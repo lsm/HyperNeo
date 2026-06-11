@@ -792,7 +792,8 @@ export class WorkflowHookEngine {
       // target to compare, so a hook with targetNode on those methods is skipped.
       if (hook.targetNode) {
         if (methodName !== 'send_message') return false;
-        if (actionTargets.size > 0 && !actionTargets.has(hook.targetNode)) return false;
+        if (actionTargets.size === 0) return false;
+        if (!actionTargets.has(hook.targetNode)) return false;
       }
 
       // Authorized callers check
@@ -1371,32 +1372,55 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
   if (!engine) return handler;
 
   const wrapped = async (args: T) => {
-    const outcome = await engine.executeAction(methodName, args as Record<string, unknown>, meta);
+    let outcome = await engine.executeAction(methodName, args as Record<string, unknown>, meta);
 
-    // Batch persist hook state updates and execution results.
-    // Each hook gets at most one repo write to avoid version conflicts.
-    const updatesByHook = new Map<
-      string,
-      { state: Record<string, unknown>; result?: WorkflowHookResult }
-    >();
-    for (const update of outcome.stateUpdates) {
-      updatesByHook.set(update.hookId, { state: update.state });
-    }
-    for (const record of outcome.executionLog) {
-      const existing = updatesByHook.get(record.hookId);
-      if (existing) {
-        existing.result = record.result;
-      } else {
-        updatesByHook.set(record.hookId, { state: {}, result: record.result });
+    for (let attempt = 0; attempt < 2; attempt++) {
+      // Batch persist hook state updates and execution results.
+      // Each hook gets at most one repo write to avoid version conflicts.
+      const updatesByHook = new Map<
+        string,
+        { state: Record<string, unknown>; result?: WorkflowHookResult }
+      >();
+      for (const update of outcome.stateUpdates) {
+        updatesByHook.set(update.hookId, { state: update.state });
       }
-    }
-    for (const [hookId, { state, result }] of updatesByHook) {
-      const ok = engine.persistStateUpdate(hookId, state, result);
-      if (!ok) {
-        log.warn(
-          `Failed to persist hook state/result for ${hookId}: version conflict or repo error`
-        );
+      for (const record of outcome.executionLog) {
+        const existing = updatesByHook.get(record.hookId);
+        if (existing) {
+          existing.result = record.result;
+        } else {
+          updatesByHook.set(record.hookId, { state: {}, result: record.result });
+        }
       }
+      for (const [hookId, { state, result }] of updatesByHook) {
+        const ok = engine.persistStateUpdate(hookId, state, result);
+        if (!ok) {
+          log.warn(
+            `Failed to persist hook state/result for ${hookId}: version conflict or repo error`
+          );
+        }
+      }
+
+      if (
+        attempt > 0 ||
+        outcome.decision !== 'retryable_block' ||
+        !outcome.userState.reason?.includes('retry after state merge')
+      ) {
+        break;
+      }
+
+      const retryOutcome = await engine.executeAction(
+        methodName,
+        args as Record<string, unknown>,
+        meta
+      );
+      if (
+        retryOutcome.decision === 'retryable_block' &&
+        retryOutcome.userState.reason === outcome.userState.reason
+      ) {
+        break;
+      }
+      outcome = retryOutcome;
     }
 
     // Handle block

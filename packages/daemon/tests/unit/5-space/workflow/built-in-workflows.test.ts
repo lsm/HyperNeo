@@ -2076,6 +2076,28 @@ describe('seedBuiltInWorkflows()', () => {
     expect(ef).toBeDefined();
   });
 
+  test('mergeChannelsFromTemplate treats single-target arrays as same from→to', () => {
+    const existingChannels = [
+      { from: 'Review', to: ['QA'], gateId: 'review-approval-gate' },
+      { from: 'Coding', to: 'Review' },
+    ];
+    const templateChannels = [{ from: 'Review', to: 'QA', hookIds: ['review-approval-hook'] }];
+
+    const result = mergeChannelsFromTemplate(
+      existingChannels as SpaceWorkflow['channels'],
+      templateChannels as SpaceWorkflow['channels'],
+      [],
+      []
+    );
+
+    expect(result).toHaveLength(2);
+    const reviewQaChannels = result!.filter((ch) => ch.from === 'Review');
+    expect(reviewQaChannels).toHaveLength(1);
+    expect(reviewQaChannels[0].to).toBe('QA');
+    expect(reviewQaChannels[0].gateId).toBeUndefined();
+    expect(reviewQaChannels[0].hookIds).toEqual(['review-approval-hook']);
+  });
+
   test('re-stamp appends missing validation node and channels with resolved agent IDs', () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;

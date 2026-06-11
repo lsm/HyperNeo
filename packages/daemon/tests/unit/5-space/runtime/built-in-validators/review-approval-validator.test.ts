@@ -28,7 +28,7 @@ function makeCtx(overrides: Partial<HookExecutorContext> = {}): HookExecutorCont
 }
 
 describe('reviewApprovalValidator', () => {
-  test('blocks and records vote when threshold not met', async () => {
+  test('retry-blocks and records vote when threshold not met', async () => {
     const ctx = makeCtx({
       params: { data: { approvals: { arch: 'approved' } } },
       templateData: { threshold: 2 },
@@ -36,7 +36,7 @@ describe('reviewApprovalValidator', () => {
 
     const result = await reviewApprovalValidator(ctx);
 
-    expect(result.type).toBe('block');
+    expect(result.type).toBe('retryable_block');
     expect((result as { reason: string }).reason).toContain('1/2');
     expect((result as { state?: Record<string, unknown> }).state).toEqual({
       approvals: { arch: 'approved' },
@@ -65,7 +65,7 @@ describe('reviewApprovalValidator', () => {
 
     const result = await reviewApprovalValidator(ctx);
 
-    expect(result.type).toBe('block');
+    expect(result.type).toBe('retryable_block');
     const state = (result as { state?: Record<string, unknown> }).state;
     expect(state?.approvals).toEqual({
       arch: 'approved',
@@ -102,7 +102,7 @@ describe('reviewApprovalValidator', () => {
 
     const result = await reviewApprovalValidator(ctx);
 
-    expect(result.type).toBe('block');
+    expect(result.type).toBe('retryable_block');
     const state = (result as { state?: Record<string, unknown> }).state;
     expect(state?.approvals).toEqual({
       arch: 'rejected',
@@ -131,7 +131,7 @@ describe('reviewApprovalValidator', () => {
 
     const result = await reviewApprovalValidator(ctx);
 
-    expect(result.type).toBe('block');
+    expect(result.type).toBe('retryable_block');
     expect((result as { reason: string }).reason).toContain('2/3');
   });
 
@@ -418,7 +418,7 @@ describe('reviewApprovalValidator', () => {
     expect(state?._codex_started_at).toBeTypeOf('number');
   });
 
-  test('persists partial votes even when blocked', async () => {
+  test('persists partial votes even when retry-blocked', async () => {
     const ctx = makeCtx({
       params: { data: { approvals: { a: 'approved' } } },
       hookLocalState: {},
@@ -427,7 +427,7 @@ describe('reviewApprovalValidator', () => {
 
     const result = await reviewApprovalValidator(ctx);
 
-    expect(result.type).toBe('block');
+    expect(result.type).toBe('retryable_block');
     expect((result as { state?: Record<string, unknown> }).state).toEqual({
       approvals: { a: 'approved' },
     });

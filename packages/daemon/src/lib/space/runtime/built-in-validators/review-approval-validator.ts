@@ -363,11 +363,14 @@ export async function reviewApprovalValidator(
   const approvalCount = countApprovals(mergedVotes, voteMatch);
   const nextState: Record<string, unknown> = { [voteKey]: mergedVotes };
 
-  // Threshold not yet met → block and persist the partial vote
+  // Threshold not yet met → persist the partial vote and ask caller to retry.
+  // A retry re-reads persisted hook state, so concurrent final votes that deep-merge
+  // to the threshold get a chance to release without another human message.
   if (approvalCount < threshold) {
     return {
-      type: 'block',
-      reason: `Waiting for approvals (${approvalCount}/${threshold}). Vote recorded.`,
+      type: 'retryable_block',
+      reason: `Waiting for approvals (${approvalCount}/${threshold}). Vote recorded; retry after state merge.`,
+      retryAfterMs: 1_000,
       state: nextState,
     };
   }

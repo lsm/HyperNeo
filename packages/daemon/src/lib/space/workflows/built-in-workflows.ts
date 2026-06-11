@@ -1750,13 +1750,12 @@ export function mergeChannelsFromTemplate(
   // Template channels are the source of truth for from→to pairs. Replace
   // any existing channel with the same from→to so that gate changes
   // (including ungating) are reflected on re-stamp.
-  const templateFromTo = new Set(
-    remappedTemplateChannels.map((ch) => JSON.stringify({ from: ch.from, to: ch.to }))
-  );
-  const keptExisting = existingChannels.filter((ch) => {
-    const key = JSON.stringify({ from: ch.from, to: ch.to });
-    return !templateFromTo.has(key);
-  });
+  const fromToKey = (ch: NonNullable<SpaceWorkflow['channels']>[number]) => {
+    const to = Array.isArray(ch.to) && ch.to.length === 1 ? ch.to[0] : ch.to;
+    return JSON.stringify({ from: ch.from, to });
+  };
+  const templateFromTo = new Set(remappedTemplateChannels.map(fromToKey));
+  const keptExisting = existingChannels.filter((ch) => !templateFromTo.has(fromToKey(ch)));
 
   return [...keptExisting, ...remappedTemplateChannels];
 }

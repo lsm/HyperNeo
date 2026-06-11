@@ -731,6 +731,21 @@ describe('WorkflowHookEngine', () => {
     expect(outcome.finalParams).toEqual({ target: 'Review', message: 'hi', extra: true });
   });
 
+  test('out-of-channel target does not trigger targetNode hooks', async () => {
+    const { engine } = makeEngine([
+      makeHook({ id: 'hook-1', targetNode: 'Review', method: 'send_message' }),
+    ]);
+
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: 'space-agent', message: 'need help' },
+      defaultMeta
+    );
+
+    expect(outcome.decision).toBe('allow');
+    expect(outcome.executionLog).toHaveLength(0);
+  });
+
   test('@worker address target is parsed to node name for hook matching', async () => {
     const { engine, mockExecutor } = makeEngine([
       makeHook({ id: 'hook-1', targetNode: 'Review', method: 'send_message' }),
@@ -2388,6 +2403,50 @@ describe('wrapHandlerWithHooks', () => {
     const state = hookStateRepo.get('run-1', 'hook-1');
     expect(state?.localState).toEqual({ retryCount: 1 });
     expect(state?.lastResult?.type).toBe('retryable_block');
+  });
+
+  test('retries state-merge retryable blocks before returning to caller', async () => {
+    const hookStateRepo = makeMockHookStateRepo();
+    const mockExecutor = new MockHookExecutor();
+    let callCount = 0;
+
+    const engine = new WorkflowHookEngine({
+      workflow: makeWorkflow([makeHook({ id: 'hook-1', classification: 'validation' })]),
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo,
+      hookExecutor: mockExecutor,
+      workspacePath: '/tmp',
+    });
+
+    mockExecutor.execute = async () => {
+      callCount += 1;
+      if (callCount === 1) {
+        return {
+          result: {
+            type: 'retryable_block',
+            reason: 'Waiting for approvals (3/4). Vote recorded; retry after state merge.',
+            retryAfterMs: 1_000,
+            state: { approvals: { correctness: 'approved' } },
+          },
+        };
+      }
+      return { result: { type: 'allow', message: 'Threshold met (4/4).' } };
+    };
+
+    const handler = async () => ({
+      content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }],
+    });
+
+    const wrapped = wrapHandlerWithHooks('send_message', handler, engine, {}, defaultMeta);
+    const result = await wrapped({ target: 'Review' });
+
+    expect(JSON.parse(result.content[0].text).success).toBe(true);
+    expect(callCount).toBe(2);
+    const state = hookStateRepo.get('run-1', 'hook-1');
+    expect(state?.localState).toEqual({ approvals: { correctness: 'approved' } });
+    expect(state?.lastResult?.type).toBe('allow');
   });
 
   test('dispatches follow-up through handler pipeline', async () => {

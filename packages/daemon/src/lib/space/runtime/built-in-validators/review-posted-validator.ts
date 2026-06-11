@@ -67,6 +67,15 @@ function githubTokenForHost(host: string): string | undefined {
   return process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
 }
 
+function apiPathMatches(path: string | undefined, suffix: string): boolean {
+  if (!path) return false;
+  try {
+    return new URL(path).pathname.endsWith(suffix);
+  } catch {
+    return path.endsWith(suffix);
+  }
+}
+
 async function githubGraphql(
   host: string,
   query: string,
@@ -157,10 +166,36 @@ async function githubRest(
   }
 }
 
+async function getPrAuthorLogin(prUrl: string): Promise<string | undefined> {
+  const parsed = parsePrUrl(prUrl);
+  if (!parsed) return undefined;
+
+  const result = await githubGraphql(
+    parsed.host,
+    `
+      query($owner:String!,$name:String!,$number:Int!) {
+        repository(owner:$owner,name:$name) {
+          pullRequest(number:$number) { author { login } }
+        }
+      }
+    `,
+    { owner: parsed.owner, name: parsed.repo, number: parsed.number }
+  );
+  if (!result.ok) return undefined;
+
+  const json = result.json as {
+    data?: { repository?: { pullRequest?: { author?: { login?: string } } } };
+    errors?: unknown[];
+  };
+  if (json.errors) return undefined;
+  return json.data?.repository?.pullRequest?.author?.login;
+}
+
 async function verifyReviewEvidenceOnGithub(
   prUrl: string,
   reviewUrl: string,
-  sinceIso?: string
+  sinceIso?: string,
+  prAuthorLogin?: string
 ): Promise<'verified' | 'missing' | 'error'> {
   const parsed = parsePrUrl(prUrl);
   if (!parsed) return 'error';
@@ -194,7 +229,7 @@ async function verifyReviewEvidenceOnGithub(
       };
       if (
         comment.id === expectedDiscussionId &&
-        comment.pull_request_url?.endsWith(`/pulls/${parsed.number}`) &&
+        apiPathMatches(comment.pull_request_url, `/pulls/${parsed.number}`) &&
         isFresh(comment.created_at)
       ) {
         return 'verified';
@@ -208,11 +243,18 @@ async function verifyReviewEvidenceOnGithub(
       `/repos/${parsed.owner}/${parsed.repo}/issues/comments/${expectedIssueCommentId}`
     );
     if (result.ok) {
-      const comment = result.json as { id?: number; issue_url?: string; created_at?: string };
+      const comment = result.json as {
+        id?: number;
+        issue_url?: string;
+        created_at?: string;
+        user?: { login?: string };
+      };
       if (
         comment.id === expectedIssueCommentId &&
-        comment.issue_url?.endsWith(`/issues/${parsed.number}`) &&
-        isFresh(comment.created_at)
+        apiPathMatches(comment.issue_url, `/issues/${parsed.number}`) &&
+        isFresh(comment.created_at) &&
+        prAuthorLogin !== undefined &&
+        comment.user?.login === prAuthorLogin
       ) {
         return 'verified';
       }
@@ -343,7 +385,13 @@ async function findReviewEvidence(
     if (!reviewBase) return false;
     if (activePrBase && reviewBase !== activePrBase) return false;
     const prUrl = activePrBase ?? reviewBase;
-    const verified = await verifyReviewEvidenceOnGithub(prUrl, url, evidenceSinceIso);
+    const prAuthorLogin = await getPrAuthorLogin(prUrl);
+    const verified = await verifyReviewEvidenceOnGithub(
+      prUrl,
+      url,
+      evidenceSinceIso,
+      prAuthorLogin
+    );
     return verified === 'verified';
   };
 
