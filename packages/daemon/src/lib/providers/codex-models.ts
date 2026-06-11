@@ -70,17 +70,17 @@ export function getModelContextWindow(modelId: string): number | undefined {
 }
 
 /**
- * Anthropic model IDs to present to the Claude Agent SDK so it uses a large
- * context window instead of falling back to ~200 k for unknown Codex IDs.
+ * Anthropic model IDs to present to the Claude Agent SDK so it uses recognised
+ * Anthropic IDs instead of falling back for unknown Codex IDs.
  *
- * The SDK has a hard-coded model database. When it sees a model it recognises
- * it uses that model's real context limit (1 M for Opus 4.1). When it sees an
- * unknown ID (e.g. `gpt-5.5`) it falls back to ~200 k and rejects requests at
- * ~175 k tokens — well before NeoKai's compaction at 231 k.
+ * The SDK has a hard-coded model database and also preflights context using
+ * provider `/v1/models` responses. Alias rows in the bridge model list advertise
+ * real Codex limits so the SDK rejects prompts OpenAI would reject before NeoKai
+ * has a stream usage event that can trigger compaction.
  *
- * We use `claude-opus-4-1-20250805` because it is the latest Opus ID the
- * current SDK (0.2.141) recognises. Newer IDs such as `claude-opus-4-20250918`
- * are not in the SDK's hard-coded database and would trigger the same fallback.
+ * We route Codex frontier models through `claude-opus-4-7` because it is a
+ * current large-context Opus ID the SDK (0.2.141) recognises. Unknown model IDs
+ * trigger fallback behaviour with smaller context windows.
  *
  * These overrides are used for:
  *   - `translateModelIdForSdk()` (so the SDK sends the Anthropic ID in the
@@ -92,7 +92,7 @@ export function getModelContextWindow(modelId: string): number | undefined {
  * `modelAliases` (plus per-session overrides) before forwarding to OpenAI.
  *
  * Architectural limitation: multiple Codex models share the same SDK alias
- * (e.g. gpt-5.5, gpt-5.3-codex, gpt-5.4 all map to claude-opus-4-1-20250805).
+ * (e.g. gpt-5.5, gpt-5.3-codex, gpt-5.4 all map to claude-opus-4-7).
  * The bridge cannot distinguish between different logical uses of the same
  * alias (primary vs fallback vs sub-agent tier). Per-session overrides use
  * last-wins semantics so model switching works correctly. Known trade-offs:
@@ -102,9 +102,9 @@ export function getModelContextWindow(modelId: string): number | undefined {
  * fallback is rare (models are similar within a tier).
  */
 export const CODEX_TO_SDK_ANTHROPIC_MODEL: Record<CodexBridgeModelId, string> = {
-  'gpt-5.5': 'claude-opus-4-1-20250805',
-  'gpt-5.3-codex': 'claude-opus-4-1-20250805',
-  'gpt-5.4': 'claude-opus-4-1-20250805',
+  'gpt-5.5': 'claude-opus-4-7',
+  'gpt-5.3-codex': 'claude-opus-4-7',
+  'gpt-5.4': 'claude-opus-4-7',
   'gpt-5.4-mini': 'claude-sonnet-4-20250514',
   'gpt-5.1-codex-mini': 'claude-sonnet-4-20250514',
 };
@@ -122,7 +122,7 @@ export const CODEX_TO_SDK_ANTHROPIC_MODEL: Record<CodexBridgeModelId, string> = 
  * this default mapping so the originally-selected Codex model is preserved.
  */
 export const SDK_ANTHROPIC_TO_CODEX_MODEL: Record<string, CodexBridgeModelId> = {
-  'claude-opus-4-1-20250805': 'gpt-5.5',
+  'claude-opus-4-7': 'gpt-5.5',
   'claude-sonnet-4-20250514': 'gpt-5.4-mini',
 };
 

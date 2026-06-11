@@ -435,13 +435,15 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       max_tokens: 16384,
     }));
     // Also advertise the Anthropic SDK aliases so the SDK can look them up
-    // if it queries the models list for context window info. Context windows
-    // reflect the real Codex model limits (272k/128k), not the Anthropic model
-    // limits (1M/200k), so the SDK compacts before exceeding the upstream limit.
+    // if it queries the models list for context window info. Alias rows must
+    // report real Codex limits, not larger Anthropic limits: the SDK can preflight
+    // a request before the bridge has any stream usage event to trigger NeoKai
+    // compaction, so accepting prompts above the upstream limit causes OpenAI
+    // prompt-too-long failures before NeoKai can intervene.
     const anthropicModels = [
       {
-        id: 'claude-opus-4-1-20250805',
-        display_name: 'Claude Opus 4.1 (Codex bridge)',
+        id: 'claude-opus-4-7',
+        display_name: 'Claude Opus 4.7 (Codex bridge)',
         created_at: '2025-08-05T00:00:00Z',
         context_window: 272_000,
         max_tokens: 16384,
@@ -625,8 +627,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 
     // Register a per-session override so the bridge sends the originally-selected
     // Codex model ID upstream instead of the default alias target. Without this,
-    // all frontier models (gpt-5.5, gpt-5.3-codex, gpt-5.4) would collapse to
-    // gpt-5.5 because they share the same Anthropic SDK alias.
+    // models that share an SDK alias would collapse to the alias default.
     bridgeServer.setSessionModelConfig?.(sessionId, sdkAnthropicId, resolvedId);
 
     return {
@@ -635,15 +636,9 @@ export class AnthropicToCodexBridgeProvider implements Provider {
         ANTHROPIC_API_KEY: `codex-bridge-${sessionId}`,
         CLAUDE_CODE_OAUTH_TOKEN: '',
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
-        // Present Anthropic model IDs with known large context windows to the
-        // Claude Agent SDK so it does not fall back to its default ~200 k limit
-        // and reject requests prematurely. The bridge maps these back to real
-        // Codex IDs via modelAliases (plus per-session overrides) before
-        // forwarding to OpenAI.
-        // Routing policy (mirrors getModelForTier):
-        //   Opus   → claude-opus-4-1-20250805   (1 M context)
-        //   Sonnet → sdkAnthropicId              (user-selected model, frontier or mini)
-        //   Haiku  → claude-sonnet-4-20250514    (200 k context, fast/cheap)
+        // Present Anthropic model IDs the Claude Agent SDK recognises while the
+        // bridge maps them back to real Codex IDs. Sonnet follows the selected
+        // model tier so cross-tier fallbacks do not overwrite primary alias routes.
         ANTHROPIC_DEFAULT_OPUS_MODEL: CODEX_TO_SDK_ANTHROPIC_MODEL['gpt-5.5'],
         ANTHROPIC_DEFAULT_SONNET_MODEL: sdkAnthropicId,
         ANTHROPIC_DEFAULT_HAIKU_MODEL: CODEX_TO_SDK_ANTHROPIC_MODEL['gpt-5.4-mini'],
