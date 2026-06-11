@@ -387,6 +387,7 @@ export function withSyntheticCodexHooks(workflow: SpaceWorkflow): SpaceWorkflow 
   );
   const gatesById = new Map((workflow.gates ?? []).map((gate) => [gate.id, gate]));
   const syntheticHooks: WorkflowHook[] = [];
+  const updatedExistingHooks = new Map<string, WorkflowHook>();
   const hookManagedChannelIdsByHook = new Map<string, Set<string>>();
 
   for (const node of workflow.nodes ?? []) {
@@ -417,14 +418,29 @@ export function withSyntheticCodexHooks(workflow: SpaceWorkflow): SpaceWorkflow 
           enforceForTargets.add(resolvedTarget);
         }
       }
-      if (channel.id && channel.hookIds && !channel.hookIds.includes(hookId)) {
+      if (channel.id && channel.hookIds) {
         const channelIds = hookManagedChannelIdsByHook.get(hookId) ?? new Set<string>();
         channelIds.add(channel.id);
         hookManagedChannelIdsByHook.set(hookId, channelIds);
       }
     }
     if (targetChannels.length === 0) continue;
-    if (existingCodexHook) continue;
+    if (existingCodexHook) {
+      const existingTargets = Array.isArray(existingCodexHook.templateData?.enforceForTargets)
+        ? existingCodexHook.templateData.enforceForTargets.filter(
+            (target): target is string => typeof target === 'string'
+          )
+        : [];
+      updatedExistingHooks.set(existingCodexHook.id, {
+        ...existingCodexHook,
+        templateData: {
+          ...existingCodexHook.templateData,
+          enforceForTargets: [...new Set([...existingTargets, ...enforceForTargets])],
+          forceCodexApproval: true,
+        },
+      });
+      continue;
+    }
 
     syntheticHooks.push({
       id: hookId,
@@ -437,16 +453,27 @@ export function withSyntheticCodexHooks(workflow: SpaceWorkflow): SpaceWorkflow 
     });
   }
 
-  if (syntheticHooks.length === 0 && hookManagedChannelIdsByHook.size === 0) return workflow;
+  if (
+    syntheticHooks.length === 0 &&
+    updatedExistingHooks.size === 0 &&
+    hookManagedChannelIdsByHook.size === 0
+  ) {
+    return workflow;
+  }
+  const hooks = existingHooks.map((hook) => updatedExistingHooks.get(hook.id) ?? hook);
   const channels = (workflow.channels ?? []).map((channel) => {
     if (!channel.id || !channel.hookIds) return channel;
     const hookIdsToAdd = [...hookManagedChannelIdsByHook.entries()]
       .filter(([, channelIds]) => channelIds.has(channel.id!))
       .map(([hookId]) => hookId);
     if (hookIdsToAdd.length === 0) return channel;
-    return { ...channel, hookIds: [...channel.hookIds, ...hookIdsToAdd] };
+    return {
+      ...channel,
+      gateId: undefined,
+      hookIds: [...channel.hookIds, ...hookIdsToAdd],
+    };
   });
-  return { ...workflow, hooks: [...existingHooks, ...syntheticHooks], channels };
+  return { ...workflow, hooks: [...hooks, ...syntheticHooks], channels };
 }
 
 // ---------------------------------------------------------------------------

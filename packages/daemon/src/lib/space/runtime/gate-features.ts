@@ -20,19 +20,26 @@ export function isRegisteredGateFeature(name: string): boolean {
   return gateFeatureRegistry.has(name);
 }
 
+function hasRuntimeGateFeatureDefinition(definition: GateFeatureDefinition | undefined): boolean {
+  return !!(definition?.script || definition?.poll);
+}
+
 export function hasRegisteredGateFeatures(
   gate: { features?: Gate['features'] } | undefined
 ): boolean {
-  return Object.keys(gate?.features ?? {}).some(
-    (name) => hasEnabledGateFeature(gate, name) && isRegisteredGateFeature(name)
-  );
+  return Object.keys(gate?.features ?? {}).some((name) => {
+    const definition = gateFeatureRegistry.get(name);
+    return hasEnabledGateFeature(gate, name) && hasRuntimeGateFeatureDefinition(definition);
+  });
 }
 
 function getEnabledGateFeatureDefinitions(gate: Gate): GateFeatureDefinition[] {
   return Object.keys(gate.features ?? {})
     .filter((name) => hasEnabledGateFeature(gate, name))
     .map((name) => gateFeatureRegistry.get(name))
-    .filter((definition): definition is GateFeatureDefinition => !!definition);
+    .filter((definition): definition is GateFeatureDefinition =>
+      hasRuntimeGateFeatureDefinition(definition)
+    );
 }
 
 /**

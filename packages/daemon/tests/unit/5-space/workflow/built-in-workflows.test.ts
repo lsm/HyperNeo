@@ -2356,6 +2356,60 @@ describe('seedBuiltInWorkflows()', () => {
     expect(secondAfter.hooks!.find((hook) => hook.id === 'codex-review-check')?.enabled).toBe(true);
   });
 
+  test('re-stamp preserves user hooks while merging template hooks', () => {
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const workflow = manager
+      .listWorkflows(SPACE_ID)
+      .find((w) => w.name === FULLSTACK_QA_LOOP_WORKFLOW.name)!;
+    manager.updateWorkflow(workflow.id, {
+      hooks: [
+        ...(workflow.hooks ?? []),
+        {
+          id: 'user-authored-hook',
+          enabled: true,
+          sourceNode: 'Review',
+          method: 'send_message',
+          validator: { kind: 'script', interpreter: 'bash', source: 'echo {"type":"allow"}' },
+          authorizedCallers: [{ sourceNode: 'Review', agentSlots: ['reviewer'] }],
+        },
+      ],
+    });
+    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+      'pre-user-hook-preservation-hash',
+      workflow.id
+    );
+
+    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    expect(result.restamped).toContain(FULLSTACK_QA_LOOP_WORKFLOW.name);
+
+    const after = manager.getWorkflow(workflow.id)!;
+    expect(after.hooks!.some((hook) => hook.id === 'user-authored-hook')).toBe(true);
+    expect(after.hooks!.some((hook) => hook.id === 'codex-review-check')).toBe(true);
+  });
+
+  test('re-stamp disables Codex hooks when node toggle is off', () => {
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const workflow = manager
+      .listWorkflows(SPACE_ID)
+      .find((w) => w.name === FULLSTACK_QA_LOOP_WORKFLOW.name)!;
+    manager.updateWorkflow(workflow.id, {
+      hooks: workflow.hooks?.map((hook) =>
+        hook.id === 'codex-review-check' ? { ...hook, enabled: true } : hook
+      ),
+      nodes: workflow.nodes.map((node) => ({ ...node, requireCodexApproval: undefined })),
+    });
+    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+      'pre-codex-toggle-off-hash',
+      workflow.id
+    );
+
+    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    expect(result.restamped).toContain(FULLSTACK_QA_LOOP_WORKFLOW.name);
+
+    const after = manager.getWorkflow(workflow.id)!;
+    expect(after.hooks!.find((hook) => hook.id === 'codex-review-check')?.enabled).toBe(false);
+  });
+
   test('re-stamp remaps Codex hooks for renamed source nodes', () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const workflow = manager
@@ -3219,6 +3273,25 @@ describe('Coding Workflow export/import round-trip', () => {
     expect(result.ok).toBe(true);
   });
 
+  test('exported workflow preserves built-in hook external lookups', () => {
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const wf = manager
+      .listWorkflows(SPACE_ID)
+      .find((w) => w.name === FULLSTACK_QA_LOOP_WORKFLOW.name)!;
+
+    const exported = exportWorkflow(wf, mockAgents);
+    const result = validateExportedWorkflow(exported);
+    expect(result.ok).toBe(true);
+    const codexHook = result.ok
+      ? result.value.hooks?.find((hook) => hook.id === 'codex-review-check')
+      : undefined;
+    expect(codexHook?.validator).toEqual({
+      kind: 'built_in',
+      id: 'codex_review_approved',
+      externalLookups: ['github'],
+    });
+  });
+
   test('exported Coding Workflow preserves channels and Review→Coding cycle', () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
@@ -3436,6 +3509,15 @@ describe('all built-in workflow gates pass creation-time validation', () => {
       fields: [
         { name: 'approved', type: 'boolean', writers: [], check: { op: '==', value: true } },
       ],
+      features: { codex_review_bot: true },
+    });
+    expect(errors).toHaveLength(0);
+  });
+
+  test('codex_review_bot marker can coexist with custom script', () => {
+    const errors = validateGate({
+      id: 'codex-marker-script-gate',
+      script: { interpreter: 'bash', source: 'echo {"approved":true}', timeoutMs: 1000 },
       features: { codex_review_bot: true },
     });
     expect(errors).toHaveLength(0);

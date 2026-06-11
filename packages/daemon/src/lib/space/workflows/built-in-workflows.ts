@@ -1647,6 +1647,15 @@ function setCodexHookEnabled(hooks: WorkflowHook[] | null | undefined, enabled: 
   );
 }
 
+function mergeTemplateHooksById(
+  existingHooks: WorkflowHook[] | null | undefined,
+  templateHooks: WorkflowHook[] | null | undefined
+): WorkflowHook[] | null | undefined {
+  if (!templateHooks) return existingHooks;
+  const templateIds = new Set(templateHooks.map((hook) => hook.id));
+  return [...(existingHooks ?? []).filter((hook) => !templateIds.has(hook.id)), ...templateHooks];
+}
+
 function nodeReferences(node: WorkflowNode): Set<string> {
   return new Set([
     node.id,
@@ -1947,14 +1956,11 @@ export function seedBuiltInWorkflows(
         const hasNewTemplateChannels = (mergedChannels?.length ?? 0) > (row.channels?.length ?? 0);
         const remappedTemplateHooks = remapTemplateHooks(template.hooks, template.nodes, row.nodes);
         const preserveCodexApproval =
-          migratedCodexApproval ||
-          migratedNodes.some((node) => node.requireCodexApproval === true) ||
-          (row.hooks ?? []).some(
-            (hook) =>
-              hook.enabled &&
-              hook.validator.kind === 'built_in' &&
-              hook.validator.id === 'codex_review_approved'
-          );
+          migratedCodexApproval || migratedNodes.some((node) => node.requireCodexApproval === true);
+        const restampedHooks = mergeTemplateHooksById(
+          row.hooks,
+          setCodexHookEnabled(remappedTemplateHooks ?? null, preserveCodexApproval) ?? null
+        );
 
         workflowManager.updateWorkflow(row.id, {
           completionAutonomyLevel: template.completionAutonomyLevel,
@@ -1962,7 +1968,7 @@ export function seedBuiltInWorkflows(
           // workflow-level value while the node updater writes node routes.
           postApproval: null,
           gates: migratedGates,
-          hooks: setCodexHookEnabled(remappedTemplateHooks ?? null, preserveCodexApproval) ?? null,
+          hooks: restampedHooks ?? null,
           nodes: migratedNodes,
           ...(hasNewTemplateChannels ? { channels: mergedChannels } : {}),
           templateHash: expectedHash,

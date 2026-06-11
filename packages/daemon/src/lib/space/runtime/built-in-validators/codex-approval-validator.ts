@@ -454,15 +454,17 @@ export const codexReviewApprovedValidator: BuiltInValidatorFn = async (context) 
     const isFirstCheck = persisted.currentHeadSha === undefined;
     const workflowStartedAt = parseIsoMs(workflowStartIso);
     const firstCheckFreshnessAnchor = workflowStartedAt ?? now;
-    const headCommitTimestamp = headChanged
-      ? await fetchCommitTimestamp(prInfo, prData, currentHeadSha, token)
-      : undefined;
+    const headCommitTimestamp =
+      headChanged || isFirstCheck
+        ? await fetchCommitTimestamp(prInfo, prData, currentHeadSha, token)
+        : undefined;
     // Truncate to second precision so comparisons with GitHub timestamps
     // (which are second-precision) don't treat same-second reactions as stale.
     const currentHeadBecameHeadAt = toEpochSeconds(
       headChanged
         ? (headCommitTimestamp ?? now)
-        : (persisted.currentHeadBecameHeadAt ?? (isFirstCheck ? firstCheckFreshnessAnchor : now))
+        : (persisted.currentHeadBecameHeadAt ??
+            (isFirstCheck ? (headCommitTimestamp ?? firstCheckFreshnessAnchor) : now))
     );
     const checkStartedAt = headChanged ? now : (persisted.checkStartedAt ?? now);
 

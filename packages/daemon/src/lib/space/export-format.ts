@@ -133,7 +133,11 @@ const exportedWorkflowChannelSchema = z.object({
 });
 
 const workflowHookValidatorSchema = z.union([
-  z.object({ kind: z.literal('built_in'), id: z.string().min(1) }),
+  z.object({
+    kind: z.literal('built_in'),
+    id: z.string().min(1),
+    externalLookups: z.array(z.literal('github')).optional(),
+  }),
   z.object({
     kind: z.literal('script'),
     interpreter: z.literal('bash'),

@@ -206,6 +206,29 @@ describe('codexReviewApprovedValidator', () => {
     expect((result as { data?: Record<string, unknown> }).data?.currentHeadSha).toBe('abc123');
   });
 
+  test('first invocation anchors freshness to current head commit timestamp', async () => {
+    mockPrWith(
+      'abc123',
+      [
+        {
+          id: 1,
+          user: { login: 'codex[bot]' },
+          content: '+1',
+          created_at: '2026-01-02T00:00:00Z',
+        },
+      ],
+      '2026-01-02T00:01:00Z'
+    );
+    const ctx = makeContext({
+      currentArtifacts: PR_ARTIFACT,
+      workflowStartIso: '2026-01-01T00:00:00Z',
+    });
+    const result = await codexReviewApprovedValidator(ctx);
+    expect(result.type).toBe('retryable_block');
+    expect((result as { reason?: string }).reason).toContain('stale');
+    expect(fetchCalls.some((c) => c.url.includes('/commits/abc123'))).toBe(true);
+  });
+
   test('retryable_block on eyes reaction', async () => {
     mockPrWith('abc123', [
       {
@@ -654,7 +677,7 @@ describe('withSyntheticCodexHooks', () => {
     expect(hook?.templateData).toEqual({ enforceForTargets: ['Review'], forceCodexApproval: true });
   });
 
-  test('adds synthetic hook IDs to hook-managed approval channels', () => {
+  test('does not add synthetic hook IDs to mixed gate/hook approval channels', () => {
     const workflow = withSyntheticCodexHooks({
       ...WORKFLOW,
       hooks: [
@@ -683,10 +706,50 @@ describe('withSyntheticCodexHooks', () => {
         },
       ],
     });
-    expect(workflow.channels?.[0]?.hookIds).toContain('synthetic-codex-review-check-node-coder');
+    expect(workflow.channels?.[0]).toMatchObject({
+      gateId: undefined,
+      hookIds: ['other-hook', 'synthetic-codex-review-check-node-coder'],
+    });
+    expect(
+      workflow.hooks?.some((hook) => hook.id === 'synthetic-codex-review-check-node-coder')
+    ).toBe(true);
   });
 
-  test('binds existing Codex hooks to hook-managed approval channels', () => {
+  test('binds synthetic hooks to hook-only approval channels', () => {
+    const workflow = withSyntheticCodexHooks({
+      ...WORKFLOW,
+      hooks: [
+        {
+          id: 'other-hook',
+          enabled: true,
+          sourceNode: 'Coding',
+          method: 'send_message',
+          validator: { kind: 'script', interpreter: 'bash', source: 'echo {"type":"allow"}' },
+          authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+        },
+      ],
+      gates: [
+        {
+          id: 'approval-gate',
+          fields: [{ name: 'approved', type: 'boolean', check: { op: '==', value: true } }],
+        },
+      ],
+      channels: [
+        {
+          id: 'hook-channel',
+          from: 'Coding',
+          to: 'Review',
+          gateId: 'approval-gate',
+          hookIds: ['other-hook'],
+        },
+      ],
+    });
+    expect(workflow.channels?.find((channel) => channel.id === 'hook-channel')?.hookIds).toContain(
+      'synthetic-codex-review-check-node-coder'
+    );
+  });
+
+  test('binds existing Codex hooks to hook-only approval channels', () => {
     const workflow = withSyntheticCodexHooks({
       ...WORKFLOW,
       hooks: [
@@ -715,7 +778,7 @@ describe('withSyntheticCodexHooks', () => {
       ],
       channels: [
         {
-          id: 'approval-channel',
+          id: 'hook-channel',
           from: 'Coding',
           to: 'Review',
           gateId: 'approval-gate',
@@ -723,10 +786,52 @@ describe('withSyntheticCodexHooks', () => {
         },
       ],
     });
-    expect(workflow.channels?.[0]?.hookIds).toContain('existing-codex-review-check');
+    expect(workflow.channels?.find((channel) => channel.id === 'hook-channel')?.hookIds).toContain(
+      'existing-codex-review-check'
+    );
     expect(
       workflow.hooks?.filter((hook) => hook.id === 'synthetic-codex-review-check-node-coder')
     ).toHaveLength(0);
+  });
+
+  test('merges synthetic target coverage into existing Codex hooks', () => {
+    const workflow = withSyntheticCodexHooks({
+      ...WORKFLOW,
+      nodes: [
+        ...WORKFLOW.nodes,
+        { id: 'node-qa', name: 'QA', agents: [{ agentId: 'a3', name: 'qa' }] },
+      ],
+      hooks: [
+        {
+          id: 'existing-codex-review-check',
+          enabled: true,
+          sourceNode: 'Coding',
+          method: 'send_message',
+          validator: { kind: 'built_in', id: 'codex_review_approved' },
+          authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+          templateData: { enforceForTargets: ['Review'] },
+        },
+      ],
+      gates: [
+        {
+          id: 'review-gate',
+          fields: [{ name: 'approved', type: 'boolean', check: { op: '==', value: true } }],
+        },
+        {
+          id: 'qa-gate',
+          fields: [{ name: 'approved', type: 'boolean', check: { op: '==', value: true } }],
+        },
+      ],
+      channels: [
+        { from: 'Coding', to: 'Review', gateId: 'review-gate' },
+        { from: 'Coding', to: 'QA', gateId: 'qa-gate' },
+      ],
+    });
+    const hook = workflow.hooks?.find((h) => h.id === 'existing-codex-review-check');
+    expect(hook?.templateData).toEqual({
+      enforceForTargets: ['Review', 'QA'],
+      forceCodexApproval: true,
+    });
   });
 
   test('normalizes synthetic hook targets from agent slot to node name', () => {
