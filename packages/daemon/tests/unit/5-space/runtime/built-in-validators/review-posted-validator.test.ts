@@ -177,8 +177,8 @@ describe('reviewPostedValidator', () => {
           data: {
             repository: {
               pullRequest: {
-                reviews: { nodes: [{ createdAt: '2999-01-01T00:00:00Z' }] },
-                comments: { nodes: [] },
+                reviews: { nodes: [] },
+                comments: { nodes: [{ databaseId: 1, createdAt: '2999-01-01T00:00:00Z' }] },
                 reviewThreads: { nodes: [] },
               },
             },
@@ -238,7 +238,7 @@ describe('reviewPostedValidator', () => {
             repository: {
               pullRequest: {
                 reviews: { nodes: [] },
-                comments: { nodes: [{ createdAt: '2999-01-01T00:00:00Z' }] },
+                comments: { nodes: [{ databaseId: 42, createdAt: '2999-01-01T00:00:00Z' }] },
                 reviewThreads: { nodes: [] },
               },
             },

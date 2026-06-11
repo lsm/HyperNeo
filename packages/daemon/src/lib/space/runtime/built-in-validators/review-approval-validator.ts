@@ -73,15 +73,15 @@ function getVotes(state: Record<string, unknown>, voteKey: string): Record<strin
 }
 
 function findPrUrl(ctx: HookExecutorContext): string | undefined {
-  const data = ctx.params.data as Record<string, unknown> | undefined;
-  if (typeof data?.pr_url === 'string') return data.pr_url;
-  if (typeof ctx.hookLocalState._pr_url === 'string') return ctx.hookLocalState._pr_url as string;
-
   // Gate data is the canonical source for the active PR URL
   for (const gate of ctx.gateData ?? []) {
     const gateData = gate.data as Record<string, unknown> | undefined;
     if (typeof gateData?.pr_url === 'string') return gateData.pr_url;
   }
+
+  const data = ctx.params.data as Record<string, unknown> | undefined;
+  if (typeof data?.pr_url === 'string') return data.pr_url;
+  if (typeof ctx.hookLocalState._pr_url === 'string') return ctx.hookLocalState._pr_url as string;
 
   // Fall back to artifacts (may contain stale URLs from prior cycles)
   for (const artifact of ctx.currentArtifacts) {
@@ -342,7 +342,12 @@ export async function reviewApprovalValidator(
     return {
       type: 'block',
       reason: 'Approval rejected. Resetting vote state and requesting revision.',
-      state: { [voteKey]: null },
+      state: {
+        [voteKey]: null,
+        _codex_started_at: null,
+        _codex_head_sha: null,
+        _pr_url: null,
+      },
     };
   }
 

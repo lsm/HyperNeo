@@ -53,87 +53,149 @@ function trustedGithubHosts(): Set<string> {
   return trustedHosts;
 }
 
+function githubTokenForHost(host: string): string | undefined {
+  if (host !== 'github.com') {
+    return (
+      process.env.GH_ENTERPRISE_TOKEN ||
+      process.env.GITHUB_ENTERPRISE_TOKEN ||
+      process.env.GITHUB_TOKEN ||
+      process.env.GH_TOKEN
+    );
+  }
+  return process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
+}
+
+async function githubGraphql(
+  host: string,
+  query: string,
+  variables: Record<string, string | number>
+): Promise<{ ok: true; json: unknown } | { ok: false }> {
+  if (!trustedGithubHosts().has(host)) return { ok: false };
+
+  const token = githubTokenForHost(host);
+  if (token) {
+    const endpoint =
+      host === 'github.com' ? 'https://api.github.com/graphql' : `https://${host}/api/graphql`;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10_000);
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query, variables }),
+        signal: controller.signal,
+      });
+      if (!res.ok) return { ok: false };
+      return { ok: true, json: await res.json() };
+    } catch {
+      return { ok: false };
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  try {
+    const args = ['api', '--hostname', host, 'graphql', '-f', `query=${query}`];
+    for (const [key, value] of Object.entries(variables)) {
+      args.push(typeof value === 'number' ? '-F' : '-f', `${key}=${value}`);
+    }
+    const proc = Bun.spawn(['gh', ...args], {
+      stdout: 'pipe',
+      stderr: 'ignore',
+      env: process.env,
+    });
+    const output = await new Response(proc.stdout).text();
+    const exitCode = await proc.exited;
+    if (exitCode !== 0) return { ok: false };
+    return { ok: true, json: JSON.parse(output) };
+  } catch {
+    return { ok: false };
+  }
+}
+
 async function verifyReviewEvidenceOnGithub(
   prUrl: string,
+  reviewUrl: string,
   sinceIso?: string
 ): Promise<'verified' | 'missing' | 'error'> {
   const parsed = parsePrUrl(prUrl);
   if (!parsed) return 'error';
-  if (!trustedGithubHosts().has(parsed.host)) return 'error';
+
+  const discussionMatch = reviewUrl.match(/discussion_r(\d+)/);
+  const reviewMatch = reviewUrl.match(/pullrequestreview-(\d+)/);
+  const expectedDiscussionId = discussionMatch ? Number(discussionMatch[1]) : undefined;
+  const expectedReviewId = reviewMatch ? Number(reviewMatch[1]) : undefined;
+  if (!expectedDiscussionId && !expectedReviewId) return 'missing';
 
   const query = `
     query($owner:String!,$name:String!,$number:Int!) {
       repository(owner:$owner,name:$name) {
         pullRequest(number:$number) {
-          reviews(first:100) { nodes { createdAt } }
-          comments(first:100) { nodes { createdAt } }
+          reviews(first:100) { nodes { databaseId createdAt } }
+          comments(first:100) { nodes { databaseId createdAt } }
           reviewThreads(first:100) {
-            nodes { comments(first:100) { nodes { createdAt } } }
+            nodes { comments(first:100) { nodes { databaseId createdAt } } }
           }
         }
       }
     }
   `;
 
-  const token =
-    parsed.host === 'github.com'
-      ? process.env.GITHUB_TOKEN || process.env.GH_TOKEN
-      : process.env.GH_ENTERPRISE_TOKEN ||
-        process.env.GITHUB_ENTERPRISE_TOKEN ||
-        process.env.GITHUB_TOKEN ||
-        process.env.GH_TOKEN;
-  if (!token) return 'error';
+  const result = await githubGraphql(parsed.host, query, {
+    owner: parsed.owner,
+    name: parsed.repo,
+    number: parsed.number,
+  });
+  if (!result.ok) return 'error';
 
-  const endpoint =
-    parsed.host === 'github.com'
-      ? 'https://api.github.com/graphql'
-      : `https://${parsed.host}/api/graphql`;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 10_000);
-  try {
-    const res = await fetch(endpoint, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        query,
-        variables: { owner: parsed.owner, name: parsed.repo, number: parsed.number },
-      }),
-      signal: controller.signal,
-    });
-    if (!res.ok) return 'error';
-    const json = (await res.json()) as {
-      data?: {
-        repository?: {
-          pullRequest?: {
-            reviews?: { nodes?: Array<{ createdAt?: string }> };
-            comments?: { nodes?: Array<{ createdAt?: string }> };
-            reviewThreads?: {
-              nodes?: Array<{ comments?: { nodes?: Array<{ createdAt?: string }> } }>;
-            };
+  const json = result.json as {
+    data?: {
+      repository?: {
+        pullRequest?: {
+          reviews?: { nodes?: Array<{ databaseId?: number; createdAt?: string }> };
+          comments?: { nodes?: Array<{ databaseId?: number; createdAt?: string }> };
+          reviewThreads?: {
+            nodes?: Array<{
+              comments?: { nodes?: Array<{ databaseId?: number; createdAt?: string }> };
+            }>;
           };
         };
       };
-      errors?: unknown[];
     };
-    if (json.errors) return 'error';
-    const pr = json.data?.repository?.pullRequest;
-    if (!pr) return 'error';
-    const since = sinceIso ? Date.parse(sinceIso) : 0;
-    const isFresh = (createdAt?: string) => {
-      const t = createdAt ? Date.parse(createdAt) : Number.NaN;
-      return Number.isFinite(t) && t >= since;
-    };
-    if (pr.reviews?.nodes?.some((n) => isFresh(n.createdAt))) return 'verified';
-    if (pr.comments?.nodes?.some((n) => isFresh(n.createdAt))) return 'verified';
-    for (const thread of pr.reviewThreads?.nodes ?? []) {
-      if (thread.comments?.nodes?.some((n) => isFresh(n.createdAt))) return 'verified';
-    }
-    return 'missing';
-  } catch {
-    return 'error';
-  } finally {
-    clearTimeout(timeout);
+    errors?: unknown[];
+  };
+  if (json.errors) return 'error';
+  const pr = json.data?.repository?.pullRequest;
+  if (!pr) return 'error';
+  const since = sinceIso ? Date.parse(sinceIso) : 0;
+  const isFresh = (createdAt?: string) => {
+    const t = createdAt ? Date.parse(createdAt) : Number.NaN;
+    return Number.isFinite(t) && t >= since;
+  };
+
+  if (
+    expectedReviewId !== undefined &&
+    pr.reviews?.nodes?.some((n) => n.databaseId === expectedReviewId && isFresh(n.createdAt))
+  ) {
+    return 'verified';
   }
+  if (
+    expectedDiscussionId !== undefined &&
+    pr.comments?.nodes?.some((n) => n.databaseId === expectedDiscussionId && isFresh(n.createdAt))
+  ) {
+    return 'verified';
+  }
+  for (const thread of pr.reviewThreads?.nodes ?? []) {
+    if (
+      expectedDiscussionId !== undefined &&
+      thread.comments?.nodes?.some(
+        (n) => n.databaseId === expectedDiscussionId && isFresh(n.createdAt)
+      )
+    ) {
+      return 'verified';
+    }
+  }
+  return 'missing';
 }
 
 async function findReviewEvidence(
@@ -152,7 +214,11 @@ async function findReviewEvidence(
     if (activePrBase) {
       const reviewBase = extractPrBaseUrl(data.review_url);
       if (reviewBase !== activePrBase) return undefined;
-      const verified = await verifyReviewEvidenceOnGithub(activePrBase, ctx.workflowStartIso);
+      const verified = await verifyReviewEvidenceOnGithub(
+        activePrBase,
+        data.review_url,
+        ctx.workflowStartIso
+      );
       if (verified !== 'verified') return undefined;
     }
     return { reviewUrl: data.review_url, source: 'message_data' };
@@ -170,7 +236,11 @@ async function findReviewEvidence(
         if (activePrBase) {
           const reviewBase = extractPrBaseUrl(url);
           if (reviewBase !== activePrBase) continue;
-          const verified = await verifyReviewEvidenceOnGithub(activePrBase, ctx.workflowStartIso);
+          const verified = await verifyReviewEvidenceOnGithub(
+            activePrBase,
+            url,
+            ctx.workflowStartIso
+          );
           if (verified !== 'verified') continue;
         }
         return { reviewUrl: url, source: 'artifact' };

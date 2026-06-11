@@ -87,6 +87,9 @@ describe('reviewApprovalValidator', () => {
     expect((result as { reason: string }).reason).toContain('rejected');
     expect((result as { state?: Record<string, unknown> }).state).toEqual({
       approvals: null,
+      _codex_started_at: null,
+      _codex_head_sha: null,
+      _pr_url: null,
     });
   });
 
