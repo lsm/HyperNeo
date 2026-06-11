@@ -174,6 +174,49 @@ describe('reviewApprovalValidator', () => {
     expect((result as { message?: string }).message).toContain('timed out');
   });
 
+  test('accepts codex approval already posted for current head before threshold vote', async () => {
+    const originalFetch = globalThis.fetch;
+    const originalToken = process.env.GITHUB_TOKEN;
+    process.env.GITHUB_TOKEN = 'test-token';
+    globalThis.fetch = async () =>
+      ({
+        ok: true,
+        json: async () => ({
+          data: {
+            repository: {
+              pullRequest: {
+                headRefOid: 'abc123',
+                reactions: {
+                  nodes: [
+                    {
+                      user: { login: 'codex[bot]' },
+                      content: 'THUMBS_UP',
+                      createdAt: '2026-01-01T00:00:00Z',
+                    },
+                  ],
+                },
+                comments: { nodes: [] },
+                reviewThreads: { nodes: [] },
+              },
+            },
+          },
+        }),
+      }) as Response;
+
+    const ctx = makeCtx({
+      params: { data: { approved: true, pr_url: 'https://github.com/test/repo/pull/42' } },
+      hookLocalState: {},
+      templateData: { threshold: 1, requireCodex: true },
+    });
+
+    const result = await reviewApprovalValidator(ctx);
+    globalThis.fetch = originalFetch;
+    process.env.GITHUB_TOKEN = originalToken;
+
+    expect(result.type).toBe('allow');
+    expect((result as { message?: string }).message).toContain('codex approval');
+  });
+
   test('allows immediately when codex already approved', async () => {
     const originalFetch = globalThis.fetch;
     const originalToken = process.env.GITHUB_TOKEN;
@@ -560,7 +603,7 @@ describe('reviewApprovalValidator', () => {
     // After reset, _codex_head_sha is null (no storedHeadSha)
     const ctx = makeCtx({
       params: { data: { approved: true, pr_url: 'https://github.com/test/repo/pull/42' } },
-      hookLocalState: { _codex_started_at: Date.now() - 10_000 },
+      hookLocalState: { _codex_started_at: null, _codex_head_sha: null },
       templateData: { threshold: 1, requireCodex: true },
     });
 

@@ -13,7 +13,9 @@ function isValidReviewUrl(url: string): boolean {
   // Must reference a concrete GitHub PR review/comment, not just the PR base URL.
   return (
     /^https:\/\/[^/]+\/[^/]+\/[^/]+\/pull\/\d+/.test(url) &&
-    (url.includes('discussion_r') || url.includes('pullrequestreview-'))
+    (url.includes('discussion_r') ||
+      url.includes('pullrequestreview-') ||
+      url.includes('issuecomment-'))
   );
 }
 
@@ -68,7 +70,7 @@ function githubTokenForHost(host: string): string | undefined {
 async function githubGraphql(
   host: string,
   query: string,
-  variables: Record<string, string | number>
+  variables: Record<string, string | number | null | undefined>
 ): Promise<{ ok: true; json: unknown } | { ok: false }> {
   if (!trustedGithubHosts().has(host)) return { ok: false };
 
@@ -97,6 +99,7 @@ async function githubGraphql(
   try {
     const args = ['api', '--hostname', host, 'graphql', '-f', `query=${query}`];
     for (const [key, value] of Object.entries(variables)) {
+      if (value === null || value === undefined) continue;
       args.push(typeof value === 'number' ? '-F' : '-f', `${key}=${value}`);
     }
     const proc = Bun.spawn(['gh', ...args], {
@@ -122,80 +125,117 @@ async function verifyReviewEvidenceOnGithub(
   if (!parsed) return 'error';
 
   const discussionMatch = reviewUrl.match(/discussion_r(\d+)/);
+  const issueCommentMatch = reviewUrl.match(/issuecomment-(\d+)/);
   const reviewMatch = reviewUrl.match(/pullrequestreview-(\d+)/);
   const expectedDiscussionId = discussionMatch ? Number(discussionMatch[1]) : undefined;
+  const expectedIssueCommentId = issueCommentMatch ? Number(issueCommentMatch[1]) : undefined;
   const expectedReviewId = reviewMatch ? Number(reviewMatch[1]) : undefined;
-  if (!expectedDiscussionId && !expectedReviewId) return 'missing';
+  if (!expectedDiscussionId && !expectedIssueCommentId && !expectedReviewId) return 'missing';
 
-  const query = `
-    query($owner:String!,$name:String!,$number:Int!) {
-      repository(owner:$owner,name:$name) {
-        pullRequest(number:$number) {
-          reviews(first:100) { nodes { databaseId createdAt } }
-          comments(first:100) { nodes { databaseId createdAt } }
-          reviewThreads(first:100) {
-            nodes { comments(first:100) { nodes { databaseId createdAt } } }
-          }
-        }
-      }
-    }
-  `;
-
-  const result = await githubGraphql(parsed.host, query, {
-    owner: parsed.owner,
-    name: parsed.repo,
-    number: parsed.number,
-  });
-  if (!result.ok) return 'error';
-
-  const json = result.json as {
-    data?: {
-      repository?: {
-        pullRequest?: {
-          reviews?: { nodes?: Array<{ databaseId?: number; createdAt?: string }> };
-          comments?: { nodes?: Array<{ databaseId?: number; createdAt?: string }> };
-          reviewThreads?: {
-            nodes?: Array<{
-              comments?: { nodes?: Array<{ databaseId?: number; createdAt?: string }> };
-            }>;
-          };
-        };
-      };
-    };
-    errors?: unknown[];
-  };
-  if (json.errors) return 'error';
-  const pr = json.data?.repository?.pullRequest;
-  if (!pr) return 'error';
   const since = sinceIso ? Date.parse(sinceIso) : 0;
   const isFresh = (createdAt?: string) => {
     const t = createdAt ? Date.parse(createdAt) : Number.NaN;
     return Number.isFinite(t) && t >= since;
   };
+  const matches = (node: { databaseId?: number; createdAt?: string }, expectedId?: number) =>
+    expectedId !== undefined && node.databaseId === expectedId && isFresh(node.createdAt);
 
-  if (
-    expectedReviewId !== undefined &&
-    pr.reviews?.nodes?.some((n) => n.databaseId === expectedReviewId && isFresh(n.createdAt))
-  ) {
-    return 'verified';
-  }
-  if (
-    expectedDiscussionId !== undefined &&
-    pr.comments?.nodes?.some((n) => n.databaseId === expectedDiscussionId && isFresh(n.createdAt))
-  ) {
-    return 'verified';
-  }
-  for (const thread of pr.reviewThreads?.nodes ?? []) {
-    if (
-      expectedDiscussionId !== undefined &&
-      thread.comments?.nodes?.some(
-        (n) => n.databaseId === expectedDiscussionId && isFresh(n.createdAt)
-      )
-    ) {
-      return 'verified';
+  let reviewsCursor: string | undefined;
+  let commentsCursor: string | undefined;
+  let threadsCursor: string | undefined;
+
+  for (;;) {
+    const query = `
+      query($owner:String!,$name:String!,$number:Int!,$reviewsCursor:String,$commentsCursor:String,$threadsCursor:String) {
+        repository(owner:$owner,name:$name) {
+          pullRequest(number:$number) {
+            reviews(first:100, after:$reviewsCursor) {
+              nodes { databaseId createdAt }
+              pageInfo { hasNextPage endCursor }
+            }
+            comments(first:100, after:$commentsCursor) {
+              nodes { databaseId createdAt }
+              pageInfo { hasNextPage endCursor }
+            }
+            reviewThreads(first:100, after:$threadsCursor) {
+              nodes { comments(first:100) { nodes { databaseId createdAt } } }
+              pageInfo { hasNextPage endCursor }
+            }
+          }
+        }
+      }
+    `;
+
+    const result = await githubGraphql(parsed.host, query, {
+      owner: parsed.owner,
+      name: parsed.repo,
+      number: parsed.number,
+      reviewsCursor,
+      commentsCursor,
+      threadsCursor,
+    });
+    if (!result.ok) return 'error';
+
+    const json = result.json as {
+      data?: {
+        repository?: {
+          pullRequest?: {
+            reviews?: {
+              nodes?: Array<{ databaseId?: number; createdAt?: string }>;
+              pageInfo?: { hasNextPage?: boolean; endCursor?: string };
+            };
+            comments?: {
+              nodes?: Array<{ databaseId?: number; createdAt?: string }>;
+              pageInfo?: { hasNextPage?: boolean; endCursor?: string };
+            };
+            reviewThreads?: {
+              nodes?: Array<{
+                comments?: { nodes?: Array<{ databaseId?: number; createdAt?: string }> };
+              }>;
+              pageInfo?: { hasNextPage?: boolean; endCursor?: string };
+            };
+          };
+        };
+      };
+      errors?: unknown[];
+    };
+    if (json.errors) return 'error';
+    const pr = json.data?.repository?.pullRequest;
+    if (!pr) return 'error';
+
+    if (pr.reviews?.nodes?.some((n) => matches(n, expectedReviewId))) return 'verified';
+    if (pr.comments?.nodes?.some((n) => matches(n, expectedIssueCommentId))) return 'verified';
+    for (const thread of pr.reviewThreads?.nodes ?? []) {
+      if (thread.comments?.nodes?.some((n) => matches(n, expectedDiscussionId))) {
+        return 'verified';
+      }
     }
+
+    const nextReviewsCursor = pr.reviews?.pageInfo?.hasNextPage
+      ? pr.reviews.pageInfo.endCursor
+      : undefined;
+    const nextCommentsCursor = pr.comments?.pageInfo?.hasNextPage
+      ? pr.comments.pageInfo.endCursor
+      : undefined;
+    const nextThreadsCursor = pr.reviewThreads?.pageInfo?.hasNextPage
+      ? pr.reviewThreads.pageInfo.endCursor
+      : undefined;
+    if (!nextReviewsCursor && !nextCommentsCursor && !nextThreadsCursor) return 'missing';
+    reviewsCursor = nextReviewsCursor;
+    commentsCursor = nextCommentsCursor;
+    threadsCursor = nextThreadsCursor;
   }
-  return 'missing';
+}
+
+function freshEvidenceSinceIso(ctx: HookExecutorContext): string | undefined {
+  let since = ctx.workflowStartIso ? Date.parse(ctx.workflowStartIso) : 0;
+  for (const artifact of ctx.currentArtifacts) {
+    if (artifact.type === 'review' || artifact.type === 'review_feedback') continue;
+    const updatedAt = typeof artifact.updatedAt === 'number' ? artifact.updatedAt : 0;
+    const createdAt = typeof artifact.createdAt === 'number' ? artifact.createdAt : 0;
+    since = Math.max(since, updatedAt, createdAt);
+  }
+  return since > 0 ? new Date(since).toISOString() : undefined;
 }
 
 async function findReviewEvidence(
@@ -203,6 +243,7 @@ async function findReviewEvidence(
 ): Promise<{ reviewUrl?: string; source: string } | undefined> {
   const data = ctx.params.data as Record<string, unknown> | undefined;
   const activePrBase = extractPrBaseUrl(getActivePrUrl(ctx) ?? '');
+  const evidenceSinceIso = freshEvidenceSinceIso(ctx);
 
   // Immediate evidence in the message data
   if (
@@ -217,7 +258,7 @@ async function findReviewEvidence(
       const verified = await verifyReviewEvidenceOnGithub(
         activePrBase,
         data.review_url,
-        ctx.workflowStartIso
+        evidenceSinceIso
       );
       if (verified !== 'verified') return undefined;
     }
@@ -236,11 +277,7 @@ async function findReviewEvidence(
         if (activePrBase) {
           const reviewBase = extractPrBaseUrl(url);
           if (reviewBase !== activePrBase) continue;
-          const verified = await verifyReviewEvidenceOnGithub(
-            activePrBase,
-            url,
-            ctx.workflowStartIso
-          );
+          const verified = await verifyReviewEvidenceOnGithub(activePrBase, url, evidenceSinceIso);
           if (verified !== 'verified') continue;
         }
         return { reviewUrl: url, source: 'artifact' };

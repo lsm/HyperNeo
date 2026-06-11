@@ -368,12 +368,18 @@ export async function reviewApprovalValidator(
     const prUrl = findPrUrl(ctx);
     const timeoutMs =
       typeof template.codexTimeoutMs === 'number' ? template.codexTimeoutMs : 600_000;
-    const codexStartedAt = state._codex_started_at as number | undefined;
-    const storedHeadSha = state._codex_head_sha as string | undefined;
+    const codexStartedAt =
+      typeof state._codex_started_at === 'number' ? state._codex_started_at : undefined;
+    const storedHeadSha =
+      typeof state._codex_head_sha === 'string' ? state._codex_head_sha : undefined;
+    const resetPending = state._codex_started_at === null || state._codex_head_sha === null;
     const now = Date.now();
 
     if (prUrl) {
-      const codexResult = await checkCodexApproval(prUrl, codexStartedAt);
+      const codexResult = await checkCodexApproval(
+        prUrl,
+        codexStartedAt ?? (storedHeadSha || resetPending ? undefined : 0)
+      );
 
       // New revision pushed — reset codex timer so stale approvals don't release
       if (codexResult.headSha && storedHeadSha && storedHeadSha !== codexResult.headSha) {
@@ -392,7 +398,7 @@ export async function reviewApprovalValidator(
 
       // After a reset, storedHeadSha is null. Record the current head and wait
       // for a fresh codex approval instead of accepting historical thumbs-ups.
-      if (codexResult.headSha && !storedHeadSha) {
+      if (codexResult.headSha && resetPending && !storedHeadSha) {
         return {
           type: 'retryable_block',
           reason: 'Recording PR head SHA after reset. Waiting for fresh codex approval.',

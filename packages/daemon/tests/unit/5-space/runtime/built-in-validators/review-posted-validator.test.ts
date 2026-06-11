@@ -177,9 +177,14 @@ describe('reviewPostedValidator', () => {
           data: {
             repository: {
               pullRequest: {
-                reviews: { nodes: [] },
-                comments: { nodes: [{ databaseId: 1, createdAt: '2999-01-01T00:00:00Z' }] },
-                reviewThreads: { nodes: [] },
+                reviews: { nodes: [], pageInfo: { hasNextPage: false } },
+                comments: { nodes: [], pageInfo: { hasNextPage: false } },
+                reviewThreads: {
+                  nodes: [
+                    { comments: { nodes: [{ databaseId: 1, createdAt: '2999-01-01T00:00:00Z' }] } },
+                  ],
+                  pageInfo: { hasNextPage: false },
+                },
               },
             },
           },
@@ -237,9 +242,18 @@ describe('reviewPostedValidator', () => {
           data: {
             repository: {
               pullRequest: {
-                reviews: { nodes: [] },
-                comments: { nodes: [{ databaseId: 42, createdAt: '2999-01-01T00:00:00Z' }] },
-                reviewThreads: { nodes: [] },
+                reviews: { nodes: [], pageInfo: { hasNextPage: false } },
+                comments: { nodes: [], pageInfo: { hasNextPage: false } },
+                reviewThreads: {
+                  nodes: [
+                    {
+                      comments: {
+                        nodes: [{ databaseId: 42, createdAt: '2999-01-01T00:00:00Z' }],
+                      },
+                    },
+                  ],
+                  pageInfo: { hasNextPage: false },
+                },
               },
             },
           },
@@ -263,6 +277,171 @@ describe('reviewPostedValidator', () => {
     process.env.GITHUB_TOKEN = originalToken;
 
     expect(result.type).toBe('allow');
+  });
+
+  test('allows PR issue comment URL matching active PR', async () => {
+    const originalFetch = globalThis.fetch;
+    const originalToken = process.env.GITHUB_TOKEN;
+    process.env.GITHUB_TOKEN = 'test-token';
+    globalThis.fetch = async () =>
+      ({
+        ok: true,
+        json: async () => ({
+          data: {
+            repository: {
+              pullRequest: {
+                reviews: { nodes: [], pageInfo: { hasNextPage: false } },
+                comments: {
+                  nodes: [{ databaseId: 99, createdAt: '2999-01-01T00:00:00Z' }],
+                  pageInfo: { hasNextPage: false },
+                },
+                reviewThreads: { nodes: [], pageInfo: { hasNextPage: false } },
+              },
+            },
+          },
+        }),
+      }) as Response;
+
+    const ctx = makeCtx({
+      params: {
+        data: { review_url: 'https://github.com/test/repo/pull/1#issuecomment-99' },
+      },
+      gateData: [
+        {
+          gateId: 'code-pr-gate',
+          data: { pr_url: 'https://github.com/test/repo/pull/1' },
+          updatedAt: Date.now(),
+        },
+      ],
+    });
+    const result = await reviewPostedValidator(ctx);
+    globalThis.fetch = originalFetch;
+    process.env.GITHUB_TOKEN = originalToken;
+
+    expect(result.type).toBe('allow');
+  });
+
+  test('finds review evidence on later pages', async () => {
+    const originalFetch = globalThis.fetch;
+    const originalToken = process.env.GITHUB_TOKEN;
+    process.env.GITHUB_TOKEN = 'test-token';
+    let callCount = 0;
+    globalThis.fetch = async () => {
+      callCount += 1;
+      return {
+        ok: true,
+        json: async () => ({
+          data: {
+            repository: {
+              pullRequest: {
+                reviews: { nodes: [], pageInfo: { hasNextPage: false } },
+                comments: { nodes: [], pageInfo: { hasNextPage: false } },
+                reviewThreads:
+                  callCount === 1
+                    ? {
+                        nodes: [],
+                        pageInfo: { hasNextPage: true, endCursor: 'cursor-1' },
+                      }
+                    : {
+                        nodes: [
+                          {
+                            comments: {
+                              nodes: [{ databaseId: 123, createdAt: '2999-01-01T00:00:00Z' }],
+                            },
+                          },
+                        ],
+                        pageInfo: { hasNextPage: false },
+                      },
+              },
+            },
+          },
+        }),
+      } as Response;
+    };
+
+    const ctx = makeCtx({
+      params: {
+        data: { review_url: 'https://github.com/test/repo/pull/1#discussion_r123' },
+      },
+      gateData: [
+        {
+          gateId: 'code-pr-gate',
+          data: { pr_url: 'https://github.com/test/repo/pull/1' },
+          updatedAt: Date.now(),
+        },
+      ],
+    });
+    const result = await reviewPostedValidator(ctx);
+    globalThis.fetch = originalFetch;
+    process.env.GITHUB_TOKEN = originalToken;
+
+    expect(result.type).toBe('allow');
+    expect(callCount).toBe(2);
+  });
+
+  test('blocks direct message review URL older than latest coding revision', async () => {
+    const originalFetch = globalThis.fetch;
+    const originalToken = process.env.GITHUB_TOKEN;
+    process.env.GITHUB_TOKEN = 'test-token';
+    const now = Date.now();
+    globalThis.fetch = async () =>
+      ({
+        ok: true,
+        json: async () => ({
+          data: {
+            repository: {
+              pullRequest: {
+                reviews: { nodes: [], pageInfo: { hasNextPage: false } },
+                comments: { nodes: [], pageInfo: { hasNextPage: false } },
+                reviewThreads: {
+                  nodes: [
+                    {
+                      comments: {
+                        nodes: [
+                          {
+                            databaseId: 42,
+                            createdAt: new Date(now - 10_000).toISOString(),
+                          },
+                        ],
+                      },
+                    },
+                  ],
+                  pageInfo: { hasNextPage: false },
+                },
+              },
+            },
+          },
+        }),
+      }) as Response;
+
+    const ctx = makeCtx({
+      params: {
+        data: { review_url: 'https://github.com/test/repo/pull/1#discussion_r42' },
+      },
+      currentArtifacts: [
+        {
+          id: 'a2',
+          nodeId: 'node-coding',
+          type: 'result',
+          key: 'revision-2',
+          data: { pr_url: 'https://github.com/test/repo/pull/1' },
+          createdAt: now,
+          updatedAt: now,
+        },
+      ],
+      gateData: [
+        {
+          gateId: 'code-pr-gate',
+          data: { pr_url: 'https://github.com/test/repo/pull/1' },
+          updatedAt: now,
+        },
+      ],
+    });
+    const result = await reviewPostedValidator(ctx);
+    globalThis.fetch = originalFetch;
+    process.env.GITHUB_TOKEN = originalToken;
+
+    expect(result.type).toBe('block');
   });
 
   test('does not send credentials to untrusted review URL host', async () => {
