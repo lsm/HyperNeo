@@ -184,7 +184,7 @@ export class WorkflowHookEngine {
         return true;
       }
       const nodeExecutionStatus = this.config.getSourceNodeExecutionStatus?.(meta);
-      if (nodeExecutionStatus === 'idle' || nodeExecutionStatus === 'cancelled') {
+      if (nodeExecutionStatus === 'cancelled') {
         return true;
       }
     }

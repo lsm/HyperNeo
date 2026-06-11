@@ -1364,9 +1364,14 @@ describe('WorkflowHookEngine', () => {
   });
 
   test.each([
-    ['task is done', { getTaskStatus: () => 'done' }],
-    ['source node execution is cancelled', { getSourceNodeExecutionStatus: () => 'cancelled' }],
-  ] as const)('queued retry does not replay when %s', async (_name, options) => {
+    ['task is done', { getTaskStatus: () => 'done' }, false],
+    [
+      'source node execution is cancelled',
+      { getSourceNodeExecutionStatus: () => 'cancelled' },
+      false,
+    ],
+    ['source node execution is idle', { getSourceNodeExecutionStatus: () => 'idle' }, true],
+  ] as const)('queued retry replay expectation when %s', async (_name, options, shouldReplay) => {
     const args = { target: 'Review', message: 'hi' };
     const actionKey = JSON.stringify({
       runScopedTaskId: defaultMeta.taskId,
@@ -1408,7 +1413,7 @@ describe('WorkflowHookEngine', () => {
     );
     await new Promise((resolve) => setTimeout(resolve, 20));
 
-    expect(handlerCallCount).toBe(0);
+    expect(handlerCallCount).toBe(shouldReplay ? 1 : 0);
     expect(
       hookStateRepo.get('run-1', 'hook-1')?.localState[QUEUED_RETRYABLE_ACTION_STATE_KEY]
     ).toBeNull();

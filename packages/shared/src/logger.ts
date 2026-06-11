@@ -257,6 +257,14 @@ export function clearStructuredLogSubscribers(): void {
   structuredLogSubscribers.clear();
 }
 
+export function resetConsoleLogCaptureForTesting(): void {
+  if (process.env.NODE_ENV !== 'test') return;
+  consoleCaptureRestore?.();
+  consoleCaptureRestore = null;
+  consoleCaptureRefCount = 0;
+  suppressConsoleCapture = false;
+}
+
 export function emitStructuredLogEvent(params: EmitStructuredLogEventParams): StructuredLogEvent {
   const timestamp = Date.now();
   const event: StructuredLogEvent = {

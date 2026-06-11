@@ -31,6 +31,17 @@ const BASIC_ENV_KEYS = new Set([
   'TMPDIR',
   'XDG_CONFIG_HOME',
   'AppData',
+  'HTTPS_PROXY',
+  'https_proxy',
+  'HTTP_PROXY',
+  'http_proxy',
+  'ALL_PROXY',
+  'all_proxy',
+  'NO_PROXY',
+  'no_proxy',
+  'SSL_CERT_FILE',
+  'SSL_CERT_DIR',
+  'GIT_SSL_CAINFO',
 ]);
 
 interface PrViewResult {
@@ -66,13 +77,14 @@ export function createPrReadyValidator(
   spawnImpl: typeof Bun.spawn = Bun.spawn
 ): (context: HookExecutorContext) => Promise<WorkflowHookResult> {
   return async (context: HookExecutorContext): Promise<WorkflowHookResult> => {
-    const prUrl = extractPrUrl(context);
-    if (!prUrl) {
+    const prUrlResult = await resolvePrUrl(context, spawnImpl);
+    if (!prUrlResult.success) {
       return {
         type: 'block',
-        reason: 'PR is not ready for Review: no PR URL provided',
+        reason: `PR is not ready for Review: ${prUrlResult.error}`,
       };
     }
+    const prUrl = prUrlResult.prUrl;
 
     const prMeta = parsePrUrl(prUrl);
     if (!prMeta) {
@@ -163,6 +175,34 @@ export function createPrReadyValidator(
       data: { pr_url: prJson.url },
     };
   };
+}
+
+async function resolvePrUrl(
+  context: HookExecutorContext,
+  spawnImpl: typeof Bun.spawn
+): Promise<{ success: true; prUrl: string } | { success: false; error: string }> {
+  const prUrl = extractPrUrl(context);
+  if (prUrl) return { success: true, prUrl };
+
+  const currentBranchPr = await runCommand<{ url?: string }>(
+    ['gh', 'pr', 'view', '--json', 'url'],
+    context.workspacePath,
+    DEFAULT_TIMEOUT_MS,
+    spawnImpl
+  );
+  if (!currentBranchPr.success) {
+    return {
+      success: false,
+      error: `no PR URL provided and current-branch PR discovery failed: ${currentBranchPr.error}`,
+    };
+  }
+  if (typeof currentBranchPr.data.url !== 'string' || currentBranchPr.data.url.length === 0) {
+    return {
+      success: false,
+      error: 'no PR URL provided and current-branch PR discovery returned no URL',
+    };
+  }
+  return { success: true, prUrl: currentBranchPr.data.url };
 }
 
 function extractPrUrl(context: HookExecutorContext): string | undefined {
@@ -275,11 +315,9 @@ async function runReviewThreadsQuery(
 
 function buildGitHubLookupEnv(): Record<string, string> {
   const env: Record<string, string> = {};
-  for (const [key, value] of Object.entries(process.env)) {
-    if (value === undefined) continue;
-    if (BASIC_ENV_KEYS.has(key) || GITHUB_LOOKUP_ENV_KEYS.has(key)) {
-      env[key] = value;
-    }
+  for (const key of [...BASIC_ENV_KEYS, ...GITHUB_LOOKUP_ENV_KEYS]) {
+    const value = process.env[key];
+    if (value !== undefined) env[key] = value;
   }
   return env;
 }
