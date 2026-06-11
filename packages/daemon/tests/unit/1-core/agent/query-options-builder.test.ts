@@ -113,6 +113,41 @@ describe('QueryOptionsBuilder', () => {
       expect(options.fallbackModel).toBe('haiku');
     });
 
+    it('marks fallback provider contexts so bridge providers do not overwrite primary routes', async () => {
+      const capturedConfigs: Array<Record<string, unknown> | undefined> = [];
+      resetProviderRegistry();
+      getProviderRegistry().register({
+        id: 'openrouter',
+        displayName: 'OpenRouter',
+        capabilities: {
+          streaming: true,
+          extendedThinking: false,
+          maxContextWindow: 1_000_000,
+          functionCalling: true,
+          vision: true,
+        },
+        isAvailable: () => true,
+        getModels: async () => [],
+        ownsModel: () => false,
+        translateModelIdForSdk: (modelId: string) => `sdk-${modelId}`,
+        buildSdkConfig: (_modelId: string, sessionConfig?: Record<string, unknown>) => {
+          capturedConfigs.push(sessionConfig);
+          return { envVars: {}, isAnthropicCompatible: true };
+        },
+      } as Provider);
+
+      mockSession.config.provider = 'openrouter';
+      mockSession.config.model = 'primary';
+      mockSession.config.fallbackModel = 'fallback';
+      const options = await builder.build();
+
+      expect(options.model).toBe('sdk-primary');
+      expect(options.fallbackModel).toBe('sdk-fallback');
+      expect(capturedConfigs[0]?.isFallbackModelContext).toBeUndefined();
+      expect(capturedConfigs[1]?.isFallbackModelContext).toBe(true);
+      resetProviderRegistry();
+    });
+
     it('should include agents when configured', async () => {
       mockSession.config.agents = {
         'test-agent': {

@@ -435,11 +435,12 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       max_tokens: 16384,
     }));
     // Also advertise the Anthropic SDK aliases so the SDK can look them up
-    // if it queries the models list for context window info. Alias models must
-    // report the SDK-facing Anthropic limits, not Codex limits: the SDK performs
-    // its own preflight prompt-too-long check from this list. NeoKai separately
-    // uses Codex ModelInfo metadata plus ContextTracker to compact at 85% of the
-    // real upstream window before OpenAI sees the request.
+    // if it queries the models list for context window info. The Opus alias must
+    // report the SDK-facing Anthropic limit because it is used for primary routing;
+    // the Sonnet/mini alias reports the real mini limit because Haiku-tier requests
+    // still use it directly. NeoKai separately uses Codex ModelInfo metadata plus
+    // ContextTracker to compact at 85% of the real upstream window before OpenAI
+    // sees the request.
     const anthropicModels = [
       {
         id: 'claude-opus-4-1-20250805',
@@ -452,7 +453,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
         id: 'claude-sonnet-4-20250514',
         display_name: 'Claude Sonnet 4 (Codex bridge)',
         created_at: '2025-05-14T00:00:00Z',
-        context_window: 200_000,
+        context_window: 128_000,
         max_tokens: 16384,
       },
     ];
@@ -628,14 +629,18 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     // Register per-session overrides so the bridge sends the originally-selected
     // Codex model ID upstream instead of the default alias target. Without this,
     // shared SDK aliases would collapse to their default Codex mappings. Sonnet is
-    // routed through the Opus alias for SDK preflight safety, so register that
-    // alias too or mini-selected sessions would fall back to gpt-5.5.
+    // routed through the Opus alias for SDK preflight safety, so primary mini
+    // sessions also register the Opus alias. Fallback model contexts must not do
+    // that extra Opus registration: otherwise a mini fallback would overwrite a
+    // frontier primary route before fallback is triggered.
     bridgeServer.setSessionModelConfig?.(sessionId, sdkAnthropicId, resolvedId);
-    bridgeServer.setSessionModelConfig?.(
-      sessionId,
-      CODEX_TO_SDK_ANTHROPIC_MODEL['gpt-5.5'],
-      resolvedId
-    );
+    if (!sessionConfig?.isFallbackModelContext) {
+      bridgeServer.setSessionModelConfig?.(
+        sessionId,
+        CODEX_TO_SDK_ANTHROPIC_MODEL['gpt-5.5'],
+        resolvedId
+      );
+    }
 
     return {
       envVars: {

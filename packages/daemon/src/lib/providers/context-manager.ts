@@ -99,6 +99,8 @@ export class ProviderContextManager {
     const sessionConfig = {
       workspacePath: session.worktree?.worktreePath ?? session.workspacePath ?? undefined,
       sessionId: session.id,
+      isFallbackModelContext: (session as unknown as { isFallbackModelContext?: boolean })
+        .isFallbackModelContext,
       ...(providerConfig
         ? {
             apiKey: providerConfig.apiKey,

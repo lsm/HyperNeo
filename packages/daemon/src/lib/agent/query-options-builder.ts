@@ -327,6 +327,7 @@ export class QueryOptionsBuilder {
       // Create a temporary session config with the fallback model
       const fallbackSession = {
         ...this.ctx.session,
+        isFallbackModelContext: true,
         config: { ...this.ctx.session.config, model: config.fallbackModel },
       };
       const fallbackContext = contextManager.createContext(fallbackSession);

@@ -718,6 +718,51 @@ describe('AnthropicToCodexBridgeProvider', () => {
       }
     });
 
+    it('does not let mini fallback override a frontier primary Opus alias route', async () => {
+      const originalFetch = globalThis.fetch;
+      let fetchSpy: ReturnType<typeof spyOn> | undefined;
+      let capturedBody: Record<string, unknown> | undefined;
+      try {
+        fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(
+          (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+            const url = String(input);
+            if (url.startsWith('http://127.0.0.1:')) {
+              return originalFetch(input, init);
+            }
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+            return Promise.resolve(
+              new Response(
+                'event: response.completed\ndata: {"type":"response.completed","response":{"usage":{"input_tokens":1,"output_tokens":0},"output":[]}}\n\n',
+                { headers: { 'Content-Type': 'text/event-stream' } }
+              )
+            );
+          }
+        );
+
+        const sessionConfig = {
+          sessionId: 'frontier-with-mini-fallback',
+          workspacePath: '/tmp/ws',
+        };
+        const primary = provider.buildSdkConfig('gpt-5.5', sessionConfig);
+        provider.buildSdkConfig('codex-mini', { ...sessionConfig, isFallbackModelContext: true });
+
+        const resp = await originalFetch(`${primary.envVars.ANTHROPIC_BASE_URL}/v1/messages`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: 'claude-opus-4-1-20250805',
+            max_tokens: 128,
+            messages: [{ role: 'user', content: 'hi' }],
+          }),
+        });
+        await resp.text();
+
+        expect(capturedBody?.model).toBe('gpt-5.5');
+      } finally {
+        fetchSpy?.mockRestore();
+      }
+    });
+
     it('resolves codex-latest alias to the 1 M Anthropic ID', () => {
       const cfg = provider.buildSdkConfig('codex-latest', { workspacePath: '/tmp/ws-latest' });
       // 'codex-latest' is an alias for 'gpt-5.5' which maps to the 1 M Anthropic ID
@@ -761,7 +806,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
       // Alias models advertise SDK-facing Anthropic limits so SDK preflight checks
       // do not reject before NeoKai can compact at the real Codex limits.
       expect(byId.get('claude-opus-4-1-20250805')).toBe(1_000_000);
-      expect(byId.get('claude-sonnet-4-20250514')).toBe(200_000);
+      expect(byId.get('claude-sonnet-4-20250514')).toBe(128_000);
       // Codex models still advertise real upstream limits for NeoKai metadata.
       expect(byId.get('gpt-5.5')).toBe(272_000);
       expect(byId.get('gpt-5.4-mini')).toBe(128_000);
