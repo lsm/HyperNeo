@@ -646,6 +646,18 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(cfg.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('claude-opus-4-1-20250805');
     });
 
+    it('routes GPT-5.5 through the 1 M SDK alias while keeping Codex context metadata', async () => {
+      const cfg = provider.buildSdkConfig('gpt-5.5', { workspacePath: '/tmp/ws-gpt-55' });
+      expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('claude-opus-4-1-20250805');
+      expect(cfg.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('claude-opus-4-1-20250805');
+
+      const models = await provider.getModels();
+      const gpt55 = models.find((model) => model.id === 'gpt-5.5');
+      expect(gpt55?.contextWindow).toBe(272_000);
+      expect(gpt55?.preferContextWindowMetadata).toBe(true);
+      expect(gpt55?.sdkModelIds).toContain('claude-opus-4-1-20250805');
+    });
+
     it('resolves model alias to Anthropic ID in ANTHROPIC_DEFAULT_SONNET_MODEL', () => {
       const cfg = provider.buildSdkConfig('codex', { workspacePath: '/tmp/ws-alias' });
       // 'codex' is an alias for 'gpt-5.3-codex' which maps to the 1 M Anthropic ID
