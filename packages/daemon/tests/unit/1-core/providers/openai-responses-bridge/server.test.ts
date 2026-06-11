@@ -1820,7 +1820,7 @@ describe('openai-responses-bridge server', () => {
     expect(events.at(-1)?.event).toBe('message_stop');
   });
 
-  it('allows high-token Codex alias turns through the bridge before the real 272k limit', async () => {
+  it('reports real Codex windows and routes high-token alias turns below upstream limits', async () => {
     const cumulativeTokenCounts = [50_000, 100_000, 150_000, 190_000, 231_000, 250_000];
     const capturedModels: string[] = [];
     const returnedInputTokens: number[] = [];
@@ -1886,26 +1886,16 @@ describe('openai-responses-bridge server', () => {
     expect(contextById.get('claude-opus-4-1-20250805')).toBe(272000);
     expect(contextById.get('claude-sonnet-4-20250514')).toBe(128000);
 
-    const sdkWouldReject = (tokensUsed: number, modelId: string) => {
-      const contextWindow = contextById.get(modelId);
-      expect(contextWindow).toBeDefined();
-      return tokensUsed >= contextWindow!;
-    };
     const shouldCompact = (tokensUsed: number, contextWindow: number) =>
       tokensUsed >= Math.floor(contextWindow * 0.85);
 
-    expect(sdkWouldReject(180000, 'claude-opus-4-1-20250805')).toBe(false);
-    expect(sdkWouldReject(200000, 'claude-opus-4-1-20250805')).toBe(false);
-    expect(sdkWouldReject(230000, 'claude-opus-4-1-20250805')).toBe(false);
-    expect(sdkWouldReject(250000, 'claude-opus-4-1-20250805')).toBe(false);
-    expect(sdkWouldReject(272000, 'claude-opus-4-1-20250805')).toBe(true);
-
+    // NeoKai uses bridge-reported context metadata for reactive context tracking.
+    // The SDK auto-compact path is disabled for bridged providers, so prompt-too-long
+    // protection comes from NeoKai compacting before the real upstream Codex limit.
     expect(shouldCompact(231199, 272000)).toBe(false);
     expect(shouldCompact(231200, 272000)).toBe(true);
-    expect(sdkWouldReject(231200, 'claude-opus-4-1-20250805')).toBe(false);
     expect(272000 - 231200).toBe(40800);
 
-    expect(sdkWouldReject(200000, 'claude-sonnet-4-20250514')).toBe(true);
     expect(shouldCompact(108799, 128000)).toBe(false);
     expect(shouldCompact(108800, 128000)).toBe(true);
 
