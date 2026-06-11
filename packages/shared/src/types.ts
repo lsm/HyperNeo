@@ -186,6 +186,7 @@ export type { RuntimeState } from './types/neo';
  * - 'ollama-cloud': Ollama Cloud through the native /api/chat endpoint
  * - 'anthropic-copilot': GitHub Copilot backend via Anthropic-compatible embedded server
  * - 'anthropic-codex': Anthropic-compatible HTTP bridge backed by OpenAI Responses
+ * - 'acp': ACP-compatible agent runtime over JSON-RPC stdio
  */
 export type Provider =
   | 'anthropic'
@@ -196,7 +197,8 @@ export type Provider =
   | 'ollama'
   | 'ollama-cloud'
   | 'anthropic-copilot'
-  | 'anthropic-codex';
+  | 'anthropic-codex'
+  | 'acp';
 
 /**
  * Provider-specific configuration
@@ -279,6 +281,7 @@ export const PROVIDER_THINKING_MODES: Record<Provider, 'off' | 'on' | 'granular'
   'ollama-cloud': 'off',
   'anthropic-copilot': 'off',
   'anthropic-codex': 'granular',
+  acp: 'granular',
 };
 
 /**

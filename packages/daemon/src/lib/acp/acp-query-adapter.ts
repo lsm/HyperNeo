@@ -103,4 +103,11 @@ export class AcpQueryAdapter implements AsyncIterable<SDKMessage> {
   setMcpServers(): Promise<McpSetServersResult> {
     return Promise.resolve({ added: [], removed: [], errors: {} });
   }
+
+  rewindFiles(): Promise<{ canRewind: boolean; error: string }> {
+    return Promise.resolve({
+      canRewind: false,
+      error: 'ACP sessions do not support file rewind yet.',
+    });
+  }
 }

@@ -41,6 +41,7 @@ import type {
   AcpStopReason,
 } from '@neokai/shared';
 import { AcpTransport } from './acp-transport';
+import type { AcpTransportCallbacks } from './acp-transport';
 
 export interface AcpClientCallbacks {
   onFsRead?(params: AcpFsReadParams): Promise<AcpFsReadResult>;
@@ -55,7 +56,9 @@ export interface AcpClientCallbacks {
   onPermissionRequest?(params: AcpPermissionRequest): Promise<AcpPermissionResponseResult>;
 }
 
-export interface AcpClientOptions extends AcpClientCallbacks {
+export interface AcpClientOptions
+  extends AcpClientCallbacks,
+    Pick<AcpTransportCallbacks, 'onProcessSpawn' | 'onStderr' | 'onExit'> {
   command: string;
   args?: string[];
   env?: Record<string, string>;

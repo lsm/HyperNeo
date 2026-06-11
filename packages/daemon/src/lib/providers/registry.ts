@@ -278,6 +278,7 @@ export function inferProviderForModel(modelId: string): ProviderIdStr {
   const fromRegistry = getProviderRegistry().findProviderForModel(modelId)?.id;
   if (fromRegistry) return fromRegistry as ProviderIdStr;
   // Static fallback when registry is empty
+  if (modelId.startsWith('acp-') || modelId === 'acp') return 'acp';
   if (modelId.startsWith('glm-') || modelId === 'glm') return 'glm';
   if (modelId.startsWith('minimax-') || modelId === 'minimax') return 'minimax';
   if (modelId === 'ollama') return 'ollama';

@@ -5,7 +5,7 @@
  * No special configuration needed - the SDK handles everything.
  */
 
-import type { Query } from '@anthropic-ai/claude-agent-sdk';
+import type { QueryLike } from '../agent/query-like';
 import type {
   Provider,
   ProviderAuthStatusInfo,
@@ -494,7 +494,9 @@ export class AnthropicProvider implements Provider {
  * Helper function to get models from an existing query
  * This is useful for getting models from an active session's query
  */
-export async function getAnthropicModelsFromQuery(queryObject: Query | null): Promise<ModelInfo[]> {
+export async function getAnthropicModelsFromQuery(
+  queryObject: QueryLike | null
+): Promise<ModelInfo[]> {
   if (!queryObject || typeof queryObject.supportedModels !== 'function') {
     return [];
   }

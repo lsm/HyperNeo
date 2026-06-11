@@ -165,7 +165,9 @@ export class DatabaseCredentialStore implements CredentialStore {
 }
 
 export function createCredentialStore(db: Database): CredentialStore {
-  if (platform() === 'darwin') return new KeychainCredentialStore();
+  if (process.env.NODE_ENV !== 'test' && platform() === 'darwin') {
+    return new KeychainCredentialStore();
+  }
   return new DatabaseCredentialStore(db);
 }
 

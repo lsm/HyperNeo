@@ -16,7 +16,6 @@
  * fresh system:init is emitted with the correct model.
  */
 
-import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type {
   Provider,
   Session,
@@ -36,6 +35,7 @@ import type { ContextTracker } from './context-tracker';
 import type { MessageQueue } from './message-queue';
 import type { ProcessingStateManager } from './processing-state-manager';
 import type { QueryLifecycleManager } from './query-lifecycle-manager';
+import type { QueryLike } from './query-like';
 
 /**
  * Context interface - what ModelSwitchHandler needs from AgentSession
@@ -52,8 +52,8 @@ export interface ModelSwitchHandlerContext {
   readonly logger: Logger;
   readonly lifecycleManager: QueryLifecycleManager;
 
-  // SDK state
-  readonly queryObject: Query | null;
+  // Query state
+  readonly queryObject: QueryLike | null;
   readonly queryPromise: Promise<void> | null;
   readonly messageQueue: MessageQueue;
 }
