@@ -299,7 +299,7 @@ export const codexReviewApprovedValidator: BuiltInValidatorFn = async (context) 
       const rawTargets: string[] = Array.isArray(rawTarget) ? rawTarget : [rawTarget];
 
       // Broadcast '*' fans out to all permitted targets, so treat it as matching
-      const isBroadcast = rawTargets.includes('*');
+      const isBroadcast = rawTargets.some((t) => typeof t === 'string' && t.trim() === '*');
       if (!isBroadcast) {
         // Resolve each raw target to node names, then check against enforceForTargets
         const matched = rawTargets.some((t) => {
@@ -392,7 +392,12 @@ export const codexReviewApprovedValidator: BuiltInValidatorFn = async (context) 
       return {
         type: 'block',
         reason: 'Codex review did not pass',
-        data: { currentHeadSha: persisted.currentHeadSha },
+        data: {
+          ...persisted,
+          currentHeadSha,
+          prUrl,
+          terminalOutcome: 'block',
+        },
       };
     }
 

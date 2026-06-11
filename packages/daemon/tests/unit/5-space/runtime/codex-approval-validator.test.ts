@@ -295,6 +295,8 @@ describe('codexReviewApprovedValidator', () => {
     });
     const result = await codexReviewApprovedValidator(ctx);
     expect(result.type).toBe('block');
+    expect((result as { data?: Record<string, unknown> }).data?.terminalOutcome).toBe('block');
+    expect((result as { data?: Record<string, unknown> }).data?.currentHeadSha).toBe('abc123');
     // Should have fetched to verify head hasn't changed
     expect(fetchCalls.some((c) => c.url.includes('/pulls/42'))).toBe(true);
   });
@@ -314,7 +316,7 @@ describe('codexReviewApprovedValidator', () => {
     mockPrWith('abc123', []);
     const ctx = makeContext({
       methodName: 'send_message',
-      params: { target: '*' },
+      params: { target: ' * ' },
       templateData: { enforceForTargets: ['Review'] },
       currentArtifacts: PR_ARTIFACT,
     });
@@ -479,6 +481,39 @@ describe('withSyntheticCodexHooks', () => {
       externalLookups: ['github'],
     });
     expect(hook?.authorizedCallers).toEqual([{ sourceNode: 'Coding', agentSlots: ['coder'] }]);
+    expect(hook?.templateData).toEqual({ enforceForTargets: ['Review'] });
+  });
+
+  test('disabled Codex hook does not suppress synthetic hook from node flag', () => {
+    const workflow = withSyntheticCodexHooks({
+      ...WORKFLOW,
+      hooks: [
+        {
+          id: 'disabled-codex-review-check',
+          enabled: false,
+          sourceNode: 'Coding',
+          method: 'send_message',
+          validator: { kind: 'built_in', id: 'codex_review_approved' },
+          authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+        },
+      ],
+      channels: [{ from: 'Coding', to: 'Review' }],
+    });
+    expect(
+      workflow.hooks?.some((hook) => hook.id === 'synthetic-codex-review-check-node-coder')
+    ).toBe(true);
+  });
+
+  test('synthesizes Codex hooks for legacy codex_review_bot gate features', () => {
+    const workflow = withSyntheticCodexHooks({
+      ...WORKFLOW,
+      nodes: WORKFLOW.nodes.map((node) => ({ ...node, requireCodexApproval: undefined })),
+      hooks: undefined,
+      gates: [{ id: 'approval-gate', features: { codex_review_bot: true } }],
+      channels: [{ from: 'Coding', to: 'Review', gateId: 'approval-gate' }],
+    });
+    const hook = workflow.hooks?.find((h) => h.id === 'synthetic-codex-review-check-node-coder');
+    expect(hook).toBeDefined();
     expect(hook?.templateData).toEqual({ enforceForTargets: ['Review'] });
   });
 });

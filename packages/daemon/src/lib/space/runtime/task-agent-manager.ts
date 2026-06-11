@@ -33,7 +33,7 @@
  * registered `onComplete` callbacks are fired.
  */
 
-import { generateUUID, resolveNodeAgents } from '@neokai/shared';
+import { generateUUID, hasEnabledGateFeature, resolveNodeAgents } from '@neokai/shared';
 import type {
   Space,
   SpaceTask,
@@ -366,22 +366,35 @@ export function withSyntheticCodexHooks(workflow: SpaceWorkflow): SpaceWorkflow 
     existingHooks
       .filter(
         (hook) =>
-          hook.validator.kind === 'built_in' && hook.validator.id === 'codex_review_approved'
+          hook.enabled &&
+          hook.validator.kind === 'built_in' &&
+          hook.validator.id === 'codex_review_approved'
       )
       .map((hook) => hook.sourceNode)
   );
+  const gatesById = new Map((workflow.gates ?? []).map((gate) => [gate.id, gate]));
   const syntheticHooks: WorkflowHook[] = [];
 
   for (const node of workflow.nodes ?? []) {
-    if (!node.requireCodexApproval || codexHookSources.has(node.name)) continue;
     const agentSlots = (node.agents ?? []).map((agent) => agent.name).filter(Boolean);
     const sourceNames = new Set([node.name, ...agentSlots]);
+    const sourceChannels = (workflow.channels ?? []).filter((channel) =>
+      sourceNames.has(channel.from)
+    );
+    const legacyCodexChannels = sourceChannels.filter(
+      (channel) =>
+        !!channel.gateId && hasEnabledGateFeature(gatesById.get(channel.gateId), 'codex_review_bot')
+    );
+    const shouldEnforceCodex = node.requireCodexApproval || legacyCodexChannels.length > 0;
+    if (!shouldEnforceCodex || codexHookSources.has(node.name)) continue;
+
     const enforceForTargets = new Set<string>();
-    for (const channel of workflow.channels ?? []) {
-      if (!sourceNames.has(channel.from)) continue;
+    const targetChannels = node.requireCodexApproval ? sourceChannels : legacyCodexChannels;
+    for (const channel of targetChannels) {
       const targets = Array.isArray(channel.to) ? channel.to : [channel.to];
       for (const target of targets) {
-        if (target && target !== '*') enforceForTargets.add(target);
+        const trimmedTarget = target.trim();
+        if (trimmedTarget && trimmedTarget !== '*') enforceForTargets.add(trimmedTarget);
       }
     }
 
