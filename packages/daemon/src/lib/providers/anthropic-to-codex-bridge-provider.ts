@@ -442,8 +442,8 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     // prompt-too-long failures before NeoKai can intervene.
     const anthropicModels = [
       {
-        id: 'claude-opus-4-1-20250805',
-        display_name: 'Claude Opus 4.1 (Codex bridge)',
+        id: 'claude-opus-4-7',
+        display_name: 'Claude Opus 4.7 (Codex bridge)',
         created_at: '2025-08-05T00:00:00Z',
         context_window: 272_000,
         max_tokens: 16384,
