@@ -187,7 +187,7 @@ async function githubGraphql(
  */
 async function checkCodexApproval(
   prUrl: string,
-  sinceMs: number | undefined
+  sinceMs: number | 'head' | undefined
 ): Promise<{ status: 'approved' | 'waiting' | 'error'; headSha?: string }> {
   const parsed = parsePrUrl(prUrl);
   if (!parsed) return { status: 'error' };
@@ -197,6 +197,7 @@ async function checkCodexApproval(
       repository(owner:$owner,name:$name) {
         pullRequest(number:$number) {
           headRefOid
+          commits(last:1) { nodes { commit { committedDate } } }
           reactions(first:100) {
             nodes { content createdAt user { login } }
           }
@@ -235,6 +236,7 @@ async function checkCodexApproval(
       repository?: {
         pullRequest?: {
           headRefOid?: string;
+          commits?: { nodes?: Array<{ commit?: { committedDate?: string } }> };
           reactions?: {
             nodes?: Array<{ content?: string; createdAt?: string; user?: { login?: string } }>;
           };
@@ -276,7 +278,14 @@ async function checkCodexApproval(
   if (!pr) return { status: 'error' };
 
   const headSha = pr.headRefOid;
-  const since = sinceMs ?? Number.POSITIVE_INFINITY;
+  const headCommittedAt = pr.commits?.nodes?.[0]?.commit?.committedDate;
+  const headCommittedMs = headCommittedAt ? Date.parse(headCommittedAt) : Number.NaN;
+  const since =
+    sinceMs === 'head'
+      ? Number.isFinite(headCommittedMs)
+        ? headCommittedMs
+        : Number.POSITIVE_INFINITY
+      : (sinceMs ?? Number.POSITIVE_INFINITY);
 
   const isFreshCodexPlusOne = (r: {
     content?: string;
@@ -378,7 +387,7 @@ export async function reviewApprovalValidator(
     if (prUrl) {
       const codexResult = await checkCodexApproval(
         prUrl,
-        codexStartedAt ?? (storedHeadSha || resetPending ? undefined : 0)
+        codexStartedAt ?? (storedHeadSha || resetPending ? undefined : 'head')
       );
 
       // New revision pushed — reset codex timer so stale approvals don't release
