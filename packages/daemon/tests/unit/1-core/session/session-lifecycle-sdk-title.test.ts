@@ -133,6 +133,7 @@ mock.module('@neokai/shared/sdk/type-guards', () => ({
 
 import {
   SessionLifecycle,
+  _setTitleGenerationQueryForTesting,
   type SessionLifecycleConfig,
 } from '../../../../src/lib/session/session-lifecycle';
 import type { Database } from '../../../../src/storage/database';
@@ -197,6 +198,21 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
     // Set a fake API key so the real provider service proceeds past the key
     // check and calls generateTitleWithSdk. Cleared in afterEach.
     process.env.ANTHROPIC_API_KEY = 'test-api-key';
+    const titleQueryOverride = (params: { prompt: string; options?: Record<string, unknown> }) => {
+      const opts = params.options ?? {};
+      if ('thinking' in opts) {
+        lastTitleQueryOptions = opts;
+        lastTitleProcessEnv = {
+          ANTHROPIC_DEFAULT_HAIKU_MODEL: process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL,
+          ANTHROPIC_DEFAULT_SONNET_MODEL: process.env.ANTHROPIC_DEFAULT_SONNET_MODEL,
+          ANTHROPIC_DEFAULT_OPUS_MODEL: process.env.ANTHROPIC_DEFAULT_OPUS_MODEL,
+        };
+      }
+      return makeQueryMock(mockSdkMessages);
+    };
+    _setTitleGenerationQueryForTesting(
+      titleQueryOverride as Parameters<typeof _setTitleGenerationQueryForTesting>[0]
+    );
 
     mockDb = {
       createSession: mock(() => {}),
@@ -260,6 +276,7 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
   });
 
   afterEach(async () => {
+    _setTitleGenerationQueryForTesting(undefined);
     const { resetProviderRegistry } = await import('../../../../src/lib/providers/registry');
     resetProviderRegistry();
     // Restore the empty API key set by unit-test setup.ts
