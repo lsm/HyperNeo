@@ -37,18 +37,14 @@ export type ArchiveResourcesTrigger = 'ui_session_archive' | 'ui_task_archive';
 export type DeleteResourcesTrigger = 'ui_session_delete';
 
 type SdkQueryFunction = typeof import('@anthropic-ai/claude-agent-sdk').query;
-let titleGenerationQueryOverride: SdkQueryFunction | undefined;
-
-/** @public Exported for unit tests. */
-export function _setTitleGenerationQueryForTesting(queryFn: SdkQueryFunction | undefined): void {
-  titleGenerationQueryOverride = queryFn;
-}
 
 export interface SessionLifecycleConfig {
   defaultModel: string;
   maxTokens: number;
   temperature: number;
   disableWorktrees?: boolean;
+  /** @internal Test-only SDK query override for title generation. */
+  titleGenerationQueryForTesting?: SdkQueryFunction;
 }
 
 export interface CreateSessionParams {
@@ -1095,7 +1091,8 @@ export class SessionLifecycle {
     messageText: string
   ): Promise<string> {
     const query =
-      titleGenerationQueryOverride ?? (await import('@anthropic-ai/claude-agent-sdk')).query;
+      this.config.titleGenerationQueryForTesting ??
+      (await import('@anthropic-ai/claude-agent-sdk')).query;
     const providerService = getProviderService();
 
     const titleModels = await providerService.getTitleGenerationModels(provider, modelId);
