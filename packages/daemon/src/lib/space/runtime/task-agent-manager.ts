@@ -106,7 +106,7 @@ import { NodeExecutionRepository } from '../../../storage/repositories/node-exec
 import { validateGlobPattern } from '../../external-events/topic-validator';
 import { executeGateScript } from './gate-script-executor';
 import { HookExecutor } from './hook-executor';
-import { WorkflowHookEngine } from './workflow-hook-engine';
+import { QUEUED_RETRYABLE_ACTION_STATE_KEY, WorkflowHookEngine } from './workflow-hook-engine';
 import { WorkflowHookStateRepository } from '../../../storage/repositories/workflow-hook-state-repository';
 import {
   buildCustomAgentTaskMessage,
@@ -2594,8 +2594,12 @@ export class TaskAgentManager {
       // already finished their turn (or been explicitly stopped) and will
       // not receive any new messages — restoring them would attach MCP
       // servers, register a new completion callback, and restart the
-      // streaming query for nothing.
-      if (execution.status !== 'in_progress' && execution.status !== 'blocked') continue;
+      // streaming query for nothing. A queued retryable hook action is the
+      // exception: it needs the source session's MCP surface restored so the
+      // persisted handoff can replay after daemon restart.
+      if (execution.status !== 'in_progress' && execution.status !== 'blocked') {
+        if (!this.hasQueuedRetryableHookAction(workflowRunId, execution)) continue;
+      }
 
       // Skip if already in memory (e.g. lazily rehydrated by an earlier
       // inbound message during this same restart, or never torn down).
@@ -2610,6 +2614,31 @@ export class TaskAgentManager {
         );
       }
     }
+  }
+
+  private hasQueuedRetryableHookAction(workflowRunId: string, execution: NodeExecution): boolean {
+    const task = this.config.taskRepo.listByWorkflowRun(workflowRunId)[0];
+    if (!task || task.status === 'done' || task.status === 'cancelled') return false;
+    const run = this.config.workflowRunRepo.getRun(workflowRunId);
+    if (!run || run.status === 'done' || run.status === 'cancelled') return false;
+    const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+    const hookStateRepo = new WorkflowHookStateRepository(this.config.db.getDatabase());
+    for (const hook of workflow?.hooks ?? []) {
+      const state = hookStateRepo.get(workflowRunId, hook.id)?.localState;
+      const queued = state?.[QUEUED_RETRYABLE_ACTION_STATE_KEY];
+      if (!queued || typeof queued !== 'object') continue;
+      const meta = (queued as Record<string, unknown>).meta;
+      if (!meta || typeof meta !== 'object') continue;
+      const record = meta as Record<string, unknown>;
+      if (
+        record.sessionId === execution.agentSessionId &&
+        record.agentName === execution.agentName &&
+        record.nodeId === execution.workflowNodeId
+      ) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /**
@@ -3840,6 +3869,10 @@ export class TaskAgentManager {
         hookStateRepo: new WorkflowHookStateRepository(this.config.db.getDatabase()),
         hookExecutor,
         workspacePath,
+        getWorkflowRunStatus: (runId) => this.config.workflowRunRepo.getRun(runId)?.status,
+        getTaskStatus: (tid) => this.config.taskRepo.getTask(tid)?.status,
+        notifySourceSession: (sessionId, message) =>
+          this.injectSubSessionMessage(sessionId, message, true),
       });
     }
 

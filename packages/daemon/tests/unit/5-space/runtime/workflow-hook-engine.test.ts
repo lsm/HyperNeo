@@ -8,13 +8,19 @@
 
 import { describe, test, expect, beforeEach } from 'bun:test';
 import {
+  QUEUED_RETRYABLE_ACTION_STATE_KEY,
   WorkflowHookEngine,
   wrapHandlerWithHooks,
   type HookActionMeta,
   type HookActionOutcome,
 } from '../../../../src/lib/space/runtime/workflow-hook-engine';
 import { HookExecutor } from '../../../../src/lib/space/runtime/hook-executor';
-import type { WorkflowHook, WorkflowHookResult, SpaceWorkflow } from '@neokai/shared';
+import type {
+  WorkflowHook,
+  WorkflowHookResult,
+  SpaceWorkflow,
+  WorkflowRunStatus,
+} from '@neokai/shared';
 import type { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
 import type { WorkflowHookStateRepository } from '../../../../src/storage/repositories/workflow-hook-state-repository';
 import type { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository';
@@ -63,8 +69,8 @@ function makeMockNodeExecutionRepo(): NodeExecutionRepository {
   } as unknown as NodeExecutionRepository;
 }
 
-function makeMockHookStateRepo(): WorkflowHookStateRepository {
-  const states = new Map<
+function makeMockHookStateRepo(
+  states = new Map<
     string,
     {
       version: number;
@@ -73,8 +79,8 @@ function makeMockHookStateRepo(): WorkflowHookStateRepository {
       retryCount: number;
       nextRetryAt: number | null;
     }
-  >();
-
+  >()
+): WorkflowHookStateRepository {
   return {
     get: (runId: string, hookId: string) => {
       const key = `${runId}:${hookId}`;
@@ -201,21 +207,34 @@ function makeHook(overrides: Partial<WorkflowHook> & { id: string }): WorkflowHo
   } as WorkflowHook;
 }
 
-function makeEngine(hooks: WorkflowHook[]): {
+function makeEngine(
+  hooks: WorkflowHook[],
+  options: {
+    hookStateRepo?: WorkflowHookStateRepository;
+    getWorkflowRunStatus?: (runId: string) => WorkflowRunStatus | undefined;
+    getTaskStatus?: (taskId: string) => string | undefined;
+    notifySourceSession?: (sessionId: string, message: string) => Promise<void>;
+  } = {}
+): {
   engine: WorkflowHookEngine;
   mockExecutor: MockHookExecutor;
+  hookStateRepo: WorkflowHookStateRepository;
 } {
   const mockExecutor = new MockHookExecutor();
+  const hookStateRepo = options.hookStateRepo ?? makeMockHookStateRepo();
   const engine = new WorkflowHookEngine({
     workflow: makeWorkflow(hooks),
     workflowRunId: 'run-1',
     nodeExecutionRepo: makeMockNodeExecutionRepo(),
     artifactRepo: makeMockArtifactRepo(),
-    hookStateRepo: makeMockHookStateRepo(),
+    hookStateRepo,
     hookExecutor: mockExecutor,
     workspacePath: '/tmp',
+    getWorkflowRunStatus: options.getWorkflowRunStatus,
+    getTaskStatus: options.getTaskStatus,
+    notifySourceSession: options.notifySourceSession,
   });
-  return { engine, mockExecutor };
+  return { engine, mockExecutor, hookStateRepo };
 }
 
 const defaultMeta: HookActionMeta = {
@@ -1286,6 +1305,109 @@ describe('WorkflowHookEngine', () => {
     expect(outcome.decision).toBe('block');
     expect(outcome.userState.reason).toContain('Patched params invalid');
   });
+
+  test('retryable send_message persists queued action and rehydrates after restart', async () => {
+    const args = { target: 'Review', message: 'hi' };
+    const actionKey = JSON.stringify({
+      runScopedTaskId: defaultMeta.taskId,
+      nodeId: defaultMeta.nodeId,
+      sessionId: defaultMeta.sessionId,
+      agentName: defaultMeta.agentName,
+      methodName: 'send_message',
+      args,
+    });
+    const hookStateRepo = makeMockHookStateRepo();
+
+    let replayCallCount = 0;
+    const { engine, mockExecutor } = makeEngine(
+      [makeHook({ id: 'hook-1', classification: 'validation', order: 0 })],
+      { hookStateRepo }
+    );
+    hookStateRepo.ensure('run-1', 'hook-1');
+    engine.persistQueuedRetryableAction({
+      actionKey,
+      hookId: 'hook-1',
+      methodName: 'send_message',
+      args,
+      meta: defaultMeta,
+      isFollowUp: false,
+      nextRetryAt: Date.now() - 1,
+      retryAfterMs: 5,
+      queuedAt: Date.now() - 10,
+    });
+    mockExecutor.setResult('hook-1', { type: 'allow' });
+    engine.scheduleQueuedRetryableActions(
+      {
+        send_message: async (replayedArgs: Record<string, unknown>) => {
+          replayCallCount++;
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: JSON.stringify({ success: true, target: replayedArgs.target }),
+              },
+            ],
+          };
+        },
+      },
+      defaultMeta
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(replayCallCount).toBe(1);
+    expect(
+      hookStateRepo.get('run-1', 'hook-1')?.localState[QUEUED_RETRYABLE_ACTION_STATE_KEY]
+    ).toBeNull();
+  });
+
+  test('queued retry does not replay after workflow run is done', async () => {
+    const args = { target: 'Review', message: 'hi' };
+    const actionKey = JSON.stringify({
+      runScopedTaskId: defaultMeta.taskId,
+      nodeId: defaultMeta.nodeId,
+      sessionId: defaultMeta.sessionId,
+      agentName: defaultMeta.agentName,
+      methodName: 'send_message',
+      args,
+    });
+    const hookStateRepo = makeMockHookStateRepo();
+    const { engine } = makeEngine(
+      [makeHook({ id: 'hook-1', classification: 'validation', order: 0 })],
+      { hookStateRepo, getTaskStatus: () => 'done' }
+    );
+    hookStateRepo.ensure('run-1', 'hook-1');
+    engine.persistQueuedRetryableAction({
+      actionKey,
+      hookId: 'hook-1',
+      methodName: 'send_message',
+      args,
+      meta: defaultMeta,
+      isFollowUp: false,
+      nextRetryAt: Date.now() - 1,
+      retryAfterMs: 5,
+      queuedAt: Date.now() - 10,
+    });
+
+    let handlerCallCount = 0;
+    engine.scheduleQueuedRetryableActions(
+      {
+        send_message: async () => {
+          handlerCallCount++;
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }],
+          };
+        },
+      },
+      defaultMeta
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(handlerCallCount).toBe(0);
+    expect(
+      hookStateRepo.get('run-1', 'hook-1')?.localState[QUEUED_RETRYABLE_ACTION_STATE_KEY]
+    ).toBeNull();
+  });
 });
 
 describe('wrapHandlerWithHooks', () => {
@@ -1503,6 +1625,39 @@ describe('wrapHandlerWithHooks', () => {
 
     expect(followUpCallCount).toBe(1);
     expect(handlerCallCount).toBe(1);
+  });
+
+  test('queued retry hard failure is reported to source session', async () => {
+    const notifications: Array<{ sessionId: string; message: string }> = [];
+    const { engine, mockExecutor } = makeEngine(
+      [makeHook({ id: 'hook-1', classification: 'validation', order: 0 })],
+      {
+        notifySourceSession: async (sessionId, message) => {
+          notifications.push({ sessionId, message });
+        },
+      }
+    );
+    mockExecutor.setResult('hook-1', {
+      type: 'retryable_block',
+      reason: 'Retry me',
+      retryAfterMs: 5,
+    });
+
+    const handler = async () => ({
+      content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }],
+    });
+
+    const wrapped = wrapHandlerWithHooks('send_message', handler, engine, {}, defaultMeta);
+    await wrapped({ target: 'Review', message: 'hi' });
+
+    mockExecutor.setResult('hook-1', { type: 'block', reason: 'PR is not mergeable' });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(notifications).toHaveLength(1);
+    expect(notifications[0]).toEqual({
+      sessionId: 'session-coder',
+      message: 'Queued send_message retry failed: PR is not mergeable',
+    });
   });
 
   test('non-message retryable block returns retryable error with metadata', async () => {
