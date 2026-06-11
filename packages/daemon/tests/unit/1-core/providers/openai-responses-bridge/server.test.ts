@@ -1946,6 +1946,71 @@ describe('openai-responses-bridge server', () => {
     expect(body.data[0].max_context_window).toBe(1_000_000);
   });
 
+  it('advertises alias context while reporting resolved Codex context in message usage', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    server = createOpenAIResponsesBridgeServer({
+      auth: { source: 'api_key', apiKey: 'sk-test' },
+      models: [
+        {
+          id: 'gpt-5.5',
+          display_name: 'GPT-5.5',
+          created_at: '2026-04-01T00:00:00Z',
+          context_window: 272000,
+        },
+        {
+          id: 'claude-opus-4-1-20250805',
+          display_name: 'Claude Opus 4.1 (Codex bridge)',
+          created_at: '2025-08-05T00:00:00Z',
+          context_window: 1_000_000,
+        },
+      ],
+      modelAliases: {
+        'claude-opus-4-1-20250805': 'gpt-5.5',
+      },
+      fetchImpl: async (_url, init) => {
+        capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return sse([
+          {
+            event: 'response.output_text.delta',
+            data: { type: 'response.output_text.delta', delta: 'hi' },
+          },
+          {
+            event: 'response.completed',
+            data: {
+              type: 'response.completed',
+              response: { usage: { input_tokens: 1, output_tokens: 1 }, output: [] },
+            },
+          },
+        ]);
+      },
+    });
+
+    const modelsResp = await fetch(`http://127.0.0.1:${server.port}/v1/models`);
+    const modelsBody = (await modelsResp.json()) as {
+      data: Array<{ id: string; context_window: number }>;
+    };
+    const contextById = new Map(modelsBody.data.map((model) => [model.id, model.context_window]));
+    expect(contextById.get('claude-opus-4-1-20250805')).toBe(1_000_000);
+
+    const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-opus-4-1-20250805',
+        max_tokens: 128,
+        messages: [{ role: 'user', content: 'hi' }],
+      }),
+    });
+
+    const events = await readSSEEvents(resp.body);
+    const start = messageStartEvent(events);
+    const startMessage = start?.message as
+      | { usage?: { model_context_window?: number } }
+      | undefined;
+    expect(capturedBody?.model).toBe('gpt-5.5');
+    expect(startMessage?.usage?.model_context_window).toBe(272000);
+  });
+
   it('falls back to Codex-only context window when model is NOT in config.models', async () => {
     // Bridge is configured with only gpt-5.3-codex, but the request uses
     // gpt-5.4-mini which is a known Codex model but NOT in this bridge's

@@ -435,22 +435,24 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       max_tokens: 16384,
     }));
     // Also advertise the Anthropic SDK aliases so the SDK can look them up
-    // if it queries the models list for context window info. Context windows
-    // reflect the real Codex model limits (272k/128k), not the Anthropic model
-    // limits (1M/200k), so the SDK compacts before exceeding the upstream limit.
+    // if it queries the models list for context window info. Alias models must
+    // report the SDK-facing Anthropic limits, not Codex limits: the SDK performs
+    // its own preflight prompt-too-long check from this list. NeoKai separately
+    // uses Codex ModelInfo metadata plus ContextTracker to compact at 85% of the
+    // real upstream window before OpenAI sees the request.
     const anthropicModels = [
       {
         id: 'claude-opus-4-1-20250805',
         display_name: 'Claude Opus 4.1 (Codex bridge)',
         created_at: '2025-08-05T00:00:00Z',
-        context_window: 272_000,
+        context_window: 1_000_000,
         max_tokens: 16384,
       },
       {
         id: 'claude-sonnet-4-20250514',
         display_name: 'Claude Sonnet 4 (Codex bridge)',
         created_at: '2025-05-14T00:00:00Z',
-        context_window: 128_000,
+        context_window: 200_000,
         max_tokens: 16384,
       },
     ];
@@ -640,12 +642,12 @@ export class AnthropicToCodexBridgeProvider implements Provider {
         // and reject requests prematurely. The bridge maps these back to real
         // Codex IDs via modelAliases (plus per-session overrides) before
         // forwarding to OpenAI.
-        // Routing policy (mirrors getModelForTier):
-        //   Opus   → claude-opus-4-1-20250805   (1 M context)
-        //   Sonnet → sdkAnthropicId              (user-selected model, frontier or mini)
-        //   Haiku  → claude-sonnet-4-20250514    (200 k context, fast/cheap)
+        // Route the SDK's primary tiers through Opus so its preflight context
+        // checks use the large Anthropic limit. The bridge maps that alias back
+        // to the real selected Codex model per session before calling OpenAI.
+        // Haiku remains on the mini-tier alias for cheap/fast sub-agent routing.
         ANTHROPIC_DEFAULT_OPUS_MODEL: CODEX_TO_SDK_ANTHROPIC_MODEL['gpt-5.5'],
-        ANTHROPIC_DEFAULT_SONNET_MODEL: sdkAnthropicId,
+        ANTHROPIC_DEFAULT_SONNET_MODEL: CODEX_TO_SDK_ANTHROPIC_MODEL['gpt-5.5'],
         ANTHROPIC_DEFAULT_HAIKU_MODEL: CODEX_TO_SDK_ANTHROPIC_MODEL['gpt-5.4-mini'],
       },
       isAnthropicCompatible: true,

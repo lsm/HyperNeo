@@ -664,15 +664,19 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('claude-opus-4-1-20250805');
     });
 
-    it('resolves codex-mini alias to the 200 k Anthropic ID', () => {
+    it('keeps the SDK sonnet tier on the 1 M Anthropic ID for mini Codex sessions', () => {
       const cfg = provider.buildSdkConfig('codex-mini', { workspacePath: '/tmp/ws-mini' });
-      // 'codex-mini' is an alias for 'gpt-5.4-mini' which maps to the 200 k Anthropic ID
-      expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('claude-sonnet-4-20250514');
+      // The SDK may route primary requests through the sonnet default even when
+      // the selected Codex model is a mini model. Keep sonnet on Opus so SDK
+      // preflight checks cannot reject before NeoKai compaction runs.
+      expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('claude-opus-4-1-20250805');
+      expect(cfg.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('claude-sonnet-4-20250514');
     });
 
-    it('resolves gpt-5.1 mini alias to the 200 k Anthropic ID', () => {
+    it('keeps the SDK sonnet tier on the 1 M Anthropic ID for GPT-5.1 mini sessions', () => {
       const cfg = provider.buildSdkConfig('codex-5.1-mini', { workspacePath: '/tmp/ws-51-mini' });
-      expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('claude-sonnet-4-20250514');
+      expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('claude-opus-4-1-20250805');
+      expect(cfg.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('claude-sonnet-4-20250514');
     });
 
     it('resolves codex-latest alias to the 1 M Anthropic ID', () => {
@@ -704,7 +708,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(cfg.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toMatch(/^claude-/);
     });
 
-    it('advertises Anthropic SDK aliases in the bridge models list with Codex context limits', async () => {
+    it('advertises SDK-facing limits for Anthropic aliases in the bridge models list', async () => {
       const cfg = provider.buildSdkConfig('gpt-5.3-codex', {
         workspacePath: '/tmp/ws-models',
       });
@@ -715,11 +719,11 @@ describe('AnthropicToCodexBridgeProvider', () => {
         data: Array<{ id: string; context_window: number }>;
       };
       const byId = new Map(body.data.map((m) => [m.id, m.context_window]));
-      // Alias models advertise real Codex limits so the SDK compacts before
-      // exceeding the upstream window (272k frontier, 128k mini).
-      expect(byId.get('claude-opus-4-1-20250805')).toBe(272_000);
-      expect(byId.get('claude-sonnet-4-20250514')).toBe(128_000);
-      // Codex models should still be present
+      // Alias models advertise SDK-facing Anthropic limits so SDK preflight checks
+      // do not reject before NeoKai can compact at the real Codex limits.
+      expect(byId.get('claude-opus-4-1-20250805')).toBe(1_000_000);
+      expect(byId.get('claude-sonnet-4-20250514')).toBe(200_000);
+      // Codex models still advertise real upstream limits for NeoKai metadata.
       expect(byId.get('gpt-5.5')).toBe(272_000);
       expect(byId.get('gpt-5.4-mini')).toBe(128_000);
     });

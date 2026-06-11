@@ -73,14 +73,14 @@ export function getModelContextWindow(modelId: string): number | undefined {
  * Anthropic model IDs to present to the Claude Agent SDK so it uses a large
  * context window instead of falling back to ~200 k for unknown Codex IDs.
  *
- * The SDK has a hard-coded model database. When it sees a model it recognises
- * it uses that model's real context limit (1 M for Opus 4.1). When it sees an
- * unknown ID (e.g. `gpt-5.5`) it falls back to ~200 k and rejects requests at
- * ~175 k tokens — well before NeoKai's compaction at 231 k.
+ * The SDK has a hard-coded model database and also preflights context using
+ * provider `/v1/models` responses. When it sees a Codex ID or a 200 k Sonnet
+ * alias, it can reject requests before NeoKai's own compaction threshold.
  *
- * We use `claude-opus-4-1-20250805` because it is the latest Opus ID the
- * current SDK (0.2.141) recognises. Newer IDs such as `claude-opus-4-20250918`
- * are not in the SDK's hard-coded database and would trigger the same fallback.
+ * We route Codex primary models through `claude-opus-4-1-20250805` because it
+ * is the latest Opus ID the current SDK (0.2.141) recognises as large-context.
+ * Newer IDs such as `claude-opus-4-20250918` are not in the SDK's hard-coded
+ * database and would trigger the same fallback.
  *
  * These overrides are used for:
  *   - `translateModelIdForSdk()` (so the SDK sends the Anthropic ID in the
