@@ -478,7 +478,7 @@ describe('openai-responses-bridge server', () => {
       auth: { source: 'api_key', apiKey: 'sk-test' },
       models,
       modelAliases: {
-        'claude-opus-4-1-20250805': 'gpt-5.5',
+        'claude-opus-4-7': 'gpt-5.5',
         'claude-sonnet-4-20250514': 'gpt-5.4-mini',
       },
       fetchImpl: async (_url, init) => {
@@ -499,7 +499,7 @@ describe('openai-responses-bridge server', () => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'claude-opus-4-1-20250805',
+        model: 'claude-opus-4-7',
         max_tokens: 128,
         messages: [{ role: 'user', content: 'hi' }],
       }),
@@ -515,7 +515,7 @@ describe('openai-responses-bridge server', () => {
       auth: { source: 'api_key', apiKey: 'sk-test' },
       models,
       modelAliases: {
-        'claude-opus-4-1-20250805': 'gpt-5.5',
+        'claude-opus-4-7': 'gpt-5.5',
       },
       fetchImpl: async (_url, init) => {
         capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
@@ -531,13 +531,13 @@ describe('openai-responses-bridge server', () => {
       },
     });
 
-    server.setSessionModelConfig?.('session-a', 'claude-opus-4-1-20250805', 'gpt-5.3-codex');
+    server.setSessionModelConfig?.('session-a', 'claude-opus-4-7', 'gpt-5.3-codex');
 
     const resp = await fetch(`${server.baseUrlForSession?.('session-a')}/v1/messages`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'claude-opus-4-1-20250805',
+        model: 'claude-opus-4-7',
         max_tokens: 128,
         messages: [{ role: 'user', content: 'hi' }],
       }),
@@ -553,7 +553,7 @@ describe('openai-responses-bridge server', () => {
       auth: { source: 'api_key', apiKey: 'sk-test' },
       models,
       modelAliases: {
-        'claude-opus-4-1-20250805': 'gpt-5.5',
+        'claude-opus-4-7': 'gpt-5.5',
         'claude-sonnet-4-20250514': 'gpt-5.4-mini',
       },
       fetchImpl: async (_url, init) => {
@@ -570,8 +570,8 @@ describe('openai-responses-bridge server', () => {
       },
     });
 
-    // Primary model override: gpt-5.3-codex (alias: claude-opus-4-1-20250805)
-    server.setSessionModelConfig?.('session-a', 'claude-opus-4-1-20250805', 'gpt-5.3-codex');
+    // Primary model override: gpt-5.3-codex (alias: claude-opus-4-7)
+    server.setSessionModelConfig?.('session-a', 'claude-opus-4-7', 'gpt-5.3-codex');
 
     // Haiku call with different alias — should NOT be overridden to gpt-5.3-codex
     const resp = await fetch(`${server.baseUrlForSession?.('session-a')}/v1/messages`, {
@@ -595,7 +595,7 @@ describe('openai-responses-bridge server', () => {
       auth: { source: 'api_key', apiKey: 'sk-test' },
       models,
       modelAliases: {
-        'claude-opus-4-1-20250805': 'gpt-5.5',
+        'claude-opus-4-7': 'gpt-5.5',
         'claude-sonnet-4-20250514': 'gpt-5.4-mini',
       },
       fetchImpl: async (_url, init) => {
@@ -613,7 +613,7 @@ describe('openai-responses-bridge server', () => {
     });
 
     // Primary model registration
-    server.setSessionModelConfig?.('session-a', 'claude-opus-4-1-20250805', 'gpt-5.3-codex');
+    server.setSessionModelConfig?.('session-a', 'claude-opus-4-7', 'gpt-5.3-codex');
     // Fallback model registration (same session, different alias)
     server.setSessionModelConfig?.('session-a', 'claude-sonnet-4-20250514', 'gpt-5.1-codex-mini');
 
@@ -622,7 +622,7 @@ describe('openai-responses-bridge server', () => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'claude-opus-4-1-20250805',
+        model: 'claude-opus-4-7',
         max_tokens: 128,
         messages: [{ role: 'user', content: 'primary' }],
       }),
@@ -648,7 +648,7 @@ describe('openai-responses-bridge server', () => {
       auth: { source: 'api_key', apiKey: 'sk-test' },
       models,
       modelAliases: {
-        'claude-opus-4-1-20250805': 'gpt-5.5',
+        'claude-opus-4-7': 'gpt-5.5',
       },
       fetchImpl: async (_url, init) => {
         capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
@@ -665,16 +665,16 @@ describe('openai-responses-bridge server', () => {
     });
 
     // Primary model registration
-    server.setSessionModelConfig?.('session-a', 'claude-opus-4-1-20250805', 'gpt-5.3-codex');
+    server.setSessionModelConfig?.('session-a', 'claude-opus-4-7', 'gpt-5.3-codex');
     // Model switch: user switches to gpt-5.4 (same alias tier)
-    server.setSessionModelConfig?.('session-a', 'claude-opus-4-1-20250805', 'gpt-5.4');
+    server.setSessionModelConfig?.('session-a', 'claude-opus-4-7', 'gpt-5.4');
 
     // Request should use the latest registration (gpt-5.4)
     await fetch(`${server.baseUrlForSession?.('session-a')}/v1/messages`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'claude-opus-4-1-20250805',
+        model: 'claude-opus-4-7',
         max_tokens: 128,
         messages: [{ role: 'user', content: 'switched' }],
       }),
@@ -1820,6 +1820,127 @@ describe('openai-responses-bridge server', () => {
     expect(events.at(-1)?.event).toBe('message_stop');
   });
 
+  it('allows high-token Codex alias turns through the bridge before the real 272k limit', async () => {
+    const cumulativeTokenCounts = [50_000, 100_000, 150_000, 190_000, 231_000, 250_000];
+    const capturedModels: string[] = [];
+    const returnedInputTokens: number[] = [];
+    server = createOpenAIResponsesBridgeServer({
+      auth: { source: 'api_key', apiKey: 'sk-test' },
+      models: [
+        {
+          id: 'gpt-5.5',
+          display_name: 'GPT-5.5',
+          created_at: '2026-04-01T00:00:00Z',
+          context_window: 272000,
+        },
+        {
+          id: 'gpt-5.4-mini',
+          display_name: 'GPT-5.4 Mini',
+          created_at: '2026-01-01T00:00:00Z',
+          context_window: 128000,
+        },
+        {
+          id: 'claude-opus-4-7',
+          display_name: 'Claude Opus 4.7 (Codex bridge)',
+          created_at: '2025-08-05T00:00:00Z',
+          context_window: 272000,
+        },
+        {
+          id: 'claude-sonnet-4-20250514',
+          display_name: 'Claude Sonnet 4 (Codex bridge)',
+          created_at: '2025-05-14T00:00:00Z',
+          context_window: 128000,
+        },
+      ],
+      modelAliases: {
+        'claude-opus-4-7': 'gpt-5.5',
+        'claude-sonnet-4-20250514': 'gpt-5.4-mini',
+      },
+      fetchImpl: async (_url, init) => {
+        const body = JSON.parse(String(init?.body)) as { model?: string };
+        const inputTokens = cumulativeTokenCounts[capturedModels.length];
+        capturedModels.push(body.model ?? '');
+        returnedInputTokens.push(inputTokens);
+        return sse([
+          {
+            event: 'response.output_text.delta',
+            data: { type: 'response.output_text.delta', delta: 'ok' },
+          },
+          {
+            event: 'response.completed',
+            data: {
+              type: 'response.completed',
+              response: { usage: { input_tokens: inputTokens, output_tokens: 1 }, output: [] },
+            },
+          },
+        ]);
+      },
+    });
+
+    const modelsResp = await fetch(`http://127.0.0.1:${server.port}/v1/models`);
+    expect(modelsResp.status).toBe(200);
+    const modelsBody = (await modelsResp.json()) as {
+      data: Array<{ id: string; context_window: number }>;
+    };
+    const contextById = new Map(modelsBody.data.map((model) => [model.id, model.context_window]));
+    expect(contextById.get('claude-opus-4-7')).toBe(272000);
+    expect(contextById.get('claude-sonnet-4-20250514')).toBe(128000);
+
+    const sdkWouldReject = (tokensUsed: number, modelId: string) => {
+      const contextWindow = contextById.get(modelId);
+      expect(contextWindow).toBeDefined();
+      return tokensUsed >= contextWindow!;
+    };
+    const shouldCompact = (tokensUsed: number, contextWindow: number) =>
+      tokensUsed >= Math.floor(contextWindow * 0.85);
+
+    // Simulate the SDK prompt-size guard against bridge-reported alias windows.
+    // The real SDK also recognises claude-opus-4-7 as a large-context
+    // Anthropic model, so this assertion is the conservative 272k safety net.
+    expect(sdkWouldReject(180000, 'claude-opus-4-7')).toBe(false);
+    expect(sdkWouldReject(200000, 'claude-opus-4-7')).toBe(false);
+    expect(sdkWouldReject(230000, 'claude-opus-4-7')).toBe(false);
+    expect(sdkWouldReject(250000, 'claude-opus-4-7')).toBe(false);
+    expect(sdkWouldReject(272000, 'claude-opus-4-7')).toBe(true);
+
+    expect(shouldCompact(231199, 272000)).toBe(false);
+    expect(shouldCompact(231200, 272000)).toBe(true);
+    expect(sdkWouldReject(231200, 'claude-opus-4-7')).toBe(false);
+    expect(272000 - 231200).toBe(40800);
+
+    expect(sdkWouldReject(200000, 'claude-sonnet-4-20250514')).toBe(true);
+    expect(shouldCompact(108799, 128000)).toBe(false);
+    expect(shouldCompact(108800, 128000)).toBe(true);
+
+    const contextWindows: number[] = [];
+    for (const tokenCount of cumulativeTokenCounts) {
+      const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'claude-opus-4-7',
+          max_tokens: 128,
+          messages: [{ role: 'user', content: `turn at ${tokenCount} tokens` }],
+        }),
+      });
+      expect(resp.status).toBe(200);
+      const events = await readSSEEvents(resp.body);
+      expect(events.find((event) => event.event === 'error')).toBeUndefined();
+      const start = messageStartEvent(events)?.message as
+        | { usage?: { model_context_window?: number } }
+        | undefined;
+      const delta = messageDeltaEvent(events) as
+        | { usage?: { input_tokens?: number; model_context_window?: number } }
+        | undefined;
+      expect(delta?.usage?.input_tokens).toBe(tokenCount);
+      contextWindows.push(start?.usage?.model_context_window ?? 0);
+    }
+
+    expect(capturedModels).toEqual(cumulativeTokenCounts.map(() => 'gpt-5.5'));
+    expect(returnedInputTokens).toEqual(cumulativeTokenCounts);
+    expect(contextWindows).toEqual(cumulativeTokenCounts.map(() => 272000));
+  });
+
   it('reports model_context_window from config models for non-Codex models', async () => {
     // Simulates a bridge configured with a non-Codex model (e.g. OpenRouter
     // model with 1M context). The context window should come from the config
@@ -1944,6 +2065,71 @@ describe('openai-responses-bridge server', () => {
     expect(body.data[0].id).toBe('deepseek/deepseek-chat-pro-v4');
     expect(body.data[0].context_window).toBe(1_000_000);
     expect(body.data[0].max_context_window).toBe(1_000_000);
+  });
+
+  it('advertises real alias context while resolving upstream Codex model', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    server = createOpenAIResponsesBridgeServer({
+      auth: { source: 'api_key', apiKey: 'sk-test' },
+      models: [
+        {
+          id: 'gpt-5.5',
+          display_name: 'GPT-5.5',
+          created_at: '2026-04-01T00:00:00Z',
+          context_window: 272000,
+        },
+        {
+          id: 'claude-opus-4-7',
+          display_name: 'Claude Opus 4.7 (Codex bridge)',
+          created_at: '2025-08-05T00:00:00Z',
+          context_window: 272000,
+        },
+      ],
+      modelAliases: {
+        'claude-opus-4-7': 'gpt-5.5',
+      },
+      fetchImpl: async (_url, init) => {
+        capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return sse([
+          {
+            event: 'response.output_text.delta',
+            data: { type: 'response.output_text.delta', delta: 'hi' },
+          },
+          {
+            event: 'response.completed',
+            data: {
+              type: 'response.completed',
+              response: { usage: { input_tokens: 1, output_tokens: 1 }, output: [] },
+            },
+          },
+        ]);
+      },
+    });
+
+    const modelsResp = await fetch(`http://127.0.0.1:${server.port}/v1/models`);
+    const modelsBody = (await modelsResp.json()) as {
+      data: Array<{ id: string; context_window: number }>;
+    };
+    const contextById = new Map(modelsBody.data.map((model) => [model.id, model.context_window]));
+    expect(contextById.get('claude-opus-4-7')).toBe(272000);
+
+    const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-opus-4-7',
+        max_tokens: 128,
+        messages: [{ role: 'user', content: 'hi' }],
+      }),
+    });
+
+    const events = await readSSEEvents(resp.body);
+    const start = messageStartEvent(events);
+    const startMessage = start?.message as
+      | { usage?: { model_context_window?: number } }
+      | undefined;
+    expect(capturedBody?.model).toBe('gpt-5.5');
+    expect(startMessage?.usage?.model_context_window).toBe(272000);
   });
 
   it('falls back to Codex-only context window when model is NOT in config.models', async () => {

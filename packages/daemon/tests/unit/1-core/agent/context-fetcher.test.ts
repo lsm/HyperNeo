@@ -196,7 +196,7 @@ describe('ContextFetcher.toContextInfo', () => {
       maxTokens: 200000,
       rawMaxTokens: 200000,
       percentage: 68,
-      model: 'claude-opus-4-1-20250805',
+      model: 'claude-opus-4-7',
       autoCompactThreshold: 180000,
       isAutoCompactEnabled: true,
       categories: [{ name: 'Messages', tokens: 136000, color: 'blue' }],
@@ -205,7 +205,7 @@ describe('ContextFetcher.toContextInfo', () => {
     const info = ContextFetcher.toContextInfo(response, {
       id: 'gpt-5.5',
       alias: 'codex-latest',
-      sdkModelIds: ['claude-opus-4-1-20250805'],
+      sdkModelIds: ['claude-opus-4-7'],
       contextWindow: 272000,
       preferContextWindowMetadata: true,
     });

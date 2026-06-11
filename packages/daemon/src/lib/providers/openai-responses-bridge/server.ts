@@ -66,7 +66,7 @@ export type OpenAIResponsesBridgeServer = {
   /**
    * Override the resolved model ID for a specific session.
    * Used when the SDK sends an aliased Anthropic model ID (e.g.
-   * claude-opus-4-1-20250805) and the bridge needs to map it back to the
+   * claude-opus-4-7) and the bridge needs to map it back to the
    * originally-selected Codex model ID for that session.
    */
   setSessionModelConfig?(sessionId: string, aliasModelId: string, realModelId: string): void;
@@ -1159,7 +1159,7 @@ export function createOpenAIResponsesBridgeServer(
   // (Claude Code CLI) omits the thinking field from request bodies.
   const sessionThinkingConfigs = new Map<string, SessionThinkingConfigEntry>();
   // Per-session, per-alias model overrides. When the SDK sends an aliased Anthropic
-  // model ID (e.g. claude-opus-4-1-20250805) the bridge maps it to a default Codex ID
+  // model ID (e.g. claude-opus-4-7) the bridge maps it to a default Codex ID
   // via modelAliases. This map lets the daemon override that default per (session,
   // alias) so the originally-selected Codex model is preserved upstream. Keyed by
   // (sessionId, aliasModelId) so that different SDK tiers (opus/sonnet/haiku) within
