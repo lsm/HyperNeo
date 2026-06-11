@@ -26,6 +26,43 @@ function makeCtx(overrides: Partial<HookExecutorContext> = {}): HookExecutorCont
   };
 }
 
+async function withMockEvidenceFetch<T>(fn: () => Promise<T>): Promise<T> {
+  const originalFetch = globalThis.fetch;
+  const originalToken = process.env.GITHUB_TOKEN;
+  process.env.GITHUB_TOKEN = 'test-token';
+  globalThis.fetch = async (url) => {
+    const path = new URL(String(url)).pathname;
+    const id = Number(path.split('/').pop());
+    if (path.includes('/pulls/comments/')) {
+      return {
+        ok: true,
+        json: async () => ({
+          id,
+          pull_request_url: 'https://api.github.com/repos/test/repo/pulls/1',
+          created_at: '2999-01-01T00:00:00Z',
+        }),
+      } as Response;
+    }
+    if (path.includes('/issues/comments/')) {
+      return {
+        ok: true,
+        json: async () => ({
+          id,
+          issue_url: 'https://api.github.com/repos/test/repo/issues/1',
+          created_at: '2999-01-01T00:00:00Z',
+        }),
+      } as Response;
+    }
+    return { ok: false, json: async () => ({}) } as Response;
+  };
+  try {
+    return await fn();
+  } finally {
+    globalThis.fetch = originalFetch;
+    process.env.GITHUB_TOKEN = originalToken;
+  }
+}
+
 describe('reviewPostedValidator', () => {
   test('blocks when no review evidence is provided', async () => {
     const ctx = makeCtx();
@@ -36,54 +73,60 @@ describe('reviewPostedValidator', () => {
   });
 
   test('allows when review_url is in message data', async () => {
-    const ctx = makeCtx({
-      params: { data: { review_url: 'https://github.com/test/repo/pull/1#discussion_r1' } },
-    });
-    const result = await reviewPostedValidator(ctx);
+    await withMockEvidenceFetch(async () => {
+      const ctx = makeCtx({
+        params: { data: { review_url: 'https://github.com/test/repo/pull/1#discussion_r1' } },
+      });
+      const result = await reviewPostedValidator(ctx);
 
-    expect(result.type).toBe('allow');
-    expect((result as { message?: string }).message).toContain('Review evidence verified');
+      expect(result.type).toBe('allow');
+      expect((result as { message?: string }).message).toContain('Review evidence verified');
+    });
   });
 
   test('allows when a review artifact exists', async () => {
-    const ctx = makeCtx({
-      currentArtifacts: [
-        {
-          id: 'a1',
-          nodeId: 'node-review',
-          type: 'review',
-          key: 'cycle-0',
-          data: { review_url: 'https://github.com/test/repo/pull/1#discussion_r1' },
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-        },
-      ],
-    });
-    const result = await reviewPostedValidator(ctx);
+    await withMockEvidenceFetch(async () => {
+      const ctx = makeCtx({
+        currentArtifacts: [
+          {
+            id: 'a1',
+            nodeId: 'node-review',
+            type: 'review',
+            key: 'cycle-0',
+            data: { review_url: 'https://github.com/test/repo/pull/1#discussion_r1' },
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+          },
+        ],
+      });
+      const result = await reviewPostedValidator(ctx);
 
-    expect(result.type).toBe('allow');
-    expect((result as { message?: string }).message).toContain('artifact');
+      expect(result.type).toBe('allow');
+      expect((result as { message?: string }).message).toContain('artifact');
+    });
   });
 
   test('prefers message data over artifacts', async () => {
-    const ctx = makeCtx({
-      params: { data: { review_url: 'https://github.com/test/repo/pull/1#discussion_r2' } },
-      currentArtifacts: [
-        {
-          id: 'a1',
-          nodeId: 'node-review',
-          type: 'review',
-          key: 'cycle-0',
-          data: { review_url: 'https://github.com/test/repo/pull/1#discussion_r1' },
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-        },
-      ],
-    });
-    const result = await reviewPostedValidator(ctx);
+    await withMockEvidenceFetch(async () => {
+      const ctx = makeCtx({
+        params: { data: { review_url: 'https://github.com/test/repo/pull/1#discussion_r2' } },
+        currentArtifacts: [
+          {
+            id: 'a1',
+            nodeId: 'node-review',
+            type: 'review',
+            key: 'cycle-0',
+            data: { review_url: 'https://github.com/test/repo/pull/1#discussion_r1' },
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+          },
+        ],
+      });
+      const result = await reviewPostedValidator(ctx);
 
-    expect(result.type).toBe('allow');
-    expect((result as { message?: string }).message).toContain('message_data');
+      expect(result.type).toBe('allow');
+      expect((result as { message?: string }).message).toContain('message_data');
+    });
   });
 
   test('blocks when review_url is not a valid GitHub PR URL', async () => {
@@ -116,22 +159,24 @@ describe('reviewPostedValidator', () => {
   });
 
   test('recognizes review_feedback artifact type', async () => {
-    const ctx = makeCtx({
-      currentArtifacts: [
-        {
-          id: 'a1',
-          nodeId: 'node-review',
-          type: 'review_feedback',
-          key: 'current',
-          data: { review_url: 'https://github.com/test/repo/pull/1#discussion_r1' },
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-        },
-      ],
-    });
-    const result = await reviewPostedValidator(ctx);
+    await withMockEvidenceFetch(async () => {
+      const ctx = makeCtx({
+        currentArtifacts: [
+          {
+            id: 'a1',
+            nodeId: 'node-review',
+            type: 'review_feedback',
+            key: 'current',
+            data: { review_url: 'https://github.com/test/repo/pull/1#discussion_r1' },
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+          },
+        ],
+      });
+      const result = await reviewPostedValidator(ctx);
 
-    expect(result.type).toBe('allow');
+      expect(result.type).toBe('allow');
+    });
   });
 
   test('rejects stale review artifact when newer non-review work exists', async () => {
@@ -436,6 +481,115 @@ describe('reviewPostedValidator', () => {
           updatedAt: now,
         },
       ],
+    });
+    const result = await reviewPostedValidator(ctx);
+    globalThis.fetch = originalFetch;
+    process.env.GITHUB_TOKEN = originalToken;
+
+    expect(result.type).toBe('block');
+  });
+
+  test('verifies review-thread comment by database ID when no page contains it', async () => {
+    const originalFetch = globalThis.fetch;
+    const originalToken = process.env.GITHUB_TOKEN;
+    process.env.GITHUB_TOKEN = 'test-token';
+    const requestedPaths: string[] = [];
+    globalThis.fetch = async (url) => {
+      const path = new URL(String(url)).pathname;
+      requestedPaths.push(path);
+      if (path.endsWith('/repos/test/repo/pulls/comments/555')) {
+        return {
+          ok: true,
+          json: async () => ({
+            id: 555,
+            pull_request_url: 'https://api.github.com/repos/test/repo/pulls/1',
+            created_at: '2999-01-01T00:00:00Z',
+          }),
+        } as Response;
+      }
+      return { ok: false, json: async () => ({}) } as Response;
+    };
+
+    const ctx = makeCtx({
+      params: {
+        data: { review_url: 'https://github.com/test/repo/pull/1#discussion_r555' },
+      },
+      gateData: [
+        {
+          gateId: 'code-pr-gate',
+          data: { pr_url: 'https://github.com/test/repo/pull/1' },
+          updatedAt: Date.now(),
+        },
+      ],
+    });
+    const result = await reviewPostedValidator(ctx);
+    globalThis.fetch = originalFetch;
+    process.env.GITHUB_TOKEN = originalToken;
+
+    expect(result.type).toBe('allow');
+    expect(requestedPaths).toContain('/repos/test/repo/pulls/comments/555');
+  });
+
+  test('ignores reviewer audit artifacts when computing evidence freshness', async () => {
+    const originalFetch = globalThis.fetch;
+    const originalToken = process.env.GITHUB_TOKEN;
+    process.env.GITHUB_TOKEN = 'test-token';
+    const now = Date.now();
+    globalThis.fetch = async (url) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/repos/test/repo/pulls/comments/42')) {
+        return {
+          ok: true,
+          json: async () => ({
+            id: 42,
+            pull_request_url: 'https://api.github.com/repos/test/repo/pulls/1',
+            created_at: new Date(now - 5_000).toISOString(),
+          }),
+        } as Response;
+      }
+      return { ok: false, json: async () => ({}) } as Response;
+    };
+
+    const ctx = makeCtx({
+      params: {
+        data: { review_url: 'https://github.com/test/repo/pull/1#discussion_r42' },
+      },
+      currentArtifacts: [
+        {
+          id: 'reviewer-progress',
+          nodeId: 'node-review',
+          type: 'progress',
+          key: 'audit',
+          data: { summary: 'review posted' },
+          createdAt: now,
+          updatedAt: now,
+        },
+      ],
+      gateData: [
+        {
+          gateId: 'code-pr-gate',
+          data: { pr_url: 'https://github.com/test/repo/pull/1' },
+          updatedAt: now,
+        },
+      ],
+    });
+    const result = await reviewPostedValidator(ctx);
+    globalThis.fetch = originalFetch;
+    process.env.GITHUB_TOKEN = originalToken;
+
+    expect(result.type).toBe('allow');
+  });
+
+  test('fails closed for nonexistent review URL when active PR data is unavailable', async () => {
+    const originalFetch = globalThis.fetch;
+    const originalToken = process.env.GITHUB_TOKEN;
+    process.env.GITHUB_TOKEN = 'test-token';
+    globalThis.fetch = async () => ({ ok: false, json: async () => ({}) }) as Response;
+
+    const ctx = makeCtx({
+      params: {
+        data: { review_url: 'https://github.com/test/repo/pull/1#discussion_r404' },
+      },
     });
     const result = await reviewPostedValidator(ctx);
     globalThis.fetch = originalFetch;

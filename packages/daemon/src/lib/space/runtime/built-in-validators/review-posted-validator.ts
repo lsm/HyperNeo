@@ -116,6 +116,47 @@ async function githubGraphql(
   }
 }
 
+async function githubRest(
+  host: string,
+  path: string
+): Promise<{ ok: true; json: unknown } | { ok: false }> {
+  if (!trustedGithubHosts().has(host)) return { ok: false };
+
+  const token = githubTokenForHost(host);
+  if (token) {
+    const endpoint =
+      host === 'github.com' ? `https://api.github.com${path}` : `https://${host}/api/v3${path}`;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10_000);
+    try {
+      const res = await fetch(endpoint, {
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json' },
+        signal: controller.signal,
+      });
+      if (!res.ok) return { ok: false };
+      return { ok: true, json: await res.json() };
+    } catch {
+      return { ok: false };
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  try {
+    const proc = Bun.spawn(['gh', 'api', '--hostname', host, path], {
+      stdout: 'pipe',
+      stderr: 'ignore',
+      env: process.env,
+    });
+    const output = await new Response(proc.stdout).text();
+    const exitCode = await proc.exited;
+    if (exitCode !== 0) return { ok: false };
+    return { ok: true, json: JSON.parse(output) };
+  } catch {
+    return { ok: false };
+  }
+}
+
 async function verifyReviewEvidenceOnGithub(
   prUrl: string,
   reviewUrl: string,
@@ -139,6 +180,57 @@ async function verifyReviewEvidenceOnGithub(
   };
   const matches = (node: { databaseId?: number; createdAt?: string }, expectedId?: number) =>
     expectedId !== undefined && node.databaseId === expectedId && isFresh(node.createdAt);
+
+  if (expectedDiscussionId !== undefined) {
+    const result = await githubRest(
+      parsed.host,
+      `/repos/${parsed.owner}/${parsed.repo}/pulls/comments/${expectedDiscussionId}`
+    );
+    if (result.ok) {
+      const comment = result.json as {
+        id?: number;
+        pull_request_url?: string;
+        created_at?: string;
+      };
+      if (
+        comment.id === expectedDiscussionId &&
+        comment.pull_request_url?.endsWith(`/pulls/${parsed.number}`) &&
+        isFresh(comment.created_at)
+      ) {
+        return 'verified';
+      }
+    }
+  }
+
+  if (expectedIssueCommentId !== undefined) {
+    const result = await githubRest(
+      parsed.host,
+      `/repos/${parsed.owner}/${parsed.repo}/issues/comments/${expectedIssueCommentId}`
+    );
+    if (result.ok) {
+      const comment = result.json as { id?: number; issue_url?: string; created_at?: string };
+      if (
+        comment.id === expectedIssueCommentId &&
+        comment.issue_url?.endsWith(`/issues/${parsed.number}`) &&
+        isFresh(comment.created_at)
+      ) {
+        return 'verified';
+      }
+    }
+  }
+
+  if (expectedReviewId !== undefined) {
+    const result = await githubRest(
+      parsed.host,
+      `/repos/${parsed.owner}/${parsed.repo}/pulls/${parsed.number}/reviews/${expectedReviewId}`
+    );
+    if (result.ok) {
+      const review = result.json as { id?: number; submitted_at?: string; submittedAt?: string };
+      if (review.id === expectedReviewId && isFresh(review.submitted_at ?? review.submittedAt)) {
+        return 'verified';
+      }
+    }
+  }
 
   let reviewsCursor: string | undefined;
   let commentsCursor: string | undefined;
@@ -231,6 +323,7 @@ function freshEvidenceSinceIso(ctx: HookExecutorContext): string | undefined {
   let since = ctx.workflowStartIso ? Date.parse(ctx.workflowStartIso) : 0;
   for (const artifact of ctx.currentArtifacts) {
     if (artifact.type === 'review' || artifact.type === 'review_feedback') continue;
+    if (artifact.nodeId === ctx.nodeId) continue;
     const updatedAt = typeof artifact.updatedAt === 'number' ? artifact.updatedAt : 0;
     const createdAt = typeof artifact.createdAt === 'number' ? artifact.createdAt : 0;
     since = Math.max(since, updatedAt, createdAt);
@@ -245,23 +338,22 @@ async function findReviewEvidence(
   const activePrBase = extractPrBaseUrl(getActivePrUrl(ctx) ?? '');
   const evidenceSinceIso = freshEvidenceSinceIso(ctx);
 
+  const verifyUrl = async (url: string): Promise<boolean> => {
+    const reviewBase = extractPrBaseUrl(url);
+    if (!reviewBase) return false;
+    if (activePrBase && reviewBase !== activePrBase) return false;
+    const prUrl = activePrBase ?? reviewBase;
+    const verified = await verifyReviewEvidenceOnGithub(prUrl, url, evidenceSinceIso);
+    return verified === 'verified';
+  };
+
   // Immediate evidence in the message data
   if (
     data?.review_url &&
     typeof data.review_url === 'string' &&
     isValidReviewUrl(data.review_url)
   ) {
-    // If we know the active PR, verify the review URL is for the same PR
-    if (activePrBase) {
-      const reviewBase = extractPrBaseUrl(data.review_url);
-      if (reviewBase !== activePrBase) return undefined;
-      const verified = await verifyReviewEvidenceOnGithub(
-        activePrBase,
-        data.review_url,
-        evidenceSinceIso
-      );
-      if (verified !== 'verified') return undefined;
-    }
+    if (!(await verifyUrl(data.review_url))) return undefined;
     return { reviewUrl: data.review_url, source: 'message_data' };
   }
 
@@ -274,12 +366,7 @@ async function findReviewEvidence(
       const artifactData = artifact.data as Record<string, unknown> | undefined;
       const url = artifactData?.review_url;
       if (typeof url === 'string' && isValidReviewUrl(url)) {
-        if (activePrBase) {
-          const reviewBase = extractPrBaseUrl(url);
-          if (reviewBase !== activePrBase) continue;
-          const verified = await verifyReviewEvidenceOnGithub(activePrBase, url, evidenceSinceIso);
-          if (verified !== 'verified') continue;
-        }
+        if (!(await verifyUrl(url))) continue;
         return { reviewUrl: url, source: 'artifact' };
       }
     } else {
