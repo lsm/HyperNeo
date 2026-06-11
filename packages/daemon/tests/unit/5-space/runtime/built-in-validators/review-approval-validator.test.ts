@@ -197,7 +197,13 @@ describe('reviewApprovalValidator', () => {
                   nodes: [
                     {
                       reactions: {
-                        nodes: [{ user: { login: 'codex[bot]' }, content: 'THUMBS_UP' }],
+                        nodes: [
+                          {
+                            user: { login: 'codex[bot]' },
+                            content: 'THUMBS_UP',
+                            createdAt: '2999-01-01T00:00:00Z',
+                          },
+                        ],
                       },
                     },
                   ],
@@ -212,7 +218,7 @@ describe('reviewApprovalValidator', () => {
 
     const ctx = makeCtx({
       params: { data: { approved: true, pr_url: 'https://github.com/test/repo/pull/42' } },
-      hookLocalState: { _codex_head_sha: 'abc123' },
+      hookLocalState: { _codex_head_sha: 'abc123', _codex_started_at: Date.now() - 10_000 },
       templateData: { threshold: 1, requireCodex: true },
     });
 
@@ -250,7 +256,13 @@ describe('reviewApprovalValidator', () => {
                   nodes: [
                     {
                       reactions: {
-                        nodes: [{ user: { login: 'codex[bot]' }, content: 'THUMBS_UP' }],
+                        nodes: [
+                          {
+                            user: { login: 'codex[bot]' },
+                            content: 'THUMBS_UP',
+                            createdAt: '2999-01-01T00:00:00Z',
+                          },
+                        ],
                       },
                     },
                   ],
@@ -265,7 +277,7 @@ describe('reviewApprovalValidator', () => {
 
     const ctx = makeCtx({
       params: { data: { approved: true } },
-      hookLocalState: { _codex_head_sha: 'abc123' },
+      hookLocalState: { _codex_head_sha: 'abc123', _codex_started_at: Date.now() - 10_000 },
       currentArtifacts: [
         {
           id: 'a1',
@@ -348,7 +360,15 @@ describe('reviewApprovalValidator', () => {
             repository: {
               pullRequest: {
                 headRefOid: 'new-sha-456',
-                reactions: { nodes: [{ user: { login: 'codex[bot]' }, content: 'THUMBS_UP' }] },
+                reactions: {
+                  nodes: [
+                    {
+                      user: { login: 'codex[bot]' },
+                      content: 'THUMBS_UP',
+                      createdAt: '2999-01-01T00:00:00Z',
+                    },
+                  ],
+                },
                 comments: { nodes: [] },
                 reviewThreads: { nodes: [] },
               },
@@ -417,7 +437,7 @@ describe('reviewApprovalValidator', () => {
       params: {
         data: { approved: true, pr_url: 'https://github.enterprise.com/org/repo/pull/42' },
       },
-      hookLocalState: { _codex_head_sha: 'ent-sha-789' },
+      hookLocalState: { _codex_head_sha: 'ent-sha-789', _codex_started_at: Date.now() - 10_000 },
       templateData: { threshold: 1, requireCodex: true },
     });
 
@@ -455,7 +475,13 @@ describe('reviewApprovalValidator', () => {
                   nodes: [
                     {
                       reactions: {
-                        nodes: [{ user: { login: 'codex[bot]' }, content: 'THUMBS_UP' }],
+                        nodes: [
+                          {
+                            user: { login: 'codex[bot]' },
+                            content: 'THUMBS_UP',
+                            createdAt: '2999-01-01T00:00:00Z',
+                          },
+                        ],
                       },
                     },
                   ],
@@ -470,7 +496,7 @@ describe('reviewApprovalValidator', () => {
 
     const ctx = makeCtx({
       params: { data: { approved: true } },
-      hookLocalState: { _codex_head_sha: 'abc123' },
+      hookLocalState: { _codex_head_sha: 'abc123', _codex_started_at: Date.now() - 10_000 },
       gateData: [
         {
           gateId: 'code-pr-gate',
@@ -511,7 +537,13 @@ describe('reviewApprovalValidator', () => {
               pullRequest: {
                 headRefOid: 'sha-after-reset',
                 reactions: {
-                  nodes: [{ user: { login: 'codex[bot]' }, content: 'THUMBS_UP' }],
+                  nodes: [
+                    {
+                      user: { login: 'codex[bot]' },
+                      content: 'THUMBS_UP',
+                      createdAt: '2999-01-01T00:00:00Z',
+                    },
+                  ],
                 },
                 comments: { nodes: [] },
                 reviewThreads: { nodes: [] },
@@ -554,7 +586,7 @@ describe('reviewApprovalValidator', () => {
       params: {
         data: { approved: true, pr_url: 'https://attacker.example/org/repo/pull/1' },
       },
-      hookLocalState: { _codex_head_sha: 'abc123' },
+      hookLocalState: { _codex_head_sha: 'abc123', _codex_started_at: Date.now() - 10_000 },
       templateData: { threshold: 1, requireCodex: true },
     });
 
@@ -602,7 +634,7 @@ describe('reviewApprovalValidator', () => {
 
     const ctx = makeCtx({
       params: { data: { approved: true } },
-      hookLocalState: { _codex_head_sha: 'abc123' },
+      hookLocalState: { _codex_head_sha: 'abc123', _codex_started_at: Date.now() - 10_000 },
       currentArtifacts: [
         {
           id: 'old-artifact',

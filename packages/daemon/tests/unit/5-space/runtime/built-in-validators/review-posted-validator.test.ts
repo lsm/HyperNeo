@@ -165,6 +165,25 @@ describe('reviewPostedValidator', () => {
   });
 
   test('accepts enterprise GitHub host for review URL', async () => {
+    const originalFetch = globalThis.fetch;
+    const originalToken = process.env.GH_ENTERPRISE_TOKEN;
+    process.env.GH_ENTERPRISE_TOKEN = 'test-token';
+    globalThis.fetch = async () =>
+      ({
+        ok: true,
+        json: async () => ({
+          data: {
+            repository: {
+              pullRequest: {
+                reviews: { nodes: [{ createdAt: '2999-01-01T00:00:00Z' }] },
+                comments: { nodes: [] },
+                reviewThreads: { nodes: [] },
+              },
+            },
+          },
+        }),
+      }) as Response;
+
     const ctx = makeCtx({
       params: {
         data: { review_url: 'https://github.enterprise.com/org/repo/pull/42#discussion_r1' },
@@ -178,6 +197,8 @@ describe('reviewPostedValidator', () => {
       ],
     });
     const result = await reviewPostedValidator(ctx);
+    globalThis.fetch = originalFetch;
+    process.env.GH_ENTERPRISE_TOKEN = originalToken;
 
     expect(result.type).toBe('allow');
     expect((result as { message?: string }).message).toContain('message_data');
@@ -203,6 +224,25 @@ describe('reviewPostedValidator', () => {
   });
 
   test('allows review URL matching the active PR', async () => {
+    const originalFetch = globalThis.fetch;
+    const originalToken = process.env.GITHUB_TOKEN;
+    process.env.GITHUB_TOKEN = 'test-token';
+    globalThis.fetch = async () =>
+      ({
+        ok: true,
+        json: async () => ({
+          data: {
+            repository: {
+              pullRequest: {
+                reviews: { nodes: [] },
+                comments: { nodes: [{ createdAt: '2999-01-01T00:00:00Z' }] },
+                reviewThreads: { nodes: [] },
+              },
+            },
+          },
+        }),
+      }) as Response;
+
     const ctx = makeCtx({
       params: {
         data: { review_url: 'https://github.com/test/repo/pull/1#discussion_r42' },
@@ -216,6 +256,8 @@ describe('reviewPostedValidator', () => {
       ],
     });
     const result = await reviewPostedValidator(ctx);
+    globalThis.fetch = originalFetch;
+    process.env.GITHUB_TOKEN = originalToken;
 
     expect(result.type).toBe('allow');
   });

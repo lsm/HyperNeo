@@ -100,24 +100,7 @@ function parsePrUrl(
   return { host: m[1], owner: m[2], repo: m[3], number: Number(m[4]) };
 }
 
-/**
- * Check GitHub for a codex[bot] +1 reaction on the PR body, issue comments,
- * or review comments. Uses the GraphQL API to query all reaction locations
- * in a single request.
- *
- * Returns status 'approved' if found, 'waiting' if not, 'error' on failure,
- * plus the current PR head SHA when available.
- */
-async function checkCodexApproval(
-  prUrl: string
-): Promise<{ status: 'approved' | 'waiting' | 'error'; headSha?: string }> {
-  const parsed = parsePrUrl(prUrl);
-  if (!parsed) return { status: 'error' };
-
-  const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
-  if (!token) return { status: 'error' };
-
-  // Only send credentials to trusted hosts
+function trustedGithubHosts(): Set<string> {
   const trustedHosts = new Set(['github.com']);
   const ghHost = process.env.GH_HOST;
   if (ghHost) trustedHosts.add(ghHost);
@@ -128,12 +111,86 @@ async function checkCodexApproval(
       if (trimmed) trustedHosts.add(trimmed);
     }
   }
-  if (!trustedHosts.has(parsed.host)) return { status: 'error' };
+  return trustedHosts;
+}
 
-  const endpoint =
-    parsed.host === 'github.com'
-      ? 'https://api.github.com/graphql'
-      : `https://${parsed.host}/api/graphql`;
+function githubTokenForHost(host: string): string | undefined {
+  if (host !== 'github.com') {
+    return (
+      process.env.GH_ENTERPRISE_TOKEN ||
+      process.env.GITHUB_ENTERPRISE_TOKEN ||
+      process.env.GITHUB_TOKEN ||
+      process.env.GH_TOKEN
+    );
+  }
+  return process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
+}
+
+async function githubGraphql(
+  host: string,
+  query: string,
+  variables: Record<string, string | number>
+): Promise<{ ok: true; json: unknown } | { ok: false }> {
+  if (!trustedGithubHosts().has(host)) return { ok: false };
+
+  const token = githubTokenForHost(host);
+  if (token) {
+    const endpoint =
+      host === 'github.com' ? 'https://api.github.com/graphql' : `https://${host}/api/graphql`;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10_000);
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ query, variables }),
+        signal: controller.signal,
+      });
+      if (!res.ok) return { ok: false };
+      return { ok: true, json: await res.json() };
+    } catch {
+      return { ok: false };
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  try {
+    const args = ['api', '--hostname', host, 'graphql', '-f', `query=${query}`];
+    for (const [key, value] of Object.entries(variables)) {
+      args.push(typeof value === 'number' ? '-F' : '-f', `${key}=${value}`);
+    }
+    const proc = Bun.spawn(['gh', ...args], {
+      stdout: 'pipe',
+      stderr: 'ignore',
+      env: process.env,
+    });
+    const output = await new Response(proc.stdout).text();
+    const exitCode = await proc.exited;
+    if (exitCode !== 0) return { ok: false };
+    return { ok: true, json: JSON.parse(output) };
+  } catch {
+    return { ok: false };
+  }
+}
+
+/**
+ * Check GitHub for a codex[bot] +1 reaction on the PR body, issue comments,
+ * or review comments. Uses the GraphQL API to query all reaction locations
+ * in a single request.
+ *
+ * Returns status 'approved' if found, 'waiting' if not, 'error' on failure,
+ * plus the current PR head SHA when available.
+ */
+async function checkCodexApproval(
+  prUrl: string,
+  sinceMs: number | undefined
+): Promise<{ status: 'approved' | 'waiting' | 'error'; headSha?: string }> {
+  const parsed = parsePrUrl(prUrl);
+  if (!parsed) return { status: 'error' };
 
   const query = `
     query($owner:String!,$name:String!,$number:Int!) {
@@ -141,12 +198,12 @@ async function checkCodexApproval(
         pullRequest(number:$number) {
           headRefOid
           reactions(first:100) {
-            nodes { content user { login } }
+            nodes { content createdAt user { login } }
           }
           comments(first:100) {
             nodes {
               reactions(first:100) {
-                nodes { content user { login } }
+                nodes { content createdAt user { login } }
               }
             }
           }
@@ -155,7 +212,7 @@ async function checkCodexApproval(
               comments(first:100) {
                 nodes {
                   reactions(first:100) {
-                    nodes { content user { login } }
+                    nodes { content createdAt user { login } }
                   }
                 }
               }
@@ -166,90 +223,92 @@ async function checkCodexApproval(
     }
   `;
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 10_000);
+  const result = await githubGraphql(parsed.host, query, {
+    owner: parsed.owner,
+    name: parsed.repo,
+    number: parsed.number,
+  });
+  if (!result.ok) return { status: 'error' };
 
-  try {
-    const res = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        query,
-        variables: { owner: parsed.owner, name: parsed.repo, number: parsed.number },
-      }),
-      signal: controller.signal,
-    });
-    clearTimeout(timeout);
-
-    if (!res.ok) return { status: 'error' };
-
-    const json = (await res.json()) as {
-      data?: {
-        repository?: {
-          pullRequest?: {
-            headRefOid?: string;
-            reactions?: {
-              nodes?: Array<{ content?: string; user?: { login?: string } }>;
-            };
-            comments?: {
-              nodes?: Array<{
-                reactions?: {
-                  nodes?: Array<{ content?: string; user?: { login?: string } }>;
-                };
-              }>;
-            };
-            reviewThreads?: {
-              nodes?: Array<{
-                comments?: {
-                  nodes?: Array<{
-                    reactions?: {
-                      nodes?: Array<{ content?: string; user?: { login?: string } }>;
-                    };
-                  }>;
-                };
-              }>;
-            };
+  const json = result.json as {
+    data?: {
+      repository?: {
+        pullRequest?: {
+          headRefOid?: string;
+          reactions?: {
+            nodes?: Array<{ content?: string; createdAt?: string; user?: { login?: string } }>;
+          };
+          comments?: {
+            nodes?: Array<{
+              reactions?: {
+                nodes?: Array<{
+                  content?: string;
+                  createdAt?: string;
+                  user?: { login?: string };
+                }>;
+              };
+            }>;
+          };
+          reviewThreads?: {
+            nodes?: Array<{
+              comments?: {
+                nodes?: Array<{
+                  reactions?: {
+                    nodes?: Array<{
+                      content?: string;
+                      createdAt?: string;
+                      user?: { login?: string };
+                    }>;
+                  };
+                }>;
+              };
+            }>;
           };
         };
       };
-      errors?: unknown[];
     };
+    errors?: unknown[];
+  };
 
-    if (json.errors) return { status: 'error' };
+  if (json.errors) return { status: 'error' };
 
-    const pr = json.data?.repository?.pullRequest;
-    if (!pr) return { status: 'error' };
+  const pr = json.data?.repository?.pullRequest;
+  if (!pr) return { status: 'error' };
 
-    const headSha = pr.headRefOid;
+  const headSha = pr.headRefOid;
+  const since = sinceMs ?? Number.POSITIVE_INFINITY;
 
-    const isCodexPlusOne = (r: { content?: string; user?: { login?: string } }): boolean =>
+  const isFreshCodexPlusOne = (r: {
+    content?: string;
+    createdAt?: string;
+    user?: { login?: string };
+  }): boolean => {
+    const createdAt = r.createdAt ? Date.parse(r.createdAt) : Number.NaN;
+    return (
       (r.user?.login === 'codex[bot]' || r.user?.login === 'chatgpt-codex-connector[bot]') &&
-      r.content === 'THUMBS_UP';
+      r.content === 'THUMBS_UP' &&
+      Number.isFinite(createdAt) &&
+      createdAt >= since
+    );
+  };
 
-    // PR body reactions
-    if (pr.reactions?.nodes?.some(isCodexPlusOne)) return { status: 'approved', headSha };
+  // PR body reactions
+  if (pr.reactions?.nodes?.some(isFreshCodexPlusOne)) return { status: 'approved', headSha };
 
-    // Issue comments
-    for (const comment of pr.comments?.nodes ?? []) {
-      if (comment.reactions?.nodes?.some(isCodexPlusOne)) return { status: 'approved', headSha };
-    }
-
-    // Review comments
-    for (const thread of pr.reviewThreads?.nodes ?? []) {
-      for (const comment of thread.comments?.nodes ?? []) {
-        if (comment.reactions?.nodes?.some(isCodexPlusOne)) return { status: 'approved', headSha };
-      }
-    }
-
-    return { status: 'waiting', headSha };
-  } catch {
-    return { status: 'error' };
-  } finally {
-    clearTimeout(timeout);
+  // Issue comments
+  for (const comment of pr.comments?.nodes ?? []) {
+    if (comment.reactions?.nodes?.some(isFreshCodexPlusOne)) return { status: 'approved', headSha };
   }
+
+  // Review comments
+  for (const thread of pr.reviewThreads?.nodes ?? []) {
+    for (const comment of thread.comments?.nodes ?? []) {
+      if (comment.reactions?.nodes?.some(isFreshCodexPlusOne))
+        return { status: 'approved', headSha };
+    }
+  }
+
+  return { status: 'waiting', headSha };
 }
 
 /**
@@ -309,7 +368,7 @@ export async function reviewApprovalValidator(
     const now = Date.now();
 
     if (prUrl) {
-      const codexResult = await checkCodexApproval(prUrl);
+      const codexResult = await checkCodexApproval(prUrl, codexStartedAt);
 
       // New revision pushed — reset codex timer so stale approvals don't release
       if (codexResult.headSha && storedHeadSha && storedHeadSha !== codexResult.headSha) {
