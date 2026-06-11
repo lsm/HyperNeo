@@ -26,29 +26,41 @@ export interface ReviewApprovalTemplateData {
   requireCodex?: boolean;
   /** Timeout window for codex approval in ms (default 10 min). */
   codexTimeoutMs?: number;
+  /** Optional vote binding mode for multi-reviewer hooks. */
+  voteBinding?: 'agent_lens';
 }
 
 function getTemplateData(ctx: HookExecutorContext): ReviewApprovalTemplateData {
   return (ctx.templateData ?? {}) as ReviewApprovalTemplateData;
 }
 
+function lensKeyForAgent(agentName: string): string {
+  return agentName.endsWith('-reviewer') ? agentName.slice(0, -'-reviewer'.length) : agentName;
+}
+
 function extractIncomingVotes(
   data: Record<string, unknown> | undefined,
   voteKey: string,
-  agentName: string
+  agentName: string,
+  voteBinding?: ReviewApprovalTemplateData['voteBinding']
 ): Record<string, unknown> | undefined {
   if (!data) return undefined;
 
   // Map-style votes: { approvals: { architecture: "approved" } }
   const mapVotes = data[voteKey];
   if (mapVotes && typeof mapVotes === 'object' && !Array.isArray(mapVotes)) {
-    return mapVotes as Record<string, unknown>;
+    const votes = mapVotes as Record<string, unknown>;
+    if (voteBinding === 'agent_lens') {
+      const lensKey = lensKeyForAgent(agentName);
+      return Object.hasOwn(votes, lensKey) ? { [lensKey]: votes[lensKey] } : undefined;
+    }
+    return votes;
   }
 
   // Boolean-style vote: { approved: true }
   // Use agentName as key so multiple reviewers don't collide.
   if (data.approved === true) {
-    return { [agentName]: 'approved' };
+    return { [voteBinding === 'agent_lens' ? lensKeyForAgent(agentName) : agentName]: 'approved' };
   }
 
   return undefined;
@@ -472,7 +484,7 @@ export async function reviewApprovalValidator(
 
   // Merge incoming votes into existing state
   const currentVotes = getVotes(state, voteKey);
-  const incoming = extractIncomingVotes(data, voteKey, ctx.agentName);
+  const incoming = extractIncomingVotes(data, voteKey, ctx.agentName, template.voteBinding);
 
   let mergedVotes = { ...currentVotes };
   if (incoming) {

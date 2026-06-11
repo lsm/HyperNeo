@@ -1113,6 +1113,7 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
         threshold: 4,
         voteKey: 'approvals',
         voteMatch: 'approved',
+        voteBinding: 'agent_lens',
         resetOnRejection: true,
         requireCodex: true,
       },
@@ -1505,10 +1506,21 @@ export function mergeNodeStructuralFieldsFromTemplate(
         : node.codexPollIntervalMs,
       agents: node.agents.map((agent) => {
         const key = `${node.name}::${agent.name}`;
+        const templateAgent = templateNode?.agents.find((a) => a.name === agent.name);
         const templateGuards = templateAgentsByKey.get(key);
-        if (templateGuards === undefined) return agent;
-        // Merge: overwrite toolGuards from template, keep everything else
-        return { ...agent, toolGuards: templateGuards };
+        const shouldRefreshPrompt =
+          templateAgent?.customPrompt &&
+          typeof agent.customPrompt?.value === 'string' &&
+          (agent.customPrompt.value.includes('review-approval-gate') ||
+            agent.customPrompt.value.includes('plan-approval-gate'));
+        if (templateGuards === undefined && !shouldRefreshPrompt) return agent;
+        // Merge: overwrite toolGuards from template and refresh only prompts that
+        // still reference removed approval gates from the hook migration.
+        return {
+          ...agent,
+          ...(shouldRefreshPrompt ? { customPrompt: templateAgent.customPrompt } : {}),
+          ...(templateGuards !== undefined ? { toolGuards: templateGuards } : {}),
+        };
       }),
     };
   });
@@ -1754,10 +1766,15 @@ export function mergeChannelsFromTemplate(
     const to = Array.isArray(ch.to) && ch.to.length === 1 ? ch.to[0] : ch.to;
     return JSON.stringify({ from: ch.from, to });
   };
+  const existingByFromTo = new Map(existingChannels.map((ch) => [fromToKey(ch), ch]));
   const templateFromTo = new Set(remappedTemplateChannels.map(fromToKey));
   const keptExisting = existingChannels.filter((ch) => !templateFromTo.has(fromToKey(ch)));
+  const replacementChannels = remappedTemplateChannels.map((channel) => {
+    const existing = existingByFromTo.get(fromToKey(channel));
+    return { ...channel, id: channel.id ?? existing?.id ?? generateUUID() };
+  });
 
-  return [...keptExisting, ...remappedTemplateChannels];
+  return [...keptExisting, ...replacementChannels];
 }
 
 /**

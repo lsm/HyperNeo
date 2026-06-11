@@ -2024,6 +2024,34 @@ describe('seedBuiltInWorkflows()', () => {
     expect(reviewNode.requireCodexApproval).toBeUndefined();
   });
 
+  test('mergeNodeStructuralFieldsFromTemplate refreshes stale approval-gate prompts', () => {
+    const existingNodes = FULLSTACK_QA_LOOP_WORKFLOW.nodes.map((node) =>
+      node.name === 'Review'
+        ? {
+            ...node,
+            agents: node.agents.map((agent) => ({
+              ...agent,
+              customPrompt: {
+                mode: 'override' as const,
+                value: 'legacy prompt says write review-approval-gate',
+              },
+            })),
+          }
+        : node
+    );
+
+    const result = mergeNodeStructuralFieldsFromTemplate(
+      existingNodes,
+      FULLSTACK_QA_LOOP_WORKFLOW.nodes,
+      resolveAgentId
+    );
+
+    const reviewPrompt = result.find((node) => node.name === 'Review')!.agents[0].customPrompt!
+      .value;
+    expect(reviewPrompt).toContain('hook-validated hand-off message');
+    expect(reviewPrompt).not.toContain('write review-approval-gate');
+  });
+
   test('mergeGateStructuralFieldsFromTemplate clears non-codex features when template removes them', () => {
     const existingGates = [{ id: 'g1', fields: [], features: { some_other_feature: true } }];
     const templateGates = [{ id: 'g1', fields: [] }];
@@ -2052,8 +2080,8 @@ describe('seedBuiltInWorkflows()', () => {
 
   test('mergeChannelsFromTemplate replaces existing channels with same from→to', () => {
     const existingChannels = [
-      { from: 'A', to: 'B', gateId: 'old-gate' },
-      { from: 'C', to: 'D' },
+      { id: 'existing-ab', from: 'A', to: 'B', gateId: 'old-gate' },
+      { id: 'existing-cd', from: 'C', to: 'D' },
     ];
     const templateChannels = [
       { from: 'A', to: 'B' },
@@ -2070,6 +2098,7 @@ describe('seedBuiltInWorkflows()', () => {
     const ab = result!.find((ch) => ch.from === 'A' && ch.to === 'B');
     expect(ab).toBeDefined();
     expect(ab!.gateId).toBeUndefined();
+    expect(ab!.id).toBe('existing-ab');
     const cd = result!.find((ch) => ch.from === 'C' && ch.to === 'D');
     expect(cd).toBeDefined();
     const ef = result!.find((ch) => ch.from === 'E' && ch.to === 'F');
@@ -2078,7 +2107,7 @@ describe('seedBuiltInWorkflows()', () => {
 
   test('mergeChannelsFromTemplate treats single-target arrays as same from→to', () => {
     const existingChannels = [
-      { from: 'Review', to: ['QA'], gateId: 'review-approval-gate' },
+      { id: 'review-qa-channel', from: 'Review', to: ['QA'], gateId: 'review-approval-gate' },
       { from: 'Coding', to: 'Review' },
     ];
     const templateChannels = [{ from: 'Review', to: 'QA', hookIds: ['review-approval-hook'] }];
@@ -2096,6 +2125,7 @@ describe('seedBuiltInWorkflows()', () => {
     expect(reviewQaChannels[0].to).toBe('QA');
     expect(reviewQaChannels[0].gateId).toBeUndefined();
     expect(reviewQaChannels[0].hookIds).toEqual(['review-approval-hook']);
+    expect(reviewQaChannels[0].id).toBe('review-qa-channel');
   });
 
   test('re-stamp appends missing validation node and channels with resolved agent IDs', () => {

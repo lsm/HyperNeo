@@ -74,6 +74,43 @@ describe('reviewApprovalValidator', () => {
     });
   });
 
+  test('binds map-style plan vote to calling reviewer lens', async () => {
+    const ctx = makeCtx({
+      agentName: 'security-reviewer',
+      params: {
+        data: {
+          approvals: {
+            architecture: 'approved',
+            security: 'approved',
+            correctness: 'approved',
+            ux: 'approved',
+          },
+        },
+      },
+      templateData: { threshold: 4, voteBinding: 'agent_lens' },
+    });
+
+    const result = await reviewApprovalValidator(ctx);
+
+    expect(result.type).toBe('retryable_block');
+    const state = (result as { state?: Record<string, unknown> }).state;
+    expect(state?.approvals).toEqual({ security: 'approved' });
+  });
+
+  test('uses calling reviewer lens for boolean plan vote binding', async () => {
+    const ctx = makeCtx({
+      agentName: 'ux-reviewer',
+      params: { data: { approved: true } },
+      templateData: { threshold: 4, voteBinding: 'agent_lens' },
+    });
+
+    const result = await reviewApprovalValidator(ctx);
+
+    expect(result.type).toBe('retryable_block');
+    const state = (result as { state?: Record<string, unknown> }).state;
+    expect(state?.approvals).toEqual({ ux: 'approved' });
+  });
+
   test('resets state on rejection when resetOnRejection is true', async () => {
     const ctx = makeCtx({
       params: { data: { approvals: { arch: 'rejected' } } },
