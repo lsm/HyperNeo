@@ -2083,12 +2083,37 @@ describe('seedBuiltInWorkflows()', () => {
     expect(after.templateHash).toBe(computeWorkflowHash(CODING_WORKFLOW));
   });
 
-  test('re-stamp patches known retired built-in node agent prompt text', () => {
+  test('re-stamp patches exact retired built-in Coding prompt text', () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
     const codingNode = coding.nodes.find((n) => n.name === 'Coding')!;
-    const stalePrompt =
-      'Legacy prompt: hand off by sending a message to Review with `data: { pr_url: "<url>" }`.';
+    const templatePrompt = CODING_WORKFLOW.nodes.find((n) => n.name === 'Coding')!.agents[0]
+      .customPrompt!.value;
+    const stalePrompt = templatePrompt
+      .replace(
+        '6. If code changed: hand off by calling `send_message` on the outbound gated ' +
+          'review channel with the PR URL in its `data` payload. Use the current target and ' +
+          'required data fields from the Runtime Execution Contract injected into your task ' +
+          'prompt. `save_artifact` alone is insufficient; only `send_message` delivers ' +
+          'the gated handoff. Always include the PR URL data field on every `send_message` ' +
+          'handoff — gate data resets each cycle, so even on round 2+ you must re-supply it.\n',
+        '6. If code changed: hand off by sending a message to Review with ' +
+          '`data: { pr_url: "<url>" }`. The gate script verifies the PR is open and ' +
+          'mergeable, so make sure it actually is before sending. ' +
+          '**Always include `data: { pr_url }` on every send_message to Review** — the gate ' +
+          'data resets each cycle, so even on round 2+ you must re-supply it.\n'
+      )
+      .replace(
+        '6. Verify no unresolved review conversations remain, verify tests still pass, ' +
+          'then call `send_message` on the outbound gated review channel again to ' +
+          're-trigger the review cycle. Re-supplying the PR URL data field is required; ' +
+          '`save_artifact` alone will not deliver the gated handoff.',
+        '6. Verify no unresolved review conversations remain, verify tests still pass, ' +
+          'then send_message to Review again (again with `data: { pr_url }`) to ' +
+          're-trigger the review cycle'
+      );
+    expect(stalePrompt).not.toBe(templatePrompt);
+    expect(stalePrompt).toContain('hand off by sending a message to Review');
 
     manager.updateWorkflow(coding.id, {
       nodes: coding.nodes.map((n) =>
@@ -2113,12 +2138,101 @@ describe('seedBuiltInWorkflows()', () => {
     const after = manager.getWorkflow(coding.id)!;
     const afterCodingNode = after.nodes.find((n) => n.id === codingNode.id)!;
     const afterPrompt = afterCodingNode.agents[0].customPrompt?.value;
-    expect(afterPrompt).toBe(
-      CODING_WORKFLOW.nodes.find((n) => n.name === 'Coding')!.agents[0].customPrompt?.value
-    );
+    expect(afterPrompt).toBe(templatePrompt);
     expect(afterPrompt).toContain('hand off by calling `send_message` on the outbound gated');
     expect(afterPrompt).not.toContain('send_message(target="Review"');
     expect(after.templateHash).toBe(computeWorkflowHash(CODING_WORKFLOW));
+  });
+
+  test('re-stamp preserves customized prompts containing retired built-in text', () => {
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+    const codingNode = coding.nodes.find((n) => n.name === 'Coding')!;
+    const customizedPrompt =
+      'Local Coding instructions: keep the staging branch open. ' +
+      'Also remember to write code-pr-gate with field pr_url so Review can activate.';
+
+    manager.updateWorkflow(coding.id, {
+      nodes: coding.nodes.map((n) =>
+        n.id !== codingNode.id
+          ? n
+          : {
+              ...n,
+              agents: n.agents.map((a, i) =>
+                i === 0 ? { ...a, customPrompt: { value: customizedPrompt } } : a
+              ),
+            }
+      ),
+    });
+    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+      'customized-stale-prompt-hash',
+      coding.id
+    );
+
+    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    expect(result.restamped).toContain(CODING_WORKFLOW.name);
+
+    const after = manager.getWorkflow(coding.id)!;
+    const afterCodingNode = after.nodes.find((n) => n.id === codingNode.id)!;
+    expect(afterCodingNode.agents[0].customPrompt?.value).toBe(customizedPrompt);
+    expect(after.templateHash).toBe(computeWorkflowHash(CODING_WORKFLOW));
+  });
+
+  test('re-stamp patches exact retired built-in Fullstack prompt text', () => {
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const workflow = manager
+      .listWorkflows(SPACE_ID)
+      .find((w) => w.name === FULLSTACK_QA_LOOP_WORKFLOW.name)!;
+    const codingNode = workflow.nodes.find((n) => n.name === 'Coding')!;
+    const templatePrompt = FULLSTACK_QA_LOOP_WORKFLOW.nodes.find((n) => n.name === 'Coding')!
+      .agents[0].customPrompt!.value;
+    const stalePrompt = templatePrompt
+      .replace(
+        'When implementation is ready, ensure the PR is open and mergeable, then call `send_message` ' +
+          'on the outbound gated review channel with the PR URL in its `data` payload. Use the current ' +
+          'target and required data fields from the Runtime Execution Contract injected into your task ' +
+          'prompt. `save_artifact` alone is insufficient; only `send_message` delivers the gated ' +
+          'handoff. Coding is not the end node — the task-completion tools (`approve_task`, ' +
+          '`submit_for_approval`) are not available to you.\n\n',
+        'When implementation is ready, ensure the PR is open and mergeable and write code-pr-gate with ' +
+          'field pr_url so Review can activate. Coding is not the end node — the task-completion tools ' +
+          '(`approve_task`, `submit_for_approval`) are not available to you.\n\n'
+      )
+      .replace(
+        '4. Hand off by calling `send_message` on the outbound gated review channel with ' +
+          'the PR URL in its `data` payload; `save_artifact` alone will not deliver the handoff\n',
+        '4. Write code-pr-gate with field pr_url so Review can activate\n'
+      );
+    expect(stalePrompt).not.toBe(templatePrompt);
+    expect(stalePrompt).toContain('4. Write code-pr-gate with field pr_url so Review can activate');
+
+    manager.updateWorkflow(workflow.id, {
+      nodes: workflow.nodes.map((n) =>
+        n.id !== codingNode.id
+          ? n
+          : {
+              ...n,
+              agents: n.agents.map((a, i) =>
+                i === 0 ? { ...a, customPrompt: { value: stalePrompt } } : a
+              ),
+            }
+      ),
+    });
+    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+      'stale-fullstack-prompt-hash',
+      workflow.id
+    );
+
+    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    expect(result.restamped).toContain(FULLSTACK_QA_LOOP_WORKFLOW.name);
+
+    const after = manager.getWorkflow(workflow.id)!;
+    const afterCodingNode = after.nodes.find((n) => n.id === codingNode.id)!;
+    const afterPrompt = afterCodingNode.agents[0].customPrompt?.value;
+    expect(afterPrompt).toBe(templatePrompt);
+    expect(afterPrompt).toContain('call `send_message` on the outbound gated review channel');
+    expect(afterPrompt).not.toContain('Write code-pr-gate with field pr_url');
+    expect(after.templateHash).toBe(computeWorkflowHash(FULLSTACK_QA_LOOP_WORKFLOW));
   });
 
   test('re-stamp updates gate field writers and features in place', () => {

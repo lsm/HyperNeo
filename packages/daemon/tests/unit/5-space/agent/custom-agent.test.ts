@@ -669,6 +669,36 @@ describe('buildCustomAgentTaskMessage', () => {
     );
     expect(message).toContain('`save_artifact` alone does not deliver this gated handoff');
   });
+
+  it('emits scalar send_message examples for multicast gated channels', () => {
+    const workflow = makeWorkflow({
+      channels: [
+        {
+          id: 'ch-plan-to-reviewers',
+          from: 'Plan',
+          to: ['Code', 'QA'],
+          label: 'Plan → Reviewers',
+          gateId: 'plan-ready-gate',
+        },
+      ],
+    });
+    const message = buildCustomAgentTaskMessage(
+      makeConfig({
+        workflow,
+        workflowRun: makeWorkflowRun({ workflowId: workflow.id }),
+        nodeId: 'node-1',
+        agentSlotName: 'Coder',
+      })
+    );
+
+    expect(message).toContain(
+      'Code (Plan → Reviewers): call `send_message(target="Code", message="<short summary>", data: { pr_url: "<pr_url>" })`'
+    );
+    expect(message).toContain(
+      'QA (Plan → Reviewers): call `send_message(target="QA", message="<short summary>", data: { pr_url: "<pr_url>" })`'
+    );
+    expect(message).not.toContain('send_message(target=["Code", "QA"]');
+  });
 });
 
 describe('createCustomAgentInit', () => {

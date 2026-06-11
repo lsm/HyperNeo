@@ -1682,10 +1682,86 @@ function migrateCodexFeatureToNodeToggle(
   return { nodes: migratedNodes, gates: migratedGates };
 }
 
-const BUILT_IN_PROMPT_PATCH_MARKERS = [
-  'write code-pr-gate with field pr_url so Review can activate',
-  'hand off by sending a message to Review with `data: { pr_url: "<url>" }`',
-  'then send_message to Review again (again with `data: { pr_url }`)',
+const CURRENT_CODING_WORKFLOW_HANDOFF_PROMPT =
+  '6. If code changed: hand off by calling `send_message` on the outbound gated ' +
+  'review channel with the PR URL in its `data` payload. Use the current target and ' +
+  'required data fields from the Runtime Execution Contract injected into your task ' +
+  'prompt. `save_artifact` alone is insufficient; only `send_message` delivers ' +
+  'the gated handoff. Always include the PR URL data field on every `send_message` ' +
+  'handoff — gate data resets each cycle, so even on round 2+ you must re-supply it.\n';
+const RETIRED_CODING_WORKFLOW_HANDOFF_PROMPT =
+  '6. If code changed: hand off by sending a message to Review with ' +
+  '`data: { pr_url: "<url>" }`. The gate script verifies the PR is open and ' +
+  'mergeable, so make sure it actually is before sending. ' +
+  '**Always include `data: { pr_url }` on every send_message to Review** — the gate ' +
+  'data resets each cycle, so even on round 2+ you must re-supply it.\n';
+const RETIRED_HARDCODED_CODING_WORKFLOW_HANDOFF_PROMPT =
+  '6. If code changed: hand off by calling ' +
+  '`send_message(target="Review", message="<short summary>", data: { pr_url: "<url>" })`. ' +
+  'The `data.pr_url` payload is auto-merged into `code-ready-gate`; the gate script verifies ' +
+  'the PR is open and mergeable before Review activates. `save_artifact` alone is insufficient; ' +
+  'only `send_message` delivers the gated handoff. ' +
+  '**Always include `data: { pr_url }` on every send_message to Review** — the gate ' +
+  'data resets each cycle, so even on round 2+ you must re-supply it.\n';
+const CURRENT_CODING_WORKFLOW_REHANDOFF_PROMPT =
+  '6. Verify no unresolved review conversations remain, verify tests still pass, ' +
+  'then call `send_message` on the outbound gated review channel again to ' +
+  're-trigger the review cycle. Re-supplying the PR URL data field is required; ' +
+  '`save_artifact` alone will not deliver the gated handoff.';
+const RETIRED_CODING_WORKFLOW_REHANDOFF_PROMPT =
+  '6. Verify no unresolved review conversations remain, verify tests still pass, ' +
+  'then send_message to Review again (again with `data: { pr_url }`) to ' +
+  're-trigger the review cycle';
+const RETIRED_HARDCODED_CODING_WORKFLOW_REHANDOFF_PROMPT =
+  '6. Verify no unresolved review conversations remain, verify tests still pass, ' +
+  'then call `send_message(target="Review", message="<short summary>", data: { pr_url: "<url>" })` ' +
+  'again to re-trigger the review cycle. Re-supplying `data.pr_url` is required; ' +
+  '`save_artifact` alone will not open `code-ready-gate`.';
+const CURRENT_FULLSTACK_CODING_READY_PROMPT =
+  'When implementation is ready, ensure the PR is open and mergeable, then call `send_message` ' +
+  'on the outbound gated review channel with the PR URL in its `data` payload. Use the current ' +
+  'target and required data fields from the Runtime Execution Contract injected into your task ' +
+  'prompt. `save_artifact` alone is insufficient; only `send_message` delivers the gated ' +
+  'handoff. Coding is not the end node — the task-completion tools (`approve_task`, ' +
+  '`submit_for_approval`) are not available to you.\n\n';
+const RETIRED_FULLSTACK_CODING_READY_PROMPT =
+  'When implementation is ready, ensure the PR is open and mergeable and write code-pr-gate with ' +
+  'field pr_url so Review can activate. Coding is not the end node — the task-completion tools ' +
+  '(`approve_task`, `submit_for_approval`) are not available to you.\n\n';
+const RETIRED_HARDCODED_FULLSTACK_CODING_READY_PROMPT =
+  'When implementation is ready, ensure the PR is open and mergeable, then call ' +
+  '`send_message(target="Review", message="<short summary>", data: { pr_url: "<url>" })`. ' +
+  'The `data.pr_url` payload is auto-merged into `code-pr-gate`; the gate script verifies ' +
+  'the PR is open and mergeable before Review activates. `save_artifact` alone is insufficient; ' +
+  'only `send_message` delivers the gated handoff. Coding is not the end node — the ' +
+  'task-completion tools (`approve_task`, `submit_for_approval`) are not available to you.\n\n';
+const CURRENT_FULLSTACK_CODING_STEP_PROMPT =
+  '4. Hand off by calling `send_message` on the outbound gated review channel with ' +
+  'the PR URL in its `data` payload; `save_artifact` alone will not deliver the handoff\n';
+const RETIRED_FULLSTACK_CODING_STEP_PROMPT =
+  '4. Write code-pr-gate with field pr_url so Review can activate\n';
+const RETIRED_HARDCODED_FULLSTACK_CODING_STEP_PROMPT =
+  '4. Hand off to Review by calling ' +
+  '`send_message(target="Review", message="<short summary>", data: { pr_url: "<url>" })`; ' +
+  '`save_artifact` alone will not open `code-pr-gate`\n';
+
+const BUILT_IN_PROMPT_PATCH_VARIANTS = [
+  [
+    [CURRENT_CODING_WORKFLOW_HANDOFF_PROMPT, RETIRED_CODING_WORKFLOW_HANDOFF_PROMPT],
+    [CURRENT_CODING_WORKFLOW_REHANDOFF_PROMPT, RETIRED_CODING_WORKFLOW_REHANDOFF_PROMPT],
+  ],
+  [
+    [CURRENT_CODING_WORKFLOW_HANDOFF_PROMPT, RETIRED_HARDCODED_CODING_WORKFLOW_HANDOFF_PROMPT],
+    [CURRENT_CODING_WORKFLOW_REHANDOFF_PROMPT, RETIRED_HARDCODED_CODING_WORKFLOW_REHANDOFF_PROMPT],
+  ],
+  [
+    [CURRENT_FULLSTACK_CODING_READY_PROMPT, RETIRED_FULLSTACK_CODING_READY_PROMPT],
+    [CURRENT_FULLSTACK_CODING_STEP_PROMPT, RETIRED_FULLSTACK_CODING_STEP_PROMPT],
+  ],
+  [
+    [CURRENT_FULLSTACK_CODING_READY_PROMPT, RETIRED_HARDCODED_FULLSTACK_CODING_READY_PROMPT],
+    [CURRENT_FULLSTACK_CODING_STEP_PROMPT, RETIRED_HARDCODED_FULLSTACK_CODING_STEP_PROMPT],
+  ],
 ] as const;
 
 function patchKnownBuiltInPromptDrift<T extends WorkflowNodeAgentOverride | undefined>(
@@ -1695,10 +1771,28 @@ function patchKnownBuiltInPromptDrift<T extends WorkflowNodeAgentOverride | unde
   const existingValue = existingPrompt?.value;
   const templateValue = templatePrompt?.value;
   if (!existingValue || !templateValue || existingValue === templateValue) return existingPrompt;
-  if (!BUILT_IN_PROMPT_PATCH_MARKERS.some((marker) => existingValue.includes(marker))) {
-    return existingPrompt;
-  }
+  if (!isExactRetiredBuiltInPrompt(existingValue, templateValue)) return existingPrompt;
   return { ...existingPrompt, value: templateValue } as T;
+}
+
+function isExactRetiredBuiltInPrompt(existingValue: string, templateValue: string): boolean {
+  return buildRetiredBuiltInPromptValues(templateValue).some((value) => existingValue === value);
+}
+
+function buildRetiredBuiltInPromptValues(templateValue: string): string[] {
+  const values: string[] = [];
+  for (const replacements of BUILT_IN_PROMPT_PATCH_VARIANTS) {
+    let value = templateValue;
+    for (const [currentText, retiredText] of replacements) {
+      if (!value.includes(currentText)) {
+        value = templateValue;
+        break;
+      }
+      value = value.replace(currentText, retiredText);
+    }
+    if (value !== templateValue) values.push(value);
+  }
+  return values;
 }
 
 function nodeReferences(node: WorkflowNode): Set<string> {

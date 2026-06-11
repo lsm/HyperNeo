@@ -31,6 +31,7 @@ import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import { inferProviderForModel } from '../../providers/registry';
 import { Logger } from '../../logger';
 import { SUB_SESSION_FEATURES } from './seed-agents';
+import { formatGatedHandoffCall, getSendMessageTargets } from '../runtime/gated-handoff-guidance';
 
 const DEFAULT_CUSTOM_AGENT_MODEL = 'claude-sonnet-4-6';
 
@@ -534,9 +535,11 @@ function buildGatedHandoffLines(
     );
     if (writableFields.length === 0) continue;
 
-    lines.push(
-      `  - ${describeChannel(channel)}: call \`send_message(target=${formatSendMessageTarget(channel.to)}, message="<short summary>", data: ${formatGateDataShape(writableFields)})\`; \`save_artifact\` alone does not deliver this gated handoff.`
-    );
+    for (const target of getSendMessageTargets(channel.to)) {
+      lines.push(
+        `  - ${describeChannelTarget(channel, target)}: call \`${formatGatedHandoffCall(target, writableFields)}\`; \`save_artifact\` alone does not deliver this gated handoff.`
+      );
+    }
   }
 
   return lines;
@@ -552,29 +555,9 @@ function describeChannel(channel: WorkflowChannel): string {
   return channel.label ? `${target} (${channel.label})` : target;
 }
 
-function formatSendMessageTarget(target: string | string[]): string {
-  if (Array.isArray(target)) return `[${target.map((item) => JSON.stringify(item)).join(', ')}]`;
-  return JSON.stringify(target);
-}
-
-function formatGateDataShape(fields: Array<{ name: string; type: string }>): string {
-  const entries = fields.map((field) => `${field.name}: ${formatGateDataPlaceholder(field)}`);
-  return `{ ${entries.join(', ')} }`;
-}
-
-function formatGateDataPlaceholder(field: { name: string; type: string }): string {
-  switch (field.type) {
-    case 'string':
-      return `"<${field.name}>"`;
-    case 'number':
-      return '<number>';
-    case 'boolean':
-      return '<boolean>';
-    case 'map':
-      return '{ "<key>": "<value>" }';
-    default:
-      return '<value>';
-  }
+function describeChannelTarget(channel: WorkflowChannel, target: string): string {
+  if (!Array.isArray(channel.to)) return describeChannel(channel);
+  return channel.label ? `${target} (${channel.label})` : target;
 }
 
 function isGateWritableFromNode(
