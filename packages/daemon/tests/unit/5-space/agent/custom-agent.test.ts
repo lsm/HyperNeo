@@ -727,7 +727,7 @@ describe('buildCustomAgentTaskMessage', () => {
     expect(message).not.toContain('send_message(target="*"');
   });
 
-  it('quotes gate field names in generated handoff data examples', () => {
+  it('quotes gate field names and emits executable non-string values in handoff data', () => {
     const workflow = makeWorkflow({
       channels: [
         {
@@ -750,6 +750,18 @@ describe('buildCustomAgentTaskMessage', () => {
               writers: ['Plan'],
               check: { op: 'exists' },
             },
+            {
+              name: 'approved',
+              type: 'boolean',
+              writers: ['Plan'],
+              check: { op: '==', value: true },
+            },
+            {
+              name: 'score',
+              type: 'number',
+              writers: ['Plan'],
+              check: { op: 'exists' },
+            },
           ],
           resetOnCycle: false,
         },
@@ -764,8 +776,12 @@ describe('buildCustomAgentTaskMessage', () => {
       })
     );
 
-    expect(message).toContain('data: { "pr-url": "<pr-url>" }');
+    expect(message).toContain('"pr-url": "<pr-url>"');
+    expect(message).toContain('"approved": true');
+    expect(message).toContain('"score": 0');
     expect(message).not.toContain('data: { pr-url:');
+    expect(message).not.toContain('<boolean>');
+    expect(message).not.toContain('<number>');
   });
 });
 

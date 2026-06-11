@@ -30,12 +30,12 @@ function formatGateDataPlaceholder(field: GateDataShapeField): string {
     case 'string':
       return `"<${field.name}>"`;
     case 'number':
-      return '<number>';
+      return '0';
     case 'boolean':
-      return '<boolean>';
+      return 'true';
     case 'map':
       return '{ "<key>": "<value>" }';
     default:
-      return '<value>';
+      return 'null';
   }
 }
