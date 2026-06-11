@@ -1019,7 +1019,7 @@ describe('ProviderContextManager', () => {
 //
 // The invariant differs per provider:
 //   Codex bridge:   all three tier slots use Anthropic model IDs with known
-//                   large context windows (claude-opus-4-1-20250805 = 1M,
+//                   large context windows (claude-opus-4-7 = 1M,
 //                   claude-sonnet-4-20250514 = 200k). The SDK recognises these
 //                   IDs and uses their real context limits instead of falling
 //                   back to ~200k for unknown Codex IDs. The bridge then maps
@@ -1055,8 +1055,8 @@ describe('sdk-model-id-aliasing invariant — real provider buildSdkConfig()', (
     // Haiku slot uses the 200 k Anthropic Sonnet ID
     expect(cfg.envVars['ANTHROPIC_DEFAULT_HAIKU_MODEL']).toBe('claude-sonnet-4-20250514');
     // Sonnet and Opus slots use the 1 M Anthropic Opus ID
-    expect(cfg.envVars['ANTHROPIC_DEFAULT_SONNET_MODEL']).toBe('claude-opus-4-1-20250805');
-    expect(cfg.envVars['ANTHROPIC_DEFAULT_OPUS_MODEL']).toBe('claude-opus-4-1-20250805');
+    expect(cfg.envVars['ANTHROPIC_DEFAULT_SONNET_MODEL']).toBe('claude-opus-4-7');
+    expect(cfg.envVars['ANTHROPIC_DEFAULT_OPUS_MODEL']).toBe('claude-opus-4-7');
   });
 
   it('Copilot provider: all three DEFAULT_*_MODEL slots are set to the resolved model ID', () => {
