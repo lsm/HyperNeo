@@ -693,10 +693,6 @@ export class WorkflowHookEngine {
 
         if (!firstCh) return false;
 
-        if (firstCh.gateId && firstCh.hookIds && firstCh.hookIds.length > 0) {
-          mixedGateHookChannel = true;
-          return true;
-        }
         if (firstCh.hookIds && firstCh.hookIds.length > 0) {
           hasChannelHookIds = true;
           for (const hid of firstCh.hookIds) {
@@ -724,10 +720,6 @@ export class WorkflowHookEngine {
                 (to) => to === '*' || actionTargets.has(to) || rawActionTargets.has(to)
               );
               if (!toMatches) continue;
-              if (ch.gateId && ch.hookIds && ch.hookIds.length > 0) {
-                mixedGateHookChannel = true;
-                break;
-              }
               if (ch.hookIds && ch.hookIds.length > 0) {
                 hasChannelHookIds = true;
                 for (const hid of ch.hookIds) {
@@ -750,10 +742,6 @@ export class WorkflowHookEngine {
             (to) => to === '*' || actionTargets.has(to) || rawActionTargets.has(to)
           );
           if (!toMatches) continue;
-          if (ch.gateId && ch.hookIds && ch.hookIds.length > 0) {
-            mixedGateHookChannel = true;
-            break;
-          }
           if (ch.hookIds && ch.hookIds.length > 0) {
             hasChannelHookIds = true;
             for (const hid of ch.hookIds) {

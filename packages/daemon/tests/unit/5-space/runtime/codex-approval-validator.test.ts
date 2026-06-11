@@ -229,6 +229,28 @@ describe('codexReviewApprovedValidator', () => {
     expect(fetchCalls.some((c) => c.url.includes('/commits/abc123'))).toBe(true);
   });
 
+  test('first invocation does not accept reactions between old commit and workflow start', async () => {
+    mockPrWith(
+      'abc123',
+      [
+        {
+          id: 1,
+          user: { login: 'codex[bot]' },
+          content: '+1',
+          created_at: '2026-01-02T00:00:30Z',
+        },
+      ],
+      '2026-01-01T00:00:00Z'
+    );
+    const ctx = makeContext({
+      currentArtifacts: PR_ARTIFACT,
+      workflowStartIso: '2026-01-02T00:01:00Z',
+    });
+    const result = await codexReviewApprovedValidator(ctx);
+    expect(result.type).toBe('retryable_block');
+    expect((result as { reason?: string }).reason).toContain('stale');
+  });
+
   test('retryable_block on eyes reaction', async () => {
     mockPrWith('abc123', [
       {
@@ -396,14 +418,21 @@ describe('codexReviewApprovedValidator', () => {
     expect((result as { data?: Record<string, unknown> }).data?.checkStartedAt).toBe(123);
   });
 
-  test('send_message to non-target node bypasses Codex check', async () => {
+  test('send_message to non-target node bypasses Codex check and preserves state', async () => {
     const ctx = makeContext({
       methodName: 'send_message',
       params: { target: 'SomeOtherNode' },
       templateData: { enforceForTargets: ['Review'], forceCodexApproval: true },
+      lastResult: {
+        type: 'block',
+        reason: 'timeout',
+        data: { terminalOutcome: 'block', currentHeadSha: 'abc123', checkStartedAt: 123 },
+      } as WorkflowHookResult,
     });
     const result = await codexReviewApprovedValidator(ctx);
     expect(result.type).toBe('allow');
+    expect((result as { data?: Record<string, unknown> }).data?.terminalOutcome).toBe('block');
+    expect((result as { data?: Record<string, unknown> }).data?.currentHeadSha).toBe('abc123');
     expect(fetchCalls).toHaveLength(0);
   });
 
@@ -459,29 +488,18 @@ describe('codexReviewApprovedValidator', () => {
     expect(result.type).toBe('retryable_block');
   });
 
-  test('uses GH_ENTERPRISE_TOKEN when GITHUB_TOKEN is absent', async () => {
+  test('does not use enterprise token for github.com', async () => {
     delete process.env.GITHUB_TOKEN;
+    delete process.env.GH_TOKEN;
     process.env.GH_ENTERPRISE_TOKEN = 'enterprise-token';
     mockPrWith('abc123', []);
     const ctx = makeContext({ currentArtifacts: PR_ARTIFACT });
     const result = await codexReviewApprovedValidator(ctx);
-    expect(result.type).toBe('retryable_block');
-  });
-
-  test('prefers enterprise token for enterprise PR host', async () => {
-    process.env.GITHUB_TOKEN = 'public-token';
-    process.env.GH_ENTERPRISE_TOKEN = 'enterprise-token';
-    mockPrWith('abc123', []);
-    const ctx = makeContext({
-      currentArtifacts: [{ data: { pr_url: 'https://gh.enterprise.com/owner/repo/pull/42' } }],
-    });
-    // Host not in allowlist → block, but token resolution should prefer enterprise
-    const result = await codexReviewApprovedValidator(ctx);
-    // The host isn't in ALLOWED_PR_HOSTS so it blocks before using the token
     expect(result.type).toBe('block');
     if (result.type === 'block') {
-      expect(result.reason).toContain('not in the allowed list');
+      expect(result.reason).toContain('GitHub token not available');
     }
+    expect(fetchCalls).toHaveLength(0);
   });
 
   test('prefers params.data PR URL over artifact PR URL', async () => {
@@ -677,7 +695,7 @@ describe('withSyntheticCodexHooks', () => {
     expect(hook?.templateData).toEqual({ enforceForTargets: ['Review'], forceCodexApproval: true });
   });
 
-  test('does not add synthetic hook IDs to mixed gate/hook approval channels', () => {
+  test('preserves gateId and adds synthetic hook IDs on mixed gate/hook approval channels', () => {
     const workflow = withSyntheticCodexHooks({
       ...WORKFLOW,
       hooks: [
@@ -707,7 +725,7 @@ describe('withSyntheticCodexHooks', () => {
       ],
     });
     expect(workflow.channels?.[0]).toMatchObject({
-      gateId: undefined,
+      gateId: 'approval-gate',
       hookIds: ['other-hook', 'synthetic-codex-review-check-node-coder'],
     });
     expect(

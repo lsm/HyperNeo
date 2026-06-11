@@ -233,11 +233,10 @@ function toEpochSeconds(ms: number): number {
 
 function resolveTokenForHost(host: string): string {
   const isEnterprise = host !== 'github.com';
-  const enterpriseToken =
-    process.env.GH_ENTERPRISE_TOKEN || process.env.GITHUB_ENTERPRISE_TOKEN || '';
-  const publicToken = process.env.GH_TOKEN || process.env.GITHUB_TOKEN || '';
-  if (isEnterprise && enterpriseToken) return enterpriseToken;
-  return publicToken || enterpriseToken;
+  if (isEnterprise) {
+    return process.env.GH_ENTERPRISE_TOKEN || process.env.GITHUB_ENTERPRISE_TOKEN || '';
+  }
+  return process.env.GH_TOKEN || process.env.GITHUB_TOKEN || '';
 }
 
 /**
@@ -338,6 +337,9 @@ export const codexReviewApprovedValidator: BuiltInValidatorFn = async (context) 
     prUrl: contextPrUrl,
   } = context;
 
+  // Load persisted state from previous invocation
+  const persisted = (lastResult?.data ?? {}) as CodexPersistedState;
+
   // For send_message hooks, only enforce when the target matches configured handoff targets.
   // Targets may be node names, agent slot names, or @worker:/@role: addresses.
   if (methodName === 'send_message') {
@@ -356,14 +358,14 @@ export const codexReviewApprovedValidator: BuiltInValidatorFn = async (context) 
           return resolved.some((rn) => enforceForTargets.includes(rn));
         });
         if (!matched) {
-          return { type: 'allow' };
+          return {
+            type: 'allow',
+            data: Object.keys(persisted).length > 0 ? { ...persisted } : undefined,
+          };
         }
       }
     }
   }
-
-  // Load persisted state from previous invocation
-  const persisted = (lastResult?.data ?? {}) as CodexPersistedState;
 
   if (!permittedExternalLookups.includes('github')) {
     return {
@@ -464,7 +466,12 @@ export const codexReviewApprovedValidator: BuiltInValidatorFn = async (context) 
       headChanged
         ? (headCommitTimestamp ?? now)
         : (persisted.currentHeadBecameHeadAt ??
-            (isFirstCheck ? (headCommitTimestamp ?? firstCheckFreshnessAnchor) : now))
+            (isFirstCheck
+              ? Math.max(
+                  headCommitTimestamp ?? firstCheckFreshnessAnchor,
+                  firstCheckFreshnessAnchor
+                )
+              : now))
     );
     const checkStartedAt = headChanged ? now : (persisted.checkStartedAt ?? now);
 

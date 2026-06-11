@@ -518,7 +518,7 @@ export class ChannelRouter {
     const { channel, index } = match;
     this.validateChannelExclusivity(channel);
     const gateSourceName = this.getChannelSourceName(workflow, channel, fromRole);
-    const hookManaged = this.isHookManagedChannel(channel);
+    const hookManaged = this.isHookManagedChannel(channel) && !channel.gateId;
 
     const channelIsCyclic = this.isChannelCyclicByIndex(index, workflow);
 
@@ -657,7 +657,7 @@ export class ChannelRouter {
       ? this.getChannelSourceName(workflow, channel, fromRole)
       : undefined;
     const channelIsCyclic = match ? this.isChannelCyclicByIndex(channelIndex, workflow) : false;
-    const hookManaged = channel ? this.isHookManagedChannel(channel) : false;
+    const hookManaged = channel ? this.isHookManagedChannel(channel) && !channel.gateId : false;
 
     // ── 2. Target resolution: agent name → DM, node name → fan-out ────────
     // Target resolution itself is non-mutating — only `activateNode` below
@@ -1453,17 +1453,11 @@ export class ChannelRouter {
   }
 
   /**
-   * Validates that a channel does not reference both legacy `gateId` and `hookIds`.
-   * If both appear in persisted JSON the runtime fails closed with a workflow
-   * validation error until the workflow is migrated.
+   * Mixed gate + hook channels are valid: hooks validate MCP action intent,
+   * then the legacy gate still controls delivery in this router.
    */
-  private validateChannelExclusivity(channel: WorkflowChannel): void {
-    if (channel.gateId && this.isHookManagedChannel(channel)) {
-      throw new ActivationError(
-        `Channel "${channel.id ?? 'unknown'}" references both gateId "${channel.gateId}" and hookIds [${channel.hookIds!.join(', ')}]. ` +
-          `A channel may reference either legacy gateId or hookIds, never both. Migrate the workflow to resolve.`
-      );
-    }
+  private validateChannelExclusivity(_channel: WorkflowChannel): void {
+    // Kept as a compatibility hook for older call sites.
   }
 
   /**

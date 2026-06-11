@@ -467,11 +467,7 @@ export function withSyntheticCodexHooks(workflow: SpaceWorkflow): SpaceWorkflow 
       .filter(([, channelIds]) => channelIds.has(channel.id!))
       .map(([hookId]) => hookId);
     if (hookIdsToAdd.length === 0) return channel;
-    return {
-      ...channel,
-      gateId: undefined,
-      hookIds: [...channel.hookIds, ...hookIdsToAdd],
-    };
+    return { ...channel, hookIds: [...channel.hookIds, ...hookIdsToAdd] };
   });
   return { ...workflow, hooks: [...hooks, ...syntheticHooks], channels };
 }
