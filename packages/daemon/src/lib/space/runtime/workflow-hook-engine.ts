@@ -97,6 +97,7 @@ export interface WorkflowHookEngineConfig {
   workspacePath?: string;
   getWorkflowRunStatus?: (runId: string) => WorkflowRunStatus | undefined;
   getTaskStatus?: (taskId: string) => string | undefined;
+  getSourceNodeExecutionStatus?: (meta: HookActionMeta) => string | undefined;
   notifySourceSession?: (sessionId: string, message: string) => Promise<void>;
 }
 
@@ -180,6 +181,10 @@ export class WorkflowHookEngine {
     if (meta) {
       const taskStatus = this.config.getTaskStatus?.(meta.taskId);
       if (taskStatus === 'done' || taskStatus === 'cancelled' || taskStatus === 'archived') {
+        return true;
+      }
+      const nodeExecutionStatus = this.config.getSourceNodeExecutionStatus?.(meta);
+      if (nodeExecutionStatus === 'idle' || nodeExecutionStatus === 'cancelled') {
         return true;
       }
     }

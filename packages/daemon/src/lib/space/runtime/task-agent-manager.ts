@@ -3871,6 +3871,15 @@ export class TaskAgentManager {
         workspacePath,
         getWorkflowRunStatus: (runId) => this.config.workflowRunRepo.getRun(runId)?.status,
         getTaskStatus: (tid) => this.config.taskRepo.getTask(tid)?.status,
+        getSourceNodeExecutionStatus: (actionMeta) =>
+          this.config.nodeExecutionRepo
+            .listByWorkflowRun(workflowRunId)
+            .find(
+              (execution) =>
+                execution.agentSessionId === actionMeta.sessionId &&
+                execution.agentName === actionMeta.agentName &&
+                execution.workflowNodeId === actionMeta.nodeId
+            )?.status,
         notifySourceSession: (sessionId, message) =>
           this.injectSubSessionMessage(sessionId, message, true),
       });

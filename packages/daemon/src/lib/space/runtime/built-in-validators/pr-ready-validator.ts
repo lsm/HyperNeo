@@ -30,6 +30,7 @@ const BASIC_ENV_KEYS = new Set([
   'TERM',
   'TMPDIR',
   'XDG_CONFIG_HOME',
+  'AppData',
 ]);
 
 interface PrViewResult {

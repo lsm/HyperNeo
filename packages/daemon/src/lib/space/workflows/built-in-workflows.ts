@@ -1628,9 +1628,18 @@ function remapTemplateHook(
 function mergeHooksFromTemplate(
   templateHooks: SpaceWorkflow['hooks'],
   templateNodes: WorkflowNode[],
-  existingNodes: WorkflowNode[]
+  existingNodes: WorkflowNode[],
+  existingHooks?: SpaceWorkflow['hooks']
 ): SpaceWorkflow['hooks'] {
-  return templateHooks?.map((hook) => remapTemplateHook(hook, templateNodes, existingNodes));
+  const remappedTemplateHooks =
+    templateHooks?.map((hook) => remapTemplateHook(hook, templateNodes, existingNodes)) ?? [];
+  if (!existingHooks || existingHooks.length === 0) return remappedTemplateHooks;
+
+  const templateHookIds = new Set(remappedTemplateHooks.map((hook) => hook.id));
+  return [
+    ...existingHooks.filter((hook) => !templateHookIds.has(hook.id)),
+    ...remappedTemplateHooks,
+  ];
 }
 
 /** @internal Exported for testing. */
@@ -1813,7 +1822,8 @@ export function seedBuiltInWorkflows(
           // workflow-level value while the node updater writes node routes.
           postApproval: null,
           gates: migratedGates,
-          hooks: mergeHooksFromTemplate(template.hooks, template.nodes, row.nodes) ?? null,
+          hooks:
+            mergeHooksFromTemplate(template.hooks, template.nodes, row.nodes, row.hooks) ?? null,
           nodes: migratedNodes,
           ...(hasNewTemplateChannels || removedLegacyPrReadyChannels
             ? { channels: mergedChannels }

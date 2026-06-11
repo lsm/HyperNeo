@@ -2152,6 +2152,34 @@ describe('seedBuiltInWorkflows()', () => {
     expect(hook.authorizedCallers?.[0]?.agentSlots).toEqual(['engineer']);
   });
 
+  test('re-stamp preserves user-added custom hooks while updating template hooks', () => {
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+    const customHook = {
+      id: 'custom-audit-hook',
+      enabled: true,
+      sourceNode: 'Coding',
+      method: 'save_artifact',
+      classification: 'side_effect',
+      validator: { kind: 'script', interpreter: 'bash', source: 'echo \'{"type":"allow"}\'' },
+      authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+    } as NonNullable<SpaceWorkflow['hooks']>[number];
+
+    repo.updateWorkflow(coding.id, { hooks: [...(coding.hooks ?? []), customHook] });
+    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+      'custom-hook-preservation',
+      coding.id
+    );
+
+    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    expect(result.restamped).toContain(CODING_WORKFLOW.name);
+    expect(result.errors).toHaveLength(0);
+
+    const after = manager.getWorkflow(coding.id)!;
+    expect(after.hooks?.some((hook) => hook.id === 'custom-audit-hook')).toBe(true);
+    expect(after.hooks?.some((hook) => hook.id === 'code-pr-ready')).toBe(true);
+  });
+
   test('re-stamp maps appended channels to renamed built-in nodes by agent slot', () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;

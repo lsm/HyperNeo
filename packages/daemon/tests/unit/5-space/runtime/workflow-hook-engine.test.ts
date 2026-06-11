@@ -213,6 +213,7 @@ function makeEngine(
     hookStateRepo?: WorkflowHookStateRepository;
     getWorkflowRunStatus?: (runId: string) => WorkflowRunStatus | undefined;
     getTaskStatus?: (taskId: string) => string | undefined;
+    getSourceNodeExecutionStatus?: (meta: HookActionMeta) => string | undefined;
     notifySourceSession?: (sessionId: string, message: string) => Promise<void>;
   } = {}
 ): {
@@ -232,6 +233,7 @@ function makeEngine(
     workspacePath: '/tmp',
     getWorkflowRunStatus: options.getWorkflowRunStatus,
     getTaskStatus: options.getTaskStatus,
+    getSourceNodeExecutionStatus: options.getSourceNodeExecutionStatus,
     notifySourceSession: options.notifySourceSession,
   });
   return { engine, mockExecutor, hookStateRepo };
@@ -1361,7 +1363,10 @@ describe('WorkflowHookEngine', () => {
     ).toBeNull();
   });
 
-  test('queued retry does not replay after workflow run is done', async () => {
+  test.each([
+    ['task is done', { getTaskStatus: () => 'done' }],
+    ['source node execution is cancelled', { getSourceNodeExecutionStatus: () => 'cancelled' }],
+  ] as const)('queued retry does not replay when %s', async (_name, options) => {
     const args = { target: 'Review', message: 'hi' };
     const actionKey = JSON.stringify({
       runScopedTaskId: defaultMeta.taskId,
@@ -1374,7 +1379,7 @@ describe('WorkflowHookEngine', () => {
     const hookStateRepo = makeMockHookStateRepo();
     const { engine } = makeEngine(
       [makeHook({ id: 'hook-1', classification: 'validation', order: 0 })],
-      { hookStateRepo, getTaskStatus: () => 'done' }
+      { hookStateRepo, ...options }
     );
     hookStateRepo.ensure('run-1', 'hook-1');
     engine.persistQueuedRetryableAction({
