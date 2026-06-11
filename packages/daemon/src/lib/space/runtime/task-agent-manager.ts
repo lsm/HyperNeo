@@ -76,6 +76,7 @@ import type { ActorResolver } from '../../../../../messaging/src/contracts';
 import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository';
 import type { SpaceWorktreeManager } from '../managers/space-worktree-manager';
 import { SpaceTaskManager } from '../managers/space-task-manager';
+import { isApprovalGate } from './gate-features';
 /** Agent identity metadata for sub-session creation. */
 export interface SubSessionMemberInfo {
   /** ID of the SpaceAgent config this sub-session uses */
@@ -374,32 +375,44 @@ export function withSyntheticCodexHooks(workflow: SpaceWorkflow): SpaceWorkflow 
   );
   const gatesById = new Map((workflow.gates ?? []).map((gate) => [gate.id, gate]));
   const syntheticHooks: WorkflowHook[] = [];
+  const hookManagedChannelIdsByHook = new Map<string, Set<string>>();
 
   for (const node of workflow.nodes ?? []) {
+    const hookId = `synthetic-codex-review-check-${node.id}`;
     const agentSlots = (node.agents ?? []).map((agent) => agent.name).filter(Boolean);
     const sourceNames = new Set([node.name, ...agentSlots]);
-    const sourceChannels = (workflow.channels ?? []).filter((channel) =>
-      sourceNames.has(channel.from)
+    const sourceChannels = (workflow.channels ?? []).filter(
+      (channel) => channel.from === '*' || sourceNames.has(channel.from)
     );
     const legacyCodexChannels = sourceChannels.filter(
       (channel) =>
         !!channel.gateId && hasEnabledGateFeature(gatesById.get(channel.gateId), 'codex_review_bot')
     );
+    const approvalGatedChannels = sourceChannels.filter((channel) => {
+      const gate = channel.gateId ? gatesById.get(channel.gateId) : undefined;
+      return !!gate && isApprovalGate(gate);
+    });
     const shouldEnforceCodex = node.requireCodexApproval || legacyCodexChannels.length > 0;
     if (!shouldEnforceCodex || codexHookSources.has(node.name)) continue;
 
     const enforceForTargets = new Set<string>();
-    const targetChannels = node.requireCodexApproval ? sourceChannels : legacyCodexChannels;
+    const targetChannels = node.requireCodexApproval ? approvalGatedChannels : legacyCodexChannels;
     for (const channel of targetChannels) {
       const targets = Array.isArray(channel.to) ? channel.to : [channel.to];
       for (const target of targets) {
         const trimmedTarget = target.trim();
         if (trimmedTarget && trimmedTarget !== '*') enforceForTargets.add(trimmedTarget);
       }
+      if (channel.id && channel.hookIds && !channel.hookIds.includes(hookId)) {
+        const channelIds = hookManagedChannelIdsByHook.get(hookId) ?? new Set<string>();
+        channelIds.add(channel.id);
+        hookManagedChannelIdsByHook.set(hookId, channelIds);
+      }
     }
+    if (targetChannels.length === 0) continue;
 
     syntheticHooks.push({
-      id: `synthetic-codex-review-check-${node.id}`,
+      id: hookId,
       enabled: true,
       sourceNode: node.name,
       method: 'send_message',
@@ -412,7 +425,15 @@ export function withSyntheticCodexHooks(workflow: SpaceWorkflow): SpaceWorkflow 
   }
 
   if (syntheticHooks.length === 0) return workflow;
-  return { ...workflow, hooks: [...existingHooks, ...syntheticHooks] };
+  const channels = (workflow.channels ?? []).map((channel) => {
+    if (!channel.id || !channel.hookIds) return channel;
+    const hookIdsToAdd = syntheticHooks
+      .map((hook) => hook.id)
+      .filter((hookId) => hookManagedChannelIdsByHook.get(hookId)?.has(channel.id!));
+    if (hookIdsToAdd.length === 0) return channel;
+    return { ...channel, hookIds: [...channel.hookIds, ...hookIdsToAdd] };
+  });
+  return { ...workflow, hooks: [...existingHooks, ...syntheticHooks], channels };
 }
 
 // ---------------------------------------------------------------------------

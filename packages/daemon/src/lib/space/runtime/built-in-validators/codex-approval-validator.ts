@@ -39,6 +39,7 @@ interface CodexPersistedState {
   lastReaction?: CodexReactionState;
   lastReactionTimestamp?: number;
   checkStartedAt?: number;
+  prUrl?: string;
   terminalOutcome?: 'allow' | 'block';
 }
 
@@ -74,6 +75,20 @@ function parsePrUrl(url: string): ParsedPr | null {
     // fall through
   }
   return null;
+}
+
+function samePrUrl(a: string | undefined, b: string): boolean {
+  if (!a) return false;
+  const parsedA = parsePrUrl(a);
+  const parsedB = parsePrUrl(b);
+  return !!(
+    parsedA &&
+    parsedB &&
+    parsedA.host === parsedB.host &&
+    parsedA.owner === parsedB.owner &&
+    parsedA.repo === parsedB.repo &&
+    parsedA.number === parsedB.number
+  );
 }
 
 function resolvePrUrl(
@@ -375,9 +390,10 @@ export const codexReviewApprovedValidator: BuiltInValidatorFn = async (context) 
 
     const hasPriorSha = persisted.currentHeadSha !== undefined;
     const headChanged = hasPriorSha && persisted.currentHeadSha !== currentHeadSha;
+    const prChanged = !samePrUrl(persisted.prUrl, prUrl);
 
-    // Re-check terminal outcome after confirming head has not changed
-    if (persisted.terminalOutcome === 'allow' && !headChanged) {
+    // Re-check terminal outcome after confirming head and PR identity have not changed
+    if (persisted.terminalOutcome === 'allow' && !headChanged && !prChanged) {
       return {
         type: 'allow',
         data: {
@@ -388,7 +404,7 @@ export const codexReviewApprovedValidator: BuiltInValidatorFn = async (context) 
         },
       };
     }
-    if (persisted.terminalOutcome === 'block' && !headChanged) {
+    if (persisted.terminalOutcome === 'block' && !headChanged && !prChanged) {
       return {
         type: 'block',
         reason: 'Codex review did not pass',
