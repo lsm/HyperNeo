@@ -679,6 +679,45 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(cfg.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('claude-sonnet-4-20250514');
     });
 
+    it('preserves mini selection when SDK sends the Opus alias for the sonnet tier', async () => {
+      const originalFetch = globalThis.fetch;
+      let fetchSpy: ReturnType<typeof spyOn> | undefined;
+      let capturedBody: Record<string, unknown> | undefined;
+      try {
+        fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(
+          (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+            const url = String(input);
+            if (url.startsWith('http://127.0.0.1:')) {
+              return originalFetch(input, init);
+            }
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+            return Promise.resolve(
+              new Response(
+                'event: response.completed\ndata: {"type":"response.completed","response":{"usage":{"input_tokens":1,"output_tokens":0},"output":[]}}\n\n',
+                { headers: { 'Content-Type': 'text/event-stream' } }
+              )
+            );
+          }
+        );
+
+        const cfg = provider.buildSdkConfig('codex-mini', { workspacePath: '/tmp/ws-mini-opus' });
+        const resp = await originalFetch(`${cfg.envVars.ANTHROPIC_BASE_URL}/v1/messages`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: 'claude-opus-4-1-20250805',
+            max_tokens: 128,
+            messages: [{ role: 'user', content: 'hi' }],
+          }),
+        });
+        await resp.text();
+
+        expect(capturedBody?.model).toBe('gpt-5.4-mini');
+      } finally {
+        fetchSpy?.mockRestore();
+      }
+    });
+
     it('resolves codex-latest alias to the 1 M Anthropic ID', () => {
       const cfg = provider.buildSdkConfig('codex-latest', { workspacePath: '/tmp/ws-latest' });
       // 'codex-latest' is an alias for 'gpt-5.5' which maps to the 1 M Anthropic ID

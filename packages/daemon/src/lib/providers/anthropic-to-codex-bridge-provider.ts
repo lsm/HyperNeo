@@ -625,11 +625,17 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       throw new Error(`Unknown Codex model: ${modelId}`);
     }
 
-    // Register a per-session override so the bridge sends the originally-selected
+    // Register per-session overrides so the bridge sends the originally-selected
     // Codex model ID upstream instead of the default alias target. Without this,
-    // all frontier models (gpt-5.5, gpt-5.3-codex, gpt-5.4) would collapse to
-    // gpt-5.5 because they share the same Anthropic SDK alias.
+    // shared SDK aliases would collapse to their default Codex mappings. Sonnet is
+    // routed through the Opus alias for SDK preflight safety, so register that
+    // alias too or mini-selected sessions would fall back to gpt-5.5.
     bridgeServer.setSessionModelConfig?.(sessionId, sdkAnthropicId, resolvedId);
+    bridgeServer.setSessionModelConfig?.(
+      sessionId,
+      CODEX_TO_SDK_ANTHROPIC_MODEL['gpt-5.5'],
+      resolvedId
+    );
 
     return {
       envVars: {
