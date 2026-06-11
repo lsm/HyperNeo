@@ -169,14 +169,17 @@ async function githubRest(
   }
 }
 
-async function getPrAuthorLogin(prUrl: string): Promise<string | undefined> {
+async function getReviewIdentityLogins(
+  prUrl: string
+): Promise<{ prAuthorLogin?: string; viewerLogin?: string }> {
   const parsed = parsePrUrl(prUrl);
-  if (!parsed) return undefined;
+  if (!parsed) return {};
 
   const result = await githubGraphql(
     parsed.host,
     `
       query($owner:String!,$name:String!,$number:Int!) {
+        viewer { login }
         repository(owner:$owner,name:$name) {
           pullRequest(number:$number) { author { login } }
         }
@@ -184,21 +187,28 @@ async function getPrAuthorLogin(prUrl: string): Promise<string | undefined> {
     `,
     { owner: parsed.owner, name: parsed.repo, number: parsed.number }
   );
-  if (!result.ok) return undefined;
+  if (!result.ok) return {};
 
   const json = result.json as {
-    data?: { repository?: { pullRequest?: { author?: { login?: string } } } };
+    data?: {
+      viewer?: { login?: string };
+      repository?: { pullRequest?: { author?: { login?: string } } };
+    };
     errors?: unknown[];
   };
-  if (json.errors) return undefined;
-  return json.data?.repository?.pullRequest?.author?.login;
+  if (json.errors) return {};
+  return {
+    prAuthorLogin: json.data?.repository?.pullRequest?.author?.login,
+    viewerLogin: json.data?.viewer?.login,
+  };
 }
 
 async function verifyReviewEvidenceOnGithub(
   prUrl: string,
   reviewUrl: string,
   sinceIso?: string,
-  prAuthorLogin?: string
+  prAuthorLogin?: string,
+  viewerLogin?: string
 ): Promise<'verified' | 'missing' | 'error'> {
   const parsed = parsePrUrl(prUrl);
   if (!parsed) return 'error';
@@ -228,7 +238,10 @@ async function verifyReviewEvidenceOnGithub(
     isFresh(node.createdAt) &&
     (!options.requireActionableState || isActionableReviewState(node.state)) &&
     (!options.requirePrAuthor ||
-      (prAuthorLogin !== undefined && node.user?.login === prAuthorLogin));
+      (prAuthorLogin !== undefined &&
+        viewerLogin !== undefined &&
+        viewerLogin === prAuthorLogin &&
+        node.user?.login === prAuthorLogin));
 
   if (expectedDiscussionId !== undefined) {
     const result = await githubRest(
@@ -268,6 +281,8 @@ async function verifyReviewEvidenceOnGithub(
         apiPathMatches(comment.issue_url, `/issues/${parsed.number}`) &&
         isFresh(comment.created_at) &&
         prAuthorLogin !== undefined &&
+        viewerLogin !== undefined &&
+        viewerLogin === prAuthorLogin &&
         comment.user?.login === prAuthorLogin
       ) {
         return 'verified';
@@ -426,12 +441,13 @@ async function findReviewEvidence(
     if (!reviewBase) return false;
     if (activePrBase && reviewBase !== activePrBase) return false;
     const prUrl = activePrBase ?? reviewBase;
-    const prAuthorLogin = await getPrAuthorLogin(prUrl);
+    const { prAuthorLogin, viewerLogin } = await getReviewIdentityLogins(prUrl);
     const verified = await verifyReviewEvidenceOnGithub(
       prUrl,
       url,
       evidenceSinceIso,
-      prAuthorLogin
+      prAuthorLogin,
+      viewerLogin
     );
     return verified === 'verified';
   };

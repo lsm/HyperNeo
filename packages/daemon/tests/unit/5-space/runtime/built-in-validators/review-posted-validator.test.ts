@@ -58,7 +58,10 @@ async function withMockEvidenceFetch<T>(fn: () => Promise<T>): Promise<T> {
       return {
         ok: true,
         json: async () => ({
-          data: { repository: { pullRequest: { author: { login: 'test-author' } } } },
+          data: {
+            viewer: { login: 'test-author' },
+            repository: { pullRequest: { author: { login: 'test-author' } } },
+          },
         }),
       } as Response;
     }
@@ -353,7 +356,10 @@ describe('reviewPostedValidator', () => {
       return {
         ok: true,
         json: async () => ({
-          data: { repository: { pullRequest: { author: { login: 'pr-author' } } } },
+          data: {
+            viewer: { login: 'pr-author' },
+            repository: { pullRequest: { author: { login: 'pr-author' } } },
+          },
         }),
       } as Response;
     };
@@ -448,7 +454,10 @@ describe('reviewPostedValidator', () => {
       return {
         ok: true,
         json: async () => ({
-          data: { repository: { pullRequest: { author: { login: 'pr-author' } } } },
+          data: {
+            viewer: { login: 'pr-author' },
+            repository: { pullRequest: { author: { login: 'pr-author' } } },
+          },
         }),
       } as Response;
     };
@@ -472,6 +481,53 @@ describe('reviewPostedValidator', () => {
     expect(result.type).toBe('allow');
   });
 
+  test('blocks PR issue comment URL when viewer is not the PR author', async () => {
+    const originalFetch = globalThis.fetch;
+    const originalToken = process.env.GITHUB_TOKEN;
+    process.env.GITHUB_TOKEN = 'test-token';
+    globalThis.fetch = async (url) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/repos/test/repo/issues/comments/99')) {
+        return {
+          ok: true,
+          json: async () => ({
+            id: 99,
+            issue_url: 'https://api.github.com/repos/test/repo/issues/1',
+            created_at: '2999-01-01T00:00:00Z',
+            user: { login: 'pr-author' },
+          }),
+        } as Response;
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          data: {
+            viewer: { login: 'reviewer' },
+            repository: { pullRequest: { author: { login: 'pr-author' } } },
+          },
+        }),
+      } as Response;
+    };
+
+    const ctx = makeCtx({
+      params: {
+        data: { review_url: 'https://github.com/test/repo/pull/1#issuecomment-99' },
+      },
+      gateData: [
+        {
+          gateId: 'code-pr-gate',
+          data: { pr_url: 'https://github.com/test/repo/pull/1' },
+          updatedAt: Date.now(),
+        },
+      ],
+    });
+    const result = await reviewPostedValidator(ctx);
+    globalThis.fetch = originalFetch;
+    process.env.GITHUB_TOKEN = originalToken;
+
+    expect(result.type).toBe('block');
+  });
+
   test('blocks PR issue comment URL when the comment author is not the PR author', async () => {
     const originalFetch = globalThis.fetch;
     const originalToken = process.env.GITHUB_TOKEN;
@@ -492,7 +548,10 @@ describe('reviewPostedValidator', () => {
       return {
         ok: true,
         json: async () => ({
-          data: { repository: { pullRequest: { author: { login: 'pr-author' } } } },
+          data: {
+            viewer: { login: 'pr-author' },
+            repository: { pullRequest: { author: { login: 'pr-author' } } },
+          },
         }),
       } as Response;
     };
@@ -555,7 +614,10 @@ describe('reviewPostedValidator', () => {
       return {
         ok: true,
         json: async () => ({
-          data: { repository: { pullRequest: { author: { login: 'pr-author' } } } },
+          data: {
+            viewer: { login: 'pr-author' },
+            repository: { pullRequest: { author: { login: 'pr-author' } } },
+          },
         }),
       } as Response;
     };
@@ -595,7 +657,10 @@ describe('reviewPostedValidator', () => {
           return {
             ok: true,
             json: async () => ({
-              data: { repository: { pullRequest: { author: { login: 'pr-author' } } } },
+              data: {
+                viewer: { login: 'pr-author' },
+                repository: { pullRequest: { author: { login: 'pr-author' } } },
+              },
             }),
           } as Response;
         }

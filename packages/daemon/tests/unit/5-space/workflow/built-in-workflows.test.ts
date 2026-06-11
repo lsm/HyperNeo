@@ -3231,13 +3231,15 @@ describe('PLAN_AND_DECOMPOSE_WORKFLOW agent slot customPrompt', () => {
     expect(seenLenses.sort()).toEqual([...lenses].sort());
   });
 
-  test('Plan Review prompt instructs waiting for codex reaction before voting', () => {
+  test('Plan Review prompt instructs hook hand-off for codex reaction wait', () => {
     const node = PLAN_AND_DECOMPOSE_WORKFLOW.nodes.find((n) => n.name === 'Plan Review')!;
     const prompt = node.agents[0].customPrompt!.value;
     expect(prompt).toContain('codex[bot]');
     expect(prompt).toContain('issues/{number}/reactions');
-    expect(prompt).toContain('poll every 60 seconds');
+    expect(prompt).toContain('hook-validated hand-off message');
     expect(prompt).toContain('10 minutes');
+    expect(prompt).not.toContain('Write the approval gate');
+    expect(prompt).not.toContain('retry the gate write');
   });
 
   test('Task Dispatcher node prompt references create_standalone_task and save_artifact', () => {
@@ -3391,14 +3393,16 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     expect(hook.classification).toBe('validation');
   });
 
-  test('FULLSTACK_QA_LOOP_WORKFLOW reviewer prompt instructs waiting for codex reaction', () => {
+  test('FULLSTACK_QA_LOOP_WORKFLOW reviewer prompt instructs hook hand-off for codex reaction wait', () => {
     const reviewNode = FULLSTACK_QA_LOOP_WORKFLOW.nodes.find((n) => n.name === 'Review')!;
     const prompt = reviewNode.agents[0].customPrompt!.value;
 
     expect(prompt).toContain('codex[bot]');
     expect(prompt).toContain('issues/{number}/reactions');
-    expect(prompt).toContain('poll every 60 seconds');
+    expect(prompt).toContain('hook-validated hand-off message');
     expect(prompt).toContain('10 minutes');
+    expect(prompt).not.toContain('Write the approval gate');
+    expect(prompt).not.toContain('retry the gate write');
   });
 
   test('FULLSTACK_QA_LOOP_WORKFLOW code-pr-gate lets only Coding publish PR URL', () => {
