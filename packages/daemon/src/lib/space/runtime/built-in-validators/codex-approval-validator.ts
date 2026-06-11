@@ -299,9 +299,10 @@ export const codexReviewApprovedValidator: BuiltInValidatorFn = async (context) 
     gateDataJson,
   } = context;
 
-  // Only enforce when the workflow node explicitly requests it
+  // Only enforce when the workflow node explicitly requests it or synthetic legacy hooks force it.
   const node = workflow?.nodes?.find((n) => n.name === nodeName);
-  if (!node?.requireCodexApproval) {
+  const forceCodexApproval = templateData?.forceCodexApproval === true;
+  if (!node?.requireCodexApproval && !forceCodexApproval) {
     return { type: 'allow' };
   }
 
@@ -546,6 +547,7 @@ export const codexReviewApprovedValidator: BuiltInValidatorFn = async (context) 
     return {
       type: 'block',
       reason: `Codex review check failed: ${message}`,
+      data: Object.keys(persisted).length > 0 ? { ...persisted, prUrl } : { prUrl },
     };
   }
 };

@@ -360,10 +360,22 @@ interface SpawnTaskAgentOptions {
   kickoff?: boolean;
 }
 
+function resolveSyntheticHookTarget(target: string, workflow: SpaceWorkflow): string[] {
+  const trimmed = target.trim();
+  if (!trimmed || trimmed === '*') return [];
+  const node = (workflow.nodes ?? []).find((n) => n.name === trimmed);
+  if (node) return [node.name];
+  const slotNodes = (workflow.nodes ?? []).filter((n) =>
+    (n.agents ?? []).some((agent) => agent.name === trimmed)
+  );
+  if (slotNodes.length > 0) return slotNodes.map((n) => n.name);
+  return [trimmed];
+}
+
 /** @internal Exported for tests. */
 export function withSyntheticCodexHooks(workflow: SpaceWorkflow): SpaceWorkflow {
   const existingHooks = workflow.hooks ?? [];
-  const codexHookSources = new Set(
+  const enabledCodexHookBySource = new Map(
     existingHooks
       .filter(
         (hook) =>
@@ -371,14 +383,13 @@ export function withSyntheticCodexHooks(workflow: SpaceWorkflow): SpaceWorkflow 
           hook.validator.kind === 'built_in' &&
           hook.validator.id === 'codex_review_approved'
       )
-      .map((hook) => hook.sourceNode)
+      .map((hook) => [hook.sourceNode, hook])
   );
   const gatesById = new Map((workflow.gates ?? []).map((gate) => [gate.id, gate]));
   const syntheticHooks: WorkflowHook[] = [];
   const hookManagedChannelIdsByHook = new Map<string, Set<string>>();
 
   for (const node of workflow.nodes ?? []) {
-    const hookId = `synthetic-codex-review-check-${node.id}`;
     const agentSlots = (node.agents ?? []).map((agent) => agent.name).filter(Boolean);
     const sourceNames = new Set([node.name, ...agentSlots]);
     const sourceChannels = (workflow.channels ?? []).filter(
@@ -393,15 +404,18 @@ export function withSyntheticCodexHooks(workflow: SpaceWorkflow): SpaceWorkflow 
       return !!gate && isApprovalGate(gate);
     });
     const shouldEnforceCodex = node.requireCodexApproval || legacyCodexChannels.length > 0;
-    if (!shouldEnforceCodex || codexHookSources.has(node.name)) continue;
+    if (!shouldEnforceCodex) continue;
 
+    const existingCodexHook = enabledCodexHookBySource.get(node.name);
+    const hookId = existingCodexHook?.id ?? `synthetic-codex-review-check-${node.id}`;
     const enforceForTargets = new Set<string>();
     const targetChannels = node.requireCodexApproval ? approvalGatedChannels : legacyCodexChannels;
     for (const channel of targetChannels) {
       const targets = Array.isArray(channel.to) ? channel.to : [channel.to];
       for (const target of targets) {
-        const trimmedTarget = target.trim();
-        if (trimmedTarget && trimmedTarget !== '*') enforceForTargets.add(trimmedTarget);
+        for (const resolvedTarget of resolveSyntheticHookTarget(target, workflow)) {
+          enforceForTargets.add(resolvedTarget);
+        }
       }
       if (channel.id && channel.hookIds && !channel.hookIds.includes(hookId)) {
         const channelIds = hookManagedChannelIdsByHook.get(hookId) ?? new Set<string>();
@@ -410,6 +424,7 @@ export function withSyntheticCodexHooks(workflow: SpaceWorkflow): SpaceWorkflow 
       }
     }
     if (targetChannels.length === 0) continue;
+    if (existingCodexHook) continue;
 
     syntheticHooks.push({
       id: hookId,
@@ -418,18 +433,16 @@ export function withSyntheticCodexHooks(workflow: SpaceWorkflow): SpaceWorkflow 
       method: 'send_message',
       validator: { kind: 'built_in', id: 'codex_review_approved', externalLookups: ['github'] },
       authorizedCallers: [{ sourceNode: node.name, agentSlots }],
-      ...(enforceForTargets.size > 0
-        ? { templateData: { enforceForTargets: [...enforceForTargets] } }
-        : {}),
+      templateData: { enforceForTargets: [...enforceForTargets], forceCodexApproval: true },
     });
   }
 
-  if (syntheticHooks.length === 0) return workflow;
+  if (syntheticHooks.length === 0 && hookManagedChannelIdsByHook.size === 0) return workflow;
   const channels = (workflow.channels ?? []).map((channel) => {
     if (!channel.id || !channel.hookIds) return channel;
-    const hookIdsToAdd = syntheticHooks
-      .map((hook) => hook.id)
-      .filter((hookId) => hookManagedChannelIdsByHook.get(hookId)?.has(channel.id!));
+    const hookIdsToAdd = [...hookManagedChannelIdsByHook.entries()]
+      .filter(([, channelIds]) => channelIds.has(channel.id!))
+      .map(([hookId]) => hookId);
     if (hookIdsToAdd.length === 0) return channel;
     return { ...channel, hookIds: [...channel.hookIds, ...hookIdsToAdd] };
   });
