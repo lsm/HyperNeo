@@ -3,8 +3,12 @@ export interface GateDataShapeField {
   type: string;
 }
 
-export function getSendMessageTargets(target: string | string[]): string[] {
-  return Array.isArray(target) ? target : [target];
+export function getSendMessageTargets(
+  target: string | string[],
+  broadcastTargets: readonly string[] = []
+): string[] {
+  const targets = Array.isArray(target) ? target : [target];
+  return [...new Set(targets.flatMap((item) => (item === '*' ? broadcastTargets : [item])))];
 }
 
 export function formatGatedHandoffCall(
@@ -15,7 +19,9 @@ export function formatGatedHandoffCall(
 }
 
 function formatGateDataShape(fields: readonly GateDataShapeField[]): string {
-  const entries = fields.map((field) => `${field.name}: ${formatGateDataPlaceholder(field)}`);
+  const entries = fields.map(
+    (field) => `${JSON.stringify(field.name)}: ${formatGateDataPlaceholder(field)}`
+  );
   return `{ ${entries.join(', ')} }`;
 }
 

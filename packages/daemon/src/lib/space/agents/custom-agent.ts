@@ -535,7 +535,10 @@ function buildGatedHandoffLines(
     );
     if (writableFields.length === 0) continue;
 
-    for (const target of getSendMessageTargets(channel.to)) {
+    for (const target of getSendMessageTargets(
+      channel.to,
+      getBroadcastTargets(workflow, currentNode)
+    )) {
       lines.push(
         `  - ${describeChannelTarget(channel, target)}: call \`${formatGatedHandoffCall(target, writableFields)}\`; \`save_artifact\` alone does not deliver this gated handoff.`
       );
@@ -556,8 +559,12 @@ function describeChannel(channel: WorkflowChannel): string {
 }
 
 function describeChannelTarget(channel: WorkflowChannel, target: string): string {
-  if (!Array.isArray(channel.to)) return describeChannel(channel);
+  if (!Array.isArray(channel.to) && channel.to !== '*') return describeChannel(channel);
   return channel.label ? `${target} (${channel.label})` : target;
+}
+
+function getBroadcastTargets(workflow: SpaceWorkflow, currentNode: WorkflowNode): string[] {
+  return workflow.nodes.filter((node) => node.id !== currentNode.id).map((node) => node.name);
 }
 
 function isGateWritableFromNode(

@@ -407,7 +407,7 @@ describe('buildCustomAgentTaskMessage', () => {
 
     expect(message).toContain('- Outbound gated handoffs:');
     expect(message).toContain(
-      'Code (Plan → Code): call `send_message(target="Code", message="<short summary>", data: { pr_url: "<pr_url>" })`'
+      'Code (Plan → Code): call `send_message(target="Code", message="<short summary>", data: { "pr_url": "<pr_url>" })`'
     );
     expect(message).toContain('`save_artifact` alone does not deliver this gated handoff');
   });
@@ -643,7 +643,7 @@ describe('buildCustomAgentTaskMessage', () => {
     );
 
     expect(message).toContain(
-      'Review (Coding → Review): call `send_message(target="Review", message="<short summary>", data: { pr_url: "<pr_url>" })`'
+      'Review (Coding → Review): call `send_message(target="Review", message="<short summary>", data: { "pr_url": "<pr_url>" })`'
     );
     expect(message).toContain('`save_artifact` alone does not deliver this gated handoff');
   });
@@ -665,7 +665,7 @@ describe('buildCustomAgentTaskMessage', () => {
     );
 
     expect(message).toContain(
-      'Review (Coding → Review): call `send_message(target="Review", message="<short summary>", data: { pr_url: "<pr_url>" })`'
+      'Review (Coding → Review): call `send_message(target="Review", message="<short summary>", data: { "pr_url": "<pr_url>" })`'
     );
     expect(message).toContain('`save_artifact` alone does not deliver this gated handoff');
   });
@@ -692,12 +692,80 @@ describe('buildCustomAgentTaskMessage', () => {
     );
 
     expect(message).toContain(
-      'Code (Plan → Reviewers): call `send_message(target="Code", message="<short summary>", data: { pr_url: "<pr_url>" })`'
+      'Code (Plan → Reviewers): call `send_message(target="Code", message="<short summary>", data: { "pr_url": "<pr_url>" })`'
     );
     expect(message).toContain(
-      'QA (Plan → Reviewers): call `send_message(target="QA", message="<short summary>", data: { pr_url: "<pr_url>" })`'
+      'QA (Plan → Reviewers): call `send_message(target="QA", message="<short summary>", data: { "pr_url": "<pr_url>" })`'
     );
     expect(message).not.toContain('send_message(target=["Code", "QA"]');
+  });
+
+  it('emits scalar send_message examples for broadcast gated channels', () => {
+    const workflow = makeWorkflow({
+      channels: [
+        {
+          id: 'ch-plan-broadcast',
+          from: 'Plan',
+          to: '*',
+          label: 'Plan → All',
+          gateId: 'plan-ready-gate',
+        },
+      ],
+    });
+    const message = buildCustomAgentTaskMessage(
+      makeConfig({
+        workflow,
+        workflowRun: makeWorkflowRun({ workflowId: workflow.id }),
+        nodeId: 'node-1',
+        agentSlotName: 'Coder',
+      })
+    );
+
+    expect(message).toContain(
+      'Code (Plan → All): call `send_message(target="Code", message="<short summary>", data: { "pr_url": "<pr_url>" })`'
+    );
+    expect(message).not.toContain('send_message(target="*"');
+  });
+
+  it('quotes gate field names in generated handoff data examples', () => {
+    const workflow = makeWorkflow({
+      channels: [
+        {
+          id: 'ch-plan-to-code',
+          from: 'Plan',
+          to: 'Code',
+          label: 'Plan → Code',
+          gateId: 'plan-ready-gate',
+        },
+      ],
+      gates: [
+        {
+          id: 'plan-ready-gate',
+          label: 'PR Ready',
+          description: 'Planner has opened a plan PR',
+          fields: [
+            {
+              name: 'pr-url',
+              type: 'string',
+              writers: ['Plan'],
+              check: { op: 'exists' },
+            },
+          ],
+          resetOnCycle: false,
+        },
+      ],
+    });
+    const message = buildCustomAgentTaskMessage(
+      makeConfig({
+        workflow,
+        workflowRun: makeWorkflowRun({ workflowId: workflow.id }),
+        nodeId: 'node-1',
+        agentSlotName: 'Coder',
+      })
+    );
+
+    expect(message).toContain('data: { "pr-url": "<pr-url>" }');
+    expect(message).not.toContain('data: { pr-url:');
   });
 });
 

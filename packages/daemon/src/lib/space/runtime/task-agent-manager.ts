@@ -45,6 +45,7 @@ import type {
   MessageContent,
   MessageImage,
   MessageOrigin,
+  WorkflowNode,
   WorkflowNodeAgent,
 } from '@neokai/shared';
 import type { AppMcpLifecycleManager } from '../../mcp/app-mcp-lifecycle-manager';
@@ -2387,7 +2388,10 @@ export class TaskAgentManager {
           continue;
         }
 
-        for (const target of getSendMessageTargets(channel.to)) {
+        for (const target of getSendMessageTargets(
+          channel.to,
+          this.getBroadcastTargets(workflow, node)
+        )) {
           lines.push(
             `  - When ready, call \`${formatGatedHandoffCall(target, writableFields)}\`; this is required to activate the target. \`save_artifact\` alone does not deliver gated handoffs.`
           );
@@ -2431,6 +2435,10 @@ export class TaskAgentManager {
     if (check.op === '==') return `== ${JSON.stringify(check.value)}`;
     if (check.op === '!=') return `!= ${JSON.stringify(check.value)}`;
     return check.op;
+  }
+
+  private getBroadcastTargets(workflow: SpaceWorkflow, currentNode: WorkflowNode): string[] {
+    return workflow.nodes.filter((node) => node.id !== currentNode.id).map((node) => node.name);
   }
 
   private normalizeAgentNameToken(value: string): string {
