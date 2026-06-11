@@ -129,7 +129,7 @@ function githubTokenForHost(host: string): string | undefined {
 async function githubGraphql(
   host: string,
   query: string,
-  variables: Record<string, string | number | null | undefined>
+  variables: Record<string, string | number | boolean | null | undefined>
 ): Promise<{ ok: true; json: unknown } | { ok: false }> {
   if (!trustedGithubHosts().has(host)) return { ok: false };
 
@@ -162,7 +162,10 @@ async function githubGraphql(
     const args = ['api', '--hostname', host, 'graphql', '-f', `query=${query}`];
     for (const [key, value] of Object.entries(variables)) {
       if (value === null || value === undefined) continue;
-      args.push(typeof value === 'number' ? '-F' : '-f', `${key}=${value}`);
+      args.push(
+        typeof value === 'number' || typeof value === 'boolean' ? '-F' : '-f',
+        `${key}=${value}`
+      );
     }
     const proc = Bun.spawn(['gh', ...args], {
       stdout: 'pipe',
@@ -196,10 +199,12 @@ async function checkCodexApproval(
   let commentsCursor: string | undefined;
   let threadsCursor: string | undefined;
   let headSha: string | undefined;
+  let commentsDone = false;
+  let threadsDone = false;
 
   for (;;) {
     const query = `
-      query($owner:String!,$name:String!,$number:Int!,$commentsCursor:String,$threadsCursor:String) {
+      query($owner:String!,$name:String!,$number:Int!,$commentsCursor:String,$threadsCursor:String,$includeComments:Boolean!,$includeThreads:Boolean!) {
         repository(owner:$owner,name:$name) {
           pullRequest(number:$number) {
             headRefOid
@@ -207,7 +212,7 @@ async function checkCodexApproval(
             reactions(first:100) {
               nodes { content createdAt user { login } }
             }
-            comments(first:100, after:$commentsCursor) {
+            comments(first:100, after:$commentsCursor) @include(if:$includeComments) {
               nodes {
                 reactions(first:100) {
                   nodes { content createdAt user { login } }
@@ -215,14 +220,16 @@ async function checkCodexApproval(
               }
               pageInfo { hasNextPage endCursor }
             }
-            reviewThreads(first:100, after:$threadsCursor) {
+            reviewThreads(first:100, after:$threadsCursor) @include(if:$includeThreads) {
               nodes {
+                id
                 comments(first:100) {
                   nodes {
                     reactions(first:100) {
                       nodes { content createdAt user { login } }
                     }
                   }
+                  pageInfo { hasNextPage endCursor }
                 }
               }
               pageInfo { hasNextPage endCursor }
@@ -238,6 +245,8 @@ async function checkCodexApproval(
       number: parsed.number,
       commentsCursor,
       threadsCursor,
+      includeComments: !commentsDone,
+      includeThreads: !threadsDone,
     });
     if (!result.ok) return { status: 'error', headSha };
 
@@ -264,6 +273,7 @@ async function checkCodexApproval(
             };
             reviewThreads?: {
               nodes?: Array<{
+                id?: string;
                 comments?: {
                   nodes?: Array<{
                     reactions?: {
@@ -274,6 +284,7 @@ async function checkCodexApproval(
                       }>;
                     };
                   }>;
+                  pageInfo?: { hasNextPage?: boolean; endCursor?: string };
                 };
               }>;
               pageInfo?: { hasNextPage?: boolean; endCursor?: string };
@@ -323,24 +334,83 @@ async function checkCodexApproval(
       }
     }
 
-    // Review comments
+    // Review comments. Fetch replies beyond GraphQL's first 100 comments with per-thread calls.
     for (const thread of pr.reviewThreads?.nodes ?? []) {
       for (const comment of thread.comments?.nodes ?? []) {
         if (comment.reactions?.nodes?.some(isFreshCodexPlusOne)) {
           return { status: 'approved', headSha };
         }
       }
+      let threadCommentsCursor = thread.comments?.pageInfo?.hasNextPage
+        ? thread.comments.pageInfo.endCursor
+        : undefined;
+      while (thread.id && threadCommentsCursor) {
+        const threadResult = await githubGraphql(
+          parsed.host,
+          `
+            query($threadId:ID!,$commentsCursor:String) {
+              node(id:$threadId) {
+                ... on PullRequestReviewThread {
+                  comments(first:100, after:$commentsCursor) {
+                    nodes {
+                      reactions(first:100) {
+                        nodes { content createdAt user { login } }
+                      }
+                    }
+                    pageInfo { hasNextPage endCursor }
+                  }
+                }
+              }
+            }
+          `,
+          { threadId: thread.id, commentsCursor: threadCommentsCursor }
+        );
+        if (!threadResult.ok) return { status: 'error', headSha };
+        const threadJson = threadResult.json as {
+          data?: {
+            node?: {
+              comments?: {
+                nodes?: Array<{
+                  reactions?: {
+                    nodes?: Array<{
+                      content?: string;
+                      createdAt?: string;
+                      user?: { login?: string };
+                    }>;
+                  };
+                }>;
+                pageInfo?: { hasNextPage?: boolean; endCursor?: string };
+              };
+            };
+          };
+          errors?: unknown[];
+        };
+        if (threadJson.errors) return { status: 'error', headSha };
+        const comments = threadJson.data?.node?.comments;
+        for (const comment of comments?.nodes ?? []) {
+          if (comment.reactions?.nodes?.some(isFreshCodexPlusOne)) {
+            return { status: 'approved', headSha };
+          }
+        }
+        threadCommentsCursor = comments?.pageInfo?.hasNextPage
+          ? comments.pageInfo.endCursor
+          : undefined;
+      }
     }
 
-    const nextCommentsCursor = pr.comments?.pageInfo?.hasNextPage
-      ? pr.comments.pageInfo.endCursor
-      : undefined;
-    const nextThreadsCursor = pr.reviewThreads?.pageInfo?.hasNextPage
-      ? pr.reviewThreads.pageInfo.endCursor
-      : undefined;
-    if (!nextCommentsCursor && !nextThreadsCursor) return { status: 'waiting', headSha };
-    commentsCursor = nextCommentsCursor;
-    threadsCursor = nextThreadsCursor;
+    if (!commentsDone) {
+      commentsCursor = pr.comments?.pageInfo?.hasNextPage
+        ? pr.comments.pageInfo.endCursor
+        : undefined;
+      commentsDone = !commentsCursor;
+    }
+    if (!threadsDone) {
+      threadsCursor = pr.reviewThreads?.pageInfo?.hasNextPage
+        ? pr.reviewThreads.pageInfo.endCursor
+        : undefined;
+      threadsDone = !threadsCursor;
+    }
+    if (commentsDone && threadsDone) return { status: 'waiting', headSha };
   }
 }
 
@@ -414,7 +484,7 @@ export async function reviewApprovalValidator(
     if (prUrl) {
       const codexResult = await checkCodexApproval(
         prUrl,
-        codexStartedAt ?? (storedHeadSha || resetPending ? undefined : 'head')
+        codexStartedAt ?? (storedHeadSha ? undefined : 'head')
       );
 
       // New revision pushed — reset codex timer so stale approvals don't release
@@ -429,6 +499,13 @@ export async function reviewApprovalValidator(
             _codex_head_sha: codexResult.headSha,
             _pr_url: prUrl,
           },
+        };
+      }
+
+      if (codexResult.status === 'approved') {
+        return {
+          type: 'allow',
+          message: `Threshold met (${approvalCount}/${threshold}) with codex approval.`,
         };
       }
 
@@ -453,13 +530,6 @@ export async function reviewApprovalValidator(
         return {
           type: 'allow',
           message: `Threshold met (${approvalCount}/${threshold}). Codex approval timed out after ${timeoutMs}ms; allowing.`,
-        };
-      }
-
-      if (codexResult.status === 'approved') {
-        return {
-          type: 'allow',
-          message: `Threshold met (${approvalCount}/${threshold}) with codex approval.`,
         };
       }
 

@@ -516,6 +516,136 @@ describe('reviewPostedValidator', () => {
     expect(result.type).toBe('block');
   });
 
+  test('rejects PR comment GraphQL fallback when author is not the PR author', async () => {
+    const originalFetch = globalThis.fetch;
+    const originalToken = process.env.GITHUB_TOKEN;
+    process.env.GITHUB_TOKEN = 'test-token';
+    let callCount = 0;
+    globalThis.fetch = async (url) => {
+      callCount += 1;
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/repos/test/repo/issues/comments/99')) {
+        return { ok: false, json: async () => ({}) } as Response;
+      }
+      if (callCount === 2) {
+        return {
+          ok: true,
+          json: async () => ({
+            data: {
+              repository: {
+                pullRequest: {
+                  reviews: { nodes: [], pageInfo: { hasNextPage: false } },
+                  comments: {
+                    nodes: [
+                      {
+                        databaseId: 99,
+                        createdAt: '2999-01-01T00:00:00Z',
+                        user: { login: 'reviewer' },
+                      },
+                    ],
+                    pageInfo: { hasNextPage: false },
+                  },
+                  reviewThreads: { nodes: [], pageInfo: { hasNextPage: false } },
+                },
+              },
+            },
+          }),
+        } as Response;
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          data: { repository: { pullRequest: { author: { login: 'pr-author' } } } },
+        }),
+      } as Response;
+    };
+
+    const ctx = makeCtx({
+      params: {
+        data: { review_url: 'https://github.com/test/repo/pull/1#issuecomment-99' },
+      },
+      gateData: [
+        {
+          gateId: 'code-pr-gate',
+          data: { pr_url: 'https://github.com/test/repo/pull/1' },
+          updatedAt: Date.now(),
+        },
+      ],
+    });
+    const result = await reviewPostedValidator(ctx);
+    globalThis.fetch = originalFetch;
+    process.env.GITHUB_TOKEN = originalToken;
+
+    expect(result.type).toBe('block');
+  });
+
+  test('returns missing when paginated evidence cursors exhaust at different times', async () => {
+    const originalFetch = globalThis.fetch;
+    const originalToken = process.env.GITHUB_TOKEN;
+    process.env.GITHUB_TOKEN = 'test-token';
+    let evidenceCalls = 0;
+    globalThis.fetch = async (url) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/repos/test/repo/pulls/comments/404')) {
+        return { ok: false, json: async () => ({}) } as Response;
+      }
+      if (path.endsWith('/graphql')) {
+        evidenceCalls += 1;
+        if (evidenceCalls === 1) {
+          return {
+            ok: true,
+            json: async () => ({
+              data: { repository: { pullRequest: { author: { login: 'pr-author' } } } },
+            }),
+          } as Response;
+        }
+        return {
+          ok: true,
+          json: async () => ({
+            data: {
+              repository: {
+                pullRequest: {
+                  reviews: { nodes: [], pageInfo: { hasNextPage: false } },
+                  comments: {
+                    nodes: [],
+                    pageInfo: { hasNextPage: evidenceCalls === 2, endCursor: 'comment-cursor' },
+                  },
+                  reviewThreads: {
+                    nodes: [],
+                    pageInfo: {
+                      hasNextPage: evidenceCalls === 2 || evidenceCalls === 3,
+                      endCursor: `thread-cursor-${evidenceCalls}`,
+                    },
+                  },
+                },
+              },
+            },
+          }),
+        } as Response;
+      }
+      return { ok: false, json: async () => ({}) } as Response;
+    };
+
+    const ctx = makeCtx({
+      params: {
+        data: { review_url: 'https://github.com/test/repo/pull/1#discussion_r404' },
+      },
+      gateData: [
+        {
+          gateId: 'code-pr-gate',
+          data: { pr_url: 'https://github.com/test/repo/pull/1' },
+          updatedAt: Date.now(),
+        },
+      ],
+    });
+    const result = await reviewPostedValidator(ctx);
+    globalThis.fetch = originalFetch;
+    process.env.GITHUB_TOKEN = originalToken;
+
+    expect(result.type).toBe('block');
+    expect(evidenceCalls).toBe(4);
+  });
+
   test('finds review evidence on later pages', async () => {
     const originalFetch = globalThis.fetch;
     const originalToken = process.env.GITHUB_TOKEN;

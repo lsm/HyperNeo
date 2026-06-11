@@ -79,7 +79,7 @@ function apiPathMatches(path: string | undefined, suffix: string): boolean {
 async function githubGraphql(
   host: string,
   query: string,
-  variables: Record<string, string | number | null | undefined>
+  variables: Record<string, string | number | boolean | null | undefined>
 ): Promise<{ ok: true; json: unknown } | { ok: false }> {
   if (!trustedGithubHosts().has(host)) return { ok: false };
 
@@ -109,7 +109,10 @@ async function githubGraphql(
     const args = ['api', '--hostname', host, 'graphql', '-f', `query=${query}`];
     for (const [key, value] of Object.entries(variables)) {
       if (value === null || value === undefined) continue;
-      args.push(typeof value === 'number' ? '-F' : '-f', `${key}=${value}`);
+      args.push(
+        typeof value === 'number' || typeof value === 'boolean' ? '-F' : '-f',
+        `${key}=${value}`
+      );
     }
     const proc = Bun.spawn(['gh', ...args], {
       stdout: 'pipe',
@@ -216,14 +219,16 @@ async function verifyReviewEvidenceOnGithub(
   const isActionableReviewState = (state?: string) =>
     state === 'APPROVED' || state === 'CHANGES_REQUESTED';
   const matches = (
-    node: { databaseId?: number; createdAt?: string; state?: string },
+    node: { databaseId?: number; createdAt?: string; state?: string; user?: { login?: string } },
     expectedId?: number,
-    requireActionableState = false
+    options: { requireActionableState?: boolean; requirePrAuthor?: boolean } = {}
   ) =>
     expectedId !== undefined &&
     node.databaseId === expectedId &&
     isFresh(node.createdAt) &&
-    (!requireActionableState || isActionableReviewState(node.state));
+    (!options.requireActionableState || isActionableReviewState(node.state)) &&
+    (!options.requirePrAuthor ||
+      (prAuthorLogin !== undefined && node.user?.login === prAuthorLogin));
 
   if (expectedDiscussionId !== undefined) {
     const result = await githubRest(
@@ -295,21 +300,24 @@ async function verifyReviewEvidenceOnGithub(
   let reviewsCursor: string | undefined;
   let commentsCursor: string | undefined;
   let threadsCursor: string | undefined;
+  let reviewsDone = false;
+  let commentsDone = false;
+  let threadsDone = false;
 
   for (;;) {
     const query = `
-      query($owner:String!,$name:String!,$number:Int!,$reviewsCursor:String,$commentsCursor:String,$threadsCursor:String) {
+      query($owner:String!,$name:String!,$number:Int!,$reviewsCursor:String,$commentsCursor:String,$threadsCursor:String,$includeReviews:Boolean!,$includeComments:Boolean!,$includeThreads:Boolean!) {
         repository(owner:$owner,name:$name) {
           pullRequest(number:$number) {
-            reviews(first:100, after:$reviewsCursor) {
+            reviews(first:100, after:$reviewsCursor) @include(if:$includeReviews) {
               nodes { databaseId createdAt state }
               pageInfo { hasNextPage endCursor }
             }
-            comments(first:100, after:$commentsCursor) {
-              nodes { databaseId createdAt }
+            comments(first:100, after:$commentsCursor) @include(if:$includeComments) {
+              nodes { databaseId createdAt user { login } }
               pageInfo { hasNextPage endCursor }
             }
-            reviewThreads(first:100, after:$threadsCursor) {
+            reviewThreads(first:100, after:$threadsCursor) @include(if:$includeThreads) {
               nodes { comments(first:100) { nodes { databaseId createdAt } } }
               pageInfo { hasNextPage endCursor }
             }
@@ -325,6 +333,9 @@ async function verifyReviewEvidenceOnGithub(
       reviewsCursor,
       commentsCursor,
       threadsCursor,
+      includeReviews: !reviewsDone,
+      includeComments: !commentsDone,
+      includeThreads: !threadsDone,
     });
     if (!result.ok) return 'error';
 
@@ -337,7 +348,7 @@ async function verifyReviewEvidenceOnGithub(
               pageInfo?: { hasNextPage?: boolean; endCursor?: string };
             };
             comments?: {
-              nodes?: Array<{ databaseId?: number; createdAt?: string }>;
+              nodes?: Array<{ databaseId?: number; createdAt?: string; user?: { login?: string } }>;
               pageInfo?: { hasNextPage?: boolean; endCursor?: string };
             };
             reviewThreads?: {
@@ -355,27 +366,39 @@ async function verifyReviewEvidenceOnGithub(
     const pr = json.data?.repository?.pullRequest;
     if (!pr) return 'error';
 
-    if (pr.reviews?.nodes?.some((n) => matches(n, expectedReviewId, true))) return 'verified';
-    if (pr.comments?.nodes?.some((n) => matches(n, expectedIssueCommentId))) return 'verified';
+    if (
+      pr.reviews?.nodes?.some((n) => matches(n, expectedReviewId, { requireActionableState: true }))
+    ) {
+      return 'verified';
+    }
+    if (
+      pr.comments?.nodes?.some((n) => matches(n, expectedIssueCommentId, { requirePrAuthor: true }))
+    ) {
+      return 'verified';
+    }
     for (const thread of pr.reviewThreads?.nodes ?? []) {
       if (thread.comments?.nodes?.some((n) => matches(n, expectedDiscussionId))) {
         return 'verified';
       }
     }
 
-    const nextReviewsCursor = pr.reviews?.pageInfo?.hasNextPage
-      ? pr.reviews.pageInfo.endCursor
-      : undefined;
-    const nextCommentsCursor = pr.comments?.pageInfo?.hasNextPage
-      ? pr.comments.pageInfo.endCursor
-      : undefined;
-    const nextThreadsCursor = pr.reviewThreads?.pageInfo?.hasNextPage
-      ? pr.reviewThreads.pageInfo.endCursor
-      : undefined;
-    if (!nextReviewsCursor && !nextCommentsCursor && !nextThreadsCursor) return 'missing';
-    reviewsCursor = nextReviewsCursor;
-    commentsCursor = nextCommentsCursor;
-    threadsCursor = nextThreadsCursor;
+    if (!reviewsDone) {
+      reviewsCursor = pr.reviews?.pageInfo?.hasNextPage ? pr.reviews.pageInfo.endCursor : undefined;
+      reviewsDone = !reviewsCursor;
+    }
+    if (!commentsDone) {
+      commentsCursor = pr.comments?.pageInfo?.hasNextPage
+        ? pr.comments.pageInfo.endCursor
+        : undefined;
+      commentsDone = !commentsCursor;
+    }
+    if (!threadsDone) {
+      threadsCursor = pr.reviewThreads?.pageInfo?.hasNextPage
+        ? pr.reviewThreads.pageInfo.endCursor
+        : undefined;
+      threadsDone = !threadsCursor;
+    }
+    if (reviewsDone && commentsDone && threadsDone) return 'missing';
   }
 }
 

@@ -265,6 +265,49 @@ describe('reviewApprovalValidator', () => {
     expect(state?._codex_head_sha).toBe('abc123');
   });
 
+  test('uses head baseline after reset when codex approval is already fresh', async () => {
+    const originalFetch = globalThis.fetch;
+    const originalToken = process.env.GITHUB_TOKEN;
+    process.env.GITHUB_TOKEN = 'test-token';
+    globalThis.fetch = async () =>
+      ({
+        ok: true,
+        json: async () => ({
+          data: {
+            repository: {
+              pullRequest: {
+                headRefOid: 'abc123',
+                commits: { nodes: [{ commit: { committedDate: '2026-01-01T00:00:00Z' } }] },
+                reactions: {
+                  nodes: [
+                    {
+                      user: { login: 'codex[bot]' },
+                      content: 'THUMBS_UP',
+                      createdAt: '2026-01-02T00:00:00Z',
+                    },
+                  ],
+                },
+                comments: { nodes: [], pageInfo: { hasNextPage: false } },
+                reviewThreads: { nodes: [], pageInfo: { hasNextPage: false } },
+              },
+            },
+          },
+        }),
+      }) as Response;
+
+    const ctx = makeCtx({
+      params: { data: { approved: true, pr_url: 'https://github.com/test/repo/pull/42' } },
+      hookLocalState: { _codex_started_at: null, _codex_head_sha: null },
+      templateData: { threshold: 1, requireCodex: true },
+    });
+
+    const result = await reviewApprovalValidator(ctx);
+    globalThis.fetch = originalFetch;
+    process.env.GITHUB_TOKEN = originalToken;
+
+    expect(result.type).toBe('allow');
+  });
+
   test('finds codex approval on later issue comment pages', async () => {
     const originalFetch = globalThis.fetch;
     const originalToken = process.env.GITHUB_TOKEN;
@@ -301,6 +344,85 @@ describe('reviewApprovalValidator', () => {
                         pageInfo: { hasNextPage: false },
                       },
                 reviewThreads: { nodes: [], pageInfo: { hasNextPage: false } },
+              },
+            },
+          },
+        }),
+      } as Response;
+    };
+
+    const ctx = makeCtx({
+      params: { data: { approved: true, pr_url: 'https://github.com/test/repo/pull/42' } },
+      hookLocalState: {},
+      templateData: { threshold: 1, requireCodex: true },
+    });
+
+    const result = await reviewApprovalValidator(ctx);
+    globalThis.fetch = originalFetch;
+    process.env.GITHUB_TOKEN = originalToken;
+
+    expect(result.type).toBe('allow');
+    expect(callCount).toBe(2);
+  });
+
+  test('finds codex approval after first 100 comments in a review thread', async () => {
+    const originalFetch = globalThis.fetch;
+    const originalToken = process.env.GITHUB_TOKEN;
+    process.env.GITHUB_TOKEN = 'test-token';
+    let callCount = 0;
+    globalThis.fetch = async (_url, init) => {
+      callCount += 1;
+      const body = JSON.parse((init as { body: string }).body);
+      const query = body.query as string;
+      if (query.includes('node(id:$threadId)')) {
+        return {
+          ok: true,
+          json: async () => ({
+            data: {
+              node: {
+                comments: {
+                  nodes: [
+                    {
+                      reactions: {
+                        nodes: [
+                          {
+                            user: { login: 'chatgpt-codex-connector[bot]' },
+                            content: 'THUMBS_UP',
+                            createdAt: '2026-01-02T00:00:00Z',
+                          },
+                        ],
+                      },
+                    },
+                  ],
+                  pageInfo: { hasNextPage: false },
+                },
+              },
+            },
+          }),
+        } as Response;
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          data: {
+            repository: {
+              pullRequest: {
+                headRefOid: 'abc123',
+                commits: { nodes: [{ commit: { committedDate: '2026-01-01T00:00:00Z' } }] },
+                reactions: { nodes: [] },
+                comments: { nodes: [], pageInfo: { hasNextPage: false } },
+                reviewThreads: {
+                  nodes: [
+                    {
+                      id: 'thread-1',
+                      comments: {
+                        nodes: [],
+                        pageInfo: { hasNextPage: true, endCursor: 'thread-comment-cursor' },
+                      },
+                    },
+                  ],
+                  pageInfo: { hasNextPage: false },
+                },
               },
             },
           },
