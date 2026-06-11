@@ -147,53 +147,6 @@ import type { ToolsConfigManager } from '../../../../src/lib/session/tools-confi
 import type { MessageHub } from '@neokai/shared';
 import { DEFAULT_GLOBAL_SETTINGS } from '@neokai/shared';
 
-type TitleSdkStubLifecycle = SessionLifecycle & {
-  generateTitleWithSdk: (provider: string, modelId: string, messageText: string) => Promise<string>;
-};
-
-function stubTitleSdk(lifecycle: SessionLifecycle): void {
-  (lifecycle as TitleSdkStubLifecycle).generateTitleWithSdk = mock(
-    async (provider: string, modelId: string) => {
-      const sdkModelId = provider === 'glm' ? 'default' : modelId;
-      lastTitleQueryOptions = {
-        model: sdkModelId,
-        thinking: { type: 'disabled' },
-        env:
-          provider === 'glm'
-            ? {
-                ANTHROPIC_DEFAULT_HAIKU_MODEL: 'glm-5-turbo',
-                ANTHROPIC_DEFAULT_SONNET_MODEL: 'glm-5-turbo',
-                ANTHROPIC_DEFAULT_OPUS_MODEL: 'glm-5-turbo',
-              }
-            : {},
-      };
-      lastTitleProcessEnv = {
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: provider === 'glm' ? 'glm-5-turbo' : undefined,
-        ANTHROPIC_DEFAULT_SONNET_MODEL: provider === 'glm' ? 'glm-5-turbo' : undefined,
-        ANTHROPIC_DEFAULT_OPUS_MODEL: provider === 'glm' ? 'glm-5-turbo' : undefined,
-      };
-
-      for await (const message of makeAsyncGen(mockSdkMessages)) {
-        const candidate = message as {
-          type?: string;
-          message?: { content?: Array<{ type?: string; text?: string }> };
-        };
-        if (candidate.type !== 'assistant') continue;
-        const title = (candidate.message?.content ?? [])
-          .filter((block) => block.type === 'text')
-          .map((block) => block.text ?? '')
-          .join(' ')
-          .trim();
-        if (title) {
-          return title.replace(/\*\*(.+?)\*\*/g, '$1').replace(/\*(.+?)\*/g, '$1');
-        }
-      }
-
-      throw new Error('No text content in SDK response');
-    }
-  );
-}
-
 describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
   let lifecycle: SessionLifecycle;
   let mockDb: Database;
@@ -312,8 +265,6 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
       mockToolsConfigManager,
       mockAgentSessionFactory
     );
-
-    stubTitleSdk(lifecycle);
   });
 
   afterEach(async () => {
@@ -366,7 +317,6 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
       mockToolsConfigManager,
       mockAgentSessionFactory
     );
-    stubTitleSdk(lifecycle);
 
     await lifecycle.generateTitleAndRenameBranch('test-id', 'Create a login form');
 
