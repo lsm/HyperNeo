@@ -772,6 +772,7 @@ describe('space-workflow-handlers', () => {
       expect(calledParams.name).toBe(template.name);
       expect(calledParams.templateName).toBe(template.name);
       expect(calledParams.templateHash).toBe(templateHash);
+      expect(calledParams.hooks).toEqual(template.hooks ?? null);
       const calledNodes = calledParams.nodes as Array<{ id: string; name: string }>;
       expect(calledNodes.map((node) => node.id)).toContain('step-1');
       expect(calledNodes.find((node) => node.id === 'step-1')?.name).toBe(template.nodes[0].name);
@@ -1227,6 +1228,7 @@ describe('space-workflow-handlers', () => {
       expect(calledParams.name).toBe(template.name);
       expect(calledParams.templateName).toBe(template.name);
       expect(calledParams.templateHash).toBe(templateHash);
+      expect(calledParams.hooks).toEqual(template.hooks ?? null);
       const calledNodes = calledParams.nodes as Array<{ id: string; name: string }>;
       expect(calledNodes.map((node) => node.id)).toContain('step-1');
       expect(calledNodes.find((node) => node.id === 'step-1')?.name).toBe(template.nodes[0].name);

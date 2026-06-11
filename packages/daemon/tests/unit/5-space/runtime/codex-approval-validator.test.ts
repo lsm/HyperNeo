@@ -113,10 +113,23 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
 });
 
-function mockPrWith(sha: string, reactions: unknown[] = []) {
+function mockPrWith(sha: string, reactions: unknown[] = [], commitDate = new Date().toISOString()) {
   fetchMock = async (url) => {
     if (url.includes('/pulls/42')) {
-      return new Response(JSON.stringify({ head: { sha } }), { status: 200 });
+      return new Response(
+        JSON.stringify({
+          head: {
+            sha,
+            repo: { name: 'repo', full_name: 'owner/repo', owner: { login: 'owner' } },
+          },
+        }),
+        { status: 200 }
+      );
+    }
+    if (url.includes(`/commits/${sha}`)) {
+      return new Response(JSON.stringify({ commit: { committer: { date: commitDate } } }), {
+        status: 200,
+      });
     }
     if (url.includes('/issues/42/reactions')) {
       return new Response(JSON.stringify(reactions), { status: 200 });
@@ -129,8 +142,10 @@ const PR_URL = 'https://github.com/owner/repo/pull/42';
 const PR_ARTIFACT = [{ data: { pr_url: PR_URL } }];
 
 describe('codexReviewApprovedValidator', () => {
-  test('allow when node does not require Codex', async () => {
+  test('explicit enabled Codex hook enforces even without node flag', async () => {
+    mockPrWith('abc123', []);
     const ctx = makeContext({
+      currentArtifacts: PR_ARTIFACT,
       workflow: {
         ...WORKFLOW,
         nodes: WORKFLOW.nodes.map((n) =>
@@ -139,7 +154,8 @@ describe('codexReviewApprovedValidator', () => {
       },
     });
     const result = await codexReviewApprovedValidator(ctx);
-    expect(result.type).toBe('allow');
+    expect(result.type).toBe('retryable_block');
+    expect(fetchCalls.some((c) => c.url.includes('/pulls/42'))).toBe(true);
   });
 
   test('block when github external lookup not permitted', async () => {
@@ -249,6 +265,27 @@ describe('codexReviewApprovedValidator', () => {
     expect(result.type).toBe('block');
     expect((result as { reason?: string }).reason).toContain('timeout');
     expect((result as { data?: Record<string, unknown> }).data?.terminalOutcome).toBe('block');
+  });
+
+  test('allow fresh +1 even when retry happens after timeout window', async () => {
+    mockPrWith('abc123', [
+      { id: 1, user: { login: 'codex[bot]' }, content: '+1', created_at: new Date().toISOString() },
+    ]);
+    const ctx = makeContext({
+      currentArtifacts: PR_ARTIFACT,
+      lastResult: {
+        type: 'retryable_block',
+        reason: 'Waiting',
+        data: {
+          checkStartedAt: Date.now() - 601_000,
+          currentHeadSha: 'abc123',
+          currentHeadBecameHeadAt: Date.now() - 700_000,
+        },
+      } as WorkflowHookResult,
+    });
+    const result = await codexReviewApprovedValidator(ctx);
+    expect(result.type).toBe('allow');
+    expect((result as { data?: Record<string, unknown> }).data?.terminalOutcome).toBe('allow');
   });
 
   test('terminal allow verified against current PR head', async () => {
@@ -451,6 +488,20 @@ describe('codexReviewApprovedValidator', () => {
     expect(fetchCalls.some((c) => c.url.includes('/pulls/42'))).toBe(true);
   });
 
+  test('resolved run PR URL overrides flat workflow gate data', async () => {
+    mockPrWith('abc123', [
+      { id: 1, user: { login: 'codex[bot]' }, content: '+1', created_at: new Date().toISOString() },
+    ]);
+    const ctx = makeContext({
+      prUrl: PR_URL,
+      gateDataJson: JSON.stringify({ pr_url: 'https://github.com/owner/old-repo/pull/99' }),
+    });
+    const result = await codexReviewApprovedValidator(ctx);
+    expect(result.type).toBe('allow');
+    expect(fetchCalls.some((c) => c.url.includes('/pulls/42'))).toBe(true);
+    expect(fetchCalls.some((c) => c.url.includes('/pulls/99'))).toBe(false);
+  });
+
   test('reaction in same second as head change is not stale', async () => {
     // GitHub timestamps are second-precision. A +1 posted in the same second
     // as currentHeadBecameHeadAt must not be treated as stale.
@@ -478,16 +529,35 @@ describe('codexReviewApprovedValidator', () => {
     expect(result.type).toBe('allow');
   });
 
-  test('head change resets freshness anchor', async () => {
+  test('head change anchors freshness to commit timestamp', async () => {
     let callCount = 0;
+    const commitDate = '2026-01-02T00:00:00Z';
+    const approvalDate = '2026-01-02T00:00:30Z';
     fetchMock = async (url) => {
       if (url.includes('/pulls/42')) {
         callCount++;
         const sha = callCount === 1 ? 'old-sha' : 'new-sha';
-        return new Response(JSON.stringify({ head: { sha } }), { status: 200 });
+        return new Response(
+          JSON.stringify({
+            head: {
+              sha,
+              repo: { name: 'repo', full_name: 'owner/repo', owner: { login: 'owner' } },
+            },
+          }),
+          { status: 200 }
+        );
+      }
+      if (url.includes('/commits/new-sha')) {
+        return new Response(JSON.stringify({ commit: { committer: { date: commitDate } } }), {
+          status: 200,
+        });
       }
       if (url.includes('/issues/42/reactions')) {
-        return new Response('[]', { status: 200 });
+        const reactions =
+          url.includes('page=1') && callCount > 1
+            ? [{ id: 1, user: { login: 'codex[bot]' }, content: '+1', created_at: approvalDate }]
+            : [];
+        return new Response(JSON.stringify(reactions), { status: 200 });
       }
       return new Response('{}', { status: 200 });
     };
@@ -501,17 +571,15 @@ describe('codexReviewApprovedValidator', () => {
     expect(result1.type).toBe('retryable_block');
     expect((result1 as { data?: Record<string, unknown> }).data?.currentHeadSha).toBe('old-sha');
 
-    // Second call: new head, freshness anchor updated
+    // Second call: new head, +1 after commit but before observation is accepted
     const result2 = await codexReviewApprovedValidator(
       makeContext({
         currentArtifacts: artifacts,
         lastResult: result1 as WorkflowHookResult,
       })
     );
-    expect(result2.type).toBe('retryable_block');
-    const data2 = (result2 as { data?: Record<string, unknown> }).data;
-    expect(data2?.currentHeadSha).toBe('new-sha');
-    expect(typeof data2?.currentHeadBecameHeadAt).toBe('number');
+    expect(result2.type).toBe('allow');
+    expect((result2 as { data?: Record<string, unknown> }).data?.currentHeadSha).toBe('new-sha');
   });
 });
 

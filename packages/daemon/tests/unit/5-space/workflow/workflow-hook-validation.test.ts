@@ -88,6 +88,33 @@ describe('workflow hook validation', () => {
     ).toBe(false);
   });
 
+  test('requires github external lookup for codex_review_approved hooks', () => {
+    const errors = validateWorkflowHooks(
+      [
+        validHook({
+          validator: { kind: 'built_in', id: 'codex_review_approved' },
+        }),
+      ],
+      nodes
+    ).join('\n');
+    expect(errors).toContain('codex_review_approved requires "github"');
+
+    expect(
+      validateWorkflowHooks(
+        [
+          validHook({
+            validator: {
+              kind: 'built_in',
+              id: 'codex_review_approved',
+              externalLookups: ['github'],
+            },
+          }),
+        ],
+        nodes
+      )
+    ).toEqual([]);
+  });
+
   test('narrows script hooks to bash and GitHub-only external lookups', () => {
     const errors = validateWorkflowHooks(
       [

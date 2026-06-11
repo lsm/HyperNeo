@@ -50,6 +50,24 @@ interface GitHubReaction {
   user: { login: string };
 }
 
+interface GitHubPullRequest {
+  head?: {
+    sha?: string;
+    repo?: {
+      name?: string;
+      full_name?: string;
+      owner?: { login?: string };
+    };
+  };
+}
+
+interface GitHubCommit {
+  commit?: {
+    committer?: { date?: string };
+    author?: { date?: string };
+  };
+}
+
 interface ParsedPr {
   owner: string;
   repo: string;
@@ -97,7 +115,8 @@ function resolvePrUrl(
     [key: string]: unknown;
   }>,
   params: Record<string, unknown>,
-  gateDataJson?: string
+  gateDataJson?: string,
+  contextPrUrl?: string
 ): string | null {
   // Prefer the current handoff's PR URL (params.data) over stale artifacts
   const nestedData = params.data as Record<string, unknown> | undefined;
@@ -114,6 +133,8 @@ function resolvePrUrl(
     (typeof params.pr_url === 'string' && params.pr_url) ||
     '';
   if (url) return url;
+
+  if (contextPrUrl) return contextPrUrl;
 
   if (gateDataJson) {
     try {
@@ -174,6 +195,24 @@ async function fetchAllReactions(pr: ParsedPr, token: string): Promise<GitHubRea
     page++;
   }
   return results;
+}
+
+async function fetchCommitTimestamp(
+  pr: ParsedPr,
+  prData: GitHubPullRequest,
+  headSha: string,
+  token: string
+): Promise<number | undefined> {
+  const apiBase = getApiBase(pr.host);
+  const repoFullName = prData.head?.repo?.full_name;
+  const repoOwner = prData.head?.repo?.owner?.login ?? repoFullName?.split('/')[0] ?? pr.owner;
+  const repoName = prData.head?.repo?.name ?? repoFullName?.split('/')[1] ?? pr.repo;
+  const commit = (await fetchGitHubJson(
+    `${apiBase}/repos/${repoOwner}/${repoName}/commits/${headSha}`,
+    token
+  )) as GitHubCommit;
+
+  return parseIsoMs(commit.commit?.committer?.date) ?? parseIsoMs(commit.commit?.author?.date);
 }
 
 function toEpochMs(iso: string): number {
@@ -287,7 +326,6 @@ const ALLOWED_PR_HOSTS = new Set(['github.com', process.env.GH_HOST].filter(Bool
 
 export const codexReviewApprovedValidator: BuiltInValidatorFn = async (context) => {
   const {
-    nodeName,
     workflow,
     lastResult,
     currentArtifacts,
@@ -297,14 +335,8 @@ export const codexReviewApprovedValidator: BuiltInValidatorFn = async (context) 
     templateData,
     workflowStartIso,
     gateDataJson,
+    prUrl: contextPrUrl,
   } = context;
-
-  // Only enforce when the workflow node explicitly requests it or synthetic legacy hooks force it.
-  const node = workflow?.nodes?.find((n) => n.name === nodeName);
-  const forceCodexApproval = templateData?.forceCodexApproval === true;
-  if (!node?.requireCodexApproval && !forceCodexApproval) {
-    return { type: 'allow' };
-  }
 
   // For send_message hooks, only enforce when the target matches configured handoff targets.
   // Targets may be node names, agent slot names, or @worker:/@role: addresses.
@@ -340,7 +372,7 @@ export const codexReviewApprovedValidator: BuiltInValidatorFn = async (context) 
     };
   }
 
-  const prUrl = resolvePrUrl(currentArtifacts, params ?? {}, gateDataJson);
+  const prUrl = resolvePrUrl(currentArtifacts, params ?? {}, gateDataJson, contextPrUrl);
   if (!prUrl) {
     return {
       type: 'block',
@@ -378,7 +410,7 @@ export const codexReviewApprovedValidator: BuiltInValidatorFn = async (context) 
     const prData = (await fetchGitHubJson(
       `${apiBase}/repos/${prInfo.owner}/${prInfo.repo}/pulls/${prInfo.number}`,
       token
-    )) as { head?: { sha?: string } };
+    )) as GitHubPullRequest;
 
     const currentHeadSha = prData.head?.sha;
     if (!currentHeadSha) {
@@ -422,11 +454,14 @@ export const codexReviewApprovedValidator: BuiltInValidatorFn = async (context) 
     const isFirstCheck = persisted.currentHeadSha === undefined;
     const workflowStartedAt = parseIsoMs(workflowStartIso);
     const firstCheckFreshnessAnchor = workflowStartedAt ?? now;
+    const headCommitTimestamp = headChanged
+      ? await fetchCommitTimestamp(prInfo, prData, currentHeadSha, token)
+      : undefined;
     // Truncate to second precision so comparisons with GitHub timestamps
     // (which are second-precision) don't treat same-second reactions as stale.
     const currentHeadBecameHeadAt = toEpochSeconds(
       headChanged
-        ? now
+        ? (headCommitTimestamp ?? now)
         : (persisted.currentHeadBecameHeadAt ?? (isFirstCheck ? firstCheckFreshnessAnchor : now))
     );
     const checkStartedAt = headChanged ? now : (persisted.checkStartedAt ?? now);
@@ -471,6 +506,20 @@ export const codexReviewApprovedValidator: BuiltInValidatorFn = async (context) 
 
     const elapsedMs = now - checkStartedAt;
 
+    // Fresh +1 → allow, even if it arrived just before a timeout-bound retry.
+    if (freshPlusOnes.length > 0) {
+      return {
+        type: 'allow',
+        data: {
+          currentHeadSha,
+          lastReaction: 'current_plus_one' as const,
+          lastReactionTimestamp,
+          prUrl,
+          terminalOutcome: 'allow',
+        },
+      };
+    }
+
     // Timeout check
     if (elapsedMs >= CODEX_TIMEOUT_MS) {
       return {
@@ -482,20 +531,6 @@ export const codexReviewApprovedValidator: BuiltInValidatorFn = async (context) 
           elapsedMs,
           prUrl,
           terminalOutcome: 'block',
-        },
-      };
-    }
-
-    // Fresh +1 → allow
-    if (freshPlusOnes.length > 0) {
-      return {
-        type: 'allow',
-        data: {
-          currentHeadSha,
-          lastReaction: 'current_plus_one' as const,
-          lastReactionTimestamp,
-          prUrl,
-          terminalOutcome: 'allow',
         },
       };
     }

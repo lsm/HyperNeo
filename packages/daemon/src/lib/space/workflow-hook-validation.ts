@@ -306,6 +306,12 @@ export function validateWorkflowHooks(hooks: unknown, nodes: WorkflowNodeInput[]
           }
         }
       }
+      if (
+        validator.id === 'codex_review_approved' &&
+        (!Array.isArray(validator.externalLookups) || !validator.externalLookups.includes('github'))
+      ) {
+        errors.push(`${loc}.validator.externalLookups: codex_review_approved requires "github"`);
+      }
     } else if (validator.kind === 'script') {
       if (validator.interpreter !== 'bash') {
         errors.push(`${loc}.validator.interpreter: expected "bash"`);

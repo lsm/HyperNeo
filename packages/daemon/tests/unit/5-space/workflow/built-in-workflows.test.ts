@@ -3430,6 +3430,17 @@ describe('getBuiltInGateScript()', () => {
 describe('all built-in workflow gates pass creation-time validation', () => {
   const workflows = getBuiltInWorkflows();
 
+  test('codex_review_bot remains a registered marker feature', () => {
+    const errors = validateGate({
+      id: 'codex-marker-gate',
+      fields: [
+        { name: 'approved', type: 'boolean', writers: [], check: { op: '==', value: true } },
+      ],
+      features: { codex_review_bot: true },
+    });
+    expect(errors).toHaveLength(0);
+  });
+
   test('every built-in gate is structurally valid', () => {
     for (const wf of workflows) {
       for (const gate of wf.gates ?? []) {

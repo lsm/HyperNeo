@@ -6,7 +6,11 @@ export interface GateFeatureDefinition {
   poll?: () => GatePoll;
 }
 
-const gateFeatureRegistry = new Map<string, GateFeatureDefinition>();
+const gateFeatureRegistry = new Map<string, GateFeatureDefinition>([
+  // Marker feature retained for custom workflow UI/backward compatibility.
+  // Runtime enforcement is handled by codex_review_approved hooks.
+  ['codex_review_bot', {}],
+]);
 
 export function registerGateFeature(name: string, definition: GateFeatureDefinition): void {
   gateFeatureRegistry.set(name, definition);
