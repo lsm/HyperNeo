@@ -129,7 +129,7 @@ function githubTokenForHost(host: string): string | undefined {
 async function githubGraphql(
   host: string,
   query: string,
-  variables: Record<string, string | number>
+  variables: Record<string, string | number | null | undefined>
 ): Promise<{ ok: true; json: unknown } | { ok: false }> {
   if (!trustedGithubHosts().has(host)) return { ok: false };
 
@@ -161,6 +161,7 @@ async function githubGraphql(
   try {
     const args = ['api', '--hostname', host, 'graphql', '-f', `query=${query}`];
     for (const [key, value] of Object.entries(variables)) {
+      if (value === null || value === undefined) continue;
       args.push(typeof value === 'number' ? '-F' : '-f', `${key}=${value}`);
     }
     const proc = Bun.spawn(['gh', ...args], {
@@ -192,132 +193,155 @@ async function checkCodexApproval(
   const parsed = parsePrUrl(prUrl);
   if (!parsed) return { status: 'error' };
 
-  const query = `
-    query($owner:String!,$name:String!,$number:Int!) {
-      repository(owner:$owner,name:$name) {
-        pullRequest(number:$number) {
-          headRefOid
-          commits(last:1) { nodes { commit { committedDate } } }
-          reactions(first:100) {
-            nodes { content createdAt user { login } }
-          }
-          comments(first:100) {
-            nodes {
-              reactions(first:100) {
-                nodes { content createdAt user { login } }
-              }
+  let commentsCursor: string | undefined;
+  let threadsCursor: string | undefined;
+  let headSha: string | undefined;
+
+  for (;;) {
+    const query = `
+      query($owner:String!,$name:String!,$number:Int!,$commentsCursor:String,$threadsCursor:String) {
+        repository(owner:$owner,name:$name) {
+          pullRequest(number:$number) {
+            headRefOid
+            commits(last:1) { nodes { commit { committedDate } } }
+            reactions(first:100) {
+              nodes { content createdAt user { login } }
             }
-          }
-          reviewThreads(first:100) {
-            nodes {
-              comments(first:100) {
-                nodes {
-                  reactions(first:100) {
-                    nodes { content createdAt user { login } }
+            comments(first:100, after:$commentsCursor) {
+              nodes {
+                reactions(first:100) {
+                  nodes { content createdAt user { login } }
+                }
+              }
+              pageInfo { hasNextPage endCursor }
+            }
+            reviewThreads(first:100, after:$threadsCursor) {
+              nodes {
+                comments(first:100) {
+                  nodes {
+                    reactions(first:100) {
+                      nodes { content createdAt user { login } }
+                    }
                   }
                 }
               }
+              pageInfo { hasNextPage endCursor }
             }
           }
         }
       }
-    }
-  `;
+    `;
 
-  const result = await githubGraphql(parsed.host, query, {
-    owner: parsed.owner,
-    name: parsed.repo,
-    number: parsed.number,
-  });
-  if (!result.ok) return { status: 'error' };
+    const result = await githubGraphql(parsed.host, query, {
+      owner: parsed.owner,
+      name: parsed.repo,
+      number: parsed.number,
+      commentsCursor,
+      threadsCursor,
+    });
+    if (!result.ok) return { status: 'error', headSha };
 
-  const json = result.json as {
-    data?: {
-      repository?: {
-        pullRequest?: {
-          headRefOid?: string;
-          commits?: { nodes?: Array<{ commit?: { committedDate?: string } }> };
-          reactions?: {
-            nodes?: Array<{ content?: string; createdAt?: string; user?: { login?: string } }>;
-          };
-          comments?: {
-            nodes?: Array<{
-              reactions?: {
-                nodes?: Array<{
-                  content?: string;
-                  createdAt?: string;
-                  user?: { login?: string };
-                }>;
-              };
-            }>;
-          };
-          reviewThreads?: {
-            nodes?: Array<{
-              comments?: {
-                nodes?: Array<{
-                  reactions?: {
-                    nodes?: Array<{
-                      content?: string;
-                      createdAt?: string;
-                      user?: { login?: string };
-                    }>;
-                  };
-                }>;
-              };
-            }>;
+    const json = result.json as {
+      data?: {
+        repository?: {
+          pullRequest?: {
+            headRefOid?: string;
+            commits?: { nodes?: Array<{ commit?: { committedDate?: string } }> };
+            reactions?: {
+              nodes?: Array<{ content?: string; createdAt?: string; user?: { login?: string } }>;
+            };
+            comments?: {
+              nodes?: Array<{
+                reactions?: {
+                  nodes?: Array<{
+                    content?: string;
+                    createdAt?: string;
+                    user?: { login?: string };
+                  }>;
+                };
+              }>;
+              pageInfo?: { hasNextPage?: boolean; endCursor?: string };
+            };
+            reviewThreads?: {
+              nodes?: Array<{
+                comments?: {
+                  nodes?: Array<{
+                    reactions?: {
+                      nodes?: Array<{
+                        content?: string;
+                        createdAt?: string;
+                        user?: { login?: string };
+                      }>;
+                    };
+                  }>;
+                };
+              }>;
+              pageInfo?: { hasNextPage?: boolean; endCursor?: string };
+            };
           };
         };
       };
+      errors?: unknown[];
     };
-    errors?: unknown[];
-  };
 
-  if (json.errors) return { status: 'error' };
+    if (json.errors) return { status: 'error', headSha };
 
-  const pr = json.data?.repository?.pullRequest;
-  if (!pr) return { status: 'error' };
+    const pr = json.data?.repository?.pullRequest;
+    if (!pr) return { status: 'error', headSha };
 
-  const headSha = pr.headRefOid;
-  const headCommittedAt = pr.commits?.nodes?.[0]?.commit?.committedDate;
-  const headCommittedMs = headCommittedAt ? Date.parse(headCommittedAt) : Number.NaN;
-  const since =
-    sinceMs === 'head'
-      ? Number.isFinite(headCommittedMs)
-        ? headCommittedMs
-        : Number.POSITIVE_INFINITY
-      : (sinceMs ?? Number.POSITIVE_INFINITY);
+    headSha = pr.headRefOid;
+    const headCommittedAt = pr.commits?.nodes?.[0]?.commit?.committedDate;
+    const headCommittedMs = headCommittedAt ? Date.parse(headCommittedAt) : Number.NaN;
+    const since =
+      sinceMs === 'head'
+        ? Number.isFinite(headCommittedMs)
+          ? headCommittedMs
+          : Number.POSITIVE_INFINITY
+        : (sinceMs ?? Number.POSITIVE_INFINITY);
 
-  const isFreshCodexPlusOne = (r: {
-    content?: string;
-    createdAt?: string;
-    user?: { login?: string };
-  }): boolean => {
-    const createdAt = r.createdAt ? Date.parse(r.createdAt) : Number.NaN;
-    return (
-      (r.user?.login === 'codex[bot]' || r.user?.login === 'chatgpt-codex-connector[bot]') &&
-      r.content === 'THUMBS_UP' &&
-      Number.isFinite(createdAt) &&
-      createdAt >= since
-    );
-  };
+    const isFreshCodexPlusOne = (r: {
+      content?: string;
+      createdAt?: string;
+      user?: { login?: string };
+    }): boolean => {
+      const createdAt = r.createdAt ? Date.parse(r.createdAt) : Number.NaN;
+      return (
+        (r.user?.login === 'codex[bot]' || r.user?.login === 'chatgpt-codex-connector[bot]') &&
+        r.content === 'THUMBS_UP' &&
+        Number.isFinite(createdAt) &&
+        createdAt >= since
+      );
+    };
 
-  // PR body reactions
-  if (pr.reactions?.nodes?.some(isFreshCodexPlusOne)) return { status: 'approved', headSha };
+    // PR body reactions
+    if (pr.reactions?.nodes?.some(isFreshCodexPlusOne)) return { status: 'approved', headSha };
 
-  // Issue comments
-  for (const comment of pr.comments?.nodes ?? []) {
-    if (comment.reactions?.nodes?.some(isFreshCodexPlusOne)) return { status: 'approved', headSha };
-  }
-
-  // Review comments
-  for (const thread of pr.reviewThreads?.nodes ?? []) {
-    for (const comment of thread.comments?.nodes ?? []) {
-      if (comment.reactions?.nodes?.some(isFreshCodexPlusOne))
+    // Issue comments
+    for (const comment of pr.comments?.nodes ?? []) {
+      if (comment.reactions?.nodes?.some(isFreshCodexPlusOne)) {
         return { status: 'approved', headSha };
+      }
     }
-  }
 
-  return { status: 'waiting', headSha };
+    // Review comments
+    for (const thread of pr.reviewThreads?.nodes ?? []) {
+      for (const comment of thread.comments?.nodes ?? []) {
+        if (comment.reactions?.nodes?.some(isFreshCodexPlusOne)) {
+          return { status: 'approved', headSha };
+        }
+      }
+    }
+
+    const nextCommentsCursor = pr.comments?.pageInfo?.hasNextPage
+      ? pr.comments.pageInfo.endCursor
+      : undefined;
+    const nextThreadsCursor = pr.reviewThreads?.pageInfo?.hasNextPage
+      ? pr.reviewThreads.pageInfo.endCursor
+      : undefined;
+    if (!nextCommentsCursor && !nextThreadsCursor) return { status: 'waiting', headSha };
+    commentsCursor = nextCommentsCursor;
+    threadsCursor = nextThreadsCursor;
+  }
 }
 
 /**

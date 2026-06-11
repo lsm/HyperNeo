@@ -213,8 +213,17 @@ async function verifyReviewEvidenceOnGithub(
     const t = createdAt ? Date.parse(createdAt) : Number.NaN;
     return Number.isFinite(t) && t >= since;
   };
-  const matches = (node: { databaseId?: number; createdAt?: string }, expectedId?: number) =>
-    expectedId !== undefined && node.databaseId === expectedId && isFresh(node.createdAt);
+  const isActionableReviewState = (state?: string) =>
+    state === 'APPROVED' || state === 'CHANGES_REQUESTED';
+  const matches = (
+    node: { databaseId?: number; createdAt?: string; state?: string },
+    expectedId?: number,
+    requireActionableState = false
+  ) =>
+    expectedId !== undefined &&
+    node.databaseId === expectedId &&
+    isFresh(node.createdAt) &&
+    (!requireActionableState || isActionableReviewState(node.state));
 
   if (expectedDiscussionId !== undefined) {
     const result = await githubRest(
@@ -267,8 +276,17 @@ async function verifyReviewEvidenceOnGithub(
       `/repos/${parsed.owner}/${parsed.repo}/pulls/${parsed.number}/reviews/${expectedReviewId}`
     );
     if (result.ok) {
-      const review = result.json as { id?: number; submitted_at?: string; submittedAt?: string };
-      if (review.id === expectedReviewId && isFresh(review.submitted_at ?? review.submittedAt)) {
+      const review = result.json as {
+        id?: number;
+        submitted_at?: string;
+        submittedAt?: string;
+        state?: string;
+      };
+      if (
+        review.id === expectedReviewId &&
+        isFresh(review.submitted_at ?? review.submittedAt) &&
+        isActionableReviewState(review.state)
+      ) {
         return 'verified';
       }
     }
@@ -284,7 +302,7 @@ async function verifyReviewEvidenceOnGithub(
         repository(owner:$owner,name:$name) {
           pullRequest(number:$number) {
             reviews(first:100, after:$reviewsCursor) {
-              nodes { databaseId createdAt }
+              nodes { databaseId createdAt state }
               pageInfo { hasNextPage endCursor }
             }
             comments(first:100, after:$commentsCursor) {
@@ -315,7 +333,7 @@ async function verifyReviewEvidenceOnGithub(
         repository?: {
           pullRequest?: {
             reviews?: {
-              nodes?: Array<{ databaseId?: number; createdAt?: string }>;
+              nodes?: Array<{ databaseId?: number; createdAt?: string; state?: string }>;
               pageInfo?: { hasNextPage?: boolean; endCursor?: string };
             };
             comments?: {
@@ -337,7 +355,7 @@ async function verifyReviewEvidenceOnGithub(
     const pr = json.data?.repository?.pullRequest;
     if (!pr) return 'error';
 
-    if (pr.reviews?.nodes?.some((n) => matches(n, expectedReviewId))) return 'verified';
+    if (pr.reviews?.nodes?.some((n) => matches(n, expectedReviewId, true))) return 'verified';
     if (pr.comments?.nodes?.some((n) => matches(n, expectedIssueCommentId))) return 'verified';
     for (const thread of pr.reviewThreads?.nodes ?? []) {
       if (thread.comments?.nodes?.some((n) => matches(n, expectedDiscussionId))) {
@@ -417,7 +435,7 @@ async function findReviewEvidence(
         if (!(await verifyUrl(url))) continue;
         return { reviewUrl: url, source: 'artifact' };
       }
-    } else {
+    } else if (artifact.nodeId !== ctx.nodeId) {
       break;
     }
   }

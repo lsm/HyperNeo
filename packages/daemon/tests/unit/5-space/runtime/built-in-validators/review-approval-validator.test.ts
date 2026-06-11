@@ -265,6 +265,63 @@ describe('reviewApprovalValidator', () => {
     expect(state?._codex_head_sha).toBe('abc123');
   });
 
+  test('finds codex approval on later issue comment pages', async () => {
+    const originalFetch = globalThis.fetch;
+    const originalToken = process.env.GITHUB_TOKEN;
+    process.env.GITHUB_TOKEN = 'test-token';
+    let callCount = 0;
+    globalThis.fetch = async () => {
+      callCount += 1;
+      return {
+        ok: true,
+        json: async () => ({
+          data: {
+            repository: {
+              pullRequest: {
+                headRefOid: 'abc123',
+                commits: { nodes: [{ commit: { committedDate: '2026-01-01T00:00:00Z' } }] },
+                reactions: { nodes: [] },
+                comments:
+                  callCount === 1
+                    ? { nodes: [], pageInfo: { hasNextPage: true, endCursor: 'comment-cursor' } }
+                    : {
+                        nodes: [
+                          {
+                            reactions: {
+                              nodes: [
+                                {
+                                  user: { login: 'chatgpt-codex-connector[bot]' },
+                                  content: 'THUMBS_UP',
+                                  createdAt: '2026-01-02T00:00:00Z',
+                                },
+                              ],
+                            },
+                          },
+                        ],
+                        pageInfo: { hasNextPage: false },
+                      },
+                reviewThreads: { nodes: [], pageInfo: { hasNextPage: false } },
+              },
+            },
+          },
+        }),
+      } as Response;
+    };
+
+    const ctx = makeCtx({
+      params: { data: { approved: true, pr_url: 'https://github.com/test/repo/pull/42' } },
+      hookLocalState: {},
+      templateData: { threshold: 1, requireCodex: true },
+    });
+
+    const result = await reviewApprovalValidator(ctx);
+    globalThis.fetch = originalFetch;
+    process.env.GITHUB_TOKEN = originalToken;
+
+    expect(result.type).toBe('allow');
+    expect(callCount).toBe(2);
+  });
+
   test('allows immediately when codex already approved', async () => {
     const originalFetch = globalThis.fetch;
     const originalToken = process.env.GITHUB_TOKEN;

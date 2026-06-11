@@ -377,6 +377,101 @@ describe('reviewPostedValidator', () => {
     expect(result.type).toBe('allow');
   });
 
+  test('blocks PR review URL when the formal review was only commented', async () => {
+    const originalFetch = globalThis.fetch;
+    const originalToken = process.env.GITHUB_TOKEN;
+    process.env.GITHUB_TOKEN = 'test-token';
+    globalThis.fetch = async (url) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/repos/test/repo/pulls/1/reviews/77')) {
+        return {
+          ok: true,
+          json: async () => ({
+            id: 77,
+            submitted_at: '2999-01-01T00:00:00Z',
+            state: 'COMMENTED',
+          }),
+        } as Response;
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          data: {
+            repository: {
+              pullRequest: {
+                author: { login: 'pr-author' },
+                reviews: { nodes: [], pageInfo: { hasNextPage: false } },
+                comments: { nodes: [], pageInfo: { hasNextPage: false } },
+                reviewThreads: { nodes: [], pageInfo: { hasNextPage: false } },
+              },
+            },
+          },
+        }),
+      } as Response;
+    };
+
+    const ctx = makeCtx({
+      params: {
+        data: { review_url: 'https://github.com/test/repo/pull/1#pullrequestreview-77' },
+      },
+      gateData: [
+        {
+          gateId: 'code-pr-gate',
+          data: { pr_url: 'https://github.com/test/repo/pull/1' },
+          updatedAt: Date.now(),
+        },
+      ],
+    });
+    const result = await reviewPostedValidator(ctx);
+    globalThis.fetch = originalFetch;
+    process.env.GITHUB_TOKEN = originalToken;
+
+    expect(result.type).toBe('block');
+  });
+
+  test('allows PR review URL when the formal review approved', async () => {
+    const originalFetch = globalThis.fetch;
+    const originalToken = process.env.GITHUB_TOKEN;
+    process.env.GITHUB_TOKEN = 'test-token';
+    globalThis.fetch = async (url) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/repos/test/repo/pulls/1/reviews/77')) {
+        return {
+          ok: true,
+          json: async () => ({
+            id: 77,
+            submitted_at: '2999-01-01T00:00:00Z',
+            state: 'APPROVED',
+          }),
+        } as Response;
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          data: { repository: { pullRequest: { author: { login: 'pr-author' } } } },
+        }),
+      } as Response;
+    };
+
+    const ctx = makeCtx({
+      params: {
+        data: { review_url: 'https://github.com/test/repo/pull/1#pullrequestreview-77' },
+      },
+      gateData: [
+        {
+          gateId: 'code-pr-gate',
+          data: { pr_url: 'https://github.com/test/repo/pull/1' },
+          updatedAt: Date.now(),
+        },
+      ],
+    });
+    const result = await reviewPostedValidator(ctx);
+    globalThis.fetch = originalFetch;
+    process.env.GITHUB_TOKEN = originalToken;
+
+    expect(result.type).toBe('allow');
+  });
+
   test('blocks PR issue comment URL when the comment author is not the PR author', async () => {
     const originalFetch = globalThis.fetch;
     const originalToken = process.env.GITHUB_TOKEN;
@@ -633,6 +728,44 @@ describe('reviewPostedValidator', () => {
     process.env.GITHUB_TOKEN = originalToken;
 
     expect(result.type).toBe('allow');
+  });
+
+  test('finds review artifact behind same-node audit artifact fallback', async () => {
+    await withMockEvidenceFetch(async () => {
+      const now = Date.now();
+      const ctx = makeCtx({
+        currentArtifacts: [
+          {
+            id: 'reviewer-progress',
+            nodeId: 'node-review',
+            type: 'progress',
+            key: 'audit',
+            data: { summary: 'review posted' },
+            createdAt: now,
+            updatedAt: now,
+          },
+          {
+            id: 'review-artifact',
+            nodeId: 'node-review',
+            type: 'review',
+            key: 'current',
+            data: { review_url: 'https://github.com/test/repo/pull/1#discussion_r42' },
+            createdAt: now - 1_000,
+            updatedAt: now - 1_000,
+          },
+        ],
+        gateData: [
+          {
+            gateId: 'code-pr-gate',
+            data: { pr_url: 'https://github.com/test/repo/pull/1' },
+            updatedAt: now,
+          },
+        ],
+      });
+      const result = await reviewPostedValidator(ctx);
+
+      expect(result.type).toBe('allow');
+    });
   });
 
   test('fails closed for nonexistent review URL when active PR data is unavailable', async () => {
