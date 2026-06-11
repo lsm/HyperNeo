@@ -45,6 +45,7 @@ import type {
   MessageContent,
   MessageImage,
   MessageOrigin,
+  WorkflowHook,
   WorkflowNodeAgent,
 } from '@neokai/shared';
 import type { AppMcpLifecycleManager } from '../../mcp/app-mcp-lifecycle-manager';
@@ -356,6 +357,49 @@ interface SpawnTaskAgentOptions {
    * `false` keeps the session idle until an explicit inbound message arrives.
    */
   kickoff?: boolean;
+}
+
+/** @internal Exported for tests. */
+export function withSyntheticCodexHooks(workflow: SpaceWorkflow): SpaceWorkflow {
+  const existingHooks = workflow.hooks ?? [];
+  const codexHookSources = new Set(
+    existingHooks
+      .filter(
+        (hook) =>
+          hook.validator.kind === 'built_in' && hook.validator.id === 'codex_review_approved'
+      )
+      .map((hook) => hook.sourceNode)
+  );
+  const syntheticHooks: WorkflowHook[] = [];
+
+  for (const node of workflow.nodes ?? []) {
+    if (!node.requireCodexApproval || codexHookSources.has(node.name)) continue;
+    const agentSlots = (node.agents ?? []).map((agent) => agent.name).filter(Boolean);
+    const sourceNames = new Set([node.name, ...agentSlots]);
+    const enforceForTargets = new Set<string>();
+    for (const channel of workflow.channels ?? []) {
+      if (!sourceNames.has(channel.from)) continue;
+      const targets = Array.isArray(channel.to) ? channel.to : [channel.to];
+      for (const target of targets) {
+        if (target && target !== '*') enforceForTargets.add(target);
+      }
+    }
+
+    syntheticHooks.push({
+      id: `synthetic-codex-review-check-${node.id}`,
+      enabled: true,
+      sourceNode: node.name,
+      method: 'send_message',
+      validator: { kind: 'built_in', id: 'codex_review_approved', externalLookups: ['github'] },
+      authorizedCallers: [{ sourceNode: node.name, agentSlots }],
+      ...(enforceForTargets.size > 0
+        ? { templateData: { enforceForTargets: [...enforceForTargets] } }
+        : {}),
+    });
+  }
+
+  if (syntheticHooks.length === 0) return workflow;
+  return { ...workflow, hooks: [...existingHooks, ...syntheticHooks] };
 }
 
 // ---------------------------------------------------------------------------
@@ -3828,18 +3872,22 @@ export class TaskAgentManager {
       }
     };
 
+    const effectiveWorkflow = workflow ? withSyntheticCodexHooks(workflow) : workflow;
     // Build workflow hook engine when the workflow defines hooks OR when any
     // channel declares hookIds (so missing-hook fail-closed checks run even
     // when the hooks array is empty or omitted).
-    const hasHookManagedChannels = (workflow?.channels ?? []).some(
+    const hasHookManagedChannels = (effectiveWorkflow?.channels ?? []).some(
       (ch) => ch.hookIds && ch.hookIds.length > 0
     );
     let hookEngine: WorkflowHookEngine | undefined;
-    if (workflow && ((workflow.hooks && workflow.hooks.length > 0) || hasHookManagedChannels)) {
+    if (
+      effectiveWorkflow &&
+      ((effectiveWorkflow.hooks && effectiveWorkflow.hooks.length > 0) || hasHookManagedChannels)
+    ) {
       const hookExecutor = new HookExecutor({ workspacePath });
 
       hookEngine = new WorkflowHookEngine({
-        workflow,
+        workflow: effectiveWorkflow,
         workflowRunId,
         nodeExecutionRepo: this.config.nodeExecutionRepo,
         workflowRunRepo: this.config.workflowRunRepo,

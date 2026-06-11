@@ -81,7 +81,8 @@ function resolvePrUrl(
     data?: Record<string, unknown>;
     [key: string]: unknown;
   }>,
-  params: Record<string, unknown>
+  params: Record<string, unknown>,
+  gateDataJson?: string
 ): string | null {
   // Prefer the current handoff's PR URL (params.data) over stale artifacts
   const nestedData = params.data as Record<string, unknown> | undefined;
@@ -98,6 +99,19 @@ function resolvePrUrl(
     (typeof params.pr_url === 'string' && params.pr_url) ||
     '';
   if (url) return url;
+
+  if (gateDataJson) {
+    try {
+      const gateData = JSON.parse(gateDataJson) as Record<string, unknown>;
+      const gateUrl =
+        (typeof gateData.prUrl === 'string' && gateData.prUrl) ||
+        (typeof gateData.pr_url === 'string' && gateData.pr_url) ||
+        '';
+      if (gateUrl) return gateUrl;
+    } catch {
+      // Ignore malformed optional gate data; validator will fall back to artifacts.
+    }
+  }
 
   // Fall back to run artifacts
   for (const artifact of currentArtifacts) {
@@ -150,6 +164,12 @@ async function fetchAllReactions(pr: ParsedPr, token: string): Promise<GitHubRea
 function toEpochMs(iso: string): number {
   const t = Date.parse(iso);
   return Number.isNaN(t) ? 0 : t;
+}
+
+function parseIsoMs(iso: string | undefined): number | undefined {
+  if (!iso) return undefined;
+  const t = Date.parse(iso);
+  return Number.isNaN(t) ? undefined : t;
 }
 
 /** Truncate to second precision to match GitHub reaction timestamps. */
@@ -260,6 +280,8 @@ export const codexReviewApprovedValidator: BuiltInValidatorFn = async (context) 
     permittedExternalLookups,
     methodName,
     templateData,
+    workflowStartIso,
+    gateDataJson,
   } = context;
 
   // Only enforce when the workflow node explicitly requests it
@@ -302,7 +324,7 @@ export const codexReviewApprovedValidator: BuiltInValidatorFn = async (context) 
     };
   }
 
-  const prUrl = resolvePrUrl(currentArtifacts, params ?? {});
+  const prUrl = resolvePrUrl(currentArtifacts, params ?? {}, gateDataJson);
   if (!prUrl) {
     return {
       type: 'block',
@@ -356,7 +378,15 @@ export const codexReviewApprovedValidator: BuiltInValidatorFn = async (context) 
 
     // Re-check terminal outcome after confirming head has not changed
     if (persisted.terminalOutcome === 'allow' && !headChanged) {
-      return { type: 'allow' };
+      return {
+        type: 'allow',
+        data: {
+          ...persisted,
+          currentHeadSha,
+          prUrl,
+          terminalOutcome: 'allow',
+        },
+      };
     }
     if (persisted.terminalOutcome === 'block' && !headChanged) {
       return {
@@ -368,10 +398,14 @@ export const codexReviewApprovedValidator: BuiltInValidatorFn = async (context) 
 
     const now = Date.now();
     const isFirstCheck = persisted.currentHeadSha === undefined;
+    const workflowStartedAt = parseIsoMs(workflowStartIso);
+    const firstCheckFreshnessAnchor = workflowStartedAt ?? now;
     // Truncate to second precision so comparisons with GitHub timestamps
     // (which are second-precision) don't treat same-second reactions as stale.
     const currentHeadBecameHeadAt = toEpochSeconds(
-      headChanged ? now : (persisted.currentHeadBecameHeadAt ?? now)
+      headChanged
+        ? now
+        : (persisted.currentHeadBecameHeadAt ?? (isFirstCheck ? firstCheckFreshnessAnchor : now))
     );
     const checkStartedAt = headChanged ? now : (persisted.checkStartedAt ?? now);
 
@@ -379,20 +413,18 @@ export const codexReviewApprovedValidator: BuiltInValidatorFn = async (context) 
     const reactions = await fetchAllReactions(prInfo, token);
     const codexReactions = reactions.filter((r) => CODEX_BOTS.has(r.user?.login));
 
-    // On first check, accept any reaction on the current head as fresh.
-    // On subsequent checks, only reactions posted after we first observed this head count.
-    const freshReactions = isFirstCheck
-      ? codexReactions
-      : codexReactions.filter((r) => toEpochMs(r.created_at) >= currentHeadBecameHeadAt);
+    // Reactions are PR-level, not commit-level. Even first hook invocation must
+    // require reactions posted after workflow start / first observed head time.
+    const freshReactions = codexReactions.filter(
+      (r) => toEpochMs(r.created_at) >= currentHeadBecameHeadAt
+    );
 
     const freshPlusOnes = freshReactions.filter((r) => r.content === '+1');
     const freshEyes = freshReactions.filter((r) => r.content === 'eyes');
 
-    const stalePlusOnes = isFirstCheck
-      ? []
-      : codexReactions.filter(
-          (r) => r.content === '+1' && toEpochMs(r.created_at) < currentHeadBecameHeadAt
-        );
+    const stalePlusOnes = codexReactions.filter(
+      (r) => r.content === '+1' && toEpochMs(r.created_at) < currentHeadBecameHeadAt
+    );
 
     // Determine the latest observed reaction (fresh or stale) for UX state
     const allSorted = [...codexReactions].sort(
@@ -408,9 +440,8 @@ export const codexReviewApprovedValidator: BuiltInValidatorFn = async (context) 
       if (latest.content === 'eyes') {
         lastReaction = 'eyes';
       } else if (latest.content === '+1') {
-        lastReaction = isFirstCheck
-          ? 'current_plus_one'
-          : toEpochMs(latest.created_at) >= currentHeadBecameHeadAt
+        lastReaction =
+          toEpochMs(latest.created_at) >= currentHeadBecameHeadAt
             ? 'current_plus_one'
             : 'stale_plus_one';
       }

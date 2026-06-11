@@ -18,6 +18,7 @@
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { codexReviewApprovedValidator } from '../../../../src/lib/space/runtime/built-in-validators/codex-approval-validator';
+import { withSyntheticCodexHooks } from '../../../../src/lib/space/runtime/task-agent-manager';
 import type { HookExecutorContext } from '../../../../src/lib/space/runtime/hook-executor';
 import type { SpaceWorkflow, WorkflowHookResult } from '@neokai/shared';
 
@@ -173,13 +174,17 @@ describe('codexReviewApprovedValidator', () => {
     expect((result as { data?: Record<string, unknown> }).data?.currentHeadSha).toBe('abc123');
   });
 
-  test('allow on pre-existing +1 on first invocation (no prior SHA)', async () => {
+  test('retryable_block on pre-run +1 on first invocation (no prior SHA)', async () => {
     mockPrWith('abc123', [
       { id: 1, user: { login: 'codex[bot]' }, content: '+1', created_at: '2026-01-01T00:00:00Z' },
     ]);
-    const ctx = makeContext({ currentArtifacts: PR_ARTIFACT });
+    const ctx = makeContext({
+      currentArtifacts: PR_ARTIFACT,
+      workflowStartIso: '2026-01-02T00:00:00Z',
+    });
     const result = await codexReviewApprovedValidator(ctx);
-    expect(result.type).toBe('allow');
+    expect(result.type).toBe('retryable_block');
+    expect((result as { reason?: string }).reason).toContain('stale');
     expect((result as { data?: Record<string, unknown> }).data?.currentHeadSha).toBe('abc123');
   });
 
@@ -257,6 +262,8 @@ describe('codexReviewApprovedValidator', () => {
     });
     const result = await codexReviewApprovedValidator(ctx);
     expect(result.type).toBe('allow');
+    expect((result as { data?: Record<string, unknown> }).data?.terminalOutcome).toBe('allow');
+    expect((result as { data?: Record<string, unknown> }).data?.currentHeadSha).toBe('abc123');
     // Should have fetched the PR head to verify SHA hasn't changed
     expect(fetchCalls.length).toBeGreaterThanOrEqual(1);
     expect(fetchCalls.some((c) => c.url.includes('/pulls/42'))).toBe(true);
@@ -379,6 +386,18 @@ describe('codexReviewApprovedValidator', () => {
     expect(fetchCalls.some((c) => c.url.includes('/pulls/99'))).toBe(false);
   });
 
+  test('reads PR URL from workflow gate data', async () => {
+    mockPrWith('abc123', [
+      { id: 1, user: { login: 'codex[bot]' }, content: '+1', created_at: new Date().toISOString() },
+    ]);
+    const ctx = makeContext({
+      gateDataJson: JSON.stringify({ pr_url: 'https://github.com/owner/repo/pull/42' }),
+    });
+    const result = await codexReviewApprovedValidator(ctx);
+    expect(result.type).toBe('allow');
+    expect(fetchCalls.some((c) => c.url.includes('/pulls/42'))).toBe(true);
+  });
+
   test('reaction in same second as head change is not stale', async () => {
     // GitHub timestamps are second-precision. A +1 posted in the same second
     // as currentHeadBecameHeadAt must not be treated as stale.
@@ -440,5 +459,26 @@ describe('codexReviewApprovedValidator', () => {
     const data2 = (result2 as { data?: Record<string, unknown> }).data;
     expect(data2?.currentHeadSha).toBe('new-sha');
     expect(typeof data2?.currentHeadBecameHeadAt).toBe('number');
+  });
+});
+
+describe('withSyntheticCodexHooks', () => {
+  test('synthesizes Codex hooks for custom workflows with node flag', () => {
+    const workflow = withSyntheticCodexHooks({
+      ...WORKFLOW,
+      hooks: undefined,
+      channels: [{ from: 'Coding', to: 'Review' }],
+    });
+    const hook = workflow.hooks?.find((h) => h.id === 'synthetic-codex-review-check-node-coder');
+    expect(hook).toBeDefined();
+    expect(hook?.enabled).toBe(true);
+    expect(hook?.sourceNode).toBe('Coding');
+    expect(hook?.validator).toEqual({
+      kind: 'built_in',
+      id: 'codex_review_approved',
+      externalLookups: ['github'],
+    });
+    expect(hook?.authorizedCallers).toEqual([{ sourceNode: 'Coding', agentSlots: ['coder'] }]);
+    expect(hook?.templateData).toEqual({ enforceForTargets: ['Review'] });
   });
 });
