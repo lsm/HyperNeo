@@ -70,17 +70,18 @@ export function getModelContextWindow(modelId: string): number | undefined {
 }
 
 /**
- * Anthropic model IDs to present to the Claude Agent SDK so it uses a large
- * context window instead of falling back to ~200 k for unknown Codex IDs.
+ * Anthropic model IDs to present to the Claude Agent SDK so it uses recognised
+ * Anthropic IDs instead of falling back for unknown Codex IDs.
  *
  * The SDK has a hard-coded model database and also preflights context using
- * provider `/v1/models` responses. When it sees a Codex ID or a 200 k Sonnet
- * alias, it can reject requests before NeoKai's own compaction threshold.
+ * provider `/v1/models` responses. Alias rows in the bridge model list advertise
+ * real Codex limits so the SDK rejects prompts OpenAI would reject before NeoKai
+ * has a stream usage event that can trigger compaction.
  *
- * We route Codex primary models through `claude-opus-4-1-20250805` because it
- * is the latest Opus ID the current SDK (0.2.141) recognises as large-context.
- * Newer IDs such as `claude-opus-4-20250918` are not in the SDK's hard-coded
- * database and would trigger the same fallback.
+ * We route Codex frontier models through `claude-opus-4-1-20250805` because it
+ * is the latest Opus ID the current SDK (0.2.141) recognises. Newer IDs such as
+ * `claude-opus-4-20250918` are not in the SDK's hard-coded database and would
+ * trigger fallback behaviour.
  *
  * These overrides are used for:
  *   - `translateModelIdForSdk()` (so the SDK sends the Anthropic ID in the

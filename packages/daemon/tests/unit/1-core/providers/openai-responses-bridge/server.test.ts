@@ -1946,7 +1946,7 @@ describe('openai-responses-bridge server', () => {
     expect(body.data[0].max_context_window).toBe(1_000_000);
   });
 
-  it('advertises alias context while reporting resolved Codex context in message usage', async () => {
+  it('advertises real alias context while resolving upstream Codex model', async () => {
     let capturedBody: Record<string, unknown> | undefined;
     server = createOpenAIResponsesBridgeServer({
       auth: { source: 'api_key', apiKey: 'sk-test' },
@@ -1961,7 +1961,7 @@ describe('openai-responses-bridge server', () => {
           id: 'claude-opus-4-1-20250805',
           display_name: 'Claude Opus 4.1 (Codex bridge)',
           created_at: '2025-08-05T00:00:00Z',
-          context_window: 1_000_000,
+          context_window: 272000,
         },
       ],
       modelAliases: {
@@ -1990,7 +1990,7 @@ describe('openai-responses-bridge server', () => {
       data: Array<{ id: string; context_window: number }>;
     };
     const contextById = new Map(modelsBody.data.map((model) => [model.id, model.context_window]));
-    expect(contextById.get('claude-opus-4-1-20250805')).toBe(1_000_000);
+    expect(contextById.get('claude-opus-4-1-20250805')).toBe(272000);
 
     const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
       method: 'POST',

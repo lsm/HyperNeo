@@ -664,25 +664,22 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('claude-opus-4-1-20250805');
     });
 
-    it('keeps the SDK sonnet tier on the 1 M Anthropic ID for mini Codex sessions', () => {
+    it('keeps the SDK sonnet tier on the mini Anthropic ID for mini Codex sessions', () => {
       const cfg = provider.buildSdkConfig('codex-mini', { workspacePath: '/tmp/ws-mini' });
-      // The SDK may route primary requests through the sonnet default even when
-      // the selected Codex model is a mini model. Keep sonnet on Opus so SDK
-      // preflight checks cannot reject before NeoKai compaction runs.
-      expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('claude-opus-4-1-20250805');
+      expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('claude-sonnet-4-20250514');
       expect(cfg.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('claude-sonnet-4-20250514');
     });
 
-    it('keeps the SDK sonnet tier on the 1 M Anthropic ID for GPT-5.1 mini sessions', () => {
+    it('keeps the SDK sonnet tier on the mini Anthropic ID for GPT-5.1 mini sessions', () => {
       const cfg = provider.buildSdkConfig('codex-5.1-mini', { workspacePath: '/tmp/ws-51-mini' });
-      expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('claude-opus-4-1-20250805');
+      expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('claude-sonnet-4-20250514');
       expect(cfg.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('claude-sonnet-4-20250514');
     });
 
-    it('preserves mini selection when SDK sends the Opus alias for the sonnet tier', async () => {
+    it('keeps cross-tier fallback registrations isolated by SDK alias', async () => {
       const originalFetch = globalThis.fetch;
       let fetchSpy: ReturnType<typeof spyOn> | undefined;
-      let capturedBody: Record<string, unknown> | undefined;
+      const capturedModels: string[] = [];
       try {
         fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(
           (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
@@ -690,7 +687,8 @@ describe('AnthropicToCodexBridgeProvider', () => {
             if (url.startsWith('http://127.0.0.1:')) {
               return originalFetch(input, init);
             }
-            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+            const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+            capturedModels.push(String(body.model));
             return Promise.resolve(
               new Response(
                 'event: response.completed\ndata: {"type":"response.completed","response":{"usage":{"input_tokens":1,"output_tokens":0},"output":[]}}\n\n',
@@ -700,53 +698,26 @@ describe('AnthropicToCodexBridgeProvider', () => {
           }
         );
 
-        const cfg = provider.buildSdkConfig('codex-mini', { workspacePath: '/tmp/ws-mini-opus' });
-        const resp = await originalFetch(`${cfg.envVars.ANTHROPIC_BASE_URL}/v1/messages`, {
+        const miniSession = { sessionId: 'mini-with-frontier-fallback', workspacePath: '/tmp/ws' };
+        const miniPrimary = provider.buildSdkConfig('codex-mini', miniSession);
+        provider.buildSdkConfig('gpt-5.5', miniSession);
+        await originalFetch(`${miniPrimary.envVars.ANTHROPIC_BASE_URL}/v1/messages`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            model: 'claude-opus-4-1-20250805',
+            model: 'claude-sonnet-4-20250514',
             max_tokens: 128,
             messages: [{ role: 'user', content: 'hi' }],
           }),
         });
-        await resp.text();
 
-        expect(capturedBody?.model).toBe('gpt-5.4-mini');
-      } finally {
-        fetchSpy?.mockRestore();
-      }
-    });
-
-    it('does not let mini fallback override a frontier primary Opus alias route', async () => {
-      const originalFetch = globalThis.fetch;
-      let fetchSpy: ReturnType<typeof spyOn> | undefined;
-      let capturedBody: Record<string, unknown> | undefined;
-      try {
-        fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(
-          (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
-            const url = String(input);
-            if (url.startsWith('http://127.0.0.1:')) {
-              return originalFetch(input, init);
-            }
-            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
-            return Promise.resolve(
-              new Response(
-                'event: response.completed\ndata: {"type":"response.completed","response":{"usage":{"input_tokens":1,"output_tokens":0},"output":[]}}\n\n',
-                { headers: { 'Content-Type': 'text/event-stream' } }
-              )
-            );
-          }
-        );
-
-        const sessionConfig = {
+        const frontierSession = {
           sessionId: 'frontier-with-mini-fallback',
           workspacePath: '/tmp/ws',
         };
-        const primary = provider.buildSdkConfig('gpt-5.5', sessionConfig);
-        provider.buildSdkConfig('codex-mini', { ...sessionConfig, isFallbackModelContext: true });
-
-        const resp = await originalFetch(`${primary.envVars.ANTHROPIC_BASE_URL}/v1/messages`, {
+        const frontierPrimary = provider.buildSdkConfig('gpt-5.5', frontierSession);
+        provider.buildSdkConfig('codex-mini', frontierSession);
+        await originalFetch(`${frontierPrimary.envVars.ANTHROPIC_BASE_URL}/v1/messages`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -755,9 +726,8 @@ describe('AnthropicToCodexBridgeProvider', () => {
             messages: [{ role: 'user', content: 'hi' }],
           }),
         });
-        await resp.text();
 
-        expect(capturedBody?.model).toBe('gpt-5.5');
+        expect(capturedModels).toEqual(['gpt-5.4-mini', 'gpt-5.5']);
       } finally {
         fetchSpy?.mockRestore();
       }
@@ -792,7 +762,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(cfg.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toMatch(/^claude-/);
     });
 
-    it('advertises SDK-facing limits for Anthropic aliases in the bridge models list', async () => {
+    it('advertises real Codex limits for Anthropic aliases in the bridge models list', async () => {
       const cfg = provider.buildSdkConfig('gpt-5.3-codex', {
         workspacePath: '/tmp/ws-models',
       });
@@ -803,9 +773,9 @@ describe('AnthropicToCodexBridgeProvider', () => {
         data: Array<{ id: string; context_window: number }>;
       };
       const byId = new Map(body.data.map((m) => [m.id, m.context_window]));
-      // Alias models advertise SDK-facing Anthropic limits so SDK preflight checks
-      // do not reject before NeoKai can compact at the real Codex limits.
-      expect(byId.get('claude-opus-4-1-20250805')).toBe(1_000_000);
+      // Alias models advertise real upstream limits so SDK preflight checks do not
+      // accept a request OpenAI would reject before NeoKai can compact.
+      expect(byId.get('claude-opus-4-1-20250805')).toBe(272_000);
       expect(byId.get('claude-sonnet-4-20250514')).toBe(128_000);
       // Codex models still advertise real upstream limits for NeoKai metadata.
       expect(byId.get('gpt-5.5')).toBe(272_000);
