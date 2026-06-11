@@ -1420,6 +1420,34 @@ describe('node-agent-tools: send_message (gate-write)', () => {
     );
   });
 
+  test('gate-write occurs on mixed gate/hook channel', async () => {
+    const gate: Gate = {
+      id: 'gate-mixed-hook',
+      fields: [
+        { name: 'approved', type: 'boolean', writers: ['coder'], check: { op: '==', value: true } },
+      ],
+      resetOnCycle: false,
+    };
+    const workflow = makeWorkflowWithGatedChannel(gate);
+    workflow.channels = workflow.channels?.map((channel) => ({
+      ...channel,
+      hookIds: ['codex-review-check'],
+    }));
+    const gateDataRepo = new GateDataRepository(ctx.db);
+    const config = makeConfig(ctx, { workflow, gateDataRepo });
+    const handlers = createNodeAgentToolHandlers(config);
+
+    const result = await handlers.send_message({
+      target: 'reviewer',
+      message: 'approved',
+      data: { approved: true },
+    });
+    const data = JSON.parse(result.content[0].text);
+
+    expect(data.gateWrite).toEqual({ gateId: 'gate-mixed-hook', gateOpen: true });
+    expect(gateDataRepo.get(ctx.workflowRunId, 'gate-mixed-hook')?.data.approved).toBe(true);
+  });
+
   test('no gateWrite in response when data not provided', async () => {
     const gate: Gate = {
       id: 'gate-no-data',
@@ -2886,7 +2914,7 @@ describe('node-agent-tools: async gate evaluation', () => {
     expect(data.gateWrite.gateOpen).toBe(true);
   });
 
-  test('evaluateTerminalGateFeatures rejects mixed gateId+hookIds channel', async () => {
+  test('evaluateTerminalGateFeatures accepts mixed gateId+hookIds channel', async () => {
     const gate: Gate = {
       id: 'mixed-gate',
       fields: [
@@ -2936,11 +2964,7 @@ describe('node-agent-tools: async gate evaluation', () => {
       ctx.artifactRepo
     );
 
-    expect(result).not.toBeNull();
-    const data = JSON.parse(result!.content[0].text);
-    expect(data.success).toBe(false);
-    expect(data.error).toContain('references both gateId');
-    expect(data.error).toContain('hookIds');
+    expect(result).toBeNull();
   });
 
   test('scriptExecutor receives correct context with gateId via send_message', async () => {

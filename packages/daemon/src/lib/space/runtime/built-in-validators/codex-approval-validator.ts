@@ -24,7 +24,7 @@ import { parseAddress } from '../../../../../../messaging/src/address';
 // ---------------------------------------------------------------------------
 
 const CODEX_TIMEOUT_MS = 600_000; // 10 minutes
-const CODEX_RETRY_DELAY_MS = 60_000; // 1 minute
+const CODEX_DEFAULT_POLL_INTERVAL_MS = 300_000; // 5 minutes
 const CODEX_BOTS = new Set(['codex[bot]', 'chatgpt-codex-connector[bot]']);
 
 // ---------------------------------------------------------------------------
@@ -239,6 +239,13 @@ function resolveTokenForHost(host: string): string {
   return process.env.GH_TOKEN || process.env.GITHUB_TOKEN || '';
 }
 
+function resolveRetryDelayMs(templateData: Record<string, unknown> | undefined): number {
+  const configured = templateData?.codexPollIntervalMs;
+  return typeof configured === 'number' && configured > 0
+    ? configured
+    : CODEX_DEFAULT_POLL_INTERVAL_MS;
+}
+
 /**
  * Resolve a raw target string to node names, handling @worker: and @role:
  * address formats, node IDs, agent slot names, and bare node names.
@@ -339,6 +346,7 @@ export const codexReviewApprovedValidator: BuiltInValidatorFn = async (context) 
 
   // Load persisted state from previous invocation
   const persisted = (lastResult?.data ?? {}) as CodexPersistedState;
+  const retryDelayMs = resolveRetryDelayMs(templateData);
 
   // For send_message hooks, only enforce when the target matches configured handoff targets.
   // Targets may be node names, agent slot names, or @worker:/@role: addresses.
@@ -456,10 +464,14 @@ export const codexReviewApprovedValidator: BuiltInValidatorFn = async (context) 
     const isFirstCheck = persisted.currentHeadSha === undefined;
     const workflowStartedAt = parseIsoMs(workflowStartIso);
     const firstCheckFreshnessAnchor = workflowStartedAt ?? now;
-    const headCommitTimestamp =
-      headChanged || isFirstCheck
-        ? await fetchCommitTimestamp(prInfo, prData, currentHeadSha, token)
-        : undefined;
+    let headCommitTimestamp: number | undefined;
+    if (headChanged || isFirstCheck) {
+      try {
+        headCommitTimestamp = await fetchCommitTimestamp(prInfo, prData, currentHeadSha, token);
+      } catch {
+        headCommitTimestamp = undefined;
+      }
+    }
     // Truncate to second precision so comparisons with GitHub timestamps
     // (which are second-precision) don't treat same-second reactions as stale.
     const currentHeadBecameHeadAt = toEpochSeconds(
@@ -554,13 +566,13 @@ export const codexReviewApprovedValidator: BuiltInValidatorFn = async (context) 
       return {
         type: 'retryable_block',
         reason,
-        retryAfterMs: CODEX_RETRY_DELAY_MS,
+        retryAfterMs: retryDelayMs,
         data: {
           currentHeadSha,
           currentHeadBecameHeadAt,
           lastReaction: freshEyes.length > 0 ? ('eyes' as const) : ('stale_plus_one' as const),
           lastReactionTimestamp,
-          nextRetryAt: now + CODEX_RETRY_DELAY_MS,
+          nextRetryAt: now + retryDelayMs,
           elapsedMs,
           timeoutMs: CODEX_TIMEOUT_MS,
           prUrl,
@@ -573,13 +585,13 @@ export const codexReviewApprovedValidator: BuiltInValidatorFn = async (context) 
     return {
       type: 'retryable_block',
       reason: `Waiting for Codex review on latest PR head ${currentHeadSha}`,
-      retryAfterMs: CODEX_RETRY_DELAY_MS,
+      retryAfterMs: retryDelayMs,
       data: {
         currentHeadSha,
         currentHeadBecameHeadAt,
         lastReaction: 'none' as const,
         lastReactionTimestamp,
-        nextRetryAt: now + CODEX_RETRY_DELAY_MS,
+        nextRetryAt: now + retryDelayMs,
         elapsedMs,
         timeoutMs: CODEX_TIMEOUT_MS,
         prUrl,

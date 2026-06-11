@@ -113,7 +113,12 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
 });
 
-function mockPrWith(sha: string, reactions: unknown[] = [], commitDate = new Date().toISOString()) {
+function mockPrWith(
+  sha: string,
+  reactions: unknown[] = [],
+  commitDate = new Date().toISOString(),
+  commitStatus = 200
+) {
   fetchMock = async (url) => {
     if (url.includes('/pulls/42')) {
       return new Response(
@@ -128,7 +133,8 @@ function mockPrWith(sha: string, reactions: unknown[] = [], commitDate = new Dat
     }
     if (url.includes(`/commits/${sha}`)) {
       return new Response(JSON.stringify({ commit: { committer: { date: commitDate } } }), {
-        status: 200,
+        status: commitStatus,
+        statusText: commitStatus === 200 ? 'OK' : 'Forbidden',
       });
     }
     if (url.includes('/issues/42/reactions')) {
@@ -251,7 +257,15 @@ describe('codexReviewApprovedValidator', () => {
     expect((result as { reason?: string }).reason).toContain('stale');
   });
 
-  test('retryable_block on eyes reaction', async () => {
+  test('commit timestamp lookup failure falls back to observation time', async () => {
+    mockPrWith('abc123', [], new Date().toISOString(), 403);
+    const ctx = makeContext({ currentArtifacts: PR_ARTIFACT });
+    const result = await codexReviewApprovedValidator(ctx);
+    expect(result.type).toBe('retryable_block');
+    expect((result as { reason?: string }).reason).toContain('Waiting for Codex review');
+  });
+
+  test('retryable_block on eyes reaction uses configured retry cadence', async () => {
     mockPrWith('abc123', [
       {
         id: 1,
@@ -260,11 +274,18 @@ describe('codexReviewApprovedValidator', () => {
         created_at: new Date().toISOString(),
       },
     ]);
-    const ctx = makeContext({ currentArtifacts: PR_ARTIFACT });
+    const ctx = makeContext({
+      currentArtifacts: PR_ARTIFACT,
+      templateData: { codexPollIntervalMs: 123_000 },
+    });
     const result = await codexReviewApprovedValidator(ctx);
     expect(result.type).toBe('retryable_block');
     expect((result as { reason?: string }).reason).toContain('eyes');
+    expect((result as { retryAfterMs?: number }).retryAfterMs).toBe(123_000);
     expect((result as { data?: Record<string, unknown> }).data?.lastReaction).toBe('eyes');
+    expect((result as { data?: Record<string, unknown> }).data?.nextRetryAt).toBeGreaterThan(
+      Date.now()
+    );
   });
 
   test('retryable_block on stale +1 when head changed', async () => {
@@ -648,6 +669,29 @@ describe('withSyntheticCodexHooks', () => {
     });
     expect(hook?.authorizedCallers).toEqual([{ sourceNode: 'Coding', agentSlots: ['coder'] }]);
     expect(hook?.templateData).toEqual({ enforceForTargets: ['Review'], forceCodexApproval: true });
+  });
+
+  test('propagates node Codex poll interval to synthetic hook template data', () => {
+    const workflow = withSyntheticCodexHooks({
+      ...WORKFLOW,
+      nodes: WORKFLOW.nodes.map((node) =>
+        node.name === 'Coding' ? { ...node, codexPollIntervalMs: 240_000 } : node
+      ),
+      hooks: undefined,
+      gates: [
+        {
+          id: 'approval-gate',
+          fields: [{ name: 'approved', type: 'boolean', check: { op: '==', value: true } }],
+        },
+      ],
+      channels: [{ from: 'Coding', to: 'Review', gateId: 'approval-gate' }],
+    });
+    const hook = workflow.hooks?.find((h) => h.id === 'synthetic-codex-review-check-node-coder');
+    expect(hook?.templateData).toEqual({
+      enforceForTargets: ['Review'],
+      forceCodexApproval: true,
+      codexPollIntervalMs: 240_000,
+    });
   });
 
   test('disabled Codex hook does not suppress synthetic hook from node flag', () => {

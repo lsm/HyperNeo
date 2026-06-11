@@ -218,17 +218,9 @@ export async function evaluateTerminalGateFeatures(
       });
       const includeIncoming = incomingChannels.length === 1;
       for (const ch of workflow.channels) {
-        // Fail closed on mixed gate/hook channels — a channel referencing
-        // both gateId and hookIds is an invalid configuration that must not
-        // silently bypass terminal gate validation.
-        if (ch.gateId && ch.hookIds && ch.hookIds.length > 0) {
-          return jsonResult({
-            success: false,
-            error: `Channel "${ch.id ?? 'unknown'}" references both gateId "${ch.gateId}" and hookIds [${ch.hookIds.join(', ')}]. Terminal gate validation cannot proceed with mixed configuration.`,
-          });
-        }
-        // Skip hook-managed channels — terminal gate features only apply to legacy gates
-        if (!ch.gateId || (ch.hookIds && ch.hookIds.length > 0)) continue;
+        // Terminal gate features still apply on mixed gate+hook channels;
+        // hooks validate MCP action intent, while the legacy gate controls delivery.
+        if (!ch.gateId) continue;
         const isOutgoing =
           ch.from === currentNodeName || ch.from === '*' || currentNodeAgentNames.has(ch.from);
         let isIncoming = false;
@@ -863,9 +855,8 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 
           const gatedChannel = (workflow.channels ?? []).find((ch) => {
             if (!ch.gateId) return false;
-            // Skip hook-managed channels — hooks validate at MCP action time;
-            // no legacy gate data write or evaluation is performed.
-            if (ch.hookIds && ch.hookIds.length > 0) return false;
+            // Mixed gate+hook channels still need the legacy gate-write;
+            // hooks validate MCP action intent, while the gate controls delivery.
             if (ch.from !== '*' && !fromRefs.has(ch.from)) return false;
             const tos = Array.isArray(ch.to) ? ch.to : [ch.to];
             const candidateTargets = uniqueTargetRefs([

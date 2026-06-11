@@ -431,12 +431,15 @@ export function withSyntheticCodexHooks(workflow: SpaceWorkflow): SpaceWorkflow 
             (target): target is string => typeof target === 'string'
           )
         : [];
+      const codexPollIntervalMs =
+        node.codexPollIntervalMs ?? existingCodexHook.templateData?.codexPollIntervalMs;
       updatedExistingHooks.set(existingCodexHook.id, {
         ...existingCodexHook,
         templateData: {
           ...existingCodexHook.templateData,
           enforceForTargets: [...new Set([...existingTargets, ...enforceForTargets])],
           forceCodexApproval: true,
+          ...(codexPollIntervalMs !== undefined ? { codexPollIntervalMs } : {}),
         },
       });
       continue;
@@ -449,7 +452,13 @@ export function withSyntheticCodexHooks(workflow: SpaceWorkflow): SpaceWorkflow 
       method: 'send_message',
       validator: { kind: 'built_in', id: 'codex_review_approved', externalLookups: ['github'] },
       authorizedCallers: [{ sourceNode: node.name, agentSlots }],
-      templateData: { enforceForTargets: [...enforceForTargets], forceCodexApproval: true },
+      templateData: {
+        enforceForTargets: [...enforceForTargets],
+        forceCodexApproval: true,
+        ...(node.codexPollIntervalMs !== undefined
+          ? { codexPollIntervalMs: node.codexPollIntervalMs }
+          : {}),
+      },
     });
   }
 
