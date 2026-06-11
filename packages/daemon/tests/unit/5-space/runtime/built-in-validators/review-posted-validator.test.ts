@@ -711,6 +711,87 @@ describe('reviewPostedValidator', () => {
     expect(evidenceCalls).toBe(4);
   });
 
+  test('uses submittedAt for formal review freshness in GraphQL fallback', async () => {
+    const originalFetch = globalThis.fetch;
+    const originalToken = process.env.GITHUB_TOKEN;
+    process.env.GITHUB_TOKEN = 'test-token';
+    let graphqlCalls = 0;
+    globalThis.fetch = async (url) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/repos/test/repo/pulls/1/reviews/77')) {
+        return { ok: false, json: async () => ({}) } as Response;
+      }
+      if (path.endsWith('/graphql')) {
+        graphqlCalls += 1;
+        if (graphqlCalls === 1) {
+          return {
+            ok: true,
+            json: async () => ({
+              data: {
+                viewer: { login: 'reviewer' },
+                repository: { pullRequest: { author: { login: 'pr-author' } } },
+              },
+            }),
+          } as Response;
+        }
+        return {
+          ok: true,
+          json: async () => ({
+            data: {
+              repository: {
+                pullRequest: {
+                  reviews: {
+                    nodes: [
+                      {
+                        databaseId: 77,
+                        createdAt: '2026-01-01T00:00:00Z',
+                        submittedAt: '2999-01-01T00:00:00Z',
+                        state: 'APPROVED',
+                      },
+                    ],
+                    pageInfo: { hasNextPage: false },
+                  },
+                  comments: { nodes: [], pageInfo: { hasNextPage: false } },
+                  reviewThreads: { nodes: [], pageInfo: { hasNextPage: false } },
+                },
+              },
+            },
+          }),
+        } as Response;
+      }
+      return { ok: false, json: async () => ({}) } as Response;
+    };
+
+    const ctx = makeCtx({
+      params: {
+        data: { review_url: 'https://github.com/test/repo/pull/1#pullrequestreview-77' },
+      },
+      currentArtifacts: [
+        {
+          id: 'a2',
+          nodeId: 'node-coding',
+          type: 'result',
+          key: 'revision-2',
+          data: { pr_url: 'https://github.com/test/repo/pull/1' },
+          createdAt: Date.parse('2026-01-02T00:00:00Z'),
+          updatedAt: Date.parse('2026-01-02T00:00:00Z'),
+        },
+      ],
+      gateData: [
+        {
+          gateId: 'code-pr-gate',
+          data: { pr_url: 'https://github.com/test/repo/pull/1' },
+          updatedAt: Date.now(),
+        },
+      ],
+    });
+    const result = await reviewPostedValidator(ctx);
+    globalThis.fetch = originalFetch;
+    process.env.GITHUB_TOKEN = originalToken;
+
+    expect(result.type).toBe('allow');
+  });
+
   test('finds review evidence on later pages', async () => {
     const originalFetch = globalThis.fetch;
     const originalToken = process.env.GITHUB_TOKEN;
@@ -767,6 +848,56 @@ describe('reviewPostedValidator', () => {
 
     expect(result.type).toBe('allow');
     expect(callCount).toBe(3);
+  });
+
+  test('floors review evidence freshness cutoff to GitHub timestamp precision', async () => {
+    const originalFetch = globalThis.fetch;
+    const originalToken = process.env.GITHUB_TOKEN;
+    process.env.GITHUB_TOKEN = 'test-token';
+    const now = Date.parse('2026-01-01T12:00:00.800Z');
+    globalThis.fetch = async (url) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/repos/test/repo/pulls/comments/42')) {
+        return {
+          ok: true,
+          json: async () => ({
+            id: 42,
+            pull_request_url: 'https://api.github.com/repos/test/repo/pulls/1',
+            created_at: '2026-01-01T12:00:00Z',
+          }),
+        } as Response;
+      }
+      return { ok: false, json: async () => ({}) } as Response;
+    };
+
+    const ctx = makeCtx({
+      params: {
+        data: { review_url: 'https://github.com/test/repo/pull/1#discussion_r42' },
+      },
+      currentArtifacts: [
+        {
+          id: 'a2',
+          nodeId: 'node-coding',
+          type: 'result',
+          key: 'revision-2',
+          data: { pr_url: 'https://github.com/test/repo/pull/1' },
+          createdAt: now,
+          updatedAt: now,
+        },
+      ],
+      gateData: [
+        {
+          gateId: 'code-pr-gate',
+          data: { pr_url: 'https://github.com/test/repo/pull/1' },
+          updatedAt: now,
+        },
+      ],
+    });
+    const result = await reviewPostedValidator(ctx);
+    globalThis.fetch = originalFetch;
+    process.env.GITHUB_TOKEN = originalToken;
+
+    expect(result.type).toBe('allow');
   });
 
   test('blocks direct message review URL older than latest coding revision', async () => {

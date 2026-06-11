@@ -76,6 +76,10 @@ function apiPathMatches(path: string | undefined, suffix: string): boolean {
   }
 }
 
+function floorToGithubSecond(ms: number): number {
+  return Math.floor(ms / 1000) * 1000;
+}
+
 async function githubGraphql(
   host: string,
   query: string,
@@ -221,7 +225,7 @@ async function verifyReviewEvidenceOnGithub(
   const expectedReviewId = reviewMatch ? Number(reviewMatch[1]) : undefined;
   if (!expectedDiscussionId && !expectedIssueCommentId && !expectedReviewId) return 'missing';
 
-  const since = sinceIso ? Date.parse(sinceIso) : 0;
+  const since = sinceIso ? floorToGithubSecond(Date.parse(sinceIso)) : 0;
   const isFresh = (createdAt?: string) => {
     const t = createdAt ? Date.parse(createdAt) : Number.NaN;
     return Number.isFinite(t) && t >= since;
@@ -229,13 +233,21 @@ async function verifyReviewEvidenceOnGithub(
   const isActionableReviewState = (state?: string) =>
     state === 'APPROVED' || state === 'CHANGES_REQUESTED';
   const matches = (
-    node: { databaseId?: number; createdAt?: string; state?: string; user?: { login?: string } },
+    node: {
+      databaseId?: number;
+      createdAt?: string;
+      submittedAt?: string;
+      state?: string;
+      user?: { login?: string };
+    },
     expectedId?: number,
     options: { requireActionableState?: boolean; requirePrAuthor?: boolean } = {}
   ) =>
     expectedId !== undefined &&
     node.databaseId === expectedId &&
-    isFresh(node.createdAt) &&
+    isFresh(
+      options.requireActionableState ? (node.submittedAt ?? node.createdAt) : node.createdAt
+    ) &&
     (!options.requireActionableState || isActionableReviewState(node.state)) &&
     (!options.requirePrAuthor ||
       (prAuthorLogin !== undefined &&
@@ -325,7 +337,7 @@ async function verifyReviewEvidenceOnGithub(
         repository(owner:$owner,name:$name) {
           pullRequest(number:$number) {
             reviews(first:100, after:$reviewsCursor) @include(if:$includeReviews) {
-              nodes { databaseId createdAt state }
+              nodes { databaseId createdAt submittedAt state }
               pageInfo { hasNextPage endCursor }
             }
             comments(first:100, after:$commentsCursor) @include(if:$includeComments) {
@@ -359,7 +371,12 @@ async function verifyReviewEvidenceOnGithub(
         repository?: {
           pullRequest?: {
             reviews?: {
-              nodes?: Array<{ databaseId?: number; createdAt?: string; state?: string }>;
+              nodes?: Array<{
+                databaseId?: number;
+                createdAt?: string;
+                submittedAt?: string;
+                state?: string;
+              }>;
               pageInfo?: { hasNextPage?: boolean; endCursor?: string };
             };
             comments?: {

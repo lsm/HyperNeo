@@ -126,6 +126,10 @@ function githubTokenForHost(host: string): string | undefined {
   return process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
 }
 
+function floorToGithubSecond(ms: number): number {
+  return Math.floor(ms / 1000) * 1000;
+}
+
 async function githubGraphql(
   host: string,
   query: string,
@@ -208,7 +212,7 @@ async function checkCodexApproval(
         repository(owner:$owner,name:$name) {
           pullRequest(number:$number) {
             headRefOid
-            commits(last:1) { nodes { commit { committedDate } } }
+            updatedAt
             reactions(first:100) {
               nodes { content createdAt user { login } }
             }
@@ -255,7 +259,7 @@ async function checkCodexApproval(
         repository?: {
           pullRequest?: {
             headRefOid?: string;
-            commits?: { nodes?: Array<{ commit?: { committedDate?: string } }> };
+            updatedAt?: string;
             reactions?: {
               nodes?: Array<{ content?: string; createdAt?: string; user?: { login?: string } }>;
             };
@@ -301,14 +305,15 @@ async function checkCodexApproval(
     if (!pr) return { status: 'error', headSha };
 
     headSha = pr.headRefOid;
-    const headCommittedAt = pr.commits?.nodes?.[0]?.commit?.committedDate;
-    const headCommittedMs = headCommittedAt ? Date.parse(headCommittedAt) : Number.NaN;
+    const prUpdatedMs = pr.updatedAt ? Date.parse(pr.updatedAt) : Number.NaN;
     const since =
       sinceMs === 'head'
-        ? Number.isFinite(headCommittedMs)
-          ? headCommittedMs
+        ? Number.isFinite(prUpdatedMs)
+          ? floorToGithubSecond(prUpdatedMs)
           : Number.POSITIVE_INFINITY
-        : (sinceMs ?? Number.POSITIVE_INFINITY);
+        : sinceMs !== undefined
+          ? floorToGithubSecond(sinceMs)
+          : Number.POSITIVE_INFINITY;
 
     const isFreshCodexPlusOne = (r: {
       content?: string;
@@ -480,6 +485,7 @@ export async function reviewApprovalValidator(
       typeof state._codex_head_sha === 'string' ? state._codex_head_sha : undefined;
     const resetPending = state._codex_started_at === null || state._codex_head_sha === null;
     const now = Date.now();
+    const githubNow = floorToGithubSecond(now);
 
     if (prUrl) {
       const codexResult = await checkCodexApproval(
@@ -495,7 +501,7 @@ export async function reviewApprovalValidator(
           retryAfterMs: 60_000,
           state: {
             ...nextState,
-            _codex_started_at: now,
+            _codex_started_at: githubNow,
             _codex_head_sha: codexResult.headSha,
             _pr_url: prUrl,
           },
@@ -518,7 +524,7 @@ export async function reviewApprovalValidator(
           retryAfterMs: 60_000,
           state: {
             ...nextState,
-            _codex_started_at: codexStartedAt ?? now,
+            _codex_started_at: codexStartedAt ?? githubNow,
             _codex_head_sha: codexResult.headSha,
             _pr_url: prUrl,
           },
@@ -559,7 +565,7 @@ export async function reviewApprovalValidator(
       type: 'retryable_block',
       reason: 'Threshold met. Waiting for codex[bot] approval.',
       retryAfterMs: 60_000,
-      state: { ...nextState, _codex_started_at: codexStartedAt ?? now, _pr_url: prUrl },
+      state: { ...nextState, _codex_started_at: codexStartedAt ?? githubNow, _pr_url: prUrl },
     };
   }
 
