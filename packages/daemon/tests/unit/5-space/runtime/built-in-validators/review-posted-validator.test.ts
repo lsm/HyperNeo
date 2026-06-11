@@ -599,7 +599,7 @@ describe('reviewPostedValidator', () => {
                       {
                         databaseId: 99,
                         createdAt: '2999-01-01T00:00:00Z',
-                        user: { login: 'reviewer' },
+                        author: { login: 'reviewer' },
                       },
                     ],
                     pageInfo: { hasNextPage: false },

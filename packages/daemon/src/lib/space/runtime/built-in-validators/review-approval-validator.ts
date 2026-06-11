@@ -130,6 +130,15 @@ function floorToGithubSecond(ms: number): number {
   return Math.floor(ms / 1000) * 1000;
 }
 
+type GithubReaction = { content?: string; createdAt?: string; user?: { login?: string } };
+type GithubReactable = {
+  id?: string;
+  reactions?: {
+    nodes?: GithubReaction[];
+    pageInfo?: { hasNextPage?: boolean; endCursor?: string };
+  };
+};
+
 async function githubGraphql(
   host: string,
   query: string,
@@ -185,6 +194,48 @@ async function githubGraphql(
   }
 }
 
+async function hasFreshCodexReaction(
+  host: string,
+  reactable: GithubReactable | undefined,
+  isFreshCodexPlusOne: (reaction: GithubReaction) => boolean
+): Promise<boolean> {
+  if (!reactable) return false;
+  if (reactable.reactions?.nodes?.some(isFreshCodexPlusOne)) return true;
+
+  let reactionCursor = reactable.reactions?.pageInfo?.hasNextPage
+    ? reactable.reactions.pageInfo.endCursor
+    : undefined;
+  while (reactable.id && reactionCursor) {
+    const result = await githubGraphql(
+      host,
+      `
+        query($nodeId:ID!,$reactionCursor:String) {
+          node(id:$nodeId) {
+            ... on Reactable {
+              reactions(first:100, after:$reactionCursor) {
+                nodes { content createdAt user { login } }
+                pageInfo { hasNextPage endCursor }
+              }
+            }
+          }
+        }
+      `,
+      { nodeId: reactable.id, reactionCursor }
+    );
+    if (!result.ok) return false;
+    const json = result.json as {
+      data?: { node?: GithubReactable };
+      errors?: unknown[];
+    };
+    if (json.errors) return false;
+    const reactions = json.data?.node?.reactions;
+    if (reactions?.nodes?.some(isFreshCodexPlusOne)) return true;
+    reactionCursor = reactions?.pageInfo?.hasNextPage ? reactions.pageInfo.endCursor : undefined;
+  }
+
+  return false;
+}
+
 /**
  * Check GitHub for a codex[bot] +1 reaction on the PR body, issue comments,
  * or review comments. Uses the GraphQL API to query all reaction locations
@@ -213,13 +264,17 @@ async function checkCodexApproval(
           pullRequest(number:$number) {
             headRefOid
             updatedAt
+            id
             reactions(first:100) {
               nodes { content createdAt user { login } }
+              pageInfo { hasNextPage endCursor }
             }
             comments(first:100, after:$commentsCursor) @include(if:$includeComments) {
               nodes {
+                id
                 reactions(first:100) {
                   nodes { content createdAt user { login } }
+                  pageInfo { hasNextPage endCursor }
                 }
               }
               pageInfo { hasNextPage endCursor }
@@ -229,8 +284,10 @@ async function checkCodexApproval(
                 id
                 comments(first:100) {
                   nodes {
+                    id
                     reactions(first:100) {
                       nodes { content createdAt user { login } }
+                      pageInfo { hasNextPage endCursor }
                     }
                   }
                   pageInfo { hasNextPage endCursor }
@@ -260,34 +317,17 @@ async function checkCodexApproval(
           pullRequest?: {
             headRefOid?: string;
             updatedAt?: string;
-            reactions?: {
-              nodes?: Array<{ content?: string; createdAt?: string; user?: { login?: string } }>;
-            };
+            id?: string;
+            reactions?: GithubReactable['reactions'];
             comments?: {
-              nodes?: Array<{
-                reactions?: {
-                  nodes?: Array<{
-                    content?: string;
-                    createdAt?: string;
-                    user?: { login?: string };
-                  }>;
-                };
-              }>;
+              nodes?: GithubReactable[];
               pageInfo?: { hasNextPage?: boolean; endCursor?: string };
             };
             reviewThreads?: {
               nodes?: Array<{
                 id?: string;
                 comments?: {
-                  nodes?: Array<{
-                    reactions?: {
-                      nodes?: Array<{
-                        content?: string;
-                        createdAt?: string;
-                        user?: { login?: string };
-                      }>;
-                    };
-                  }>;
+                  nodes?: GithubReactable[];
                   pageInfo?: { hasNextPage?: boolean; endCursor?: string };
                 };
               }>;
@@ -330,11 +370,13 @@ async function checkCodexApproval(
     };
 
     // PR body reactions
-    if (pr.reactions?.nodes?.some(isFreshCodexPlusOne)) return { status: 'approved', headSha };
+    if (await hasFreshCodexReaction(parsed.host, pr, isFreshCodexPlusOne)) {
+      return { status: 'approved', headSha };
+    }
 
     // Issue comments
     for (const comment of pr.comments?.nodes ?? []) {
-      if (comment.reactions?.nodes?.some(isFreshCodexPlusOne)) {
+      if (await hasFreshCodexReaction(parsed.host, comment, isFreshCodexPlusOne)) {
         return { status: 'approved', headSha };
       }
     }
@@ -342,7 +384,7 @@ async function checkCodexApproval(
     // Review comments. Fetch replies beyond GraphQL's first 100 comments with per-thread calls.
     for (const thread of pr.reviewThreads?.nodes ?? []) {
       for (const comment of thread.comments?.nodes ?? []) {
-        if (comment.reactions?.nodes?.some(isFreshCodexPlusOne)) {
+        if (await hasFreshCodexReaction(parsed.host, comment, isFreshCodexPlusOne)) {
           return { status: 'approved', headSha };
         }
       }
@@ -358,8 +400,10 @@ async function checkCodexApproval(
                 ... on PullRequestReviewThread {
                   comments(first:100, after:$commentsCursor) {
                     nodes {
+                      id
                       reactions(first:100) {
                         nodes { content createdAt user { login } }
+                        pageInfo { hasNextPage endCursor }
                       }
                     }
                     pageInfo { hasNextPage endCursor }
@@ -375,15 +419,7 @@ async function checkCodexApproval(
           data?: {
             node?: {
               comments?: {
-                nodes?: Array<{
-                  reactions?: {
-                    nodes?: Array<{
-                      content?: string;
-                      createdAt?: string;
-                      user?: { login?: string };
-                    }>;
-                  };
-                }>;
+                nodes?: GithubReactable[];
                 pageInfo?: { hasNextPage?: boolean; endCursor?: string };
               };
             };
@@ -393,7 +429,7 @@ async function checkCodexApproval(
         if (threadJson.errors) return { status: 'error', headSha };
         const comments = threadJson.data?.node?.comments;
         for (const comment of comments?.nodes ?? []) {
-          if (comment.reactions?.nodes?.some(isFreshCodexPlusOne)) {
+          if (await hasFreshCodexReaction(parsed.host, comment, isFreshCodexPlusOne)) {
             return { status: 'approved', headSha };
           }
         }
@@ -493,7 +529,15 @@ export async function reviewApprovalValidator(
         codexStartedAt ?? (storedHeadSha ? undefined : 'head')
       );
 
-      // New revision pushed — reset codex timer so stale approvals don't release
+      if (codexResult.status === 'approved') {
+        return {
+          type: 'allow',
+          message: `Threshold met (${approvalCount}/${threshold}) with codex approval.`,
+        };
+      }
+
+      // New revision pushed — reset codex timer so stale approvals don't release.
+      // Check approval first so a fresh pre-existing Codex +1 on the new head can release.
       if (codexResult.headSha && storedHeadSha && storedHeadSha !== codexResult.headSha) {
         return {
           type: 'retryable_block',
@@ -505,13 +549,6 @@ export async function reviewApprovalValidator(
             _codex_head_sha: codexResult.headSha,
             _pr_url: prUrl,
           },
-        };
-      }
-
-      if (codexResult.status === 'approved') {
-        return {
-          type: 'allow',
-          message: `Threshold met (${approvalCount}/${threshold}) with codex approval.`,
         };
       }
 
@@ -546,7 +583,7 @@ export async function reviewApprovalValidator(
         retryAfterMs: 60_000,
         state: {
           ...nextState,
-          _codex_started_at: codexStartedAt ?? now,
+          _codex_started_at: codexStartedAt ?? githubNow,
           _codex_head_sha: codexResult.headSha ?? storedHeadSha,
           _pr_url: prUrl,
         },

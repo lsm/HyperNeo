@@ -239,6 +239,7 @@ async function verifyReviewEvidenceOnGithub(
       submittedAt?: string;
       state?: string;
       user?: { login?: string };
+      author?: { login?: string };
     },
     expectedId?: number,
     options: { requireActionableState?: boolean; requirePrAuthor?: boolean } = {}
@@ -253,7 +254,7 @@ async function verifyReviewEvidenceOnGithub(
       (prAuthorLogin !== undefined &&
         viewerLogin !== undefined &&
         viewerLogin === prAuthorLogin &&
-        node.user?.login === prAuthorLogin));
+        (node.user?.login ?? node.author?.login) === prAuthorLogin));
 
   if (expectedDiscussionId !== undefined) {
     const result = await githubRest(
@@ -341,7 +342,7 @@ async function verifyReviewEvidenceOnGithub(
               pageInfo { hasNextPage endCursor }
             }
             comments(first:100, after:$commentsCursor) @include(if:$includeComments) {
-              nodes { databaseId createdAt user { login } }
+              nodes { databaseId createdAt author { login } }
               pageInfo { hasNextPage endCursor }
             }
             reviewThreads(first:100, after:$threadsCursor) @include(if:$includeThreads) {
@@ -380,7 +381,11 @@ async function verifyReviewEvidenceOnGithub(
               pageInfo?: { hasNextPage?: boolean; endCursor?: string };
             };
             comments?: {
-              nodes?: Array<{ databaseId?: number; createdAt?: string; user?: { login?: string } }>;
+              nodes?: Array<{
+                databaseId?: number;
+                createdAt?: string;
+                author?: { login?: string };
+              }>;
               pageInfo?: { hasNextPage?: boolean; endCursor?: string };
             };
             reviewThreads?: {

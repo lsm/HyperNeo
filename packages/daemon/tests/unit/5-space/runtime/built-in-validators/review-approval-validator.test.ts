@@ -673,6 +673,130 @@ describe('reviewApprovalValidator', () => {
     });
   });
 
+  test('finds codex approval on later reaction pages', async () => {
+    const originalFetch = globalThis.fetch;
+    const originalToken = process.env.GITHUB_TOKEN;
+    process.env.GITHUB_TOKEN = 'test-token';
+    let callCount = 0;
+    globalThis.fetch = async (_url, init) => {
+      callCount += 1;
+      const body = JSON.parse((init as { body: string }).body);
+      const query = body.query as string;
+      if (query.includes('node(id:$nodeId)')) {
+        return {
+          ok: true,
+          json: async () => ({
+            data: {
+              node: {
+                reactions: {
+                  nodes: [
+                    {
+                      user: { login: 'codex[bot]' },
+                      content: 'THUMBS_UP',
+                      createdAt: '2026-01-02T00:00:00Z',
+                    },
+                  ],
+                  pageInfo: { hasNextPage: false },
+                },
+              },
+            },
+          }),
+        } as Response;
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          data: {
+            repository: {
+              pullRequest: {
+                id: 'pr-node',
+                headRefOid: 'abc123',
+                updatedAt: '2026-01-01T00:00:00Z',
+                reactions: {
+                  nodes: [],
+                  pageInfo: { hasNextPage: true, endCursor: 'reaction-cursor' },
+                },
+                comments: { nodes: [], pageInfo: { hasNextPage: false } },
+                reviewThreads: { nodes: [], pageInfo: { hasNextPage: false } },
+              },
+            },
+          },
+        }),
+      } as Response;
+    };
+
+    const ctx = makeCtx({
+      params: { data: { approved: true, pr_url: 'https://github.com/test/repo/pull/42' } },
+      hookLocalState: {},
+      templateData: { threshold: 1, requireCodex: true },
+    });
+
+    const result = await reviewApprovalValidator(ctx);
+    globalThis.fetch = originalFetch;
+    process.env.GITHUB_TOKEN = originalToken;
+
+    expect(result.type).toBe('allow');
+    expect(callCount).toBe(2);
+  });
+
+  test('allows fresh codex approval when PR head SHA changes', async () => {
+    const originalFetch = globalThis.fetch;
+    const originalToken = process.env.GITHUB_TOKEN;
+    process.env.GITHUB_TOKEN = 'test-token';
+    globalThis.fetch = async (_url, init) => {
+      const body = JSON.parse((init as { body: string }).body);
+      const query = body.query as string;
+      const isGraphQL = query.includes('repository(owner:$owner,name:$name)');
+      if (!isGraphQL) {
+        return {
+          ok: true,
+          json: async () => ({ data: { repository: null } }),
+        } as Response;
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          data: {
+            repository: {
+              pullRequest: {
+                id: 'pr-node',
+                headRefOid: 'new-sha-456',
+                updatedAt: '2026-01-01T00:00:00Z',
+                reactions: {
+                  nodes: [
+                    {
+                      user: { login: 'codex[bot]' },
+                      content: 'THUMBS_UP',
+                      createdAt: '2026-01-02T00:00:00Z',
+                    },
+                  ],
+                  pageInfo: { hasNextPage: false },
+                },
+                comments: { nodes: [], pageInfo: { hasNextPage: false } },
+                reviewThreads: { nodes: [], pageInfo: { hasNextPage: false } },
+              },
+            },
+          },
+        }),
+      } as Response;
+    };
+
+    const ctx = makeCtx({
+      params: { data: { approved: true, pr_url: 'https://github.com/test/repo/pull/42' } },
+      hookLocalState: {
+        _codex_started_at: Date.parse('2026-01-01T00:00:00Z'),
+        _codex_head_sha: 'old-sha-123',
+      },
+      templateData: { threshold: 1, requireCodex: true },
+    });
+
+    const result = await reviewApprovalValidator(ctx);
+    globalThis.fetch = originalFetch;
+    process.env.GITHUB_TOKEN = originalToken;
+
+    expect(result.type).toBe('allow');
+  });
+
   test('resets codex timer when PR head SHA changes', async () => {
     const originalFetch = globalThis.fetch;
     const originalToken = process.env.GITHUB_TOKEN;
@@ -693,18 +817,12 @@ describe('reviewApprovalValidator', () => {
           data: {
             repository: {
               pullRequest: {
+                id: 'pr-node',
                 headRefOid: 'new-sha-456',
-                reactions: {
-                  nodes: [
-                    {
-                      user: { login: 'codex[bot]' },
-                      content: 'THUMBS_UP',
-                      createdAt: '2999-01-01T00:00:00Z',
-                    },
-                  ],
-                },
-                comments: { nodes: [] },
-                reviewThreads: { nodes: [] },
+                updatedAt: '3000-01-01T00:00:00Z',
+                reactions: { nodes: [], pageInfo: { hasNextPage: false } },
+                comments: { nodes: [], pageInfo: { hasNextPage: false } },
+                reviewThreads: { nodes: [], pageInfo: { hasNextPage: false } },
               },
             },
           },
