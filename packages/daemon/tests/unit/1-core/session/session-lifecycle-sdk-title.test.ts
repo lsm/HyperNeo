@@ -189,9 +189,16 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
     const { AnthropicProvider } = await import(
       '../../../../src/lib/providers/anthropic-provider.js'
     );
+    const { resetProviderServiceInstance } = await import(
+      '../../../../src/lib/provider-service.js'
+    );
+    // Set API key before provider construction/registration so CI Bun versions
+    // that snapshot process.env during provider setup still see credentials.
+    process.env.ANTHROPIC_API_KEY = 'test-api-key';
     resetProviderRegistry();
     resetProviderFactory();
-    const anthropicProvider = new AnthropicProvider();
+    resetProviderServiceInstance();
+    const anthropicProvider = new AnthropicProvider(process.env);
     anthropicProvider.setCredentials({ type: 'api_key', apiKey: 'test-api-key' });
     getProviderRegistry().register(anthropicProvider);
 
@@ -207,9 +214,6 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
       },
     ];
 
-    // Set a fake API key so the real provider service proceeds past the key
-    // check and calls generateTitleWithSdk. Cleared in afterEach.
-    process.env.ANTHROPIC_API_KEY = 'test-api-key';
     const titleQueryOverride: SessionLifecycleConfig['titleGenerationQueryForTesting'] = (
       params
     ) => {
@@ -290,8 +294,12 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
   afterEach(async () => {
     const { resetProviderRegistry } = await import('../../../../src/lib/providers/registry.js');
     const { resetProviderFactory } = await import('../../../../src/lib/providers/factory.js');
+    const { resetProviderServiceInstance } = await import(
+      '../../../../src/lib/provider-service.js'
+    );
     resetProviderRegistry();
     resetProviderFactory();
+    resetProviderServiceInstance();
     // Restore the empty API key set by unit-test setup.ts
     process.env.ANTHROPIC_API_KEY = '';
     process.env.GLM_API_KEY = '';
