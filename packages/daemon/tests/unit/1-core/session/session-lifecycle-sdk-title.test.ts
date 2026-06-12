@@ -181,7 +181,16 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
     };
   };
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    const { getProviderRegistry, resetProviderRegistry } = await import(
+      '../../../../src/lib/providers/registry'
+    );
+    const { AnthropicProvider } = await import('../../../../src/lib/providers/anthropic-provider');
+    resetProviderRegistry();
+    const anthropicProvider = new AnthropicProvider();
+    anthropicProvider.setCredentials({ type: 'api_key', apiKey: 'test-api-key' });
+    getProviderRegistry().register(anthropicProvider);
+
     lastTitleQueryOptions = undefined;
     lastTitleProcessEnv = undefined;
     // Default: assistant message with a plain text block
@@ -302,7 +311,9 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
 
     process.env.GLM_API_KEY = 'test-glm-key';
     const registry = getProviderRegistry();
-    registry.register(new GlmProvider(process.env));
+    const glmProvider = new GlmProvider();
+    glmProvider.setCredentials({ type: 'api_key', apiKey: 'test-glm-key' });
+    registry.register(glmProvider);
 
     const { mockAgentSession, mockSessionCache: sessionCache } = makeSessionCache();
     mockAgentSession.getSessionData = mock(() => ({
@@ -391,17 +402,14 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
   });
 
   it('should generate titles using stored credentials when env vars are absent', async () => {
-    const { AnthropicProvider } = await import('../../../../src/lib/providers/anthropic-provider');
     const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
 
     delete process.env.ANTHROPIC_API_KEY;
     delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
     delete process.env.ANTHROPIC_AUTH_TOKEN;
 
-    const anthropicProvider = new AnthropicProvider();
-    anthropicProvider.setCredentials({ type: 'api_key', apiKey: 'stored-api-key' });
-    const registry = getProviderRegistry();
-    registry.register(anthropicProvider);
+    const anthropicProvider = getProviderRegistry().get('anthropic');
+    anthropicProvider?.setCredentials({ type: 'api_key', apiKey: 'stored-api-key' });
 
     const result = await lifecycle.generateTitleAndRenameBranch('test-id', 'Create a login form');
 
