@@ -149,7 +149,34 @@ describe('QueryOptionsBuilder', () => {
     it('should include env when configured', async () => {
       mockSession.config.env = { MY_VAR: 'value' };
       const options = await builder.build();
-      expect(options.env).toEqual({ MY_VAR: 'value' });
+      expect(options.env).toEqual({
+        MY_VAR: 'value',
+        CLAUDE_CODE_MAX_OUTPUT_TOKENS: '16384',
+      });
+    });
+
+    it('should set a default SDK output token cap', async () => {
+      const options = await builder.build();
+      expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('16384');
+    });
+
+    it('should use a higher SDK output token cap for Claude Sonnet 4 models', async () => {
+      mockSession.config.model = 'claude-sonnet-4-6';
+      const options = await builder.build();
+      expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('64000');
+    });
+
+    it('should use the Opus SDK output token cap for Claude Opus models', async () => {
+      mockSession.config.model = 'claude-opus-4-7';
+      const options = await builder.build();
+      expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('128000');
+    });
+
+    it('should preserve an explicit SDK output token cap from session env', async () => {
+      mockSession.config.model = 'claude-opus-4-7';
+      mockSession.config.env = { CLAUDE_CODE_MAX_OUTPUT_TOKENS: '32768' };
+      const options = await builder.build();
+      expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('32768');
     });
 
     it('should not override SDK auto-compaction settings for native anthropic provider', async () => {

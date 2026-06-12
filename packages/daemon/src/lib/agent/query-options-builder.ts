@@ -125,6 +125,21 @@ const FULL_BUILTIN_TOOL_LIST = [
   'ToolSearch',
 ];
 
+const DEFAULT_SDK_OUTPUT_TOKEN_LIMIT = 16_384;
+const LARGE_SDK_OUTPUT_TOKEN_LIMIT = 64_000;
+const OPUS_SDK_OUTPUT_TOKEN_LIMIT = 128_000;
+
+function getSdkOutputTokenLimit(modelId: string): string {
+  const normalizedModelId = modelId.toLowerCase();
+  if (normalizedModelId.includes('opus')) {
+    return String(OPUS_SDK_OUTPUT_TOKEN_LIMIT);
+  }
+  if (normalizedModelId.includes('sonnet-4') || normalizedModelId.includes('claude-sonnet-4')) {
+    return String(LARGE_SDK_OUTPUT_TOKEN_LIMIT);
+  }
+  return String(DEFAULT_SDK_OUTPUT_TOKEN_LIMIT);
+}
+
 /**
  * Agent invocation tools that must be present when agents are configured.
  */
@@ -966,7 +981,15 @@ CRITICAL RULES:
       }
     }
 
-    // 3. Explicitly include proxy environment variables for Dev Proxy support
+    // 3. Set the SDK CLI subprocess output cap. The SDK reads this from the
+    // inherited process environment and defaults to 64,000 internally. Use a
+    // lower default for ordinary models, and raise it for large-output Claude
+    // models. Explicit global/session env values above still win.
+    mergedEnv.CLAUDE_CODE_MAX_OUTPUT_TOKENS ??= getSdkOutputTokenLimit(
+      this.ctx.session.config.model
+    );
+
+    // 4. Explicitly include proxy environment variables for Dev Proxy support
     // These are set by the dev-proxy test helper and need to be passed to the SDK subprocess
     // See: https://github.com/dotnet/dev-proxy/issues/169
     const proxyEnvVars = [
