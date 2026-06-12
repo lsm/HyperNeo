@@ -25,6 +25,41 @@ let lastTitleProcessEnv: Record<string, string | undefined> | undefined;
 // Mutable state controlling which messages the SDK query mock yields for
 // title generation. Set in beforeEach so each test starts from a known state.
 let mockSdkMessages: unknown[] = [];
+const mockProviderService = {
+  isProviderAvailable: mock(async () => true),
+  getTitleGenerationModels: mock(async (provider: string, modelId: string) => ({
+    sdkModelId: provider === 'glm' ? 'default' : modelId,
+    providerModelId: provider === 'glm' ? 'glm-5-turbo' : modelId,
+  })),
+  applyEnvVarsToProcessForProvider: mock(async (provider: string, providerModelId: string) => {
+    const original = {
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL,
+      ANTHROPIC_DEFAULT_SONNET_MODEL: process.env.ANTHROPIC_DEFAULT_SONNET_MODEL,
+      ANTHROPIC_DEFAULT_OPUS_MODEL: process.env.ANTHROPIC_DEFAULT_OPUS_MODEL,
+    };
+    if (provider === 'glm') {
+      process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = providerModelId;
+      process.env.ANTHROPIC_DEFAULT_SONNET_MODEL = providerModelId;
+      process.env.ANTHROPIC_DEFAULT_OPUS_MODEL = providerModelId;
+    }
+    return original;
+  }),
+  getEnvVarsForModel: mock(async (modelId: string, provider: string) =>
+    provider === 'glm'
+      ? {
+          ANTHROPIC_DEFAULT_HAIKU_MODEL: modelId,
+          ANTHROPIC_DEFAULT_SONNET_MODEL: modelId,
+          ANTHROPIC_DEFAULT_OPUS_MODEL: modelId,
+        }
+      : {}
+  ),
+  restoreEnvVars: mock((original: Record<string, string | undefined>) => {
+    for (const [key, value] of Object.entries(original)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }),
+};
 
 async function* makeAsyncGen(messages: unknown[]) {
   for (const msg of messages) {
@@ -96,6 +131,12 @@ mock.module('@anthropic-ai/claude-agent-sdk', () => ({
     _toolBatch.push({ name, def });
     return def;
   },
+}));
+
+mock.module('../../../../src/lib/provider-service', () => ({
+  getProviderService: () => mockProviderService,
+  resetProviderServiceInstance: mock(() => {}),
+  mergeProviderEnvVars: (env: Record<string, string | undefined>) => ({ ...process.env, ...env }),
 }));
 
 mock.module('@neokai/shared/sdk/type-guards', () => ({
