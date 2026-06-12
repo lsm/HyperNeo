@@ -44,7 +44,6 @@ import { ApiErrorCircuitBreaker } from './api-error-circuit-breaker';
 import type { MessageQueue } from './message-queue';
 import type { QueryLifecycleManager } from './query-lifecycle-manager';
 import { getSessionModelInfo } from '../model-service';
-import { NATIVE_CONTEXT_WINDOW_PROVIDER_IDS } from './query-options-builder.js';
 
 /**
  * Number of SDK stream events between automatic context-usage refreshes.
@@ -891,28 +890,6 @@ export class SDKMessageHandler {
           sessionId: session.id,
           contextInfo,
         });
-
-        // NeoKai-level compaction trigger for non-native providers.
-        // SDK auto-compaction is disabled in buildProviderSettings() for these
-        // providers because the SDK assumes a 200 k Claude context window.
-        // We monitor usage and enqueue /compact when the real limit is approached.
-        const providerId = session.config.provider;
-        if (!providerId) {
-          return;
-        }
-        const isNativeProvider = NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId);
-        if (
-          !isNativeProvider &&
-          modelInfo?.contextWindow &&
-          contextTracker.shouldCompact(modelInfo.contextWindow)
-        ) {
-          contextTracker.markCompactionTriggered();
-          this.logger.info(
-            `Triggering compaction for session ${session.id} ` +
-              `(${contextInfo.totalUsed} / ${modelInfo.contextWindow} tokens)`
-          );
-          void this.ctx.messageQueue.enqueue('/compact', /* internal */ true);
-        }
       } catch (error) {
         this.logger.warn(`context refresh (${reason}) failed:`, error);
       } finally {
