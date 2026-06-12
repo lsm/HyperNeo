@@ -843,7 +843,7 @@ describe('buildCustomAgentTaskMessage', () => {
     expect(message).toContain('"score": 5');
     expect(message).toContain('"scoreNonZero": 1');
     expect(message).toContain('"status": "<status-different>"');
-    expect(message).toContain('"votes": { "<key1>": "approved", "<key2>": "approved" }');
+    expect(message).toContain('"votes": { "<your-key>": "approved" }');
     expect(message).not.toContain('"omitted"');
     expect(message).not.toContain('"status": "<status>"');
     expect(message).not.toContain('data: { pr"url:');
@@ -851,7 +851,7 @@ describe('buildCustomAgentTaskMessage', () => {
     expect(message).not.toContain('<number>');
   });
 
-  it('caps map-count handoff placeholders for large thresholds', () => {
+  it('emits only the writer vote for map-count handoff placeholders', () => {
     const workflow = makeWorkflow({
       channels: [
         {
@@ -886,10 +886,9 @@ describe('buildCustomAgentTaskMessage', () => {
       })
     );
 
-    expect(message).toContain(
-      '"votes": { "<key1>": "approved", "<key2>": "approved", "<key3>": "approved", /* add 22 more matching entries */ }'
-    );
-    expect(message).not.toContain('<key25>');
+    expect(message).toContain('"votes": { "<your-key>": "approved" }');
+    expect(message).not.toContain('<key2>');
+    expect(message).not.toContain('add 22 more matching entries');
   });
 });
 
