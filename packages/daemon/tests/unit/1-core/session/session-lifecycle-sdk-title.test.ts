@@ -181,7 +181,12 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
     };
   };
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    const { resetProviderRegistry } = await import('../../../../src/lib/providers/registry');
+    const { resetProviderFactory } = await import('../../../../src/lib/providers/factory');
+    resetProviderRegistry();
+    resetProviderFactory();
+
     lastTitleQueryOptions = undefined;
     lastTitleProcessEnv = undefined;
     // Default: assistant message with a plain text block
@@ -276,7 +281,9 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
 
   afterEach(async () => {
     const { resetProviderRegistry } = await import('../../../../src/lib/providers/registry');
+    const { resetProviderFactory } = await import('../../../../src/lib/providers/factory');
     resetProviderRegistry();
+    resetProviderFactory();
     // Restore the empty API key set by unit-test setup.ts
     process.env.ANTHROPIC_API_KEY = '';
     process.env.GLM_API_KEY = '';
