@@ -127,7 +127,8 @@ export class AcpQueryAdapter implements QueryLike {
     if (!option) {
       throw new Error('ACP session has no model config option');
     }
-    await this.client.setConfigOption(option.id, modelId);
+    const configOptions = await this.client.setConfigOption(option.id, modelId);
+    this.options.onConfigOptionsUpdate?.(configOptions);
   }
 
   async setMaxThinkingTokens(tokens: number | null): Promise<void> {
@@ -136,7 +137,8 @@ export class AcpQueryAdapter implements QueryLike {
       throw new Error('ACP session has no thought_level config option');
     }
     const value = selectThoughtLevelValue(option, tokens);
-    await this.client.setConfigOption(option.id, value);
+    const configOptions = await this.client.setConfigOption(option.id, value);
+    this.options.onConfigOptionsUpdate?.(configOptions);
   }
 
   async getContextUsage(): Promise<SDKControlGetContextUsageResponse> {

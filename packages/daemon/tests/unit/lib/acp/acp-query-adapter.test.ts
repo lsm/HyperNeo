@@ -18,7 +18,18 @@ class MockAcpClient {
   private notifications: AcpSessionUpdateNotification[] = [];
   cancel = mock(() => {});
   close = mock(() => {});
-  setConfigOption = mock((_configId: string, _value: string) => Promise.resolve([]));
+  setConfigOption = mock((_configId: string, value: string) =>
+    Promise.resolve([
+      {
+        id: 'model-option',
+        name: 'Model',
+        type: 'select' as const,
+        category: 'model',
+        currentValue: value,
+        options: [{ name: 'Opus', value: 'opus' }],
+      },
+    ])
+  );
   updateConfigOptions = mock((_configOptions: unknown[]) => {});
 
   constructor(sessionId: string) {
@@ -321,18 +332,30 @@ describe('AcpQueryAdapter', () => {
     await expect(adapter.setMcpServers()).resolves.toEqual({ added: [], removed: [], errors: {} });
   });
 
-  test('setModel updates ACP model config option', async () => {
+  test('setModel updates ACP model config option and refreshes callback', async () => {
     const client = new MockAcpClient('sess-model');
+    const onConfigOptionsUpdate = mock((_configOptions: unknown[]) => {});
     const adapter = new AcpQueryAdapter(
       client as unknown as InstanceType<
         typeof import('../../../../src/lib/acp/acp-client').AcpClient
       >,
-      [{ type: 'text', text: 'hello' }]
+      [{ type: 'text', text: 'hello' }],
+      { onConfigOptionsUpdate }
     );
 
     await adapter.setModel('opus');
 
     expect(client.setConfigOption).toHaveBeenCalledWith('model-option', 'opus');
+    expect(onConfigOptionsUpdate).toHaveBeenCalledWith([
+      {
+        id: 'model-option',
+        name: 'Model',
+        type: 'select',
+        category: 'model',
+        currentValue: 'opus',
+        options: [{ name: 'Opus', value: 'opus' }],
+      },
+    ]);
   });
 
   test('setMaxThinkingTokens updates ACP thought level config option', async () => {

@@ -498,6 +498,8 @@ export class AcpQueryRunner {
         this.updateAcpModelCache(result.configOptions);
         createdAcpSessionDuringRun = true;
       }
+      await this.applyStoredAcpModel(client);
+
       startupHandshakeActive = false;
       restoreMessageEnqueuedHandler?.();
       this.clearStartupTimer();
@@ -891,6 +893,17 @@ export class AcpQueryRunner {
       acpInstructionsSent: true,
     };
     db.updateSession(session.id, { metadata: session.metadata });
+  }
+
+  private async applyStoredAcpModel(client: AcpClient): Promise<void> {
+    const modelOption = client.getConfigOptions().find((option) => option.category === 'model');
+    if (!modelOption || modelOption.currentValue === this.ctx.session.config.model) return;
+
+    const configOptions = await client.setConfigOption(
+      modelOption.id,
+      this.ctx.session.config.model
+    );
+    this.updateAcpModelCache(configOptions);
   }
 
   private updateAcpModelCache(configOptions: AcpConfigOption[]): void {
