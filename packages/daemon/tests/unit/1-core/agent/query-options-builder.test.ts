@@ -176,7 +176,8 @@ describe('QueryOptionsBuilder', () => {
         env: { CLAUDE_CODE_AUTO_COMPACT_WINDOW: '200000', KEEP_GLOBAL: 'global' },
         settingSources: ['user', 'project', 'local'],
       }));
-      mockSession.config.provider = 'kimi';
+      mockSession.config.provider = 'anthropic-codex';
+      mockSession.config.model = 'gpt-5.3-codex';
       mockSession.config.env = {
         CLAUDE_CODE_AUTO_COMPACT_WINDOW: '262144',
         KEEP_SESSION: 'session',
