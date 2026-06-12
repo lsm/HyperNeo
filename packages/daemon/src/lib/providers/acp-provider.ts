@@ -133,9 +133,16 @@ export class AcpProvider implements Provider {
     this.cachedModels = models;
   }
 
+  getCachedModels(): ModelInfo[] | null {
+    return this.cachedModels;
+  }
+
   setConfigOptions(configOptions: AcpConfigOption[]): void {
     const modelOption = configOptions.find((option) => option.category === 'model');
-    if (!modelOption) return;
+    if (!modelOption) {
+      this.clearModelCache();
+      return;
+    }
 
     this.cachedModels = flattenModelChoices(modelOption).map((choice) => ({
       id: choice.value,

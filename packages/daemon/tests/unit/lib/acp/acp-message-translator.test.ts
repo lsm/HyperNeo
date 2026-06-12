@@ -229,6 +229,13 @@ describe('AcpMessageTranslator', () => {
     expect(translator.getContextUsage()?.size).toBe(200000);
   });
 
+  test('does not add local output estimates to ACP usage totals', () => {
+    translator.processUpdate(agentChunk('assistant text'));
+    translator.processUpdate({ sessionUpdate: 'usage_update', size: 200000, used: 53000 } as never);
+
+    expect(translator.getContextUsage()?.used).toBe(53000);
+  });
+
   test('ignores available commands updates', () => {
     expect(
       translator.processUpdate({

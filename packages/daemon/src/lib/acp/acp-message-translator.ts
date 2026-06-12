@@ -55,6 +55,7 @@ export class AcpMessageTranslator {
   private inputTokenEstimate = 0;
   private outputTokenEstimate = 0;
   private costUsdEstimate = 0;
+  private receivedUsageUpdate = false;
 
   constructor(
     sessionId: string,
@@ -99,6 +100,7 @@ export class AcpMessageTranslator {
       case 'session_info_update':
         return [...this.flush(), this.translateSyntheticAssistant('Session info', update)];
       case 'usage_update':
+        this.receivedUsageUpdate = true;
         this.inputTokenEstimate = Math.max(this.inputTokenEstimate, update.used);
         this.contextWindow = update.size;
         if (update.cost) {
@@ -238,7 +240,9 @@ export class AcpMessageTranslator {
   }
 
   getContextUsage(): { used: number; size: number } | null {
-    const used = this.inputTokenEstimate + this.outputTokenEstimate;
+    const used = this.receivedUsageUpdate
+      ? this.inputTokenEstimate
+      : this.inputTokenEstimate + this.outputTokenEstimate;
     return used > 0 ? { used, size: this.contextWindow } : null;
   }
 

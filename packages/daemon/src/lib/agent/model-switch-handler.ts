@@ -153,6 +153,9 @@ export class ModelSwitchHandler {
 
     const previousModel = session.config.model;
     const previousProvider = session.config.provider;
+    const previousAcpSessionId = session.acpSessionId;
+    const previousSdkSessionId = session.sdkSessionId;
+    const previousSdkOriginPath = session.sdkOriginPath;
 
     try {
       if (!previousProvider) {
@@ -346,11 +349,17 @@ export class ModelSwitchHandler {
 
       session.config.model = previousModel;
       session.config.provider = previousProvider;
+      session.acpSessionId = previousAcpSessionId;
+      session.sdkSessionId = previousSdkSessionId;
+      session.sdkOriginPath = previousSdkOriginPath;
       db.updateSession(session.id, {
         config: {
           model: previousModel,
           provider: previousProvider,
         } as SessionConfig,
+        acpSessionId: previousAcpSessionId,
+        sdkSessionId: previousSdkSessionId,
+        sdkOriginPath: previousSdkOriginPath,
       });
       contextTracker.setModel(previousModel);
       await internalEventBus.publish('session.updated', {

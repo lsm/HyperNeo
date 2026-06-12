@@ -10,7 +10,7 @@ import type {
 } from '@neokai/shared/acp';
 import type { McpServerConfig, SDKMessage, SDKUserMessage } from '@neokai/shared/sdk';
 import { ErrorCategory } from '../error-manager';
-import { clearModelsCache } from '../model-service';
+import { getModelsCache, setModelsCache } from '../model-service';
 import { getProviderRegistry } from '../providers/factory';
 import { getProviderService } from '../provider-service';
 import { AcpProvider } from '../providers/acp-provider';
@@ -31,6 +31,13 @@ function getStartupTimeoutMs(): number {
   if (!raw) return DEFAULT_STARTUP_TIMEOUT_MS;
   const parsed = Number.parseInt(raw, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_STARTUP_TIMEOUT_MS;
+}
+
+function getAcpContextWindow(): number {
+  const provider = getProviderRegistry().get('acp');
+  return provider instanceof AcpProvider
+    ? provider.getContextWindow()
+    : AcpProvider.DEFAULT_CONTEXT_WINDOW;
 }
 
 export function parseAcpCommand(commandLine: string): { command: string; args: string[] } {
@@ -519,7 +526,7 @@ export class AcpQueryRunner {
         const shouldPersistInstructionsSent = prependInstructionsToNextPrompt;
         prependInstructionsToNextPrompt = false;
         const adapter = new AcpQueryAdapter(client, promptContent, {
-          contextWindow: AcpProvider.DEFAULT_CONTEXT_WINDOW,
+          contextWindow: getAcpContextWindow(),
           onConfigOptionsUpdate: (configOptions) => this.updateAcpModelCache(configOptions),
         });
         this.ctx.queryObject = adapter;
@@ -890,7 +897,18 @@ export class AcpQueryRunner {
     const provider = getProviderRegistry().get('acp');
     if (provider instanceof AcpProvider) {
       provider.setConfigOptions(configOptions);
-      clearModelsCache('global');
+      const cache = getModelsCache();
+      const providerModels = provider.getCachedModels();
+      if (providerModels) {
+        const globalModels = cache.get('global') ?? [];
+        cache.set('global', [
+          ...globalModels.filter((model) => model.provider !== 'acp'),
+          ...providerModels,
+        ]);
+      } else {
+        cache.delete('global');
+      }
+      setModelsCache(cache);
     }
   }
 

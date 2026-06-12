@@ -148,6 +148,25 @@ describe('AcpProvider', () => {
       expect(models[0].provider).toBe('acp');
     });
 
+    it('should clear cached models when config options have no model selector', async () => {
+      process.env.NEOKAI_ACP_COMMAND = 'claude --acp';
+      provider.setConfigOptions([
+        {
+          id: 'model',
+          name: 'Model',
+          type: 'select',
+          category: 'model',
+          currentValue: 'sonnet',
+          options: [{ name: 'Sonnet', value: 'sonnet' }],
+        },
+      ]);
+
+      provider.setConfigOptions([]);
+      const models = await provider.getModels();
+
+      expect(models[0].id).toBe('acp-default');
+    });
+
     it('should return cached models when set', async () => {
       process.env.NEOKAI_ACP_COMMAND = 'claude --acp';
       const cached = [
