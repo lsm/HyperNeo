@@ -45,6 +45,8 @@ export interface SessionLifecycleConfig {
   disableWorktrees?: boolean;
   /** @internal Test-only SDK query override for title generation. */
   titleGenerationQueryForTesting?: SdkQueryFunction;
+  /** @internal Test-only provider availability override for title generation. */
+  titleGenerationProviderAvailableForTesting?: (providerId: string) => boolean | Promise<boolean>;
 }
 
 export interface CreateSessionParams {
@@ -1046,8 +1048,10 @@ export class SessionLifecycle {
     // available (env vars, stored credentials, or provider-owned auth missing).
     // This delegates to each provider's own isAvailable() implementation so that
     // stored credentials are respected for title generation.
-    const available = await providerService.isProviderAvailable(provider);
-    if (!available) {
+    const available =
+      this.config.titleGenerationProviderAvailableForTesting?.(provider) ??
+      (await providerService.isProviderAvailable(provider));
+    if (!(await available)) {
       this.logger.warn(
         `[SessionLifecycle] Provider ${provider} not available, using fallback title`
       );

@@ -181,16 +181,7 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
     };
   };
 
-  beforeEach(async () => {
-    const { getProviderRegistry, resetProviderRegistry } = await import(
-      '../../../../src/lib/providers/registry'
-    );
-    const { AnthropicProvider } = await import('../../../../src/lib/providers/anthropic-provider');
-    resetProviderRegistry();
-    const anthropicProvider = new AnthropicProvider();
-    anthropicProvider.setCredentials({ type: 'api_key', apiKey: 'test-api-key' });
-    getProviderRegistry().register(anthropicProvider);
-
+  beforeEach(() => {
     lastTitleQueryOptions = undefined;
     lastTitleProcessEnv = undefined;
     // Default: assistant message with a plain text block
@@ -269,6 +260,7 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
       workspaceRoot: '/default/workspace',
       disableWorktrees: true,
       titleGenerationQueryForTesting: titleQueryOverride,
+      titleGenerationProviderAvailableForTesting: () => true,
     };
 
     lifecycle = new SessionLifecycle(
@@ -402,14 +394,9 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
   });
 
   it('should generate titles using stored credentials when env vars are absent', async () => {
-    const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
-
     delete process.env.ANTHROPIC_API_KEY;
     delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
     delete process.env.ANTHROPIC_AUTH_TOKEN;
-
-    const anthropicProvider = getProviderRegistry().get('anthropic');
-    anthropicProvider?.setCredentials({ type: 'api_key', apiKey: 'stored-api-key' });
 
     const result = await lifecycle.generateTitleAndRenameBranch('test-id', 'Create a login form');
 
