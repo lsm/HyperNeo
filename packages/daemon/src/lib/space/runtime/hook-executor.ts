@@ -22,6 +22,7 @@ import { mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { validateWorkflowHookResult } from '../workflow-hook-validation';
+import { createPrReadyValidator } from './built-in-validators/pr-ready-validator';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -33,7 +34,10 @@ export interface HookExecutorContext {
   runId: string;
   hookId: string;
   methodName: string;
+  /** Bounded action params safe for script env serialization. */
   params: Record<string, unknown>;
+  /** Original unbounded action params. Built-in validators may inspect routing fields here. */
+  rawParams?: Record<string, unknown>;
   nodeId: string;
   nodeName: string;
   sessionId: string;
@@ -137,6 +141,7 @@ registerBuiltInValidator('task_reported_status', async () => ({
   type: 'block',
   reason: NOT_IMPLEMENTED,
 }));
+registerBuiltInValidator('pr_ready', createPrReadyValidator());
 
 // ---------------------------------------------------------------------------
 // Environment builder
