@@ -372,6 +372,19 @@ function resolveSyntheticHookTarget(target: string, workflow: SpaceWorkflow): st
   return [trimmed];
 }
 
+function mergeAuthorizedCallers(
+  existing: WorkflowHook['authorizedCallers'],
+  sourceNode: string,
+  agentSlots: string[]
+): WorkflowHook['authorizedCallers'] {
+  if (!existing || existing.length === 0) return [{ sourceNode, agentSlots }];
+  return existing.map((caller) => {
+    if (caller.sourceNode !== sourceNode) return caller;
+    const mergedSlots = [...new Set([...(caller.agentSlots ?? []), ...agentSlots])];
+    return { ...caller, agentSlots: mergedSlots };
+  });
+}
+
 /** @internal Exported for tests. */
 export function withSyntheticCodexHooks(workflow: SpaceWorkflow): SpaceWorkflow {
   const existingHooks = workflow.hooks ?? [];
@@ -389,7 +402,8 @@ export function withSyntheticCodexHooks(workflow: SpaceWorkflow): SpaceWorkflow 
   const gatesById = new Map((workflow.gates ?? []).map((gate) => [gate.id, gate]));
   const syntheticHooks: WorkflowHook[] = [];
   const updatedExistingHooks = new Map<string, WorkflowHook>();
-  const hookManagedChannelIdsByHook = new Map<string, Set<string>>();
+  type WorkflowChannel = NonNullable<SpaceWorkflow['channels']>[number];
+  const hookManagedChannelsByHook = new Map<string, Set<WorkflowChannel>>();
 
   for (const node of workflow.nodes ?? []) {
     const agentSlots = (node.agents ?? []).map((agent) => agent.name).filter(Boolean);
@@ -419,10 +433,10 @@ export function withSyntheticCodexHooks(workflow: SpaceWorkflow): SpaceWorkflow 
           enforceForTargets.add(resolvedTarget);
         }
       }
-      if (channel.id && channel.hookIds) {
-        const channelIds = hookManagedChannelIdsByHook.get(hookId) ?? new Set<string>();
-        channelIds.add(channel.id);
-        hookManagedChannelIdsByHook.set(hookId, channelIds);
+      if (channel.hookIds) {
+        const channels = hookManagedChannelsByHook.get(hookId) ?? new Set<WorkflowChannel>();
+        channels.add(channel);
+        hookManagedChannelsByHook.set(hookId, channels);
       }
     }
     if (targetChannels.length === 0) continue;
@@ -436,6 +450,11 @@ export function withSyntheticCodexHooks(workflow: SpaceWorkflow): SpaceWorkflow 
         node.codexPollIntervalMs ?? existingCodexHook.templateData?.codexPollIntervalMs;
       updatedExistingHooks.set(existingCodexHook.id, {
         ...existingCodexHook,
+        authorizedCallers: mergeAuthorizedCallers(
+          existingCodexHook.authorizedCallers,
+          node.name,
+          agentSlots
+        ),
         templateData: {
           ...existingCodexHook.templateData,
           enforceForTargets: [...new Set([...existingTargets, ...enforceForTargets])],
@@ -466,18 +485,18 @@ export function withSyntheticCodexHooks(workflow: SpaceWorkflow): SpaceWorkflow 
   if (
     syntheticHooks.length === 0 &&
     updatedExistingHooks.size === 0 &&
-    hookManagedChannelIdsByHook.size === 0
+    hookManagedChannelsByHook.size === 0
   ) {
     return workflow;
   }
   const hooks = existingHooks.map((hook) => updatedExistingHooks.get(hook.id) ?? hook);
   const channels = (workflow.channels ?? []).map((channel) => {
-    if (!channel.id || !channel.hookIds) return channel;
-    const hookIdsToAdd = [...hookManagedChannelIdsByHook.entries()]
-      .filter(([, channelIds]) => channelIds.has(channel.id!))
+    if (!channel.hookIds) return channel;
+    const hookIdsToAdd = [...hookManagedChannelsByHook.entries()]
+      .filter(([, managedChannels]) => managedChannels.has(channel))
       .map(([hookId]) => hookId);
     if (hookIdsToAdd.length === 0) return channel;
-    return { ...channel, hookIds: [...channel.hookIds, ...hookIdsToAdd] };
+    return { ...channel, hookIds: [...new Set([...channel.hookIds, ...hookIdsToAdd])] };
   });
   return { ...workflow, hooks: [...hooks, ...syntheticHooks], channels };
 }

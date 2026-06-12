@@ -1098,6 +1098,7 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
     {
       from: 'Plan Review',
       to: 'Planning',
+      hookIds: ['plan-approval-reset-hook', 'plan-codex-reset-hook'],
       maxCycles: 5,
       label: 'Plan Review → Planning (revision requested)',
     },
@@ -1142,6 +1143,22 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
       },
       authorizedCallers: [{ sourceNode: 'Plan Review' }],
       label: 'Plan Approval Reset',
+    },
+    {
+      id: 'plan-codex-reset-hook',
+      enabled: true,
+      sourceNode: 'Plan Review',
+      targetNode: 'Planning',
+      method: 'send_message',
+      classification: 'side_effect',
+      validator: {
+        kind: 'script',
+        interpreter: 'bash',
+        source:
+          'echo \'{"type":"record_state","state":{"currentHeadSha":null,"currentHeadBecameHeadAt":null,"lastReaction":null,"lastReactionTimestamp":null,"checkStartedAt":null,"prUrl":null,"terminalOutcome":null},"targetHookId":"synthetic-codex-review-check-tpl-pd-plan-review"}\'',
+      },
+      authorizedCallers: [{ sourceNode: 'Plan Review' }],
+      label: 'Plan Codex Reset',
     },
   ],
 };
@@ -1313,12 +1330,14 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
     {
       from: 'Review',
       to: 'Coding',
+      hookIds: ['review-approval-reset-hook', 'review-codex-reset-hook'],
       maxCycles: 6,
       label: 'Review → Coding (feedback)',
     },
     {
       from: 'QA',
       to: 'Coding',
+      hookIds: ['qa-approval-reset-hook', 'qa-codex-reset-hook'],
       maxCycles: 6,
       label: 'QA → Coding (issues found)',
     },
@@ -1353,6 +1372,22 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
       label: 'Review Approval Reset',
     },
     {
+      id: 'review-codex-reset-hook',
+      enabled: true,
+      sourceNode: 'Review',
+      targetNode: 'Coding',
+      method: 'send_message',
+      classification: 'side_effect',
+      validator: {
+        kind: 'script',
+        interpreter: 'bash',
+        source:
+          'echo \'{"type":"record_state","state":{"currentHeadSha":null,"currentHeadBecameHeadAt":null,"lastReaction":null,"lastReactionTimestamp":null,"checkStartedAt":null,"prUrl":null,"terminalOutcome":null},"targetHookId":"synthetic-codex-review-check-tpl-fullstack-review"}\'',
+      },
+      authorizedCallers: [{ sourceNode: 'Review' }],
+      label: 'Review Codex Reset',
+    },
+    {
       id: 'qa-approval-reset-hook',
       enabled: true,
       sourceNode: 'QA',
@@ -1367,6 +1402,22 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
       },
       authorizedCallers: [{ sourceNode: 'QA' }],
       label: 'QA Approval Reset',
+    },
+    {
+      id: 'qa-codex-reset-hook',
+      enabled: true,
+      sourceNode: 'QA',
+      targetNode: 'Coding',
+      method: 'send_message',
+      classification: 'side_effect',
+      validator: {
+        kind: 'script',
+        interpreter: 'bash',
+        source:
+          'echo \'{"type":"record_state","state":{"currentHeadSha":null,"currentHeadBecameHeadAt":null,"lastReaction":null,"lastReactionTimestamp":null,"checkStartedAt":null,"prUrl":null,"terminalOutcome":null},"targetHookId":"synthetic-codex-review-check-tpl-fullstack-review"}\'',
+      },
+      authorizedCallers: [{ sourceNode: 'QA' }],
+      label: 'QA Codex Reset',
     },
   ],
 };

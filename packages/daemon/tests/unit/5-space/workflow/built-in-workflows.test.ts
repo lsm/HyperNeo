@@ -938,9 +938,9 @@ describe('PLAN_AND_DECOMPOSE_WORKFLOW template', () => {
     expect(ids).toContain('plan-pr-gate');
   });
 
-  test('has two hooks: plan-approval-hook and plan-approval-reset-hook', () => {
+  test('has three hooks: plan approval plus approval/codex reset hooks', () => {
     expect(PLAN_AND_DECOMPOSE_WORKFLOW.hooks).toBeDefined();
-    expect(PLAN_AND_DECOMPOSE_WORKFLOW.hooks).toHaveLength(2);
+    expect(PLAN_AND_DECOMPOSE_WORKFLOW.hooks).toHaveLength(3);
     const hook = PLAN_AND_DECOMPOSE_WORKFLOW.hooks!.find((h) => h.id === 'plan-approval-hook')!;
     expect(hook.id).toBe('plan-approval-hook');
     expect(hook.sourceNode).toBe('Plan Review');
@@ -954,6 +954,26 @@ describe('PLAN_AND_DECOMPOSE_WORKFLOW template', () => {
     });
     expect(hook.enabled).toBe(true);
     expect(hook.classification).toBe('validation');
+
+    const resetHook = PLAN_AND_DECOMPOSE_WORKFLOW.hooks!.find(
+      (h) => h.id === 'plan-approval-reset-hook'
+    )!;
+    const codexResetHook = PLAN_AND_DECOMPOSE_WORKFLOW.hooks!.find(
+      (h) => h.id === 'plan-codex-reset-hook'
+    )!;
+    expect(resetHook.validator.kind).toBe('script');
+    expect(codexResetHook.validator.kind).toBe('script');
+    if (resetHook.validator.kind === 'script' && codexResetHook.validator.kind === 'script') {
+      expect(resetHook.validator.source).toContain('targetHookId":"plan-approval-hook');
+      expect(codexResetHook.validator.source).toContain(
+        'targetHookId":"synthetic-codex-review-check-tpl-pd-plan-review'
+      );
+    }
+    expect(
+      PLAN_AND_DECOMPOSE_WORKFLOW.channels?.find(
+        (channel) => channel.from === 'Plan Review' && channel.to === 'Planning'
+      )?.hookIds
+    ).toEqual(['plan-approval-reset-hook', 'plan-codex-reset-hook']);
   });
 
   test('plan-pr-gate has script-based PR check with pr_url output', () => {
@@ -1519,13 +1539,13 @@ describe('seedBuiltInWorkflows()', () => {
     expect(wf.gates![0].id).toBe('plan-pr-gate');
   });
 
-  test('PLAN_AND_DECOMPOSE_WORKFLOW seeded with 2 hooks: plan-approval-hook + plan-approval-reset-hook', async () => {
+  test('PLAN_AND_DECOMPOSE_WORKFLOW seeded with approval and reset hooks', async () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const wf = manager
       .listWorkflows(SPACE_ID)
       .find((w) => w.name === PLAN_AND_DECOMPOSE_WORKFLOW.name)!;
     expect(wf.hooks).toBeDefined();
-    expect(wf.hooks).toHaveLength(2);
+    expect(wf.hooks).toHaveLength(3);
     const hook = wf.hooks![0];
     expect(hook.id).toBe('plan-approval-hook');
     expect(hook.sourceNode).toBe('Plan Review');
@@ -1534,7 +1554,7 @@ describe('seedBuiltInWorkflows()', () => {
     expect(hook.validator).toEqual({ kind: 'built_in', id: 'review_approval' });
   });
 
-  test('PLAN_AND_DECOMPOSE_WORKFLOW seeded channels split into 1 gated + 1 hook-guarded + 1 ungated feedback', async () => {
+  test('PLAN_AND_DECOMPOSE_WORKFLOW seeded channels split into gated and hook-guarded routes', async () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const wf = manager
       .listWorkflows(SPACE_ID)
@@ -1548,6 +1568,10 @@ describe('seedBuiltInWorkflows()', () => {
     const cyclicChannels = wf.channels!.filter((c) => c.maxCycles !== undefined);
     // One cyclic feedback channel: Plan Review → Planning
     expect(cyclicChannels).toHaveLength(1);
+    expect(cyclicChannels[0].hookIds).toEqual([
+      'plan-approval-reset-hook',
+      'plan-codex-reset-hook',
+    ]);
   });
 
   test('PLAN_AND_DECOMPOSE_WORKFLOW seeded channels reference node names or reviewer slot names', async () => {
@@ -3416,9 +3440,9 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     );
   });
 
-  test('FULLSTACK_QA_LOOP_WORKFLOW has three hooks: review-approval-hook + two reset hooks', () => {
+  test('FULLSTACK_QA_LOOP_WORKFLOW has approval and reset hooks', () => {
     expect(FULLSTACK_QA_LOOP_WORKFLOW.hooks).toBeDefined();
-    expect(FULLSTACK_QA_LOOP_WORKFLOW.hooks).toHaveLength(3);
+    expect(FULLSTACK_QA_LOOP_WORKFLOW.hooks).toHaveLength(5);
     const hook = FULLSTACK_QA_LOOP_WORKFLOW.hooks!.find((h) => h.id === 'review-approval-hook')!;
     expect(hook.id).toBe('review-approval-hook');
     expect(hook.sourceNode).toBe('Review');
@@ -3428,6 +3452,33 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     expect(hook.templateData).toMatchObject({ threshold: 1, requireCodex: true });
     expect(hook.enabled).toBe(true);
     expect(hook.classification).toBe('validation');
+
+    for (const hookId of ['review-approval-reset-hook', 'qa-approval-reset-hook']) {
+      const resetHook = FULLSTACK_QA_LOOP_WORKFLOW.hooks!.find((h) => h.id === hookId)!;
+      expect(resetHook.validator.kind).toBe('script');
+      if (resetHook.validator.kind === 'script') {
+        expect(resetHook.validator.source).toContain('targetHookId":"review-approval-hook');
+      }
+    }
+    for (const hookId of ['review-codex-reset-hook', 'qa-codex-reset-hook']) {
+      const resetHook = FULLSTACK_QA_LOOP_WORKFLOW.hooks!.find((h) => h.id === hookId)!;
+      expect(resetHook.validator.kind).toBe('script');
+      if (resetHook.validator.kind === 'script') {
+        expect(resetHook.validator.source).toContain(
+          'targetHookId":"synthetic-codex-review-check-tpl-fullstack-review'
+        );
+      }
+    }
+    expect(
+      FULLSTACK_QA_LOOP_WORKFLOW.channels?.find(
+        (channel) => channel.from === 'Review' && channel.to === 'Coding'
+      )?.hookIds
+    ).toEqual(['review-approval-reset-hook', 'review-codex-reset-hook']);
+    expect(
+      FULLSTACK_QA_LOOP_WORKFLOW.channels?.find(
+        (channel) => channel.from === 'QA' && channel.to === 'Coding'
+      )?.hookIds
+    ).toEqual(['qa-approval-reset-hook', 'qa-codex-reset-hook']);
   });
 
   test('FULLSTACK_QA_LOOP_WORKFLOW reviewer prompt instructs hook hand-off for codex reaction wait', () => {

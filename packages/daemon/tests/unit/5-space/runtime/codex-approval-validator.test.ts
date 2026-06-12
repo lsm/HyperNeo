@@ -921,11 +921,21 @@ describe('withSyntheticCodexHooks', () => {
     ).not.toContain('existing-codex-approval-check');
   });
 
-  test('merges synthetic target coverage into existing Codex hooks', () => {
+  test('merges synthetic coverage into existing Codex hooks', () => {
     const workflow = withSyntheticCodexHooks({
       ...WORKFLOW,
       nodes: [
-        ...WORKFLOW.nodes,
+        ...WORKFLOW.nodes.map((node) =>
+          node.name === 'Coding'
+            ? {
+                ...node,
+                agents: [
+                  { agentId: 'a1', name: 'coder' },
+                  { agentId: 'a4', name: 'coder-alt' },
+                ],
+              }
+            : node
+        ),
         { id: 'node-qa', name: 'QA', agents: [{ agentId: 'a3', name: 'qa' }] },
       ],
       hooks: [
@@ -955,6 +965,9 @@ describe('withSyntheticCodexHooks', () => {
       ],
     });
     const hook = workflow.hooks?.find((h) => h.id === 'existing-codex-review-check');
+    expect(hook?.authorizedCallers).toEqual([
+      { sourceNode: 'Coding', agentSlots: ['coder', 'coder-alt'] },
+    ]);
     expect(hook?.templateData).toEqual({
       enforceForTargets: ['Review', 'QA'],
       forceCodexApproval: true,

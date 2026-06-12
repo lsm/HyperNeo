@@ -190,9 +190,9 @@ export class WorkflowHookEngine {
   ): Promise<HookActionOutcome> {
     const { hooks, missingChannelHooks } = this.resolveMatchingHooks(methodName, params, meta);
 
-    // Fail closed when a hook-managed channel declares hookIds but one or more
-    // declared hooks do not resolve (disabled, missing, misconfigured, or wrong
-    // source/target).
+    // Fail closed when a hook-managed channel declares hookIds but no validation
+    // hook resolves. The channel-level list may include hooks scoped to other
+    // wildcard sources; those must not block this caller.
     if (missingChannelHooks) {
       return {
         decision: 'block',
@@ -202,7 +202,7 @@ export class WorkflowHookEngine {
         userState: {
           status: 'blocked_by_hook',
           reason:
-            'Channel declares hookIds but not all declared hooks resolve. Action blocked (fail closed).',
+            'Channel declares hookIds but no validation hook resolves. Action blocked (fail closed).',
         },
         executionLog: [],
       };
@@ -781,16 +781,15 @@ export class WorkflowHookEngine {
       });
     });
 
-    // Fail closed when any declared channel hookId does not resolve to a
-    // runnable validation hook. Side_effect hooks cannot block delivery, so
-    // they do not count as resolved validators for a channel.
+    // Fail closed only when a hook-managed channel has no runnable validation
+    // hooks for this caller. Wildcard channels can carry hook IDs for multiple
+    // source nodes, and unrelated source-specific IDs should not block.
     const resolvedHookIds = new Set(
       matchedHooks
         .filter((h) => (h.classification ?? 'validation') === 'validation')
         .map((h) => h.id)
     );
-    const missingChannelHooks =
-      hasChannelHookIds && [...channelHookIds].some((hid) => !resolvedHookIds.has(hid));
+    const missingChannelHooks = hasChannelHookIds && resolvedHookIds.size === 0;
     return { hooks: matchedHooks, missingChannelHooks };
   }
 

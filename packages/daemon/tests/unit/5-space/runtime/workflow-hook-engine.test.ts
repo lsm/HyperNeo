@@ -1521,7 +1521,7 @@ describe('WorkflowHookEngine', () => {
     expect(outcome.executionLog[0].hookId).toBe('review-gate');
   });
 
-  test('missing one of multiple declared hookIds fails closed', async () => {
+  test('unrelated source-specific hookIds on wildcard channels do not fail closed', async () => {
     const workflow = makeWorkflow([
       makeHook({
         id: 'hook-a',
@@ -1529,10 +1529,14 @@ describe('WorkflowHookEngine', () => {
         method: 'send_message',
         authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
       }),
+      makeHook({
+        id: 'hook-b',
+        sourceNode: 'Planning',
+        method: 'send_message',
+        authorizedCallers: [{ sourceNode: 'Planning', agentSlots: ['planner'] }],
+      }),
     ]);
-    workflow.channels = [
-      { id: 'ch-1', from: 'Coding', to: 'Review', hookIds: ['hook-a', 'hook-b'] },
-    ];
+    workflow.channels = [{ id: 'ch-1', from: '*', to: 'Review', hookIds: ['hook-a', 'hook-b'] }];
 
     const mockExecutor = new MockHookExecutor();
     const engine = new WorkflowHookEngine({
@@ -1546,6 +1550,7 @@ describe('WorkflowHookEngine', () => {
       workspacePath: '/tmp',
     });
     mockExecutor.setResult('hook-a', { type: 'allow' });
+    mockExecutor.setResult('hook-b', { type: 'block', reason: 'wrong source' });
 
     const outcome = await engine.executeAction(
       'send_message',
@@ -1553,9 +1558,8 @@ describe('WorkflowHookEngine', () => {
       defaultMeta
     );
 
-    expect(outcome.decision).toBe('block');
-    expect(outcome.userState.status).toBe('blocked_by_hook');
-    expect(outcome.userState.reason).toContain('not all declared hooks resolve');
+    expect(outcome.decision).toBe('allow');
+    expect(outcome.executionLog.map((entry) => entry.hookId)).toEqual(['hook-a']);
   });
 
   test('mixed gateId and hookIds channel runs declared hooks', async () => {
@@ -1620,7 +1624,7 @@ describe('WorkflowHookEngine', () => {
 
     expect(outcome.decision).toBe('block');
     expect(outcome.userState.status).toBe('blocked_by_hook');
-    expect(outcome.userState.reason).toContain('not all declared hooks resolve');
+    expect(outcome.userState.reason).toContain('no validation hook resolves');
   });
 
   test('@worker address with agent slot matches slot-addressed channel', async () => {
@@ -1886,7 +1890,7 @@ describe('WorkflowHookEngine', () => {
 
     expect(outcome.decision).toBe('block');
     expect(outcome.userState.status).toBe('blocked_by_hook');
-    expect(outcome.userState.reason).toContain('not all declared hooks resolve');
+    expect(outcome.userState.reason).toContain('no validation hook resolves');
   });
 
   test('PR_URL env var injected alongside NEOKAI_PR_URL', async () => {
