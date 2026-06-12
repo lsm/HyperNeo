@@ -47,6 +47,7 @@ import { join } from 'path';
 import type { Database } from '../../storage/database';
 import type { AppMcpServerRepository } from '../../storage/repositories/app-mcp-server-repository';
 import type { McpEnablementRepository } from '../../storage/repositories/mcp-enablement-repository';
+import { getSessionModelInfo } from '../model-service';
 import { resolveMcpServers, scopeChainForSession } from '../mcp/resolve-mcp-servers';
 import {
   getProviderContextManager,
@@ -198,23 +199,31 @@ export const NATIVE_CONTEXT_WINDOW_PROVIDER_IDS = ['anthropic', 'anthropic-copil
  * window and auto-compact behaviour — no override needed.
  *
  * For non-native providers (OpenRouter, Ollama, GLM, Codex bridge, etc.) the
- * SDK assumes Claude's 200 k context window and auto-compacts prematurely.
- * We disable SDK auto-compaction entirely here and let NeoKai trigger
- * compaction at the correct threshold (see ContextTracker / SDKMessageHandler).
+ * SDK cannot infer the provider model's real context window from its Anthropic
+ * model alias. We pass the real window here so SDK auto-compaction fires at the
+ * correct threshold without injecting `/compact` as prompt text.
  */
-export function buildProviderSettings(providerId: string): Options['settings'] {
+export function buildProviderSettings(
+  providerId: string,
+  contextWindow?: number | null
+): Options['settings'] {
   if (NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId)) {
     return undefined;
   }
 
-  // Disable SDK auto-compaction for all non-native providers.
-  // The SDK's internal 200 k assumption causes premature compaction on
-  // models with larger context windows (1 M, 272 k, etc.).
-  // NeoKai monitors getContextUsage() and enqueues /compact when the
-  // real context window approaches its limit.
+  if (!contextWindow) {
+    return {
+      autoCompactEnabled: false,
+    };
+  }
+
+  // Keep SDK auto-compaction enabled for non-native providers only when we can
+  // provide the provider model's real context window. This lets the SDK trigger
+  // compaction through its internal control flow instead of receiving
+  // `/compact` as ordinary prompt text from the streaming input generator.
   return {
-    autoCompactEnabled: false,
-    autoCompactWindow: Number.MAX_SAFE_INTEGER,
+    autoCompactEnabled: true,
+    autoCompactWindow: contextWindow,
   };
 }
 
@@ -319,6 +328,7 @@ export class QueryOptionsBuilder {
     const contextManager = getProviderContextManager();
     const providerContext = contextManager.createContext(this.ctx.session);
     const providerId = providerContext.provider.id;
+    const modelInfo = await getSessionModelInfo(this.ctx.session);
     const sdkModelId = providerContext.getSdkModelId();
     let sdkFallbackModel: string | undefined;
     if (config.fallbackModel) {
@@ -439,7 +449,7 @@ export class QueryOptionsBuilder {
       // output style, CLAUDE.md content, etc.).
       settingSources:
         config.settingSources ?? this.ctx.settingsManager.getGlobalSettings().settingSources,
-      settings: buildProviderSettings(providerId),
+      settings: buildProviderSettings(providerId, modelInfo?.contextWindow),
 
       // ============ Streaming ============
       includePartialMessages: config.includePartialMessages,
