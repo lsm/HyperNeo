@@ -863,9 +863,13 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
           const broadcastTargetRefs = new Set<string>();
           for (const targetNode of workflow.nodes) {
             broadcastTargetRefs.add(targetNode.name);
-            for (const agent of resolveNodeAgents(targetNode)) {
-              if (targetNode.id === workflowNodeId && agent.name === myAgentName) continue;
-              broadcastTargetRefs.add(agent.name);
+            try {
+              for (const agent of resolveNodeAgents(targetNode)) {
+                if (targetNode.id === workflowNodeId && agent.name === myAgentName) continue;
+                broadcastTargetRefs.add(agent.name);
+              }
+            } catch {
+              // Malformed node definitions have no resolvable agent slots to include.
             }
           }
           const targetIsBroadcastRecipient = candidateTargets.some((targetRef) =>
