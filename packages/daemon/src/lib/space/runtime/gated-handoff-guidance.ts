@@ -38,7 +38,7 @@ function formatGateDataPlaceholder(field: GateDataShapeField): string {
     case 'string':
       return JSON.stringify(`<${field.name}>`);
     case 'number':
-      return '0';
+      return field.check?.op === '!=' && field.check.value === 0 ? '1' : '0';
     case 'boolean':
       return field.check?.op === '!=' && field.check.value === true ? 'false' : 'true';
     case 'map':
