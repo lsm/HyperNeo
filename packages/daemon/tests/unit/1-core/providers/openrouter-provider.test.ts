@@ -349,6 +349,30 @@ describe('OpenRouterProvider', () => {
     expect(provider.getModelContextWindow('anthropic/claude-sonnet-4.5')).toBe(200_000);
   });
 
+  it('prefers API-loaded Claude context when it differs from aggregate fallback', async () => {
+    process.env.OPENROUTER_API_KEY = 'sk-or-test';
+    const fetchMock = mock(
+      async () =>
+        new Response(
+          JSON.stringify({
+            data: [
+              {
+                id: 'anthropic/claude-sonnet-future',
+                name: 'Claude Sonnet Future',
+                context_length: 300_000,
+              },
+            ],
+          }),
+          { status: 200 }
+        )
+    );
+    const provider = new OpenRouterProvider(process.env, fetchMock as unknown as typeof fetch);
+
+    await provider.getModels();
+
+    expect(provider.getModelContextWindow('anthropic/claude-sonnet-future')).toBe(300_000);
+  });
+
   it('returns API-loaded model context for selected OpenRouter model', async () => {
     process.env.OPENROUTER_API_KEY = 'sk-or-test';
     const fetchMock = mock(

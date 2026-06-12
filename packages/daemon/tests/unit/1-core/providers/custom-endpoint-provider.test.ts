@@ -357,6 +357,30 @@ describe('CustomEndpointProvider', () => {
     expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('qwen2.5-7b');
   });
 
+  it('uses the routed fallback model context when modelId is unknown', () => {
+    const p = new CustomEndpointProvider(baseConfig, { bridgeFactory: makeFakeBridge().factory });
+
+    expect(p.getModelContextWindow('not-a-real-model')).toBe(32_000);
+  });
+
+  it('reports configured context for large-context custom endpoint models', () => {
+    const p = new CustomEndpointProvider(
+      {
+        ...baseConfig,
+        models: [
+          {
+            id: 'large-context-small-output',
+            capabilities: { maxContextTokens: 1_000_000 },
+          },
+        ],
+        defaultModelId: 'large-context-small-output',
+      },
+      { bridgeFactory: makeFakeBridge().factory }
+    );
+
+    expect(p.getModelContextWindow('large-context-small-output')).toBe(1_000_000);
+  });
+
   it('honours sessionConfig overrides for baseUrl and apiKey', () => {
     const fake = makeFakeBridge();
     const p = new CustomEndpointProvider(baseConfig, { bridgeFactory: fake.factory });

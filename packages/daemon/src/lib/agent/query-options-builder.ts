@@ -130,6 +130,7 @@ const KIMI_SDK_OUTPUT_TOKEN_LIMIT = 32_768;
 const LARGE_SDK_OUTPUT_TOKEN_LIMIT = 64_000;
 const MAX_SDK_OUTPUT_TOKEN_LIMIT = 128_000;
 const SMALL_OUTPUT_BRIDGE_PROVIDER_IDS = new Set(['anthropic-codex']);
+const SMALL_OUTPUT_PROVIDER_ID_PREFIXES = ['custom:'];
 
 type SdkOutputLimitInput = {
   providerId: string;
@@ -143,7 +144,10 @@ function isOpusModel(modelId: string): boolean {
 }
 
 function deriveSdkOutputTokenLimit(input: SdkOutputLimitInput): string {
-  if (SMALL_OUTPUT_BRIDGE_PROVIDER_IDS.has(input.providerId)) {
+  if (
+    SMALL_OUTPUT_BRIDGE_PROVIDER_IDS.has(input.providerId) ||
+    SMALL_OUTPUT_PROVIDER_ID_PREFIXES.some((prefix) => input.providerId.startsWith(prefix))
+  ) {
     return String(SMALL_SDK_OUTPUT_TOKEN_LIMIT);
   }
   if (input.providerId === 'kimi') {
@@ -158,7 +162,7 @@ function deriveSdkOutputTokenLimit(input: SdkOutputLimitInput): string {
   if (input.maxContextWindow >= 262_000) {
     return String(MAX_SDK_OUTPUT_TOKEN_LIMIT);
   }
-  if (input.maxContextWindow > 128_000) {
+  if (input.maxContextWindow >= 128_000) {
     return String(LARGE_SDK_OUTPUT_TOKEN_LIMIT);
   }
   return String(SMALL_SDK_OUTPUT_TOKEN_LIMIT);

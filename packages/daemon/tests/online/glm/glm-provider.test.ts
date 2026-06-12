@@ -421,8 +421,10 @@ describe('GLM Provider Integration', () => {
       const builder = new QueryOptionsBuilder({ session, settingsManager });
       const options = await builder.build();
 
-      // Anthropic should not have provider env overrides, only SDK output cap env.
-      expect(options.env).toEqual({ CLAUDE_CODE_MAX_OUTPUT_TOKENS: '64000' });
+      // Anthropic should not have provider env overrides, but proxy vars may be present.
+      expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('64000');
+      expect(options.env?.ANTHROPIC_BASE_URL).toBeUndefined();
+      expect(options.env?.ANTHROPIC_API_KEY).toBeUndefined();
     });
 
     it('should not inject env vars for opus/haiku models', async () => {
@@ -441,8 +443,10 @@ describe('GLM Provider Integration', () => {
       const opusOptions = await opusBuilder.build();
       const haikuOptions = await haikuBuilder.build();
 
-      expect(opusOptions.env).toEqual({ CLAUDE_CODE_MAX_OUTPUT_TOKENS: '128000' });
-      expect(haikuOptions.env).toEqual({ CLAUDE_CODE_MAX_OUTPUT_TOKENS: '64000' });
+      expect(opusOptions.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('128000');
+      expect(haikuOptions.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('64000');
+      expect(opusOptions.env?.ANTHROPIC_BASE_URL).toBeUndefined();
+      expect(haikuOptions.env?.ANTHROPIC_BASE_URL).toBeUndefined();
     });
   });
 

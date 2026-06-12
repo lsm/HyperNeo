@@ -158,10 +158,8 @@ describe('QueryOptionsBuilder', () => {
     it('should include env when configured', async () => {
       mockSession.config.env = { MY_VAR: 'value' };
       const options = await builder.build();
-      expect(options.env).toEqual({
-        MY_VAR: 'value',
-        CLAUDE_CODE_MAX_OUTPUT_TOKENS: '64000',
-      });
+      expect(options.env?.MY_VAR).toBe('value');
+      expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('64000');
     });
 
     it('should derive the default SDK output token cap from provider context window', async () => {
@@ -199,7 +197,7 @@ describe('QueryOptionsBuilder', () => {
       }
     });
 
-    it('should cap large provider context windows at the SDK maximum output limit', async () => {
+    it('should cap custom endpoints at the small SDK output limit despite large contexts', async () => {
       resetProviderRegistry();
       const registry = getProviderRegistry();
       registry.register({
@@ -223,7 +221,7 @@ describe('QueryOptionsBuilder', () => {
         mockSession.config.model = 'provider-native-id';
         const options = await builder.build();
         expect(options.model).toBe('default');
-        expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('128000');
+        expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('16384');
       } finally {
         resetProviderRegistry();
       }
@@ -428,6 +426,67 @@ describe('QueryOptionsBuilder', () => {
         const options = await builder.build();
         expect(options.model).toBe('default');
         expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('16384');
+      } finally {
+        resetProviderRegistry();
+      }
+    });
+
+    it('should not let stale custom endpoint model IDs fall back to aggregate output caps', async () => {
+      resetProviderRegistry();
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'custom:heterogeneous',
+        displayName: 'Heterogeneous Custom Endpoint',
+        capabilities: {
+          streaming: true,
+          extendedThinking: false,
+          maxContextWindow: 1_000_000,
+          functionCalling: true,
+          vision: false,
+        },
+        isAvailable: () => true,
+        getModels: async () => [],
+        ownsModel: () => false,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: true }),
+        translateModelIdForSdk: () => 'default',
+        getModelContextWindow: () => 32_000,
+      } as Provider);
+      try {
+        mockSession.config.provider = 'custom:heterogeneous';
+        mockSession.config.model = 'sonnet';
+        const options = await builder.build();
+        expect(options.model).toBe('default');
+        expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('16384');
+      } finally {
+        resetProviderRegistry();
+      }
+    });
+
+    it('should keep exactly 128k context models in the large output bucket', async () => {
+      resetProviderRegistry();
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'ollama',
+        displayName: 'Ollama',
+        capabilities: {
+          streaming: true,
+          extendedThinking: false,
+          maxContextWindow: 128_000,
+          functionCalling: true,
+          vision: false,
+        },
+        isAvailable: () => true,
+        getModels: async () => [],
+        ownsModel: () => true,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: true }),
+        translateModelIdForSdk: () => 'default',
+      } as Provider);
+      try {
+        mockSession.config.provider = 'ollama';
+        mockSession.config.model = 'qwen3-coder';
+        const options = await builder.build();
+        expect(options.model).toBe('default');
+        expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('64000');
       } finally {
         resetProviderRegistry();
       }

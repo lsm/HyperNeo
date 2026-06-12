@@ -202,10 +202,7 @@ export class CustomEndpointProvider implements Provider {
   }
 
   buildSdkConfig(modelId: string, sessionConfig?: ProviderSessionConfig): ProviderSdkConfig {
-    const model =
-      this.config.models.find((m) => m.id === modelId) ??
-      this.config.models.find((m) => m.id === this.config.defaultModelId) ??
-      this.config.models[0];
+    const model = this.resolveConfiguredModel(modelId);
     if (!model) {
       throw new Error(
         `Custom endpoint '${this.config.id}' has no models; cannot build SDK config for '${modelId}'`
@@ -243,6 +240,14 @@ export class CustomEndpointProvider implements Provider {
    * bridge forwards request bytes verbatim and a `thinking` field sent to
    * a non-thinking upstream model would 4xx.
    */
+  private resolveConfiguredModel(modelId: string): CustomEndpointModel | undefined {
+    return (
+      this.config.models.find((m) => m.id === modelId) ??
+      this.config.models.find((m) => m.id === this.config.defaultModelId) ??
+      this.config.models[0]
+    );
+  }
+
   getModelThinkingMode(modelId: string): 'off' | 'on' | 'granular' | undefined {
     const model = this.config.models.find((m) => m.id === modelId);
     if (!model) return undefined;
@@ -251,7 +256,7 @@ export class CustomEndpointProvider implements Provider {
   }
 
   getModelContextWindow(modelId: string): number | undefined {
-    const model = this.config.models.find((m) => m.id === modelId);
+    const model = this.resolveConfiguredModel(modelId);
     if (!model) return undefined;
     return resolveModelCapabilities(model, this.type).maxContextTokens;
   }
