@@ -302,7 +302,9 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
 
     process.env.GLM_API_KEY = 'test-glm-key';
     const registry = getProviderRegistry();
-    registry.register(new GlmProvider(process.env));
+    const glmProvider = new GlmProvider();
+    glmProvider.setCredentials({ type: 'api_key', apiKey: 'test-glm-key' });
+    registry.register(glmProvider);
 
     const { mockAgentSession, mockSessionCache: sessionCache } = makeSessionCache();
     mockAgentSession.getSessionData = mock(() => ({
@@ -391,17 +393,9 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
   });
 
   it('should generate titles using stored credentials when env vars are absent', async () => {
-    const { AnthropicProvider } = await import('../../../../src/lib/providers/anthropic-provider');
-    const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
-
     delete process.env.ANTHROPIC_API_KEY;
     delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
     delete process.env.ANTHROPIC_AUTH_TOKEN;
-
-    const anthropicProvider = new AnthropicProvider();
-    anthropicProvider.setCredentials({ type: 'api_key', apiKey: 'stored-api-key' });
-    const registry = getProviderRegistry();
-    registry.register(anthropicProvider);
 
     const result = await lifecycle.generateTitleAndRenameBranch('test-id', 'Create a login form');
 

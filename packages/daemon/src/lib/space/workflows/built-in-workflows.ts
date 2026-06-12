@@ -22,6 +22,7 @@
 
 import type {
   DeclarativeToolGuard,
+  WorkflowNodeAgentOverride,
   GateField,
   GatePoll,
   GateScript,
@@ -528,9 +529,12 @@ const REVIEW_THREAD_APPROVAL_CHECK_GUIDANCE =
 const FULLSTACK_CODING_PROMPT =
   'You are the Coder in a Fullstack QA Loop workflow. You implement backend + frontend changes, ' +
   'write tests, and keep one PR updated across review and QA cycles.\n\n' +
-  'When implementation is ready, ensure the PR is open and mergeable and write code-pr-gate with ' +
-  'field pr_url so Review can activate. Coding is not the end node — the task-completion tools ' +
-  '(`approve_task`, `submit_for_approval`) are not available to you.\n\n' +
+  'When implementation is ready, ensure the PR is open and mergeable, then call `send_message` ' +
+  'on the outbound gated review channel with the PR URL in its `data` payload. Use the current ' +
+  'target and required data fields from the Runtime Execution Contract injected into your task ' +
+  'prompt. `save_artifact` alone is insufficient; only `send_message` delivers the gated ' +
+  'handoff. Coding is not the end node — the task-completion tools (`approve_task`, ' +
+  '`submit_for_approval`) are not available to you.\n\n' +
   REVIEW_THREAD_RESOLUTION_GUIDANCE;
 
 const FULLSTACK_REVIEW_PROMPT =
@@ -601,11 +605,12 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
               '3. Write or update tests to cover new behavior\n' +
               '4. Run the test suite and fix any failures\n' +
               '5. If code changed: open a PR with `gh pr create` — include a clear title and description\n' +
-              '6. If code changed: hand off by sending a message to Review with ' +
-              '`data: { pr_url: "<url>" }`. The gate script verifies the PR is open and ' +
-              'mergeable, so make sure it actually is before sending. ' +
-              '**Always include `data: { pr_url }` on every send_message to Review** — the gate ' +
-              'data resets each cycle, so even on round 2+ you must re-supply it.\n' +
+              '6. If code changed: hand off by calling `send_message` on the outbound gated ' +
+              'review channel with the PR URL in its `data` payload. Use the current target and ' +
+              'required data fields from the Runtime Execution Contract injected into your task ' +
+              'prompt. `save_artifact` alone is insufficient; only `send_message` delivers ' +
+              'the gated handoff. Always include the PR URL data field on every `send_message` ' +
+              'handoff — gate data resets each cycle, so even on round 2+ you must re-supply it.\n' +
               '7. If the task is validation-only and produced no code changes: do NOT create an empty commit or PR. ' +
               'Instead, call `save_artifact({ type: "result", append: true, summary: "<validation outcome>", data: { completion_mode: "validation_only", changed_files: 0, validation_outcome: "<passed|failed + evidence>" } })`, then ' +
               '`send_message(target="Validation Complete", message="<short outcome>", data: { completion_mode: "validation_only", changed_files: 0, validation_outcome: "<outcome>" })`. ' +
@@ -625,8 +630,9 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
               REVIEW_THREAD_RESOLUTION_GUIDANCE +
               '\n' +
               '6. Verify no unresolved review conversations remain, verify tests still pass, ' +
-              'then send_message to Review again (again with `data: { pr_url }`) to ' +
-              're-trigger the review cycle',
+              'then call `send_message` on the outbound gated review channel again to ' +
+              're-trigger the review cycle. Re-supplying the PR URL data field is required; ' +
+              '`save_artifact` alone will not deliver the gated handoff.',
           },
           toolGuards: [CODER_NO_MERGE_GUARD],
         },
@@ -1241,7 +1247,8 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
               '1. Implement backend and frontend changes with focused commits\n' +
               '2. Add/update unit, integration, and UI tests as needed\n' +
               '3. Open or update the PR and ensure it remains mergeable\n' +
-              '4. Write code-pr-gate with field pr_url so Review can activate\n' +
+              '4. Hand off by calling `send_message` on the outbound gated review channel with ' +
+              'the PR URL in its `data` payload; `save_artifact` alone will not deliver the handoff\n' +
               '5. Share blockers clearly with Reviewer/QA when needed',
           },
           toolGuards: [CODER_NO_MERGE_GUARD],
@@ -1459,7 +1466,8 @@ export interface SeedBuiltInWorkflowsResult {
    * PR 3/5 uses this path to land `postApproval` routes, updated
    * `completionAutonomyLevel`, and refreshed `templateHash` values onto
    * existing spaces without rewriting user-customisable fields (node
-   * UUIDs, prompt text, channels, gates).
+   * UUIDs, custom prompt text, channels, gates), except for known retired
+   * built-in prompt text patched during restamp.
    */
   restamped: string[];
   /** Errors for workflows that failed to seed or re-stamp */
@@ -1477,7 +1485,8 @@ export interface SeedBuiltInWorkflowsResult {
  * Unlike `customPrompt` (user-configurable), `toolGuards` are structural enforcement
  * metadata that must stay in sync with the template. `postApproval` is also structural
  * routing metadata for the terminal node. This function only touches `postApproval`
- * on the node and `toolGuards` on each agent slot — all other fields (customPrompt,
+ * on the node and `toolGuards` on each agent slot, with a narrow exception for known
+ * retired built-in prompt text that must be re-stamped. All other fields (customPrompt,
  * model, disabledSkillIds, etc.) are preserved from the existing row.
  *
  * Template matching is by node name + agent name. If a user renamed a node,
@@ -1510,10 +1519,19 @@ export function mergeNodeStructuralFieldsFromTemplate(
         agentId: resolveAgentId(agent.agentId) ?? agent.agentId,
       })),
     }));
-  const templateAgentsByKey = new Map<string, DeclarativeToolGuard[] | undefined>();
+  const templateAgentsByKey = new Map<
+    string,
+    {
+      toolGuards: DeclarativeToolGuard[] | undefined;
+      customPrompt?: WorkflowNodeAgentOverride;
+    }
+  >();
   for (const node of templateNodes) {
     for (const agent of node.agents) {
-      templateAgentsByKey.set(`${node.name}::${agent.name}`, agent.toolGuards);
+      templateAgentsByKey.set(`${node.name}::${agent.name}`, {
+        toolGuards: agent.toolGuards,
+        customPrompt: agent.customPrompt,
+      });
     }
   }
 
@@ -1530,10 +1548,20 @@ export function mergeNodeStructuralFieldsFromTemplate(
         : node.codexPollIntervalMs,
       agents: node.agents.map((agent) => {
         const key = `${node.name}::${agent.name}`;
-        const templateGuards = templateAgentsByKey.get(key);
-        if (templateGuards === undefined) return agent;
-        // Merge: overwrite toolGuards from template, keep everything else
-        return { ...agent, toolGuards: templateGuards };
+        const templateAgent = templateAgentsByKey.get(key);
+        if (templateAgent === undefined) return agent;
+        // Merge: overwrite structural toolGuards, preserve user custom prompts except
+        // for known retired built-in prompt text that would otherwise survive restamp.
+        return {
+          ...agent,
+          ...(templateAgent.toolGuards === undefined
+            ? {}
+            : { toolGuards: templateAgent.toolGuards }),
+          customPrompt: patchKnownBuiltInPromptDrift(
+            agent.customPrompt,
+            templateAgent.customPrompt
+          ),
+        };
       }),
     };
   });
@@ -1652,6 +1680,119 @@ function migrateCodexFeatureToNodeToggle(
   });
 
   return { nodes: migratedNodes, gates: migratedGates };
+}
+
+const CURRENT_CODING_WORKFLOW_HANDOFF_PROMPT =
+  '6. If code changed: hand off by calling `send_message` on the outbound gated ' +
+  'review channel with the PR URL in its `data` payload. Use the current target and ' +
+  'required data fields from the Runtime Execution Contract injected into your task ' +
+  'prompt. `save_artifact` alone is insufficient; only `send_message` delivers ' +
+  'the gated handoff. Always include the PR URL data field on every `send_message` ' +
+  'handoff — gate data resets each cycle, so even on round 2+ you must re-supply it.\n';
+const RETIRED_CODING_WORKFLOW_HANDOFF_PROMPT =
+  '6. If code changed: hand off by sending a message to Review with ' +
+  '`data: { pr_url: "<url>" }`. The gate script verifies the PR is open and ' +
+  'mergeable, so make sure it actually is before sending. ' +
+  '**Always include `data: { pr_url }` on every send_message to Review** — the gate ' +
+  'data resets each cycle, so even on round 2+ you must re-supply it.\n';
+const RETIRED_HARDCODED_CODING_WORKFLOW_HANDOFF_PROMPT =
+  '6. If code changed: hand off by calling ' +
+  '`send_message(target="Review", message="<short summary>", data: { pr_url: "<url>" })`. ' +
+  'The `data.pr_url` payload is auto-merged into `code-ready-gate`; the gate script verifies ' +
+  'the PR is open and mergeable before Review activates. `save_artifact` alone is insufficient; ' +
+  'only `send_message` delivers the gated handoff. ' +
+  '**Always include `data: { pr_url }` on every send_message to Review** — the gate ' +
+  'data resets each cycle, so even on round 2+ you must re-supply it.\n';
+const CURRENT_CODING_WORKFLOW_REHANDOFF_PROMPT =
+  '6. Verify no unresolved review conversations remain, verify tests still pass, ' +
+  'then call `send_message` on the outbound gated review channel again to ' +
+  're-trigger the review cycle. Re-supplying the PR URL data field is required; ' +
+  '`save_artifact` alone will not deliver the gated handoff.';
+const RETIRED_CODING_WORKFLOW_REHANDOFF_PROMPT =
+  '6. Verify no unresolved review conversations remain, verify tests still pass, ' +
+  'then send_message to Review again (again with `data: { pr_url }`) to ' +
+  're-trigger the review cycle';
+const RETIRED_HARDCODED_CODING_WORKFLOW_REHANDOFF_PROMPT =
+  '6. Verify no unresolved review conversations remain, verify tests still pass, ' +
+  'then call `send_message(target="Review", message="<short summary>", data: { pr_url: "<url>" })` ' +
+  'again to re-trigger the review cycle. Re-supplying `data.pr_url` is required; ' +
+  '`save_artifact` alone will not open `code-ready-gate`.';
+const CURRENT_FULLSTACK_CODING_READY_PROMPT =
+  'When implementation is ready, ensure the PR is open and mergeable, then call `send_message` ' +
+  'on the outbound gated review channel with the PR URL in its `data` payload. Use the current ' +
+  'target and required data fields from the Runtime Execution Contract injected into your task ' +
+  'prompt. `save_artifact` alone is insufficient; only `send_message` delivers the gated ' +
+  'handoff. Coding is not the end node — the task-completion tools (`approve_task`, ' +
+  '`submit_for_approval`) are not available to you.\n\n';
+const RETIRED_FULLSTACK_CODING_READY_PROMPT =
+  'When implementation is ready, ensure the PR is open and mergeable and write code-pr-gate with ' +
+  'field pr_url so Review can activate. Coding is not the end node — the task-completion tools ' +
+  '(`approve_task`, `submit_for_approval`) are not available to you.\n\n';
+const RETIRED_HARDCODED_FULLSTACK_CODING_READY_PROMPT =
+  'When implementation is ready, ensure the PR is open and mergeable, then call ' +
+  '`send_message(target="Review", message="<short summary>", data: { pr_url: "<url>" })`. ' +
+  'The `data.pr_url` payload is auto-merged into `code-pr-gate`; the gate script verifies ' +
+  'the PR is open and mergeable before Review activates. `save_artifact` alone is insufficient; ' +
+  'only `send_message` delivers the gated handoff. Coding is not the end node — the ' +
+  'task-completion tools (`approve_task`, `submit_for_approval`) are not available to you.\n\n';
+const CURRENT_FULLSTACK_CODING_STEP_PROMPT =
+  '4. Hand off by calling `send_message` on the outbound gated review channel with ' +
+  'the PR URL in its `data` payload; `save_artifact` alone will not deliver the handoff\n';
+const RETIRED_FULLSTACK_CODING_STEP_PROMPT =
+  '4. Write code-pr-gate with field pr_url so Review can activate\n';
+const RETIRED_HARDCODED_FULLSTACK_CODING_STEP_PROMPT =
+  '4. Hand off to Review by calling ' +
+  '`send_message(target="Review", message="<short summary>", data: { pr_url: "<url>" })`; ' +
+  '`save_artifact` alone will not open `code-pr-gate`\n';
+
+const BUILT_IN_PROMPT_PATCH_VARIANTS = [
+  [
+    [CURRENT_CODING_WORKFLOW_HANDOFF_PROMPT, RETIRED_CODING_WORKFLOW_HANDOFF_PROMPT],
+    [CURRENT_CODING_WORKFLOW_REHANDOFF_PROMPT, RETIRED_CODING_WORKFLOW_REHANDOFF_PROMPT],
+  ],
+  [
+    [CURRENT_CODING_WORKFLOW_HANDOFF_PROMPT, RETIRED_HARDCODED_CODING_WORKFLOW_HANDOFF_PROMPT],
+    [CURRENT_CODING_WORKFLOW_REHANDOFF_PROMPT, RETIRED_HARDCODED_CODING_WORKFLOW_REHANDOFF_PROMPT],
+  ],
+  [
+    [CURRENT_FULLSTACK_CODING_READY_PROMPT, RETIRED_FULLSTACK_CODING_READY_PROMPT],
+    [CURRENT_FULLSTACK_CODING_STEP_PROMPT, RETIRED_FULLSTACK_CODING_STEP_PROMPT],
+  ],
+  [
+    [CURRENT_FULLSTACK_CODING_READY_PROMPT, RETIRED_HARDCODED_FULLSTACK_CODING_READY_PROMPT],
+    [CURRENT_FULLSTACK_CODING_STEP_PROMPT, RETIRED_HARDCODED_FULLSTACK_CODING_STEP_PROMPT],
+  ],
+] as const;
+
+function patchKnownBuiltInPromptDrift<T extends WorkflowNodeAgentOverride | undefined>(
+  existingPrompt: T,
+  templatePrompt: T
+): T {
+  const existingValue = existingPrompt?.value;
+  const templateValue = templatePrompt?.value;
+  if (!existingValue || !templateValue || existingValue === templateValue) return existingPrompt;
+  if (!isExactRetiredBuiltInPrompt(existingValue, templateValue)) return existingPrompt;
+  return { ...existingPrompt, value: templateValue } as T;
+}
+
+function isExactRetiredBuiltInPrompt(existingValue: string, templateValue: string): boolean {
+  return buildRetiredBuiltInPromptValues(templateValue).some((value) => existingValue === value);
+}
+
+function buildRetiredBuiltInPromptValues(templateValue: string): string[] {
+  const values: string[] = [];
+  for (const replacements of BUILT_IN_PROMPT_PATCH_VARIANTS) {
+    let value = templateValue;
+    for (const [currentText, retiredText] of replacements) {
+      if (!value.includes(currentText)) {
+        value = templateValue;
+        break;
+      }
+      value = value.replace(currentText, retiredText);
+    }
+    if (value !== templateValue) values.push(value);
+  }
+  return values;
 }
 
 function nodeReferences(node: WorkflowNode): Set<string> {
@@ -1779,8 +1920,9 @@ export function mergeGateStructuralFieldsFromTemplate(
  *
  * - Node-level `postApproval`, `completionAutonomyLevel`, and `templateHash`
  *   are updated. The legacy workflow-level `postApproval` is cleared. Persisted
- *   node agent `customPrompt.value` is deliberately left untouched so daemon
- *   restart / startup seed passes cannot replace user-configured runtime prompts.
+ *   node agent `customPrompt.value` is preserved except for known retired built-in
+ *   prompt text, so daemon restart / startup seed passes cannot replace user-configured
+ *   runtime prompts.
  * - Agent `toolGuards` are merged onto matching agent slots (by node name +
  *   agent name) so structural enforcement metadata stays in sync with the
  *   template when node + agent names still match. Other node fields
