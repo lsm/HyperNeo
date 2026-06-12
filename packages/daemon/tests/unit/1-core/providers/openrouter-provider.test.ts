@@ -320,6 +320,39 @@ describe('OpenRouterProvider', () => {
     expect(byAlias['openrouter-haiku']).toBe(200_000); // Claude Haiku ~200K
   });
 
+  it('returns selected model context instead of provider aggregate context', () => {
+    const provider = new OpenRouterProvider();
+
+    expect(provider.getModelContextWindow('sonnet')).toBe(200_000);
+    expect(provider.getModelContextWindow('haiku')).toBe(200_000);
+    expect(provider.getModelContextWindow('openrouter/auto')).toBe(1_000_000);
+  });
+
+  it('returns API-loaded model context for selected OpenRouter model', async () => {
+    process.env.OPENROUTER_API_KEY = 'sk-or-test';
+    const fetchMock = mock(
+      async () =>
+        new Response(
+          JSON.stringify({
+            data: [
+              {
+                id: 'anthropic/claude-sonnet-4.6',
+                name: 'Claude Sonnet 4.6',
+                context_length: 200_000,
+              },
+              { id: 'xai/grok-4', name: 'Grok 4', context_length: 256_000 },
+            ],
+          }),
+          { status: 200 }
+        )
+    );
+    const provider = new OpenRouterProvider(process.env, fetchMock as unknown as typeof fetch);
+
+    await provider.getModels();
+
+    expect(provider.getModelContextWindow('xai/grok-4')).toBe(256_000);
+  });
+
   it('capabilities.maxContextWindow is 1M for unknown models with large contexts', () => {
     const provider = new OpenRouterProvider();
     expect(provider.capabilities.maxContextWindow).toBe(1_000_000);

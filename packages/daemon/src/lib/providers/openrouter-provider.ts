@@ -302,6 +302,15 @@ export class OpenRouterProvider implements Provider {
     return 'default';
   }
 
+  getModelContextWindow(modelId: string): number | undefined {
+    const routedModelId = this.ownsModel(modelId)
+      ? modelId
+      : (this.getModelForTier(modelId as ModelTier) ?? OpenRouterProvider.DEFAULT_MODEL);
+    const models = this.modelCache ?? OpenRouterProvider.FALLBACK_MODELS;
+    const model = models.find((m) => m.id === routedModelId || m.alias === routedModelId);
+    return model?.contextWindow;
+  }
+
   async getAuthStatus(): Promise<ProviderAuthStatusInfo> {
     const apiKey = this.getApiKey();
     if (!apiKey) {
