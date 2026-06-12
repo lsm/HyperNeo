@@ -155,6 +155,21 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
   let mockAgentSessionFactory: AgentSessionFactory;
   let config: SessionLifecycleConfig;
 
+  const generateTitleWithSdkForTest = (
+    provider = 'anthropic',
+    modelId = 'claude-sonnet-4-20250514',
+    messageText = 'Create a login form'
+  ) =>
+    (
+      lifecycle as unknown as {
+        generateTitleWithSdk: (
+          provider: string,
+          modelId: string,
+          messageText: string
+        ) => Promise<string>;
+      }
+    ).generateTitleWithSdk(provider, modelId, messageText);
+
   const makeSessionCache = () => {
     const mockAgentSession = {
       cleanup: mock(async () => {}),
@@ -308,15 +323,14 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
   });
 
   it('should disable thinking when calling SDK query for title generation', async () => {
-    const result = await lifecycle.generateTitleAndRenameBranch('test-id', 'Create a login form');
+    await generateTitleWithSdkForTest();
 
-    expect(result.isFallback).toBe(false);
     expect(lastTitleQueryOptions).toBeDefined();
     expect(lastTitleQueryOptions?.thinking).toEqual({ type: 'disabled' });
   });
 
   it('should pass the session model to SDK title generation without provider hardcoding', async () => {
-    await lifecycle.generateTitleAndRenameBranch('test-id', 'Create a login form');
+    await generateTitleWithSdkForTest();
 
     expect(lastTitleQueryOptions?.model).toBe('claude-sonnet-4-20250514');
   });
@@ -351,7 +365,7 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
       mockAgentSessionFactory
     );
 
-    await lifecycle.generateTitleAndRenameBranch('test-id', 'Create a login form');
+    await generateTitleWithSdkForTest('glm', 'glm-5.1');
 
     expect(lastTitleQueryOptions?.model).toBe('default');
     expect(lastTitleProcessEnv?.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('glm-5-turbo');
@@ -364,10 +378,9 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
   });
 
   it('should extract title from text blocks', async () => {
-    const result = await lifecycle.generateTitleAndRenameBranch('test-id', 'Create a login form');
+    const title = await generateTitleWithSdkForTest();
 
-    expect(result.isFallback).toBe(false);
-    expect(result.title).toBe('My Generated Title');
+    expect(title).toBe('My Generated Title');
   });
 
   it('should strip markdown formatting from extracted title', async () => {
@@ -380,10 +393,9 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
       },
     ];
 
-    const result = await lifecycle.generateTitleAndRenameBranch('test-id', 'Create a login form');
+    const title = await generateTitleWithSdkForTest();
 
-    expect(result.isFallback).toBe(false);
-    expect(result.title).toBe('Bold Title Here');
+    expect(title).toBe('Bold Title Here');
   });
 
   it('should fall back to message text when assistant message contains only thinking blocks', async () => {
@@ -432,9 +444,8 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
     registry.unregister('anthropic');
     registry.register(anthropicProvider);
 
-    const result = await lifecycle.generateTitleAndRenameBranch('test-id', 'Create a login form');
+    const title = await generateTitleWithSdkForTest();
 
-    expect(result.isFallback).toBe(false);
-    expect(result.title).toBe('My Generated Title');
+    expect(title).toBe('My Generated Title');
   });
 });
