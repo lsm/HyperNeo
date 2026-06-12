@@ -844,12 +844,10 @@ export class ChannelRouter {
 
     if (!this.config.gateDataRepo) return [];
 
-    // Find all channels in this workflow that reference this gate.
-    // Skip hook-managed channels — they are evaluated by the hook engine
-    // at MCP action time, not by gate data writes.
-    const channels = (workflow.channels ?? []).filter(
-      (ch) => ch.gateId === gateId && !this.isHookManagedChannel(ch)
-    );
+    // Find all channels in this workflow that reference this gate. Mixed
+    // gate+hook channels still need gate-data activation after hook validation
+    // succeeds on the approving action.
+    const channels = (workflow.channels ?? []).filter((ch) => ch.gateId === gateId);
     if (channels.length === 0) return [];
 
     // --- Auto-approval: pre-write approval data when the space's autonomy level meets or

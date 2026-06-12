@@ -462,10 +462,11 @@ export const codexReviewApprovedValidator: BuiltInValidatorFn = async (context) 
 
     const now = Date.now();
     const isFirstCheck = persisted.currentHeadSha === undefined;
+    const isNewReviewWindow = headChanged || prChanged || isFirstCheck;
     const workflowStartedAt = parseIsoMs(workflowStartIso);
     const firstCheckFreshnessAnchor = workflowStartedAt ?? now;
     let headCommitTimestamp: number | undefined;
-    if (headChanged || isFirstCheck) {
+    if (isNewReviewWindow) {
       try {
         headCommitTimestamp = await fetchCommitTimestamp(prInfo, prData, currentHeadSha, token);
       } catch {
@@ -475,17 +476,13 @@ export const codexReviewApprovedValidator: BuiltInValidatorFn = async (context) 
     // Truncate to second precision so comparisons with GitHub timestamps
     // (which are second-precision) don't treat same-second reactions as stale.
     const currentHeadBecameHeadAt = toEpochSeconds(
-      headChanged
-        ? (headCommitTimestamp ?? now)
-        : (persisted.currentHeadBecameHeadAt ??
-            (isFirstCheck
-              ? Math.max(
-                  headCommitTimestamp ?? firstCheckFreshnessAnchor,
-                  firstCheckFreshnessAnchor
-                )
-              : now))
+      isNewReviewWindow
+        ? isFirstCheck
+          ? Math.max(headCommitTimestamp ?? firstCheckFreshnessAnchor, firstCheckFreshnessAnchor)
+          : (headCommitTimestamp ?? now)
+        : (persisted.currentHeadBecameHeadAt ?? now)
     );
-    const checkStartedAt = headChanged ? now : (persisted.checkStartedAt ?? now);
+    const checkStartedAt = isNewReviewWindow ? now : (persisted.checkStartedAt ?? now);
 
     // Fetch all reactions (PRs are issues for reaction API)
     const reactions = await fetchAllReactions(prInfo, token);

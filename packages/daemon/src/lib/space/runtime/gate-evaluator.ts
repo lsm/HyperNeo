@@ -25,6 +25,7 @@ import type { Channel, Gate, GateField, GateFieldCheck, GateScript } from '@neok
 import { hasEnabledGateFeature } from '@neokai/shared';
 import {
   hasRegisteredGateFeatures,
+  hasRuntimeGateFeatures,
   isRegisteredGateFeature,
   validateGateFeatures,
 } from './gate-features';
@@ -339,6 +340,7 @@ export function validateGate(gate: unknown): string[] {
   const hasScript = g.script !== undefined && g.script !== null;
   const hasPoll = g.poll !== undefined && g.poll !== null;
   const hasFeatures = hasRegisteredGateFeatures(g as { features?: Gate['features'] });
+  const hasRuntimeFeatures = hasRuntimeGateFeatures(g as { features?: Gate['features'] });
   if (!hasFields && !hasScript && !hasFeatures) {
     errors.push('gate: must have at least one non-empty "fields" array, "features", or a "script"');
   }
@@ -358,9 +360,9 @@ export function validateGate(gate: unknown): string[] {
   // Features compile into script/poll at runtime; mixing them with custom
   // script/poll would silently drop the custom checks. Remove the custom
   // script/poll or disable the feature, not both.
-  if (hasFeatures && (hasScript || hasPoll)) {
+  if (hasRuntimeFeatures && (hasScript || hasPoll)) {
     errors.push(
-      'gate: cannot combine registered features with a custom "script" or "poll". ' +
+      'gate: cannot combine runtime gate features with a custom "script" or "poll". ' +
         'Either remove the custom script/poll or disable the feature.'
     );
   }

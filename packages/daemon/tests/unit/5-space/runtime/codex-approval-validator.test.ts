@@ -324,7 +324,7 @@ describe('codexReviewApprovedValidator', () => {
       lastResult: {
         type: 'retryable_block',
         reason: 'Waiting',
-        data: { checkStartedAt: Date.now() - 601_000, currentHeadSha: 'abc123' },
+        data: { checkStartedAt: Date.now() - 601_000, currentHeadSha: 'abc123', prUrl: PR_URL },
       } as WorkflowHookResult,
     });
     const result = await codexReviewApprovedValidator(ctx);
@@ -403,6 +403,30 @@ describe('codexReviewApprovedValidator', () => {
     });
     const result = await codexReviewApprovedValidator(ctx);
     expect(result.type).toBe('retryable_block');
+  });
+
+  test('PR URL change resets Codex timeout window even when head SHA matches', async () => {
+    mockPrWith('abc123', []);
+    const oldStartedAt = Date.now() - 601_000;
+    const ctx = makeContext({
+      currentArtifacts: PR_ARTIFACT,
+      lastResult: {
+        type: 'retryable_block',
+        reason: 'Waiting',
+        data: {
+          currentHeadSha: 'abc123',
+          checkStartedAt: oldStartedAt,
+          currentHeadBecameHeadAt: oldStartedAt,
+          prUrl: 'https://github.com/owner/other-repo/pull/42',
+        },
+      } as WorkflowHookResult,
+    });
+    const result = await codexReviewApprovedValidator(ctx);
+    expect(result.type).toBe('retryable_block');
+    expect((result as { reason?: string }).reason).toContain('Waiting for Codex review');
+    expect((result as { data?: Record<string, unknown> }).data?.checkStartedAt).toBeGreaterThan(
+      oldStartedAt
+    );
   });
 
   test('terminal block verified against current PR head', async () => {

@@ -27,6 +27,12 @@ function hasRuntimeGateFeatureDefinition(definition: GateFeatureDefinition | und
 export function hasRegisteredGateFeatures(
   gate: { features?: Gate['features'] } | undefined
 ): boolean {
+  return Object.keys(gate?.features ?? {}).some(
+    (name) => hasEnabledGateFeature(gate, name) && isRegisteredGateFeature(name)
+  );
+}
+
+export function hasRuntimeGateFeatures(gate: { features?: Gate['features'] } | undefined): boolean {
   return Object.keys(gate?.features ?? {}).some((name) => {
     const definition = gateFeatureRegistry.get(name);
     return hasEnabledGateFeature(gate, name) && hasRuntimeGateFeatureDefinition(definition);
@@ -85,7 +91,7 @@ export function hasInjectedGateFeature(
   _workflow?: SpaceWorkflow,
   _sourceNodeName?: string
 ): boolean {
-  return hasRegisteredGateFeatures(gate);
+  return hasRuntimeGateFeatures(gate);
 }
 
 export function getEffectiveGate(

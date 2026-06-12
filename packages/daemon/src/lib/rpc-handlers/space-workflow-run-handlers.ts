@@ -32,11 +32,18 @@ import type { GateDataRepository } from '../../storage/repositories/gate-data-re
 import type { WorkflowRunArtifactRepository } from '../../storage/repositories/workflow-run-artifact-repository';
 import type { WorkflowRunArtifactCacheRepository } from '../../storage/repositories/workflow-run-artifact-cache-repository';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository';
+import type { WorkflowHookStateRepository } from '../../storage/repositories/workflow-hook-state-repository';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service';
 import type { SpaceTaskManager } from '../space/managers/space-task-manager';
 import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository';
 import type { SpaceWorktreeManager } from '../space/managers/space-worktree-manager';
-import type { WorkflowRunFailureReason, WorkflowRunStatus } from '@neokai/shared';
+import type {
+  SpaceWorkflow,
+  SpaceWorkflowRun,
+  WorkflowHook,
+  WorkflowRunFailureReason,
+  WorkflowRunStatus,
+} from '@neokai/shared';
 import {
   execGit,
   isGitRepo,
@@ -59,6 +66,8 @@ import {
   SPACE_WORKFLOW_RUN_SYNC_COMMITS,
   SPACE_WORKFLOW_RUN_SYNC_FILE_DIFF,
 } from '../job-queue-constants';
+import { HookExecutor } from '../space/runtime/hook-executor';
+import { withSyntheticCodexHooks } from '../space/runtime/task-agent-manager';
 import { Logger } from '../logger';
 
 const log = new Logger('space-workflow-run-handlers');
@@ -102,6 +111,59 @@ function enqueueSyncOnce(
 
 function isCacheFresh(syncedAt: number, now: number = Date.now()): boolean {
   return now - syncedAt < CACHE_STALE_AFTER_MS;
+}
+
+function isCodexApprovalHook(hook: WorkflowHook): boolean {
+  return (
+    hook.enabled &&
+    hook.validator.kind === 'built_in' &&
+    hook.validator.id === 'codex_review_approved'
+  );
+}
+
+function findCodexHooksForGateApproval(workflow: SpaceWorkflow, gateId: string): WorkflowHook[] {
+  const gateChannels = (workflow.channels ?? []).filter((channel) => channel.gateId === gateId);
+  if (gateChannels.length === 0) return [];
+
+  const sourceNodes = new Set(
+    gateChannels.map((channel) => channel.from).filter((from) => from !== '*')
+  );
+  const hookIds = new Set(gateChannels.flatMap((channel) => channel.hookIds ?? []));
+
+  return (workflow.hooks ?? []).filter((hook) => {
+    if (!isCodexApprovalHook(hook)) return false;
+    if (hookIds.size > 0 && hookIds.has(hook.id)) return true;
+    return sourceNodes.has(hook.sourceNode);
+  });
+}
+
+function mapArtifactsForHook(artifactRepo: WorkflowRunArtifactRepository, runId: string) {
+  return artifactRepo
+    .listByRun(runId)
+    .slice()
+    .sort((a, b) => b.updatedAt - a.updatedAt)
+    .slice(0, 50)
+    .map((artifact) => ({
+      id: artifact.id,
+      nodeId: artifact.nodeId,
+      type: artifact.artifactType,
+      key: artifact.artifactKey,
+      data: artifact.data,
+      createdAt: artifact.createdAt,
+      updatedAt: artifact.updatedAt,
+    }));
+}
+
+function buildGateDataJson(gateDataRepo: GateDataRepository, runId: string): string | undefined {
+  try {
+    const flatGateData: Record<string, unknown> = {};
+    for (const record of gateDataRepo.listByRun(runId)) {
+      Object.assign(flatGateData, record.data);
+    }
+    return JSON.stringify(flatGateData);
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -179,7 +241,8 @@ export function setupSpaceWorkflowRunHandlers(
   spaceWorktreeManager: SpaceWorktreeManager,
   artifactRepo: WorkflowRunArtifactRepository,
   artifactCacheRepo: WorkflowRunArtifactCacheRepository,
-  jobQueue: JobQueueRepository
+  jobQueue: JobQueueRepository,
+  hookStateRepo?: WorkflowHookStateRepository
 ): void {
   /**
    * Helper: notify the channel router that gate data has changed.
@@ -190,6 +253,69 @@ export function setupSpaceWorkflowRunHandlers(
     void spaceRuntimeService.notifyGateDataChanged(runId, gateId).catch((err) => {
       log.warn(`notifyGateDataChanged failed for gate "${gateId}" in run "${runId}":`, err);
     });
+  }
+
+  async function assertCodexApprovedForHumanGate(
+    run: SpaceWorkflowRun,
+    gateId: string
+  ): Promise<void> {
+    if (!hookStateRepo) return;
+
+    const workflow = spaceWorkflowManager.getWorkflow(run.workflowId);
+    if (!workflow) return;
+
+    const effectiveWorkflow = withSyntheticCodexHooks(workflow);
+    const hooks = findCodexHooksForGateApproval(effectiveWorkflow, gateId);
+    if (hooks.length === 0) return;
+
+    const hookExecutor = new HookExecutor({ workspacePath: '' });
+    for (const hook of hooks) {
+      const state = hookStateRepo.ensure(run.id, hook.id, hook.localState?.defaults ?? {});
+      const result = await hookExecutor.execute(hook, {
+        workspacePath: '',
+        runId: run.id,
+        hookId: hook.id,
+        methodName: 'approve_task',
+        params: { gateId, approved: true },
+        nodeId: 'human',
+        nodeName: hook.sourceNode,
+        sessionId: 'human',
+        taskId: '',
+        hookLocalState: state.localState,
+        currentArtifacts: mapArtifactsForHook(artifactRepo, run.id),
+        permittedExternalLookups:
+          'externalLookups' in hook.validator ? (hook.validator.externalLookups ?? []) : [],
+        templateData: hook.templateData,
+        workflow: effectiveWorkflow,
+        lastResult: state.lastResult,
+        workflowStartIso: new Date(run.createdAt).toISOString(),
+        gateDataJson: buildGateDataJson(gateDataRepo, run.id),
+      });
+
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const currentState = hookStateRepo.get(run.id, hook.id) ?? state;
+        const update = hookStateRepo.update(run.id, hook.id, {
+          expectedVersion: currentState.version,
+          lastResult: result.result,
+          retryCount: result.result.type === 'retryable_block' ? currentState.retryCount + 1 : 0,
+          nextRetryAt:
+            result.result.type === 'retryable_block'
+              ? Date.now() + (result.result.retryAfterMs ?? 0)
+              : null,
+        });
+        if (update) break;
+      }
+
+      if (result.result.type !== 'allow') {
+        const reason =
+          result.result.type === 'retryable_block'
+            ? result.result.reason
+            : result.result.type === 'block'
+              ? result.result.reason
+              : 'Codex review did not pass';
+        throw new Error(reason);
+      }
+    }
   }
   // ─── spaceWorkflowRun.start ──────────────────────────────────────────────
   messageHub.onRequest('spaceWorkflowRun.start', async (data) => {
@@ -424,6 +550,8 @@ export function setupSpaceWorkflowRunHandlers(
     const existing = gateDataRepo.get(params.runId, params.gateId);
 
     if (params.approved) {
+      await assertCodexApprovedForHumanGate(run, params.gateId);
+
       // Idempotent: already approved — return existing state
       if (existing?.data?.approved === true) {
         // Re-trigger gate evaluation so feature scripts get a chance to run

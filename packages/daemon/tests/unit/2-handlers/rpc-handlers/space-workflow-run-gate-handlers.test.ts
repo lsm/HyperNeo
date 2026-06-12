@@ -35,6 +35,7 @@ import type { SpaceWorktreeManager } from '../../../../src/lib/space/managers/sp
 import type { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository.ts';
 import type { WorkflowRunArtifactCacheRepository } from '../../../../src/storage/repositories/workflow-run-artifact-cache-repository.ts';
 import type { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
+import type { WorkflowHookStateRepository } from '../../../../src/storage/repositories/workflow-hook-state-repository.ts';
 import type {
   DaemonInternalEventMap,
   InternalEventBus,
@@ -93,7 +94,10 @@ const mockWorkflow: SpaceWorkflow = {
   id: 'workflow-1',
   spaceId: 'space-1',
   name: 'Test Workflow',
-  nodes: [{ id: 'step-1', name: 'Step One', agents: [{ agentId: 'agent-1', name: 'Coder' }] }],
+  nodes: [
+    { id: 'step-1', name: 'Step One', agents: [{ agentId: 'agent-1', name: 'Coder' }] },
+    { id: 'step-2', name: 'Step Two', agents: [{ agentId: 'agent-2', name: 'Reviewer' }] },
+  ],
   startNodeId: 'step-1',
   tags: [],
   createdAt: NOW,
@@ -165,10 +169,10 @@ function createMockSpaceManager(space: Space | null = mockSpace): SpaceManager {
   } as unknown as SpaceManager;
 }
 
-function createMockWorkflowManager(): SpaceWorkflowManager {
+function createMockWorkflowManager(workflow: SpaceWorkflow = mockWorkflow): SpaceWorkflowManager {
   return {
-    listWorkflows: mock(() => [mockWorkflow]),
-    getWorkflow: mock(() => mockWorkflow),
+    listWorkflows: mock(() => [workflow]),
+    getWorkflow: mock(() => workflow),
   } as unknown as SpaceWorkflowManager;
 }
 
@@ -195,6 +199,7 @@ function createMockRunRepo(run: SpaceWorkflowRun | null = mockRun): SpaceWorkflo
 function createMockGateDataRepo(existing: GateDataRecord | null = null): GateDataRepository {
   return {
     get: mock(() => existing),
+    listByRun: mock(() => (existing ? [existing] : [])),
     merge: mock((_runId: string, _gateId: string, partial: Record<string, unknown>) => ({
       ...mockGateData,
       data: { ...(existing?.data ?? {}), ...partial },
@@ -206,6 +211,51 @@ function createMockGateDataRepo(existing: GateDataRecord | null = null): GateDat
       updatedAt: Date.now(),
     })),
   } as unknown as GateDataRepository;
+}
+
+function createMockHookStateRepo(
+  lastResult?: Record<string, unknown>
+): WorkflowHookStateRepository {
+  let version = 0;
+  return {
+    ensure: mock((runId: string, hookId: string) => ({
+      runId,
+      hookId,
+      version,
+      localState: {},
+      lastResult,
+      retryCount: 0,
+      voteMaps: {},
+      createdAt: NOW,
+      updatedAt: NOW,
+    })),
+    get: mock((runId: string, hookId: string) => ({
+      runId,
+      hookId,
+      version,
+      localState: {},
+      lastResult,
+      retryCount: 0,
+      voteMaps: {},
+      createdAt: NOW,
+      updatedAt: NOW,
+    })),
+    update: mock((runId: string, hookId: string, patch: Record<string, unknown>) => {
+      version += 1;
+      return {
+        runId,
+        hookId,
+        version,
+        localState: {},
+        lastResult: patch.lastResult ?? lastResult,
+        retryCount: patch.retryCount ?? 0,
+        nextRetryAt: patch.nextRetryAt as number | undefined,
+        voteMaps: {},
+        createdAt: NOW,
+        updatedAt: Date.now(),
+      };
+    }),
+  } as unknown as WorkflowHookStateRepository;
 }
 
 function createMockRuntimeService(): SpaceRuntimeService {
@@ -249,6 +299,9 @@ describe('space-workflow-run gate handlers', () => {
       run?: SpaceWorkflowRun | null;
       existingGateData?: GateDataRecord | null;
       space?: Space | null;
+      workflow?: SpaceWorkflow;
+      hookStateRepo?: WorkflowHookStateRepository;
+      artifactRepo?: WorkflowRunArtifactRepository;
     } = {}
   ) {
     mockExecResult = () => '';
@@ -273,7 +326,7 @@ describe('space-workflow-run gate handlers', () => {
     setupSpaceWorkflowRunHandlers(
       hub,
       createMockSpaceManager(resolvedSpace),
-      createMockWorkflowManager(),
+      createMockWorkflowManager(opts.workflow ?? mockWorkflow),
       runRepo,
       gateDataRepo,
       createMockRuntimeService(),
@@ -281,9 +334,10 @@ describe('space-workflow-run gate handlers', () => {
       internalEventBus,
       createMockSpaceTaskRepo(),
       createMockSpaceWorktreeManager(),
-      {
-        listByRun: mock(() => []),
-      } as unknown as WorkflowRunArtifactRepository,
+      opts.artifactRepo ??
+        ({
+          listByRun: mock(() => []),
+        } as unknown as WorkflowRunArtifactRepository),
       {
         get: mock(() => null),
         upsert: mock(() => ({})),
@@ -294,7 +348,8 @@ describe('space-workflow-run gate handlers', () => {
       {
         enqueue: mock(() => ({})),
         listJobs: mock(() => []),
-      } as unknown as JobQueueRepository
+      } as unknown as JobQueueRepository,
+      opts.hookStateRepo
     );
   }
 
@@ -516,6 +571,46 @@ describe('space-workflow-run gate handlers', () => {
         approved: true,
       });
       expect(gateDataRepo.merge).toHaveBeenCalledTimes(1);
+    });
+
+    it('blocks human approval of Codex-gated channels until Codex approves', async () => {
+      setup({
+        workflow: {
+          ...mockWorkflow,
+          nodes: mockWorkflow.nodes.map((node) =>
+            node.id === 'step-1' ? { ...node, requireCodexApproval: true } : node
+          ),
+          channels: [
+            { id: 'code-review', from: 'Step One', to: 'Step Two', gateId: 'gate-approval' },
+          ],
+          gates: [
+            {
+              id: 'gate-approval',
+              fields: [
+                {
+                  name: 'approved',
+                  type: 'boolean',
+                  writers: [],
+                  check: { op: '==', value: true },
+                },
+              ],
+            },
+          ],
+        },
+        hookStateRepo: createMockHookStateRepo(),
+        artifactRepo: {
+          listByRun: mock(() => [{ data: { pr_url: 'https://github.com/owner/repo/pull/42' } }]),
+        } as unknown as WorkflowRunArtifactRepository,
+      });
+
+      await expect(
+        call('spaceWorkflowRun.approveGate', {
+          runId: 'run-1',
+          gateId: 'gate-approval',
+          approved: true,
+        })
+      ).rejects.toThrow('GitHub token not available for Codex review check');
+      expect(gateDataRepo.merge).not.toHaveBeenCalled();
     });
 
     it('approveGate emits space.gateData.updated with gate data on approval', async () => {

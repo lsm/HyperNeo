@@ -3523,6 +3523,14 @@ describe('all built-in workflow gates pass creation-time validation', () => {
     expect(errors).toHaveLength(0);
   });
 
+  test('codex_review_bot marker-only gate counts as feature-backed validation', () => {
+    const errors = validateGate({
+      id: 'codex-marker-only-gate',
+      features: { codex_review_bot: true },
+    });
+    expect(errors).toHaveLength(0);
+  });
+
   test('every built-in gate is structurally valid', () => {
     for (const wf of workflows) {
       for (const gate of wf.gates ?? []) {
