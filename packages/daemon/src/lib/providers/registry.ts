@@ -261,8 +261,10 @@ export function resetProviderRegistry(): void {
 export function inferProviderForModel(modelId: string): ProviderIdStr {
   const normalizedModelId = modelId.toLowerCase();
 
-  // Route canonical Kimi/Moonshot IDs before live registry lookup because the
+  // Route canonical ACP and Kimi/Moonshot IDs before live registry lookup because the
   // Anthropic provider intentionally claims unknown model IDs as a fallback.
+  if (normalizedModelId.startsWith('acp-') || normalizedModelId === 'acp') return 'acp';
+
   // Exclude IDs containing ':' so Ollama tags like kimi-k2:latest or
   // moonshot-v1:latest fall through to Ollama routing.
   if (
@@ -278,7 +280,6 @@ export function inferProviderForModel(modelId: string): ProviderIdStr {
   const fromRegistry = getProviderRegistry().findProviderForModel(modelId)?.id;
   if (fromRegistry) return fromRegistry as ProviderIdStr;
   // Static fallback when registry is empty
-  if (modelId.startsWith('acp-') || modelId === 'acp') return 'acp';
   if (modelId.startsWith('glm-') || modelId === 'glm') return 'glm';
   if (modelId.startsWith('minimax-') || modelId === 'minimax') return 'minimax';
   if (modelId === 'ollama') return 'ollama';

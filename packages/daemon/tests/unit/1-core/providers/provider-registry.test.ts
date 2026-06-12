@@ -586,6 +586,26 @@ describe('inferProviderForModel', () => {
     }
   });
 
+  it('maps ACP model IDs before registry fallback providers', () => {
+    try {
+      getProviderRegistry().register(
+        new (class extends MockProvider {
+          readonly id = 'anthropic' as const;
+          readonly displayName = 'Anthropic';
+          ownsModel(): boolean {
+            return true;
+          }
+        })()
+      );
+
+      expect(inferProviderForModel('acp')).toBe('acp');
+      expect(inferProviderForModel('acp-default')).toBe('acp');
+      expect(inferProviderForModel('ACP-custom')).toBe('acp');
+    } finally {
+      resetProviderRegistry();
+    }
+  });
+
   it('maps OpenRouter provider/model refs to openrouter', () => {
     expect(inferProviderForModel('openrouter/auto')).toBe('openrouter');
     expect(inferProviderForModel('anthropic/claude-sonnet-4.6')).toBe('openrouter');

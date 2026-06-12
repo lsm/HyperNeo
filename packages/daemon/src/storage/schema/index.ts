@@ -125,6 +125,8 @@ export { runMigration143 } from './migrations';
 export { runMigration144 } from './migrations';
 // knip-ignore-next-line
 export { runMigration148 } from './migrations';
+// knip-ignore-next-line
+export { runMigration156 } from './migrations';
 
 /**
  * Create all database tables and initialize defaults
@@ -147,6 +149,7 @@ export function createTables(db: BunDatabase): void {
         worktree_branch TEXT,
         git_branch TEXT,
         sdk_session_id TEXT,
+        acp_session_id TEXT,
         sdk_origin_path TEXT,
         available_commands TEXT,
         processing_state TEXT,

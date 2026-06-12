@@ -16,6 +16,10 @@ import type {
   AcpSessionPromptResult,
   AcpSessionCancelParams,
   AcpSessionUpdateNotification,
+  AcpSessionLoadParams,
+  AcpSessionLoadResult,
+  AcpSessionResumeParams,
+  AcpSessionResumeResult,
   AcpConfigOption,
   AcpSessionModeState,
   AcpFsReadParams,
@@ -199,6 +203,74 @@ export class AcpClient {
       configOptions: this.cachedConfigOptions,
       modes: result.modes,
     };
+  }
+
+  /**
+   * Load an existing ACP session.
+   */
+  async loadSession(
+    sessionId: string,
+    cwd: string,
+    mcpServers: AcpMcpServerConfig[] = []
+  ): Promise<{
+    sessionId: string;
+    configOptions: AcpConfigOption[];
+    modes?: AcpSessionModeState | null;
+  }> {
+    const params: AcpSessionLoadParams = { sessionId, cwd, mcpServers };
+    const response = await this.transport.sendRequest('session/load', params);
+
+    if ('error' in response) {
+      throw new Error(`session/load failed: ${response.error.message}`);
+    }
+
+    const result = response.result as AcpSessionLoadResult;
+    this.sessionId = result.sessionId ?? sessionId;
+    this.cachedConfigOptions = result.configOptions ?? [];
+    this.cachedModes = result.modes ?? undefined;
+
+    return {
+      sessionId: this.sessionId,
+      configOptions: this.cachedConfigOptions,
+      modes: result.modes,
+    };
+  }
+
+  /**
+   * Resume an existing ACP session.
+   */
+  async resumeSession(
+    sessionId: string,
+    cwd: string,
+    mcpServers: AcpMcpServerConfig[] = []
+  ): Promise<{
+    sessionId: string;
+    configOptions: AcpConfigOption[];
+    modes?: AcpSessionModeState | null;
+  }> {
+    const params: AcpSessionResumeParams = { sessionId, cwd, mcpServers };
+    const response = await this.transport.sendRequest('session/resume', params);
+
+    if ('error' in response) {
+      throw new Error(`session/resume failed: ${response.error.message}`);
+    }
+
+    const result = response.result as AcpSessionResumeResult;
+    this.sessionId = result.sessionId ?? sessionId;
+    this.cachedConfigOptions = result.configOptions ?? [];
+    this.cachedModes = result.modes ?? undefined;
+
+    return {
+      sessionId: this.sessionId,
+      configOptions: this.cachedConfigOptions,
+      modes: result.modes,
+    };
+  }
+
+  canLoadSession(): boolean {
+    if (this.agentCapabilities?.loadSession) return true;
+    const sessionCapabilities = this.agentCapabilities?.sessionCapabilities;
+    return !!sessionCapabilities && 'resume' in sessionCapabilities;
   }
 
   /**

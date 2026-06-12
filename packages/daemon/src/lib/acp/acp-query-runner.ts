@@ -246,6 +246,40 @@ async function handleAcpPermissionRequest(
   return { outcome: { outcome: 'cancelled' } };
 }
 
+function systemPromptText(systemPrompt: Options['systemPrompt']): string[] {
+  if (!systemPrompt) return [];
+  if (typeof systemPrompt === 'string') return [systemPrompt];
+  if (Array.isArray(systemPrompt)) return systemPrompt;
+  return [systemPrompt.append].filter((text): text is string => !!text?.trim());
+}
+
+function agentPromptText(queryOptions: Options): string[] {
+  const agentName = queryOptions.agent;
+  if (!agentName || !queryOptions.agents) return [];
+  const agent = queryOptions.agents[agentName] as
+    | { prompt?: string; description?: string }
+    | undefined;
+  if (!agent) return [];
+  return [
+    agent.prompt,
+    agent.description ? `Agent: ${agentName}\n${agent.description}` : undefined,
+  ].filter((text): text is string => !!text?.trim());
+}
+
+function acpInstructionBlocks(queryOptions: Options): AcpContentBlock[] {
+  const text = [...systemPromptText(queryOptions.systemPrompt), ...agentPromptText(queryOptions)]
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .join('\n\n');
+  if (!text) return [];
+  return [
+    {
+      type: 'text',
+      text: `NeoKai session instructions:\n\n${text}`,
+    },
+  ];
+}
+
 /**
  * Runs ACP agent sessions with same external lifecycle contract as QueryRunner.
  */
@@ -294,6 +328,7 @@ export class AcpQueryRunner {
     let client: AcpClient | null = null;
     let queryStartTime = Date.now();
     let startupTimeoutReached = false;
+    let createdAcpSessionDuringRun = false;
 
     try {
       const { initializeProviders, waitForOptionalProviderRegistration } = await import(
@@ -351,22 +386,8 @@ export class AcpQueryRunner {
       const startupTimeoutMs = getStartupTimeoutMs();
       const abortController = new AbortController();
       this.ctx.queryAbortController = abortController;
-
-      const startupTimer = setTimeout(() => {
-        if (!this.ctx.firstMessageReceived) {
-          startupTimeoutReached = true;
-          const elapsed = Date.now() - queryStartTime;
-          logger.error(
-            `ACP startup timeout: ACP agent did not respond within ${elapsed}ms. ` +
-              `Command: ${command}, workspace: ${cwd} ` +
-              `(Hint: set NEOKAI_SDK_STARTUP_TIMEOUT_MS to increase timeout, currently ${startupTimeoutMs}ms)`
-          );
-          abortController.abort();
-          this.ctx.queryObject?.close();
-          client?.close();
-        }
-      }, startupTimeoutMs);
-      this.ctx.startupTimeoutTimer = startupTimer;
+      const instructionBlocks = acpInstructionBlocks(queryOptions);
+      let prependInstructionsToNextPrompt = true;
 
       client = this.createAcpClient({
         command,
@@ -381,7 +402,42 @@ export class AcpQueryRunner {
 
       await client.initialize();
       await client.authenticate();
-      await client.createSession(cwd, acpMcpServers);
+      const existingAcpSessionId = session.acpSessionId;
+      if (existingAcpSessionId) {
+        if (!client.canLoadSession()) {
+          throw new Error(
+            `ACP agent cannot resume existing ACP session ${existingAcpSessionId}: ` +
+              'agent does not advertise session load/resume capability. ' +
+              'Reset Agent to start a new ACP conversation.'
+          );
+        }
+
+        try {
+          const result = await client.loadSession(existingAcpSessionId, cwd, acpMcpServers);
+          this.persistAcpSessionId(result.sessionId);
+          prependInstructionsToNextPrompt = false;
+        } catch (loadError) {
+          try {
+            const result = await client.resumeSession(existingAcpSessionId, cwd, acpMcpServers);
+            this.persistAcpSessionId(result.sessionId);
+            prependInstructionsToNextPrompt = false;
+          } catch (resumeError) {
+            const loadMessage = loadError instanceof Error ? loadError.message : String(loadError);
+            const resumeMessage =
+              resumeError instanceof Error ? resumeError.message : String(resumeError);
+            throw new Error(
+              `Failed to resume ACP session ${existingAcpSessionId}. ` +
+                `session/load failed: ${loadMessage}; ` +
+                `session/resume failed: ${resumeMessage}. ` +
+                'Reset Agent to start a new ACP conversation.'
+            );
+          }
+        }
+      } else {
+        const result = await client.createSession(cwd, acpMcpServers);
+        this.persistAcpSessionId(result.sessionId);
+        createdAcpSessionDuringRun = true;
+      }
 
       await this.ctx.onModelsFetched().catch((error) => {
         logger.warn('Background fetch of models failed:', error);
@@ -401,8 +457,29 @@ export class AcpQueryRunner {
 
         onSent();
 
-        const adapter = new AcpQueryAdapter(client, toAcpPromptContent(message));
+        const promptContent = prependInstructionsToNextPrompt
+          ? [...instructionBlocks, ...toAcpPromptContent(message)]
+          : toAcpPromptContent(message);
+        prependInstructionsToNextPrompt = false;
+        const adapter = new AcpQueryAdapter(client, promptContent);
         this.ctx.queryObject = adapter;
+
+        startupTimeoutReached = false;
+        queryStartTime = Date.now();
+        this.ctx.startupTimeoutTimer = setTimeout(() => {
+          if (!this.ctx.firstMessageReceived) {
+            startupTimeoutReached = true;
+            const elapsed = Date.now() - queryStartTime;
+            logger.error(
+              `ACP startup timeout: ACP agent did not respond within ${elapsed}ms. ` +
+                `Command: ${command}, workspace: ${cwd} ` +
+                `(Hint: set NEOKAI_SDK_STARTUP_TIMEOUT_MS to increase timeout, currently ${startupTimeoutMs}ms)`
+            );
+            abortController.abort();
+            this.ctx.queryObject?.close();
+            client?.close();
+          }
+        }, startupTimeoutMs);
 
         let messageCount = 0;
         for await (const acpMessage of this.createAbortableQuery(adapter, abortController.signal)) {
@@ -451,7 +528,13 @@ export class AcpQueryRunner {
         startupTimeoutReached && !this.ctx.firstMessageReceived
           ? new Error('ACP startup timeout - query aborted')
           : error;
-      await this.handleRunError(effectiveError, queryGeneration, isRetry, client);
+      await this.handleRunError(
+        effectiveError,
+        queryGeneration,
+        isRetry,
+        client,
+        createdAcpSessionDuringRun
+      );
     } finally {
       const isStaleQuery = this.ctx.getQueryGeneration() !== queryGeneration;
 
@@ -497,7 +580,8 @@ export class AcpQueryRunner {
     error: unknown,
     queryGeneration: number,
     isRetry: boolean,
-    client?: AcpClient | null
+    client?: AcpClient | null,
+    createdAcpSessionDuringRun = false
   ): Promise<void> {
     const { session, messageQueue, stateManager, errorManager, logger } = this.ctx;
     logger.error('ACP query error:', error);
@@ -528,6 +612,10 @@ export class AcpQueryRunner {
           : 'Auto-retrying ACP query after transient connection error (1 retry).'
       );
       await stateManager.setIdle();
+
+      if (isStartupTimeout && createdAcpSessionDuringRun && !this.ctx.firstMessageReceived) {
+        this.persistAcpSessionId(undefined);
+      }
 
       const lastMsg = this._lastConsumedUserMessage;
       if (lastMsg && (isStartupTimeout || isTransientConnectionError)) {
@@ -723,6 +811,13 @@ export class AcpQueryRunner {
     ) {
       await this.ctx.onMissingMemberSpaceMcpServers(this.ctx.session.id, missing);
     }
+  }
+
+  private persistAcpSessionId(acpSessionId: string | undefined): void {
+    const { session, db } = this.ctx;
+    if (session.acpSessionId === acpSessionId) return;
+    session.acpSessionId = acpSessionId;
+    db.updateSession(session.id, { acpSessionId });
   }
 
   private clearStartupTimer(): void {

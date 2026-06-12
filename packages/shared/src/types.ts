@@ -128,6 +128,7 @@ export interface SessionInfo {
   worktree?: WorktreeMetadata;
   gitBranch?: string; // Current git branch for non-worktree sessions in git repos
   sdkSessionId?: string; // SDK's internal session ID for resuming conversations
+  acpSessionId?: string; // ACP agent session ID for resuming ACP conversations
   /**
    * The workspace path (resolved) that was used as CWD when the SDK session was first
    * created. The SDK stores conversation files under

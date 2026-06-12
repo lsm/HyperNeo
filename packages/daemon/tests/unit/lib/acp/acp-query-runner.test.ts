@@ -23,6 +23,9 @@ function createMockClient() {
     initialize: mock(async () => ({ protocolVersion: 1, agentCapabilities: {}, agentInfo: {} })),
     authenticate: mock(async () => {}),
     createSession: mock(async () => ({ sessionId: 'acp-session-1', configOptions: [] })),
+    loadSession: mock(async (sessionId: string) => ({ sessionId, configOptions: [] })),
+    resumeSession: mock(async (sessionId: string) => ({ sessionId, configOptions: [] })),
+    canLoadSession: mock(() => false),
     sendPrompt: mock(async function* (_prompt: unknown) {
       yield {
         sessionId: 'acp-session-1',
@@ -52,14 +55,20 @@ function makeUserMessage(content: string | MessageContent[]): SDKUserMessage {
   };
 }
 
+type RunnerFixtureMessage = { message: SDKUserMessage; onSent: () => void };
+
 interface RunnerFixtureOverrides {
   session?: Partial<Session>;
   client?: ReturnType<typeof createMockClient>;
   messages?: SDKUserMessage[];
+  messageGenerator?: () => AsyncGenerator<RunnerFixtureMessage>;
   queryOptions?: {
     cwd?: string;
     mcpServers?: Record<string, unknown>;
     env?: Record<string, string>;
+    systemPrompt?: unknown;
+    agent?: string;
+    agents?: Record<string, unknown>;
   };
   canUseTool?: (
     toolName: string,
@@ -89,6 +98,14 @@ function createRunnerFixture(overrides: RunnerFixtureOverrides = {}) {
   const constructorOptions: AcpClientOptions[] = [];
   const queryOptions = overrides.queryOptions ?? { cwd: '/tmp/acp-session', mcpServers: {} };
 
+  const generatorFactory =
+    overrides.messageGenerator ??
+    async function* () {
+      for (const message of yieldedMessages) {
+        yield { message, onSent };
+      }
+    };
+
   const messageQueue = {
     isRunning: mock(() => false),
     getGeneration: mock(() => 0),
@@ -97,11 +114,7 @@ function createRunnerFixture(overrides: RunnerFixtureOverrides = {}) {
     clear: mock(() => {}),
     size: mock(() => 0),
     enqueueWithId: mock(async () => {}),
-    messageGenerator: mock(async function* () {
-      for (const message of yieldedMessages) {
-        yield { message, onSent };
-      }
-    }),
+    messageGenerator: mock(generatorFactory),
   } as unknown as MessageQueue;
 
   const baseSession: Session = {
@@ -133,6 +146,7 @@ function createRunnerFixture(overrides: RunnerFixtureOverrides = {}) {
     session,
     db: {
       saveSDKMessage: mock(() => {}),
+      updateSession: mock(() => {}),
       getNodeExecutionRepo: mock(() => ({
         getByAgentSessionId: mock(() => null),
         getById: mock(() => null),
@@ -341,6 +355,168 @@ describe('AcpQueryRunner', () => {
     expect(result).toEqual({ outcome: { outcome: 'selected', optionId: 'allow-once' } });
   });
 
+  test('persists new ACP session ids', async () => {
+    const { runner, ctx, mockClient } = createRunnerFixture();
+
+    await runner.start();
+    await ctx.queryPromise;
+
+    expect(mockClient.createSession).toHaveBeenCalled();
+    expect(ctx.session.acpSessionId).toBe('acp-session-1');
+    expect(ctx.db.updateSession).toHaveBeenCalledWith('session-1', {
+      acpSessionId: 'acp-session-1',
+    });
+  });
+
+  test('loads an existing ACP session instead of creating a new one', async () => {
+    const client = createMockClient();
+    client.canLoadSession.mockImplementation(() => true);
+    client.loadSession.mockImplementation(async (sessionId: string) => ({
+      sessionId,
+      configOptions: [],
+    }));
+    const { runner, ctx } = createRunnerFixture({
+      client,
+      session: { acpSessionId: 'persisted-acp-session' } as Partial<Session>,
+      queryOptions: {
+        cwd: '/tmp/acp-session',
+        mcpServers: {},
+        systemPrompt: { type: 'preset', preset: 'none', append: 'Do not duplicate me' },
+      },
+    });
+
+    await runner.start();
+    await ctx.queryPromise;
+
+    expect(client.loadSession).toHaveBeenCalledWith(
+      'persisted-acp-session',
+      '/tmp/acp-session',
+      []
+    );
+    expect(client.resumeSession).not.toHaveBeenCalled();
+    expect(client.createSession).not.toHaveBeenCalled();
+    expect(ctx.db.updateSession).not.toHaveBeenCalled();
+    expect(client.sendPrompt.mock.calls[0][0]).toEqual([{ type: 'text', text: 'hello' }]);
+  });
+
+  test('falls back to resume when ACP session load fails', async () => {
+    const client = createMockClient();
+    client.canLoadSession.mockImplementation(() => true);
+    client.loadSession.mockImplementation(async () => {
+      throw new Error('load unavailable');
+    });
+    client.resumeSession.mockImplementation(async () => ({
+      sessionId: 'resumed-acp-session',
+      configOptions: [],
+    }));
+    const { runner, ctx } = createRunnerFixture({
+      client,
+      session: { acpSessionId: 'persisted-acp-session' } as Partial<Session>,
+    });
+
+    await runner.start();
+    await ctx.queryPromise;
+
+    expect(client.loadSession).toHaveBeenCalledWith(
+      'persisted-acp-session',
+      '/tmp/acp-session',
+      []
+    );
+    expect(client.resumeSession).toHaveBeenCalledWith(
+      'persisted-acp-session',
+      '/tmp/acp-session',
+      []
+    );
+    expect(client.createSession).not.toHaveBeenCalled();
+    expect(ctx.session.acpSessionId).toBe('resumed-acp-session');
+    expect(ctx.db.updateSession).toHaveBeenCalledWith('session-1', {
+      acpSessionId: 'resumed-acp-session',
+    });
+  });
+
+  test('blocks existing ACP sessions when the agent cannot resume them', async () => {
+    const client = createMockClient();
+    const { runner, ctx } = createRunnerFixture({
+      client,
+      session: { acpSessionId: 'persisted-acp-session' } as Partial<Session>,
+    });
+
+    await runner.start();
+    await ctx.queryPromise;
+
+    expect(client.createSession).not.toHaveBeenCalled();
+    expect(client.sendPrompt).not.toHaveBeenCalled();
+    expect(ctx.errorManager.handleError).toHaveBeenCalledWith(
+      'session-1',
+      expect.any(Error),
+      'system',
+      undefined,
+      expect.any(Object),
+      expect.objectContaining({ providerId: 'acp' })
+    );
+  });
+
+  test('prepends NeoKai session instructions to first ACP prompt', async () => {
+    const { runner, ctx, mockClient } = createRunnerFixture({
+      queryOptions: {
+        cwd: '/tmp/acp-session',
+        mcpServers: {},
+        systemPrompt: { type: 'preset', preset: 'none', append: 'Follow Space workflow rules.' },
+        agent: 'reviewer',
+        agents: {
+          reviewer: {
+            prompt: 'Review code carefully.',
+            description: 'Find correctness issues.',
+          },
+        },
+      },
+    });
+
+    await runner.start();
+    await ctx.queryPromise;
+
+    expect(mockClient.sendPrompt.mock.calls[0][0]).toEqual([
+      {
+        type: 'text',
+        text:
+          'NeoKai session instructions:\n\n' +
+          'Follow Space workflow rules.\n\n' +
+          'Review code carefully.\n\n' +
+          'Agent: reviewer\nFind correctness issues.',
+      },
+      { type: 'text', text: 'hello' },
+    ]);
+  });
+
+  test('does not start ACP startup timeout while waiting for a queued prompt', async () => {
+    const client = createMockClient();
+    let releaseMessage: (() => void) | undefined;
+    const { runner, ctx } = createRunnerFixture({
+      client,
+      messageGenerator: async function* () {
+        await new Promise<void>((resolve) => {
+          releaseMessage = resolve;
+        });
+        yield { message: makeUserMessage('hello'), onSent: mock(() => {}) };
+      },
+    });
+
+    const previousTimeout = process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS;
+    process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS = '20';
+    await runner.start();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(ctx.startupTimeoutTimer).toBeNull();
+    expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+
+    releaseMessage?.();
+    await ctx.queryPromise;
+    if (previousTimeout === undefined) delete process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS;
+    else process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS = previousTimeout;
+
+    expect(client.sendPrompt).toHaveBeenCalled();
+  }, 1000);
+
   test('retries ACP startup timeout even after timeout aborts controller', async () => {
     const firstClient = createMockClient();
     let releasePrompt: (() => void) | undefined;
@@ -351,6 +527,7 @@ describe('AcpQueryRunner', () => {
       });
     });
     const secondClient = createMockClient();
+    secondClient.canLoadSession.mockImplementation(() => true);
     const clients = [firstClient, secondClient];
     const { runner, ctx, messageQueue } = createRunnerFixture({ client: firstClient });
     const constructorOptions: AcpClientOptions[] = [];
