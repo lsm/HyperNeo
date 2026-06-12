@@ -25,18 +25,25 @@ export function formatGatedHandoffCall(
 }
 
 function formatGateDataShape(fields: readonly GateDataShapeField[]): string {
-  const entries = fields.map(
-    (field) => `${JSON.stringify(field.name)}: ${formatGateDataPlaceholder(field)}`
-  );
+  const entries = fields.flatMap((field) => {
+    const placeholder = formatGateDataPlaceholder(field);
+    return placeholder === undefined ? [] : [`${JSON.stringify(field.name)}: ${placeholder}`];
+  });
   return `{ ${entries.join(', ')} }`;
 }
 
-function formatGateDataPlaceholder(field: GateDataShapeField): string {
+function formatGateDataPlaceholder(field: GateDataShapeField): string | undefined {
+  if (field.check?.op === '==' && !('value' in field.check)) return undefined;
   if (field.check?.op === '==') return formatLiteral(field.check.value);
 
   switch (field.type) {
-    case 'string':
-      return JSON.stringify(`<${field.name}>`);
+    case 'string': {
+      const placeholder = `<${field.name}>`;
+      if (field.check?.op === '!=' && field.check.value === placeholder) {
+        return JSON.stringify(`<${field.name}-different>`);
+      }
+      return JSON.stringify(placeholder);
+    }
     case 'number':
       return field.check?.op === '!=' && field.check.value === 0 ? '1' : '0';
     case 'boolean':

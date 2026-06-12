@@ -807,6 +807,18 @@ describe('buildCustomAgentTaskMessage', () => {
               check: { op: '!=', value: 0 },
             },
             {
+              name: 'status',
+              type: 'string',
+              writers: ['Plan'],
+              check: { op: '!=', value: '<status>' },
+            },
+            {
+              name: 'omitted',
+              type: 'string',
+              writers: ['Plan'],
+              check: { op: '==' },
+            },
+            {
               name: 'votes',
               type: 'map',
               writers: ['Plan'],
@@ -830,7 +842,10 @@ describe('buildCustomAgentTaskMessage', () => {
     expect(message).toContain('"approved": false');
     expect(message).toContain('"score": 5');
     expect(message).toContain('"scoreNonZero": 1');
+    expect(message).toContain('"status": "<status-different>"');
     expect(message).toContain('"votes": { "<key1>": "approved", "<key2>": "approved" }');
+    expect(message).not.toContain('"omitted"');
+    expect(message).not.toContain('"status": "<status>"');
     expect(message).not.toContain('data: { pr"url:');
     expect(message).not.toContain('<boolean>');
     expect(message).not.toContain('<number>');

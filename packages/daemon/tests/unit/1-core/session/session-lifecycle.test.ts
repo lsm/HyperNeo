@@ -57,6 +57,10 @@ mock.module('../../../../src/lib/provider-service', () => ({
     getTitleGenerationConfig: async (_provider: string) => ({
       modelId: 'claude-sonnet-4-20250514',
     }),
+    getTitleGenerationModels: async (_provider: string, sessionModelId: string) => ({
+      providerModelId: sessionModelId,
+      sdkModelId: sessionModelId,
+    }),
     getEnvVarsForModel: (_modelId: string, _provider: string) => ({}),
     restoreEnvVars: (_originalEnv: Record<string, string | undefined>) => {},
   }),
