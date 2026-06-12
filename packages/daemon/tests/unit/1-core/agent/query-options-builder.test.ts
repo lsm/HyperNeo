@@ -229,6 +229,50 @@ describe('QueryOptionsBuilder', () => {
       }
     });
 
+    it('should keep Anthropic Opus on the SDK maximum output limit', async () => {
+      mockSession.config.model = 'opus';
+      const options = await builder.build();
+      expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('128000');
+    });
+
+    it('should keep Anthropic Opus fallback on the SDK maximum output limit', async () => {
+      mockSession.config.model = 'haiku';
+      mockSession.config.fallbackModel = 'claude-opus-4-7';
+      const options = await builder.build();
+      expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('128000');
+    });
+
+    it('should not exceed Kimi bridge advertised output limit', async () => {
+      resetProviderRegistry();
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'kimi',
+        displayName: 'Kimi',
+        capabilities: {
+          streaming: true,
+          extendedThinking: true,
+          thinkingModes: 'on',
+          maxContextWindow: 262_144,
+          functionCalling: true,
+          vision: false,
+        },
+        isAvailable: () => true,
+        getModels: async () => [],
+        ownsModel: () => true,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: true }),
+        translateModelIdForSdk: () => 'default',
+      } as Provider);
+      try {
+        mockSession.config.provider = 'kimi';
+        mockSession.config.model = 'kimi-for-coding';
+        const options = await builder.build();
+        expect(options.model).toBe('default');
+        expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('32768');
+      } finally {
+        resetProviderRegistry();
+      }
+    });
+
     it('should preserve an explicit SDK output token cap from session env', async () => {
       mockSession.config.model = 'claude-opus-4-7';
       mockSession.config.env = { CLAUDE_CODE_MAX_OUTPUT_TOKENS: '32768' };
@@ -243,9 +287,9 @@ describe('QueryOptionsBuilder', () => {
       expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('49152');
     });
 
-    it('should use provider context metadata even when fallback model names differ', async () => {
+    it('should use the largest non-Opus provider context cap when fallback model names differ', async () => {
       mockSession.config.model = 'haiku';
-      mockSession.config.fallbackModel = 'claude-opus-4-7';
+      mockSession.config.fallbackModel = 'sonnet';
       const options = await builder.build();
       expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('64000');
     });
