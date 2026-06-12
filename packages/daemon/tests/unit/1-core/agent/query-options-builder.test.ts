@@ -170,7 +170,7 @@ describe('QueryOptionsBuilder', () => {
     });
 
     it('should use the Sonnet SDK output token cap for short aliases', async () => {
-      for (const model of ['default', 'sonnet', 'sonnet1m']) {
+      for (const model of ['default', 'sonnet', 'sonnet1m', 'sonnet[1m]']) {
         mockSession.config.model = model;
         const options = await builder.build();
         expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('64000');
@@ -181,6 +181,36 @@ describe('QueryOptionsBuilder', () => {
       mockSession.config.model = 'claude-sonnet-4-6';
       const options = await builder.build();
       expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('64000');
+    });
+
+    it('should base the SDK output token cap on translated SDK model IDs', async () => {
+      resetProviderRegistry();
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'custom:translated-default',
+        displayName: 'Translated Default',
+        capabilities: {
+          streaming: true,
+          extendedThinking: false,
+          maxContextWindow: 1_000_000,
+          functionCalling: true,
+          vision: false,
+        },
+        isAvailable: () => true,
+        getModels: async () => [],
+        ownsModel: () => true,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: true }),
+        translateModelIdForSdk: () => 'default',
+      } as Provider);
+      try {
+        mockSession.config.provider = 'custom:translated-default';
+        mockSession.config.model = 'provider-native-id';
+        const options = await builder.build();
+        expect(options.model).toBe('default');
+        expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('64000');
+      } finally {
+        resetProviderRegistry();
+      }
     });
 
     it('should use the Opus SDK output token cap for Claude Opus models', async () => {

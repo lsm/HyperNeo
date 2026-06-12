@@ -138,6 +138,7 @@ function getSdkOutputTokenLimit(modelId: string): number {
     normalizedModelId === 'default' ||
     normalizedModelId === 'sonnet' ||
     normalizedModelId === 'sonnet1m' ||
+    normalizedModelId === 'sonnet[1m]' ||
     normalizedModelId.includes('sonnet-4')
   ) {
     return LARGE_SDK_OUTPUT_TOKEN_LIMIT;
@@ -370,7 +371,7 @@ export class QueryOptionsBuilder {
       ...this.buildPluginsFromBuiltinSkills(),
     ];
     const mcpServersFromSkills = this.getMcpServersFromSkills();
-    const mergedEnv = this.getMergedEnvironmentVars();
+    const mergedEnv = this.getMergedEnvironmentVars(sdkModelId, sdkFallbackModel);
     const sdkCliPath = this.getSDKCliPath();
 
     // Merged MCP servers: skill-injected + session-config-injected.
@@ -952,7 +953,10 @@ CRITICAL RULES:
    *
    * @returns Merged env vars (excluding provider-specific vars)
    */
-  private getMergedEnvironmentVars(): Record<string, string> | undefined {
+  private getMergedEnvironmentVars(
+    sdkModelId: string,
+    sdkFallbackModel: string | undefined
+  ): Record<string, string> | undefined {
     const globalSettings = this.ctx.settingsManager.getGlobalSettings();
     const sessionEnv = this.ctx.session.config.env;
 
@@ -998,9 +1002,7 @@ CRITICAL RULES:
       mergedEnv.CLAUDE_CODE_MAX_OUTPUT_TOKENS ??= process.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS;
     }
     mergedEnv.CLAUDE_CODE_MAX_OUTPUT_TOKENS ??= getLargestSdkOutputTokenLimit(
-      [this.ctx.session.config.model, this.ctx.session.config.fallbackModel].filter(
-        (modelId): modelId is string => !!modelId
-      )
+      [sdkModelId, sdkFallbackModel].filter((modelId): modelId is string => !!modelId)
     );
 
     // 4. Explicitly include proxy environment variables for Dev Proxy support
