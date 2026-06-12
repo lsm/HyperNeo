@@ -328,20 +328,23 @@ export class ModelSwitchHandler {
         }
       }
 
+      const selectedModel = session.config.model;
+      contextTracker.setModel(selectedModel);
+
       // Emit success event
       messageHub.event(
         'session.model-switched',
         {
           from: previousModel,
-          to: resolvedModel,
-          modelInfo: modelInfo || null,
+          to: selectedModel,
+          modelInfo: selectedModel === resolvedModel ? modelInfo || null : null,
         },
         { channel: `session:${session.id}` }
       );
 
       return {
         success: true,
-        model: resolvedModel,
+        model: selectedModel,
       };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);

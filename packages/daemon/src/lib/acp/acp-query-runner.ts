@@ -579,8 +579,8 @@ export class AcpQueryRunner {
           };
         }
 
-        onSent();
         await this.applyStoredAcpThinkingLevel(client);
+        onSent();
 
         const promptContent = prependInstructionsToNextPrompt
           ? [...instructionBlocks, ...toAcpPromptContent(message)]
@@ -1045,6 +1045,7 @@ export class AcpQueryRunner {
         ]);
       }
       setModelsCache(cache);
+      this.ctx.internalEventBus.publishAsync('providers.changed', { sessionId: 'global' });
     }
   }
 
