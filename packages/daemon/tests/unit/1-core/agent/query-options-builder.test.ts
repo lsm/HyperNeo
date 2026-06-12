@@ -179,22 +179,28 @@ describe('QueryOptionsBuilder', () => {
       expect(buildProviderSettings('anthropic')).toBeUndefined();
     });
 
-    it('should disable SDK auto-compaction for all non-native providers', () => {
-      expect(buildProviderSettings('openrouter')).toEqual({
-        autoCompactEnabled: false,
-        autoCompactWindow: Number.MAX_SAFE_INTEGER,
+    it('should enable SDK auto-compaction for all non-native providers with context windows', () => {
+      expect(buildProviderSettings('openrouter', 1_000_000)).toEqual({
+        autoCompactEnabled: true,
+        autoCompactWindow: 1_000_000,
       });
-      expect(buildProviderSettings('glm')).toEqual({
-        autoCompactEnabled: false,
-        autoCompactWindow: Number.MAX_SAFE_INTEGER,
+      expect(buildProviderSettings('glm', 128_000)).toEqual({
+        autoCompactEnabled: true,
+        autoCompactWindow: 128_000,
       });
-      expect(buildProviderSettings('ollama')).toEqual({
-        autoCompactEnabled: false,
-        autoCompactWindow: Number.MAX_SAFE_INTEGER,
+      expect(buildProviderSettings('ollama', 32_000)).toEqual({
+        autoCompactEnabled: true,
+        autoCompactWindow: 32_000,
       });
     });
 
-    it('should enable SDK auto-compaction for Kimi', () => {
+    it('should disable SDK auto-compaction when context window is unavailable', () => {
+      expect(buildProviderSettings('openrouter')).toEqual({
+        autoCompactEnabled: false,
+      });
+    });
+
+    it('should enable SDK auto-compaction for Kimi with its known window', () => {
       expect(buildProviderSettings('kimi')).toEqual({
         autoCompactEnabled: true,
         autoCompactWindow: 262_144,
@@ -232,7 +238,7 @@ describe('QueryOptionsBuilder', () => {
       resetProviderRegistry();
     });
 
-    it('should disable SDK auto-compaction for OpenRouter models', async () => {
+    it('should enable SDK auto-compaction for OpenRouter models with their context window', async () => {
       registerOpenRouterProvider();
       setModelsCache(
         new Map([
@@ -254,12 +260,12 @@ describe('QueryOptionsBuilder', () => {
       mockSession.config.model = 'deepseek-v4';
       const options = await builder.build();
       expect(options.settings).toEqual({
-        autoCompactEnabled: false,
-        autoCompactWindow: Number.MAX_SAFE_INTEGER,
+        autoCompactEnabled: true,
+        autoCompactWindow: 1_000_000,
       });
     });
 
-    it('should disable SDK auto-compaction for OpenRouter even when model is unknown', async () => {
+    it('should disable SDK auto-compaction for OpenRouter when model is unknown', async () => {
       registerOpenRouterProvider();
       // Empty cache — model not found
       setModelsCache(new Map());
@@ -268,7 +274,6 @@ describe('QueryOptionsBuilder', () => {
       const options = await builder.build();
       expect(options.settings).toEqual({
         autoCompactEnabled: false,
-        autoCompactWindow: Number.MAX_SAFE_INTEGER,
       });
     });
 
