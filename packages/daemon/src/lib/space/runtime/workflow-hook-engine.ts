@@ -1360,6 +1360,14 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
 
     // Handle block
     if (outcome.decision === 'block') {
+      if (outcome.blockedByHookId) {
+        for (const queuedActionKey of engine.clearQueuedRetryableActionsForOwner(
+          [outcome.blockedByHookId],
+          meta
+        )) {
+          clearRetryableAction(queuedActionKey);
+        }
+      }
       engine.clearQueuedRetryableActionsForKey(actionKey);
       clearRetryableAction(actionKey);
       return hookResult(

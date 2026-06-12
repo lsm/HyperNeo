@@ -253,6 +253,7 @@ describe('pr-ready validator', () => {
     const previousAnthropicKey = process.env.ANTHROPIC_API_KEY;
     const previousClaudeToken = process.env.CLAUDE_CODE_OAUTH_TOKEN;
     const previousGhToken = process.env.GH_TOKEN;
+    const previousGhRepo = process.env.GH_REPO;
     const previousGhConfigDir = process.env.GH_CONFIG_DIR;
     const previousXdgConfigHome = process.env.XDG_CONFIG_HOME;
     const previousAppData = process.env.AppData;
@@ -264,6 +265,7 @@ describe('pr-ready validator', () => {
     process.env.ANTHROPIC_API_KEY = 'anthropic-secret';
     process.env.CLAUDE_CODE_OAUTH_TOKEN = 'claude-secret';
     process.env.GH_TOKEN = 'github-secret';
+    process.env.GH_REPO = 'acme/corp';
     process.env.GH_CONFIG_DIR = '/tmp/gh-config';
     process.env.XDG_CONFIG_HOME = '/tmp/xdg-config';
     process.env.AppData = 'C:\\Users\\alice\\AppData\\Roaming';
@@ -277,6 +279,7 @@ describe('pr-ready validator', () => {
       expect(result.type).toBe('allow');
       const env = (calls[0].options as { env?: Record<string, string> }).env ?? {};
       expect(env.GH_TOKEN).toBe('github-secret');
+      expect(env.GH_REPO).toBe('acme/corp');
       expect(env.GH_CONFIG_DIR).toBe('/tmp/gh-config');
       expect(env.XDG_CONFIG_HOME).toBe('/tmp/xdg-config');
       expect(env.AppData).toBe('C:\\Users\\alice\\AppData\\Roaming');
@@ -293,6 +296,8 @@ describe('pr-ready validator', () => {
       else process.env.CLAUDE_CODE_OAUTH_TOKEN = previousClaudeToken;
       if (previousGhToken === undefined) delete process.env.GH_TOKEN;
       else process.env.GH_TOKEN = previousGhToken;
+      if (previousGhRepo === undefined) delete process.env.GH_REPO;
+      else process.env.GH_REPO = previousGhRepo;
       if (previousGhConfigDir === undefined) delete process.env.GH_CONFIG_DIR;
       else process.env.GH_CONFIG_DIR = previousGhConfigDir;
       if (previousXdgConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;

@@ -1666,6 +1666,36 @@ describe('wrapHandlerWithHooks', () => {
     expect(deliveredMessages).toEqual(['second']);
   });
 
+  test('hard-block resend clears superseded queued retry before replay', async () => {
+    const { engine, mockExecutor } = makeEngine([
+      makeHook({ id: 'hook-1', classification: 'validation', order: 0 }),
+    ]);
+    mockExecutor.setResult('hook-1', {
+      type: 'retryable_block',
+      reason: 'Retry me',
+      retryAfterMs: 20,
+    });
+
+    const deliveredMessages: string[] = [];
+    const handler = async (args: { target: string; message: string }) => {
+      deliveredMessages.push(args.message);
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }],
+      };
+    };
+
+    const wrapped = wrapHandlerWithHooks('send_message', handler, engine, {}, defaultMeta);
+    await wrapped({ target: 'Review', message: 'queued' });
+
+    mockExecutor.setResult('hook-1', { type: 'block', reason: 'PR is not ready' });
+    const blockedResult = await wrapped({ target: 'Review', message: 'blocked resend' });
+    await new Promise((resolve) => setTimeout(resolve, 40));
+
+    expect(blockedResult.isError).toBe(true);
+    expect(deliveredMessages).toEqual([]);
+    expect(engine.getQueuedRetryableAction('hook-1')).toBeUndefined();
+  });
+
   test('successful resend clears superseded queued retry before replay', async () => {
     const { engine, mockExecutor } = makeEngine([
       makeHook({ id: 'hook-1', classification: 'validation', order: 0 }),

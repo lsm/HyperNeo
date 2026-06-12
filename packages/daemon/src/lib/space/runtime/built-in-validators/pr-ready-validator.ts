@@ -19,6 +19,7 @@ const GITHUB_LOOKUP_ENV_KEYS = new Set([
   'GH_ENTERPRISE_TOKEN',
   'GITHUB_ENTERPRISE_TOKEN',
   'GH_HOST',
+  'GH_REPO',
   'GH_CONFIG_DIR',
 ]);
 const BASIC_ENV_KEYS = new Set([
@@ -77,7 +78,8 @@ export function createPrReadyValidator(
   spawnImpl: typeof Bun.spawn = Bun.spawn
 ): (context: HookExecutorContext) => Promise<WorkflowHookResult> {
   return async (context: HookExecutorContext): Promise<WorkflowHookResult> => {
-    const prUrlResult = await resolvePrUrl(context, spawnImpl);
+    const deadlineMs = Date.now() + DEFAULT_TIMEOUT_MS;
+    const prUrlResult = await resolvePrUrl(context, spawnImpl, deadlineMs);
     if (!prUrlResult.success) {
       return {
         type: 'block',
@@ -99,7 +101,7 @@ export function createPrReadyValidator(
     const prView = await runCommand<PrViewResult>(
       ['gh', 'pr', 'view', prUrl, '--json', 'url,state,mergeable,mergeStateStatus'],
       context.workspacePath,
-      DEFAULT_TIMEOUT_MS,
+      remainingTimeoutMs(deadlineMs),
       spawnImpl
     );
     if (!prView.success) {
@@ -153,7 +155,12 @@ export function createPrReadyValidator(
     }
 
     // Check unresolved review threads
-    const threadsResult = await runReviewThreadsQuery(prMeta, context.workspacePath, spawnImpl);
+    const threadsResult = await runReviewThreadsQuery(
+      prMeta,
+      context.workspacePath,
+      spawnImpl,
+      deadlineMs
+    );
     if (!threadsResult.success) {
       return {
         type: 'block',
@@ -188,7 +195,8 @@ export function createPrReadyValidator(
 
 async function resolvePrUrl(
   context: HookExecutorContext,
-  spawnImpl: typeof Bun.spawn
+  spawnImpl: typeof Bun.spawn,
+  deadlineMs: number
 ): Promise<
   { success: true; prUrl: string; shouldPatchPrUrl: boolean } | { success: false; error: string }
 > {
@@ -204,7 +212,7 @@ async function resolvePrUrl(
   const currentBranchPr = await runCommand<{ url?: string }>(
     ['gh', 'pr', 'view', '--json', 'url'],
     context.workspacePath,
-    DEFAULT_TIMEOUT_MS,
+    remainingTimeoutMs(deadlineMs),
     spawnImpl
   );
   if (!currentBranchPr.success) {
@@ -262,7 +270,8 @@ function parsePrUrl(
 async function runReviewThreadsQuery(
   meta: { host: string; owner: string; repo: string; number: string },
   cwd: string,
-  spawnImpl: typeof Bun.spawn
+  spawnImpl: typeof Bun.spawn,
+  deadlineMs: number
 ): Promise<{ success: true; unresolvedUrls: string[] } | { success: false; error: string }> {
   const unresolvedUrls: string[] = [];
   let cursor: string | null = null;
@@ -295,7 +304,12 @@ async function runReviewThreadsQuery(
       );
     }
 
-    const result = await runCommand<GraphQlResponse>(args, cwd, DEFAULT_TIMEOUT_MS, spawnImpl);
+    const result = await runCommand<GraphQlResponse>(
+      args,
+      cwd,
+      remainingTimeoutMs(deadlineMs),
+      spawnImpl
+    );
     if (!result.success) {
       return { success: false, error: result.error };
     }
@@ -327,6 +341,10 @@ async function runReviewThreadsQuery(
   }
 
   return { success: true, unresolvedUrls };
+}
+
+function remainingTimeoutMs(deadlineMs: number): number {
+  return Math.max(1, deadlineMs - Date.now());
 }
 
 function buildGitHubLookupEnv(): Record<string, string> {
