@@ -198,9 +198,9 @@ describe('QueryOptionsBuilder', () => {
       });
     });
 
-    it('should omit autoCompactWindow when context window is unavailable', () => {
+    it('should disable SDK auto-compaction when context window is unavailable', () => {
       expect(buildProviderSettings('openrouter')).toEqual({
-        autoCompactEnabled: true,
+        autoCompactEnabled: false,
       });
     });
 
@@ -262,7 +262,7 @@ describe('QueryOptionsBuilder', () => {
       });
     });
 
-    it('should enable SDK auto-compaction for OpenRouter even when model is unknown', async () => {
+    it('should disable SDK auto-compaction for OpenRouter when model is unknown', async () => {
       registerOpenRouterProvider();
       // Empty cache — model not found
       setModelsCache(new Map());
@@ -270,7 +270,7 @@ describe('QueryOptionsBuilder', () => {
       mockSession.config.model = 'unknown-model';
       const options = await builder.build();
       expect(options.settings).toEqual({
-        autoCompactEnabled: true,
+        autoCompactEnabled: false,
       });
     });
 

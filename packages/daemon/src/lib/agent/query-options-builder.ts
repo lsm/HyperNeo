@@ -211,13 +211,19 @@ export function buildProviderSettings(
     return undefined;
   }
 
-  // Keep SDK auto-compaction enabled for non-native providers, but provide
-  // the provider model's real context window. This lets the SDK trigger
+  if (!contextWindow) {
+    return {
+      autoCompactEnabled: false,
+    };
+  }
+
+  // Keep SDK auto-compaction enabled for non-native providers only when we can
+  // provide the provider model's real context window. This lets the SDK trigger
   // compaction through its internal control flow instead of receiving
   // `/compact` as ordinary prompt text from the streaming input generator.
   return {
     autoCompactEnabled: true,
-    ...(contextWindow ? { autoCompactWindow: contextWindow } : {}),
+    autoCompactWindow: contextWindow,
   };
 }
 
