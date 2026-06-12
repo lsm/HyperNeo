@@ -1526,7 +1526,9 @@ export type WorkflowHookValidatorId =
   | 'github_review_approved'
   | 'codex_review_approved'
   | 'artifact_exists'
-  | 'task_reported_status';
+  | 'task_reported_status'
+  | 'review_approval'
+  | 'review_posted';
 
 export type WorkflowHookExternalLookup = 'github';
 
@@ -1585,12 +1587,16 @@ export interface WorkflowHookAllowResult extends WorkflowHookBaseResult {
 export interface WorkflowHookBlockResult extends WorkflowHookBaseResult {
   type: 'block';
   reason: string;
+  /** Optional state to persist into hook-local storage even when blocking. */
+  state?: Record<string, unknown>;
 }
 
 export interface WorkflowHookRetryableBlockResult extends WorkflowHookBaseResult {
   type: 'retryable_block';
   reason: string;
   retryAfterMs?: number;
+  /** Optional state to persist into hook-local storage even when blocking. */
+  state?: Record<string, unknown>;
 }
 
 export interface WorkflowHookPatchParamsResult extends WorkflowHookBaseResult {
@@ -1607,6 +1613,8 @@ export interface WorkflowHookEmitFollowUpResult extends WorkflowHookBaseResult {
 export interface WorkflowHookRecordStateResult extends WorkflowHookBaseResult {
   type: 'record_state';
   state: Record<string, unknown>;
+  /** When set, persist state to the specified hook instead of the current one. */
+  targetHookId?: string;
 }
 
 export type WorkflowHookResult =

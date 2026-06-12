@@ -22,6 +22,8 @@ import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { validateWorkflowHookResult } from '../workflow-hook-validation';
+import { reviewApprovalValidator } from './built-in-validators/review-approval-validator';
+import { reviewPostedValidator } from './built-in-validators/review-posted-validator';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -38,12 +40,15 @@ export interface HookExecutorContext {
   nodeName: string;
   sessionId: string;
   taskId: string;
+  agentName: string;
   targetNode?: string;
   hookLocalState: Record<string, unknown>;
   currentArtifacts: Record<string, unknown>[];
   permittedExternalLookups: string[];
   /** Optional bounded template data from the hook definition. */
   templateData?: Record<string, unknown>;
+  /** Current gate runtime data for this workflow run, when available. */
+  gateData?: Record<string, unknown>[];
   /** Optional ISO8601 timestamp of workflowRun.createdAt for time-window checks. */
   workflowStartIso?: string;
   /** Optional resolved PR URL for this workflow run. */
@@ -143,6 +148,8 @@ registerBuiltInValidator('task_reported_status', async () => ({
   type: 'block',
   reason: NOT_IMPLEMENTED,
 }));
+registerBuiltInValidator('review_approval', reviewApprovalValidator);
+registerBuiltInValidator('review_posted', reviewPostedValidator);
 
 // ---------------------------------------------------------------------------
 // Environment builder

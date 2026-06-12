@@ -26,7 +26,10 @@ import {
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
 import type { WorkflowHookStateRepository } from '../../../storage/repositories/workflow-hook-state-repository';
-import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
+import type {
+  GateDataRepository,
+  GateDataRecord,
+} from '../../../storage/repositories/gate-data-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { HookExecutor, HookExecutorContext } from './hook-executor';
 import { ChannelResolver } from './channel-resolver';
@@ -93,14 +96,14 @@ export interface WorkflowHookEngineConfig {
   workflow: SpaceWorkflow;
   workflowRunId: string;
   nodeExecutionRepo: NodeExecutionRepository;
-  workflowRunRepo: SpaceWorkflowRunRepository;
+  workflowRunRepo?: SpaceWorkflowRunRepository;
   artifactRepo?: WorkflowRunArtifactRepository;
   hookStateRepo: WorkflowHookStateRepository;
   hookExecutor: HookExecutor;
   workspacePath?: string;
   /** Optional resolved PR URL for this workflow run (injected into hook script env). */
   prUrl?: string;
-  /** Optional gate data repository for building fresh NEOKAI_GATE_DATA_JSON per action. */
+  /** Optional gate data repository for exposing runtime gate data to hook validators. */
   gateDataRepo?: GateDataRepository;
 }
 
@@ -162,17 +165,20 @@ export class WorkflowHookEngine {
     state: Record<string, unknown>,
     lastResult?: WorkflowHookResult
   ): boolean {
-    try {
-      const repoState = this.config.hookStateRepo.get(this.config.workflowRunId, hookId);
-      const result = this.config.hookStateRepo.update(this.config.workflowRunId, hookId, {
-        expectedVersion: repoState?.version ?? 0,
-        localState: state,
-        lastResult,
-      });
-      return result !== null;
-    } catch {
-      return false;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const repoState = this.config.hookStateRepo.get(this.config.workflowRunId, hookId);
+        const result = this.config.hookStateRepo.update(this.config.workflowRunId, hookId, {
+          expectedVersion: repoState?.version ?? 0,
+          localState: state,
+          lastResult,
+        });
+        if (result !== null) return true;
+      } catch {
+        // retry on version conflict or error
+      }
     }
+    return false;
   }
 
   /**
@@ -336,6 +342,9 @@ export class WorkflowHookEngine {
           if ((hook.classification ?? 'validation') === 'validation') {
             blockedByValidation = { hookId: hook.id, result, isRetryable: false };
           }
+          if (result.state && typeof result.state === 'object') {
+            stateUpdates.push({ hookId: hook.id, state: result.state as Record<string, unknown> });
+          }
           // side_effect block is recorded but does not stop
           break;
 
@@ -391,6 +400,9 @@ export class WorkflowHookEngine {
               }
             }
           }
+          if (result.state && typeof result.state === 'object') {
+            stateUpdates.push({ hookId: hook.id, state: result.state as Record<string, unknown> });
+          }
           break;
         }
 
@@ -437,7 +449,12 @@ export class WorkflowHookEngine {
 
         case 'record_state':
           if (result.state && typeof result.state === 'object') {
-            stateUpdates.push({ hookId: hook.id, state: result.state as Record<string, unknown> });
+            const targetHookId =
+              typeof result.targetHookId === 'string' ? result.targetHookId : hook.id;
+            stateUpdates.push({
+              hookId: targetHookId,
+              state: result.state as Record<string, unknown>,
+            });
           }
           break;
       }
@@ -775,7 +792,8 @@ export class WorkflowHookEngine {
       // target to compare, so a hook with targetNode on those methods is skipped.
       if (hook.targetNode) {
         if (methodName !== 'send_message') return false;
-        if (actionTargets.size > 0 && !actionTargets.has(hook.targetNode)) return false;
+        if (actionTargets.size === 0) return false;
+        if (!actionTargets.has(hook.targetNode)) return false;
       }
 
       // Authorized callers check
@@ -893,47 +911,48 @@ export class WorkflowHookEngine {
       mappedArtifacts.push(item);
     }
 
-    const run = this.config.workflowRunRepo.getRun(this.config.workflowRunId);
+    const run = this.config.workflowRunRepo?.getRun(this.config.workflowRunId);
     const workflowStartIso = run ? new Date(run.createdAt).toISOString() : undefined;
 
-    // Build fresh gate data JSON per action so long-lived sessions don't
-    // validate against stale gate data or missing PR URLs.
-    // Flat-merge all gate data objects for backward compatibility with
-    // converted gate scripts that expect a single flat object shape.
-    // Also merge the current `params.data` (from send_message's `data` arg)
-    // so that converted gate scripts see the in-flight payload without
-    // requiring a separate gate data write first — matching legacy behavior
-    // where the gate write happened before evaluation.
+    // Build fresh gate data per action so long-lived sessions don't validate
+    // against stale gate data or missing PR URLs.
+    let gateData: Record<string, unknown>[] | undefined;
     let gateDataJson: string | undefined;
-    {
-      try {
-        const records = this.config.gateDataRepo?.listByRun(this.config.workflowRunId) ?? [];
-        const flatGateData: Record<string, unknown> = {};
-        for (const record of records) {
-          Object.assign(flatGateData, record.data);
-        }
-        // Merge current action data so hooks evaluating in the same MCP call
-        // see the payload the agent is sending (e.g. { pr_url }) without
-        // needing a prior gate data write.
-        if (
-          methodName === 'send_message' &&
-          params.data &&
-          typeof params.data === 'object' &&
-          !Array.isArray(params.data)
-        ) {
-          try {
-            const dataBytes = new TextEncoder().encode(JSON.stringify(params.data)).length;
-            if (dataBytes <= MAX_PARAM_DATA_BYTES) {
-              Object.assign(flatGateData, params.data as Record<string, unknown>);
-            }
-          } catch {
-            // non-serializable data — skip merge
-          }
-        }
-        gateDataJson = JSON.stringify(flatGateData);
-      } catch {
-        // best effort — hook scripts that depend on gate data will fail closed
+    try {
+      const records = this.config.gateDataRepo?.listByRun(this.config.workflowRunId) ?? [];
+      gateData = records.map((r: GateDataRecord) => ({
+        gateId: r.gateId,
+        data: r.data,
+        updatedAt: r.updatedAt,
+      }));
+
+      // Flat-merge all gate data objects for backward compatibility with
+      // converted gate scripts that expect a single flat object shape.
+      const flatGateData: Record<string, unknown> = {};
+      for (const record of records) {
+        Object.assign(flatGateData, record.data);
       }
+      // Merge current action data so hooks evaluating in the same MCP call
+      // see the payload the agent is sending (e.g. { pr_url }) without
+      // needing a prior gate data write.
+      if (
+        methodName === 'send_message' &&
+        params.data &&
+        typeof params.data === 'object' &&
+        !Array.isArray(params.data)
+      ) {
+        try {
+          const dataBytes = new TextEncoder().encode(JSON.stringify(params.data)).length;
+          if (dataBytes <= MAX_PARAM_DATA_BYTES) {
+            Object.assign(flatGateData, params.data as Record<string, unknown>);
+          }
+        } catch {
+          // non-serializable data — skip merge
+        }
+      }
+      gateDataJson = JSON.stringify(flatGateData);
+    } catch {
+      // best effort — hook scripts that depend on gate data will fail closed
     }
 
     return {
@@ -941,16 +960,18 @@ export class WorkflowHookEngine {
       runId: this.config.workflowRunId,
       hookId: hook.id,
       methodName,
-      params: this.boundParams(params),
+      params: hook.validator.kind === 'built_in' ? params : this.boundParams(params),
       nodeId: meta.nodeId,
       nodeName,
       sessionId: meta.sessionId,
       taskId: meta.taskId,
+      agentName: meta.agentName,
       targetNode: hook.targetNode ?? meta.targetNode,
       hookLocalState: this.boundHookLocalState(hookLocalState),
       currentArtifacts: mappedArtifacts,
       permittedExternalLookups,
       templateData: hook.templateData,
+      gateData,
       workflowStartIso,
       prUrl: this.config.prUrl,
       gateDataJson,
@@ -1351,32 +1372,55 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
   if (!engine) return handler;
 
   const wrapped = async (args: T) => {
-    const outcome = await engine.executeAction(methodName, args as Record<string, unknown>, meta);
+    let outcome = await engine.executeAction(methodName, args as Record<string, unknown>, meta);
 
-    // Batch persist hook state updates and execution results.
-    // Each hook gets at most one repo write to avoid version conflicts.
-    const updatesByHook = new Map<
-      string,
-      { state: Record<string, unknown>; result?: WorkflowHookResult }
-    >();
-    for (const update of outcome.stateUpdates) {
-      updatesByHook.set(update.hookId, { state: update.state });
-    }
-    for (const record of outcome.executionLog) {
-      const existing = updatesByHook.get(record.hookId);
-      if (existing) {
-        existing.result = record.result;
-      } else {
-        updatesByHook.set(record.hookId, { state: {}, result: record.result });
+    for (let attempt = 0; attempt < 2; attempt++) {
+      // Batch persist hook state updates and execution results.
+      // Each hook gets at most one repo write to avoid version conflicts.
+      const updatesByHook = new Map<
+        string,
+        { state: Record<string, unknown>; result?: WorkflowHookResult }
+      >();
+      for (const update of outcome.stateUpdates) {
+        updatesByHook.set(update.hookId, { state: update.state });
       }
-    }
-    for (const [hookId, { state, result }] of updatesByHook) {
-      const ok = engine.persistStateUpdate(hookId, state, result);
-      if (!ok) {
-        log.warn(
-          `Failed to persist hook state/result for ${hookId}: version conflict or repo error`
-        );
+      for (const record of outcome.executionLog) {
+        const existing = updatesByHook.get(record.hookId);
+        if (existing) {
+          existing.result = record.result;
+        } else {
+          updatesByHook.set(record.hookId, { state: {}, result: record.result });
+        }
       }
+      for (const [hookId, { state, result }] of updatesByHook) {
+        const ok = engine.persistStateUpdate(hookId, state, result);
+        if (!ok) {
+          log.warn(
+            `Failed to persist hook state/result for ${hookId}: version conflict or repo error`
+          );
+        }
+      }
+
+      if (
+        attempt > 0 ||
+        outcome.decision !== 'retryable_block' ||
+        !outcome.userState.reason?.includes('retry after state merge')
+      ) {
+        break;
+      }
+
+      const retryOutcome = await engine.executeAction(
+        methodName,
+        args as Record<string, unknown>,
+        meta
+      );
+      if (
+        retryOutcome.decision === 'retryable_block' &&
+        retryOutcome.userState.reason === outcome.userState.reason
+      ) {
+        break;
+      }
+      outcome = retryOutcome;
     }
 
     // Handle block

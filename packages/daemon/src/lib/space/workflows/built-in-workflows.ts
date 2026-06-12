@@ -28,6 +28,7 @@ import type {
   Gate,
   SpaceWorkflow,
   WorkflowChannel,
+  WorkflowHook,
   WorkflowNode,
 } from '@neokai/shared';
 import { generateUUID, resolveNodeAgents, hasEnabledGateFeature } from '@neokai/shared';
@@ -315,65 +316,6 @@ const PR_READY_BASH_SCRIPT = [
 ].join('\n');
 
 /**
- * Review-posted gate script.
- *
- * Verifies that the Reviewer has actually posted review evidence on the PR
- * since the workflow run started. This gate guards the Review → Coding feedback
- * channel: the runtime refuses to deliver a "changes requested" message until
- * a formal review or at least one PR comment is visible on GitHub.
- *
- * Primary check: formal GitHub review (gh pr review / pulls/{n}/reviews)
- * with APPROVED or CHANGES_REQUESTED state.
- * Own-PR fallback: COMMENTED reviews or PR conversation comments since workflow
- * start. GitHub blocks APPROVE/REQUEST_CHANGES on your own PR, so comment-only
- * evidence is accepted only when the authenticated GitHub user is the PR author.
- *
- * Environment variables:
- *   NEOKAI_GATE_DATA_JSON       — current gate data; contains `pr_url` (PR URL, preferred)
- *                                 and `review_url` (review permalink, fallback)
- *   NEOKAI_WORKFLOW_START_ISO   — ISO8601 timestamp of workflowRun.createdAt,
- *                                 injected by the gate script runner
- */
-const REVIEW_POSTED_BASH_SCRIPT = [
-  'PR_URL=$(jq -r \'.pr_url // .review_url // empty\' <<< "${NEOKAI_GATE_DATA_JSON:-{}}" 2>/dev/null || true)',
-  'if [ -z "$PR_URL" ]; then',
-  '  PR_URL=$(gh pr view --json url -q .url 2>/dev/null || true)',
-  'fi',
-  'if [ -z "$PR_URL" ]; then',
-  '  echo "No PR URL available to verify review" >&2',
-  '  exit 1',
-  'fi',
-  'START_ISO="${NEOKAI_WORKFLOW_START_ISO:-}"',
-  'if [ -z "$START_ISO" ]; then',
-  '  echo "NEOKAI_WORKFLOW_START_ISO not injected — cannot determine review window" >&2',
-  '  exit 1',
-  'fi',
-  'if ! PR_JSON=$(gh pr view "$PR_URL" --json reviews,comments,author); then',
-  '  echo "Failed to fetch review evidence for ${PR_URL}" >&2',
-  '  exit 1',
-  'fi',
-  'FORMAL_REVIEW_COUNT=$(jq --arg since "$START_ISO" \'[.reviews[] | select(.submittedAt > $since) | select(.state == "APPROVED" or .state == "CHANGES_REQUESTED")] | length\' <<< "$PR_JSON")',
-  'if [ "$FORMAL_REVIEW_COUNT" != "0" ] && [ -n "$FORMAL_REVIEW_COUNT" ]; then',
-  '  jq -n --arg url "$PR_URL" --argjson n "$FORMAL_REVIEW_COUNT" \'{"pr_url":$url,"review_count":$n,"review_evidence":"formal_review"}\'',
-  '  exit 0',
-  'fi',
-  'AUTHOR_LOGIN=$(jq -r \'.author.login // empty\' <<< "$PR_JSON")',
-  'VIEWER_LOGIN=$(gh api user --jq .login 2>/dev/null || true)',
-  'if [ -z "$AUTHOR_LOGIN" ] || [ -z "$VIEWER_LOGIN" ] || [ "$AUTHOR_LOGIN" != "$VIEWER_LOGIN" ]; then',
-  '  echo "No APPROVED or CHANGES_REQUESTED review found on ${PR_URL} since workflow start (${START_ISO}); comment-only evidence is accepted only for own PRs" >&2',
-  '  exit 1',
-  'fi',
-  'COMMENT_REVIEW_COUNT=$(jq --arg since "$START_ISO" \'[.reviews[] | select(.submittedAt > $since) | select(.state == "COMMENTED")] | length\' <<< "$PR_JSON")',
-  'PR_COMMENT_COUNT=$(jq --arg since "$START_ISO" \'[.comments[] | select(.createdAt > $since)] | length\' <<< "$PR_JSON")',
-  'COMMENT_COUNT=$((COMMENT_REVIEW_COUNT + PR_COMMENT_COUNT))',
-  'if [ "$COMMENT_COUNT" = "0" ]; then',
-  '  echo "No review or PR comment found on own PR ${PR_URL} since workflow start (${START_ISO})" >&2',
-  '  exit 1',
-  'fi',
-  'jq -n --arg url "$PR_URL" --argjson n "$COMMENT_COUNT" \'{"pr_url":$url,"review_count":$n,"review_evidence":"own_pr_comment"}\'',
-].join('\n');
-
-/**
  * Reviewer Terminal Action Pre-conditions block.
  *
  * Prepended to every review-style end-node prompt that exposes the terminal
@@ -427,25 +369,25 @@ const CODEX_REACTION_APPROVAL_GUIDANCE =
   'reacted at all, comment `@codex review` on the PR to trigger its review, then wait ' +
   'for an `eyes` or `+1` reaction. ' +
   'Only a +1 newer than the current PR head commit counts — after a revision push, ' +
-  'an older +1 from a previous cycle is stale and will not open the gate. If the +1 ' +
+  'an older +1 from a previous cycle is stale and will not release the hand-off. If the +1 ' +
   'looks old, retrigger Codex with a fresh `@codex review` comment. ' +
-  'Write the approval gate to start the Codex timeout (10 minutes). If the gate ' +
-  'blocks because Codex has not yet posted `+1`, poll every 60 seconds and retry the ' +
-  'gate write. If codex[bot] still has not posted `+1` after the timeout, proceed ' +
-  'only with a warning recorded in your result artifact. Do not close the task ' +
-  'before codex[bot] has `+1` unless that timeout has elapsed.';
+  'Send your hook-validated hand-off message to start the Codex timeout (10 minutes). ' +
+  'If the message is blocked because Codex has not yet posted `+1`, wait for the retryable ' +
+  'block or resend after 60 seconds. If codex[bot] still has not posted `+1` after the ' +
+  'timeout, proceed only with a warning recorded in your result artifact. Do not close the ' +
+  'task before codex[bot] has `+1` unless that timeout has elapsed.';
 
 const PD_PLAN_REVIEW_PROMPT =
   'You are one of four independent Plan Reviewers. Review the plan PR through your lens before ' +
   'tasks are dispatched. Use the Reviewer System Contract for review quality and severity.\n\n' +
   'Plan Review is not the end node: do not call approve_task or submit_for_approval. Your terminal ' +
-  'action is your `approvals` vote on `plan-approval-gate`. Vote approved only for zero P0-P3 ' +
+  'action is your `approvals` vote via the plan-approval hook. Vote approved only for zero P0-P3 ' +
   'lens findings; otherwise vote rejected and send actionable feedback to Planning.\n\n' +
   CODEX_REACTION_APPROVAL_GUIDANCE +
   '\n\n' +
   'Procedure: read `gh pr diff`/`gh pr view`, post a visible PR review comment, then ' +
   'send_message(target="Task Dispatcher", message: "<short summary>", data: { approvals: { "<your lens>": "approved" }, ' +
-  'pr_url: "<plan PR url>" }). First three approvals normally get a gate-blocked response; ' +
+  'pr_url: "<plan PR url>" }). First three approvals normally get a hook-blocked response; ' +
   'the vote is still recorded. On rejection, write `{ "<your lens>": "rejected" }` and also ' +
   'message Planning with required changes.';
 
@@ -538,11 +480,11 @@ const FULLSTACK_REVIEW_PROMPT =
   'maintainability, and coverage before QA. Follow the Reviewer System Contract for ' +
   'review quality and severity.\n\n' +
   'Review is not the end node: approve_task/submit_for_approval are unavailable. Your ' +
-  'terminal hand-off is writing approved = true to review-approval-gate after an ' +
-  'APPROVE verdict with zero P0-P3 findings. Write the gate first to start the 10-minute ' +
-  'Codex timeout, then wait for codex[bot] `+1` or timeout before proceeding. ' +
+  'terminal hand-off is sending a message to QA with `data: { approved: true }` after an ' +
+  'APPROVE verdict with zero P0-P3 findings. The review-approval hook starts the 10-minute ' +
+  'Codex timeout and waits for codex[bot] `+1` or timeout before releasing your message to QA. ' +
   CODEX_REACTION_APPROVAL_GUIDANCE +
-  ' If findings remain, do not write the gate; send actionable feedback to Coding and stop. ' +
+  ' If findings remain, do not send the approval message; send actionable feedback to Coding and stop. ' +
   'Never set a PR to auto-merge.';
 
 const FULLSTACK_QA_PROMPT =
@@ -664,13 +606,14 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
               'might not surface (e.g. callers of changed functions, integration points).\n' +
               '- All feedback MUST be posted to the PR on GitHub — not just summarized in your ' +
               'response. Use the Reviewer System Contract GitHub review procedure.\n' +
-              '- The Review → Coding channel is gated by `review-posted-gate` — the runtime ' +
-              'checks GitHub for a fresh review before releasing your message. If you skip ' +
-              '`gh pr review`, the gate will block and the coder will never hear from you.\n\n' +
+              '- The Review → Coding channel has a `review-posted` hook — the runtime ' +
+              'checks for review evidence before releasing your message. Include ' +
+              '`data: { review_url: "..." }` in your message, or save a review artifact first. ' +
+              'If you skip posting the review, the hook will block and the coder will never hear from you.\n\n' +
               reviewerFeedbackProcedure('Coding') +
               'Use save_artifact every cycle. Nest pr_url inside artifact data for post-approval dispatch.\n\n' +
               'Review checklist: inspect PR diff and related worktree context, run tests if uncertain, ' +
-              'post visible GitHub review before gate write. If changes needed, include pr_url, ' +
+              'post visible GitHub review, then message Coding with review_url. If changes needed, include pr_url, ' +
               'review_url, and comment_urls when messaging Coding. If approved, ' +
               REVIEW_THREAD_APPROVAL_CHECK_GUIDANCE +
               ' Call save_artifact({ type: "result", data: { pr_url: "<url>" } }) then approve_task() or submit_for_approval. ' +
@@ -747,35 +690,6 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
       },
       resetOnCycle: true,
     },
-    {
-      id: 'review-posted-gate',
-      label: 'Review Posted',
-      description:
-        'Reviewer has posted a GitHub review or PR comment since the workflow started. ' +
-        'Accepts a formal review (via `gh pr review`) as primary evidence; falls back to ' +
-        'PR conversation comments for same-account setups where GitHub blocks self-reviews. ' +
-        'Blocks the Review → Coding feedback channel until review evidence is visible on the PR.',
-      fields: [
-        {
-          name: 'pr_url',
-          type: 'string',
-          writers: ['Review'],
-          check: { op: 'exists' },
-        },
-        {
-          name: 'review_url',
-          type: 'string',
-          writers: ['Review'],
-          check: { op: 'exists' },
-        },
-      ],
-      script: {
-        interpreter: 'bash',
-        source: REVIEW_POSTED_BASH_SCRIPT,
-        timeoutMs: 30000,
-      },
-      resetOnCycle: true,
-    },
   ],
   channels: [
     {
@@ -800,9 +714,22 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
     {
       from: 'Review',
       to: 'Coding',
-      gateId: 'review-posted-gate',
+      hookIds: ['review-posted-hook'],
       maxCycles: 5,
       label: 'Review → Coding (changes requested)',
+    },
+  ],
+  hooks: [
+    {
+      id: 'review-posted-hook',
+      enabled: true,
+      sourceNode: 'Review',
+      targetNode: 'Coding',
+      method: 'send_message',
+      classification: 'validation',
+      validator: { kind: 'built_in', id: 'review_posted' },
+      authorizedCallers: [{ sourceNode: 'Review', agentSlots: ['reviewer'] }],
+      label: 'Review Posted',
     },
   ],
 };
@@ -982,7 +909,7 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
  *
  * Main progression:
  *   Planning → Plan Review (plan-pr-gate: script verifies plan PR is open/mergeable)
- *   Plan Review → Task Dispatcher (plan-approval-gate: all 4 reviewers approve)
+ *   Plan Review → Task Dispatcher (plan-approval hook: all 4 reviewers approve)
  *
  * Cyclic feedback:
  *   Plan Review → Planning (revision requests, maxCycles: 5)
@@ -1053,9 +980,9 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
               'items, long-term maintainability, and whether the decomposition will hold up as ' +
               'the system grows. Flag items that smuggle unrelated concerns together or create ' +
               'hidden cross-cutting dependencies.\n\n' +
-              'When voting, your lens key is `"architecture"` — write ' +
-              '`data: { approvals: { architecture: "approved" } }` (or `"rejected"`) on the ' +
-              '`plan-approval-gate`.',
+              'When voting, your lens key is `"architecture"` — send a message to Task Dispatcher ' +
+              'with `data: { approvals: { architecture: "approved" } }` (or `"rejected"`). ' +
+              'The plan-approval hook accumulates votes and blocks until all 4 reviewers approve.',
           },
         },
         {
@@ -1069,9 +996,9 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
               'authentication/authorization, secrets handling, and supply-chain risk for any ' +
               'new dependencies. Flag items that expose user data, bypass existing auth checks, ' +
               'or rely on untrusted input without validation.\n\n' +
-              'When voting, your lens key is `"security"` — write ' +
-              '`data: { approvals: { security: "approved" } }` (or `"rejected"`) on the ' +
-              '`plan-approval-gate`.',
+              'When voting, your lens key is `"security"` — send a message to Task Dispatcher ' +
+              'with `data: { approvals: { security: "approved" } }` (or `"rejected"`). ' +
+              'The plan-approval hook accumulates votes and blocks until all 4 reviewers approve.',
           },
         },
         {
@@ -1085,9 +1012,9 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
               'consistency across failures, idempotency, and race conditions. Flag items ' +
               'whose acceptance criteria are vague, whose failure modes are unclear, or ' +
               'whose tests would not catch the obvious regressions.\n\n' +
-              'When voting, your lens key is `"correctness"` — write ' +
-              '`data: { approvals: { correctness: "approved" } }` (or `"rejected"`) on the ' +
-              '`plan-approval-gate`.',
+              'When voting, your lens key is `"correctness"` — send a message to Task Dispatcher ' +
+              'with `data: { approvals: { correctness: "approved" } }` (or `"rejected"`). ' +
+              'The plan-approval hook accumulates votes and blocks until all 4 reviewers approve.',
           },
         },
         {
@@ -1101,9 +1028,9 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
               'documentation, error messages, and upgrade/migration experience for ' +
               'existing users. Flag items that change public interfaces without describing ' +
               'what users will see or how docs will be updated.\n\n' +
-              'When voting, your lens key is `"ux"` — write ' +
-              '`data: { approvals: { ux: "approved" } }` (or `"rejected"`) on the ' +
-              '`plan-approval-gate`.',
+              'When voting, your lens key is `"ux"` — send a message to Task Dispatcher ' +
+              'with `data: { approvals: { ux: "approved" } }` (or `"rejected"`). ' +
+              'The plan-approval hook accumulates votes and blocks until all 4 reviewers approve.',
           },
         },
       ],
@@ -1119,8 +1046,8 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
             value:
               PD_TASK_DISPATCHER_PROMPT +
               '\n\n' +
-              'Expected inputs: An approved plan PR (plan-approval-gate satisfied — all 4 ' +
-              'reviewers voted `approved: true`).\n' +
+              'Expected inputs: An approved plan PR (plan-approval hook satisfied — all 4 ' +
+              'reviewers voted `approved`).\n' +
               'Expected outputs: One standalone task per actionable work item in the plan, ' +
               'then save_artifact({ type: "result", append: true, created_task_ids: [...] }).\n\n' +
               'Tool contract:\n' +
@@ -1154,28 +1081,6 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
       poll: PR_INLINE_COMMENTS_POLL,
       resetOnCycle: true,
     },
-    {
-      id: 'plan-approval-gate',
-      label: 'Plan Approvals',
-      description:
-        'All four Plan Reviewers must approve the plan before Task Dispatcher activates. ' +
-        'Each reviewer writes to the `approvals` map with their lens name as the key ' +
-        '(architecture, security, correctness, ux) and the string `"approved"` as the ' +
-        "value. The auto-gate-write deep-merges map fields, so each reviewer's entry " +
-        'accumulates without overwriting earlier votes. Gate passes when ≥ 4 entries ' +
-        'have value `"approved"`. Note: `resetOnCycle: true` means all approvals are ' +
-        'cleared when Plan Review→Planning revision feedback fires — fresh votes are ' +
-        'collected after each plan revision because the plan diff has changed.',
-      fields: [
-        {
-          name: 'approvals',
-          type: 'map',
-          writers: ['Plan Review'],
-          check: { op: 'count', match: 'approved', min: 4 },
-        },
-      ],
-      resetOnCycle: true,
-    },
   ],
   channels: [
     {
@@ -1187,7 +1092,7 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
     {
       from: 'Plan Review',
       to: 'Task Dispatcher',
-      gateId: 'plan-approval-gate',
+      hookIds: ['plan-approval-hook'],
       label: 'Plan Review → Task Dispatcher',
     },
     {
@@ -1195,6 +1100,48 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
       to: 'Planning',
       maxCycles: 5,
       label: 'Plan Review → Planning (revision requested)',
+    },
+  ],
+  hooks: [
+    {
+      id: 'plan-approval-hook',
+      enabled: true,
+      sourceNode: 'Plan Review',
+      targetNode: 'Task Dispatcher',
+      method: 'send_message',
+      classification: 'validation',
+      validator: { kind: 'built_in', id: 'review_approval' },
+      templateData: {
+        threshold: 4,
+        voteKey: 'approvals',
+        voteMatch: 'approved',
+        voteBinding: 'agent_lens',
+        resetOnRejection: true,
+        requireCodex: true,
+      },
+      authorizedCallers: [
+        { sourceNode: 'Plan Review', agentSlots: ['architecture-reviewer'] },
+        { sourceNode: 'Plan Review', agentSlots: ['security-reviewer'] },
+        { sourceNode: 'Plan Review', agentSlots: ['correctness-reviewer'] },
+        { sourceNode: 'Plan Review', agentSlots: ['ux-reviewer'] },
+      ],
+      label: 'Plan Approval',
+    },
+    {
+      id: 'plan-approval-reset-hook',
+      enabled: true,
+      sourceNode: 'Plan Review',
+      targetNode: 'Planning',
+      method: 'send_message',
+      classification: 'side_effect',
+      validator: {
+        kind: 'script',
+        interpreter: 'bash',
+        source:
+          'echo \'{"type":"record_state","state":{"approvals":null,"_codex_started_at":null,"_codex_head_sha":null,"_pr_url":null},"targetHookId":"plan-approval-hook"}\'',
+      },
+      authorizedCallers: [{ sourceNode: 'Plan Review' }],
+      label: 'Plan Approval Reset',
     },
   ],
 };
@@ -1207,7 +1154,7 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
  *
  * Main progression:
  *   Coding → Review (code-pr-gate: script verifies PR is open/mergeable)
- *   Review → QA (review-approval-gate: reviewer approves)
+ *   Review → QA (review-approval hook: reviewer approves)
  *
  * Feedback cycles:
  *   Review → Coding (changes requested)
@@ -1261,10 +1208,10 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
               FULLSTACK_REVIEW_PROMPT +
               '\n\n' +
               'Expected inputs: Open PR from Coding.\n' +
-              'Expected outputs: Approval gate write or actionable feedback.\n\n' +
+              'Expected outputs: Approval message to QA or actionable feedback to Coding.\n\n' +
               'Steps:\n' +
               '1. Review diff quality, correctness, and test coverage\n' +
-              '2. If approved: write review-approval-gate (field: approved = true) to start the 10-minute Codex timeout, then wait for codex[bot] +1 or timeout\n' +
+              '2. If approved: send a message to QA with `data: { approved: true }`. The review-approval hook starts the 10-minute Codex timeout and waits for codex[bot] +1 or timeout before releasing your message to QA.\n' +
               '3. If changes needed: send clear feedback to Coding',
           },
         },
@@ -1344,20 +1291,6 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
       poll: PR_INLINE_COMMENTS_POLL,
       resetOnCycle: true,
     },
-    {
-      id: 'review-approval-gate',
-      label: 'Review',
-      description: 'Reviewer approved the PR for QA and codex[bot] review passed or timed out.',
-      fields: [
-        {
-          name: 'approved',
-          type: 'boolean',
-          writers: ['Review', 'reviewer'],
-          check: { op: '==', value: true },
-        },
-      ],
-      resetOnCycle: true,
-    },
   ],
   layout: {
     [FULLSTACK_CODING_NODE]: { x: 80, y: 160 },
@@ -1374,7 +1307,7 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
     {
       from: 'Review',
       to: 'QA',
-      gateId: 'review-approval-gate',
+      hookIds: ['review-approval-hook'],
       label: 'Review → QA',
     },
     {
@@ -1388,6 +1321,52 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
       to: 'Coding',
       maxCycles: 6,
       label: 'QA → Coding (issues found)',
+    },
+  ],
+  hooks: [
+    {
+      id: 'review-approval-hook',
+      enabled: true,
+      sourceNode: 'Review',
+      targetNode: 'QA',
+      method: 'send_message',
+      classification: 'validation',
+      validator: { kind: 'built_in', id: 'review_approval' },
+      templateData: { threshold: 1, requireCodex: true, codexTimeoutMs: 600_000 },
+      authorizedCallers: [{ sourceNode: 'Review', agentSlots: ['reviewer'] }],
+      label: 'Review Approval',
+    },
+    {
+      id: 'review-approval-reset-hook',
+      enabled: true,
+      sourceNode: 'Review',
+      targetNode: 'Coding',
+      method: 'send_message',
+      classification: 'side_effect',
+      validator: {
+        kind: 'script',
+        interpreter: 'bash',
+        source:
+          'echo \'{"type":"record_state","state":{"approvals":null,"_codex_started_at":null,"_codex_head_sha":null,"_pr_url":null},"targetHookId":"review-approval-hook"}\'',
+      },
+      authorizedCallers: [{ sourceNode: 'Review' }],
+      label: 'Review Approval Reset',
+    },
+    {
+      id: 'qa-approval-reset-hook',
+      enabled: true,
+      sourceNode: 'QA',
+      targetNode: 'Coding',
+      method: 'send_message',
+      classification: 'side_effect',
+      validator: {
+        kind: 'script',
+        interpreter: 'bash',
+        source:
+          'echo \'{"type":"record_state","state":{"approvals":null,"_codex_started_at":null,"_codex_head_sha":null,"_pr_url":null},"targetHookId":"review-approval-hook"}\'',
+      },
+      authorizedCallers: [{ sourceNode: 'QA' }],
+      label: 'QA Approval Reset',
     },
   ],
 };
@@ -1530,10 +1509,21 @@ export function mergeNodeStructuralFieldsFromTemplate(
         : node.codexPollIntervalMs,
       agents: node.agents.map((agent) => {
         const key = `${node.name}::${agent.name}`;
+        const templateAgent = templateNode?.agents.find((a) => a.name === agent.name);
         const templateGuards = templateAgentsByKey.get(key);
-        if (templateGuards === undefined) return agent;
-        // Merge: overwrite toolGuards from template, keep everything else
-        return { ...agent, toolGuards: templateGuards };
+        const shouldRefreshPrompt =
+          templateAgent?.customPrompt &&
+          typeof agent.customPrompt?.value === 'string' &&
+          (agent.customPrompt.value.includes('review-approval-gate') ||
+            agent.customPrompt.value.includes('plan-approval-gate'));
+        if (templateGuards === undefined && !shouldRefreshPrompt) return agent;
+        // Merge: overwrite toolGuards from template and refresh only prompts that
+        // still reference removed approval gates from the hook migration.
+        return {
+          ...agent,
+          ...(shouldRefreshPrompt ? { customPrompt: templateAgent.customPrompt } : {}),
+          ...(templateGuards !== undefined ? { toolGuards: templateGuards } : {}),
+        };
       }),
     };
   });
@@ -1693,7 +1683,74 @@ function remapTemplateChannel(
   };
 }
 
-function mergeChannelsFromTemplate(
+function remapTemplateHook(
+  hook: NonNullable<SpaceWorkflow['hooks']>[number],
+  templateNodes: WorkflowNode[],
+  existingNodes: WorkflowNode[]
+): NonNullable<SpaceWorkflow['hooks']>[number] {
+  const remapRef = (ref: string) => remapTemplateChannelRef(ref, templateNodes, existingNodes);
+  return {
+    ...hook,
+    sourceNode: remapRef(hook.sourceNode),
+    targetNode: hook.targetNode ? remapRef(hook.targetNode) : undefined,
+    authorizedCallers: hook.authorizedCallers?.map((caller) => ({
+      ...caller,
+      sourceNode: remapRef(caller.sourceNode),
+    })),
+  };
+}
+
+function hookKey(hook: WorkflowHook): string {
+  return JSON.stringify({
+    id: hook.id,
+    sourceNode: hook.sourceNode,
+    targetNode: hook.targetNode ?? null,
+    method: hook.method,
+  });
+}
+
+function mergeHooksFromTemplate(
+  existingHooks: SpaceWorkflow['hooks'],
+  templateHooks: SpaceWorkflow['hooks'],
+  templateNodes: WorkflowNode[],
+  existingNodes: WorkflowNode[]
+): SpaceWorkflow['hooks'] {
+  if (!templateHooks) return existingHooks;
+  const remappedTemplateHooks = templateHooks.map((hook) =>
+    remapTemplateHook(hook, templateNodes, existingNodes)
+  );
+  if (!existingHooks) return remappedTemplateHooks;
+
+  // Build a map of template hooks by key for efficient lookup
+  const templateByKey = new Map<string, WorkflowHook>();
+  for (const th of remappedTemplateHooks) {
+    templateByKey.set(hookKey(th), th);
+  }
+
+  // For existing hooks that match a template key, update structural fields
+  // (templateData, validator, retryPolicy) while preserving user-customized fields.
+  const updatedExisting = existingHooks.map((hook) => {
+    const templateMatch = templateByKey.get(hookKey(hook));
+    if (templateMatch) {
+      return {
+        ...hook,
+        templateData: templateMatch.templateData,
+        validator: templateMatch.validator,
+      };
+    }
+    return hook;
+  });
+
+  const existingKeys = new Set(existingHooks.map(hookKey));
+  const missingTemplateHooks = remappedTemplateHooks.filter(
+    (hook) => !existingKeys.has(hookKey(hook))
+  );
+
+  return [...updatedExisting, ...missingTemplateHooks];
+}
+
+/** @internal Exported for testing. */
+export function mergeChannelsFromTemplate(
   existingChannels: SpaceWorkflow['channels'],
   templateChannels: SpaceWorkflow['channels'],
   templateNodes: WorkflowNode[],
@@ -1705,19 +1762,42 @@ function mergeChannelsFromTemplate(
   );
   if (!existingChannels) return remappedTemplateChannels;
 
-  const existingKeys = new Set(
-    existingChannels.map((channel) =>
-      JSON.stringify({ from: channel.from, to: channel.to, gateId: channel.gateId ?? null })
-    )
-  );
-  const missingTemplateChannels = remappedTemplateChannels.filter(
-    (channel) =>
-      !existingKeys.has(
-        JSON.stringify({ from: channel.from, to: channel.to, gateId: channel.gateId ?? null })
-      )
-  );
+  // Template channels are the source of truth for from→to pairs. Replace
+  // any existing channel with the same from→to so that gate changes
+  // (including ungating) are reflected on re-stamp.
+  const fromToKey = (ch: NonNullable<SpaceWorkflow['channels']>[number]) => {
+    const to = Array.isArray(ch.to) && ch.to.length === 1 ? ch.to[0] : ch.to;
+    return JSON.stringify({ from: ch.from, to });
+  };
+  const existingByFromTo = new Map(existingChannels.map((ch) => [fromToKey(ch), ch]));
+  const templateFromTo = new Set(remappedTemplateChannels.map(fromToKey));
+  const keptExisting = existingChannels.filter((ch) => !templateFromTo.has(fromToKey(ch)));
+  const replacementChannels = remappedTemplateChannels.map((channel) => {
+    const existing = existingByFromTo.get(fromToKey(channel));
+    return { ...channel, id: channel.id ?? existing?.id ?? generateUUID() };
+  });
 
-  return [...existingChannels, ...missingTemplateChannels];
+  return [...keptExisting, ...replacementChannels];
+}
+
+/**
+ * Remove gates that are no longer in the template and no longer referenced by
+ * any channel. Preserves user-added custom gates as long as a channel still
+ * references them.
+ *
+ * @internal Exported for testing.
+ */
+export function removeOrphanedGates(
+  gates: Gate[] | undefined,
+  channels: SpaceWorkflow['channels'] | undefined,
+  templateGates: Gate[] | undefined
+): Gate[] | undefined {
+  if (!gates) return gates;
+  const templateGateIds = new Set(templateGates?.map((g) => g.id) ?? []);
+  const referencedGateIds = new Set(
+    (channels ?? []).map((ch) => ch.gateId).filter((id): id is string => typeof id === 'string')
+  );
+  return gates.filter((gate) => templateGateIds.has(gate.id) || referencedGateIds.has(gate.id));
 }
 
 /** @internal Exported for testing. */
@@ -1732,45 +1812,45 @@ export function mergeGateStructuralFieldsFromTemplate(
   const existingGateIds = new Set(existingGates.map((gate) => gate.id));
   const missingTemplateGates = templateGates.filter((gate) => !existingGateIds.has(gate.id));
 
-  return existingGates
-    .map((gate) => {
-      const templateGate = templateGatesById.get(gate.id);
-      if (!templateGate) return gate;
+  const mergedExisting = existingGates.map((gate) => {
+    const templateGate = templateGatesById.get(gate.id);
+    if (!templateGate) return gate;
 
-      const templateFieldsByName = new Map(
-        (templateGate.fields ?? []).map((field) => [field.name, field])
-      );
-      const fields = (gate.fields ?? []).map((field) => {
-        const templateField = templateFieldsByName.get(field.name);
-        if (!templateField) return field;
-        return { ...field, writers: templateField.writers };
-      });
+    const templateFieldsByName = new Map(
+      (templateGate.fields ?? []).map((field) => [field.name, field])
+    );
+    const fields = (gate.fields ?? []).map((field) => {
+      const templateField = templateFieldsByName.get(field.name);
+      if (!templateField) return field;
+      return { ...field, writers: templateField.writers };
+    });
 
-      // Skip copying template features if the existing gate already has a custom
-      // script or poll, so feature-backed mechanisms do not silently override
-      // custom gate logic at runtime. When copying is allowed, propagate the
-      // template's features (including undefined when the template removed them).
-      // Preserve existing codex_review_bot feature during transition to node-level
-      // config so pre-existing workflows that relied on gate-level codex keep working.
-      const shouldCopyFeatures = !gate.script && !gate.poll;
-      let nextFeatures: Gate['features'] | undefined;
-      if (shouldCopyFeatures) {
-        if (templateGate.features) {
-          nextFeatures = { ...templateGate.features };
-        }
-        if (hasEnabledGateFeature(gate, 'codex_review_bot')) {
-          nextFeatures = { codex_review_bot: true, ...nextFeatures };
-        }
-      } else {
-        nextFeatures = gate.features;
+    // Skip copying template features if the existing gate already has a custom
+    // script or poll, so feature-backed mechanisms do not silently override
+    // custom gate logic at runtime. When copying is allowed, propagate the
+    // template's features (including undefined when the template removed them).
+    // Preserve existing codex_review_bot feature during transition to node-level
+    // config so pre-existing workflows that relied on gate-level codex keep working.
+    const shouldCopyFeatures = !gate.script && !gate.poll;
+    let nextFeatures: Gate['features'] | undefined;
+    if (shouldCopyFeatures) {
+      if (templateGate.features) {
+        nextFeatures = { ...templateGate.features };
       }
-      return {
-        ...gate,
-        fields,
-        features: nextFeatures,
-      };
-    })
-    .concat(missingTemplateGates);
+      if (hasEnabledGateFeature(gate, 'codex_review_bot')) {
+        nextFeatures = { codex_review_bot: true, ...nextFeatures };
+      }
+    } else {
+      nextFeatures = gate.features;
+    }
+    return {
+      ...gate,
+      fields,
+      features: nextFeatures,
+    } as Gate;
+  });
+
+  return [...mergedExisting, ...missingTemplateGates];
 }
 
 /**
@@ -1882,13 +1962,24 @@ export function seedBuiltInWorkflows(
           template.nodes,
           row.nodes
         );
-        const mergedGates = mergeGateStructuralFieldsFromTemplate(row.gates, template.gates);
+        const mergedGates = removeOrphanedGates(
+          mergeGateStructuralFieldsFromTemplate(row.gates, template.gates),
+          mergedChannels,
+          template.gates
+        );
+        const mergedHooks = mergeHooksFromTemplate(
+          row.hooks,
+          template.hooks,
+          template.nodes,
+          row.nodes
+        );
         const { nodes: migratedNodes, gates: migratedGates } = migrateCodexFeatureToNodeToggle(
           mergedNodes,
           mergedChannels ?? row.channels ?? [],
           mergedGates ?? row.gates ?? []
         );
-        const hasNewTemplateChannels = (mergedChannels?.length ?? 0) > (row.channels?.length ?? 0);
+        const channelsChanged =
+          JSON.stringify(mergedChannels) !== JSON.stringify(row.channels ?? []);
 
         workflowManager.updateWorkflow(row.id, {
           completionAutonomyLevel: template.completionAutonomyLevel,
@@ -1896,9 +1987,9 @@ export function seedBuiltInWorkflows(
           // workflow-level value while the node updater writes node routes.
           postApproval: null,
           gates: migratedGates,
-          hooks: template.hooks ?? null,
           nodes: migratedNodes,
-          ...(hasNewTemplateChannels ? { channels: mergedChannels } : {}),
+          hooks: mergedHooks ?? null,
+          ...(channelsChanged ? { channels: mergedChannels } : {}),
           templateHash: expectedHash,
         });
         restamped.push(template.name);
