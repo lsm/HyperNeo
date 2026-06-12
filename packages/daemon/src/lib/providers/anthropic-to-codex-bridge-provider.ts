@@ -384,15 +384,22 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     };
   }
 
+  /**
+   * Stable identifier for bridge server reuse.
+   *
+   * Must NOT include the raw OAuth access token: the bridge server performs its
+   * own in-request token refresh, so rotating the token must not create a new
+   * bridge (which would kill the old port and leave the SDK subprocess talking
+   * to a dead server). API keys are hashed so switching keys still changes the
+   * key and triggers cleanup of the stale bridge.
+   */
   private bridgeAuthCacheKey(auth: OpenAIResponsesBridgeAuth | undefined): string {
     if (!auth) return 'none';
-    if (auth.source === 'api_key') return `api_key:${auth.apiKey}`;
-    return [
-      'chatgpt',
-      auth.apiKey,
-      auth.accountId,
-      auth.isFedrampAccount ? 'fedramp' : 'standard',
-    ].join(':');
+    if (auth.source === 'api_key') {
+      const hash = crypto.createHash('sha256').update(auth.apiKey).digest('hex').slice(0, 16);
+      return `api_key:${hash}`;
+    }
+    return ['chatgpt', auth.accountId, auth.isFedrampAccount ? 'fedramp' : 'standard'].join(':');
   }
 
   /**
