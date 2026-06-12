@@ -377,13 +377,7 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
   });
 
   it('should build title routing env from provider title model override', async () => {
-    const { GlmProvider } = await import('../../../../src/lib/providers/glm-provider.js');
-    const { getProviderRegistry } = await import('../../../../src/lib/providers/registry.js');
-
     process.env.GLM_API_KEY = 'test-glm-key';
-    const registry = getProviderRegistry();
-    registry.unregister('glm');
-    registry.register(new GlmProvider(process.env));
 
     const { mockAgentSession, mockSessionCache: sessionCache } = makeSessionCache();
     mockAgentSession.getSessionData = mock(() => ({
@@ -470,20 +464,9 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
   });
 
   it('should generate titles using stored credentials when env vars are absent', async () => {
-    const { AnthropicProvider } = await import(
-      '../../../../src/lib/providers/anthropic-provider.js'
-    );
-    const { getProviderRegistry } = await import('../../../../src/lib/providers/registry.js');
-
     delete process.env.ANTHROPIC_API_KEY;
     delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
     delete process.env.ANTHROPIC_AUTH_TOKEN;
-
-    const anthropicProvider = new AnthropicProvider();
-    anthropicProvider.setCredentials({ type: 'api_key', apiKey: 'stored-api-key' });
-    const registry = getProviderRegistry();
-    registry.unregister('anthropic');
-    registry.register(anthropicProvider);
 
     const title = await generateTitleWithSdkForTest();
 

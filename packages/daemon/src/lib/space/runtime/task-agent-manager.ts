@@ -45,6 +45,7 @@ import type {
   MessageContent,
   MessageImage,
   MessageOrigin,
+  WorkflowNode,
   WorkflowNodeAgent,
 } from '@neokai/shared';
 import type { AppMcpLifecycleManager } from '../../mcp/app-mcp-lifecycle-manager';
@@ -114,6 +115,7 @@ import {
   type SlotOverrides,
 } from '../agents/custom-agent';
 import { TERMINAL_NODE_EXECUTION_STATUSES } from '../managers/node-execution-manager';
+import { formatGatedHandoffCall, getSendMessageTargets } from './gated-handoff-guidance';
 import { Logger } from '../../logger';
 import {
   formatAgentMessage,
@@ -2386,6 +2388,14 @@ export class TaskAgentManager {
           continue;
         }
 
+        for (const target of getSendMessageTargets(
+          channel.to,
+          this.getBroadcastTargets(workflow, node, execution.agentName)
+        )) {
+          lines.push(
+            `  - When ready, call \`${formatGatedHandoffCall(target, writableFields)}\`; this is required to activate the target. \`save_artifact\` alone does not deliver gated handoffs.`
+          );
+        }
         lines.push(`  - Include in send_message data:`);
         for (const field of writableFields) {
           lines.push(
@@ -2425,6 +2435,23 @@ export class TaskAgentManager {
     if (check.op === '==') return `== ${JSON.stringify(check.value)}`;
     if (check.op === '!=') return `!= ${JSON.stringify(check.value)}`;
     return check.op;
+  }
+
+  private getBroadcastTargets(
+    workflow: SpaceWorkflow,
+    currentNode: WorkflowNode,
+    agentName: string
+  ): string[] {
+    const targets = new Set<string>();
+    for (const node of workflow.nodes) {
+      if (node.id !== currentNode.id) targets.add(node.name);
+      for (const agent of node.agents ?? []) {
+        if (node.id === currentNode.id && agent.name === agentName) continue;
+        targets.add(agent.name);
+      }
+    }
+    targets.delete(currentNode.name);
+    return [...targets];
   }
 
   private normalizeAgentNameToken(value: string): string {
