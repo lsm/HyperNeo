@@ -80,6 +80,7 @@ export interface ProviderEnvVars {
   ANTHROPIC_DEFAULT_OPUS_MODEL?: string; // Map opus tier to provider model
   API_TIMEOUT_MS?: string;
   CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC?: string;
+  CLAUDE_CODE_AUTO_COMPACT_WINDOW?: string;
   CLAUDE_CODE_OAUTH_TOKEN?: string;
   [key: string]: string | undefined; // Index signature for SDK env option compatibility
 }
@@ -96,6 +97,7 @@ export interface OriginalEnvVars {
   ANTHROPIC_BASE_URL?: string;
   API_TIMEOUT_MS?: string;
   CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC?: string;
+  CLAUDE_CODE_AUTO_COMPACT_WINDOW?: string;
   ANTHROPIC_DEFAULT_SONNET_MODEL?: string;
   ANTHROPIC_DEFAULT_HAIKU_MODEL?: string;
   ANTHROPIC_DEFAULT_OPUS_MODEL?: string;
@@ -602,6 +604,10 @@ export class ProviderService {
       process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC =
         envVars.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC;
     }
+    if (envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW !== undefined) {
+      original.CLAUDE_CODE_AUTO_COMPACT_WINDOW = process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
+      process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
+    }
     if (envVars.ANTHROPIC_DEFAULT_SONNET_MODEL !== undefined) {
       original.ANTHROPIC_DEFAULT_SONNET_MODEL = process.env.ANTHROPIC_DEFAULT_SONNET_MODEL;
       process.env.ANTHROPIC_DEFAULT_SONNET_MODEL = envVars.ANTHROPIC_DEFAULT_SONNET_MODEL;
@@ -792,6 +798,13 @@ export class ProviderService {
           original.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC;
       } else {
         delete process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC;
+      }
+    }
+    if (Object.prototype.hasOwnProperty.call(original, 'CLAUDE_CODE_AUTO_COMPACT_WINDOW')) {
+      if (original.CLAUDE_CODE_AUTO_COMPACT_WINDOW !== undefined) {
+        process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = original.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
+      } else {
+        delete process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
       }
     }
     if (Object.prototype.hasOwnProperty.call(original, 'ANTHROPIC_DEFAULT_SONNET_MODEL')) {

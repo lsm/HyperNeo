@@ -1403,6 +1403,70 @@ describe('SDKMessageHandler', () => {
         expect(enqueueMessageSpy).not.toHaveBeenCalledWith('/compact', true);
       });
 
+      it('handles rejected fallback /compact enqueue', async () => {
+        setModelsCache(
+          new Map([
+            [
+              'global',
+              [
+                {
+                  id: 'fallback-model',
+                  name: 'Fallback Model',
+                  provider: 'custom-provider',
+                  contextWindow: 128_000,
+                  available: true,
+                },
+              ],
+            ],
+          ])
+        );
+
+        const getContextUsageSpy = mock(async () => ({
+          categories: [{ name: 'Messages', tokens: 110_000 }],
+          totalTokens: 110_000,
+          maxTokens: Number.MAX_SAFE_INTEGER,
+          rawMaxTokens: Number.MAX_SAFE_INTEGER,
+          percentage: 0,
+          gridRows: [],
+          model: 'fallback-model',
+          memoryFiles: [],
+          mcpTools: [],
+          agents: [],
+          isAutoCompactEnabled: false,
+          apiUsage: null,
+        }));
+
+        mockContext.queryObject = { getContextUsage: getContextUsageSpy } as never;
+        mockContext.session.config.provider = 'custom-provider';
+        mockContext.session.config.model = 'fallback-model';
+        mockContextTracker.shouldCompact = mock(() => true);
+        enqueueMessageSpy = mock(async () => {
+          throw new Error('queue stopped');
+        });
+        mockContext.messageQueue.enqueue = enqueueMessageSpy;
+
+        const h = new SDKMessageHandler(mockContext);
+
+        const resultMessage: SDKMessage = {
+          type: 'result',
+          subtype: 'success',
+          uuid: 'result-uuid',
+          usage: {
+            input_tokens: 10,
+            output_tokens: 5,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+          },
+          total_cost_usd: 0.001,
+          modelUsage: {},
+        } as unknown as SDKMessage;
+
+        await h.handleMessage(resultMessage);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(enqueueMessageSpy).toHaveBeenCalledWith('/compact', true);
+      });
+
       it('does not enqueue /compact for providers with native auto-compaction', async () => {
         setModelsCache(
           new Map([

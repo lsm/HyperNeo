@@ -910,7 +910,9 @@ export class SDKMessageHandler {
             `Triggering compaction for session ${session.id} ` +
               `(${contextInfo.totalUsed} / ${modelInfo.contextWindow} tokens)`
           );
-          void this.ctx.messageQueue.enqueue('/compact', /* internal */ true);
+          void this.ctx.messageQueue.enqueue('/compact', /* internal */ true).catch((error) => {
+            this.logger.warn(`compaction enqueue failed for session ${session.id}:`, error);
+          });
         }
       } catch (error) {
         this.logger.warn(`context refresh (${reason}) failed:`, error);
