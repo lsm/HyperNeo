@@ -103,7 +103,7 @@ export class AcpMessageTranslator {
         return [...this.flush(), this.translateSyntheticAssistant('Session info', update)];
       case 'usage_update':
         this.receivedUsageUpdate = true;
-        this.inputTokenEstimate = Math.max(this.inputTokenEstimate, update.used);
+        this.inputTokenEstimate = update.used;
         this.contextWindow = update.size;
         if (update.cost) {
           this.costUsdEstimate =

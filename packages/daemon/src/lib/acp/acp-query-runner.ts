@@ -1,6 +1,11 @@
 import type { UUID } from 'crypto';
 import type { CanUseTool, Options } from '@anthropic-ai/claude-agent-sdk';
-import { generateUUID, type MessageContent, type Session } from '@neokai/shared';
+import {
+  generateUUID,
+  THINKING_LEVEL_TOKENS,
+  type MessageContent,
+  type Session,
+} from '@neokai/shared';
 import type {
   AcpConfigOption,
   AcpContentBlock,
@@ -42,6 +47,21 @@ function getAcpContextWindow(): number {
 
 function flattenConfigChoices(option: AcpConfigOption): Array<{ name: string; value: string }> {
   return option.options.flatMap((entry) => ('options' in entry ? entry.options : [entry]));
+}
+
+function selectThoughtLevelValue(option: AcpConfigOption, tokens: number | null): string {
+  const choices = flattenConfigChoices(option);
+  if (!tokens || tokens <= 0) {
+    return choices.find((choice) => choice.value === 'none')?.value ?? option.currentValue;
+  }
+
+  const preferred = tokens >= 20000 ? 'high' : tokens >= 8000 ? 'medium' : 'low';
+  return (
+    choices.find((choice) => choice.value === preferred)?.value ??
+    choices.find((choice) => choice.value === 'high')?.value ??
+    choices.at(-1)?.value ??
+    option.currentValue
+  );
 }
 
 export function parseAcpCommand(commandLine: string): { command: string; args: string[] } {
@@ -503,6 +523,7 @@ export class AcpQueryRunner {
         createdAcpSessionDuringRun = true;
       }
       await this.applyStoredAcpModel(client);
+      await this.applyStoredAcpThinkingLevel(client);
       const initialUsageEstimate = (
         session.metadata as { acpContextUsageEstimate?: number } | undefined
       )?.acpContextUsageEstimate;
@@ -914,6 +935,21 @@ export class AcpQueryRunner {
     if (!flattenConfigChoices(modelOption).some((choice) => choice.value === storedModel)) return;
 
     const configOptions = await client.setConfigOption(modelOption.id, storedModel);
+    this.updateAcpModelCache(configOptions);
+  }
+
+  private async applyStoredAcpThinkingLevel(client: AcpClient): Promise<void> {
+    const thinkingLevel = this.ctx.session.config.thinkingLevel;
+    if (!thinkingLevel) return;
+
+    const option = client
+      .getConfigOptions()
+      .find((configOption) => configOption.category === 'thought_level');
+    if (!option) return;
+    const value = selectThoughtLevelValue(option, THINKING_LEVEL_TOKENS[thinkingLevel] ?? null);
+    if (option.currentValue === value) return;
+
+    const configOptions = await client.setConfigOption(option.id, value);
     this.updateAcpModelCache(configOptions);
   }
 

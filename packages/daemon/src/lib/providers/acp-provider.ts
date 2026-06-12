@@ -66,6 +66,7 @@ export class AcpProvider implements Provider {
       description: 'ACP-compatible agent default model',
       releaseDate: '2026-01-01',
       available: true,
+      preferContextWindowMetadata: false,
     },
   ];
 
@@ -154,6 +155,7 @@ export class AcpProvider implements Provider {
       description: `ACP model ${choice.name}`,
       releaseDate: '2026-01-01',
       available: true,
+      preferContextWindowMetadata: false,
     }));
   }
 

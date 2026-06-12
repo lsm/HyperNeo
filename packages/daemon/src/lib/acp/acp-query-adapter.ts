@@ -46,7 +46,7 @@ export class AcpQueryAdapter implements QueryLike {
     this.translator = new AcpMessageTranslator(
       sessionId,
       options.contextWindow,
-      options.initialUsageEstimate
+      (options.initialUsageEstimate ?? 0) + estimatePromptTokens(prompt)
     );
   }
 
@@ -183,6 +183,10 @@ export class AcpQueryAdapter implements QueryLike {
       this.options.onContextUsageUpdate?.(usage.used);
     }
   }
+}
+
+function estimatePromptTokens(prompt: AcpContentBlock[]): number {
+  return Math.ceil(JSON.stringify(prompt).length / 4);
 }
 
 function findConfigOption(
