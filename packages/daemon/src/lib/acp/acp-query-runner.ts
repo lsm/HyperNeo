@@ -329,6 +329,7 @@ export class AcpQueryRunner {
     let queryStartTime = Date.now();
     let startupTimeoutReached = false;
     let createdAcpSessionDuringRun = false;
+    let receivedAcpMessageDuringRun = false;
 
     try {
       const { initializeProviders, waitForOptionalProviderRegistration } = await import(
@@ -389,6 +390,26 @@ export class AcpQueryRunner {
       const instructionBlocks = acpInstructionBlocks(queryOptions);
       let prependInstructionsToNextPrompt = true;
 
+      const startStartupTimer = (hasFirstMessage: () => boolean) => {
+        this.clearStartupTimer();
+        startupTimeoutReached = false;
+        queryStartTime = Date.now();
+        this.ctx.startupTimeoutTimer = setTimeout(() => {
+          if (!hasFirstMessage()) {
+            startupTimeoutReached = true;
+            const elapsed = Date.now() - queryStartTime;
+            logger.error(
+              `ACP startup timeout: ACP agent did not respond within ${elapsed}ms. ` +
+                `Command: ${command}, workspace: ${cwd} ` +
+                `(Hint: set NEOKAI_SDK_STARTUP_TIMEOUT_MS to increase timeout, currently ${startupTimeoutMs}ms)`
+            );
+            abortController.abort();
+            this.ctx.queryObject?.close();
+            client?.close();
+          }
+        }, startupTimeoutMs);
+      };
+
       client = this.createAcpClient({
         command,
         args,
@@ -399,6 +420,10 @@ export class AcpQueryRunner {
         onStderr: (data) => logger.warn(`ACP agent stderr: ${data.trimEnd()}`),
         onPermissionRequest: (params) => handleAcpPermissionRequest(params, canUseTool),
       });
+
+      if (messageQueue.size() > 0) {
+        startStartupTimer(() => false);
+      }
 
       await client.initialize();
       await client.authenticate();
@@ -438,6 +463,7 @@ export class AcpQueryRunner {
         this.persistAcpSessionId(result.sessionId);
         createdAcpSessionDuringRun = true;
       }
+      this.clearStartupTimer();
 
       await this.ctx.onModelsFetched().catch((error) => {
         logger.warn('Background fetch of models failed:', error);
@@ -464,22 +490,9 @@ export class AcpQueryRunner {
         const adapter = new AcpQueryAdapter(client, promptContent);
         this.ctx.queryObject = adapter;
 
-        startupTimeoutReached = false;
-        queryStartTime = Date.now();
-        this.ctx.startupTimeoutTimer = setTimeout(() => {
-          if (!this.ctx.firstMessageReceived) {
-            startupTimeoutReached = true;
-            const elapsed = Date.now() - queryStartTime;
-            logger.error(
-              `ACP startup timeout: ACP agent did not respond within ${elapsed}ms. ` +
-                `Command: ${command}, workspace: ${cwd} ` +
-                `(Hint: set NEOKAI_SDK_STARTUP_TIMEOUT_MS to increase timeout, currently ${startupTimeoutMs}ms)`
-            );
-            abortController.abort();
-            this.ctx.queryObject?.close();
-            client?.close();
-          }
-        }, startupTimeoutMs);
+        this.ctx.firstMessageReceived = false;
+        let promptMessageReceived = false;
+        startStartupTimer(() => promptMessageReceived);
 
         let messageCount = 0;
         for await (const acpMessage of this.createAbortableQuery(adapter, abortController.signal)) {
@@ -489,6 +502,8 @@ export class AcpQueryRunner {
 
           messageCount++;
           if (messageCount === 1) {
+            promptMessageReceived = true;
+            receivedAcpMessageDuringRun = true;
             this.clearStartupTimer();
           }
           this.ctx.firstMessageReceived = true;
@@ -533,7 +548,8 @@ export class AcpQueryRunner {
         queryGeneration,
         isRetry,
         client,
-        createdAcpSessionDuringRun
+        createdAcpSessionDuringRun,
+        receivedAcpMessageDuringRun
       );
     } finally {
       const isStaleQuery = this.ctx.getQueryGeneration() !== queryGeneration;
@@ -581,7 +597,8 @@ export class AcpQueryRunner {
     queryGeneration: number,
     isRetry: boolean,
     client?: AcpClient | null,
-    createdAcpSessionDuringRun = false
+    createdAcpSessionDuringRun = false,
+    receivedAcpMessageDuringRun = false
   ): Promise<void> {
     const { session, messageQueue, stateManager, errorManager, logger } = this.ctx;
     logger.error('ACP query error:', error);
@@ -613,7 +630,7 @@ export class AcpQueryRunner {
       );
       await stateManager.setIdle();
 
-      if (isStartupTimeout && createdAcpSessionDuringRun && !this.ctx.firstMessageReceived) {
+      if (isStartupTimeout && createdAcpSessionDuringRun && !receivedAcpMessageDuringRun) {
         this.persistAcpSessionId(undefined);
       }
 

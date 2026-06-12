@@ -298,6 +298,22 @@ describe('ModelSwitchHandler — session continuity (sdkSessionId)', () => {
     await handler.switchModel('glm-5', 'glm');
     expect(mockSession.sdkSessionId).toBe(sdkId);
   });
+
+  it('clears acpSessionId when switching away from ACP', async () => {
+    mockSession.config.model = 'acp-default';
+    mockSession.config.provider = 'acp';
+    mockSession.acpSessionId = 'acp-session-abc';
+
+    handler = createHandler();
+    const result = await handler.switchModel('opus', 'anthropic');
+
+    expect(result.success).toBe(true);
+    expect(mockSession.acpSessionId).toBeUndefined();
+    expect(updateSessionSpy).toHaveBeenCalledWith(
+      mockSession.id,
+      expect.objectContaining({ acpSessionId: undefined })
+    );
+  });
 });
 
 // ===========================================================================

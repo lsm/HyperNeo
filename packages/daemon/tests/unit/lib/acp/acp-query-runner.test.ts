@@ -62,6 +62,7 @@ interface RunnerFixtureOverrides {
   client?: ReturnType<typeof createMockClient>;
   messages?: SDKUserMessage[];
   messageGenerator?: () => AsyncGenerator<RunnerFixtureMessage>;
+  queueSize?: number;
   queryOptions?: {
     cwd?: string;
     mcpServers?: Record<string, unknown>;
@@ -112,7 +113,7 @@ function createRunnerFixture(overrides: RunnerFixtureOverrides = {}) {
     start: startSpy,
     stop: stopSpy,
     clear: mock(() => {}),
-    size: mock(() => 0),
+    size: mock(() => overrides.queueSize ?? 0),
     enqueueWithId: mock(async () => {}),
     messageGenerator: mock(generatorFactory),
   } as unknown as MessageQueue;
@@ -515,6 +516,78 @@ describe('AcpQueryRunner', () => {
     else process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS = previousTimeout;
 
     expect(client.sendPrompt).toHaveBeenCalled();
+  }, 1000);
+
+  test('retries ACP handshake timeout while a queued turn is waiting', async () => {
+    const firstClient = createMockClient();
+    let releaseInitialize: (() => void) | undefined;
+    firstClient.close.mockImplementation(() => releaseInitialize?.());
+    firstClient.initialize.mockImplementation(async () => {
+      await new Promise<void>((resolve) => {
+        releaseInitialize = resolve;
+      });
+      throw new Error('closed before initialize');
+    });
+    const secondClient = createMockClient();
+    const clients = [firstClient, secondClient];
+    const { ctx } = createRunnerFixture({ client: firstClient, queueSize: 1 });
+    const runner = new AcpQueryRunner(ctx, () => clients.shift() as unknown as AcpClient);
+
+    const previousTimeout = process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS;
+    process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS = '20';
+    await runner.start();
+    await ctx.queryPromise;
+    if (previousTimeout === undefined) delete process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS;
+    else process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS = previousTimeout;
+
+    expect(firstClient.close).toHaveBeenCalled();
+    expect(secondClient.sendPrompt).toHaveBeenCalled();
+  }, 1000);
+
+  test('resets ACP startup timeout tracking for each prompt', async () => {
+    const firstClient = createMockClient();
+    let releaseSecondPrompt: (() => void) | undefined;
+    firstClient.close.mockImplementation(() => releaseSecondPrompt?.());
+    firstClient.sendPrompt.mockImplementation(async function* () {
+      if (firstClient.sendPrompt.mock.calls.length === 1) {
+        yield {
+          sessionId: 'acp-session-1',
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            content: { type: 'text', text: 'first response' },
+          },
+        };
+        return;
+      }
+
+      await new Promise<void>((resolve) => {
+        releaseSecondPrompt = resolve;
+      });
+    });
+    const secondClient = createMockClient();
+    secondClient.canLoadSession.mockImplementation(() => true);
+    const clients = [firstClient, secondClient];
+    const { ctx, messageQueue } = createRunnerFixture({
+      client: firstClient,
+      messages: [makeUserMessage('first'), makeUserMessage('second')],
+    });
+    const runner = new AcpQueryRunner(ctx, () => clients.shift() as unknown as AcpClient);
+
+    const previousTimeout = process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS;
+    process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS = '20';
+    await runner.start();
+    await ctx.queryPromise;
+    if (previousTimeout === undefined) delete process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS;
+    else process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS = previousTimeout;
+
+    expect(firstClient.close).toHaveBeenCalled();
+    expect(messageQueue.enqueueWithId).toHaveBeenCalledWith('user-message-1', [
+      { type: 'text', text: 'second' },
+    ]);
+    expect(secondClient.sendPrompt).toHaveBeenCalled();
+    expect(ctx.db.updateSession).not.toHaveBeenCalledWith('session-1', {
+      acpSessionId: undefined,
+    });
   }, 1000);
 
   test('retries ACP startup timeout even after timeout aborts controller', async () => {

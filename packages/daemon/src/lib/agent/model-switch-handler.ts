@@ -222,6 +222,9 @@ export class ModelSwitchHandler {
         return { success: false, model: session.config.model, error: errMsg };
       }
 
+      const nextProvider = newProviderInstance.id as Provider;
+      const clearAcpSessionId = previousProvider === 'acp' && nextProvider !== 'acp';
+
       if (!this.isQueryActiveOrStarting()) {
         // Query hasn't been created yet OR query was already completed/interrupted.
         // Persist the new model/provider only. The next user message will start a
@@ -230,15 +233,19 @@ export class ModelSwitchHandler {
         // is ready to consume it.
         session.config.model = resolvedModel;
         // newProviderInstance is guaranteed non-null here (we returned early above).
-        session.config.provider = newProviderInstance.id as Provider;
+        session.config.provider = nextProvider;
+        if (clearAcpSessionId) {
+          session.acpSessionId = undefined;
+        }
         // Only pass serializable fields — session.config may contain runtime-only
         // objects (mcpServers with closures, agents, spawnClaudeCodeProcess) that
         // cannot be JSON-stringified and would cause a cyclic structure error.
         db.updateSession(session.id, {
           config: {
             model: resolvedModel,
-            provider: newProviderInstance.id as Provider,
+            provider: nextProvider,
           } as SessionConfig,
+          ...(clearAcpSessionId ? { acpSessionId: undefined } : {}),
         });
 
         // Update context tracker model
@@ -267,15 +274,19 @@ export class ModelSwitchHandler {
         // Update session config first (will be used when query restarts)
         session.config.model = resolvedModel;
         // newProviderInstance is guaranteed non-null here (we returned early above).
-        session.config.provider = newProviderInstance.id as Provider;
+        session.config.provider = nextProvider;
+        if (clearAcpSessionId) {
+          session.acpSessionId = undefined;
+        }
         // Only pass serializable fields — session.config may contain runtime-only
         // objects (mcpServers with closures, agents, spawnClaudeCodeProcess) that
         // cannot be JSON-stringified and would cause a cyclic structure error.
         db.updateSession(session.id, {
           config: {
             model: resolvedModel,
-            provider: newProviderInstance.id as Provider,
+            provider: nextProvider,
           } as SessionConfig,
+          ...(clearAcpSessionId ? { acpSessionId: undefined } : {}),
         });
 
         // Update context tracker model
