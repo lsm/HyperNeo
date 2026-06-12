@@ -143,6 +143,23 @@ import type { ToolsConfigManager } from '../../../../src/lib/session/tools-confi
 import type { MessageHub } from '@neokai/shared';
 import { DEFAULT_GLOBAL_SETTINGS } from '@neokai/shared';
 
+type TitleSdkInvoker = {
+  generateTitleWithSdk(provider: string, modelId: string, messageText: string): Promise<string>;
+};
+
+function runTitleSdk(
+  lifecycle: SessionLifecycle,
+  provider = 'anthropic',
+  modelId = 'claude-sonnet-4-20250514',
+  messageText = 'Create a login form'
+): Promise<string> {
+  return (lifecycle as unknown as TitleSdkInvoker).generateTitleWithSdk(
+    provider,
+    modelId,
+    messageText
+  );
+}
+
 describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
   let lifecycle: SessionLifecycle;
   let mockDb: Database;
@@ -298,15 +315,15 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
   });
 
   it('should disable thinking when calling SDK query for title generation', async () => {
-    const result = await lifecycle.generateTitleAndRenameBranch('test-id', 'Create a login form');
+    const title = await runTitleSdk(lifecycle);
 
-    expect(result.isFallback).toBe(false);
+    expect(title).toBe('My Generated Title');
     expect(lastTitleQueryOptions).toBeDefined();
     expect(lastTitleQueryOptions?.thinking).toEqual({ type: 'disabled' });
   });
 
   it('should pass the session model to SDK title generation without provider hardcoding', async () => {
-    await lifecycle.generateTitleAndRenameBranch('test-id', 'Create a login form');
+    await runTitleSdk(lifecycle);
 
     expect(lastTitleQueryOptions?.model).toBe('claude-sonnet-4-20250514');
   });
@@ -342,7 +359,7 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
       mockAgentSessionFactory
     );
 
-    await lifecycle.generateTitleAndRenameBranch('test-id', 'Create a login form');
+    await runTitleSdk(lifecycle, 'glm', 'glm-5.1');
 
     expect(lastTitleQueryOptions?.model).toBe('default');
     expect(lastTitleProcessEnv?.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('glm-5-turbo');
@@ -355,10 +372,9 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
   });
 
   it('should extract title from text blocks', async () => {
-    const result = await lifecycle.generateTitleAndRenameBranch('test-id', 'Create a login form');
+    const title = await runTitleSdk(lifecycle);
 
-    expect(result.isFallback).toBe(false);
-    expect(result.title).toBe('My Generated Title');
+    expect(title).toBe('My Generated Title');
   });
 
   it('should strip markdown formatting from extracted title', async () => {
@@ -371,10 +387,9 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
       },
     ];
 
-    const result = await lifecycle.generateTitleAndRenameBranch('test-id', 'Create a login form');
+    const title = await runTitleSdk(lifecycle);
 
-    expect(result.isFallback).toBe(false);
-    expect(result.title).toBe('Bold Title Here');
+    expect(title).toBe('Bold Title Here');
   });
 
   it('should fall back to message text when assistant message contains only thinking blocks', async () => {
@@ -412,9 +427,8 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
     delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
     delete process.env.ANTHROPIC_AUTH_TOKEN;
 
-    const result = await lifecycle.generateTitleAndRenameBranch('test-id', 'Create a login form');
+    const title = await runTitleSdk(lifecycle);
 
-    expect(result.isFallback).toBe(false);
-    expect(result.title).toBe('My Generated Title');
+    expect(title).toBe('My Generated Title');
   });
 });
