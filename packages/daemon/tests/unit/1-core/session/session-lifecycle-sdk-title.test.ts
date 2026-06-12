@@ -183,9 +183,12 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
 
   beforeEach(async () => {
     const { resetProviderRegistry } = await import('../../../../src/lib/providers/registry');
-    const { resetProviderFactory } = await import('../../../../src/lib/providers/factory');
+    const { initializeProviders, resetProviderFactory } = await import(
+      '../../../../src/lib/providers/factory'
+    );
     resetProviderRegistry();
     resetProviderFactory();
+    initializeProviders();
 
     lastTitleQueryOptions = undefined;
     lastTitleProcessEnv = undefined;
@@ -307,6 +310,7 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
 
     process.env.GLM_API_KEY = 'test-glm-key';
     const registry = getProviderRegistry();
+    registry.unregister('glm');
     registry.register(new GlmProvider(process.env));
 
     const { mockAgentSession, mockSessionCache: sessionCache } = makeSessionCache();
@@ -406,6 +410,7 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
     const anthropicProvider = new AnthropicProvider();
     anthropicProvider.setCredentials({ type: 'api_key', apiKey: 'stored-api-key' });
     const registry = getProviderRegistry();
+    registry.unregister('anthropic');
     registry.register(anthropicProvider);
 
     const result = await lifecycle.generateTitleAndRenameBranch('test-id', 'Create a login form');
