@@ -219,10 +219,42 @@ describe('QueryOptionsBuilder', () => {
       expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('128000');
     });
 
-    it('should use a lower SDK output token cap for non-large-output models', async () => {
-      mockSession.config.model = 'haiku';
-      const options = await builder.build();
-      expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('16384');
+    it('should preserve Opus caps when bridged providers translate models to default', async () => {
+      resetProviderRegistry();
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'custom:bridged-opus',
+        displayName: 'Bridged Opus',
+        capabilities: {
+          streaming: true,
+          extendedThinking: false,
+          maxContextWindow: 1_000_000,
+          functionCalling: true,
+          vision: false,
+        },
+        isAvailable: () => true,
+        getModels: async () => [],
+        ownsModel: () => true,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: true }),
+        translateModelIdForSdk: () => 'default',
+      } as Provider);
+      try {
+        mockSession.config.provider = 'custom:bridged-opus';
+        mockSession.config.model = 'anthropic/claude-opus-4.7';
+        const options = await builder.build();
+        expect(options.model).toBe('default');
+        expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('128000');
+      } finally {
+        resetProviderRegistry();
+      }
+    });
+
+    it('should use the large SDK output token cap for Claude Haiku 4 models', async () => {
+      for (const model of ['haiku', 'claude-haiku-4-5']) {
+        mockSession.config.model = model;
+        const options = await builder.build();
+        expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('64000');
+      }
     });
 
     it('should preserve an explicit SDK output token cap from session env', async () => {

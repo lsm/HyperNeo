@@ -139,7 +139,9 @@ function getSdkOutputTokenLimit(modelId: string): number {
     normalizedModelId === 'sonnet' ||
     normalizedModelId === 'sonnet1m' ||
     normalizedModelId === 'sonnet[1m]' ||
-    normalizedModelId.includes('sonnet-4')
+    normalizedModelId === 'haiku' ||
+    normalizedModelId.includes('sonnet-4') ||
+    normalizedModelId.includes('haiku-4')
   ) {
     return LARGE_SDK_OUTPUT_TOKEN_LIMIT;
   }
@@ -1002,7 +1004,12 @@ CRITICAL RULES:
       mergedEnv.CLAUDE_CODE_MAX_OUTPUT_TOKENS ??= process.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS;
     }
     mergedEnv.CLAUDE_CODE_MAX_OUTPUT_TOKENS ??= getLargestSdkOutputTokenLimit(
-      [sdkModelId, sdkFallbackModel].filter((modelId): modelId is string => !!modelId)
+      [
+        this.ctx.session.config.model,
+        this.ctx.session.config.fallbackModel,
+        sdkModelId,
+        sdkFallbackModel,
+      ].filter((modelId): modelId is string => !!modelId)
     );
 
     // 4. Explicitly include proxy environment variables for Dev Proxy support
