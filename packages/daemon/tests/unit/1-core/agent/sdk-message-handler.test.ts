@@ -1341,7 +1341,7 @@ describe('SDKMessageHandler', () => {
         setModelsCache(new Map());
       });
 
-      it('enqueues /compact when non-native provider exceeds 85% threshold', async () => {
+      it('does not enqueue /compact when non-native provider exceeds 85% threshold', async () => {
         setModelsCache(
           new Map([
             [
@@ -1362,15 +1362,15 @@ describe('SDKMessageHandler', () => {
         const getContextUsageSpy = mock(async () => ({
           categories: [{ name: 'Messages', tokens: 860_000 }],
           totalTokens: 860_000,
-          maxTokens: Number.MAX_SAFE_INTEGER,
-          rawMaxTokens: Number.MAX_SAFE_INTEGER,
-          percentage: 0,
+          maxTokens: 1_000_000,
+          rawMaxTokens: 1_000_000,
+          percentage: 86,
           gridRows: [],
           model: 'deepseek-v4',
           memoryFiles: [],
           mcpTools: [],
           agents: [],
-          isAutoCompactEnabled: false,
+          isAutoCompactEnabled: true,
           apiUsage: null,
         }));
 
@@ -1399,7 +1399,8 @@ describe('SDKMessageHandler', () => {
         await new Promise((resolve) => setTimeout(resolve, 0));
 
         expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
-        expect(enqueueMessageSpy).toHaveBeenCalledWith('/compact', true);
+        expect(mockContextTracker.shouldCompact).not.toHaveBeenCalled();
+        expect(enqueueMessageSpy).not.toHaveBeenCalledWith('/compact', true);
       });
 
       it('does not enqueue /compact for native Anthropic providers', async () => {
