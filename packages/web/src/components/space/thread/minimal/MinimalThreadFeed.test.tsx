@@ -903,6 +903,48 @@ describe('MinimalThreadFeed', () => {
       expect(trigger).not.toBeNull();
     });
 
+    it('only renders result trigger on the segment that contains the result row', () => {
+      const t = Date.now();
+      const rows = [
+        makeRow({
+          id: 'a1',
+          label: 'Coder Agent',
+          createdAt: t,
+          message: assistantText('a1', 'before compact'),
+        }),
+        makeRow({
+          id: 'c1',
+          label: 'Coder Agent',
+          createdAt: t + 1000,
+          message: compactBoundaryMessage('c1', {
+            trigger: 'manual',
+            pre_tokens: 90000,
+            post_tokens: 15000,
+          }),
+        }),
+        makeRow({
+          id: 'a2',
+          label: 'Coder Agent',
+          createdAt: t + 2000,
+          message: assistantText('a2', 'after compact'),
+        }),
+        makeRow({
+          id: 'r1',
+          label: 'Coder Agent',
+          createdAt: t + 3000,
+          message: resultMessage('r1'),
+        }),
+      ];
+
+      const { container } = render(<MinimalThreadFeed parsedRows={rows} />);
+      const turns = screen.getAllByTestId('minimal-thread-turn');
+      const completedTurns = turns.filter((turn) => turn.dataset.turnState === 'completed');
+      expect(completedTurns.length).toBe(2);
+      expect(completedTurns[0].querySelector('button[title="Run result"]')).toBeNull();
+      expect(completedTurns[1].querySelector('button[title="Run result"]')).not.toBeNull();
+      expect(container.querySelectorAll('button[title="Run result"]').length).toBe(1);
+    });
+
     it('does not render the result trigger when the block has no result envelope', () => {
       const t = Date.now();
       const rows = [

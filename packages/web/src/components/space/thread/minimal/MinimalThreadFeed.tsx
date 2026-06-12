@@ -773,14 +773,15 @@ function buildFeedTurns(
       if (pendingAgentRows.length === 0) return;
       const turnId = `${block.id}:${String(pendingAgentRows[0].id)}`;
       const sessionId = latestSessionId(pendingAgentRows);
-      const transitionSummary = rowsContainResult(pendingAgentRows, blockResult)
+      const resultInfo = rowsContainResult(pendingAgentRows, blockResult) ? blockResult : undefined;
+      const transitionSummary = resultInfo
         ? summaryMatchesTurn(
             sessionId ? summariesBySession.get(sessionId) : undefined,
             pendingAgentRows
           )
         : undefined;
       turns.push(
-        buildCompletedTurn(block, pendingAgentRows, turnId, blockResult, transitionSummary)
+        buildCompletedTurn(block, pendingAgentRows, turnId, resultInfo, transitionSummary)
       );
       perAgentTrailing.set(blockKey, {
         turnIdx: turns.length - 1,
