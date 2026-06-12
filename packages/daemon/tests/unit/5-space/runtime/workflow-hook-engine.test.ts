@@ -1476,6 +1476,38 @@ describe('wrapHandlerWithHooks', () => {
     expect(data.extra).toBe('data');
   });
 
+  test('persists PR URL from allowed send_message hook to local state', async () => {
+    const hookStateRepo = makeMockHookStateRepo();
+    const mockExecutor = new MockHookExecutor();
+
+    const engine = new WorkflowHookEngine({
+      workflow: makeWorkflow([makeHook({ id: 'hook-1', classification: 'validation' })]),
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo,
+      hookExecutor: mockExecutor,
+      workspacePath: '/tmp',
+    });
+
+    mockExecutor.setResult('hook-1', { type: 'allow' });
+
+    const handler = async () => ({
+      content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }],
+    });
+
+    const wrapped = wrapHandlerWithHooks('send_message', handler, engine, {}, defaultMeta);
+    await wrapped({
+      target: 'Review',
+      message: 'handoff',
+      data: { pr_url: 'https://github.com/acme/corp/pull/42' },
+    });
+
+    expect(hookStateRepo.get('run-1', 'hook-1')?.localState.pr_url).toBe(
+      'https://github.com/acme/corp/pull/42'
+    );
+  });
+
   test('persists hook results to state repo', async () => {
     const hookStateRepo = makeMockHookStateRepo();
     const mockExecutor = new MockHookExecutor();

@@ -4114,6 +4114,21 @@ export class TaskAgentManager {
       '';
 
     try {
+      const hookStateRepo = new WorkflowHookStateRepository(this.config.db.getDatabase());
+      const run = this.config.workflowRunRepo.getRun(runId);
+      const workflow = run ? this.config.spaceWorkflowManager.getWorkflow(run.workflowId) : null;
+      for (const hook of workflow?.hooks ?? []) {
+        if (hook.validator.kind !== 'built_in' || hook.validator.id !== 'pr_ready') continue;
+        const candidate = fromData(hookStateRepo.get(runId, hook.id)?.localState);
+        if (candidate) return candidate;
+      }
+    } catch (err) {
+      log.warn(
+        `TaskAgentManager.resolvePrUrlForRun: failed to read hook state for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+
+    try {
       const records = this.config.gateDataRepo?.listByRun(runId);
       if (records) {
         const sorted = records.sort((a, b) => b.updatedAt - a.updatedAt);

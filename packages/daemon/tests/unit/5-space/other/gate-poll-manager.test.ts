@@ -252,6 +252,8 @@ describe('GatePollManager', () => {
       const activePoll = activePolls.get('run-1:__hook_poll__-pr-ready-hook-Coder-Reviewer:Coder');
       expect(activePoll?.targetNodeId).toBe('node-1');
       expect(activePoll?.pollConfig.messageTemplate).toContain('PR review thread update');
+      expect(activePoll?.pollConfig.script).toContain('comments(last:1)');
+      expect(activePoll?.pollConfig.script).toContain('body createdAt');
     });
 
     test('starts dynamic codex polls for colliding agent-slot source owner', () => {

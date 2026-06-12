@@ -63,15 +63,15 @@ const PR_READY_REVIEW_THREADS_POLL_SCRIPT = [
   'NUMBER="${BASH_REMATCH[4]}"',
   'GH_HOST_ARGS=()',
   'if [ -n "$PR_HOST" ]; then GH_HOST_ARGS=(--hostname "$PR_HOST"); fi',
-  'THREADS=$(gh api graphql "${GH_HOST_ARGS[@]}" -f owner="$OWNER" -f name="$REPO" -F number="$NUMBER" -f query=\'query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100){nodes{isResolved comments(first:1){nodes{url}}}}}}}\' 2>/dev/null || true)',
+  'THREADS=$(gh api graphql "${GH_HOST_ARGS[@]}" -f owner="$OWNER" -f name="$REPO" -F number="$NUMBER" -f query=\'query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100){nodes{isResolved comments(last:1){nodes{url body createdAt}}}}}}}\' 2>/dev/null || true)',
   'if [ -z "$THREADS" ]; then',
   '  exit 0',
   'fi',
-  'URLS=$(jq -r \'.data.repository.pullRequest.reviewThreads.nodes[]? | select(.isResolved == false) | .comments.nodes[0].url // empty\' <<< "$THREADS" 2>/dev/null || true)',
-  'if [ -z "$URLS" ]; then',
+  'SUMMARY=$(jq -r \'.data.repository.pullRequest.reviewThreads.nodes[]? | select(.isResolved == false) | .comments.nodes[-1] | select(.url != null) | "- " + .url + " (" + (.createdAt // "unknown") + ")\\n" + ((.body // "") | split("\\n") | .[0:8] | join("\\n"))\' <<< "$THREADS" 2>/dev/null || true)',
+  'if [ -z "$SUMMARY" ]; then',
   '  exit 0',
   'fi',
-  'printf "Unresolved GitHub review conversations on %s:\\n%s\\n" "$PR_URL" "$URLS"',
+  'printf "Unresolved GitHub review conversations on %s (latest comments):\\n%s\\n" "$PR_URL" "$SUMMARY"',
 ].join('\n');
 
 // ---------------------------------------------------------------------------

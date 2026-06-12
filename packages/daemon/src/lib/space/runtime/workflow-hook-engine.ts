@@ -419,6 +419,10 @@ export class WorkflowHookEngine {
       // Process result
       switch (result.type) {
         case 'allow':
+          if (methodName === 'send_message') {
+            const prUrl = extractPrUrlFromParams(currentParams);
+            if (prUrl) stateUpdates.push({ hookId: hook.id, state: { pr_url: prUrl } });
+          }
           break;
 
         case 'block':
@@ -1137,6 +1141,19 @@ type AnyToolResult = import('../tools/tool-result').ToolResult;
 type WrappedHandler<T extends Record<string, unknown>> = ((args: T) => Promise<AnyToolResult>) & {
   [RAW_HANDLER]?: (args: T) => Promise<AnyToolResult>;
 };
+
+function extractPrUrlFromParams(params: Record<string, unknown>): string | undefined {
+  const data = params.data;
+  if (
+    typeof data === 'object' &&
+    data !== null &&
+    !Array.isArray(data) &&
+    typeof (data as Record<string, unknown>).pr_url === 'string'
+  ) {
+    return (data as Record<string, unknown>).pr_url as string;
+  }
+  return undefined;
+}
 
 function buildRetryableActionKey(
   methodName: string,
