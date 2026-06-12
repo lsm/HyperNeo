@@ -144,7 +144,9 @@ export class AcpMessageTranslator {
    * containing a tool_use content block.
    */
   translateToolCall(call: AcpToolCallUpdateNotification): SDKAssistantMessage {
-    this.inputTokenEstimate += estimateTokens(JSON.stringify(call.rawInput ?? {}));
+    this.contextUsageEstimate += estimateTokens(
+      JSON.stringify({ name: call.title, input: call.rawInput ?? {} })
+    );
 
     return {
       type: 'assistant',
@@ -187,6 +189,7 @@ export class AcpMessageTranslator {
   translateToolResult(update: AcpToolCallUpdateUpdate): SDKUserMessage {
     const output = update.rawOutput ?? update.content;
     const text = typeof output === 'string' ? output : JSON.stringify(output);
+    this.contextUsageEstimate += estimateTokens(text);
 
     return {
       type: 'user',

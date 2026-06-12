@@ -532,12 +532,12 @@ export class AcpQueryRunner {
         try {
           const result = await client.loadSession(existingAcpSessionId, cwd, acpMcpServers);
           this.persistAcpSessionId(result.sessionId);
-          this.updateAcpModelCache(result.configOptions);
+          this.updateAcpModelCache(result.configOptions, { syncSessionModel: false });
         } catch (loadError) {
           try {
             const result = await client.resumeSession(existingAcpSessionId, cwd, acpMcpServers);
             this.persistAcpSessionId(result.sessionId);
-            this.updateAcpModelCache(result.configOptions);
+            this.updateAcpModelCache(result.configOptions, { syncSessionModel: false });
           } catch (resumeError) {
             const loadMessage = loadError instanceof Error ? loadError.message : String(loadError);
             const resumeMessage =
@@ -553,11 +553,12 @@ export class AcpQueryRunner {
       } else {
         const result = await client.createSession(cwd, acpMcpServers);
         this.persistAcpSessionId(result.sessionId);
-        this.updateAcpModelCache(result.configOptions);
+        this.updateAcpModelCache(result.configOptions, { syncSessionModel: false });
         createdAcpSessionDuringRun = true;
       }
       await this.applyStoredAcpModel(client);
       await this.applyStoredAcpThinkingLevel(client);
+      this.updateAcpModelCache(client.getConfigOptions());
       startupHandshakeActive = false;
       restoreMessageEnqueuedHandler?.();
       this.clearStartupTimer();
@@ -579,6 +580,7 @@ export class AcpQueryRunner {
         }
 
         onSent();
+        await this.applyStoredAcpThinkingLevel(client);
 
         const promptContent = prependInstructionsToNextPrompt
           ? [...instructionBlocks, ...toAcpPromptContent(message)]
@@ -996,8 +998,8 @@ export class AcpQueryRunner {
 
   private syncAcpSessionModel(configOptions: AcpConfigOption[]): void {
     const modelOption = configOptions.find((option) => option.category === 'model');
-    const currentValue = modelOption?.currentValue;
-    if (!currentValue || this.ctx.session.config.model === currentValue) return;
+    const currentValue = modelOption?.currentValue ?? 'acp-default';
+    if (this.ctx.session.config.model === currentValue) return;
 
     this.ctx.session.config.model = currentValue;
     this.ctx.db.updateSession(this.ctx.session.id, {
@@ -1008,8 +1010,13 @@ export class AcpQueryRunner {
     });
   }
 
-  private updateAcpModelCache(configOptions: AcpConfigOption[]): void {
-    this.syncAcpSessionModel(configOptions);
+  private updateAcpModelCache(
+    configOptions: AcpConfigOption[],
+    options: { syncSessionModel?: boolean } = {}
+  ): void {
+    if (options.syncSessionModel !== false) {
+      this.syncAcpSessionModel(configOptions);
+    }
 
     const provider = getProviderRegistry().get('acp');
     if (provider instanceof AcpProvider) {
