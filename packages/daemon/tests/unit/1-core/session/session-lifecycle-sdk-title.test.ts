@@ -190,7 +190,7 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
     const { AnthropicProvider } = await import(
       '../../../../src/lib/providers/anthropic-provider.js'
     );
-    const { resetProviderServiceInstance } = await import(
+    const { getProviderService, resetProviderServiceInstance } = await import(
       '../../../../src/lib/provider-service.js'
     );
     const { SessionLifecycle } = await import('../../../../src/lib/session/session-lifecycle.js');
@@ -204,6 +204,7 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
     const anthropicProvider = new AnthropicProvider(process.env);
     anthropicProvider.setCredentials({ type: 'api_key', apiKey: 'test-api-key' });
     getProviderRegistry().register(anthropicProvider);
+    getProviderService().isProviderAvailable = mock(async () => true);
 
     lastTitleQueryOptions = undefined;
     lastTitleProcessEnv = undefined;
