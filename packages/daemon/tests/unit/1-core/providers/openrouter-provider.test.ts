@@ -328,6 +328,15 @@ describe('OpenRouterProvider', () => {
     expect(provider.getModelContextWindow('openrouter/auto')).toBe(1_000_000);
   });
 
+  it('infers Claude-family context when selected model metadata is unresolved', () => {
+    const provider = new OpenRouterProvider();
+
+    expect(provider.getModelContextWindow('anthropic/claude-sonnet-4.5')).toBe(200_000);
+    expect(provider.getModelContextWindow('anthropic/claude-haiku-4.5')).toBe(200_000);
+    expect(provider.getModelContextWindow('anthropic/claude-opus-4.7')).toBe(200_000);
+    expect(provider.getModelContextWindow('unknown/provider-model')).toBeUndefined();
+  });
+
   it('returns API-loaded model context for selected OpenRouter model', async () => {
     process.env.OPENROUTER_API_KEY = 'sk-or-test';
     const fetchMock = mock(

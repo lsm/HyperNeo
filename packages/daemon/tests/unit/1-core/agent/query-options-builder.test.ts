@@ -368,6 +368,39 @@ describe('QueryOptionsBuilder', () => {
       }
     });
 
+    it('should infer OpenRouter Sonnet context when selected metadata is unresolved', async () => {
+      resetProviderRegistry();
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'openrouter',
+        displayName: 'OpenRouter',
+        capabilities: {
+          streaming: true,
+          extendedThinking: true,
+          thinkingModes: 'granular',
+          maxContextWindow: 1_000_000,
+          functionCalling: true,
+          vision: true,
+        },
+        isAvailable: () => true,
+        getModels: async () => [],
+        ownsModel: () => true,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: true }),
+        translateModelIdForSdk: () => 'default',
+        getModelContextWindow: (modelId: string) =>
+          modelId.includes('sonnet') ? 200_000 : undefined,
+      } as Provider);
+      try {
+        mockSession.config.provider = 'openrouter';
+        mockSession.config.model = 'anthropic/claude-sonnet-4.5';
+        const options = await builder.build();
+        expect(options.model).toBe('default');
+        expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('64000');
+      } finally {
+        resetProviderRegistry();
+      }
+    });
+
     it('should prefer selected model context over aggregated provider context', async () => {
       resetProviderRegistry();
       const registry = getProviderRegistry();
