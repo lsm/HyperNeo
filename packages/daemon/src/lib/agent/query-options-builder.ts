@@ -125,31 +125,16 @@ const FULL_BUILTIN_TOOL_LIST = [
   'ToolSearch',
 ];
 
-const DEFAULT_SDK_OUTPUT_TOKEN_LIMIT = 16_384;
-const LARGE_SDK_OUTPUT_TOKEN_LIMIT = 64_000;
-const OPUS_SDK_OUTPUT_TOKEN_LIMIT = 128_000;
+const SMALL_SDK_OUTPUT_TOKEN_LIMIT = 16_384;
+const MAX_SDK_OUTPUT_TOKEN_LIMIT = 128_000;
 
-function getSdkOutputTokenLimit(modelId: string): number {
-  const normalizedModelId = modelId.toLowerCase();
-  if (normalizedModelId.includes('opus')) {
-    return OPUS_SDK_OUTPUT_TOKEN_LIMIT;
-  }
-  if (
-    normalizedModelId === 'default' ||
-    normalizedModelId === 'sonnet' ||
-    normalizedModelId === 'sonnet1m' ||
-    normalizedModelId === 'sonnet[1m]' ||
-    normalizedModelId === 'haiku' ||
-    normalizedModelId.includes('sonnet-4') ||
-    normalizedModelId.includes('haiku-4')
-  ) {
-    return LARGE_SDK_OUTPUT_TOKEN_LIMIT;
-  }
-  return DEFAULT_SDK_OUTPUT_TOKEN_LIMIT;
-}
-
-function getLargestSdkOutputTokenLimit(modelIds: string[]): string {
-  return String(Math.max(...modelIds.map(getSdkOutputTokenLimit)));
+function deriveSdkOutputTokenLimit(maxContextWindows: number[]): string {
+  const maxContextWindow = Math.max(...maxContextWindows);
+  const cap = Math.min(
+    Math.max(Math.ceil(maxContextWindow / 3), SMALL_SDK_OUTPUT_TOKEN_LIMIT),
+    MAX_SDK_OUTPUT_TOKEN_LIMIT
+  );
+  return String(cap);
 }
 
 /**
@@ -347,7 +332,9 @@ export class QueryOptionsBuilder {
     const providerContext = contextManager.createContext(this.ctx.session);
     const providerId = providerContext.provider.id;
     const sdkModelId = providerContext.getSdkModelId();
+    const primaryMaxContextWindow = providerContext.provider.capabilities.maxContextWindow;
     let sdkFallbackModel: string | undefined;
+    let fallbackMaxContextWindow: number | undefined;
     if (config.fallbackModel) {
       // For fallback model, we need to create a separate context
       const contextManager = getProviderContextManager();
@@ -358,6 +345,7 @@ export class QueryOptionsBuilder {
       };
       const fallbackContext = contextManager.createContext(fallbackSession);
       sdkFallbackModel = fallbackContext.getSdkModelId();
+      fallbackMaxContextWindow = fallbackContext.provider.capabilities.maxContextWindow;
     }
 
     // Build all configuration components
@@ -373,7 +361,11 @@ export class QueryOptionsBuilder {
       ...this.buildPluginsFromBuiltinSkills(),
     ];
     const mcpServersFromSkills = this.getMcpServersFromSkills();
-    const mergedEnv = this.getMergedEnvironmentVars(sdkModelId, sdkFallbackModel);
+    const mergedEnv = this.getMergedEnvironmentVars(
+      [primaryMaxContextWindow, fallbackMaxContextWindow].filter(
+        (window): window is number => typeof window === 'number' && window > 0
+      )
+    );
     const sdkCliPath = this.getSDKCliPath();
 
     // Merged MCP servers: skill-injected + session-config-injected.
@@ -956,8 +948,7 @@ CRITICAL RULES:
    * @returns Merged env vars (excluding provider-specific vars)
    */
   private getMergedEnvironmentVars(
-    sdkModelId: string,
-    sdkFallbackModel: string | undefined
+    maxContextWindows: number[]
   ): Record<string, string> | undefined {
     const globalSettings = this.ctx.settingsManager.getGlobalSettings();
     const sessionEnv = this.ctx.session.config.env;
@@ -1003,14 +994,7 @@ CRITICAL RULES:
     if (process.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS !== undefined) {
       mergedEnv.CLAUDE_CODE_MAX_OUTPUT_TOKENS ??= process.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS;
     }
-    mergedEnv.CLAUDE_CODE_MAX_OUTPUT_TOKENS ??= getLargestSdkOutputTokenLimit(
-      [
-        this.ctx.session.config.model,
-        this.ctx.session.config.fallbackModel,
-        sdkModelId,
-        sdkFallbackModel,
-      ].filter((modelId): modelId is string => !!modelId)
-    );
+    mergedEnv.CLAUDE_CODE_MAX_OUTPUT_TOKENS ??= deriveSdkOutputTokenLimit(maxContextWindows);
 
     // 4. Explicitly include proxy environment variables for Dev Proxy support
     // These are set by the dev-proxy test helper and need to be passed to the SDK subprocess

@@ -160,39 +160,25 @@ describe('QueryOptionsBuilder', () => {
       const options = await builder.build();
       expect(options.env).toEqual({
         MY_VAR: 'value',
-        CLAUDE_CODE_MAX_OUTPUT_TOKENS: '64000',
+        CLAUDE_CODE_MAX_OUTPUT_TOKENS: '66667',
       });
     });
 
-    it('should set a default SDK output token cap for the default Sonnet alias', async () => {
+    it('should derive the default SDK output token cap from provider context window', async () => {
       const options = await builder.build();
-      expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('64000');
+      expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('66667');
     });
 
-    it('should use the Sonnet SDK output token cap for short aliases', async () => {
-      for (const model of ['default', 'sonnet', 'sonnet1m', 'sonnet[1m]']) {
-        mockSession.config.model = model;
-        const options = await builder.build();
-        expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('64000');
-      }
-    });
-
-    it('should use the Sonnet SDK output token cap for Claude Sonnet 4 models', async () => {
-      mockSession.config.model = 'claude-sonnet-4-6';
-      const options = await builder.build();
-      expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('64000');
-    });
-
-    it('should base the SDK output token cap on translated SDK model IDs', async () => {
+    it('should derive SDK output token caps from provider metadata, not model names', async () => {
       resetProviderRegistry();
       const registry = getProviderRegistry();
       registry.register({
-        id: 'custom:translated-default',
-        displayName: 'Translated Default',
+        id: 'custom:small-context',
+        displayName: 'Small Context',
         capabilities: {
           streaming: true,
           extendedThinking: false,
-          maxContextWindow: 1_000_000,
+          maxContextWindow: 32_000,
           functionCalling: true,
           vision: false,
         },
@@ -203,28 +189,22 @@ describe('QueryOptionsBuilder', () => {
         translateModelIdForSdk: () => 'default',
       } as Provider);
       try {
-        mockSession.config.provider = 'custom:translated-default';
-        mockSession.config.model = 'provider-native-id';
+        mockSession.config.provider = 'custom:small-context';
+        mockSession.config.model = 'anthropic/claude-opus-4.7';
         const options = await builder.build();
         expect(options.model).toBe('default');
-        expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('64000');
+        expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('16384');
       } finally {
         resetProviderRegistry();
       }
     });
 
-    it('should use the Opus SDK output token cap for Claude Opus models', async () => {
-      mockSession.config.model = 'claude-opus-4-7';
-      const options = await builder.build();
-      expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('128000');
-    });
-
-    it('should preserve Opus caps when bridged providers translate models to default', async () => {
+    it('should cap large provider context windows at the SDK maximum output limit', async () => {
       resetProviderRegistry();
       const registry = getProviderRegistry();
       registry.register({
-        id: 'custom:bridged-opus',
-        displayName: 'Bridged Opus',
+        id: 'custom:large-context',
+        displayName: 'Large Context',
         capabilities: {
           streaming: true,
           extendedThinking: false,
@@ -239,21 +219,13 @@ describe('QueryOptionsBuilder', () => {
         translateModelIdForSdk: () => 'default',
       } as Provider);
       try {
-        mockSession.config.provider = 'custom:bridged-opus';
-        mockSession.config.model = 'anthropic/claude-opus-4.7';
+        mockSession.config.provider = 'custom:large-context';
+        mockSession.config.model = 'provider-native-id';
         const options = await builder.build();
         expect(options.model).toBe('default');
         expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('128000');
       } finally {
         resetProviderRegistry();
-      }
-    });
-
-    it('should use the large SDK output token cap for Claude Haiku 4 models', async () => {
-      for (const model of ['haiku', 'claude-haiku-4-5']) {
-        mockSession.config.model = model;
-        const options = await builder.build();
-        expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('64000');
       }
     });
 
@@ -271,11 +243,11 @@ describe('QueryOptionsBuilder', () => {
       expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('49152');
     });
 
-    it('should use the largest SDK output token cap across primary and fallback models', async () => {
+    it('should use provider context metadata even when fallback model names differ', async () => {
       mockSession.config.model = 'haiku';
       mockSession.config.fallbackModel = 'claude-opus-4-7';
       const options = await builder.build();
-      expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('128000');
+      expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('66667');
     });
 
     it('should not override SDK auto-compaction settings for native anthropic provider', async () => {
