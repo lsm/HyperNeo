@@ -109,6 +109,13 @@ export class WorkflowHookStateRepository {
     return this.get(runId, hookId)!;
   }
 
+  listByRun(runId: string): WorkflowHookStateSnapshot[] {
+    const rows = this.db
+      .prepare(`SELECT * FROM workflow_hook_state WHERE run_id = ?`)
+      .all(runId) as HookStateRow[];
+    return rows.map(rowToSnapshot);
+  }
+
   update(
     runId: string,
     hookId: string,

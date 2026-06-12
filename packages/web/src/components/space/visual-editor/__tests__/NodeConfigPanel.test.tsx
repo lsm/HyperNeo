@@ -23,7 +23,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, fireEvent, cleanup, act, waitFor } from '@testing-library/preact';
 import { useState } from 'preact/hooks';
-import type { SpaceAgent } from '@neokai/shared';
+import type { SpaceAgent, WorkflowHook } from '@neokai/shared';
 
 const mockModels = [
   {
@@ -972,6 +972,59 @@ describe('NodeConfigPanel', () => {
   // ============================================================================
   // Single-agent prompts slide
   // ============================================================================
+
+  describe('hooks section', () => {
+    it('adds a backend-valid script hook with an authorized caller for the node', () => {
+      const onUpdateNodeHooks = vi.fn();
+      const { getByTestId } = render(
+        <NodeConfigPanel
+          {...makeProps({
+            nodeHooks: [],
+            workflowNodeNames: ['My Step', 'Review'],
+            onUpdateNodeHooks,
+          })}
+        />
+      );
+
+      fireEvent.click(getByTestId('add-hook-button'));
+
+      expect(onUpdateNodeHooks).toHaveBeenCalledWith([
+        expect.objectContaining({
+          sourceNode: 'My Step',
+          validator: expect.objectContaining({ kind: 'script', source: `echo '{"type":"allow"}'` }),
+          authorizedCallers: [expect.objectContaining({ sourceNode: 'My Step' })],
+        }),
+      ]);
+    });
+
+    it('updates existing hook configs from the embedded hook editor', () => {
+      const onUpdateNodeHooks = vi.fn();
+      const hook: WorkflowHook = {
+        id: 'hook-1',
+        enabled: true,
+        sourceNode: 'My Step',
+        method: 'send_message',
+        validator: { kind: 'script', interpreter: 'bash', source: `echo '{"type":"allow"}'` },
+        authorizedCallers: [{ sourceNode: 'My Step' }],
+      };
+      const { getByTestId } = render(
+        <NodeConfigPanel
+          {...makeProps({
+            nodeHooks: [hook],
+            workflowNodeNames: ['My Step', 'Review'],
+            onUpdateNodeHooks,
+          })}
+        />
+      );
+
+      fireEvent.click(getByTestId('node-hook-button'));
+      fireEvent.input(getByTestId('hook-editor-label'), { target: { value: 'Approval hook' } });
+
+      expect(onUpdateNodeHooks).toHaveBeenCalledWith([
+        expect.objectContaining({ id: 'hook-1', label: 'Approval hook' }),
+      ]);
+    });
+  });
 
   describe('single-agent prompts slide', () => {
     it('opens single prompts view from the main panel', () => {

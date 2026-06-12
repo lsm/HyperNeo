@@ -27,6 +27,7 @@ import type {
   WorkflowChannel,
   Gate,
   SpaceAutonomyLevel,
+  WorkflowHook,
 } from '@neokai/shared';
 import { generateUUID, isChannelCyclic } from '@neokai/shared';
 import { spaceStore } from '../../../lib/space-store';
@@ -69,6 +70,7 @@ function buildTemplateCanvasSignature(
   channels: WorkflowChannel[],
   startNodeId: string,
   gates: Gate[],
+  hooks: WorkflowHook[],
   endNodeId: string | undefined
 ): string {
   const regularNodes = nodes
@@ -127,6 +129,17 @@ function buildTemplateCanvasSignature(
     }))
     .sort((a, b) => a.id.localeCompare(b.id));
 
+  const normalizedHooks = hooks
+    .map((hook) => ({
+      id: hook.id,
+      enabled: hook.enabled,
+      sourceNode: hook.sourceNode,
+      targetNode: hook.targetNode ?? null,
+      method: hook.method,
+      validator: hook.validator,
+    }))
+    .sort((a, b) => a.id.localeCompare(b.id));
+
   return JSON.stringify({
     nodes: regularNodes,
     edges: normalizedEdges,
@@ -134,6 +147,7 @@ function buildTemplateCanvasSignature(
     startNodeId,
     endNodeId,
     gates: normalizedGates,
+    hooks: normalizedHooks,
   });
 }
 
@@ -212,6 +226,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
   const [endNodeId, setEndNodeId] = useState<string | undefined>(() => initState?.endNodeId);
   const [channels, setChannels] = useState<WorkflowChannel[]>(() => initState?.channels ?? []);
   const [gates, setGates] = useState<Gate[]>(() => initState?.gates ?? []);
+  const [hooks, setHooks] = useState<WorkflowHook[]>(() => initState?.hooks ?? []);
   const [completionAutonomyLevel, setCompletionAutonomyLevel] = useState<SpaceAutonomyLevel>(
     () =>
       (initState?.completionAutonomyLevel ??
@@ -251,8 +266,9 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
   const nodeExecutionsByNodeId = spaceStore.nodeExecutionsByNodeId.value;
   const regularNodes = nodes;
   const currentTemplateCanvasSignature = useMemo(
-    () => buildTemplateCanvasSignature(nodes, edges, channels, startNodeId, gates, endNodeId),
-    [nodes, edges, channels, startNodeId, gates, endNodeId]
+    () =>
+      buildTemplateCanvasSignature(nodes, edges, channels, startNodeId, gates, hooks, endNodeId),
+    [nodes, edges, channels, startNodeId, gates, hooks, endNodeId]
   );
   const [templateBaselineSignature, setTemplateBaselineSignature] = useState(() =>
     buildTemplateCanvasSignature(
@@ -261,6 +277,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
       initState?.channels ?? [],
       initState?.startNodeId ?? '',
       initState?.gates ?? [],
+      initState?.hooks ?? [],
       initState?.endNodeId
     )
   );
@@ -596,6 +613,20 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
       // Update all state in flat calls — no nested setter inside another updater.
       setNodes(remaining);
       setEdges((prev) => prev.filter((e) => e.fromStepKey !== key && e.toStepKey !== key));
+      if (nodeToDelete.step.name) {
+        const deletedName = nodeToDelete.step.name;
+        setHooks((prev) =>
+          prev
+            .filter((hook) => hook.sourceNode !== deletedName && hook.targetNode !== deletedName)
+            .map((hook) => ({
+              ...hook,
+              authorizedCallers: hook.authorizedCallers?.filter(
+                (caller) => caller.sourceNode !== deletedName
+              ),
+            }))
+            .filter((hook) => (hook.authorizedCallers?.length ?? 0) > 0)
+        );
+      }
 
       if (wasStart && remaining.length > 0) {
         const next = remaining[0];
@@ -613,9 +644,30 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
     [nodes, startNodeId, endNodeId]
   );
 
-  const handleUpdateNode = useCallback((step: NodeDraft) => {
-    setNodes((prev) => prev.map((n) => (n.step.localId === step.localId ? { ...n, step } : n)));
-  }, []);
+  const handleUpdateNode = useCallback(
+    (step: NodeDraft) => {
+      const previousNode = nodes.find((n) => n.step.localId === step.localId);
+      const previousName = previousNode?.step.name;
+      const nextName = step.name;
+
+      setNodes((prev) => prev.map((n) => (n.step.localId === step.localId ? { ...n, step } : n)));
+
+      if (previousName && nextName && previousName !== nextName) {
+        setHooks((prev) =>
+          prev.map((hook) => ({
+            ...hook,
+            sourceNode: hook.sourceNode === previousName ? nextName : hook.sourceNode,
+            targetNode: hook.targetNode === previousName ? nextName : hook.targetNode,
+            authorizedCallers: hook.authorizedCallers?.map((caller) => ({
+              ...caller,
+              sourceNode: caller.sourceNode === previousName ? nextName : caller.sourceNode,
+            })),
+          }))
+        );
+      }
+    },
+    [nodes]
+  );
 
   /**
    * Set this node as the start node. Stores step.localId so that both the
@@ -925,11 +977,13 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
       ...gate,
       fields: [...(gate.fields ?? [])],
     }));
+    const nextHooks = (template.hooks ?? []).map((hook) => ({ ...hook }));
 
     setNodes(nextNodes);
     setEdges(newEdges);
     setChannels(nextChannels);
     setGates(nextGates);
+    setHooks(nextHooks);
     if (template.tags) {
       setTags([...template.tags]);
     }
@@ -946,6 +1000,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
         nextChannels,
         resolvedStartLocalId,
         nextGates,
+        nextHooks,
         resolvedEndLocalId
       )
     );
@@ -1026,6 +1081,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
       tags,
       channels,
       gates,
+      hooks,
       completionAutonomyLevel,
       disabled,
     };
@@ -1459,6 +1515,16 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
               setSelectedNodeId(null);
             }}
             onDelete={handleDeleteNode}
+            nodeHooks={hooks.filter(
+              (h) => h.sourceNode === (selectedNode.step.name || selectedNode.step.localId)
+            )}
+            workflowNodeNames={nodes.map((n) => n.step.name || n.step.localId)}
+            onUpdateNodeHooks={(nextHooks) => {
+              // Merge updated node-specific hooks back into the global hooks list
+              const nodeName = selectedNode.step.name || selectedNode.step.localId;
+              const otherHooks = hooks.filter((h) => h.sourceNode !== nodeName);
+              setHooks([...otherHooks, ...nextHooks]);
+            }}
           />
         )}
 

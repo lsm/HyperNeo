@@ -286,6 +286,7 @@ describe('visualStateToCreateParams', () => {
       tags: [],
       channels: [],
       gates: [],
+      hooks: [],
       ...overrides,
     };
   }
@@ -392,6 +393,7 @@ describe('visualStateToCreateParams', () => {
       tags: [],
       channels: [],
       gates: [],
+      hooks: [],
     };
     const params = visualStateToCreateParams(state, 'space-1', 'WF');
     expect(params.nodes![0].id).toBeTruthy();
@@ -406,6 +408,7 @@ describe('visualStateToCreateParams', () => {
       tags: [],
       channels: [],
       gates: [],
+      hooks: [],
     };
     const params = visualStateToCreateParams(state, 'space-1', 'WF');
     expect(params.nodes).toHaveLength(0);
@@ -602,6 +605,7 @@ describe('visualStateToUpdateParams', () => {
       tags: [],
       channels: [],
       gates: [],
+      hooks: [],
     };
     const params = visualStateToUpdateParams(state, {
       name: 'Updated Name',
@@ -629,6 +633,7 @@ describe('visualStateToUpdateParams', () => {
       tags: [],
       channels: [],
       gates: [],
+      hooks: [],
     };
     const params = visualStateToUpdateParams(state);
     expect(params.endNodeId).toBe('s2');
@@ -656,6 +661,7 @@ describe('visualStateToUpdateParams', () => {
       tags: [],
       channels: [],
       gates: [],
+      hooks: [],
     };
     const params = visualStateToUpdateParams(state);
     expect(params.nodes?.[0].postApproval).toEqual({
@@ -678,6 +684,7 @@ describe('visualStateToUpdateParams', () => {
       tags: [],
       channels: [],
       gates: [],
+      hooks: [],
     };
     const params = visualStateToUpdateParams(state);
     expect(params.endNodeId).toBeNull();
@@ -763,6 +770,7 @@ describe('multi-agent step serialization', () => {
       tags: [],
       channels: [],
       gates: [],
+      hooks: [],
     };
     const params = visualStateToCreateParams(state, 'space-1', 'WF');
     const step = params.nodes![0];
@@ -792,6 +800,7 @@ describe('multi-agent step serialization', () => {
       tags: [],
       channels: [],
       gates: [],
+      hooks: [],
     };
     const params = visualStateToCreateParams(state, 'space-1', 'WF');
     // Channels are not yet supported in visualStateToCreateParams output
@@ -853,6 +862,7 @@ describe('multi-agent step serialization', () => {
           resetOnCycle: false,
         },
       ],
+      hooks: [],
     };
     const params = visualStateToCreateParams(state, 'space-1', 'WF');
     expect(params.gates).toHaveLength(1);

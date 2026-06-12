@@ -2168,6 +2168,82 @@ class SpaceStore {
    * Fetch a paginated snapshot of task-thread messages.
    */
   // ========================================
+  // Hook Methods
+  // ========================================
+
+  /**
+   * List all hook states for a workflow run.
+   */
+  async listHookStates(
+    runId: string
+  ): Promise<import('@neokai/shared').WorkflowHookStateSnapshot[]> {
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) throw new Error('Not connected');
+
+    const result = await hub.request<{
+      hookStates: import('@neokai/shared').WorkflowHookStateSnapshot[];
+      hooks: import('@neokai/shared').WorkflowHook[];
+    }>('spaceWorkflowRun.listHookStates', { runId });
+    return result?.hookStates ?? [];
+  }
+
+  /**
+   * Approve or reject a hook awaiting human sign-off.
+   */
+  async approveHook(
+    runId: string,
+    hookId: string,
+    approved: boolean,
+    reason?: string | null
+  ): Promise<import('@neokai/shared').WorkflowHookStateSnapshot> {
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) throw new Error('Not connected');
+
+    const result = await hub.request<{
+      hookState: import('@neokai/shared').WorkflowHookStateSnapshot;
+    }>('spaceWorkflowRun.approveHook', { runId, hookId, approved, reason: reason ?? null });
+    return (
+      result?.hookState ?? {
+        runId,
+        hookId,
+        version: 0,
+        localState: {},
+        retryCount: 0,
+        createdAt: 0,
+        updatedAt: 0,
+        voteMaps: {},
+      }
+    );
+  }
+
+  /**
+   * Retry a retryable_block hook by clearing its backoff state.
+   */
+  async retryHook(
+    runId: string,
+    hookId: string
+  ): Promise<import('@neokai/shared').WorkflowHookStateSnapshot> {
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) throw new Error('Not connected');
+
+    const result = await hub.request<{
+      hookState: import('@neokai/shared').WorkflowHookStateSnapshot;
+    }>('spaceWorkflowRun.retryHook', { runId, hookId });
+    return (
+      result?.hookState ?? {
+        runId,
+        hookId,
+        version: 0,
+        localState: {},
+        retryCount: 0,
+        createdAt: 0,
+        updatedAt: 0,
+        voteMaps: {},
+      }
+    );
+  }
+
+  // ========================================
   // Agent Methods
   // ========================================
 
