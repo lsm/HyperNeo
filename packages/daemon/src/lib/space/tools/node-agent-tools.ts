@@ -1764,17 +1764,16 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
       taskId: config.taskId,
     };
 
+    const handlerMap = handlers as unknown as Record<
+      string,
+      (...args: unknown[]) => Promise<ToolResult>
+    >;
     const wrap = <T extends Record<string, unknown>>(
       methodName: string,
       handler: (args: T) => Promise<ToolResult>
-    ) =>
-      wrapHandlerWithHooks(
-        methodName,
-        handler,
-        config.hookEngine,
-        handlers as unknown as Record<string, (...args: unknown[]) => Promise<ToolResult>>,
-        meta
-      );
+    ) => wrapHandlerWithHooks(methodName, handler, config.hookEngine, handlerMap, meta);
+
+    config.hookEngine.scheduleQueuedRetryableActions(handlerMap, meta);
 
     handlers.send_message = wrap('send_message', handlers.send_message);
     handlers.save_artifact = wrap('save_artifact', handlers.save_artifact);

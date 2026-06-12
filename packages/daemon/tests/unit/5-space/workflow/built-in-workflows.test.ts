@@ -170,10 +170,10 @@ describe('CODING_WORKFLOW template', () => {
     expect(CODING_WORKFLOW.channels).toHaveLength(4);
   });
 
-  test('Coding → Review channel is gated by code-ready-gate', () => {
+  test('Coding → Review channel is ungated (PR-ready hook replaces gate)', () => {
     const ch = CODING_WORKFLOW.channels!.find((c) => c.from === 'Coding' && c.to === 'Review');
     expect(ch).toBeDefined();
-    expect(ch!.gateId).toBe('code-ready-gate');
+    expect(ch!.gateId).toBeUndefined();
     // direction field removed from WorkflowChannel
     expect(ch!.maxCycles).toBeUndefined();
   });
@@ -220,16 +220,26 @@ describe('CODING_WORKFLOW template', () => {
     }
   });
 
-  test('has three gates: code-ready-gate, validation-complete-gate, and review-posted-gate', () => {
-    expect(CODING_WORKFLOW.gates).toHaveLength(3);
+  test('has two gates: validation-complete-gate and review-posted-gate', () => {
+    expect(CODING_WORKFLOW.gates).toHaveLength(2);
     const gateIds = CODING_WORKFLOW.gates!.map((g) => g.id).sort();
-    expect(gateIds).toEqual(['code-ready-gate', 'review-posted-gate', 'validation-complete-gate']);
-    const codeReadyGate = CODING_WORKFLOW.gates!.find((g) => g.id === 'code-ready-gate')!;
-    expect(codeReadyGate.fields).toHaveLength(1);
+    expect(gateIds).toEqual(['review-posted-gate', 'validation-complete-gate']);
     const validationGate = CODING_WORKFLOW.gates!.find((g) => g.id === 'validation-complete-gate')!;
     expect(validationGate.fields).toHaveLength(3);
     const reviewPostedGate = CODING_WORKFLOW.gates!.find((g) => g.id === 'review-posted-gate')!;
     expect(reviewPostedGate.fields).toHaveLength(2);
+  });
+
+  test('has a send_message hook for Coding → Review using pr_ready validator', () => {
+    const hooks = CODING_WORKFLOW.hooks ?? [];
+    expect(hooks.length).toBeGreaterThanOrEqual(1);
+    const hook = hooks.find((h) => h.id === 'code-pr-ready');
+    expect(hook).toBeDefined();
+    expect(hook!.sourceNode).toBe('Coding');
+    expect(hook!.targetNode).toBe('Review');
+    expect(hook!.method).toBe('send_message');
+    expect(hook!.validator).toEqual({ kind: 'built_in', id: 'pr_ready' });
+    expect(hook!.enabled).toBe(true);
   });
 
   test('validation-complete-gate accepts no-code-change completion evidence without pr_url', () => {
@@ -612,351 +622,6 @@ describe('CODING_WORKFLOW template', () => {
     expect(gate.resetOnCycle).toBe(true);
   });
 
-  test('code-ready-gate has pr_url field writable by Coding node and coder alias', () => {
-    const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'code-ready-gate')!;
-    const prField = gate.fields.find((f) => f.name === 'pr_url')!;
-    expect(prField.type).toBe('string');
-    expect(prField.writers).toEqual(['Coding', 'coder']);
-    expect(prField.check.op).toBe('exists');
-  });
-
-  test('code-ready-gate PR comment poll preserves GraphQL variable names and host for gh', () => {
-    const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'code-ready-gate')!;
-    expect(gate.poll?.script).toContain("QUERY='query($owner:String!,$name:String!,$number:Int!)");
-    expect(gate.poll?.script).toContain('repository(owner:$owner,name:$name)');
-    expect(gate.poll?.script).toContain('pullRequest(number:$number)');
-    expect(gate.poll?.script).toContain('PR_HOST="${PR_HOST:-$(jq -r .host <<< "$PR_META")}"');
-    expect(gate.poll?.script).toContain('GH_HOST_ARGS=(--hostname "$PR_HOST")');
-    expect(gate.poll?.script).toContain('gh api graphql "${GH_HOST_ARGS[@]}"');
-  });
-
-  test('code-ready-gate has a bash script that checks PR mergeability and outputs pr_url', () => {
-    const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'code-ready-gate')!;
-    expect(gate.script).toBeDefined();
-    expect(gate.script!.interpreter).toBe('bash');
-    expect(gate.script!.timeoutMs).toBe(30000);
-    expect(gate.script!.source).toContain('gh pr view --json url,state,mergeable,mergeStateStatus');
-    expect(gate.script!.source).toContain('jq -r');
-    expect(gate.script!.source).toContain('.url');
-    expect(gate.script!.source).toContain('"OPEN"');
-    expect(gate.script!.source).toContain('.mergeable');
-    expect(gate.script!.source).toContain('"MERGEABLE"');
-    expect(gate.script!.source).toContain('.mergeStateStatus');
-    expect(gate.script!.source).toContain('"CLEAN"');
-    expect(gate.script!.source).toContain('"HAS_HOOKS"');
-    expect(gate.script!.source).toContain('"BLOCKED"');
-    expect(gate.script!.source).toContain('exit 1');
-    expect(gate.script!.source).toContain('pr_url');
-    expect(gate.script!.source).toContain('not authenticated');
-    expect(gate.script!.source).not.toContain('gh pr list');
-    expect(gate.script!.source).not.toContain('--base dev');
-    expect(gate.script!.source).toContain('gh pr view "$PR_TARGET"');
-    expect(gate.script!.source).toContain('reviewThreads(first:100)');
-    expect(gate.script!.source).toContain('isResolved == false');
-  });
-
-  test('code-ready-gate blocks unresolved review conversations', async () => {
-    const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'code-ready-gate')!;
-    const workspace = mkdtempSync(join(tmpdir(), 'neokai-pr-ready-gate-unresolved-'));
-    const binDir = join(workspace, 'bin');
-    const ghPath = join(binDir, 'gh');
-    const prUrl = 'https://github.com/test/repo/pull/42';
-
-    try {
-      mkdirSync(binDir);
-      writeFileSync(
-        ghPath,
-        [
-          '#!/usr/bin/env bash',
-          `if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$3" = ${JSON.stringify(prUrl)} ]; then`,
-          `  printf '%s\\n' '{"url":"${prUrl}","state":"OPEN","mergeable":"MERGEABLE","mergeStateStatus":"CLEAN"}'`,
-          '  exit 0',
-          'fi',
-          'if [ "$1" = "api" ] && [ "$2" = "graphql" ]; then',
-          `  printf '%s\\n' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"thread-1","isResolved":false,"comments":{"nodes":[{"url":"https://github.com/test/repo/pull/42#discussion_r1"}]}}],"pageInfo":{"hasNextPage":false}}}}}}'`,
-          '  exit 0',
-          'fi',
-          'printf "unexpected gh args: %s\\n" "$*" >&2',
-          'exit 2',
-        ].join('\n')
-      );
-      chmodSync(ghPath, 0o755);
-
-      const result = await executeGateScript(
-        gate.script!,
-        {
-          workspacePath: workspace,
-          gateId: 'code-ready-gate',
-          runId: 'run-1',
-          gateData: { pr_url: prUrl },
-        },
-        { PATH: `${binDir}:${process.env.PATH ?? ''}` }
-      );
-
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('unresolved review conversation');
-      expect(result.error).toContain('discussion_r1');
-    } finally {
-      rmSync(workspace, { recursive: true, force: true });
-    }
-  });
-
-  test('code-ready-gate paginates review threads and blocks on unresolved across pages', async () => {
-    const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'code-ready-gate')!;
-    const workspace = mkdtempSync(join(tmpdir(), 'neokai-pr-ready-gate-paged-'));
-    const binDir = join(workspace, 'bin');
-    const ghPath = join(binDir, 'gh');
-    const statePath = join(workspace, 'page.state');
-    const prUrl = 'https://github.com/test/repo/pull/42';
-
-    try {
-      mkdirSync(binDir);
-      writeFileSync(
-        ghPath,
-        [
-          '#!/usr/bin/env bash',
-          `if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$3" = ${JSON.stringify(prUrl)} ]; then`,
-          `  printf '%s\\n' '{"url":"${prUrl}","state":"OPEN","mergeable":"MERGEABLE","mergeStateStatus":"CLEAN"}'`,
-          '  exit 0',
-          'fi',
-          'if [ "$1" = "api" ] && [ "$2" = "graphql" ]; then',
-          '  PAGE_FILE=' + JSON.stringify(statePath),
-          '  PAGE_NUM=$(cat "$PAGE_FILE" 2>/dev/null || echo "1")',
-          '  if [ "$PAGE_NUM" = "1" ]; then',
-          `    printf '%s\\n' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"t1","isResolved":true,"comments":{"nodes":[{"url":"https://github.com/test/repo/pull/42#discussion_r_resolved"}]}}],"pageInfo":{"hasNextPage":true,"endCursor":"cursor2"}}}}}}'`,
-          '    echo "2" > "$PAGE_FILE"',
-          '    exit 0',
-          '  fi',
-          '  if [ "$PAGE_NUM" = "2" ]; then',
-          `    printf '%s\\n' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"t2","isResolved":false,"comments":{"nodes":[{"url":"https://github.com/test/repo/pull/42#discussion_r_unresolved"}]}}],"pageInfo":{"hasNextPage":false}}}}}}'`,
-          '    exit 0',
-          '  fi',
-          'fi',
-          'printf "unexpected gh args: %s\\n" "$*" >&2',
-          'exit 2',
-        ].join('\n')
-      );
-      chmodSync(ghPath, 0o755);
-
-      const result = await executeGateScript(
-        gate.script!,
-        {
-          workspacePath: workspace,
-          gateId: 'code-ready-gate',
-          runId: 'run-1',
-          gateData: { pr_url: prUrl },
-        },
-        { PATH: `${binDir}:${process.env.PATH ?? ''}` }
-      );
-
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('unresolved review conversation');
-      expect(result.error).toContain('discussion_r_unresolved');
-    } finally {
-      rmSync(workspace, { recursive: true, force: true });
-    }
-  });
-
-  test('code-ready-gate passes when all review threads across multiple pages are resolved', async () => {
-    const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'code-ready-gate')!;
-    const workspace = mkdtempSync(join(tmpdir(), 'neokai-pr-ready-gate-paged-clean-'));
-    const binDir = join(workspace, 'bin');
-    const ghPath = join(binDir, 'gh');
-    const statePath = join(workspace, 'page.state');
-    const prUrl = 'https://github.com/test/repo/pull/42';
-
-    try {
-      mkdirSync(binDir);
-      writeFileSync(
-        ghPath,
-        [
-          '#!/usr/bin/env bash',
-          `if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$3" = ${JSON.stringify(prUrl)} ]; then`,
-          `  printf '%s\\n' '{"url":"${prUrl}","state":"OPEN","mergeable":"MERGEABLE","mergeStateStatus":"CLEAN"}'`,
-          '  exit 0',
-          'fi',
-          'if [ "$1" = "api" ] && [ "$2" = "graphql" ]; then',
-          '  PAGE_FILE=' + JSON.stringify(statePath),
-          '  PAGE_NUM=$(cat "$PAGE_FILE" 2>/dev/null || echo "1")',
-          '  if [ "$PAGE_NUM" = "1" ]; then',
-          `    printf '%s\\n' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"t1","isResolved":true,"comments":{"nodes":[{"url":"https://github.com/test/repo/pull/42#discussion_r1"}]}}],"pageInfo":{"hasNextPage":true,"endCursor":"cursor2"}}}}}}'`,
-          '    echo "2" > "$PAGE_FILE"',
-          '    exit 0',
-          '  fi',
-          '  if [ "$PAGE_NUM" = "2" ]; then',
-          `    printf '%s\\n' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"t2","isResolved":true,"comments":{"nodes":[{"url":"https://github.com/test/repo/pull/42#discussion_r2"}]}}],"pageInfo":{"hasNextPage":false}}}}}}'`,
-          '    exit 0',
-          '  fi',
-          'fi',
-          'printf "unexpected gh args: %s\\n" "$*" >&2',
-          'exit 2',
-        ].join('\n')
-      );
-      chmodSync(ghPath, 0o755);
-
-      const result = await executeGateScript(
-        gate.script!,
-        {
-          workspacePath: workspace,
-          gateId: 'code-ready-gate',
-          runId: 'run-1',
-          gateData: { pr_url: prUrl },
-        },
-        { PATH: `${binDir}:${process.env.PATH ?? ''}` }
-      );
-
-      expect(result.success).toBe(true);
-      expect(result.data).toEqual({ pr_url: prUrl });
-    } finally {
-      rmSync(workspace, { recursive: true, force: true });
-    }
-  });
-
-  test('code-ready-gate fails when GraphQL returns errors', async () => {
-    const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'code-ready-gate')!;
-    const workspace = mkdtempSync(join(tmpdir(), 'neokai-pr-ready-gate-gql-err-'));
-    const binDir = join(workspace, 'bin');
-    const ghPath = join(binDir, 'gh');
-    const prUrl = 'https://github.com/test/repo/pull/42';
-
-    try {
-      mkdirSync(binDir);
-      writeFileSync(
-        ghPath,
-        [
-          '#!/usr/bin/env bash',
-          `if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$3" = ${JSON.stringify(prUrl)} ]; then`,
-          `  printf '%s\\n' '{"url":"${prUrl}","state":"OPEN","mergeable":"MERGEABLE","mergeStateStatus":"CLEAN"}'`,
-          '  exit 0',
-          'fi',
-          'if [ "$1" = "api" ] && [ "$2" = "graphql" ]; then',
-          `  printf '%s\\n' '{"errors":[{"message":"Resource not accessible"}]}'`,
-          '  exit 0',
-          'fi',
-          'printf "unexpected gh args: %s\\n" "$*" >&2',
-          'exit 2',
-        ].join('\n')
-      );
-      chmodSync(ghPath, 0o755);
-
-      const result = await executeGateScript(
-        gate.script!,
-        {
-          workspacePath: workspace,
-          gateId: 'code-ready-gate',
-          runId: 'run-1',
-          gateData: { pr_url: prUrl },
-        },
-        { PATH: `${binDir}:${process.env.PATH ?? ''}` }
-      );
-
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('GraphQL errors');
-    } finally {
-      rmSync(workspace, { recursive: true, force: true });
-    }
-  });
-
-  test('code-ready-gate passes for a clean mergeable PR with zero unresolved threads', async () => {
-    const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'code-ready-gate')!;
-    const workspace = mkdtempSync(join(tmpdir(), 'neokai-pr-ready-gate-clean-'));
-    const binDir = join(workspace, 'bin');
-    const ghPath = join(binDir, 'gh');
-    const prUrl = 'https://github.com/test/repo/pull/42';
-
-    try {
-      mkdirSync(binDir);
-      writeFileSync(
-        ghPath,
-        [
-          '#!/usr/bin/env bash',
-          `if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$3" = ${JSON.stringify(prUrl)} ]; then`,
-          `  printf '%s\\n' '{"url":"${prUrl}","state":"OPEN","mergeable":"MERGEABLE","mergeStateStatus":"CLEAN"}'`,
-          '  exit 0',
-          'fi',
-          'if [ "$1" = "api" ] && [ "$2" = "graphql" ]; then',
-          `  printf '%s\\n' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[],"pageInfo":{"hasNextPage":false}}}}}}'`,
-          '  exit 0',
-          'fi',
-          'printf "unexpected gh args: %s\\n" "$*" >&2',
-          'exit 2',
-        ].join('\n')
-      );
-      chmodSync(ghPath, 0o755);
-
-      const result = await executeGateScript(
-        gate.script!,
-        {
-          workspacePath: workspace,
-          gateId: 'code-ready-gate',
-          runId: 'run-1',
-          gateData: { pr_url: prUrl },
-        },
-        { PATH: `${binDir}:${process.env.PATH ?? ''}` }
-      );
-
-      expect(result.success).toBe(true);
-      expect(result.data).toEqual({ pr_url: prUrl });
-    } finally {
-      rmSync(workspace, { recursive: true, force: true });
-    }
-  });
-
-  test('code-ready-gate validates supplied pr_url without branch rediscovery', async () => {
-    const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'code-ready-gate')!;
-    const workspace = mkdtempSync(join(tmpdir(), 'neokai-pr-ready-gate-'));
-    const binDir = join(workspace, 'bin');
-    const ghPath = join(binDir, 'gh');
-    const logPath = join(workspace, 'gh-args.log');
-    const prUrl = 'https://github.com/test/repo/pull/42';
-
-    try {
-      mkdirSync(binDir);
-      writeFileSync(
-        ghPath,
-        [
-          '#!/usr/bin/env bash',
-          `printf '%s\\n' "$*" >> ${JSON.stringify(logPath)}`,
-          `if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$3" = ${JSON.stringify(prUrl)} ]; then`,
-          `  printf '%s\\n' '{"url":"${prUrl}","state":"OPEN","mergeable":"MERGEABLE","mergeStateStatus":"BLOCKED"}'`,
-          '  exit 0',
-          'fi',
-          'if [ "$1" = "api" ] && [ "$2" = "graphql" ]; then',
-          `  printf '%s\\n' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[],"pageInfo":{"hasNextPage":false}}}}}}'`,
-          '  exit 0',
-          'fi',
-          'printf "unexpected gh args: %s\\n" "$*" >&2',
-          'exit 2',
-        ].join('\n')
-      );
-      chmodSync(ghPath, 0o755);
-
-      const result = await executeGateScript(
-        gate.script!,
-        {
-          workspacePath: workspace,
-          gateId: 'code-ready-gate',
-          runId: 'run-1',
-          gateData: { pr_url: prUrl },
-        },
-        { PATH: `${binDir}:${process.env.PATH ?? ''}` }
-      );
-
-      expect(result.success).toBe(true);
-      expect(result.data).toEqual({ pr_url: prUrl });
-      expect(readFileSync(logPath, 'utf8').trim().split('\n')[0]).toBe(
-        `pr view ${prUrl} --json url,state,mergeable,mergeStateStatus`
-      );
-    } finally {
-      rmSync(workspace, { recursive: true, force: true });
-    }
-  });
-
-  test('code-ready-gate resets on cycle', () => {
-    const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'code-ready-gate')!;
-    expect(gate.resetOnCycle).toBe(true);
-  });
-
   test('startNodeId points to the Coding step', () => {
     const codeStep = CODING_WORKFLOW.nodes.find((s) => s.agents[0]?.name === 'coder');
     expect(CODING_WORKFLOW.startNodeId).toBe(codeStep?.id);
@@ -1006,19 +671,33 @@ describe('RESEARCH_WORKFLOW template', () => {
     expect(RESEARCH_WORKFLOW.nodes[1].name).toBe('Review');
   });
 
-  test('has two channels: gated Research→Review and ungated Review→Research', () => {
+  test('has two channels: ungated Research→Review and ungated Review→Research', () => {
     expect(RESEARCH_WORKFLOW.channels).toHaveLength(2);
-    const gated = RESEARCH_WORKFLOW.channels!.find((c) => c.gateId === 'research-ready-gate');
-    expect(gated).toBeDefined();
-    expect(gated!.from).toBe('Research');
-    expect(gated!.to).toBe('Review');
+    const forward = RESEARCH_WORKFLOW.channels!.find(
+      (c) => c.from === 'Research' && c.to === 'Review'
+    );
+    expect(forward).toBeDefined();
+    expect(forward!.gateId).toBeUndefined();
     // direction field removed from WorkflowChannel
 
-    const backChannel = RESEARCH_WORKFLOW.channels!.find((c) => c.gateId === undefined);
+    const backChannel = RESEARCH_WORKFLOW.channels!.find(
+      (c) => c.from === 'Review' && c.to === 'Research'
+    );
     expect(backChannel).toBeDefined();
-    expect(backChannel!.from).toBe('Review');
-    expect(backChannel!.to).toBe('Research');
+    expect(backChannel!.gateId).toBeUndefined();
     expect(backChannel!.maxCycles).toBe(5);
+  });
+
+  test('has a send_message hook for Research → Review using pr_ready validator', () => {
+    const hooks = RESEARCH_WORKFLOW.hooks ?? [];
+    expect(hooks.length).toBeGreaterThanOrEqual(1);
+    const hook = hooks.find((h) => h.id === 'research-pr-ready');
+    expect(hook).toBeDefined();
+    expect(hook!.sourceNode).toBe('Research');
+    expect(hook!.targetNode).toBe('Review');
+    expect(hook!.method).toBe('send_message');
+    expect(hook!.validator).toEqual({ kind: 'built_in', id: 'pr_ready' });
+    expect(hook!.enabled).toBe(true);
   });
 
   test('channel from/to references match node names', () => {
@@ -1057,32 +736,6 @@ describe('RESEARCH_WORKFLOW template', () => {
   test('template id and spaceId are empty (not space-specific)', () => {
     expect(RESEARCH_WORKFLOW.id).toBe('');
     expect(RESEARCH_WORKFLOW.spaceId).toBe('');
-  });
-
-  test('research-ready-gate has a bash script that checks PR mergeability and outputs pr_url', () => {
-    const gate = RESEARCH_WORKFLOW.gates!.find((g) => g.id === 'research-ready-gate')!;
-    expect(gate.script).toBeDefined();
-    expect(gate.script!.interpreter).toBe('bash');
-    expect(gate.script!.timeoutMs).toBe(30000);
-    expect(gate.script!.source).toContain('gh pr view --json url,state,mergeable,mergeStateStatus');
-    expect(gate.script!.source).toContain('jq -r');
-    expect(gate.script!.source).toContain('.url');
-    expect(gate.script!.source).toContain('"OPEN"');
-    expect(gate.script!.source).toContain('.mergeable');
-    expect(gate.script!.source).toContain('"MERGEABLE"');
-    expect(gate.script!.source).toContain('.mergeStateStatus');
-    expect(gate.script!.source).toContain('"CLEAN"');
-    expect(gate.script!.source).toContain('"HAS_HOOKS"');
-    expect(gate.script!.source).toContain('exit 1');
-    expect(gate.script!.source).toContain('pr_url');
-    expect(gate.script!.source).toContain('not authenticated');
-    expect(gate.script!.source).toContain('reviewThreads(first:100)');
-    expect(gate.script!.source).toContain('isResolved == false');
-  });
-
-  test('research-ready-gate resets on cycle', () => {
-    const gate = RESEARCH_WORKFLOW.gates!.find((g) => g.id === 'research-ready-gate')!;
-    expect(gate.resetOnCycle).toBe(true);
   });
 
   test('nodes have agents with non-empty customPrompt', () => {
@@ -1209,27 +862,25 @@ describe('PLAN_AND_DECOMPOSE_WORKFLOW template', () => {
     expect(nodeIds.has(PLAN_AND_DECOMPOSE_WORKFLOW.endNodeId!)).toBe(true);
   });
 
-  test('has two gates', () => {
-    expect(PLAN_AND_DECOMPOSE_WORKFLOW.gates).toHaveLength(2);
+  test('has one gate', () => {
+    expect(PLAN_AND_DECOMPOSE_WORKFLOW.gates).toHaveLength(1);
   });
 
   test('gate IDs are correct', () => {
     const ids = PLAN_AND_DECOMPOSE_WORKFLOW.gates!.map((g) => g.id);
-    expect(ids).toContain('plan-pr-gate');
     expect(ids).toContain('plan-approval-gate');
   });
 
-  test('plan-pr-gate has script-based PR check with pr_url output', () => {
-    const gate = PLAN_AND_DECOMPOSE_WORKFLOW.gates!.find((g) => g.id === 'plan-pr-gate')!;
-    expect(gate.fields).toHaveLength(1);
-    expect(gate.fields[0].name).toBe('pr_url');
-    expect(gate.fields[0].type).toBe('string');
-    expect(gate.fields[0].check.op).toBe('exists');
-    expect(gate.fields[0].writers).toEqual(['*']);
-    expect(gate.script?.interpreter).toBe('bash');
-    expect(gate.script?.source.length).toBeGreaterThan(0);
-    // Planning can cycle back from Plan Review; PR state must be re-verified each cycle.
-    expect(gate.resetOnCycle).toBe(true);
+  test('has a send_message hook for Planning → Plan Review using pr_ready validator', () => {
+    const hooks = PLAN_AND_DECOMPOSE_WORKFLOW.hooks ?? [];
+    expect(hooks.length).toBeGreaterThanOrEqual(1);
+    const hook = hooks.find((h) => h.id === 'plan-pr-ready');
+    expect(hook).toBeDefined();
+    expect(hook!.sourceNode).toBe('Planning');
+    expect(hook!.targetNode).toBe('Plan Review');
+    expect(hook!.method).toBe('send_message');
+    expect(hook!.validator).toEqual({ kind: 'built_in', id: 'pr_ready' });
+    expect(hook!.enabled).toBe(true);
   });
 
   test('plan-approval-gate requires all four reviewers to approve', () => {
@@ -1252,7 +903,7 @@ describe('PLAN_AND_DECOMPOSE_WORKFLOW template', () => {
     const ch = PLAN_AND_DECOMPOSE_WORKFLOW.channels!;
 
     const planningToReview = ch.find((c) => c.from === 'Planning' && c.to === 'Plan Review');
-    expect(planningToReview?.gateId).toBe('plan-pr-gate');
+    expect(planningToReview?.gateId).toBeUndefined();
 
     const reviewToDispatcher = ch.find(
       (c) => c.from === 'Plan Review' && c.to === 'Task Dispatcher'
@@ -1485,7 +1136,7 @@ describe('getBuiltInWorkflows()', () => {
     workflow.gates![0].fields![0].writers = [];
 
     expect(validateWorkflowTemplateGateWriters(workflow)).toEqual([
-      `${workflow.name}.gates.code-ready-gate.fields.pr_url.writers: must contain at least one writer role`,
+      `${workflow.name}.gates.validation-complete-gate.fields.completion_mode.writers: must contain at least one writer role`,
     ]);
   });
 
@@ -1494,7 +1145,7 @@ describe('getBuiltInWorkflows()', () => {
     workflow.gates![0].fields![0].writers = ['Unknown Role'];
 
     expect(validateWorkflowTemplateGateWriters(workflow)).toEqual([
-      `${workflow.name}.gates.code-ready-gate.fields.pr_url.writers: unknown writer role "Unknown Role"`,
+      `${workflow.name}.gates.validation-complete-gate.fields.completion_mode.writers: unknown writer role "Unknown Role"`,
     ]);
   });
 });
@@ -1623,7 +1274,7 @@ describe('seedBuiltInWorkflows()', () => {
 
     const codeToReview = wf.channels!.find((c) => c.from === 'Coding' && c.to === 'Review');
     expect(codeToReview).toBeDefined();
-    expect(codeToReview!.gateId).toBe('code-ready-gate');
+    expect(codeToReview!.gateId).toBeUndefined();
 
     const codeToValidation = wf.channels!.find(
       (c) => c.from === 'Coding' && c.to === 'Validation Complete'
@@ -1646,12 +1297,12 @@ describe('seedBuiltInWorkflows()', () => {
     expect(validationToCode!.maxCycles).toBe(5);
   });
 
-  test('CODING_WORKFLOW seeded with three gates including validation-complete-gate', async () => {
+  test('CODING_WORKFLOW seeded with two gates including validation-complete-gate', async () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
-    expect(wf.gates).toHaveLength(3);
+    expect(wf.gates).toHaveLength(2);
     const gateIds = wf.gates!.map((g) => g.id).sort();
-    expect(gateIds).toEqual(['code-ready-gate', 'review-posted-gate', 'validation-complete-gate']);
+    expect(gateIds).toEqual(['review-posted-gate', 'validation-complete-gate']);
   });
 
   test('CODING_WORKFLOW seeded channels all have direction one-way', async () => {
@@ -1672,16 +1323,16 @@ describe('seedBuiltInWorkflows()', () => {
     }
   });
 
-  test('RESEARCH_WORKFLOW seeded with two channels (gated Research→Review, ungated Review→Research)', async () => {
+  test('RESEARCH_WORKFLOW seeded with two ungated channels', async () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === RESEARCH_WORKFLOW.name)!;
     expect(wf.channels).toHaveLength(2);
-    const gated = wf.channels!.find((c) => c.gateId === 'research-ready-gate');
-    expect(gated).toBeDefined();
-    expect(gated!.from).toBe('Research');
-    expect(gated!.to).toBe('Review');
-    const back = wf.channels!.find((c) => c.gateId === undefined);
+    const forward = wf.channels!.find((c) => c.from === 'Research' && c.to === 'Review');
+    expect(forward).toBeDefined();
+    expect(forward!.gateId).toBeUndefined();
+    const back = wf.channels!.find((c) => c.from === 'Review' && c.to === 'Research');
     expect(back).toBeDefined();
+    expect(back!.gateId).toBeUndefined();
     expect(back!.from).toBe('Review');
     expect(back!.to).toBe('Research');
   });
@@ -1704,6 +1355,20 @@ describe('seedBuiltInWorkflows()', () => {
       expect(nodeNames.has(ch.from as string)).toBe(true);
       expect(nodeNames.has(ch.to as string)).toBe(true);
     }
+  });
+
+  test('RESEARCH_WORKFLOW seeded with no gates', async () => {
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === RESEARCH_WORKFLOW.name)!;
+    expect(wf.gates ?? []).toHaveLength(0);
+  });
+
+  test('RESEARCH_WORKFLOW seeded with a pr_ready hook', async () => {
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === RESEARCH_WORKFLOW.name)!;
+    const hook = wf.hooks?.find((h) => h.id === 'research-pr-ready');
+    expect(hook).toBeDefined();
+    expect(hook!.validator).toEqual({ kind: 'built_in', id: 'pr_ready' });
   });
 
   test('REVIEW_ONLY_WORKFLOW seeded with no channels', async () => {
@@ -1753,27 +1418,35 @@ describe('seedBuiltInWorkflows()', () => {
     expect(wf.channels).toHaveLength(3);
   });
 
-  test('PLAN_AND_DECOMPOSE_WORKFLOW seeded with 2 gates', async () => {
+  test('PLAN_AND_DECOMPOSE_WORKFLOW seeded with 1 gate', async () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const wf = manager
       .listWorkflows(SPACE_ID)
       .find((w) => w.name === PLAN_AND_DECOMPOSE_WORKFLOW.name)!;
-    expect(wf.gates).toHaveLength(2);
-    const gateIds = wf.gates!.map((g) => g.id);
-    expect(gateIds).toContain('plan-pr-gate');
-    expect(gateIds).toContain('plan-approval-gate');
+    expect(wf.gates).toHaveLength(1);
+    expect(wf.gates![0].id).toBe('plan-approval-gate');
   });
 
-  test('PLAN_AND_DECOMPOSE_WORKFLOW seeded channels split into 2 gated + 1 ungated feedback', async () => {
+  test('PLAN_AND_DECOMPOSE_WORKFLOW seeded channels split into 1 gated + 1 ungated feedback', async () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const wf = manager
       .listWorkflows(SPACE_ID)
       .find((w) => w.name === PLAN_AND_DECOMPOSE_WORKFLOW.name)!;
     const gatedChannels = wf.channels!.filter((c) => c.gateId !== undefined);
-    expect(gatedChannels).toHaveLength(2);
+    expect(gatedChannels).toHaveLength(1);
     const cyclicChannels = wf.channels!.filter((c) => c.maxCycles !== undefined);
     // One cyclic feedback channel: Plan Review → Planning
     expect(cyclicChannels).toHaveLength(1);
+  });
+
+  test('PLAN_AND_DECOMPOSE_WORKFLOW seeded with a pr_ready hook', async () => {
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const wf = manager
+      .listWorkflows(SPACE_ID)
+      .find((w) => w.name === PLAN_AND_DECOMPOSE_WORKFLOW.name)!;
+    const hook = wf.hooks?.find((h) => h.id === 'plan-pr-ready');
+    expect(hook).toBeDefined();
+    expect(hook!.validator).toEqual({ kind: 'built_in', id: 'pr_ready' });
   });
 
   test('PLAN_AND_DECOMPOSE_WORKFLOW seeded channels reference node names or reviewer slot names', async () => {
@@ -1979,11 +1652,12 @@ describe('seedBuiltInWorkflows()', () => {
     const reviewNode = coding.nodes.find((n) => n.name === 'Review')!;
     expect(reviewNode.postApproval).toBeDefined();
 
-    manager.updateWorkflow(coding.id, {
-      nodes: coding.nodes.map((node) =>
-        node.id === reviewNode.id ? { ...node, name: 'Human Review' } : node
-      ),
-    });
+    // Bypass manager validation — only rename node, don't touch hooks.
+    // Direct DB update avoids hook validation against renamed nodes.
+    db.prepare(`UPDATE space_workflow_nodes SET name = ? WHERE id = ?`).run(
+      'Human Review',
+      reviewNode.id
+    );
     db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
       'stale-hash',
       coding.id
@@ -2092,7 +1766,7 @@ describe('seedBuiltInWorkflows()', () => {
     const stalePrompt = templatePrompt
       .replace(
         '6. If code changed: hand off by calling `send_message` on the outbound gated ' +
-          'review channel with the PR URL in its `data` payload. Use the current target and ' +
+          'review channel with `data: { pr_url: "<url>" }`. Use the current target and ' +
           'required data fields from the Runtime Execution Contract injected into your task ' +
           'prompt. `save_artifact` alone is insufficient; only `send_message` delivers ' +
           'the gated handoff. Always include the PR URL data field on every `send_message` ' +
@@ -2189,7 +1863,7 @@ describe('seedBuiltInWorkflows()', () => {
     const stalePrompt = templatePrompt
       .replace(
         'When implementation is ready, ensure the PR is open and mergeable, then call `send_message` ' +
-          'on the outbound gated review channel with the PR URL in its `data` payload. Use the current ' +
+          'on the outbound gated review channel with `data: { pr_url: "<url>" }`. Use the current ' +
           'target and required data fields from the Runtime Execution Contract injected into your task ' +
           'prompt. `save_artifact` alone is insufficient; only `send_message` delivers the gated ' +
           'handoff. Coding is not the end node — the task-completion tools (`approve_task`, ' +
@@ -2200,7 +1874,7 @@ describe('seedBuiltInWorkflows()', () => {
       )
       .replace(
         '4. Hand off by calling `send_message` on the outbound gated review channel with ' +
-          'the PR URL in its `data` payload; `save_artifact` alone will not deliver the handoff\n',
+          '`data: { pr_url: "<url>" }`; `save_artifact` alone will not deliver the handoff\n',
         '4. Write code-pr-gate with field pr_url so Review can activate\n'
       );
     expect(stalePrompt).not.toBe(templatePrompt);
@@ -2384,18 +2058,20 @@ describe('seedBuiltInWorkflows()', () => {
     expect(result![0].features).toEqual({ codex_review_bot: true });
   });
 
-  test('re-stamp preserves codex_review_bot on non-approval gates', () => {
+  test('re-stamp migrates codex_review_bot on approval gate to node toggle', () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const workflow = manager
       .listWorkflows(SPACE_ID)
       .find((w) => w.name === FULLSTACK_QA_LOOP_WORKFLOW.name)!;
-    const gatesWithNonApprovalCodex = workflow.gates!.map((gate) =>
-      gate.id !== 'code-pr-gate' ? gate : { ...gate, features: { codex_review_bot: true } }
+    const gatesWithCodexFeature = workflow.gates!.map((gate) =>
+      gate.id === 'review-approval-gate'
+        ? { ...gate, features: { codex_review_bot: true, ...(gate.features ?? {}) } }
+        : gate
     );
 
-    repo.updateWorkflow(workflow.id, { gates: gatesWithNonApprovalCodex });
+    repo.updateWorkflow(workflow.id, { gates: gatesWithCodexFeature });
     db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
-      'pre-non-approval-codex-hash',
+      'pre-codex-feature-hash',
       workflow.id
     );
 
@@ -2403,8 +2079,9 @@ describe('seedBuiltInWorkflows()', () => {
     expect(result.restamped).toContain(FULLSTACK_QA_LOOP_WORKFLOW.name);
 
     const after = manager.getWorkflow(workflow.id)!;
-    const gate = after.gates!.find((g) => g.id === 'code-pr-gate')!;
-    expect(gate.features?.codex_review_bot).toBe(true);
+    const gate = after.gates!.find((g) => g.id === 'review-approval-gate')!;
+    expect(gate.features?.codex_review_bot).toBeUndefined();
+    expect(after.nodes.find((node) => node.name === 'Review')?.requireCodexApproval).toBe(true);
   });
 
   test('re-stamp preserves codex_review_bot on custom-polled approval gates', () => {
@@ -2582,23 +2259,186 @@ describe('seedBuiltInWorkflows()', () => {
     ).toBe(true);
   });
 
+  test('re-stamp replaces legacy PR-ready gate channels with hook-validated channels', () => {
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+    const customSecurityChannel = {
+      id: 'custom-security-review-channel',
+      from: 'Coding',
+      to: 'Security Review',
+      gateId: 'code-ready-gate',
+    } as NonNullable<SpaceWorkflow['channels']>[number];
+    const legacyChannels = [
+      ...coding.channels!.map((channel) =>
+        channel.from === 'Coding' && channel.to === 'Review'
+          ? { ...channel, gateId: 'code-ready-gate' }
+          : channel
+      ),
+      customSecurityChannel,
+    ];
+
+    repo.updateWorkflow(coding.id, { channels: legacyChannels });
+    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+      'legacy-pr-gate-channel',
+      coding.id
+    );
+
+    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    expect(result.restamped).toContain(CODING_WORKFLOW.name);
+    expect(result.errors).toHaveLength(0);
+
+    const after = manager.getWorkflow(coding.id)!;
+    const codeToReview = after.channels!.filter(
+      (channel) => channel.from === 'Coding' && channel.to === 'Review'
+    );
+    expect(codeToReview).toHaveLength(1);
+    expect(codeToReview[0].gateId).toBeUndefined();
+    expect(
+      after.channels!.some(
+        (channel) =>
+          channel.from === 'Coding' &&
+          channel.to === 'Security Review' &&
+          channel.gateId === 'code-ready-gate'
+      )
+    ).toBe(true);
+  });
+
+  test('re-stamp removes renamed legacy PR-ready gate channel', () => {
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+    const codingNode = coding.nodes.find((node) => node.name === 'Coding')!;
+    const reviewNode = coding.nodes.find((node) => node.name === 'Review')!;
+
+    db.prepare(`UPDATE space_workflow_nodes SET name = ? WHERE id = ?`).run(
+      'Implementation',
+      codingNode.id
+    );
+    db.prepare(`UPDATE space_workflow_nodes SET name = ? WHERE id = ?`).run(
+      'Human Review',
+      reviewNode.id
+    );
+    repo.updateWorkflow(coding.id, {
+      channels: [
+        ...coding.channels!.filter(
+          (channel) => !(channel.from === 'Coding' && channel.to === 'Review')
+        ),
+        {
+          id: 'renamed-legacy-pr-ready-channel',
+          from: 'Implementation',
+          to: 'Human Review',
+          gateId: 'code-ready-gate',
+        },
+      ],
+    });
+    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+      'renamed-legacy-pr-gate-channel',
+      coding.id
+    );
+
+    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    expect(result.restamped).toContain(CODING_WORKFLOW.name);
+    expect(result.errors).toHaveLength(0);
+
+    const after = manager.getWorkflow(coding.id)!;
+    const implementationToHumanReview = after.channels!.filter(
+      (channel) => channel.from === 'Implementation' && channel.to === 'Human Review'
+    );
+    expect(implementationToHumanReview).toHaveLength(1);
+    expect(implementationToHumanReview[0].gateId).toBeUndefined();
+  });
+
+  test('re-stamp remaps hook node refs and authorized slots when source node and slot were renamed', () => {
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+    const codingNode = coding.nodes.find((node) => node.name === 'Coding')!;
+    const reviewNode = coding.nodes.find((node) => node.name === 'Review')!;
+    const renamedCodingNode = {
+      ...codingNode,
+      agents: codingNode.agents.map((agent) =>
+        agent.name === 'coder' ? { ...agent, name: 'engineer' } : agent
+      ),
+    };
+
+    db.prepare(`UPDATE space_workflow_nodes SET name = ?, config = ? WHERE id = ?`).run(
+      'Implementation',
+      JSON.stringify({ agents: renamedCodingNode.agents }),
+      codingNode.id
+    );
+    db.prepare(`UPDATE space_workflow_nodes SET name = ? WHERE id = ?`).run(
+      'Human Review',
+      reviewNode.id
+    );
+    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+      'renamed-source-slot',
+      coding.id
+    );
+
+    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    expect(result.restamped).toContain(CODING_WORKFLOW.name);
+    expect(result.errors).toHaveLength(0);
+
+    const after = manager.getWorkflow(coding.id)!;
+    const hook = after.hooks!.find((h) => h.id === 'code-pr-ready')!;
+    expect(hook.sourceNode).toBe('Implementation');
+    expect(hook.targetNode).toBe('Human Review');
+    expect(hook.authorizedCallers?.[0]?.sourceNode).toBe('Implementation');
+    expect(hook.authorizedCallers?.[0]?.agentSlots).toEqual(['engineer']);
+  });
+
+  test('re-stamp preserves user-added custom hooks while updating template hooks', () => {
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+    const customHook = {
+      id: 'custom-audit-hook',
+      enabled: true,
+      sourceNode: 'Coding',
+      method: 'save_artifact',
+      classification: 'side_effect',
+      validator: { kind: 'script', interpreter: 'bash', source: 'echo \'{"type":"allow"}\'' },
+      authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+    } as NonNullable<SpaceWorkflow['hooks']>[number];
+
+    repo.updateWorkflow(coding.id, { hooks: [...(coding.hooks ?? []), customHook] });
+    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+      'custom-hook-preservation',
+      coding.id
+    );
+
+    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    expect(result.restamped).toContain(CODING_WORKFLOW.name);
+    expect(result.errors).toHaveLength(0);
+
+    const after = manager.getWorkflow(coding.id)!;
+    expect(after.hooks?.some((hook) => hook.id === 'custom-audit-hook')).toBe(true);
+    expect(after.hooks?.some((hook) => hook.id === 'code-pr-ready')).toBe(true);
+  });
+
   test('re-stamp maps appended channels to renamed built-in nodes by agent slot', () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
     const codingNode = coding.nodes.find((node) => node.name === 'Coding')!;
     const reviewNode = coding.nodes.find((node) => node.name === 'Review')!;
-    const legacyNodes = coding.nodes.filter((node) => node.name !== 'Validation Complete');
+    // Bypass manager validation — direct DB rename + channel removal.
+    // Manager validates hooks against node names; direct DB avoids that.
+    db.prepare(`UPDATE space_workflow_nodes SET name = ? WHERE id = ?`).run(
+      'Implementation',
+      codingNode.id
+    );
+    db.prepare(`UPDATE space_workflow_nodes SET name = ? WHERE id = ?`).run(
+      'Human Review',
+      reviewNode.id
+    );
+    // Remove Validation Complete node and its channels
+    const valNode = coding.nodes.find((n) => n.name === 'Validation Complete')!;
     const legacyChannels = coding.channels!.filter(
       (channel) => channel.from !== 'Coding' || channel.to !== 'Validation Complete'
     );
-    manager.updateWorkflow(coding.id, {
-      nodes: legacyNodes.map((node) => {
-        if (node.id === codingNode.id) return { ...node, name: 'Implementation' };
-        if (node.id === reviewNode.id) return { ...node, name: 'Human Review' };
-        return node;
-      }),
-      channels: legacyChannels,
-    });
+    db.prepare(`DELETE FROM space_workflow_nodes WHERE id = ?`).run(valNode.id);
+    db.prepare(`UPDATE space_workflows SET channels = ? WHERE id = ?`).run(
+      JSON.stringify(legacyChannels),
+      coding.id
+    );
+
     db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
       'renamed-node-drift',
       coding.id
@@ -2919,7 +2759,7 @@ describe('seedBuiltInWorkflows()', () => {
       .listWorkflows(SPACE_ID)
       .find((w) => w.name === PLAN_AND_DECOMPOSE_WORKFLOW.name)!;
     const planNode = wf.nodes.find((n) => n.name === 'Planning');
-    expect(planNode?.agents[0].customPrompt?.value).toContain('plan-pr-gate');
+    expect(planNode?.agents[0].customPrompt?.value).toContain('hook validates');
     const planReviewNode = wf.nodes.find((n) => n.name === 'Plan Review');
     expect(planReviewNode?.agents[0].customPrompt?.value).toContain('plan-approval-gate');
     const dispatcherNode = wf.nodes.find((n) => n.name === 'Task Dispatcher');
@@ -2938,13 +2778,6 @@ describe('seedBuiltInWorkflows()', () => {
 
   // ─── Gate preservation per workflow ──────────────────────────────────────
 
-  test('RESEARCH_WORKFLOW seeded with one gate (research-ready-gate)', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-    const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === RESEARCH_WORKFLOW.name)!;
-    expect(wf.gates).toHaveLength(1);
-    expect(wf.gates![0].id).toBe('research-ready-gate');
-  });
-
   test('REVIEW_ONLY_WORKFLOW seeded with no gates', () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === REVIEW_ONLY_WORKFLOW.name)!;
@@ -2954,15 +2787,14 @@ describe('seedBuiltInWorkflows()', () => {
   test('CODING_WORKFLOW gate fields are preserved during seeding', () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
-    const gate = wf.gates!.find((g) => g.id === 'code-ready-gate')!;
-    expect(gate.fields).toHaveLength(1);
-    expect(gate.fields[0].name).toBe('pr_url');
+    const gate = wf.gates!.find((g) => g.id === 'validation-complete-gate')!;
+    expect(gate.fields).toHaveLength(3);
+    expect(gate.fields[0].name).toBe('completion_mode');
     expect(gate.fields[0].type).toBe('string');
-    expect(gate.fields[0].check).toEqual({ op: 'exists' });
+    expect(gate.fields[0].check).toEqual({ op: '==', value: 'validation_only' });
     expect(gate.script).toBeDefined();
     expect(gate.script!.interpreter).toBe('bash');
     expect(gate.script!.timeoutMs).toBe(30000);
-    expect(gate.poll?.target).toBe('from');
     expect(gate.resetOnCycle).toBe(true);
   });
 
@@ -2971,9 +2803,6 @@ describe('seedBuiltInWorkflows()', () => {
     const wf = manager
       .listWorkflows(SPACE_ID)
       .find((w) => w.name === PLAN_AND_DECOMPOSE_WORKFLOW.name)!;
-    const planPr = wf.gates!.find((g) => g.id === 'plan-pr-gate')!;
-    // Planning cycles back on feedback; PR state must be re-verified per cycle.
-    expect(planPr.resetOnCycle).toBe(true);
     const planApproval = wf.gates!.find((g) => g.id === 'plan-approval-gate')!;
     expect(planApproval.resetOnCycle).toBe(true);
   });
@@ -3000,7 +2829,7 @@ describe('seedBuiltInWorkflows()', () => {
     expect(codeToReview!.id).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
     );
-    expect(codeToReview!.gateId).toBe('code-ready-gate');
+    expect(codeToReview!.gateId).toBeUndefined();
     // direction field removed from WorkflowChannel schema
   });
 
@@ -3432,14 +3261,9 @@ describe('Coding Workflow export/import round-trip', () => {
 // baked into the database at seed time.
 
 describe('getBuiltInGateScript()', () => {
-  test('returns the bash script for code-ready-gate in Coding Workflow', () => {
+  test('getBuiltInGateScript returns undefined for removed code-ready-gate', () => {
     const script = getBuiltInGateScript(CODING_WORKFLOW.name, 'code-ready-gate');
-    expect(script).toBeDefined();
-    expect(script?.interpreter).toBe('bash');
-    expect(script?.source.length).toBeGreaterThan(0);
-    // The PR-ready script references gh pr view and checks mergeability
-    expect(script?.source).toContain('gh pr view');
-    expect(script?.source).toContain('MERGEABLE');
+    expect(script).toBeUndefined();
   });
 
   test('returns the bash script for review-posted-gate in Coding Workflow', () => {
@@ -3453,10 +3277,9 @@ describe('getBuiltInGateScript()', () => {
     expect(script?.source).toContain('No review or PR comment found on');
   });
 
-  test('returns the bash script for plan-pr-gate in Plan & Decompose Workflow', () => {
+  test('getBuiltInGateScript returns undefined for removed plan-pr-gate', () => {
     const script = getBuiltInGateScript(PLAN_AND_DECOMPOSE_WORKFLOW.name, 'plan-pr-gate');
-    expect(script).toBeDefined();
-    expect(script?.interpreter).toBe('bash');
+    expect(script).toBeUndefined();
   });
 
   test('returns undefined for a field-only gate (plan-approval-gate has no script)', () => {
@@ -3465,7 +3288,7 @@ describe('getBuiltInGateScript()', () => {
   });
 
   test('returns undefined when the template name does not match any built-in', () => {
-    const script = getBuiltInGateScript('Unknown Template', 'code-ready-gate');
+    const script = getBuiltInGateScript('Unknown Template', 'nonexistent-gate');
     expect(script).toBeUndefined();
   });
 
@@ -3635,11 +3458,11 @@ describe('REVIEW_ONLY_WORKFLOW agent slot customPrompt', () => {
 });
 
 describe('PLAN_AND_DECOMPOSE_WORKFLOW agent slot customPrompt', () => {
-  test('Planning node planner has non-empty customPrompt referencing plan-pr-gate', () => {
+  test('Planning node planner has non-empty customPrompt referencing PR-ready hook', () => {
     const node = PLAN_AND_DECOMPOSE_WORKFLOW.nodes.find((n) => n.name === 'Planning')!;
     const agent = node.agents[0];
     expect(agent.customPrompt?.value).toBeDefined();
-    expect(agent.customPrompt?.value).toContain('plan-pr-gate');
+    expect(agent.customPrompt?.value).toContain('hook validates');
   });
 
   test('Plan Review node has 4 lens-specific reviewers, each referencing plan-approval-gate and its lens', () => {
@@ -4494,207 +4317,163 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     expect(prompt).toContain('poll every 60 seconds');
     expect(prompt).toContain('10 minutes');
   });
+});
 
-  test('FULLSTACK_QA_LOOP_WORKFLOW code-pr-gate lets only Coding publish PR URL', () => {
-    const gate = FULLSTACK_QA_LOOP_WORKFLOW.gates!.find((g) => g.id === 'code-pr-gate')!;
-    const prField = gate.fields!.find((f) => f.name === 'pr_url')!;
+test('FULLSTACK_QA_LOOP_WORKFLOW has layout entries for actual template node IDs', () => {
+  const nodeIds = new Set(FULLSTACK_QA_LOOP_WORKFLOW.nodes.map((n) => n.id));
+  expect(FULLSTACK_QA_LOOP_WORKFLOW.layout).toBeDefined();
+  expect(Object.keys(FULLSTACK_QA_LOOP_WORKFLOW.layout!)).toEqual(
+    FULLSTACK_QA_LOOP_WORKFLOW.nodes.map((n) => n.id)
+  );
+  for (const layoutNodeId of Object.keys(FULLSTACK_QA_LOOP_WORKFLOW.layout!)) {
+    expect(nodeIds.has(layoutNodeId)).toBe(true);
+  }
+});
 
-    expect(prField.type).toBe('string');
-    expect(prField.writers).toEqual(['Coding', 'coder']);
-    expect(prField.check).toEqual({ op: 'exists' });
-  });
+test('FULLSTACK_QA_LOOP_WORKFLOW has a send_message hook for Coding → Review using pr_ready validator', () => {
+  const hooks = FULLSTACK_QA_LOOP_WORKFLOW.hooks ?? [];
+  expect(hooks.length).toBeGreaterThanOrEqual(1);
+  const hook = hooks.find((h) => h.id === 'fullstack-code-pr-ready');
+  expect(hook).toBeDefined();
+  expect(hook!.sourceNode).toBe('Coding');
+  expect(hook!.targetNode).toBe('Review');
+  expect(hook!.method).toBe('send_message');
+  expect(hook!.validator).toEqual({ kind: 'built_in', id: 'pr_ready' });
+  expect(hook!.enabled).toBe(true);
+});
 
-  test('FULLSTACK_QA_LOOP_WORKFLOW coder prompt uses behavioral gated handoff wording', () => {
-    const codingNode = FULLSTACK_QA_LOOP_WORKFLOW.nodes.find((n) => n.name === 'Coding')!;
-    const prompt = codingNode.agents[0].customPrompt!.value;
+test('FULLSTACK_QA_LOOP_WORKFLOW coder prompt uses behavioral gated handoff wording', () => {
+  const codingNode = FULLSTACK_QA_LOOP_WORKFLOW.nodes.find((n) => n.name === 'Coding')!;
+  const prompt = codingNode.agents[0].customPrompt!.value;
 
-    expect(prompt).toContain('call `send_message` on the outbound gated review channel');
-    expect(prompt).toContain('Use the current target and required data fields');
-    expect(prompt).toContain('`save_artifact` alone is insufficient');
-    expect(prompt).not.toContain('send_message(target="Review"');
-    expect(prompt).not.toContain('code-pr-gate');
-  });
+  expect(prompt).toContain('call `send_message` on the outbound gated review channel');
+  expect(prompt).toContain('Use the current target and required data fields');
+  expect(prompt).toContain('`save_artifact` alone is insufficient');
+  expect(prompt).not.toContain('send_message(target="Review"');
+  expect(prompt).not.toContain('code-pr-gate');
+});
 
-  test('FULLSTACK_QA_LOOP_WORKFLOW has layout entries for actual template node IDs', () => {
-    const nodeIds = new Set(FULLSTACK_QA_LOOP_WORKFLOW.nodes.map((n) => n.id));
-    expect(FULLSTACK_QA_LOOP_WORKFLOW.layout).toBeDefined();
-    expect(Object.keys(FULLSTACK_QA_LOOP_WORKFLOW.layout!)).toEqual(
-      FULLSTACK_QA_LOOP_WORKFLOW.nodes.map((n) => n.id)
-    );
-    for (const layoutNodeId of Object.keys(FULLSTACK_QA_LOOP_WORKFLOW.layout!)) {
-      expect(nodeIds.has(layoutNodeId)).toBe(true);
-    }
-  });
+test('FULLSTACK_QA_LOOP_WORKFLOW Review node forbids gate-write while findings are open', () => {
+  const reviewNode = FULLSTACK_QA_LOOP_WORKFLOW.nodes.find((n) => n.name === 'Review')!;
+  const prompt = reviewNode.agents[0].customPrompt!.value;
+  // Review is mid-graph in this workflow — terminal tools are unavailable
+  // to it — but the pre-conditions block must still be present so the
+  // reviewer does not silently flip review-approval-gate while findings
+  // are open.
+  expect(prompt).toMatch(
+    /terminal-action tool contract|Terminal-action contract|terminal hand-off|terminal action|terminal calls|terminal actions|terminal-action tool descriptions/
+  );
+  expect(prompt).toMatch(
+    /P0[–-]P3|zero findings|zero P0-P3|findings remain|blocking findings|QA passes|Reviewer System Contract/i
+  );
+  expect(prompt).toMatch(
+    /REQUEST_CHANGES|changes needed|requesting changes|more research is needed|findings remain|QA fails/i
+  );
+  expect(prompt).toContain('review-approval-gate');
+  // Failure-path routing: the prompt must explicitly tell the reviewer to
+  // send feedback back to Coding via send_message rather than silently
+  // stalling. Asserting this catches future drift in the routing wording.
+  expect(prompt).toMatch(
+    /send_message\(target="Coding", \.\.\.\)|send actionable feedback to Coding|feedback to Coding/i
+  );
+  // Same approval semantic clarifier: even though approve_task /
+  // submit_for_approval are unavailable on this mid-graph node, writing
+  // the approval gate is the equivalent terminal hand-off and the prompt
+  // must call out the parallel so a future split (where the tools become
+  // available) does not accidentally remove the gating.
+  expect(prompt).toMatch(
+    /same approval semantic|terminal-action tool contract|terminal hand-off|terminal.*contract/i
+  );
+});
 
-  test('FULLSTACK_QA_LOOP_WORKFLOW PR gate permits BLOCKED mergeStateStatus before review', async () => {
-    const gate = FULLSTACK_QA_LOOP_WORKFLOW.gates!.find((g) => g.id === 'code-pr-gate')!;
-    const workspace = mkdtempSync(join(tmpdir(), 'neokai-fullstack-pr-ready-blocked-'));
-    const binDir = join(workspace, 'bin');
-    const ghPath = join(binDir, 'gh');
-    const prUrl = 'https://github.com/test/repo/pull/42';
+test('post-approval merge instructions are safe for isolated worktrees', () => {
+  expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('git fetch origin dev');
+  expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('do NOT `git checkout dev`');
+  expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('git checkout dev && git pull');
+});
 
-    try {
-      mkdirSync(binDir);
-      writeFileSync(
-        ghPath,
-        [
-          '#!/usr/bin/env bash',
-          `if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$3" = ${JSON.stringify(prUrl)} ]; then`,
-          `  printf '%s\\n' '{"url":"${prUrl}","state":"OPEN","mergeable":"MERGEABLE","mergeStateStatus":"BLOCKED"}'`,
-          '  exit 0',
-          'fi',
-          'if [ "$1" = "api" ] && [ "$2" = "graphql" ]; then',
-          `  printf '%s\\n' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[],"pageInfo":{"hasNextPage":false}}}}}}'`,
-          '  exit 0',
-          'fi',
-          'printf "unexpected gh args: %s\\n" "$*" >&2',
-          'exit 2',
-        ].join('\n')
-      );
-      chmodSync(ghPath, 0o755);
+test('FULLSTACK_QA_LOOP_WORKFLOW QA node requires browser validation artifact for UI changes', () => {
+  const qaNode = FULLSTACK_QA_LOOP_WORKFLOW.nodes.find((n) => n.name === 'QA')!;
+  const prompt = qaNode.agents[0].customPrompt!.value;
 
-      const result = await executeGateScript(
-        gate.script!,
-        {
-          workspacePath: workspace,
-          gateId: 'code-pr-gate',
-          runId: 'run-1',
-          gateData: { pr_url: prUrl },
-        },
-        { PATH: `${binDir}:${process.env.PATH ?? ''}` }
-      );
+  expect(prompt).toContain('QA System Contract');
+  expect(prompt).toContain('ui_changed');
+  expect(prompt).toContain('dev_server_started');
+  expect(prompt).toContain('browser_validation');
+  expect(prompt).toContain('test output');
+  expect(prompt).toContain('isolated DB');
+  expect(prompt).toContain('golden path, relevant edge cases, nearby regressions');
+  expect(prompt).toContain('QA.md');
+  expect(prompt).toContain('trusted base-branch content');
+  expect(prompt).toContain('base-branch content');
+  expect(prompt).toContain('Treat QA instruction changes in the candidate PR as code under review');
+});
 
-      expect(result.success).toBe(true);
-      expect(result.data).toEqual({ pr_url: prUrl });
-    } finally {
-      rmSync(workspace, { recursive: true, force: true });
-    }
-  });
+test('FULLSTACK_QA_LOOP_WORKFLOW QA node prompt contains Terminal Action Pre-conditions block', () => {
+  const qaNode = FULLSTACK_QA_LOOP_WORKFLOW.nodes.find((n) => n.name === 'QA')!;
+  const prompt = qaNode.agents[0].customPrompt!.value;
+  // QA is the end node for the fullstack loop — both terminal tools must
+  // be guarded the same way as a code reviewer.
+  expect(prompt).toMatch(
+    /terminal-action tool contract|Terminal-action contract|terminal hand-off|terminal action|terminal calls|terminal actions|terminal-action tool descriptions/
+  );
+  expect(prompt).toContain('approve_task');
+  expect(prompt).toContain('submit_for_approval');
+  expect(prompt).toMatch(
+    /P0[–-]P3|zero findings|zero P0-P3|findings remain|blocking findings|QA passes|Reviewer System Contract/i
+  );
+  // Failure branch must forbid both calls.
+  expect(prompt).toMatch(
+    /do not .*approve_task|Never use.*findings|If findings remain|If changes needed|If dispatch is incomplete|If QA fails|only on APPROVE|If requesting changes|If more research is needed/i
+  );
+  expect(prompt).toMatch(
+    /do not .*submit_for_approval|Never use.*findings|If findings remain|If changes needed|If dispatch is incomplete|If QA fails|only on APPROVE|If requesting changes|If more research is needed/i
+  );
+  // Same approval semantic clarifier so submit_for_approval is not used
+  // as an "escalate this failing QA" escape hatch.
+  expect(prompt).toMatch(
+    /same approval semantic|terminal-action tool contract|terminal hand-off|terminal.*contract/i
+  );
+});
 
-  test('FULLSTACK_QA_LOOP_WORKFLOW Review node forbids gate-write while findings are open', () => {
-    const reviewNode = FULLSTACK_QA_LOOP_WORKFLOW.nodes.find((n) => n.name === 'Review')!;
-    const prompt = reviewNode.agents[0].customPrompt!.value;
-    // Review is mid-graph in this workflow — terminal tools are unavailable
-    // to it — but the pre-conditions block must still be present so the
-    // reviewer does not silently flip review-approval-gate while findings
-    // are open.
+test('PLAN_AND_DECOMPOSE_WORKFLOW Plan Review reviewers carry Terminal Action Pre-conditions', () => {
+  const reviewNode = PLAN_AND_DECOMPOSE_WORKFLOW.nodes.find((n) => n.name === 'Plan Review')!;
+  expect(reviewNode.agents).toHaveLength(4);
+  for (const agent of reviewNode.agents) {
+    const prompt = agent.customPrompt!.value;
+    // Plan reviewers are not end-node agents but the same gating
+    // principle applies — voting `approved: true` while P0–P3 findings
+    // are open is the gate-write equivalent of `approve_task`.
     expect(prompt).toMatch(
       /terminal-action tool contract|Terminal-action contract|terminal hand-off|terminal action|terminal calls|terminal actions|terminal-action tool descriptions/
     );
     expect(prompt).toMatch(
       /P0[–-]P3|zero findings|zero P0-P3|findings remain|blocking findings|QA passes|Reviewer System Contract/i
     );
-    expect(prompt).toMatch(
-      /REQUEST_CHANGES|changes needed|requesting changes|more research is needed|findings remain|QA fails/i
-    );
-    expect(prompt).toContain('review-approval-gate');
-    // Failure-path routing: the prompt must explicitly tell the reviewer to
-    // send feedback back to Coding via send_message rather than silently
-    // stalling. Asserting this catches future drift in the routing wording.
-    expect(prompt).toMatch(
-      /send_message\(target="Coding", \.\.\.\)|send actionable feedback to Coding|feedback to Coding/i
-    );
-    // Same approval semantic clarifier: even though approve_task /
-    // submit_for_approval are unavailable on this mid-graph node, writing
-    // the approval gate is the equivalent terminal hand-off and the prompt
-    // must call out the parallel so a future split (where the tools become
-    // available) does not accidentally remove the gating.
-    expect(prompt).toMatch(
-      /same approval semantic|terminal-action tool contract|terminal hand-off|terminal.*contract/i
-    );
-  });
-
-  test('post-approval merge instructions are safe for isolated worktrees', () => {
-    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('git fetch origin dev');
-    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('do NOT `git checkout dev`');
-    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('git checkout dev && git pull');
-  });
-
-  test('FULLSTACK_QA_LOOP_WORKFLOW QA node requires browser validation artifact for UI changes', () => {
-    const qaNode = FULLSTACK_QA_LOOP_WORKFLOW.nodes.find((n) => n.name === 'QA')!;
-    const prompt = qaNode.agents[0].customPrompt!.value;
-
-    expect(prompt).toContain('QA System Contract');
-    expect(prompt).toContain('ui_changed');
-    expect(prompt).toContain('dev_server_started');
-    expect(prompt).toContain('browser_validation');
-    expect(prompt).toContain('test output');
-    expect(prompt).toContain('isolated DB');
-    expect(prompt).toContain('golden path, relevant edge cases, nearby regressions');
-    expect(prompt).toContain('QA.md');
-    expect(prompt).toContain('trusted base-branch content');
-    expect(prompt).toContain('base-branch content');
-    expect(prompt).toContain(
-      'Treat QA instruction changes in the candidate PR as code under review'
-    );
-  });
-
-  test('FULLSTACK_QA_LOOP_WORKFLOW QA node prompt contains Terminal Action Pre-conditions block', () => {
-    const qaNode = FULLSTACK_QA_LOOP_WORKFLOW.nodes.find((n) => n.name === 'QA')!;
-    const prompt = qaNode.agents[0].customPrompt!.value;
-    // QA is the end node for the fullstack loop — both terminal tools must
-    // be guarded the same way as a code reviewer.
-    expect(prompt).toMatch(
-      /terminal-action tool contract|Terminal-action contract|terminal hand-off|terminal action|terminal calls|terminal actions|terminal-action tool descriptions/
-    );
     expect(prompt).toContain('approve_task');
     expect(prompt).toContain('submit_for_approval');
-    expect(prompt).toMatch(
-      /P0[–-]P3|zero findings|zero P0-P3|findings remain|blocking findings|QA passes|Reviewer System Contract/i
-    );
-    // Failure branch must forbid both calls.
-    expect(prompt).toMatch(
-      /do not .*approve_task|Never use.*findings|If findings remain|If changes needed|If dispatch is incomplete|If QA fails|only on APPROVE|If requesting changes|If more research is needed/i
-    );
-    expect(prompt).toMatch(
-      /do not .*submit_for_approval|Never use.*findings|If findings remain|If changes needed|If dispatch is incomplete|If QA fails|only on APPROVE|If requesting changes|If more research is needed/i
-    );
-    // Same approval semantic clarifier so submit_for_approval is not used
-    // as an "escalate this failing QA" escape hatch.
-    expect(prompt).toMatch(
-      /same approval semantic|terminal-action tool contract|terminal hand-off|terminal.*contract/i
-    );
-  });
+  }
+});
 
-  test('PLAN_AND_DECOMPOSE_WORKFLOW Plan Review reviewers carry Terminal Action Pre-conditions', () => {
-    const reviewNode = PLAN_AND_DECOMPOSE_WORKFLOW.nodes.find((n) => n.name === 'Plan Review')!;
-    expect(reviewNode.agents).toHaveLength(4);
-    for (const agent of reviewNode.agents) {
-      const prompt = agent.customPrompt!.value;
-      // Plan reviewers are not end-node agents but the same gating
-      // principle applies — voting `approved: true` while P0–P3 findings
-      // are open is the gate-write equivalent of `approve_task`.
-      expect(prompt).toMatch(
-        /terminal-action tool contract|Terminal-action contract|terminal hand-off|terminal action|terminal calls|terminal actions|terminal-action tool descriptions/
-      );
-      expect(prompt).toMatch(
-        /P0[–-]P3|zero findings|zero P0-P3|findings remain|blocking findings|QA passes|Reviewer System Contract/i
-      );
-      expect(prompt).toContain('approve_task');
-      expect(prompt).toContain('submit_for_approval');
-    }
-  });
-
-  test('PLAN_AND_DECOMPOSE_WORKFLOW Task Dispatcher prompt forbids terminal calls while dispatch incomplete', () => {
-    const dispatcherNode = PLAN_AND_DECOMPOSE_WORKFLOW.nodes.find(
-      (n) => n.name === 'Task Dispatcher'
-    )!;
-    const prompt = dispatcherNode.agents[0].customPrompt!.value;
-    expect(prompt).toMatch(
-      /terminal-action tool contract|Terminal-action contract|terminal hand-off|terminal action|terminal calls|terminal actions|terminal-action tool descriptions/
-    );
-    expect(prompt).toContain('approve_task');
-    expect(prompt).toContain('submit_for_approval');
-    // Dispatcher's REQUEST_CHANGES analogue: dispatch incomplete.
-    expect(prompt).toMatch(
-      /do not .*approve_task|Never use.*findings|If findings remain|If changes needed|If dispatch is incomplete|If QA fails|only on APPROVE|If requesting changes|If more research is needed/i
-    );
-    expect(prompt).toMatch(
-      /do not .*submit_for_approval|Never use.*findings|If findings remain|If changes needed|If dispatch is incomplete|If QA fails|only on APPROVE|If requesting changes|If more research is needed/i
-    );
-    // Same approval semantic clarifier.
-    expect(prompt).toMatch(
-      /same approval semantic|terminal-action tool contract|terminal hand-off|terminal.*contract/i
-    );
-  });
+test('PLAN_AND_DECOMPOSE_WORKFLOW Task Dispatcher prompt forbids terminal calls while dispatch incomplete', () => {
+  const dispatcherNode = PLAN_AND_DECOMPOSE_WORKFLOW.nodes.find(
+    (n) => n.name === 'Task Dispatcher'
+  )!;
+  const prompt = dispatcherNode.agents[0].customPrompt!.value;
+  expect(prompt).toMatch(
+    /terminal-action tool contract|Terminal-action contract|terminal hand-off|terminal action|terminal calls|terminal actions|terminal-action tool descriptions/
+  );
+  expect(prompt).toContain('approve_task');
+  expect(prompt).toContain('submit_for_approval');
+  // Dispatcher's REQUEST_CHANGES analogue: dispatch incomplete.
+  expect(prompt).toMatch(
+    /do not .*approve_task|Never use.*findings|If findings remain|If changes needed|If dispatch is incomplete|If QA fails|only on APPROVE|If requesting changes|If more research is needed/i
+  );
+  expect(prompt).toMatch(
+    /do not .*submit_for_approval|Never use.*findings|If findings remain|If changes needed|If dispatch is incomplete|If QA fails|only on APPROVE|If requesting changes|If more research is needed/i
+  );
+  // Same approval semantic clarifier.
+  expect(prompt).toMatch(
+    /same approval semantic|terminal-action tool contract|terminal hand-off|terminal.*contract/i
+  );
 });

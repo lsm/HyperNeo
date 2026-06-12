@@ -509,11 +509,42 @@ function buildRoleSection(
   }
 
   const gatedHandoffs = buildGatedHandoffLines(workflow, currentNode, agentSlotName);
-  if (gatedHandoffs.length > 0) {
+  const hookValidatedHandoffs = buildHookValidatedHandoffLines(workflow, currentNode);
+  const handoffLines = [...hookValidatedHandoffs, ...gatedHandoffs];
+  if (handoffLines.length > 0) {
     lines.push('- Outbound gated handoffs:');
-    lines.push(...gatedHandoffs);
+    lines.push(...handoffLines);
   }
 
+  return lines;
+}
+
+function buildHookValidatedHandoffLines(
+  workflow: SpaceWorkflow,
+  currentNode: WorkflowNode
+): string[] {
+  const outboundHookValidatedChannels = (workflow.channels ?? []).filter(
+    (channel) =>
+      !channel.gateId &&
+      isChannelFromNode(channel, currentNode.name) &&
+      (workflow.hooks ?? []).some(
+        (hook) =>
+          hook.enabled !== false &&
+          hook.method === 'send_message' &&
+          hook.sourceNode === currentNode.name &&
+          hook.targetNode === channel.to &&
+          hook.validator?.kind === 'built_in' &&
+          hook.validator.id === 'pr_ready'
+      )
+  );
+
+  const lines: string[] = [];
+  for (const channel of outboundHookValidatedChannels) {
+    if (Array.isArray(channel.to)) continue;
+    lines.push(
+      `  - ${describeChannelTarget(channel, channel.to)}: call \`send_message(target=${JSON.stringify(channel.to)}, message="<short summary>", data: { "pr_url": "<pr_url>" })\`; \`save_artifact\` alone does not deliver this gated handoff.`
+    );
+  }
   return lines;
 }
 
