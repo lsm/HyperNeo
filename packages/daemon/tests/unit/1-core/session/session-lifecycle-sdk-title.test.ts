@@ -182,10 +182,16 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
   };
 
   beforeEach(async () => {
-    const { resetProviderRegistry } = await import('../../../../src/lib/providers/registry');
+    const { getProviderRegistry, resetProviderRegistry } = await import(
+      '../../../../src/lib/providers/registry'
+    );
     const { resetProviderFactory } = await import('../../../../src/lib/providers/factory');
+    const { AnthropicProvider } = await import('../../../../src/lib/providers/anthropic-provider');
     resetProviderRegistry();
     resetProviderFactory();
+    const anthropicProvider = new AnthropicProvider();
+    anthropicProvider.setCredentials({ type: 'api_key', apiKey: 'test-api-key' });
+    getProviderRegistry().register(anthropicProvider);
 
     lastTitleQueryOptions = undefined;
     lastTitleProcessEnv = undefined;
