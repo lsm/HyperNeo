@@ -292,7 +292,21 @@ describe('AcpQueryAdapter', () => {
       [{ type: 'text', text: 'hello' }]
     );
 
-    await adapter.setMcpServers();
-    // No-op: should resolve without error
+    await expect(adapter.setMcpServers()).resolves.toEqual({ added: [], removed: [], errors: {} });
+  });
+
+  test('rewindFiles reports unsupported for ACP sessions', async () => {
+    const client = new MockAcpClient('sess-12');
+    const adapter = new AcpQueryAdapter(
+      client as unknown as InstanceType<
+        typeof import('../../../../src/lib/acp/acp-client').AcpClient
+      >,
+      [{ type: 'text', text: 'hello' }]
+    );
+
+    await expect(adapter.rewindFiles()).resolves.toEqual({
+      canRewind: false,
+      error: 'ACP sessions do not support file rewind yet.',
+    });
   });
 });

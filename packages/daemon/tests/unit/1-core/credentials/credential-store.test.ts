@@ -127,8 +127,10 @@ describe('createCredentialStore', () => {
     }
   });
 
-  it('returns KeychainCredentialStore on darwin', () => {
+  it('returns KeychainCredentialStore on darwin outside tests', () => {
     const platformSpy = spyOn(os, 'platform').mockReturnValue('darwin');
+    const prevNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
     const db = new Database(':memory:');
     try {
       const store = createCredentialStore(db);
@@ -137,6 +139,30 @@ describe('createCredentialStore', () => {
     } finally {
       db.close();
       platformSpy.mockRestore();
+      if (prevNodeEnv === undefined) {
+        delete process.env.NODE_ENV;
+      } else {
+        process.env.NODE_ENV = prevNodeEnv;
+      }
+    }
+  });
+
+  it('uses database store on darwin during tests', () => {
+    const platformSpy = spyOn(os, 'platform').mockReturnValue('darwin');
+    const prevNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'test';
+    const db = new Database(':memory:');
+    try {
+      const store = createCredentialStore(db);
+      expect(store).toBeInstanceOf(DatabaseCredentialStore);
+    } finally {
+      db.close();
+      platformSpy.mockRestore();
+      if (prevNodeEnv === undefined) {
+        delete process.env.NODE_ENV;
+      } else {
+        process.env.NODE_ENV = prevNodeEnv;
+      }
     }
   });
 });

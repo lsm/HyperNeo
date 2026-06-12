@@ -16,8 +16,8 @@
  *   (runs every N stream events, at every turn end, and after compaction)
  */
 
-import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type { UUID } from 'crypto';
+import type { QueryLike } from './query-like';
 import type { ContextInfo, MessageHub, Session } from '@neokai/shared';
 import { generateUUID } from '@neokai/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
@@ -71,7 +71,7 @@ export interface SDKMessageHandlerContext {
   readonly lifecycleManager: QueryLifecycleManager;
 
   // Mutable query state (needed to check if query is running and to call getContextUsage())
-  queryObject: Query | null;
+  queryObject: QueryLike | null;
   queryPromise: Promise<void> | null;
 
   // Called when the SDK init message provides the full slash commands list

@@ -16,7 +16,6 @@
  * fresh system:init is emitted with the correct model.
  */
 
-import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type {
   Provider,
   Session,
@@ -36,6 +35,7 @@ import type { ContextTracker } from './context-tracker';
 import type { MessageQueue } from './message-queue';
 import type { ProcessingStateManager } from './processing-state-manager';
 import type { QueryLifecycleManager } from './query-lifecycle-manager';
+import type { QueryLike } from './query-like';
 
 /**
  * Context interface - what ModelSwitchHandler needs from AgentSession
@@ -52,8 +52,8 @@ export interface ModelSwitchHandlerContext {
   readonly logger: Logger;
   readonly lifecycleManager: QueryLifecycleManager;
 
-  // SDK state
-  readonly queryObject: Query | null;
+  // Query state
+  readonly queryObject: QueryLike | null;
   readonly queryPromise: Promise<void> | null;
   readonly messageQueue: MessageQueue;
 }
@@ -222,6 +222,10 @@ export class ModelSwitchHandler {
         return { success: false, model: session.config.model, error: errMsg };
       }
 
+      const nextProvider = newProviderInstance.id as Provider;
+      const clearAcpSessionId = previousProvider === 'acp' && nextProvider !== 'acp';
+      const clearSdkSessionState = previousProvider !== 'acp' && nextProvider === 'acp';
+
       if (!this.isQueryActiveOrStarting()) {
         // Query hasn't been created yet OR query was already completed/interrupted.
         // Persist the new model/provider only. The next user message will start a
@@ -230,15 +234,24 @@ export class ModelSwitchHandler {
         // is ready to consume it.
         session.config.model = resolvedModel;
         // newProviderInstance is guaranteed non-null here (we returned early above).
-        session.config.provider = newProviderInstance.id as Provider;
+        session.config.provider = nextProvider;
+        if (clearAcpSessionId) {
+          session.acpSessionId = undefined;
+        }
+        if (clearSdkSessionState) {
+          session.sdkSessionId = undefined;
+          session.sdkOriginPath = undefined;
+        }
         // Only pass serializable fields — session.config may contain runtime-only
         // objects (mcpServers with closures, agents, spawnClaudeCodeProcess) that
         // cannot be JSON-stringified and would cause a cyclic structure error.
         db.updateSession(session.id, {
           config: {
             model: resolvedModel,
-            provider: newProviderInstance.id as Provider,
+            provider: nextProvider,
           } as SessionConfig,
+          ...(clearAcpSessionId ? { acpSessionId: undefined } : {}),
+          ...(clearSdkSessionState ? { sdkSessionId: undefined, sdkOriginPath: undefined } : {}),
         });
 
         // Update context tracker model
@@ -267,15 +280,24 @@ export class ModelSwitchHandler {
         // Update session config first (will be used when query restarts)
         session.config.model = resolvedModel;
         // newProviderInstance is guaranteed non-null here (we returned early above).
-        session.config.provider = newProviderInstance.id as Provider;
+        session.config.provider = nextProvider;
+        if (clearAcpSessionId) {
+          session.acpSessionId = undefined;
+        }
+        if (clearSdkSessionState) {
+          session.sdkSessionId = undefined;
+          session.sdkOriginPath = undefined;
+        }
         // Only pass serializable fields — session.config may contain runtime-only
         // objects (mcpServers with closures, agents, spawnClaudeCodeProcess) that
         // cannot be JSON-stringified and would cause a cyclic structure error.
         db.updateSession(session.id, {
           config: {
             model: resolvedModel,
-            provider: newProviderInstance.id as Provider,
+            provider: nextProvider,
           } as SessionConfig,
+          ...(clearAcpSessionId ? { acpSessionId: undefined } : {}),
+          ...(clearSdkSessionState ? { sdkSessionId: undefined, sdkOriginPath: undefined } : {}),
         });
 
         // Update context tracker model

@@ -14,6 +14,7 @@ import { MinimaxProvider } from './minimax-provider.js';
 import { OpenRouterProvider } from './openrouter-provider.js';
 import { OllamaProvider } from './ollama-provider.js';
 import { AnthropicToCodexBridgeProvider } from './anthropic-to-codex-bridge-provider.js';
+import { AcpProvider } from './acp-provider.js';
 import {
   CustomEndpointProvider,
   customProviderIdFor,
@@ -119,6 +120,11 @@ export function initializeProviders(): ProviderRegistry {
     registerIfMissing(registry, new AnthropicToCodexBridgeProvider());
   }
 
+  // Register ACP provider for JSON-RPC stdio agent runtimes.
+  if (!disabledBuiltInProviderIds.has('acp')) {
+    registerIfMissing(registry, new AcpProvider());
+  }
+
   // Register Anthropic Copilot provider (embedded Anthropic-compatible server).
   // process.cwd() is the fallback cwd; per-session workspace is threaded via
   // ANTHROPIC_AUTH_TOKEN (encoded by buildSdkConfig) and parsed per-request in server.ts.
@@ -177,6 +183,9 @@ export async function registerBuiltInProvider(
       break;
     case 'anthropic-copilot':
       await waitForOptionalProviderRegistration(registry);
+      break;
+    case 'acp':
+      registry.register(new AcpProvider());
       break;
     default:
       logger.warn(`Unknown built-in provider ID: ${providerId}`);
@@ -336,6 +345,9 @@ export async function ensureBuiltInProviderRegistered(providerId: string): Promi
     case 'anthropic-copilot':
       registerCopilotProvider(registry);
       await waitForOptionalProviderRegistration(registry);
+      break;
+    case 'acp':
+      registerIfMissing(registry, new AcpProvider());
       break;
     default:
       break;

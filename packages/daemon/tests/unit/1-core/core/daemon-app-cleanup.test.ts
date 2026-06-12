@@ -16,7 +16,7 @@ import {
   clearStructuredLogSubscribers,
   installConsoleLogCapture,
   subscribeToStructuredLogs,
-} from '@neokai/shared';
+} from '../../../../src/lib/logger';
 import { createDaemonApp } from '../../../../src/app';
 import type { Config } from '../../../../src/config';
 
@@ -28,6 +28,7 @@ describe('Daemon App Cleanup', () => {
   let originalClaudeCodeOAuthToken: string | undefined;
   let originalAnthropicAuthToken: string | undefined;
   let originalGlmApiKey: string | undefined;
+  let originalAcpCommand: string | undefined;
   let bunServeSpy: ReturnType<typeof spyOn> | null = null;
   const logs: string[] = [];
 
@@ -38,10 +39,12 @@ describe('Daemon App Cleanup', () => {
     originalClaudeCodeOAuthToken = process.env.CLAUDE_CODE_OAUTH_TOKEN;
     originalAnthropicAuthToken = process.env.ANTHROPIC_AUTH_TOKEN;
     originalGlmApiKey = process.env.GLM_API_KEY;
+    originalAcpCommand = process.env.NEOKAI_ACP_COMMAND;
     delete process.env.ANTHROPIC_API_KEY;
     delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
     delete process.env.ANTHROPIC_AUTH_TOKEN;
     delete process.env.GLM_API_KEY;
+    delete process.env.NEOKAI_ACP_COMMAND;
 
     // Capture console output for verification
     originalConsoleLog = console.log;
@@ -94,6 +97,11 @@ describe('Daemon App Cleanup', () => {
       process.env.GLM_API_KEY = originalGlmApiKey;
     } else {
       delete process.env.GLM_API_KEY;
+    }
+    if (originalAcpCommand !== undefined) {
+      process.env.NEOKAI_ACP_COMMAND = originalAcpCommand;
+    } else {
+      delete process.env.NEOKAI_ACP_COMMAND;
     }
 
     // Restore console
@@ -264,6 +272,7 @@ describe('Daemon App Cleanup', () => {
       delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
       delete process.env.ANTHROPIC_AUTH_TOKEN;
       delete process.env.GLM_API_KEY;
+      delete process.env.NEOKAI_ACP_COMMAND;
     });
 
     afterEach(() => {
