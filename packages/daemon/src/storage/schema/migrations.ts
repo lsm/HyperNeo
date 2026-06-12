@@ -702,6 +702,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
   // Migration 155: Copy legacy ownership/automation rows into long-horizon tables.
   runMigration155(db);
+
+  // Migration 156: Expand Forge evidence kinds for public feedback mining.
+  runMigration156(db);
 }
 
 /**
@@ -9647,7 +9650,13 @@ function widenEvolutionEvidenceKinds(db: BunDatabase): void {
     sql.includes("'test_failure'") &&
     sql.includes("'permission_block'") &&
     sql.includes("'slow_tool_call'") &&
-    sql.includes("'conversation_friction'")
+    sql.includes("'conversation_friction'") &&
+    sql.includes("'public_feedback'") &&
+    sql.includes("'social_post'") &&
+    sql.includes("'github_issue'") &&
+    sql.includes("'community_discussion'") &&
+    sql.includes("'livestream_chat'") &&
+    sql.includes("'dogfood_reaction'")
   ) {
     return;
   }
@@ -9660,7 +9669,7 @@ function widenEvolutionEvidenceKinds(db: BunDatabase): void {
 				id TEXT PRIMARY KEY,
 				scope_id TEXT NOT NULL,
 				kind TEXT NOT NULL
-					CHECK(kind IN ('task', 'workflow_run', 'session', 'manual_note', 'metric_snapshot', 'task_result', 'artifact', 'error', 'daemon_error', 'runtime_crash', 'runtime_warning', 'uncaught_exception', 'error_cluster', 'retry_loop', 'tool_failure', 'test_failure', 'permission_block', 'slow_tool_call', 'conversation_friction')),
+					CHECK(kind IN ('task', 'workflow_run', 'session', 'manual_note', 'metric_snapshot', 'task_result', 'artifact', 'error', 'daemon_error', 'runtime_crash', 'runtime_warning', 'uncaught_exception', 'error_cluster', 'retry_loop', 'tool_failure', 'test_failure', 'permission_block', 'slow_tool_call', 'conversation_friction', 'public_feedback', 'social_post', 'github_issue', 'community_discussion', 'livestream_chat', 'dogfood_reaction')),
 				summary TEXT NOT NULL,
 				source_id TEXT,
 				metadata_json TEXT NOT NULL DEFAULT '{}',
@@ -10620,4 +10629,11 @@ export function runMigration155(db: BunDatabase): void {
     markerKey,
     Date.now()
   );
+}
+
+/**
+ * Migration 156 — Expand Forge evidence kinds for public feedback mining.
+ */
+function runMigration156(db: BunDatabase): void {
+  widenEvolutionEvidenceKinds(db);
 }

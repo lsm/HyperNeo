@@ -20,7 +20,13 @@ export type EvidenceKind =
   | 'test_failure'
   | 'permission_block'
   | 'slow_tool_call'
-  | 'conversation_friction';
+  | 'conversation_friction'
+  | 'public_feedback'
+  | 'social_post'
+  | 'github_issue'
+  | 'community_discussion'
+  | 'livestream_chat'
+  | 'dogfood_reaction';
 export type EvolutionEpisodeStatus = 'draft' | 'accepted' | 'dismissed';
 export type EvolutionLessonStatus = 'candidate' | 'active' | 'dismissed';
 export type TaskProposalStatus = 'proposed' | 'accepted' | 'dismissed' | 'created';
@@ -31,7 +37,9 @@ export type EvolutionFindingKind =
   | 'bug'
   | 'optimization'
   | 'missing_capability'
-  | 'new_opportunity';
+  | 'new_opportunity'
+  | 'marketing_confusion'
+  | 'ux_gap';
 export type EvolutionImpact = 'low' | 'medium' | 'high';
 export type GoalForgeAutomationTriggerKind =
   | 'completed_task_threshold'
@@ -139,6 +147,7 @@ export interface EvidenceQualityPreflight {
     manualNotes: number;
     taskResults: number;
     workflowArtifacts: number;
+    publicFeedback: number;
     metricSnapshots: number;
     outcomes: number;
   };
@@ -281,4 +290,67 @@ export interface EvolutionScopeListParams {
   spaceId: string;
   spaceGoalId?: string | null;
   kind?: EvolutionScopeKind;
+}
+
+// Feedback mining taxonomy
+export type FeedbackSource =
+  | 'github_issue'
+  | 'github_discussion'
+  | 'social_post'
+  | 'community_discussion'
+  | 'livestream_chat'
+  | 'dogfood_reaction'
+  | 'human_provided';
+
+export type FeedbackTheme =
+  | 'bug'
+  | 'ux_gap'
+  | 'marketing_confusion'
+  | 'feature_request'
+  | 'performance'
+  | 'reliability'
+  | 'documentation'
+  | 'pricing'
+  | 'competitor_comparison'
+  | 'unclear';
+
+export type FeedbackSentiment = 'negative' | 'neutral' | 'positive';
+export type FeedbackUrgency = 'low' | 'medium' | 'high';
+
+export interface FeedbackItem {
+  id: string;
+  scopeId: string;
+  source: FeedbackSource;
+  url: string | null;
+  content: string;
+  author: string | null;
+  postedAt: number | null;
+  themes: FeedbackTheme[];
+  sentiment: FeedbackSentiment;
+  urgency: FeedbackUrgency;
+  metadata: Record<string, unknown>;
+  evidenceId: string | null;
+  createdAt: number;
+}
+
+export interface CaptureFeedbackParams {
+  scopeId: string;
+  source: FeedbackSource;
+  url?: string | null;
+  content: string;
+  author?: string | null;
+  postedAt?: number | null;
+  themes?: FeedbackTheme[];
+  sentiment?: FeedbackSentiment;
+  urgency?: FeedbackUrgency;
+  metadata?: Record<string, unknown>;
+}
+
+export interface FeedbackCluster {
+  theme: FeedbackTheme;
+  items: string[]; // evidence IDs
+  summary: string;
+  sentiment: FeedbackSentiment;
+  urgency: FeedbackUrgency;
+  count: number;
 }

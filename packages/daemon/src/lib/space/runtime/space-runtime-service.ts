@@ -53,6 +53,8 @@ import { selectWorkflowWithLlmDefault } from './llm-workflow-selector';
 import { ChannelRouter } from './channel-router';
 import { SpaceTaskManager } from '../managers/space-task-manager';
 import { createSpaceAgentMcpServer } from '../tools/space-agent-tools';
+import { FeedbackMiningService } from '../feedback-mining-service';
+import { EvolutionRepository } from '../../../storage/repositories/evolution-repository';
 import type { ReplyRoutingRegistry } from './reply-routing-registry';
 import { buildSpaceChatSystemPrompt } from '../agents/space-chat-agent';
 import { resolveCustomAgentPrompt } from '../agents/custom-agent';
@@ -847,6 +849,9 @@ export class SpaceRuntimeService {
       goalService: this.config.goalService,
       evolutionScopeService: this.config.evolutionScopeService,
       evolutionEpisodeService: this.config.evolutionEpisodeService,
+      feedbackMiningService: new FeedbackMiningService({
+        evolutionRepo: new EvolutionRepository(this.config.db),
+      }),
       replyRoutingRegistry: this.config.replyRoutingRegistry,
       messageResolver: this.createMessageResolver(space.id),
       longTermAgentDelivery: this.longTermAgentDeliveryCallbacks(),
@@ -1484,6 +1489,9 @@ export class SpaceRuntimeService {
       goalService: this.config.goalService,
       evolutionScopeService: this.config.evolutionScopeService,
       evolutionEpisodeService: this.config.evolutionEpisodeService,
+      feedbackMiningService: new FeedbackMiningService({
+        evolutionRepo: new EvolutionRepository(this.config.db),
+      }),
       replyRoutingRegistry: this.config.replyRoutingRegistry,
       messageResolver: this.createMessageResolver(space.id),
       longTermAgentDelivery: this.longTermAgentDeliveryCallbacks(),
@@ -1610,6 +1618,9 @@ export class SpaceRuntimeService {
       goalService: this.config.goalService,
       evolutionScopeService: this.config.evolutionScopeService,
       evolutionEpisodeService: this.config.evolutionEpisodeService,
+      feedbackMiningService: new FeedbackMiningService({
+        evolutionRepo: new EvolutionRepository(this.config.db),
+      }),
       replyRoutingRegistry: this.config.replyRoutingRegistry,
       messageResolver: this.createMessageResolver(space.id),
       longTermAgentDelivery: this.longTermAgentDeliveryCallbacks(),

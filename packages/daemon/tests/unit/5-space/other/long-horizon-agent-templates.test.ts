@@ -13,6 +13,7 @@ describe('long-horizon agent templates', () => {
       'marketing.default',
       'sales.default',
       'research.default',
+      'feedback-miner.default',
       'family-ops-chores.default',
     ]);
     expect(templates.map((template) => template.displayName)).toEqual([
@@ -23,6 +24,7 @@ describe('long-horizon agent templates', () => {
       'Marketing',
       'Sales',
       'Research',
+      'Feedback Miner',
       'Family Ops/Chores',
     ]);
   });

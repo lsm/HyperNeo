@@ -380,6 +380,8 @@ export interface SpaceAgentToolsConfig {
   evolutionScopeService?: import('../evolution-scope-service').EvolutionScopeService;
   /** Forge episode/review service for lesson, proposal, and rollup MCP tools. */
   evolutionEpisodeService?: import('../evolution-episode-service').EvolutionEpisodeService;
+  /** Feedback mining service for public feedback capture MCP tools. */
+  feedbackMiningService?: import('../feedback-mining-service').FeedbackMiningService;
   /** Generic Space actor resolver for @handle/@role DMs. */
   messageResolver?: ActorResolver;
   /** Deliver to or activate long-term Space agents. */
@@ -468,6 +470,11 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
   function requireEvolutionEpisodeService() {
     if (!config.evolutionEpisodeService) throw new Error('Forge episode management not available');
     return config.evolutionEpisodeService;
+  }
+
+  function requireFeedbackMiningService() {
+    if (!config.feedbackMiningService) throw new Error('Feedback mining not available');
+    return config.feedbackMiningService;
   }
 
   function requireEvolutionScopeInSpace(scopeId: string) {
@@ -2501,6 +2508,103 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       }
     },
 
+    async capture_public_feedback(args: {
+      scope_id: string;
+      source: string;
+      content: string;
+      url?: string | null;
+      author?: string | null;
+      posted_at?: number | null;
+      themes?: string[];
+      sentiment?: string;
+      urgency?: string;
+      metadata?: Record<string, unknown>;
+    }): Promise<ToolResult> {
+      try {
+        requireEvolutionScopeInSpace(args.scope_id);
+        const validSources = [
+          'github_issue',
+          'github_discussion',
+          'social_post',
+          'community_discussion',
+          'livestream_chat',
+          'dogfood_reaction',
+          'human_provided',
+        ] as const;
+        if (!validSources.includes(args.source as (typeof validSources)[number])) {
+          return jsonResult({
+            success: false,
+            error: `Invalid source: ${args.source}. Must be one of: ${validSources.join(', ')}`,
+          });
+        }
+        const validThemes = [
+          'bug',
+          'ux_gap',
+          'marketing_confusion',
+          'feature_request',
+          'performance',
+          'reliability',
+          'documentation',
+          'pricing',
+          'competitor_comparison',
+          'unclear',
+        ] as const;
+        if (args.themes) {
+          const invalidThemes = args.themes.filter(
+            (t) => !validThemes.includes(t as (typeof validThemes)[number])
+          );
+          if (invalidThemes.length > 0) {
+            return jsonResult({
+              success: false,
+              error: `Invalid theme(s): ${invalidThemes.join(', ')}. Must be one of: ${validThemes.join(', ')}`,
+            });
+          }
+        }
+        const themes = args.themes ?? [];
+        const validSentiments = ['negative', 'neutral', 'positive'] as const;
+        const sentiment = args.sentiment
+          ? validSentiments.includes(args.sentiment as (typeof validSentiments)[number])
+            ? (args.sentiment as (typeof validSentiments)[number])
+            : undefined
+          : undefined;
+        if (args.sentiment && !sentiment) {
+          return jsonResult({
+            success: false,
+            error: `Invalid sentiment: ${args.sentiment}. Must be one of: ${validSentiments.join(', ')}`,
+          });
+        }
+        const validUrgencies = ['low', 'medium', 'high'] as const;
+        const urgency = args.urgency
+          ? validUrgencies.includes(args.urgency as (typeof validUrgencies)[number])
+            ? (args.urgency as (typeof validUrgencies)[number])
+            : undefined
+          : undefined;
+        if (args.urgency && !urgency) {
+          return jsonResult({
+            success: false,
+            error: `Invalid urgency: ${args.urgency}. Must be one of: ${validUrgencies.join(', ')}`,
+          });
+        }
+        const item = requireFeedbackMiningService().captureFeedback({
+          scopeId: args.scope_id,
+          source: args.source as (typeof validSources)[number],
+          content: args.content,
+          url: args.url ?? null,
+          author: args.author ?? null,
+          postedAt: args.posted_at ?? null,
+          themes: themes.length > 0 ? (themes as (typeof validThemes)[number][]) : undefined,
+          sentiment,
+          urgency,
+          metadata: args.metadata,
+        });
+        logAudit('capture_public_feedback', { scope_id: args.scope_id, source: args.source });
+        return jsonResult({ success: true, item });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return jsonResult({ success: false, error: message });
+      }
+    },
+
     async attach_forge_task_evidence(args: {
       task_id: string;
       scope_id?: string;
@@ -3795,6 +3899,28 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
           created_at: z.number().int().optional().describe('Optional timestamp ms'),
         },
         (args) => handlers.add_forge_manual_note(args)
+      ),
+      tool(
+        'capture_public_feedback',
+        'Capture public feedback as Forge evidence. Sources: github_issue, github_discussion, social_post, community_discussion, livestream_chat, dogfood_reaction, human_provided. Themes: bug, ux_gap, marketing_confusion, feature_request, performance, reliability, documentation, pricing, competitor_comparison, unclear.',
+        {
+          scope_id: z.string().describe('EvolutionScope ID'),
+          source: z.string().describe('Feedback source'),
+          content: z.string().min(1).describe('Full feedback text'),
+          url: z.string().nullable().optional().describe('Optional URL to original post'),
+          author: z.string().nullable().optional().describe('Optional author name'),
+          posted_at: z
+            .number()
+            .int()
+            .nullable()
+            .optional()
+            .describe('Optional original post timestamp ms'),
+          themes: z.array(z.string()).optional().describe('Optional theme tags'),
+          sentiment: z.string().optional().describe('negative, neutral, or positive'),
+          urgency: z.string().optional().describe('low, medium, or high'),
+          metadata: metadataSchema.optional(),
+        },
+        (args) => handlers.capture_public_feedback(args)
       ),
       tool(
         'attach_forge_task_evidence',
