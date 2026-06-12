@@ -860,7 +860,11 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
               ...routedTargetNames.map(resolveNodeName),
             ]);
             return tos.some(
-              (to) => candidateTargets.includes(to) || to === myNodeName || to === myAgentName
+              (to) =>
+                to === '*' ||
+                candidateTargets.includes(to) ||
+                to === myNodeName ||
+                to === myAgentName
             );
           });
 
