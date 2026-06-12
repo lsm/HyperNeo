@@ -48,15 +48,23 @@ function formatGateDataPlaceholder(field: GateDataShapeField): string {
   }
 }
 
+const MAX_MAP_PLACEHOLDER_ENTRIES = 3;
+
 function formatMapPlaceholder(field: GateDataShapeField): string {
   if (field.check?.op !== 'count') return '{ "<key>": "<value>" }';
 
   const matchValue = formatLiteral(field.check.match);
   const count = Math.max(1, field.check.min ?? 1);
+  const shownCount = Math.min(count, MAX_MAP_PLACEHOLDER_ENTRIES);
   const entries = Array.from(
-    { length: count },
+    { length: shownCount },
     (_, index) => `${JSON.stringify(`<key${index + 1}>`)}: ${matchValue}`
   );
+  if (count > shownCount) {
+    entries.push(
+      `/* add ${count - shownCount} more matching entr${count - shownCount === 1 ? 'y' : 'ies'} */`
+    );
+  }
   return `{ ${entries.join(', ')} }`;
 }
 

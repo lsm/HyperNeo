@@ -727,6 +727,44 @@ describe('buildCustomAgentTaskMessage', () => {
     expect(message).not.toContain('send_message(target="*"');
   });
 
+  it('emits peer slot send_message examples for same-node broadcast gated channels', () => {
+    const workflow = makeWorkflow({
+      nodes: [
+        {
+          id: 'node-1',
+          name: 'Plan',
+          agents: [
+            { agentId: 'agent-coder', name: 'coder' },
+            { agentId: 'agent-reviewer', name: 'reviewer' },
+          ],
+        },
+      ],
+      channels: [
+        {
+          id: 'ch-plan-broadcast',
+          from: 'Plan',
+          to: '*',
+          label: 'Plan → All',
+          gateId: 'plan-ready-gate',
+        },
+      ],
+    });
+    const message = buildCustomAgentTaskMessage(
+      makeConfig({
+        workflow,
+        workflowRun: makeWorkflowRun({ workflowId: workflow.id }),
+        nodeId: 'node-1',
+        agentSlotName: 'coder',
+      })
+    );
+
+    expect(message).toContain(
+      'reviewer (Plan → All): call `send_message(target="reviewer", message="<short summary>", data: { "pr_url": "<pr_url>" })`'
+    );
+    expect(message).not.toContain('send_message(target="coder"');
+    expect(message).not.toContain('send_message(target="*"');
+  });
+
   it('quotes gate field names and emits executable non-string values in handoff data', () => {
     const workflow = makeWorkflow({
       channels: [
@@ -796,6 +834,47 @@ describe('buildCustomAgentTaskMessage', () => {
     expect(message).not.toContain('data: { pr"url:');
     expect(message).not.toContain('<boolean>');
     expect(message).not.toContain('<number>');
+  });
+
+  it('caps map-count handoff placeholders for large thresholds', () => {
+    const workflow = makeWorkflow({
+      channels: [
+        {
+          id: 'ch-plan-to-code',
+          from: 'Plan',
+          to: 'Code',
+          label: 'Plan → Code',
+          gateId: 'plan-ready-gate',
+        },
+      ],
+      gates: [
+        {
+          id: 'plan-ready-gate',
+          fields: [
+            {
+              name: 'votes',
+              type: 'map',
+              writers: ['Plan'],
+              check: { op: 'count', match: 'approved', min: 25 },
+            },
+          ],
+          resetOnCycle: false,
+        },
+      ],
+    });
+    const message = buildCustomAgentTaskMessage(
+      makeConfig({
+        workflow,
+        workflowRun: makeWorkflowRun({ workflowId: workflow.id }),
+        nodeId: 'node-1',
+        agentSlotName: 'Coder',
+      })
+    );
+
+    expect(message).toContain(
+      '"votes": { "<key1>": "approved", "<key2>": "approved", "<key3>": "approved", /* add 22 more matching entries */ }'
+    );
+    expect(message).not.toContain('<key25>');
   });
 });
 

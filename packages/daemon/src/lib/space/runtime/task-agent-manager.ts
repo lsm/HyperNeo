@@ -2390,7 +2390,7 @@ export class TaskAgentManager {
 
         for (const target of getSendMessageTargets(
           channel.to,
-          this.getBroadcastTargets(workflow, node)
+          this.getBroadcastTargets(workflow, node, execution.agentName)
         )) {
           lines.push(
             `  - When ready, call \`${formatGatedHandoffCall(target, writableFields)}\`; this is required to activate the target. \`save_artifact\` alone does not deliver gated handoffs.`
@@ -2437,8 +2437,21 @@ export class TaskAgentManager {
     return check.op;
   }
 
-  private getBroadcastTargets(workflow: SpaceWorkflow, currentNode: WorkflowNode): string[] {
-    return workflow.nodes.filter((node) => node.id !== currentNode.id).map((node) => node.name);
+  private getBroadcastTargets(
+    workflow: SpaceWorkflow,
+    currentNode: WorkflowNode,
+    agentName: string
+  ): string[] {
+    const targets = new Set<string>();
+    for (const node of workflow.nodes) {
+      if (node.id !== currentNode.id) targets.add(node.name);
+      for (const agent of node.agents ?? []) {
+        if (node.id === currentNode.id && agent.name === agentName) continue;
+        targets.add(agent.name);
+      }
+    }
+    targets.delete(currentNode.name);
+    return [...targets];
   }
 
   private normalizeAgentNameToken(value: string): string {
