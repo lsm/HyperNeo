@@ -686,6 +686,9 @@ export class ProviderService {
       }
     }
 
+    // Provider-specific auto-compact override must not leak into native providers.
+    clear('CLAUDE_CODE_AUTO_COMPACT_WINDOW');
+
     // Preserve user's custom ANTHROPIC_DEFAULT_SONNET_MODEL
     if (process.env.ANTHROPIC_DEFAULT_SONNET_MODEL !== undefined) {
       original.ANTHROPIC_DEFAULT_SONNET_MODEL = process.env.ANTHROPIC_DEFAULT_SONNET_MODEL;

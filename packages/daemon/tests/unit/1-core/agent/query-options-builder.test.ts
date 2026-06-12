@@ -152,6 +152,21 @@ describe('QueryOptionsBuilder', () => {
       expect(options.env).toEqual({ MY_VAR: 'value' });
     });
 
+    it('should filter provider-managed auto-compact env overrides', async () => {
+      mockSettingsManager.getGlobalSettings = mock(() => ({
+        env: { CLAUDE_CODE_AUTO_COMPACT_WINDOW: '200000', KEEP_GLOBAL: 'global' },
+        settingSources: ['user', 'project', 'local'],
+      }));
+      mockSession.config.env = {
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW: '262144',
+        KEEP_SESSION: 'session',
+      };
+
+      const options = await builder.build();
+
+      expect(options.env).toEqual({ KEEP_GLOBAL: 'global', KEEP_SESSION: 'session' });
+    });
+
     it('should not override SDK auto-compaction settings for native anthropic provider', async () => {
       // Default provider is anthropic — SDK already knows correct context window
       const options = await builder.build();

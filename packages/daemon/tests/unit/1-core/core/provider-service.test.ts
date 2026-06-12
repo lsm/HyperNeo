@@ -1024,6 +1024,18 @@ describe('ProviderService', () => {
       expect(process.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
     });
 
+    it('clears provider-leaked auto compact window before Anthropic query', async () => {
+      process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = '262144';
+
+      const original = await service.applyEnvVarsToProcess('claude-3-opus', 'anthropic');
+
+      expect(process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBeUndefined();
+      expect(original.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('262144');
+
+      service.restoreEnvVars(original);
+      expect(process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('262144');
+    });
+
     it('should clear provider-leaked GLM base URL after GLM query', async () => {
       // First simulate GLM was used (leaving its base URL)
       process.env.ANTHROPIC_BASE_URL = 'https://api.glm.example.com';
