@@ -49,19 +49,53 @@ function flattenConfigChoices(option: AcpConfigOption): Array<{ name: string; va
   return option.options.flatMap((entry) => ('options' in entry ? entry.options : [entry]));
 }
 
+function getAcpContextUsageEstimate(session: Session): number | undefined {
+  return (session.metadata as { acpContextUsageEstimate?: number } | undefined)
+    ?.acpContextUsageEstimate;
+}
+
 function selectThoughtLevelValue(option: AcpConfigOption, tokens: number | null): string {
   const choices = flattenConfigChoices(option);
+  if (choices.length === 0) return option.currentValue;
+
   if (!tokens || tokens <= 0) {
-    return choices.find((choice) => choice.value === 'none')?.value ?? option.currentValue;
+    return choices.find(isOffThoughtChoice)?.value ?? choices[0].value;
   }
 
-  const preferred = tokens >= 20000 ? 'high' : tokens >= 8000 ? 'medium' : 'low';
-  return (
-    choices.find((choice) => choice.value === preferred)?.value ??
-    choices.find((choice) => choice.value === 'high')?.value ??
-    choices.at(-1)?.value ??
-    option.currentValue
+  const exact = choices.find((choice) => parseThoughtTokenValue(choice) === tokens);
+  if (exact) return exact.value;
+
+  const enabledChoices = choices.filter((choice) => !isOffThoughtChoice(choice));
+  if (enabledChoices.length === 0) return option.currentValue;
+
+  const sorted = [...enabledChoices].sort(
+    (a, b) => (parseThoughtTokenValue(a) ?? 0) - (parseThoughtTokenValue(b) ?? 0)
   );
+  const sizedChoices = sorted.filter((choice) => parseThoughtTokenValue(choice) !== undefined);
+  if (sizedChoices.length > 0) {
+    return (
+      sizedChoices.find((choice) => (parseThoughtTokenValue(choice) ?? 0) >= tokens)?.value ??
+      sizedChoices.at(-1)!.value
+    );
+  }
+
+  if (enabledChoices.length === 1) return enabledChoices[0].value;
+  if (enabledChoices.length === 2) return enabledChoices[tokens >= 8000 ? 1 : 0].value;
+
+  const index = tokens >= 24000 ? enabledChoices.length - 1 : tokens >= 16000 ? 1 : 0;
+  return enabledChoices[Math.min(index, enabledChoices.length - 1)].value;
+}
+
+function isOffThoughtChoice(choice: { name: string; value: string }): boolean {
+  const text = `${choice.value} ${choice.name}`.toLowerCase();
+  return /\b(off|none|disabled|disable|false|0)\b/.test(text);
+}
+
+function parseThoughtTokenValue(choice: { name: string; value: string }): number | undefined {
+  const text = `${choice.value} ${choice.name}`.toLowerCase();
+  const match = text.match(/(?:think)?(\d+)k\b/);
+  if (match) return Number(match[1]) * 1000;
+  return undefined;
 }
 
 export function parseAcpCommand(commandLine: string): { command: string; args: string[] } {
@@ -524,10 +558,6 @@ export class AcpQueryRunner {
       }
       await this.applyStoredAcpModel(client);
       await this.applyStoredAcpThinkingLevel(client);
-      const initialUsageEstimate = (
-        session.metadata as { acpContextUsageEstimate?: number } | undefined
-      )?.acpContextUsageEstimate;
-
       startupHandshakeActive = false;
       restoreMessageEnqueuedHandler?.();
       this.clearStartupTimer();
@@ -557,8 +587,7 @@ export class AcpQueryRunner {
         prependInstructionsToNextPrompt = false;
         const adapter = new AcpQueryAdapter(client, promptContent, {
           contextWindow: getAcpContextWindow(),
-          initialUsageEstimate:
-            typeof initialUsageEstimate === 'number' ? initialUsageEstimate : undefined,
+          initialUsageEstimate: getAcpContextUsageEstimate(session),
           onContextUsageUpdate: (used) => this.persistAcpContextUsageEstimate(used),
           onConfigOptionsUpdate: (configOptions) => this.updateAcpModelCache(configOptions),
         });
@@ -965,7 +994,23 @@ export class AcpQueryRunner {
     db.updateSession(session.id, { metadata: session.metadata });
   }
 
+  private syncAcpSessionModel(configOptions: AcpConfigOption[]): void {
+    const modelOption = configOptions.find((option) => option.category === 'model');
+    const currentValue = modelOption?.currentValue;
+    if (!currentValue || this.ctx.session.config.model === currentValue) return;
+
+    this.ctx.session.config.model = currentValue;
+    this.ctx.db.updateSession(this.ctx.session.id, {
+      config: {
+        model: currentValue,
+        provider: 'acp',
+      } as Session['config'],
+    });
+  }
+
   private updateAcpModelCache(configOptions: AcpConfigOption[]): void {
+    this.syncAcpSessionModel(configOptions);
+
     const provider = getProviderRegistry().get('acp');
     if (provider instanceof AcpProvider) {
       provider.setConfigOptions(configOptions);

@@ -202,7 +202,7 @@ describe('AcpMessageTranslator', () => {
       usage: { input_tokens: number; output_tokens: number };
     };
 
-    expect(result.usage.input_tokens).toBe(80);
+    expect(result.usage.input_tokens).toBe(0);
     expect(result.usage.output_tokens).toBe(0);
   });
 
