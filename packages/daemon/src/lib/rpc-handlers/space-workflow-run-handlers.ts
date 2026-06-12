@@ -1041,18 +1041,25 @@ export function setupSpaceWorkflowRunHandlers(
     const baseVersion = existing?.version ?? 0;
     const baseLocalState = existing?.localState ?? {};
 
+    const rejectionReason = params.reason?.trim() || 'Rejected by human';
     const updateResult = hookStateRepo.update(params.runId, params.hookId, {
       expectedVersion: baseVersion,
       localState: {
         ...baseLocalState,
         humanApproved: params.approved,
         humanApprovedAt: Date.now(),
-        humanRejectionReason: params.approved ? undefined : (params.reason ?? 'Rejected by human'),
+        humanRejectionReason: params.approved ? undefined : rejectionReason,
       },
-      lastResult: {
-        type: 'allow',
-        message: params.approved ? 'Approved by human' : 'Rejected by human',
-      },
+      lastResult: params.approved
+        ? {
+            type: 'allow',
+            message: 'Approved by human',
+          }
+        : {
+            type: 'block',
+            reason: rejectionReason,
+            message: 'Rejected by human',
+          },
       retryCount: 0,
       nextRetryAt: null,
     });

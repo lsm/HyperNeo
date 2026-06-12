@@ -131,12 +131,16 @@ function buildTemplateCanvasSignature(
 
   const normalizedHooks = hooks
     .map((hook) => ({
-      id: hook.id,
-      enabled: hook.enabled,
-      sourceNode: hook.sourceNode,
+      ...hook,
       targetNode: hook.targetNode ?? null,
-      method: hook.method,
-      validator: hook.validator,
+      label: hook.label ?? null,
+      templateData: hook.templateData ?? null,
+      classification: hook.classification ?? null,
+      authorizedCallers: hook.authorizedCallers ?? [],
+      retry: hook.retry ?? null,
+      poll: hook.poll ?? null,
+      order: hook.order ?? null,
+      humanOnly: hook.humanOnly ?? null,
     }))
     .sort((a, b) => a.id.localeCompare(b.id));
 
@@ -613,20 +617,19 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
       // Update all state in flat calls — no nested setter inside another updater.
       setNodes(remaining);
       setEdges((prev) => prev.filter((e) => e.fromStepKey !== key && e.toStepKey !== key));
-      if (nodeToDelete.step.name) {
-        const deletedName = nodeToDelete.step.name;
-        setHooks((prev) =>
-          prev
-            .filter((hook) => hook.sourceNode !== deletedName && hook.targetNode !== deletedName)
-            .map((hook) => ({
-              ...hook,
-              authorizedCallers: hook.authorizedCallers?.filter(
-                (caller) => caller.sourceNode !== deletedName
-              ),
-            }))
-            .filter((hook) => (hook.authorizedCallers?.length ?? 0) > 0)
-        );
-      }
+      const deletedRefs = new Set(
+        [nodeToDelete.step.name, nodeToDelete.step.id, nodeToDelete.step.localId].filter(Boolean)
+      );
+      setHooks((prev) =>
+        prev
+          .filter((hook) => !deletedRefs.has(hook.sourceNode) && !deletedRefs.has(hook.targetNode))
+          .map((hook) => ({
+            ...hook,
+            authorizedCallers: hook.authorizedCallers?.filter(
+              (caller) => !deletedRefs.has(caller.sourceNode)
+            ),
+          }))
+      );
 
       if (wasStart && remaining.length > 0) {
         const next = remaining[0];
@@ -647,24 +650,24 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
   const handleUpdateNode = useCallback(
     (step: NodeDraft) => {
       const previousNode = nodes.find((n) => n.step.localId === step.localId);
-      const previousName = previousNode?.step.name;
-      const nextName = step.name;
+      const previousRefs = new Set(
+        [previousNode?.step.name, previousNode?.step.id, previousNode?.step.localId].filter(Boolean)
+      );
+      const nextRef = step.name || step.localId;
 
       setNodes((prev) => prev.map((n) => (n.step.localId === step.localId ? { ...n, step } : n)));
 
-      if (previousName && nextName && previousName !== nextName) {
-        setHooks((prev) =>
-          prev.map((hook) => ({
-            ...hook,
-            sourceNode: hook.sourceNode === previousName ? nextName : hook.sourceNode,
-            targetNode: hook.targetNode === previousName ? nextName : hook.targetNode,
-            authorizedCallers: hook.authorizedCallers?.map((caller) => ({
-              ...caller,
-              sourceNode: caller.sourceNode === previousName ? nextName : caller.sourceNode,
-            })),
-          }))
-        );
-      }
+      setHooks((prev) =>
+        prev.map((hook) => ({
+          ...hook,
+          sourceNode: previousRefs.has(hook.sourceNode) ? nextRef : hook.sourceNode,
+          targetNode: previousRefs.has(hook.targetNode) ? nextRef : hook.targetNode,
+          authorizedCallers: hook.authorizedCallers?.map((caller) => ({
+            ...caller,
+            sourceNode: previousRefs.has(caller.sourceNode) ? nextRef : caller.sourceNode,
+          })),
+        }))
+      );
     },
     [nodes]
   );

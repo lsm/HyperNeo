@@ -22,6 +22,7 @@ import type {
   SpaceWorkflow,
   WorkflowRunArtifact,
   WorkflowRunStatus,
+  WorkflowHookStateSnapshot,
 } from '@neokai/shared';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
@@ -99,6 +100,7 @@ export interface WorkflowHookEngineConfig {
   getTaskStatus?: (taskId: string) => string | undefined;
   getSourceNodeExecutionStatus?: (meta: HookActionMeta) => string | undefined;
   notifySourceSession?: (sessionId: string, message: string) => Promise<void>;
+  onHookStateUpdated?: (hookId: string, hookState: WorkflowHookStateSnapshot) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -296,6 +298,9 @@ export class WorkflowHookEngine {
         localState: state,
         lastResult,
       });
+      if (result) {
+        this.config.onHookStateUpdated?.(hookId, result);
+      }
       return result !== null;
     } catch {
       return false;

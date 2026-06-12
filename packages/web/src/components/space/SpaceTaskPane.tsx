@@ -246,7 +246,7 @@ export function SpaceTaskPane({
     : null;
   const _workflowIdForHook = _workflowRunForHook?.workflowId ?? null;
   const { summaries: gateSummaries } = useRunGateSummaries(_runId, _workflowIdForHook);
-  const { summaries: hookSummaries, hasHooks: workflowHasHooks } = useRunHookStates(
+  const { summaries: hookSummaries, fetchError: hookFetchError } = useRunHookStates(
     _runId,
     _workflowIdForHook
   );
@@ -492,11 +492,14 @@ export function SpaceTaskPane({
     !isTerminalTask && !ensuringThread && !sendingThread && composerTargets.length > 0;
   const canShowCanvasTab = !!task.workflowRunId && !!canvasWorkflowId;
   const activitySummary = STATUS_LABELS[task.status];
-  const activeBanner = resolveActiveTaskBanner(
-    task,
-    hookSummaries as unknown as import('../../lib/task-banner').HookBannerSummary[],
-    workflowHasHooks ? [] : gateSummaries
-  );
+  const activeBanner =
+    hookFetchError && _runId
+      ? ({ kind: 'hook_pending', runId: _runId } as const)
+      : resolveActiveTaskBanner(
+          task,
+          hookSummaries as unknown as import('../../lib/task-banner').HookBannerSummary[],
+          gateSummaries
+        );
   const showHeaderStatusBadge = activeBanner === null;
   const agentActionLabel =
     task.activeSession === 'leader'

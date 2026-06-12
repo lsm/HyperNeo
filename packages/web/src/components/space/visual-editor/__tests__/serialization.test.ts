@@ -415,6 +415,47 @@ describe('visualStateToCreateParams', () => {
     expect(params.startNodeId).toBeUndefined();
   });
 
+  it('serializes hook node localId references to persisted node names', () => {
+    const params = visualStateToCreateParams(
+      makeState({
+        nodes: [
+          {
+            step: { localId: 'local-unnamed', name: '', agentId: 'a1' },
+            position: { x: 0, y: 0 },
+          },
+          {
+            step: { localId: 'local-review', id: 'review-id', name: 'Review', agentId: 'a2' },
+            position: { x: 300, y: 0 },
+          },
+        ],
+        startNodeId: 'local-unnamed',
+        hooks: [
+          {
+            id: 'hook-1',
+            enabled: true,
+            sourceNode: 'local-unnamed',
+            targetNode: 'local-review',
+            method: 'send_message',
+            validator: { kind: 'script', interpreter: 'bash', source: 'echo ok' },
+            authorizedCallers: [{ sourceNode: 'local-unnamed' }],
+            poll: { intervalMs: 5000 },
+          },
+        ],
+      }),
+      'space-1',
+      'WF'
+    );
+
+    expect(params.hooks).toEqual([
+      expect.objectContaining({
+        sourceNode: 'Step 1',
+        targetNode: 'Review',
+        authorizedCallers: [expect.objectContaining({ sourceNode: 'Step 1' })],
+      }),
+    ]);
+    expect(params.hooks![0]).not.toHaveProperty('poll');
+  });
+
   it('passes endNodeId through to create params', () => {
     const state = makeState({ endNodeId: 's2' });
     const params = visualStateToCreateParams(state, 'space-1', 'WF');

@@ -997,6 +997,29 @@ describe('NodeConfigPanel', () => {
       ]);
     });
 
+    it('uses the node localId when adding a hook to an unnamed node', () => {
+      const onUpdateNodeHooks = vi.fn();
+      const { getByTestId } = render(
+        <NodeConfigPanel
+          {...makeProps({
+            step: makeStep({ name: '', localId: 'local-unnamed' }),
+            nodeHooks: [],
+            workflowNodeNames: ['local-unnamed', 'Review'],
+            onUpdateNodeHooks,
+          })}
+        />
+      );
+
+      fireEvent.click(getByTestId('add-hook-button'));
+
+      expect(onUpdateNodeHooks).toHaveBeenCalledWith([
+        expect.objectContaining({
+          sourceNode: 'local-unnamed',
+          authorizedCallers: [expect.objectContaining({ sourceNode: 'local-unnamed' })],
+        }),
+      ]);
+    });
+
     it('updates existing hook configs from the embedded hook editor', () => {
       const onUpdateNodeHooks = vi.fn();
       const hook: WorkflowHook = {

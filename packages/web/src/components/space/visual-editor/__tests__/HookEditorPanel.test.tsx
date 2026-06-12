@@ -14,9 +14,8 @@
  * - external lookup toggles
  * - authorized callers add/edit/remove
  * - retry settings (maxAttempts, delayMs, backoffMultiplier)
- * - poll settings (intervalMs, maxDurationMs)
+ * - unsupported poll and human-only notices
  * - classification and order
- * - humanOnly checkbox
  */
 
 // @ts-nocheck
@@ -83,13 +82,18 @@ describe('HookEditorPanel', () => {
     expect(getByTestId('hook-editor-label').className).toContain('border-red-500');
   });
 
-  it('updates source node on select change', () => {
-    const hook = makeHook();
+  it('updates source node and matching callers on select change', () => {
+    const hook = makeHook({ authorizedCallers: [{ sourceNode: 'Plan' }] });
     const { getByTestId } = render(
       <HookEditorPanel hook={hook} onChange={onChange} onBack={onBack} nodeNames={nodeNames} />
     );
     fireEvent.change(getByTestId('hook-editor-source-node'), { target: { value: 'Code' } });
-    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ sourceNode: 'Code' }));
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceNode: 'Code',
+        authorizedCallers: [expect.objectContaining({ sourceNode: 'Code' })],
+      })
+    );
   });
 
   it('updates target node on select change', () => {
@@ -110,13 +114,15 @@ describe('HookEditorPanel', () => {
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ targetNode: undefined }));
   });
 
-  it('updates MCP method on select change', () => {
-    const hook = makeHook();
+  it('updates MCP method and clears target for non-message methods', () => {
+    const hook = makeHook({ targetNode: 'Review' });
     const { getByTestId } = render(
       <HookEditorPanel hook={hook} onChange={onChange} onBack={onBack} nodeNames={nodeNames} />
     );
     fireEvent.change(getByTestId('hook-editor-method'), { target: { value: 'save_artifact' } });
-    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ method: 'save_artifact' }));
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({ method: 'save_artifact', targetNode: undefined })
+    );
   });
 
   it('switches validator kind to script', () => {
@@ -133,32 +139,14 @@ describe('HookEditorPanel', () => {
     );
   });
 
-  it('switches validator kind to built-in', () => {
-    const hook = makeHook({ validator: { kind: 'script', interpreter: 'bash', source: '' } });
-    const { getByTestId } = render(
-      <HookEditorPanel hook={hook} onChange={onChange} onBack={onBack} nodeNames={nodeNames} />
-    );
-    fireEvent.click(getByTestId('hook-editor-section-validator'));
-    fireEvent.click(getByTestId('hook-editor-validator-kind-built-in'));
-    expect(onChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        validator: expect.objectContaining({ kind: 'built_in' }),
-      })
-    );
-  });
-
-  it('updates built-in validator ID', () => {
+  it('disables unsupported built-in validator controls', () => {
     const hook = makeHook();
     const { getByTestId } = render(
       <HookEditorPanel hook={hook} onChange={onChange} onBack={onBack} nodeNames={nodeNames} />
     );
     fireEvent.click(getByTestId('hook-editor-section-validator'));
-    fireEvent.change(getByTestId('hook-editor-built-in-id'), { target: { value: 'pr_mergeable' } });
-    expect(onChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        validator: expect.objectContaining({ id: 'pr_mergeable' }),
-      })
-    );
+    expect(getByTestId('hook-editor-validator-kind-built-in').disabled).toBe(true);
+    expect(getByTestId('hook-editor-built-in-id').disabled).toBe(true);
   });
 
   it('shows PR-ready block copy for pull request validators', () => {
@@ -188,6 +176,19 @@ describe('HookEditorPanel', () => {
     );
     fireEvent.click(getByTestId('hook-editor-section-validator'));
     expect(getByTestId('hook-editor-script-source').className).toContain('border-red-500');
+  });
+
+  it('keeps invalid template JSON draft editable without updating hook', () => {
+    const hook = makeHook({ templateData: { ok: true } });
+    const { getByTestId, getByText } = render(
+      <HookEditorPanel hook={hook} onChange={onChange} onBack={onBack} nodeNames={nodeNames} />
+    );
+    fireEvent.input(getByTestId('hook-editor-template-data'), { target: { value: '{nope' } });
+    expect(getByTestId('hook-editor-template-data').value).toBe('{nope');
+    expect(getByText(/Expected property name/)).toBeTruthy();
+    expect(onChange).not.toHaveBeenCalledWith(
+      expect.objectContaining({ templateData: expect.anything() })
+    );
   });
 
   it('toggles external lookup checkbox', () => {
@@ -250,18 +251,14 @@ describe('HookEditorPanel', () => {
     );
   });
 
-  it('updates poll interval', () => {
+  it('shows unsupported poll notice without editable poll controls', () => {
     const hook = makeHook({ poll: { intervalMs: 30_000 } });
-    const { getByTestId } = render(
+    const { getByTestId, queryByTestId } = render(
       <HookEditorPanel hook={hook} onChange={onChange} onBack={onBack} nodeNames={nodeNames} />
     );
     fireEvent.click(getByTestId('hook-editor-section-retry'));
-    fireEvent.input(getByTestId('hook-editor-poll-interval'), { target: { value: '60000' } });
-    expect(onChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        poll: expect.objectContaining({ intervalMs: 60000 }),
-      })
-    );
+    expect(getByTestId('hook-editor-poll-unsupported').textContent).toContain('not supported yet');
+    expect(queryByTestId('hook-editor-poll-interval')).toBeNull();
   });
 
   it('updates classification', () => {
@@ -286,13 +283,13 @@ describe('HookEditorPanel', () => {
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ order: 2 }));
   });
 
-  it('toggles humanOnly checkbox', () => {
-    const hook = makeHook({ humanOnly: false });
-    const { getByTestId } = render(
+  it('shows unsupported human-only notice without checkbox', () => {
+    const hook = makeHook({ humanOnly: true });
+    const { getByText, queryByTestId } = render(
       <HookEditorPanel hook={hook} onChange={onChange} onBack={onBack} nodeNames={nodeNames} />
     );
-    fireEvent.click(getByTestId('hook-editor-human-only'));
-    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ humanOnly: true }));
+    expect(getByText(/Human-only hooks are not supported yet/)).toBeTruthy();
+    expect(queryByTestId('hook-editor-human-only')).toBeNull();
   });
 
   it('calls onBack when back button clicked', () => {

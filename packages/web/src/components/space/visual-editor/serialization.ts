@@ -242,6 +242,35 @@ function derivePostApprovalTargetAgent(agents: WorkflowNodeAgent[], fallbackInde
   return namedAgent?.name.trim() || `agent-${fallbackIndex + 1}`;
 }
 
+function buildHookNodeNameMap(nodes: VisualNode[]): Map<string, string> {
+  const nodeNames = new Map<string, string>();
+  nodes.forEach((node, i) => {
+    const name = node.step.name || `Step ${i + 1}`;
+    nodeNames.set(node.step.localId, name);
+    if (node.step.id) nodeNames.set(node.step.id, name);
+    if (node.step.name) nodeNames.set(node.step.name, name);
+  });
+  return nodeNames;
+}
+
+function remapHookNodeReference(value: string | undefined, nodeNames: Map<string, string>) {
+  if (!value) return value;
+  return nodeNames.get(value) ?? value;
+}
+
+function serializeHook(hook: WorkflowHook, nodeNames: Map<string, string>): WorkflowHook {
+  const { poll: _poll, ...hookWithoutUnsupportedPoll } = hook;
+  return {
+    ...hookWithoutUnsupportedPoll,
+    sourceNode: remapHookNodeReference(hook.sourceNode, nodeNames) ?? hook.sourceNode,
+    targetNode: remapHookNodeReference(hook.targetNode, nodeNames),
+    authorizedCallers: hook.authorizedCallers?.map((caller) => ({
+      ...caller,
+      sourceNode: remapHookNodeReference(caller.sourceNode, nodeNames) ?? caller.sourceNode,
+    })),
+  };
+}
+
 /**
  * Build the serialized workflow fields from a VisualEditorState.
  * Shared between create and update serialisation.
@@ -355,7 +384,8 @@ function buildWorkflowFields(state: VisualEditorState): {
     state.channels.map((channel) => channel.gateId).filter((gateId): gateId is string => !!gateId)
   );
   const gates = state.gates.filter((gate) => referencedGateIds.has(gate.id));
-  const hooks = state.hooks;
+  const hookNodeNames = buildHookNodeNameMap(persistableNodes);
+  const hooks = state.hooks.map((hook) => serializeHook(hook, hookNodeNames));
 
   return {
     fields: {

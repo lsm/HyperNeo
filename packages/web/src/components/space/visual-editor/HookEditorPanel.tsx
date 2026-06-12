@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'preact/hooks';
+import { useEffect, useMemo, useState } from 'preact/hooks';
 import type {
   WorkflowHook,
   WorkflowHookMcpMethod,
@@ -95,6 +95,15 @@ export function HookEditorPanel({
   embedded = false,
 }: HookEditorPanelProps) {
   const [expandedSection, setExpandedSection] = useState<string | null>('basic');
+  const [templateDataDraft, setTemplateDataDraft] = useState(() =>
+    hook.templateData ? JSON.stringify(hook.templateData, null, 2) : ''
+  );
+  const [templateDataError, setTemplateDataError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setTemplateDataDraft(hook.templateData ? JSON.stringify(hook.templateData, null, 2) : '');
+    setTemplateDataError(null);
+  }, [hook.id, hook.templateData]);
 
   const labelError = useMemo(() => validateLabel(hook.label), [hook.label]);
   const sourceNodeError = useMemo(() => validateSourceNode(hook.sourceNode), [hook.sourceNode]);
@@ -123,11 +132,27 @@ export function HookEditorPanel({
   const delayMs = hook.retry?.delayMs ?? 5000;
   const backoffMultiplier = hook.retry?.backoffMultiplier ?? 1;
 
-  const pollIntervalMs = hook.poll?.intervalMs ?? 30_000;
-  const pollMaxDurationMs = hook.poll?.maxDurationMs ?? 300_000;
-
   function updateHook(partial: Partial<WorkflowHook>) {
     onChange({ ...hook, ...partial });
+  }
+
+  function updateSourceNode(sourceNode: string) {
+    onChange({
+      ...hook,
+      sourceNode,
+      authorizedCallers: (hook.authorizedCallers ?? [{ sourceNode }]).map((caller) => ({
+        ...caller,
+        sourceNode: caller.sourceNode === hook.sourceNode ? sourceNode : caller.sourceNode,
+      })),
+    });
+  }
+
+  function updateMethod(method: WorkflowHookMcpMethod) {
+    onChange({
+      ...hook,
+      method,
+      targetNode: method === 'send_message' ? hook.targetNode : undefined,
+    });
   }
 
   function updateValidator(partial: Partial<WorkflowHook['validator']>) {
@@ -140,17 +165,15 @@ export function HookEditorPanel({
     onChange({ ...hook, retry: { ...current, ...partial } });
   }
 
-  function updatePoll(partial: Partial<NonNullable<WorkflowHook['poll']>>) {
-    const current = hook.poll ?? { intervalMs: 30_000 };
-    onChange({ ...hook, poll: { ...current, ...partial } });
-  }
-
   function updateTemplateData(raw: string) {
+    setTemplateDataDraft(raw);
     try {
       const parsed = raw.trim() ? JSON.parse(raw) : undefined;
+      setTemplateDataError(null);
       updateHook({ templateData: parsed });
-    } catch {
-      // Invalid JSON — don't update; validation will catch it elsewhere if needed
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Invalid JSON';
+      setTemplateDataError(message);
     }
   }
 
@@ -183,14 +206,6 @@ export function HookEditorPanel({
       updateValidator({ externalLookups: Array.from(current) });
     }
   }
-
-  const templateDataRaw = useMemo(() => {
-    try {
-      return hook.templateData ? JSON.stringify(hook.templateData, null, 2) : '';
-    } catch {
-      return '';
-    }
-  }, [hook.templateData]);
 
   const sections: { id: string; label: string }[] = [
     { id: 'basic', label: 'Basic' },
@@ -296,7 +311,7 @@ export function HookEditorPanel({
             <select
               data-testid="hook-editor-source-node"
               value={hook.sourceNode}
-              onChange={(e) => updateHook({ sourceNode: e.currentTarget.value })}
+              onChange={(e) => updateSourceNode(e.currentTarget.value)}
               class={`w-full text-xs bg-dark-800 border rounded px-2 py-1 text-gray-200 focus:outline-none ${
                 sourceNodeError
                   ? 'border-red-500 focus:border-red-500'
@@ -319,13 +334,14 @@ export function HookEditorPanel({
             </label>
             <select
               data-testid="hook-editor-target-node"
-              value={hook.targetNode ?? ''}
+              value={hook.method === 'send_message' ? (hook.targetNode ?? '') : ''}
+              disabled={hook.method !== 'send_message'}
               onChange={(e) =>
                 updateHook({
                   targetNode: e.currentTarget.value || undefined,
                 })
               }
-              class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1 text-gray-200 focus:outline-none focus:border-blue-500"
+              class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1 text-gray-200 focus:outline-none focus:border-blue-500 disabled:opacity-50"
             >
               <option value="">— Any target —</option>
               {nodeNames.map((name) => (
@@ -342,9 +358,7 @@ export function HookEditorPanel({
             <select
               data-testid="hook-editor-method"
               value={hook.method}
-              onChange={(e) =>
-                updateHook({ method: e.currentTarget.value as WorkflowHookMcpMethod })
-              }
+              onChange={(e) => updateMethod(e.currentTarget.value as WorkflowHookMcpMethod)}
               class={`w-full text-xs bg-dark-800 border rounded px-2 py-1 text-gray-200 focus:outline-none ${
                 methodError
                   ? 'border-red-500 focus:border-red-500'
@@ -367,12 +381,17 @@ export function HookEditorPanel({
             </label>
             <textarea
               data-testid="hook-editor-template-data"
-              value={templateDataRaw}
+              value={templateDataDraft}
               placeholder='{"key": "value"}'
               rows={4}
               onInput={(e) => updateTemplateData(e.currentTarget.value)}
-              class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-gray-200 font-mono focus:outline-none focus:border-blue-500 placeholder-gray-700 resize-y leading-relaxed"
+              class={`w-full text-xs bg-dark-800 border rounded px-2 py-1.5 text-gray-200 font-mono focus:outline-none placeholder-gray-700 resize-y leading-relaxed ${
+                templateDataError
+                  ? 'border-red-500 focus:border-red-500'
+                  : 'border-dark-600 focus:border-blue-500'
+              }`}
             />
+            {templateDataError && <p class="text-[10px] text-red-400">{templateDataError}</p>}
           </div>
 
           {/* Classification + Order */}
@@ -412,19 +431,10 @@ export function HookEditorPanel({
             </div>
           </div>
 
-          {/* humanOnly */}
-          <label class="flex items-center gap-2 cursor-pointer">
-            <input
-              type="checkbox"
-              data-testid="hook-editor-human-only"
-              checked={hook.humanOnly ?? false}
-              onChange={(e) =>
-                updateHook({ humanOnly: (e.currentTarget as HTMLInputElement).checked })
-              }
-              class="rounded border-dark-600 text-blue-500 focus:ring-blue-500"
-            />
-            <span class="text-xs text-gray-400">Human-only (agent sessions cannot trigger)</span>
-          </label>
+          <p class="rounded border border-amber-700/50 bg-amber-900/10 px-2 py-1.5 text-[11px] text-amber-200">
+            Human-only hooks are not supported yet, so this editor only creates agent-triggered
+            hooks.
+          </p>
         </div>
       )}
 
@@ -436,16 +446,13 @@ export function HookEditorPanel({
             <button
               type="button"
               data-testid="hook-editor-validator-kind-built-in"
-              onClick={() =>
-                updateHook({
-                  validator: { kind: 'built_in', id: builtInId || 'pr_open' },
-                })
-              }
-              class={`flex-1 rounded border px-2 py-1.5 text-xs transition-colors ${
+              disabled
+              title="Built-in validators are not supported by workflow validation yet."
+              class={`flex-1 rounded border px-2 py-1.5 text-xs transition-colors opacity-50 cursor-not-allowed ${
                 validatorKind === 'built_in' ? modeButtonClass(true) : modeButtonClass(false)
               }`}
             >
-              Built-in
+              Built-in (coming soon)
             </button>
             <button
               type="button"
@@ -474,12 +481,13 @@ export function HookEditorPanel({
               <select
                 data-testid="hook-editor-built-in-id"
                 value={builtInId}
+                disabled
                 onChange={(e) =>
                   updateValidator({
                     id: e.currentTarget.value as WorkflowHookValidatorId,
                   })
                 }
-                class={`w-full text-xs bg-dark-800 border rounded px-2 py-1 text-gray-200 focus:outline-none ${
+                class={`w-full text-xs bg-dark-800 border rounded px-2 py-1 text-gray-200 focus:outline-none opacity-60 ${
                   builtInIdError
                     ? 'border-red-500 focus:border-red-500'
                     : 'border-dark-600 focus:border-blue-500'
@@ -715,45 +723,12 @@ export function HookEditorPanel({
             </div>
           </div>
 
-          <div class="space-y-2">
-            <label class="text-[11px] uppercase tracking-[0.12em] text-gray-400">
-              Poll Settings
-            </label>
-            <div class="grid grid-cols-2 gap-2">
-              <div class="space-y-0.5">
-                <label class="text-[10px] text-gray-400">Interval (ms)</label>
-                <input
-                  type="number"
-                  data-testid="hook-editor-poll-interval"
-                  value={pollIntervalMs}
-                  min={1000}
-                  step={1000}
-                  onInput={(e) => {
-                    const val = Number((e.currentTarget as HTMLInputElement).value);
-                    if (isNaN(val)) return;
-                    updatePoll({ intervalMs: Math.max(1000, val) });
-                  }}
-                  class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1 text-gray-200 font-mono focus:outline-none focus:border-blue-500"
-                />
-              </div>
-              <div class="space-y-0.5">
-                <label class="text-[10px] text-gray-400">Max duration (ms)</label>
-                <input
-                  type="number"
-                  data-testid="hook-editor-poll-max-duration"
-                  value={pollMaxDurationMs}
-                  min={1000}
-                  step={1000}
-                  onInput={(e) => {
-                    const val = Number((e.currentTarget as HTMLInputElement).value);
-                    if (isNaN(val)) return;
-                    updatePoll({ maxDurationMs: Math.max(1000, val) });
-                  }}
-                  class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1 text-gray-200 font-mono focus:outline-none focus:border-blue-500"
-                />
-              </div>
-            </div>
-          </div>
+          <p
+            class="rounded border border-amber-700/50 bg-amber-900/10 px-2 py-1.5 text-[11px] text-amber-200"
+            data-testid="hook-editor-poll-unsupported"
+          >
+            Polling hooks are not supported yet, so poll settings are not saved by this editor.
+          </p>
         </div>
       )}
     </div>

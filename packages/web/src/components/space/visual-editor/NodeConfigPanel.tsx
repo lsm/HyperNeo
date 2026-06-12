@@ -1290,7 +1290,7 @@ export function NodeConfigPanel({
               type="button"
               data-testid="add-hook-button"
               onClick={() => {
-                const sourceNode = step.name || '';
+                const sourceNode = step.name || step.localId;
                 const newHook: WorkflowHook = {
                   id: generateUUID(),
                   enabled: true,
@@ -1301,7 +1301,7 @@ export function NodeConfigPanel({
                     interpreter: 'bash',
                     source: `echo '{"type":"allow"}'`,
                   },
-                  authorizedCallers: sourceNode ? [{ sourceNode }] : undefined,
+                  authorizedCallers: [{ sourceNode }],
                 };
                 onUpdateNodeHooks([...nodeHooks, newHook]);
                 setPanelView({ kind: 'hook-editor', hookId: newHook.id });
