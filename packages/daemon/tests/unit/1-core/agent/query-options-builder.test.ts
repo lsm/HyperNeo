@@ -336,6 +336,38 @@ describe('QueryOptionsBuilder', () => {
       }
     });
 
+    it('should keep OpenRouter Opus models on the SDK maximum output limit', async () => {
+      resetProviderRegistry();
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'openrouter',
+        displayName: 'OpenRouter',
+        capabilities: {
+          streaming: true,
+          extendedThinking: true,
+          thinkingModes: 'granular',
+          maxContextWindow: 1_000_000,
+          functionCalling: true,
+          vision: true,
+        },
+        isAvailable: () => true,
+        getModels: async () => [],
+        ownsModel: () => true,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: true }),
+        translateModelIdForSdk: () => 'default',
+        getModelContextWindow: () => 200_000,
+      } as Provider);
+      try {
+        mockSession.config.provider = 'openrouter';
+        mockSession.config.model = 'anthropic/claude-opus-4.7';
+        const options = await builder.build();
+        expect(options.model).toBe('default');
+        expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('128000');
+      } finally {
+        resetProviderRegistry();
+      }
+    });
+
     it('should prefer selected model context over aggregated provider context', async () => {
       resetProviderRegistry();
       const registry = getProviderRegistry();

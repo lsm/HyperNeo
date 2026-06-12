@@ -149,7 +149,10 @@ function deriveSdkOutputTokenLimit(input: SdkOutputLimitInput): string {
   if (input.providerId === 'kimi') {
     return String(KIMI_SDK_OUTPUT_TOKEN_LIMIT);
   }
-  if (input.providerId === 'anthropic' && isOpusModel(input.modelId)) {
+  if (
+    (input.providerId === 'anthropic' || input.providerId === 'openrouter') &&
+    isOpusModel(input.modelId)
+  ) {
     return String(MAX_SDK_OUTPUT_TOKEN_LIMIT);
   }
   if (input.maxContextWindow >= 262_000) {
