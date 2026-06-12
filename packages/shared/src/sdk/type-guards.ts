@@ -9,6 +9,7 @@ import type {
   SDKMessage,
   SDKAssistantMessage,
   SDKAuthStatusMessage,
+  SDKCommandsChangedMessage,
   SDKCompactBoundaryMessage,
   SDKHookResponseMessage,
   SDKResultError,
@@ -106,7 +107,16 @@ export function isSDKSystemMessage(
 export function isSDKSystemInit(
   msg: SDKMessage,
 ): msg is SDKSystemMessage {
-  return msg.type === "system" && (msg as SDKSystemMessage).subtype === "init";
+  return msg.type === "system" && (msg as { subtype?: string }).subtype === "init";
+}
+
+/**
+ * Check if message is a commands changed message
+ */
+export function isSDKCommandsChangedMessage(
+  msg: SDKMessage,
+): msg is SDKCommandsChangedMessage {
+  return msg.type === "system" && (msg as { subtype?: string }).subtype === "commands_changed";
 }
 
 /**

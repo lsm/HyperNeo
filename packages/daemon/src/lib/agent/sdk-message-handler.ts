@@ -25,6 +25,7 @@ import type { SDKMessage, SDKUserMessage } from '@neokai/shared/sdk';
 import {
   isSDKAPIRetryMessage,
   isSDKAssistantMessage,
+  isSDKCommandsChangedMessage,
   isSDKCompactBoundary,
   isSDKResultMessage,
   isSDKResultSuccess,
@@ -648,6 +649,10 @@ export class SDKMessageHandler {
     // Use isSDKSystemInit which narrows specifically to SDKSystemMessage (subtype: 'init').
     if (isSDKSystemInit(message) && message.slash_commands?.length > 0) {
       await this.ctx.onInitSlashCommands(message.slash_commands);
+    }
+
+    if (isSDKCommandsChangedMessage(message)) {
+      await this.ctx.onInitSlashCommands(message.commands.map((command) => command.name));
     }
   }
 

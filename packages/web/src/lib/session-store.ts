@@ -453,13 +453,14 @@ class SessionStore {
           ((b as ChatMessage & { timestamp?: number }).timestamp || 0)
       );
 
-    this.sdkMessages.value = sorted;
+    const visible = this._withoutSupersededMessages(sorted);
+    this.sdkMessages.value = visible;
     this._hasMoreMessages.value = rows.length >= LIVE_QUERY_MESSAGE_LIMIT;
     this._initialMessageCount.value = rows.length;
     // Mark the messages as loaded so the UI can transition from the loading
     // skeleton to either the message list or the empty-state placeholder.
     this.messagesLoaded.value = true;
-    this._syncCommandsFromSDKMessages(sorted);
+    this._syncCommandsFromSDKMessages(visible);
   }
 
   /**
@@ -527,8 +528,24 @@ class SessionStore {
     }
 
     if (changed) {
-      this.sdkMessages.value = next;
+      this.sdkMessages.value = this._withoutSupersededMessages(next);
     }
+  }
+
+  private _withoutSupersededMessages(messages: ChatMessage[]): ChatMessage[] {
+    const superseded = new Set<string>();
+    for (const msg of messages) {
+      const maybeSuperseding = msg as ChatMessage & { supersedes?: unknown };
+      if (!Array.isArray(maybeSuperseding.supersedes)) continue;
+      for (const uuid of maybeSuperseding.supersedes) {
+        if (typeof uuid === 'string') superseded.add(uuid);
+      }
+    }
+    if (superseded.size === 0) return messages;
+    return messages.filter((msg) => {
+      const uuid = (msg as ChatMessage & { uuid?: unknown }).uuid;
+      return typeof uuid !== 'string' || !superseded.has(uuid);
+    });
   }
 
   /**
@@ -602,23 +619,48 @@ class SessionStore {
    * daemon fallback broadcast), this restores commands from the SDK message.
    */
   private _syncCommandsFromSDKMessages(messages: ChatMessage[]): void {
-    for (const msg of messages) {
-      const m = msg as unknown as { type?: string; subtype?: string; slash_commands?: string[] };
-      if (
-        m.type === 'system' &&
-        m.subtype === 'init' &&
-        Array.isArray(m.slash_commands) &&
-        m.slash_commands.length > 0
-      ) {
+    for (let index = messages.length - 1; index >= 0; index--) {
+      const msg = messages[index];
+      const m = msg as unknown as {
+        type?: string;
+        subtype?: string;
+        slash_commands?: string[];
+        commands?: Array<{ name?: unknown }>;
+      };
+      const availableCommands = this._commandsFromSDKMessage(m);
+      if (availableCommands.length > 0) {
+        slashCommandsSignal.value = availableCommands;
         if (this.sessionState.value) {
           this.sessionState.value = {
             ...this.sessionState.value,
-            commandsData: { availableCommands: m.slash_commands },
+            commandsData: { availableCommands },
           };
         }
         break;
       }
     }
+  }
+
+  private _commandsFromSDKMessage(message: {
+    type?: string;
+    subtype?: string;
+    slash_commands?: string[];
+    commands?: Array<{ name?: unknown }>;
+  }): string[] {
+    if (message.type !== 'system') return [];
+    if (message.subtype === 'commands_changed' && Array.isArray(message.commands)) {
+      return message.commands
+        .map((command) => command.name)
+        .filter((name): name is string => typeof name === 'string' && name.length > 0);
+    }
+    if (
+      message.subtype === 'init' &&
+      Array.isArray(message.slash_commands) &&
+      message.slash_commands.length > 0
+    ) {
+      return message.slash_commands;
+    }
+    return [];
   }
 
   /**

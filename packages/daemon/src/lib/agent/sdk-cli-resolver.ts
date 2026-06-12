@@ -146,7 +146,7 @@ function getSdkVersion(): string {
   }
 
   // Hardcoded fallback — must be updated when the SDK dependency changes
-  return '0.2.141';
+  return '0.3.175';
 }
 
 /**
