@@ -1008,6 +1008,11 @@ export class AcpQueryRunner {
         provider: 'acp',
       } as Session['config'],
     });
+    this.ctx.internalEventBus.publishAsync('session.updated', {
+      sessionId: this.ctx.session.id,
+      source: 'acp-config-options',
+      session: { config: this.ctx.session.config },
+    });
   }
 
   private updateAcpModelCache(

@@ -199,6 +199,26 @@ describe('AcpQueryAdapter', () => {
     expect((msg.value as { tool_use_id: string }).tool_use_id).toBe('tc-2');
   });
 
+  test('counts prompt estimate in result input tokens', async () => {
+    const client = new MockAcpClient('sess-usage');
+    const adapter = new AcpQueryAdapter(
+      client as unknown as InstanceType<
+        typeof import('../../../../src/lib/acp/acp-client').AcpClient
+      >,
+      [{ type: 'text', text: 'hello world' }]
+    );
+
+    const messages: SDKMessage[] = [];
+    for await (const msg of adapter) {
+      messages.push(msg);
+    }
+
+    const result = messages.find((msg) => msg.type === 'result') as {
+      usage: { input_tokens: number };
+    };
+    expect(result.usage.input_tokens).toBeGreaterThan(0);
+  });
+
   test('stops iteration when interrupted', async () => {
     const client = new MockAcpClient('sess-4');
     const adapter = new AcpQueryAdapter(

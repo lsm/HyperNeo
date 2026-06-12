@@ -61,10 +61,12 @@ export class AcpMessageTranslator {
   constructor(
     sessionId: string,
     private contextWindow = 0,
-    initialUsageEstimate = 0
+    initialUsageEstimate = 0,
+    initialInputTokenEstimate = 0
   ) {
     this.sessionId = sessionId;
     this.contextUsageEstimate = initialUsageEstimate;
+    this.inputTokenEstimate = initialInputTokenEstimate;
   }
 
   /**
@@ -245,7 +247,11 @@ export class AcpMessageTranslator {
   }
 
   getContextUsage(): { used: number; size: number } | null {
-    const used = this.reportedContextUsage ?? this.contextUsageEstimate + this.outputTokenEstimate;
+    if (this.reportedContextUsage !== null) {
+      return { used: this.reportedContextUsage, size: this.contextWindow };
+    }
+
+    const used = this.contextUsageEstimate + this.outputTokenEstimate;
     return used > 0 ? { used, size: this.contextWindow } : null;
   }
 

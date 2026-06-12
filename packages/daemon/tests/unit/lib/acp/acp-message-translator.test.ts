@@ -236,6 +236,12 @@ describe('AcpMessageTranslator', () => {
     expect(translator.getContextUsage()?.used).toBe(53000);
   });
 
+  test('preserves zero ACP usage updates', () => {
+    translator.processUpdate({ sessionUpdate: 'usage_update', size: 200000, used: 0 } as never);
+
+    expect(translator.getContextUsage()).toEqual({ used: 0, size: 200000 });
+  });
+
   test('ignores available commands updates', () => {
     expect(
       translator.processUpdate({

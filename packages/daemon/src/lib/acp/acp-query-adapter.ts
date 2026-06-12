@@ -43,10 +43,12 @@ export class AcpQueryAdapter implements QueryLike {
     if (!sessionId) {
       throw new Error('AcpClient has no active session');
     }
+    const promptTokenEstimate = estimatePromptTokens(prompt);
     this.translator = new AcpMessageTranslator(
       sessionId,
       options.contextWindow,
-      (options.initialUsageEstimate ?? 0) + estimatePromptTokens(prompt)
+      (options.initialUsageEstimate ?? 0) + promptTokenEstimate,
+      promptTokenEstimate
     );
   }
 
