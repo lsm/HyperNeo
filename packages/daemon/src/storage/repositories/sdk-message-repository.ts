@@ -498,6 +498,7 @@ export class SDKMessageRepository {
     let query = `SELECT id, sdk_message, timestamp, send_status, origin FROM sdk_messages
       WHERE session_id = ?
         AND parent_tool_use_id IS NULL
+        AND COALESCE(message_subtype, '') != 'thinking_tokens'
         AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))`;
     const params: SQLiteValue[] = [sessionId];
 

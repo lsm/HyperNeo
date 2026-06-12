@@ -506,7 +506,15 @@ export class QueryRunner {
       }
 
       // Note: PORT and NEOKAI_PORT are cleared inside applyEnvVarsToProcess() above,
-      // so SDK subprocesses cannot inherit the daemon's listening port.
+      // so SDK subprocesses cannot inherit the daemon's listening port. Refresh
+      // the full SDK env snapshot now so provider credentials applied to
+      // process.env are included before SDK 0.3 treats options.env as complete.
+      queryOptions.env = Object.fromEntries(
+        Object.entries({ ...process.env, ...queryOptions.env }).filter(
+          (entry): entry is [string, string] =>
+            entry[1] !== undefined && entry[0] !== 'PORT' && entry[0] !== 'NEOKAI_PORT'
+        )
+      );
 
       // Wrap spawnClaudeCodeProcess to track subprocess exit deterministically.
       // This lets stop() await the actual process exit instead of using arbitrary delays.

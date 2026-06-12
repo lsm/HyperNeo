@@ -124,6 +124,19 @@ const FULL_BUILTIN_TOOL_LIST = [
   'ExitPlanMode',
   'Skill',
   'ToolSearch',
+  'Projects',
+  'REPL',
+  'Workflow',
+  'CronCreate',
+  'CronDelete',
+  'CronList',
+  'ScheduleWakeup',
+  'RemoteTrigger',
+  'Monitor',
+  'Artifact',
+  'PushNotification',
+  'EnterWorktree',
+  'ExitWorktree',
 ];
 
 /**
@@ -1003,9 +1016,11 @@ CRITICAL RULES:
       providerEnvVars.add('CLAUDE_CODE_AUTO_COMPACT_WINDOW');
     }
 
+    const excludedEnvVars = new Set(['PORT', 'NEOKAI_PORT']);
     const mergedEnv: Record<string, string> = Object.fromEntries(
       Object.entries(process.env).filter(
-        (entry): entry is [string, string] => entry[1] !== undefined
+        (entry): entry is [string, string] =>
+          entry[1] !== undefined && !excludedEnvVars.has(entry[0])
       )
     );
 

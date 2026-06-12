@@ -1405,6 +1405,11 @@ describe('QueryOptionsBuilder', () => {
         expect(result).toContain('TaskStop');
         expect(result).toContain('Read');
         expect(result).toContain('Write');
+        expect(result).toContain('REPL');
+        expect(result).toContain('Workflow');
+        expect(result).toContain('CronCreate');
+        expect(result).toContain('Artifact');
+        expect(result).toContain('Monitor');
       });
 
       it('expands undefined to full array for glm provider', () => {

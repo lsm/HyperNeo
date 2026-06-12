@@ -282,6 +282,25 @@ describe('SDKMessageRepository', () => {
       expect(messages.length).toBe(50);
     });
 
+    it('should exclude thinking token progress rows before applying limit', () => {
+      repository.saveSDKMessage('session-1', createUserMessage('Visible'));
+      for (let i = 0; i < 10; i++) {
+        repository.saveSDKMessage('session-1', {
+          type: 'system',
+          subtype: 'thinking_tokens',
+          estimated_tokens: i + 1,
+          estimated_tokens_delta: 1,
+          uuid: `thinking-${i}`,
+          session_id: 'session-1',
+        } as unknown as SDKMessage);
+      }
+
+      const { messages } = repository.getSDKMessages('session-1', 1);
+
+      expect(messages.length).toBe(1);
+      expect(messages[0]?.type).toBe('user');
+    });
+
     it('should return messages before a timestamp (cursor pagination)', async () => {
       repository.saveSDKMessage('session-1', createUserMessage('First'));
       await new Promise((r) => setTimeout(r, 10));
