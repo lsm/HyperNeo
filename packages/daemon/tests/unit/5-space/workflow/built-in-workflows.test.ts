@@ -2099,11 +2099,20 @@ describe('seedBuiltInWorkflows()', () => {
   test('re-stamp replaces legacy PR-ready gate channels with hook-validated channels', () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
-    const legacyChannels = coding.channels!.map((channel) =>
-      channel.from === 'Coding' && channel.to === 'Review'
-        ? { ...channel, gateId: 'code-ready-gate' }
-        : channel
-    );
+    const customSecurityChannel = {
+      id: 'custom-security-review-channel',
+      from: 'Coding',
+      to: 'Security Review',
+      gateId: 'code-ready-gate',
+    } as NonNullable<SpaceWorkflow['channels']>[number];
+    const legacyChannels = [
+      ...coding.channels!.map((channel) =>
+        channel.from === 'Coding' && channel.to === 'Review'
+          ? { ...channel, gateId: 'code-ready-gate' }
+          : channel
+      ),
+      customSecurityChannel,
+    ];
 
     repo.updateWorkflow(coding.id, { channels: legacyChannels });
     db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
@@ -2121,12 +2130,21 @@ describe('seedBuiltInWorkflows()', () => {
     );
     expect(codeToReview).toHaveLength(1);
     expect(codeToReview[0].gateId).toBeUndefined();
+    expect(
+      after.channels!.some(
+        (channel) =>
+          channel.from === 'Coding' &&
+          channel.to === 'Security Review' &&
+          channel.gateId === 'code-ready-gate'
+      )
+    ).toBe(true);
   });
 
-  test('re-stamp remaps hook authorized slots when source agent slot was renamed', () => {
+  test('re-stamp remaps hook node refs and authorized slots when source node and slot were renamed', () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
     const codingNode = coding.nodes.find((node) => node.name === 'Coding')!;
+    const reviewNode = coding.nodes.find((node) => node.name === 'Review')!;
     const renamedCodingNode = {
       ...codingNode,
       agents: codingNode.agents.map((agent) =>
@@ -2134,9 +2152,14 @@ describe('seedBuiltInWorkflows()', () => {
       ),
     };
 
-    db.prepare(`UPDATE space_workflow_nodes SET config = ? WHERE id = ?`).run(
+    db.prepare(`UPDATE space_workflow_nodes SET name = ?, config = ? WHERE id = ?`).run(
+      'Implementation',
       JSON.stringify({ agents: renamedCodingNode.agents }),
       codingNode.id
+    );
+    db.prepare(`UPDATE space_workflow_nodes SET name = ? WHERE id = ?`).run(
+      'Human Review',
+      reviewNode.id
     );
     db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
       'renamed-source-slot',
@@ -2149,6 +2172,9 @@ describe('seedBuiltInWorkflows()', () => {
 
     const after = manager.getWorkflow(coding.id)!;
     const hook = after.hooks!.find((h) => h.id === 'code-pr-ready')!;
+    expect(hook.sourceNode).toBe('Implementation');
+    expect(hook.targetNode).toBe('Human Review');
+    expect(hook.authorizedCallers?.[0]?.sourceNode).toBe('Implementation');
     expect(hook.authorizedCallers?.[0]?.agentSlots).toEqual(['engineer']);
   });
 

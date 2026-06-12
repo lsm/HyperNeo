@@ -1637,6 +1637,34 @@ describe('wrapHandlerWithHooks', () => {
     expect(handlerCallCount).toBe(1);
   });
 
+  test('superseded queued retry timer is cancelled before replay', async () => {
+    const { engine, mockExecutor } = makeEngine([
+      makeHook({ id: 'hook-1', classification: 'validation', order: 0 }),
+    ]);
+    mockExecutor.setResult('hook-1', {
+      type: 'retryable_block',
+      reason: 'Retry me',
+      retryAfterMs: 10,
+    });
+
+    const deliveredMessages: string[] = [];
+    const handler = async (args: { target: string; message: string }) => {
+      deliveredMessages.push(args.message);
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }],
+      };
+    };
+
+    const wrapped = wrapHandlerWithHooks('send_message', handler, engine, {}, defaultMeta);
+    await wrapped({ target: 'Review', message: 'first' });
+    await wrapped({ target: 'Review', message: 'second' });
+
+    mockExecutor.setResult('hook-1', { type: 'allow' });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    expect(deliveredMessages).toEqual(['second']);
+  });
+
   test('queued retry hard failure is reported to source session', async () => {
     const notifications: Array<{ sessionId: string; message: string }> = [];
     const { engine, mockExecutor } = makeEngine(

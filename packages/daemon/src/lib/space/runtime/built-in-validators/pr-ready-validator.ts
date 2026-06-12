@@ -85,6 +85,7 @@ export function createPrReadyValidator(
       };
     }
     const prUrl = prUrlResult.prUrl;
+    const shouldPatchPrUrl = prUrlResult.shouldPatchPrUrl;
 
     const prMeta = parsePrUrl(prUrl);
     if (!prMeta) {
@@ -170,6 +171,14 @@ export function createPrReadyValidator(
       };
     }
 
+    if (shouldPatchPrUrl) {
+      return {
+        type: 'patch_params',
+        patch: { data: { ...extractDataRecord(context), pr_url: prJson.url } },
+        data: { pr_url: prJson.url },
+      };
+    }
+
     return {
       type: 'allow',
       data: { pr_url: prJson.url },
@@ -180,9 +189,17 @@ export function createPrReadyValidator(
 async function resolvePrUrl(
   context: HookExecutorContext,
   spawnImpl: typeof Bun.spawn
-): Promise<{ success: true; prUrl: string } | { success: false; error: string }> {
-  const prUrl = extractPrUrl(context);
-  if (prUrl) return { success: true, prUrl };
+): Promise<
+  { success: true; prUrl: string; shouldPatchPrUrl: boolean } | { success: false; error: string }
+> {
+  const boundedPrUrl = extractPrUrlFromParams(context.params);
+  if (boundedPrUrl) return { success: true, prUrl: boundedPrUrl, shouldPatchPrUrl: false };
+
+  const rawPrUrl = context.rawParams ? extractPrUrlFromParams(context.rawParams) : undefined;
+  if (rawPrUrl) return { success: true, prUrl: rawPrUrl, shouldPatchPrUrl: false };
+
+  const templatePrUrl = extractTemplatePrUrl(context);
+  if (templatePrUrl) return { success: true, prUrl: templatePrUrl, shouldPatchPrUrl: true };
 
   const currentBranchPr = await runCommand<{ url?: string }>(
     ['gh', 'pr', 'view', '--json', 'url'],
@@ -202,16 +219,15 @@ async function resolvePrUrl(
       error: 'no PR URL provided and current-branch PR discovery returned no URL',
     };
   }
-  return { success: true, prUrl: currentBranchPr.data.url };
+  return { success: true, prUrl: currentBranchPr.data.url, shouldPatchPrUrl: true };
 }
 
-function extractPrUrl(context: HookExecutorContext): string | undefined {
-  const boundedPrUrl = extractPrUrlFromParams(context.params);
-  if (boundedPrUrl) return boundedPrUrl;
+function extractDataRecord(context: HookExecutorContext): Record<string, unknown> {
+  const data = context.rawParams?.data ?? context.params.data;
+  return typeof data === 'object' && data !== null && !Array.isArray(data) ? { ...data } : {};
+}
 
-  const rawPrUrl = context.rawParams ? extractPrUrlFromParams(context.rawParams) : undefined;
-  if (rawPrUrl) return rawPrUrl;
-
+function extractTemplatePrUrl(context: HookExecutorContext): string | undefined {
   const templateData = context.templateData;
   if (
     typeof templateData === 'object' &&

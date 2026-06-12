@@ -121,6 +121,12 @@ const LEGACY_PR_READY_GATE_IDS = new Set([
   'plan-pr-gate',
   'code-pr-gate',
 ]);
+const LEGACY_PR_READY_TEMPLATE_ROUTES = new Set([
+  'code-ready-gate:Coding:Review',
+  'research-ready-gate:Research:Review',
+  'plan-pr-gate:Planning:Plan Review',
+  'code-pr-gate:Coding:Review',
+]);
 
 // ---------------------------------------------------------------------------
 // Template node ID constants (used as stable IDs for workflow nodes and startNodeId)
@@ -1509,13 +1515,24 @@ function remapTemplateChannelRef(
   const templateNode = templateNodes.find((node) => nodeReferences(node).has(ref));
   if (!templateNode) return ref;
 
+  const templateNodeIndex = templateNodes.findIndex((node) => node.id === templateNode.id);
   const existingNode =
+    existingNodes.find((node) => node.id === templateNode.id) ??
     existingNodes.find((node) => node.name === templateNode.name) ??
     existingNodes.find((node) =>
       templateNode.agents.some((templateAgent) =>
-        node.agents.some((agent) => agent.name && agent.name === templateAgent.name)
+        node.agents.some(
+          (agent) =>
+            (agent.name && agent.name === templateAgent.name) ||
+            agent.agentId === templateAgent.agentId
+        )
       )
-    );
+    ) ??
+    (ref === templateNode.name &&
+    templateNodeIndex >= 0 &&
+    existingNodes.length === templateNodes.length
+      ? existingNodes[templateNodeIndex]
+      : undefined);
   return existingNode?.name ?? ref;
 }
 
@@ -1535,7 +1552,12 @@ function remapTemplateChannel(
 function removeLegacyPrReadyGateChannels(
   channels: SpaceWorkflow['channels']
 ): SpaceWorkflow['channels'] {
-  return channels?.filter((channel) => !LEGACY_PR_READY_GATE_IDS.has(channel.gateId ?? ''));
+  return channels?.filter((channel) => {
+    const gateId = channel.gateId;
+    if (!gateId || !LEGACY_PR_READY_GATE_IDS.has(gateId)) return true;
+    const routeKey = `${gateId}:${channel.from}:${String(channel.to)}`;
+    return !LEGACY_PR_READY_TEMPLATE_ROUTES.has(routeKey);
+  });
 }
 
 function mergeChannelsFromTemplate(

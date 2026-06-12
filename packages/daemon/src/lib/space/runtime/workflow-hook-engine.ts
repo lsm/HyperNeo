@@ -257,6 +257,12 @@ export class WorkflowHookEngine {
     }
   }
 
+  clearQueuedRetryableActionForHook(hookId: string): QueuedRetryableHookAction | undefined {
+    const queued = this.getQueuedRetryableAction(hookId);
+    this.clearQueuedRetryableAction(hookId);
+    return queued;
+  }
+
   getHooksWithQueuedAction(actionKey: string): WorkflowHook[] {
     return (this.config.workflow.hooks ?? []).filter(
       (hook) => this.getQueuedRetryableAction(hook.id)?.actionKey === actionKey
@@ -1358,6 +1364,8 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
       const retryAfterMs = outcome.userState.retryAfterMs ?? DEFAULT_RETRYABLE_ACTION_DELAY_MS;
       if (methodName === 'send_message') {
         if (outcome.blockedByHookId) {
+          const existingQueued = engine.clearQueuedRetryableActionForHook(outcome.blockedByHookId);
+          if (existingQueued) clearRetryableAction(existingQueued.actionKey);
           const now = Date.now();
           const persisted = engine.persistQueuedRetryableAction({
             actionKey,

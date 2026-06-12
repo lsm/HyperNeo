@@ -107,10 +107,13 @@ describe('pr-ready validator', () => {
     ]);
     const validator = createPrReadyValidator(spawn);
     const result = await validator(makeContext());
-    expect(result.type).toBe('allow');
+    expect(result.type).toBe('patch_params');
     expect((result as { data?: Record<string, unknown> }).data?.pr_url).toBe(
       'https://github.com/acme/corp/pull/42'
     );
+    expect((result as { patch?: Record<string, unknown> }).patch?.data).toEqual({
+      pr_url: 'https://github.com/acme/corp/pull/42',
+    });
   });
 
   test('closed PR → block with exact state', async () => {
@@ -322,9 +325,12 @@ describe('pr-ready validator', () => {
       templateData: { pr_url: 'https://github.com/acme/corp/pull/99' },
     };
     const result = await validator(ctx);
-    expect(result.type).toBe('allow');
+    expect(result.type).toBe('patch_params');
     expect((result as { data?: Record<string, unknown> }).data?.pr_url).toBe(
       'https://github.com/acme/corp/pull/99'
     );
+    expect((result as { patch?: Record<string, unknown> }).patch?.data).toEqual({
+      pr_url: 'https://github.com/acme/corp/pull/99',
+    });
   });
 });
