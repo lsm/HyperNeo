@@ -32,8 +32,11 @@ describe('QueryOptionsBuilder', () => {
   let mockContext: QueryOptionsBuilderContext;
   let updateSessionSpy: ReturnType<typeof mock>;
   let getSDKMessagesSpy: ReturnType<typeof mock>;
+  let originalSdkOutputTokenLimit: string | undefined;
 
   beforeEach(() => {
+    originalSdkOutputTokenLimit = process.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS;
+    delete process.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS;
     mockSession = {
       id: generateUUID(),
       title: 'Test Session',
@@ -77,7 +80,13 @@ describe('QueryOptionsBuilder', () => {
     builder = new QueryOptionsBuilder(mockContext);
   });
 
-  afterEach(() => {});
+  afterEach(() => {
+    if (originalSdkOutputTokenLimit === undefined) {
+      delete process.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS;
+    } else {
+      process.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS = originalSdkOutputTokenLimit;
+    }
+  });
 
   describe('build', () => {
     it('should build basic query options', async () => {
@@ -151,16 +160,24 @@ describe('QueryOptionsBuilder', () => {
       const options = await builder.build();
       expect(options.env).toEqual({
         MY_VAR: 'value',
-        CLAUDE_CODE_MAX_OUTPUT_TOKENS: '16384',
+        CLAUDE_CODE_MAX_OUTPUT_TOKENS: '64000',
       });
     });
 
-    it('should set a default SDK output token cap', async () => {
+    it('should set a default SDK output token cap for the default Sonnet alias', async () => {
       const options = await builder.build();
-      expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('16384');
+      expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('64000');
     });
 
-    it('should use a higher SDK output token cap for Claude Sonnet 4 models', async () => {
+    it('should use the Sonnet SDK output token cap for short aliases', async () => {
+      for (const model of ['default', 'sonnet']) {
+        mockSession.config.model = model;
+        const options = await builder.build();
+        expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('64000');
+      }
+    });
+
+    it('should use the Sonnet SDK output token cap for Claude Sonnet 4 models', async () => {
       mockSession.config.model = 'claude-sonnet-4-6';
       const options = await builder.build();
       expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('64000');
@@ -172,11 +189,31 @@ describe('QueryOptionsBuilder', () => {
       expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('128000');
     });
 
+    it('should use a lower SDK output token cap for non-large-output models', async () => {
+      mockSession.config.model = 'haiku';
+      const options = await builder.build();
+      expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('16384');
+    });
+
     it('should preserve an explicit SDK output token cap from session env', async () => {
       mockSession.config.model = 'claude-opus-4-7';
       mockSession.config.env = { CLAUDE_CODE_MAX_OUTPUT_TOKENS: '32768' };
       const options = await builder.build();
       expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('32768');
+    });
+
+    it('should preserve an explicit SDK output token cap from process env', async () => {
+      mockSession.config.model = 'claude-opus-4-7';
+      process.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS = '49152';
+      const options = await builder.build();
+      expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('49152');
+    });
+
+    it('should use the largest SDK output token cap across primary and fallback models', async () => {
+      mockSession.config.model = 'haiku';
+      mockSession.config.fallbackModel = 'claude-opus-4-7';
+      const options = await builder.build();
+      expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('128000');
     });
 
     it('should not override SDK auto-compaction settings for native anthropic provider', async () => {

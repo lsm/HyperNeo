@@ -129,15 +129,24 @@ const DEFAULT_SDK_OUTPUT_TOKEN_LIMIT = 16_384;
 const LARGE_SDK_OUTPUT_TOKEN_LIMIT = 64_000;
 const OPUS_SDK_OUTPUT_TOKEN_LIMIT = 128_000;
 
-function getSdkOutputTokenLimit(modelId: string): string {
+function getSdkOutputTokenLimit(modelId: string): number {
   const normalizedModelId = modelId.toLowerCase();
   if (normalizedModelId.includes('opus')) {
-    return String(OPUS_SDK_OUTPUT_TOKEN_LIMIT);
+    return OPUS_SDK_OUTPUT_TOKEN_LIMIT;
   }
-  if (normalizedModelId.includes('sonnet-4') || normalizedModelId.includes('claude-sonnet-4')) {
-    return String(LARGE_SDK_OUTPUT_TOKEN_LIMIT);
+  if (
+    normalizedModelId === 'default' ||
+    normalizedModelId === 'sonnet' ||
+    normalizedModelId.includes('sonnet-4') ||
+    normalizedModelId.includes('claude-sonnet-4')
+  ) {
+    return LARGE_SDK_OUTPUT_TOKEN_LIMIT;
   }
-  return String(DEFAULT_SDK_OUTPUT_TOKEN_LIMIT);
+  return DEFAULT_SDK_OUTPUT_TOKEN_LIMIT;
+}
+
+function getLargestSdkOutputTokenLimit(modelIds: string[]): string {
+  return String(Math.max(...modelIds.map(getSdkOutputTokenLimit)));
 }
 
 /**
@@ -984,9 +993,14 @@ CRITICAL RULES:
     // 3. Set the SDK CLI subprocess output cap. The SDK reads this from the
     // inherited process environment and defaults to 64,000 internally. Use a
     // lower default for ordinary models, and raise it for large-output Claude
-    // models. Explicit global/session env values above still win.
-    mergedEnv.CLAUDE_CODE_MAX_OUTPUT_TOKENS ??= getSdkOutputTokenLimit(
-      this.ctx.session.config.model
+    // models. Explicit global/session/process env values above still win.
+    if (process.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS !== undefined) {
+      mergedEnv.CLAUDE_CODE_MAX_OUTPUT_TOKENS ??= process.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS;
+    }
+    mergedEnv.CLAUDE_CODE_MAX_OUTPUT_TOKENS ??= getLargestSdkOutputTokenLimit(
+      [this.ctx.session.config.model, this.ctx.session.config.fallbackModel].filter(
+        (modelId): modelId is string => !!modelId
+      )
     );
 
     // 4. Explicitly include proxy environment variables for Dev Proxy support
