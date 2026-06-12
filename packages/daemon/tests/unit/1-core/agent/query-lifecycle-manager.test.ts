@@ -831,6 +831,26 @@ describe('QueryLifecycleManager', () => {
       }
     });
 
+    test('skips SDK transcript validation for ACP sessions with sdkSessionId', async () => {
+      const tmpTestDir = mkdtempSync(join(tmpdir(), 'kai-test-'));
+      try {
+        process.env.TEST_SDK_SESSION_DIR = tmpTestDir;
+        mockContext = createMockContext();
+        mockContext.session.config.provider = 'acp';
+        mockContext.session.sdkSessionId = 'missing-sdk-session';
+        manager = new QueryLifecycleManager(mockContext);
+
+        const result = await manager.ensureQueryStarted();
+
+        expect(result).toBe('started');
+        expect(startStreamingCalled).toBe(true);
+        expect(saveNeokaiActionMessageSpy).not.toHaveBeenCalled();
+      } finally {
+        delete process.env.TEST_SDK_SESSION_DIR;
+        rmSync(tmpTestDir, { recursive: true, force: true });
+      }
+    });
+
     test('handles interrupt wait error gracefully', async () => {
       const rejectingPromise = Promise.reject(new Error('Interrupt error'));
       mockContext = createMockContext({

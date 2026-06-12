@@ -9,12 +9,13 @@
  * yielding them to the consumer.
  */
 
-import type { SDKMessage, McpSetServersResult } from '@neokai/shared/sdk';
+import type { SDKMessage, McpSetServersResult, RewindFilesResult } from '@neokai/shared/sdk';
 import type { AcpContentBlock } from '@neokai/shared';
 import { AcpClient } from './acp-client';
 import { AcpMessageTranslator } from './acp-message-translator';
+import type { QueryLike } from '../agent/query-like';
 
-export class AcpQueryAdapter implements AsyncIterable<SDKMessage> {
+export class AcpQueryAdapter implements QueryLike {
   private client: AcpClient;
   private prompt: AcpContentBlock[];
   private translator: AcpMessageTranslator;
@@ -104,7 +105,7 @@ export class AcpQueryAdapter implements AsyncIterable<SDKMessage> {
     return Promise.resolve({ added: [], removed: [], errors: {} });
   }
 
-  rewindFiles(): Promise<{ canRewind: boolean; error: string }> {
+  rewindFiles(_userMessageId: string, _options?: { dryRun?: boolean }): Promise<RewindFilesResult> {
     return Promise.resolve({
       canRewind: false,
       error: 'ACP sessions do not support file rewind yet.',

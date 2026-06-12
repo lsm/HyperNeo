@@ -1,12 +1,21 @@
 import type { UUID } from 'crypto';
-import type { Options } from '@anthropic-ai/claude-agent-sdk';
+import type { CanUseTool, Options } from '@anthropic-ai/claude-agent-sdk';
 import { generateUUID, type MessageContent, type Session } from '@neokai/shared';
-import type { AcpContentBlock, AcpMcpServerConfig } from '@neokai/shared/acp';
+import type {
+  AcpContentBlock,
+  AcpMcpServerConfig,
+  AcpPermissionRequest,
+  AcpPermissionResponseResult,
+} from '@neokai/shared/acp';
 import type { McpServerConfig, SDKMessage, SDKUserMessage } from '@neokai/shared/sdk';
 import { ErrorCategory } from '../error-manager';
 import { getProviderService } from '../provider-service';
 import { TRANSIENT_CONNECTION_ERROR_SUBSTRINGS } from '../agent/transient-error-patterns';
 import type { QueryRunnerContext, TrackedAgentProcess } from '../agent/query-runner';
+import {
+  missingMcpServers,
+  resolveSpaceMcpSessionPolicy,
+} from '../space/runtime/space-mcp-session-policy';
 import { AcpClient, type AcpClientOptions } from './acp-client';
 import { AcpQueryAdapter } from './acp-query-adapter';
 
@@ -19,8 +28,6 @@ function getStartupTimeoutMs(): number {
   const parsed = Number.parseInt(raw, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_STARTUP_TIMEOUT_MS;
 }
-
-const STARTUP_TIMEOUT_MS = getStartupTimeoutMs();
 
 export function parseAcpCommand(commandLine: string): { command: string; args: string[] } {
   const tokens: string[] = [];
@@ -108,6 +115,15 @@ function headersToAcp(
   return Object.entries(headers ?? {}).map(([name, value]) => ({ name, value }));
 }
 
+function validAcpServerUrl(url: unknown): string | null {
+  if (typeof url !== 'string') return null;
+  try {
+    return new URL(url).toString();
+  } catch {
+    return null;
+  }
+}
+
 export function convertMcpServersForAcp(
   servers: Options['mcpServers'],
   warn: (message: string) => void = () => {}
@@ -138,22 +154,26 @@ export function convertMcpServersForAcp(
     }
 
     if (server.type === 'http') {
+      const url = validAcpServerUrl(server.url);
+      if (!url) return [];
       return [
         {
           type: 'http',
           name,
-          url: server.url,
+          url,
           headers: headersToAcp(server.headers),
         },
       ];
     }
 
     if (server.type === 'sse') {
+      const url = validAcpServerUrl(server.url);
+      if (!url) return [];
       return [
         {
           type: 'sse',
           name,
-          url: server.url,
+          url,
           headers: headersToAcp(server.headers),
         },
       ];
@@ -167,6 +187,63 @@ function getAcpWorkspacePath(session: Session, queryOptions: Options): string {
   return (
     queryOptions.cwd ?? session.worktree?.worktreePath ?? session.workspacePath ?? process.cwd()
   );
+}
+
+function acpPermissionQuestion(params: AcpPermissionRequest): string {
+  return params.toolCall.title
+    ? `Allow ${params.toolCall.title}?`
+    : `Allow ACP tool ${params.toolCall.toolCallId}?`;
+}
+
+function acpPermissionQuestionInput(params: AcpPermissionRequest): Record<string, unknown> {
+  const question = acpPermissionQuestion(params);
+  return {
+    questions: [
+      {
+        question,
+        header: 'ACP approval',
+        options: params.options.map((option) => ({
+          label: option.name,
+          description: option.kind.replaceAll('_', ' '),
+        })),
+        multiSelect: false,
+      },
+    ],
+  };
+}
+
+async function handleAcpPermissionRequest(
+  params: AcpPermissionRequest,
+  canUseTool: CanUseTool
+): Promise<AcpPermissionResponseResult> {
+  if (params.options.length === 0) {
+    return { outcome: { outcome: 'cancelled' } };
+  }
+
+  const controller = new AbortController();
+  const question = acpPermissionQuestion(params);
+  const result = await canUseTool('AskUserQuestion', acpPermissionQuestionInput(params), {
+    signal: controller.signal,
+    toolUseID: params.toolCall.toolCallId,
+    title: question,
+    displayName: params.toolCall.title ?? params.toolCall.kind ?? 'ACP tool',
+    description: params.toolCall.kind,
+  });
+
+  if (result.behavior === 'deny') {
+    return { outcome: { outcome: 'cancelled' } };
+  }
+
+  const answers = (result.updatedInput as { answers?: Record<string, string> } | undefined)
+    ?.answers;
+  const selectedName = answers?.[question] ?? Object.values(answers ?? {})[0];
+  const selectedOption = params.options.find((option) => option.name === selectedName);
+
+  if (selectedOption) {
+    return { outcome: { outcome: 'selected', optionId: selectedOption.optionId } };
+  }
+
+  return { outcome: { outcome: 'cancelled' } };
 }
 
 /**
@@ -250,8 +327,10 @@ export class AcpQueryRunner {
         await fs.mkdir(session.workspacePath, { recursive: true });
       }
 
-      optionsBuilder.setCanUseTool(this.ctx.askUserQuestionHandler.createCanUseToolCallback());
-      const queryOptions = await optionsBuilder.build();
+      const canUseTool = this.ctx.askUserQuestionHandler.createCanUseToolCallback();
+      optionsBuilder.setCanUseTool(canUseTool);
+      let queryOptions = await optionsBuilder.build();
+      queryOptions = await this.ensureRequiredMcpServersForAcp(queryOptions);
 
       const acpCommand = process.env.NEOKAI_ACP_COMMAND;
       if (!acpCommand) {
@@ -269,6 +348,7 @@ export class AcpQueryRunner {
         logger.warn(message)
       );
       const cwd = getAcpWorkspacePath(session, queryOptions);
+      const startupTimeoutMs = getStartupTimeoutMs();
       const abortController = new AbortController();
       this.ctx.queryAbortController = abortController;
 
@@ -279,13 +359,13 @@ export class AcpQueryRunner {
           logger.error(
             `ACP startup timeout: ACP agent did not respond within ${elapsed}ms. ` +
               `Command: ${command}, workspace: ${cwd} ` +
-              `(Hint: set NEOKAI_SDK_STARTUP_TIMEOUT_MS to increase timeout, currently ${STARTUP_TIMEOUT_MS}ms)`
+              `(Hint: set NEOKAI_SDK_STARTUP_TIMEOUT_MS to increase timeout, currently ${startupTimeoutMs}ms)`
           );
           abortController.abort();
           this.ctx.queryObject?.close();
           client?.close();
         }
-      }, STARTUP_TIMEOUT_MS);
+      }, startupTimeoutMs);
       this.ctx.startupTimeoutTimer = startupTimer;
 
       client = this.createAcpClient({
@@ -296,13 +376,12 @@ export class AcpQueryRunner {
         onProcessSpawn: (proc) =>
           this.ctx.trackAgentProcess(proc as unknown as TrackedAgentProcess),
         onStderr: (data) => logger.warn(`ACP agent stderr: ${data.trimEnd()}`),
+        onPermissionRequest: (params) => handleAcpPermissionRequest(params, canUseTool),
       });
 
       await client.initialize();
       await client.authenticate();
       await client.createSession(cwd, acpMcpServers);
-      this.clearStartupTimer();
-      this.ctx.firstMessageReceived = true;
 
       await this.ctx.onModelsFetched().catch((error) => {
         logger.warn('Background fetch of models failed:', error);
@@ -327,16 +406,36 @@ export class AcpQueryRunner {
 
         let messageCount = 0;
         for await (const acpMessage of this.createAbortableQuery(adapter, abortController.signal)) {
-          if (startupTimeoutReached && !this.ctx.firstMessageReceived) {
+          if (startupTimeoutReached && messageCount === 0) {
             throw new Error('ACP startup timeout - query aborted');
           }
 
           messageCount++;
-          if (!this.ctx.firstMessageReceived) {
+          if (messageCount === 1) {
             this.clearStartupTimer();
           }
           this.ctx.firstMessageReceived = true;
-          await this.handleSDKMessage(acpMessage as SDKMessage);
+
+          try {
+            await this.handleSDKMessage(acpMessage as SDKMessage);
+          } catch (error) {
+            logger.error('Error handling ACP SDK message:', error);
+            logger.error('Message type:', (acpMessage as SDKMessage).type);
+
+            if (!this.ctx.isCleaningUp()) {
+              const processingState = stateManager.getState();
+              await stateManager.setIdle();
+
+              await errorManager.handleError(
+                session.id,
+                error as Error,
+                ErrorCategory.MESSAGE,
+                'Error processing ACP message. The session has been reset.',
+                processingState,
+                { messageType: (acpMessage as SDKMessage).type, providerId: 'acp' }
+              );
+            }
+          }
         }
 
         if (startupTimeoutReached && messageCount === 0) {
@@ -352,7 +451,7 @@ export class AcpQueryRunner {
         startupTimeoutReached && !this.ctx.firstMessageReceived
           ? new Error('ACP startup timeout - query aborted')
           : error;
-      await this.handleRunError(effectiveError, queryGeneration, isRetry);
+      await this.handleRunError(effectiveError, queryGeneration, isRetry, client);
     } finally {
       const isStaleQuery = this.ctx.getQueryGeneration() !== queryGeneration;
 
@@ -397,7 +496,8 @@ export class AcpQueryRunner {
   private async handleRunError(
     error: unknown,
     queryGeneration: number,
-    isRetry: boolean
+    isRetry: boolean,
+    client?: AcpClient | null
   ): Promise<void> {
     const { session, messageQueue, stateManager, errorManager, logger } = this.ctx;
     logger.error('ACP query error:', error);
@@ -417,7 +517,11 @@ export class AcpQueryRunner {
       errorMessage.includes(substr)
     );
 
-    if ((isStartupTimeout || isTransientConnectionError) && !isQueryInterrupted && !isRetry) {
+    if (
+      (isStartupTimeout || (isTransientConnectionError && !isQueryInterrupted)) &&
+      !isRetry &&
+      !this.ctx.isCleaningUp()
+    ) {
       logger.warn(
         isStartupTimeout
           ? 'Auto-retrying ACP query after startup timeout (1 retry).'
@@ -426,7 +530,7 @@ export class AcpQueryRunner {
       await stateManager.setIdle();
 
       const lastMsg = this._lastConsumedUserMessage;
-      if (lastMsg && isTransientConnectionError) {
+      if (lastMsg && (isStartupTimeout || isTransientConnectionError)) {
         messageQueue.enqueueWithId(lastMsg.uuid, lastMsg.content).catch(() => {});
         this._lastConsumedUserMessage = null;
       }
@@ -438,6 +542,8 @@ export class AcpQueryRunner {
           // Ignore close errors
         }
         this.ctx.queryObject = null;
+      } else {
+        client?.close();
       }
 
       const exitPromise = this.ctx.processExitedPromise;
@@ -487,22 +593,25 @@ export class AcpQueryRunner {
       const rateLimitCooldownScheduled =
         is429Error &&
         !!(await this.ctx.onRateLimitExhausted?.(errorMessage, this._lastConsumedUserMessage));
+      const userMessage = isStartupTimeout
+        ? `The ACP agent failed to start (workspace: ${session.workspacePath ?? 'unbound'}). Check NEOKAI_ACP_COMMAND and resend your message.`
+        : errorMessage.includes('[MCP invariant]')
+          ? errorMessage
+          : undefined;
 
       if (!rateLimitCooldownScheduled) {
         await errorManager.handleError(
           session.id,
           error instanceof Error ? error : new Error(errorMessage),
           category,
-          isStartupTimeout
-            ? `The ACP agent failed to start (workspace: ${session.workspacePath ?? 'unbound'}). Check NEOKAI_ACP_COMMAND and resend your message.`
-            : undefined,
+          userMessage,
           stateManager.getState(),
           {
             errorMessage,
             queueSize: messageQueue.size(),
             providerId: 'acp',
             workspacePath: session.workspacePath ?? undefined,
-            startupTimeoutMs: STARTUP_TIMEOUT_MS,
+            startupTimeoutMs: getStartupTimeoutMs(),
           }
         );
         await stateManager.setIdle();
@@ -513,6 +622,107 @@ export class AcpQueryRunner {
   private async handleSDKMessage(message: SDKMessage): Promise<void> {
     await this.ctx.onSDKMessage(message);
     await this.ctx.onMarkApiSuccess();
+  }
+
+  private async ensureRequiredMcpServersForAcp(queryOptions: Options): Promise<Options> {
+    const { session, logger } = this.ctx;
+    const policy = resolveSpaceMcpSessionPolicy(session, {
+      nodeExecutionRepo: this.ctx.db.getNodeExecutionRepo(),
+      taskRepo: this.ctx.db.getSpaceTaskRepo(),
+    });
+    if (policy.requiredServers.length === 0) return queryOptions;
+
+    let currentOptions = queryOptions;
+    let missing = missingMcpServers(
+      currentOptions.mcpServers as Record<string, unknown> | undefined,
+      policy.requiredServers
+    );
+
+    if (missing.length > 0) {
+      logger.error(
+        `AcpQueryRunner.start(): session ${session.id} is missing required Space MCP servers. ` +
+          `Missing: [${missing.join(', ')}]. ACP cannot proxy in-process SDK MCP servers yet. ` +
+          `${JSON.stringify({
+            event: 'acp.space.mcp.missing',
+            sessionId: session.id,
+            spaceId: policy.spaceId,
+            sessionType: session.type,
+            role: policy.role,
+            owner: policy.owner,
+            requiredServers: policy.requiredServers,
+            missingServers: missing,
+            presentServers: Object.keys(currentOptions.mcpServers ?? {}).sort(),
+            selfHealAttempted: this.hasSpaceMcpSelfHealCallback(policy),
+          })}`
+      );
+
+      await this.runSpaceMcpSelfHeal(policy, missing);
+      currentOptions = await this.ctx.optionsBuilder.build();
+      currentOptions = this.ctx.optionsBuilder.addSessionStateOptions(currentOptions);
+      missing = missingMcpServers(
+        currentOptions.mcpServers as Record<string, unknown> | undefined,
+        policy.requiredServers
+      );
+
+      if (missing.length > 0) {
+        throw new Error(
+          `[MCP invariant] ACP session ${session.id} missing required Space MCP servers: ` +
+            `[${missing.join(', ')}]. Refusing to start a degraded Space turn. ` +
+            `ACP cannot proxy in-process SDK MCP servers yet.`
+        );
+      }
+    }
+
+    const stillInProcess = policy.requiredServers.filter((serverName) => {
+      const server = (currentOptions.mcpServers as Record<string, unknown> | undefined)?.[
+        serverName
+      ];
+      return (
+        !!server &&
+        typeof server === 'object' &&
+        ('instance' in server || (server as { type?: unknown }).type === 'sdk')
+      );
+    });
+    if (stillInProcess.length > 0) {
+      throw new Error(
+        `[MCP invariant] ACP session ${session.id} requires in-process Space MCP servers ` +
+          `[${stillInProcess.join(', ')}], but ACP cannot proxy SDK MCP servers yet. ` +
+          `Refusing to start a degraded Space turn.`
+      );
+    }
+
+    return currentOptions;
+  }
+
+  private hasSpaceMcpSelfHealCallback(
+    policy: ReturnType<typeof resolveSpaceMcpSessionPolicy>
+  ): boolean {
+    if (policy.isWorkflowWorker) return !!this.ctx.onMissingWorkflowMcpServers;
+    if (policy.attachCoordinatorTools) return !!this.ctx.onMissingSpaceChatMcpServers;
+    if (policy.attachGenericSpaceTools || policy.attachLongTermAgentTools) {
+      return !!this.ctx.onMissingMemberSpaceMcpServers;
+    }
+    return false;
+  }
+
+  private async runSpaceMcpSelfHeal(
+    policy: ReturnType<typeof resolveSpaceMcpSessionPolicy>,
+    missing: string[]
+  ): Promise<void> {
+    if (policy.isWorkflowWorker && this.ctx.onMissingWorkflowMcpServers) {
+      await this.ctx.onMissingWorkflowMcpServers(this.ctx.session.id, missing);
+      return;
+    }
+    if (policy.attachCoordinatorTools && this.ctx.onMissingSpaceChatMcpServers) {
+      await this.ctx.onMissingSpaceChatMcpServers(this.ctx.session.id, missing);
+      return;
+    }
+    if (
+      (policy.attachGenericSpaceTools || policy.attachLongTermAgentTools) &&
+      this.ctx.onMissingMemberSpaceMcpServers
+    ) {
+      await this.ctx.onMissingMemberSpaceMcpServers(this.ctx.session.id, missing);
+    }
   }
 
   private clearStartupTimer(): void {
@@ -566,7 +776,7 @@ export class AcpQueryRunner {
   }
 
   async displayErrorAsAssistantMessage(text: string): Promise<void> {
-    const { session, db, messageHub } = this.ctx;
+    const { session, db, messageHub, logger } = this.ctx;
 
     const assistantMessage: SDKMessage = {
       type: 'assistant' as const,
@@ -579,7 +789,12 @@ export class AcpQueryRunner {
       },
     };
 
-    db.saveSDKMessage(session.id, assistantMessage);
+    try {
+      db.saveSDKMessage(session.id, assistantMessage);
+    } catch (error) {
+      logger.warn('Failed to persist ACP assistant error message:', error);
+      return;
+    }
 
     messageHub.event(
       'state.sdkMessages.delta',

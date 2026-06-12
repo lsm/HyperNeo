@@ -591,7 +591,7 @@ export class QueryLifecycleManager {
     }
 
     // Validate SDK session file, migrating it to the current workspace path if needed.
-    if (session.sdkSessionId) {
+    if (session.config.provider !== 'acp' && session.sdkSessionId) {
       const isValid = this.validateAndRepairWithMigration();
       if (!isValid) {
         // Transcript file not found — ask the user before proceeding.
