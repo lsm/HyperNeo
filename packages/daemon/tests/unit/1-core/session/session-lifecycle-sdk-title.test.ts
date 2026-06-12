@@ -260,7 +260,6 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
       workspaceRoot: '/default/workspace',
       disableWorktrees: true,
       titleGenerationQueryForTesting: titleQueryOverride,
-      titleGenerationProviderAvailableForTesting: () => true,
     };
 
     lifecycle = new SessionLifecycle(
