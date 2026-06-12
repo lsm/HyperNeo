@@ -862,9 +862,9 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
           ]);
           const broadcastTargetRefs = new Set<string>();
           for (const targetNode of workflow.nodes) {
-            if (targetNode.id === workflowNodeId) continue;
             broadcastTargetRefs.add(targetNode.name);
             for (const agent of resolveNodeAgents(targetNode)) {
+              if (targetNode.id === workflowNodeId && agent.name === myAgentName) continue;
               broadcastTargetRefs.add(agent.name);
             }
           }

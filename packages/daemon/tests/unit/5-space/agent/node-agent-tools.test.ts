@@ -1504,6 +1504,32 @@ describe('node-agent-tools: send_message (gate-write)', () => {
     expect(gateDataRepo.get(ctx.workflowRunId, 'gate-broadcast')).toBeNull();
   });
 
+  test('gate-write treats same-node peer agents as broadcast targets', async () => {
+    const gate: Gate = {
+      id: 'gate-broadcast-peer',
+      fields: [{ name: 'pr_url', type: 'string', writers: ['Coding'], check: { op: 'exists' } }],
+      resetOnCycle: false,
+    };
+    const workflow = makeWorkflowWithGatedChannel(gate);
+    workflow.nodes[0].agents.push({ agentId: 'agent-peer', name: 'peer' });
+    workflow.channels = [{ id: 'ch-coder-all', from: 'Coding', to: '*', gateId: gate.id }];
+    const gateDataRepo = new GateDataRepository(ctx.db);
+    const config = makeConfig(ctx, { workflow, gateDataRepo });
+    const handlers = createNodeAgentToolHandlers(config);
+
+    const result = await handlers.send_message({
+      target: 'peer',
+      message: 'ready',
+      data: { pr_url: 'https://github.com/test/repo/pull/42' },
+    });
+    const data = JSON.parse(result.content[0].text);
+
+    expect(data.gateWrite).toEqual({ gateId: 'gate-broadcast-peer', gateOpen: true });
+    expect(gateDataRepo.get(ctx.workflowRunId, 'gate-broadcast-peer')?.data.pr_url).toBe(
+      'https://github.com/test/repo/pull/42'
+    );
+  });
+
   test('no gateWrite in response when data not provided', async () => {
     const gate: Gate = {
       id: 'gate-no-data',
