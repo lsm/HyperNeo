@@ -131,9 +131,9 @@ mock.module('@neokai/shared/sdk/type-guards', () => ({
     msg.type !== 'stream_event' && msg.type !== 'api_retry',
 }));
 
-import {
+import type {
   SessionLifecycle,
-  type SessionLifecycleConfig,
+  SessionLifecycleConfig,
 } from '../../../../src/lib/session/session-lifecycle';
 import type { Database } from '../../../../src/storage/database';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
@@ -144,6 +144,7 @@ import type { MessageHub } from '@neokai/shared';
 import { DEFAULT_GLOBAL_SETTINGS } from '@neokai/shared';
 
 describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
+  let SessionLifecycleCtor: typeof SessionLifecycle;
   let lifecycle: SessionLifecycle;
   let mockDb: Database;
   let mockWorktreeManager: WorktreeManager;
@@ -192,6 +193,8 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
     const { resetProviderServiceInstance } = await import(
       '../../../../src/lib/provider-service.js'
     );
+    const { SessionLifecycle } = await import('../../../../src/lib/session/session-lifecycle.js');
+    SessionLifecycleCtor = SessionLifecycle;
     // Set API key before provider construction/registration so CI Bun versions
     // that snapshot process.env during provider setup still see credentials.
     process.env.ANTHROPIC_API_KEY = 'test-api-key';
@@ -279,7 +282,7 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
       titleGenerationQueryForTesting: titleQueryOverride,
     };
 
-    lifecycle = new SessionLifecycle(
+    lifecycle = new SessionLifecycleCtor(
       mockDb,
       mockWorktreeManager,
       mockSessionCache,
@@ -338,7 +341,7 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
       config: { model: 'glm-5.1', provider: 'glm' },
       worktree: undefined,
     }));
-    lifecycle = new SessionLifecycle(
+    lifecycle = new SessionLifecycleCtor(
       mockDb,
       mockWorktreeManager,
       sessionCache,
