@@ -35,6 +35,7 @@ import type { ContextTracker } from './context-tracker';
 import type { MessageQueue } from './message-queue';
 import type { ProcessingStateManager } from './processing-state-manager';
 import type { QueryLifecycleManager } from './query-lifecycle-manager';
+import { AcpQueryAdapter } from '../acp/acp-query-adapter';
 import type { QueryLike } from './query-like';
 
 /**
@@ -315,9 +316,13 @@ export class ModelSwitchHandler {
         // Strip thinking blocks from JSONL if switching to Anthropic from another provider
         this.stripThinkingBlocksIfNeeded(previousProvider, newProviderInstance.id);
 
-        // Restart the query via lifecycle manager
-        // This spawns a new SDK subprocess with the new model configuration
-        await lifecycleManager.restart();
+        if (this.ctx.queryObject instanceof AcpQueryAdapter && nextProvider === 'acp') {
+          await this.ctx.queryObject.setModel(resolvedModel);
+        } else {
+          // Restart the query via lifecycle manager
+          // This spawns a new SDK subprocess with the new model configuration
+          await lifecycleManager.restart();
+        }
       }
 
       // Emit success event

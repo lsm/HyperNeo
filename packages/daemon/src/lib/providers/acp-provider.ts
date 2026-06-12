@@ -16,7 +16,7 @@ import type {
   ProviderSessionConfig,
   ModelTier,
 } from '@neokai/shared/provider';
-import type { ModelInfo } from '@neokai/shared';
+import type { AcpConfigOption, ModelInfo } from '@neokai/shared';
 
 const DEFAULT_ACP_CONTEXT_WINDOW = 200000;
 const ACP_CONTEXT_WINDOW_ENV_VAR = 'NEOKAI_ACP_CONTEXT_WINDOW';
@@ -133,6 +133,23 @@ export class AcpProvider implements Provider {
     this.cachedModels = models;
   }
 
+  setConfigOptions(configOptions: AcpConfigOption[]): void {
+    const modelOption = configOptions.find((option) => option.category === 'model');
+    if (!modelOption) return;
+
+    this.cachedModels = flattenModelChoices(modelOption).map((choice) => ({
+      id: choice.value,
+      name: choice.name,
+      alias: choice.value,
+      family: 'acp',
+      provider: 'acp',
+      contextWindow: this.getContextWindow(),
+      description: `ACP model ${choice.name}`,
+      releaseDate: '2026-01-01',
+      available: true,
+    }));
+  }
+
   /**
    * Clear cached models so the next getModels() call falls back to defaults.
    */
@@ -184,4 +201,8 @@ export class AcpProvider implements Provider {
   getTitleGenerationModel(): string {
     return 'acp-default';
   }
+}
+
+function flattenModelChoices(option: AcpConfigOption): Array<{ name: string; value: string }> {
+  return option.options.flatMap((entry) => ('options' in entry ? entry.options : [entry]));
 }

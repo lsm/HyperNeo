@@ -126,6 +126,28 @@ describe('AcpProvider', () => {
       expect(models).toEqual([]);
     });
 
+    it('should discover cached models from model config option', async () => {
+      process.env.NEOKAI_ACP_COMMAND = 'claude --acp';
+      provider.setConfigOptions([
+        {
+          id: 'model',
+          name: 'Model',
+          type: 'select',
+          category: 'model',
+          currentValue: 'sonnet',
+          options: [
+            { name: 'Sonnet', value: 'sonnet' },
+            { group: 'more', name: 'More', options: [{ name: 'Opus', value: 'opus' }] },
+          ],
+        },
+      ]);
+
+      const models = await provider.getModels();
+
+      expect(models.map((model) => model.id)).toEqual(['sonnet', 'opus']);
+      expect(models[0].provider).toBe('acp');
+    });
+
     it('should return cached models when set', async () => {
       process.env.NEOKAI_ACP_COMMAND = 'claude --acp';
       const cached = [

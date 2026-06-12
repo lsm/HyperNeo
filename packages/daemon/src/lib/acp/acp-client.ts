@@ -384,6 +384,26 @@ export class AcpClient {
     return this.lastPromptStopReason;
   }
 
+  async setConfigOption(configId: string, value: string): Promise<AcpConfigOption[]> {
+    if (!this.sessionId) {
+      throw new Error('No active session. Call createSession() first.');
+    }
+
+    const response = await this.transport.sendRequest('session/set_config_option', {
+      sessionId: this.sessionId,
+      configId,
+      value,
+    });
+
+    if ('error' in response) {
+      throw new Error(`session/set_config_option failed: ${response.error.message}`);
+    }
+
+    const result = response.result as { configOptions?: AcpConfigOption[] | null };
+    this.cachedConfigOptions = result.configOptions ?? [];
+    return this.cachedConfigOptions;
+  }
+
   private async handleRequest(request: AcpJsonRpcRequest): Promise<void> {
     const handler = this.getRequestHandler(request.method);
     if (!handler) {

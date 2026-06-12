@@ -172,23 +172,41 @@ describe('AcpMessageTranslator', () => {
   // Ignored updates
   // ---------------------------------------------------------------------------
 
-  test('ignores plan, config, mode, usage, commands updates', () => {
-    expect(translator.processUpdate({ sessionUpdate: 'plan', entries: [] } as never)).toEqual([]);
+  test('translates plan, config, mode, session info updates', () => {
+    expect(translator.processUpdate({ sessionUpdate: 'plan', entries: [] } as never)[0].type).toBe(
+      'assistant'
+    );
     expect(
       translator.processUpdate({
         sessionUpdate: 'current_mode_update',
         currentModeId: 'x',
-      } as never)
-    ).toEqual([]);
+      } as never)[0].type
+    ).toBe('assistant');
     expect(
       translator.processUpdate({
         sessionUpdate: 'config_option_update',
         configOptions: [],
-      } as never)
-    ).toEqual([]);
+      } as never)[0].type
+    ).toBe('assistant');
     expect(
-      translator.processUpdate({ sessionUpdate: 'usage_update', size: 0, used: 0 } as never)
-    ).toEqual([]);
+      translator.processUpdate({
+        sessionUpdate: 'session_info_update',
+        title: 'New title',
+      } as never)[0].type
+    ).toBe('assistant');
+  });
+
+  test('uses usage update in result message', () => {
+    translator.processUpdate({ sessionUpdate: 'usage_update', size: 100, used: 80 } as never);
+    const result = translator.translateResult('end_turn') as {
+      usage: { input_tokens: number; output_tokens: number };
+    };
+
+    expect(result.usage.input_tokens).toBe(80);
+    expect(result.usage.output_tokens).toBe(20);
+  });
+
+  test('ignores available commands updates', () => {
     expect(
       translator.processUpdate({
         sessionUpdate: 'available_commands_update',

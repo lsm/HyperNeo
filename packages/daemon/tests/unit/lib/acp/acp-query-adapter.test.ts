@@ -18,6 +18,7 @@ class MockAcpClient {
   private notifications: AcpSessionUpdateNotification[] = [];
   cancel = mock(() => {});
   close = mock(() => {});
+  setConfigOption = mock((_configId: string, _value: string) => Promise.resolve([]));
 
   constructor(sessionId: string) {
     this.sessionId = sessionId;
@@ -29,6 +30,27 @@ class MockAcpClient {
 
   getLastPromptStopReason() {
     return undefined;
+  }
+
+  getConfigOptions() {
+    return [
+      {
+        id: 'model-option',
+        name: 'Model',
+        type: 'select' as const,
+        category: 'model',
+        currentValue: 'sonnet',
+        options: [{ name: 'Opus', value: 'opus' }],
+      },
+      {
+        id: 'thought-option',
+        name: 'Thinking',
+        type: 'select' as const,
+        category: 'thought_level',
+        currentValue: 'low',
+        options: [{ name: 'High', value: 'high' }],
+      },
+    ];
   }
 
   queueNotification(notification: AcpSessionUpdateNotification) {
@@ -293,6 +315,34 @@ describe('AcpQueryAdapter', () => {
     );
 
     await expect(adapter.setMcpServers()).resolves.toEqual({ added: [], removed: [], errors: {} });
+  });
+
+  test('setModel updates ACP model config option', async () => {
+    const client = new MockAcpClient('sess-model');
+    const adapter = new AcpQueryAdapter(
+      client as unknown as InstanceType<
+        typeof import('../../../../src/lib/acp/acp-client').AcpClient
+      >,
+      [{ type: 'text', text: 'hello' }]
+    );
+
+    await adapter.setModel('opus');
+
+    expect(client.setConfigOption).toHaveBeenCalledWith('model-option', 'opus');
+  });
+
+  test('setMaxThinkingTokens updates ACP thought level config option', async () => {
+    const client = new MockAcpClient('sess-thinking');
+    const adapter = new AcpQueryAdapter(
+      client as unknown as InstanceType<
+        typeof import('../../../../src/lib/acp/acp-client').AcpClient
+      >,
+      [{ type: 'text', text: 'hello' }]
+    );
+
+    await adapter.setMaxThinkingTokens(12000);
+
+    expect(client.setConfigOption).toHaveBeenCalledWith('thought-option', '12000');
   });
 
   test('rewindFiles reports unsupported for ACP sessions', async () => {

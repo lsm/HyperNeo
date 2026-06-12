@@ -2,6 +2,7 @@ import type { UUID } from 'crypto';
 import type { CanUseTool, Options } from '@anthropic-ai/claude-agent-sdk';
 import { generateUUID, type MessageContent, type Session } from '@neokai/shared';
 import type {
+  AcpConfigOption,
   AcpContentBlock,
   AcpMcpServerConfig,
   AcpPermissionRequest,
@@ -9,7 +10,9 @@ import type {
 } from '@neokai/shared/acp';
 import type { McpServerConfig, SDKMessage, SDKUserMessage } from '@neokai/shared/sdk';
 import { ErrorCategory } from '../error-manager';
+import { getProviderRegistry } from '../providers/factory';
 import { getProviderService } from '../provider-service';
+import { AcpProvider } from '../providers/acp-provider';
 import { TRANSIENT_CONNECTION_ERROR_SUBSTRINGS } from '../agent/transient-error-patterns';
 import type { QueryRunnerContext, TrackedAgentProcess } from '../agent/query-runner';
 import {
@@ -463,10 +466,12 @@ export class AcpQueryRunner {
         try {
           const result = await client.loadSession(existingAcpSessionId, cwd, acpMcpServers);
           this.persistAcpSessionId(result.sessionId);
+          this.updateAcpModelCache(result.configOptions);
         } catch (loadError) {
           try {
             const result = await client.resumeSession(existingAcpSessionId, cwd, acpMcpServers);
             this.persistAcpSessionId(result.sessionId);
+            this.updateAcpModelCache(result.configOptions);
           } catch (resumeError) {
             const loadMessage = loadError instanceof Error ? loadError.message : String(loadError);
             const resumeMessage =
@@ -482,6 +487,7 @@ export class AcpQueryRunner {
       } else {
         const result = await client.createSession(cwd, acpMcpServers);
         this.persistAcpSessionId(result.sessionId);
+        this.updateAcpModelCache(result.configOptions);
         createdAcpSessionDuringRun = true;
       }
       startupHandshakeActive = false;
@@ -874,6 +880,13 @@ export class AcpQueryRunner {
       acpInstructionsSent: true,
     };
     db.updateSession(session.id, { metadata: session.metadata });
+  }
+
+  private updateAcpModelCache(configOptions: AcpConfigOption[]): void {
+    const provider = getProviderRegistry().get('acp');
+    if (provider instanceof AcpProvider) {
+      provider.setConfigOptions(configOptions);
+    }
   }
 
   private clearStartupTimer(): void {
