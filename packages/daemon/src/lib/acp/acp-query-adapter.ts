@@ -32,6 +32,8 @@ export class AcpQueryAdapter implements QueryLike {
     prompt: AcpContentBlock[],
     private readonly options: {
       contextWindow?: number;
+      initialUsageEstimate?: number;
+      onContextUsageUpdate?: (used: number) => void;
       onConfigOptionsUpdate?: (configOptions: AcpConfigOption[]) => void;
     } = {}
   ) {
@@ -41,7 +43,11 @@ export class AcpQueryAdapter implements QueryLike {
     if (!sessionId) {
       throw new Error('AcpClient has no active session');
     }
-    this.translator = new AcpMessageTranslator(sessionId, options.contextWindow);
+    this.translator = new AcpMessageTranslator(
+      sessionId,
+      options.contextWindow,
+      options.initialUsageEstimate
+    );
   }
 
   async *[Symbol.asyncIterator](): AsyncGenerator<SDKMessage, void> {
@@ -71,6 +77,8 @@ export class AcpQueryAdapter implements QueryLike {
       for (const msg of flushMessages) {
         yield msg;
       }
+
+      this.notifyContextUsage();
 
       // Emit result message using the ACP stop reason if available
       const stopReason = this.client.getLastPromptStopReason() ?? 'end_turn';
@@ -167,6 +175,13 @@ export class AcpQueryAdapter implements QueryLike {
       canRewind: false,
       error: 'ACP sessions do not support file rewind yet.',
     });
+  }
+
+  private notifyContextUsage(): void {
+    const usage = this.translator.getContextUsage();
+    if (usage) {
+      this.options.onContextUsageUpdate?.(usage.used);
+    }
   }
 }
 

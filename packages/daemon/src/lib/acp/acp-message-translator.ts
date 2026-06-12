@@ -59,9 +59,11 @@ export class AcpMessageTranslator {
 
   constructor(
     sessionId: string,
-    private contextWindow = 0
+    private contextWindow = 0,
+    initialUsageEstimate = 0
   ) {
     this.sessionId = sessionId;
+    this.inputTokenEstimate = initialUsageEstimate;
   }
 
   /**

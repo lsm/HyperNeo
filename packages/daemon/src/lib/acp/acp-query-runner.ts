@@ -40,6 +40,10 @@ function getAcpContextWindow(): number {
     : AcpProvider.DEFAULT_CONTEXT_WINDOW;
 }
 
+function flattenConfigChoices(option: AcpConfigOption): Array<{ name: string; value: string }> {
+  return option.options.flatMap((entry) => ('options' in entry ? entry.options : [entry]));
+}
+
 export function parseAcpCommand(commandLine: string): { command: string; args: string[] } {
   const tokens: string[] = [];
   let current = '';
@@ -499,6 +503,9 @@ export class AcpQueryRunner {
         createdAcpSessionDuringRun = true;
       }
       await this.applyStoredAcpModel(client);
+      const initialUsageEstimate = (
+        session.metadata as { acpContextUsageEstimate?: number } | undefined
+      )?.acpContextUsageEstimate;
 
       startupHandshakeActive = false;
       restoreMessageEnqueuedHandler?.();
@@ -529,6 +536,9 @@ export class AcpQueryRunner {
         prependInstructionsToNextPrompt = false;
         const adapter = new AcpQueryAdapter(client, promptContent, {
           contextWindow: getAcpContextWindow(),
+          initialUsageEstimate:
+            typeof initialUsageEstimate === 'number' ? initialUsageEstimate : undefined,
+          onContextUsageUpdate: (used) => this.persistAcpContextUsageEstimate(used),
           onConfigOptionsUpdate: (configOptions) => this.updateAcpModelCache(configOptions),
         });
         this.ctx.queryObject = adapter;
@@ -896,14 +906,27 @@ export class AcpQueryRunner {
   }
 
   private async applyStoredAcpModel(client: AcpClient): Promise<void> {
-    const modelOption = client.getConfigOptions().find((option) => option.category === 'model');
-    if (!modelOption || modelOption.currentValue === this.ctx.session.config.model) return;
+    const storedModel = this.ctx.session.config.model;
+    if (storedModel === 'acp-default') return;
 
-    const configOptions = await client.setConfigOption(
-      modelOption.id,
-      this.ctx.session.config.model
-    );
+    const modelOption = client.getConfigOptions().find((option) => option.category === 'model');
+    if (!modelOption || modelOption.currentValue === storedModel) return;
+    if (!flattenConfigChoices(modelOption).some((choice) => choice.value === storedModel)) return;
+
+    const configOptions = await client.setConfigOption(modelOption.id, storedModel);
     this.updateAcpModelCache(configOptions);
+  }
+
+  private persistAcpContextUsageEstimate(used: number): void {
+    const { session, db } = this.ctx;
+    const metadata = session.metadata as { acpContextUsageEstimate?: number } | undefined;
+    if (metadata?.acpContextUsageEstimate === used) return;
+
+    session.metadata = {
+      ...session.metadata,
+      acpContextUsageEstimate: used,
+    } as Session['metadata'];
+    db.updateSession(session.id, { metadata: session.metadata });
   }
 
   private updateAcpModelCache(configOptions: AcpConfigOption[]): void {
@@ -919,7 +942,14 @@ export class AcpQueryRunner {
           ...providerModels,
         ]);
       } else {
-        cache.delete('global');
+        const globalModels = cache.get('global') ?? [];
+        cache.set('global', [
+          ...globalModels.filter((model) => model.provider !== 'acp'),
+          ...AcpProvider.MODELS.map((model) => ({
+            ...model,
+            contextWindow: provider.getContextWindow(),
+          })),
+        ]);
       }
       setModelsCache(cache);
     }
