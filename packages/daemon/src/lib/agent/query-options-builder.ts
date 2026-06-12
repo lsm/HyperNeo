@@ -971,8 +971,10 @@ CRITICAL RULES:
       'ANTHROPIC_DEFAULT_OPUS_MODEL',
       'API_TIMEOUT_MS',
       'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC',
-      'CLAUDE_CODE_AUTO_COMPACT_WINDOW',
     ]);
+    if (this.ctx.session.config.provider !== 'anthropic') {
+      providerEnvVars.add('CLAUDE_CODE_AUTO_COMPACT_WINDOW');
+    }
 
     const mergedEnv: Record<string, string> = {};
 

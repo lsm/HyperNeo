@@ -152,11 +152,31 @@ describe('QueryOptionsBuilder', () => {
       expect(options.env).toEqual({ MY_VAR: 'value' });
     });
 
-    it('should filter provider-managed auto-compact env overrides', async () => {
+    it('should preserve user auto-compact env overrides for native Anthropic', async () => {
       mockSettingsManager.getGlobalSettings = mock(() => ({
         env: { CLAUDE_CODE_AUTO_COMPACT_WINDOW: '200000', KEEP_GLOBAL: 'global' },
         settingSources: ['user', 'project', 'local'],
       }));
+      mockSession.config.env = {
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW: '262144',
+        KEEP_SESSION: 'session',
+      };
+
+      const options = await builder.build();
+
+      expect(options.env).toEqual({
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW: '262144',
+        KEEP_GLOBAL: 'global',
+        KEEP_SESSION: 'session',
+      });
+    });
+
+    it('should filter provider-managed auto-compact env overrides for bridge providers', async () => {
+      mockSettingsManager.getGlobalSettings = mock(() => ({
+        env: { CLAUDE_CODE_AUTO_COMPACT_WINDOW: '200000', KEEP_GLOBAL: 'global' },
+        settingSources: ['user', 'project', 'local'],
+      }));
+      mockSession.config.provider = 'kimi';
       mockSession.config.env = {
         CLAUDE_CODE_AUTO_COMPACT_WINDOW: '262144',
         KEEP_SESSION: 'session',

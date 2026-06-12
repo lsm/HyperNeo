@@ -686,8 +686,17 @@ export class ProviderService {
       }
     }
 
-    // Provider-specific auto-compact override must not leak into native providers.
-    clear('CLAUDE_CODE_AUTO_COMPACT_WINDOW');
+    // Preserve user's custom auto-compact window while clearing provider leaks.
+    if (process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW !== undefined) {
+      original.CLAUDE_CODE_AUTO_COMPACT_WINDOW = process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
+      changed = true;
+      if (
+        userConfiguredAutoCompactWindow === undefined ||
+        process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW !== userConfiguredAutoCompactWindow
+      ) {
+        delete process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
+      }
+    }
 
     // Preserve user's custom ANTHROPIC_DEFAULT_SONNET_MODEL
     if (process.env.ANTHROPIC_DEFAULT_SONNET_MODEL !== undefined) {
@@ -895,6 +904,7 @@ const userConfiguredBaseUrl = process.env.ANTHROPIC_BASE_URL;
 const userConfiguredApiTimeout = process.env.API_TIMEOUT_MS;
 const userConfiguredDisableNonEssentialTraffic =
   process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC;
+const userConfiguredAutoCompactWindow = process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
 const userConfiguredDefaultSonnetModel = process.env.ANTHROPIC_DEFAULT_SONNET_MODEL;
 const userConfiguredDefaultHaikuModel = process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL;
 const userConfiguredDefaultOpusModel = process.env.ANTHROPIC_DEFAULT_OPUS_MODEL;
