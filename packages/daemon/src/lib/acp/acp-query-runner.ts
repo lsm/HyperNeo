@@ -330,6 +330,7 @@ export class AcpQueryRunner {
     let startupTimeoutReached = false;
     let createdAcpSessionDuringRun = false;
     let receivedAcpMessageDuringRun = false;
+    let restoreMessageEnqueuedHandler: (() => void) | undefined;
 
     try {
       const { initializeProviders, waitForOptionalProviderRegistration } = await import(
@@ -388,7 +389,14 @@ export class AcpQueryRunner {
       const abortController = new AbortController();
       this.ctx.queryAbortController = abortController;
       const instructionBlocks = acpInstructionBlocks(queryOptions);
-      let prependInstructionsToNextPrompt = true;
+      const hasInstructionBlocks = instructionBlocks.length > 0;
+      const hasPriorAcpTurn = (session.metadata?.messageCount ?? 0) > 0;
+      let prependInstructionsToNextPrompt =
+        hasInstructionBlocks &&
+        !(session.acpSessionId && (session.metadata?.acpInstructionsSent || hasPriorAcpTurn));
+      let startupHandshakeActive = true;
+      let restoredMessageEnqueuedHandler = false;
+      const previousOnMessageEnqueued = messageQueue.onMessageEnqueued;
 
       const startStartupTimer = (hasFirstMessage: () => boolean) => {
         this.clearStartupTimer();
@@ -409,6 +417,21 @@ export class AcpQueryRunner {
           }
         }, startupTimeoutMs);
       };
+
+      const onMessageEnqueued = (messageId: string, queuedAt: number) => {
+        previousOnMessageEnqueued?.(messageId, queuedAt);
+        if (!startupHandshakeActive || this.ctx.startupTimeoutTimer) return;
+        startStartupTimer(() => false);
+      };
+
+      restoreMessageEnqueuedHandler = () => {
+        if (restoredMessageEnqueuedHandler) return;
+        restoredMessageEnqueuedHandler = true;
+        if (messageQueue.onMessageEnqueued === onMessageEnqueued) {
+          messageQueue.onMessageEnqueued = previousOnMessageEnqueued;
+        }
+      };
+      messageQueue.onMessageEnqueued = onMessageEnqueued;
 
       client = this.createAcpClient({
         command,
@@ -440,12 +463,10 @@ export class AcpQueryRunner {
         try {
           const result = await client.loadSession(existingAcpSessionId, cwd, acpMcpServers);
           this.persistAcpSessionId(result.sessionId);
-          prependInstructionsToNextPrompt = false;
         } catch (loadError) {
           try {
             const result = await client.resumeSession(existingAcpSessionId, cwd, acpMcpServers);
             this.persistAcpSessionId(result.sessionId);
-            prependInstructionsToNextPrompt = false;
           } catch (resumeError) {
             const loadMessage = loadError instanceof Error ? loadError.message : String(loadError);
             const resumeMessage =
@@ -463,6 +484,8 @@ export class AcpQueryRunner {
         this.persistAcpSessionId(result.sessionId);
         createdAcpSessionDuringRun = true;
       }
+      startupHandshakeActive = false;
+      restoreMessageEnqueuedHandler?.();
       this.clearStartupTimer();
 
       await this.ctx.onModelsFetched().catch((error) => {
@@ -486,6 +509,7 @@ export class AcpQueryRunner {
         const promptContent = prependInstructionsToNextPrompt
           ? [...instructionBlocks, ...toAcpPromptContent(message)]
           : toAcpPromptContent(message);
+        const shouldPersistInstructionsSent = prependInstructionsToNextPrompt;
         prependInstructionsToNextPrompt = false;
         const adapter = new AcpQueryAdapter(client, promptContent);
         this.ctx.queryObject = adapter;
@@ -504,6 +528,9 @@ export class AcpQueryRunner {
           if (messageCount === 1) {
             promptMessageReceived = true;
             receivedAcpMessageDuringRun = true;
+            if (shouldPersistInstructionsSent) {
+              this.persistAcpInstructionsSent();
+            }
             this.clearStartupTimer();
           }
           this.ctx.firstMessageReceived = true;
@@ -539,6 +566,7 @@ export class AcpQueryRunner {
         messageQueue.stop();
       }
     } catch (error) {
+      restoreMessageEnqueuedHandler?.();
       const effectiveError =
         startupTimeoutReached && !this.ctx.firstMessageReceived
           ? new Error('ACP startup timeout - query aborted')
@@ -552,6 +580,7 @@ export class AcpQueryRunner {
         receivedAcpMessageDuringRun
       );
     } finally {
+      restoreMessageEnqueuedHandler?.();
       const isStaleQuery = this.ctx.getQueryGeneration() !== queryGeneration;
 
       if (!isStaleQuery) {
@@ -835,6 +864,16 @@ export class AcpQueryRunner {
     if (session.acpSessionId === acpSessionId) return;
     session.acpSessionId = acpSessionId;
     db.updateSession(session.id, { acpSessionId });
+  }
+
+  private persistAcpInstructionsSent(): void {
+    const { session, db } = this.ctx;
+    if (session.metadata?.acpInstructionsSent) return;
+    session.metadata = {
+      ...session.metadata,
+      acpInstructionsSent: true,
+    };
+    db.updateSession(session.id, { metadata: session.metadata });
   }
 
   private clearStartupTimer(): void {

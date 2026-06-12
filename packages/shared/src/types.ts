@@ -601,6 +601,7 @@ export interface SessionMetadata {
   // We track lastSdkCost to detect resets and costBaseline to preserve pre-reset totals
   lastSdkCost?: number; // Last SDK-reported total_cost_usd (resets when agent restarts)
   costBaseline?: number; // Accumulated cost from previous runs before last reset
+  acpInstructionsSent?: boolean; // Whether first-turn ACP session instructions were sent
   worktreeChoice?: {
     status: 'pending' | 'completed';
     choice?: 'worktree' | 'direct';

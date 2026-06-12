@@ -94,6 +94,28 @@ export class QueryLifecycleManager {
     this.logger = new Logger(`QueryLifecycleManager ${ctx.session.id}`);
   }
 
+  private clearAcpSessionStateForReset(): void {
+    const { session, db } = this.ctx;
+    if (session.config.provider !== 'acp') return;
+
+    const updates: Partial<Session> = {};
+    if (session.acpSessionId) {
+      session.acpSessionId = undefined;
+      updates.acpSessionId = undefined;
+    }
+    if (session.metadata?.acpInstructionsSent) {
+      session.metadata = {
+        ...session.metadata,
+        acpInstructionsSent: undefined,
+      };
+      updates.metadata = session.metadata;
+    }
+
+    if (Object.keys(updates).length > 0) {
+      db.updateSession(session.id, updates);
+    }
+  }
+
   /**
    * Get the effective workspace path for SDK session file lookups.
    *
@@ -428,6 +450,7 @@ export class QueryLifecycleManager {
       messageQueue.clear();
       this.ctx.pendingRestartReason = null;
       messageHandler.resetCircuitBreaker();
+      this.clearAcpSessionStateForReset();
       await stateManager.setIdle();
       // Clear models cache to ensure fresh model info is fetched from DB
       await this.ctx.clearModelsCache();
@@ -451,6 +474,7 @@ export class QueryLifecycleManager {
       messageQueue.clear();
       this.ctx.pendingRestartReason = null;
       messageHandler.resetCircuitBreaker();
+      this.clearAcpSessionStateForReset();
       await internalEventBus.publish('session.errorClear', { sessionId: session.id });
 
       // Stop the query with shorter timeout and catch errors

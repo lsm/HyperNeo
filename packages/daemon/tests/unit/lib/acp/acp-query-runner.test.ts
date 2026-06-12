@@ -115,6 +115,7 @@ function createRunnerFixture(overrides: RunnerFixtureOverrides = {}) {
     clear: mock(() => {}),
     size: mock(() => overrides.queueSize ?? 0),
     enqueueWithId: mock(async () => {}),
+    onMessageEnqueued: undefined,
     messageGenerator: mock(generatorFactory),
   } as unknown as MessageQueue;
 
@@ -378,7 +379,10 @@ describe('AcpQueryRunner', () => {
     }));
     const { runner, ctx } = createRunnerFixture({
       client,
-      session: { acpSessionId: 'persisted-acp-session' } as Partial<Session>,
+      session: {
+        acpSessionId: 'persisted-acp-session',
+        metadata: { messageCount: 2 },
+      } as Partial<Session>,
       queryOptions: {
         cwd: '/tmp/acp-session',
         mcpServers: {},
@@ -487,6 +491,38 @@ describe('AcpQueryRunner', () => {
       },
       { type: 'text', text: 'hello' },
     ]);
+    expect(ctx.db.updateSession).toHaveBeenCalledWith('session-1', {
+      metadata: expect.objectContaining({ acpInstructionsSent: true }),
+    });
+  });
+
+  test('preserves first-turn instructions after idle ACP resume', async () => {
+    const client = createMockClient();
+    client.canLoadSession.mockImplementation(() => true);
+    const { runner, ctx } = createRunnerFixture({
+      client,
+      session: { acpSessionId: 'idle-acp-session' } as Partial<Session>,
+      queryOptions: {
+        cwd: '/tmp/acp-session',
+        mcpServers: {},
+        systemPrompt: { type: 'preset', preset: 'none', append: 'Follow Space workflow rules.' },
+      },
+    });
+
+    await runner.start();
+    await ctx.queryPromise;
+
+    expect(client.loadSession).toHaveBeenCalledWith('idle-acp-session', '/tmp/acp-session', []);
+    expect(client.sendPrompt.mock.calls[0][0]).toEqual([
+      {
+        type: 'text',
+        text: 'NeoKai session instructions:\n\nFollow Space workflow rules.',
+      },
+      { type: 'text', text: 'hello' },
+    ]);
+    expect(ctx.db.updateSession).toHaveBeenCalledWith('session-1', {
+      metadata: expect.objectContaining({ acpInstructionsSent: true }),
+    });
   });
 
   test('does not start ACP startup timeout while waiting for a queued prompt', async () => {
@@ -516,6 +552,41 @@ describe('AcpQueryRunner', () => {
     else process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS = previousTimeout;
 
     expect(client.sendPrompt).toHaveBeenCalled();
+  }, 1000);
+
+  test('retries ACP handshake timeout when turn is queued during startup', async () => {
+    const firstClient = createMockClient();
+    let enqueueDuringStartup: ((messageId: string, queuedAt: number) => void) | undefined;
+    let releaseInitialize: (() => void) | undefined;
+    firstClient.close.mockImplementation(() => releaseInitialize?.());
+    firstClient.initialize.mockImplementation(async () => {
+      enqueueDuringStartup?.('user-message-1', Date.now());
+      await new Promise<void>((resolve) => {
+        releaseInitialize = resolve;
+      });
+      throw new Error('closed before initialize');
+    });
+    const secondClient = createMockClient();
+    const clients = [firstClient, secondClient];
+    const { ctx, messageQueue } = createRunnerFixture({ client: firstClient, queueSize: 0 });
+    const previousOnMessageEnqueued = mock(() => {});
+    messageQueue.onMessageEnqueued = previousOnMessageEnqueued;
+    enqueueDuringStartup = (messageId, queuedAt) => {
+      messageQueue.onMessageEnqueued?.(messageId, queuedAt);
+    };
+    const runner = new AcpQueryRunner(ctx, () => clients.shift() as unknown as AcpClient);
+
+    const previousTimeout = process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS;
+    process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS = '20';
+    await runner.start();
+    await ctx.queryPromise;
+    if (previousTimeout === undefined) delete process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS;
+    else process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS = previousTimeout;
+
+    expect(previousOnMessageEnqueued).toHaveBeenCalledWith('user-message-1', expect.any(Number));
+    expect(firstClient.close).toHaveBeenCalled();
+    expect(secondClient.sendPrompt).toHaveBeenCalled();
+    expect(messageQueue.onMessageEnqueued).toBe(previousOnMessageEnqueued);
   }, 1000);
 
   test('retries ACP handshake timeout while a queued turn is waiting', async () => {

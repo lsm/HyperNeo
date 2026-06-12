@@ -224,6 +224,7 @@ export class ModelSwitchHandler {
 
       const nextProvider = newProviderInstance.id as Provider;
       const clearAcpSessionId = previousProvider === 'acp' && nextProvider !== 'acp';
+      const clearSdkSessionState = previousProvider !== 'acp' && nextProvider === 'acp';
 
       if (!this.isQueryActiveOrStarting()) {
         // Query hasn't been created yet OR query was already completed/interrupted.
@@ -237,6 +238,10 @@ export class ModelSwitchHandler {
         if (clearAcpSessionId) {
           session.acpSessionId = undefined;
         }
+        if (clearSdkSessionState) {
+          session.sdkSessionId = undefined;
+          session.sdkOriginPath = undefined;
+        }
         // Only pass serializable fields — session.config may contain runtime-only
         // objects (mcpServers with closures, agents, spawnClaudeCodeProcess) that
         // cannot be JSON-stringified and would cause a cyclic structure error.
@@ -246,6 +251,7 @@ export class ModelSwitchHandler {
             provider: nextProvider,
           } as SessionConfig,
           ...(clearAcpSessionId ? { acpSessionId: undefined } : {}),
+          ...(clearSdkSessionState ? { sdkSessionId: undefined, sdkOriginPath: undefined } : {}),
         });
 
         // Update context tracker model
@@ -278,6 +284,10 @@ export class ModelSwitchHandler {
         if (clearAcpSessionId) {
           session.acpSessionId = undefined;
         }
+        if (clearSdkSessionState) {
+          session.sdkSessionId = undefined;
+          session.sdkOriginPath = undefined;
+        }
         // Only pass serializable fields — session.config may contain runtime-only
         // objects (mcpServers with closures, agents, spawnClaudeCodeProcess) that
         // cannot be JSON-stringified and would cause a cyclic structure error.
@@ -287,6 +297,7 @@ export class ModelSwitchHandler {
             provider: nextProvider,
           } as SessionConfig,
           ...(clearAcpSessionId ? { acpSessionId: undefined } : {}),
+          ...(clearSdkSessionState ? { sdkSessionId: undefined, sdkOriginPath: undefined } : {}),
         });
 
         // Update context tracker model

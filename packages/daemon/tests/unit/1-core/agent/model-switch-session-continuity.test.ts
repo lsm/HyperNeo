@@ -91,6 +91,17 @@ const TEST_MODELS: ModelInfo[] = [
     releaseDate: '2026-01-01',
     available: true,
   },
+  {
+    id: 'acp-default',
+    name: 'ACP Default',
+    alias: 'acp',
+    family: 'acp',
+    provider: 'acp',
+    contextWindow: 200000,
+    description: 'ACP model',
+    releaseDate: '2026-01-01',
+    available: true,
+  },
 ];
 
 // ===========================================================================
@@ -312,6 +323,22 @@ describe('ModelSwitchHandler — session continuity (sdkSessionId)', () => {
     expect(updateSessionSpy).toHaveBeenCalledWith(
       mockSession.id,
       expect.objectContaining({ acpSessionId: undefined })
+    );
+  });
+
+  it('clears sdkSessionId and sdkOriginPath when switching into ACP', async () => {
+    mockSession.sdkSessionId = 'sdk-session-abc';
+    mockSession.sdkOriginPath = '/test/workspace';
+
+    handler = createHandler();
+    const result = await handler.switchModel('acp-default', 'acp');
+
+    expect(result.success).toBe(true);
+    expect(mockSession.sdkSessionId).toBeUndefined();
+    expect(mockSession.sdkOriginPath).toBeUndefined();
+    expect(updateSessionSpy).toHaveBeenCalledWith(
+      mockSession.id,
+      expect.objectContaining({ sdkSessionId: undefined, sdkOriginPath: undefined })
     );
   });
 });
