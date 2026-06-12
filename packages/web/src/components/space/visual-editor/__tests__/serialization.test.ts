@@ -451,9 +451,35 @@ describe('visualStateToCreateParams', () => {
         sourceNode: 'Step 1',
         targetNode: 'Review',
         authorizedCallers: [expect.objectContaining({ sourceNode: 'Step 1' })],
+        retry: { maxAttempts: 3, delayMs: 5000, backoffMultiplier: 1 },
       }),
     ]);
-    expect(params.hooks![0]).not.toHaveProperty('poll');
+    expect(params.hooks![0].poll).toEqual({ intervalMs: 5000 });
+  });
+
+  it('preserves explicit hook retry settings', () => {
+    const params = visualStateToCreateParams(
+      makeState({
+        hooks: [
+          {
+            id: 'hook-1',
+            enabled: true,
+            sourceNode: 'Step 1',
+            method: 'send_message',
+            validator: { kind: 'script', interpreter: 'bash', source: 'echo ok' },
+            retry: { maxAttempts: 9, delayMs: 1000, backoffMultiplier: 2 },
+          },
+        ],
+      }),
+      'space-1',
+      'WF'
+    );
+
+    expect(params.hooks?.[0].retry).toEqual({
+      maxAttempts: 9,
+      delayMs: 1000,
+      backoffMultiplier: 2,
+    });
   });
 
   it('passes endNodeId through to create params', () => {

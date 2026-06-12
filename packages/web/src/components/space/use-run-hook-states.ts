@@ -41,11 +41,13 @@ export function evaluateHookStatus(
 ): HookBannerSummary {
   const lastResult = state.lastResult;
   const status: HookBannerStatus =
-    lastResult?.type === 'retryable_block'
-      ? 'waiting_on_hook_retry'
-      : lastResult?.type === 'block'
-        ? 'blocked_by_hook'
-        : 'allowed';
+    hookDef?.classification === 'side_effect'
+      ? 'allowed'
+      : lastResult?.type === 'retryable_block'
+        ? 'waiting_on_hook_retry'
+        : lastResult?.type === 'block'
+          ? 'blocked_by_hook'
+          : 'allowed';
 
   return {
     hookId: state.hookId,

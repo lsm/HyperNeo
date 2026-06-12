@@ -259,9 +259,9 @@ function remapHookNodeReference(value: string | undefined, nodeNames: Map<string
 }
 
 function serializeHook(hook: WorkflowHook, nodeNames: Map<string, string>): WorkflowHook {
-  const { poll: _poll, ...hookWithoutUnsupportedPoll } = hook;
   return {
-    ...hookWithoutUnsupportedPoll,
+    ...hook,
+    retry: hook.retry ?? { maxAttempts: 3, delayMs: 5000, backoffMultiplier: 1 },
     sourceNode: remapHookNodeReference(hook.sourceNode, nodeNames) ?? hook.sourceNode,
     targetNode: remapHookNodeReference(hook.targetNode, nodeNames),
     authorizedCallers: hook.authorizedCallers?.map((caller) => ({

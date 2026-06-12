@@ -101,7 +101,7 @@ export class WorkflowHookStateRepository {
     const now = Date.now();
     this.db
       .prepare(
-        `INSERT INTO workflow_hook_state
+        `INSERT OR IGNORE INTO workflow_hook_state
           (run_id, hook_id, version, local_state, last_result, retry_count, next_retry_at, vote_maps, created_at, updated_at)
          VALUES (?, ?, 0, ?, NULL, 0, NULL, '{}', ?, ?)`
       )

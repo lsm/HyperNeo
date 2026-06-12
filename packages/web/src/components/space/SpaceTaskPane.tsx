@@ -246,10 +246,11 @@ export function SpaceTaskPane({
     : null;
   const _workflowIdForHook = _workflowRunForHook?.workflowId ?? null;
   const { summaries: gateSummaries } = useRunGateSummaries(_runId, _workflowIdForHook);
-  const { summaries: hookSummaries, fetchError: hookFetchError } = useRunHookStates(
-    _runId,
-    _workflowIdForHook
-  );
+  const {
+    summaries: hookSummaries,
+    fetchError: hookFetchError,
+    retry: retryHookFetch,
+  } = useRunHookStates(_runId, _workflowIdForHook);
   const navigationSpaceIdForTask =
     routeSpaceId ?? currentSpaceIdSignal.value ?? spaceId ?? task?.spaceId;
   const targetSpaceIdForTask = spaceId ?? task?.spaceId ?? navigationSpaceIdForTask;
@@ -987,6 +988,9 @@ export function SpaceTaskPane({
               runId={banner.runId}
               spaceId={runtimeSpaceId}
               workflowId={canvasWorkflowId}
+              summaries={hookSummaries}
+              fetchError={hookFetchError}
+              retry={retryHookFetch}
             />
           ) : (
             // gate_pending — PendingGateBanner renders rows for every
