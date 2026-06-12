@@ -194,13 +194,16 @@ export const NATIVE_CONTEXT_WINDOW_PROVIDER_IDS = ['anthropic', 'anthropic-copil
 
 export const PROVIDER_NATIVE_AUTO_COMPACT_WINDOWS: Record<string, number> = {
   kimi: 262_144,
-  'anthropic-codex': 272_000,
 };
 
-export function providerUsesNativeAutoCompact(providerId: string): boolean {
+export function providerUsesNativeAutoCompact(
+  providerId: string,
+  contextWindow?: number | null
+): boolean {
   return (
     NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId) ||
-    providerId in PROVIDER_NATIVE_AUTO_COMPACT_WINDOWS
+    providerId in PROVIDER_NATIVE_AUTO_COMPACT_WINDOWS ||
+    (providerId === 'anthropic-codex' && !!contextWindow)
   );
 }
 

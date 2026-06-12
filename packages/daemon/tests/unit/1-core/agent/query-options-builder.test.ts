@@ -168,10 +168,9 @@ describe('QueryOptionsBuilder', () => {
   });
 
   describe('provider settings', () => {
-    it('should enable SDK auto-compaction for Codex bridge', () => {
+    it('should disable SDK auto-compaction for Codex bridge without model context', () => {
       expect(buildProviderSettings('anthropic-codex')).toEqual({
-        autoCompactEnabled: true,
-        autoCompactWindow: 272_000,
+        autoCompactEnabled: false,
       });
     });
 
@@ -180,6 +179,10 @@ describe('QueryOptionsBuilder', () => {
     });
 
     it('should enable SDK auto-compaction for all non-native providers with context windows', () => {
+      expect(buildProviderSettings('anthropic-codex', 128_000)).toEqual({
+        autoCompactEnabled: true,
+        autoCompactWindow: 128_000,
+      });
       expect(buildProviderSettings('openrouter', 1_000_000)).toEqual({
         autoCompactEnabled: true,
         autoCompactWindow: 1_000_000,

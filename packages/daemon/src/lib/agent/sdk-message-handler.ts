@@ -898,7 +898,8 @@ export class SDKMessageHandler {
           return;
         }
         const usesNativeAutoCompact =
-          providerUsesNativeAutoCompact(providerId) || contextInfo.isAutoCompactEnabled;
+          providerUsesNativeAutoCompact(providerId, modelInfo?.contextWindow) ||
+          contextInfo.isAutoCompactEnabled;
         if (
           !usesNativeAutoCompact &&
           modelInfo?.contextWindow &&
