@@ -53,16 +53,39 @@ mock.module('../../../../src/lib/provider-service', () => ({
     getProviderApiKey: (_provider: string) => process.env.ANTHROPIC_API_KEY || undefined,
     isProviderAvailable: async () => false,
     mergeProviderEnvVars: (s: object) => s,
-    applyEnvVarsToProcessForProvider: (_provider: string, _modelId: string) => ({}),
+    applyEnvVarsToProcessForProvider: (provider: string, modelId: string) => {
+      if (provider !== 'glm') return {};
+      const originalEnv = {
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL,
+        ANTHROPIC_DEFAULT_SONNET_MODEL: process.env.ANTHROPIC_DEFAULT_SONNET_MODEL,
+        ANTHROPIC_DEFAULT_OPUS_MODEL: process.env.ANTHROPIC_DEFAULT_OPUS_MODEL,
+      };
+      process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = modelId;
+      process.env.ANTHROPIC_DEFAULT_SONNET_MODEL = modelId;
+      process.env.ANTHROPIC_DEFAULT_OPUS_MODEL = modelId;
+      return originalEnv;
+    },
     getTitleGenerationConfig: async (_provider: string) => ({
       modelId: 'claude-sonnet-4-20250514',
     }),
-    getTitleGenerationModels: async (_provider: string, sessionModelId: string) => ({
-      providerModelId: sessionModelId,
-      sdkModelId: sessionModelId,
+    getTitleGenerationModels: async (provider: string, sessionModelId: string) => ({
+      providerModelId: provider === 'glm' ? 'glm-5-turbo' : sessionModelId,
+      sdkModelId: provider === 'glm' ? 'default' : sessionModelId,
     }),
-    getEnvVarsForModel: (_modelId: string, _provider: string) => ({}),
-    restoreEnvVars: (_originalEnv: Record<string, string | undefined>) => {},
+    getEnvVarsForModel: (modelId: string, provider: string) =>
+      provider === 'glm'
+        ? {
+            ANTHROPIC_DEFAULT_HAIKU_MODEL: modelId,
+            ANTHROPIC_DEFAULT_SONNET_MODEL: modelId,
+            ANTHROPIC_DEFAULT_OPUS_MODEL: modelId,
+          }
+        : {},
+    restoreEnvVars: (originalEnv: Record<string, string | undefined>) => {
+      for (const [key, value] of Object.entries(originalEnv)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    },
   }),
   mergeProviderEnvVars: (session: object) => session,
 }));
