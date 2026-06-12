@@ -37,6 +37,16 @@ export type ArchiveResourcesTrigger = 'ui_session_archive' | 'ui_task_archive';
 export type DeleteResourcesTrigger = 'ui_session_delete';
 
 type SdkQueryFunction = typeof import('@anthropic-ai/claude-agent-sdk').query;
+type TitleGenerationProviderService = Pick<
+  ReturnType<typeof getProviderService>,
+  | 'getDefaultProvider'
+  | 'isProviderAvailable'
+  | 'getTitleGenerationConfig'
+  | 'getTitleGenerationModels'
+  | 'applyEnvVarsToProcessForProvider'
+  | 'getEnvVarsForModel'
+  | 'restoreEnvVars'
+>;
 
 function isAssistantMessageWithContent(
   message: unknown
@@ -53,6 +63,8 @@ export interface SessionLifecycleConfig {
   disableWorktrees?: boolean;
   /** @internal Test-only SDK query override for title generation. */
   titleGenerationQueryForTesting?: SdkQueryFunction;
+  /** @internal Test-only provider service override for title generation. */
+  titleGenerationProviderServiceForTesting?: TitleGenerationProviderService;
 }
 
 export interface CreateSessionParams {
@@ -1038,7 +1050,8 @@ export class SessionLifecycle {
     sessionModel?: string,
     sessionProviderId?: string
   ): Promise<{ title: string; isFallback: boolean }> {
-    const providerService = getProviderService();
+    const providerService =
+      this.config.titleGenerationProviderServiceForTesting ?? getProviderService();
 
     // Determine which provider to use for title generation.
     // When the session has an explicit provider ID (e.g. 'anthropic-copilot'), use that
@@ -1103,7 +1116,8 @@ export class SessionLifecycle {
     const query =
       this.config.titleGenerationQueryForTesting ??
       (await import('@anthropic-ai/claude-agent-sdk')).query;
-    const providerService = getProviderService();
+    const providerService =
+      this.config.titleGenerationProviderServiceForTesting ?? getProviderService();
 
     const titleModels = await providerService.getTitleGenerationModels(provider, modelId);
 

@@ -19,6 +19,7 @@ export interface AcpTransportCallbacks {
   onRequest?: (request: AcpJsonRpcRequest) => void;
   onExit?: (code: number | null, signal: string | null) => void;
   onStderr?: (data: string) => void;
+  onProcessSpawn?: (process: ChildProcess) => void;
 }
 
 export interface AcpTransportOptions extends AcpTransportCallbacks {
@@ -71,6 +72,7 @@ export class AcpTransport {
     });
 
     this.process = proc;
+    this.options.onProcessSpawn?.(proc);
 
     proc.stdout?.on('data', (chunk: Buffer) => {
       this.handleStdoutChunk(chunk);

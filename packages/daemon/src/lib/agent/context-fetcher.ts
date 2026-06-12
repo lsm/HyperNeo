@@ -12,8 +12,8 @@
  * fully typed `SDKControlGetContextUsageResponse`.
  */
 
-import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type { SDKControlGetContextUsageResponse } from '@anthropic-ai/claude-agent-sdk';
+import type { QueryLike } from './query-like';
 import type {
   ContextInfo,
   ContextCategoryBreakdown,
@@ -58,8 +58,11 @@ export class ContextFetcher {
    * a best-effort side effect of turn handling and should never cause a turn
    * to fail.
    */
-  async fetch(query: Query | null, modelMetadata?: ContextMetadata): Promise<ContextInfo | null> {
-    if (!query) return null;
+  async fetch(
+    query: QueryLike | null,
+    modelMetadata?: ContextMetadata
+  ): Promise<ContextInfo | null> {
+    if (!query?.getContextUsage) return null;
 
     try {
       const response = await query.getContextUsage();

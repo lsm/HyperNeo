@@ -324,7 +324,7 @@ describe('ProviderRegistry', () => {
   describe('initializeProviders — all built-in providers registered', () => {
     // Outer beforeEach already resets registry+factory; no per-test resets needed.
 
-    it('should register exactly nine built-in providers', async () => {
+    it('should register exactly ten built-in providers', async () => {
       const reg = initializeProviders();
       await waitForOptionalProviderRegistration();
 
@@ -334,6 +334,7 @@ describe('ProviderRegistry', () => {
         .sort();
       expect(ids).toEqual(
         [
+          'acp',
           'anthropic',
           'anthropic-codex',
           'anthropic-copilot',
@@ -389,20 +390,31 @@ describe('ProviderRegistry', () => {
       expect(reg.has('anthropic-copilot')).toBe(true);
     });
 
+    it('should include acp provider', () => {
+      const reg = initializeProviders();
+      expect(reg.has('acp')).toBe(true);
+      expect(reg.detectProviderForModel('acp-default', 'acp')?.id).toBe('acp');
+    });
+
+    it('should infer acp provider from acp model IDs', () => {
+      expect(inferProviderForModel('acp')).toBe('acp');
+      expect(inferProviderForModel('acp-default')).toBe('acp');
+    });
+
     it('should return the same singleton registry on repeated calls without reset', async () => {
       const reg1 = initializeProviders();
       await waitForOptionalProviderRegistration();
       const reg2 = initializeProviders();
       // The global singleton must be the same reference — not a new instance
       expect(reg1).toBe(reg2);
-      expect(reg2.size).toBe(9);
+      expect(reg2.size).toBe(10);
     });
 
     it('should use the global registry singleton', async () => {
       initializeProviders();
       await waitForOptionalProviderRegistration();
       const globalReg = getProviderRegistry();
-      expect(globalReg.size).toBe(9);
+      expect(globalReg.size).toBe(10);
     });
 
     it('should restore all providers after the registry is reset without factory reset', async () => {
@@ -420,6 +432,7 @@ describe('ProviderRegistry', () => {
         .sort();
       expect(ids).toEqual(
         [
+          'acp',
           'anthropic',
           'anthropic-codex',
           'anthropic-copilot',
@@ -568,6 +581,26 @@ describe('inferProviderForModel', () => {
       expect(inferProviderForModel('Moonshot-v1-32k')).toBe('kimi');
       expect(inferProviderForModel('kimi-for-coding')).toBe('kimi');
       expect(inferProviderForModel('Kimi')).toBe('kimi');
+    } finally {
+      resetProviderRegistry();
+    }
+  });
+
+  it('maps ACP model IDs before registry fallback providers', () => {
+    try {
+      getProviderRegistry().register(
+        new (class extends MockProvider {
+          readonly id = 'anthropic' as const;
+          readonly displayName = 'Anthropic';
+          ownsModel(): boolean {
+            return true;
+          }
+        })()
+      );
+
+      expect(inferProviderForModel('acp')).toBe('acp');
+      expect(inferProviderForModel('acp-default')).toBe('acp');
+      expect(inferProviderForModel('ACP-custom')).toBe('acp');
     } finally {
       resetProviderRegistry();
     }

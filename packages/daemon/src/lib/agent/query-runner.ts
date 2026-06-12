@@ -11,7 +11,8 @@
  */
 
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import type { Options, Query, SpawnOptions, SpawnedProcess } from '@anthropic-ai/claude-agent-sdk';
+import type { Options, SpawnOptions, SpawnedProcess } from '@anthropic-ai/claude-agent-sdk';
+import type { QueryLike } from './query-like';
 import { spawn as nodeSpawn } from 'node:child_process';
 import type { UUID } from 'crypto';
 import type { MessageContent, Session, MessageHub } from '@neokai/shared';
@@ -119,8 +120,8 @@ export interface QueryRunnerContext {
   readonly optionsBuilder: QueryOptionsBuilder;
   readonly askUserQuestionHandler: AskUserQuestionHandler;
 
-  // Mutable SDK state (accessed directly)
-  queryObject: Query | null;
+  // Mutable query state (accessed directly)
+  queryObject: QueryLike | null;
   queryPromise: Promise<void> | null;
   queryAbortController: AbortController | null;
   firstMessageReceived: boolean;
@@ -1217,7 +1218,7 @@ export class QueryRunner {
    * Public for testing
    */
   async *createAbortableQuery(
-    queryObj: Query,
+    queryObj: QueryLike,
     signal: AbortSignal
   ): AsyncGenerator<unknown, void, unknown> {
     const iterator = queryObj[Symbol.asyncIterator]();

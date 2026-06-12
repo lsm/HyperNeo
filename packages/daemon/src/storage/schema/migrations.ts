@@ -702,6 +702,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
   // Migration 155: Copy legacy ownership/automation rows into long-horizon tables.
   runMigration155(db);
+
+  // Migration 156: Persist ACP agent session ids.
+  runMigration156(db);
 }
 
 /**
@@ -10620,4 +10623,11 @@ export function runMigration155(db: BunDatabase): void {
     markerKey,
     Date.now()
   );
+}
+
+export function runMigration156(db: BunDatabase): void {
+  if (!tableExists(db, 'sessions')) return;
+  if (!tableHasColumn(db, 'sessions', 'acp_session_id')) {
+    db.exec(`ALTER TABLE sessions ADD COLUMN acp_session_id TEXT`);
+  }
 }

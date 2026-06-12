@@ -11,7 +11,7 @@
  */
 
 import type { ModelInfo, Session } from '@neokai/shared';
-import type { Query } from '@anthropic-ai/claude-agent-sdk';
+import type { QueryLike } from './agent/query-like';
 import { initializeProviders, waitForOptionalProviderRegistration } from './providers/factory.js';
 import { getProviderRegistry } from './providers/registry.js';
 import type { Provider } from '@neokai/shared/provider';
@@ -164,7 +164,7 @@ const cacheGeneration = new Map<string, number>();
  * @returns Array of ModelInfo, or empty array if query doesn't support it
  */
 export async function getSupportedModelsFromQuery(
-  queryObject: Query | null,
+  queryObject: QueryLike | null,
   cacheKey: string = 'global'
 ): Promise<ModelInfo[]> {
   // Return cached if available

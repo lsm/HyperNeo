@@ -11,8 +11,8 @@
  * - updateToolsConfig - Update tools configuration with restart
  */
 
-import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type { Session } from '@neokai/shared';
+import type { QueryLike } from './query-like';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { Database } from '../../storage/database';
 import type { Logger } from '../logger';
@@ -33,8 +33,8 @@ export interface SDKRuntimeConfigContext {
   readonly logger: Logger;
   readonly contextTracker: ContextTracker;
 
-  // SDK state
-  readonly queryObject: Query | null;
+  // Query state
+  readonly queryObject: QueryLike | null;
   readonly firstMessageReceived: boolean;
 
   // Method to restart query (needs to be a method, not a simple property)
@@ -80,11 +80,9 @@ export class SDKRuntimeConfig {
         return { success: true };
       }
 
-      // Use SDK's native method
-      if ('setMaxThinkingTokens' in queryObject) {
-        await (
-          queryObject as Query & { setMaxThinkingTokens: (t: number | null) => Promise<void> }
-        ).setMaxThinkingTokens(tokens);
+      // Use native query method when available
+      if (queryObject.setMaxThinkingTokens) {
+        await queryObject.setMaxThinkingTokens(tokens);
       }
 
       // Update config
@@ -120,11 +118,9 @@ export class SDKRuntimeConfig {
         return { success: true };
       }
 
-      // Use SDK's native method
-      if ('setPermissionMode' in queryObject) {
-        await (
-          queryObject as Query & { setPermissionMode: (m: string) => Promise<void> }
-        ).setPermissionMode(mode);
+      // Use native query method when available
+      if (queryObject.setPermissionMode) {
+        await queryObject.setPermissionMode(mode);
       }
 
       // Update config
@@ -157,10 +153,8 @@ export class SDKRuntimeConfig {
     }
 
     try {
-      if ('mcpServerStatus' in queryObject) {
-        const status = await (
-          queryObject as Query & { mcpServerStatus: () => Promise<unknown[]> }
-        ).mcpServerStatus();
+      if (queryObject.mcpServerStatus) {
+        const status = await queryObject.mcpServerStatus();
         return status as McpServerStatus[];
       }
       return [];
