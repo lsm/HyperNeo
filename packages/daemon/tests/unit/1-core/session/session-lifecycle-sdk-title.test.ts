@@ -169,6 +169,9 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
   let mockMessageHub: MessageHub;
   let mockToolsConfigManager: ToolsConfigManager;
   let mockAgentSessionFactory: AgentSessionFactory;
+  let mockTitleProviderService: NonNullable<
+    SessionLifecycleConfig['titleGenerationProviderServiceForTesting']
+  >;
   let config: SessionLifecycleConfig;
 
   const makeSessionCache = () => {
@@ -283,6 +286,49 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
     // sufficient for type compatibility).
     mockToolsConfigManager = {} as unknown as ToolsConfigManager;
 
+    mockTitleProviderService = {
+      getDefaultProvider: mock(async () => 'anthropic'),
+      isProviderAvailable: mock(async () => true),
+      getTitleGenerationConfig: mock(async () => ({
+        modelId: 'claude-sonnet-4-20250514',
+        baseUrl: 'https://api.anthropic.com',
+        apiVersion: 'v1',
+      })),
+      getTitleGenerationModels: mock(async (provider: string, sessionModelId: string) =>
+        provider === 'glm'
+          ? { providerModelId: 'glm-5-turbo', sdkModelId: 'default' }
+          : { providerModelId: sessionModelId, sdkModelId: sessionModelId }
+      ),
+      applyEnvVarsToProcessForProvider: mock(async (provider: string) => {
+        const original = {
+          ANTHROPIC_DEFAULT_HAIKU_MODEL: process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL,
+          ANTHROPIC_DEFAULT_SONNET_MODEL: process.env.ANTHROPIC_DEFAULT_SONNET_MODEL,
+          ANTHROPIC_DEFAULT_OPUS_MODEL: process.env.ANTHROPIC_DEFAULT_OPUS_MODEL,
+        };
+        if (provider === 'glm') {
+          process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = 'glm-5-turbo';
+          process.env.ANTHROPIC_DEFAULT_SONNET_MODEL = 'glm-5-turbo';
+          process.env.ANTHROPIC_DEFAULT_OPUS_MODEL = 'glm-5-turbo';
+        }
+        return original;
+      }),
+      getEnvVarsForModel: mock(async (_modelId: string, provider: string) =>
+        provider === 'glm'
+          ? {
+              ANTHROPIC_DEFAULT_HAIKU_MODEL: 'glm-5-turbo',
+              ANTHROPIC_DEFAULT_SONNET_MODEL: 'glm-5-turbo',
+              ANTHROPIC_DEFAULT_OPUS_MODEL: 'glm-5-turbo',
+            }
+          : {}
+      ),
+      restoreEnvVars: mock((original) => {
+        for (const [key, value] of Object.entries(original)) {
+          if (value === undefined) delete process.env[key];
+          else process.env[key] = value;
+        }
+      }),
+    };
+
     config = {
       defaultModel: 'claude-sonnet-4-20250514',
       maxTokens: 8192,
@@ -290,6 +336,7 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
       workspaceRoot: '/default/workspace',
       disableWorktrees: true,
       titleGenerationQueryForTesting: titleQueryOverride,
+      titleGenerationProviderServiceForTesting: mockTitleProviderService,
     };
 
     lifecycle = new SessionLifecycle(
