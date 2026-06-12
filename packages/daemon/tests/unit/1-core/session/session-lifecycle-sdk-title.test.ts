@@ -191,7 +191,7 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
       '../../../../src/lib/providers/anthropic-provider.js'
     );
     const { getProviderService, resetProviderServiceInstance } = await import(
-      '../../../../src/lib/provider-service.js'
+      '../../../../src/lib/provider-service'
     );
     const { SessionLifecycle } = await import('../../../../src/lib/session/session-lifecycle.js');
     SessionLifecycleCtor = SessionLifecycle;
@@ -298,9 +298,7 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
   afterEach(async () => {
     const { resetProviderRegistry } = await import('../../../../src/lib/providers/registry.js');
     const { resetProviderFactory } = await import('../../../../src/lib/providers/factory.js');
-    const { resetProviderServiceInstance } = await import(
-      '../../../../src/lib/provider-service.js'
-    );
+    const { resetProviderServiceInstance } = await import('../../../../src/lib/provider-service');
     resetProviderRegistry();
     resetProviderFactory();
     resetProviderServiceInstance();
