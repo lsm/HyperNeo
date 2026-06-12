@@ -43,6 +43,8 @@ const LIVE_QUERY_MESSAGE_LIMIT = 200;
 
 const logger = new Logger('kai:web:sessionstore');
 
+const NEOKAI_BUILT_IN_COMMANDS = ['merge-session'];
+
 class SessionStore {
   // ========================================
   // Core Signals
@@ -649,9 +651,10 @@ class SessionStore {
   }): string[] {
     if (message.type !== 'system') return [];
     if (message.subtype === 'commands_changed' && Array.isArray(message.commands)) {
-      return message.commands
+      const sdkCommands = message.commands
         .map((command) => command.name)
         .filter((name): name is string => typeof name === 'string' && name.length > 0);
+      return [...new Set([...sdkCommands, ...NEOKAI_BUILT_IN_COMMANDS])];
     }
     if (
       message.subtype === 'init' &&

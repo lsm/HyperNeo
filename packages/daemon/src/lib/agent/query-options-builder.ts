@@ -1003,7 +1003,11 @@ CRITICAL RULES:
       providerEnvVars.add('CLAUDE_CODE_AUTO_COMPACT_WINDOW');
     }
 
-    const mergedEnv: Record<string, string> = {};
+    const mergedEnv: Record<string, string> = Object.fromEntries(
+      Object.entries(process.env).filter(
+        (entry): entry is [string, string] => entry[1] !== undefined
+      )
+    );
 
     // 1. Add global settings env vars (filtered)
     if (globalSettings.env) {

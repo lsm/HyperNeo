@@ -165,6 +165,12 @@ export function isSDKThinkingTokensMessage(
   return msg.type === "system" && (msg as { subtype?: string }).subtype === "thinking_tokens";
 }
 
+export function isSDKModelRefusalFallbackMessage(
+  msg: SDKMessage,
+): msg is Extract<SDKMessage, { type: "system"; subtype: "model_refusal_fallback" }> {
+  return msg.type === "system" && (msg as { subtype?: string }).subtype === "model_refusal_fallback";
+}
+
 /**
  * Check if message is a stream event (partial assistant message)
  */

@@ -12,6 +12,7 @@ import { useState } from 'preact/hooks';
 import type {
   SDKHookResponseMessage,
   SDKMessage,
+  SDKModelRefusalFallbackMessage,
   SDKStatusMessage,
 } from '@neokai/shared/sdk/sdk.d.ts';
 import {
@@ -19,6 +20,7 @@ import {
   isSDKCompactBoundary,
   isSDKStatusMessage,
   isSDKHookResponse,
+  isSDKModelRefusalFallbackMessage,
 } from '@neokai/shared/sdk/type-guards';
 import { customColors } from '../../lib/design-tokens.ts';
 
@@ -68,7 +70,23 @@ export function SDKSystemMessage({ message }: Props) {
     return <HookResponseCard message={hookMessage} />;
   }
 
+  if (isSDKModelRefusalFallbackMessage(message)) {
+    return <ModelRefusalFallbackMessage message={message} />;
+  }
+
   return null;
+}
+
+function ModelRefusalFallbackMessage({ message }: { message: SDKModelRefusalFallbackMessage }) {
+  return (
+    <div class="my-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100">
+      <div class="mb-1 font-semibold">Model fallback</div>
+      <div>{message.content}</div>
+      <div class="mt-2 text-xs text-amber-700 dark:text-amber-300">
+        {message.original_model} → {message.fallback_model}
+      </div>
+    </div>
+  );
 }
 
 /**

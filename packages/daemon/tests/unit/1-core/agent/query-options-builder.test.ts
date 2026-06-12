@@ -149,7 +149,11 @@ describe('QueryOptionsBuilder', () => {
     it('should include env when configured', async () => {
       mockSession.config.env = { MY_VAR: 'value' };
       const options = await builder.build();
-      expect(options.env).toEqual({ MY_VAR: 'value' });
+      expect(options.env).toMatchObject({
+        PATH: process.env.PATH,
+        HOME: process.env.HOME,
+        MY_VAR: 'value',
+      });
     });
 
     it('should preserve user auto-compact env overrides for native Anthropic', async () => {
