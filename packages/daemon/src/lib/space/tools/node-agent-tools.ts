@@ -851,22 +851,22 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
           const myNodeName = node?.name ?? myAgentName;
           const fromRefs = new Set([myAgentName, myNodeName]);
 
-          const gatedChannel = (workflow.channels ?? []).find((ch) => {
+          const channelsFromCurrentNode = (workflow.channels ?? []).filter((ch) => {
             if (!ch.gateId) return false;
             if (ch.from !== '*' && !fromRefs.has(ch.from)) return false;
-            const tos = Array.isArray(ch.to) ? ch.to : [ch.to];
-            const candidateTargets = uniqueTargetRefs([
-              ...routedTargetNames,
-              ...routedTargetNames.map(resolveNodeName),
-            ]);
-            return tos.some(
-              (to) =>
-                to === '*' ||
-                candidateTargets.includes(to) ||
-                to === myNodeName ||
-                to === myAgentName
-            );
+            return true;
           });
+          const candidateTargets = uniqueTargetRefs([
+            ...routedTargetNames,
+            ...routedTargetNames.map(resolveNodeName),
+          ]);
+          const gatedChannel =
+            channelsFromCurrentNode.find((ch) => {
+              const tos = Array.isArray(ch.to) ? ch.to : [ch.to];
+              return tos.some(
+                (to) => candidateTargets.includes(to) || to === myNodeName || to === myAgentName
+              );
+            }) ?? channelsFromCurrentNode.find((ch) => ch.to === '*');
 
           if (gatedChannel?.gateId) {
             const gateId = gatedChannel.gateId;

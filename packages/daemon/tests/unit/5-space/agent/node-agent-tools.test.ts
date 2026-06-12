@@ -1445,6 +1445,41 @@ describe('node-agent-tools: send_message (gate-write)', () => {
     );
   });
 
+  test('gate-write prefers scalar target channels over broadcast channels', async () => {
+    const broadcastGate: Gate = {
+      id: 'gate-broadcast',
+      fields: [{ name: 'pr_url', type: 'string', writers: ['Coding'], check: { op: 'exists' } }],
+      resetOnCycle: false,
+    };
+    const reviewGate: Gate = {
+      id: 'gate-review',
+      fields: [{ name: 'pr_url', type: 'string', writers: ['Coding'], check: { op: 'exists' } }],
+      resetOnCycle: false,
+    };
+    const workflow = makeWorkflowWithGatedChannel(reviewGate);
+    workflow.channels = [
+      { id: 'ch-coder-all', from: 'Coding', to: '*', gateId: broadcastGate.id },
+      { id: 'ch-coder-review', from: 'Coding', to: 'Review', gateId: reviewGate.id },
+    ];
+    workflow.gates = [broadcastGate, reviewGate];
+    const gateDataRepo = new GateDataRepository(ctx.db);
+    const config = makeConfig(ctx, { workflow, gateDataRepo });
+    const handlers = createNodeAgentToolHandlers(config);
+
+    const result = await handlers.send_message({
+      target: 'Review',
+      message: 'ready',
+      data: { pr_url: 'https://github.com/test/repo/pull/42' },
+    });
+    const data = JSON.parse(result.content[0].text);
+
+    expect(data.gateWrite).toEqual({ gateId: 'gate-review', gateOpen: true });
+    expect(gateDataRepo.get(ctx.workflowRunId, 'gate-review')?.data.pr_url).toBe(
+      'https://github.com/test/repo/pull/42'
+    );
+    expect(gateDataRepo.get(ctx.workflowRunId, 'gate-broadcast')).toBeNull();
+  });
+
   test('no gateWrite in response when data not provided', async () => {
     const gate: Gate = {
       id: 'gate-no-data',
