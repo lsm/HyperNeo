@@ -183,10 +183,12 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
 
   beforeEach(async () => {
     const { getProviderRegistry, resetProviderRegistry } = await import(
-      '../../../../src/lib/providers/registry'
+      '../../../../src/lib/providers/registry.js'
     );
-    const { resetProviderFactory } = await import('../../../../src/lib/providers/factory');
-    const { AnthropicProvider } = await import('../../../../src/lib/providers/anthropic-provider');
+    const { resetProviderFactory } = await import('../../../../src/lib/providers/factory.js');
+    const { AnthropicProvider } = await import(
+      '../../../../src/lib/providers/anthropic-provider.js'
+    );
     resetProviderRegistry();
     resetProviderFactory();
     const anthropicProvider = new AnthropicProvider();
@@ -286,8 +288,8 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
   });
 
   afterEach(async () => {
-    const { resetProviderRegistry } = await import('../../../../src/lib/providers/registry');
-    const { resetProviderFactory } = await import('../../../../src/lib/providers/factory');
+    const { resetProviderRegistry } = await import('../../../../src/lib/providers/registry.js');
+    const { resetProviderFactory } = await import('../../../../src/lib/providers/factory.js');
     resetProviderRegistry();
     resetProviderFactory();
     // Restore the empty API key set by unit-test setup.ts
@@ -310,8 +312,8 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
   });
 
   it('should build title routing env from provider title model override', async () => {
-    const { GlmProvider } = await import('../../../../src/lib/providers/glm-provider');
-    const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+    const { GlmProvider } = await import('../../../../src/lib/providers/glm-provider.js');
+    const { getProviderRegistry } = await import('../../../../src/lib/providers/registry.js');
 
     process.env.GLM_API_KEY = 'test-glm-key';
     const registry = getProviderRegistry();
