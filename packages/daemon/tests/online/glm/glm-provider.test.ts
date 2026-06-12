@@ -422,7 +422,7 @@ describe('GLM Provider Integration', () => {
       const options = await builder.build();
 
       // Anthropic should not have provider env overrides, only SDK output cap env.
-      expect(options.env).toEqual({ CLAUDE_CODE_MAX_OUTPUT_TOKENS: '66667' });
+      expect(options.env).toEqual({ CLAUDE_CODE_MAX_OUTPUT_TOKENS: '64000' });
     });
 
     it('should not inject env vars for opus/haiku models', async () => {
@@ -441,8 +441,8 @@ describe('GLM Provider Integration', () => {
       const opusOptions = await opusBuilder.build();
       const haikuOptions = await haikuBuilder.build();
 
-      expect(opusOptions.env).toEqual({ CLAUDE_CODE_MAX_OUTPUT_TOKENS: '66667' });
-      expect(haikuOptions.env).toEqual({ CLAUDE_CODE_MAX_OUTPUT_TOKENS: '66667' });
+      expect(opusOptions.env).toEqual({ CLAUDE_CODE_MAX_OUTPUT_TOKENS: '64000' });
+      expect(haikuOptions.env).toEqual({ CLAUDE_CODE_MAX_OUTPUT_TOKENS: '64000' });
     });
   });
 

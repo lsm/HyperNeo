@@ -160,13 +160,13 @@ describe('QueryOptionsBuilder', () => {
       const options = await builder.build();
       expect(options.env).toEqual({
         MY_VAR: 'value',
-        CLAUDE_CODE_MAX_OUTPUT_TOKENS: '66667',
+        CLAUDE_CODE_MAX_OUTPUT_TOKENS: '64000',
       });
     });
 
     it('should derive the default SDK output token cap from provider context window', async () => {
       const options = await builder.build();
-      expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('66667');
+      expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('64000');
     });
 
     it('should derive SDK output token caps from provider metadata, not model names', async () => {
@@ -247,7 +247,7 @@ describe('QueryOptionsBuilder', () => {
       mockSession.config.model = 'haiku';
       mockSession.config.fallbackModel = 'claude-opus-4-7';
       const options = await builder.build();
-      expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('66667');
+      expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('64000');
     });
 
     it('should not override SDK auto-compaction settings for native anthropic provider', async () => {

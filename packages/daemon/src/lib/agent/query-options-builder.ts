@@ -126,15 +126,18 @@ const FULL_BUILTIN_TOOL_LIST = [
 ];
 
 const SMALL_SDK_OUTPUT_TOKEN_LIMIT = 16_384;
+const LARGE_SDK_OUTPUT_TOKEN_LIMIT = 64_000;
 const MAX_SDK_OUTPUT_TOKEN_LIMIT = 128_000;
 
 function deriveSdkOutputTokenLimit(maxContextWindows: number[]): string {
   const maxContextWindow = Math.max(...maxContextWindows);
-  const cap = Math.min(
-    Math.max(Math.ceil(maxContextWindow / 3), SMALL_SDK_OUTPUT_TOKEN_LIMIT),
-    MAX_SDK_OUTPUT_TOKEN_LIMIT
-  );
-  return String(cap);
+  if (maxContextWindow >= 262_000) {
+    return String(MAX_SDK_OUTPUT_TOKEN_LIMIT);
+  }
+  if (maxContextWindow > 128_000) {
+    return String(LARGE_SDK_OUTPUT_TOKEN_LIMIT);
+  }
+  return String(SMALL_SDK_OUTPUT_TOKEN_LIMIT);
 }
 
 /**
