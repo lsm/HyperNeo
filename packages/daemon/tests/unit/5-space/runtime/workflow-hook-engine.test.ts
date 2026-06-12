@@ -1391,7 +1391,7 @@ describe('WorkflowHookEngine', () => {
     expect(outcome.userState.reason).toContain('not all declared hooks resolve');
   });
 
-  test('mixed gateId and hookIds channel fails closed before hooks run', async () => {
+  test('mixed gateId and hookIds channel runs declared hooks', async () => {
     const workflow = makeWorkflow([
       makeHook({
         id: 'review-gate',
@@ -1423,10 +1423,10 @@ describe('WorkflowHookEngine', () => {
       defaultMeta
     );
 
-    expect(outcome.decision).toBe('block');
-    expect(outcome.userState.status).toBe('blocked_by_hook');
-    expect(outcome.userState.reason).toContain('mixed configuration');
-    expect(outcome.executionLog).toHaveLength(0);
+    expect(outcome.decision).toBe('allow');
+    expect(outcome.userState.status).toBe('allowed');
+    expect(outcome.executionLog).toHaveLength(1);
+    expect(outcome.executionLog[0].hookId).toBe('review-gate');
   });
 
   test('empty hooks array with hook-managed channel fails closed', async () => {

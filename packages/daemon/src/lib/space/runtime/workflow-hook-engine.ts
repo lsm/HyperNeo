@@ -188,27 +188,7 @@ export class WorkflowHookEngine {
     params: Record<string, unknown>,
     meta: HookActionMeta
   ): Promise<HookActionOutcome> {
-    const { hooks, missingChannelHooks, mixedGateHookChannel } = this.resolveMatchingHooks(
-      methodName,
-      params,
-      meta
-    );
-
-    // Reject mixed gate/hook channels before any hooks run.
-    if (mixedGateHookChannel) {
-      return {
-        decision: 'block',
-        finalParams: params,
-        followUpRequests: [],
-        stateUpdates: [],
-        userState: {
-          status: 'blocked_by_hook',
-          reason:
-            'Channel references both gateId and hookIds. Action blocked (mixed configuration).',
-        },
-        executionLog: [],
-      };
-    }
+    const { hooks, missingChannelHooks } = this.resolveMatchingHooks(methodName, params, meta);
 
     // Fail closed when a hook-managed channel declares hookIds but one or more
     // declared hooks do not resolve (disabled, missing, misconfigured, or wrong
@@ -525,7 +505,7 @@ export class WorkflowHookEngine {
     methodName: string,
     params: Record<string, unknown>,
     meta: HookActionMeta
-  ): { hooks: WorkflowHook[]; missingChannelHooks: boolean; mixedGateHookChannel: boolean } {
+  ): { hooks: WorkflowHook[]; missingChannelHooks: boolean } {
     const workflow = this.config.workflow;
     const nodeName = workflow?.nodes.find((n) => n.id === meta.nodeId)?.name ?? meta.agentName;
 
@@ -645,7 +625,6 @@ export class WorkflowHookEngine {
     // pull in unrelated hooks.
     const channelHookIds = new Set<string>();
     let hasChannelHookIds = false;
-    let mixedGateHookChannel = false;
     if (methodName === 'send_message' && (actionTargets.size > 0 || rawActionTargets.size > 0)) {
       const target = params.target;
 
@@ -790,7 +769,7 @@ export class WorkflowHookEngine {
     );
     const missingChannelHooks =
       hasChannelHookIds && [...channelHookIds].some((hid) => !resolvedHookIds.has(hid));
-    return { hooks: matchedHooks, missingChannelHooks, mixedGateHookChannel };
+    return { hooks: matchedHooks, missingChannelHooks };
   }
 
   private sortHooks(hooks: WorkflowHook[]): WorkflowHook[] {
