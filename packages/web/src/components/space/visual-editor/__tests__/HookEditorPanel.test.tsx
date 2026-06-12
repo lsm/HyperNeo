@@ -191,6 +191,19 @@ describe('HookEditorPanel', () => {
     );
   });
 
+  it('rejects non-object template JSON values', () => {
+    const hook = makeHook({ templateData: { ok: true } });
+    const { getByTestId, getByText } = render(
+      <HookEditorPanel hook={hook} onChange={onChange} onBack={onBack} nodeNames={nodeNames} />
+    );
+    fireEvent.input(getByTestId('hook-editor-template-data'), { target: { value: '[]' } });
+    expect(getByTestId('hook-editor-template-data').value).toBe('[]');
+    expect(getByText(/must be a JSON object/)).toBeTruthy();
+    expect(onChange).not.toHaveBeenCalledWith(
+      expect.objectContaining({ templateData: expect.anything() })
+    );
+  });
+
   it('toggles external lookup checkbox', () => {
     const hook = makeHook({
       validator: { kind: 'script', interpreter: 'bash', source: 'echo ok' },
@@ -223,7 +236,7 @@ describe('HookEditorPanel', () => {
     );
   });
 
-  it('removes an authorized caller', () => {
+  it('keeps at least one authorized caller', () => {
     const hook = makeHook({
       authorizedCallers: [{ sourceNode: 'Plan', agentSlots: ['coder'] }],
     });
@@ -231,10 +244,22 @@ describe('HookEditorPanel', () => {
       <HookEditorPanel hook={hook} onChange={onChange} onBack={onBack} nodeNames={nodeNames} />
     );
     fireEvent.click(getByTestId('hook-editor-section-callers'));
-    fireEvent.click(getByTestId('hook-editor-caller-delete-0'));
-    expect(onChange).toHaveBeenCalledWith(
-      expect.objectContaining({ authorizedCallers: undefined })
+    const deleteButton = getByTestId('hook-editor-caller-delete-0') as HTMLButtonElement;
+    expect(deleteButton.disabled).toBe(true);
+    fireEvent.click(deleteButton);
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('restricts caller source and slot filters in the editor', () => {
+    const hook = makeHook({
+      authorizedCallers: [{ sourceNode: 'Plan', agentSlots: ['coder'] }],
+    });
+    const { getByTestId } = render(
+      <HookEditorPanel hook={hook} onChange={onChange} onBack={onBack} nodeNames={nodeNames} />
     );
+    fireEvent.click(getByTestId('hook-editor-section-callers'));
+    expect((getByTestId('hook-editor-caller-source-0') as HTMLSelectElement).disabled).toBe(true);
+    expect((getByTestId('hook-editor-caller-slots-0') as HTMLInputElement).disabled).toBe(true);
   });
 
   it('updates retry maxAttempts', () => {

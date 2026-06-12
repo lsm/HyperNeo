@@ -493,14 +493,15 @@ export function SpaceTaskPane({
     !isTerminalTask && !ensuringThread && !sendingThread && composerTargets.length > 0;
   const canShowCanvasTab = !!task.workflowRunId && !!canvasWorkflowId;
   const activitySummary = STATUS_LABELS[task.status];
+  const resolvedBanner = resolveActiveTaskBanner(
+    task,
+    hookSummaries as unknown as import('../../lib/task-banner').HookBannerSummary[],
+    gateSummaries
+  );
   const activeBanner =
-    hookFetchError && _runId
+    hookFetchError && _runId && (resolvedBanner === null || resolvedBanner.kind === 'gate_pending')
       ? ({ kind: 'hook_pending', runId: _runId } as const)
-      : resolveActiveTaskBanner(
-          task,
-          hookSummaries as unknown as import('../../lib/task-banner').HookBannerSummary[],
-          gateSummaries
-        );
+      : resolvedBanner;
   const showHeaderStatusBadge = activeBanner === null;
   const agentActionLabel =
     task.activeSession === 'leader'

@@ -81,6 +81,10 @@ function validateScriptSource(value: string | undefined): string {
   return '';
 }
 
+function isTemplateDataObject(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
 function modeButtonClass(active: boolean): string {
   return active
     ? 'border-blue-500 bg-blue-500/10 text-blue-200'
@@ -169,6 +173,10 @@ export function HookEditorPanel({
     setTemplateDataDraft(raw);
     try {
       const parsed = raw.trim() ? JSON.parse(raw) : undefined;
+      if (parsed !== undefined && !isTemplateDataObject(parsed)) {
+        setTemplateDataError('Template data must be a JSON object');
+        return;
+      }
       setTemplateDataError(null);
       updateHook({ templateData: parsed });
     } catch (err) {
@@ -188,14 +196,16 @@ export function HookEditorPanel({
     caller: NonNullable<WorkflowHook['authorizedCallers']>[number]
   ) {
     const next = [...(hook.authorizedCallers ?? [])];
-    next[index] = caller;
+    next[index] = { ...caller, sourceNode: hook.sourceNode };
     updateHook({ authorizedCallers: next });
   }
 
   function removeAuthorizedCaller(index: number) {
-    const next = [...(hook.authorizedCallers ?? [])];
+    const current = hook.authorizedCallers ?? [];
+    if (current.length <= 1) return;
+    const next = [...current];
     next.splice(index, 1);
-    updateHook({ authorizedCallers: next.length > 0 ? next : undefined });
+    updateHook({ authorizedCallers: next });
   }
 
   function toggleExternalLookup(lookup: WorkflowHookExternalLookup) {
@@ -603,18 +613,18 @@ export function HookEditorPanel({
                 </label>
                 <select
                   data-testid={`hook-editor-caller-source-${i}`}
-                  value={caller.sourceNode}
+                  value={hook.sourceNode}
+                  disabled
                   onChange={(e) =>
                     updateAuthorizedCaller(i, { ...caller, sourceNode: e.currentTarget.value })
                   }
-                  class="w-full text-xs bg-dark-900 border border-dark-700 rounded px-2 py-1 text-gray-200 focus:outline-none focus:border-blue-500"
+                  class="w-full text-xs bg-dark-900 border border-dark-700 rounded px-2 py-1 text-gray-200 focus:outline-none focus:border-blue-500 opacity-60"
                 >
-                  {nodeNames.map((name) => (
-                    <option key={name} value={name}>
-                      {name}
-                    </option>
-                  ))}
+                  <option value={hook.sourceNode}>{hook.sourceNode}</option>
                 </select>
+                <p class="text-[10px] text-gray-500">
+                  Caller source follows the hook source so this hook can match at runtime.
+                </p>
               </div>
 
               <div class="space-y-1">
@@ -626,6 +636,8 @@ export function HookEditorPanel({
                   data-testid={`hook-editor-caller-slots-${i}`}
                   value={caller.agentSlots?.join(', ') ?? ''}
                   placeholder="reviewer, coder"
+                  disabled
+                  title="Slot filtering is not supported by this editor yet. Leave empty to allow any slot on the source node."
                   onInput={(e) => {
                     const raw = (e.currentTarget as HTMLInputElement).value;
                     const slots = raw
@@ -637,17 +649,23 @@ export function HookEditorPanel({
                       agentSlots: slots.length > 0 ? slots : undefined,
                     });
                   }}
-                  class="w-full text-xs bg-dark-900 border border-dark-700 rounded px-2 py-1 text-gray-200 font-mono focus:outline-none focus:border-blue-500 placeholder-gray-700"
+                  class="w-full text-xs bg-dark-900 border border-dark-700 rounded px-2 py-1 text-gray-200 font-mono focus:outline-none focus:border-blue-500 placeholder-gray-700 disabled:opacity-50"
                 />
+                <p class="text-[10px] text-gray-500">
+                  Slot filters are not supported in this editor yet; empty means any slot.
+                </p>
               </div>
 
               <button
                 type="button"
                 data-testid={`hook-editor-caller-delete-${i}`}
                 onClick={() => removeAuthorizedCaller(i)}
-                class="w-full rounded px-2 py-1 text-xs text-red-400 border border-red-800 hover:bg-red-900/30 transition-colors"
+                disabled={(hook.authorizedCallers ?? []).length <= 1}
+                class="w-full rounded px-2 py-1 text-xs text-red-400 border border-red-800 hover:bg-red-900/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Remove caller
+                {(hook.authorizedCallers ?? []).length <= 1
+                  ? 'At least one caller required'
+                  : 'Remove caller'}
               </button>
             </div>
           ))}

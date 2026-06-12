@@ -197,6 +197,23 @@ describe('PendingHookBanner', () => {
     expect(queryByTestId('pending-hook-banner')).toBeNull();
   });
 
+  it('ignores disabled hooks with stale block state', async () => {
+    const workflow = makeWorkflow([{ id: 'h1' }]);
+    workflow.hooks![0].enabled = false;
+    workflowsSignal.value = [workflow];
+    mockRequest.mockResolvedValue({
+      hookStates: [makeHookState('h1', 'block')],
+      hooks: workflow.hooks,
+    });
+    const { queryByTestId } = render(
+      <PendingHookBanner runId="r1" spaceId="s1" workflowId="wf-1" />
+    );
+    await waitFor(() =>
+      expect(mockRequest).toHaveBeenCalledWith('spaceWorkflowRun.listHookStates', { runId: 'r1' })
+    );
+    expect(queryByTestId('pending-hook-banner')).toBeNull();
+  });
+
   it('uses provided fetch retry instead of a separate hook state request', async () => {
     const retry = vi.fn();
     const { getByTestId } = render(

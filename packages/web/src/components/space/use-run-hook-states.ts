@@ -168,6 +168,7 @@ export function useRunHookStates(
     hookStateMap === null
       ? undefined
       : hooks.flatMap((hook): HookBannerSummary[] => {
+          if (!hook.enabled) return [];
           const state = hookStateMap.get(hook.id);
           if (!state) return [];
           const summary = evaluateHookStatus(state, hook);
