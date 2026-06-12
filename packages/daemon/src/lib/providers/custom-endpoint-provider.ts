@@ -250,6 +250,12 @@ export class CustomEndpointProvider implements Provider {
     return caps.thinking ? 'on' : 'off';
   }
 
+  getModelContextWindow(modelId: string): number | undefined {
+    const model = this.config.models.find((m) => m.id === modelId);
+    if (!model) return undefined;
+    return resolveModelCapabilities(model, this.type).maxContextTokens;
+  }
+
   /**
    * Propagate the session's thinking level to all chat bridges.
    *

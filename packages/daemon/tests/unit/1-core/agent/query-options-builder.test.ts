@@ -235,11 +235,11 @@ describe('QueryOptionsBuilder', () => {
       expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('128000');
     });
 
-    it('should keep Anthropic Opus fallback on the SDK maximum output limit', async () => {
+    it('should not apply the Anthropic Opus fallback cap to primary requests', async () => {
       mockSession.config.model = 'haiku';
       mockSession.config.fallbackModel = 'claude-opus-4-7';
       const options = await builder.build();
-      expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('128000');
+      expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('64000');
     });
 
     it('should not exceed Kimi bridge advertised output limit', async () => {
@@ -273,6 +273,69 @@ describe('QueryOptionsBuilder', () => {
       }
     });
 
+    it('should cap Codex bridge sessions at the advertised bridge output limit', async () => {
+      resetProviderRegistry();
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'anthropic-codex',
+        displayName: 'Codex Bridge',
+        capabilities: {
+          streaming: true,
+          extendedThinking: true,
+          thinkingModes: 'granular',
+          maxContextWindow: 272_000,
+          functionCalling: true,
+          vision: true,
+        },
+        isAvailable: () => true,
+        getModels: async () => [],
+        ownsModel: () => true,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: true }),
+        translateModelIdForSdk: () => 'default',
+      } as Provider);
+      try {
+        mockSession.config.provider = 'anthropic-codex';
+        mockSession.config.model = 'gpt-5.5';
+        const options = await builder.build();
+        expect(options.model).toBe('default');
+        expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('16384');
+      } finally {
+        resetProviderRegistry();
+      }
+    });
+
+    it('should prefer selected model context over aggregated provider context', async () => {
+      resetProviderRegistry();
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'custom:heterogeneous',
+        displayName: 'Heterogeneous Custom Endpoint',
+        capabilities: {
+          streaming: true,
+          extendedThinking: false,
+          maxContextWindow: 1_000_000,
+          functionCalling: true,
+          vision: false,
+        },
+        isAvailable: () => true,
+        getModels: async () => [],
+        ownsModel: () => true,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: true }),
+        translateModelIdForSdk: () => 'default',
+        getModelContextWindow: (modelId: string) =>
+          modelId === 'small-model' ? 32_000 : 1_000_000,
+      } as Provider);
+      try {
+        mockSession.config.provider = 'custom:heterogeneous';
+        mockSession.config.model = 'small-model';
+        const options = await builder.build();
+        expect(options.model).toBe('default');
+        expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('16384');
+      } finally {
+        resetProviderRegistry();
+      }
+    });
+
     it('should preserve an explicit SDK output token cap from session env', async () => {
       mockSession.config.model = 'claude-opus-4-7';
       mockSession.config.env = { CLAUDE_CODE_MAX_OUTPUT_TOKENS: '32768' };
@@ -287,7 +350,7 @@ describe('QueryOptionsBuilder', () => {
       expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('49152');
     });
 
-    it('should use the largest non-Opus provider context cap when fallback model names differ', async () => {
+    it('should use the primary non-Opus provider context cap when fallback model names differ', async () => {
       mockSession.config.model = 'haiku';
       mockSession.config.fallbackModel = 'sonnet';
       const options = await builder.build();

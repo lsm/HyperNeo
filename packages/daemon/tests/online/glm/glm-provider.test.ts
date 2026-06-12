@@ -441,7 +441,7 @@ describe('GLM Provider Integration', () => {
       const opusOptions = await opusBuilder.build();
       const haikuOptions = await haikuBuilder.build();
 
-      expect(opusOptions.env).toEqual({ CLAUDE_CODE_MAX_OUTPUT_TOKENS: '64000' });
+      expect(opusOptions.env).toEqual({ CLAUDE_CODE_MAX_OUTPUT_TOKENS: '128000' });
       expect(haikuOptions.env).toEqual({ CLAUDE_CODE_MAX_OUTPUT_TOKENS: '64000' });
     });
   });

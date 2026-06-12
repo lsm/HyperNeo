@@ -129,6 +129,7 @@ const SMALL_SDK_OUTPUT_TOKEN_LIMIT = 16_384;
 const KIMI_SDK_OUTPUT_TOKEN_LIMIT = 32_768;
 const LARGE_SDK_OUTPUT_TOKEN_LIMIT = 64_000;
 const MAX_SDK_OUTPUT_TOKEN_LIMIT = 128_000;
+const SMALL_OUTPUT_BRIDGE_PROVIDER_IDS = new Set(['anthropic-codex']);
 
 type SdkOutputLimitInput = {
   providerId: string;
@@ -141,24 +142,23 @@ function isOpusModel(modelId: string): boolean {
   return normalized === 'opus' || normalized.includes('claude-opus');
 }
 
-function deriveSdkOutputTokenLimit(inputs: SdkOutputLimitInput[]): string {
-  const limits = inputs.map((input) => {
-    if (input.providerId === 'kimi') {
-      return KIMI_SDK_OUTPUT_TOKEN_LIMIT;
-    }
-    if (input.providerId === 'anthropic' && isOpusModel(input.modelId)) {
-      return MAX_SDK_OUTPUT_TOKEN_LIMIT;
-    }
-    if (input.maxContextWindow >= 262_000) {
-      return MAX_SDK_OUTPUT_TOKEN_LIMIT;
-    }
-    if (input.maxContextWindow > 128_000) {
-      return LARGE_SDK_OUTPUT_TOKEN_LIMIT;
-    }
-    return SMALL_SDK_OUTPUT_TOKEN_LIMIT;
-  });
-
-  return String(Math.max(...limits));
+function deriveSdkOutputTokenLimit(input: SdkOutputLimitInput): string {
+  if (SMALL_OUTPUT_BRIDGE_PROVIDER_IDS.has(input.providerId)) {
+    return String(SMALL_SDK_OUTPUT_TOKEN_LIMIT);
+  }
+  if (input.providerId === 'kimi') {
+    return String(KIMI_SDK_OUTPUT_TOKEN_LIMIT);
+  }
+  if (input.providerId === 'anthropic' && isOpusModel(input.modelId)) {
+    return String(MAX_SDK_OUTPUT_TOKEN_LIMIT);
+  }
+  if (input.maxContextWindow >= 262_000) {
+    return String(MAX_SDK_OUTPUT_TOKEN_LIMIT);
+  }
+  if (input.maxContextWindow > 128_000) {
+    return String(LARGE_SDK_OUTPUT_TOKEN_LIMIT);
+  }
+  return String(SMALL_SDK_OUTPUT_TOKEN_LIMIT);
 }
 
 /**
@@ -359,10 +359,11 @@ export class QueryOptionsBuilder {
     const primaryOutputLimitInput = {
       providerId,
       modelId: providerContext.modelId,
-      maxContextWindow: providerContext.provider.capabilities.maxContextWindow,
+      maxContextWindow:
+        providerContext.provider.getModelContextWindow?.(providerContext.modelId) ??
+        providerContext.provider.capabilities.maxContextWindow,
     };
     let sdkFallbackModel: string | undefined;
-    let fallbackOutputLimitInput: SdkOutputLimitInput | undefined;
     if (config.fallbackModel) {
       // For fallback model, we need to create a separate context
       const contextManager = getProviderContextManager();
@@ -373,11 +374,6 @@ export class QueryOptionsBuilder {
       };
       const fallbackContext = contextManager.createContext(fallbackSession);
       sdkFallbackModel = fallbackContext.getSdkModelId();
-      fallbackOutputLimitInput = {
-        providerId: fallbackContext.provider.id,
-        modelId: fallbackContext.modelId,
-        maxContextWindow: fallbackContext.provider.capabilities.maxContextWindow,
-      };
     }
 
     // Build all configuration components
@@ -393,11 +389,7 @@ export class QueryOptionsBuilder {
       ...this.buildPluginsFromBuiltinSkills(),
     ];
     const mcpServersFromSkills = this.getMcpServersFromSkills();
-    const mergedEnv = this.getMergedEnvironmentVars(
-      [primaryOutputLimitInput, fallbackOutputLimitInput].filter(
-        (input): input is SdkOutputLimitInput => input !== undefined && input.maxContextWindow > 0
-      )
-    );
+    const mergedEnv = this.getMergedEnvironmentVars(primaryOutputLimitInput);
     const sdkCliPath = this.getSDKCliPath();
 
     // Merged MCP servers: skill-injected + session-config-injected.
@@ -980,7 +972,7 @@ CRITICAL RULES:
    * @returns Merged env vars (excluding provider-specific vars)
    */
   private getMergedEnvironmentVars(
-    outputLimitInputs: SdkOutputLimitInput[]
+    outputLimitInput: SdkOutputLimitInput
   ): Record<string, string> | undefined {
     const globalSettings = this.ctx.settingsManager.getGlobalSettings();
     const sessionEnv = this.ctx.session.config.env;
@@ -1022,12 +1014,12 @@ CRITICAL RULES:
     // 3. Set the SDK CLI subprocess output cap. The SDK reads this from the
     // inherited process environment and defaults to 64,000 internally. Use a
     // lower default for ordinary models, raise it for large-output Claude
-    // models, and cap bridged providers to known upstream output limits.
+    // primary models, and cap bridged providers to known upstream output limits.
     // Explicit global/session/process env values above still win.
     if (process.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS !== undefined) {
       mergedEnv.CLAUDE_CODE_MAX_OUTPUT_TOKENS ??= process.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS;
     }
-    mergedEnv.CLAUDE_CODE_MAX_OUTPUT_TOKENS ??= deriveSdkOutputTokenLimit(outputLimitInputs);
+    mergedEnv.CLAUDE_CODE_MAX_OUTPUT_TOKENS ??= deriveSdkOutputTokenLimit(outputLimitInput);
 
     // 4. Explicitly include proxy environment variables for Dev Proxy support
     // These are set by the dev-proxy test helper and need to be passed to the SDK subprocess
