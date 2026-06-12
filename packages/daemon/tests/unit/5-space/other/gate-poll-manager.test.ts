@@ -226,6 +226,34 @@ describe('GatePollManager', () => {
       expect(manager.isPollActive('run-1', gate.id, 'Coder')).toBe(true);
     });
 
+    test('starts PR-ready hook poll without gated channel reference', () => {
+      const workflow = makeWorkflow([], [{ id: 'ch-1', from: 'Coder', to: 'Reviewer' }]);
+      workflow.hooks = [
+        {
+          id: 'pr-ready-hook',
+          enabled: true,
+          sourceNode: 'Coder',
+          targetNode: 'Reviewer',
+          method: 'send_message',
+          validator: { kind: 'built_in', id: 'pr_ready' },
+        },
+      ];
+
+      manager.startPolls('run-1', workflow, '/tmp', 'space-1', makeContext());
+
+      expect(manager.activePollCount).toBe(1);
+      expect(manager.isPollActive('run-1', '__hook_poll__-pr-ready-hook-Coder-Reviewer')).toBe(
+        true
+      );
+      const activePolls = (manager as Record<string, unknown>).activePolls as Map<
+        string,
+        { targetNodeId: string; pollConfig: GatePoll }
+      >;
+      const activePoll = activePolls.get('run-1:__hook_poll__-pr-ready-hook-Coder-Reviewer:Coder');
+      expect(activePoll?.targetNodeId).toBe('node-1');
+      expect(activePoll?.pollConfig.messageTemplate).toContain('PR review thread update');
+    });
+
     test('starts dynamic codex polls for colliding agent-slot source owner', () => {
       const gate: Gate = {
         id: 'colliding-source-gate',
