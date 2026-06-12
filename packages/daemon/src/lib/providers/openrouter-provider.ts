@@ -315,7 +315,7 @@ export class OpenRouterProvider implements Provider {
       : (this.getModelForTier(modelId as ModelTier) ?? OpenRouterProvider.DEFAULT_MODEL);
     const models = this.modelCache ?? OpenRouterProvider.FALLBACK_MODELS;
     const model = models.find((m) => m.id === routedModelId || m.alias === routedModelId);
-    return model?.contextWindow ?? inferContextWindowFromModelId(routedModelId);
+    return inferContextWindowFromModelId(routedModelId) ?? model?.contextWindow;
   }
 
   async getAuthStatus(): Promise<ProviderAuthStatusInfo> {

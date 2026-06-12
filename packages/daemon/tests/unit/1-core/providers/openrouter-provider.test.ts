@@ -337,6 +337,18 @@ describe('OpenRouterProvider', () => {
     expect(provider.getModelContextWindow('unknown/provider-model')).toBeUndefined();
   });
 
+  it('infers Claude-family context before cached allowlist aggregate metadata', async () => {
+    process.env.OPENROUTER_API_KEY = 'sk-or-test';
+    process.env.OPENROUTER_ALLOWED_MODELS = 'anthropic/claude-sonnet-4.5';
+    const fetchMock = mock(async () => new Response('Bad gateway', { status: 502 }));
+    const provider = new OpenRouterProvider(process.env, fetchMock as unknown as typeof fetch);
+
+    const models = await provider.getModels();
+
+    expect(models[0].contextWindow).toBe(1_000_000);
+    expect(provider.getModelContextWindow('anthropic/claude-sonnet-4.5')).toBe(200_000);
+  });
+
   it('returns API-loaded model context for selected OpenRouter model', async () => {
     process.env.OPENROUTER_API_KEY = 'sk-or-test';
     const fetchMock = mock(
