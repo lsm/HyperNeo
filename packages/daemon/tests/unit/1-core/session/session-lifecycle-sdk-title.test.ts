@@ -181,7 +181,12 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
     };
   };
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    const { resetProviderRegistry } = await import('../../../../src/lib/providers/registry');
+    const { resetProviderFactory } = await import('../../../../src/lib/providers/factory');
+    resetProviderRegistry();
+    resetProviderFactory();
+
     lastTitleQueryOptions = undefined;
     lastTitleProcessEnv = undefined;
     // Default: assistant message with a plain text block
