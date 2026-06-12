@@ -135,7 +135,7 @@ export class AcpQueryAdapter implements QueryLike {
     if (!option) {
       throw new Error('ACP session has no thought_level config option');
     }
-    const value = tokens && tokens > 0 ? String(tokens) : 'none';
+    const value = selectThoughtLevelValue(option, tokens);
     await this.client.setConfigOption(option.id, value);
   }
 
@@ -173,4 +173,23 @@ function findConfigOption(
   category: string
 ): AcpConfigOption | undefined {
   return options.find((option) => option.category === category);
+}
+
+function selectThoughtLevelValue(option: AcpConfigOption, tokens: number | null): string {
+  const choices = flattenConfigChoices(option);
+  if (!tokens || tokens <= 0) {
+    return choices.find((choice) => choice.value === 'none')?.value ?? option.currentValue;
+  }
+
+  const preferred = tokens >= 20000 ? 'high' : tokens >= 8000 ? 'medium' : 'low';
+  return (
+    choices.find((choice) => choice.value === preferred)?.value ??
+    choices.find((choice) => choice.value === 'high')?.value ??
+    choices.at(-1)?.value ??
+    option.currentValue
+  );
+}
+
+function flattenConfigChoices(option: AcpConfigOption): Array<{ name: string; value: string }> {
+  return option.options.flatMap((entry) => ('options' in entry ? entry.options : [entry]));
 }

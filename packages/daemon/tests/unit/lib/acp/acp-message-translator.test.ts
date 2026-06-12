@@ -203,7 +203,23 @@ describe('AcpMessageTranslator', () => {
     };
 
     expect(result.usage.input_tokens).toBe(80);
-    expect(result.usage.output_tokens).toBe(20);
+    expect(result.usage.output_tokens).toBe(0);
+  });
+
+  test('flushes buffered text before synthetic updates', () => {
+    translator.processUpdate(agentChunk('Before'));
+
+    const messages = translator.processUpdate({ sessionUpdate: 'plan', entries: [] } as never);
+
+    expect(messages.length).toBe(2);
+    expect(
+      (messages[0] as { message: { content: { type: string; text: string }[] } }).message.content[0]
+        .text
+    ).toBe('Before');
+    expect(
+      (messages[1] as { message: { content: { type: string; text: string }[] } }).message.content[0]
+        .text
+    ).toContain('Plan:');
   });
 
   test('uses configured context window in usage estimate', () => {

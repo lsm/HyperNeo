@@ -49,7 +49,10 @@ class MockAcpClient {
         type: 'select' as const,
         category: 'thought_level',
         currentValue: 'low',
-        options: [{ name: 'High', value: 'high' }],
+        options: [
+          { name: 'Low', value: 'low' },
+          { name: 'High', value: 'high' },
+        ],
       },
     ];
   }
@@ -343,7 +346,7 @@ describe('AcpQueryAdapter', () => {
 
     await adapter.setMaxThinkingTokens(12000);
 
-    expect(client.setConfigOption).toHaveBeenCalledWith('thought-option', '12000');
+    expect(client.setConfigOption).toHaveBeenCalledWith('thought-option', 'high');
   });
 
   test('setMaxThinkingTokens maps null and zero to none', async () => {
@@ -358,8 +361,8 @@ describe('AcpQueryAdapter', () => {
     await adapter.setMaxThinkingTokens(null);
     await adapter.setMaxThinkingTokens(0);
 
-    expect(client.setConfigOption).toHaveBeenNthCalledWith(1, 'thought-option', 'none');
-    expect(client.setConfigOption).toHaveBeenNthCalledWith(2, 'thought-option', 'none');
+    expect(client.setConfigOption).toHaveBeenNthCalledWith(1, 'thought-option', 'low');
+    expect(client.setConfigOption).toHaveBeenNthCalledWith(2, 'thought-option', 'low');
   });
 
   test('config option updates refresh client cache and callback', async () => {

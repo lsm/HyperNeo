@@ -10,6 +10,7 @@ import type {
 } from '@neokai/shared/acp';
 import type { McpServerConfig, SDKMessage, SDKUserMessage } from '@neokai/shared/sdk';
 import { ErrorCategory } from '../error-manager';
+import { clearModelsCache } from '../model-service';
 import { getProviderRegistry } from '../providers/factory';
 import { getProviderService } from '../provider-service';
 import { AcpProvider } from '../providers/acp-provider';
@@ -889,6 +890,7 @@ export class AcpQueryRunner {
     const provider = getProviderRegistry().get('acp');
     if (provider instanceof AcpProvider) {
       provider.setConfigOptions(configOptions);
+      clearModelsCache('global');
     }
   }
 

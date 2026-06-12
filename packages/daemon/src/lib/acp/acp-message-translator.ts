@@ -58,7 +58,7 @@ export class AcpMessageTranslator {
 
   constructor(
     sessionId: string,
-    private readonly contextWindow = 0
+    private contextWindow = 0
   ) {
     this.sessionId = sessionId;
   }
@@ -85,16 +85,22 @@ export class AcpMessageTranslator {
         return messages;
       }
       case 'plan':
-        return [this.translateSyntheticAssistant('Plan', update.entries)];
+        return [...this.flush(), this.translateSyntheticAssistant('Plan', update.entries)];
       case 'current_mode_update':
-        return [this.translateSyntheticAssistant('Current mode', update.currentModeId)];
+        return [
+          ...this.flush(),
+          this.translateSyntheticAssistant('Current mode', update.currentModeId),
+        ];
       case 'config_option_update':
-        return [this.translateSyntheticAssistant('Config options', update.configOptions)];
+        return [
+          ...this.flush(),
+          this.translateSyntheticAssistant('Config options', update.configOptions),
+        ];
       case 'session_info_update':
-        return [this.translateSyntheticAssistant('Session info', update)];
+        return [...this.flush(), this.translateSyntheticAssistant('Session info', update)];
       case 'usage_update':
         this.inputTokenEstimate = Math.max(this.inputTokenEstimate, update.used);
-        this.outputTokenEstimate = Math.max(0, update.size - update.used);
+        this.contextWindow = update.size;
         if (update.cost) {
           this.costUsdEstimate =
             update.cost.currency.toUpperCase() === 'USD' ? update.cost.amount : 0;
