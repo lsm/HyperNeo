@@ -1,6 +1,12 @@
 export interface GateDataShapeField {
   name: string;
   type: string;
+  check?: {
+    op: string;
+    value?: unknown;
+    match?: unknown;
+    min?: number;
+  };
 }
 
 export function getSendMessageTargets(
@@ -26,16 +32,35 @@ function formatGateDataShape(fields: readonly GateDataShapeField[]): string {
 }
 
 function formatGateDataPlaceholder(field: GateDataShapeField): string {
+  if (field.check?.op === '==') return formatLiteral(field.check.value);
+
   switch (field.type) {
     case 'string':
-      return `"<${field.name}>"`;
+      return JSON.stringify(`<${field.name}>`);
     case 'number':
       return '0';
     case 'boolean':
-      return 'true';
+      return field.check?.op === '!=' && field.check.value === true ? 'false' : 'true';
     case 'map':
-      return '{ "<key>": "<value>" }';
+      return formatMapPlaceholder(field);
     default:
       return 'null';
   }
+}
+
+function formatMapPlaceholder(field: GateDataShapeField): string {
+  if (field.check?.op !== 'count') return '{ "<key>": "<value>" }';
+
+  const matchValue = formatLiteral(field.check.match);
+  const count = Math.max(1, field.check.min ?? 1);
+  const entries = Array.from(
+    { length: count },
+    (_, index) => `${JSON.stringify(`<key${index + 1}>`)}: ${matchValue}`
+  );
+  return `{ ${entries.join(', ')} }`;
+}
+
+function formatLiteral(value: unknown): string {
+  const literal = JSON.stringify(value);
+  return literal === undefined ? 'null' : literal;
 }

@@ -745,7 +745,7 @@ describe('buildCustomAgentTaskMessage', () => {
           description: 'Planner has opened a plan PR',
           fields: [
             {
-              name: 'pr-url',
+              name: 'pr"url',
               type: 'string',
               writers: ['Plan'],
               check: { op: 'exists' },
@@ -754,13 +754,19 @@ describe('buildCustomAgentTaskMessage', () => {
               name: 'approved',
               type: 'boolean',
               writers: ['Plan'],
-              check: { op: '==', value: true },
+              check: { op: '==', value: false },
             },
             {
               name: 'score',
               type: 'number',
               writers: ['Plan'],
-              check: { op: 'exists' },
+              check: { op: '==', value: 5 },
+            },
+            {
+              name: 'votes',
+              type: 'map',
+              writers: ['Plan'],
+              check: { op: 'count', match: 'approved', min: 2 },
             },
           ],
           resetOnCycle: false,
@@ -776,10 +782,11 @@ describe('buildCustomAgentTaskMessage', () => {
       })
     );
 
-    expect(message).toContain('"pr-url": "<pr-url>"');
-    expect(message).toContain('"approved": true');
-    expect(message).toContain('"score": 0');
-    expect(message).not.toContain('data: { pr-url:');
+    expect(message).toContain('"pr\\"url": "<pr\\"url>"');
+    expect(message).toContain('"approved": false');
+    expect(message).toContain('"score": 5');
+    expect(message).toContain('"votes": { "<key1>": "approved", "<key2>": "approved" }');
+    expect(message).not.toContain('data: { pr"url:');
     expect(message).not.toContain('<boolean>');
     expect(message).not.toContain('<number>');
   });

@@ -1480,6 +1480,30 @@ describe('node-agent-tools: send_message (gate-write)', () => {
     expect(gateDataRepo.get(ctx.workflowRunId, 'gate-broadcast')).toBeNull();
   });
 
+  test('gate-write skips broadcast channels for unknown scalar targets', async () => {
+    const gate: Gate = {
+      id: 'gate-broadcast',
+      fields: [{ name: 'pr_url', type: 'string', writers: ['Coding'], check: { op: 'exists' } }],
+      resetOnCycle: false,
+    };
+    const workflow = makeWorkflowWithGatedChannel(gate);
+    workflow.channels = [{ id: 'ch-coder-all', from: 'Coding', to: '*', gateId: gate.id }];
+    const gateDataRepo = new GateDataRepository(ctx.db);
+    const config = makeConfig(ctx, { workflow, gateDataRepo });
+    const handlers = createNodeAgentToolHandlers(config);
+
+    const result = await handlers.send_message({
+      target: 'TypoReview',
+      message: 'ready',
+      data: { pr_url: 'https://github.com/test/repo/pull/42' },
+    });
+    const data = JSON.parse(result.content[0].text);
+
+    expect(data.success).toBe(false);
+    expect(data.gateWrite).toBeUndefined();
+    expect(gateDataRepo.get(ctx.workflowRunId, 'gate-broadcast')).toBeNull();
+  });
+
   test('no gateWrite in response when data not provided', async () => {
     const gate: Gate = {
       id: 'gate-no-data',
