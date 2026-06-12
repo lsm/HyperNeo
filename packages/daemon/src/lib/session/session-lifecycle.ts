@@ -38,6 +38,14 @@ export type DeleteResourcesTrigger = 'ui_session_delete';
 
 type SdkQueryFunction = typeof import('@anthropic-ai/claude-agent-sdk').query;
 
+function isAssistantMessageWithContent(
+  message: unknown
+): message is { type: 'assistant'; message: { content: Array<{ type: string; text?: string }> } } {
+  if (!message || typeof message !== 'object') return false;
+  const candidate = message as { type?: unknown; message?: { content?: unknown } };
+  return candidate.type === 'assistant' && Array.isArray(candidate.message?.content);
+}
+
 export interface SessionLifecycleConfig {
   defaultModel: string;
   maxTokens: number;
@@ -1158,12 +1166,12 @@ ${messageText.slice(0, 2000)}`;
         },
       });
 
-      // Extract title from the response
-      const { isSDKAssistantMessage } = await import('@neokai/shared/sdk/type-guards');
+      // Extract title from the response. Keep this structural instead of importing
+      // shared SDK type guards so unit tests are isolated from process-wide mock.module state.
       let title = '';
 
       for await (const message of agentQuery) {
-        if (isSDKAssistantMessage(message)) {
+        if (isAssistantMessageWithContent(message)) {
           const textBlocks = message.message.content.filter(
             (b: { type: string }) => b.type === 'text'
           ) as Array<{ text?: string }>;
