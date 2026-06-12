@@ -168,10 +168,10 @@ describe('QueryOptionsBuilder', () => {
   });
 
   describe('provider settings', () => {
-    it('should disable SDK auto-compaction for Codex bridge (non-Anthropic)', () => {
+    it('should enable SDK auto-compaction for Codex bridge', () => {
       expect(buildProviderSettings('anthropic-codex')).toEqual({
-        autoCompactEnabled: false,
-        autoCompactWindow: Number.MAX_SAFE_INTEGER,
+        autoCompactEnabled: true,
+        autoCompactWindow: 272_000,
       });
     });
 
@@ -192,9 +192,12 @@ describe('QueryOptionsBuilder', () => {
         autoCompactEnabled: false,
         autoCompactWindow: Number.MAX_SAFE_INTEGER,
       });
+    });
+
+    it('should enable SDK auto-compaction for Kimi', () => {
       expect(buildProviderSettings('kimi')).toEqual({
-        autoCompactEnabled: false,
-        autoCompactWindow: Number.MAX_SAFE_INTEGER,
+        autoCompactEnabled: true,
+        autoCompactWindow: 262_144,
       });
     });
 

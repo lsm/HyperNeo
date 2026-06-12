@@ -180,6 +180,7 @@ describe('KimiProvider', () => {
       expect(config.envVars.ANTHROPIC_API_KEY).toBe('');
       expect(config.envVars.ANTHROPIC_AUTH_TOKEN).toBe('');
       expect(config.envVars.API_TIMEOUT_MS).toBe('3000000');
+      expect(config.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('262144');
       expect(config.envVars.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC).toBe('1');
       expect(config.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('kimi-for-coding');
       expect(config.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('kimi-for-coding');

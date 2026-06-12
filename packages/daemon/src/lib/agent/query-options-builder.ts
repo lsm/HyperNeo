@@ -191,6 +191,18 @@ export function ensureAgentTools(
  */
 export const NATIVE_CONTEXT_WINDOW_PROVIDER_IDS = ['anthropic', 'anthropic-copilot'];
 
+export const PROVIDER_NATIVE_AUTO_COMPACT_WINDOWS: Record<string, number> = {
+  kimi: 262_144,
+  'anthropic-codex': 272_000,
+};
+
+export function providerUsesNativeAutoCompact(providerId: string): boolean {
+  return (
+    NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId) ||
+    providerId in PROVIDER_NATIVE_AUTO_COMPACT_WINDOWS
+  );
+}
+
 /**
  * Provider-specific SDK settings overrides.
  *
@@ -207,7 +219,15 @@ export function buildProviderSettings(providerId: string): Options['settings'] {
     return undefined;
   }
 
-  // Disable SDK auto-compaction for all non-native providers.
+  const nativeAutoCompactWindow = PROVIDER_NATIVE_AUTO_COMPACT_WINDOWS[providerId];
+  if (nativeAutoCompactWindow) {
+    return {
+      autoCompactEnabled: true,
+      autoCompactWindow: nativeAutoCompactWindow,
+    };
+  }
+
+  // Disable SDK auto-compaction for non-native providers without known windows.
   // The SDK's internal 200 k assumption causes premature compaction on
   // models with larger context windows (1 M, 272 k, etc.).
   // NeoKai monitors getContextUsage() and enqueues /compact when the

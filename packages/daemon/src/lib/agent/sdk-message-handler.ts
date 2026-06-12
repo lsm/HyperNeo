@@ -44,7 +44,7 @@ import { ApiErrorCircuitBreaker } from './api-error-circuit-breaker';
 import type { MessageQueue } from './message-queue';
 import type { QueryLifecycleManager } from './query-lifecycle-manager';
 import { getSessionModelInfo } from '../model-service';
-import { NATIVE_CONTEXT_WINDOW_PROVIDER_IDS } from './query-options-builder.js';
+import { providerUsesNativeAutoCompact } from './query-options-builder.js';
 
 /**
  * Number of SDK stream events between automatic context-usage refreshes.
@@ -900,9 +900,9 @@ export class SDKMessageHandler {
         if (!providerId) {
           return;
         }
-        const isNativeProvider = NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId);
+        const usesNativeAutoCompact = providerUsesNativeAutoCompact(providerId);
         if (
-          !isNativeProvider &&
+          !usesNativeAutoCompact &&
           modelInfo?.contextWindow &&
           contextTracker.shouldCompact(modelInfo.contextWindow)
         ) {

@@ -1402,7 +1402,7 @@ describe('SDKMessageHandler', () => {
         expect(enqueueMessageSpy).toHaveBeenCalledWith('/compact', true);
       });
 
-      it('does not enqueue /compact for native Anthropic providers', async () => {
+      it('does not enqueue /compact for providers with native auto-compaction', async () => {
         setModelsCache(
           new Map([
             [
@@ -1436,8 +1436,8 @@ describe('SDKMessageHandler', () => {
         }));
 
         mockContext.queryObject = { getContextUsage: getContextUsageSpy } as never;
-        mockContext.session.config.provider = 'anthropic';
-        mockContext.session.config.model = 'sonnet';
+        mockContext.session.config.provider = 'kimi';
+        mockContext.session.config.model = 'kimi-for-coding';
 
         const h = new SDKMessageHandler(mockContext);
 
