@@ -170,7 +170,7 @@ describe('QueryOptionsBuilder', () => {
     });
 
     it('should use the Sonnet SDK output token cap for short aliases', async () => {
-      for (const model of ['default', 'sonnet']) {
+      for (const model of ['default', 'sonnet', 'sonnet1m']) {
         mockSession.config.model = model;
         const options = await builder.build();
         expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('64000');

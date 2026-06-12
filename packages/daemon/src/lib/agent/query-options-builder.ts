@@ -137,8 +137,8 @@ function getSdkOutputTokenLimit(modelId: string): number {
   if (
     normalizedModelId === 'default' ||
     normalizedModelId === 'sonnet' ||
-    normalizedModelId.includes('sonnet-4') ||
-    normalizedModelId.includes('claude-sonnet-4')
+    normalizedModelId === 'sonnet1m' ||
+    normalizedModelId.includes('sonnet-4')
   ) {
     return LARGE_SDK_OUTPUT_TOKEN_LIMIT;
   }
