@@ -27,14 +27,21 @@ export class AcpQueryAdapter implements QueryLike {
   private interrupted = false;
   private closed = false;
 
-  constructor(client: AcpClient, prompt: AcpContentBlock[]) {
+  constructor(
+    client: AcpClient,
+    prompt: AcpContentBlock[],
+    private readonly options: {
+      contextWindow?: number;
+      onConfigOptionsUpdate?: (configOptions: AcpConfigOption[]) => void;
+    } = {}
+  ) {
     this.client = client;
     this.prompt = prompt;
     const sessionId = client.getSessionId();
     if (!sessionId) {
       throw new Error('AcpClient has no active session');
     }
-    this.translator = new AcpMessageTranslator(sessionId);
+    this.translator = new AcpMessageTranslator(sessionId, options.contextWindow);
   }
 
   async *[Symbol.asyncIterator](): AsyncGenerator<SDKMessage, void> {
@@ -46,6 +53,11 @@ export class AcpQueryAdapter implements QueryLike {
       for await (const notification of this.client.sendPrompt(this.prompt)) {
         if (this.interrupted) {
           break;
+        }
+
+        if (notification.update.sessionUpdate === 'config_option_update') {
+          this.client.updateConfigOptions(notification.update.configOptions);
+          this.options.onConfigOptionsUpdate?.(notification.update.configOptions);
         }
 
         const messages = this.translator.processUpdate(notification.update);
@@ -123,7 +135,8 @@ export class AcpQueryAdapter implements QueryLike {
     if (!option) {
       throw new Error('ACP session has no thought_level config option');
     }
-    await this.client.setConfigOption(option.id, String(tokens ?? 'none'));
+    const value = tokens && tokens > 0 ? String(tokens) : 'none';
+    await this.client.setConfigOption(option.id, value);
   }
 
   async getContextUsage(): Promise<SDKControlGetContextUsageResponse> {

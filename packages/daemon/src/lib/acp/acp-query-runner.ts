@@ -517,7 +517,10 @@ export class AcpQueryRunner {
           : toAcpPromptContent(message);
         const shouldPersistInstructionsSent = prependInstructionsToNextPrompt;
         prependInstructionsToNextPrompt = false;
-        const adapter = new AcpQueryAdapter(client, promptContent);
+        const adapter = new AcpQueryAdapter(client, promptContent, {
+          contextWindow: AcpProvider.DEFAULT_CONTEXT_WINDOW,
+          onConfigOptionsUpdate: (configOptions) => this.updateAcpModelCache(configOptions),
+        });
         this.ctx.queryObject = adapter;
 
         this.ctx.firstMessageReceived = false;

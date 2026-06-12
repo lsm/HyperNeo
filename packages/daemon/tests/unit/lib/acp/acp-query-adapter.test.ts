@@ -19,6 +19,7 @@ class MockAcpClient {
   cancel = mock(() => {});
   close = mock(() => {});
   setConfigOption = mock((_configId: string, _value: string) => Promise.resolve([]));
+  updateConfigOptions = mock((_configOptions: unknown[]) => {});
 
   constructor(sessionId: string) {
     this.sessionId = sessionId;
@@ -343,6 +344,55 @@ describe('AcpQueryAdapter', () => {
     await adapter.setMaxThinkingTokens(12000);
 
     expect(client.setConfigOption).toHaveBeenCalledWith('thought-option', '12000');
+  });
+
+  test('setMaxThinkingTokens maps null and zero to none', async () => {
+    const client = new MockAcpClient('sess-thinking-none');
+    const adapter = new AcpQueryAdapter(
+      client as unknown as InstanceType<
+        typeof import('../../../../src/lib/acp/acp-client').AcpClient
+      >,
+      [{ type: 'text', text: 'hello' }]
+    );
+
+    await adapter.setMaxThinkingTokens(null);
+    await adapter.setMaxThinkingTokens(0);
+
+    expect(client.setConfigOption).toHaveBeenNthCalledWith(1, 'thought-option', 'none');
+    expect(client.setConfigOption).toHaveBeenNthCalledWith(2, 'thought-option', 'none');
+  });
+
+  test('config option updates refresh client cache and callback', async () => {
+    const client = new MockAcpClient('sess-config-update');
+    const onConfigOptionsUpdate = mock((_configOptions: unknown[]) => {});
+    const adapter = new AcpQueryAdapter(
+      client as unknown as InstanceType<
+        typeof import('../../../../src/lib/acp/acp-client').AcpClient
+      >,
+      [{ type: 'text', text: 'hello' }],
+      { onConfigOptionsUpdate }
+    );
+    const configOptions = [
+      {
+        id: 'model-option',
+        name: 'Model',
+        type: 'select' as const,
+        category: 'model',
+        currentValue: 'opus',
+        options: [{ name: 'Opus', value: 'opus' }],
+      },
+    ];
+
+    client.queueNotification({
+      sessionId: 'sess-config-update',
+      update: { sessionUpdate: 'config_option_update', configOptions },
+    });
+
+    const iterator = adapter[Symbol.asyncIterator]();
+    await iterator.next();
+
+    expect(client.updateConfigOptions).toHaveBeenCalledWith(configOptions);
+    expect(onConfigOptionsUpdate).toHaveBeenCalledWith(configOptions);
   });
 
   test('rewindFiles reports unsupported for ACP sessions', async () => {

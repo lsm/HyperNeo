@@ -56,7 +56,10 @@ export class AcpMessageTranslator {
   private outputTokenEstimate = 0;
   private costUsdEstimate = 0;
 
-  constructor(sessionId: string) {
+  constructor(
+    sessionId: string,
+    private readonly contextWindow = 0
+  ) {
     this.sessionId = sessionId;
   }
 
@@ -230,7 +233,7 @@ export class AcpMessageTranslator {
 
   getContextUsage(): { used: number; size: number } | null {
     const used = this.inputTokenEstimate + this.outputTokenEstimate;
-    return used > 0 ? { used, size: 0 } : null;
+    return used > 0 ? { used, size: this.contextWindow } : null;
   }
 
   private accumulateAgentChunk(update: AcpAgentMessageChunkUpdate): void {

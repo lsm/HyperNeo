@@ -372,6 +372,10 @@ export class AcpClient {
     return this.cachedConfigOptions;
   }
 
+  updateConfigOptions(configOptions: AcpConfigOption[]): void {
+    this.cachedConfigOptions = configOptions;
+  }
+
   getModes(): AcpSessionModeState | undefined {
     return this.cachedModes;
   }

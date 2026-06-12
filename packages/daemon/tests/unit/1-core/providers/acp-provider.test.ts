@@ -196,6 +196,21 @@ describe('AcpProvider', () => {
       expect(provider.ownsModel('ACP-DEFAULT')).toBe(true);
     });
 
+    it('should own cached dynamic model IDs', () => {
+      provider.setConfigOptions([
+        {
+          id: 'model',
+          name: 'Model',
+          type: 'select',
+          category: 'model',
+          currentValue: 'sonnet',
+          options: [{ name: 'Sonnet', value: 'sonnet' }],
+        },
+      ]);
+
+      expect(provider.ownsModel('sonnet')).toBe(true);
+    });
+
     it('should not own other provider models', () => {
       expect(provider.ownsModel('default')).toBe(false);
       expect(provider.ownsModel('glm-5')).toBe(false);

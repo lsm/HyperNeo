@@ -161,7 +161,11 @@ export class AcpProvider implements Provider {
    * Check if a model ID belongs to ACP.
    */
   ownsModel(modelId: string): boolean {
-    return modelId === 'acp' || modelId.toLowerCase().startsWith('acp-');
+    return (
+      modelId === 'acp' ||
+      modelId.toLowerCase().startsWith('acp-') ||
+      this.cachedModels?.some((model) => model.id === modelId || model.alias === modelId) === true
+    );
   }
 
   /**

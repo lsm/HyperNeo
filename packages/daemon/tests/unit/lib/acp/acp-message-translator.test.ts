@@ -206,6 +206,13 @@ describe('AcpMessageTranslator', () => {
     expect(result.usage.output_tokens).toBe(20);
   });
 
+  test('uses configured context window in usage estimate', () => {
+    translator = new AcpMessageTranslator('test-session', 200000);
+    translator.processUpdate(agentChunk('hello'));
+
+    expect(translator.getContextUsage()?.size).toBe(200000);
+  });
+
   test('ignores available commands updates', () => {
     expect(
       translator.processUpdate({

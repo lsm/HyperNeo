@@ -151,8 +151,11 @@ export class ModelSwitchHandler {
       lifecycleManager,
     } = this.ctx;
 
+    const previousModel = session.config.model;
+    const previousProvider = session.config.provider;
+
     try {
-      if (!session.config.provider) {
+      if (!previousProvider) {
         throw new Error('Session has no provider configured');
       }
 
@@ -180,7 +183,7 @@ export class ModelSwitchHandler {
       const currentResolvedModel = await resolveModelAlias(
         session.config.model,
         'global',
-        session.config.provider
+        previousProvider
       );
 
       // Check if already using this model (compare resolved IDs and provider).
@@ -194,9 +197,6 @@ export class ModelSwitchHandler {
           error: `Already using ${modelInfo?.name || resolvedModel}`,
         };
       }
-
-      const previousModel = session.config.model;
-      const previousProvider = session.config.provider;
 
       // Emit model switching event
       messageHub.event(
@@ -343,6 +343,21 @@ export class ModelSwitchHandler {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.error(`Model switch failed:`, error);
+
+      session.config.model = previousModel;
+      session.config.provider = previousProvider;
+      db.updateSession(session.id, {
+        config: {
+          model: previousModel,
+          provider: previousProvider,
+        } as SessionConfig,
+      });
+      contextTracker.setModel(previousModel);
+      await internalEventBus.publish('session.updated', {
+        sessionId: session.id,
+        source: 'model-switch-rollback',
+        session: { config: session.config },
+      });
 
       await errorManager.handleError(
         session.id,
