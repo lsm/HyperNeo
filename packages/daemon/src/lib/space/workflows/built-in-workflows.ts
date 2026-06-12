@@ -714,6 +714,7 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
     {
       from: 'Review',
       to: 'Coding',
+      hookIds: ['review-posted-hook'],
       maxCycles: 5,
       label: 'Review → Coding (changes requested)',
     },
@@ -1091,6 +1092,7 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
     {
       from: 'Plan Review',
       to: 'Task Dispatcher',
+      hookIds: ['plan-approval-hook'],
       label: 'Plan Review → Task Dispatcher',
     },
     {
@@ -1305,6 +1307,7 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
     {
       from: 'Review',
       to: 'QA',
+      hookIds: ['review-approval-hook'],
       label: 'Review → QA',
     },
     {

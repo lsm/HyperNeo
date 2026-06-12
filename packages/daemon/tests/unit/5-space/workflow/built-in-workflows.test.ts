@@ -165,6 +165,7 @@ describe('CODING_WORKFLOW template', () => {
     // The review-posted hook (not gate) closes the feedback-loop gap where the reviewer
     // summarizes feedback internally without posting to GitHub.
     expect(ch!.gateId).toBeUndefined();
+    expect(ch!.hookIds).toEqual(['review-posted-hook']);
     // direction field removed from WorkflowChannel
     expect(ch!.maxCycles).toBe(5);
   });
@@ -998,6 +999,7 @@ describe('PLAN_AND_DECOMPOSE_WORKFLOW template', () => {
       (c) => c.from === 'Plan Review' && c.to === 'Task Dispatcher'
     );
     expect(reviewToDispatcher?.gateId).toBeUndefined();
+    expect(reviewToDispatcher?.hookIds).toEqual(['plan-approval-hook']);
   });
 
   test('feedback channel Plan Review → Planning is ungated and cyclic', () => {
@@ -1373,9 +1375,10 @@ describe('seedBuiltInWorkflows()', () => {
 
     const reviewToCode = wf.channels!.find((c) => c.from === 'Review' && c.to === 'Coding');
     expect(reviewToCode).toBeDefined();
-    // Review → Coding is now ungated; the review-posted hook validates
+    // Review → Coding is hook-guarded; the review-posted hook validates
     // the reviewer's message before delivery.
     expect(reviewToCode!.gateId).toBeUndefined();
+    expect(reviewToCode!.hookIds).toEqual(['review-posted-hook']);
     expect(reviewToCode!.maxCycles).toBe(5);
 
     const validationToCode = wf.channels!.find(
@@ -1538,6 +1541,10 @@ describe('seedBuiltInWorkflows()', () => {
       .find((w) => w.name === PLAN_AND_DECOMPOSE_WORKFLOW.name)!;
     const gatedChannels = wf.channels!.filter((c) => c.gateId !== undefined);
     expect(gatedChannels).toHaveLength(1); // plan-pr-gate only
+    const hookChannels = wf.channels!.filter((c) => c.hookIds?.includes('plan-approval-hook'));
+    expect(hookChannels).toHaveLength(1);
+    expect(hookChannels[0].from).toBe('Plan Review');
+    expect(hookChannels[0].to).toBe('Task Dispatcher');
     const cyclicChannels = wf.channels!.filter((c) => c.maxCycles !== undefined);
     // One cyclic feedback channel: Plan Review → Planning
     expect(cyclicChannels).toHaveLength(1);

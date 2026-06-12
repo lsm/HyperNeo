@@ -223,6 +223,7 @@ describe('reviewApprovalValidator', () => {
             repository: {
               pullRequest: {
                 headRefOid: 'abc123',
+                headRef: { target: { committedDate: '2025-12-31T00:00:00Z' } },
                 updatedAt: '2025-12-31T00:00:00Z',
                 reactions: {
                   nodes: [
@@ -302,7 +303,7 @@ describe('reviewApprovalValidator', () => {
     expect(state?._codex_head_sha).toBe('abc123');
   });
 
-  test('uses PR update baseline instead of commit timestamp for first-cycle codex freshness', async () => {
+  test('uses head commit baseline instead of PR activity for first-cycle codex freshness', async () => {
     const originalFetch = globalThis.fetch;
     const originalToken = process.env.GITHUB_TOKEN;
     process.env.GITHUB_TOKEN = 'test-token';
@@ -314,6 +315,7 @@ describe('reviewApprovalValidator', () => {
             repository: {
               pullRequest: {
                 headRefOid: 'abc123',
+                headRef: { target: { committedDate: '2026-01-01T00:00:00Z' } },
                 updatedAt: '2026-01-03T00:00:00Z',
                 reactions: {
                   nodes: [
@@ -342,8 +344,7 @@ describe('reviewApprovalValidator', () => {
     globalThis.fetch = originalFetch;
     process.env.GITHUB_TOKEN = originalToken;
 
-    expect(result.type).toBe('retryable_block');
-    expect((result as { reason?: string }).reason).toContain('codex');
+    expect(result.type).toBe('allow');
   });
 
   test('floors codex wait start to GitHub timestamp precision', async () => {
@@ -375,6 +376,7 @@ describe('reviewApprovalValidator', () => {
             repository: {
               pullRequest: {
                 headRefOid: 'abc123',
+                headRef: { target: { committedDate: '2026-01-01T00:00:00Z' } },
                 updatedAt: '2026-01-01T00:00:00Z',
                 reactions: {
                   nodes: [
@@ -420,6 +422,7 @@ describe('reviewApprovalValidator', () => {
             repository: {
               pullRequest: {
                 headRefOid: 'abc123',
+                headRef: { target: { committedDate: '2026-01-01T00:00:00Z' } },
                 updatedAt: '2026-01-01T00:00:00Z',
                 reactions: { nodes: [] },
                 comments:
@@ -506,6 +509,7 @@ describe('reviewApprovalValidator', () => {
             repository: {
               pullRequest: {
                 headRefOid: 'abc123',
+                headRef: { target: { committedDate: '2026-01-01T00:00:00Z' } },
                 updatedAt: '2026-01-01T00:00:00Z',
                 reactions: { nodes: [] },
                 comments: { nodes: [], pageInfo: { hasNextPage: false } },
@@ -748,6 +752,7 @@ describe('reviewApprovalValidator', () => {
               pullRequest: {
                 id: 'pr-node',
                 headRefOid: 'abc123',
+                headRef: { target: { committedDate: '2026-01-01T00:00:00Z' } },
                 updatedAt: '2026-01-01T00:00:00Z',
                 reactions: {
                   nodes: [],
@@ -798,7 +803,7 @@ describe('reviewApprovalValidator', () => {
               pullRequest: {
                 id: 'pr-node',
                 headRefOid: 'new-sha-456',
-                updatedAt: '2026-01-01T00:00:00Z',
+                headRef: { target: { committedDate: '2026-01-01T00:00:00Z' } },
                 reactions: {
                   nodes: [
                     {
@@ -832,6 +837,57 @@ describe('reviewApprovalValidator', () => {
     process.env.GITHUB_TOKEN = originalToken;
 
     expect(result.type).toBe('allow');
+  });
+
+  test('resets codex timer before accepting stale approval from previous PR head', async () => {
+    const originalFetch = globalThis.fetch;
+    const originalToken = process.env.GITHUB_TOKEN;
+    process.env.GITHUB_TOKEN = 'test-token';
+    globalThis.fetch = async () =>
+      ({
+        ok: true,
+        json: async () => ({
+          data: {
+            repository: {
+              pullRequest: {
+                id: 'pr-node',
+                headRefOid: 'new-sha-456',
+                headRef: { target: { committedDate: '2026-01-03T00:00:00Z' } },
+                reactions: {
+                  nodes: [
+                    {
+                      user: { login: 'codex[bot]' },
+                      content: 'THUMBS_UP',
+                      createdAt: '2026-01-02T00:00:00Z',
+                    },
+                  ],
+                  pageInfo: { hasNextPage: false },
+                },
+                comments: { nodes: [], pageInfo: { hasNextPage: false } },
+                reviewThreads: { nodes: [], pageInfo: { hasNextPage: false } },
+              },
+            },
+          },
+        }),
+      }) as Response;
+
+    const ctx = makeCtx({
+      params: { data: { approved: true, pr_url: 'https://github.com/test/repo/pull/42' } },
+      hookLocalState: {
+        _codex_started_at: Date.parse('2026-01-01T00:00:00Z'),
+        _codex_head_sha: 'old-sha-123',
+      },
+      templateData: { threshold: 1, requireCodex: true },
+    });
+
+    const result = await reviewApprovalValidator(ctx);
+    globalThis.fetch = originalFetch;
+    process.env.GITHUB_TOKEN = originalToken;
+
+    expect(result.type).toBe('retryable_block');
+    const state = (result as { state?: Record<string, unknown> }).state;
+    expect(state?._codex_head_sha).toBe('new-sha-456');
+    expect((result as { reason: string }).reason).toContain('New PR revision');
   });
 
   test('resets codex timer when PR head SHA changes', async () => {

@@ -275,7 +275,7 @@ async function checkCodexApproval(
         repository(owner:$owner,name:$name) {
           pullRequest(number:$number) {
             headRefOid
-            updatedAt
+            headRef { target { ... on Commit { committedDate } } }
             id
             reactions(first:100) {
               nodes { content createdAt user { login } }
@@ -328,7 +328,7 @@ async function checkCodexApproval(
         repository?: {
           pullRequest?: {
             headRefOid?: string;
-            updatedAt?: string;
+            headRef?: { target?: { committedDate?: string } };
             id?: string;
             reactions?: GithubReactable['reactions'];
             comments?: {
@@ -357,11 +357,13 @@ async function checkCodexApproval(
     if (!pr) return { status: 'error', headSha };
 
     headSha = pr.headRefOid;
-    const prUpdatedMs = pr.updatedAt ? Date.parse(pr.updatedAt) : Number.NaN;
+    const headCommittedMs = pr.headRef?.target?.committedDate
+      ? Date.parse(pr.headRef.target.committedDate)
+      : Number.NaN;
     const since =
       sinceMs === 'head'
-        ? Number.isFinite(prUpdatedMs)
-          ? floorToGithubSecond(prUpdatedMs)
+        ? Number.isFinite(headCommittedMs)
+          ? floorToGithubSecond(headCommittedMs)
           : Number.POSITIVE_INFINITY
         : sinceMs !== undefined
           ? floorToGithubSecond(sinceMs)
@@ -541,16 +543,14 @@ export async function reviewApprovalValidator(
         codexStartedAt ?? (storedHeadSha ? undefined : 'head')
       );
 
-      if (codexResult.status === 'approved') {
-        return {
-          type: 'allow',
-          message: `Threshold met (${approvalCount}/${threshold}) with codex approval.`,
-        };
-      }
-
-      // New revision pushed — reset codex timer so stale approvals don't release.
-      // Check approval first so a fresh pre-existing Codex +1 on the new head can release.
       if (codexResult.headSha && storedHeadSha && storedHeadSha !== codexResult.headSha) {
+        const headCodexResult = await checkCodexApproval(prUrl, 'head');
+        if (headCodexResult.status === 'approved') {
+          return {
+            type: 'allow',
+            message: `Threshold met (${approvalCount}/${threshold}) with codex approval.`,
+          };
+        }
         return {
           type: 'retryable_block',
           reason: 'New PR revision detected. Resetting codex timer.',
@@ -561,6 +561,13 @@ export async function reviewApprovalValidator(
             _codex_head_sha: codexResult.headSha,
             _pr_url: prUrl,
           },
+        };
+      }
+
+      if (codexResult.status === 'approved') {
+        return {
+          type: 'allow',
+          message: `Threshold met (${approvalCount}/${threshold}) with codex approval.`,
         };
       }
 
