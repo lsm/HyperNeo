@@ -78,6 +78,9 @@ export interface SDKMessageHandlerContext {
 
   // Called when the SDK init message provides the full slash commands list
   onInitSlashCommands: (commands: string[]) => Promise<void>;
+
+  // Called when the SDK pushes a mid-session slash command replacement list
+  onCommandsChanged: (commands: string[]) => Promise<void>;
 }
 
 type PersistedUserMessage = SDKMessage & { dbId: string; timestamp: number };
@@ -652,7 +655,7 @@ export class SDKMessageHandler {
     }
 
     if (isSDKCommandsChangedMessage(message)) {
-      await this.ctx.onInitSlashCommands(message.commands.map((command) => command.name));
+      await this.ctx.onCommandsChanged(message.commands.map((command) => command.name));
     }
   }
 

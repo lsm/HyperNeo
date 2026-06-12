@@ -174,6 +174,7 @@ describe('SDKMessageHandler', () => {
       queryObject: null,
       queryPromise: null,
       onInitSlashCommands: async () => {},
+      onCommandsChanged: async () => {},
     };
 
     handler = new SDKMessageHandler(mockContext);

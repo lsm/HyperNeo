@@ -755,7 +755,10 @@ class SessionStore {
       return id == null || !seenIds.has(id);
     });
     if (uniqueMessages.length === 0) return;
-    this.sdkMessages.value = [...uniqueMessages, ...this.sdkMessages.value];
+    this.sdkMessages.value = this._withoutSupersededMessages([
+      ...uniqueMessages,
+      ...this.sdkMessages.value,
+    ]);
   }
 
   /**

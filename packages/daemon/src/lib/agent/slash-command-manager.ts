@@ -102,6 +102,24 @@ export class SlashCommandManager {
     });
   }
 
+  async updateFromCommandsChanged(sdkCommands: string[]): Promise<void> {
+    const { session, db, internalEventBus } = this.ctx;
+
+    const kaiBuiltInCommands = getBuiltInCommandNames();
+    const allCommands = [...new Set([...sdkCommands, ...kaiBuiltInCommands])];
+
+    this.slashCommands = allCommands;
+    this.commandsFetchedFromSDK = true;
+
+    session.availableCommands = this.slashCommands;
+    db.updateSession(session.id, { availableCommands: this.slashCommands });
+
+    await internalEventBus.publish('commands.updated', {
+      sessionId: session.id,
+      commands: this.slashCommands,
+    });
+  }
+
   /**
    * Fetch and cache slash commands from SDK
    */

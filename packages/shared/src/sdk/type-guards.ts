@@ -17,6 +17,7 @@ import type {
   SDKResultSuccess,
   SDKStatusMessage,
   SDKSystemMessage,
+  SDKThinkingTokensMessage,
   SDKToolProgressMessage,
 } from "./sdk.d.ts";
 import type { NeokaiActionMessage } from "../types.ts";
@@ -153,6 +154,15 @@ export function isSDKAPIRetryMessage(
   msg: SDKMessage,
 ): msg is SDKAPIRetryMessage {
   return msg.type === "system" && (msg as SDKAPIRetryMessage).subtype === "api_retry";
+}
+
+/**
+ * Check if message is a thinking token progress message
+ */
+export function isSDKThinkingTokensMessage(
+  msg: SDKMessage,
+): msg is SDKThinkingTokensMessage {
+  return msg.type === "system" && (msg as { subtype?: string }).subtype === "thinking_tokens";
 }
 
 /**
@@ -393,6 +403,7 @@ export function isUserVisibleMessage(msg: SDKMessage): boolean {
   // User should NOT see: stream events or API retry messages
   if (isSDKStreamEvent(msg)) return false;
   if (isSDKAPIRetryMessage(msg)) return false;
+  if (isSDKThinkingTokensMessage(msg)) return false;
 
   return true;
 }
