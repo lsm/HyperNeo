@@ -346,7 +346,13 @@ async function verifyReviewEvidenceOnGithub(
               pageInfo { hasNextPage endCursor }
             }
             reviewThreads(first:100, after:$threadsCursor) @include(if:$includeThreads) {
-              nodes { comments(first:100) { nodes { databaseId createdAt } } }
+              nodes {
+                id
+                comments(first:100) {
+                  nodes { databaseId createdAt }
+                  pageInfo { hasNextPage endCursor }
+                }
+              }
               pageInfo { hasNextPage endCursor }
             }
           }
@@ -390,7 +396,11 @@ async function verifyReviewEvidenceOnGithub(
             };
             reviewThreads?: {
               nodes?: Array<{
-                comments?: { nodes?: Array<{ databaseId?: number; createdAt?: string }> };
+                id?: string;
+                comments?: {
+                  nodes?: Array<{ databaseId?: number; createdAt?: string }>;
+                  pageInfo?: { hasNextPage?: boolean; endCursor?: string };
+                };
               }>;
               pageInfo?: { hasNextPage?: boolean; endCursor?: string };
             };
@@ -416,6 +426,47 @@ async function verifyReviewEvidenceOnGithub(
     for (const thread of pr.reviewThreads?.nodes ?? []) {
       if (thread.comments?.nodes?.some((n) => matches(n, expectedDiscussionId))) {
         return 'verified';
+      }
+      let threadCommentsCursor = thread.comments?.pageInfo?.hasNextPage
+        ? thread.comments.pageInfo.endCursor
+        : undefined;
+      while (thread.id && threadCommentsCursor) {
+        const threadResult = await githubGraphql(
+          parsed.host,
+          `
+            query($threadId:ID!,$commentsCursor:String) {
+              node(id:$threadId) {
+                ... on PullRequestReviewThread {
+                  comments(first:100, after:$commentsCursor) {
+                    nodes { databaseId createdAt }
+                    pageInfo { hasNextPage endCursor }
+                  }
+                }
+              }
+            }
+          `,
+          { threadId: thread.id, commentsCursor: threadCommentsCursor }
+        );
+        if (!threadResult.ok) return 'error';
+        const threadJson = threadResult.json as {
+          data?: {
+            node?: {
+              comments?: {
+                nodes?: Array<{ databaseId?: number; createdAt?: string }>;
+                pageInfo?: { hasNextPage?: boolean; endCursor?: string };
+              };
+            };
+          };
+          errors?: unknown[];
+        };
+        if (threadJson.errors) return 'error';
+        const comments = threadJson.data?.node?.comments;
+        if (comments?.nodes?.some((n) => matches(n, expectedDiscussionId))) {
+          return 'verified';
+        }
+        threadCommentsCursor = comments?.pageInfo?.hasNextPage
+          ? comments.pageInfo.endCursor
+          : undefined;
       }
     }
 
@@ -447,6 +498,10 @@ function freshEvidenceSinceIso(ctx: HookExecutorContext): string | undefined {
     const updatedAt = typeof artifact.updatedAt === 'number' ? artifact.updatedAt : 0;
     const createdAt = typeof artifact.createdAt === 'number' ? artifact.createdAt : 0;
     since = Math.max(since, updatedAt, createdAt);
+  }
+  for (const gate of ctx.gateData ?? []) {
+    const updatedAt = typeof gate.updatedAt === 'number' ? gate.updatedAt : 0;
+    since = Math.max(since, updatedAt);
   }
   return since > 0 ? new Date(since).toISOString() : undefined;
 }

@@ -850,6 +850,143 @@ describe('reviewPostedValidator', () => {
     expect(callCount).toBe(3);
   });
 
+  test('finds review-thread comment on a later thread comment page', async () => {
+    const originalFetch = globalThis.fetch;
+    const originalToken = process.env.GITHUB_TOKEN;
+    process.env.GITHUB_TOKEN = 'test-token';
+    let graphqlCalls = 0;
+    globalThis.fetch = async (url) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/repos/test/repo/pulls/comments/123')) {
+        return { ok: false, json: async () => ({}) } as Response;
+      }
+      if (path.endsWith('/graphql')) {
+        graphqlCalls += 1;
+        if (graphqlCalls === 1) {
+          return {
+            ok: true,
+            json: async () => ({
+              data: {
+                viewer: { login: 'reviewer' },
+                repository: { pullRequest: { author: { login: 'pr-author' } } },
+              },
+            }),
+          } as Response;
+        }
+        if (graphqlCalls === 2) {
+          return {
+            ok: true,
+            json: async () => ({
+              data: {
+                repository: {
+                  pullRequest: {
+                    reviews: { nodes: [], pageInfo: { hasNextPage: false } },
+                    comments: { nodes: [], pageInfo: { hasNextPage: false } },
+                    reviewThreads: {
+                      nodes: [
+                        {
+                          id: 'thread-1',
+                          comments: {
+                            nodes: [],
+                            pageInfo: { hasNextPage: true, endCursor: 'comments-1' },
+                          },
+                        },
+                      ],
+                      pageInfo: { hasNextPage: false },
+                    },
+                  },
+                },
+              },
+            }),
+          } as Response;
+        }
+        return {
+          ok: true,
+          json: async () => ({
+            data: {
+              node: {
+                comments: {
+                  nodes: [{ databaseId: 123, createdAt: '2999-01-01T00:00:00Z' }],
+                  pageInfo: { hasNextPage: false },
+                },
+              },
+            },
+          }),
+        } as Response;
+      }
+      return { ok: false, json: async () => ({}) } as Response;
+    };
+
+    const ctx = makeCtx({
+      params: {
+        data: { review_url: 'https://github.com/test/repo/pull/1#discussion_r123' },
+      },
+      gateData: [
+        {
+          gateId: 'code-pr-gate',
+          data: { pr_url: 'https://github.com/test/repo/pull/1' },
+          updatedAt: Date.now(),
+        },
+      ],
+    });
+    const result = await reviewPostedValidator(ctx);
+    globalThis.fetch = originalFetch;
+    process.env.GITHUB_TOKEN = originalToken;
+
+    expect(result.type).toBe('allow');
+    expect(graphqlCalls).toBe(3);
+  });
+
+  test('blocks review evidence older than the active PR gate update', async () => {
+    const originalFetch = globalThis.fetch;
+    const originalToken = process.env.GITHUB_TOKEN;
+    process.env.GITHUB_TOKEN = 'test-token';
+    const now = Date.parse('2026-01-01T12:00:00Z');
+    globalThis.fetch = async (url) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/repos/test/repo/pulls/comments/42')) {
+        return {
+          ok: true,
+          json: async () => ({
+            id: 42,
+            pull_request_url: 'https://api.github.com/repos/test/repo/pulls/1',
+            created_at: new Date(now - 10_000).toISOString(),
+          }),
+        } as Response;
+      }
+      if (path.endsWith('/graphql')) {
+        return {
+          ok: true,
+          json: async () => ({
+            data: {
+              viewer: { login: 'reviewer' },
+              repository: { pullRequest: { author: { login: 'pr-author' } } },
+            },
+          }),
+        } as Response;
+      }
+      return { ok: false, json: async () => ({}) } as Response;
+    };
+
+    const ctx = makeCtx({
+      params: {
+        data: { review_url: 'https://github.com/test/repo/pull/1#discussion_r42' },
+      },
+      gateData: [
+        {
+          gateId: 'code-pr-gate',
+          data: { pr_url: 'https://github.com/test/repo/pull/1' },
+          updatedAt: now,
+        },
+      ],
+    });
+    const result = await reviewPostedValidator(ctx);
+    globalThis.fetch = originalFetch;
+    process.env.GITHUB_TOKEN = originalToken;
+
+    expect(result.type).toBe('block');
+  });
+
   test('floors review evidence freshness cutoff to GitHub timestamp precision', async () => {
     const originalFetch = globalThis.fetch;
     const originalToken = process.env.GITHUB_TOKEN;
@@ -889,7 +1026,7 @@ describe('reviewPostedValidator', () => {
         {
           gateId: 'code-pr-gate',
           data: { pr_url: 'https://github.com/test/repo/pull/1' },
-          updatedAt: now,
+          updatedAt: now - 10_000,
         },
       ],
     });
@@ -1045,7 +1182,7 @@ describe('reviewPostedValidator', () => {
         {
           gateId: 'code-pr-gate',
           data: { pr_url: 'https://github.com/test/repo/pull/1' },
-          updatedAt: now,
+          updatedAt: now - 10_000,
         },
       ],
     });
