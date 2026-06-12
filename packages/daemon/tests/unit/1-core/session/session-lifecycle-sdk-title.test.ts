@@ -182,13 +182,16 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
   };
 
   beforeEach(async () => {
-    const { resetProviderRegistry } = await import('../../../../src/lib/providers/registry');
-    const { initializeProviders, resetProviderFactory } = await import(
-      '../../../../src/lib/providers/factory'
+    const { getProviderRegistry, resetProviderRegistry } = await import(
+      '../../../../src/lib/providers/registry'
     );
+    const { resetProviderFactory } = await import('../../../../src/lib/providers/factory');
+    const { AnthropicProvider } = await import('../../../../src/lib/providers/anthropic-provider');
     resetProviderRegistry();
     resetProviderFactory();
-    initializeProviders();
+    const anthropicProvider = new AnthropicProvider();
+    anthropicProvider.setCredentials({ type: 'api_key', apiKey: 'test-api-key' });
+    getProviderRegistry().register(anthropicProvider);
 
     lastTitleQueryOptions = undefined;
     lastTitleProcessEnv = undefined;
@@ -284,7 +287,9 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
 
   afterEach(async () => {
     const { resetProviderRegistry } = await import('../../../../src/lib/providers/registry');
+    const { resetProviderFactory } = await import('../../../../src/lib/providers/factory');
     resetProviderRegistry();
+    resetProviderFactory();
     // Restore the empty API key set by unit-test setup.ts
     process.env.ANTHROPIC_API_KEY = '';
     process.env.GLM_API_KEY = '';
