@@ -263,6 +263,17 @@ export class WorkflowHookEngine {
     return queued;
   }
 
+  clearQueuedRetryableActionsForOwner(hookIds: Iterable<string>, meta: HookActionMeta): string[] {
+    const clearedActionKeys: string[] = [];
+    for (const hookId of hookIds) {
+      const queued = this.getQueuedRetryableAction(hookId);
+      if (!queued || !sameRetryableActionOwner(queued.meta, meta)) continue;
+      this.clearQueuedRetryableAction(hookId);
+      clearedActionKeys.push(queued.actionKey);
+    }
+    return clearedActionKeys;
+  }
+
   getHooksWithQueuedAction(actionKey: string): WorkflowHook[] {
     return (this.config.workflow.hooks ?? []).filter(
       (hook) => this.getQueuedRetryableAction(hook.id)?.actionKey === actionKey
@@ -1174,6 +1185,13 @@ function clearRetryableAction(actionKey: string): void {
   pendingRetryableHookActions.delete(actionKey);
 }
 
+export function clearAllRetryableHookActionTimers(): void {
+  for (const timer of pendingRetryableHookActions.values()) {
+    clearTimeout(timer);
+  }
+  pendingRetryableHookActions.clear();
+}
+
 function isQueuedRetryableHookAction(value: unknown): value is QueuedRetryableHookAction {
   if (!value || typeof value !== 'object') return false;
   const record = value as Record<string, unknown>;
@@ -1445,6 +1463,13 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
       );
     }
 
+    const successfulHookIds = outcome.executionLog.map((record) => record.hookId);
+    for (const queuedActionKey of engine.clearQueuedRetryableActionsForOwner(
+      successfulHookIds,
+      meta
+    )) {
+      clearRetryableAction(queuedActionKey);
+    }
     engine.clearQueuedRetryableActionsForKey(actionKey);
     clearRetryableAction(actionKey);
 

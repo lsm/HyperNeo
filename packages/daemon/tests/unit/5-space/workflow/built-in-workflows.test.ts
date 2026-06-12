@@ -2303,6 +2303,50 @@ describe('seedBuiltInWorkflows()', () => {
     ).toBe(true);
   });
 
+  test('re-stamp removes renamed legacy PR-ready gate channel', () => {
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+    const codingNode = coding.nodes.find((node) => node.name === 'Coding')!;
+    const reviewNode = coding.nodes.find((node) => node.name === 'Review')!;
+
+    db.prepare(`UPDATE space_workflow_nodes SET name = ? WHERE id = ?`).run(
+      'Implementation',
+      codingNode.id
+    );
+    db.prepare(`UPDATE space_workflow_nodes SET name = ? WHERE id = ?`).run(
+      'Human Review',
+      reviewNode.id
+    );
+    repo.updateWorkflow(coding.id, {
+      channels: [
+        ...coding.channels!.filter(
+          (channel) => !(channel.from === 'Coding' && channel.to === 'Review')
+        ),
+        {
+          id: 'renamed-legacy-pr-ready-channel',
+          from: 'Implementation',
+          to: 'Human Review',
+          gateId: 'code-ready-gate',
+        },
+      ],
+    });
+    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+      'renamed-legacy-pr-gate-channel',
+      coding.id
+    );
+
+    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    expect(result.restamped).toContain(CODING_WORKFLOW.name);
+    expect(result.errors).toHaveLength(0);
+
+    const after = manager.getWorkflow(coding.id)!;
+    const implementationToHumanReview = after.channels!.filter(
+      (channel) => channel.from === 'Implementation' && channel.to === 'Human Review'
+    );
+    expect(implementationToHumanReview).toHaveLength(1);
+    expect(implementationToHumanReview[0].gateId).toBeUndefined();
+  });
+
   test('re-stamp remaps hook node refs and authorized slots when source node and slot were renamed', () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;

@@ -107,7 +107,11 @@ import { NodeExecutionRepository } from '../../../storage/repositories/node-exec
 import { validateGlobPattern } from '../../external-events/topic-validator';
 import { executeGateScript } from './gate-script-executor';
 import { HookExecutor } from './hook-executor';
-import { QUEUED_RETRYABLE_ACTION_STATE_KEY, WorkflowHookEngine } from './workflow-hook-engine';
+import {
+  clearAllRetryableHookActionTimers,
+  QUEUED_RETRYABLE_ACTION_STATE_KEY,
+  WorkflowHookEngine,
+} from './workflow-hook-engine';
 import { WorkflowHookStateRepository } from '../../../storage/repositories/workflow-hook-state-repository';
 import {
   buildCustomAgentTaskMessage,
@@ -1971,6 +1975,7 @@ export class TaskAgentManager {
    * 3. Clear in-memory maps so a subsequent rehydrate starts from a clean slate.
    */
   async cleanupAll(): Promise<void> {
+    clearAllRetryableHookActionTimers();
     if (this.taskArchiveListenerUnsub) {
       this.taskArchiveListenerUnsub();
       this.taskArchiveListenerUnsub = null;

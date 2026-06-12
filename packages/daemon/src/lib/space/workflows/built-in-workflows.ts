@@ -1690,13 +1690,27 @@ function remapTemplateChannel(
 }
 
 function removeLegacyPrReadyGateChannels(
-  channels: SpaceWorkflow['channels']
+  channels: SpaceWorkflow['channels'],
+  templateNodes: WorkflowNode[],
+  existingNodes: WorkflowNode[]
 ): SpaceWorkflow['channels'] {
+  const legacyRouteKeys = new Set(LEGACY_PR_READY_TEMPLATE_ROUTES);
+  for (const route of LEGACY_PR_READY_TEMPLATE_ROUTES) {
+    const [gateId, from, to] = route.split(':');
+    legacyRouteKeys.add(
+      `${gateId}:${remapTemplateChannelRef(from, templateNodes, existingNodes)}:${remapTemplateChannelRef(
+        to,
+        templateNodes,
+        existingNodes
+      )}`
+    );
+  }
+
   return channels?.filter((channel) => {
     const gateId = channel.gateId;
     if (!gateId || !LEGACY_PR_READY_GATE_IDS.has(gateId)) return true;
     const routeKey = `${gateId}:${channel.from}:${String(channel.to)}`;
-    return !LEGACY_PR_READY_TEMPLATE_ROUTES.has(routeKey);
+    return !legacyRouteKeys.has(routeKey);
   });
 }
 
@@ -1961,7 +1975,11 @@ export function seedBuiltInWorkflows(
           template.nodes,
           resolveAgentId
         );
-        const existingChannels = removeLegacyPrReadyGateChannels(row.channels);
+        const existingChannels = removeLegacyPrReadyGateChannels(
+          row.channels,
+          template.nodes,
+          row.nodes
+        );
         const mergedChannels = mergeChannelsFromTemplate(
           existingChannels,
           template.channels,

@@ -8,6 +8,7 @@
 
 import { describe, test, expect, beforeEach } from 'bun:test';
 import {
+  clearAllRetryableHookActionTimers,
   QUEUED_RETRYABLE_ACTION_STATE_KEY,
   WorkflowHookEngine,
   wrapHandlerWithHooks,
@@ -1663,6 +1664,66 @@ describe('wrapHandlerWithHooks', () => {
     await new Promise((resolve) => setTimeout(resolve, 30));
 
     expect(deliveredMessages).toEqual(['second']);
+  });
+
+  test('successful resend clears superseded queued retry before replay', async () => {
+    const { engine, mockExecutor } = makeEngine([
+      makeHook({ id: 'hook-1', classification: 'validation', order: 0 }),
+    ]);
+    mockExecutor.setResult('hook-1', {
+      type: 'retryable_block',
+      reason: 'Retry me',
+      retryAfterMs: 20,
+    });
+
+    const deliveredMessages: string[] = [];
+    const handler = async (args: { target: string; message: string }) => {
+      deliveredMessages.push(args.message);
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }],
+      };
+    };
+
+    const wrapped = wrapHandlerWithHooks('send_message', handler, engine, {}, defaultMeta);
+    await wrapped({ target: 'Review', message: 'queued' });
+
+    mockExecutor.setResult('hook-1', { type: 'allow' });
+    await wrapped({ target: 'Review', message: 'manual resend' });
+    await new Promise((resolve) => setTimeout(resolve, 40));
+
+    expect(deliveredMessages).toEqual(['manual resend']);
+  });
+
+  test('cleanup helper cancels queued retry timer before replay', async () => {
+    const { engine, mockExecutor } = makeEngine([
+      makeHook({ id: 'hook-1', classification: 'validation', order: 0 }),
+    ]);
+    mockExecutor.setResult('hook-1', {
+      type: 'retryable_block',
+      reason: 'Retry me',
+      retryAfterMs: 10,
+    });
+
+    const deliveredMessages: string[] = [];
+    const handler = async (args: { target: string; message: string }) => {
+      deliveredMessages.push(args.message);
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }],
+      };
+    };
+
+    const wrapped = wrapHandlerWithHooks('send_message', handler, engine, {}, defaultMeta);
+    await wrapped({ target: 'Review', message: 'queued' });
+    mockExecutor.setResult('hook-1', { type: 'allow' });
+
+    clearAllRetryableHookActionTimers();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    expect(deliveredMessages).toEqual([]);
+    expect(engine.getQueuedRetryableAction('hook-1')?.args).toEqual({
+      target: 'Review',
+      message: 'queued',
+    });
   });
 
   test('queued retry hard failure is reported to source session', async () => {
