@@ -880,6 +880,47 @@ describe('withSyntheticCodexHooks', () => {
     ).toHaveLength(0);
   });
 
+  test('does not reuse non-send_message Codex hook for handoff enforcement', () => {
+    const workflow = withSyntheticCodexHooks({
+      ...WORKFLOW,
+      hooks: [
+        {
+          id: 'existing-codex-approval-check',
+          enabled: true,
+          sourceNode: 'Coding',
+          method: 'approve_task',
+          validator: { kind: 'built_in', id: 'codex_review_approved' },
+          authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+        },
+      ],
+      gates: [
+        {
+          id: 'approval-gate',
+          fields: [{ name: 'approved', type: 'boolean', check: { op: '==', value: true } }],
+        },
+      ],
+      channels: [
+        {
+          id: 'hook-channel',
+          from: 'Coding',
+          to: 'Review',
+          gateId: 'approval-gate',
+          hookIds: [],
+        },
+      ],
+    });
+    const syntheticHook = workflow.hooks?.find(
+      (hook) => hook.id === 'synthetic-codex-review-check-node-coder'
+    );
+    expect(syntheticHook?.method).toBe('send_message');
+    expect(workflow.channels?.find((channel) => channel.id === 'hook-channel')?.hookIds).toContain(
+      'synthetic-codex-review-check-node-coder'
+    );
+    expect(
+      workflow.channels?.find((channel) => channel.id === 'hook-channel')?.hookIds
+    ).not.toContain('existing-codex-approval-check');
+  });
+
   test('merges synthetic target coverage into existing Codex hooks', () => {
     const workflow = withSyntheticCodexHooks({
       ...WORKFLOW,

@@ -380,6 +380,7 @@ export function withSyntheticCodexHooks(workflow: SpaceWorkflow): SpaceWorkflow 
       .filter(
         (hook) =>
           hook.enabled &&
+          hook.method === 'send_message' &&
           hook.validator.kind === 'built_in' &&
           hook.validator.id === 'codex_review_approved'
       )

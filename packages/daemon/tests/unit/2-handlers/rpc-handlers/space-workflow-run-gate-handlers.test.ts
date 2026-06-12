@@ -196,17 +196,29 @@ function createMockRunRepo(run: SpaceWorkflowRun | null = mockRun): SpaceWorkflo
   } as unknown as SpaceWorkflowRunRepository;
 }
 
-function createMockGateDataRepo(existing: GateDataRecord | null = null): GateDataRepository {
+function createMockGateDataRepo(
+  existing: GateDataRecord | GateDataRecord[] | null = null
+): GateDataRepository {
+  const records = Array.isArray(existing) ? existing : existing ? [existing] : [];
+  const first = records[0] ?? null;
   return {
-    get: mock(() => existing),
-    listByRun: mock(() => (existing ? [existing] : [])),
-    merge: mock((_runId: string, _gateId: string, partial: Record<string, unknown>) => ({
+    get: mock(
+      (_runId: string, gateId: string) =>
+        records.find((record) => record.gateId === gateId) ?? first
+    ),
+    listByRun: mock(() => records),
+    merge: mock((_runId: string, gateId: string, partial: Record<string, unknown>) => {
+      const existingRecord = records.find((record) => record.gateId === gateId) ?? first;
+      return {
+        ...mockGateData,
+        gateId,
+        data: { ...(existingRecord?.data ?? {}), ...partial },
+        updatedAt: Date.now(),
+      };
+    }),
+    set: mock((_runId: string, gateId: string, data: Record<string, unknown>) => ({
       ...mockGateData,
-      data: { ...(existing?.data ?? {}), ...partial },
-      updatedAt: Date.now(),
-    })),
-    set: mock((_runId: string, _gateId: string, data: Record<string, unknown>) => ({
-      ...mockGateData,
+      gateId,
       data,
       updatedAt: Date.now(),
     })),
@@ -297,7 +309,7 @@ describe('space-workflow-run gate handlers', () => {
   function setup(
     opts: {
       run?: SpaceWorkflowRun | null;
-      existingGateData?: GateDataRecord | null;
+      existingGateData?: GateDataRecord | GateDataRecord[] | null;
       space?: Space | null;
       workflow?: SpaceWorkflow;
       hookStateRepo?: WorkflowHookStateRepository;
@@ -601,6 +613,158 @@ describe('space-workflow-run gate handlers', () => {
         artifactRepo: {
           listByRun: mock(() => [{ data: { pr_url: 'https://github.com/owner/repo/pull/42' } }]),
         } as unknown as WorkflowRunArtifactRepository,
+      });
+
+      await expect(
+        call('spaceWorkflowRun.approveGate', {
+          runId: 'run-1',
+          gateId: 'gate-approval',
+          approved: true,
+        })
+      ).rejects.toThrow('GitHub token not available for Codex review check');
+      expect(gateDataRepo.merge).not.toHaveBeenCalled();
+    });
+
+    it('blocks human approval for Codex-gated wildcard source channels', async () => {
+      setup({
+        workflow: {
+          ...mockWorkflow,
+          nodes: mockWorkflow.nodes.map((node) =>
+            node.id === 'step-1' ? { ...node, requireCodexApproval: true } : node
+          ),
+          channels: [{ id: 'wildcard-review', from: '*', to: 'Step Two', gateId: 'gate-approval' }],
+          gates: [
+            {
+              id: 'gate-approval',
+              fields: [
+                {
+                  name: 'approved',
+                  type: 'boolean',
+                  writers: [],
+                  check: { op: '==', value: true },
+                },
+              ],
+            },
+          ],
+        },
+        hookStateRepo: createMockHookStateRepo(),
+        artifactRepo: {
+          listByRun: mock(() => [{ data: { pr_url: 'https://github.com/owner/repo/pull/42' } }]),
+        } as unknown as WorkflowRunArtifactRepository,
+      });
+
+      await expect(
+        call('spaceWorkflowRun.approveGate', {
+          runId: 'run-1',
+          gateId: 'gate-approval',
+          approved: true,
+        })
+      ).rejects.toThrow('GitHub token not available for Codex review check');
+      expect(gateDataRepo.merge).not.toHaveBeenCalled();
+    });
+
+    it('does not run unrelated Codex hook when approving non-Codex target gate', async () => {
+      setup({
+        workflow: {
+          ...mockWorkflow,
+          nodes: [
+            ...mockWorkflow.nodes,
+            { id: 'step-3', name: 'Docs', agents: [{ agentId: 'agent-3', name: 'Writer' }] },
+          ],
+          hooks: [
+            {
+              id: 'codex-review-check',
+              enabled: true,
+              sourceNode: 'Step One',
+              method: 'send_message',
+              validator: {
+                kind: 'built_in',
+                id: 'codex_review_approved',
+                externalLookups: ['github'],
+              },
+              authorizedCallers: [{ sourceNode: 'Step One', agentSlots: ['Coder'] }],
+              templateData: { enforceForTargets: ['Step Two'] },
+            },
+          ],
+          channels: [
+            { id: 'code-review', from: 'Step One', to: 'Step Two', gateId: 'codex-gate' },
+            { id: 'docs-review', from: 'Step One', to: 'Docs', gateId: 'plain-gate' },
+          ],
+          gates: [
+            {
+              id: 'codex-gate',
+              fields: [
+                {
+                  name: 'approved',
+                  type: 'boolean',
+                  writers: [],
+                  check: { op: '==', value: true },
+                },
+              ],
+            },
+            {
+              id: 'plain-gate',
+              fields: [
+                {
+                  name: 'approved',
+                  type: 'boolean',
+                  writers: [],
+                  check: { op: '==', value: true },
+                },
+              ],
+            },
+          ],
+        },
+        hookStateRepo: createMockHookStateRepo(),
+      });
+
+      await call('spaceWorkflowRun.approveGate', {
+        runId: 'run-1',
+        gateId: 'plain-gate',
+        approved: true,
+      });
+      expect(gateDataRepo.merge).toHaveBeenCalledWith('run-1', 'plain-gate', expect.any(Object));
+    });
+
+    it('uses most recent run PR URL instead of flat merged gate data for human Codex check', async () => {
+      setup({
+        existingGateData: [
+          {
+            ...mockGateData,
+            gateId: 'plan-pr-gate',
+            data: { pr_url: 'https://github.com/owner/planning/pull/1' },
+            updatedAt: NOW,
+          },
+          {
+            ...mockGateData,
+            gateId: 'code-pr-gate',
+            data: { pr_url: 'https://github.com/owner/code/pull/2' },
+            updatedAt: NOW + 1,
+          },
+        ],
+        workflow: {
+          ...mockWorkflow,
+          nodes: mockWorkflow.nodes.map((node) =>
+            node.id === 'step-1' ? { ...node, requireCodexApproval: true } : node
+          ),
+          channels: [
+            { id: 'code-review', from: 'Step One', to: 'Step Two', gateId: 'gate-approval' },
+          ],
+          gates: [
+            {
+              id: 'gate-approval',
+              fields: [
+                {
+                  name: 'approved',
+                  type: 'boolean',
+                  writers: [],
+                  check: { op: '==', value: true },
+                },
+              ],
+            },
+          ],
+        },
+        hookStateRepo: createMockHookStateRepo(),
       });
 
       await expect(
@@ -1004,7 +1168,7 @@ describe('space-workflow-run gate handlers', () => {
       })) as { gateData: { runId: string; gateId: string } };
 
       expect(result.gateData).toBeDefined();
-      expect(result.gateData.gateId).toBe('gate-approval'); // mockGateData default id
+      expect(result.gateData.gateId).toBe('code-pr-gate');
     });
   });
 });

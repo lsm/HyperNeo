@@ -79,6 +79,25 @@ function makeMockHookStateRepo(): WorkflowHookStateRepository {
     }
   >();
 
+  function isPlainRecord(value: unknown): value is Record<string, unknown> {
+    return !!value && typeof value === 'object' && !Array.isArray(value);
+  }
+
+  function deepMerge(
+    base: Record<string, unknown>,
+    patch: Record<string, unknown>
+  ): Record<string, unknown> {
+    const next: Record<string, unknown> = { ...base };
+    for (const [key, value] of Object.entries(patch)) {
+      if (isPlainRecord(value) && isPlainRecord(next[key])) {
+        next[key] = deepMerge(next[key] as Record<string, unknown>, value);
+      } else {
+        next[key] = value;
+      }
+    }
+    return next;
+  }
+
   return {
     get: (runId: string, hookId: string) => {
       const key = `${runId}:${hookId}`;
@@ -139,7 +158,7 @@ function makeMockHookStateRepo(): WorkflowHookStateRepository {
       if (!s || s.version !== patch.expectedVersion) return null;
       s.version += 1;
       if (patch.localState) {
-        s.localState = { ...s.localState, ...patch.localState };
+        s.localState = deepMerge(s.localState, patch.localState);
       }
       if (patch.lastResult !== undefined) {
         s.lastResult = patch.lastResult;
@@ -457,6 +476,96 @@ describe('WorkflowHookEngine', () => {
     expect(outcome.userState.status).toBe('state_recorded');
   });
 
+  test('concurrent vote deep-merge round-trip: two blocks with partial votes accumulate', async () => {
+    const hookStateRepo = makeMockHookStateRepo();
+    const mockExecutor = new MockHookExecutor();
+
+    const engine = new WorkflowHookEngine({
+      workflow: makeWorkflow([
+        makeHook({
+          id: 'vote-hook',
+          classification: 'validation',
+          validator: { kind: 'built_in', id: 'review_approval' },
+          authorizedCallers: [{ sourceNode: 'Coding' }],
+        }),
+      ]),
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo,
+      hookExecutor: mockExecutor,
+      workspacePath: '/tmp',
+    });
+
+    // Simulate the built-in validator returning block with partial votes.
+    // First call: architecture reviewer votes.
+    mockExecutor.setResult('vote-hook', {
+      type: 'block',
+      reason: 'Waiting for approvals (1/4)',
+      state: { approvals: { architecture: 'approved' } },
+    });
+
+    const outcome1 = await engine.executeAction(
+      'send_message',
+      { target: 'Task Dispatcher', message: 'arch approved' },
+      { ...defaultMeta, agentName: 'architecture-reviewer' }
+    );
+
+    expect(outcome1.decision).toBe('block');
+    expect(outcome1.stateUpdates).toHaveLength(1);
+    expect(outcome1.stateUpdates[0].state).toEqual({
+      approvals: { architecture: 'approved' },
+    });
+
+    // Persist the first vote via wrapHandlerWithHooks logic.
+    const ok1 = engine.persistStateUpdate('vote-hook', outcome1.stateUpdates[0].state);
+    expect(ok1).toBe(true);
+
+    // Second call: security reviewer votes while architecture vote is already in state.
+    mockExecutor.setResult('vote-hook', {
+      type: 'block',
+      reason: 'Waiting for approvals (2/4)',
+      state: { approvals: { security: 'approved' } },
+    });
+
+    const outcome2 = await engine.executeAction(
+      'send_message',
+      { target: 'Task Dispatcher', message: 'sec approved' },
+      { ...defaultMeta, agentName: 'security-reviewer' }
+    );
+
+    expect(outcome2.decision).toBe('block');
+    expect(outcome2.stateUpdates).toHaveLength(1);
+
+    // The mock repo now deep-merges, so both votes should coexist.
+    const ok2 = engine.persistStateUpdate('vote-hook', outcome2.stateUpdates[0].state);
+    expect(ok2).toBe(true);
+
+    const finalState = hookStateRepo.get('run-1', 'vote-hook');
+    expect(finalState?.localState.approvals).toEqual({
+      architecture: 'approved',
+      security: 'approved',
+    });
+  });
+
+  test('record_state with targetHookId routes state to specified hook', async () => {
+    const { engine, mockExecutor } = makeEngine([
+      makeHook({ id: 'reset-hook', classification: 'side_effect' }),
+    ]);
+    mockExecutor.setResult('reset-hook', {
+      type: 'record_state',
+      state: { approvals: null },
+      targetHookId: 'vote-hook',
+    });
+
+    const outcome = await engine.executeAction('send_message', { target: 'Review' }, defaultMeta);
+
+    expect(outcome.decision).toBe('record_state');
+    expect(outcome.stateUpdates).toHaveLength(1);
+    expect(outcome.stateUpdates[0].hookId).toBe('vote-hook');
+    expect(outcome.stateUpdates[0].state).toEqual({ approvals: null });
+  });
+
   test('side_effect patch_params is ignored', async () => {
     const { engine, mockExecutor } = makeEngine([
       makeHook({ id: 'hook-1', classification: 'side_effect' }),
@@ -620,6 +729,21 @@ describe('WorkflowHookEngine', () => {
 
     expect(outcome.decision).toBe('patch_params');
     expect(outcome.finalParams).toEqual({ target: 'Review', message: 'hi', extra: true });
+  });
+
+  test('out-of-channel target does not trigger targetNode hooks', async () => {
+    const { engine } = makeEngine([
+      makeHook({ id: 'hook-1', targetNode: 'Review', method: 'send_message' }),
+    ]);
+
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: 'space-agent', message: 'need help' },
+      defaultMeta
+    );
+
+    expect(outcome.decision).toBe('allow');
+    expect(outcome.executionLog).toHaveLength(0);
   });
 
   test('@worker address target is parsed to node name for hook matching', async () => {
@@ -901,6 +1025,49 @@ describe('WorkflowHookEngine', () => {
 
     const params = (capturedContext as { params: Record<string, unknown> }).params;
     expect(params.data).toContain('truncated');
+  });
+
+  test('built-in validators receive full unbounded params even when data exceeds budget', async () => {
+    const hookStateRepo = makeMockHookStateRepo();
+    const mockExecutor = new MockHookExecutor();
+
+    const engine = new WorkflowHookEngine({
+      workflow: makeWorkflow([
+        makeHook({
+          id: 'hook-1',
+          classification: 'validation',
+          validator: { kind: 'built_in', id: 'review_posted' },
+        }),
+      ]),
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo,
+      hookExecutor: mockExecutor,
+      workspacePath: '/tmp',
+    });
+
+    let capturedContext: unknown;
+    mockExecutor.execute = async (_hook, context) => {
+      capturedContext = context;
+      return { result: { type: 'allow' } };
+    };
+
+    const bigData = {
+      review_url: 'https://github.com/test/repo/pull/1',
+      summary: 'x'.repeat(10_000),
+    };
+    await engine.executeAction(
+      'send_message',
+      { target: 'Review', message: 'hi', data: bigData },
+      defaultMeta
+    );
+
+    const params = (capturedContext as { params: Record<string, unknown> }).params;
+    expect((params.data as Record<string, unknown>).review_url).toBe(
+      'https://github.com/test/repo/pull/1'
+    );
+    expect((params.data as Record<string, unknown>).summary).toBe('x'.repeat(10_000));
   });
 
   test('large arrays in params are capped', async () => {
@@ -2171,6 +2338,115 @@ describe('wrapHandlerWithHooks', () => {
     const state2 = hookStateRepo.get('run-1', 'hook-2');
     expect(state2?.lastResult?.type).toBe('record_state');
     expect(state2?.localState).toEqual({ count: 1 });
+  });
+
+  test('persists state on block results', async () => {
+    const hookStateRepo = makeMockHookStateRepo();
+    const mockExecutor = new MockHookExecutor();
+
+    const engine = new WorkflowHookEngine({
+      workflow: makeWorkflow([makeHook({ id: 'hook-1', classification: 'validation' })]),
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo,
+      hookExecutor: mockExecutor,
+      workspacePath: '/tmp',
+    });
+
+    mockExecutor.setResult('hook-1', {
+      type: 'block',
+      reason: 'Threshold not met',
+      state: { approvals: { arch: 'approved' } },
+    });
+
+    const handler = async () => ({
+      content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }],
+    });
+
+    const wrapped = wrapHandlerWithHooks('send_message', handler, engine, {}, defaultMeta);
+    await wrapped({ target: 'Review' });
+
+    const state = hookStateRepo.get('run-1', 'hook-1');
+    expect(state?.localState).toEqual({ approvals: { arch: 'approved' } });
+    expect(state?.lastResult?.type).toBe('block');
+  });
+
+  test('persists state on retryable_block results', async () => {
+    const hookStateRepo = makeMockHookStateRepo();
+    const mockExecutor = new MockHookExecutor();
+
+    const engine = new WorkflowHookEngine({
+      workflow: makeWorkflow([makeHook({ id: 'hook-1', classification: 'validation' })]),
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo,
+      hookExecutor: mockExecutor,
+      workspacePath: '/tmp',
+    });
+
+    mockExecutor.setResult('hook-1', {
+      type: 'retryable_block',
+      reason: 'Waiting on CI',
+      retryAfterMs: 5_000,
+      state: { retryCount: 1 },
+    });
+
+    const handler = async () => ({
+      content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }],
+    });
+
+    const wrapped = wrapHandlerWithHooks('send_message', handler, engine, {}, defaultMeta);
+    await wrapped({ target: 'Review' });
+
+    const state = hookStateRepo.get('run-1', 'hook-1');
+    expect(state?.localState).toEqual({ retryCount: 1 });
+    expect(state?.lastResult?.type).toBe('retryable_block');
+  });
+
+  test('retries state-merge retryable blocks before returning to caller', async () => {
+    const hookStateRepo = makeMockHookStateRepo();
+    const mockExecutor = new MockHookExecutor();
+    let callCount = 0;
+
+    const engine = new WorkflowHookEngine({
+      workflow: makeWorkflow([makeHook({ id: 'hook-1', classification: 'validation' })]),
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo,
+      hookExecutor: mockExecutor,
+      workspacePath: '/tmp',
+    });
+
+    mockExecutor.execute = async () => {
+      callCount += 1;
+      if (callCount === 1) {
+        return {
+          result: {
+            type: 'retryable_block',
+            reason: 'Waiting for approvals (3/4). Vote recorded; retry after state merge.',
+            retryAfterMs: 1_000,
+            state: { approvals: { correctness: 'approved' } },
+          },
+        };
+      }
+      return { result: { type: 'allow', message: 'Threshold met (4/4).' } };
+    };
+
+    const handler = async () => ({
+      content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }],
+    });
+
+    const wrapped = wrapHandlerWithHooks('send_message', handler, engine, {}, defaultMeta);
+    const result = await wrapped({ target: 'Review' });
+
+    expect(JSON.parse(result.content[0].text).success).toBe(true);
+    expect(callCount).toBe(2);
+    const state = hookStateRepo.get('run-1', 'hook-1');
+    expect(state?.localState).toEqual({ approvals: { correctness: 'approved' } });
+    expect(state?.lastResult?.type).toBe('allow');
   });
 
   test('dispatches follow-up through handler pipeline', async () => {

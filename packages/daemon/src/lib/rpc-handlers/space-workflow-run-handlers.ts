@@ -116,25 +116,73 @@ function isCacheFresh(syncedAt: number, now: number = Date.now()): boolean {
 function isCodexApprovalHook(hook: WorkflowHook): boolean {
   return (
     hook.enabled &&
+    hook.method === 'send_message' &&
     hook.validator.kind === 'built_in' &&
     hook.validator.id === 'codex_review_approved'
   );
 }
 
-function findCodexHooksForGateApproval(workflow: SpaceWorkflow, gateId: string): WorkflowHook[] {
+interface CodexGateHookMatch {
+  hook: WorkflowHook;
+  targetNodes: string[];
+}
+
+function resolveWorkflowNodeRefs(workflow: SpaceWorkflow, ref: string): string[] {
+  if (ref === '*') return (workflow.nodes ?? []).map((node) => node.name);
+  const node = (workflow.nodes ?? []).find((n) => n.name === ref);
+  if (node) return [node.name];
+  const slotNodes = (workflow.nodes ?? []).filter((node) =>
+    (node.agents ?? []).some((agent) => agent.name === ref)
+  );
+  if (slotNodes.length > 0) return slotNodes.map((node) => node.name);
+  return [ref];
+}
+
+function codexHookAppliesToTargets(hook: WorkflowHook, targetNodes: Set<string>): boolean {
+  const enforceForTargets = Array.isArray(hook.templateData?.enforceForTargets)
+    ? hook.templateData.enforceForTargets.filter(
+        (target): target is string => typeof target === 'string'
+      )
+    : [];
+  const explicitTargets = new Set<string>([
+    ...enforceForTargets,
+    ...(hook.targetNode ? [hook.targetNode] : []),
+  ]);
+  if (explicitTargets.size === 0) return true;
+  return [...explicitTargets].some((target) => targetNodes.has(target));
+}
+
+function findCodexHooksForGateApproval(
+  workflow: SpaceWorkflow,
+  gateId: string
+): CodexGateHookMatch[] {
   const gateChannels = (workflow.channels ?? []).filter((channel) => channel.gateId === gateId);
   if (gateChannels.length === 0) return [];
 
-  const sourceNodes = new Set(
-    gateChannels.map((channel) => channel.from).filter((from) => from !== '*')
-  );
-  const hookIds = new Set(gateChannels.flatMap((channel) => channel.hookIds ?? []));
+  const matches = new Map<string, CodexGateHookMatch>();
+  for (const channel of gateChannels) {
+    const sourceNodes = new Set(resolveWorkflowNodeRefs(workflow, channel.from));
+    const targetNodes = new Set(
+      (Array.isArray(channel.to) ? channel.to : [channel.to]).flatMap((target) =>
+        resolveWorkflowNodeRefs(workflow, target)
+      )
+    );
+    const hookIds = new Set(channel.hookIds ?? []);
 
-  return (workflow.hooks ?? []).filter((hook) => {
-    if (!isCodexApprovalHook(hook)) return false;
-    if (hookIds.size > 0 && hookIds.has(hook.id)) return true;
-    return sourceNodes.has(hook.sourceNode);
-  });
+    for (const hook of workflow.hooks ?? []) {
+      if (!isCodexApprovalHook(hook)) continue;
+      if (!codexHookAppliesToTargets(hook, targetNodes)) continue;
+      if (!hookIds.has(hook.id) && !sourceNodes.has(hook.sourceNode)) continue;
+
+      const existing = matches.get(hook.id);
+      matches.set(hook.id, {
+        hook,
+        targetNodes: [...new Set([...(existing?.targetNodes ?? []), ...targetNodes])],
+      });
+    }
+  }
+
+  return [...matches.values()];
 }
 
 function mapArtifactsForHook(artifactRepo: WorkflowRunArtifactRepository, runId: string) {
@@ -152,6 +200,42 @@ function mapArtifactsForHook(artifactRepo: WorkflowRunArtifactRepository, runId:
       createdAt: artifact.createdAt,
       updatedAt: artifact.updatedAt,
     }));
+}
+
+function resolvePrUrlForRun(
+  gateDataRepo: GateDataRepository,
+  artifactRepo: WorkflowRunArtifactRepository,
+  runId: string
+): string {
+  const fromData = (data: Record<string, unknown> | undefined): string =>
+    (typeof data?.prUrl === 'string' && data.prUrl) ||
+    (typeof data?.pr_url === 'string' && data.pr_url) ||
+    '';
+
+  try {
+    const records = gateDataRepo
+      .listByRun(runId)
+      .slice()
+      .sort((a, b) => b.updatedAt - a.updatedAt);
+    for (const record of records) {
+      const candidate = fromData(record.data);
+      if (candidate) return candidate;
+    }
+  } catch {
+    // Fall back to artifacts.
+  }
+
+  try {
+    const artifacts = artifactRepo.listByRun(runId, { artifactType: 'pr' });
+    for (let i = artifacts.length - 1; i >= 0; i--) {
+      const candidate = fromData(artifacts[i]?.data);
+      if (candidate) return candidate;
+    }
+  } catch {
+    // No resolved PR URL available.
+  }
+
+  return '';
 }
 
 function buildGateDataJson(gateDataRepo: GateDataRepository, runId: string): string | undefined {
@@ -265,22 +349,28 @@ export function setupSpaceWorkflowRunHandlers(
     if (!workflow) return;
 
     const effectiveWorkflow = withSyntheticCodexHooks(workflow);
-    const hooks = findCodexHooksForGateApproval(effectiveWorkflow, gateId);
-    if (hooks.length === 0) return;
+    const hookMatches = findCodexHooksForGateApproval(effectiveWorkflow, gateId);
+    if (hookMatches.length === 0) return;
 
+    const prUrl = resolvePrUrlForRun(gateDataRepo, artifactRepo, run.id) || undefined;
     const hookExecutor = new HookExecutor({ workspacePath: '' });
-    for (const hook of hooks) {
+    for (const { hook, targetNodes } of hookMatches) {
       const state = hookStateRepo.ensure(run.id, hook.id, hook.localState?.defaults ?? {});
       const result = await hookExecutor.execute(hook, {
         workspacePath: '',
         runId: run.id,
         hookId: hook.id,
-        methodName: 'approve_task',
-        params: { gateId, approved: true },
+        methodName: 'send_message',
+        params: {
+          gateId,
+          approved: true,
+          target: targetNodes.length === 1 ? targetNodes[0] : targetNodes,
+        },
         nodeId: 'human',
         nodeName: hook.sourceNode,
         sessionId: 'human',
         taskId: '',
+        agentName: 'human',
         hookLocalState: state.localState,
         currentArtifacts: mapArtifactsForHook(artifactRepo, run.id),
         permittedExternalLookups:
@@ -289,6 +379,7 @@ export function setupSpaceWorkflowRunHandlers(
         workflow: effectiveWorkflow,
         lastResult: state.lastResult,
         workflowStartIso: new Date(run.createdAt).toISOString(),
+        prUrl,
         gateDataJson: buildGateDataJson(gateDataRepo, run.id),
       });
 

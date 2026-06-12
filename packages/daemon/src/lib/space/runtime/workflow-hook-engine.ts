@@ -93,7 +93,7 @@ export interface WorkflowHookEngineConfig {
   workflow: SpaceWorkflow;
   workflowRunId: string;
   nodeExecutionRepo: NodeExecutionRepository;
-  workflowRunRepo: SpaceWorkflowRunRepository;
+  workflowRunRepo?: SpaceWorkflowRunRepository;
   artifactRepo?: WorkflowRunArtifactRepository;
   hookStateRepo: WorkflowHookStateRepository;
   hookExecutor: HookExecutor;
@@ -312,14 +312,31 @@ export class WorkflowHookEngine {
         case 'allow':
           break;
 
-        case 'block':
+        case 'block': {
+          if (result.state && typeof result.state === 'object') {
+            const targetHookId =
+              typeof result.targetHookId === 'string' ? result.targetHookId : hook.id;
+            stateUpdates.push({
+              hookId: targetHookId,
+              state: result.state as Record<string, unknown>,
+            });
+          }
           if ((hook.classification ?? 'validation') === 'validation') {
             blockedByValidation = { hookId: hook.id, result, isRetryable: false };
           }
           // side_effect block is recorded but does not stop
           break;
+        }
 
         case 'retryable_block': {
+          if (result.state && typeof result.state === 'object') {
+            const targetHookId =
+              typeof result.targetHookId === 'string' ? result.targetHookId : hook.id;
+            stateUpdates.push({
+              hookId: targetHookId,
+              state: result.state as Record<string, unknown>,
+            });
+          }
           if ((hook.classification ?? 'validation') === 'validation') {
             // block takes precedence over retryable_block
             if (!blockedByValidation) {
@@ -417,7 +434,12 @@ export class WorkflowHookEngine {
 
         case 'record_state':
           if (result.state && typeof result.state === 'object') {
-            stateUpdates.push({ hookId: hook.id, state: result.state as Record<string, unknown> });
+            const targetHookId =
+              typeof result.targetHookId === 'string' ? result.targetHookId : hook.id;
+            stateUpdates.push({
+              hookId: targetHookId,
+              state: result.state as Record<string, unknown>,
+            });
           }
           break;
       }
@@ -860,7 +882,7 @@ export class WorkflowHookEngine {
       mappedArtifacts.push(item);
     }
 
-    const run = this.config.workflowRunRepo.getRun(this.config.workflowRunId);
+    const run = this.config.workflowRunRepo?.getRun(this.config.workflowRunId);
     const workflowStartIso = run ? new Date(run.createdAt).toISOString() : undefined;
 
     // Build fresh gate data JSON per action so long-lived sessions don't
@@ -871,10 +893,16 @@ export class WorkflowHookEngine {
     // so that converted gate scripts see the in-flight payload without
     // requiring a separate gate data write first — matching legacy behavior
     // where the gate write happened before evaluation.
+    let gateData: Record<string, unknown>[] | undefined;
     let gateDataJson: string | undefined;
     {
       try {
         const records = this.config.gateDataRepo?.listByRun(this.config.workflowRunId) ?? [];
+        gateData = records.map((record) => ({
+          gateId: record.gateId,
+          data: record.data,
+          updatedAt: record.updatedAt,
+        }));
         const flatGateData: Record<string, unknown> = {};
         for (const record of records) {
           Object.assign(flatGateData, record.data);
@@ -908,11 +936,12 @@ export class WorkflowHookEngine {
       runId: this.config.workflowRunId,
       hookId: hook.id,
       methodName,
-      params: this.boundParams(params),
+      params: hook.validator.kind === 'built_in' ? params : this.boundParams(params),
       nodeId: meta.nodeId,
       nodeName,
       sessionId: meta.sessionId,
       taskId: meta.taskId,
+      agentName: meta.agentName,
       targetNode: hook.targetNode ?? meta.targetNode,
       hookLocalState: this.boundHookLocalState(hookLocalState),
       currentArtifacts: mappedArtifacts,
@@ -920,6 +949,7 @@ export class WorkflowHookEngine {
       templateData: hook.templateData,
       workflow: this.config.workflow ?? undefined,
       lastResult: hookState.lastResult,
+      gateData,
       workflowStartIso,
       prUrl: this.config.prUrl,
       gateDataJson,
@@ -1324,32 +1354,55 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
   if (!engine) return handler;
 
   const wrapped = async (args: T) => {
-    const outcome = await engine.executeAction(methodName, args as Record<string, unknown>, meta);
+    let outcome = await engine.executeAction(methodName, args as Record<string, unknown>, meta);
 
-    // Batch persist hook state updates and execution results.
-    // Each hook gets at most one repo write to avoid version conflicts.
-    const updatesByHook = new Map<
-      string,
-      { state: Record<string, unknown>; result?: WorkflowHookResult }
-    >();
-    for (const update of outcome.stateUpdates) {
-      updatesByHook.set(update.hookId, { state: update.state });
-    }
-    for (const record of outcome.executionLog) {
-      const existing = updatesByHook.get(record.hookId);
-      if (existing) {
-        existing.result = record.result;
-      } else {
-        updatesByHook.set(record.hookId, { state: {}, result: record.result });
+    for (let attempt = 0; attempt < 2; attempt++) {
+      // Batch persist hook state updates and execution results.
+      // Each hook gets at most one repo write to avoid version conflicts.
+      const updatesByHook = new Map<
+        string,
+        { state: Record<string, unknown>; result?: WorkflowHookResult }
+      >();
+      for (const update of outcome.stateUpdates) {
+        updatesByHook.set(update.hookId, { state: update.state });
       }
-    }
-    for (const [hookId, { state, result }] of updatesByHook) {
-      const ok = engine.persistStateUpdate(hookId, state, result);
-      if (!ok) {
-        log.warn(
-          `Failed to persist hook state/result for ${hookId}: version conflict or repo error`
-        );
+      for (const record of outcome.executionLog) {
+        const existing = updatesByHook.get(record.hookId);
+        if (existing) {
+          existing.result = record.result;
+        } else {
+          updatesByHook.set(record.hookId, { state: {}, result: record.result });
+        }
       }
+      for (const [hookId, { state, result }] of updatesByHook) {
+        const ok = engine.persistStateUpdate(hookId, state, result);
+        if (!ok) {
+          log.warn(
+            `Failed to persist hook state/result for ${hookId}: version conflict or repo error`
+          );
+        }
+      }
+
+      if (
+        attempt > 0 ||
+        outcome.decision !== 'retryable_block' ||
+        !outcome.userState.reason?.includes('retry after state merge')
+      ) {
+        break;
+      }
+
+      const retryOutcome = await engine.executeAction(
+        methodName,
+        args as Record<string, unknown>,
+        meta
+      );
+      if (
+        retryOutcome.decision === 'retryable_block' &&
+        retryOutcome.userState.reason === outcome.userState.reason
+      ) {
+        break;
+      }
+      outcome = retryOutcome;
     }
 
     // Handle block
