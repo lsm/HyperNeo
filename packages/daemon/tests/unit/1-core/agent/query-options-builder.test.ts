@@ -114,6 +114,12 @@ describe('QueryOptionsBuilder', () => {
       expect(options.supportedDialogKinds).toEqual(['refusal_fallback_prompt']);
       expect(
         await options.onUserDialog?.(
+          { dialogKind: 'refusal_fallback_prompt', payload: {} },
+          { signal: new AbortController().signal }
+        )
+      ).toEqual({ behavior: 'completed', result: { continue: true } });
+      expect(
+        await options.onUserDialog?.(
           { dialogKind: 'unknown', payload: {} },
           { signal: new AbortController().signal }
         )
@@ -1415,6 +1421,7 @@ describe('QueryOptionsBuilder', () => {
           'general'
         );
         expect(Array.isArray(result)).toBe(true);
+        expect(result).toContain('Agent');
         expect(result).toContain('Task');
         expect(result).toContain('TaskOutput');
         expect(result).toContain('TaskStop');
@@ -1440,6 +1447,7 @@ describe('QueryOptionsBuilder', () => {
           'general'
         );
         expect(Array.isArray(result)).toBe(true);
+        expect(result).toContain('Agent');
         expect(result).toContain('Task');
       });
 
@@ -1450,17 +1458,17 @@ describe('QueryOptionsBuilder', () => {
           'anthropic-codex',
           'general'
         );
-        expect(result).toEqual(['Read', 'Write', 'Task', 'TaskOutput', 'TaskStop']);
+        expect(result).toEqual(['Read', 'Write', 'Agent', 'Task', 'TaskOutput', 'TaskStop']);
       });
 
       it('does not duplicate existing agent tools in explicit array for non-native providers', () => {
         const result = ensureAgentTools(
-          ['Read', 'Task', 'TaskOutput', 'TaskStop'],
+          ['Read', 'Agent', 'Task', 'TaskOutput', 'TaskStop'],
           { Coordinator: { description: 'c', prompt: 'p' } },
           'anthropic-codex',
           'general'
         );
-        expect(result).toEqual(['Read', 'Task', 'TaskOutput', 'TaskStop']);
+        expect(result).toEqual(['Read', 'Agent', 'Task', 'TaskOutput', 'TaskStop']);
       });
 
       it('preserves explicit array unchanged for Anthropic provider', () => {
@@ -1572,7 +1580,15 @@ describe('QueryOptionsBuilder', () => {
         const codexBuilder = new QueryOptionsBuilder(mockContext);
         const options = await codexBuilder.build();
 
-        expect(options.tools).toEqual(['Read', 'Write', 'Edit', 'Task', 'TaskOutput', 'TaskStop']);
+        expect(options.tools).toEqual([
+          'Read',
+          'Write',
+          'Edit',
+          'Agent',
+          'Task',
+          'TaskOutput',
+          'TaskStop',
+        ]);
       });
     });
   });

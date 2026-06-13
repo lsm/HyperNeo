@@ -114,6 +114,7 @@ const FULL_BUILTIN_TOOL_LIST = [
   'Glob',
   'WebFetch',
   'WebSearch',
+  'Agent',
   'Task',
   'TaskOutput',
   'TaskStop',
@@ -147,7 +148,7 @@ const FULL_BUILTIN_TOOL_LIST = [
 /**
  * Agent invocation tools that must be present when agents are configured.
  */
-const AGENT_INVOCATION_TOOLS = ['Task', 'TaskOutput', 'TaskStop'];
+const AGENT_INVOCATION_TOOLS = ['Agent', 'Task', 'TaskOutput', 'TaskStop'];
 
 /**
  * Providers whose native SDK integration already includes agent tools in the
@@ -526,7 +527,12 @@ export class QueryOptionsBuilder {
 
       // ============ Callbacks ============
       canUseTool: this.canUseTool,
-      onUserDialog: async () => ({ behavior: 'cancelled' }),
+      onUserDialog: async (request) => {
+        if (request.dialogKind === 'refusal_fallback_prompt') {
+          return { behavior: 'completed', result: { continue: true } };
+        }
+        return { behavior: 'cancelled' };
+      },
       supportedDialogKinds: config.fallbackModel ? ['refusal_fallback_prompt'] : undefined,
     };
 
