@@ -348,6 +348,7 @@ export class SpaceWorkflowManager {
         params.templateName === undefined
           ? existing.templateName
           : (params.templateName ?? undefined),
+      templateGates: existing.templateName ? (params.gates ?? existing.gates ?? []) : [],
     }).workflow;
     params = {
       ...params,

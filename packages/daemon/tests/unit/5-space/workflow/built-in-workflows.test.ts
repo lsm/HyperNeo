@@ -2329,14 +2329,23 @@ describe('seedBuiltInWorkflows()', () => {
     );
     repo.updateWorkflow(coding.id, {
       channels: [
-        ...coding.channels!.filter(
-          (channel) => !(channel.from === 'Coding' && channel.to === 'Review')
-        ),
+        ...coding
+          .channels!.filter((channel) => !(channel.from === 'Coding' && channel.to === 'Review'))
+          .map((channel) => ({
+            ...channel,
+            from: channel.from === 'Coding' ? 'Implementation' : channel.from,
+            to:
+              channel.to === 'Review'
+                ? 'Human Review'
+                : channel.to === 'Coding'
+                  ? 'Implementation'
+                  : channel.to,
+          })),
         {
-          id: 'renamed-legacy-pr-ready-channel',
-          from: 'Implementation',
-          to: 'Human Review',
-          gateId: 'code-ready-gate',
+          id: 'renamed-legacy-review-posted-channel',
+          from: 'Human Review',
+          to: 'Implementation',
+          gateId: 'review-posted-gate',
         },
       ],
     });
@@ -2344,17 +2353,18 @@ describe('seedBuiltInWorkflows()', () => {
       'renamed-legacy-pr-gate-channel',
       coding.id
     );
+    expect(manager.getWorkflow(coding.id)?.templateHash).toBe('renamed-legacy-pr-gate-channel');
 
     const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-    expect(result.restamped).toContain(CODING_WORKFLOW.name);
     expect(result.errors).toHaveLength(0);
+    expect(result.restamped).toContain(CODING_WORKFLOW.name);
 
     const after = manager.getWorkflow(coding.id)!;
-    const implementationToHumanReview = after.channels!.filter(
-      (channel) => channel.from === 'Implementation' && channel.to === 'Human Review'
+    const humanReviewToImplementation = after.channels!.filter(
+      (channel) => channel.from === 'Human Review' && channel.to === 'Implementation'
     );
-    expect(implementationToHumanReview).toHaveLength(1);
-    expect(implementationToHumanReview[0].gateId).toBeUndefined();
+    expect(humanReviewToImplementation).toHaveLength(1);
+    expect(humanReviewToImplementation[0].gateId).toBeUndefined();
   });
 
   test.skip('re-stamp remaps hook node refs and authorized slots when source node and slot were renamed', () => {
@@ -3307,21 +3317,16 @@ describe('getBuiltInGateScript()', () => {
     expect(script).toBeUndefined();
   });
 
-  test('returns undefined for migrated review-posted gate script', () => {
+  test('returns live script for retained legacy review-posted gate path', () => {
     const script = getBuiltInGateScript(CODING_WORKFLOW.name, 'review-posted-gate');
-    expect(script).toBeUndefined();
+    expect(script).toBeDefined();
   });
 
   test('returns scripts for all script-based gates in all templates', () => {
     // Every gate that has a script in any built-in template should be resolvable
     for (const template of getBuiltInWorkflows()) {
       for (const gate of template.gates ?? []) {
-        if (
-          !gate.script ||
-          gate.id === 'review-posted-gate' ||
-          gate.id === 'validation-complete-gate'
-        )
-          continue;
+        if (!gate.script) continue;
         const script = getBuiltInGateScript(template.name, gate.id);
         expect(script).toBeDefined();
         expect(script?.interpreter).toBe(gate.script.interpreter);
@@ -3334,7 +3339,8 @@ describe('getBuiltInGateScript()', () => {
     const script = getBuiltInGateScript(CODING_WORKFLOW.name, 'review-posted-gate');
     // The review-posted-gate script must use NEOKAI_WORKFLOW_START_ISO to filter
     // reviews that were posted after the workflow started
-    expect(script).toBeUndefined();
+    expect(script).toBeDefined();
+    expect(script?.source).toContain('NEOKAI_WORKFLOW_START_ISO');
   });
 });
 

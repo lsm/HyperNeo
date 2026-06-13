@@ -1258,15 +1258,13 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
  * in that case.
  */
 export function getBuiltInGateScript(templateName: string, gateId: string): GateScript | undefined {
-  if (
-    gateId === 'validation-complete-gate' ||
-    gateId === 'review-posted-gate' ||
-    gateId === 'plan-approval-gate' ||
-    gateId === 'review-approval-gate'
-  ) {
-    return undefined;
-  }
-  const template = getBuiltInWorkflows().find((t) => t.name === templateName);
+  const template = [
+    CODING_WORKFLOW,
+    PLAN_AND_DECOMPOSE_WORKFLOW,
+    FULLSTACK_QA_LOOP_WORKFLOW,
+    RESEARCH_WORKFLOW,
+    REVIEW_ONLY_WORKFLOW,
+  ].find((t) => t.name === templateName);
   if (!template) return undefined;
   const gate = (template.gates ?? []).find((g) => g.id === gateId);
   return gate?.script;
@@ -1815,11 +1813,19 @@ function mergeHooksFromTemplate(
 ): SpaceWorkflow['hooks'] {
   const remappedTemplateHooks =
     templateHooks?.map((hook) => remapTemplateHook(hook, templateNodes, existingNodes)) ?? [];
+  const remappedTemplateNodeNames = new Set(
+    templateNodes.map((node) => remapTemplateChannelRef(node.name, templateNodes, existingNodes))
+  );
   if (!existingHooks || existingHooks.length === 0) return remappedTemplateHooks;
 
   const templateHookIds = new Set(remappedTemplateHooks.map((hook) => hook.id));
   return [
-    ...existingHooks.filter((hook) => !templateHookIds.has(hook.id)),
+    ...existingHooks.filter(
+      (hook) =>
+        !templateHookIds.has(hook.id) &&
+        remappedTemplateNodeNames.has(hook.sourceNode) &&
+        (!hook.targetNode || remappedTemplateNodeNames.has(hook.targetNode))
+    ),
     ...remappedTemplateHooks,
   ];
 }

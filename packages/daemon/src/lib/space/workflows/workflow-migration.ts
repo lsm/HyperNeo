@@ -14,8 +14,10 @@ const REVIEW_POSTED_SCRIPT = [
   'START_ISO="${NEOKAI_WORKFLOW_START_ISO:-}"',
   'if [ -z "$START_ISO" ]; then echo "NEOKAI_WORKFLOW_START_ISO not injected — cannot determine review window" >&2; exit 1; fi',
   'if ! PR_JSON=$(gh pr view "$PR_URL" --json reviews,comments,author 2>/dev/null); then echo "Failed to fetch review evidence for ${PR_URL}" >&2; exit 1; fi',
-  'FORMAL=$(jq --arg since "$START_ISO" \'[.reviews[] | select((.submittedAt // "") > $since) | select(.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "COMMENTED")] | length\' <<< "$PR_JSON")',
-  'COMMENTS=$(jq --arg since "$START_ISO" \'[.comments[] | select((.createdAt // "") > $since)] | length\' <<< "$PR_JSON")',
+  'VIEWER_LOGIN=$(gh api user --jq .login 2>/dev/null || true)',
+  'if [ -z "$VIEWER_LOGIN" ]; then echo "Unable to resolve authenticated reviewer" >&2; exit 1; fi',
+  'FORMAL=$(jq --arg since "$START_ISO" --arg viewer "$VIEWER_LOGIN" \'[.reviews[] | select((.submittedAt // "") > $since) | select((.author.login // .user.login // "") == $viewer) | select(.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "COMMENTED")] | length\' <<< "$PR_JSON")',
+  'COMMENTS=$(jq --arg since "$START_ISO" --arg viewer "$VIEWER_LOGIN" \'[.comments[] | select((.createdAt // "") > $since) | select((.author.login // .user.login // "") == $viewer)] | length\' <<< "$PR_JSON")',
   'COUNT=$((FORMAL + COMMENTS))',
   'if [ "$COUNT" = "0" ]; then echo "No GitHub review or PR comment found on ${PR_URL} since workflow start" >&2; exit 1; fi',
   'jq -n --arg url "$PR_URL" --argjson count "$COUNT" \'{"type":"allow","data":{"pr_url":$url,"review_evidence_count":$count}}\'',
@@ -62,7 +64,7 @@ const APPROVALS_SCRIPT = [
 ].join('\n');
 
 const PLAN_APPROVAL_RESET_SCRIPT = [
-  'jq -n \'{"type":"record_state","state":{"approvals":{},"approval_count":0}}\'',
+  'jq -n \'{"type":"record_state","state":{"approvals":null,"approval_count":0}}\'',
 ].join('\n');
 
 const ALLOW_SCRIPT = ['jq -n \'{"type":"allow"}\''].join('\n');
@@ -164,6 +166,9 @@ export interface WorkflowMigrationResult<
   warnings: WorkflowMigrationWarning[];
 }
 
+type SpaceWorkflowLike = Pick<SpaceWorkflow, 'channels' | 'gates' | 'hooks'> &
+  Partial<Pick<SpaceWorkflow, 'nodes' | 'templateName'>> & { templateGates?: Gate[] };
+
 function resolveChannelNodeName(
   ref: string,
   nodes: WorkflowNode[] | undefined
@@ -183,12 +188,39 @@ function canMigrateChannel(channel: WorkflowChannel, nodes: WorkflowNode[] | und
   );
 }
 
-function isBuiltInGateShape(
-  gate: Gate | undefined,
-  workflow: Pick<SpaceWorkflow, 'templateName'>
-): boolean {
+function isBuiltInGateShape(gate: Gate | undefined, workflow: SpaceWorkflowLike): boolean {
   if (!workflow.templateName || !gate) return false;
-  return !gate.requiredLevel && !gate.poll && !gate.features;
+  if (
+    workflow.templateGates &&
+    !workflow.templateGates.some((templateGate) => templateGate.id === gate.id)
+  ) {
+    return false;
+  }
+  if (gate.requiredLevel || gate.poll || gate.features) return false;
+  const fields = gate.fields ?? [];
+  switch (gate.id) {
+    case 'validation-complete-gate':
+      return (
+        fields.length === 3 &&
+        fields.some((field) => field.name === 'completion_mode') &&
+        fields.some((field) => field.name === 'changed_files') &&
+        fields.some((field) => field.name === 'validation_outcome') &&
+        !!gate.script
+      );
+    case 'review-posted-gate':
+      return (
+        fields.length === 2 &&
+        fields.some((field) => field.name === 'pr_url') &&
+        fields.some((field) => field.name === 'review_url') &&
+        !!gate.script
+      );
+    case 'plan-approval-gate':
+      return fields.length === 1 && fields[0]?.name === 'approvals' && !gate.script;
+    case 'review-approval-gate':
+      return fields.length === 1 && fields[0]?.name === 'approved' && !gate.script;
+    default:
+      return false;
+  }
 }
 
 function makeHook(
@@ -235,18 +267,11 @@ function markDeprecatedGate(gate: Gate): Gate {
   };
 }
 
-export function migrateWorkflowGateProgressionToHooks<
-  T extends Pick<SpaceWorkflow, 'channels' | 'gates' | 'hooks'> &
-    Partial<Pick<SpaceWorkflow, 'nodes' | 'templateName'>>,
->(workflow: T): WorkflowMigrationResult<T> {
+export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLike>(
+  workflow: T
+): WorkflowMigrationResult<T> {
   const warnings: WorkflowMigrationWarning[] = [];
-  const generatedHookIds = new Set(
-    Object.values(KNOWN_GATE_PATTERNS).map((pattern) => pattern.hookId)
-  );
-  const initialHooks = workflow.templateName
-    ? (workflow.hooks ?? []).filter((hook) => !generatedHookIds.has(hook.id))
-    : (workflow.hooks ?? []);
-  const hooksById = new Map(initialHooks.map((hook) => [hook.id, hook]));
+  const hooksById = new Map((workflow.hooks ?? []).map((hook) => [hook.id, hook]));
   const existingHookIds = new Set(hooksById.keys());
   const gatesById = new Map((workflow.gates ?? []).map((gate) => [gate.id, gate]));
   const migratedGateIds = new Set<string>();
@@ -308,14 +333,17 @@ export function migrateWorkflowGateProgressionToHooks<
     return openChannel;
   });
 
+  const retainedGateIds = new Set(
+    channels.flatMap((channel) => ('gateId' in channel && channel.gateId ? [channel.gateId] : []))
+  );
   const gates = (workflow.gates ?? [])
-    .filter((gate) => !migratedGateIds.has(gate.id))
+    .filter((gate) => !migratedGateIds.has(gate.id) || retainedGateIds.has(gate.id))
     .map((gate) => markDeprecatedGate(gate));
 
   return {
     workflow: {
       ...workflow,
-      channels,
+      channels: workflow.channels === undefined ? undefined : channels,
       gates: gates.length > 0 ? gates : undefined,
       hooks: Array.from(hooksById.values()),
     } as T,
