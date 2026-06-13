@@ -1680,6 +1680,7 @@ export class TaskAgentManager {
       });
 
       await channelRouter.activateNode(run.id, targetNodeId, {
+        allowTerminalReopen: true,
         reopenReason: options?.reopenReason ?? `lazy activation of agent "${agentName}"`,
         reopenBy: options?.reopenBy ?? 'task-agent',
       });

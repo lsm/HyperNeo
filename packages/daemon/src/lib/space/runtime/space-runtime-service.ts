@@ -1925,7 +1925,11 @@ export class SpaceRuntimeService {
       internalEventBus: this.config.internalEventBus,
       getPrUrlForRun: (rid) => this.resolvePrUrlForRun(rid),
     });
-    return router.activateNode(runId, nodeId);
+    return router.activateNode(runId, nodeId, {
+      allowTerminalReopen: true,
+      reopenBy: 'space-runtime-service',
+      reopenReason: 'explicit workflow node activation',
+    });
   }
 
   /**
