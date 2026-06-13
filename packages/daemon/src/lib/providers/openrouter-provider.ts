@@ -72,6 +72,13 @@ function releaseDateFromCreated(created?: number): string {
   return new Date(created * 1000).toISOString().slice(0, 10);
 }
 
+function inferContextWindowFromModelId(modelId: string): number | undefined {
+  if (modelId === 'openrouter/auto') return 1_000_000;
+  const family = familyFromModelId(modelId);
+  if (family === 'opus' || family === 'sonnet' || family === 'haiku') return 200_000;
+  return undefined;
+}
+
 export class OpenRouterProvider implements Provider {
   readonly id = 'openrouter';
   readonly displayName = 'OpenRouter';
@@ -300,6 +307,18 @@ export class OpenRouterProvider implements Provider {
 
   translateModelIdForSdk(_modelId: string): string {
     return 'default';
+  }
+
+  getModelContextWindow(modelId: string): number | undefined {
+    const routedModelId = this.ownsModel(modelId)
+      ? modelId
+      : (this.getModelForTier(modelId as ModelTier) ?? OpenRouterProvider.DEFAULT_MODEL);
+    const models = this.modelCache ?? OpenRouterProvider.FALLBACK_MODELS;
+    const model = models.find((m) => m.id === routedModelId || m.alias === routedModelId);
+    if (model?.contextWindow && model.contextWindow !== this.capabilities.maxContextWindow) {
+      return model.contextWindow;
+    }
+    return inferContextWindowFromModelId(routedModelId) ?? model?.contextWindow;
   }
 
   async getAuthStatus(): Promise<ProviderAuthStatusInfo> {

@@ -61,6 +61,11 @@ export type TrackedAgentProcess = SpawnedProcess & {
   kill?: (signal?: NodeJS.Signals | number) => boolean;
 };
 
+export function withInheritedSpawnEnv(opts: SpawnOptions): SpawnOptions {
+  if (!opts.env) return opts;
+  return { ...opts, env: { ...process.env, ...opts.env } };
+}
+
 function defaultSpawn(opts: SpawnOptions): SpawnedProcess {
   const debugSdk = opts.env?.DEBUG_CLAUDE_AGENT_SDK;
   const stderr = debugSdk && debugSdk !== '0' && debugSdk !== 'false' ? 'pipe' : 'ignore';
@@ -512,8 +517,9 @@ export class QueryRunner {
       // This lets stop() await the actual process exit instead of using arbitrary delays.
       const originalSpawn = queryOptions.spawnClaudeCodeProcess;
       queryOptions.spawnClaudeCodeProcess = (opts: SpawnOptions): SpawnedProcess => {
+        const spawnOpts = withInheritedSpawnEnv(opts);
         const proc = (
-          originalSpawn ? originalSpawn(opts) : defaultSpawn(opts)
+          originalSpawn ? originalSpawn(spawnOpts) : defaultSpawn(spawnOpts)
         ) as TrackedAgentProcess;
         this.ctx.trackAgentProcess(proc);
         return proc;

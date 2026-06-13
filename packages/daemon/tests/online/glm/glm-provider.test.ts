@@ -354,10 +354,11 @@ describe('GLM Provider Integration', () => {
         const builder = new QueryOptionsBuilder({ session, settingsManager });
         const options = await builder.build();
 
-        // IMPORTANT: Provider env vars are NO LONGER passed via options.env
-        // They are now applied to process.env before SDK query creation
-        // So options.env should be undefined for Anthropic-only sessions
-        expect(options.env).toBeUndefined();
+        // IMPORTANT: Provider env vars are NO LONGER passed via options.env.
+        // They are now applied to process.env before SDK query creation.
+        expect(options.env?.GLM_API_KEY).toBeUndefined();
+        expect(options.env?.ANTHROPIC_BASE_URL).toBeUndefined();
+        expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('64000');
 
         // The model ID is translated to SDK-recognized ID
         expect(options.model).toBe('default'); // glm-5 → default (Sonnet tier)
@@ -420,8 +421,10 @@ describe('GLM Provider Integration', () => {
       const builder = new QueryOptionsBuilder({ session, settingsManager });
       const options = await builder.build();
 
-      // Anthropic should not have env overrides
-      expect(options.env).toBeUndefined();
+      // Anthropic should not have provider env overrides, but proxy vars may be present.
+      expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('64000');
+      expect(options.env?.ANTHROPIC_BASE_URL).toBeUndefined();
+      expect(options.env?.ANTHROPIC_API_KEY).toBeUndefined();
     });
 
     it('should not inject env vars for opus/haiku models', async () => {
@@ -440,8 +443,10 @@ describe('GLM Provider Integration', () => {
       const opusOptions = await opusBuilder.build();
       const haikuOptions = await haikuBuilder.build();
 
-      expect(opusOptions.env).toBeUndefined();
-      expect(haikuOptions.env).toBeUndefined();
+      expect(opusOptions.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('128000');
+      expect(haikuOptions.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('64000');
+      expect(opusOptions.env?.ANTHROPIC_BASE_URL).toBeUndefined();
+      expect(haikuOptions.env?.ANTHROPIC_BASE_URL).toBeUndefined();
     });
   });
 

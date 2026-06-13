@@ -6,7 +6,11 @@
 
 import { describe, expect, it, beforeEach, afterEach, mock, jest } from 'bun:test';
 import { tmpdir } from 'node:os';
-import { QueryRunner, type QueryRunnerContext } from '../../../../src/lib/agent/query-runner';
+import {
+  QueryRunner,
+  withInheritedSpawnEnv,
+  type QueryRunnerContext,
+} from '../../../../src/lib/agent/query-runner';
 import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session';
 import type { Session, MessageHub } from '@neokai/shared';
 import type { SDKMessage } from '@neokai/shared/sdk';
@@ -239,6 +243,41 @@ describe('QueryRunner', () => {
     it('should create runner with dependencies', () => {
       runner = createRunner();
       expect(runner).toBeDefined();
+    });
+  });
+
+  describe('withInheritedSpawnEnv', () => {
+    it('should preserve omitted env so spawn inherits process defaults', () => {
+      const opts = { command: 'node', args: [] } as Parameters<typeof withInheritedSpawnEnv>[0];
+      expect(withInheritedSpawnEnv(opts)).toBe(opts);
+    });
+
+    it('should merge explicit SDK env values over inherited process env', () => {
+      const originalPath = process.env.PATH;
+      const originalCap = process.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS;
+      process.env.PATH = '/usr/bin';
+      process.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS = '49152';
+      try {
+        const opts = withInheritedSpawnEnv({
+          command: 'node',
+          args: [],
+          env: { CLAUDE_CODE_MAX_OUTPUT_TOKENS: '64000' },
+        } as Parameters<typeof withInheritedSpawnEnv>[0]);
+
+        expect(opts.env?.PATH).toBe('/usr/bin');
+        expect(opts.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('64000');
+      } finally {
+        if (originalPath === undefined) {
+          delete process.env.PATH;
+        } else {
+          process.env.PATH = originalPath;
+        }
+        if (originalCap === undefined) {
+          delete process.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS;
+        } else {
+          process.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS = originalCap;
+        }
+      }
     });
   });
 

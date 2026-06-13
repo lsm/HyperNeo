@@ -32,8 +32,11 @@ describe('QueryOptionsBuilder', () => {
   let mockContext: QueryOptionsBuilderContext;
   let updateSessionSpy: ReturnType<typeof mock>;
   let getSDKMessagesSpy: ReturnType<typeof mock>;
+  let originalSdkOutputTokenLimit: string | undefined;
 
   beforeEach(() => {
+    originalSdkOutputTokenLimit = process.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS;
+    delete process.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS;
     mockSession = {
       id: generateUUID(),
       title: 'Test Session',
@@ -77,7 +80,13 @@ describe('QueryOptionsBuilder', () => {
     builder = new QueryOptionsBuilder(mockContext);
   });
 
-  afterEach(() => {});
+  afterEach(() => {
+    if (originalSdkOutputTokenLimit === undefined) {
+      delete process.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS;
+    } else {
+      process.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS = originalSdkOutputTokenLimit;
+    }
+  });
 
   describe('build', () => {
     it('should build basic query options', async () => {
@@ -149,7 +158,359 @@ describe('QueryOptionsBuilder', () => {
     it('should include env when configured', async () => {
       mockSession.config.env = { MY_VAR: 'value' };
       const options = await builder.build();
-      expect(options.env).toEqual({ MY_VAR: 'value' });
+      expect(options.env?.MY_VAR).toBe('value');
+      expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('64000');
+    });
+
+    it('should derive the default SDK output token cap from provider context window', async () => {
+      const options = await builder.build();
+      expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('64000');
+    });
+
+    it('should derive SDK output token caps from provider metadata, not model names', async () => {
+      resetProviderRegistry();
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'custom:small-context',
+        displayName: 'Small Context',
+        capabilities: {
+          streaming: true,
+          extendedThinking: false,
+          maxContextWindow: 32_000,
+          functionCalling: true,
+          vision: false,
+        },
+        isAvailable: () => true,
+        getModels: async () => [],
+        ownsModel: () => true,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: true }),
+        translateModelIdForSdk: () => 'default',
+      } as Provider);
+      try {
+        mockSession.config.provider = 'custom:small-context';
+        mockSession.config.model = 'anthropic/claude-opus-4.7';
+        const options = await builder.build();
+        expect(options.model).toBe('default');
+        expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('16384');
+      } finally {
+        resetProviderRegistry();
+      }
+    });
+
+    it('should cap custom endpoints at the small SDK output limit despite large contexts', async () => {
+      resetProviderRegistry();
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'custom:large-context',
+        displayName: 'Large Context',
+        capabilities: {
+          streaming: true,
+          extendedThinking: false,
+          maxContextWindow: 1_000_000,
+          functionCalling: true,
+          vision: false,
+        },
+        isAvailable: () => true,
+        getModels: async () => [],
+        ownsModel: () => true,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: true }),
+        translateModelIdForSdk: () => 'default',
+      } as Provider);
+      try {
+        mockSession.config.provider = 'custom:large-context';
+        mockSession.config.model = 'provider-native-id';
+        const options = await builder.build();
+        expect(options.model).toBe('default');
+        expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('16384');
+      } finally {
+        resetProviderRegistry();
+      }
+    });
+
+    it('should keep Anthropic Opus on the SDK maximum output limit', async () => {
+      mockSession.config.model = 'opus';
+      const options = await builder.build();
+      expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('128000');
+    });
+
+    it('should not apply the Anthropic Opus fallback cap to primary requests', async () => {
+      mockSession.config.model = 'haiku';
+      mockSession.config.fallbackModel = 'claude-opus-4-7';
+      const options = await builder.build();
+      expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('64000');
+    });
+
+    it('should not exceed Kimi bridge advertised output limit', async () => {
+      resetProviderRegistry();
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'kimi',
+        displayName: 'Kimi',
+        capabilities: {
+          streaming: true,
+          extendedThinking: true,
+          thinkingModes: 'on',
+          maxContextWindow: 262_144,
+          functionCalling: true,
+          vision: false,
+        },
+        isAvailable: () => true,
+        getModels: async () => [],
+        ownsModel: () => true,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: true }),
+        translateModelIdForSdk: () => 'default',
+      } as Provider);
+      try {
+        mockSession.config.provider = 'kimi';
+        mockSession.config.model = 'kimi-for-coding';
+        const options = await builder.build();
+        expect(options.model).toBe('default');
+        expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('32768');
+      } finally {
+        resetProviderRegistry();
+      }
+    });
+
+    it('should cap Codex bridge sessions at the advertised bridge output limit', async () => {
+      resetProviderRegistry();
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'anthropic-codex',
+        displayName: 'Codex Bridge',
+        capabilities: {
+          streaming: true,
+          extendedThinking: true,
+          thinkingModes: 'granular',
+          maxContextWindow: 272_000,
+          functionCalling: true,
+          vision: true,
+        },
+        isAvailable: () => true,
+        getModels: async () => [],
+        ownsModel: () => true,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: true }),
+        translateModelIdForSdk: () => 'default',
+      } as Provider);
+      try {
+        mockSession.config.provider = 'anthropic-codex';
+        mockSession.config.model = 'gpt-5.5';
+        const options = await builder.build();
+        expect(options.model).toBe('default');
+        expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('16384');
+      } finally {
+        resetProviderRegistry();
+      }
+    });
+
+    it('should use OpenRouter selected model context instead of provider aggregate context', async () => {
+      resetProviderRegistry();
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'openrouter',
+        displayName: 'OpenRouter',
+        capabilities: {
+          streaming: true,
+          extendedThinking: true,
+          thinkingModes: 'granular',
+          maxContextWindow: 1_000_000,
+          functionCalling: true,
+          vision: true,
+        },
+        isAvailable: () => true,
+        getModels: async () => [],
+        ownsModel: () => true,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: true }),
+        translateModelIdForSdk: () => 'default',
+        getModelContextWindow: (modelId: string) => (modelId === 'haiku' ? 200_000 : 1_000_000),
+      } as Provider);
+      try {
+        mockSession.config.provider = 'openrouter';
+        mockSession.config.model = 'haiku';
+        const options = await builder.build();
+        expect(options.model).toBe('default');
+        expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('64000');
+      } finally {
+        resetProviderRegistry();
+      }
+    });
+
+    it('should keep OpenRouter Opus models on the SDK maximum output limit', async () => {
+      resetProviderRegistry();
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'openrouter',
+        displayName: 'OpenRouter',
+        capabilities: {
+          streaming: true,
+          extendedThinking: true,
+          thinkingModes: 'granular',
+          maxContextWindow: 1_000_000,
+          functionCalling: true,
+          vision: true,
+        },
+        isAvailable: () => true,
+        getModels: async () => [],
+        ownsModel: () => true,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: true }),
+        translateModelIdForSdk: () => 'default',
+        getModelContextWindow: () => 200_000,
+      } as Provider);
+      try {
+        mockSession.config.provider = 'openrouter';
+        mockSession.config.model = 'anthropic/claude-opus-4.7';
+        const options = await builder.build();
+        expect(options.model).toBe('default');
+        expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('128000');
+      } finally {
+        resetProviderRegistry();
+      }
+    });
+
+    it('should infer OpenRouter Sonnet context when selected metadata is unresolved', async () => {
+      resetProviderRegistry();
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'openrouter',
+        displayName: 'OpenRouter',
+        capabilities: {
+          streaming: true,
+          extendedThinking: true,
+          thinkingModes: 'granular',
+          maxContextWindow: 1_000_000,
+          functionCalling: true,
+          vision: true,
+        },
+        isAvailable: () => true,
+        getModels: async () => [],
+        ownsModel: () => true,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: true }),
+        translateModelIdForSdk: () => 'default',
+        getModelContextWindow: (modelId: string) =>
+          modelId.includes('sonnet') ? 200_000 : undefined,
+      } as Provider);
+      try {
+        mockSession.config.provider = 'openrouter';
+        mockSession.config.model = 'anthropic/claude-sonnet-4.5';
+        const options = await builder.build();
+        expect(options.model).toBe('default');
+        expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('64000');
+      } finally {
+        resetProviderRegistry();
+      }
+    });
+
+    it('should prefer selected model context over aggregated provider context', async () => {
+      resetProviderRegistry();
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'custom:heterogeneous',
+        displayName: 'Heterogeneous Custom Endpoint',
+        capabilities: {
+          streaming: true,
+          extendedThinking: false,
+          maxContextWindow: 1_000_000,
+          functionCalling: true,
+          vision: false,
+        },
+        isAvailable: () => true,
+        getModels: async () => [],
+        ownsModel: () => true,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: true }),
+        translateModelIdForSdk: () => 'default',
+        getModelContextWindow: (modelId: string) =>
+          modelId === 'small-model' ? 32_000 : 1_000_000,
+      } as Provider);
+      try {
+        mockSession.config.provider = 'custom:heterogeneous';
+        mockSession.config.model = 'small-model';
+        const options = await builder.build();
+        expect(options.model).toBe('default');
+        expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('16384');
+      } finally {
+        resetProviderRegistry();
+      }
+    });
+
+    it('should not let stale custom endpoint model IDs fall back to aggregate output caps', async () => {
+      resetProviderRegistry();
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'custom:heterogeneous',
+        displayName: 'Heterogeneous Custom Endpoint',
+        capabilities: {
+          streaming: true,
+          extendedThinking: false,
+          maxContextWindow: 1_000_000,
+          functionCalling: true,
+          vision: false,
+        },
+        isAvailable: () => true,
+        getModels: async () => [],
+        ownsModel: () => false,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: true }),
+        translateModelIdForSdk: () => 'default',
+        getModelContextWindow: () => 32_000,
+      } as Provider);
+      try {
+        mockSession.config.provider = 'custom:heterogeneous';
+        mockSession.config.model = 'sonnet';
+        const options = await builder.build();
+        expect(options.model).toBe('default');
+        expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('16384');
+      } finally {
+        resetProviderRegistry();
+      }
+    });
+
+    it('should keep exactly 128k context models in the large output bucket', async () => {
+      resetProviderRegistry();
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'ollama',
+        displayName: 'Ollama',
+        capabilities: {
+          streaming: true,
+          extendedThinking: false,
+          maxContextWindow: 128_000,
+          functionCalling: true,
+          vision: false,
+        },
+        isAvailable: () => true,
+        getModels: async () => [],
+        ownsModel: () => true,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: true }),
+        translateModelIdForSdk: () => 'default',
+      } as Provider);
+      try {
+        mockSession.config.provider = 'ollama';
+        mockSession.config.model = 'qwen3-coder';
+        const options = await builder.build();
+        expect(options.model).toBe('default');
+        expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('64000');
+      } finally {
+        resetProviderRegistry();
+      }
+    });
+
+    it('should preserve an explicit SDK output token cap from session env', async () => {
+      mockSession.config.model = 'claude-opus-4-7';
+      mockSession.config.env = { CLAUDE_CODE_MAX_OUTPUT_TOKENS: '32768' };
+      const options = await builder.build();
+      expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('32768');
+    });
+
+    it('should preserve an explicit SDK output token cap from process env', async () => {
+      mockSession.config.model = 'claude-opus-4-7';
+      process.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS = '49152';
+      const options = await builder.build();
+      expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('49152');
+    });
+
+    it('should use the primary non-Opus provider context cap when fallback model names differ', async () => {
+      mockSession.config.model = 'haiku';
+      mockSession.config.fallbackModel = 'sonnet';
+      const options = await builder.build();
+      expect(options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('64000');
     });
 
     it('should preserve user auto-compact env overrides for native Anthropic', async () => {

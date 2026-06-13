@@ -269,6 +269,12 @@ export interface Provider {
    * thinking for this model.
    */
   getModelThinkingMode?(modelId: string): 'off' | 'on' | 'granular' | undefined;
+
+  /**
+   * Optional: Return the context window for a specific model when provider-level
+   * capabilities aggregate multiple heterogeneous models.
+   */
+  getModelContextWindow?(modelId: string): number | undefined;
 }
 
 /**

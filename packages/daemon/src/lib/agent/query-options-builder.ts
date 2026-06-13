@@ -126,6 +126,49 @@ const FULL_BUILTIN_TOOL_LIST = [
   'ToolSearch',
 ];
 
+const SMALL_SDK_OUTPUT_TOKEN_LIMIT = 16_384;
+const KIMI_SDK_OUTPUT_TOKEN_LIMIT = 32_768;
+const LARGE_SDK_OUTPUT_TOKEN_LIMIT = 64_000;
+const MAX_SDK_OUTPUT_TOKEN_LIMIT = 128_000;
+const SMALL_OUTPUT_BRIDGE_PROVIDER_IDS = new Set(['anthropic-codex']);
+const SMALL_OUTPUT_PROVIDER_ID_PREFIXES = ['custom:'];
+
+type SdkOutputLimitInput = {
+  providerId: string;
+  modelId: string;
+  maxContextWindow: number;
+};
+
+function isOpusModel(modelId: string): boolean {
+  const normalized = modelId.toLowerCase();
+  return normalized === 'opus' || normalized.includes('claude-opus');
+}
+
+function deriveSdkOutputTokenLimit(input: SdkOutputLimitInput): string {
+  if (
+    SMALL_OUTPUT_BRIDGE_PROVIDER_IDS.has(input.providerId) ||
+    SMALL_OUTPUT_PROVIDER_ID_PREFIXES.some((prefix) => input.providerId.startsWith(prefix))
+  ) {
+    return String(SMALL_SDK_OUTPUT_TOKEN_LIMIT);
+  }
+  if (input.providerId === 'kimi') {
+    return String(KIMI_SDK_OUTPUT_TOKEN_LIMIT);
+  }
+  if (
+    (input.providerId === 'anthropic' || input.providerId === 'openrouter') &&
+    isOpusModel(input.modelId)
+  ) {
+    return String(MAX_SDK_OUTPUT_TOKEN_LIMIT);
+  }
+  if (input.maxContextWindow >= 262_000) {
+    return String(MAX_SDK_OUTPUT_TOKEN_LIMIT);
+  }
+  if (input.maxContextWindow >= 128_000) {
+    return String(LARGE_SDK_OUTPUT_TOKEN_LIMIT);
+  }
+  return String(SMALL_SDK_OUTPUT_TOKEN_LIMIT);
+}
+
 /**
  * Agent invocation tools that must be present when agents are configured.
  */
@@ -347,6 +390,13 @@ export class QueryOptionsBuilder {
     const providerId = providerContext.provider.id;
     const modelInfo = await getSessionModelInfo(this.ctx.session);
     const sdkModelId = providerContext.getSdkModelId();
+    const primaryOutputLimitInput = {
+      providerId,
+      modelId: providerContext.modelId,
+      maxContextWindow:
+        providerContext.provider.getModelContextWindow?.(providerContext.modelId) ??
+        providerContext.provider.capabilities.maxContextWindow,
+    };
     let sdkFallbackModel: string | undefined;
     if (config.fallbackModel) {
       // For fallback model, we need to create a separate context
@@ -373,7 +423,7 @@ export class QueryOptionsBuilder {
       ...this.buildPluginsFromBuiltinSkills(),
     ];
     const mcpServersFromSkills = this.getMcpServersFromSkills();
-    const mergedEnv = this.getMergedEnvironmentVars();
+    const mergedEnv = this.getMergedEnvironmentVars(primaryOutputLimitInput);
     const sdkCliPath = this.getSDKCliPath();
 
     // Merged MCP servers: skill-injected + session-config-injected.
@@ -955,7 +1005,9 @@ CRITICAL RULES:
    *
    * @returns Merged env vars (excluding provider-specific vars)
    */
-  private getMergedEnvironmentVars(): Record<string, string> | undefined {
+  private getMergedEnvironmentVars(
+    outputLimitInput: SdkOutputLimitInput
+  ): Record<string, string> | undefined {
     const globalSettings = this.ctx.settingsManager.getGlobalSettings();
     const sessionEnv = this.ctx.session.config.env;
 
@@ -996,7 +1048,17 @@ CRITICAL RULES:
       }
     }
 
-    // 3. Explicitly include proxy environment variables for Dev Proxy support
+    // 3. Set the SDK CLI subprocess output cap. The SDK reads this from the
+    // inherited process environment and defaults to 64,000 internally. Use a
+    // lower default for ordinary models, raise it for large-output Claude
+    // primary models, and cap bridged providers to known upstream output limits.
+    // Explicit global/session/process env values above still win.
+    if (process.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS !== undefined) {
+      mergedEnv.CLAUDE_CODE_MAX_OUTPUT_TOKENS ??= process.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS;
+    }
+    mergedEnv.CLAUDE_CODE_MAX_OUTPUT_TOKENS ??= deriveSdkOutputTokenLimit(outputLimitInput);
+
+    // 4. Explicitly include proxy environment variables for Dev Proxy support
     // These are set by the dev-proxy test helper and need to be passed to the SDK subprocess
     // See: https://github.com/dotnet/dev-proxy/issues/169
     const proxyEnvVars = [
