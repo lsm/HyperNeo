@@ -454,15 +454,3 @@ export function getEffectiveGate(
     poll: pollDefinition?.poll?.() ?? gate.poll,
   };
 }
-
-export function getEffectiveGatePoll(
-  gate: Gate,
-  workflow?: SpaceWorkflow,
-  sourceNodeName?: string
-): GatePoll | undefined {
-  const definitions = getEnabledGateFeatureDefinitions(gate);
-  maybeInjectCodexFeature(gate, workflow, definitions, sourceNodeName);
-
-  const pollDefinition = definitions.find((definition) => definition.poll);
-  return pollDefinition?.poll?.() ?? gate.poll;
-}
