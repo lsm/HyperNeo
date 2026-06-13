@@ -149,6 +149,9 @@ export function SyntheticMessageBlock({
     <div
       class="border border-amber-700/50 rounded-lg overflow-hidden bg-dark-800/60"
       data-testid="synthetic-card"
+      data-message-role="synthetic"
+      data-message-uuid={uuid}
+      data-message-timestamp={timestamp || 0}
     >
       {/* Header — arrow icon + Synthetic label + optional FROM→TO route badge. */}
       <div class="flex items-center gap-2 px-3 py-2 border-b border-amber-700/50 flex-wrap">

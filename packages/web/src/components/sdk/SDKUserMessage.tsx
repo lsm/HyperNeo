@@ -419,8 +419,8 @@ export function SDKUserMessage({
   const messageContent = (
     <div
       class={cn(messageSpacing.user.container.combined, 'flex justify-end')}
-      data-testid="user-message"
-      data-message-role="user"
+      data-testid={syntheticContentBlocks ? 'synthetic-message' : 'user-message'}
+      data-message-role={syntheticContentBlocks ? 'synthetic' : 'user'}
       data-message-uuid={message.uuid ?? ''}
       data-message-timestamp={messageWithTimestamp.timestamp || 0}
     >
