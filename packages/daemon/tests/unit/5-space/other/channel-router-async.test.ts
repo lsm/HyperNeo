@@ -1485,7 +1485,7 @@ describe('ChannelRouter async gate evaluation', () => {
     /**
      * Builds a two-node workflow that mimics a seeded Coding Workflow:
      * - Uses node/agent names from CODING_WORKFLOW
-     * - Carries a STALE script in the stored code-ready-gate
+     * - Carries a STALE script in the stored review-posted-gate
      * - Has templateName set to CODING_WORKFLOW.name
      *
      * The stale script exits non-zero (which would block delivery if it ran).
@@ -1541,20 +1541,27 @@ describe('ChannelRouter async gate evaluation', () => {
       // A script that always fails — simulates a stale script with an old bug
       const STALE_FAILING_SCRIPT = 'exit 1 # stale script that has a bug';
 
-      // The gate we are patching: code-ready-gate from the CODING_WORKFLOW template
+      // The gate we are patching: review-posted-gate from the CODING_WORKFLOW template
       // For this test we stub it with a simple passing script to avoid real `gh` calls
-      const LIVE_PASSING_SCRIPT = 'echo \'{"pr_url":"https://github.com/test/pr/1"}\'';
+      const LIVE_PASSING_SCRIPT =
+        'echo \'{"pr_url":"https://github.com/test/pr/1","review_url":"https://github.com/test/pr/1#pullrequestreview-1"}\'';
 
-      // Build a gate that matches code-ready-gate's field schema but with a stale script.
+      // Build a gate that matches review-posted-gate's field schema but with a stale script.
       // The router will swap in the live template script at evaluation time.
-      const gateId = 'code-ready-gate';
+      const gateId = 'review-posted-gate';
       const gateWithStaleScript: Gate = {
         id: gateId,
         fields: [
           {
             name: 'pr_url',
             type: 'string',
-            writers: ['Coding'],
+            writers: ['Review'],
+            check: { op: 'exists' },
+          },
+          {
+            name: 'review_url',
+            type: 'string',
+            writers: ['Review'],
             check: { op: 'exists' },
           },
         ],
@@ -1581,12 +1588,15 @@ describe('ChannelRouter async gate evaluation', () => {
       try {
         const wf = buildStaleTemplateWorkflow(STALE_FAILING_SCRIPT, gateWithStaleScript);
         const run = createActiveRun(wf);
-        // Seed pr_url in gate data so the pr_url field check passes after script runs
-        gateDataRepo.set(run.id, gateId, { pr_url: 'https://github.com/test/pr/1' });
+        // Seed pr_url and review_url in gate data so the field checks pass after script runs
+        gateDataRepo.set(run.id, gateId, {
+          pr_url: 'https://github.com/test/pr/1',
+          review_url: 'https://github.com/test/pr/1#pullrequestreview-1',
+        });
 
         const router = makeRouter({ workspacePath: '/tmp' });
         // If the stale script ran, canDeliver would return { allowed: false }
-        // because exit 1 blocks the gate. The live script exits 0 with a pr_url
+        // because exit 1 blocks the gate. The live script exits 0 with the required
         // JSON object → gate opens.
         const result = await router.canDeliver(run.id, 'coder', 'planner');
         expect(result.allowed).toBe(true);

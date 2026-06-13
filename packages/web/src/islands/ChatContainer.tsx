@@ -17,6 +17,7 @@
  */
 
 import type {
+  AgentProcessingState,
   ChatMessage,
   MessageDeliveryMode,
   MessageImage,
@@ -29,7 +30,7 @@ import {
   DEFAULT_WORKER_FEATURES,
   normalizeThinkingLevel,
 } from '@neokai/shared';
-import type { SDKSystemMessage } from '@neokai/shared/sdk/sdk.d.ts';
+import type { SDKMessage, SDKSystemMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import { useSignalEffect } from '@preact/signals';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { ArchiveConfirmDialog } from '../components/ArchiveConfirmDialog.tsx';
@@ -76,6 +77,14 @@ import { toast } from '../lib/toast.ts';
 import { cn } from '../lib/utils';
 import type { StructuredError } from '../types/error.ts';
 import { ErrorCategory } from '../types/error.ts';
+
+export function shouldBlockForPendingQuestion(
+  agentState: AgentProcessingState,
+  messages: SDKMessage[]
+): agentState is Extract<AgentProcessingState, { status: 'waiting_for_input' }> {
+  const lastMessage = messages.length > 0 ? messages[messages.length - 1] : null;
+  return agentState.status === 'waiting_for_input' && lastMessage?.type !== 'result';
+}
 
 export async function sendChatContainerMessage({
   content,
@@ -531,7 +540,7 @@ export default function ChatContainer({
 
   // Derived processing state
   const isProcessing = agentState.status === 'processing' || agentState.status === 'queued';
-  const isWaitingForInput = agentState.status === 'waiting_for_input';
+  const isWaitingForInput = shouldBlockForPendingQuestion(agentState, messages as SDKMessage[]);
   const pendingQuestion = isWaitingForInput ? agentState.pendingQuestion : null;
 
   const {

@@ -26,12 +26,14 @@ import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import type { ActiveTurnSummary, ActivityEntry, ActorMessageDeliveryState } from '@neokai/shared';
 import {
   isSDKAssistantMessage,
+  isSDKCompactBoundary,
   isSDKResultMessage,
   isSDKSystemInit,
   isToolUseBlock,
 } from '@neokai/shared/sdk/type-guards';
 
 type SystemInitMessage = Extract<SDKMessage, { type: 'system'; subtype: 'init' }>;
+type CompactBoundaryMessage = Extract<SDKMessage, { type: 'system'; subtype: 'compact_boundary' }>;
 type ResultMessage = Extract<SDKMessage, { type: 'result' }>;
 import { useEffect, useState } from 'preact/hooks';
 import MarkdownRenderer from '../../../chat/MarkdownRenderer.tsx';
@@ -199,6 +201,22 @@ interface ActiveFeedTurn {
   sessionId: string | null;
 }
 
+interface CompactBoundaryFeedTurn {
+  state: 'compact_boundary';
+  id: string;
+  agent: string;
+  agentKind: 'task_agent' | 'node_agent';
+  agentRole: string;
+  agentNodeExecutionId?: string | null;
+  createdAt: number;
+  trigger: 'manual' | 'auto';
+  preTokens: number;
+  postTokens?: number;
+  durationMs?: number;
+  sessionId: string | null;
+  highlightMessageUuid?: string;
+}
+
 interface MessageFeedTurn {
   state: 'message';
   id: string;
@@ -234,7 +252,7 @@ interface MessageFeedTurn {
   sessionInit?: SystemInitMessage;
 }
 
-type FeedTurn = CompletedFeedTurn | ActiveFeedTurn | MessageFeedTurn;
+type FeedTurn = CompletedFeedTurn | ActiveFeedTurn | CompactBoundaryFeedTurn | MessageFeedTurn;
 
 const ROSTER_MAX_ENTRIES = 8;
 
@@ -613,6 +631,30 @@ function extractUserMessageText(row: ParsedThreadRow): { body: string; fallback:
   return { body: '', fallback: false };
 }
 
+function buildCompactBoundaryTurn(row: ParsedThreadRow): CompactBoundaryFeedTurn | null {
+  if (!row.message || !isSDKCompactBoundary(row.message)) return null;
+  const metadata = (row.message as CompactBoundaryMessage).compact_metadata;
+  const highlightUuid =
+    typeof (row.message as { uuid?: unknown }).uuid === 'string'
+      ? ((row.message as { uuid: string }).uuid as string)
+      : undefined;
+  return {
+    state: 'compact_boundary',
+    id: `compact-boundary-${String(row.id)}`,
+    agent: row.label,
+    agentKind: row.kind,
+    agentRole: row.role,
+    agentNodeExecutionId: row.nodeExecutionId ?? null,
+    createdAt: row.createdAt,
+    trigger: metadata.trigger,
+    preTokens: metadata.pre_tokens,
+    postTokens: metadata.post_tokens,
+    durationMs: metadata.duration_ms,
+    sessionId: row.sessionId,
+    highlightMessageUuid: highlightUuid,
+  };
+}
+
 function buildMessageTurn(
   row: ParsedThreadRow,
   previousAgentLabel: string | null,
@@ -731,14 +773,15 @@ function buildFeedTurns(
       if (pendingAgentRows.length === 0) return;
       const turnId = `${block.id}:${String(pendingAgentRows[0].id)}`;
       const sessionId = latestSessionId(pendingAgentRows);
-      const transitionSummary = rowsContainResult(pendingAgentRows, blockResult)
+      const resultInfo = rowsContainResult(pendingAgentRows, blockResult) ? blockResult : undefined;
+      const transitionSummary = resultInfo
         ? summaryMatchesTurn(
             sessionId ? summariesBySession.get(sessionId) : undefined,
             pendingAgentRows
           )
         : undefined;
       turns.push(
-        buildCompletedTurn(block, pendingAgentRows, turnId, blockResult, transitionSummary)
+        buildCompletedTurn(block, pendingAgentRows, turnId, resultInfo, transitionSummary)
       );
       perAgentTrailing.set(blockKey, {
         turnIdx: turns.length - 1,
@@ -749,6 +792,12 @@ function buildFeedTurns(
     };
 
     for (const row of block.rows) {
+      const compactBoundaryTurn = buildCompactBoundaryTurn(row);
+      if (compactBoundaryTurn) {
+        flushAgent();
+        turns.push(compactBoundaryTurn);
+        continue;
+      }
       if (isUserRow(row)) {
         flushAgent();
         turns.push(buildMessageTurn(row, previousAgentLabel, blockInit));
@@ -1245,6 +1294,86 @@ function HumanMessageTurn({ turn }: { turn: MessageFeedTurn }) {
  *   • An "open in session" callback that pops the session overlay scrolled
  *     to this synthetic message.
  */
+function CompactBoundaryTurn({
+  turn,
+  overlayTaskId,
+}: {
+  turn: CompactBoundaryFeedTurn;
+  overlayTaskId?: string;
+}) {
+  const color = getAgentColor(turn.agent);
+  const tokenDelta =
+    typeof turn.postTokens === 'number' ? Math.max(0, turn.preTokens - turn.postTokens) : null;
+  const tokenSummary = `${turn.preTokens.toLocaleString()} → ${turn.postTokens?.toLocaleString() ?? '—'} tokens`;
+  const openSession = turn.sessionId
+    ? () => {
+        if (overlayTaskId && turn.agentKind === 'node_agent') {
+          pushOverlayHistory(turn.sessionId as string, turn.agent, turn.highlightMessageUuid, {
+            taskId: overlayTaskId,
+            agentName: turn.agentRole,
+            ...(turn.agentNodeExecutionId ? { nodeExecutionId: turn.agentNodeExecutionId } : {}),
+          });
+        } else {
+          pushOverlayHistory(turn.sessionId as string, turn.agent, turn.highlightMessageUuid);
+        }
+      }
+    : undefined;
+  const card = (
+    <div class="w-full rounded-lg border border-yellow-300/50 bg-yellow-400/10 px-3 py-2 text-yellow-100 shadow-sm shadow-yellow-950/20 dark:border-yellow-400/30 dark:bg-yellow-400/10">
+      <div class="flex items-center justify-between gap-3">
+        <div class="flex items-center gap-2 min-w-0">
+          <span class="h-2 w-2 rounded-full bg-yellow-300 shadow-[0_0_10px_rgba(253,224,71,0.65)]" />
+          <span class="text-xs font-semibold uppercase tracking-[0.16em] text-yellow-200">
+            Compact Boundary
+          </span>
+          <span class="text-[11px] text-yellow-300/80" style={{ color }}>
+            {shortAgentName(turn.agent)}
+          </span>
+        </div>
+        <span class="shrink-0 text-[11px] text-yellow-200/70">{formatClock(turn.createdAt)}</span>
+      </div>
+      <div class="mt-2 flex flex-wrap items-center gap-2 text-xs text-yellow-100/90">
+        <span class="rounded-full border border-yellow-300/30 bg-yellow-300/10 px-2 py-0.5 font-medium capitalize text-yellow-100">
+          {turn.trigger}
+        </span>
+        <span>{tokenSummary}</span>
+        {tokenDelta !== null ? (
+          <span class="text-yellow-200/75">saved {tokenDelta.toLocaleString()}</span>
+        ) : null}
+        {typeof turn.durationMs === 'number' ? (
+          <span class="text-yellow-200/75">
+            {formatDuration(Math.max(1, Math.round(turn.durationMs / 1000)))}
+          </span>
+        ) : null}
+      </div>
+    </div>
+  );
+
+  return (
+    <div
+      data-testid="minimal-thread-turn"
+      data-turn-state="compact_boundary"
+      data-agent-label={turn.agent}
+      data-agent-color={color}
+    >
+      {openSession ? (
+        <button
+          type="button"
+          class="w-full rounded-lg text-left transition-colors hover:bg-yellow-400/5 focus:outline-none focus-visible:ring-2 focus-visible:ring-yellow-300/60"
+          onClick={openSession}
+          title="Open session"
+          aria-label={`Open ${turn.agent} session at compact boundary`}
+          data-testid="minimal-thread-compact-boundary"
+        >
+          {card}
+        </button>
+      ) : (
+        <div data-testid="minimal-thread-compact-boundary">{card}</div>
+      )}
+    </div>
+  );
+}
+
 function SyntheticMessageTurn({
   turn,
   overlayTaskId,
@@ -1313,6 +1442,9 @@ function SyntheticMessageTurn({
 }
 
 function MinimalTurnRow({ turn, overlayTaskId }: { turn: FeedTurn; overlayTaskId?: string }) {
+  if (turn.state === 'compact_boundary') {
+    return <CompactBoundaryTurn turn={turn} overlayTaskId={overlayTaskId} />;
+  }
   if (turn.state === 'message') {
     return turn.isSynthetic ? (
       <SyntheticMessageTurn turn={turn} overlayTaskId={overlayTaskId} />

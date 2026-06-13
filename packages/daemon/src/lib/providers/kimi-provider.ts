@@ -182,6 +182,7 @@ export class KimiProvider implements Provider {
         ANTHROPIC_API_KEY: '',
         ANTHROPIC_AUTH_TOKEN: '',
         API_TIMEOUT_MS: '3000000',
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW: '262144',
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
         ANTHROPIC_DEFAULT_HAIKU_MODEL: routingModelId,
         ANTHROPIC_DEFAULT_SONNET_MODEL: routingModelId,

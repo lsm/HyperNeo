@@ -471,7 +471,7 @@ describe('SDKMessageRenderer', () => {
       expect(container.querySelector('[data-testid="user-message"]')).toBeTruthy();
     });
 
-    it('should not show rewind UI for synthetic messages', () => {
+    it('should show rewind UI for synthetic messages', () => {
       const message = {
         ...createUserMessage('Synthetic message'),
         isSynthetic: true,
@@ -486,8 +486,8 @@ describe('SDKMessageRenderer', () => {
         />
       );
 
-      // Should not have rewind button (synthetic messages use SyntheticMessageBlock component)
-      expect(container.querySelector('button[title="Rewind to here"]')).toBeFalsy();
+      // Synthetic messages use the shared user message toolbar.
+      expect(container.querySelector('button[title="Rewind to here"]')).toBeTruthy();
     });
 
     it('should not show rewind UI for result messages (only user messages have rewind)', () => {

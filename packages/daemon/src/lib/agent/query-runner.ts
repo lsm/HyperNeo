@@ -33,6 +33,7 @@ import {
   SPACE_WORKFLOW_WORKER_REQUIRED_MCP_SERVERS,
 } from '../space/runtime/space-mcp-session-policy';
 import type { OriginalEnvVars } from '../provider-service';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 // Re-exported for callers that import OriginalEnvVars from this module — canonical definition lives in provider-service.ts.
 export type { OriginalEnvVars } from '../provider-service';
 
@@ -118,6 +119,7 @@ export interface QueryRunnerContext {
   readonly session: Session;
   readonly db: Database;
   readonly messageHub: MessageHub;
+  readonly internalEventBus: InternalEventBus<DaemonInternalEventMap>;
   readonly messageQueue: MessageQueue;
   readonly stateManager: ProcessingStateManager;
   readonly errorManager: ErrorManager;

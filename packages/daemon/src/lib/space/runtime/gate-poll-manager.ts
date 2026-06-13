@@ -22,7 +22,13 @@
  * - All state is in-memory only; no DB persistence needed
  */
 
-import { resolveNodeAgents, type Gate, type GatePoll, type SpaceWorkflow } from '@neokai/shared';
+import {
+  resolveNodeAgents,
+  type Gate,
+  type GatePoll,
+  type SpaceWorkflow,
+  type WorkflowHook,
+} from '@neokai/shared';
 import { Logger } from '../../logger';
 import { getEffectiveGatePoll } from './gate-features';
 import { buildRestrictedEnv, collectWithMaxBuffer, MAX_BUFFER_BYTES } from './gate-script-executor';
@@ -38,6 +44,35 @@ export const MIN_POLL_INTERVAL_MS = 10_000;
 
 /** Default script timeout for poll scripts (30 seconds). */
 const DEFAULT_POLL_SCRIPT_TIMEOUT_MS = 30_000;
+const PR_READY_REVIEW_THREADS_POLL_INTERVAL_MS = 30_000;
+const PR_READY_REVIEW_THREADS_POLL_SCRIPT = [
+  'GATE_PR_URL=$(jq -r \'.pr_url // empty\' <<< "${NEOKAI_GATE_DATA_JSON:-{}}" 2>/dev/null || true)',
+  'PR_URL="${GATE_PR_URL:-${PR_URL:-}}"',
+  'if [ -z "$PR_URL" ]; then',
+  '  PR_URL=$(gh pr view --json url -q .url 2>/dev/null || true)',
+  'fi',
+  'if [ -z "$PR_URL" ]; then',
+  '  exit 0',
+  'fi',
+  'if [[ ! "$PR_URL" =~ ^https://([^/]+)/([^/]+)/([^/]+)/pull/([0-9]+) ]]; then',
+  '  exit 0',
+  'fi',
+  'PR_HOST="${BASH_REMATCH[1]}"',
+  'OWNER="${BASH_REMATCH[2]}"',
+  'REPO="${BASH_REMATCH[3]}"',
+  'NUMBER="${BASH_REMATCH[4]}"',
+  'GH_HOST_ARGS=()',
+  'if [ -n "$PR_HOST" ]; then GH_HOST_ARGS=(--hostname "$PR_HOST"); fi',
+  'THREADS=$(gh api graphql "${GH_HOST_ARGS[@]}" -f owner="$OWNER" -f name="$REPO" -F number="$NUMBER" -f query=\'query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100){nodes{isResolved comments(last:1){nodes{url body createdAt}}}}}}}\' 2>/dev/null || true)',
+  'if [ -z "$THREADS" ]; then',
+  '  exit 0',
+  'fi',
+  'SUMMARY=$(jq -r \'.data.repository.pullRequest.reviewThreads.nodes[]? | select(.isResolved == false) | .comments.nodes[-1] | select(.url != null) | "- " + .url + " (" + (.createdAt // "unknown") + ")\\n" + ((.body // "") | split("\\n") | .[0:8] | join("\\n"))\' <<< "$THREADS" 2>/dev/null || true)',
+  'if [ -z "$SUMMARY" ]; then',
+  '  exit 0',
+  'fi',
+  'printf "Unresolved GitHub review conversations on %s (latest comments):\\n%s\\n" "$PR_URL" "$SUMMARY"',
+].join('\n');
 
 // ---------------------------------------------------------------------------
 // Context resolution
@@ -275,10 +310,52 @@ interface PolledGate {
   poll: GatePoll;
   /** The channel `from` value that caused this poll (for source-scoped Codex). */
   sourceName: string;
+  targetNodeName?: string;
+}
+
+function getPrReadyHookPolls(workflow: SpaceWorkflow): PolledGate[] {
+  const result: PolledGate[] = [];
+  const seen = new Set<string>();
+
+  for (const hook of workflow.hooks ?? []) {
+    if (!isPrReadySendMessageHook(hook) || !hook.targetNode) continue;
+    const sourceNodeNames = resolveSourceNodeNamesByRef(workflow, hook.sourceNode);
+    for (const sourceName of sourceNodeNames) {
+      const sourceNode = workflow.nodes.find((node) => node.name === sourceName);
+      if (!sourceNode) continue;
+      const targetNode = resolveNodeNameByRef(workflow, hook.targetNode);
+      if (!targetNode) continue;
+      const key = `${hook.id}:${sourceName}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      result.push({
+        gate: { id: `__hook_poll__-${hook.id}-${sourceName}-${targetNode}`, resetOnCycle: false },
+        poll: {
+          intervalMs: hook.poll?.intervalMs ?? PR_READY_REVIEW_THREADS_POLL_INTERVAL_MS,
+          target: 'from',
+          script: PR_READY_REVIEW_THREADS_POLL_SCRIPT,
+          messageTemplate: 'PR review thread update:\n{{output}}',
+        },
+        sourceName,
+        targetNodeName: sourceName,
+      });
+    }
+  }
+
+  return result;
+}
+
+function isPrReadySendMessageHook(hook: WorkflowHook): boolean {
+  return (
+    hook.enabled !== false &&
+    hook.method === 'send_message' &&
+    hook.validator.kind === 'built_in' &&
+    hook.validator.id === 'pr_ready'
+  );
 }
 
 function getPolledGates(workflow: SpaceWorkflow): PolledGate[] {
-  const result: PolledGate[] = [];
+  const result: PolledGate[] = getPrReadyHookPolls(workflow);
   const nativeSeen = new Set<string>();
   const injectedSeen = new Set<string>();
 
@@ -432,7 +509,7 @@ export class GatePollManager {
       return;
     }
 
-    for (const { gate, poll, sourceName } of polledGates) {
+    for (const { gate, poll, sourceName, targetNodeName: explicitTargetNodeName } of polledGates) {
       const key = `${runId}:${gate.id}:${sourceName}`;
 
       // Validate interval — skip polls with malformed intervalMs (e.g. NaN, string)
@@ -451,7 +528,8 @@ export class GatePollManager {
       const intervalMs = Math.max(poll.intervalMs, MIN_POLL_INTERVAL_MS);
 
       // Resolve target node scoped to the channel source
-      const targetNodeName = resolveTargetNodeName(gate.id, workflow, poll.target, sourceName);
+      const targetNodeName =
+        explicitTargetNodeName ?? resolveTargetNodeName(gate.id, workflow, poll.target, sourceName);
       if (!targetNodeName) {
         log.warn(
           `GatePollManager: skipping poll for gate "${gate.id}" — no channel references this gate (source=${sourceName})`
@@ -641,7 +719,9 @@ export class GatePollManager {
     const latestPolledKeys = new Set<string>();
 
     // Start or update polls for gates that now have poll config
-    for (const { gate, poll, sourceName } of getPolledGates(latestWorkflow)) {
+    for (const { gate, poll, sourceName, targetNodeName: explicitTargetNodeName } of getPolledGates(
+      latestWorkflow
+    )) {
       const key = `${runId}:${gate.id}:${sourceName}`;
       const existing = this.activePolls.get(key);
 
@@ -660,12 +740,9 @@ export class GatePollManager {
       const intervalMs = Math.max(poll.intervalMs, MIN_POLL_INTERVAL_MS);
 
       // Resolve target node scoped to the channel source
-      const targetNodeName = resolveTargetNodeName(
-        gate.id,
-        latestWorkflow,
-        poll.target,
-        sourceName
-      );
+      const targetNodeName =
+        explicitTargetNodeName ??
+        resolveTargetNodeName(gate.id, latestWorkflow, poll.target, sourceName);
       if (!targetNodeName) {
         log.warn(
           `GatePollManager.refreshPolls: skipping gate "${gate.id}" — no channel references this gate (source=${sourceName})`

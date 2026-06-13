@@ -21,6 +21,7 @@ import {
 } from 'node:fs';
 import * as path from 'path';
 import * as os from 'os';
+import type { ProviderCredentials } from '@neokai/shared/provider';
 import { AnthropicToCodexBridgeProvider } from '../../../../src/lib/providers/anthropic-to-codex-bridge-provider';
 
 // ---------------------------------------------------------------------------
@@ -419,6 +420,56 @@ describe('AnthropicToCodexBridgeProvider', () => {
       }
     });
 
+    it('reuses the same bridge server after OAuth token refresh', async () => {
+      const tmpDir = mkdtempSync(path.join(os.tmpdir(), 'neokai-build-cfg-refresh-'));
+      try {
+        const neokaiDir = path.join(tmpDir, 'neokai');
+        const accessToken1 = makeJwt({
+          'https://api.openai.com/auth': { chatgpt_account_id: 'acct_refresh' },
+          jti: 'token-1',
+        });
+        writeNeokaiAuth(neokaiDir, {
+          type: 'oauth',
+          access: accessToken1,
+          refresh: 'refresh-token-1',
+        });
+        const p = makeProvider({}, neokaiDir, path.join(tmpDir, 'codex'));
+        await p.getApiKey();
+
+        const cfg1 = p.buildSdkConfig('gpt-5.3-codex', { workspacePath: '/tmp/ws-refresh' });
+        const port1 = new URL(cfg1.envVars.ANTHROPIC_BASE_URL as string).port;
+
+        // Simulate token rotation while preserving account identity.
+        const accessToken2 = makeJwt({
+          'https://api.openai.com/auth': { chatgpt_account_id: 'acct_refresh' },
+          jti: 'token-2',
+        });
+        p.setCredentials({
+          type: 'oauth',
+          accessToken: accessToken2,
+          refreshToken: 'refresh-token-2',
+          expiresAt: Date.now() + 3600_000,
+          raw: { accountId: 'acct_refresh' },
+        } as ProviderCredentials);
+
+        const cfg2 = p.buildSdkConfig('gpt-5.3-codex', { workspacePath: '/tmp/ws-refresh' });
+        const port2 = new URL(cfg2.envVars.ANTHROPIC_BASE_URL as string).port;
+
+        expect(port2).toBe(port1);
+
+        // The original port must still be reachable: the bridge was not killed.
+        const resp = await fetch(`${cfg1.envVars.ANTHROPIC_BASE_URL}/v1/models`);
+        expect(resp.status).toBe(200);
+
+        const servers = (p as unknown as { bridgeServers: Map<string, unknown> }).bridgeServers;
+        expect(servers.size).toBe(1);
+
+        p.stopAllBridgeServers();
+      } finally {
+        rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
     it('recreates a Responses bridge when resolved auth changes', async () => {
       const tmpDir = mkdtempSync(path.join(os.tmpdir(), 'neokai-build-cfg-auth-change-'));
       const originalFetch = globalThis.fetch;
@@ -644,6 +695,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('claude-opus-4-7');
       expect(cfg.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('claude-sonnet-4-20250514');
       expect(cfg.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('claude-opus-4-7');
+      expect(cfg.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('272000');
     });
 
     it('routes GPT-5.5 through the 1 M SDK alias while keeping Codex context metadata', async () => {
@@ -668,6 +720,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
       const cfg = provider.buildSdkConfig('codex-mini', { workspacePath: '/tmp/ws-mini' });
       expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('claude-sonnet-4-20250514');
       expect(cfg.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('claude-sonnet-4-20250514');
+      expect(cfg.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('128000');
     });
 
     it('keeps the SDK sonnet tier on the mini Anthropic ID for GPT-5.1 mini sessions', () => {
