@@ -3,15 +3,19 @@
  * Does NOT import dev-server.ts or Vite — only production code.
  */
 
-import { getConfig } from '@neokai/daemon/config';
-import { parseArgs, getHelpText } from './src/cli-utils';
-import { startProdServer } from './src/prod-server-embedded';
-import { version } from './package.json';
+export {};
 
 if (process.argv[2] === '--neokai-acp-mcp-proxy') {
   const { startAcpMcpProxy } = await import('@neokai/daemon/lib/acp/mcp-proxy-entry');
   startAcpMcpProxy(process.argv.slice(3));
 } else {
+  const [{ getConfig }, { parseArgs, getHelpText }, { startProdServer }, { version }] =
+    await Promise.all([
+      import('@neokai/daemon/config'),
+      import('./src/cli-utils'),
+      import('./src/prod-server-embedded'),
+      import('./package.json'),
+    ]);
   // The SDK CLI binary is no longer embedded in the compiled binary.
   // Instead, the runtime resolver (sdk-cli-resolver.ts) downloads it
   // on first use and caches it at ~/.neokai/sdk/. This keeps the

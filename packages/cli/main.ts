@@ -1,11 +1,14 @@
 #!/usr/bin/env bun
-import { getConfig } from '@neokai/daemon/config';
-import { parseArgs, getHelpText } from './src/cli-utils';
+export {};
 
 if (process.argv[2] === '--neokai-acp-mcp-proxy') {
   const { startAcpMcpProxy } = await import('@neokai/daemon/lib/acp/mcp-proxy-entry');
   startAcpMcpProxy(process.argv.slice(3));
 } else {
+  const [{ getConfig }, { parseArgs, getHelpText }] = await Promise.all([
+    import('@neokai/daemon/config'),
+    import('./src/cli-utils'),
+  ]);
   // Parse CLI arguments
   const { options: cliOptions, error } = parseArgs(process.argv.slice(2));
 

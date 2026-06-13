@@ -42,6 +42,7 @@ const PROXIED_SERVER_NAMES = new Set([
   'node-agent',
   'node-agent-tools',
   'agent-memory',
+  'db-query',
 ]);
 
 export class AcpMcpProxyBridge {
