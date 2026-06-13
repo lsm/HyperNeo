@@ -1713,6 +1713,13 @@ export interface Gate {
    * Undefined = no polling (default, backward compatible).
    */
   poll?: GatePoll;
+  /** Legacy custom gate deprecation metadata surfaced by workflow hook migration. */
+  legacyGateMetadata?: {
+    deprecated: true;
+    badge: string;
+    docsUrl: string;
+    deprecationReason: string;
+  };
 }
 
 /**

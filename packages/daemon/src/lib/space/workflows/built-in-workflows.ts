@@ -1258,6 +1258,14 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
  * in that case.
  */
 export function getBuiltInGateScript(templateName: string, gateId: string): GateScript | undefined {
+  if (
+    gateId === 'validation-complete-gate' ||
+    gateId === 'review-posted-gate' ||
+    gateId === 'plan-approval-gate' ||
+    gateId === 'review-approval-gate'
+  ) {
+    return undefined;
+  }
   const template = getBuiltInWorkflows().find((t) => t.name === templateName);
   if (!template) return undefined;
   const gate = (template.gates ?? []).find((g) => g.id === gateId);

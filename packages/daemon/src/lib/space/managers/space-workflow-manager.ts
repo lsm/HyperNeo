@@ -103,7 +103,10 @@ export class SpaceWorkflowManager {
     this.validateStartNodeId(startNodeId, nodes);
     this.validateEndNodeId(endNodeId, nodes);
 
-    params = migrateWorkflowGateProgressionToHooks(params).workflow;
+    params = migrateWorkflowGateProgressionToHooks({
+      ...params,
+      nodes: nodes as SpaceWorkflow['nodes'],
+    }).workflow;
 
     if (params.channels && params.channels.length > 0) {
       this.validateChannels(params.channels);
@@ -340,12 +343,17 @@ export class SpaceWorkflowManager {
       channels: params.channels === undefined ? existing.channels : (params.channels ?? undefined),
       gates: params.gates === undefined ? existing.gates : (params.gates ?? undefined),
       hooks: params.hooks === undefined ? existing.hooks : (params.hooks ?? undefined),
+      nodes: effectiveNodes as SpaceWorkflow['nodes'],
+      templateName:
+        params.templateName === undefined
+          ? existing.templateName
+          : (params.templateName ?? undefined),
     }).workflow;
     params = {
       ...params,
-      channels: migrated.channels,
-      gates: migrated.gates,
-      hooks: migrated.hooks,
+      channels: migrated.channels ?? [],
+      gates: migrated.gates ?? [],
+      hooks: migrated.hooks ?? [],
     };
 
     const effectiveChannels =

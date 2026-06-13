@@ -446,6 +446,9 @@ export class WorkflowHookEngine {
           break;
 
         case 'block':
+          if (result.data && typeof result.data === 'object') {
+            stateUpdates.push({ hookId: hook.id, state: result.data as Record<string, unknown> });
+          }
           if ((hook.classification ?? 'validation') === 'validation') {
             blockedByValidation = { hookId: hook.id, result, isRetryable: false };
           }
