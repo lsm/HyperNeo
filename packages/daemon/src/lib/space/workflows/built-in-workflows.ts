@@ -1828,6 +1828,23 @@ function remapTemplateHook(
   };
 }
 
+function equivalentGeneratedHook(
+  existingHook: NonNullable<SpaceWorkflow['hooks']>[number],
+  templateHook: NonNullable<SpaceWorkflow['hooks']>[number]
+): boolean {
+  return (
+    existingHook.method === templateHook.method &&
+    existingHook.sourceNode === templateHook.sourceNode &&
+    existingHook.targetNode === templateHook.targetNode &&
+    existingHook.classification === templateHook.classification &&
+    existingHook.validator.kind === 'script' &&
+    templateHook.validator.kind === 'script' &&
+    existingHook.validator.source === templateHook.validator.source &&
+    JSON.stringify(existingHook.authorizedCallers ?? []) ===
+      JSON.stringify(templateHook.authorizedCallers ?? [])
+  );
+}
+
 function mergeHooksFromTemplate(
   templateHooks: SpaceWorkflow['hooks'],
   templateNodes: WorkflowNode[],
@@ -1839,8 +1856,19 @@ function mergeHooksFromTemplate(
   if (!existingHooks || existingHooks.length === 0) return remappedTemplateHooks;
 
   const templateHookIds = new Set(remappedTemplateHooks.map((hook) => hook.id));
+  const equivalentTemplateHooks = new Set(
+    existingHooks
+      .filter((existingHook) =>
+        remappedTemplateHooks.some((templateHook) =>
+          equivalentGeneratedHook(existingHook, templateHook)
+        )
+      )
+      .map((hook) => hook.id)
+  );
   return [
-    ...existingHooks.filter((hook) => !templateHookIds.has(hook.id)),
+    ...existingHooks.filter(
+      (hook) => !templateHookIds.has(hook.id) && !equivalentTemplateHooks.has(hook.id)
+    ),
     ...remappedTemplateHooks,
   ];
 }

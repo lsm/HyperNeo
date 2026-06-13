@@ -2565,6 +2565,8 @@ describe('seedBuiltInWorkflows()', () => {
     const source = hook?.validator.kind === 'script' ? hook.validator.source : '';
     expect(source).toContain('ALLOWED_HOST="${GH_HOST:-github.com}"');
     expect(source).toContain('PR host ${PR_HOST} is not allowed for GitHub lookups');
+    expect(source).toContain('[ "$COMMENT_OK" != "0" ] || [ "$REACTION_OK" != "0" ]');
+    expect(source).toContain('codex_reaction_count');
     expect(source).toContain('codex_approved":false');
     expect(source).toContain('codex_timed_out":true');
   });
@@ -2778,6 +2780,54 @@ describe('seedBuiltInWorkflows()', () => {
           hook.id.startsWith('review-posted:')
       )
     ).toBe(true);
+  });
+
+  test('re-stamp reuses renamed generated route hooks', () => {
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const plan = manager
+      .listWorkflows(SPACE_ID)
+      .find((w) => w.name === PLAN_AND_DECOMPOSE_WORKFLOW.name)!;
+    const planReviewNode = plan.nodes.find((node) => node.name === 'Plan Review')!;
+    const dispatcherNode = plan.nodes.find((node) => node.name === 'Task Dispatcher')!;
+    db.prepare(`UPDATE space_workflow_nodes SET name = ? WHERE id = ?`).run(
+      'Plan Review Renamed',
+      planReviewNode.id
+    );
+    db.prepare(`UPDATE space_workflow_nodes SET name = ? WHERE id = ?`).run(
+      'Dispatch Renamed',
+      dispatcherNode.id
+    );
+    const remappedTemplateHook = getBuiltInWorkflows()
+      .find((workflow) => workflow.name === PLAN_AND_DECOMPOSE_WORKFLOW.name)!
+      .hooks!.find(
+        (hook) => hook.sourceNode === 'Plan Review' && hook.targetNode === 'Task Dispatcher'
+      )!;
+    repo.updateWorkflow(plan.id, {
+      hooks: [
+        {
+          ...remappedTemplateHook,
+          id: 'plan-approval:renamed-route',
+          sourceNode: 'Plan Review Renamed',
+          targetNode: 'Dispatch Renamed',
+          authorizedCallers: [{ sourceNode: 'Plan Review Renamed' }],
+        },
+      ],
+    });
+
+    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+      'renamed-generated-hook-restamp',
+      plan.id
+    );
+
+    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    expect(result.restamped).toContain(PLAN_AND_DECOMPOSE_WORKFLOW.name);
+    expect(result.errors).toHaveLength(0);
+
+    const after = manager.getWorkflow(plan.id)!;
+    const approvalHooks = after.hooks?.filter(
+      (hook) => hook.sourceNode === 'Plan Review Renamed' && hook.targetNode === 'Dispatch Renamed'
+    );
+    expect(approvalHooks).toHaveLength(1);
   });
 
   test('re-stamp preserves user-added custom hooks while updating template hooks', () => {
