@@ -189,7 +189,7 @@ export function PendingHookBanner({
               });
             }
 
-            if (hook.status === 'blocked_by_hook') {
+            if (hook.status === 'blocked_by_hook' && hook.allowHumanApproval) {
               actions.push(
                 {
                   label: 'Approve',

@@ -49,7 +49,8 @@ import { evaluateHookStatus } from '../use-run-hook-states';
 
 function makeHookState(
   hookId: string,
-  status: WorkflowHookStateSnapshot['lastResult']['type']
+  status: WorkflowHookStateSnapshot['lastResult']['type'],
+  options: { allowHumanApproval?: boolean } = {}
 ): WorkflowHookStateSnapshot {
   return {
     runId: 'r1',
@@ -58,7 +59,11 @@ function makeHookState(
     localState: {},
     lastResult:
       status === 'block'
-        ? { type: 'block', reason: 'Needs approval' }
+        ? {
+            type: 'block',
+            reason: 'Needs approval',
+            data: options.allowHumanApproval ? { allowHumanApproval: true } : undefined,
+          }
         : status === 'retryable_block'
           ? { type: 'retryable_block', reason: 'Retry me' }
           : { type: 'allow' },
@@ -152,10 +157,25 @@ describe('PendingHookBanner', () => {
     expect(queryByTestId('pending-hook-fetch-error')).toBeNull();
   });
 
-  it('renders the banner for a blocked_by_hook hook', async () => {
+  it('renders the banner for a blocked_by_hook hook without approval actions by default', async () => {
     workflowsSignal.value = [makeWorkflow([{ id: 'h1', label: 'Merge Check' }])];
     mockRequest.mockResolvedValue({
       hookStates: [makeHookState('h1', 'block')],
+      hooks: makeWorkflow([{ id: 'h1', label: 'Merge Check' }]).hooks,
+    });
+    const { findByTestId, queryByTestId } = render(
+      <PendingHookBanner runId="r1" spaceId="s1" workflowId="wf-1" />
+    );
+    await findByTestId('pending-hook-banner');
+    expect(queryByTestId('pending-hook-approve-btn')).toBeNull();
+    expect(queryByTestId('pending-hook-reject-btn')).toBeNull();
+    expect(queryByTestId('pending-hook-retry-btn')).toBeNull();
+  });
+
+  it('renders approval actions for blocks that opt into human approval', async () => {
+    workflowsSignal.value = [makeWorkflow([{ id: 'h1', label: 'Merge Check' }])];
+    mockRequest.mockResolvedValue({
+      hookStates: [makeHookState('h1', 'block', { allowHumanApproval: true })],
       hooks: makeWorkflow([{ id: 'h1', label: 'Merge Check' }]).hooks,
     });
     const { findByTestId, getByTestId, queryByTestId } = render(
@@ -257,7 +277,7 @@ describe('PendingHookBanner', () => {
     mockRequest.mockImplementation((method: string) => {
       if (method === 'spaceWorkflowRun.listHookStates')
         return Promise.resolve({
-          hookStates: [makeHookState('h1', 'block')],
+          hookStates: [makeHookState('h1', 'block', { allowHumanApproval: true })],
           hooks: makeWorkflow([{ id: 'h1' }]).hooks,
         });
       return Promise.resolve({});
@@ -281,7 +301,7 @@ describe('PendingHookBanner', () => {
     mockRequest.mockImplementation((method: string) => {
       if (method === 'spaceWorkflowRun.listHookStates')
         return Promise.resolve({
-          hookStates: [makeHookState('h1', 'block')],
+          hookStates: [makeHookState('h1', 'block', { allowHumanApproval: true })],
           hooks: makeWorkflow([{ id: 'h1' }]).hooks,
         });
       return Promise.resolve({});
@@ -395,7 +415,10 @@ describe('PendingHookBanner', () => {
     mockRequest.mockImplementation((method: string, params: { hookId?: string }) => {
       if (method === 'spaceWorkflowRun.listHookStates')
         return Promise.resolve({
-          hookStates: [makeHookState('h1', 'block'), makeHookState('h2', 'block')],
+          hookStates: [
+            makeHookState('h1', 'block', { allowHumanApproval: true }),
+            makeHookState('h2', 'block', { allowHumanApproval: true }),
+          ],
           hooks: makeWorkflow([{ id: 'h1' }, { id: 'h2' }]).hooks,
         });
       if (method === 'spaceWorkflowRun.approveHook' && params.hookId === 'h1') {

@@ -149,6 +149,7 @@ export function HookEditorPanel({
       authorizedCallers: (hook.authorizedCallers ?? [{ sourceNode }]).map((caller) => ({
         ...caller,
         sourceNode: caller.sourceNode === hook.sourceNode ? sourceNode : caller.sourceNode,
+        agentSlots: caller.sourceNode === hook.sourceNode ? undefined : caller.agentSlots,
       })),
     });
   }

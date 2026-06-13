@@ -28,6 +28,8 @@ export interface HookBannerSummary {
   retryAfterMs?: number;
   retryCount?: number;
   nextRetryAt?: number;
+  /** True when the hook result explicitly allows human approval override. */
+  allowHumanApproval?: boolean;
   /** Raw hook state — callers rendering details use this. */
   state: WorkflowHookStateSnapshot;
 }
@@ -62,6 +64,8 @@ export function evaluateHookStatus(
         : undefined,
     remediation: lastResult?.message,
     retryAfterMs: lastResult?.type === 'retryable_block' ? lastResult.retryAfterMs : undefined,
+    allowHumanApproval:
+      lastResult?.data && lastResult.data.allowHumanApproval === true ? true : undefined,
     retryCount: state.retryCount,
     nextRetryAt: state.nextRetryAt,
     state,
@@ -182,6 +186,6 @@ export function useRunHookStates(
     summaries,
     fetchError,
     retry: () => setFetchAttempt((n) => n + 1),
-    hasHooks: hooks.length > 0,
+    hasHooks: hooks.some((hook) => hook.enabled),
   };
 }

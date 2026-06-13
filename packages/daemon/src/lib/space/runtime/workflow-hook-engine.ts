@@ -1008,8 +1008,9 @@ export class WorkflowHookEngine {
     if (result.type === 'block' || result.type === 'retryable_block') {
       base.reason = result.reason;
       base.remediation = result.message;
-      if (result.type === 'retryable_block' && result.retryAfterMs !== undefined) {
-        base.retryAfterMs = result.retryAfterMs;
+      if (result.type === 'retryable_block') {
+        base.retryAfterMs =
+          result.retryAfterMs ?? hook.retry?.delayMs ?? DEFAULT_RETRYABLE_ACTION_DELAY_MS;
       }
     }
 
