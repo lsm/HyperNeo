@@ -303,6 +303,28 @@ describe('SDKMessageRepository', () => {
       expect(messages[0]?.type).toBe('user');
     });
 
+    it('should exclude retracted rows before applying limit', () => {
+      repository.saveSDKMessage('session-1', createUserMessage('Visible older', 'visible-older'));
+      repository.saveSDKMessage(
+        'session-1',
+        createUserMessage('Retracted newer', 'retracted-newer')
+      );
+      repository.saveSDKMessage('session-1', {
+        type: 'system',
+        subtype: 'model_refusal_fallback',
+        retracted_message_uuids: ['retracted-newer'],
+        uuid: 'fallback-notice',
+        session_id: 'session-1',
+      } as unknown as SDKMessage);
+
+      const { messages } = repository.getSDKMessages('session-1', 2);
+
+      expect(messages.map((message) => (message as { uuid?: string }).uuid)).toEqual([
+        'fallback-notice',
+        'visible-older',
+      ]);
+    });
+
     it('should return messages before a timestamp (cursor pagination)', async () => {
       repository.saveSDKMessage('session-1', createUserMessage('First'));
       await new Promise((r) => setTimeout(r, 10));

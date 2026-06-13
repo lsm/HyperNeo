@@ -42,6 +42,7 @@ interface InsertSdkMessageArgs {
   id: string;
   sessionId: string;
   messageType: string;
+  messageSubtype?: string | null;
   sdkMessage: Record<string, unknown>;
   /** ISO timestamp (stored TEXT). Default is a fixed known value. */
   timestamp?: string;
@@ -56,12 +57,13 @@ function insertSdkMessage(db: BunDatabase, args: InsertSdkMessageArgs): void {
       : null;
   db.prepare(
     `INSERT INTO sdk_messages
-		 (id, session_id, message_type, sdk_message, timestamp, send_status, origin, parent_tool_use_id)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+		 (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin, parent_tool_use_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     args.id,
     args.sessionId,
     args.messageType,
+    args.messageSubtype ?? null,
     JSON.stringify(args.sdkMessage),
     args.timestamp ?? '2024-01-01 00:00:00',
     args.sendStatus ?? 'consumed',
@@ -231,6 +233,38 @@ describe('messages.bySession — SQL behavior', () => {
     // With LIMIT=3, only the 3 most recent top-level rows should be included,
     // and returned in ascending order (t3, t4, t5).
     expect(ids).toEqual(['t3', 't4', 't5']);
+  });
+
+  test('filters retracted messages before applying the top-level window', () => {
+    insertSdkMessage(db, {
+      id: 'older-real',
+      sessionId: 's1',
+      messageType: 'assistant',
+      sdkMessage: { type: 'assistant', uuid: 'older-real-uuid', message: { content: [] } },
+      timestamp: '2024-01-01 00:00:01',
+    });
+    insertSdkMessage(db, {
+      id: 'row-retracted',
+      sessionId: 's1',
+      messageType: 'assistant',
+      sdkMessage: { type: 'assistant', uuid: 'sdk-retracted', message: { content: [] } },
+      timestamp: '2024-01-01 00:00:02',
+    });
+    insertSdkMessage(db, {
+      id: 'fallback-notice',
+      sessionId: 's1',
+      messageType: 'system',
+      messageSubtype: 'model_refusal_fallback',
+      sdkMessage: {
+        type: 'system',
+        subtype: 'model_refusal_fallback',
+        retracted_message_uuids: ['sdk-retracted'],
+      },
+      timestamp: '2024-01-01 00:00:03',
+    });
+
+    const rows = query(db, 's1', 2);
+    expect(rows.map((r) => r.id)).toEqual(['older-real', 'fallback-notice']);
   });
 
   test('uses the session timestamp index for the top-level window', () => {

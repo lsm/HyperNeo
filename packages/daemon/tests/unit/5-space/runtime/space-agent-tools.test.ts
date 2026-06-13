@@ -759,6 +759,56 @@ describe('createSpaceAgentToolHandlers — session management tools', () => {
     ]);
   });
 
+  test('get_session_messages excludes operational frames before limiting', async () => {
+    seedSession('operational-session', ctx.spaceId, { status: 'idle' });
+    ctx.db
+      .prepare(
+        `INSERT INTO sdk_messages (
+          id, session_id, message_type, message_subtype, sdk_message, timestamp,
+          send_status, origin, is_renderable, is_terminal, parent_tool_use_id, task_id
+        ) VALUES (?, 'operational-session', ?, ?, ?, ?, 'consumed', 'system', 1, 0, NULL, NULL)`
+      )
+      .run(
+        'msg-visible',
+        'assistant',
+        null,
+        JSON.stringify({
+          type: 'assistant',
+          message: { content: [{ type: 'text', text: 'Visible' }] },
+        }),
+        new Date(1).toISOString()
+      );
+    for (const [id, subtype] of [
+      ['msg-thinking', 'thinking_tokens'],
+      ['msg-state', 'session_state_changed'],
+      ['msg-commands', 'commands_changed'],
+    ]) {
+      ctx.db
+        .prepare(
+          `INSERT INTO sdk_messages (
+            id, session_id, message_type, message_subtype, sdk_message, timestamp,
+            send_status, origin, is_renderable, is_terminal, parent_tool_use_id, task_id
+          ) VALUES (?, 'operational-session', 'system', ?, ?, ?, 'consumed', 'system', 1, 0, NULL, NULL)`
+        )
+        .run(
+          id,
+          subtype,
+          JSON.stringify({ type: 'system', subtype }),
+          new Date(id === 'msg-thinking' ? 2 : id === 'msg-state' ? 3 : 4).toISOString()
+        );
+    }
+    const handlers = makeHandlers(ctx);
+
+    const parsed = parseResult(
+      await handlers.get_session_messages({ session_id: 'operational-session', limit: 1 })
+    );
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.messages).toEqual([
+      expect.objectContaining({ id: 'msg-visible', content_summary: 'Visible' }),
+    ]);
+  });
+
   test('update_session_state rejects cached ad-hoc live sessions', async () => {
     seedSession('adhoc-live-update', ctx.spaceId, { status: 'processing' });
     const handlers = makeHandlers(ctx, {

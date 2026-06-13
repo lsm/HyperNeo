@@ -713,6 +713,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         `SELECT id, message_type, message_subtype, is_terminal, timestamp, sdk_message
            FROM sdk_messages
           WHERE session_id = ? ${beforeClause}
+            AND COALESCE(message_subtype, '') NOT IN ('thinking_tokens', 'session_state_changed', 'commands_changed')
           ORDER BY timestamp DESC, id DESC
           LIMIT ?`
       )
