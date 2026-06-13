@@ -25,6 +25,41 @@ let lastTitleProcessEnv: Record<string, string | undefined> | undefined;
 // Mutable state controlling which messages the SDK query mock yields for
 // title generation. Set in beforeEach so each test starts from a known state.
 let mockSdkMessages: unknown[] = [];
+const mockProviderService = {
+  isProviderAvailable: mock(async () => true),
+  getTitleGenerationModels: mock(async (provider: string, modelId: string) => ({
+    sdkModelId: provider === 'glm' ? 'default' : modelId,
+    providerModelId: provider === 'glm' ? 'glm-5-turbo' : modelId,
+  })),
+  applyEnvVarsToProcessForProvider: mock(async (provider: string, providerModelId: string) => {
+    const original = {
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL,
+      ANTHROPIC_DEFAULT_SONNET_MODEL: process.env.ANTHROPIC_DEFAULT_SONNET_MODEL,
+      ANTHROPIC_DEFAULT_OPUS_MODEL: process.env.ANTHROPIC_DEFAULT_OPUS_MODEL,
+    };
+    if (provider === 'glm') {
+      process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = providerModelId;
+      process.env.ANTHROPIC_DEFAULT_SONNET_MODEL = providerModelId;
+      process.env.ANTHROPIC_DEFAULT_OPUS_MODEL = providerModelId;
+    }
+    return original;
+  }),
+  getEnvVarsForModel: mock(async (modelId: string, provider: string) =>
+    provider === 'glm'
+      ? {
+          ANTHROPIC_DEFAULT_HAIKU_MODEL: modelId,
+          ANTHROPIC_DEFAULT_SONNET_MODEL: modelId,
+          ANTHROPIC_DEFAULT_OPUS_MODEL: modelId,
+        }
+      : {}
+  ),
+  restoreEnvVars: mock((original: Record<string, string | undefined>) => {
+    for (const [key, value] of Object.entries(original)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }),
+};
 
 async function* makeAsyncGen(messages: unknown[]) {
   for (const msg of messages) {
@@ -98,6 +133,12 @@ mock.module('@anthropic-ai/claude-agent-sdk', () => ({
   },
 }));
 
+mock.module('../../../../src/lib/provider-service', () => ({
+  getProviderService: () => mockProviderService,
+  resetProviderServiceInstance: mock(() => {}),
+  mergeProviderEnvVars: (env: Record<string, string | undefined>) => ({ ...process.env, ...env }),
+}));
+
 mock.module('@neokai/shared/sdk/type-guards', () => ({
   isSDKAssistantMessage: (msg: { type: string }) => msg.type === 'assistant',
   isSDKUserMessage: (msg: { type: string; isReplay?: boolean }) =>
@@ -131,9 +172,9 @@ mock.module('@neokai/shared/sdk/type-guards', () => ({
     msg.type !== 'stream_event' && msg.type !== 'api_retry',
 }));
 
-import {
+import type {
   SessionLifecycle,
-  type SessionLifecycleConfig,
+  SessionLifecycleConfig,
 } from '../../../../src/lib/session/session-lifecycle';
 import type { Database } from '../../../../src/storage/database';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
@@ -161,6 +202,7 @@ function runTitleSdk(
 }
 
 describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
+  let SessionLifecycleCtor: typeof SessionLifecycle;
   let lifecycle: SessionLifecycle;
   let mockDb: Database;
   let mockWorktreeManager: WorktreeManager;
@@ -173,6 +215,21 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
     SessionLifecycleConfig['titleGenerationProviderServiceForTesting']
   >;
   let config: SessionLifecycleConfig;
+
+  const generateTitleWithSdkForTest = (
+    provider = 'anthropic',
+    modelId = 'claude-sonnet-4-20250514',
+    messageText = 'Create a login form'
+  ) =>
+    (
+      lifecycle as unknown as {
+        generateTitleWithSdk: (
+          provider: string,
+          modelId: string,
+          messageText: string
+        ) => Promise<string>;
+      }
+    ).generateTitleWithSdk(provider, modelId, messageText);
 
   const makeSessionCache = () => {
     const mockAgentSession = {
@@ -209,9 +266,16 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
     const { AnthropicProvider } = await import(
       '../../../../src/lib/providers/anthropic-provider.js'
     );
+    const { resetProviderServiceInstance } = await import('../../../../src/lib/provider-service');
+    const { SessionLifecycle } = await import('../../../../src/lib/session/session-lifecycle.js');
+    SessionLifecycleCtor = SessionLifecycle;
+    // Set API key before provider construction/registration so CI Bun versions
+    // that snapshot process.env during provider setup still see credentials.
+    process.env.ANTHROPIC_API_KEY = 'test-api-key';
     resetProviderRegistry();
     resetProviderFactory();
-    const anthropicProvider = new AnthropicProvider();
+    resetProviderServiceInstance();
+    const anthropicProvider = new AnthropicProvider(process.env);
     anthropicProvider.setCredentials({ type: 'api_key', apiKey: 'test-api-key' });
     getProviderRegistry().register(anthropicProvider);
 
@@ -227,9 +291,6 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
       },
     ];
 
-    // Set a fake API key so the real provider service proceeds past the key
-    // check and calls generateTitleWithSdk. Cleared in afterEach.
-    process.env.ANTHROPIC_API_KEY = 'test-api-key';
     const titleQueryOverride: SessionLifecycleConfig['titleGenerationQueryForTesting'] = (
       params
     ) => {
@@ -339,7 +400,7 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
       titleGenerationProviderServiceForTesting: mockTitleProviderService,
     };
 
-    lifecycle = new SessionLifecycle(
+    lifecycle = new SessionLifecycleCtor(
       mockDb,
       mockWorktreeManager,
       mockSessionCache,
@@ -354,15 +415,17 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
   afterEach(async () => {
     const { resetProviderRegistry } = await import('../../../../src/lib/providers/registry.js');
     const { resetProviderFactory } = await import('../../../../src/lib/providers/factory.js');
+    const { resetProviderServiceInstance } = await import('../../../../src/lib/provider-service');
     resetProviderRegistry();
     resetProviderFactory();
+    resetProviderServiceInstance();
     // Restore the empty API key set by unit-test setup.ts
     process.env.ANTHROPIC_API_KEY = '';
     process.env.GLM_API_KEY = '';
   });
 
   it('should disable thinking when calling SDK query for title generation', async () => {
-    const title = await runTitleSdk(lifecycle);
+    const title = await generateTitleWithSdkForTest();
 
     expect(title).toBe('My Generated Title');
     expect(lastTitleQueryOptions).toBeDefined();
@@ -370,20 +433,13 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
   });
 
   it('should pass the session model to SDK title generation without provider hardcoding', async () => {
-    await runTitleSdk(lifecycle);
+    await generateTitleWithSdkForTest();
 
     expect(lastTitleQueryOptions?.model).toBe('claude-sonnet-4-20250514');
   });
 
   it('should build title routing env from provider title model override', async () => {
-    const { GlmProvider } = await import('../../../../src/lib/providers/glm-provider.js');
-    const { getProviderRegistry } = await import('../../../../src/lib/providers/registry.js');
-
     process.env.GLM_API_KEY = 'test-glm-key';
-    const registry = getProviderRegistry();
-    const glmProvider = new GlmProvider();
-    glmProvider.setCredentials({ type: 'api_key', apiKey: 'test-glm-key' });
-    registry.register(glmProvider);
 
     const { mockAgentSession, mockSessionCache: sessionCache } = makeSessionCache();
     mockAgentSession.getSessionData = mock(() => ({
@@ -395,7 +451,7 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
       config: { model: 'glm-5.1', provider: 'glm' },
       worktree: undefined,
     }));
-    lifecycle = new SessionLifecycle(
+    lifecycle = new SessionLifecycleCtor(
       mockDb,
       mockWorktreeManager,
       sessionCache,
@@ -406,7 +462,7 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
       mockAgentSessionFactory
     );
 
-    await runTitleSdk(lifecycle, 'glm', 'glm-5.1');
+    await generateTitleWithSdkForTest('glm', 'glm-5.1');
 
     expect(lastTitleQueryOptions?.model).toBe('default');
     expect(lastTitleProcessEnv?.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('glm-5-turbo');
@@ -419,7 +475,7 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
   });
 
   it('should extract title from text blocks', async () => {
-    const title = await runTitleSdk(lifecycle);
+    const title = await generateTitleWithSdkForTest();
 
     expect(title).toBe('My Generated Title');
   });
@@ -434,7 +490,7 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
       },
     ];
 
-    const title = await runTitleSdk(lifecycle);
+    const title = await generateTitleWithSdkForTest();
 
     expect(title).toBe('Bold Title Here');
   });
@@ -445,14 +501,31 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
     // no text block. Without `thinking: { type: 'disabled' }` in the query options, this
     // caused a "No text content in SDK response" error. With the fix in place, this scenario
     // cannot occur in production, but the defensive fallback path should still work correctly.
-    mockSdkMessages = [
-      {
-        type: 'assistant',
-        message: {
-          content: [{ type: 'thinking', thinking: 'Long internal reasoning about the title...' }],
+    const thinkingOnlyQuery: SessionLifecycleConfig['titleGenerationQueryForTesting'] = (
+      params
+    ) => {
+      const opts = params.options ?? {};
+      if ('thinking' in opts) lastTitleQueryOptions = opts;
+      return makeQueryMock([
+        {
+          type: 'assistant',
+          message: {
+            content: [{ type: 'thinking', thinking: 'Long internal reasoning about the title...' }],
+          },
         },
-      },
-    ];
+      ]);
+    };
+    config.titleGenerationQueryForTesting = thinkingOnlyQuery;
+    lifecycle = new SessionLifecycleCtor(
+      mockDb,
+      mockWorktreeManager,
+      mockSessionCache,
+      mockInternalEventBus,
+      mockMessageHub,
+      config,
+      mockToolsConfigManager,
+      mockAgentSessionFactory
+    );
 
     const result = await lifecycle.generateTitleAndRenameBranch('test-id', 'Create a login form');
 
@@ -461,7 +534,22 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
   });
 
   it('should fall back to message text when SDK returns no assistant messages', async () => {
-    mockSdkMessages = [{ type: 'result', subtype: 'success' }];
+    const noAssistantQuery: SessionLifecycleConfig['titleGenerationQueryForTesting'] = (params) => {
+      const opts = params.options ?? {};
+      if ('thinking' in opts) lastTitleQueryOptions = opts;
+      return makeQueryMock([{ type: 'result', subtype: 'success' }]);
+    };
+    config.titleGenerationQueryForTesting = noAssistantQuery;
+    lifecycle = new SessionLifecycleCtor(
+      mockDb,
+      mockWorktreeManager,
+      mockSessionCache,
+      mockInternalEventBus,
+      mockMessageHub,
+      config,
+      mockToolsConfigManager,
+      mockAgentSessionFactory
+    );
 
     const result = await lifecycle.generateTitleAndRenameBranch('test-id', 'Create a login form');
 
@@ -474,7 +562,7 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
     delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
     delete process.env.ANTHROPIC_AUTH_TOKEN;
 
-    const title = await runTitleSdk(lifecycle);
+    const title = await generateTitleWithSdkForTest();
 
     expect(title).toBe('My Generated Title');
   });

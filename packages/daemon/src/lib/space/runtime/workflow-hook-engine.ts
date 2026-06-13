@@ -21,6 +21,7 @@ import type {
   WorkflowHookUserState,
   SpaceWorkflow,
   WorkflowRunArtifact,
+  WorkflowRunStatus,
 } from '@neokai/shared';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
@@ -94,6 +95,10 @@ export interface WorkflowHookEngineConfig {
   hookStateRepo: WorkflowHookStateRepository;
   hookExecutor: HookExecutor;
   workspacePath?: string;
+  getWorkflowRunStatus?: (runId: string) => WorkflowRunStatus | undefined;
+  getTaskStatus?: (taskId: string) => string | undefined;
+  getSourceNodeExecutionStatus?: (meta: HookActionMeta) => string | undefined;
+  notifySourceSession?: (sessionId: string, message: string) => Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -107,6 +112,25 @@ const FOLLOW_UP_METHODS = new Set(['send_message']);
 
 /** Maximum follow-up execution latency budget (30 seconds default). */
 const DEFAULT_FOLLOW_UP_TIMEOUT_MS = 30_000;
+
+/** Default delay for queued retryable hook actions when validator omits retryAfterMs. */
+const DEFAULT_RETRYABLE_ACTION_DELAY_MS = 30_000;
+
+const pendingRetryableHookActions = new Map<string, ReturnType<typeof setTimeout>>();
+export const QUEUED_RETRYABLE_ACTION_STATE_KEY = '__queuedRetryableAction';
+const RETRYABLE_ACTION_CANCEL_STATUSES = new Set<WorkflowRunStatus>(['done', 'cancelled']);
+
+interface QueuedRetryableHookAction {
+  actionKey: string;
+  hookId: string;
+  methodName: string;
+  args: Record<string, unknown>;
+  meta: HookActionMeta;
+  isFollowUp: boolean;
+  nextRetryAt: number;
+  retryAfterMs: number;
+  queuedAt: number;
+}
 
 /** Maximum bytes for an artifact data payload injected into hook context. */
 const MAX_ARTIFACT_DATA_BYTES = 16_384;
@@ -144,6 +168,117 @@ const METHOD_PARAM_SCHEMAS: Record<string, import('zod').ZodType<unknown>> = {
 
 export class WorkflowHookEngine {
   constructor(private readonly config: WorkflowHookEngineConfig) {}
+
+  get workflowRunId(): string {
+    return this.config.workflowRunId;
+  }
+
+  getRunStatus(): WorkflowRunStatus | undefined {
+    return this.config.getWorkflowRunStatus?.(this.config.workflowRunId);
+  }
+
+  isRetryableActionCancelled(meta?: HookActionMeta): boolean {
+    if (meta) {
+      const taskStatus = this.config.getTaskStatus?.(meta.taskId);
+      if (taskStatus === 'done' || taskStatus === 'cancelled' || taskStatus === 'archived') {
+        return true;
+      }
+      const nodeExecutionStatus = this.config.getSourceNodeExecutionStatus?.(meta);
+      if (nodeExecutionStatus === 'cancelled') {
+        return true;
+      }
+    }
+    const status = this.getRunStatus();
+    return status !== undefined && RETRYABLE_ACTION_CANCEL_STATUSES.has(status);
+  }
+
+  async notifySourceSession(sessionId: string, message: string): Promise<void> {
+    await this.config.notifySourceSession?.(sessionId, message);
+  }
+
+  scheduleQueuedRetryableActions(
+    handlersByMethod: Record<
+      string,
+      (...args: unknown[]) => Promise<AnyToolResult> | AnyToolResult
+    >,
+    ownerMeta: HookActionMeta
+  ): void {
+    for (const action of this.getQueuedRetryableActions()) {
+      if (!sameRetryableActionOwner(action.meta, ownerMeta)) continue;
+      if (this.isRetryableActionCancelled(action.meta)) {
+        this.clearQueuedRetryableAction(action.hookId);
+        continue;
+      }
+      const rawHandler = handlersByMethod[action.methodName];
+      if (!rawHandler) continue;
+      const handler = async (args: Record<string, unknown>) => await rawHandler(args);
+      scheduleRetryableAction({
+        actionKey: action.actionKey,
+        delayMs: Math.max(0, action.nextRetryAt - Date.now()),
+        methodName: action.methodName,
+        args: action.args,
+        handler,
+        engine: this,
+        handlers: handlersByMethod,
+        meta: action.meta,
+        isFollowUp: action.isFollowUp,
+      });
+    }
+  }
+
+  persistQueuedRetryableAction(action: QueuedRetryableHookAction): boolean {
+    return this.persistStateUpdate(action.hookId, {
+      [QUEUED_RETRYABLE_ACTION_STATE_KEY]: action,
+    });
+  }
+
+  clearQueuedRetryableAction(hookId: string): boolean {
+    return this.persistStateUpdate(hookId, {
+      [QUEUED_RETRYABLE_ACTION_STATE_KEY]: null,
+    });
+  }
+
+  getQueuedRetryableAction(hookId: string): QueuedRetryableHookAction | undefined {
+    const state = this.config.hookStateRepo.get(this.config.workflowRunId, hookId)?.localState;
+    const value = state?.[QUEUED_RETRYABLE_ACTION_STATE_KEY];
+    if (!isQueuedRetryableHookAction(value)) return undefined;
+    return value;
+  }
+
+  getQueuedRetryableActions(): QueuedRetryableHookAction[] {
+    return (this.config.workflow.hooks ?? [])
+      .map((hook) => this.getQueuedRetryableAction(hook.id))
+      .filter((action): action is QueuedRetryableHookAction => action !== undefined);
+  }
+
+  clearQueuedRetryableActionsForKey(actionKey: string): void {
+    for (const hook of this.getHooksWithQueuedAction(actionKey)) {
+      this.clearQueuedRetryableAction(hook.id);
+    }
+  }
+
+  clearQueuedRetryableActionForHook(hookId: string): QueuedRetryableHookAction | undefined {
+    const queued = this.getQueuedRetryableAction(hookId);
+    this.clearQueuedRetryableAction(hookId);
+    return queued;
+  }
+
+  clearQueuedRetryableActionsForOwner(hookIds: Iterable<string>, meta: HookActionMeta): string[] {
+    const clearedActionKeys: string[] = [];
+    for (const hookId of hookIds) {
+      const queued = this.getQueuedRetryableAction(hookId);
+      if (!queued || !sameRetryableActionOwner(queued.meta, meta)) continue;
+      this.clearQueuedRetryableAction(hookId);
+      clearedActionKeys.push(queued.actionKey);
+    }
+    return clearedActionKeys;
+  }
+
+  getHooksWithQueuedAction(actionKey: string): WorkflowHook[] {
+    return (this.config.workflow.hooks ?? []).filter(
+      (hook) => this.getQueuedRetryableAction(hook.id)?.actionKey === actionKey
+    );
+  }
 
   /**
    * Persist a single hook-local state update (and optional last result) through
@@ -284,6 +419,10 @@ export class WorkflowHookEngine {
       // Process result
       switch (result.type) {
         case 'allow':
+          if (methodName === 'send_message') {
+            const prUrl = extractPrUrlFromParams(currentParams);
+            if (prUrl) stateUpdates.push({ hookId: hook.id, state: { pr_url: prUrl } });
+          }
           break;
 
         case 'block':
@@ -660,7 +799,11 @@ export class WorkflowHookEngine {
     }
 
     const permittedExternalLookups: string[] =
-      hook.validator.kind === 'script' ? (hook.validator.externalLookups ?? []) : [];
+      hook.validator.kind === 'script'
+        ? (hook.validator.externalLookups ?? [])
+        : hook.validator.id === 'pr_ready'
+          ? ['github']
+          : [];
 
     // Build mapped artifacts with a total-byte budget to avoid exceeding OS env limits.
     const mappedArtifacts: Array<{
@@ -694,6 +837,7 @@ export class WorkflowHookEngine {
       hookId: hook.id,
       methodName,
       params: this.boundParams(params),
+      rawParams: params,
       nodeId: meta.nodeId,
       nodeName,
       sessionId: meta.sessionId,
@@ -998,6 +1142,188 @@ type WrappedHandler<T extends Record<string, unknown>> = ((args: T) => Promise<A
   [RAW_HANDLER]?: (args: T) => Promise<AnyToolResult>;
 };
 
+function extractPrUrlFromParams(params: Record<string, unknown>): string | undefined {
+  const data = params.data;
+  if (
+    typeof data === 'object' &&
+    data !== null &&
+    !Array.isArray(data) &&
+    typeof (data as Record<string, unknown>).pr_url === 'string'
+  ) {
+    return (data as Record<string, unknown>).pr_url as string;
+  }
+  return undefined;
+}
+
+function buildRetryableActionKey(
+  methodName: string,
+  args: Record<string, unknown>,
+  meta: HookActionMeta
+): string {
+  return JSON.stringify({
+    runScopedTaskId: meta.taskId,
+    nodeId: meta.nodeId,
+    sessionId: meta.sessionId,
+    agentName: meta.agentName,
+    methodName,
+    args,
+  });
+}
+
+function scheduleRetryableAction<T extends Record<string, unknown>>(options: {
+  actionKey: string;
+  delayMs: number;
+  methodName: string;
+  args: T;
+  handler: (args: T) => Promise<AnyToolResult>;
+  engine: WorkflowHookEngine;
+  handlers: Record<string, (...args: unknown[]) => Promise<AnyToolResult> | AnyToolResult>;
+  meta: HookActionMeta;
+  isFollowUp: boolean;
+}): void {
+  if (pendingRetryableHookActions.has(options.actionKey)) return;
+
+  const timer = setTimeout(() => {
+    pendingRetryableHookActions.delete(options.actionKey);
+    void replayRetryableAction(options).catch((err) => {
+      log.warn(
+        `Retryable hook action retry failed for ${options.methodName}: ${err instanceof Error ? err.message : String(err)}`
+      );
+    });
+  }, options.delayMs);
+
+  pendingRetryableHookActions.set(options.actionKey, timer);
+}
+
+function clearRetryableAction(actionKey: string): void {
+  const timer = pendingRetryableHookActions.get(actionKey);
+  if (!timer) return;
+  clearTimeout(timer);
+  pendingRetryableHookActions.delete(actionKey);
+}
+
+export function clearAllRetryableHookActionTimers(): void {
+  for (const timer of pendingRetryableHookActions.values()) {
+    clearTimeout(timer);
+  }
+  pendingRetryableHookActions.clear();
+}
+
+function isQueuedRetryableHookAction(value: unknown): value is QueuedRetryableHookAction {
+  if (!value || typeof value !== 'object') return false;
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.actionKey === 'string' &&
+    typeof record.hookId === 'string' &&
+    typeof record.methodName === 'string' &&
+    !!record.args &&
+    typeof record.args === 'object' &&
+    isHookActionMeta(record.meta) &&
+    typeof record.isFollowUp === 'boolean' &&
+    typeof record.nextRetryAt === 'number' &&
+    typeof record.retryAfterMs === 'number' &&
+    typeof record.queuedAt === 'number'
+  );
+}
+
+function isHookActionMeta(value: unknown): value is HookActionMeta {
+  if (!value || typeof value !== 'object') return false;
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.sessionId === 'string' &&
+    typeof record.agentName === 'string' &&
+    typeof record.nodeId === 'string' &&
+    typeof record.taskId === 'string' &&
+    (record.targetNode === undefined || typeof record.targetNode === 'string')
+  );
+}
+
+function sameRetryableActionOwner(left: HookActionMeta, right: HookActionMeta): boolean {
+  return (
+    left.sessionId === right.sessionId &&
+    left.agentName === right.agentName &&
+    left.nodeId === right.nodeId &&
+    left.taskId === right.taskId
+  );
+}
+
+async function replayRetryableAction<T extends Record<string, unknown>>(options: {
+  actionKey: string;
+  methodName: string;
+  args: T;
+  handler: (args: T) => Promise<AnyToolResult>;
+  engine: WorkflowHookEngine;
+  handlers: Record<string, (...args: unknown[]) => Promise<AnyToolResult> | AnyToolResult>;
+  meta: HookActionMeta;
+  isFollowUp: boolean;
+}): Promise<void> {
+  if (options.engine.isRetryableActionCancelled(options.meta)) {
+    options.engine.clearQueuedRetryableActionsForKey(options.actionKey);
+    clearRetryableAction(options.actionKey);
+    return;
+  }
+
+  const retryHandler = wrapHandlerWithHooks(
+    options.methodName,
+    options.handler,
+    options.engine,
+    options.handlers,
+    options.meta,
+    options.isFollowUp
+  );
+  const result = await retryHandler(options.args);
+  const failure = getToolResultFailure(result);
+  if (failure && !failure.retryable) {
+    try {
+      await options.engine.notifySourceSession(
+        options.meta.sessionId,
+        `Queued ${options.methodName} retry failed: ${failure.message}`
+      );
+    } catch (err) {
+      log.warn(
+        `Failed to notify source session for queued ${options.methodName} retry failure: ${err instanceof Error ? err.message : String(err)}`
+      );
+    } finally {
+      options.engine.clearQueuedRetryableActionsForKey(options.actionKey);
+      clearRetryableAction(options.actionKey);
+    }
+  }
+}
+
+function getToolResultFailure(
+  result: AnyToolResult
+): { message: string; retryable: boolean } | undefined {
+  const text = result.content.find((item) => item.type === 'text')?.text;
+  if (!text) {
+    return result.isError ? { message: 'tool returned an error', retryable: false } : undefined;
+  }
+
+  let data: unknown;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    return result.isError ? { message: text, retryable: false } : undefined;
+  }
+
+  if (!data || typeof data !== 'object') {
+    return result.isError ? { message: text, retryable: false } : undefined;
+  }
+
+  const record = data as Record<string, unknown>;
+  const success = record.success;
+  const retryable = record.retryable === true;
+  if (success === false || result.isError) {
+    const message =
+      typeof record.error === 'string'
+        ? record.error
+        : typeof record.message === 'string'
+          ? record.message
+          : text;
+    return { message, retryable };
+  }
+  return undefined;
+}
+
 /**
  * Wrap an MCP tool handler with the workflow hook engine.
  *
@@ -1020,6 +1346,7 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
   if (!engine) return handler;
 
   const wrapped = async (args: T) => {
+    const actionKey = buildRetryableActionKey(methodName, args as Record<string, unknown>, meta);
     const outcome = await engine.executeAction(methodName, args as Record<string, unknown>, meta);
 
     // Batch persist hook state updates and execution results.
@@ -1050,6 +1377,16 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
 
     // Handle block
     if (outcome.decision === 'block') {
+      if (outcome.blockedByHookId) {
+        for (const queuedActionKey of engine.clearQueuedRetryableActionsForOwner(
+          [outcome.blockedByHookId],
+          meta
+        )) {
+          clearRetryableAction(queuedActionKey);
+        }
+      }
+      engine.clearQueuedRetryableActionsForKey(actionKey);
+      clearRetryableAction(actionKey);
       return hookResult(
         {
           success: false,
@@ -1067,12 +1404,79 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
 
     // Handle retryable block
     if (outcome.decision === 'retryable_block') {
+      const retryAfterMs = outcome.userState.retryAfterMs ?? DEFAULT_RETRYABLE_ACTION_DELAY_MS;
+      if (methodName === 'send_message') {
+        if (outcome.blockedByHookId) {
+          const existingQueued = engine.clearQueuedRetryableActionForHook(outcome.blockedByHookId);
+          if (existingQueued) clearRetryableAction(existingQueued.actionKey);
+          const now = Date.now();
+          const persisted = engine.persistQueuedRetryableAction({
+            actionKey,
+            hookId: outcome.blockedByHookId,
+            methodName,
+            args: args as Record<string, unknown>,
+            meta,
+            isFollowUp,
+            nextRetryAt: now + retryAfterMs,
+            retryAfterMs,
+            queuedAt: now,
+          });
+          if (!persisted) {
+            log.warn(
+              `Failed to persist queued retryable hook action for ${methodName}: ${outcome.blockedByHookId}`
+            );
+          }
+        }
+        if (engine.isRetryableActionCancelled(meta)) {
+          engine.clearQueuedRetryableActionsForKey(actionKey);
+          clearRetryableAction(actionKey);
+          return hookResult({
+            success: true,
+            queued: false,
+            cancelled: true,
+            retryable: false,
+            hookStatus: outcome.userState.status,
+            hookLabel: outcome.userState.hookLabel,
+            hookMethod: outcome.userState.method,
+            hookReason: outcome.userState.reason,
+            hookRemediation: outcome.userState.remediation,
+            sourceNode: outcome.userState.sourceNode,
+            message: 'Queued action cancelled because task or workflow run is no longer active.',
+          });
+        }
+        scheduleRetryableAction({
+          actionKey,
+          delayMs: retryAfterMs,
+          methodName,
+          args,
+          handler,
+          engine,
+          handlers,
+          meta,
+          isFollowUp,
+        });
+        return hookResult({
+          success: true,
+          queued: true,
+          retryable: true,
+          retryAfterMs,
+          hookStatus: outcome.userState.status,
+          hookLabel: outcome.userState.hookLabel,
+          hookMethod: outcome.userState.method,
+          hookReason: outcome.userState.reason,
+          hookRemediation: outcome.userState.remediation,
+          sourceNode: outcome.userState.sourceNode,
+          message:
+            outcome.userState.reason ??
+            `Action queued until hook "${outcome.userState.hookLabel ?? outcome.blockedByHookId ?? 'unknown'}" allows it.`,
+        });
+      }
       return hookResult(
         {
           success: false,
           error: outcome.userState.reason ?? 'Action blocked by hook (retryable).',
           retryable: true,
-          retryAfterMs: outcome.userState.retryAfterMs,
+          retryAfterMs,
           hookStatus: outcome.userState.status,
           hookLabel: outcome.userState.hookLabel,
           hookMethod: outcome.userState.method,
@@ -1083,6 +1487,16 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
         true
       );
     }
+
+    const successfulHookIds = outcome.executionLog.map((record) => record.hookId);
+    for (const queuedActionKey of engine.clearQueuedRetryableActionsForOwner(
+      successfulHookIds,
+      meta
+    )) {
+      clearRetryableAction(queuedActionKey);
+    }
+    engine.clearQueuedRetryableActionsForKey(actionKey);
+    clearRetryableAction(actionKey);
 
     // Skip nested follow-up emission — only one level of follow-up is allowed
     const nestedFollowUpSuppressed = outcome.followUpRequests.length > 0 && isFollowUp;

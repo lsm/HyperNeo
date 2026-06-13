@@ -1523,6 +1523,7 @@ export type WorkflowHookMcpMethod =
 export type WorkflowHookValidatorId =
   | 'pr_open'
   | 'pr_mergeable'
+  | 'pr_ready'
   | 'github_review_approved'
   | 'codex_review_approved'
   | 'artifact_exists'
