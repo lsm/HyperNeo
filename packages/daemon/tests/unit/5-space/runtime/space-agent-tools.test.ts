@@ -56,6 +56,31 @@ function makeDb(): BunDatabase {
   db.exec('PRAGMA foreign_keys = ON');
   runMigrations(db, () => {});
 
+  db.exec(`CREATE TABLE IF NOT EXISTS sessions (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    workspace_path TEXT,
+    created_at TEXT NOT NULL,
+    last_active_at TEXT NOT NULL,
+    status TEXT NOT NULL,
+    config TEXT NOT NULL,
+    metadata TEXT NOT NULL,
+    is_worktree INTEGER DEFAULT 0,
+    worktree_path TEXT,
+    main_repo_path TEXT,
+    worktree_branch TEXT,
+    git_branch TEXT,
+    sdk_session_id TEXT,
+    acp_session_id TEXT,
+    sdk_origin_path TEXT,
+    available_commands TEXT,
+    processing_state TEXT,
+    archived_at TEXT,
+    parent_id TEXT,
+    type TEXT DEFAULT 'worker',
+    session_context TEXT
+  )`);
+
   // runMigrations() applies migrations only; these unit fixtures need the base
   // sdk_messages table because runtime recovery inspects persisted SDK output.
   db.exec(`CREATE TABLE IF NOT EXISTS sdk_messages (
@@ -69,7 +94,8 @@ function makeDb(): BunDatabase {
 		origin TEXT,
 		is_renderable INTEGER NOT NULL DEFAULT 1,
 		is_terminal INTEGER NOT NULL DEFAULT 0,
-		parent_tool_use_id TEXT
+		parent_tool_use_id TEXT,
+			task_id TEXT
 	)`);
 
   return db;
@@ -314,6 +340,10 @@ function getRegisteredTool(server: ReturnType<typeof createSpaceAgentMcpServer>,
   return instance._registeredTools[name];
 }
 
+function parseResult(result: { content: Array<{ text: string }> }) {
+  return JSON.parse(result.content[0].text) as Record<string, unknown>;
+}
+
 function expectToolInputParses(
   server: ReturnType<typeof createSpaceAgentMcpServer>,
   name: string,
@@ -367,6 +397,12 @@ describe('createSpaceAgentMcpServer — tool registration', () => {
     const names = getRegisteredToolNames(server);
     expect(names).not.toContain('start_workflow_run');
     expect(names).toContain('create_standalone_task');
+    expect(names).toContain('list_sessions');
+    expect(names).toContain('get_session_detail');
+    expect(names).toContain('get_session_messages');
+    expect(names).toContain('send_session_message');
+    expect(names).toContain('update_session_state');
+    expect(names).toContain('interrupt_session');
     expect(names).not.toContain('create_agent');
     expect(names).not.toContain('assign_agent_to_goal');
     expect(names).not.toContain('create_agent_reminder');
@@ -446,6 +482,155 @@ describe('createSpaceAgentMcpServer — tool registration', () => {
     expect(names).toContain('resolve_forge_scope');
     expect(names).toContain('update_forge_lesson');
     expect(names).toContain('create_task_from_forge_proposal');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// session management tools
+// ---------------------------------------------------------------------------
+
+describe('createSpaceAgentToolHandlers — session management tools', () => {
+  let ctx: TestCtx;
+  beforeEach(() => {
+    ctx = makeCtx();
+  });
+  afterEach(() => {
+    ctx.db.close();
+  });
+
+  function seedSession(id: string, spaceId = ctx.spaceId, processingState = { status: 'idle' }) {
+    ctx.db
+      .prepare(
+        `INSERT INTO sessions (
+          id, title, workspace_path, created_at, last_active_at, status, config, metadata,
+          is_worktree, git_branch, processing_state, type, session_context
+        ) VALUES (?, ?, ?, ?, ?, 'active', '{}', '{}', 1, 'feature/session-tools', ?, 'worker', ?)`
+      )
+      .run(
+        id,
+        `Session ${id}`,
+        '/tmp/session-workspace',
+        new Date(0).toISOString(),
+        new Date().toISOString(),
+        JSON.stringify(processingState),
+        JSON.stringify({ spaceId })
+      );
+  }
+
+  test('list_sessions includes ad-hoc sessions in current space only', async () => {
+    seedSession('adhoc-1', ctx.spaceId, { status: 'waiting_for_input' });
+    seedSession('other-space', 'other-space', { status: 'idle' });
+    const handlers = makeHandlers(ctx);
+
+    const parsed = parseResult(await handlers.list_sessions({}));
+
+    expect(parsed.success).toBe(true);
+    const sessions = parsed.sessions as Array<{ id: string; status: string; type: string }>;
+    expect(sessions.map((session) => session.id)).toContain('adhoc-1');
+    expect(sessions.map((session) => session.id)).not.toContain('other-space');
+    expect(sessions[0].status).toBe('waiting_for_input');
+    expect(sessions[0].type).toBe('ad-hoc');
+  });
+
+  test('get_session_detail returns parsed processing state and message summaries', async () => {
+    seedSession('stuck-1', ctx.spaceId, {
+      status: 'waiting_for_input',
+      pendingQuestion: { toolUseId: 'q1' },
+    });
+    ctx.db
+      .prepare(
+        `INSERT INTO sdk_messages (
+          id, session_id, message_type, message_subtype, sdk_message, timestamp,
+          send_status, origin, is_renderable, is_terminal, parent_tool_use_id, task_id
+        ) VALUES (?, ?, 'assistant', NULL, ?, ?, 'consumed', 'system', 1, 0, NULL, NULL)`
+      )
+      .run(
+        'msg-1',
+        'stuck-1',
+        JSON.stringify({
+          type: 'assistant',
+          message: { content: [{ type: 'text', text: 'Need input' }] },
+        }),
+        new Date().toISOString()
+      );
+    const handlers = makeHandlers(ctx);
+
+    const parsed = parseResult(await handlers.get_session_detail({ session_id: 'stuck-1' }));
+
+    expect(parsed.success).toBe(true);
+    const session = parsed.session as {
+      processing_state: { status: string; pendingQuestion: { toolUseId: string } };
+      last_messages: Array<{ content_summary: string }>;
+    };
+    expect(session.processing_state.status).toBe('waiting_for_input');
+    expect(session.processing_state.pendingQuestion.toolUseId).toBe('q1');
+    expect(session.last_messages[0].content_summary).toBe('Need input');
+  });
+
+  test('send_session_message enqueues user message and clears waiting state', async () => {
+    seedSession('adhoc-send', ctx.spaceId, {
+      status: 'waiting_for_input',
+      pendingQuestion: { toolUseId: 'q1' },
+    });
+    const handlers = makeHandlers(ctx);
+
+    const parsed = parseResult(
+      await handlers.send_session_message({
+        session_id: 'adhoc-send',
+        message: 'Use option A',
+        answer_question: true,
+      })
+    );
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.delivered).toBe(true);
+    const row = ctx.db
+      .prepare(`SELECT sdk_message, send_status FROM sdk_messages WHERE id = ?`)
+      .get(parsed.message_id as string) as { sdk_message: string; send_status: string };
+    expect(row.send_status).toBe('enqueued');
+    expect(JSON.parse(row.sdk_message).message.content).toBe('Use option A');
+    const session = ctx.db
+      .prepare(`SELECT processing_state FROM sessions WHERE id = 'adhoc-send'`)
+      .get() as { processing_state: string };
+    expect(JSON.parse(session.processing_state)).toEqual({ status: 'idle' });
+  });
+
+  test('interrupt_session appends terminal result and resets state with autonomy gate', async () => {
+    seedSession('adhoc-interrupt', ctx.spaceId, { status: 'processing' });
+    const handlers = makeHandlers(ctx, { getSpaceAutonomyLevel: async () => 4 });
+
+    const parsed = parseResult(
+      await handlers.interrupt_session({ session_id: 'adhoc-interrupt', reason: 'hung' })
+    );
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.interrupted).toBe(true);
+    const resultRows = ctx.db
+      .prepare(
+        `SELECT message_type, is_terminal FROM sdk_messages WHERE session_id = ? ORDER BY timestamp ASC`
+      )
+      .all('adhoc-interrupt') as Array<{ message_type: string; is_terminal: number }>;
+    expect(resultRows.map((row) => row.message_type)).toEqual(['user', 'result']);
+    expect(resultRows[1].is_terminal).toBe(1);
+    const session = ctx.db
+      .prepare(`SELECT processing_state FROM sessions WHERE id = 'adhoc-interrupt'`)
+      .get() as { processing_state: string };
+    expect(JSON.parse(session.processing_state)).toEqual({ status: 'idle' });
+  });
+
+  test('update_session_state rejects when autonomy level is too low', async () => {
+    seedSession('adhoc-low-autonomy', ctx.spaceId, { status: 'processing' });
+    const handlers = makeHandlers(ctx, { getSpaceAutonomyLevel: async () => 3 });
+
+    const parsed = parseResult(
+      await handlers.update_session_state({
+        session_id: 'adhoc-low-autonomy',
+        processing_state: 'idle',
+      })
+    );
+
+    expect(parsed.success).toBe(false);
+    expect(String(parsed.error)).toContain('space autonomy level 3 < required level 4');
   });
 });
 
