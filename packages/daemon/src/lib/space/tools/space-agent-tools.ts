@@ -142,6 +142,7 @@ type SpaceSessionSummary = {
 };
 
 const SPACE_SESSION_MAX_LIMIT = 100;
+const SPACE_SESSION_FETCH_CAP = 500;
 const SPACE_SESSION_DEFAULT_LIMIT = 50;
 const SESSION_DETAIL_MESSAGE_LIMIT = 5;
 const SESSION_MESSAGE_DEFAULT_LIMIT = 20;
@@ -601,6 +602,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
   function requireSpaceSessionRow(sessionId: string): SpaceSessionRow {
     const row = getSpaceSessionRow(sessionId);
     if (!row) throw new Error(`Session not found in this space: ${sessionId}`);
+    if (row.status === 'archived') throw new Error(`Session is archived: ${sessionId}`);
     return row;
   }
 
@@ -828,15 +830,17 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       try {
         const limit = Math.min(args.limit ?? SPACE_SESSION_DEFAULT_LIMIT, SPACE_SESSION_MAX_LIMIT);
         const offset = Math.max(args.offset ?? 0, 0);
+        const fetchLimit = Math.min(offset + limit, SPACE_SESSION_FETCH_CAP);
         const rows = requireDb()
           .prepare(
             `SELECT id, title, workspace_path, created_at, last_active_at, status, metadata,
                     is_worktree, git_branch, processing_state, type, session_context
                FROM sessions
               WHERE json_extract(session_context, '$.spaceId') = ?
-              ORDER BY last_active_at DESC`
+              ORDER BY last_active_at DESC
+              LIMIT ?`
           )
-          .all(spaceId) as SpaceSessionRow[];
+          .all(spaceId, fetchLimit) as SpaceSessionRow[];
         const sessions = rows
           .map(rowToSessionSummary)
           .filter((session) => !args.status || session.status === args.status)
@@ -959,7 +963,9 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         const newStatus =
           args.processing_state === 'running' ? 'processing' : args.processing_state;
         const newState: Record<string, unknown> = { ...previousState, status: newStatus };
-        if (args.clear_pending_question) delete newState.pendingQuestion;
+        if (args.clear_pending_question || args.processing_state !== 'waiting_for_input') {
+          delete newState.pendingQuestion;
+        }
         requireDb()
           .prepare(`UPDATE sessions SET processing_state = ?, last_active_at = ? WHERE id = ?`)
           .run(JSON.stringify(newState), new Date().toISOString(), args.session_id);

@@ -662,7 +662,7 @@ describe('createSpaceAgentToolHandlers — session management tools', () => {
     seedSession('older-worker', ctx.spaceId, { status: 'idle' }, { taskId: 'task-1' });
     const handlers = makeHandlers(ctx);
 
-    const parsed = parseResult(await handlers.list_sessions({ type: 'worker', limit: 1 }));
+    const parsed = parseResult(await handlers.list_sessions({ type: 'worker', limit: 2 }));
 
     expect(parsed.success).toBe(true);
     expect(parsed.sessions).toEqual([
