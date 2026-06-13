@@ -2565,7 +2565,7 @@ describe('seedBuiltInWorkflows()', () => {
     const source = hook?.validator.kind === 'script' ? hook.validator.source : '';
     expect(source).toContain('ALLOWED_HOST="${GH_HOST:-github.com}"');
     expect(source).toContain('PR host ${PR_HOST} is not allowed for GitHub lookups');
-    expect(source).toContain('[ "$COMMENT_OK" != "0" ] || [ "$REACTION_OK" != "0" ]');
+    expect(source).toContain('[ "$REACTION_OK" != "0" ] && [ "$WAIT_HEAD" = "$HEAD_OID" ]');
     expect(source).toContain('codex_reaction_count');
     expect(source).toContain('codex_approved":false');
     expect(source).toContain('codex_timed_out":true');
