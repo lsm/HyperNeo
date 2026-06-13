@@ -1356,6 +1356,65 @@ describe('SDKMessageRepository', () => {
       });
     });
 
+    it('removes fallback-retracted messages from search index', () => {
+      createSearchIndex();
+      repository.saveSDKMessage(
+        'session-1',
+        createUserMessage('refused searchable marker', 'refused-uuid')
+      );
+
+      expect(repository.searchMessages({ query: 'refused searchable' }).results).toHaveLength(1);
+      repository.saveSDKMessage('session-1', {
+        type: 'system',
+        subtype: 'model_refusal_fallback',
+        uuid: 'fallback-notice',
+        retracted_message_uuids: ['refused-uuid'],
+        session_id: 'session-1',
+      } as unknown as SDKMessage);
+
+      expect(repository.searchMessages({ query: 'refused searchable' }).results).toEqual([]);
+    });
+
+    it('keeps fallback-retracted messages out during search index rebuild', () => {
+      createSearchIndex();
+      repository.saveSDKMessage(
+        'session-1',
+        createUserMessage('rebuild hidden marker', 'hidden-uuid')
+      );
+      repository.saveSDKMessage('session-1', {
+        type: 'system',
+        subtype: 'model_refusal_fallback',
+        uuid: 'fallback-notice',
+        retracted_message_uuids: ['hidden-uuid'],
+        session_id: 'session-1',
+      } as unknown as SDKMessage);
+
+      const hiddenRow = db
+        .prepare(`SELECT id FROM sdk_messages WHERE json_extract(sdk_message, '$.uuid') = ?`)
+        .get('hidden-uuid') as { id: string };
+      repository.updateMessageTimestamp(hiddenRow.id);
+
+      expect(repository.searchMessages({ query: 'rebuild hidden' }).results).toEqual([]);
+    });
+
+    it('removes superseded messages from search index', () => {
+      createSearchIndex();
+      repository.saveSDKMessage(
+        'session-1',
+        createUserMessage('superseded searchable marker', 'superseded-uuid')
+      );
+
+      expect(repository.searchMessages({ query: 'superseded searchable' }).results).toHaveLength(1);
+      repository.saveSDKMessage('session-1', {
+        type: 'assistant',
+        uuid: 'replacement-uuid',
+        supersedes: ['superseded-uuid'],
+        message: { role: 'assistant', content: [{ type: 'text', text: 'replacement marker' }] },
+      } as unknown as SDKMessage);
+
+      expect(repository.searchMessages({ query: 'superseded searchable' }).results).toEqual([]);
+    });
+
     it('removes deleted messages from search index', () => {
       createSearchIndex();
       const before = Date.now() - 1000;

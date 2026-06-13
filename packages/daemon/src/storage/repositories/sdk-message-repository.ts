@@ -202,6 +202,7 @@ export class SDKMessageRepository {
     this.db
       .prepare(`DELETE FROM message_search_content WHERE kind = 'message' AND source_id = ?`)
       .run(row.id);
+    if (this.isMessageSuperseded(row.id, row.session_id, parsed)) return;
     if (!SEARCHABLE_MESSAGE_TYPES.has(row.message_type)) return;
     if (!this.isMessageSearchIndexEligible(row)) return;
     if (!body) return;
@@ -283,6 +284,68 @@ export class SDKMessageRepository {
     this.db
       .prepare(`DELETE FROM message_search_content WHERE kind = 'message' AND source_id = ?`)
       .run(rowId);
+  }
+
+  private getSupersededMessageUuids(message: SDKMessage): string[] {
+    const maybeSuperseding = message as SDKMessage & {
+      supersedes?: unknown;
+      retracted_message_uuids?: unknown;
+    };
+    return [
+      ...(Array.isArray(maybeSuperseding.supersedes) ? maybeSuperseding.supersedes : []),
+      ...(Array.isArray(maybeSuperseding.retracted_message_uuids)
+        ? maybeSuperseding.retracted_message_uuids
+        : []),
+    ].filter((uuid): uuid is string => typeof uuid === 'string' && uuid.length > 0);
+  }
+
+  private deleteSupersededMessageSearchRows(sessionId: string, message: SDKMessage): void {
+    if (!this.hasMessageSearchIndex()) return;
+    const supersededUuids = this.getSupersededMessageUuids(message);
+    if (supersededUuids.length === 0) return;
+
+    const placeholders = supersededUuids.map(() => '?').join(',');
+    this.db
+      .prepare(
+        `DELETE FROM message_search_content
+         WHERE kind = 'message'
+           AND session_id = ?
+           AND message_id IN (${placeholders})`
+      )
+      .run(sessionId, ...supersededUuids);
+  }
+
+  private isMessageSuperseded(rowId: string, sessionId: string, sdkMessage: SDKMessage): boolean {
+    const sdkUuid = (sdkMessage as { uuid?: unknown }).uuid;
+    if (typeof sdkUuid !== 'string' || sdkUuid.length === 0) return false;
+
+    const row = this.db
+      .prepare(
+        `SELECT 1
+         FROM sdk_messages ref,
+              json_each(ref.sdk_message, '$.retracted_message_uuids') retracted
+         WHERE ref.session_id = ?
+           AND ref.id != ?
+           AND ref.message_subtype = 'model_refusal_fallback'
+           AND retracted.value = ?
+         LIMIT 1`
+      )
+      .get(sessionId, rowId, sdkUuid);
+    if (row) return true;
+
+    return Boolean(
+      this.db
+        .prepare(
+          `SELECT 1
+           FROM sdk_messages ref,
+                json_each(ref.sdk_message, '$.supersedes') superseded
+           WHERE ref.session_id = ?
+             AND ref.id != ?
+             AND superseded.value = ?
+           LIMIT 1`
+        )
+        .get(sessionId, rowId, sdkUuid)
+    );
   }
 
   private isSearchableUserMessageStatus(rowId: string): boolean {
@@ -383,6 +446,7 @@ export class SDKMessageRepository {
         extractParentToolUseId(message),
         this.resolveTaskIdForSession(sessionId)
       );
+      this.deleteSupersededMessageSearchRows(sessionId, message);
       this.upsertMessageSearchRow(id);
       return true;
     } catch (error) {
