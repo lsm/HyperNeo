@@ -289,7 +289,7 @@ const CODEX_REACTION_APPROVAL_GUIDANCE =
   'reacted at all, comment `@codex review` on the PR to trigger its review, then wait ' +
   'for an `eyes` or `+1` reaction. ' +
   'Only a +1 newer than the current PR head commit counts — after a revision push, ' +
-  'an older +1 from a previous cycle is stale and will not open the gate. If the +1 ' +
+  'an older +1 from a previous cycle is stale and will not satisfy the hook. If the +1 ' +
   'looks old, retrigger Codex with a fresh `@codex review` comment. ' +
   'Send the approval handoff to start the Codex timeout (10 minutes). If the hook ' +
   'blocks because Codex has not yet posted `+1`, poll every 60 seconds and retry the ' +
@@ -307,7 +307,7 @@ const PD_PLAN_REVIEW_PROMPT =
   '\n\n' +
   'Procedure: read `gh pr diff`/`gh pr view`, post a visible PR review comment, then ' +
   'send_message(target="Task Dispatcher", message: "<short summary>", data: { approvals: { "<your lens>": "approved" }, ' +
-  'pr_url: "<plan PR url>" }). First three approvals normally get a gate-blocked response; ' +
+  'pr_url: "<plan PR url>" }). Early approvals normally get a hook-blocked response; ' +
   'the hook records each vote until all four approvals are present. On rejection, send ' +
   '`{ "<your lens>": "rejected" }` to Planning with required changes.';
 
@@ -391,9 +391,9 @@ const FULLSTACK_CODING_PROMPT =
   'You are the Coder in a Fullstack QA Loop workflow. You implement backend + frontend changes, ' +
   'write tests, and keep one PR updated across review and QA cycles.\n\n' +
   'When implementation is ready, ensure the PR is open and mergeable, then call `send_message` ' +
-  'on the outbound gated review channel with `data: { pr_url: "<url>" }`. Use the current ' +
+  'to the review target with `data: { pr_url: "<url>" }`. Use the current ' +
   'target and required data fields from the Runtime Execution Contract injected into your task ' +
-  'prompt. `save_artifact` alone is insufficient; only `send_message` delivers the gated ' +
+  'prompt. `save_artifact` alone is insufficient; only `send_message` triggers the hook-validated ' +
   'handoff. Coding is not the end node — the task-completion tools (`approve_task`, ' +
   '`submit_for_approval`) are not available to you.\n\n' +
   REVIEW_THREAD_RESOLUTION_GUIDANCE;
@@ -466,12 +466,13 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
               '3. Write or update tests to cover new behavior\n' +
               '4. Run the test suite and fix any failures\n' +
               '5. If code changed: open a PR with `gh pr create` — include a clear title and description\n' +
-              '6. If code changed: hand off by calling `send_message` on the outbound gated ' +
-              'review channel with `data: { pr_url: "<url>" }`. Use the current target and ' +
-              'required data fields from the Runtime Execution Contract injected into your task ' +
-              'prompt. `save_artifact` alone is insufficient; only `send_message` delivers ' +
-              'the gated handoff. Always include the PR URL data field on every `send_message` ' +
-              'handoff — gate data resets each cycle, so even on round 2+ you must re-supply it.\n' +
+              '6. If code changed: hand off by calling `send_message` to the review target ' +
+              'with `data: { pr_url: "<url>" }`. Use the current target and required data ' +
+              'fields from the Runtime Execution Contract injected into your task prompt. ' +
+              '`save_artifact` alone is insufficient; only `send_message` triggers the ' +
+              'hook-validated handoff. Always include the PR URL data field on every ' +
+              '`send_message` handoff — the hook validates every cycle, so even on round 2+ ' +
+              'you must re-supply it.\n' +
               '7. If the task is validation-only and produced no code changes: do NOT create an empty commit or PR. ' +
               'Instead, call `save_artifact({ type: "result", append: true, summary: "<validation outcome>", data: { completion_mode: "validation_only", changed_files: 0, validation_outcome: "<passed|failed + evidence>" } })`, then ' +
               '`send_message(target="Validation Complete", message="<short outcome>", data: { completion_mode: "validation_only", changed_files: 0, validation_outcome: "<outcome>" })`. ' +
@@ -491,9 +492,9 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
               REVIEW_THREAD_RESOLUTION_GUIDANCE +
               '\n' +
               '6. Verify no unresolved review conversations remain, verify tests still pass, ' +
-              'then call `send_message` on the outbound gated review channel again to ' +
-              're-trigger the review cycle. Re-supplying the PR URL data field is required; ' +
-              '`save_artifact` alone will not deliver the gated handoff.',
+              'then call `send_message` to the review target again to re-trigger the review ' +
+              'cycle. Re-supplying the PR URL data field is required because the hook ' +
+              'validates each handoff; `save_artifact` alone will not deliver it.',
           },
           toolGuards: [CODER_NO_MERGE_GUARD],
         },
@@ -1089,7 +1090,7 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
               '1. Implement backend and frontend changes with focused commits\n' +
               '2. Add/update unit, integration, and UI tests as needed\n' +
               '3. Open or update the PR and ensure it remains mergeable\n' +
-              '4. Hand off by calling `send_message` on the outbound gated review channel with ' +
+              '4. Hand off by calling `send_message` to the review target with ' +
               '`data: { pr_url: "<url>" }`; `save_artifact` alone will not deliver the handoff\n' +
               '5. Share blockers clearly with Reviewer/QA when needed',
           },
@@ -1559,9 +1560,9 @@ const RETIRED_HARDCODED_CODING_WORKFLOW_REHANDOFF_PROMPT =
   '`save_artifact` alone will not open `code-ready-gate`.';
 const CURRENT_FULLSTACK_CODING_READY_PROMPT =
   'When implementation is ready, ensure the PR is open and mergeable, then call `send_message` ' +
-  'on the outbound gated review channel with `data: { pr_url: "<url>" }`. Use the current ' +
+  'to the review target with `data: { pr_url: "<url>" }`. Use the current ' +
   'target and required data fields from the Runtime Execution Contract injected into your task ' +
-  'prompt. `save_artifact` alone is insufficient; only `send_message` delivers the gated ' +
+  'prompt. `save_artifact` alone is insufficient; only `send_message` triggers the hook-validated ' +
   'handoff. Coding is not the end node — the task-completion tools (`approve_task`, ' +
   '`submit_for_approval`) are not available to you.\n\n';
 const RETIRED_FULLSTACK_CODING_READY_PROMPT =
