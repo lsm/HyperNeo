@@ -2620,6 +2620,55 @@ describe('seedBuiltInWorkflows()', () => {
     expect(approvalHooks).toHaveLength(1);
   });
 
+  test('migration does not reuse user route hooks as generated gate equivalents', () => {
+    const workflow = migrateWorkflowGateProgressionToHooks({
+      ...PLAN_AND_DECOMPOSE_WORKFLOW,
+      hooks: [
+        {
+          id: 'custom-plan-review-hook',
+          enabled: true,
+          sourceNode: 'Plan Review',
+          targetNode: 'Task Dispatcher',
+          method: 'send_message',
+          classification: 'validation',
+          order: 0,
+          validator: { kind: 'script', interpreter: 'bash', source: 'jq -n \'{"type":"allow"}\'' },
+          authorizedCallers: [{ sourceNode: 'Plan Review' }],
+        },
+      ],
+      templateName: PLAN_AND_DECOMPOSE_WORKFLOW.name,
+      templateGates: PLAN_AND_DECOMPOSE_WORKFLOW.gates ?? [],
+    }).workflow;
+
+    const approvalHooks = workflow.hooks?.filter(
+      (hook) => hook.sourceNode === 'Plan Review' && hook.targetNode === 'Task Dispatcher'
+    );
+    expect(approvalHooks?.map((hook) => hook.id)).toContain('custom-plan-review-hook');
+    expect(approvalHooks?.some((hook) => hook.id.startsWith('plan-approval:'))).toBe(true);
+  });
+
+  test('Codex approval migration only follows source node toggle', () => {
+    const workflow = migrateWorkflowGateProgressionToHooks({
+      ...PLAN_AND_DECOMPOSE_WORKFLOW,
+      nodes: PLAN_AND_DECOMPOSE_WORKFLOW.nodes.map((node) =>
+        node.name === 'Plan Review'
+          ? { ...node, requireCodexApproval: false }
+          : node.name === 'Task Dispatcher'
+            ? { ...node, requireCodexApproval: true }
+            : node
+      ),
+      templateName: PLAN_AND_DECOMPOSE_WORKFLOW.name,
+      templateGates: PLAN_AND_DECOMPOSE_WORKFLOW.gates ?? [],
+    }).workflow;
+
+    const hook = workflow.hooks?.find(
+      (candidate) =>
+        candidate.sourceNode === 'Plan Review' && candidate.targetNode === 'Task Dispatcher'
+    );
+    const source = hook?.validator.kind === 'script' ? hook.validator.source : '';
+    expect(source).not.toContain('gh pr view');
+  });
+
   test('re-stamp installs generated hooks when replacing legacy template channels', () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;

@@ -13,8 +13,11 @@ const REVIEW_POSTED_SCRIPT = [
   'if [ -z "$PR_URL" ]; then echo "Review handoff requires pr_url or review_url" >&2; exit 1; fi',
   'START_ISO="${NEOKAI_WORKFLOW_START_ISO:-}"',
   'if [ -z "$START_ISO" ]; then echo "NEOKAI_WORKFLOW_START_ISO not injected — cannot determine review window" >&2; exit 1; fi',
-  'if ! PR_JSON=$(gh pr view "$PR_URL" --json reviews,comments,author 2>/dev/null); then echo "Failed to fetch review evidence for ${PR_URL}" >&2; exit 1; fi',
-  'VIEWER_LOGIN=$(gh api user --jq .login 2>/dev/null || true)',
+  'if ! PR_JSON=$(gh pr view "$PR_URL" --json reviews,comments,author,url 2>/dev/null); then echo "Failed to fetch review evidence for ${PR_URL}" >&2; exit 1; fi',
+  'PR_API_URL=$(jq -r \'.url // empty\' <<< "$PR_JSON")',
+  'PR_HOST=$(sed -E "s#https://([^/]+)/.*#\\1#" <<< "$PR_API_URL")',
+  'if [ -z "$PR_HOST" ] || [ "$PR_HOST" = "$PR_API_URL" ]; then echo "Failed to resolve PR host from ${PR_URL}" >&2; exit 1; fi',
+  'VIEWER_LOGIN=$(gh api --hostname "$PR_HOST" user --jq .login 2>/dev/null || true)',
   'if [ -z "$VIEWER_LOGIN" ]; then echo "Unable to resolve authenticated reviewer" >&2; exit 1; fi',
   'FORMAL=$(jq --arg since "$START_ISO" --arg viewer "$VIEWER_LOGIN" \'[.reviews[] | select((.submittedAt // "") > $since) | select((.author.login // .user.login // "") == $viewer) | select(.state == "APPROVED" or .state == "CHANGES_REQUESTED")] | length\' <<< "$PR_JSON")',
   'if [ "$FORMAL" != "0" ]; then jq -n --arg url "$PR_URL" --argjson count "$FORMAL" \'{"type":"allow","data":{"pr_url":$url,"review_evidence_count":$count,"review_evidence":"formal_review"}}\'; exit 0; fi',
@@ -365,6 +368,9 @@ function findExistingRouteHookId(
       existing.sourceNode === hook.sourceNode &&
       existing.targetNode === hook.targetNode &&
       existing.classification === hook.classification &&
+      existing.validator.kind === 'script' &&
+      hook.validator.kind === 'script' &&
+      existing.validator.source === hook.validator.source &&
       JSON.stringify(existing.authorizedCallers ?? []) ===
         JSON.stringify(hook.authorizedCallers ?? [])
     ) {
@@ -410,9 +416,7 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
       ] ?? KNOWN_GATE_PATTERNS[channel.gateId];
     const gate = gatesById.get(channel.gateId);
     const sourceNode = workflow.nodes?.find((node) => node.name === fromNode);
-    const targetNode = workflow.nodes?.find((node) => node.name === toNode);
-    const codexRequired =
-      sourceNode?.requireCodexApproval === true || targetNode?.requireCodexApproval === true;
+    const codexRequired = sourceNode?.requireCodexApproval === true;
     const script =
       pattern?.gateId === 'plan-approval-gate' && !codexRequired
         ? APPROVALS_WITHOUT_CODEX_SCRIPT
