@@ -554,6 +554,13 @@ export class SDKMessageHandler {
       message,
     });
 
+    // Terminal messages end the turn even when they represent errors.
+    // Clear stale waiting_for_input state before type-specific handling so
+    // interrupted AskUserQuestion turns cannot keep the composer locked.
+    if (isSDKResultMessage(message)) {
+      await stateManager.setIdle();
+    }
+
     // Handle specific message types
     if (isSDKUserMessage(message)) {
       await this.handleUserMessage(message);
@@ -646,7 +653,7 @@ export class SDKMessageHandler {
    * Handle result message (end of turn)
    */
   private async handleResultMessage(message: SDKMessage): Promise<void> {
-    const { session, db, internalEventBus, stateManager } = this.ctx;
+    const { session, db, internalEventBus } = this.ctx;
 
     // Type guard to ensure this is a successful result
     if (!isSDKResultSuccess(message)) return;
@@ -736,9 +743,8 @@ export class SDKMessageHandler {
       sessionId: session.id,
     });
 
-    // Set state back to idle
-    // Note: Title generation now handled by TitleGenerationQueue (decoupled via EventBus)
-    await stateManager.setIdle();
+    // Note: Terminal result handling resets processing state before this success-only branch runs.
+    // Title generation now handled by TitleGenerationQueue (decoupled via EventBus).
 
     // Auto-dispatch deferred messages in immediate mode (next-turn queue replay)
     if (session.config.queryMode !== 'manual') {
