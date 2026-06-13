@@ -152,6 +152,42 @@ describe('QueryOptionsBuilder', () => {
       expect(options.env).toEqual({ MY_VAR: 'value' });
     });
 
+    it('should preserve user auto-compact env overrides for native Anthropic', async () => {
+      mockSettingsManager.getGlobalSettings = mock(() => ({
+        env: { CLAUDE_CODE_AUTO_COMPACT_WINDOW: '200000', KEEP_GLOBAL: 'global' },
+        settingSources: ['user', 'project', 'local'],
+      }));
+      mockSession.config.env = {
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW: '262144',
+        KEEP_SESSION: 'session',
+      };
+
+      const options = await builder.build();
+
+      expect(options.env).toEqual({
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW: '262144',
+        KEEP_GLOBAL: 'global',
+        KEEP_SESSION: 'session',
+      });
+    });
+
+    it('should filter provider-managed auto-compact env overrides for bridge providers', async () => {
+      mockSettingsManager.getGlobalSettings = mock(() => ({
+        env: { CLAUDE_CODE_AUTO_COMPACT_WINDOW: '200000', KEEP_GLOBAL: 'global' },
+        settingSources: ['user', 'project', 'local'],
+      }));
+      mockSession.config.provider = 'anthropic-codex';
+      mockSession.config.model = 'gpt-5.3-codex';
+      mockSession.config.env = {
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW: '262144',
+        KEEP_SESSION: 'session',
+      };
+
+      const options = await builder.build();
+
+      expect(options.env).toEqual({ KEEP_GLOBAL: 'global', KEEP_SESSION: 'session' });
+    });
+
     it('should not override SDK auto-compaction settings for native anthropic provider', async () => {
       // Default provider is anthropic — SDK already knows correct context window
       const options = await builder.build();
@@ -168,10 +204,9 @@ describe('QueryOptionsBuilder', () => {
   });
 
   describe('provider settings', () => {
-    it('should enable SDK auto-compaction for Codex bridge with the provider context window', () => {
-      expect(buildProviderSettings('anthropic-codex', 272_000)).toEqual({
-        autoCompactEnabled: true,
-        autoCompactWindow: 272_000,
+    it('should disable SDK auto-compaction for Codex bridge without model context', () => {
+      expect(buildProviderSettings('anthropic-codex')).toEqual({
+        autoCompactEnabled: false,
       });
     });
 
@@ -179,7 +214,11 @@ describe('QueryOptionsBuilder', () => {
       expect(buildProviderSettings('anthropic')).toBeUndefined();
     });
 
-    it('should enable SDK auto-compaction for all non-native providers', () => {
+    it('should enable SDK auto-compaction for all non-native providers with context windows', () => {
+      expect(buildProviderSettings('anthropic-codex', 128_000)).toEqual({
+        autoCompactEnabled: true,
+        autoCompactWindow: 128_000,
+      });
       expect(buildProviderSettings('openrouter', 1_000_000)).toEqual({
         autoCompactEnabled: true,
         autoCompactWindow: 1_000_000,
@@ -192,15 +231,18 @@ describe('QueryOptionsBuilder', () => {
         autoCompactEnabled: true,
         autoCompactWindow: 32_000,
       });
-      expect(buildProviderSettings('kimi', 200_000)).toEqual({
-        autoCompactEnabled: true,
-        autoCompactWindow: 200_000,
-      });
     });
 
     it('should disable SDK auto-compaction when context window is unavailable', () => {
       expect(buildProviderSettings('openrouter')).toEqual({
         autoCompactEnabled: false,
+      });
+    });
+
+    it('should enable SDK auto-compaction for Kimi with its known window', () => {
+      expect(buildProviderSettings('kimi')).toEqual({
+        autoCompactEnabled: true,
+        autoCompactWindow: 262_144,
       });
     });
 

@@ -695,6 +695,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('claude-opus-4-7');
       expect(cfg.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('claude-sonnet-4-20250514');
       expect(cfg.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('claude-opus-4-7');
+      expect(cfg.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('272000');
     });
 
     it('routes GPT-5.5 through the 1 M SDK alias while keeping Codex context metadata', async () => {
@@ -719,6 +720,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
       const cfg = provider.buildSdkConfig('codex-mini', { workspacePath: '/tmp/ws-mini' });
       expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('claude-sonnet-4-20250514');
       expect(cfg.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('claude-sonnet-4-20250514');
+      expect(cfg.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('128000');
     });
 
     it('keeps the SDK sonnet tier on the mini Anthropic ID for GPT-5.1 mini sessions', () => {

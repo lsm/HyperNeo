@@ -641,6 +641,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       envVars: {
         ANTHROPIC_BASE_URL: bridgeBaseUrl,
         ANTHROPIC_API_KEY: `codex-bridge-${sessionId}`,
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(entry.contextWindow),
         CLAUDE_CODE_OAUTH_TOKEN: '',
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
         // Present Anthropic model IDs the Claude Agent SDK recognises while the

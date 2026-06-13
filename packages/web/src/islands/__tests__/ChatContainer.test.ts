@@ -6,6 +6,9 @@
  */
 
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
+import { shouldBlockForPendingQuestion } from '../ChatContainer.tsx';
+import type { AgentProcessingState } from '@neokai/shared';
+import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 // Vite-native raw import — works in both Node and browser-like test environments
 // (happy-dom) without reaching for Node built-ins like `fs`/`path`/`url`, which
 // are externalized by Vite and unavailable at runtime in the test environment.
@@ -26,6 +29,23 @@ function flushRAF(): void {
   rafCallbacks.length = 0;
   callbacks.forEach((cb) => cb());
 }
+
+describe('ChatContainer input guard', () => {
+  const waitingState: AgentProcessingState = {
+    status: 'waiting_for_input',
+    pendingQuestion: { toolUseId: 'tool-123', questions: [], askedAt: 1000 },
+  };
+
+  it('blocks input while waiting_for_input without terminal result', () => {
+    expect(shouldBlockForPendingQuestion(waitingState, [])).toBe(true);
+  });
+
+  it('allows input when stale waiting_for_input follows a terminal result', () => {
+    const messages = [{ type: 'result' }] as SDKMessage[];
+
+    expect(shouldBlockForPendingQuestion(waitingState, messages)).toBe(false);
+  });
+});
 
 describe('ChatContainer State Batching', () => {
   const originalRAF = globalThis.requestAnimationFrame;

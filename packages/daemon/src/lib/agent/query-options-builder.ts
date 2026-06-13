@@ -192,6 +192,21 @@ export function ensureAgentTools(
  */
 export const NATIVE_CONTEXT_WINDOW_PROVIDER_IDS = ['anthropic', 'anthropic-copilot'];
 
+export const PROVIDER_NATIVE_AUTO_COMPACT_WINDOWS: Record<string, number> = {
+  kimi: 262_144,
+};
+
+export function providerUsesNativeAutoCompact(
+  providerId: string,
+  contextWindow?: number | null
+): boolean {
+  return (
+    NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId) ||
+    providerId in PROVIDER_NATIVE_AUTO_COMPACT_WINDOWS ||
+    (providerId === 'anthropic-codex' && !!contextWindow)
+  );
+}
+
 /**
  * Provider-specific SDK settings overrides.
  *
@@ -211,7 +226,9 @@ export function buildProviderSettings(
     return undefined;
   }
 
-  if (!contextWindow) {
+  const nativeAutoCompactWindow = PROVIDER_NATIVE_AUTO_COMPACT_WINDOWS[providerId];
+  const autoCompactWindow = nativeAutoCompactWindow ?? contextWindow;
+  if (!autoCompactWindow) {
     return {
       autoCompactEnabled: false,
     };
@@ -223,7 +240,7 @@ export function buildProviderSettings(
   // `/compact` as ordinary prompt text from the streaming input generator.
   return {
     autoCompactEnabled: true,
-    autoCompactWindow: contextWindow,
+    autoCompactWindow,
   };
 }
 
@@ -955,6 +972,9 @@ CRITICAL RULES:
       'API_TIMEOUT_MS',
       'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC',
     ]);
+    if (this.ctx.session.config.provider !== 'anthropic') {
+      providerEnvVars.add('CLAUDE_CODE_AUTO_COMPACT_WINDOW');
+    }
 
     const mergedEnv: Record<string, string> = {};
 
