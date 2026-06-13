@@ -817,10 +817,33 @@ describe('createSpaceAgentToolHandlers — session management tools', () => {
       },
       3
     );
+    insertMessage(
+      'msg-superseded',
+      'assistant',
+      null,
+      {
+        type: 'assistant',
+        uuid: 'superseded-uuid',
+        message: { content: [{ type: 'text', text: 'Superseded' }] },
+      },
+      4
+    );
+    insertMessage(
+      'msg-replacement',
+      'assistant',
+      null,
+      {
+        type: 'assistant',
+        uuid: 'replacement-uuid',
+        supersedes: ['superseded-uuid'],
+        message: { content: [{ type: 'text', text: 'Replacement' }] },
+      },
+      5
+    );
     for (const [id, subtype, timestampMs] of [
-      ['msg-thinking', 'thinking_tokens', 4],
-      ['msg-state', 'session_state_changed', 5],
-      ['msg-commands', 'commands_changed', 6],
+      ['msg-thinking', 'thinking_tokens', 6],
+      ['msg-state', 'session_state_changed', 7],
+      ['msg-commands', 'commands_changed', 8],
     ] as const) {
       insertMessage(id, 'system', subtype, { type: 'system', subtype }, timestampMs);
     }
@@ -832,8 +855,8 @@ describe('createSpaceAgentToolHandlers — session management tools', () => {
 
     expect(parsed.success).toBe(true);
     expect(parsed.messages).toEqual([
+      expect.objectContaining({ id: 'msg-replacement', content_summary: 'Replacement' }),
       expect.objectContaining({ id: 'fallback-notice' }),
-      expect.objectContaining({ id: 'msg-visible', content_summary: 'Visible' }),
     ]);
   });
 

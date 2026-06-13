@@ -722,6 +722,13 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
                 AND ref.message_subtype = 'model_refusal_fallback'
                 AND retracted.value = COALESCE(json_extract(sdk_messages.sdk_message, '$.uuid'), sdk_messages.id)
             )
+            AND NOT EXISTS (
+              SELECT 1
+              FROM sdk_messages ref,
+                   json_each(ref.sdk_message, '$.supersedes') superseded
+              WHERE ref.session_id = sdk_messages.session_id
+                AND superseded.value = COALESCE(json_extract(sdk_messages.sdk_message, '$.uuid'), sdk_messages.id)
+            )
           ORDER BY timestamp DESC, id DESC
           LIMIT ?`
       )

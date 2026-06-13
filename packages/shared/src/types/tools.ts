@@ -14,6 +14,7 @@ export const KNOWN_TOOLS = [
   'Glob',
   'WebFetch',
   'WebSearch',
+  'Agent',
   'Task',
   'TaskOutput',
   'TaskStop',

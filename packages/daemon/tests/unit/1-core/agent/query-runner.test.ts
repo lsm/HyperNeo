@@ -2488,6 +2488,22 @@ describe('QueryRunner environment variable handling', () => {
     expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe('session-oauth-token');
   });
 
+  it('should not copy ambient OAuth tokens for bridge providers', () => {
+    const env = refreshQueryEnvFromProcess(
+      {
+        ANTHROPIC_AUTH_TOKEN: 'glm-api-key',
+      },
+      {
+        ANTHROPIC_AUTH_TOKEN: 'glm-api-key',
+        CLAUDE_CODE_OAUTH_TOKEN: 'ambient-anthropic-oauth',
+      },
+      { clearProviderManaged: true }
+    );
+
+    expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe('glm-api-key');
+  });
+
   it('should tombstone provider-managed env when omitted for ACP subprocesses', () => {
     const env = refreshQueryEnvFromProcess(
       {

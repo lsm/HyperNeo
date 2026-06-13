@@ -138,6 +138,14 @@ export function refreshQueryEnvFromProcess(
   }
   for (const key of providerManagedEnvVars) {
     if (options.omitProviderManaged) continue;
+    if (
+      key === 'CLAUDE_CODE_OAUTH_TOKEN' &&
+      options.clearProviderManaged &&
+      !options.preserveAnthropicOAuthToken
+    ) {
+      delete refreshedEnv[key];
+      continue;
+    }
     const value = processEnv[key];
     if (value === undefined) {
       if (options.clearProviderManaged) {
@@ -168,6 +176,13 @@ export function refreshQueryEnvFromProcess(
   for (const [key, value] of Object.entries(processEnv)) {
     if (value === undefined || key === 'PORT' || key === 'NEOKAI_PORT') continue;
     if (options.omitProviderManaged && providerManagedEnvVars.has(key)) continue;
+    if (
+      options.clearProviderManaged &&
+      key === 'CLAUDE_CODE_OAUTH_TOKEN' &&
+      !options.preserveAnthropicOAuthToken
+    ) {
+      continue;
+    }
     if (!(key in refreshedEnv)) {
       refreshedEnv[key] = value;
     }
