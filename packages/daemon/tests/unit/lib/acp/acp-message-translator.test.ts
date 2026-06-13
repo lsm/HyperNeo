@@ -172,23 +172,77 @@ describe('AcpMessageTranslator', () => {
   // Ignored updates
   // ---------------------------------------------------------------------------
 
-  test('ignores plan, config, mode, usage, commands updates', () => {
-    expect(translator.processUpdate({ sessionUpdate: 'plan', entries: [] } as never)).toEqual([]);
+  test('translates plan, config, mode, session info updates', () => {
+    expect(translator.processUpdate({ sessionUpdate: 'plan', entries: [] } as never)[0].type).toBe(
+      'assistant'
+    );
     expect(
       translator.processUpdate({
         sessionUpdate: 'current_mode_update',
         currentModeId: 'x',
-      } as never)
-    ).toEqual([]);
+      } as never)[0].type
+    ).toBe('assistant');
     expect(
       translator.processUpdate({
         sessionUpdate: 'config_option_update',
         configOptions: [],
-      } as never)
-    ).toEqual([]);
+      } as never)[0].type
+    ).toBe('assistant');
     expect(
-      translator.processUpdate({ sessionUpdate: 'usage_update', size: 0, used: 0 } as never)
-    ).toEqual([]);
+      translator.processUpdate({
+        sessionUpdate: 'session_info_update',
+        title: 'New title',
+      } as never)[0].type
+    ).toBe('assistant');
+  });
+
+  test('uses usage update in result message', () => {
+    translator.processUpdate({ sessionUpdate: 'usage_update', size: 100, used: 80 } as never);
+    const result = translator.translateResult('end_turn') as {
+      usage: { input_tokens: number; output_tokens: number };
+    };
+
+    expect(result.usage.input_tokens).toBe(0);
+    expect(result.usage.output_tokens).toBe(0);
+  });
+
+  test('flushes buffered text before synthetic updates', () => {
+    translator.processUpdate(agentChunk('Before'));
+
+    const messages = translator.processUpdate({ sessionUpdate: 'plan', entries: [] } as never);
+
+    expect(messages.length).toBe(2);
+    expect(
+      (messages[0] as { message: { content: { type: string; text: string }[] } }).message.content[0]
+        .text
+    ).toBe('Before');
+    expect(
+      (messages[1] as { message: { content: { type: string; text: string }[] } }).message.content[0]
+        .text
+    ).toContain('Plan:');
+  });
+
+  test('uses configured context window in usage estimate', () => {
+    translator = new AcpMessageTranslator('test-session', 200000);
+    translator.processUpdate(agentChunk('hello'));
+
+    expect(translator.getContextUsage()?.size).toBe(200000);
+  });
+
+  test('does not add local output estimates to ACP usage totals', () => {
+    translator.processUpdate(agentChunk('assistant text'));
+    translator.processUpdate({ sessionUpdate: 'usage_update', size: 200000, used: 53000 } as never);
+
+    expect(translator.getContextUsage()?.used).toBe(53000);
+  });
+
+  test('preserves zero ACP usage updates', () => {
+    translator.processUpdate({ sessionUpdate: 'usage_update', size: 200000, used: 0 } as never);
+
+    expect(translator.getContextUsage()).toEqual({ used: 0, size: 200000 });
+  });
+
+  test('ignores available commands updates', () => {
     expect(
       translator.processUpdate({
         sessionUpdate: 'available_commands_update',

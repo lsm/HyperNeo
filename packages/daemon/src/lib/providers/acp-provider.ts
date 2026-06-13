@@ -16,7 +16,7 @@ import type {
   ProviderSessionConfig,
   ModelTier,
 } from '@neokai/shared/provider';
-import type { ModelInfo } from '@neokai/shared';
+import type { AcpConfigOption, ModelInfo } from '@neokai/shared';
 
 const DEFAULT_ACP_CONTEXT_WINDOW = 200000;
 const ACP_CONTEXT_WINDOW_ENV_VAR = 'NEOKAI_ACP_CONTEXT_WINDOW';
@@ -66,6 +66,7 @@ export class AcpProvider implements Provider {
       description: 'ACP-compatible agent default model',
       releaseDate: '2026-01-01',
       available: true,
+      preferContextWindowMetadata: false,
     },
   ];
 
@@ -133,6 +134,31 @@ export class AcpProvider implements Provider {
     this.cachedModels = models;
   }
 
+  getCachedModels(): ModelInfo[] | null {
+    return this.cachedModels;
+  }
+
+  setConfigOptions(configOptions: AcpConfigOption[]): void {
+    const modelOption = configOptions.find((option) => option.category === 'model');
+    if (!modelOption) {
+      this.clearModelCache();
+      return;
+    }
+
+    this.cachedModels = flattenModelChoices(modelOption).map((choice) => ({
+      id: choice.value,
+      name: choice.name,
+      alias: choice.value,
+      family: 'acp',
+      provider: 'acp',
+      contextWindow: this.getContextWindow(),
+      description: `ACP model ${choice.name}`,
+      releaseDate: '2026-01-01',
+      available: true,
+      preferContextWindowMetadata: false,
+    }));
+  }
+
   /**
    * Clear cached models so the next getModels() call falls back to defaults.
    */
@@ -144,7 +170,11 @@ export class AcpProvider implements Provider {
    * Check if a model ID belongs to ACP.
    */
   ownsModel(modelId: string): boolean {
-    return modelId === 'acp' || modelId.toLowerCase().startsWith('acp-');
+    return (
+      modelId === 'acp' ||
+      modelId.toLowerCase().startsWith('acp-') ||
+      this.cachedModels?.some((model) => model.id === modelId || model.alias === modelId) === true
+    );
   }
 
   /**
@@ -184,4 +214,8 @@ export class AcpProvider implements Provider {
   getTitleGenerationModel(): string {
     return 'acp-default';
   }
+}
+
+function flattenModelChoices(option: AcpConfigOption): Array<{ name: string; value: string }> {
+  return option.options.flatMap((entry) => ('options' in entry ? entry.options : [entry]));
 }

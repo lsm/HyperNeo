@@ -1,7 +1,13 @@
 import type { UUID } from 'crypto';
 import type { CanUseTool, Options } from '@anthropic-ai/claude-agent-sdk';
-import { generateUUID, type MessageContent, type Session } from '@neokai/shared';
+import {
+  generateUUID,
+  THINKING_LEVEL_TOKENS,
+  type MessageContent,
+  type Session,
+} from '@neokai/shared';
 import type {
+  AcpConfigOption,
   AcpContentBlock,
   AcpMcpServerConfig,
   AcpPermissionRequest,
@@ -9,7 +15,10 @@ import type {
 } from '@neokai/shared/acp';
 import type { McpServerConfig, SDKMessage, SDKUserMessage } from '@neokai/shared/sdk';
 import { ErrorCategory } from '../error-manager';
+import { getModelsCache, setModelsCache } from '../model-service';
+import { getProviderRegistry } from '../providers/factory';
 import { getProviderService } from '../provider-service';
+import { AcpProvider } from '../providers/acp-provider';
 import { TRANSIENT_CONNECTION_ERROR_SUBSTRINGS } from '../agent/transient-error-patterns';
 import type { QueryRunnerContext, TrackedAgentProcess } from '../agent/query-runner';
 import {
@@ -27,6 +36,66 @@ function getStartupTimeoutMs(): number {
   if (!raw) return DEFAULT_STARTUP_TIMEOUT_MS;
   const parsed = Number.parseInt(raw, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_STARTUP_TIMEOUT_MS;
+}
+
+function getAcpContextWindow(): number {
+  const provider = getProviderRegistry().get('acp');
+  return provider instanceof AcpProvider
+    ? provider.getContextWindow()
+    : AcpProvider.DEFAULT_CONTEXT_WINDOW;
+}
+
+function flattenConfigChoices(option: AcpConfigOption): Array<{ name: string; value: string }> {
+  return option.options.flatMap((entry) => ('options' in entry ? entry.options : [entry]));
+}
+
+function getAcpContextUsageEstimate(session: Session): number | undefined {
+  return (session.metadata as { acpContextUsageEstimate?: number } | undefined)
+    ?.acpContextUsageEstimate;
+}
+
+function selectThoughtLevelValue(option: AcpConfigOption, tokens: number | null): string {
+  const choices = flattenConfigChoices(option);
+  if (choices.length === 0) return option.currentValue;
+
+  if (!tokens || tokens <= 0) {
+    return choices.find(isOffThoughtChoice)?.value ?? choices[0].value;
+  }
+
+  const exact = choices.find((choice) => parseThoughtTokenValue(choice) === tokens);
+  if (exact) return exact.value;
+
+  const enabledChoices = choices.filter((choice) => !isOffThoughtChoice(choice));
+  if (enabledChoices.length === 0) return option.currentValue;
+
+  const sorted = [...enabledChoices].sort(
+    (a, b) => (parseThoughtTokenValue(a) ?? 0) - (parseThoughtTokenValue(b) ?? 0)
+  );
+  const sizedChoices = sorted.filter((choice) => parseThoughtTokenValue(choice) !== undefined);
+  if (sizedChoices.length > 0) {
+    return (
+      sizedChoices.find((choice) => (parseThoughtTokenValue(choice) ?? 0) >= tokens)?.value ??
+      sizedChoices.at(-1)!.value
+    );
+  }
+
+  if (enabledChoices.length === 1) return enabledChoices[0].value;
+  if (enabledChoices.length === 2) return enabledChoices[tokens >= 8000 ? 1 : 0].value;
+
+  const index = tokens >= 24000 ? enabledChoices.length - 1 : tokens >= 16000 ? 1 : 0;
+  return enabledChoices[Math.min(index, enabledChoices.length - 1)].value;
+}
+
+function isOffThoughtChoice(choice: { name: string; value: string }): boolean {
+  const text = `${choice.value} ${choice.name}`.toLowerCase();
+  return /\b(off|none|disabled|disable|false|0)\b/.test(text);
+}
+
+function parseThoughtTokenValue(choice: { name: string; value: string }): number | undefined {
+  const text = `${choice.value} ${choice.name}`.toLowerCase();
+  const match = text.match(/(?:think)?(\d+)k\b/);
+  if (match) return Number(match[1]) * 1000;
+  return undefined;
 }
 
 export function parseAcpCommand(commandLine: string): { command: string; args: string[] } {
@@ -463,10 +532,12 @@ export class AcpQueryRunner {
         try {
           const result = await client.loadSession(existingAcpSessionId, cwd, acpMcpServers);
           this.persistAcpSessionId(result.sessionId);
+          this.updateAcpModelCache(result.configOptions, { syncSessionModel: false });
         } catch (loadError) {
           try {
             const result = await client.resumeSession(existingAcpSessionId, cwd, acpMcpServers);
             this.persistAcpSessionId(result.sessionId);
+            this.updateAcpModelCache(result.configOptions, { syncSessionModel: false });
           } catch (resumeError) {
             const loadMessage = loadError instanceof Error ? loadError.message : String(loadError);
             const resumeMessage =
@@ -482,8 +553,12 @@ export class AcpQueryRunner {
       } else {
         const result = await client.createSession(cwd, acpMcpServers);
         this.persistAcpSessionId(result.sessionId);
+        this.updateAcpModelCache(result.configOptions, { syncSessionModel: false });
         createdAcpSessionDuringRun = true;
       }
+      await this.applyStoredAcpModel(client);
+      await this.applyStoredAcpThinkingLevel(client);
+      this.updateAcpModelCache(client.getConfigOptions());
       startupHandshakeActive = false;
       restoreMessageEnqueuedHandler?.();
       this.clearStartupTimer();
@@ -504,6 +579,7 @@ export class AcpQueryRunner {
           };
         }
 
+        await this.applyStoredAcpThinkingLevel(client);
         onSent();
 
         const promptContent = prependInstructionsToNextPrompt
@@ -511,7 +587,12 @@ export class AcpQueryRunner {
           : toAcpPromptContent(message);
         const shouldPersistInstructionsSent = prependInstructionsToNextPrompt;
         prependInstructionsToNextPrompt = false;
-        const adapter = new AcpQueryAdapter(client, promptContent);
+        const adapter = new AcpQueryAdapter(client, promptContent, {
+          contextWindow: getAcpContextWindow(),
+          initialUsageEstimate: getAcpContextUsageEstimate(session),
+          onContextUsageUpdate: (used) => this.persistAcpContextUsageEstimate(used),
+          onConfigOptionsUpdate: (configOptions) => this.updateAcpModelCache(configOptions),
+        });
         this.ctx.queryObject = adapter;
 
         this.ctx.firstMessageReceived = false;
@@ -874,6 +955,98 @@ export class AcpQueryRunner {
       acpInstructionsSent: true,
     };
     db.updateSession(session.id, { metadata: session.metadata });
+  }
+
+  private async applyStoredAcpModel(client: AcpClient): Promise<void> {
+    const storedModel = this.ctx.session.config.model;
+    if (storedModel === 'acp-default') return;
+
+    const modelOption = client.getConfigOptions().find((option) => option.category === 'model');
+    if (!modelOption || modelOption.currentValue === storedModel) return;
+    if (!flattenConfigChoices(modelOption).some((choice) => choice.value === storedModel)) return;
+
+    const configOptions = await client.setConfigOption(modelOption.id, storedModel);
+    this.updateAcpModelCache(configOptions);
+  }
+
+  private async applyStoredAcpThinkingLevel(client: AcpClient): Promise<void> {
+    const thinkingLevel = this.ctx.session.config.thinkingLevel;
+    if (!thinkingLevel) return;
+
+    const option = client
+      .getConfigOptions()
+      .find((configOption) => configOption.category === 'thought_level');
+    if (!option) return;
+    const value = selectThoughtLevelValue(option, THINKING_LEVEL_TOKENS[thinkingLevel] ?? null);
+    if (option.currentValue === value) return;
+
+    const configOptions = await client.setConfigOption(option.id, value);
+    this.updateAcpModelCache(configOptions);
+  }
+
+  private persistAcpContextUsageEstimate(used: number): void {
+    const { session, db } = this.ctx;
+    const metadata = session.metadata as { acpContextUsageEstimate?: number } | undefined;
+    if (metadata?.acpContextUsageEstimate === used) return;
+
+    session.metadata = {
+      ...session.metadata,
+      acpContextUsageEstimate: used,
+    } as Session['metadata'];
+    db.updateSession(session.id, { metadata: session.metadata });
+  }
+
+  private syncAcpSessionModel(configOptions: AcpConfigOption[]): void {
+    const modelOption = configOptions.find((option) => option.category === 'model');
+    const currentValue = modelOption?.currentValue ?? 'acp-default';
+    if (this.ctx.session.config.model === currentValue) return;
+
+    this.ctx.session.config.model = currentValue;
+    this.ctx.db.updateSession(this.ctx.session.id, {
+      config: {
+        model: currentValue,
+        provider: 'acp',
+      } as Session['config'],
+    });
+    this.ctx.internalEventBus.publishAsync('session.updated', {
+      sessionId: this.ctx.session.id,
+      source: 'acp-config-options',
+      session: { config: this.ctx.session.config },
+    });
+  }
+
+  private updateAcpModelCache(
+    configOptions: AcpConfigOption[],
+    options: { syncSessionModel?: boolean } = {}
+  ): void {
+    if (options.syncSessionModel !== false) {
+      this.syncAcpSessionModel(configOptions);
+    }
+
+    const provider = getProviderRegistry().get('acp');
+    if (provider instanceof AcpProvider) {
+      provider.setConfigOptions(configOptions);
+      const cache = getModelsCache();
+      const providerModels = provider.getCachedModels();
+      if (providerModels) {
+        const globalModels = cache.get('global') ?? [];
+        cache.set('global', [
+          ...globalModels.filter((model) => model.provider !== 'acp'),
+          ...providerModels,
+        ]);
+      } else {
+        const globalModels = cache.get('global') ?? [];
+        cache.set('global', [
+          ...globalModels.filter((model) => model.provider !== 'acp'),
+          ...AcpProvider.MODELS.map((model) => ({
+            ...model,
+            contextWindow: provider.getContextWindow(),
+          })),
+        ]);
+      }
+      setModelsCache(cache);
+      this.ctx.internalEventBus.publishAsync('providers.changed', { sessionId: 'global' });
+    }
   }
 
   private clearStartupTimer(): void {
