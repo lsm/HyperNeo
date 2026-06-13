@@ -284,6 +284,7 @@ export function SDKUserMessage({
       content={syntheticContentBlocks}
       timestamp={messageWithTimestamp.timestamp}
       uuid={message.uuid}
+      showActions={false}
     />
   ) : (
     <div
