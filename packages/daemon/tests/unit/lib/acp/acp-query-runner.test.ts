@@ -353,6 +353,54 @@ describe('AcpQueryRunner', () => {
     ).rejects.toThrow('Invalid proxy token');
   });
 
+  test('writes per-server tool catalogs for proxy subprocesses', async () => {
+    const mcpServers = {
+      'node-agent': {
+        type: 'sdk',
+        name: 'node-agent',
+        tools: [
+          {
+            name: 'send_message',
+            description: 'Send message',
+            inputSchema: { target: z.string() },
+            handler: mock(async () => ({ content: [{ type: 'text', text: 'sent' }] })),
+          },
+        ],
+        instance: { _registeredTools: {} },
+      },
+      'agent-memory': {
+        type: 'sdk',
+        name: 'agent-memory',
+        tools: [
+          {
+            name: 'memory.write',
+            description: 'Write memory',
+            inputSchema: { key: z.string() },
+            handler: mock(async () => ({ content: [{ type: 'text', text: 'written' }] })),
+          },
+        ],
+        instance: { _registeredTools: {} },
+      },
+    } as never;
+    const bridge = new AcpMcpProxyBridge(mcpServers);
+
+    await bridge.start();
+    try {
+      const fs = await import('node:fs/promises');
+      const nodeTools = JSON.parse(
+        await fs.readFile(bridge.getToolsPathForServer('node-agent'), 'utf8')
+      );
+      const memoryTools = JSON.parse(
+        await fs.readFile(bridge.getToolsPathForServer('agent-memory'), 'utf8')
+      );
+
+      expect(nodeTools.map((tool: { name: string }) => tool.name)).toEqual(['send_message']);
+      expect(memoryTools.map((tool: { name: string }) => tool.name)).toEqual(['memory.write']);
+    } finally {
+      await bridge.close();
+    }
+  });
+
   test('collects tools from production tools array fallback', () => {
     const mcpServers = {
       'space-agent-tools': {

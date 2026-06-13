@@ -226,7 +226,7 @@ export function convertMcpServersForAcp(
               '--token',
               proxyBridge.token,
               '--toolsPath',
-              proxyBridge.toolsPath,
+              proxyBridge.getToolsPathForServer(name) ?? proxyBridge.toolsPath,
             ],
             env: [],
           },

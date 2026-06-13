@@ -51,6 +51,7 @@ export class AcpMcpProxyBridge {
   private server: Server | null = null;
   private socketDir: string | null = null;
   private readonly activeSockets = new Set<Socket>();
+  private readonly toolsPathByServer = new Map<string, string>();
   private toolsByName = new Map<string, ProxiedTool>();
 
   constructor(mcpServers: Record<string, McpServerConfig>) {
@@ -66,10 +67,23 @@ export class AcpMcpProxyBridge {
       .map((tool) => tool.schema);
   }
 
+  getToolsPathForServer(serverName: string): string | undefined {
+    return this.toolsPathByServer.get(serverName);
+  }
+
   async start(): Promise<void> {
     if (this.server) return;
     this.socketDir = await mkdtemp(join(tmpdir(), 'neokai-acp-proxy-'));
     await writeFile(this.toolsPath, JSON.stringify(this.tools), { mode: 0o600 });
+    for (const serverName of new Set(
+      [...this.toolsByName.values()].map((tool) => tool.serverName)
+    )) {
+      const serverToolsPath = join(this.socketDir, `${serverName}.tools.json`);
+      await writeFile(serverToolsPath, JSON.stringify(this.getToolsForServer(serverName)), {
+        mode: 0o600,
+      });
+      this.toolsPathByServer.set(serverName, serverToolsPath);
+    }
     if (process.platform === 'win32') {
       this.socketPath = `\\\\.\\pipe\\neokai-acp-proxy-${randomUUID()}`;
     } else {
@@ -120,6 +134,7 @@ export class AcpMcpProxyBridge {
     if (server) {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
+    this.toolsPathByServer.clear();
     if (this.socketDir) {
       await rm(this.socketDir, { recursive: true, force: true }).catch(() => {});
       this.socketDir = null;
