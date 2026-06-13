@@ -29,6 +29,7 @@ import type {
 } from '@neokai/shared';
 import type { ChatMessage } from '@neokai/shared';
 import { Logger } from '@neokai/shared';
+import { flattenSDKSlashCommands, type SDKSlashCommand } from '@neokai/shared/sdk';
 import { connectionManager } from './connection-manager';
 import { slashCommandsSignal } from './signals';
 import { toast } from './toast';
@@ -635,7 +636,7 @@ class SessionStore {
         type?: string;
         subtype?: string;
         slash_commands?: string[];
-        commands?: Array<{ name?: unknown }>;
+        commands?: SDKSlashCommand[];
       };
       const availableCommands = this._commandsFromSDKMessage(m);
       if (availableCommands.length > 0) {
@@ -655,14 +656,13 @@ class SessionStore {
     type?: string;
     subtype?: string;
     slash_commands?: string[];
-    commands?: Array<{ name?: unknown }>;
+    commands?: SDKSlashCommand[];
   }): string[] {
     if (message.type !== 'system') return [];
     if (message.subtype === 'commands_changed' && Array.isArray(message.commands)) {
-      const sdkCommands = message.commands
-        .map((command) => command.name)
-        .filter((name): name is string => typeof name === 'string' && name.length > 0);
-      return [...new Set([...sdkCommands, ...NEOKAI_BUILT_IN_COMMANDS])];
+      return [
+        ...new Set([...flattenSDKSlashCommands(message.commands), ...NEOKAI_BUILT_IN_COMMANDS]),
+      ];
     }
     if (
       message.subtype === 'init' &&

@@ -173,8 +173,8 @@ describe('SDKMessageHandler', () => {
       lifecycleManager: mockLifecycleManager,
       queryObject: null,
       queryPromise: null,
-      onInitSlashCommands: async () => {},
-      onCommandsChanged: async () => {},
+      onInitSlashCommands: mock(async () => {}),
+      onCommandsChanged: mock(async () => {}),
     };
 
     handler = new SDKMessageHandler(mockContext);
@@ -702,6 +702,46 @@ describe('SDKMessageHandler', () => {
       await handler.handleMessage(message);
 
       expect(setIdleSpy).toHaveBeenCalled();
+    });
+
+    it('should reset session-state turn mode after idle so later result can finish turn', async () => {
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'session_state_changed',
+        state: 'busy',
+        uuid: 'state-busy',
+      } as unknown as SDKMessage);
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'session_state_changed',
+        state: 'idle',
+        uuid: 'state-idle',
+      } as unknown as SDKMessage);
+      setIdleSpy.mockClear();
+
+      await handler.handleMessage({
+        type: 'result',
+        subtype: 'success',
+        uuid: 'later-result',
+        usage: {
+          input_tokens: 100,
+          output_tokens: 50,
+        },
+        total_cost_usd: 0.001,
+        modelUsage: {},
+      } as unknown as SDKMessage);
+
+      expect(setIdleSpy).toHaveBeenCalled();
+    });
+
+    it('should include slash-command aliases from commands_changed messages', async () => {
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'commands_changed',
+        commands: [{ name: 'status', aliases: ['cost', 'stats'] }],
+      } as unknown as SDKMessage);
+
+      expect(mockContext.onCommandsChanged).toHaveBeenCalledWith(['status', 'cost', 'stats']);
     });
 
     it('should emit session.errorClear event', async () => {

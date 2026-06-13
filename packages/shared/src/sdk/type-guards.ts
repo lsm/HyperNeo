@@ -20,7 +20,7 @@ import type {
   SDKThinkingTokensMessage,
   SDKToolProgressMessage,
 } from "./sdk.d.ts";
-import type { NeokaiActionMessage } from "../types.ts";
+import type { NeokaiActionMessage, SlashCommand } from "../types.ts";
 import type { ChatMessage } from "../state-types.ts";
 
 // ============================================================================
@@ -211,6 +211,23 @@ export function isSDKRateLimitEvent(
   msg: SDKMessage,
 ): msg is Extract<SDKMessage, { type: "rate_limit_event" }> {
   return msg.type === "rate_limit_event";
+}
+
+export type SDKSlashCommand = Pick<SlashCommand, "name" | "aliases">;
+
+export function flattenSDKSlashCommands(commands: SDKSlashCommand[]): string[] {
+  const names = new Set<string>();
+  for (const command of commands) {
+    if (typeof command.name === "string" && command.name.length > 0) {
+      names.add(command.name);
+    }
+    for (const alias of command.aliases ?? []) {
+      if (typeof alias === "string" && alias.length > 0) {
+        names.add(alias);
+      }
+    }
+  }
+  return [...names];
 }
 
 // ============================================================================

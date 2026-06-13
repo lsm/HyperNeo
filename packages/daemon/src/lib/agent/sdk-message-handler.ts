@@ -25,6 +25,7 @@ import type { SDKMessage, SDKUserMessage } from '@neokai/shared/sdk';
 import {
   isSDKAPIRetryMessage,
   isSDKAssistantMessage,
+  flattenSDKSlashCommands,
   isSDKCommandsChangedMessage,
   isSDKCompactBoundary,
   isSDKModelRefusalFallbackMessage,
@@ -666,7 +667,7 @@ export class SDKMessageHandler {
     }
 
     if (isSDKCommandsChangedMessage(message)) {
-      await this.ctx.onCommandsChanged(message.commands.map((command) => command.name));
+      await this.ctx.onCommandsChanged(flattenSDKSlashCommands(message.commands));
     }
   }
 
@@ -792,6 +793,7 @@ export class SDKMessageHandler {
     this.usesSessionStateChangedTurnEnd = true;
     if (message.state === 'idle') {
       await this.finishTurn();
+      this.usesSessionStateChangedTurnEnd = false;
     }
   }
 
