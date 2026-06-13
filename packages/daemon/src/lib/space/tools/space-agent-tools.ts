@@ -33,6 +33,7 @@ import type {
   MetricDefinition,
   MetricSnapshotValues,
   NodeExecution,
+  QuestionDraftResponse,
   SpaceGoalStatus,
   SpaceGoalType,
   SpaceLongHorizonAgent,
@@ -52,8 +53,10 @@ import type { NodeExecutionRepository } from '../../../storage/repositories/node
 import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
+import type { AgentSession } from '../../agent/agent-session';
 import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus';
 import { Logger } from '../../logger';
+import type { SessionManager } from '../../session/session-manager';
 import type { PendingAgentMessageQueue } from '../../rpc-handlers/space-task-message-handlers';
 import { requireAgentFamily } from '../agents/agent-family-resolver';
 import { formatAgentMessage } from '../agent-message-envelope';
@@ -332,6 +335,10 @@ export interface SpaceAgentToolsConfig {
   taskManager: SpaceTaskManager;
   /** Space agent manager for reassign validation. */
   spaceAgentManager: SpaceAgentManager;
+  /** Session manager for live Space session message delivery and interrupts. */
+  sessionManager?: Pick<SessionManager, 'getSessionAsync' | 'sendUserMessage'>;
+  /** Optional runtime live-session lookup (used for workflow node sessions). */
+  getRuntimeSession?: (sessionId: string) => AgentSession | undefined;
   /**
    * Task Agent Manager for injecting messages into running task agent sessions.
    * When provided, enables the `send_message_to_task` and `list_task_members` tools.
@@ -556,7 +563,10 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
   }
 
   function sessionKind(row: SpaceSessionRow): SpaceSessionTypeFilter {
-    return row.type === 'space_task_agent' ? 'worker' : 'ad-hoc';
+    const context = parseJsonValue(row.session_context) as Record<string, unknown> | null;
+    return row.type === 'space_task_agent' || typeof context?.taskId === 'string'
+      ? 'worker'
+      : 'ad-hoc';
   }
 
   function rowToSessionSummary(row: SpaceSessionRow): SpaceSessionSummary {
@@ -592,6 +602,41 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     const row = getSpaceSessionRow(sessionId);
     if (!row) throw new Error(`Session not found in this space: ${sessionId}`);
     return row;
+  }
+
+  async function getLiveSession(sessionId: string): Promise<AgentSession | null> {
+    const runtimeSession = config.getRuntimeSession?.(sessionId);
+    if (runtimeSession) return runtimeSession;
+    return (await config.sessionManager?.getSessionAsync(sessionId)) ?? null;
+  }
+
+  async function requireLiveSession(sessionId: string): Promise<AgentSession> {
+    const session = await getLiveSession(sessionId);
+    if (!session) throw new Error(`Live session not available: ${sessionId}`);
+    return session;
+  }
+
+  function buildQuestionResponses(
+    pendingQuestion: Record<string, unknown>,
+    answerText: string
+  ): QuestionDraftResponse[] {
+    const questions = Array.isArray(pendingQuestion.questions) ? pendingQuestion.questions : [];
+    return questions.map((question, questionIndex) => {
+      const options =
+        question &&
+        typeof question === 'object' &&
+        Array.isArray((question as { options?: unknown }).options)
+          ? ((question as { options: Array<{ label?: unknown }> }).options ?? [])
+          : [];
+      const firstMatchingLabel = options.find(
+        (option) => typeof option.label === 'string' && option.label === answerText
+      )?.label as string | undefined;
+      return {
+        questionIndex,
+        selectedLabels: firstMatchingLabel ? [firstMatchingLabel] : [],
+        customText: firstMatchingLabel ? undefined : answerText,
+      };
+    });
   }
 
   async function requireSessionWriteAutonomy(toolName: string): Promise<void> {
@@ -789,10 +834,9 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
                     is_worktree, git_branch, processing_state, type, session_context
                FROM sessions
               WHERE json_extract(session_context, '$.spaceId') = ?
-              ORDER BY last_active_at DESC
-              LIMIT ? OFFSET ?`
+              ORDER BY last_active_at DESC`
           )
-          .all(spaceId, limit + offset + SPACE_SESSION_MAX_LIMIT, 0) as SpaceSessionRow[];
+          .all(spaceId) as SpaceSessionRow[];
         const sessions = rows
           .map(rowToSessionSummary)
           .filter((session) => !args.status || session.status === args.status)
@@ -852,33 +896,45 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     }): Promise<ToolResult> {
       try {
         const row = requireSpaceSessionRow(args.session_id);
-        const messageId = generateUUID();
-        const sdkMessage = {
-          type: 'user',
-          uuid: messageId,
-          message: { role: 'user', content: args.message },
-          timestamp: new Date().toISOString(),
-        };
-        const nextState = args.answer_question
-          ? { status: 'idle' }
-          : { ...parseProcessingState(row.processing_state), status: 'idle' };
-        requireDb().transaction(() => {
-          requireDb()
-            .prepare(
-              `INSERT INTO sdk_messages (
-                  id, session_id, message_type, message_subtype, sdk_message, timestamp,
-                  send_status, origin, is_renderable, is_terminal, parent_tool_use_id, task_id
-                ) VALUES (?, ?, 'user', NULL, ?, ?, 'enqueued', 'system', 1, 0, NULL, NULL)`
-            )
-            .run(messageId, args.session_id, JSON.stringify(sdkMessage), sdkMessage.timestamp);
-          requireDb()
-            .prepare(
-              `UPDATE sessions
-                    SET processing_state = ?, last_active_at = ?
-                  WHERE id = ?`
-            )
-            .run(JSON.stringify(nextState), sdkMessage.timestamp, args.session_id);
-        })();
+        const liveSession = await requireLiveSession(args.session_id);
+        let messageId = generateUUID();
+        if (args.answer_question) {
+          const state = parseProcessingState(row.processing_state);
+          if (state.status !== 'waiting_for_input') {
+            return jsonResult({
+              success: false,
+              error: 'Session is not waiting for input',
+            });
+          }
+          const pendingQuestion = state.pendingQuestion;
+          if (!pendingQuestion || typeof pendingQuestion !== 'object') {
+            return jsonResult({
+              success: false,
+              error: 'Session has no pending question to answer',
+            });
+          }
+          const toolUseId = (pendingQuestion as { toolUseId?: unknown }).toolUseId;
+          if (typeof toolUseId !== 'string' || !toolUseId) {
+            return jsonResult({
+              success: false,
+              error: 'Pending question is missing toolUseId',
+            });
+          }
+          await liveSession.handleQuestionResponse(
+            toolUseId,
+            buildQuestionResponses(pendingQuestion as Record<string, unknown>, args.message)
+          );
+          messageId = toolUseId;
+        } else {
+          await config.sessionManager?.sendUserMessage({
+            sessionId: args.session_id,
+            messageId,
+            content: args.message,
+          });
+          if (!config.sessionManager) {
+            await liveSession.startQueryAndEnqueue(messageId, args.message);
+          }
+        }
         logAudit('send_session_message', {
           session_id: args.session_id,
           answer_question: args.answer_question ?? false,
@@ -928,57 +984,8 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       try {
         await requireSessionWriteAutonomy('interrupt_session');
         requireSpaceSessionRow(args.session_id);
-        const now = new Date().toISOString();
-        const interruptId = generateUUID();
-        const resultId = generateUUID();
-        const interruptMessage = {
-          type: 'user',
-          uuid: interruptId,
-          message: { role: 'user', content: '[Request interrupted by user for tool use]' },
-          timestamp: now,
-        };
-        const resultMessage = {
-          type: 'result',
-          subtype: 'success',
-          uuid: resultId,
-          duration_ms: 0,
-          duration_api_ms: 0,
-          is_error: false,
-          result: args.reason ?? 'Interrupted by space-agent tool',
-          session_id: args.session_id,
-          total_cost_usd: 0,
-        };
-        requireDb().transaction(() => {
-          const insert = requireDb().prepare(
-            `INSERT INTO sdk_messages (
-                id, session_id, message_type, message_subtype, sdk_message, timestamp,
-                send_status, origin, is_renderable, is_terminal, parent_tool_use_id, task_id
-              ) VALUES (?, ?, ?, ?, ?, ?, 'consumed', 'system', ?, ?, NULL, NULL)`
-          );
-          insert.run(
-            interruptId,
-            args.session_id,
-            'user',
-            null,
-            JSON.stringify(interruptMessage),
-            now,
-            1,
-            0
-          );
-          insert.run(
-            resultId,
-            args.session_id,
-            'result',
-            'success',
-            JSON.stringify(resultMessage),
-            now,
-            1,
-            1
-          );
-          requireDb()
-            .prepare(`UPDATE sessions SET processing_state = ?, last_active_at = ? WHERE id = ?`)
-            .run(JSON.stringify({ status: 'idle' }), now, args.session_id);
-        })();
+        const liveSession = await requireLiveSession(args.session_id);
+        await liveSession.handleInterrupt();
         logAudit('interrupt_session', { session_id: args.session_id, reason: args.reason });
         return jsonResult({ success: true, interrupted: true });
       } catch (err) {

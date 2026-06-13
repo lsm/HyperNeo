@@ -498,7 +498,12 @@ describe('createSpaceAgentToolHandlers — session management tools', () => {
     ctx.db.close();
   });
 
-  function seedSession(id: string, spaceId = ctx.spaceId, processingState = { status: 'idle' }) {
+  function seedSession(
+    id: string,
+    spaceId = ctx.spaceId,
+    processingState = { status: 'idle' },
+    context: Record<string, unknown> = {}
+  ) {
     ctx.db
       .prepare(
         `INSERT INTO sessions (
@@ -513,7 +518,7 @@ describe('createSpaceAgentToolHandlers — session management tools', () => {
         new Date(0).toISOString(),
         new Date().toISOString(),
         JSON.stringify(processingState),
-        JSON.stringify({ spaceId })
+        JSON.stringify({ spaceId, ...context })
       );
   }
 
@@ -567,12 +572,23 @@ describe('createSpaceAgentToolHandlers — session management tools', () => {
     expect(session.last_messages[0].content_summary).toBe('Need input');
   });
 
-  test('send_session_message enqueues user message and clears waiting state', async () => {
+  test('send_session_message resolves pending question through live session', async () => {
     seedSession('adhoc-send', ctx.spaceId, {
       status: 'waiting_for_input',
-      pendingQuestion: { toolUseId: 'q1' },
+      pendingQuestion: {
+        toolUseId: 'q1',
+        questions: [{ options: [{ label: 'Use option A' }] }],
+      },
     });
-    const handlers = makeHandlers(ctx);
+    const responses: unknown[] = [];
+    const handlers = makeHandlers(ctx, {
+      getRuntimeSession: () =>
+        ({
+          handleQuestionResponse: async (_toolUseId: string, draftResponses: unknown[]) => {
+            responses.push(_toolUseId, draftResponses);
+          },
+        }) as never,
+    });
 
     const parsed = parseResult(
       await handlers.send_session_message({
@@ -584,20 +600,49 @@ describe('createSpaceAgentToolHandlers — session management tools', () => {
 
     expect(parsed.success).toBe(true);
     expect(parsed.delivered).toBe(true);
-    const row = ctx.db
-      .prepare(`SELECT sdk_message, send_status FROM sdk_messages WHERE id = ?`)
-      .get(parsed.message_id as string) as { sdk_message: string; send_status: string };
-    expect(row.send_status).toBe('enqueued');
-    expect(JSON.parse(row.sdk_message).message.content).toBe('Use option A');
-    const session = ctx.db
-      .prepare(`SELECT processing_state FROM sessions WHERE id = 'adhoc-send'`)
-      .get() as { processing_state: string };
-    expect(JSON.parse(session.processing_state)).toEqual({ status: 'idle' });
+    expect(parsed.message_id).toBe('q1');
+    expect(responses).toEqual(['q1', [{ questionIndex: 0, selectedLabels: ['Use option A'] }]]);
   });
 
-  test('interrupt_session appends terminal result and resets state with autonomy gate', async () => {
+  test('send_session_message delivers normal input through SessionManager', async () => {
+    seedSession('adhoc-deliver', ctx.spaceId, { status: 'idle' });
+    const sent: unknown[] = [];
+    const handlers = makeHandlers(ctx, {
+      sessionManager: {
+        getSessionAsync: async () => ({ startQueryAndEnqueue: async () => {} }) as never,
+        sendUserMessage: async (message: unknown) => {
+          sent.push(message);
+        },
+      },
+    });
+
+    const parsed = parseResult(
+      await handlers.send_session_message({ session_id: 'adhoc-deliver', message: 'Proceed' })
+    );
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.delivered).toBe(true);
+    expect(sent).toEqual([
+      {
+        sessionId: 'adhoc-deliver',
+        messageId: parsed.message_id,
+        content: 'Proceed',
+      },
+    ]);
+  });
+
+  test('interrupt_session routes through live interrupt path with autonomy gate', async () => {
     seedSession('adhoc-interrupt', ctx.spaceId, { status: 'processing' });
-    const handlers = makeHandlers(ctx, { getSpaceAutonomyLevel: async () => 4 });
+    let interrupted = false;
+    const handlers = makeHandlers(ctx, {
+      getSpaceAutonomyLevel: async () => 4,
+      getRuntimeSession: () =>
+        ({
+          handleInterrupt: async () => {
+            interrupted = true;
+          },
+        }) as never,
+    });
 
     const parsed = parseResult(
       await handlers.interrupt_session({ session_id: 'adhoc-interrupt', reason: 'hung' })
@@ -605,17 +650,75 @@ describe('createSpaceAgentToolHandlers — session management tools', () => {
 
     expect(parsed.success).toBe(true);
     expect(parsed.interrupted).toBe(true);
+    expect(interrupted).toBe(true);
     const resultRows = ctx.db
-      .prepare(
-        `SELECT message_type, is_terminal FROM sdk_messages WHERE session_id = ? ORDER BY timestamp ASC`
-      )
-      .all('adhoc-interrupt') as Array<{ message_type: string; is_terminal: number }>;
-    expect(resultRows.map((row) => row.message_type)).toEqual(['user', 'result']);
-    expect(resultRows[1].is_terminal).toBe(1);
-    const session = ctx.db
-      .prepare(`SELECT processing_state FROM sessions WHERE id = 'adhoc-interrupt'`)
-      .get() as { processing_state: string };
-    expect(JSON.parse(session.processing_state)).toEqual({ status: 'idle' });
+      .prepare(`SELECT message_type FROM sdk_messages WHERE session_id = ?`)
+      .all('adhoc-interrupt') as Array<{ message_type: string }>;
+    expect(resultRows).toEqual([]);
+  });
+
+  test('list_sessions classifies task-bound sessions as workers after filtering', async () => {
+    seedSession('newer-adhoc', ctx.spaceId, { status: 'idle' });
+    seedSession('older-worker', ctx.spaceId, { status: 'idle' }, { taskId: 'task-1' });
+    const handlers = makeHandlers(ctx);
+
+    const parsed = parseResult(await handlers.list_sessions({ type: 'worker', limit: 1 }));
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.sessions).toEqual([
+      expect.objectContaining({ id: 'older-worker', type: 'worker' }),
+    ]);
+  });
+
+  test('get_session_messages returns requested message summaries', async () => {
+    seedSession('messages-session', ctx.spaceId, { status: 'idle' });
+    for (const [id, text] of [
+      ['msg-1', 'First'],
+      ['msg-2', 'Second'],
+    ]) {
+      ctx.db
+        .prepare(
+          `INSERT INTO sdk_messages (
+            id, session_id, message_type, message_subtype, sdk_message, timestamp,
+            send_status, origin, is_renderable, is_terminal, parent_tool_use_id, task_id
+          ) VALUES (?, 'messages-session', 'assistant', NULL, ?, ?, 'consumed', 'system', 1, 0, NULL, NULL)`
+        )
+        .run(
+          id,
+          JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text }] } }),
+          new Date(id === 'msg-1' ? 1 : 2).toISOString()
+        );
+    }
+    const handlers = makeHandlers(ctx);
+
+    const parsed = parseResult(
+      await handlers.get_session_messages({ session_id: 'messages-session', limit: 1 })
+    );
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.messages).toEqual([
+      expect.objectContaining({ id: 'msg-2', content_summary: 'Second' }),
+    ]);
+  });
+
+  test('update_session_state updates state and clears pending question', async () => {
+    seedSession('adhoc-update', ctx.spaceId, {
+      status: 'waiting_for_input',
+      pendingQuestion: { toolUseId: 'q1' },
+    });
+    const handlers = makeHandlers(ctx, { getSpaceAutonomyLevel: async () => 4 });
+
+    const parsed = parseResult(
+      await handlers.update_session_state({
+        session_id: 'adhoc-update',
+        processing_state: 'idle',
+        clear_pending_question: true,
+      })
+    );
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.updated).toBe(true);
+    expect(parsed.new_state).toEqual({ status: 'idle' });
   });
 
   test('update_session_state rejects when autonomy level is too low', async () => {
