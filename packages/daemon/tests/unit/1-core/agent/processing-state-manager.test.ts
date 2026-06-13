@@ -139,6 +139,18 @@ describe('ProcessingStateManager', () => {
 
       expect(callbackMock).toHaveBeenCalled();
     });
+
+    test('clears pending question state', async () => {
+      await manager.setWaitingForInput({ toolUseId: 'tool-123', questions: [] });
+
+      await manager.setIdle();
+
+      expect(manager.getState()).toEqual({ status: 'idle' });
+      const savedState = JSON.parse(
+        updateSessionMock.mock.calls[updateSessionMock.mock.calls.length - 1][1].processingState
+      );
+      expect(savedState).toEqual({ status: 'idle' });
+    });
   });
 
   describe('setQueued', () => {
