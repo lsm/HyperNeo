@@ -11,6 +11,7 @@ type RegisteredTool = {
   inputSchema?:
     | { parse?: (args: unknown) => unknown; parseAsync?: (args: unknown) => Promise<unknown> }
     | unknown;
+  callback?: (args: unknown) => unknown;
   handler?: (args: unknown) => unknown;
 };
 
@@ -176,7 +177,8 @@ export class AcpMcpProxyBridge {
       if (!shouldProxy(serverName, config)) continue;
       const registeredTools = getRegisteredTools(config);
       for (const [toolName, registered] of Object.entries(registeredTools)) {
-        if (typeof registered.handler !== 'function') continue;
+        const handler = registered.callback ?? registered.handler;
+        if (typeof handler !== 'function') continue;
         const schema = {
           name: toolName,
           description: registered.description,
@@ -186,7 +188,7 @@ export class AcpMcpProxyBridge {
         this.toolsByName.set(toolKey(serverName, toolName), {
           serverName,
           toolName,
-          handler: registered.handler,
+          handler,
           inputSchema: registered.inputSchema,
           schema,
         });

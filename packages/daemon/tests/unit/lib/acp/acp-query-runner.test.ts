@@ -401,6 +401,39 @@ describe('AcpQueryRunner', () => {
     }
   });
 
+  test('collects tools from registered MCP callbacks', async () => {
+    const callback = mock(async () => ({ content: [{ type: 'text', text: 'ok' }] }));
+    const mcpServers = {
+      'space-agent-tools': {
+        type: 'sdk',
+        name: 'space-agent-tools',
+        instance: {
+          _registeredTools: {
+            create_standalone_task: {
+              description: 'Create a task',
+              inputSchema: { title: z.string() },
+              callback,
+            },
+          },
+        },
+      },
+    } as never;
+    const bridge = new AcpMcpProxyBridge(mcpServers);
+
+    expect(bridge.getToolsForServer('space-agent-tools')).toEqual([
+      expect.objectContaining({ name: 'create_standalone_task', description: 'Create a task' }),
+    ]);
+    await bridge.handleLineForTest(
+      JSON.stringify({
+        token: bridge.token,
+        serverName: 'space-agent-tools',
+        toolName: 'create_standalone_task',
+        arguments: { title: 'Task' },
+      })
+    );
+    expect(callback).toHaveBeenCalledWith({ title: 'Task' });
+  });
+
   test('collects tools from production tools array fallback', () => {
     const mcpServers = {
       'space-agent-tools': {
