@@ -658,6 +658,30 @@ describe('createSpaceAgentToolHandlers — session management tools', () => {
     expect(resultRows).toEqual([]);
   });
 
+  test('interrupt_session rejects cold sessions without lazy-loading', async () => {
+    seedSession('adhoc-cold-interrupt', ctx.spaceId, { status: 'processing' });
+    let loaded = false;
+    const handlers = makeHandlers(ctx, {
+      getSpaceAutonomyLevel: async () => 4,
+      sessionManager: {
+        getCachedSession: () => null,
+        getSessionAsync: async () => {
+          loaded = true;
+          return null;
+        },
+        sendUserMessage: async () => {},
+      },
+    });
+
+    const parsed = parseResult(
+      await handlers.interrupt_session({ session_id: 'adhoc-cold-interrupt', reason: 'hung' })
+    );
+
+    expect(parsed.success).toBe(false);
+    expect(String(parsed.error)).toContain('requires a live cached session');
+    expect(loaded).toBe(false);
+  });
+
   test('list_sessions applies filters before SQL pagination', async () => {
     for (let i = 0; i < 3; i += 1) seedSession(`newer-adhoc-${i}`, ctx.spaceId, { status: 'idle' });
     seedSession(
@@ -799,6 +823,45 @@ describe('createSpaceAgentToolHandlers — session management tools', () => {
     expect(String(parsed.error)).toContain('space autonomy level 3 < required level 4');
   });
 
+  test('send_session_message cross-session gates named non-coordinator agents', async () => {
+    seedSession('other-member-named-agent', ctx.spaceId, { status: 'idle' });
+    const handlers = makeHandlers(ctx, {
+      myAgentName: 'scout',
+      mySessionId: 'caller-session',
+      getSpaceAutonomyLevel: async () => 3,
+      getRuntimeSession: () => ({ startQueryAndEnqueue: async () => {} }) as never,
+    });
+
+    const parsed = parseResult(
+      await handlers.send_session_message({
+        session_id: 'other-member-named-agent',
+        message: 'Proceed',
+      })
+    );
+
+    expect(parsed.success).toBe(false);
+    expect(String(parsed.error)).toContain('space autonomy level 3 < required level 4');
+  });
+
+  test('send_session_message coordinator can send cross-session without autonomy gate', async () => {
+    seedSession('other-member-coordinator', ctx.spaceId, { status: 'idle' });
+    const handlers = makeHandlers(ctx, {
+      myAgentName: 'space-agent',
+      mySessionId: 'caller-session',
+      getSpaceAutonomyLevel: async () => 3,
+      getRuntimeSession: () => ({ startQueryAndEnqueue: async () => {} }) as never,
+    });
+
+    const parsed = parseResult(
+      await handlers.send_session_message({
+        session_id: 'other-member-coordinator',
+        message: 'Proceed',
+      })
+    );
+
+    expect(parsed.success).toBe(true);
+  });
+
   test('get_session_messages cursor handles duplicate timestamps', async () => {
     seedSession('cursor-session', ctx.spaceId, { status: 'idle' });
     for (const id of ['msg-c', 'msg-b', 'msg-a']) {
@@ -851,6 +914,21 @@ describe('createSpaceAgentToolHandlers — session management tools', () => {
     expect(parsed.success).toBe(true);
     expect(parsed.updated).toBe(true);
     expect(parsed.new_state).toEqual({ status: 'idle' });
+  });
+
+  test('update_session_state rejects waiting state without pending question', async () => {
+    seedSession('adhoc-waiting-without-question', ctx.spaceId, { status: 'idle' });
+    const handlers = makeHandlers(ctx, { getSpaceAutonomyLevel: async () => 4 });
+
+    const parsed = parseResult(
+      await handlers.update_session_state({
+        session_id: 'adhoc-waiting-without-question',
+        processing_state: 'waiting_for_input',
+      })
+    );
+
+    expect(parsed.success).toBe(false);
+    expect(String(parsed.error)).toContain('without an existing pending question');
   });
 
   test('update_session_state rejects when autonomy level is too low', async () => {

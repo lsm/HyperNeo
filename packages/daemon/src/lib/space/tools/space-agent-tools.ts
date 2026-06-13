@@ -481,10 +481,14 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       .filter((v) => v.length > 0)
   );
   const outboundSenderName = myAgentName ?? (mySessionId ? 'space-member' : 'space-agent');
+  const isCoordinatorAgent =
+    !mySessionId ||
+    (typeof myAgentName === 'string' &&
+      ['space-agent', 'coordinator'].includes(normalizeAgentNameToken(myAgentName)));
   const outboundSenderLevel =
     outboundSenderName === 'task-agent'
       ? 'task-agent'
-      : myAgentName || !mySessionId
+      : isCoordinatorAgent
         ? 'space-agent'
         : 'session-agent';
   const outboundSenderDisplayName = outboundSenderName;
@@ -1039,6 +1043,12 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         if (args.clear_pending_question || args.processing_state !== 'waiting_for_input') {
           delete newState.pendingQuestion;
         }
+        if (args.processing_state === 'waiting_for_input' && !newState.pendingQuestion) {
+          return jsonResult({
+            success: false,
+            error: 'Cannot set waiting_for_input without an existing pending question',
+          });
+        }
         requireDb()
           .prepare(`UPDATE sessions SET processing_state = ?, last_active_at = ? WHERE id = ?`)
           .run(JSON.stringify(newState), new Date().toISOString(), args.session_id);
@@ -1063,7 +1073,14 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       try {
         await requireSessionWriteAutonomy('interrupt_session');
         requireMutableSpaceSessionRow(args.session_id);
-        const liveSession = await requireDeliverableSession(args.session_id);
+        const liveSession = getLiveSession(args.session_id);
+        if (!liveSession) {
+          return jsonResult({
+            success: false,
+            error:
+              'interrupt_session requires a live cached session. Use update_session_state for cold session recovery.',
+          });
+        }
         await liveSession.handleInterrupt();
         logAudit('interrupt_session', { session_id: args.session_id, reason: args.reason });
         return jsonResult({ success: true, interrupted: true });
