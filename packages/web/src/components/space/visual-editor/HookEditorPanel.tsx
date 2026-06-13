@@ -28,6 +28,7 @@ const MCP_METHODS: WorkflowHookMcpMethod[] = [
 const BUILT_IN_VALIDATORS: WorkflowHookValidatorId[] = [
   'pr_open',
   'pr_mergeable',
+  'pr_ready',
   'github_review_approved',
   'codex_review_approved',
   'artifact_exists',
@@ -37,6 +38,7 @@ const BUILT_IN_VALIDATORS: WorkflowHookValidatorId[] = [
 const BUILT_IN_VALIDATOR_COPY: Record<WorkflowHookValidatorId, string> = {
   pr_open: 'PR-ready block: requires an open pull request URL before this hook can pass.',
   pr_mergeable: 'PR-ready block: requires GitHub to report the pull request as mergeable.',
+  pr_ready: 'PR-ready block: requires an open, mergeable pull request with approval checks passed.',
   github_review_approved: 'Requires an approved GitHub review on the pull request.',
   codex_review_approved:
     'Codex retry: blocks until Codex approval is available, then retry safely.',
