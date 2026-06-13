@@ -828,6 +828,9 @@ export class SpaceRuntimeService {
         this.config.evolutionScopeService
       ),
       spaceAgentManager: this.config.spaceAgentManager,
+      sessionManager: this.config.sessionManager,
+      getRuntimeSession: (sid) =>
+        this.taskAgentManager?.getCachedAgentSessionById(sid) ?? undefined,
       taskAgentManager: this.taskAgentManager ?? undefined,
       gateDataRepo: this.config.gateDataRepo,
       internalEventBus: this.config.internalEventBus,
@@ -1462,6 +1465,9 @@ export class SpaceRuntimeService {
         this.config.evolutionScopeService
       ),
       spaceAgentManager: this.config.spaceAgentManager,
+      sessionManager: this.config.sessionManager,
+      getRuntimeSession: (sid) =>
+        this.taskAgentManager?.getCachedAgentSessionById(sid) ?? undefined,
       taskAgentManager: this.taskAgentManager ?? undefined,
       gateDataRepo: this.config.gateDataRepo,
       internalEventBus: this.config.internalEventBus,
@@ -1588,6 +1594,9 @@ export class SpaceRuntimeService {
         this.config.evolutionScopeService
       ),
       spaceAgentManager,
+      sessionManager: this.config.sessionManager,
+      getRuntimeSession: (sid) =>
+        this.taskAgentManager?.getCachedAgentSessionById(sid) ?? undefined,
       taskAgentManager: this.taskAgentManager ?? undefined,
       gateDataRepo: this.config.gateDataRepo,
       internalEventBus: this.config.internalEventBus,

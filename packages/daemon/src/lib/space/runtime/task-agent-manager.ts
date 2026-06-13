@@ -1811,6 +1811,10 @@ export class TaskAgentManager {
     return this.config.sessionManager.getSession(sessionId) ?? undefined;
   }
 
+  getCachedAgentSessionById(sessionId: string): AgentSession | undefined {
+    return this.agentSessionIndex.get(sessionId);
+  }
+
   /**
    * Prepare an existing node-agent sub-session for workflow resume/reopen.
    *
