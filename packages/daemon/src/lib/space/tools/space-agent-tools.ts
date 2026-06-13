@@ -336,7 +336,7 @@ export interface SpaceAgentToolsConfig {
   /** Space agent manager for reassign validation. */
   spaceAgentManager: SpaceAgentManager;
   /** Session manager for live Space session message delivery and interrupts. */
-  sessionManager?: Pick<SessionManager, 'getSessionAsync' | 'sendUserMessage'>;
+  sessionManager?: Pick<SessionManager, 'getCachedSession' | 'getSessionAsync' | 'sendUserMessage'>;
   /** Optional runtime live-session lookup (used for workflow node sessions). */
   getRuntimeSession?: (sessionId: string) => AgentSession | undefined;
   /**
@@ -618,7 +618,11 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
   }
 
   function getLiveSession(sessionId: string): AgentSession | null {
-    return config.getRuntimeSession?.(sessionId) ?? null;
+    return (
+      config.getRuntimeSession?.(sessionId) ??
+      config.sessionManager?.getCachedSession(sessionId) ??
+      null
+    );
   }
 
   async function requireDeliverableSession(sessionId: string): Promise<AgentSession> {

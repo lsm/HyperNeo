@@ -609,6 +609,7 @@ describe('createSpaceAgentToolHandlers — session management tools', () => {
     const sent: unknown[] = [];
     const handlers = makeHandlers(ctx, {
       sessionManager: {
+        getCachedSession: () => null,
         getSessionAsync: async () => ({ startQueryAndEnqueue: async () => {} }) as never,
         sendUserMessage: async (message: unknown) => {
           sent.push(message);
@@ -734,12 +735,35 @@ describe('createSpaceAgentToolHandlers — session management tools', () => {
     ]);
   });
 
+  test('update_session_state rejects cached ad-hoc live sessions', async () => {
+    seedSession('adhoc-live-update', ctx.spaceId, { status: 'processing' });
+    const handlers = makeHandlers(ctx, {
+      getSpaceAutonomyLevel: async () => 4,
+      sessionManager: {
+        getCachedSession: () => ({ getProcessingState: () => ({ status: 'processing' }) }) as never,
+        getSessionAsync: async () => null,
+        sendUserMessage: async () => {},
+      },
+    });
+
+    const parsed = parseResult(
+      await handlers.update_session_state({
+        session_id: 'adhoc-live-update',
+        processing_state: 'idle',
+      })
+    );
+
+    expect(parsed.success).toBe(false);
+    expect(String(parsed.error)).toContain('cannot mutate live sessions');
+  });
+
   test('update_session_state does not lazy-load cold sessions', async () => {
     seedSession('adhoc-cold-update', ctx.spaceId, { status: 'processing' });
     let loaded = false;
     const handlers = makeHandlers(ctx, {
       getSpaceAutonomyLevel: async () => 4,
       sessionManager: {
+        getCachedSession: () => null,
         getSessionAsync: async () => {
           loaded = true;
           return null;
