@@ -91,6 +91,7 @@ export interface HookExecutionRecord {
 export interface WorkflowHookEngineConfig {
   workflow: SpaceWorkflow;
   workflowRunId: string;
+  workflowRunCreatedAt?: number;
   nodeExecutionRepo: NodeExecutionRepository;
   artifactRepo?: WorkflowRunArtifactRepository;
   hookStateRepo: WorkflowHookStateRepository;
@@ -858,6 +859,7 @@ export class WorkflowHookEngine {
       workspacePath: this.config.workspacePath ?? '',
       runId: this.config.workflowRunId,
       hookId: hook.id,
+      workflowRunCreatedAt: this.config.workflowRunCreatedAt,
       methodName,
       params: this.boundParams(params),
       rawParams: params,

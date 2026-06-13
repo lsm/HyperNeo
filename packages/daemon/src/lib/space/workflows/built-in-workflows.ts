@@ -403,7 +403,7 @@ const FULLSTACK_REVIEW_PROMPT =
   'maintainability, and coverage before QA. Follow the Reviewer System Contract for ' +
   'review quality and severity.\n\n' +
   'Review is not the end node: approve_task/submit_for_approval are unavailable. Your ' +
-  'terminal hand-off is sending approved = true to QA after an ' +
+  'terminal hand-off is sending `data: { approved: true, pr_url: "<url>" }` to QA after an ' +
   'APPROVE verdict with zero P0-P3 findings. Send the handoff to start the 10-minute ' +
   'Codex timeout, then wait for codex[bot] `+1` or timeout before proceeding. ' +
   CODEX_REACTION_APPROVAL_GUIDANCE +
@@ -1114,7 +1114,7 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
               'Expected outputs: QA handoff or actionable feedback.\n\n' +
               'Steps:\n' +
               '1. Review diff quality, correctness, and test coverage\n' +
-              '2. If approved: send_message to QA with data: { approved: true } to start the 10-minute Codex timeout, then wait for codex[bot] +1 or timeout\n' +
+              '2. If approved: send_message to QA with data: { approved: true, pr_url: "<url>" } to start the 10-minute Codex timeout, then wait for codex[bot] +1 or timeout\n' +
               '3. If changes needed: send clear feedback to Coding',
           },
         },

@@ -42,6 +42,7 @@ export interface HookExecutorContext {
   nodeName: string;
   sessionId: string;
   taskId: string;
+  workflowRunCreatedAt?: number;
   targetNode?: string;
   hookLocalState: Record<string, unknown>;
   currentArtifacts: Record<string, unknown>[];
@@ -192,6 +193,15 @@ function buildHookRestrictedEnv(
   env['NEOKAI_NODE_NAME'] = context.nodeName;
   env['NEOKAI_SESSION_ID'] = context.sessionId;
   env['NEOKAI_TASK_ID'] = context.taskId;
+
+  const workflowRunCreatedAt = (context.workflowRunCreatedAt ??
+    context.templateData?.workflowRunCreatedAt ??
+    context.templateData?.runCreatedAt) as unknown;
+  if (typeof workflowRunCreatedAt === 'string') {
+    env['NEOKAI_WORKFLOW_START_ISO'] = workflowRunCreatedAt;
+  } else if (typeof workflowRunCreatedAt === 'number' && Number.isFinite(workflowRunCreatedAt)) {
+    env['NEOKAI_WORKFLOW_START_ISO'] = new Date(workflowRunCreatedAt).toISOString();
+  }
 
   if (context.targetNode) {
     env['NEOKAI_TARGET_NODE'] = context.targetNode;

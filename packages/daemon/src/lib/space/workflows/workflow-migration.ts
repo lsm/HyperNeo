@@ -11,7 +11,8 @@ const MIGRATION_DOCS_URL = 'docs/features/space-workflows.md#workflow-hooks';
 const REVIEW_POSTED_SCRIPT = [
   'PR_URL=$(jq -r \'(.data.pr_url // .data.review_url // .pr_url // .review_url // empty)\' <<< "${NEOKAI_PARAMS_JSON:-{}}" 2>/dev/null || true)',
   'if [ -z "$PR_URL" ]; then echo "Review handoff requires pr_url or review_url" >&2; exit 1; fi',
-  'START_ISO="${NEOKAI_WORKFLOW_START_ISO:-1970-01-01T00:00:00Z}"',
+  'START_ISO="${NEOKAI_WORKFLOW_START_ISO:-}"',
+  'if [ -z "$START_ISO" ]; then echo "NEOKAI_WORKFLOW_START_ISO not injected — cannot determine review window" >&2; exit 1; fi',
   'if ! PR_JSON=$(gh pr view "$PR_URL" --json reviews,comments,author 2>/dev/null); then echo "Failed to fetch review evidence for ${PR_URL}" >&2; exit 1; fi',
   'FORMAL=$(jq --arg since "$START_ISO" \'[.reviews[] | select((.submittedAt // "") > $since) | select(.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "COMMENTED")] | length\' <<< "$PR_JSON")',
   'COMMENTS=$(jq --arg since "$START_ISO" \'[.comments[] | select((.createdAt // "") > $since)] | length\' <<< "$PR_JSON")',
@@ -43,22 +44,47 @@ const APPROVALS_SCRIPT = [
   'MERGED=$(jq -c -n --argjson a "$STATE" --argjson b "$INCOMING" \'$a * $b\')',
   'COUNT=$(jq \'to_entries | map(select(.value == "approved" or .value == true)) | length\' <<< "$MERGED")',
   'if [ "$COUNT" -lt 4 ]; then jq -n --argjson approvals "$MERGED" --argjson count "$COUNT" \'{"type":"block","reason":"Plan dispatch requires four approved plan-review votes","data":{"approvals":$approvals,"approval_count":$count}}\'; exit 0; fi',
-  'jq -n --argjson approvals "$MERGED" \'{"type":"allow","data":{"approvals":$approvals}}\'',
+  'PR_URL=$(jq -r \'(.data.pr_url // .pr_url // empty)\' <<< "${NEOKAI_PARAMS_JSON:-{}}" 2>/dev/null || true)',
+  'START_ISO="${NEOKAI_WORKFLOW_START_ISO:-}"',
+  'if [ -z "$PR_URL" ] || [ -z "$START_ISO" ]; then echo "Plan approval requires pr_url and workflow start time for Codex validation" >&2; exit 1; fi',
+  'if ! PR_JSON=$(gh pr view "$PR_URL" --json number,headRefOid 2>/dev/null); then echo "Failed to fetch plan PR for Codex validation" >&2; exit 1; fi',
+  'PR_NUMBER=$(jq -r \'.number\' <<< "$PR_JSON")',
+  'HEAD_OID=$(jq -r \'.headRefOid // empty\' <<< "$PR_JSON")',
+  'REPO_JSON=$(gh repo view --json owner,name 2>/dev/null) || { echo "Failed to resolve repository" >&2; exit 1; }',
+  'OWNER=$(jq -r \'.owner.login\' <<< "$REPO_JSON")',
+  'REPO=$(jq -r \'.name\' <<< "$REPO_JSON")',
+  'COMMENTS=$(gh api "repos/${OWNER}/${REPO}/issues/${PR_NUMBER}/comments" 2>/dev/null || echo [])',
+  'REACTIONS=$(gh api "repos/${OWNER}/${REPO}/issues/${PR_NUMBER}/reactions" 2>/dev/null || echo [])',
+  'COMMENT_OK=$(jq --arg since "$START_ISO" --arg head "$HEAD_OID" \'[.[] | select(.user.login == "codex[bot]" and (.created_at // "") > $since and ((.body // "") | contains($head)))] | length\' <<< "$COMMENTS")',
+  'REACTION_OK=$(jq --arg since "$START_ISO" \'[.[] | select(.user.login == "codex[bot]" and .content == "+1" and (.created_at // "") > $since)] | length\' <<< "$REACTIONS")',
+  'if [ "$COMMENT_OK" = "0" ] && [ "$REACTION_OK" = "0" ]; then START_EPOCH=$(date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "${START_ISO%%.*}Z" +%s 2>/dev/null || date -u -d "$START_ISO" +%s 2>/dev/null || echo 0); NOW_EPOCH=$(date -u +%s); if [ $((NOW_EPOCH - START_EPOCH)) -lt 600 ]; then echo "Plan approval requires fresh codex[bot] approval for this workflow run" >&2; exit 1; fi; fi',
+  'jq -n --argjson approvals "$MERGED" \'{"type":"allow","data":{"approvals":$approvals,"codex_approved":true}}\'',
 ].join('\n');
+
+const PLAN_APPROVAL_RESET_SCRIPT = [
+  'jq -n \'{"type":"record_state","state":{"approvals":{},"approval_count":0}}\'',
+].join('\n');
+
+const ALLOW_SCRIPT = ['jq -n \'{"type":"allow"}\''].join('\n');
 
 const REVIEW_APPROVAL_SCRIPT = [
   'APPROVED=$(jq -r \'(.data.approved // .approved // false)\' <<< "${NEOKAI_PARAMS_JSON:-{}}" 2>/dev/null || true)',
   'PR_URL=$(jq -r \'(.data.pr_url // .pr_url // empty)\' <<< "${NEOKAI_PARAMS_JSON:-{}}" 2>/dev/null || true)',
   'if [ "$APPROVED" != "true" ]; then echo "Review handoff requires approved=true" >&2; exit 1; fi',
   'if [ -z "$PR_URL" ]; then echo "Review approval handoff requires pr_url for Codex validation" >&2; exit 1; fi',
+  'START_ISO="${NEOKAI_WORKFLOW_START_ISO:-}"',
+  'if [ -z "$START_ISO" ]; then echo "NEOKAI_WORKFLOW_START_ISO not injected — cannot determine Codex review window" >&2; exit 1; fi',
   'if ! PR_JSON=$(gh pr view "$PR_URL" --json number,headRefOid 2>/dev/null); then echo "Failed to fetch PR for Codex validation" >&2; exit 1; fi',
   'PR_NUMBER=$(jq -r \'.number\' <<< "$PR_JSON")',
+  'HEAD_OID=$(jq -r \'.headRefOid // empty\' <<< "$PR_JSON")',
   'if ! REPO_JSON=$(gh repo view --json owner,name 2>/dev/null); then echo "Failed to resolve repository for Codex validation" >&2; exit 1; fi',
   'OWNER=$(jq -r \'.owner.login\' <<< "$REPO_JSON")',
   'REPO=$(jq -r \'.name\' <<< "$REPO_JSON")',
+  'COMMENTS=$(gh api "repos/${OWNER}/${REPO}/issues/${PR_NUMBER}/comments" 2>/dev/null || echo [])',
   'REACTIONS=$(gh api "repos/${OWNER}/${REPO}/issues/${PR_NUMBER}/reactions" 2>/dev/null || echo [])',
-  'CODEX_OK=$(jq \'[.[] | select(.user.login == "codex[bot]" and .content == "+1")] | length\' <<< "$REACTIONS")',
-  'if [ "$CODEX_OK" = "0" ]; then echo "Review approval requires codex[bot] +1 reaction" >&2; exit 1; fi',
+  'COMMENT_OK=$(jq --arg since "$START_ISO" --arg head "$HEAD_OID" \'[.[] | select(.user.login == "codex[bot]" and (.created_at // "") > $since and ((.body // "") | contains($head)))] | length\' <<< "$COMMENTS")',
+  'REACTION_OK=$(jq --arg since "$START_ISO" \'[.[] | select(.user.login == "codex[bot]" and .content == "+1" and (.created_at // "") > $since)] | length\' <<< "$REACTIONS")',
+  'if [ "$COMMENT_OK" = "0" ] && [ "$REACTION_OK" = "0" ]; then START_EPOCH=$(date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "${START_ISO%%.*}Z" +%s 2>/dev/null || date -u -d "$START_ISO" +%s 2>/dev/null || echo 0); NOW_EPOCH=$(date -u +%s); if [ $((NOW_EPOCH - START_EPOCH)) -lt 600 ]; then echo "Review approval requires fresh codex[bot] approval for this workflow run" >&2; exit 1; fi; fi',
   'jq -n --arg url "$PR_URL" \'{"type":"allow","data":{"approved":true,"pr_url":$url,"codex_approved":true}}\'',
 ].join('\n');
 
@@ -68,15 +94,28 @@ type Pattern = {
   label: string;
   method: WorkflowHook['method'];
   script: string;
+  from?: string;
+  to?: string;
 };
 
 const KNOWN_GATE_PATTERNS: Record<string, Pattern> = {
-  'validation-complete-gate': {
+  'validation-complete-gate:Coding:Validation Complete': {
     gateId: 'validation-complete-gate',
     hookId: 'validation-only-complete',
     label: 'Validation-only Complete',
     method: 'send_message',
     script: VALIDATION_ONLY_SCRIPT,
+    from: 'Coding',
+    to: 'Validation Complete',
+  },
+  'validation-complete-gate:Validation Complete:Coding': {
+    gateId: 'validation-complete-gate',
+    hookId: 'validation-evidence-feedback',
+    label: 'Validation Evidence Feedback',
+    method: 'send_message',
+    script: ALLOW_SCRIPT,
+    from: 'Validation Complete',
+    to: 'Coding',
   },
   'review-posted-gate': {
     gateId: 'review-posted-gate',
@@ -91,6 +130,15 @@ const KNOWN_GATE_PATTERNS: Record<string, Pattern> = {
     label: 'Plan Approval',
     method: 'send_message',
     script: APPROVALS_SCRIPT,
+  },
+  'plan-approval-feedback-reset': {
+    gateId: 'plan-approval-feedback-reset',
+    hookId: 'plan-approval-reset',
+    label: 'Plan Approval Reset',
+    method: 'send_message',
+    script: PLAN_APPROVAL_RESET_SCRIPT,
+    from: 'Plan Review',
+    to: 'Planning',
   },
   'review-approval-gate': {
     gateId: 'review-approval-gate',
@@ -163,7 +211,9 @@ function makeHook(
       source: pattern.script,
       timeoutMs: 30000,
       externalLookups:
-        pattern.gateId === 'review-posted-gate' || pattern.gateId === 'review-approval-gate'
+        pattern.gateId === 'review-posted-gate' ||
+        pattern.gateId === 'review-approval-gate' ||
+        pattern.gateId === 'plan-approval-gate'
           ? ['github']
           : undefined,
     },
@@ -190,17 +240,48 @@ export function migrateWorkflowGateProgressionToHooks<
     Partial<Pick<SpaceWorkflow, 'nodes' | 'templateName'>>,
 >(workflow: T): WorkflowMigrationResult<T> {
   const warnings: WorkflowMigrationWarning[] = [];
-  const hooksById = new Map((workflow.hooks ?? []).map((hook) => [hook.id, hook]));
+  const generatedHookIds = new Set(
+    Object.values(KNOWN_GATE_PATTERNS).map((pattern) => pattern.hookId)
+  );
+  const initialHooks = workflow.templateName
+    ? (workflow.hooks ?? []).filter((hook) => !generatedHookIds.has(hook.id))
+    : (workflow.hooks ?? []);
+  const hooksById = new Map(initialHooks.map((hook) => [hook.id, hook]));
   const existingHookIds = new Set(hooksById.keys());
   const gatesById = new Map((workflow.gates ?? []).map((gate) => [gate.id, gate]));
   const migratedGateIds = new Set<string>();
+  const planFeedbackResetPattern = KNOWN_GATE_PATTERNS['plan-approval-feedback-reset'];
+  if (workflow.templateName && planFeedbackResetPattern) {
+    const planFeedbackChannel = (workflow.channels ?? []).find(
+      (channel) =>
+        resolveChannelNodeName(channel.from, workflow.nodes) === planFeedbackResetPattern.from &&
+        typeof channel.to === 'string' &&
+        resolveChannelNodeName(channel.to, workflow.nodes) === planFeedbackResetPattern.to
+    );
+    if (planFeedbackChannel && !hooksById.has(planFeedbackResetPattern.hookId)) {
+      hooksById.set(
+        planFeedbackResetPattern.hookId,
+        makeHook(planFeedbackResetPattern, planFeedbackChannel, workflow.nodes)
+      );
+    }
+  }
 
   const channels = (workflow.channels ?? []).map((channel) => {
     if (!channel.gateId) return channel;
-    const pattern = KNOWN_GATE_PATTERNS[channel.gateId];
+    const fromNode = resolveChannelNodeName(channel.from, workflow.nodes);
+    const toNode =
+      typeof channel.to === 'string'
+        ? resolveChannelNodeName(channel.to, workflow.nodes)
+        : undefined;
+    const pattern =
+      KNOWN_GATE_PATTERNS[
+        `${channel.gateId}:${fromNode ?? channel.from}:${toNode ?? String(channel.to)}`
+      ] ?? KNOWN_GATE_PATTERNS[channel.gateId];
     const gate = gatesById.get(channel.gateId);
     if (
       !pattern ||
+      (pattern.from !== undefined && pattern.from !== fromNode) ||
+      (pattern.to !== undefined && pattern.to !== toNode) ||
       !canMigrateChannel(channel, workflow.nodes) ||
       !isBuiltInGateShape(gate, workflow)
     ) {
