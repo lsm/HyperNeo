@@ -34,6 +34,7 @@ import {
 import { validateGate } from '../runtime/gate-evaluator';
 import { isApprovalGate } from '../runtime/gate-features';
 import { slugify, validateSlug } from '../slug';
+import { migrateWorkflowGateProgressionToHooks } from '../workflows/workflow-migration';
 
 const logger = new Logger('SpaceWorkflowManager');
 const RESERVED_WORKFLOW_AGENT_NAMES = new Set(['space-agent', 'task-agent']);
@@ -101,6 +102,8 @@ export class SpaceWorkflowManager {
 
     this.validateStartNodeId(startNodeId, nodes);
     this.validateEndNodeId(endNodeId, nodes);
+
+    params = migrateWorkflowGateProgressionToHooks(params).workflow;
 
     if (params.channels && params.channels.length > 0) {
       this.validateChannels(params.channels);
@@ -222,8 +225,8 @@ export class SpaceWorkflowManager {
       return nextNode;
     });
 
-    if (!sanitized) return wf;
-    return { ...sanitized, nodes: nextNodes };
+    const withSanitizedNodes = sanitized ? { ...sanitized, nodes: nextNodes } : wf;
+    return migrateWorkflowGateProgressionToHooks(withSanitizedNodes).workflow;
   }
 
   // -------------------------------------------------------------------------
@@ -332,6 +335,18 @@ export class SpaceWorkflowManager {
         this.validateGates(changedGates);
       }
     }
+
+    const migrated = migrateWorkflowGateProgressionToHooks({
+      channels: params.channels === undefined ? existing.channels : (params.channels ?? undefined),
+      gates: params.gates === undefined ? existing.gates : (params.gates ?? undefined),
+      hooks: params.hooks === undefined ? existing.hooks : (params.hooks ?? undefined),
+    }).workflow;
+    params = {
+      ...params,
+      channels: migrated.channels,
+      gates: migrated.gates,
+      hooks: migrated.hooks,
+    };
 
     const effectiveChannels =
       params.channels === undefined ? (existing.channels ?? []) : (params.channels ?? []);

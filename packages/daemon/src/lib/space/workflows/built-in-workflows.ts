@@ -37,6 +37,7 @@ import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import { QA_SYSTEM_CONTRACT } from '../agents/system-contracts.ts';
 import { PR_MERGE_POST_APPROVAL_INSTRUCTIONS } from './post-approval-merge-template.ts';
 import { computeWorkflowHash } from './template-hash.ts';
+import { migrateWorkflowGateProgressionToHooks } from './workflow-migration.ts';
 
 // ---------------------------------------------------------------------------
 // Declarative tool guard: prevent coder agents from merging PRs
@@ -255,7 +256,7 @@ const REVIEW_POSTED_BASH_SCRIPT = [
 function reviewerFeedbackProcedure(upstreamNodeName: string): string {
   return (
     'Follow the Reviewer System Contract and terminal-action tool contract. ' +
-    'Before any gate write or terminal action, post a visible GitHub review. ' +
+    'Before any progression handoff or terminal action, post a visible GitHub review. ' +
     `If requesting changes, send_message(target="${upstreamNodeName}", ...) with ` +
     'pr_url, review_url, and comment_urls, save a result artifact, then stop. '
   );
@@ -290,9 +291,9 @@ const CODEX_REACTION_APPROVAL_GUIDANCE =
   'Only a +1 newer than the current PR head commit counts — after a revision push, ' +
   'an older +1 from a previous cycle is stale and will not open the gate. If the +1 ' +
   'looks old, retrigger Codex with a fresh `@codex review` comment. ' +
-  'Write the approval gate to start the Codex timeout (10 minutes). If the gate ' +
+  'Send the approval handoff to start the Codex timeout (10 minutes). If the hook ' +
   'blocks because Codex has not yet posted `+1`, poll every 60 seconds and retry the ' +
-  'gate write. If codex[bot] still has not posted `+1` after the timeout, proceed ' +
+  'handoff. If codex[bot] still has not posted `+1` after the timeout, proceed ' +
   'only with a warning recorded in your result artifact. Do not close the task ' +
   'before codex[bot] has `+1` unless that timeout has elapsed.';
 
@@ -300,15 +301,15 @@ const PD_PLAN_REVIEW_PROMPT =
   'You are one of four independent Plan Reviewers. Review the plan PR through your lens before ' +
   'tasks are dispatched. Use the Reviewer System Contract for review quality and severity.\n\n' +
   'Plan Review is not the end node: do not call approve_task or submit_for_approval. Your terminal ' +
-  'action is your `approvals` vote on `plan-approval-gate`. Vote approved only for zero P0-P3 ' +
+  'action is sending your `approvals` vote in the Task Dispatcher handoff data. Vote approved only for zero P0-P3 ' +
   'lens findings; otherwise vote rejected and send actionable feedback to Planning.\n\n' +
   CODEX_REACTION_APPROVAL_GUIDANCE +
   '\n\n' +
   'Procedure: read `gh pr diff`/`gh pr view`, post a visible PR review comment, then ' +
   'send_message(target="Task Dispatcher", message: "<short summary>", data: { approvals: { "<your lens>": "approved" }, ' +
   'pr_url: "<plan PR url>" }). First three approvals normally get a gate-blocked response; ' +
-  'the vote is still recorded. On rejection, write `{ "<your lens>": "rejected" }` and also ' +
-  'message Planning with required changes.';
+  'the hook records each vote until all four approvals are present. On rejection, send ' +
+  '`{ "<your lens>": "rejected" }` to Planning with required changes.';
 
 const PD_TASK_DISPATCHER_PROMPT =
   'You are the Task Dispatcher in a Plan & Decompose Workflow. You are the end node. ' +
@@ -402,11 +403,11 @@ const FULLSTACK_REVIEW_PROMPT =
   'maintainability, and coverage before QA. Follow the Reviewer System Contract for ' +
   'review quality and severity.\n\n' +
   'Review is not the end node: approve_task/submit_for_approval are unavailable. Your ' +
-  'terminal hand-off is writing approved = true to review-approval-gate after an ' +
-  'APPROVE verdict with zero P0-P3 findings. Write the gate first to start the 10-minute ' +
+  'terminal hand-off is sending approved = true to QA after an ' +
+  'APPROVE verdict with zero P0-P3 findings. Send the handoff to start the 10-minute ' +
   'Codex timeout, then wait for codex[bot] `+1` or timeout before proceeding. ' +
   CODEX_REACTION_APPROVAL_GUIDANCE +
-  ' If findings remain, do not write the gate; send actionable feedback to Coding and stop. ' +
+  ' If findings remain, do not send the QA handoff; send actionable feedback to Coding and stop. ' +
   'Never set a PR to auto-merge.';
 
 const FULLSTACK_QA_PROMPT =
@@ -530,13 +531,13 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
               'might not surface (e.g. callers of changed functions, integration points).\n' +
               '- All feedback MUST be posted to the PR on GitHub — not just summarized in your ' +
               'response. Use the Reviewer System Contract GitHub review procedure.\n' +
-              '- The Review → Coding channel is gated by `review-posted-gate` — the runtime ' +
-              'checks GitHub for a fresh review before releasing your message. If you skip ' +
-              '`gh pr review`, the gate will block and the coder will never hear from you.\n\n' +
+              '- The Review → Coding handoff runs a hook that checks GitHub for a fresh review ' +
+              'before releasing your message. If you skip `gh pr review`, the hook will block ' +
+              'and the coder will never hear from you.\n\n' +
               reviewerFeedbackProcedure('Coding') +
               'Use save_artifact every cycle. Nest pr_url inside artifact data for post-approval dispatch.\n\n' +
               'Review checklist: inspect PR diff and related worktree context, run tests if uncertain, ' +
-              'post visible GitHub review before gate write. If changes needed, include pr_url, ' +
+              'post visible GitHub review before sending feedback. If changes needed, include pr_url, ' +
               'review_url, and comment_urls when messaging Coding. If approved, ' +
               REVIEW_THREAD_APPROVAL_CHECK_GUIDANCE +
               ' Call save_artifact({ type: "result", data: { pr_url: "<url>" } }) then approve_task() or submit_for_approval. ' +
@@ -905,9 +906,8 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
               'items, long-term maintainability, and whether the decomposition will hold up as ' +
               'the system grows. Flag items that smuggle unrelated concerns together or create ' +
               'hidden cross-cutting dependencies.\n\n' +
-              'When voting, your lens key is `"architecture"` — write ' +
-              '`data: { approvals: { architecture: "approved" } }` (or `"rejected"`) on the ' +
-              '`plan-approval-gate`.',
+              'When voting, your lens key is `"architecture"` — send ' +
+              '`data: { approvals: { architecture: "approved" } }` (or `"rejected"`) to Task Dispatcher.',
           },
         },
         {
@@ -921,9 +921,8 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
               'authentication/authorization, secrets handling, and supply-chain risk for any ' +
               'new dependencies. Flag items that expose user data, bypass existing auth checks, ' +
               'or rely on untrusted input without validation.\n\n' +
-              'When voting, your lens key is `"security"` — write ' +
-              '`data: { approvals: { security: "approved" } }` (or `"rejected"`) on the ' +
-              '`plan-approval-gate`.',
+              'When voting, your lens key is `"security"` — send ' +
+              '`data: { approvals: { security: "approved" } }` (or `"rejected"`) to Task Dispatcher.',
           },
         },
         {
@@ -937,9 +936,8 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
               'consistency across failures, idempotency, and race conditions. Flag items ' +
               'whose acceptance criteria are vague, whose failure modes are unclear, or ' +
               'whose tests would not catch the obvious regressions.\n\n' +
-              'When voting, your lens key is `"correctness"` — write ' +
-              '`data: { approvals: { correctness: "approved" } }` (or `"rejected"`) on the ' +
-              '`plan-approval-gate`.',
+              'When voting, your lens key is `"correctness"` — send ' +
+              '`data: { approvals: { correctness: "approved" } }` (or `"rejected"`) to Task Dispatcher.',
           },
         },
         {
@@ -953,9 +951,8 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
               'documentation, error messages, and upgrade/migration experience for ' +
               'existing users. Flag items that change public interfaces without describing ' +
               'what users will see or how docs will be updated.\n\n' +
-              'When voting, your lens key is `"ux"` — write ' +
-              '`data: { approvals: { ux: "approved" } }` (or `"rejected"`) on the ' +
-              '`plan-approval-gate`.',
+              'When voting, your lens key is `"ux"` — send ' +
+              '`data: { approvals: { ux: "approved" } }` (or `"rejected"`) to Task Dispatcher.',
           },
         },
       ],
@@ -971,8 +968,7 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
             value:
               PD_TASK_DISPATCHER_PROMPT +
               '\n\n' +
-              'Expected inputs: An approved plan PR (plan-approval-gate satisfied — all 4 ' +
-              'reviewers voted `approved: true`).\n' +
+              'Expected inputs: An approved plan PR (all 4 reviewers sent approved votes).\n' +
               'Expected outputs: One standalone task per actionable work item in the plan, ' +
               'then save_artifact({ type: "result", append: true, created_task_ids: [...] }).\n\n' +
               'Tool contract:\n' +
@@ -1114,10 +1110,10 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
               FULLSTACK_REVIEW_PROMPT +
               '\n\n' +
               'Expected inputs: Open PR from Coding.\n' +
-              'Expected outputs: Approval gate write or actionable feedback.\n\n' +
+              'Expected outputs: QA handoff or actionable feedback.\n\n' +
               'Steps:\n' +
               '1. Review diff quality, correctness, and test coverage\n' +
-              '2. If approved: write review-approval-gate (field: approved = true) to start the 10-minute Codex timeout, then wait for codex[bot] +1 or timeout\n' +
+              '2. If approved: send_message to QA with data: { approved: true } to start the 10-minute Codex timeout, then wait for codex[bot] +1 or timeout\n' +
               '3. If changes needed: send clear feedback to Coding',
           },
         },
@@ -1299,7 +1295,7 @@ export function getBuiltInWorkflows(): SpaceWorkflow[] {
   if (errors.length > 0) {
     throw new Error(`Built-in workflow gate writer validation failed:\n${errors.join('\n')}`);
   }
-  return workflows;
+  return workflows.map((workflow) => migrateWorkflowGateProgressionToHooks(workflow).workflow);
 }
 
 export interface SeedBuiltInWorkflowsResult {
@@ -2004,7 +2000,8 @@ export function seedBuiltInWorkflows(
           postApproval: null,
           gates: migratedGates,
           hooks:
-            mergeHooksFromTemplate(template.hooks, template.nodes, row.nodes, row.hooks) ?? null,
+            mergeHooksFromTemplate(template.hooks, template.nodes, migratedNodes, row.hooks) ??
+            null,
           nodes: migratedNodes,
           ...(hasNewTemplateChannels || removedLegacyPrReadyChannels
             ? { channels: mergedChannels }
