@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
+import { z } from 'zod';
 import type { MessageContent, MessageHub, Session } from '@neokai/shared';
 import type { SDKMessage, SDKUserMessage } from '@neokai/shared/sdk';
 import type { Database } from '../../../../src/storage/database';
@@ -307,7 +308,7 @@ describe('AcpQueryRunner', () => {
         },
       },
     } as never;
-    const bridge = new AcpMcpProxyBridge('session-1', mcpServers);
+    const bridge = new AcpMcpProxyBridge(mcpServers);
 
     const converted = convertMcpServersForAcp(mcpServers, () => {}, bridge);
 
@@ -317,10 +318,43 @@ describe('AcpQueryRunner', () => {
       name: 'space-agent-tools',
       command: 'bun',
     });
+    expect(converted[0].args).toContain('--token');
     const toolsArg = converted[0].args[converted[0].args.indexOf('--tools') + 1];
     expect(JSON.parse(toolsArg)).toEqual([
       expect.objectContaining({ name: 'create_standalone_task', description: 'Create a task' }),
     ]);
+  });
+
+  test('wraps raw SDK tool input shapes before schema conversion', () => {
+    const mcpServers = {
+      'space-agent-tools': {
+        type: 'sdk',
+        name: 'space-agent-tools',
+        instance: {
+          _registeredTools: {
+            create_standalone_task: {
+              description: 'Create a task',
+              inputSchema: { title: z.string(), priority: z.enum(['low', 'normal']) },
+              handler: mock(async () => ({ content: [{ type: 'text', text: 'ok' }] })),
+            },
+          },
+        },
+      },
+    } as never;
+    const bridge = new AcpMcpProxyBridge(mcpServers);
+
+    const [tool] = bridge.getToolsForServer('space-agent-tools');
+
+    expect(tool.inputSchema).toEqual(
+      expect.objectContaining({
+        type: 'object',
+        required: ['title', 'priority'],
+        properties: expect.objectContaining({
+          title: expect.objectContaining({ type: 'string' }),
+          priority: expect.objectContaining({ enum: ['low', 'normal'] }),
+        }),
+      })
+    );
   });
 
   test('runs ACP lifecycle with proxied Space MCP servers', async () => {

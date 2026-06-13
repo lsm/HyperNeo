@@ -15,6 +15,7 @@ type ToolCallParams = {
 };
 
 type ProxyCallRequest = {
+  token: string;
   serverName: string;
   toolName: string;
   arguments?: unknown;
@@ -24,6 +25,7 @@ const args = parseArgs(process.argv.slice(2));
 const tools = JSON.parse(args.tools ?? '[]') as AcpProxyToolSchema[];
 const socketPath = requiredArg(args, 'socketPath');
 const serverName = requiredArg(args, 'serverName');
+const token = requiredArg(args, 'token');
 
 let buffer = '';
 stdin.setEncoding('utf8');
@@ -65,6 +67,7 @@ async function handleJsonRpcLine(line: string): Promise<void> {
         const params = request.params as ToolCallParams;
         if (!params?.name) throw new Error('tools/call missing tool name');
         const result = await callBridge({
+          token,
           serverName,
           toolName: params.name,
           arguments: params.arguments ?? {},

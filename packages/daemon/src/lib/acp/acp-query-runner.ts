@@ -218,6 +218,8 @@ export function convertMcpServersForAcp(
               proxyBridge.socketPath,
               '--serverName',
               name,
+              '--token',
+              proxyBridge.token,
               '--tools',
               JSON.stringify(tools),
             ],
@@ -475,7 +477,6 @@ export class AcpQueryRunner {
       });
 
       proxyBridge = new AcpMcpProxyBridge(
-        session.id,
         (queryOptions.mcpServers ?? {}) as Record<string, McpServerConfig>
       );
       if (proxyBridge.tools.length > 0) {
@@ -695,6 +696,8 @@ export class AcpQueryRunner {
       );
     } finally {
       restoreMessageEnqueuedHandler?.();
+      await proxyBridge?.close();
+      proxyBridge = null;
       const isStaleQuery = this.ctx.getQueryGeneration() !== queryGeneration;
 
       if (!isStaleQuery) {
@@ -719,9 +722,6 @@ export class AcpQueryRunner {
         } else {
           client?.close();
         }
-
-        await proxyBridge?.close();
-        proxyBridge = null;
 
         const originalEnvVars = this.ctx.originalEnvVars;
         if (Object.keys(originalEnvVars).length > 0) {

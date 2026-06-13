@@ -1,8 +1,9 @@
 import { createServer, type Server } from 'node:net';
-import { unlink } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { toJSONSchema } from 'zod';
+import { toJSONSchema, z } from 'zod';
 import type { McpServerConfig } from '@neokai/shared/sdk';
 
 type RegisteredTool = {
@@ -26,6 +27,7 @@ type ProxiedTool = {
 
 type ProxyRequest = {
   id?: string;
+  token?: string;
   serverName?: string;
   toolName?: string;
   arguments?: unknown;
@@ -34,16 +36,16 @@ type ProxyRequest = {
 const PROXIED_SERVER_NAMES = new Set(['space-agent-tools', 'node-agent', 'node-agent-tools']);
 
 export class AcpMcpProxyBridge {
-  readonly socketPath: string;
+  socketPath: string;
+  readonly token = randomUUID();
   readonly tools: AcpProxyToolSchema[];
   private server: Server | null = null;
+  private socketDir: string | null = null;
   private toolsByName = new Map<string, ProxiedTool>();
 
-  constructor(
-    private readonly sessionId: string,
-    mcpServers: Record<string, McpServerConfig>
-  ) {
-    this.socketPath = join(tmpdir(), `neokai-acp-proxy-${safeSocketName(sessionId)}.sock`);
+  constructor(mcpServers: Record<string, McpServerConfig>) {
+    const uniqueName = randomUUID();
+    this.socketPath = join(tmpdir(), `neokai-acp-proxy-${uniqueName}.sock`);
     this.tools = this.collectTools(mcpServers);
   }
 
@@ -55,9 +57,8 @@ export class AcpMcpProxyBridge {
 
   async start(): Promise<void> {
     if (this.server) return;
-    await unlink(this.socketPath).catch((error: NodeJS.ErrnoException) => {
-      if (error.code !== 'ENOENT') throw error;
-    });
+    this.socketDir = await mkdtemp(join(tmpdir(), 'neokai-acp-proxy-'));
+    this.socketPath = join(this.socketDir, 'proxy.sock');
 
     this.server = createServer((socket) => {
       let buffer = '';
@@ -97,11 +98,17 @@ export class AcpMcpProxyBridge {
     if (server) {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
-    await unlink(this.socketPath).catch(() => {});
+    if (this.socketDir) {
+      await rm(this.socketDir, { recursive: true, force: true }).catch(() => {});
+      this.socketDir = null;
+    }
   }
 
   private async handleLine(line: string): Promise<unknown> {
     const request = JSON.parse(line) as ProxyRequest;
+    if (request.token !== this.token) {
+      throw new Error('Invalid proxy token');
+    }
     if (!request.serverName || !request.toolName) {
       throw new Error('Missing serverName or toolName');
     }
@@ -152,16 +159,17 @@ function getRegisteredTools(config: unknown): Record<string, RegisteredTool> {
 function toInputJsonSchema(schema: unknown): Record<string, unknown> {
   if (!schema) return { type: 'object', properties: {} };
   try {
-    return toJSONSchema(schema as Parameters<typeof toJSONSchema>[0]) as Record<string, unknown>;
+    const zodSchema = isZodSchema(schema) ? schema : z.object(schema as z.core.$ZodShape);
+    return toJSONSchema(zodSchema as Parameters<typeof toJSONSchema>[0]) as Record<string, unknown>;
   } catch {
     return { type: 'object', properties: {} };
   }
 }
 
-function toolKey(serverName: string, toolName: string): string {
-  return `${serverName}:${toolName}`;
+function isZodSchema(schema: unknown): schema is Parameters<typeof toJSONSchema>[0] {
+  return !!schema && typeof schema === 'object' && '~standard' in schema;
 }
 
-function safeSocketName(sessionId: string): string {
-  return sessionId.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 80);
+function toolKey(serverName: string, toolName: string): string {
+  return `${serverName}:${toolName}`;
 }
