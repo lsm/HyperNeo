@@ -64,6 +64,23 @@ import {
 // Constants
 // ============================================================================
 
+function remapHookCallerAgentSlots(
+  slots: string[] | undefined,
+  previousStep: NodeDraft | undefined,
+  nextStep: NodeDraft
+): string[] | undefined {
+  if (!slots || !previousStep?.agents || !nextStep.agents) return slots;
+
+  const nextSlots = slots.flatMap((slot) => {
+    const index = previousStep.agents?.findIndex((agent) => agent.name === slot) ?? -1;
+    if (index === -1) return [slot];
+    const nextName = nextStep.agents?.[index]?.name?.trim();
+    return nextName ? [nextName] : [];
+  });
+
+  return nextSlots.length > 0 ? nextSlots : undefined;
+}
+
 function buildTemplateCanvasSignature(
   nodes: VisualNode[],
   edges: VisualEdge[],
@@ -665,6 +682,9 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
           authorizedCallers: hook.authorizedCallers?.map((caller) => ({
             ...caller,
             sourceNode: previousRefs.has(caller.sourceNode) ? nextRef : caller.sourceNode,
+            agentSlots: previousRefs.has(caller.sourceNode)
+              ? remapHookCallerAgentSlots(caller.agentSlots, previousNode?.step, step)
+              : caller.agentSlots,
           })),
         }))
       );

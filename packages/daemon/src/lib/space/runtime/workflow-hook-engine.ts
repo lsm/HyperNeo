@@ -118,7 +118,22 @@ const DEFAULT_FOLLOW_UP_TIMEOUT_MS = 30_000;
 /** Default delay for queued retryable hook actions when validator omits retryAfterMs. */
 const DEFAULT_RETRYABLE_ACTION_DELAY_MS = 30_000;
 
-const pendingRetryableHookActions = new Map<string, ReturnType<typeof setTimeout>>();
+interface PendingRetryableHookAction {
+  actionKey: string;
+  delayMs: number;
+  methodName: string;
+  args: Record<string, unknown>;
+  handler: (args: Record<string, unknown>) => Promise<AnyToolResult>;
+  engine: WorkflowHookEngine;
+  handlers: Record<string, (...args: unknown[]) => Promise<AnyToolResult> | AnyToolResult>;
+  meta: HookActionMeta;
+  isFollowUp: boolean;
+}
+
+const pendingRetryableHookActions = new Map<
+  string,
+  { timer: ReturnType<typeof setTimeout>; options: PendingRetryableHookAction }
+>();
 export const QUEUED_RETRYABLE_ACTION_STATE_KEY = '__queuedRetryableAction';
 const RETRYABLE_ACTION_CANCEL_STATUSES = new Set<WorkflowRunStatus>(['done', 'cancelled']);
 
@@ -1197,19 +1212,39 @@ function scheduleRetryableAction<T extends Record<string, unknown>>(options: {
     });
   }, options.delayMs);
 
-  pendingRetryableHookActions.set(options.actionKey, timer);
+  pendingRetryableHookActions.set(options.actionKey, {
+    timer,
+    options: {
+      ...options,
+      args: options.args,
+      handler: async (args) => options.handler(args as T),
+    },
+  });
 }
 
-function clearRetryableAction(actionKey: string): void {
-  const timer = pendingRetryableHookActions.get(actionKey);
-  if (!timer) return;
-  clearTimeout(timer);
+export function clearRetryableHookActionTimer(actionKey: string): void {
+  const pending = pendingRetryableHookActions.get(actionKey);
+  if (!pending) return;
+  clearTimeout(pending.timer);
   pendingRetryableHookActions.delete(actionKey);
 }
 
+export function triggerRetryableHookAction(actionKey: string): boolean {
+  const pending = pendingRetryableHookActions.get(actionKey);
+  if (!pending) return false;
+  clearTimeout(pending.timer);
+  pendingRetryableHookActions.delete(actionKey);
+  void replayRetryableAction(pending.options).catch((err) => {
+    log.warn(
+      `Manual retryable hook action retry failed for ${pending.options.methodName}: ${err instanceof Error ? err.message : String(err)}`
+    );
+  });
+  return true;
+}
+
 export function clearAllRetryableHookActionTimers(): void {
-  for (const timer of pendingRetryableHookActions.values()) {
-    clearTimeout(timer);
+  for (const pending of pendingRetryableHookActions.values()) {
+    clearTimeout(pending.timer);
   }
   pendingRetryableHookActions.clear();
 }
@@ -1264,7 +1299,7 @@ async function replayRetryableAction<T extends Record<string, unknown>>(options:
 }): Promise<void> {
   if (options.engine.isRetryableActionCancelled(options.meta)) {
     options.engine.clearQueuedRetryableActionsForKey(options.actionKey);
-    clearRetryableAction(options.actionKey);
+    clearRetryableHookActionTimer(options.actionKey);
     return;
   }
 
@@ -1290,7 +1325,7 @@ async function replayRetryableAction<T extends Record<string, unknown>>(options:
       );
     } finally {
       options.engine.clearQueuedRetryableActionsForKey(options.actionKey);
-      clearRetryableAction(options.actionKey);
+      clearRetryableHookActionTimer(options.actionKey);
     }
   }
 }
@@ -1387,11 +1422,11 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
           [outcome.blockedByHookId],
           meta
         )) {
-          clearRetryableAction(queuedActionKey);
+          clearRetryableHookActionTimer(queuedActionKey);
         }
       }
       engine.clearQueuedRetryableActionsForKey(actionKey);
-      clearRetryableAction(actionKey);
+      clearRetryableHookActionTimer(actionKey);
       return hookResult(
         {
           success: false,
@@ -1413,7 +1448,7 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
       if (methodName === 'send_message') {
         if (outcome.blockedByHookId) {
           const existingQueued = engine.clearQueuedRetryableActionForHook(outcome.blockedByHookId);
-          if (existingQueued) clearRetryableAction(existingQueued.actionKey);
+          if (existingQueued) clearRetryableHookActionTimer(existingQueued.actionKey);
           const now = Date.now();
           const persisted = engine.persistQueuedRetryableAction({
             actionKey,
@@ -1434,7 +1469,7 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
         }
         if (engine.isRetryableActionCancelled(meta)) {
           engine.clearQueuedRetryableActionsForKey(actionKey);
-          clearRetryableAction(actionKey);
+          clearRetryableHookActionTimer(actionKey);
           return hookResult({
             success: true,
             queued: false,
@@ -1498,10 +1533,10 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
       successfulHookIds,
       meta
     )) {
-      clearRetryableAction(queuedActionKey);
+      clearRetryableHookActionTimer(queuedActionKey);
     }
     engine.clearQueuedRetryableActionsForKey(actionKey);
-    clearRetryableAction(actionKey);
+    clearRetryableHookActionTimer(actionKey);
 
     // Skip nested follow-up emission — only one level of follow-up is allowed
     const nestedFollowUpSuppressed = outcome.followUpRequests.length > 0 && isFollowUp;

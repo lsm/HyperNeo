@@ -454,7 +454,7 @@ describe('visualStateToCreateParams', () => {
         retry: { maxAttempts: 3, delayMs: 5000, backoffMultiplier: 1 },
       }),
     ]);
-    expect(params.hooks![0].poll).toEqual({ intervalMs: 5000 });
+    expect(params.hooks![0].poll).toBeUndefined();
   });
 
   it('preserves explicit hook retry settings', () => {

@@ -250,6 +250,7 @@ export function SpaceTaskPane({
     summaries: hookSummaries,
     fetchError: hookFetchError,
     retry: retryHookFetch,
+    hasHooks: hasWorkflowHooks,
   } = useRunHookStates(_runId, _workflowIdForHook);
   const navigationSpaceIdForTask =
     routeSpaceId ?? currentSpaceIdSignal.value ?? spaceId ?? task?.spaceId;
@@ -499,7 +500,10 @@ export function SpaceTaskPane({
     gateSummaries
   );
   const activeBanner =
-    hookFetchError && _runId && (resolvedBanner === null || resolvedBanner.kind === 'gate_pending')
+    hasWorkflowHooks &&
+    hookFetchError &&
+    _runId &&
+    (resolvedBanner === null || resolvedBanner.kind === 'gate_pending')
       ? ({ kind: 'hook_pending', runId: _runId } as const)
       : resolvedBanner;
   const showHeaderStatusBadge = activeBanner === null;

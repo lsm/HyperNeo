@@ -39,6 +39,10 @@ import type { SpaceTaskRepository } from '../../storage/repositories/space-task-
 import type { SpaceWorktreeManager } from '../space/managers/space-worktree-manager';
 import type { WorkflowRunFailureReason, WorkflowRunStatus } from '@neokai/shared';
 import {
+  QUEUED_RETRYABLE_ACTION_STATE_KEY,
+  triggerRetryableHookAction,
+} from '../space/runtime/workflow-hook-engine';
+import {
   execGit,
   isGitRepo,
   parseNumstat,
@@ -1102,9 +1106,17 @@ export function setupSpaceWorkflowRunHandlers(
 
     const existing = hookStateRepo.get(params.runId, params.hookId);
     const baseVersion = existing?.version ?? 0;
-
+    const queuedAction = existing?.localState?.[QUEUED_RETRYABLE_ACTION_STATE_KEY];
+    const queuedActionKey =
+      queuedAction && typeof queuedAction === 'object'
+        ? (queuedAction as Record<string, unknown>).actionKey
+        : undefined;
     const updateResult = hookStateRepo.update(params.runId, params.hookId, {
       expectedVersion: baseVersion,
+      localState: {
+        ...existing?.localState,
+        [QUEUED_RETRYABLE_ACTION_STATE_KEY]: null,
+      },
       lastResult: {
         type: 'allow',
         message: 'Retry requested by human',
@@ -1115,6 +1127,10 @@ export function setupSpaceWorkflowRunHandlers(
 
     if (!updateResult) {
       throw new Error('Hook state update failed due to version conflict');
+    }
+
+    if (typeof queuedActionKey === 'string') {
+      triggerRetryableHookAction(queuedActionKey);
     }
 
     internalEventBus
