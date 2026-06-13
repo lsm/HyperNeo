@@ -817,6 +817,26 @@ describe('WorkflowHookEngine', () => {
     expect(outcome.decision).toBe('allow');
   });
 
+  test('invalid generic worker target skips target-specific hooks', async () => {
+    const { engine, mockExecutor } = makeEngine([
+      makeHook({ id: 'hook-1', targetNode: 'Review', method: 'send_message' }),
+    ]);
+    mockExecutor.setResult('hook-1', {
+      type: 'block',
+      reason: 'would record state for undelivered worker target',
+      data: { approvals: { architecture: 'approved' } },
+    });
+
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: '@worker:other-run/node-review/reviewer', message: 'hi' },
+      defaultMeta
+    );
+
+    expect(outcome.executionLog).toHaveLength(0);
+    expect(outcome.decision).toBe('allow');
+  });
+
   test('bare target prefers exact node name over slot alias', async () => {
     // Node A is named 'Review'; Node B has an agent slot named 'Review'
     const workflow = makeWorkflow([

@@ -2565,8 +2565,10 @@ describe('seedBuiltInWorkflows()', () => {
     const source = hook?.validator.kind === 'script' ? hook.validator.source : '';
     expect(source).toContain('ALLOWED_HOST="${GH_HOST:-github.com}"');
     expect(source).toContain('PR host ${PR_HOST} is not allowed for GitHub lookups');
-    expect(source).not.toContain('|| [ "$REACTION_OK" != "0" ]');
-    expect(source).not.toContain('[ "$WAIT_HEAD" = "$HEAD_OID" ]');
+    expect(source).toContain('FRESH_REACTION_OK');
+    expect(source).toContain('[ -n "$WAIT_STARTED" ]');
+    expect(source).toContain('[ "$WAIT_HEAD" = "$HEAD_OID" ]');
+    expect(source).toContain('codex_fresh_reaction_count');
     expect(source).toContain('codex_reaction_count');
     expect(source).toContain('codex_approved":false');
     expect(source).toContain('codex_timed_out":true');
@@ -2651,6 +2653,37 @@ describe('seedBuiltInWorkflows()', () => {
     ).toEqual(['architecture-reviewer', 'security-reviewer']);
   });
 
+  test('ambiguous source-slot gated routes stay on legacy gate path', () => {
+    const workflow = migrateWorkflowGateProgressionToHooks({
+      ...PLAN_AND_DECOMPOSE_WORKFLOW,
+      nodes: [
+        ...PLAN_AND_DECOMPOSE_WORKFLOW.nodes,
+        {
+          id: 'alternate-review-node',
+          name: 'Alternate Review',
+          agents: [{ name: 'shared-reviewer' }],
+        },
+      ].map((node) =>
+        node.name === 'Plan Review' ? { ...node, agents: [{ name: 'shared-reviewer' }] } : node
+      ),
+      channels: PLAN_AND_DECOMPOSE_WORKFLOW.channels?.map((channel) =>
+        channel.from === 'Plan Review' && channel.to === 'Task Dispatcher'
+          ? { ...channel, from: 'shared-reviewer' }
+          : channel
+      ),
+      templateName: PLAN_AND_DECOMPOSE_WORKFLOW.name,
+      templateGates: PLAN_AND_DECOMPOSE_WORKFLOW.gates ?? [],
+    }).workflow;
+
+    const retainedChannel = workflow.channels?.find(
+      (channel) => channel.from === 'shared-reviewer' && channel.to === 'Task Dispatcher'
+    );
+    expect(retainedChannel?.gateId).toBe('plan-approval-gate');
+    expect(workflow.gates?.find((gate) => gate.id === 'plan-approval-gate')).toMatchObject({
+      legacyGateMetadata: { deprecated: true },
+    });
+  });
+
   test('target-slot gated routes stay on legacy gate path', () => {
     const workflow = migrateWorkflowGateProgressionToHooks({
       ...PLAN_AND_DECOMPOSE_WORKFLOW,
@@ -2726,6 +2759,25 @@ describe('seedBuiltInWorkflows()', () => {
     );
     expect(approvalHooks?.map((hook) => hook.id)).toContain('custom-plan-review-hook');
     expect(approvalHooks?.some((hook) => hook.id.startsWith('plan-approval:'))).toBe(true);
+  });
+
+  test('migration replaces disabled predictable-id hooks with generated validators', () => {
+    const template = getBuiltInWorkflows().find(
+      (workflow) => workflow.name === PLAN_AND_DECOMPOSE_WORKFLOW.name
+    )!;
+    const generatedHook = template.hooks!.find(
+      (hook) => hook.sourceNode === 'Plan Review' && hook.targetNode === 'Task Dispatcher'
+    )!;
+    const workflow = migrateWorkflowGateProgressionToHooks({
+      ...PLAN_AND_DECOMPOSE_WORKFLOW,
+      hooks: [{ ...generatedHook, enabled: false, validator: { ...generatedHook.validator } }],
+      templateName: PLAN_AND_DECOMPOSE_WORKFLOW.name,
+      templateGates: PLAN_AND_DECOMPOSE_WORKFLOW.gates ?? [],
+    }).workflow;
+
+    const generatedHooks = workflow.hooks?.filter((hook) => hook.id === generatedHook.id);
+    expect(generatedHooks).toHaveLength(1);
+    expect(generatedHooks?.[0]?.enabled).toBe(true);
   });
 
   test('Codex approval migration only follows source node toggle', () => {

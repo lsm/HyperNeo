@@ -74,7 +74,8 @@ const APPROVALS_SCRIPT = [
   'REACTIONS=$(gh api --hostname "$PR_HOST" --paginate --slurp "repos/${OWNER}/${REPO}/issues/${PR_NUMBER}/reactions?per_page=100") || { echo "Failed to fetch Codex reactions" >&2; exit 1; }',
   'COMMENT_OK=$(jq --arg head "$HEAD_OID" \'[.[][] | select((.user.login == "codex[bot]" or .user.login == "chatgpt-codex-connector[bot]") and ((.body // "") | contains($head)))] | length\' <<< "$COMMENTS")',
   'REACTION_OK=$(jq \'[.[][] | select((.user.login == "codex[bot]" or .user.login == "chatgpt-codex-connector[bot]") and .content == "+1")] | length\' <<< "$REACTIONS")',
-  'if [ "$COMMENT_OK" != "0" ]; then jq -n --argjson approvals "$MERGED" --argjson reaction_count "$REACTION_OK" \'{"type":"allow","data":{"approvals":$approvals,"codex_approved":true,"codex_reaction_count":$reaction_count}}\'; exit 0; fi',
+  'FRESH_REACTION_OK=$(jq --arg since "$WAIT_STARTED" \'[.[][] | select((.user.login == "codex[bot]" or .user.login == "chatgpt-codex-connector[bot]") and .content == "+1" and (.created_at // "") > $since)] | length\' <<< "$REACTIONS")',
+  'if [ "$COMMENT_OK" != "0" ] || { [ -n "$WAIT_STARTED" ] && [ "$WAIT_HEAD" = "$HEAD_OID" ] && [ "$FRESH_REACTION_OK" != "0" ]; }; then jq -n --argjson approvals "$MERGED" --argjson reaction_count "$REACTION_OK" --argjson fresh_reaction_count "$FRESH_REACTION_OK" \'{"type":"allow","data":{"approvals":$approvals,"codex_approved":true,"codex_reaction_count":$reaction_count,"codex_fresh_reaction_count":$fresh_reaction_count}}\'; exit 0; fi',
   'NOW_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)',
   'if [ -z "$WAIT_STARTED" ] || [ "$WAIT_HEAD" != "$HEAD_OID" ]; then jq -n --argjson approvals "$MERGED" --arg started "$NOW_ISO" --arg head "$HEAD_OID" \'{"type":"block","reason":"Plan approval requires fresh Codex bot approval for current head or 10-minute timeout from approval handoff","data":{"approvals":$approvals,"approval_count":4,"codex_wait_started_at":$started,"codex_wait_head_oid":$head}}\'; exit 0; fi',
   'WAIT_STARTED_PARSE=${WAIT_STARTED%%.*}; WAIT_STARTED_PARSE=${WAIT_STARTED_PARSE%Z}Z',
@@ -127,7 +128,8 @@ const REVIEW_APPROVAL_SCRIPT = [
   'REACTIONS=$(gh api --hostname "$PR_HOST" --paginate --slurp "repos/${OWNER}/${REPO}/issues/${PR_NUMBER}/reactions?per_page=100") || { echo "Failed to fetch Codex reactions" >&2; exit 1; }',
   'COMMENT_OK=$(jq --arg head "$HEAD_OID" \'[.[][] | select((.user.login == "codex[bot]" or .user.login == "chatgpt-codex-connector[bot]") and ((.body // "") | contains($head)))] | length\' <<< "$COMMENTS")',
   'REACTION_OK=$(jq \'[.[][] | select((.user.login == "codex[bot]" or .user.login == "chatgpt-codex-connector[bot]") and .content == "+1")] | length\' <<< "$REACTIONS")',
-  'if [ "$COMMENT_OK" != "0" ]; then jq -n --arg url "$PR_URL" --argjson reaction_count "$REACTION_OK" \'{"type":"allow","data":{"approved":true,"pr_url":$url,"codex_approved":true,"codex_reaction_count":$reaction_count}}\'; exit 0; fi',
+  'FRESH_REACTION_OK=$(jq --arg since "$WAIT_STARTED" \'[.[][] | select((.user.login == "codex[bot]" or .user.login == "chatgpt-codex-connector[bot]") and .content == "+1" and (.created_at // "") > $since)] | length\' <<< "$REACTIONS")',
+  'if [ "$COMMENT_OK" != "0" ] || { [ -n "$WAIT_STARTED" ] && [ "$WAIT_HEAD" = "$HEAD_OID" ] && [ "$FRESH_REACTION_OK" != "0" ]; }; then jq -n --arg url "$PR_URL" --argjson reaction_count "$REACTION_OK" --argjson fresh_reaction_count "$FRESH_REACTION_OK" \'{"type":"allow","data":{"approved":true,"pr_url":$url,"codex_approved":true,"codex_reaction_count":$reaction_count,"codex_fresh_reaction_count":$fresh_reaction_count}}\'; exit 0; fi',
   'NOW_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)',
   'if [ -z "$WAIT_STARTED" ] || [ "$WAIT_HEAD" != "$HEAD_OID" ]; then jq -n --arg started "$NOW_ISO" --arg head "$HEAD_OID" \'{"type":"block","reason":"Review approval requires fresh Codex bot approval for current head or 10-minute timeout from approval handoff","data":{"codex_wait_started_at":$started,"codex_wait_head_oid":$head}}\'; exit 0; fi',
   'WAIT_STARTED_PARSE=${WAIT_STARTED%%.*}; WAIT_STARTED_PARSE=${WAIT_STARTED_PARSE%Z}Z',
@@ -231,15 +233,20 @@ function resolveChannelNodeName(
   return byAgentSlot?.name;
 }
 
+function matchingAgentSlotNodes(ref: string, nodes: WorkflowNode[] | undefined): WorkflowNode[] {
+  if (nodes?.some((node) => node.name === ref)) return [];
+  return nodes?.filter((node) => node.agents.some((agent) => agent.name === ref)) ?? [];
+}
+
 function isAgentSlot(ref: string, nodes: WorkflowNode[] | undefined): boolean {
-  if (nodes?.some((node) => node.name === ref)) return false;
-  return nodes?.some((node) => node.agents.some((agent) => agent.name === ref)) ?? false;
+  return matchingAgentSlotNodes(ref, nodes).length > 0;
 }
 
 function canMigrateChannel(channel: WorkflowChannel, nodes: WorkflowNode[] | undefined): boolean {
   return (
     typeof channel.to === 'string' &&
     !isAgentSlot(channel.to, nodes) &&
+    matchingAgentSlotNodes(channel.from, nodes).length <= 1 &&
     resolveChannelNodeName(channel.from, nodes) !== undefined &&
     resolveChannelNodeName(channel.to, nodes) !== undefined
   );
@@ -368,23 +375,33 @@ function makeHook(
   };
 }
 
+function equivalentGeneratedHook(existing: WorkflowHook, hook: WorkflowHook): boolean {
+  return (
+    existing.method === hook.method &&
+    existing.sourceNode === hook.sourceNode &&
+    existing.targetNode === hook.targetNode &&
+    existing.classification === hook.classification &&
+    existing.validator.kind === 'script' &&
+    hook.validator.kind === 'script' &&
+    existing.validator.source === hook.validator.source &&
+    JSON.stringify(existing.authorizedCallers ?? []) ===
+      JSON.stringify(hook.authorizedCallers ?? [])
+  );
+}
+
 function findExistingRouteHookId(
   hooks: Iterable<WorkflowHook>,
   hook: WorkflowHook
 ): string | undefined {
   for (const existing of hooks) {
-    if (existing.id === hook.id) return existing.id;
     if (
-      existing.method === hook.method &&
-      existing.sourceNode === hook.sourceNode &&
-      existing.targetNode === hook.targetNode &&
-      existing.classification === hook.classification &&
-      existing.validator.kind === 'script' &&
-      hook.validator.kind === 'script' &&
-      existing.validator.source === hook.validator.source &&
-      JSON.stringify(existing.authorizedCallers ?? []) ===
-        JSON.stringify(hook.authorizedCallers ?? [])
+      existing.enabled === hook.enabled &&
+      existing.id === hook.id &&
+      equivalentGeneratedHook(existing, hook)
     ) {
+      return existing.id;
+    }
+    if (existing.enabled === hook.enabled && equivalentGeneratedHook(existing, hook)) {
       return existing.id;
     }
   }

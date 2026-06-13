@@ -684,6 +684,19 @@ export class WorkflowHookEngine {
     const isRoutableTarget = (targetNode: string): boolean =>
       nodeNames.has(targetNode) &&
       (resolver.canSend(fromNode, targetNode) || resolver.canSend(meta.agentName, targetNode));
+    const hasValidWorkerAddress = (targetValue: string): boolean => {
+      if (!targetValue.trim().startsWith('@worker:')) return true;
+      try {
+        const address = parseAddress(targetValue.trim());
+        return (
+          address.kind === 'worker' &&
+          address.workflowRunId === this.config.workflowRunId &&
+          !!address.agentName
+        );
+      } catch {
+        return false;
+      }
+    };
 
     if (methodName === 'send_message') {
       const target = params.target;
@@ -717,6 +730,9 @@ export class WorkflowHookEngine {
           );
           for (const resolved of resolvedTargets) {
             actionTargets.add(resolved);
+          }
+          if (!hasValidWorkerAddress(target)) {
+            allRequestedTargetsRoutable = false;
           }
         }
       } else if (Array.isArray(target)) {
@@ -755,7 +771,10 @@ export class WorkflowHookEngine {
             for (const resolved of resolvedTargets) {
               actionTargets.add(resolved);
             }
-            if (resolvedTargets.some((resolved) => !isRoutableTarget(resolved))) {
+            if (
+              !hasValidWorkerAddress(t) ||
+              resolvedTargets.some((resolved) => !isRoutableTarget(resolved))
+            ) {
               allRequestedTargetsRoutable = false;
             }
           }
