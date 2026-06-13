@@ -474,6 +474,37 @@ describe('SDKMessageRepository', () => {
 
       expect(message?.type).toBe('result');
     });
+
+    it('should skip model fallback notices when finding the last terminal message', () => {
+      repository.saveSDKMessage('session-1', {
+        type: 'result',
+        subtype: 'success',
+        duration_ms: 100,
+        duration_api_ms: 50,
+        is_error: false,
+        num_turns: 1,
+        result: 'Done after fallback',
+        session_id: 'session-1',
+        total_cost_usd: 0,
+        usage: {},
+      } as unknown as SDKMessage);
+      repository.saveSDKMessage('session-1', {
+        type: 'system',
+        subtype: 'model_refusal_fallback',
+        trigger: 'refusal',
+        direction: 'retry',
+        original_model: 'opus',
+        fallback_model: 'sonnet',
+        request_id: 'req-1',
+        content: 'Retried with fallback model',
+        uuid: 'fallback-notice',
+        session_id: 'session-1',
+      } as unknown as SDKMessage);
+
+      const message = repository.getLastSDKMessage('session-1');
+
+      expect(message?.type).toBe('result');
+    });
   });
 
   describe('getSDKMessagesByType', () => {

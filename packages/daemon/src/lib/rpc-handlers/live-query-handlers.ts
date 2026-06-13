@@ -575,7 +575,16 @@ sdk_rows AS (
    AND ne.agent_session_id = sm.session_id
    AND ne.rn = 1
   LEFT JOIN space_agents sa ON sa.id = ne.agent_id
-  WHERE (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
+  WHERE COALESCE(sm.message_subtype, '') NOT IN ('thinking_tokens', 'session_state_changed', 'commands_changed')
+    AND NOT EXISTS (
+      SELECT 1
+      FROM sdk_messages ref,
+           json_each(ref.sdk_message, '$.retracted_message_uuids') retracted
+      WHERE ref.session_id = sm.session_id
+        AND ref.message_subtype = 'model_refusal_fallback'
+        AND retracted.value = sm.id
+    )
+    AND (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
 ),
 pending_rows AS (
   SELECT
@@ -766,6 +775,14 @@ sdk_rows_raw AS (
   JOIN session_group_members gm ON gm.group_id = tg.id
   JOIN sdk_messages sm ON sm.session_id = gm.session_id
   WHERE COALESCE(sm.message_subtype, '') NOT IN ('thinking_tokens', 'session_state_changed', 'commands_changed')
+    AND NOT EXISTS (
+      SELECT 1
+      FROM sdk_messages ref,
+           json_each(ref.sdk_message, '$.retracted_message_uuids') retracted
+      WHERE ref.session_id = sm.session_id
+        AND ref.message_subtype = 'model_refusal_fallback'
+        AND retracted.value = sm.id
+    )
     AND (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
 ),
 sdk_rows_with_pos AS (
@@ -1142,6 +1159,14 @@ sdk_rows_raw AS (
    AND sne.rn = 1
   LEFT JOIN space_agents sa ON sa.id = sne.agent_id
   WHERE COALESCE(sm.message_subtype, '') NOT IN ('thinking_tokens', 'session_state_changed', 'commands_changed')
+    AND NOT EXISTS (
+      SELECT 1
+      FROM sdk_messages ref,
+           json_each(ref.sdk_message, '$.retracted_message_uuids') retracted
+      WHERE ref.session_id = sm.session_id
+        AND ref.message_subtype = 'model_refusal_fallback'
+        AND retracted.value = sm.id
+    )
     AND (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
 ),
 sdk_rows_numbered AS (

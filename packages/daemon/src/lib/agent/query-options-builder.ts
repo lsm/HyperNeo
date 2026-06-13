@@ -551,6 +551,7 @@ export class QueryOptionsBuilder {
         'WebSearch',
         'ToolSearch',
         'AskUserQuestion',
+        'Agent',
         'Task',
         'TaskOutput',
         'TaskStop',
