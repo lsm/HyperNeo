@@ -216,7 +216,7 @@ export function convertMcpServersForAcp(
             name,
             command: process.execPath,
             args: [
-              process.execPath.includes('/$bunfs/root/')
+              import.meta.url.includes('/$bunfs/root/')
                 ? '--neokai-acp-mcp-proxy'
                 : new URL('./mcp-proxy-server.ts', import.meta.url).pathname,
               '--socketPath',
@@ -225,8 +225,8 @@ export function convertMcpServersForAcp(
               name,
               '--token',
               proxyBridge.token,
-              '--tools',
-              JSON.stringify(tools),
+              '--toolsPath',
+              proxyBridge.toolsPath,
             ],
             env: [],
           },

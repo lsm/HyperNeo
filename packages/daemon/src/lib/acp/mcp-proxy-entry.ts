@@ -1,4 +1,5 @@
 import { connect } from 'node:net';
+import { readFileSync } from 'node:fs';
 import { stdin, stdout } from 'node:process';
 import type { AcpProxyToolSchema } from './mcp-proxy-bridge.ts';
 
@@ -26,7 +27,8 @@ const MCP_PROTOCOL_VERSION = '2025-11-25';
 
 export function startAcpMcpProxy(argv: string[] = process.argv.slice(2)): void {
   const args = parseArgs(argv);
-  const tools = JSON.parse(args.tools ?? '[]') as AcpProxyToolSchema[];
+  const toolsPath = requiredArg(args, 'toolsPath');
+  const tools = JSON.parse(readFileSync(toolsPath, 'utf8')) as AcpProxyToolSchema[];
   const socketPath = requiredArg(args, 'socketPath');
   const serverName = requiredArg(args, 'serverName');
   const token = requiredArg(args, 'token');

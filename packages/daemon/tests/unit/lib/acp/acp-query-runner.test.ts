@@ -302,7 +302,7 @@ describe('AcpQueryRunner', () => {
             create_standalone_task: {
               description: 'Create a task',
               inputSchema: undefined,
-              callback: mock(async () => ({ content: [{ type: 'text', text: 'ok' }] })),
+              handler: mock(async () => ({ content: [{ type: 'text', text: 'ok' }] })),
             },
           },
         },
@@ -319,8 +319,59 @@ describe('AcpQueryRunner', () => {
       command: process.execPath,
     });
     expect(converted[0].args).toContain('--token');
-    const toolsArg = converted[0].args[converted[0].args.indexOf('--tools') + 1];
-    expect(JSON.parse(toolsArg)).toEqual([
+    expect(converted[0].args).toContain('--toolsPath');
+    expect(converted[0].args).not.toContain('--tools');
+  });
+
+  test('rejects proxy requests with invalid tokens', async () => {
+    const mcpServers = {
+      'space-agent-tools': {
+        type: 'sdk',
+        name: 'space-agent-tools',
+        instance: {
+          _registeredTools: {
+            create_standalone_task: {
+              description: 'Create a task',
+              inputSchema: undefined,
+              handler: mock(async () => ({ content: [{ type: 'text', text: 'ok' }] })),
+            },
+          },
+        },
+      },
+    } as never;
+    const bridge = new AcpMcpProxyBridge(mcpServers);
+
+    await expect(
+      bridge.handleLineForTest(
+        JSON.stringify({
+          token: 'wrong',
+          serverName: 'space-agent-tools',
+          toolName: 'create_standalone_task',
+          arguments: {},
+        })
+      )
+    ).rejects.toThrow('Invalid proxy token');
+  });
+
+  test('collects tools from production tools array fallback', () => {
+    const mcpServers = {
+      'space-agent-tools': {
+        type: 'sdk',
+        name: 'space-agent-tools',
+        tools: [
+          {
+            name: 'create_standalone_task',
+            description: 'Create a task',
+            inputSchema: { title: z.string() },
+            handler: mock(async () => ({ content: [{ type: 'text', text: 'ok' }] })),
+          },
+        ],
+        instance: { _registeredTools: {} },
+      },
+    } as never;
+    const bridge = new AcpMcpProxyBridge(mcpServers);
+
+    expect(bridge.getToolsForServer('space-agent-tools')).toEqual([
       expect.objectContaining({ name: 'create_standalone_task', description: 'Create a task' }),
     ]);
   });
@@ -335,7 +386,7 @@ describe('AcpQueryRunner', () => {
             create_standalone_task: {
               description: 'Create a task',
               inputSchema: { title: z.string(), priority: z.enum(['low', 'normal']) },
-              callback: mock(async () => ({ content: [{ type: 'text', text: 'ok' }] })),
+              handler: mock(async () => ({ content: [{ type: 'text', text: 'ok' }] })),
             },
           },
         },

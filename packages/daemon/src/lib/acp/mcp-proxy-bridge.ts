@@ -1,5 +1,5 @@
 import { createServer, type Server, type Socket } from 'node:net';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -11,7 +11,6 @@ type RegisteredTool = {
   inputSchema?:
     | { parse?: (args: unknown) => unknown; parseAsync?: (args: unknown) => Promise<unknown> }
     | unknown;
-  callback?: (args: unknown) => unknown;
   handler?: (args: unknown) => unknown;
 };
 
@@ -37,10 +36,16 @@ type ProxyRequest = {
   arguments?: unknown;
 };
 
-const PROXIED_SERVER_NAMES = new Set(['space-agent-tools', 'node-agent', 'node-agent-tools']);
+const PROXIED_SERVER_NAMES = new Set([
+  'space-agent-tools',
+  'node-agent',
+  'node-agent-tools',
+  'agent-memory',
+]);
 
 export class AcpMcpProxyBridge {
   socketPath: string;
+  readonly toolsPath: string;
   readonly token = randomUUID();
   readonly tools: AcpProxyToolSchema[];
   private server: Server | null = null;
@@ -51,6 +56,7 @@ export class AcpMcpProxyBridge {
   constructor(mcpServers: Record<string, McpServerConfig>) {
     const uniqueName = randomUUID();
     this.socketPath = join(tmpdir(), `neokai-acp-proxy-${uniqueName}.sock`);
+    this.toolsPath = join(tmpdir(), `neokai-acp-proxy-tools-${uniqueName}.json`);
     this.tools = this.collectTools(mcpServers);
   }
 
@@ -62,10 +68,11 @@ export class AcpMcpProxyBridge {
 
   async start(): Promise<void> {
     if (this.server) return;
+    this.socketDir = await mkdtemp(join(tmpdir(), 'neokai-acp-proxy-'));
+    await writeFile(this.toolsPath, JSON.stringify(this.tools), { mode: 0o600 });
     if (process.platform === 'win32') {
       this.socketPath = `\\\\.\\pipe\\neokai-acp-proxy-${randomUUID()}`;
     } else {
-      this.socketDir = await mkdtemp(join(tmpdir(), 'neokai-acp-proxy-'));
       this.socketPath = join(this.socketDir, 'proxy.sock');
     }
 
@@ -117,6 +124,11 @@ export class AcpMcpProxyBridge {
       await rm(this.socketDir, { recursive: true, force: true }).catch(() => {});
       this.socketDir = null;
     }
+    await rm(this.toolsPath, { force: true }).catch(() => {});
+  }
+
+  async handleLineForTest(line: string): Promise<unknown> {
+    return await this.handleLine(line);
   }
 
   private async handleLine(line: string): Promise<unknown> {
@@ -149,8 +161,7 @@ export class AcpMcpProxyBridge {
       if (!shouldProxy(serverName, config)) continue;
       const registeredTools = getRegisteredTools(config);
       for (const [toolName, registered] of Object.entries(registeredTools)) {
-        const callback = registered.callback ?? registered.handler;
-        if (typeof callback !== 'function') continue;
+        if (typeof registered.handler !== 'function') continue;
         const schema = {
           name: toolName,
           description: registered.description,
@@ -160,7 +171,7 @@ export class AcpMcpProxyBridge {
         this.toolsByName.set(toolKey(serverName, toolName), {
           serverName,
           toolName,
-          handler: callback,
+          handler: registered.handler,
           inputSchema: registered.inputSchema,
           schema,
         });
