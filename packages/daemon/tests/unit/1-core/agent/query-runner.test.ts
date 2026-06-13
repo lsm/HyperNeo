@@ -2420,7 +2420,7 @@ describe('QueryRunner environment variable handling', () => {
         PORT: '8484',
         NEOKAI_PORT: '8484',
       },
-      { refreshAutoCompactWindow: true }
+      { refreshAutoCompactWindow: true, clearProviderManaged: true }
     );
 
     expect(env).toMatchObject({

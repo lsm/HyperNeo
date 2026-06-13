@@ -1140,7 +1140,8 @@ sdk_rows_raw AS (
    AND sne.session_id = sm.session_id
    AND sne.rn = 1
   LEFT JOIN space_agents sa ON sa.id = sne.agent_id
-  WHERE (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
+  WHERE COALESCE(sm.message_subtype, '') NOT IN ('thinking_tokens', 'session_state_changed', 'commands_changed')
+    AND (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
 ),
 sdk_rows_numbered AS (
   SELECT

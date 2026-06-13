@@ -918,13 +918,14 @@ describe('NAMED_QUERY_REGISTRY', () => {
         const isRenderable = computeIsRenderable(sdkLike);
         const isTerminal = computeIsTerminal(sdkLike);
         const parentToolUseId = extractParentToolUseId(sdkLike);
+        const messageSubtype = typeof payload.subtype === 'string' ? payload.subtype : null;
         const taskIdForSession = sessionTaskIds.get(sessionIdValue) ?? null;
         db.exec(`
 					INSERT INTO sdk_messages (
 						id, session_id, message_type, message_subtype, sdk_message, timestamp,
 						send_status, origin, is_renderable, is_terminal, parent_tool_use_id, task_id
 					) VALUES (
-						'${id}', '${sessionIdValue}', '${messageType}', NULL, '${JSON.stringify(payload)}',
+						'${id}', '${sessionIdValue}', '${messageType}', ${messageSubtype ? `'${messageSubtype}'` : 'NULL'}, '${JSON.stringify(payload)}',
 						'${iso}', 'consumed', 'system', ${isRenderable}, ${isTerminal},
 						${parentToolUseId ? `'${parentToolUseId}'` : 'NULL'},
 						${taskIdForSession ? `'${taskIdForSession}'` : 'NULL'}
@@ -1195,7 +1196,41 @@ describe('NAMED_QUERY_REGISTRY', () => {
         expect(createdAts).toEqual(sorted);
       });
 
-      test('legacy full query variant is unaffected (no compact slicing)', () => {
+      test('task feeds exclude operational system rows', () => {
+        const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+        insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+
+        insertSdkMessageAt('visible', sessionId, now, {
+          type: 'assistant',
+          message: { role: 'assistant', content: [{ type: 'text', text: 'visible' }] },
+        });
+        for (const subtype of ['thinking_tokens', 'session_state_changed', 'commands_changed']) {
+          insertSdkMessageAt(
+            `operational-${subtype}`,
+            sessionId,
+            now + 1000,
+            {
+              type: 'system',
+              subtype,
+              commands: [],
+              state: 'idle',
+              estimated_tokens: 1,
+              estimated_tokens_delta: 1,
+            },
+            'system'
+          );
+        }
+
+        const compactRows = queryCompact(taskId);
+        const entry = NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask')!;
+        const rawRows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
+        const fullRows = entry.mapRow ? rawRows.map(entry.mapRow) : rawRows;
+
+        expect(compactRows.map((row) => row.id)).toEqual(['visible']);
+        expect(fullRows.map((row) => row.id)).toEqual(['visible']);
+      });
+
+      test('legacy full query variant is unaffected by compact slicing', () => {
         const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
         insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
 

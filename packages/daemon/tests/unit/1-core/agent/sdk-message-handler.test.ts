@@ -9,8 +9,11 @@ import {
   SDKMessageHandler,
   type SDKMessageHandlerContext,
 } from '../../../../src/lib/agent/sdk-message-handler';
-import type { Session, MessageHub } from '@neokai/shared';
+import type { Session, MessageHub, ModelInfo } from '@neokai/shared';
+import type { Provider, ProviderSdkConfig } from '@neokai/shared/provider';
 import type { SDKMessage } from '@neokai/shared/sdk';
+import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
+import { resetProviderFactory } from '../../../../src/lib/providers/factory';
 import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { Database } from '../../../../src/storage/database';
@@ -20,6 +23,42 @@ import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import type { ErrorManager } from '../../../../src/lib/error-manager';
 import type { QueryLifecycleManager } from '../../../../src/lib/agent/query-lifecycle-manager';
 import { setModelsCache } from '../../../../src/lib/model-service';
+
+class TranslatingMockProvider implements Provider {
+  readonly id = 'anthropic-codex';
+  readonly displayName = 'Anthropic Codex';
+  readonly capabilities = {
+    streaming: true,
+    extendedThinking: false,
+    maxContextWindow: 100000,
+    functionCalling: true,
+    vision: false,
+  };
+
+  isAvailable(): boolean {
+    return true;
+  }
+
+  async getModels(): Promise<ModelInfo[]> {
+    return [];
+  }
+
+  ownsModel(modelId: string): boolean {
+    return modelId.startsWith('gpt-') || modelId.startsWith('claude-');
+  }
+
+  getModelForTier(tier: string): string {
+    return `gpt-${tier}`;
+  }
+
+  buildSdkConfig(): ProviderSdkConfig {
+    return { envVars: {}, isAnthropicCompatible: true };
+  }
+
+  translateModelIdForSdk(modelId: string): string {
+    return modelId === 'gpt-5.4-mini' ? 'claude-sonnet-4-20250514' : modelId;
+  }
+}
 
 describe('SDKMessageHandler', () => {
   let handler: SDKMessageHandler;
@@ -55,6 +94,8 @@ describe('SDKMessageHandler', () => {
   let getStateSpy: ReturnType<typeof mock>;
 
   beforeEach(() => {
+    resetProviderRegistry();
+    resetProviderFactory();
     mockSession = {
       id: 'test-session-id',
       title: 'Test Session',
@@ -178,6 +219,11 @@ describe('SDKMessageHandler', () => {
     };
 
     handler = new SDKMessageHandler(mockContext);
+  });
+
+  afterEach(() => {
+    resetProviderRegistry();
+    resetProviderFactory();
   });
 
   describe('constructor', () => {
@@ -734,14 +780,41 @@ describe('SDKMessageHandler', () => {
       expect(setIdleSpy).toHaveBeenCalled();
     });
 
-    it('should include slash-command aliases from commands_changed messages', async () => {
+    it('should include normalized slash-command aliases from commands_changed messages', async () => {
       await handler.handleMessage({
         type: 'system',
         subtype: 'commands_changed',
-        commands: [{ name: 'status', aliases: ['cost', 'stats'] }],
+        commands: [{ name: '/status', aliases: ['/cost', 'stats'] }],
       } as unknown as SDKMessage);
 
       expect(mockContext.onCommandsChanged).toHaveBeenCalledWith(['status', 'cost', 'stats']);
+    });
+
+    it('should persist provider-native fallback model after SDK fallback translation', async () => {
+      getProviderRegistry().register(new TranslatingMockProvider());
+      mockSession.config = {
+        ...mockSession.config,
+        provider: 'anthropic-codex',
+        model: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-mini',
+      };
+
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'model_refusal_fallback',
+        direction: 'retry',
+        original_model: 'claude-opus-4-7',
+        fallback_model: 'claude-sonnet-4-20250514',
+        content: 'Retrying with fallback model',
+      } as unknown as SDKMessage);
+
+      expect(mockSession.config.model).toBe('gpt-5.4-mini');
+      expect(updateSessionSpy).toHaveBeenCalledWith(
+        'test-session-id',
+        expect.objectContaining({
+          config: expect.objectContaining({ model: 'gpt-5.4-mini' }),
+        })
+      );
     });
 
     it('should emit session.errorClear event', async () => {

@@ -215,19 +215,23 @@ export function isSDKRateLimitEvent(
 
 export type SDKSlashCommand = Pick<SlashCommand, "name" | "aliases">;
 
+function normalizeSlashCommandName(name: string): string {
+  return name.startsWith("/") ? name.slice(1) : name;
+}
+
 export function flattenSDKSlashCommands(commands: SDKSlashCommand[]): string[] {
   const names = new Set<string>();
   for (const command of commands) {
     if (typeof command.name === "string" && command.name.length > 0) {
-      names.add(command.name);
+      names.add(normalizeSlashCommandName(command.name));
     }
     for (const alias of command.aliases ?? []) {
       if (typeof alias === "string" && alias.length > 0) {
-        names.add(alias);
+        names.add(normalizeSlashCommandName(alias));
       }
     }
   }
-  return [...names];
+  return [...names].filter((name) => name.length > 0);
 }
 
 // ============================================================================

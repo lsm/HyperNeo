@@ -94,7 +94,7 @@ function getStartupTimeoutMs(): number {
 // in user-facing error messages reflect these module-load-time snapshots.
 const STARTUP_TIMEOUT_MS = getStartupTimeoutMs();
 
-const PROVIDER_MANAGED_ENV_VARS = new Set([
+export const PROVIDER_MANAGED_ENV_VARS = new Set([
   'ANTHROPIC_BASE_URL',
   'ANTHROPIC_API_KEY',
   'ANTHROPIC_AUTH_TOKEN',
@@ -110,9 +110,13 @@ const PROVIDER_MANAGED_ENV_VARS = new Set([
 export function refreshQueryEnvFromProcess(
   queryEnv: Record<string, string | undefined> | undefined,
   processEnv: NodeJS.ProcessEnv = process.env,
-  options: { refreshAutoCompactWindow?: boolean } = {}
-): Record<string, string> {
-  const refreshedEnv: Record<string, string> = Object.fromEntries(
+  options: {
+    refreshAutoCompactWindow?: boolean;
+    clearProviderManaged?: boolean;
+    omitProviderManaged?: boolean;
+  } = {}
+): Record<string, string | undefined> {
+  const refreshedEnv: Record<string, string | undefined> = Object.fromEntries(
     Object.entries(queryEnv ?? {}).filter(
       (entry): entry is [string, string] => entry[1] !== undefined
     )
@@ -121,16 +125,29 @@ export function refreshQueryEnvFromProcess(
   if (options.refreshAutoCompactWindow) {
     providerManagedEnvVars.add('CLAUDE_CODE_AUTO_COMPACT_WINDOW');
   }
+  if (options.omitProviderManaged) {
+    for (const key of providerManagedEnvVars) {
+      refreshedEnv[key] = undefined;
+    }
+  }
   for (const key of providerManagedEnvVars) {
+    if (options.omitProviderManaged) continue;
     const value = processEnv[key];
     if (value === undefined) {
-      delete refreshedEnv[key];
+      if (options.clearProviderManaged) {
+        if (options.omitProviderManaged) {
+          refreshedEnv[key] = undefined;
+        } else {
+          delete refreshedEnv[key];
+        }
+      }
     } else {
       refreshedEnv[key] = value;
     }
   }
   for (const [key, value] of Object.entries(processEnv)) {
     if (value === undefined || key === 'PORT' || key === 'NEOKAI_PORT') continue;
+    if (options.omitProviderManaged && providerManagedEnvVars.has(key)) continue;
     if (!(key in refreshedEnv)) {
       refreshedEnv[key] = value;
     }
@@ -558,7 +575,8 @@ export class QueryRunner {
       // Anthropic sessions preserve configured env overrides from QueryOptionsBuilder.
       queryOptions.env = refreshQueryEnvFromProcess(queryOptions.env, process.env, {
         refreshAutoCompactWindow,
-      });
+        clearProviderManaged: true,
+      }) as Record<string, string>;
 
       // Wrap spawnClaudeCodeProcess to track subprocess exit deterministically.
       // This lets stop() await the actual process exit instead of using arbitrary delays.

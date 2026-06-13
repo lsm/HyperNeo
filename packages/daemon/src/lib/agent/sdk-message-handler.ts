@@ -41,6 +41,7 @@ import {
 import type { Database } from '../../storage/database';
 import { Logger } from '../logger';
 import { ErrorCategory, type ErrorManager } from '../error-manager';
+import { getProviderContextManager } from '../providers/factory';
 import type { ProcessingStateManager } from './processing-state-manager';
 import type { ContextTracker } from './context-tracker';
 import { ContextFetcher } from './context-fetcher';
@@ -800,11 +801,12 @@ export class SDKMessageHandler {
   private async handleModelRefusalFallbackMessage(message: SDKMessage): Promise<void> {
     const { session, db, internalEventBus } = this.ctx;
     if (!isSDKModelRefusalFallbackMessage(message) || message.direction !== 'retry') return;
-    if (!message.fallback_model || session.config.model === message.fallback_model) return;
+    const fallbackModel = this.resolveConfiguredFallbackModel(message.fallback_model);
+    if (!fallbackModel || session.config.model === fallbackModel) return;
 
     session.config = {
       ...session.config,
-      model: message.fallback_model,
+      model: fallbackModel,
     };
     db.updateSession(session.id, { config: session.config });
     await internalEventBus.publish('session.updated', {
@@ -812,6 +814,23 @@ export class SDKMessageHandler {
       source: 'model-refusal-fallback',
       session: { config: session.config },
     });
+  }
+
+  private resolveConfiguredFallbackModel(sdkFallbackModel: string | undefined): string | undefined {
+    const configuredFallbackModel = this.ctx.session.config.fallbackModel;
+    if (!sdkFallbackModel || !configuredFallbackModel) return sdkFallbackModel;
+
+    const fallbackSession = {
+      ...this.ctx.session,
+      config: {
+        ...this.ctx.session.config,
+        model: configuredFallbackModel,
+      },
+    };
+    const fallbackSdkModel = getProviderContextManager()
+      .createContext(fallbackSession)
+      .getSdkModelId();
+    return fallbackSdkModel === sdkFallbackModel ? configuredFallbackModel : sdkFallbackModel;
   }
 
   private async handleUserMessage(message: SDKMessage): Promise<void> {
