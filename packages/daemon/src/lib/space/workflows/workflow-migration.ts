@@ -9,14 +9,17 @@ import type {
 const MIGRATION_DOCS_URL = 'docs/features/space-workflows.md#workflow-hooks';
 
 const REVIEW_POSTED_SCRIPT = [
-  'PR_URL=$(jq -r \'(.data.pr_url // .data.review_url // .pr_url // .review_url // empty)\' <<< "${NEOKAI_PARAMS_JSON:-{}}" 2>/dev/null || true)',
-  'if [ -z "$PR_URL" ]; then echo "Review handoff requires pr_url or review_url" >&2; exit 1; fi',
+  'PR_URL=$(jq -r \'(.data.pr_url // .pr_url // empty)\' <<< "${NEOKAI_PARAMS_JSON:-{}}" 2>/dev/null || true)',
+  'REVIEW_URL=$(jq -r \'(.data.review_url // .review_url // empty)\' <<< "${NEOKAI_PARAMS_JSON:-{}}" 2>/dev/null || true)',
+  'if [ -z "$PR_URL" ] || [ -z "$REVIEW_URL" ]; then echo "Review handoff requires both pr_url and review_url" >&2; exit 1; fi',
   'START_ISO="${NEOKAI_WORKFLOW_START_ISO:-}"',
   'if [ -z "$START_ISO" ]; then echo "NEOKAI_WORKFLOW_START_ISO not injected — cannot determine review window" >&2; exit 1; fi',
   'if ! PR_JSON=$(gh pr view "$PR_URL" --json reviews,comments,author,url 2>/dev/null); then echo "Failed to fetch review evidence for ${PR_URL}" >&2; exit 1; fi',
   'PR_API_URL=$(jq -r \'.url // empty\' <<< "$PR_JSON")',
   'PR_HOST=$(sed -E "s#https://([^/]+)/.*#\\1#" <<< "$PR_API_URL")',
   'if [ -z "$PR_HOST" ] || [ "$PR_HOST" = "$PR_API_URL" ]; then echo "Failed to resolve PR host from ${PR_URL}" >&2; exit 1; fi',
+  'ALLOWED_HOST="${GH_HOST:-github.com}"',
+  'if [ "$PR_HOST" != "github.com" ] && [ "$PR_HOST" != "$ALLOWED_HOST" ]; then echo "PR host ${PR_HOST} is not allowed for GitHub lookups" >&2; exit 1; fi',
   'VIEWER_LOGIN=$(gh api --hostname "$PR_HOST" user --jq .login 2>/dev/null || true)',
   'if [ -z "$VIEWER_LOGIN" ]; then echo "Unable to resolve authenticated reviewer" >&2; exit 1; fi',
   'FORMAL=$(jq --arg since "$START_ISO" --arg viewer "$VIEWER_LOGIN" \'[.reviews[] | select((.submittedAt // "") > $since) | select((.author.login // .user.login // "") == $viewer) | select(.state == "APPROVED" or .state == "CHANGES_REQUESTED")] | length\' <<< "$PR_JSON")',
@@ -65,6 +68,8 @@ const APPROVALS_SCRIPT = [
   'OWNER=$(sed -E "s#https://[^/]+/([^/]+)/([^/]+)/pull/[0-9]+.*#\\1#" <<< "$PR_API_URL")',
   'REPO=$(sed -E "s#https://[^/]+/([^/]+)/([^/]+)/pull/[0-9]+.*#\\2#" <<< "$PR_API_URL")',
   'if [ -z "$PR_HOST" ] || [ -z "$OWNER" ] || [ -z "$REPO" ] || [ "$OWNER" = "$PR_API_URL" ]; then echo "Failed to resolve repository from PR URL" >&2; exit 1; fi',
+  'ALLOWED_HOST="${GH_HOST:-github.com}"',
+  'if [ "$PR_HOST" != "github.com" ] && [ "$PR_HOST" != "$ALLOWED_HOST" ]; then echo "PR host ${PR_HOST} is not allowed for GitHub lookups" >&2; exit 1; fi',
   'COMMENTS=$(gh api --hostname "$PR_HOST" --paginate --slurp "repos/${OWNER}/${REPO}/issues/${PR_NUMBER}/comments?per_page=100") || { echo "Failed to fetch Codex comments" >&2; exit 1; }',
   'REACTIONS=$(gh api --hostname "$PR_HOST" --paginate --slurp "repos/${OWNER}/${REPO}/issues/${PR_NUMBER}/reactions?per_page=100") || { echo "Failed to fetch Codex reactions" >&2; exit 1; }',
   'COMMENT_OK=$(jq --arg head "$HEAD_OID" \'[.[][] | select((.user.login == "codex[bot]" or .user.login == "chatgpt-codex-connector[bot]") and ((.body // "") | contains($head)))] | length\' <<< "$COMMENTS")',
@@ -76,7 +81,7 @@ const APPROVALS_SCRIPT = [
   'START_EPOCH=$(date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$WAIT_STARTED_PARSE" +%s 2>/dev/null || date -u -d "$WAIT_STARTED" +%s 2>/dev/null || echo 0)',
   'NOW_EPOCH=$(date -u +%s)',
   'if [ $((NOW_EPOCH - START_EPOCH)) -lt 600 ]; then jq -n --argjson approvals "$MERGED" --arg started "$WAIT_STARTED" --arg head "$HEAD_OID" \'{"type":"block","reason":"Plan approval requires fresh Codex bot approval for current head or 10-minute timeout from approval handoff","data":{"approvals":$approvals,"approval_count":4,"codex_wait_started_at":$started,"codex_wait_head_oid":$head}}\'; exit 0; fi',
-  'jq -n --argjson approvals "$MERGED" --argjson reaction_count "$REACTION_OK" \'{"type":"allow","data":{"approvals":$approvals,"codex_approved":true,"codex_reaction_count":$reaction_count}}\'',
+  'jq -n --argjson approvals "$MERGED" \'{"type":"allow","data":{"approvals":$approvals,"codex_approved":false,"codex_timed_out":true,"codex_warning":"No current-head Codex approval found before timeout"}}\'',
 ].join('\n');
 
 const PLAN_APPROVAL_RESET_SCRIPT = [
@@ -116,6 +121,8 @@ const REVIEW_APPROVAL_SCRIPT = [
   'OWNER=$(sed -E "s#https://[^/]+/([^/]+)/([^/]+)/pull/[0-9]+.*#\\1#" <<< "$PR_API_URL")',
   'REPO=$(sed -E "s#https://[^/]+/([^/]+)/([^/]+)/pull/[0-9]+.*#\\2#" <<< "$PR_API_URL")',
   'if [ -z "$PR_HOST" ] || [ -z "$OWNER" ] || [ -z "$REPO" ] || [ "$OWNER" = "$PR_API_URL" ]; then echo "Failed to resolve repository from PR URL" >&2; exit 1; fi',
+  'ALLOWED_HOST="${GH_HOST:-github.com}"',
+  'if [ "$PR_HOST" != "github.com" ] && [ "$PR_HOST" != "$ALLOWED_HOST" ]; then echo "PR host ${PR_HOST} is not allowed for GitHub lookups" >&2; exit 1; fi',
   'COMMENTS=$(gh api --hostname "$PR_HOST" --paginate --slurp "repos/${OWNER}/${REPO}/issues/${PR_NUMBER}/comments?per_page=100") || { echo "Failed to fetch Codex comments" >&2; exit 1; }',
   'REACTIONS=$(gh api --hostname "$PR_HOST" --paginate --slurp "repos/${OWNER}/${REPO}/issues/${PR_NUMBER}/reactions?per_page=100") || { echo "Failed to fetch Codex reactions" >&2; exit 1; }',
   'COMMENT_OK=$(jq --arg head "$HEAD_OID" \'[.[][] | select((.user.login == "codex[bot]" or .user.login == "chatgpt-codex-connector[bot]") and ((.body // "") | contains($head)))] | length\' <<< "$COMMENTS")',
@@ -127,7 +134,7 @@ const REVIEW_APPROVAL_SCRIPT = [
   'START_EPOCH=$(date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$WAIT_STARTED_PARSE" +%s 2>/dev/null || date -u -d "$WAIT_STARTED" +%s 2>/dev/null || echo 0)',
   'NOW_EPOCH=$(date -u +%s)',
   'if [ $((NOW_EPOCH - START_EPOCH)) -lt 600 ]; then jq -n --arg started "$WAIT_STARTED" --arg head "$HEAD_OID" \'{"type":"block","reason":"Review approval requires fresh Codex bot approval for current head or 10-minute timeout from approval handoff","data":{"codex_wait_started_at":$started,"codex_wait_head_oid":$head}}\'; exit 0; fi',
-  'jq -n --arg url "$PR_URL" --argjson reaction_count "$REACTION_OK" \'{"type":"allow","data":{"approved":true,"pr_url":$url,"codex_approved":true,"codex_reaction_count":$reaction_count}}\'',
+  'jq -n --arg url "$PR_URL" \'{"type":"allow","data":{"approved":true,"pr_url":$url,"codex_approved":false,"codex_timed_out":true,"codex_warning":"No current-head Codex approval found before timeout"}}\'',
 ].join('\n');
 
 type Pattern = {
@@ -224,9 +231,15 @@ function resolveChannelNodeName(
   return byAgentSlot?.name;
 }
 
+function isAgentSlot(ref: string, nodes: WorkflowNode[] | undefined): boolean {
+  if (nodes?.some((node) => node.name === ref)) return false;
+  return nodes?.some((node) => node.agents.some((agent) => agent.name === ref)) ?? false;
+}
+
 function canMigrateChannel(channel: WorkflowChannel, nodes: WorkflowNode[] | undefined): boolean {
   return (
     typeof channel.to === 'string' &&
+    !isAgentSlot(channel.to, nodes) &&
     resolveChannelNodeName(channel.from, nodes) !== undefined &&
     resolveChannelNodeName(channel.to, nodes) !== undefined
   );

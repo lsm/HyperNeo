@@ -1138,6 +1138,10 @@ describe('getBuiltInWorkflows()', () => {
           hook.id.startsWith('review-posted:')
       )
     ).toBe(true);
+    const reviewPostedHook = coding.hooks?.find((hook) => hook.id.startsWith('review-posted:'));
+    const reviewPostedSource =
+      reviewPostedHook?.validator.kind === 'script' ? reviewPostedHook.validator.source : '';
+    expect(reviewPostedSource).toContain('Review handoff requires both pr_url and review_url');
     expect(computeWorkflowHash(coding)).toBe(
       computeWorkflowHash(
         migrateWorkflowGateProgressionToHooks({
@@ -2548,6 +2552,23 @@ describe('seedBuiltInWorkflows()', () => {
     expect(source).not.toContain('gh pr view');
   });
 
+  test('migrated Codex hooks allow only configured GitHub hosts and report timeouts', () => {
+    const workflow = migrateWorkflowGateProgressionToHooks({
+      ...PLAN_AND_DECOMPOSE_WORKFLOW,
+      templateName: PLAN_AND_DECOMPOSE_WORKFLOW.name,
+      templateGates: PLAN_AND_DECOMPOSE_WORKFLOW.gates ?? [],
+    }).workflow;
+    const hook = workflow.hooks?.find(
+      (candidate) =>
+        candidate.sourceNode === 'Plan Review' && candidate.targetNode === 'Task Dispatcher'
+    );
+    const source = hook?.validator.kind === 'script' ? hook.validator.source : '';
+    expect(source).toContain('ALLOWED_HOST="${GH_HOST:-github.com}"');
+    expect(source).toContain('PR host ${PR_HOST} is not allowed for GitHub lookups');
+    expect(source).toContain('codex_approved":false');
+    expect(source).toContain('codex_timed_out":true');
+  });
+
   test('route-specific migrated hook ids distinguish normalized node-name collisions', () => {
     const workflow = migrateWorkflowGateProgressionToHooks({
       ...PLAN_AND_DECOMPOSE_WORKFLOW,
@@ -2625,6 +2646,35 @@ describe('seedBuiltInWorkflows()', () => {
     expect(
       approvalHooks?.map((hook) => hook.authorizedCallers?.[0]?.agentSlots?.[0]).sort()
     ).toEqual(['architecture-reviewer', 'security-reviewer']);
+  });
+
+  test('target-slot gated routes stay on legacy gate path', () => {
+    const workflow = migrateWorkflowGateProgressionToHooks({
+      ...PLAN_AND_DECOMPOSE_WORKFLOW,
+      nodes: PLAN_AND_DECOMPOSE_WORKFLOW.nodes.map((node) =>
+        node.name === 'Task Dispatcher' ? { ...node, agents: [{ name: 'dispatch-slot' }] } : node
+      ),
+      channels: PLAN_AND_DECOMPOSE_WORKFLOW.channels?.map((channel) =>
+        channel.from === 'Plan Review' && channel.to === 'Task Dispatcher'
+          ? { ...channel, to: 'dispatch-slot' }
+          : channel
+      ),
+      templateName: PLAN_AND_DECOMPOSE_WORKFLOW.name,
+      templateGates: PLAN_AND_DECOMPOSE_WORKFLOW.gates ?? [],
+    }).workflow;
+
+    const retainedChannel = workflow.channels?.find(
+      (channel) => channel.from === 'Plan Review' && channel.to === 'dispatch-slot'
+    );
+    expect(retainedChannel?.gateId).toBe('plan-approval-gate');
+    expect(workflow.gates?.find((gate) => gate.id === 'plan-approval-gate')).toMatchObject({
+      legacyGateMetadata: { deprecated: true },
+    });
+    expect(
+      workflow.hooks?.some(
+        (hook) => hook.sourceNode === 'Plan Review' && hook.targetNode === 'Task Dispatcher'
+      )
+    ).toBe(false);
   });
 
   test('migration reuses generated route hooks during restamp', () => {
