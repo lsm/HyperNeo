@@ -1524,12 +1524,13 @@ function migrateCodexFeatureToNodeToggle(
 }
 
 const CURRENT_CODING_WORKFLOW_HANDOFF_PROMPT =
-  '6. If code changed: hand off by calling `send_message` on the outbound gated ' +
-  'review channel with `data: { pr_url: "<url>" }`. Use the current target and ' +
-  'required data fields from the Runtime Execution Contract injected into your task ' +
-  'prompt. `save_artifact` alone is insufficient; only `send_message` delivers ' +
-  'the gated handoff. Always include the PR URL data field on every `send_message` ' +
-  'handoff — gate data resets each cycle, so even on round 2+ you must re-supply it.\n';
+  '6. If code changed: hand off by calling `send_message` to the review target ' +
+  'with `data: { pr_url: "<url>" }`. Use the current target and required data ' +
+  'fields from the Runtime Execution Contract injected into your task prompt. ' +
+  '`save_artifact` alone is insufficient; only `send_message` triggers the ' +
+  'hook-validated handoff. Always include the PR URL data field on every ' +
+  '`send_message` handoff — the hook validates every cycle, so even on round 2+ ' +
+  'you must re-supply it.\n';
 const RETIRED_CODING_WORKFLOW_HANDOFF_PROMPT =
   '6. If code changed: hand off by sending a message to Review with ' +
   '`data: { pr_url: "<url>" }`. The gate script verifies the PR is open and ' +
@@ -1546,9 +1547,9 @@ const RETIRED_HARDCODED_CODING_WORKFLOW_HANDOFF_PROMPT =
   'data resets each cycle, so even on round 2+ you must re-supply it.\n';
 const CURRENT_CODING_WORKFLOW_REHANDOFF_PROMPT =
   '6. Verify no unresolved review conversations remain, verify tests still pass, ' +
-  'then call `send_message` on the outbound gated review channel again to ' +
-  're-trigger the review cycle. Re-supplying the PR URL data field is required; ' +
-  '`save_artifact` alone will not deliver the gated handoff.';
+  'then call `send_message` to the review target again to re-trigger the review ' +
+  'cycle. Re-supplying the PR URL data field is required because the hook ' +
+  'validates each handoff; `save_artifact` alone will not deliver it.';
 const RETIRED_CODING_WORKFLOW_REHANDOFF_PROMPT =
   '6. Verify no unresolved review conversations remain, verify tests still pass, ' +
   'then send_message to Review again (again with `data: { pr_url }`) to ' +
@@ -1577,7 +1578,7 @@ const RETIRED_HARDCODED_FULLSTACK_CODING_READY_PROMPT =
   'only `send_message` delivers the gated handoff. Coding is not the end node — the ' +
   'task-completion tools (`approve_task`, `submit_for_approval`) are not available to you.\n\n';
 const CURRENT_FULLSTACK_CODING_STEP_PROMPT =
-  '4. Hand off by calling `send_message` on the outbound gated review channel with ' +
+  '4. Hand off by calling `send_message` to the review target with ' +
   '`data: { pr_url: "<url>" }`; `save_artifact` alone will not deliver the handoff\n';
 const RETIRED_FULLSTACK_CODING_STEP_PROMPT =
   '4. Write code-pr-gate with field pr_url so Review can activate\n';

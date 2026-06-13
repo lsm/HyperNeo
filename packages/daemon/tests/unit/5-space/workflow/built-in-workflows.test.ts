@@ -145,7 +145,7 @@ describe('CODING_WORKFLOW template', () => {
 
   test('coder prompt gives behavioral handoff guidance without hard-coded gate details', () => {
     const prompt = CODING_WORKFLOW.nodes[0].agents[0]?.customPrompt?.value;
-    expect(prompt).toContain('hand off by calling `send_message` on the outbound gated');
+    expect(prompt).toContain('hand off by calling `send_message` to the review target');
     expect(prompt).toContain('Use the current target and required data fields');
     expect(prompt).toContain('Runtime Execution Contract');
     expect(prompt).toContain('`save_artifact` alone is insufficient');
@@ -1764,12 +1764,13 @@ describe('seedBuiltInWorkflows()', () => {
       .customPrompt!.value;
     const stalePrompt = templatePrompt
       .replace(
-        '6. If code changed: hand off by calling `send_message` on the outbound gated ' +
-          'review channel with `data: { pr_url: "<url>" }`. Use the current target and ' +
-          'required data fields from the Runtime Execution Contract injected into your task ' +
-          'prompt. `save_artifact` alone is insufficient; only `send_message` delivers ' +
-          'the gated handoff. Always include the PR URL data field on every `send_message` ' +
-          'handoff — gate data resets each cycle, so even on round 2+ you must re-supply it.\n',
+        '6. If code changed: hand off by calling `send_message` to the review target ' +
+          'with `data: { pr_url: "<url>" }`. Use the current target and required data ' +
+          'fields from the Runtime Execution Contract injected into your task prompt. ' +
+          '`save_artifact` alone is insufficient; only `send_message` triggers the ' +
+          'hook-validated handoff. Always include the PR URL data field on every ' +
+          '`send_message` handoff — the hook validates every cycle, so even on round 2+ ' +
+          'you must re-supply it.\n',
         '6. If code changed: hand off by sending a message to Review with ' +
           '`data: { pr_url: "<url>" }`. The gate script verifies the PR is open and ' +
           'mergeable, so make sure it actually is before sending. ' +
@@ -1778,9 +1779,9 @@ describe('seedBuiltInWorkflows()', () => {
       )
       .replace(
         '6. Verify no unresolved review conversations remain, verify tests still pass, ' +
-          'then call `send_message` on the outbound gated review channel again to ' +
-          're-trigger the review cycle. Re-supplying the PR URL data field is required; ' +
-          '`save_artifact` alone will not deliver the gated handoff.',
+          'then call `send_message` to the review target again to re-trigger the review ' +
+          'cycle. Re-supplying the PR URL data field is required because the hook ' +
+          'validates each handoff; `save_artifact` alone will not deliver it.',
         '6. Verify no unresolved review conversations remain, verify tests still pass, ' +
           'then send_message to Review again (again with `data: { pr_url }`) to ' +
           're-trigger the review cycle'
@@ -1812,7 +1813,7 @@ describe('seedBuiltInWorkflows()', () => {
     const afterCodingNode = after.nodes.find((n) => n.id === codingNode.id)!;
     const afterPrompt = afterCodingNode.agents[0].customPrompt?.value;
     expect(afterPrompt).toBe(templatePrompt);
-    expect(afterPrompt).toContain('hand off by calling `send_message` on the outbound gated');
+    expect(afterPrompt).toContain('hand off by calling `send_message` to the review target');
     expect(afterPrompt).not.toContain('send_message(target="Review"');
     expect(after.templateHash).toBe(
       computeWorkflowHash(getBuiltInWorkflows().find((w) => w.name === CODING_WORKFLOW.name)!)
@@ -1866,9 +1867,9 @@ describe('seedBuiltInWorkflows()', () => {
     const stalePrompt = templatePrompt
       .replace(
         'When implementation is ready, ensure the PR is open and mergeable, then call `send_message` ' +
-          'on the outbound gated review channel with `data: { pr_url: "<url>" }`. Use the current ' +
+          'to the review target with `data: { pr_url: "<url>" }`. Use the current ' +
           'target and required data fields from the Runtime Execution Contract injected into your task ' +
-          'prompt. `save_artifact` alone is insufficient; only `send_message` delivers the gated ' +
+          'prompt. `save_artifact` alone is insufficient; only `send_message` triggers the hook-validated ' +
           'handoff. Coding is not the end node — the task-completion tools (`approve_task`, ' +
           '`submit_for_approval`) are not available to you.\n\n',
         'When implementation is ready, ensure the PR is open and mergeable and write code-pr-gate with ' +
@@ -1876,7 +1877,7 @@ describe('seedBuiltInWorkflows()', () => {
           '(`approve_task`, `submit_for_approval`) are not available to you.\n\n'
       )
       .replace(
-        '4. Hand off by calling `send_message` on the outbound gated review channel with ' +
+        '4. Hand off by calling `send_message` to the review target with ' +
           '`data: { pr_url: "<url>" }`; `save_artifact` alone will not deliver the handoff\n',
         '4. Write code-pr-gate with field pr_url so Review can activate\n'
       );
@@ -1907,7 +1908,7 @@ describe('seedBuiltInWorkflows()', () => {
     const afterCodingNode = after.nodes.find((n) => n.id === codingNode.id)!;
     const afterPrompt = afterCodingNode.agents[0].customPrompt?.value;
     expect(afterPrompt).toBe(templatePrompt);
-    expect(afterPrompt).toContain('call `send_message` on the outbound gated review channel');
+    expect(afterPrompt).toContain('call `send_message` to the review target');
     expect(afterPrompt).not.toContain('Write code-pr-gate with field pr_url');
     expect(after.templateHash).toBe(
       computeWorkflowHash(
@@ -4349,11 +4350,11 @@ test('FULLSTACK_QA_LOOP_WORKFLOW has a send_message hook for Coding → Review u
   expect(hook!.enabled).toBe(true);
 });
 
-test('FULLSTACK_QA_LOOP_WORKFLOW coder prompt uses behavioral gated handoff wording', () => {
+test('FULLSTACK_QA_LOOP_WORKFLOW coder prompt uses behavioral hook handoff wording', () => {
   const codingNode = FULLSTACK_QA_LOOP_WORKFLOW.nodes.find((n) => n.name === 'Coding')!;
   const prompt = codingNode.agents[0].customPrompt!.value;
 
-  expect(prompt).toContain('call `send_message` on the outbound gated review channel');
+  expect(prompt).toContain('call `send_message` to the review target');
   expect(prompt).toContain('Use the current target and required data fields');
   expect(prompt).toContain('`save_artifact` alone is insufficient');
   expect(prompt).not.toContain('send_message(target="Review"');
