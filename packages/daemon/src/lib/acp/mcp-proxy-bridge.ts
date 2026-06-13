@@ -94,8 +94,21 @@ export class AcpMcpProxyBridge {
 
     this.server = createServer((socket) => {
       let buffer = '';
+      let closed = false;
       this.activeSockets.add(socket);
-      socket.once('close', () => this.activeSockets.delete(socket));
+      socket.once('close', () => {
+        closed = true;
+        this.activeSockets.delete(socket);
+      });
+      socket.on('error', () => {
+        closed = true;
+      });
+      const writeResponse = (payload: unknown) => {
+        if (closed || socket.destroyed) return;
+        socket.write(`${JSON.stringify(payload)}\n`, (error) => {
+          if (error) socket.destroy();
+        });
+      };
       socket.setEncoding('utf8');
       socket.on('data', (chunk) => {
         buffer += chunk;
@@ -105,11 +118,9 @@ export class AcpMcpProxyBridge {
           buffer = buffer.slice(newline + 1);
           if (line) {
             this.handleLine(line)
-              .then((response) => socket.write(`${JSON.stringify(response)}\n`))
+              .then((response) => writeResponse(response))
               .catch((error) =>
-                socket.write(
-                  `${JSON.stringify({ error: error instanceof Error ? error.message : String(error) })}\n`
-                )
+                writeResponse({ error: error instanceof Error ? error.message : String(error) })
               );
           }
           newline = buffer.indexOf('\n');

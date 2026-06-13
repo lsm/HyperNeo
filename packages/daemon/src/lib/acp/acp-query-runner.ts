@@ -702,7 +702,11 @@ export class AcpQueryRunner {
         isRetry,
         client,
         createdAcpSessionDuringRun,
-        receivedAcpMessageDuringRun
+        receivedAcpMessageDuringRun,
+        async () => {
+          await proxyBridge?.close();
+          proxyBridge = null;
+        }
       );
     } finally {
       restoreMessageEnqueuedHandler?.();
@@ -754,7 +758,8 @@ export class AcpQueryRunner {
     isRetry: boolean,
     client?: AcpClient | null,
     createdAcpSessionDuringRun = false,
-    receivedAcpMessageDuringRun = false
+    receivedAcpMessageDuringRun = false,
+    closeProxyBridge: () => Promise<void> = async () => {}
   ): Promise<void> {
     const { session, messageQueue, stateManager, errorManager, logger } = this.ctx;
     logger.error('ACP query error:', error);
@@ -806,6 +811,7 @@ export class AcpQueryRunner {
       } else {
         client?.close();
       }
+      await closeProxyBridge();
 
       const exitPromise = this.ctx.processExitedPromise;
       if (exitPromise) {
