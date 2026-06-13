@@ -15,6 +15,7 @@ import {
   convertMcpServersForAcp,
   parseAcpCommand,
 } from '../../../../src/lib/acp/acp-query-runner';
+import { AcpMcpProxyBridge } from '../../../../src/lib/acp/mcp-proxy-bridge';
 import { resetProviderFactory } from '../../../../src/lib/providers/factory';
 import { resetProviderRegistry } from '../../../../src/lib/providers/registry';
 
@@ -37,6 +38,9 @@ function createMockClient() {
     }),
     getSessionId: mock(() => 'acp-session-1'),
     getLastPromptStopReason: mock(() => 'end_turn'),
+    getConfigOptions: mock(() => []),
+    updateConfigOptions: mock(() => {}),
+    setConfigOption: mock(async () => []),
     close: mock(() => {}),
     cancel: mock(() => {}),
   };
@@ -156,6 +160,7 @@ function createRunnerFixture(overrides: RunnerFixtureOverrides = {}) {
       getSpaceTaskRepo: mock(() => ({ getTask: mock(() => null) })),
     } as unknown as Database,
     messageHub: { event: mock(() => {}) } as unknown as MessageHub,
+    internalEventBus: { publishAsync: mock(async () => {}) },
     messageQueue,
     stateManager: {
       getState: mock(() => ({ status: 'idle' })),
@@ -240,7 +245,7 @@ describe('AcpQueryRunner', () => {
     });
   });
 
-  test('converts process MCP servers and skips in-process SDK servers', () => {
+  test('converts process MCP servers and skips unproxied in-process SDK servers', () => {
     const warnings: string[] = [];
     const converted = convertMcpServersForAcp(
       {
@@ -284,6 +289,69 @@ describe('AcpQueryRunner', () => {
       },
     ]);
     expect(warnings[0]).toContain("Skipping in-process MCP server 'live'");
+  });
+
+  test('converts Space SDK MCP servers to ACP proxy stdio servers', () => {
+    const mcpServers = {
+      'space-agent-tools': {
+        type: 'sdk',
+        name: 'space-agent-tools',
+        instance: {
+          _registeredTools: {
+            create_standalone_task: {
+              description: 'Create a task',
+              inputSchema: undefined,
+              handler: mock(async () => ({ content: [{ type: 'text', text: 'ok' }] })),
+            },
+          },
+        },
+      },
+    } as never;
+    const bridge = new AcpMcpProxyBridge('session-1', mcpServers);
+
+    const converted = convertMcpServersForAcp(mcpServers, () => {}, bridge);
+
+    expect(converted).toHaveLength(1);
+    expect(converted[0]).toMatchObject({
+      type: 'stdio',
+      name: 'space-agent-tools',
+      command: 'bun',
+    });
+    const toolsArg = converted[0].args[converted[0].args.indexOf('--tools') + 1];
+    expect(JSON.parse(toolsArg)).toEqual([
+      expect.objectContaining({ name: 'create_standalone_task', description: 'Create a task' }),
+    ]);
+  });
+
+  test('runs ACP lifecycle with proxied Space MCP servers', async () => {
+    const handler = mock(async () => ({ content: [{ type: 'text', text: 'ok' }] }));
+    const { runner, ctx, mockClient } = createRunnerFixture({
+      queryOptions: {
+        cwd: '/tmp/acp-session',
+        mcpServers: {
+          'space-agent-tools': {
+            type: 'sdk',
+            name: 'space-agent-tools',
+            instance: {
+              _registeredTools: {
+                create_standalone_task: {
+                  description: 'Create a task',
+                  inputSchema: undefined,
+                  handler,
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    await runner.start();
+    await ctx.queryPromise;
+
+    expect(mockClient.createSession.mock.calls[0][1]).toEqual([
+      expect.objectContaining({ type: 'stdio', name: 'space-agent-tools', command: 'bun' }),
+    ]);
   });
 
   test('runs ACP lifecycle and forwards translated SDK messages', async () => {
@@ -400,7 +468,9 @@ describe('AcpQueryRunner', () => {
     );
     expect(client.resumeSession).not.toHaveBeenCalled();
     expect(client.createSession).not.toHaveBeenCalled();
-    expect(ctx.db.updateSession).not.toHaveBeenCalled();
+    expect(ctx.db.updateSession).not.toHaveBeenCalledWith('session-1', {
+      acpSessionId: expect.any(String),
+    });
     expect(client.sendPrompt.mock.calls[0][0]).toEqual([{ type: 'text', text: 'hello' }]);
   });
 
@@ -721,7 +791,7 @@ describe('AcpQueryRunner', () => {
     );
   });
 
-  test('blocks ACP Space turns when required in-process MCP servers are present', async () => {
+  test('proxies ACP Space turns when required in-process MCP servers are present', async () => {
     const { runner, ctx } = createRunnerFixture({
       session: {
         type: 'space_chat',
@@ -730,7 +800,18 @@ describe('AcpQueryRunner', () => {
       queryOptions: {
         cwd: '/tmp/acp-session',
         mcpServers: {
-          'space-agent-tools': { type: 'sdk', instance: {} },
+          'space-agent-tools': {
+            type: 'sdk',
+            instance: {
+              _registeredTools: {
+                create_standalone_task: {
+                  description: 'Create a task',
+                  inputSchema: undefined,
+                  handler: mock(async () => ({ content: [{ type: 'text', text: 'ok' }] })),
+                },
+              },
+            },
+          },
         },
       },
     });
@@ -738,14 +819,7 @@ describe('AcpQueryRunner', () => {
     await runner.start();
     await ctx.queryPromise;
 
-    expect(ctx.errorManager.handleError).toHaveBeenCalledWith(
-      'session-1',
-      expect.any(Error),
-      'system',
-      expect.stringContaining('ACP cannot proxy SDK MCP servers yet'),
-      expect.any(Object),
-      expect.objectContaining({ providerId: 'acp' })
-    );
+    expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
   });
 
   test('closes local client when retry happens before queryObject exists', async () => {

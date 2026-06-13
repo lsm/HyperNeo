@@ -27,6 +27,7 @@ import {
 } from '../space/runtime/space-mcp-session-policy';
 import { AcpClient, type AcpClientOptions } from './acp-client';
 import { AcpQueryAdapter } from './acp-query-adapter';
+import { AcpMcpProxyBridge, shouldProxy } from './mcp-proxy-bridge';
 
 const DEFAULT_STARTUP_TIMEOUT_MS = 15000;
 const RETRY_EXIT_TIMEOUT_MS = 5000;
@@ -195,14 +196,36 @@ function validAcpServerUrl(url: unknown): string | null {
 
 export function convertMcpServersForAcp(
   servers: Options['mcpServers'],
-  warn: (message: string) => void = () => {}
+  warn: (message: string) => void = () => {},
+  proxyBridge?: AcpMcpProxyBridge
 ): AcpMcpServerConfig[] {
   return Object.entries(servers ?? {}).flatMap(([name, config]): AcpMcpServerConfig[] => {
     if (!config || typeof config !== 'object') return [];
     const server = config as McpServerConfig & { type?: string; instance?: unknown };
 
     if (server.type === 'sdk' || server.instance) {
-      warn(`Skipping in-process MCP server '${name}' for ACP; PR6 will add MCP proxy support.`);
+      if (proxyBridge && shouldProxy(name, server)) {
+        const tools = proxyBridge.getToolsForServer(name);
+        return [
+          {
+            type: 'stdio',
+            name,
+            command: 'bun',
+            args: [
+              'run',
+              new URL('./mcp-proxy-server.ts', import.meta.url).pathname,
+              '--socketPath',
+              proxyBridge.socketPath,
+              '--serverName',
+              name,
+              '--tools',
+              JSON.stringify(tools),
+            ],
+            env: [],
+          },
+        ];
+      }
+      warn(`Skipping in-process MCP server '${name}' for ACP; no proxy bridge was provided.`);
       return [];
     }
 
@@ -400,6 +423,7 @@ export class AcpQueryRunner {
     let createdAcpSessionDuringRun = false;
     let receivedAcpMessageDuringRun = false;
     let restoreMessageEnqueuedHandler: (() => void) | undefined;
+    let proxyBridge: AcpMcpProxyBridge | null = null;
 
     try {
       const { initializeProviders, waitForOptionalProviderRegistration } = await import(
@@ -450,8 +474,17 @@ export class AcpQueryRunner {
         config: { ...session.config, provider: 'acp' },
       });
 
-      const acpMcpServers = convertMcpServersForAcp(queryOptions.mcpServers, (message) =>
-        logger.warn(message)
+      proxyBridge = new AcpMcpProxyBridge(
+        session.id,
+        (queryOptions.mcpServers ?? {}) as Record<string, McpServerConfig>
+      );
+      if (proxyBridge.tools.length > 0) {
+        await proxyBridge.start();
+      }
+      const acpMcpServers = convertMcpServersForAcp(
+        queryOptions.mcpServers,
+        (message) => logger.warn(message),
+        proxyBridge
       );
       const cwd = getAcpWorkspacePath(session, queryOptions);
       const startupTimeoutMs = getStartupTimeoutMs();
@@ -687,6 +720,9 @@ export class AcpQueryRunner {
           client?.close();
         }
 
+        await proxyBridge?.close();
+        proxyBridge = null;
+
         const originalEnvVars = this.ctx.originalEnvVars;
         if (Object.keys(originalEnvVars).length > 0) {
           getProviderService().restoreEnvVars(originalEnvVars);
@@ -886,24 +922,6 @@ export class AcpQueryRunner {
             `ACP cannot proxy in-process SDK MCP servers yet.`
         );
       }
-    }
-
-    const stillInProcess = policy.requiredServers.filter((serverName) => {
-      const server = (currentOptions.mcpServers as Record<string, unknown> | undefined)?.[
-        serverName
-      ];
-      return (
-        !!server &&
-        typeof server === 'object' &&
-        ('instance' in server || (server as { type?: unknown }).type === 'sdk')
-      );
-    });
-    if (stillInProcess.length > 0) {
-      throw new Error(
-        `[MCP invariant] ACP session ${session.id} requires in-process Space MCP servers ` +
-          `[${stillInProcess.join(', ')}], but ACP cannot proxy SDK MCP servers yet. ` +
-          `Refusing to start a degraded Space turn.`
-      );
     }
 
     return currentOptions;
