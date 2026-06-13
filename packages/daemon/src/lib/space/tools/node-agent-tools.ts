@@ -2048,7 +2048,8 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
       : []),
   ];
 
-  return createSdkMcpServer({ name: 'node-agent', tools });
+  const server = createSdkMcpServer({ name: 'node-agent', tools });
+  return { ...server, tools };
 }
 
 export type NodeAgentMcpServer = ReturnType<typeof createNodeAgentMcpServer>;

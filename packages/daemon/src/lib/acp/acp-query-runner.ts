@@ -1,4 +1,5 @@
 import type { UUID } from 'crypto';
+import { fileURLToPath } from 'node:url';
 import type { CanUseTool, Options } from '@anthropic-ai/claude-agent-sdk';
 import {
   generateUUID,
@@ -27,6 +28,7 @@ import {
 } from '../space/runtime/space-mcp-session-policy';
 import { AcpClient, type AcpClientOptions } from './acp-client';
 import { AcpQueryAdapter } from './acp-query-adapter';
+import { AcpMcpProxyBridge, shouldProxy } from './mcp-proxy-bridge';
 
 const DEFAULT_STARTUP_TIMEOUT_MS = 15000;
 const RETRY_EXIT_TIMEOUT_MS = 5000;
@@ -195,14 +197,47 @@ function validAcpServerUrl(url: unknown): string | null {
 
 export function convertMcpServersForAcp(
   servers: Options['mcpServers'],
-  warn: (message: string) => void = () => {}
+  warn: (message: string) => void = () => {},
+  proxyBridge?: AcpMcpProxyBridge
 ): AcpMcpServerConfig[] {
   return Object.entries(servers ?? {}).flatMap(([name, config]): AcpMcpServerConfig[] => {
     if (!config || typeof config !== 'object') return [];
     const server = config as McpServerConfig & { type?: string; instance?: unknown };
 
     if (server.type === 'sdk' || server.instance) {
-      warn(`Skipping in-process MCP server '${name}' for ACP; PR6 will add MCP proxy support.`);
+      if (proxyBridge && shouldProxy(name, server)) {
+        const tools = proxyBridge.getToolsForServer(name);
+        if (tools.length === 0) {
+          warn(`Skipping ACP proxy for in-process MCP server '${name}'; no callable tools found.`);
+          return [];
+        }
+        return [
+          {
+            type: 'stdio',
+            name,
+            command: process.execPath,
+            args: [
+              import.meta.url.includes('/$bunfs/root/')
+                ? '--neokai-acp-mcp-proxy'
+                : fileURLToPath(new URL('./mcp-proxy-server.ts', import.meta.url)),
+              '--socketPath',
+              proxyBridge.socketPath,
+              '--serverName',
+              name,
+              '--token',
+              proxyBridge.token,
+              '--toolsPath',
+              proxyBridge.getToolsPathForServer(name) ?? proxyBridge.toolsPath,
+            ],
+            env: [],
+          },
+        ];
+      }
+      warn(
+        proxyBridge
+          ? `Skipping in-process MCP server '${name}' for ACP; server is not proxy-enabled.`
+          : `Skipping in-process MCP server '${name}' for ACP; no proxy bridge was provided.`
+      );
       return [];
     }
 
@@ -400,6 +435,7 @@ export class AcpQueryRunner {
     let createdAcpSessionDuringRun = false;
     let receivedAcpMessageDuringRun = false;
     let restoreMessageEnqueuedHandler: (() => void) | undefined;
+    let proxyBridge: AcpMcpProxyBridge | null = null;
 
     try {
       const { initializeProviders, waitForOptionalProviderRegistration } = await import(
@@ -450,8 +486,16 @@ export class AcpQueryRunner {
         config: { ...session.config, provider: 'acp' },
       });
 
-      const acpMcpServers = convertMcpServersForAcp(queryOptions.mcpServers, (message) =>
-        logger.warn(message)
+      proxyBridge = new AcpMcpProxyBridge(
+        (queryOptions.mcpServers ?? {}) as Record<string, McpServerConfig>
+      );
+      if (proxyBridge.tools.length > 0) {
+        await proxyBridge.start();
+      }
+      const acpMcpServers = convertMcpServersForAcp(
+        queryOptions.mcpServers,
+        (message) => logger.warn(message),
+        proxyBridge
       );
       const cwd = getAcpWorkspacePath(session, queryOptions);
       const startupTimeoutMs = getStartupTimeoutMs();
@@ -658,10 +702,16 @@ export class AcpQueryRunner {
         isRetry,
         client,
         createdAcpSessionDuringRun,
-        receivedAcpMessageDuringRun
+        receivedAcpMessageDuringRun,
+        async () => {
+          await proxyBridge?.close();
+          proxyBridge = null;
+        }
       );
     } finally {
       restoreMessageEnqueuedHandler?.();
+      await proxyBridge?.close();
+      proxyBridge = null;
       const isStaleQuery = this.ctx.getQueryGeneration() !== queryGeneration;
 
       if (!isStaleQuery) {
@@ -708,7 +758,8 @@ export class AcpQueryRunner {
     isRetry: boolean,
     client?: AcpClient | null,
     createdAcpSessionDuringRun = false,
-    receivedAcpMessageDuringRun = false
+    receivedAcpMessageDuringRun = false,
+    closeProxyBridge: () => Promise<void> = async () => {}
   ): Promise<void> {
     const { session, messageQueue, stateManager, errorManager, logger } = this.ctx;
     logger.error('ACP query error:', error);
@@ -760,6 +811,7 @@ export class AcpQueryRunner {
       } else {
         client?.close();
       }
+      await closeProxyBridge();
 
       const exitPromise = this.ctx.processExitedPromise;
       if (exitPromise) {
@@ -886,24 +938,6 @@ export class AcpQueryRunner {
             `ACP cannot proxy in-process SDK MCP servers yet.`
         );
       }
-    }
-
-    const stillInProcess = policy.requiredServers.filter((serverName) => {
-      const server = (currentOptions.mcpServers as Record<string, unknown> | undefined)?.[
-        serverName
-      ];
-      return (
-        !!server &&
-        typeof server === 'object' &&
-        ('instance' in server || (server as { type?: unknown }).type === 'sdk')
-      );
-    });
-    if (stillInProcess.length > 0) {
-      throw new Error(
-        `[MCP invariant] ACP session ${session.id} requires in-process Space MCP servers ` +
-          `[${stillInProcess.join(', ')}], but ACP cannot proxy SDK MCP servers yet. ` +
-          `Refusing to start a degraded Space turn.`
-      );
     }
 
     return currentOptions;
