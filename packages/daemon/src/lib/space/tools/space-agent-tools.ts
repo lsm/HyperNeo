@@ -602,6 +602,11 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
   function requireSpaceSessionRow(sessionId: string): SpaceSessionRow {
     const row = getSpaceSessionRow(sessionId);
     if (!row) throw new Error(`Session not found in this space: ${sessionId}`);
+    return row;
+  }
+
+  function requireMutableSpaceSessionRow(sessionId: string): SpaceSessionRow {
+    const row = requireSpaceSessionRow(sessionId);
     if (row.status === 'archived') throw new Error(`Session is archived: ${sessionId}`);
     return row;
   }
@@ -830,7 +835,12 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       try {
         const limit = Math.min(args.limit ?? SPACE_SESSION_DEFAULT_LIMIT, SPACE_SESSION_MAX_LIMIT);
         const offset = Math.max(args.offset ?? 0, 0);
-        const fetchLimit = Math.min(offset + limit, SPACE_SESSION_FETCH_CAP);
+        if (offset + limit > SPACE_SESSION_FETCH_CAP) {
+          return jsonResult({
+            success: false,
+            error: `list_sessions supports offset + limit up to ${SPACE_SESSION_FETCH_CAP}. Narrow filters or lower offset.`,
+          });
+        }
         const rows = requireDb()
           .prepare(
             `SELECT id, title, workspace_path, created_at, last_active_at, status, metadata,
@@ -840,7 +850,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
               ORDER BY last_active_at DESC
               LIMIT ?`
           )
-          .all(spaceId, fetchLimit) as SpaceSessionRow[];
+          .all(spaceId, offset + limit) as SpaceSessionRow[];
         const sessions = rows
           .map(rowToSessionSummary)
           .filter((session) => !args.status || session.status === args.status)
@@ -899,7 +909,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       answer_question?: boolean;
     }): Promise<ToolResult> {
       try {
-        const row = requireSpaceSessionRow(args.session_id);
+        const row = requireMutableSpaceSessionRow(args.session_id);
         const liveSession = await requireLiveSession(args.session_id);
         let messageId = generateUUID();
         if (args.answer_question) {
@@ -922,6 +932,16 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             return jsonResult({
               success: false,
               error: 'Pending question is missing toolUseId',
+            });
+          }
+          const questions = Array.isArray((pendingQuestion as { questions?: unknown }).questions)
+            ? (pendingQuestion as { questions: unknown[] }).questions
+            : [];
+          if (questions.length !== 1) {
+            return jsonResult({
+              success: false,
+              error:
+                'answer_question only supports pending prompts with exactly one question. Use the UI for multi-question prompts.',
             });
           }
           await liveSession.handleQuestionResponse(
@@ -958,7 +978,15 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     }): Promise<ToolResult> {
       try {
         await requireSessionWriteAutonomy('update_session_state');
-        const row = requireSpaceSessionRow(args.session_id);
+        const row = requireMutableSpaceSessionRow(args.session_id);
+        const liveSession = await getLiveSession(args.session_id);
+        if (liveSession) {
+          return jsonResult({
+            success: false,
+            error:
+              'update_session_state cannot mutate live sessions. Interrupt or message the live session instead.',
+          });
+        }
         const previousState = parseProcessingState(row.processing_state);
         const newStatus =
           args.processing_state === 'running' ? 'processing' : args.processing_state;
@@ -989,7 +1017,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     async interrupt_session(args: { session_id: string; reason?: string }): Promise<ToolResult> {
       try {
         await requireSessionWriteAutonomy('interrupt_session');
-        requireSpaceSessionRow(args.session_id);
+        requireMutableSpaceSessionRow(args.session_id);
         const liveSession = await requireLiveSession(args.session_id);
         await liveSession.handleInterrupt();
         logAudit('interrupt_session', { session_id: args.session_id, reason: args.reason });
