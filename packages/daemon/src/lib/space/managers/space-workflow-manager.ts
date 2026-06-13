@@ -246,7 +246,12 @@ export class SpaceWorkflowManager {
     });
 
     const withSanitizedNodes = sanitized ? { ...sanitized, nodes: nextNodes } : wf;
-    return migrateWorkflowGateProgressionToHooks(withSanitizedNodes).workflow;
+    return migrateWorkflowGateProgressionToHooks({
+      ...withSanitizedNodes,
+      templateGates: withSanitizedNodes.templateName
+        ? (BUILT_IN_TEMPLATE_GATES.get(withSanitizedNodes.templateName) ?? [])
+        : [],
+    }).workflow;
   }
 
   // -------------------------------------------------------------------------

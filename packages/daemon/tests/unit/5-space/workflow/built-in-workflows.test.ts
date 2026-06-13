@@ -2467,6 +2467,105 @@ describe('seedBuiltInWorkflows()', () => {
     expect(hook.authorizedCallers?.[0]?.agentSlots).toEqual(['engineer']);
   });
 
+  test('load-time migration preserves customized known gates by comparing canonical gate shape', () => {
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+    const customizedReviewGate = {
+      ...CODING_WORKFLOW.gates!.find((gate) => gate.id === 'review-posted-gate')!,
+      script: { interpreter: 'bash', source: 'echo stricter custom review gate >&2; exit 1' },
+    };
+    repo.updateWorkflow(coding.id, {
+      channels: coding.channels?.map((channel) =>
+        channel.from === 'Review' && channel.to === 'Coding'
+          ? { ...channel, gateId: 'review-posted-gate' }
+          : channel
+      ),
+      gates: [customizedReviewGate],
+    });
+
+    const after = manager.getWorkflow(coding.id)!;
+    expect(
+      after.channels?.some(
+        (channel) => channel.from === 'Review' && channel.to === 'Coding' && channel.gateId
+      )
+    ).toBe(true);
+    expect(
+      after.gates?.find((gate) => gate.id === 'review-posted-gate')?.legacyGateMetadata
+    ).toMatchObject({ deprecated: true });
+  });
+
+  test('migrated plan approval reset targets renamed route-specific approval hooks', () => {
+    const renamedWorkflow = migrateWorkflowGateProgressionToHooks({
+      ...PLAN_AND_DECOMPOSE_WORKFLOW,
+      nodes: PLAN_AND_DECOMPOSE_WORKFLOW.nodes.map((node) =>
+        node.name === 'Task Dispatcher' ? { ...node, name: 'Dispatch' } : node
+      ),
+      channels: PLAN_AND_DECOMPOSE_WORKFLOW.channels?.map((channel) => ({
+        ...channel,
+        to: channel.to === 'Task Dispatcher' ? 'Dispatch' : channel.to,
+        from: channel.from === 'Task Dispatcher' ? 'Dispatch' : channel.from,
+      })),
+      templateName: PLAN_AND_DECOMPOSE_WORKFLOW.name,
+      templateGates: PLAN_AND_DECOMPOSE_WORKFLOW.gates ?? [],
+    }).workflow;
+
+    const approvalHook = renamedWorkflow.hooks?.find((hook) =>
+      hook.id.startsWith('plan-approval:plan-review:')
+    );
+    const resetHook = renamedWorkflow.hooks?.find((hook) => hook.id === 'plan-approval-reset');
+    expect(approvalHook?.id).toBe('plan-approval:plan-review:dispatch');
+    expect(resetHook?.validator.kind === 'script' ? resetHook.validator.source : '').toContain(
+      'plan-approval:plan-review:dispatch'
+    );
+    expect(resetHook?.validator.kind === 'script' ? resetHook.validator.source : '').not.toContain(
+      'plan-approval:plan-review:task-dispatcher'
+    );
+  });
+
+  test('migrated approval hooks skip Codex validation when node toggle is disabled', () => {
+    const workflow = migrateWorkflowGateProgressionToHooks({
+      ...PLAN_AND_DECOMPOSE_WORKFLOW,
+      nodes: PLAN_AND_DECOMPOSE_WORKFLOW.nodes.map((node) =>
+        node.name === 'Plan Review' ? { ...node, requireCodexApproval: false } : node
+      ),
+      templateName: PLAN_AND_DECOMPOSE_WORKFLOW.name,
+      templateGates: PLAN_AND_DECOMPOSE_WORKFLOW.gates ?? [],
+    }).workflow;
+    const hook = workflow.hooks?.find(
+      (candidate) => candidate.id === 'plan-approval:plan-review:task-dispatcher'
+    );
+    const source = hook?.validator.kind === 'script' ? hook.validator.source : '';
+    expect(source).toContain('Plan dispatch requires four approved plan-review votes');
+    expect(source).not.toContain('Codex');
+    expect(source).not.toContain('gh pr view');
+  });
+
+  test('re-stamp installs generated hooks when replacing legacy template channels', () => {
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+    repo.updateWorkflow(coding.id, {
+      hooks: coding.hooks?.filter((hook) => hook.id === 'code-pr-ready'),
+      channels: coding.channels?.map((channel) =>
+        channel.from === 'Review' && channel.to === 'Coding'
+          ? { ...channel, gateId: 'review-posted-gate' }
+          : channel
+      ),
+      gates: CODING_WORKFLOW.gates,
+    });
+    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+      'legacy-gated-review-feedback',
+      coding.id
+    );
+
+    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    expect(result.restamped).toContain(CODING_WORKFLOW.name);
+    expect(result.errors).toHaveLength(0);
+
+    const after = manager.getWorkflow(coding.id)!;
+    expect(after.hooks?.some((hook) => hook.id === 'code-pr-ready')).toBe(true);
+    expect(after.hooks?.some((hook) => hook.id === 'review-posted:review:coding')).toBe(true);
+  });
+
   test('re-stamp preserves user-added custom hooks while updating template hooks', () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;

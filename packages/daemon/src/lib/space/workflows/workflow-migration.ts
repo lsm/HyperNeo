@@ -16,11 +16,15 @@ const REVIEW_POSTED_SCRIPT = [
   'if ! PR_JSON=$(gh pr view "$PR_URL" --json reviews,comments,author 2>/dev/null); then echo "Failed to fetch review evidence for ${PR_URL}" >&2; exit 1; fi',
   'VIEWER_LOGIN=$(gh api user --jq .login 2>/dev/null || true)',
   'if [ -z "$VIEWER_LOGIN" ]; then echo "Unable to resolve authenticated reviewer" >&2; exit 1; fi',
-  'FORMAL=$(jq --arg since "$START_ISO" --arg viewer "$VIEWER_LOGIN" \'[.reviews[] | select((.submittedAt // "") > $since) | select((.author.login // .user.login // "") == $viewer) | select(.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "COMMENTED")] | length\' <<< "$PR_JSON")',
-  'COMMENTS=$(jq --arg since "$START_ISO" --arg viewer "$VIEWER_LOGIN" \'[.comments[] | select((.createdAt // "") > $since) | select((.author.login // .user.login // "") == $viewer)] | length\' <<< "$PR_JSON")',
-  'COUNT=$((FORMAL + COMMENTS))',
-  'if [ "$COUNT" = "0" ]; then echo "No GitHub review or PR comment found on ${PR_URL} since workflow start" >&2; exit 1; fi',
-  'jq -n --arg url "$PR_URL" --argjson count "$COUNT" \'{"type":"allow","data":{"pr_url":$url,"review_evidence_count":$count}}\'',
+  'FORMAL=$(jq --arg since "$START_ISO" --arg viewer "$VIEWER_LOGIN" \'[.reviews[] | select((.submittedAt // "") > $since) | select((.author.login // .user.login // "") == $viewer) | select(.state == "APPROVED" or .state == "CHANGES_REQUESTED")] | length\' <<< "$PR_JSON")',
+  'if [ "$FORMAL" != "0" ]; then jq -n --arg url "$PR_URL" --argjson count "$FORMAL" \'{"type":"allow","data":{"pr_url":$url,"review_evidence_count":$count,"review_evidence":"formal_review"}}\'; exit 0; fi',
+  'AUTHOR_LOGIN=$(jq -r \'.author.login // empty\' <<< "$PR_JSON")',
+  'if [ -z "$AUTHOR_LOGIN" ] || [ "$AUTHOR_LOGIN" != "$VIEWER_LOGIN" ]; then echo "No APPROVED or CHANGES_REQUESTED review found on ${PR_URL} since workflow start; comment-only evidence is accepted only for own PRs" >&2; exit 1; fi',
+  'COMMENTS=$(jq --arg since "$START_ISO" --arg viewer "$VIEWER_LOGIN" \'[.reviews[] | select((.submittedAt // "") > $since) | select((.author.login // .user.login // "") == $viewer) | select(.state == "COMMENTED")] | length\' <<< "$PR_JSON")',
+  'PR_COMMENTS=$(jq --arg since "$START_ISO" --arg viewer "$VIEWER_LOGIN" \'[.comments[] | select((.createdAt // "") > $since) | select((.author.login // .user.login // "") == $viewer)] | length\' <<< "$PR_JSON")',
+  'COUNT=$((COMMENTS + PR_COMMENTS))',
+  'if [ "$COUNT" = "0" ]; then echo "No GitHub review or PR comment found on own PR ${PR_URL} since workflow start" >&2; exit 1; fi',
+  'jq -n --arg url "$PR_URL" --argjson count "$COUNT" \'{"type":"allow","data":{"pr_url":$url,"review_evidence_count":$count,"review_evidence":"own_pr_comment"}}\'',
 ].join('\n');
 
 const VALIDATION_ONLY_SCRIPT = [
@@ -69,7 +73,23 @@ const APPROVALS_SCRIPT = [
 ].join('\n');
 
 const PLAN_APPROVAL_RESET_SCRIPT = [
-  'jq -n \'{"type":"record_state","stateForHook":{"plan-approval:plan-review:task-dispatcher":{"approvals":null,"approval_count":0,"codex_wait_started_at":null}}}\'',
+  'jq -n \'{"type":"record_state","stateForHook":{"__PLAN_APPROVAL_HOOK_ID__":{"approvals":null,"approval_count":0,"codex_wait_started_at":null}}}\'',
+].join('\n');
+
+const APPROVALS_WITHOUT_CODEX_SCRIPT = [
+  'STATE=$(jq -c \'.approvals // {}\' <<< "${NEOKAI_HOOK_LOCAL_STATE_JSON:-{}}" 2>/dev/null || echo {})',
+  'INCOMING=$(jq -c \'(.data.approvals // .approvals // {})\' <<< "${NEOKAI_PARAMS_JSON:-{}}" 2>/dev/null || echo {})',
+  'MERGED=$(jq -c -n --argjson a "$STATE" --argjson b "$INCOMING" \'$a * $b\')',
+  'COUNT=$(jq \'to_entries | map(select(.value == "approved" or .value == true)) | length\' <<< "$MERGED")',
+  'if [ "$COUNT" -lt 4 ]; then jq -n --argjson approvals "$MERGED" --argjson count "$COUNT" \'{"type":"block","reason":"Plan dispatch requires four approved plan-review votes","data":{"approvals":$approvals,"approval_count":$count}}\'; exit 0; fi',
+  'jq -n --argjson approvals "$MERGED" \'{"type":"allow","data":{"approvals":$approvals}}\'',
+].join('\n');
+
+const REVIEW_APPROVAL_WITHOUT_CODEX_SCRIPT = [
+  'APPROVED=$(jq -r \'(.data.approved // .approved // false)\' <<< "${NEOKAI_PARAMS_JSON:-{}}" 2>/dev/null || true)',
+  'PR_URL=$(jq -r \'(.data.pr_url // .pr_url // empty)\' <<< "${NEOKAI_PARAMS_JSON:-{}}" 2>/dev/null || true)',
+  'if [ "$APPROVED" != "true" ]; then echo "Review handoff requires approved=true" >&2; exit 1; fi',
+  'if [ -n "$PR_URL" ]; then jq -n --arg url "$PR_URL" \'{"type":"allow","data":{"approved":true,"pr_url":$url}}\'; else jq -n \'{"type":"allow","data":{"approved":true}}\'; fi',
 ].join('\n');
 
 const ALLOW_SCRIPT = ['jq -n \'{"type":"allow"}\''].join('\n');
@@ -268,7 +288,8 @@ function routeHookId(pattern: Pattern, sourceNode: string, targetNode: string): 
 function makeHook(
   pattern: Pattern,
   channel: WorkflowChannel,
-  nodes: WorkflowNode[] | undefined
+  nodes: WorkflowNode[] | undefined,
+  script = pattern.script
 ): WorkflowHook {
   const sourceNode = resolveChannelNodeName(channel.from, nodes)!;
   const targetNode = resolveChannelNodeName(channel.to as string, nodes)!;
@@ -284,12 +305,12 @@ function makeHook(
     validator: {
       kind: 'script',
       interpreter: 'bash',
-      source: pattern.script,
+      source: script,
       timeoutMs: 30000,
       externalLookups:
-        pattern.gateId === 'review-posted-gate' ||
-        pattern.gateId === 'review-approval-gate' ||
-        pattern.gateId === 'plan-approval-gate'
+        script === REVIEW_POSTED_SCRIPT ||
+        script === REVIEW_APPROVAL_SCRIPT ||
+        script === APPROVALS_SCRIPT
           ? ['github']
           : undefined,
     },
@@ -319,19 +340,7 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
   const existingHookIds = new Set(hooksById.keys());
   const gatesById = new Map((workflow.gates ?? []).map((gate) => [gate.id, gate]));
   const migratedGateIds = new Set<string>();
-  const planFeedbackResetPattern = KNOWN_GATE_PATTERNS['plan-approval-feedback-reset'];
-  if (workflow.templateName && planFeedbackResetPattern) {
-    const planFeedbackChannel = (workflow.channels ?? []).find(
-      (channel) =>
-        resolveChannelNodeName(channel.from, workflow.nodes) === planFeedbackResetPattern.from &&
-        typeof channel.to === 'string' &&
-        resolveChannelNodeName(channel.to, workflow.nodes) === planFeedbackResetPattern.to
-    );
-    if (planFeedbackChannel && !hooksById.has(planFeedbackResetPattern.hookId)) {
-      const hook = makeHook(planFeedbackResetPattern, planFeedbackChannel, workflow.nodes);
-      hooksById.set(hook.id, hook);
-    }
-  }
+  const planApprovalHookIds = new Set<string>();
 
   const channels = (workflow.channels ?? []).map((channel) => {
     if (!channel.gateId) return channel;
@@ -345,8 +354,19 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
         `${channel.gateId}:${fromNode ?? channel.from}:${toNode ?? String(channel.to)}`
       ] ?? KNOWN_GATE_PATTERNS[channel.gateId];
     const gate = gatesById.get(channel.gateId);
+    const sourceNode = workflow.nodes?.find((node) => node.name === fromNode);
+    const targetNode = workflow.nodes?.find((node) => node.name === toNode);
+    const codexRequired =
+      sourceNode?.requireCodexApproval === true || targetNode?.requireCodexApproval === true;
+    const script =
+      pattern?.gateId === 'plan-approval-gate' && !codexRequired
+        ? APPROVALS_WITHOUT_CODEX_SCRIPT
+        : pattern?.gateId === 'review-approval-gate' && !codexRequired
+          ? REVIEW_APPROVAL_WITHOUT_CODEX_SCRIPT
+          : pattern?.script;
     if (
       !pattern ||
+      !script ||
       (pattern.from !== undefined && pattern.from !== fromNode) ||
       (pattern.to !== undefined && pattern.to !== toNode) ||
       !canMigrateChannel(channel, workflow.nodes) ||
@@ -361,9 +381,10 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
       return channel;
     }
 
-    const hook = makeHook(pattern, channel, workflow.nodes);
+    const hook = makeHook(pattern, channel, workflow.nodes, script);
     if (existingHookIds.has(hook.id) && !workflow.templateName) return channel;
     hooksById.set(hook.id, hook);
+    if (pattern.gateId === 'plan-approval-gate') planApprovalHookIds.add(hook.id);
     migratedGateIds.add(channel.gateId);
     warnings.push({
       code: 'known_gate_migrated_to_hook',
@@ -375,6 +396,34 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
     const { gateId: _gateId, ...openChannel } = channel;
     return openChannel;
   });
+
+  const planFeedbackResetPattern = KNOWN_GATE_PATTERNS['plan-approval-feedback-reset'];
+  if (workflow.templateName && planFeedbackResetPattern && planApprovalHookIds.size > 0) {
+    const planFeedbackChannel = (workflow.channels ?? []).find(
+      (channel) =>
+        resolveChannelNodeName(channel.from, workflow.nodes) === planFeedbackResetPattern.from &&
+        typeof channel.to === 'string' &&
+        resolveChannelNodeName(channel.to, workflow.nodes) === planFeedbackResetPattern.to
+    );
+    if (planFeedbackChannel && !hooksById.has(planFeedbackResetPattern.hookId)) {
+      const stateForHook = Array.from(planApprovalHookIds)
+        .map(
+          (hookId) =>
+            `"${hookId}":{"approvals":null,"approval_count":0,"codex_wait_started_at":null}`
+        )
+        .join(',');
+      const hook = makeHook(
+        planFeedbackResetPattern,
+        planFeedbackChannel,
+        workflow.nodes,
+        PLAN_APPROVAL_RESET_SCRIPT.replace(
+          '"__PLAN_APPROVAL_HOOK_ID__":{"approvals":null,"approval_count":0,"codex_wait_started_at":null}',
+          stateForHook
+        )
+      );
+      hooksById.set(hook.id, hook);
+    }
+  }
 
   const retainedGateIds = new Set(
     channels.flatMap((channel) => ('gateId' in channel && channel.gateId ? [channel.gateId] : []))
