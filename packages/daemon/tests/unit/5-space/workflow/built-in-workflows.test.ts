@@ -1130,7 +1130,14 @@ describe('getBuiltInWorkflows()', () => {
   test('getBuiltInWorkflows returns migrated hook-backed templates', () => {
     const coding = getBuiltInWorkflows().find((w) => w.name === CODING_WORKFLOW.name)!;
     expect(coding.channels?.some((channel) => channel.gateId === 'review-posted-gate')).toBe(false);
-    expect(coding.hooks?.some((hook) => hook.id === 'review-posted:review:coding')).toBe(true);
+    expect(
+      coding.hooks?.some(
+        (hook) =>
+          hook.sourceNode === 'Review' &&
+          hook.targetNode === 'Coding' &&
+          hook.id.startsWith('review-posted:')
+      )
+    ).toBe(true);
     expect(computeWorkflowHash(coding)).toBe(
       computeWorkflowHash(
         migrateWorkflowGateProgressionToHooks({
@@ -2509,13 +2516,13 @@ describe('seedBuiltInWorkflows()', () => {
       templateGates: PLAN_AND_DECOMPOSE_WORKFLOW.gates ?? [],
     }).workflow;
 
-    const approvalHook = renamedWorkflow.hooks?.find((hook) =>
-      hook.id.startsWith('plan-approval:plan-review:')
+    const approvalHook = renamedWorkflow.hooks?.find(
+      (hook) => hook.sourceNode === 'Plan Review' && hook.targetNode === 'Dispatch'
     );
     const resetHook = renamedWorkflow.hooks?.find((hook) => hook.id === 'plan-approval-reset');
-    expect(approvalHook?.id).toBe('plan-approval:plan-review:dispatch');
+    expect(approvalHook?.id).toStartWith('plan-approval:');
     expect(resetHook?.validator.kind === 'script' ? resetHook.validator.source : '').toContain(
-      'plan-approval:plan-review:dispatch'
+      approvalHook!.id
     );
     expect(resetHook?.validator.kind === 'script' ? resetHook.validator.source : '').not.toContain(
       'plan-approval:plan-review:task-dispatcher'
@@ -2532,12 +2539,64 @@ describe('seedBuiltInWorkflows()', () => {
       templateGates: PLAN_AND_DECOMPOSE_WORKFLOW.gates ?? [],
     }).workflow;
     const hook = workflow.hooks?.find(
-      (candidate) => candidate.id === 'plan-approval:plan-review:task-dispatcher'
+      (candidate) =>
+        candidate.sourceNode === 'Plan Review' && candidate.targetNode === 'Task Dispatcher'
     );
     const source = hook?.validator.kind === 'script' ? hook.validator.source : '';
     expect(source).toContain('Plan dispatch requires four approved plan-review votes');
     expect(source).not.toContain('Codex');
     expect(source).not.toContain('gh pr view');
+  });
+
+  test('route-specific migrated hook ids distinguish normalized node-name collisions', () => {
+    const workflow = migrateWorkflowGateProgressionToHooks({
+      ...PLAN_AND_DECOMPOSE_WORKFLOW,
+      nodes: [
+        ...PLAN_AND_DECOMPOSE_WORKFLOW.nodes,
+        { id: 'task-dispatcher-hyphen', name: 'Task-Dispatcher', agents: [{ name: 'dispatcher' }] },
+      ],
+      channels: [
+        ...(PLAN_AND_DECOMPOSE_WORKFLOW.channels ?? []),
+        {
+          from: 'Plan Review',
+          to: 'Task-Dispatcher',
+          gateId: 'plan-approval-gate',
+          label: 'Plan Review → Task-Dispatcher',
+        },
+      ],
+      templateName: PLAN_AND_DECOMPOSE_WORKFLOW.name,
+      templateGates: PLAN_AND_DECOMPOSE_WORKFLOW.gates ?? [],
+    }).workflow;
+
+    const approvalHookIds =
+      workflow.hooks
+        ?.filter(
+          (hook) => hook.sourceNode === 'Plan Review' && hook.id.startsWith('plan-approval:')
+        )
+        .map((hook) => hook.id) ?? [];
+    expect(new Set(approvalHookIds).size).toBe(approvalHookIds.length);
+    expect(approvalHookIds).toHaveLength(2);
+  });
+
+  test('migrated hooks preserve slot-scoped channel authorization', () => {
+    const workflow = migrateWorkflowGateProgressionToHooks({
+      ...PLAN_AND_DECOMPOSE_WORKFLOW,
+      channels: PLAN_AND_DECOMPOSE_WORKFLOW.channels?.map((channel) =>
+        channel.from === 'Plan Review' && channel.to === 'Task Dispatcher'
+          ? { ...channel, from: 'architecture-reviewer' }
+          : channel
+      ),
+      templateName: PLAN_AND_DECOMPOSE_WORKFLOW.name,
+      templateGates: PLAN_AND_DECOMPOSE_WORKFLOW.gates ?? [],
+    }).workflow;
+
+    const hook = workflow.hooks?.find(
+      (candidate) =>
+        candidate.sourceNode === 'Plan Review' && candidate.targetNode === 'Task Dispatcher'
+    );
+    expect(hook?.authorizedCallers).toEqual([
+      { sourceNode: 'Plan Review', agentSlots: ['architecture-reviewer'] },
+    ]);
   });
 
   test('re-stamp installs generated hooks when replacing legacy template channels', () => {
@@ -2563,7 +2622,14 @@ describe('seedBuiltInWorkflows()', () => {
 
     const after = manager.getWorkflow(coding.id)!;
     expect(after.hooks?.some((hook) => hook.id === 'code-pr-ready')).toBe(true);
-    expect(after.hooks?.some((hook) => hook.id === 'review-posted:review:coding')).toBe(true);
+    expect(
+      after.hooks?.some(
+        (hook) =>
+          hook.sourceNode === 'Review' &&
+          hook.targetNode === 'Coding' &&
+          hook.id.startsWith('review-posted:')
+      )
+    ).toBe(true);
   });
 
   test('re-stamp preserves user-added custom hooks while updating template hooks', () => {

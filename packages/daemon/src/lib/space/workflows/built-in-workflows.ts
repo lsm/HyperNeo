@@ -909,7 +909,7 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
               'hidden cross-cutting dependencies.\n\n' +
               'When voting, your lens key is `"architecture"` — send ' +
               '`data: { approvals: { architecture: "approved" }, pr_url: "<plan PR url>" }` ' +
-              '(or `"rejected"`) to Task Dispatcher.',
+              'to Task Dispatcher when approving. Send rejected votes with findings to Planning.',
           },
         },
         {
@@ -925,7 +925,7 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
               'or rely on untrusted input without validation.\n\n' +
               'When voting, your lens key is `"security"` — send ' +
               '`data: { approvals: { security: "approved" }, pr_url: "<plan PR url>" }` ' +
-              '(or `"rejected"`) to Task Dispatcher.',
+              'to Task Dispatcher when approving. Send rejected votes with findings to Planning.',
           },
         },
         {
@@ -941,7 +941,7 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
               'whose tests would not catch the obvious regressions.\n\n' +
               'When voting, your lens key is `"correctness"` — send ' +
               '`data: { approvals: { correctness: "approved" }, pr_url: "<plan PR url>" }` ' +
-              '(or `"rejected"`) to Task Dispatcher.',
+              'to Task Dispatcher when approving. Send rejected votes with findings to Planning.',
           },
         },
         {
@@ -957,7 +957,7 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
               'what users will see or how docs will be updated.\n\n' +
               'When voting, your lens key is `"ux"` — send ' +
               '`data: { approvals: { ux: "approved" }, pr_url: "<plan PR url>" }` ' +
-              '(or `"rejected"`) to Task Dispatcher.',
+              'to Task Dispatcher when approving. Send rejected votes with findings to Planning.',
           },
         },
       ],
