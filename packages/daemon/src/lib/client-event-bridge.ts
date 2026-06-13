@@ -123,6 +123,11 @@ const SPACE_BRIDGE_MAPPINGS: BridgeMapping[] = [
     channel: () => Channels.global(),
   },
   {
+    event: 'space.hookState.updated',
+    clientEvent: 'space.hookState.updated',
+    channel: () => Channels.global(),
+  },
+  {
     event: 'space.artifactCache.updated',
     clientEvent: 'space.artifactCache.updated',
     channel: () => Channels.global(),

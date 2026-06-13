@@ -24,12 +24,15 @@ import type {
   ThinkingLevel,
   WorkflowChannel,
   WorkflowNodeAgent,
+  WorkflowHook,
 } from '@neokai/shared';
+import { generateUUID } from '@neokai/shared';
 import type { NodeDraft } from '../WorkflowNodeCard';
 import { isMultiAgentNode, extractOverrideValue, buildOverride } from '../WorkflowNodeCard';
 import { WorkflowModelSelect } from './WorkflowModelSelect';
 import { ChannelRelationConfigPanel } from './ChannelRelationConfigPanel';
 import { GateEditorPanel } from './GateEditorPanel';
+import { HookEditorPanel } from './HookEditorPanel';
 import { skillsStore } from '../../../lib/skills-store';
 import { normalizeThinkingLevel } from '@neokai/shared';
 
@@ -125,6 +128,12 @@ export interface NodeConfigPanelProps {
   onClose: () => void;
   /** Called when the user confirms deletion of this step */
   onDelete: (stepId: string) => void;
+  /** Workflow-level hooks for this node (filtered by sourceNode match). */
+  nodeHooks?: WorkflowHook[];
+  /** All node names in the workflow for hook source/target selectors. */
+  workflowNodeNames?: string[];
+  /** Update the workflow-level hooks list. */
+  onUpdateNodeHooks?: (hooks: WorkflowHook[]) => void;
 }
 
 // ============================================================================
@@ -637,6 +646,7 @@ type PanelView =
   | { kind: 'main' }
   | { kind: 'channel-links' }
   | { kind: 'gate-editor'; gateId: string }
+  | { kind: 'hook-editor'; hookId: string }
   | { kind: 'single-prompts' }
   | { kind: 'slot-prompts'; role: string };
 
@@ -659,6 +669,9 @@ export function NodeConfigPanel({
   onCloseChannelLink,
   onClose,
   onDelete,
+  nodeHooks = [],
+  workflowNodeNames = [],
+  onUpdateNodeHooks,
 }: NodeConfigPanelProps) {
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [panelView, setPanelView] = useState<PanelView>({ kind: 'main' });
@@ -780,11 +793,13 @@ export function NodeConfigPanel({
         ? 'Channel Links'
         : panelView.kind === 'gate-editor'
           ? 'Gate Editor'
-          : panelView.kind === 'single-prompts'
-            ? 'Prompts'
-            : panelView.kind === 'slot-prompts'
-              ? 'Slot Prompts'
-              : step.name || 'Unnamed Node';
+          : panelView.kind === 'hook-editor'
+            ? 'Hook Editor'
+            : panelView.kind === 'single-prompts'
+              ? 'Prompts'
+              : panelView.kind === 'slot-prompts'
+                ? 'Slot Prompts'
+                : step.name || 'Unnamed Node';
 
     return (
       <div class="flex items-center justify-between border-b border-white/10 bg-dark-850/60 px-4 py-3 flex-shrink-0">
@@ -795,6 +810,10 @@ export function NodeConfigPanel({
             onClick={() => {
               if (panelView.kind === 'gate-editor') {
                 setPanelView({ kind: 'channel-links' });
+                return;
+              }
+              if (panelView.kind === 'hook-editor') {
+                setPanelView({ kind: 'main' });
                 return;
               }
               if (panelView.kind === 'slot-prompts') {
@@ -856,6 +875,22 @@ export function NodeConfigPanel({
             );
           }}
           onBack={() => setPanelView({ kind: 'channel-links' })}
+          embedded
+        />
+      );
+    }
+
+    if (panelView.kind === 'hook-editor') {
+      const editingHook = nodeHooks.find((h) => h.id === panelView.hookId);
+      if (!editingHook) return null;
+      return (
+        <HookEditorPanel
+          hook={editingHook}
+          nodeNames={workflowNodeNames}
+          onChange={(updated) => {
+            onUpdateNodeHooks?.(nodeHooks.map((h) => (h.id === updated.id ? updated : h)));
+          }}
+          onBack={() => setPanelView({ kind: 'main' })}
           embedded
         />
       );
@@ -1203,6 +1238,80 @@ export function NodeConfigPanel({
             />
           ) : null}
         </div>
+
+        {/* Hooks section */}
+        {onUpdateNodeHooks && (
+          <div class="space-y-1.5">
+            <div class="flex items-center justify-between">
+              <label class="text-xs font-medium text-gray-400">Hooks</label>
+              <span class="text-xs text-gray-400">{nodeHooks.length}</span>
+            </div>
+            {nodeHooks.length > 0 ? (
+              <div class="space-y-1.5">
+                {nodeHooks.map((hook) => (
+                  <button
+                    key={hook.id}
+                    type="button"
+                    data-testid="node-hook-button"
+                    onClick={() => setPanelView({ kind: 'hook-editor', hookId: hook.id })}
+                    class="w-full rounded border border-dark-700 bg-dark-800 px-2.5 py-2 text-left hover:border-blue-600/60 hover:bg-dark-750 transition-colors"
+                  >
+                    <div class="flex items-center justify-between gap-2">
+                      <div class="min-w-0">
+                        <div class="text-xs font-mono text-gray-200 truncate">
+                          {hook.label || hook.id}
+                        </div>
+                        <div class="mt-1 flex items-center gap-2 text-[11px] text-gray-400">
+                          <span>{hook.method}</span>
+                          {!hook.enabled && <span class="text-red-400">disabled</span>}
+                        </div>
+                      </div>
+                      <svg
+                        class="w-4 h-4 text-gray-400 flex-shrink-0"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          stroke-width={2}
+                          d="M9 5l7 7-7 7"
+                        />
+                      </svg>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p class="text-xs text-gray-400">No hooks configured for this node.</p>
+            )}
+            <button
+              type="button"
+              data-testid="add-hook-button"
+              onClick={() => {
+                const sourceNode = step.name || step.localId;
+                const newHook: WorkflowHook = {
+                  id: generateUUID(),
+                  enabled: true,
+                  sourceNode,
+                  method: 'send_message',
+                  validator: {
+                    kind: 'script',
+                    interpreter: 'bash',
+                    source: `echo '{"type":"allow"}'`,
+                  },
+                  authorizedCallers: [{ sourceNode }],
+                };
+                onUpdateNodeHooks([...nodeHooks, newHook]);
+                setPanelView({ kind: 'hook-editor', hookId: newHook.id });
+              }}
+              class="w-full rounded border border-dashed border-dark-500 px-2 py-1.5 text-xs text-gray-400 hover:border-blue-500 hover:text-blue-300 transition-colors"
+            >
+              + Add Hook
+            </button>
+          </div>
+        )}
       </div>
     );
   };

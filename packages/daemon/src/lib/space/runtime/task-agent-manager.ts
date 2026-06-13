@@ -3918,6 +3918,21 @@ export class TaskAgentManager {
             )?.status,
         notifySourceSession: (sessionId, message) =>
           this.injectSubSessionMessage(sessionId, message, true),
+        onHookStateUpdated: (hookId, hookState) => {
+          this.config.internalEventBus
+            ?.publish('space.hookState.updated', {
+              sessionId: 'global',
+              spaceId,
+              runId: workflowRunId,
+              hookId,
+              hookState,
+            })
+            .catch((err: unknown) => {
+              log.warn(
+                `Failed to emit space.hookState.updated for hook ${hookId}: ${err instanceof Error ? err.message : String(err)}`
+              );
+            });
+        },
       });
     }
 

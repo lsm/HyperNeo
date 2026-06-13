@@ -681,6 +681,13 @@ interface ClientForwardingEvents {
     gateId: string;
     data: Record<string, unknown>;
   };
+  'space.hookState.updated': {
+    sessionId: string;
+    spaceId: string;
+    runId: string;
+    hookId: string;
+    hookState: import('@neokai/shared').WorkflowHookStateSnapshot;
+  };
   'spaceAgent.created': {
     sessionId: string;
     spaceId: string;

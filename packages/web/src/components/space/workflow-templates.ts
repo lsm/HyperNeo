@@ -37,6 +37,8 @@ export interface WorkflowTemplate {
   channels?: WorkflowChannel[];
   /** Optional first-class workflow gates to seed with the template. */
   gates?: Gate[];
+  /** Optional workflow hooks to seed with the template. */
+  hooks?: import('@neokai/shared').WorkflowHook[];
   /** Optional tags to seed with the template. */
   tags?: string[];
   /** Legacy workflow-level post-approval route; migrated onto the end node when loaded. */
