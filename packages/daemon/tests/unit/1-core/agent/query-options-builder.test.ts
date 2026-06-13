@@ -168,7 +168,9 @@ describe('QueryOptionsBuilder', () => {
 
       const options = await builder.build();
 
-      expect(options.env).toEqual({
+      expect(options.env).toMatchObject({
+        PATH: process.env.PATH,
+        HOME: process.env.HOME,
         CLAUDE_CODE_AUTO_COMPACT_WINDOW: '262144',
         KEEP_GLOBAL: 'global',
         KEEP_SESSION: 'session',
@@ -189,7 +191,13 @@ describe('QueryOptionsBuilder', () => {
 
       const options = await builder.build();
 
-      expect(options.env).toEqual({ KEEP_GLOBAL: 'global', KEEP_SESSION: 'session' });
+      expect(options.env).toMatchObject({
+        PATH: process.env.PATH,
+        HOME: process.env.HOME,
+        KEEP_GLOBAL: 'global',
+        KEEP_SESSION: 'session',
+      });
+      expect(options.env).not.toHaveProperty('CLAUDE_CODE_AUTO_COMPACT_WINDOW');
     });
 
     it('should not override SDK auto-compaction settings for native anthropic provider', async () => {
@@ -1410,6 +1418,7 @@ describe('QueryOptionsBuilder', () => {
         expect(result).toContain('CronCreate');
         expect(result).toContain('Artifact');
         expect(result).toContain('Monitor');
+        expect(result).toContain('ShowOnboardingRolePicker');
       });
 
       it('expands undefined to full array for glm provider', () => {

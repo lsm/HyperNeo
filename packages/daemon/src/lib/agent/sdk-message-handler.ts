@@ -566,7 +566,7 @@ export class SDKMessageHandler {
     // Terminal messages end the turn even when they represent errors.
     // Clear stale waiting_for_input state before type-specific handling so
     // interrupted AskUserQuestion turns cannot keep the composer locked.
-    if (isSDKResultMessage(message)) {
+    if (isSDKResultMessage(message) && !this.usesSessionStateChangedTurnEnd) {
       await stateManager.setIdle();
     }
 

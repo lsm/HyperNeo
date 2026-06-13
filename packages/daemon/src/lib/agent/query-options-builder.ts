@@ -132,6 +132,7 @@ const FULL_BUILTIN_TOOL_LIST = [
   'CronList',
   'ScheduleWakeup',
   'RemoteTrigger',
+  'ShowOnboardingRolePicker',
   'Monitor',
   'Artifact',
   'PushNotification',

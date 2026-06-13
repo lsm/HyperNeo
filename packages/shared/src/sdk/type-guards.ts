@@ -416,6 +416,7 @@ export function isUserVisibleMessage(msg: SDKMessage): boolean {
   if (isSDKStreamEvent(msg)) return false;
   if (isSDKAPIRetryMessage(msg)) return false;
   if (isSDKThinkingTokensMessage(msg)) return false;
+  if (isSDKSessionStateChangedMessage(msg)) return false;
 
   return true;
 }
