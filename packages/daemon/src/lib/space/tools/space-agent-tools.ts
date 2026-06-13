@@ -142,7 +142,6 @@ type SpaceSessionSummary = {
 };
 
 const SPACE_SESSION_MAX_LIMIT = 100;
-const SPACE_SESSION_FETCH_CAP = 500;
 const SPACE_SESSION_DEFAULT_LIMIT = 50;
 const SESSION_DETAIL_MESSAGE_LIMIT = 5;
 const SESSION_MESSAGE_DEFAULT_LIMIT = 20;
@@ -337,7 +336,7 @@ export interface SpaceAgentToolsConfig {
   /** Space agent manager for reassign validation. */
   spaceAgentManager: SpaceAgentManager;
   /** Session manager for live Space session message delivery and interrupts. */
-  sessionManager?: Pick<SessionManager, 'getSession' | 'getSessionAsync' | 'sendUserMessage'>;
+  sessionManager?: Pick<SessionManager, 'getSessionAsync' | 'sendUserMessage'>;
   /** Optional runtime live-session lookup (used for workflow node sessions). */
   getRuntimeSession?: (sessionId: string) => AgentSession | undefined;
   /**
@@ -557,7 +556,14 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     if (row.status === 'archived') return 'archived';
     const state = parseProcessingState(row.processing_state);
     const status = typeof state.status === 'string' ? state.status : 'idle';
-    if (status === 'processing' || status === 'queued' || status === 'running') return 'active';
+    if (
+      status === 'processing' ||
+      status === 'queued' ||
+      status === 'running' ||
+      status === 'rate_limit_cooldown'
+    ) {
+      return 'active';
+    }
     if (status === 'waiting_for_input') return 'waiting_for_input';
     if (status === 'error') return 'error';
     return 'idle';
@@ -612,9 +618,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
   }
 
   function getLiveSession(sessionId: string): AgentSession | null {
-    const runtimeSession = config.getRuntimeSession?.(sessionId);
-    if (runtimeSession) return runtimeSession;
-    return config.sessionManager?.getSession(sessionId) ?? null;
+    return config.getRuntimeSession?.(sessionId) ?? null;
   }
 
   async function requireDeliverableSession(sessionId: string): Promise<AgentSession> {
@@ -845,27 +849,47 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       try {
         const limit = Math.min(args.limit ?? SPACE_SESSION_DEFAULT_LIMIT, SPACE_SESSION_MAX_LIMIT);
         const offset = Math.max(args.offset ?? 0, 0);
-        if (offset + limit > SPACE_SESSION_FETCH_CAP) {
-          return jsonResult({
-            success: false,
-            error: `list_sessions supports offset + limit up to ${SPACE_SESSION_FETCH_CAP}. Narrow filters or lower offset.`,
-          });
+        const clauses = [`json_extract(session_context, '$.spaceId') = ?`];
+        const params: Array<string | number> = [spaceId];
+        const processingStatus = `COALESCE(json_extract(processing_state, '$.status'), 'idle')`;
+        if (args.status === 'archived') {
+          clauses.push(`status = 'archived'`);
+        } else if (args.status === 'active') {
+          clauses.push(`status != 'archived'`);
+          clauses.push(
+            `${processingStatus} IN ('processing', 'queued', 'running', 'rate_limit_cooldown')`
+          );
+        } else if (args.status === 'waiting_for_input' || args.status === 'error') {
+          clauses.push(`status != 'archived'`);
+          clauses.push(`${processingStatus} = ?`);
+          params.push(args.status);
+        } else if (args.status === 'idle') {
+          clauses.push(`status != 'archived'`);
+          clauses.push(
+            `${processingStatus} NOT IN ('processing', 'queued', 'running', 'rate_limit_cooldown', 'waiting_for_input', 'error')`
+          );
         }
+        if (args.type === 'worker') {
+          clauses.push(
+            `(type = 'space_task_agent' OR json_type(session_context, '$.taskId') = 'text')`
+          );
+        } else if (args.type === 'ad-hoc') {
+          clauses.push(
+            `(type != 'space_task_agent' AND json_type(session_context, '$.taskId') IS NULL)`
+          );
+        }
+        params.push(limit, offset);
         const rows = requireDb()
           .prepare(
             `SELECT id, title, workspace_path, created_at, last_active_at, status, metadata,
                     is_worktree, git_branch, processing_state, type, session_context
                FROM sessions
-              WHERE json_extract(session_context, '$.spaceId') = ?
+              WHERE ${clauses.join(' AND ')}
               ORDER BY last_active_at DESC
-              LIMIT ?`
+              LIMIT ? OFFSET ?`
           )
-          .all(spaceId, offset + limit) as SpaceSessionRow[];
-        const sessions = rows
-          .map(rowToSessionSummary)
-          .filter((session) => !args.status || session.status === args.status)
-          .filter((session) => !args.type || session.type === args.type)
-          .slice(offset, offset + limit);
+          .all(...params) as SpaceSessionRow[];
+        const sessions = rows.map(rowToSessionSummary);
         return jsonResult({ success: true, sessions });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);

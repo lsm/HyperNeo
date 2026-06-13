@@ -829,7 +829,8 @@ export class SpaceRuntimeService {
       ),
       spaceAgentManager: this.config.spaceAgentManager,
       sessionManager: this.config.sessionManager,
-      getRuntimeSession: (sid) => this.taskAgentManager?.getAgentSessionById(sid) ?? undefined,
+      getRuntimeSession: (sid) =>
+        this.taskAgentManager?.getCachedAgentSessionById(sid) ?? undefined,
       taskAgentManager: this.taskAgentManager ?? undefined,
       gateDataRepo: this.config.gateDataRepo,
       internalEventBus: this.config.internalEventBus,
@@ -1465,7 +1466,8 @@ export class SpaceRuntimeService {
       ),
       spaceAgentManager: this.config.spaceAgentManager,
       sessionManager: this.config.sessionManager,
-      getRuntimeSession: (sid) => this.taskAgentManager?.getAgentSessionById(sid) ?? undefined,
+      getRuntimeSession: (sid) =>
+        this.taskAgentManager?.getCachedAgentSessionById(sid) ?? undefined,
       taskAgentManager: this.taskAgentManager ?? undefined,
       gateDataRepo: this.config.gateDataRepo,
       internalEventBus: this.config.internalEventBus,
@@ -1593,7 +1595,8 @@ export class SpaceRuntimeService {
       ),
       spaceAgentManager,
       sessionManager: this.config.sessionManager,
-      getRuntimeSession: (sid) => this.taskAgentManager?.getAgentSessionById(sid) ?? undefined,
+      getRuntimeSession: (sid) =>
+        this.taskAgentManager?.getCachedAgentSessionById(sid) ?? undefined,
       taskAgentManager: this.taskAgentManager ?? undefined,
       gateDataRepo: this.config.gateDataRepo,
       internalEventBus: this.config.internalEventBus,

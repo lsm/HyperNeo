@@ -609,7 +609,6 @@ describe('createSpaceAgentToolHandlers — session management tools', () => {
     const sent: unknown[] = [];
     const handlers = makeHandlers(ctx, {
       sessionManager: {
-        getSession: () => null,
         getSessionAsync: async () => ({ startQueryAndEnqueue: async () => {} }) as never,
         sendUserMessage: async (message: unknown) => {
           sent.push(message);
@@ -656,6 +655,39 @@ describe('createSpaceAgentToolHandlers — session management tools', () => {
       .prepare(`SELECT message_type FROM sdk_messages WHERE session_id = ?`)
       .all('adhoc-interrupt') as Array<{ message_type: string }>;
     expect(resultRows).toEqual([]);
+  });
+
+  test('list_sessions applies filters before SQL pagination', async () => {
+    for (let i = 0; i < 3; i += 1) seedSession(`newer-adhoc-${i}`, ctx.spaceId, { status: 'idle' });
+    seedSession(
+      'older-worker-filtered',
+      ctx.spaceId,
+      { status: 'idle' },
+      { taskId: 'task-filtered' }
+    );
+    const handlers = makeHandlers(ctx);
+
+    const parsed = parseResult(await handlers.list_sessions({ type: 'worker', limit: 1 }));
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.sessions).toEqual([
+      expect.objectContaining({ id: 'older-worker-filtered', type: 'worker' }),
+    ]);
+  });
+
+  test('list_sessions treats rate-limit cooldown as active', async () => {
+    seedSession('cooldown-session', ctx.spaceId, { status: 'rate_limit_cooldown' });
+    const handlers = makeHandlers(ctx);
+
+    const active = parseResult(await handlers.list_sessions({ status: 'active' }));
+    const idle = parseResult(await handlers.list_sessions({ status: 'idle' }));
+
+    expect((active.sessions as Array<{ id: string }>).map((session) => session.id)).toContain(
+      'cooldown-session'
+    );
+    expect((idle.sessions as Array<{ id: string }>).map((session) => session.id)).not.toContain(
+      'cooldown-session'
+    );
   });
 
   test('list_sessions classifies task-bound sessions as workers after filtering', async () => {
@@ -708,7 +740,6 @@ describe('createSpaceAgentToolHandlers — session management tools', () => {
     const handlers = makeHandlers(ctx, {
       getSpaceAutonomyLevel: async () => 4,
       sessionManager: {
-        getSession: () => null,
         getSessionAsync: async () => {
           loaded = true;
           return null;
