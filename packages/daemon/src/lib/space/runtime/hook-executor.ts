@@ -18,8 +18,8 @@ import {
   MAX_BUFFER_BYTES,
   parseJsonStdout,
 } from './gate-script-executor';
-import { mkdtempSync } from 'fs';
-import { tmpdir } from 'os';
+import { existsSync, mkdtempSync } from 'fs';
+import { homedir, tmpdir } from 'os';
 import { join } from 'path';
 import { validateWorkflowHookResult } from '../workflow-hook-validation';
 import { createPrReadyValidator } from './built-in-validators/pr-ready-validator';
@@ -89,6 +89,8 @@ const GITHUB_LOOKUP_ENV_KEYS = new Set([
   'GH_ENTERPRISE_TOKEN',
   'GITHUB_ENTERPRISE_TOKEN',
   'GH_HOST',
+  'GH_CONFIG_DIR',
+  'XDG_CONFIG_HOME',
 ]);
 
 /** SSH agent / Git credential helper keys — stripped from restricted env. */
@@ -148,6 +150,22 @@ registerBuiltInValidator('pr_ready', createPrReadyValidator());
 // Environment builder
 // ---------------------------------------------------------------------------
 
+function resolveGithubConfigDir(): string | undefined {
+  const explicit = process.env.GH_CONFIG_DIR;
+  if (explicit && existsSync(explicit)) return explicit;
+
+  const xdgConfigHome = process.env.XDG_CONFIG_HOME;
+  if (xdgConfigHome) {
+    const xdgGhConfig = join(xdgConfigHome, 'gh');
+    if (existsSync(xdgGhConfig)) return xdgGhConfig;
+  }
+
+  const defaultGhConfig = join(homedir(), '.config', 'gh');
+  if (existsSync(defaultGhConfig)) return defaultGhConfig;
+
+  return undefined;
+}
+
 function buildHookRestrictedEnv(
   context: HookExecutorContext,
   scriptEnv?: Record<string, string>
@@ -182,6 +200,11 @@ function buildHookRestrictedEnv(
     if (CREDENTIAL_PATH_ENV_KEYS.has(key)) continue;
 
     env[key] = value as string;
+  }
+
+  if (permitGithub) {
+    const githubConfigDir = resolveGithubConfigDir();
+    if (githubConfigDir) env['GH_CONFIG_DIR'] = githubConfigDir;
   }
 
   // Inject hook-specific environment variables

@@ -908,7 +908,8 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
               'the system grows. Flag items that smuggle unrelated concerns together or create ' +
               'hidden cross-cutting dependencies.\n\n' +
               'When voting, your lens key is `"architecture"` — send ' +
-              '`data: { approvals: { architecture: "approved" } }` (or `"rejected"`) to Task Dispatcher.',
+              '`data: { approvals: { architecture: "approved" }, pr_url: "<plan PR url>" }` ' +
+              '(or `"rejected"`) to Task Dispatcher.',
           },
         },
         {
@@ -923,7 +924,8 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
               'new dependencies. Flag items that expose user data, bypass existing auth checks, ' +
               'or rely on untrusted input without validation.\n\n' +
               'When voting, your lens key is `"security"` — send ' +
-              '`data: { approvals: { security: "approved" } }` (or `"rejected"`) to Task Dispatcher.',
+              '`data: { approvals: { security: "approved" }, pr_url: "<plan PR url>" }` ' +
+              '(or `"rejected"`) to Task Dispatcher.',
           },
         },
         {
@@ -938,7 +940,8 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
               'whose acceptance criteria are vague, whose failure modes are unclear, or ' +
               'whose tests would not catch the obvious regressions.\n\n' +
               'When voting, your lens key is `"correctness"` — send ' +
-              '`data: { approvals: { correctness: "approved" } }` (or `"rejected"`) to Task Dispatcher.',
+              '`data: { approvals: { correctness: "approved" }, pr_url: "<plan PR url>" }` ' +
+              '(or `"rejected"`) to Task Dispatcher.',
           },
         },
         {
@@ -953,7 +956,8 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
               'existing users. Flag items that change public interfaces without describing ' +
               'what users will see or how docs will be updated.\n\n' +
               'When voting, your lens key is `"ux"` — send ' +
-              '`data: { approvals: { ux: "approved" } }` (or `"rejected"`) to Task Dispatcher.',
+              '`data: { approvals: { ux: "approved" }, pr_url: "<plan PR url>" }` ' +
+              '(or `"rejected"`) to Task Dispatcher.',
           },
         },
       ],
