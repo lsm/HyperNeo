@@ -6,7 +6,7 @@ type JsonRpcRequest = {
   jsonrpc: '2.0';
   id?: string | number | null;
   method?: string;
-  params?: unknown;
+  params?: { protocolVersion?: string } | unknown;
 };
 
 type ToolCallParams = {
@@ -68,7 +68,7 @@ async function handleJsonRpcLine(
     switch (request.method) {
       case 'initialize':
         writeResponse(request.id, {
-          protocolVersion: MCP_PROTOCOL_VERSION,
+          protocolVersion: requestedProtocolVersion(request.params) ?? MCP_PROTOCOL_VERSION,
           capabilities: { tools: {} },
           serverInfo: { name: `${context.serverName}-acp-proxy`, version: '1.0.0' },
         });
@@ -137,6 +137,12 @@ async function callBridge(socketPath: string, request: ProxyCallRequest): Promis
     });
     socket.once('error', (error) => settle(() => reject(error)));
   });
+}
+
+function requestedProtocolVersion(params: unknown): string | undefined {
+  if (!params || typeof params !== 'object') return undefined;
+  const protocolVersion = (params as { protocolVersion?: unknown }).protocolVersion;
+  return typeof protocolVersion === 'string' && protocolVersion ? protocolVersion : undefined;
 }
 
 function getCallTimeoutMs(): number {

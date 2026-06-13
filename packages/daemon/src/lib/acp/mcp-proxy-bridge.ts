@@ -62,8 +62,12 @@ export class AcpMcpProxyBridge {
 
   async start(): Promise<void> {
     if (this.server) return;
-    this.socketDir = await mkdtemp(join(tmpdir(), 'neokai-acp-proxy-'));
-    this.socketPath = join(this.socketDir, 'proxy.sock');
+    if (process.platform === 'win32') {
+      this.socketPath = `\\\\.\\pipe\\neokai-acp-proxy-${randomUUID()}`;
+    } else {
+      this.socketDir = await mkdtemp(join(tmpdir(), 'neokai-acp-proxy-'));
+      this.socketPath = join(this.socketDir, 'proxy.sock');
+    }
 
     this.server = createServer((socket) => {
       let buffer = '';
@@ -128,8 +132,15 @@ export class AcpMcpProxyBridge {
     if (!tool) {
       throw new Error(`Unknown proxied MCP tool ${request.serverName}.${request.toolName}`);
     }
-    const args = await parseToolArgs(tool.inputSchema, request.arguments ?? {});
-    return await tool.handler(args);
+    try {
+      const args = await parseToolArgs(tool.inputSchema, request.arguments ?? {});
+      return await tool.handler(args);
+    } catch (error) {
+      return {
+        isError: true,
+        content: [{ type: 'text', text: error instanceof Error ? error.message : String(error) }],
+      };
+    }
   }
 
   private collectTools(mcpServers: Record<string, McpServerConfig>): AcpProxyToolSchema[] {
