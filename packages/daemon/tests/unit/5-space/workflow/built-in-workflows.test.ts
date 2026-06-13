@@ -2594,9 +2594,37 @@ describe('seedBuiltInWorkflows()', () => {
       (candidate) =>
         candidate.sourceNode === 'Plan Review' && candidate.targetNode === 'Task Dispatcher'
     );
+    expect(hook?.id).toContain('architecture-reviewer'.length.toString());
     expect(hook?.authorizedCallers).toEqual([
       { sourceNode: 'Plan Review', agentSlots: ['architecture-reviewer'] },
     ]);
+  });
+
+  test('slot-scoped migrated hook ids distinguish routes with the same nodes', () => {
+    const basePlanApprovalChannel = PLAN_AND_DECOMPOSE_WORKFLOW.channels!.find(
+      (channel) => channel.from === 'Plan Review' && channel.to === 'Task Dispatcher'
+    )!;
+    const workflow = migrateWorkflowGateProgressionToHooks({
+      ...PLAN_AND_DECOMPOSE_WORKFLOW,
+      channels: [
+        ...PLAN_AND_DECOMPOSE_WORKFLOW.channels!.filter(
+          (channel) => !(channel.from === 'Plan Review' && channel.to === 'Task Dispatcher')
+        ),
+        { ...basePlanApprovalChannel, from: 'architecture-reviewer' },
+        { ...basePlanApprovalChannel, from: 'security-reviewer' },
+      ],
+      templateName: PLAN_AND_DECOMPOSE_WORKFLOW.name,
+      templateGates: PLAN_AND_DECOMPOSE_WORKFLOW.gates ?? [],
+    }).workflow;
+
+    const approvalHooks = workflow.hooks?.filter(
+      (hook) => hook.sourceNode === 'Plan Review' && hook.targetNode === 'Task Dispatcher'
+    );
+    expect(approvalHooks).toHaveLength(2);
+    expect(new Set(approvalHooks?.map((hook) => hook.id)).size).toBe(2);
+    expect(
+      approvalHooks?.map((hook) => hook.authorizedCallers?.[0]?.agentSlots?.[0]).sort()
+    ).toEqual(['architecture-reviewer', 'security-reviewer']);
   });
 
   test('migration reuses generated route hooks during restamp', () => {

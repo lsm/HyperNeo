@@ -299,10 +299,11 @@ function routeHookId(
   pattern: Pattern,
   sourceNode: string,
   targetNode: string,
-  _channel: WorkflowChannel
+  agentSlot?: string
 ): string {
   if (!pattern.routeSpecific) return pattern.hookId;
-  return `${pattern.hookId}:${hookIdComponent(sourceNode)}:${hookIdComponent(targetNode)}`;
+  const slotComponent = agentSlot ? `:${hookIdComponent(agentSlot)}` : '';
+  return `${pattern.hookId}:${hookIdComponent(sourceNode)}:${hookIdComponent(targetNode)}${slotComponent}`;
 }
 
 function channelAgentSlot(
@@ -325,7 +326,7 @@ function makeHook(
   const targetNode = resolveChannelNodeName(channel.to as string, nodes)!;
   const agentSlot = channelAgentSlot(channel, nodes);
   return {
-    id: routeHookId(pattern, sourceNode, targetNode, channel),
+    id: routeHookId(pattern, sourceNode, targetNode, agentSlot),
     enabled: true,
     label: pattern.label,
     sourceNode,
