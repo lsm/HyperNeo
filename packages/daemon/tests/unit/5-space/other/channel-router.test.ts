@@ -499,7 +499,7 @@ describe('ChannelRouter', () => {
     // Error cases
     // -----------------------------------------------------------------------
 
-    test('auto-reopens cancelled run back to in_progress when parent task is not archived', async () => {
+    test('rejects cancelled run activation unless caller explicitly allows terminal reopen', async () => {
       const workflow = buildWorkflow(SPACE_ID, workflowManager, [
         { id: NODE_A, name: 'Node A', agentId: AGENT_CODER },
       ]);
@@ -512,13 +512,18 @@ describe('ChannelRouter', () => {
       workflowRunRepo.transitionStatus(run.id, 'in_progress');
       workflowRunRepo.transitionStatus(run.id, 'cancelled');
 
-      await router.activateNode(run.id, NODE_A);
+      await expect(router.activateNode(run.id, NODE_A)).rejects.toThrow(/cancelled/);
+
+      const afterRejected = workflowRunRepo.getRun(run.id);
+      expect(afterRejected?.status).toBe('cancelled');
+
+      await router.activateNode(run.id, NODE_A, { allowTerminalReopen: true });
 
       const after = workflowRunRepo.getRun(run.id);
       expect(after?.status).toBe('in_progress');
     });
 
-    test('auto-reopens done run back to in_progress when parent task is not archived', async () => {
+    test('rejects done run activation unless caller explicitly allows terminal reopen', async () => {
       const workflow = buildWorkflow(SPACE_ID, workflowManager, [
         { id: NODE_A, name: 'Node A', agentId: AGENT_CODER },
       ]);
@@ -530,7 +535,12 @@ describe('ChannelRouter', () => {
       });
       workflowRunRepo.updateStatusUnchecked(run.id, 'done');
 
-      await router.activateNode(run.id, NODE_A);
+      await expect(router.activateNode(run.id, NODE_A)).rejects.toThrow(/done/);
+
+      const afterRejected = workflowRunRepo.getRun(run.id);
+      expect(afterRejected?.status).toBe('done');
+
+      await router.activateNode(run.id, NODE_A, { allowTerminalReopen: true });
 
       const after = workflowRunRepo.getRun(run.id);
       expect(after?.status).toBe('in_progress');
@@ -1424,6 +1434,81 @@ describe('ChannelRouter', () => {
       expect(result.toRole).toBe('coder');
     });
 
+    test('gate data refresh does not reactivate a done run', async () => {
+      const gate: Gate = {
+        id: 'done-gate',
+        fields: [
+          { name: 'approved', type: 'boolean', writers: ['*'], check: { op: '==', value: true } },
+        ],
+        resetOnCycle: false,
+      };
+      const workflow = buildWorkflowWithGates(
+        SPACE_ID,
+        workflowManager,
+        [
+          {
+            id: NODE_A,
+            name: 'Planner Node',
+            agents: [{ agentId: AGENT_PLANNER, name: 'planner' }],
+          },
+          { id: NODE_B, name: 'Coder Node', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+        ],
+        [{ id: 'done-channel', from: 'Planner Node', to: 'coder', gateId: 'done-gate' }],
+        [gate]
+      );
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Done Gate Refresh Run',
+      });
+      workflowRunRepo.updateStatusUnchecked(run.id, 'done');
+      gateDataRepo.set(run.id, 'done-gate', { approved: true });
+
+      const activated = await router.onGateDataChanged(run.id, 'done-gate');
+
+      expect(activated).toHaveLength(0);
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
+      expect(new NodeExecutionRepository(db).listByNode(run.id, NODE_B)).toHaveLength(0);
+    });
+
+    test('gate data refresh does not reactivate an archived task', async () => {
+      const gate: Gate = {
+        id: 'archived-gate',
+        fields: [
+          { name: 'approved', type: 'boolean', writers: ['*'], check: { op: '==', value: true } },
+        ],
+        resetOnCycle: false,
+      };
+      const workflow = buildWorkflowWithGates(
+        SPACE_ID,
+        workflowManager,
+        [
+          {
+            id: NODE_A,
+            name: 'Planner Node',
+            agents: [{ agentId: AGENT_PLANNER, name: 'planner' }],
+          },
+          { id: NODE_B, name: 'Coder Node', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+        ],
+        [{ id: 'archived-channel', from: 'Planner Node', to: 'coder', gateId: 'archived-gate' }],
+        [gate]
+      );
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Archived Gate Refresh Run',
+      });
+      for (const task of taskRepo.listByWorkflowRunIncludingArchived(run.id)) {
+        taskRepo.archiveTask(task.id);
+      }
+      gateDataRepo.set(run.id, 'archived-gate', { approved: true });
+
+      const activated = await router.onGateDataChanged(run.id, 'archived-gate');
+
+      expect(activated).toHaveLength(0);
+      expect(new NodeExecutionRepository(db).listByNode(run.id, NODE_B)).toHaveLength(0);
+    });
+
     test('gated channel (check): canDeliver returns true when condition satisfied', async () => {
       const gate: Gate = {
         id: 'allow-gate',
@@ -1810,7 +1895,7 @@ describe('ChannelRouter', () => {
       expect(activated).toHaveLength(0);
     });
 
-    test('onGateDataChanged: re-activates target node when run is done but parent task is not archived', async () => {
+    test('onGateDataChanged: does not re-activate target node when run is done', async () => {
       const gate: Gate = {
         id: 'done-gate',
         fields: [{ name: 'done', type: 'string', writers: ['*'], check: { op: 'exists' } }],
@@ -1843,9 +1928,8 @@ describe('ChannelRouter', () => {
 
       gateDataRepo.set(run.id, 'done-gate', { done: true });
       const activated = await router.onGateDataChanged(run.id, 'done-gate');
-      expect(activated.length).toBeGreaterThan(0);
-      // The run was auto-reopened back to in_progress.
-      expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+      expect(activated).toHaveLength(0);
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
     });
 
     // -----------------------------------------------------------------------

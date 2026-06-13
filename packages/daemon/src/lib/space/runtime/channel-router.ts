@@ -353,7 +353,7 @@ export class ChannelRouter {
   async activateNode(
     runId: string,
     nodeId: string,
-    options?: { reopenReason?: string; reopenBy?: string }
+    options?: { reopenReason?: string; reopenBy?: string; allowTerminalReopen?: boolean }
   ): Promise<SpaceTask[]> {
     // ── 1. Load the run ────────────────────────────────────────────────────
     const run = this.config.workflowRunRepo.getRun(runId);
@@ -367,10 +367,16 @@ export class ChannelRouter {
       throw new ActivationError(ARCHIVED_TASK_ERROR_MESSAGE);
     }
 
-    // Auto-reopen from terminal run statuses. The status machine permits
-    // done → in_progress and cancelled → in_progress (blocked requires explicit resume).
+    // Terminal run states are tombstones for passive activation sources (gate
+    // cache refresh, hook/poll recovery). Only explicit live sends or manual
+    // recovery paths may opt into reopening.
     if (run.status === 'done' || run.status === 'cancelled') {
       this.evictRunCache(runId);
+      if (!options?.allowTerminalReopen) {
+        throw new ActivationError(
+          `Run ${runId} is ${run.status} — create a new task or use an explicit resume action.`
+        );
+      }
       await this.reopenRun(
         run.id,
         run.status,
@@ -727,6 +733,7 @@ export class ChannelRouter {
 
     if (activeTasks.length === 0) {
       activatedTasks = await this.activateNode(runId, targetNode.id, {
+        allowTerminalReopen: true,
         reopenBy: `agent:${fromRole}`,
         reopenReason: `peer send_message from "${fromRole}" to "${toTarget}"`,
       });

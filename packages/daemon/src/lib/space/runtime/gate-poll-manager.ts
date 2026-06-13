@@ -445,6 +445,7 @@ interface ActivePoll {
   workspacePath: string;
 }
 
+/** @public Exported for legacy unit tests while runtime poll loops are retired. */
 export class GatePollManager {
   /**
    * Active polls keyed by `${runId}:${gateId}`.

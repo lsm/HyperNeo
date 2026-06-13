@@ -66,7 +66,7 @@ import {
 } from '../managers/space-workflow-manager';
 import { MAX_AGENT_SLOT_EVENT_INTERESTS } from '../export-format';
 import { getBuiltInGateScript } from '../workflows/built-in-workflows';
-import { getEffectiveGate, getEffectiveGatePoll } from './gate-features';
+import { getEffectiveGate } from './gate-features';
 import { CompletionDetector } from './completion-detector';
 import {
   DEFAULT_AGENT_NO_PROGRESS_THRESHOLD_MS,
@@ -78,7 +78,7 @@ import {
   MAX_TASK_AGENT_CRASH_RETRIES,
 } from './constants';
 import { evaluateGate } from './gate-evaluator';
-import { extractPrContext, GatePollManager, type PollScriptContext } from './gate-poll-manager';
+import { extractPrContext, type PollScriptContext } from './gate-poll-manager';
 import { executeGateScript } from './gate-script-executor';
 import { classifyLastMessageForIdleAgent } from './last-message-classifier';
 import type { SelectWorkflowWithLlm } from './llm-workflow-selector';
@@ -910,12 +910,6 @@ export class SpaceRuntime {
   private unsubscribeSdkToolUseCreated?: () => void;
   private unsubscribeSdkToolUseConsumed?: () => void;
   private acceptingExternalEvents = false;
-
-  /**
-   * Manages gate poll timers for periodic script execution and message injection.
-   * Lazy-initialized when taskAgentManager is available.
-   */
-  private pollManager: GatePollManager | null = null;
 
   constructor(private config: SpaceRuntimeConfig) {
     this.internalEventBus = config.internalEventBus;
@@ -2205,17 +2199,6 @@ export class SpaceRuntime {
   }
 
   /**
-   * Notify the runtime that a workflow definition has changed.
-   *
-   * Called when a `spaceWorkflow.updated` InternalEventBus<DaemonInternalEventMap> event fires.
-   * Rebuilds external-event interests for active/recoverable runs and refreshes gate poll timers
-   * so mid-run workflow config changes are picked up without requiring a task restart.
-   */
-  onWorkflowDefChanged(workflowId: string): void {
-    this.pollManager?.refreshPollsForWorkflow(workflowId);
-  }
-
-  /**
    * Wire a TaskAgentManager into the runtime after construction.
    *
    * Called after construction to resolve the circular dependency:
@@ -2225,60 +2208,6 @@ export class SpaceRuntime {
   setTaskAgentManager(manager: TaskAgentManager): void {
     this.config.taskAgentManager = manager;
     manager.attachToolContinuationRepo?.(this.toolContinuationRepo);
-    // Initialize the poll manager now that taskAgentManager is available
-    if (!this.pollManager) {
-      this.pollManager = new GatePollManager(
-        {
-          injectSubSessionMessage: (sessionId, message, isSynthetic) =>
-            manager.injectSubSessionMessage(sessionId, message, isSynthetic),
-        },
-        {
-          getActiveSessionForNode: (runId, nodeId) => {
-            const executions = this.config.nodeExecutionRepo.listByNode(runId, nodeId);
-            const active = executions.find(
-              (e) => e.status !== 'cancelled' && e.status !== 'idle' && e.agentSessionId !== null
-            );
-            if (active?.agentSessionId) return active.agentSessionId;
-
-            const latestWithSession = executions
-              .filter((e) => e.status !== 'cancelled' && e.agentSessionId !== null)
-              .at(-1);
-            if (latestWithSession?.agentSessionId) {
-              log.info(
-                `SpaceRuntime: gate poll will wake idle session "${latestWithSession.agentSessionId}" ` +
-                  `for run "${runId}" node "${nodeId}"`
-              );
-              return latestWithSession.agentSessionId;
-            }
-
-            return null;
-          },
-        },
-        // PR URL resolver: refreshes PR context on each poll tick so polls
-        // discover PR URLs that appear after the run starts.
-        {
-          getPrUrlForRun: async (runId) => this.resolvePrUrlForRun(runId),
-        },
-        // Workflow definition provider: enables mid-run poll config pickup
-        // by re-reading the latest workflow definition from the DB.
-        {
-          getWorkflow: (workflowId) => this.config.spaceWorkflowManager.getWorkflow(workflowId),
-        },
-        // Gate data resolver: refreshes gate data updated timestamp on each
-        // poll tick so feature scripts (e.g. codex_review_bot) base their
-        // timeout on the gate data write time rather than workflow start.
-        {
-          getGateDataUpdatedIsoForRun: (runId, gateId) => {
-            try {
-              const record = this.config.gateDataRepo?.get(runId, gateId);
-              return record ? new Date(record.updatedAt).toISOString() : undefined;
-            } catch {
-              return undefined;
-            }
-          },
-        }
-      );
-    }
   }
 
   /**
@@ -3018,9 +2947,6 @@ export class SpaceRuntime {
         .filter((run) => run.status === 'done' || run.status === 'cancelled');
       for (const run of terminalRuns) {
         if (this.executors.has(run.id)) continue;
-        // Ensure polls are stopped for terminal runs discovered outside
-        // the executor map (e.g. daemon restart after run completed).
-        this.pollManager?.stopPolls(run.id);
         await this.reconcileTerminalRunTasks(run);
       }
     }
@@ -3071,8 +2997,6 @@ export class SpaceRuntime {
    * be resumed by calling start() again.
    */
   async stop(): Promise<void> {
-    // Stop all gate poll timers
-    this.pollManager?.stopAll();
     this.unsubscribeExternalEventPublished?.();
     this.unsubscribeExternalEventPublished = undefined;
     this.unsubscribeSdkToolUseCreated?.();
@@ -3307,14 +3231,6 @@ export class SpaceRuntime {
     // TaskAgentManager.spawnTaskAgent() rather than storing in run config.
     this.storeWorkflowChannels(run.id, workflow.channels ?? []);
 
-    // Start gate polls for this workflow run
-    if (this.pollManager && canonicalTask) {
-      const pollContext = this.buildPollScriptContext(canonicalTask, run, spaceId);
-      if (pollContext) {
-        this.pollManager.startPolls(run.id, workflow, space.workspacePath, spaceId, pollContext);
-      }
-    }
-
     return { run, tasks: canonicalTask ? [canonicalTask] : [] };
   }
 
@@ -3345,12 +3261,14 @@ export class SpaceRuntime {
 
   /** @internal — exposed only for unit tests/diagnostics. */
   getActiveGatePollCount(): number {
-    return this.pollManager?.activePollCount ?? 0;
+    return 0;
   }
 
   /** @internal — exposed only for unit tests/diagnostics. */
   isGatePollActive(runId: string, gateId: string): boolean {
-    return this.pollManager?.isPollActive(runId, gateId) ?? false;
+    void runId;
+    void gateId;
+    return false;
   }
 
   /** @internal — exposed only for unit tests/diagnostics. */
@@ -3512,9 +3430,6 @@ export class SpaceRuntime {
 
     const recovered = recoverTx();
     await this.ensureExecutorRegistered(recovered.run);
-    await this.ensurePollsForRun(
-      this.config.workflowRunRepo.getRun(recovered.run.id) ?? recovered.run
-    );
     for (const sessionId of liveSessionIds) {
       const prepared =
         (await this.config.taskAgentManager?.prepareSubSessionForWorkflowResume(sessionId)) ?? true;
@@ -3567,81 +3482,6 @@ export class SpaceRuntime {
     this.executors.set(run.id, this.buildExecutor(workflow, run, space.id, space.workspacePath));
     this.registerRunInterestsFromWorkflow(run, workflow);
     return true;
-  }
-
-  /**
-   * Ensure gate polls are running for an active workflow-backed task.
-   *
-   * GatePollManager keeps timers in memory, so daemon restarts and blocked/manual
-   * recovery transitions must recreate them from persisted run + workflow state.
-   * Polls are proactive and should remain active for any non-terminal task; only
-   * done/cancelled/archived tasks should have polls stopped.
-   */
-  private async ensurePollsForRun(run: SpaceWorkflowRun, knownSpace?: Space): Promise<void> {
-    if (!this.pollManager) return;
-    if (run.status === 'done' || run.status === 'cancelled') return;
-
-    const workflow =
-      this.config.spaceWorkflowManager.getWorkflow(run.workflowId) ??
-      this.executorMeta.get(run.id)?.workflow;
-    if (!workflow) {
-      log.warn(
-        `SpaceRuntime.ensurePollsForRun: stopping gate polls for run ${run.id} — workflow ${run.workflowId} not found`
-      );
-      this.pollManager.stopPolls(run.id);
-      return;
-    }
-    const pollGateCount =
-      workflow.gates?.filter((gate) => getEffectiveGatePoll(gate, workflow)).length ?? 0;
-    if (pollGateCount === 0) {
-      log.info(
-        `SpaceRuntime.ensurePollsForRun: stopping gate polls for run ${run.id} — workflow has no polled gates`
-      );
-      this.pollManager.stopPolls(run.id);
-      return;
-    }
-
-    const canonicalTask = this.pickCanonicalTaskForRun(
-      run,
-      this.config.taskRepo.listByWorkflowRun(run.id)
-    );
-    if (!canonicalTask) {
-      log.warn(
-        `SpaceRuntime.ensurePollsForRun: cannot restart gate polls for run ${run.id} — no canonical task found`
-      );
-      return;
-    }
-    if (
-      canonicalTask.status === 'done' ||
-      canonicalTask.status === 'cancelled' ||
-      canonicalTask.status === 'archived'
-    ) {
-      log.info(
-        `SpaceRuntime.ensurePollsForRun: not starting gate polls for run ${run.id} — task ${canonicalTask.id} is ${canonicalTask.status}`
-      );
-      return;
-    }
-
-    const space = knownSpace ?? (await this.config.spaceManager.getSpace(run.spaceId));
-    if (!space) {
-      log.warn(
-        `SpaceRuntime.ensurePollsForRun: cannot ensure gate polls for run ${run.id} — space ${run.spaceId} not found`
-      );
-      return;
-    }
-
-    const pollContext = this.buildPollScriptContext(canonicalTask, run, space.id);
-    if (!pollContext) return;
-
-    log.info(
-      `SpaceRuntime.ensurePollsForRun: starting ${pollGateCount} gate poll(s) for run ${run.id} ` +
-        `(runStatus=${run.status}, taskStatus=${canonicalTask.status}, prUrl=${pollContext.PR_URL ? 'present' : 'missing'})`
-    );
-    // GatePollManager.startPolls replaces activePolls entries but does not clear
-    // any existing interval for the same run/gate key. Stop first so this helper
-    // is idempotent across rehydration + recovery paths in the same tick.
-    this.pollManager.stopPolls(run.id);
-    this.pollManager.startPolls(run.id, workflow, space.workspacePath, space.id, pollContext);
   }
 
   /**
@@ -3870,14 +3710,8 @@ export class SpaceRuntime {
       activeRuns.push(...reviewRuns);
 
       for (const run of activeRuns) {
-        if (this.executors.has(run.id)) {
-          await this.ensurePollsForRun(run, space);
-          continue;
-        }
-        const registered = await this.ensureExecutorRegistered(run, space);
-        if (registered) {
-          await this.ensurePollsForRun(run, space);
-        }
+        if (this.executors.has(run.id)) continue;
+        await this.ensureExecutorRegistered(run, space);
       }
       this.rehydrateLongHorizonSubscriptions(space.id);
     }
@@ -6141,8 +5975,6 @@ export class SpaceRuntime {
       // Clear dedup so a re-block can be notified again.
       this.notifiedTaskSet.delete(`${canonicalTask.id}:blocked`);
 
-      await this.ensurePollsForRun(this.config.workflowRunRepo.getRun(runId) ?? run);
-
       await this.safeNotify({
         kind: 'task_retry',
         spaceId: meta.spaceId,
@@ -6400,8 +6232,6 @@ export class SpaceRuntime {
           this.notifiedTaskSet.delete(`${task.id}:timeout`);
         }
         this.clearRunInterests(runId);
-        // Stop gate polls for this terminal run
-        this.pollManager?.stopPolls(runId);
         this.executors.delete(runId);
         this.executorMeta.delete(runId);
       }
