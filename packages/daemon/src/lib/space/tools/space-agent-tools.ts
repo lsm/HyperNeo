@@ -337,7 +337,7 @@ export interface SpaceAgentToolsConfig {
   /** Space agent manager for reassign validation. */
   spaceAgentManager: SpaceAgentManager;
   /** Session manager for live Space session message delivery and interrupts. */
-  sessionManager?: Pick<SessionManager, 'getSessionAsync' | 'sendUserMessage'>;
+  sessionManager?: Pick<SessionManager, 'getSession' | 'getSessionAsync' | 'sendUserMessage'>;
   /** Optional runtime live-session lookup (used for workflow node sessions). */
   getRuntimeSession?: (sessionId: string) => AgentSession | undefined;
   /**
@@ -611,14 +611,15 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     return row;
   }
 
-  async function getLiveSession(sessionId: string): Promise<AgentSession | null> {
+  function getLiveSession(sessionId: string): AgentSession | null {
     const runtimeSession = config.getRuntimeSession?.(sessionId);
     if (runtimeSession) return runtimeSession;
-    return (await config.sessionManager?.getSessionAsync(sessionId)) ?? null;
+    return config.sessionManager?.getSession(sessionId) ?? null;
   }
 
-  async function requireLiveSession(sessionId: string): Promise<AgentSession> {
-    const session = await getLiveSession(sessionId);
+  async function requireDeliverableSession(sessionId: string): Promise<AgentSession> {
+    const session =
+      getLiveSession(sessionId) ?? (await config.sessionManager?.getSessionAsync(sessionId));
     if (!session) throw new Error(`Live session not available: ${sessionId}`);
     return session;
   }
@@ -683,8 +684,16 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     const params: (string | number)[] = [sessionId];
     let beforeClause = '';
     if (before) {
-      beforeClause = 'AND timestamp < ?';
-      params.push(before);
+      const [beforeTimestamp, beforeId] = before.includes('|')
+        ? before.split('|', 2)
+        : [before, ''];
+      if (beforeId) {
+        beforeClause = 'AND (timestamp < ? OR (timestamp = ? AND id < ?))';
+        params.push(beforeTimestamp, beforeTimestamp, beforeId);
+      } else {
+        beforeClause = 'AND timestamp < ?';
+        params.push(beforeTimestamp);
+      }
     }
     params.push(boundedLimit);
     const rows = requireDb()
@@ -692,7 +701,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         `SELECT id, message_type, message_subtype, is_terminal, timestamp, sdk_message
            FROM sdk_messages
           WHERE session_id = ? ${beforeClause}
-          ORDER BY timestamp DESC
+          ORDER BY timestamp DESC, id DESC
           LIMIT ?`
       )
       .all(...params) as Array<{
@@ -709,6 +718,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       message_subtype: row.message_subtype,
       is_terminal: row.is_terminal === 1,
       timestamp: row.timestamp,
+      cursor: `${row.timestamp}|${row.id}`,
       content_summary: summarizeMessageContent(row.sdk_message),
     }));
   }
@@ -910,7 +920,14 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     }): Promise<ToolResult> {
       try {
         const row = requireMutableSpaceSessionRow(args.session_id);
-        const liveSession = await requireLiveSession(args.session_id);
+        if (
+          mySessionId &&
+          args.session_id !== mySessionId &&
+          outboundSenderLevel !== 'space-agent'
+        ) {
+          await requireSessionWriteAutonomy('send_session_message');
+        }
+        const liveSession = await requireDeliverableSession(args.session_id);
         let messageId = generateUUID();
         if (args.answer_question) {
           const state = parseProcessingState(row.processing_state);
@@ -979,7 +996,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       try {
         await requireSessionWriteAutonomy('update_session_state');
         const row = requireMutableSpaceSessionRow(args.session_id);
-        const liveSession = await getLiveSession(args.session_id);
+        const liveSession = getLiveSession(args.session_id);
         if (liveSession) {
           return jsonResult({
             success: false,
@@ -1018,7 +1035,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       try {
         await requireSessionWriteAutonomy('interrupt_session');
         requireMutableSpaceSessionRow(args.session_id);
-        const liveSession = await requireLiveSession(args.session_id);
+        const liveSession = await requireDeliverableSession(args.session_id);
         await liveSession.handleInterrupt();
         logAudit('interrupt_session', { session_id: args.session_id, reason: args.reason });
         return jsonResult({ success: true, interrupted: true });

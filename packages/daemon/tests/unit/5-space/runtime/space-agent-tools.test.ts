@@ -609,6 +609,7 @@ describe('createSpaceAgentToolHandlers — session management tools', () => {
     const sent: unknown[] = [];
     const handlers = makeHandlers(ctx, {
       sessionManager: {
+        getSession: () => null,
         getSessionAsync: async () => ({ startQueryAndEnqueue: async () => {} }) as never,
         sendUserMessage: async (message: unknown) => {
           sent.push(message);
@@ -699,6 +700,82 @@ describe('createSpaceAgentToolHandlers — session management tools', () => {
     expect(parsed.messages).toEqual([
       expect.objectContaining({ id: 'msg-2', content_summary: 'Second' }),
     ]);
+  });
+
+  test('update_session_state does not lazy-load cold sessions', async () => {
+    seedSession('adhoc-cold-update', ctx.spaceId, { status: 'processing' });
+    let loaded = false;
+    const handlers = makeHandlers(ctx, {
+      getSpaceAutonomyLevel: async () => 4,
+      sessionManager: {
+        getSession: () => null,
+        getSessionAsync: async () => {
+          loaded = true;
+          return null;
+        },
+        sendUserMessage: async () => {},
+      },
+    });
+
+    const parsed = parseResult(
+      await handlers.update_session_state({
+        session_id: 'adhoc-cold-update',
+        processing_state: 'idle',
+      })
+    );
+
+    expect(parsed.success).toBe(true);
+    expect(loaded).toBe(false);
+  });
+
+  test('send_session_message cross-session requires autonomy', async () => {
+    seedSession('other-member', ctx.spaceId, { status: 'idle' });
+    const handlers = makeHandlers(ctx, {
+      mySessionId: 'caller-session',
+      getSpaceAutonomyLevel: async () => 3,
+      getRuntimeSession: () => ({ startQueryAndEnqueue: async () => {} }) as never,
+    });
+
+    const parsed = parseResult(
+      await handlers.send_session_message({ session_id: 'other-member', message: 'Proceed' })
+    );
+
+    expect(parsed.success).toBe(false);
+    expect(String(parsed.error)).toContain('space autonomy level 3 < required level 4');
+  });
+
+  test('get_session_messages cursor handles duplicate timestamps', async () => {
+    seedSession('cursor-session', ctx.spaceId, { status: 'idle' });
+    for (const id of ['msg-c', 'msg-b', 'msg-a']) {
+      ctx.db
+        .prepare(
+          `INSERT INTO sdk_messages (
+            id, session_id, message_type, message_subtype, sdk_message, timestamp,
+            send_status, origin, is_renderable, is_terminal, parent_tool_use_id, task_id
+          ) VALUES (?, 'cursor-session', 'assistant', NULL, ?, ?, 'consumed', 'system', 1, 0, NULL, NULL)`
+        )
+        .run(
+          id,
+          JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: id }] } }),
+          new Date(1).toISOString()
+        );
+    }
+    const handlers = makeHandlers(ctx);
+
+    const firstPage = parseResult(
+      await handlers.get_session_messages({ session_id: 'cursor-session', limit: 1 })
+    );
+    const cursor = (firstPage.messages as Array<{ cursor: string }>)[0].cursor;
+    const secondPage = parseResult(
+      await handlers.get_session_messages({
+        session_id: 'cursor-session',
+        limit: 1,
+        before: cursor,
+      })
+    );
+
+    expect((firstPage.messages as Array<{ id: string }>)[0].id).toBe('msg-c');
+    expect((secondPage.messages as Array<{ id: string }>)[0].id).toBe('msg-b');
   });
 
   test('update_session_state updates state and clears pending question', async () => {
