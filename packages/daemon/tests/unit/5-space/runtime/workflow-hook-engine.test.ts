@@ -797,6 +797,26 @@ describe('WorkflowHookEngine', () => {
     expect(outcome.executionLog[0].hookId).toBe('hook-1');
   });
 
+  test('mixed invalid multicast target skips target-specific hooks', async () => {
+    const { engine, mockExecutor } = makeEngine([
+      makeHook({ id: 'hook-1', targetNode: 'Review', method: 'send_message' }),
+    ]);
+    mockExecutor.setResult('hook-1', {
+      type: 'block',
+      reason: 'would record state for undelivered multicast',
+      data: { approvals: { architecture: 'approved' } },
+    });
+
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: ['Review', 'Task Disptcher'], message: 'hi' },
+      defaultMeta
+    );
+
+    expect(outcome.executionLog).toHaveLength(0);
+    expect(outcome.decision).toBe('allow');
+  });
+
   test('bare target prefers exact node name over slot alias', async () => {
     // Node A is named 'Review'; Node B has an agent slot named 'Review'
     const workflow = makeWorkflow([

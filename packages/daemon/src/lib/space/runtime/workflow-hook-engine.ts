@@ -680,6 +680,11 @@ export class WorkflowHookEngine {
 
     // Resolve action target(s) for send_message
     const actionTargets = new Set<string>();
+    let allRequestedTargetsRoutable = true;
+    const isRoutableTarget = (targetNode: string): boolean =>
+      nodeNames.has(targetNode) &&
+      (resolver.canSend(fromNode, targetNode) || resolver.canSend(meta.agentName, targetNode));
+
     if (methodName === 'send_message') {
       const target = params.target;
       if (typeof target === 'string') {
@@ -704,18 +709,22 @@ export class WorkflowHookEngine {
             }
           }
         } else {
-          for (const resolved of this.resolveTargetEntries(
+          const resolvedTargets = this.resolveTargetEntries(
             target,
             nodeIdToName,
             slotToNodes,
             nodeNames
-          )) {
+          );
+          for (const resolved of resolvedTargets) {
             actionTargets.add(resolved);
           }
         }
       } else if (Array.isArray(target)) {
         for (const t of target) {
-          if (typeof t !== 'string') continue;
+          if (typeof t !== 'string') {
+            allRequestedTargetsRoutable = false;
+            continue;
+          }
           if (t.trim() === '*') {
             const permittedNode = resolver.getPermittedTargets(fromNode);
             const permittedSlot = resolver.getPermittedTargets(meta.agentName);
@@ -737,13 +746,17 @@ export class WorkflowHookEngine {
               }
             }
           } else {
-            for (const resolved of this.resolveTargetEntries(
+            const resolvedTargets = this.resolveTargetEntries(
               t,
               nodeIdToName,
               slotToNodes,
               nodeNames
-            )) {
+            );
+            for (const resolved of resolvedTargets) {
               actionTargets.add(resolved);
+            }
+            if (resolvedTargets.some((resolved) => !isRoutableTarget(resolved))) {
+              allRequestedTargetsRoutable = false;
             }
           }
         }
@@ -761,6 +774,7 @@ export class WorkflowHookEngine {
       // target to compare, so a hook with targetNode on those methods is skipped.
       if (hook.targetNode) {
         if (methodName !== 'send_message') return false;
+        if (!allRequestedTargetsRoutable) return false;
         if (!actionTargets.has(hook.targetNode)) return false;
       }
 
