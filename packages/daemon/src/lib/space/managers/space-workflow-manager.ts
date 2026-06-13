@@ -34,10 +34,27 @@ import {
 import { validateGate } from '../runtime/gate-evaluator';
 import { isApprovalGate } from '../runtime/gate-features';
 import { slugify, validateSlug } from '../slug';
+import {
+  CODING_WORKFLOW,
+  FULLSTACK_QA_LOOP_WORKFLOW,
+  PLAN_AND_DECOMPOSE_WORKFLOW,
+  RESEARCH_WORKFLOW,
+  REVIEW_ONLY_WORKFLOW,
+} from '../workflows/built-in-workflows';
 import { migrateWorkflowGateProgressionToHooks } from '../workflows/workflow-migration';
 
 const logger = new Logger('SpaceWorkflowManager');
 const RESERVED_WORKFLOW_AGENT_NAMES = new Set(['space-agent', 'task-agent']);
+
+const BUILT_IN_TEMPLATE_GATES = new Map(
+  [
+    CODING_WORKFLOW,
+    PLAN_AND_DECOMPOSE_WORKFLOW,
+    FULLSTACK_QA_LOOP_WORKFLOW,
+    RESEARCH_WORKFLOW,
+    REVIEW_ONLY_WORKFLOW,
+  ].map((workflow) => [workflow.name, workflow.gates ?? []])
+);
 
 function normalizeWorkflowAgentName(name: string): string {
   return name.trim().toLowerCase();
@@ -348,7 +365,9 @@ export class SpaceWorkflowManager {
         params.templateName === undefined
           ? existing.templateName
           : (params.templateName ?? undefined),
-      templateGates: existing.templateName ? (params.gates ?? existing.gates ?? []) : [],
+      templateGates: existing.templateName
+        ? (BUILT_IN_TEMPLATE_GATES.get(existing.templateName) ?? [])
+        : [],
     }).workflow;
     params = {
       ...params,

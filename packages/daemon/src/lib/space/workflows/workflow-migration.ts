@@ -42,29 +42,34 @@ const VALIDATION_ONLY_SCRIPT = [
 
 const APPROVALS_SCRIPT = [
   'STATE=$(jq -c \'.approvals // {}\' <<< "${NEOKAI_HOOK_LOCAL_STATE_JSON:-{}}" 2>/dev/null || echo {})',
+  'WAIT_STARTED=$(jq -r \'.codex_wait_started_at // empty\' <<< "${NEOKAI_HOOK_LOCAL_STATE_JSON:-{}}" 2>/dev/null || true)',
   'INCOMING=$(jq -c \'(.data.approvals // .approvals // {})\' <<< "${NEOKAI_PARAMS_JSON:-{}}" 2>/dev/null || echo {})',
   'MERGED=$(jq -c -n --argjson a "$STATE" --argjson b "$INCOMING" \'$a * $b\')',
   'COUNT=$(jq \'to_entries | map(select(.value == "approved" or .value == true)) | length\' <<< "$MERGED")',
   'if [ "$COUNT" -lt 4 ]; then jq -n --argjson approvals "$MERGED" --argjson count "$COUNT" \'{"type":"block","reason":"Plan dispatch requires four approved plan-review votes","data":{"approvals":$approvals,"approval_count":$count}}\'; exit 0; fi',
   'PR_URL=$(jq -r \'(.data.pr_url // .pr_url // empty)\' <<< "${NEOKAI_PARAMS_JSON:-{}}" 2>/dev/null || true)',
-  'START_ISO="${NEOKAI_WORKFLOW_START_ISO:-}"',
-  'if [ -z "$PR_URL" ] || [ -z "$START_ISO" ]; then echo "Plan approval requires pr_url and workflow start time for Codex validation" >&2; exit 1; fi',
+  'if [ -z "$PR_URL" ]; then echo "Plan approval requires pr_url for Codex validation" >&2; exit 1; fi',
   'if ! PR_JSON=$(gh pr view "$PR_URL" --json number,headRefOid 2>/dev/null); then echo "Failed to fetch plan PR for Codex validation" >&2; exit 1; fi',
   'PR_NUMBER=$(jq -r \'.number\' <<< "$PR_JSON")',
   'HEAD_OID=$(jq -r \'.headRefOid // empty\' <<< "$PR_JSON")',
   'REPO_JSON=$(gh repo view --json owner,name 2>/dev/null) || { echo "Failed to resolve repository" >&2; exit 1; }',
   'OWNER=$(jq -r \'.owner.login\' <<< "$REPO_JSON")',
   'REPO=$(jq -r \'.name\' <<< "$REPO_JSON")',
-  'COMMENTS=$(gh api "repos/${OWNER}/${REPO}/issues/${PR_NUMBER}/comments" 2>/dev/null || echo [])',
-  'REACTIONS=$(gh api "repos/${OWNER}/${REPO}/issues/${PR_NUMBER}/reactions" 2>/dev/null || echo [])',
-  'COMMENT_OK=$(jq --arg since "$START_ISO" --arg head "$HEAD_OID" \'[.[] | select((.user.login == "codex[bot]" or .user.login == "chatgpt-codex-connector[bot]") and (.created_at // "") > $since and ((.body // "") | contains($head)))] | length\' <<< "$COMMENTS")',
-  'REACTION_OK=$(jq --arg since "$START_ISO" \'[.[] | select((.user.login == "codex[bot]" or .user.login == "chatgpt-codex-connector[bot]") and .content == "+1" and (.created_at // "") > $since)] | length\' <<< "$REACTIONS")',
-  'if [ "$COMMENT_OK" = "0" ] && [ "$REACTION_OK" = "0" ]; then START_EPOCH=$(date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "${START_ISO%%.*}Z" +%s 2>/dev/null || date -u -d "$START_ISO" +%s 2>/dev/null || echo 0); NOW_EPOCH=$(date -u +%s); if [ $((NOW_EPOCH - START_EPOCH)) -lt 600 ]; then echo "Plan approval requires fresh Codex bot approval for this workflow run" >&2; exit 1; fi; fi',
-  'jq -n --argjson approvals "$MERGED" \'{"type":"allow","data":{"approvals":$approvals,"codex_approved":true}}\'',
+  'COMMENTS=$(gh api "repos/${OWNER}/${REPO}/issues/${PR_NUMBER}/comments") || { echo "Failed to fetch Codex comments" >&2; exit 1; }',
+  'REACTIONS=$(gh api "repos/${OWNER}/${REPO}/issues/${PR_NUMBER}/reactions") || { echo "Failed to fetch Codex reactions" >&2; exit 1; }',
+  'COMMENT_OK=$(jq --arg head "$HEAD_OID" \'[.[] | select((.user.login == "codex[bot]" or .user.login == "chatgpt-codex-connector[bot]") and ((.body // "") | contains($head)))] | length\' <<< "$COMMENTS")',
+  'REACTION_OK=$(jq \'[.[] | select((.user.login == "codex[bot]" or .user.login == "chatgpt-codex-connector[bot]") and .content == "+1")] | length\' <<< "$REACTIONS")',
+  'if [ "$COMMENT_OK" != "0" ]; then jq -n --argjson approvals "$MERGED" \'{"type":"allow","data":{"approvals":$approvals,"codex_approved":true}}\'; exit 0; fi',
+  'NOW_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)',
+  'if [ -z "$WAIT_STARTED" ]; then jq -n --argjson approvals "$MERGED" --arg started "$NOW_ISO" \'{"type":"block","reason":"Plan approval requires fresh Codex bot approval for current head or 10-minute timeout from approval handoff","data":{"approvals":$approvals,"approval_count":4,"codex_wait_started_at":$started}}\'; exit 0; fi',
+  'START_EPOCH=$(date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "${WAIT_STARTED%%.*}Z" +%s 2>/dev/null || date -u -d "$WAIT_STARTED" +%s 2>/dev/null || echo 0)',
+  'NOW_EPOCH=$(date -u +%s)',
+  'if [ $((NOW_EPOCH - START_EPOCH)) -lt 600 ]; then jq -n --argjson approvals "$MERGED" --arg started "$WAIT_STARTED" \'{"type":"block","reason":"Plan approval requires fresh Codex bot approval for current head or 10-minute timeout from approval handoff","data":{"approvals":$approvals,"approval_count":4,"codex_wait_started_at":$started}}\'; exit 0; fi',
+  'jq -n --argjson approvals "$MERGED" --argjson reaction_count "$REACTION_OK" \'{"type":"allow","data":{"approvals":$approvals,"codex_approved":true,"codex_reaction_count":$reaction_count}}\'',
 ].join('\n');
 
 const PLAN_APPROVAL_RESET_SCRIPT = [
-  'jq -n \'{"type":"record_state","stateForHook":{"plan-approval":{"approvals":null,"approval_count":0}}}\'',
+  'jq -n \'{"type":"record_state","stateForHook":{"plan-approval:plan-review:task-dispatcher":{"approvals":null,"approval_count":0,"codex_wait_started_at":null}}}\'',
 ].join('\n');
 
 const ALLOW_SCRIPT = ['jq -n \'{"type":"allow"}\''].join('\n');
@@ -74,20 +79,24 @@ const REVIEW_APPROVAL_SCRIPT = [
   'PR_URL=$(jq -r \'(.data.pr_url // .pr_url // empty)\' <<< "${NEOKAI_PARAMS_JSON:-{}}" 2>/dev/null || true)',
   'if [ "$APPROVED" != "true" ]; then echo "Review handoff requires approved=true" >&2; exit 1; fi',
   'if [ -z "$PR_URL" ]; then echo "Review approval handoff requires pr_url for Codex validation" >&2; exit 1; fi',
-  'START_ISO="${NEOKAI_WORKFLOW_START_ISO:-}"',
-  'if [ -z "$START_ISO" ]; then echo "NEOKAI_WORKFLOW_START_ISO not injected — cannot determine Codex review window" >&2; exit 1; fi',
+  'WAIT_STARTED=$(jq -r \'.codex_wait_started_at // empty\' <<< "${NEOKAI_HOOK_LOCAL_STATE_JSON:-{}}" 2>/dev/null || true)',
   'if ! PR_JSON=$(gh pr view "$PR_URL" --json number,headRefOid 2>/dev/null); then echo "Failed to fetch PR for Codex validation" >&2; exit 1; fi',
   'PR_NUMBER=$(jq -r \'.number\' <<< "$PR_JSON")',
   'HEAD_OID=$(jq -r \'.headRefOid // empty\' <<< "$PR_JSON")',
   'if ! REPO_JSON=$(gh repo view --json owner,name 2>/dev/null); then echo "Failed to resolve repository for Codex validation" >&2; exit 1; fi',
   'OWNER=$(jq -r \'.owner.login\' <<< "$REPO_JSON")',
   'REPO=$(jq -r \'.name\' <<< "$REPO_JSON")',
-  'COMMENTS=$(gh api "repos/${OWNER}/${REPO}/issues/${PR_NUMBER}/comments" 2>/dev/null || echo [])',
-  'REACTIONS=$(gh api "repos/${OWNER}/${REPO}/issues/${PR_NUMBER}/reactions" 2>/dev/null || echo [])',
-  'COMMENT_OK=$(jq --arg since "$START_ISO" --arg head "$HEAD_OID" \'[.[] | select((.user.login == "codex[bot]" or .user.login == "chatgpt-codex-connector[bot]") and (.created_at // "") > $since and ((.body // "") | contains($head)))] | length\' <<< "$COMMENTS")',
-  'REACTION_OK=$(jq --arg since "$START_ISO" \'[.[] | select((.user.login == "codex[bot]" or .user.login == "chatgpt-codex-connector[bot]") and .content == "+1" and (.created_at // "") > $since)] | length\' <<< "$REACTIONS")',
-  'if [ "$COMMENT_OK" = "0" ] && [ "$REACTION_OK" = "0" ]; then START_EPOCH=$(date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "${START_ISO%%.*}Z" +%s 2>/dev/null || date -u -d "$START_ISO" +%s 2>/dev/null || echo 0); NOW_EPOCH=$(date -u +%s); if [ $((NOW_EPOCH - START_EPOCH)) -lt 600 ]; then echo "Review approval requires fresh Codex bot approval for this workflow run" >&2; exit 1; fi; fi',
-  'jq -n --arg url "$PR_URL" \'{"type":"allow","data":{"approved":true,"pr_url":$url,"codex_approved":true}}\'',
+  'COMMENTS=$(gh api "repos/${OWNER}/${REPO}/issues/${PR_NUMBER}/comments") || { echo "Failed to fetch Codex comments" >&2; exit 1; }',
+  'REACTIONS=$(gh api "repos/${OWNER}/${REPO}/issues/${PR_NUMBER}/reactions") || { echo "Failed to fetch Codex reactions" >&2; exit 1; }',
+  'COMMENT_OK=$(jq --arg head "$HEAD_OID" \'[.[] | select((.user.login == "codex[bot]" or .user.login == "chatgpt-codex-connector[bot]") and ((.body // "") | contains($head)))] | length\' <<< "$COMMENTS")',
+  'REACTION_OK=$(jq \'[.[] | select((.user.login == "codex[bot]" or .user.login == "chatgpt-codex-connector[bot]") and .content == "+1")] | length\' <<< "$REACTIONS")',
+  'if [ "$COMMENT_OK" != "0" ]; then jq -n --arg url "$PR_URL" \'{"type":"allow","data":{"approved":true,"pr_url":$url,"codex_approved":true}}\'; exit 0; fi',
+  'NOW_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)',
+  'if [ -z "$WAIT_STARTED" ]; then jq -n --arg started "$NOW_ISO" \'{"type":"block","reason":"Review approval requires fresh Codex bot approval for current head or 10-minute timeout from approval handoff","data":{"codex_wait_started_at":$started}}\'; exit 0; fi',
+  'START_EPOCH=$(date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "${WAIT_STARTED%%.*}Z" +%s 2>/dev/null || date -u -d "$WAIT_STARTED" +%s 2>/dev/null || echo 0)',
+  'NOW_EPOCH=$(date -u +%s)',
+  'if [ $((NOW_EPOCH - START_EPOCH)) -lt 600 ]; then jq -n --arg started "$WAIT_STARTED" \'{"type":"block","reason":"Review approval requires fresh Codex bot approval for current head or 10-minute timeout from approval handoff","data":{"codex_wait_started_at":$started}}\'; exit 0; fi',
+  'jq -n --arg url "$PR_URL" --argjson reaction_count "$REACTION_OK" \'{"type":"allow","data":{"approved":true,"pr_url":$url,"codex_approved":true,"codex_reaction_count":$reaction_count}}\'',
 ].join('\n');
 
 type Pattern = {
@@ -192,14 +201,36 @@ function canMigrateChannel(channel: WorkflowChannel, nodes: WorkflowNode[] | und
   );
 }
 
+function sortedJson(value: unknown): string {
+  if (Array.isArray(value))
+    return JSON.stringify(value.map((item) => JSON.parse(sortedJson(item))));
+  if (!value || typeof value !== 'object') return JSON.stringify(value);
+  const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) =>
+    a < b ? -1 : a > b ? 1 : 0
+  );
+  return JSON.stringify(
+    Object.fromEntries(entries.map(([key, item]) => [key, JSON.parse(sortedJson(item))]))
+  );
+}
+
+function comparableGateShape(gate: Gate): string {
+  return sortedJson({
+    fields: gate.fields ?? [],
+    requiredLevel: gate.requiredLevel ?? null,
+    resetOnCycle: gate.resetOnCycle ?? null,
+    script: gate.script ?? null,
+    poll: gate.poll ?? null,
+    features: gate.features ?? null,
+  });
+}
+
 function isBuiltInGateShape(gate: Gate | undefined, workflow: SpaceWorkflowLike): boolean {
   if (!workflow.templateName || !gate) return false;
-  if (
-    workflow.templateGates &&
-    !workflow.templateGates.some((templateGate) => templateGate.id === gate.id)
-  ) {
+  const templateGate = workflow.templateGates?.find((candidate) => candidate.id === gate.id);
+  if (templateGate && comparableGateShape(gate) !== comparableGateShape(templateGate)) {
     return false;
   }
+  if (!templateGate && workflow.templateGates) return false;
   if (gate.requiredLevel || gate.poll || gate.features) return false;
   const fields = gate.fields ?? [];
   switch (gate.id) {
