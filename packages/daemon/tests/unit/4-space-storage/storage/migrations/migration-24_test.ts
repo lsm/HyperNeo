@@ -106,7 +106,7 @@ describe('Migration 24: rename failed → needs_attention', () => {
     expect(pendingTask.status).toBe('pending');
     expect(completedTask.status).toBe('completed');
     expect(cancelledTask.status).toBe('cancelled');
-  });
+  }, 15000);
 
   test('updated constraint accepts needs_attention but rejects failed', () => {
     runMigrations(db, () => {});

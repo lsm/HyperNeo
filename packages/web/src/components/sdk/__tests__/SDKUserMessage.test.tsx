@@ -264,7 +264,7 @@ describe('SDKUserMessage', () => {
       const { container } = render(<SDKUserMessage message={message} />);
 
       // Should use SyntheticMessageBlock component
-      expect(container.querySelector('[data-testid="synthetic-message"]')).toBeTruthy();
+      expect(container.querySelector('[data-testid="synthetic-card"]')).toBeTruthy();
     });
 
     it('should show synthetic label in the card header', () => {
@@ -300,7 +300,7 @@ describe('SDKUserMessage', () => {
       const { container } = render(<SDKUserMessage message={message} />);
 
       // Should render without error
-      expect(container.querySelector('[data-testid="synthetic-message"]')).toBeTruthy();
+      expect(container.querySelector('[data-testid="synthetic-card"]')).toBeTruthy();
     });
 
     it('should return null for synthetic message with invalid content type', () => {
