@@ -361,6 +361,26 @@ describe('SDKMessageRepository', () => {
       expect(messages.length).toBe(1);
     });
 
+    it('should exclude subagent thinking token progress rows', () => {
+      const toolUseId = 'tool-use-123';
+      repository.saveSDKMessage('session-1', createAssistantMessage('Task started', toolUseId));
+      repository.saveSDKMessage('session-1', createSubagentMessage('Subagent work', toolUseId));
+      repository.saveSDKMessage('session-1', {
+        type: 'system',
+        subtype: 'thinking_tokens',
+        parent_tool_use_id: toolUseId,
+        estimated_tokens: 1,
+        estimated_tokens_delta: 1,
+        uuid: 'thinking-subagent',
+        session_id: 'session-1',
+      } as unknown as SDKMessage);
+
+      const { messages } = repository.getSDKMessages('session-1');
+
+      expect(messages.length).toBe(2);
+      expect(messages.some((message) => message.type === 'system')).toBe(false);
+    });
+
     it('should inject id and timestamp into returned messages', () => {
       repository.saveSDKMessage('session-1', createUserMessage('Test'));
 

@@ -537,9 +537,17 @@ class SessionStore {
   private _withoutSupersededMessages(messages: ChatMessage[]): ChatMessage[] {
     const superseded = new Set<string>();
     for (const msg of messages) {
-      const maybeSuperseding = msg as ChatMessage & { supersedes?: unknown };
-      if (!Array.isArray(maybeSuperseding.supersedes)) continue;
-      for (const uuid of maybeSuperseding.supersedes) {
+      const maybeSuperseding = msg as ChatMessage & {
+        supersedes?: unknown;
+        retracted_message_uuids?: unknown;
+      };
+      const supersededUuids = [
+        ...(Array.isArray(maybeSuperseding.supersedes) ? maybeSuperseding.supersedes : []),
+        ...(Array.isArray(maybeSuperseding.retracted_message_uuids)
+          ? maybeSuperseding.retracted_message_uuids
+          : []),
+      ];
+      for (const uuid of supersededUuids) {
         if (typeof uuid === 'string') superseded.add(uuid);
       }
     }

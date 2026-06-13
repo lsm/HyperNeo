@@ -509,12 +509,25 @@ export class QueryRunner {
       // so SDK subprocesses cannot inherit the daemon's listening port. Refresh
       // the full SDK env snapshot now so provider credentials applied to
       // process.env are included before SDK 0.3 treats options.env as complete.
-      queryOptions.env = Object.fromEntries(
-        Object.entries({ ...queryOptions.env, ...process.env }).filter(
-          (entry): entry is [string, string] =>
-            entry[1] !== undefined && entry[0] !== 'PORT' && entry[0] !== 'NEOKAI_PORT'
-        )
-      );
+      const providerManagedEnvVars = new Set([
+        'ANTHROPIC_BASE_URL',
+        'ANTHROPIC_API_KEY',
+        'ANTHROPIC_AUTH_TOKEN',
+        'ANTHROPIC_MODEL',
+        'ANTHROPIC_DEFAULT_HAIKU_MODEL',
+        'ANTHROPIC_DEFAULT_SONNET_MODEL',
+        'ANTHROPIC_DEFAULT_OPUS_MODEL',
+        'API_TIMEOUT_MS',
+        'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC',
+      ]);
+      const refreshedEnv = { ...queryOptions.env };
+      for (const [key, value] of Object.entries(process.env)) {
+        if (value === undefined || key === 'PORT' || key === 'NEOKAI_PORT') continue;
+        if (!(key in refreshedEnv) || providerManagedEnvVars.has(key)) {
+          refreshedEnv[key] = value;
+        }
+      }
+      queryOptions.env = refreshedEnv;
 
       // Wrap spawnClaudeCodeProcess to track subprocess exit deterministically.
       // This lets stop() await the actual process exit instead of using arbitrary delays.
