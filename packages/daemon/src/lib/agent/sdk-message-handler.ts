@@ -44,6 +44,7 @@ import { ApiErrorCircuitBreaker } from './api-error-circuit-breaker';
 import type { MessageQueue } from './message-queue';
 import type { QueryLifecycleManager } from './query-lifecycle-manager';
 import { getSessionModelInfo } from '../model-service';
+import { providerUsesNativeAutoCompact } from './query-options-builder.js';
 
 /**
  * Number of SDK stream events between automatic context-usage refreshes.
@@ -896,6 +897,29 @@ export class SDKMessageHandler {
           sessionId: session.id,
           contextInfo,
         });
+
+        // NeoKai-level compaction fallback for providers without SDK-native compaction.
+        const providerId = session.config.provider;
+        if (!providerId) {
+          return;
+        }
+        const usesNativeAutoCompact =
+          providerUsesNativeAutoCompact(providerId, modelInfo?.contextWindow) ||
+          contextInfo.isAutoCompactEnabled;
+        if (
+          !usesNativeAutoCompact &&
+          modelInfo?.contextWindow &&
+          contextTracker.shouldCompact(modelInfo.contextWindow)
+        ) {
+          contextTracker.markCompactionTriggered();
+          this.logger.info(
+            `Triggering compaction for session ${session.id} ` +
+              `(${contextInfo.totalUsed} / ${modelInfo.contextWindow} tokens)`
+          );
+          void this.ctx.messageQueue.enqueue('/compact', /* internal */ true).catch((error) => {
+            this.logger.warn(`compaction enqueue failed for session ${session.id}:`, error);
+          });
+        }
       } catch (error) {
         this.logger.warn(`context refresh (${reason}) failed:`, error);
       } finally {
