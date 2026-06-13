@@ -2533,6 +2533,33 @@ describe('seedBuiltInWorkflows()', () => {
     );
   });
 
+  test('migration installs collision-free plan approval reset hook', () => {
+    const workflow = migrateWorkflowGateProgressionToHooks({
+      ...PLAN_AND_DECOMPOSE_WORKFLOW,
+      hooks: [
+        {
+          id: 'plan-approval-reset',
+          enabled: false,
+          sourceNode: 'Plan Review',
+          targetNode: 'Planning',
+          method: 'send_message',
+          classification: 'validation',
+          order: 0,
+          validator: { kind: 'script', interpreter: 'bash', source: 'jq -n \'{"type":"allow"}\'' },
+          authorizedCallers: [{ sourceNode: 'Plan Review' }],
+        },
+      ],
+      templateName: PLAN_AND_DECOMPOSE_WORKFLOW.name,
+      templateGates: PLAN_AND_DECOMPOSE_WORKFLOW.gates ?? [],
+    }).workflow;
+
+    const resetHooks = workflow.hooks?.filter((hook) => hook.id.startsWith('plan-approval-reset'));
+    expect(resetHooks?.map((hook) => hook.id)).toContain('plan-approval-reset');
+    expect(resetHooks?.some((hook) => hook.id !== 'plan-approval-reset' && hook.enabled)).toBe(
+      true
+    );
+  });
+
   test('migrated approval hooks skip Codex validation when node toggle is disabled', () => {
     const workflow = migrateWorkflowGateProgressionToHooks({
       ...PLAN_AND_DECOMPOSE_WORKFLOW,

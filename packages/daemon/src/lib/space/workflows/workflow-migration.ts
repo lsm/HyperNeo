@@ -505,7 +505,7 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
         !planApprovalTargetNodes.has(targetNode)
       );
     });
-    if (planFeedbackChannel && !hooksById.has(planFeedbackResetPattern.hookId)) {
+    if (planFeedbackChannel) {
       const stateForHook = Array.from(planApprovalHookIds)
         .map(
           (hookId) =>
@@ -521,7 +521,18 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
           stateForHook
         )
       );
-      hooksById.set(hook.id, hook);
+      const existing = hooksById.get(hook.id);
+      if (!existing) {
+        hooksById.set(hook.id, hook);
+      } else if (!existing.enabled || !equivalentGeneratedHook(existing, hook)) {
+        hooksById.set(
+          `${hook.id}:${hookIdComponent(hook.sourceNode)}:${hookIdComponent(hook.targetNode ?? '')}`,
+          {
+            ...hook,
+            id: `${hook.id}:${hookIdComponent(hook.sourceNode)}:${hookIdComponent(hook.targetNode ?? '')}`,
+          }
+        );
+      }
     }
   }
 

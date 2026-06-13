@@ -252,6 +252,23 @@ const defaultMeta: HookActionMeta = {
 // ---------------------------------------------------------------------------
 
 describe('WorkflowHookEngine', () => {
+  test('persistStateUpdate retries version conflicts', () => {
+    let attempts = 0;
+    const stateRepo = makeMockHookStateRepo();
+    const originalUpdate = stateRepo.update.bind(stateRepo);
+    stateRepo.update = ((...args: Parameters<WorkflowHookStateRepository['update']>) => {
+      attempts += 1;
+      if (attempts === 1) return null;
+      return originalUpdate(...args);
+    }) as WorkflowHookStateRepository['update'];
+    const { engine } = makeEngine([makeHook({ id: 'hook-1' })], { hookStateRepo: stateRepo });
+
+    expect(engine.persistStateUpdate('hook-1', { approvals: { architecture: 'approved' } })).toBe(
+      true
+    );
+    expect(attempts).toBe(2);
+  });
+
   test('allow: no hooks registered → allow silently', async () => {
     const { engine } = makeEngine([]);
     const outcome = await engine.executeAction(
@@ -835,6 +852,22 @@ describe('WorkflowHookEngine', () => {
 
     expect(outcome.executionLog).toHaveLength(0);
     expect(outcome.decision).toBe('allow');
+  });
+
+  test('runless worker target is treated as current-run target for hooks', async () => {
+    const { engine, mockExecutor } = makeEngine([
+      makeHook({ id: 'hook-1', targetNode: 'Review', method: 'send_message' }),
+    ]);
+    mockExecutor.setResult('hook-1', { type: 'allow' });
+
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: '@worker:node-review/reviewer', message: 'hi' },
+      defaultMeta
+    );
+
+    expect(outcome.executionLog).toHaveLength(1);
+    expect(outcome.executionLog[0].hookId).toBe('hook-1');
   });
 
   test('bare target prefers exact node name over slot alias', async () => {

@@ -315,20 +315,25 @@ export class WorkflowHookEngine {
     state: Record<string, unknown>,
     lastResult?: WorkflowHookResult
   ): boolean {
-    try {
-      const repoState = this.config.hookStateRepo.get(this.config.workflowRunId, hookId);
-      const result = this.config.hookStateRepo.update(this.config.workflowRunId, hookId, {
-        expectedVersion: repoState?.version ?? 0,
-        localState: state,
-        lastResult,
-      });
-      if (result) {
-        this.config.onHookStateUpdated?.(hookId, result);
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const repoState =
+          this.config.hookStateRepo.get(this.config.workflowRunId, hookId) ??
+          this.config.hookStateRepo.ensure(this.config.workflowRunId, hookId);
+        const result = this.config.hookStateRepo.update(this.config.workflowRunId, hookId, {
+          expectedVersion: repoState.version,
+          localState: state,
+          lastResult,
+        });
+        if (result) {
+          this.config.onHookStateUpdated?.(hookId, result);
+          return true;
+        }
+      } catch {
+        // retry on version conflict or transient repo error
       }
-      return result !== null;
-    } catch {
-      return false;
     }
+    return false;
   }
 
   /**
@@ -690,7 +695,8 @@ export class WorkflowHookEngine {
         const address = parseAddress(targetValue.trim());
         return (
           address.kind === 'worker' &&
-          address.workflowRunId === this.config.workflowRunId &&
+          (address.workflowRunId === undefined ||
+            address.workflowRunId === this.config.workflowRunId) &&
           !!address.agentName
         );
       } catch {
