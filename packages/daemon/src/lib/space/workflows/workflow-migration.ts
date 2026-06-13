@@ -58,11 +58,12 @@ const APPROVALS_SCRIPT = [
   'PR_NUMBER=$(jq -r \'.number\' <<< "$PR_JSON")',
   'HEAD_OID=$(jq -r \'.headRefOid // empty\' <<< "$PR_JSON")',
   'PR_API_URL=$(jq -r \'.url // empty\' <<< "$PR_JSON")',
+  'PR_HOST=$(sed -E "s#https://([^/]+)/.*#\\1#" <<< "$PR_API_URL")',
   'OWNER=$(sed -E "s#https://[^/]+/([^/]+)/([^/]+)/pull/[0-9]+.*#\\1#" <<< "$PR_API_URL")',
   'REPO=$(sed -E "s#https://[^/]+/([^/]+)/([^/]+)/pull/[0-9]+.*#\\2#" <<< "$PR_API_URL")',
-  'if [ -z "$OWNER" ] || [ -z "$REPO" ] || [ "$OWNER" = "$PR_API_URL" ]; then echo "Failed to resolve repository from PR URL" >&2; exit 1; fi',
-  'COMMENTS=$(gh api --paginate --slurp "repos/${OWNER}/${REPO}/issues/${PR_NUMBER}/comments?per_page=100") || { echo "Failed to fetch Codex comments" >&2; exit 1; }',
-  'REACTIONS=$(gh api --paginate --slurp "repos/${OWNER}/${REPO}/issues/${PR_NUMBER}/reactions?per_page=100") || { echo "Failed to fetch Codex reactions" >&2; exit 1; }',
+  'if [ -z "$PR_HOST" ] || [ -z "$OWNER" ] || [ -z "$REPO" ] || [ "$OWNER" = "$PR_API_URL" ]; then echo "Failed to resolve repository from PR URL" >&2; exit 1; fi',
+  'COMMENTS=$(gh api --hostname "$PR_HOST" --paginate --slurp "repos/${OWNER}/${REPO}/issues/${PR_NUMBER}/comments?per_page=100") || { echo "Failed to fetch Codex comments" >&2; exit 1; }',
+  'REACTIONS=$(gh api --hostname "$PR_HOST" --paginate --slurp "repos/${OWNER}/${REPO}/issues/${PR_NUMBER}/reactions?per_page=100") || { echo "Failed to fetch Codex reactions" >&2; exit 1; }',
   'COMMENT_OK=$(jq --arg head "$HEAD_OID" \'[.[][] | select((.user.login == "codex[bot]" or .user.login == "chatgpt-codex-connector[bot]") and ((.body // "") | contains($head)))] | length\' <<< "$COMMENTS")',
   'REACTION_OK=$(jq \'[.[][] | select((.user.login == "codex[bot]" or .user.login == "chatgpt-codex-connector[bot]") and .content == "+1")] | length\' <<< "$REACTIONS")',
   'if [ "$COMMENT_OK" != "0" ]; then jq -n --argjson approvals "$MERGED" \'{"type":"allow","data":{"approvals":$approvals,"codex_approved":true}}\'; exit 0; fi',
@@ -108,11 +109,12 @@ const REVIEW_APPROVAL_SCRIPT = [
   'PR_NUMBER=$(jq -r \'.number\' <<< "$PR_JSON")',
   'HEAD_OID=$(jq -r \'.headRefOid // empty\' <<< "$PR_JSON")',
   'PR_API_URL=$(jq -r \'.url // empty\' <<< "$PR_JSON")',
+  'PR_HOST=$(sed -E "s#https://([^/]+)/.*#\\1#" <<< "$PR_API_URL")',
   'OWNER=$(sed -E "s#https://[^/]+/([^/]+)/([^/]+)/pull/[0-9]+.*#\\1#" <<< "$PR_API_URL")',
   'REPO=$(sed -E "s#https://[^/]+/([^/]+)/([^/]+)/pull/[0-9]+.*#\\2#" <<< "$PR_API_URL")',
-  'if [ -z "$OWNER" ] || [ -z "$REPO" ] || [ "$OWNER" = "$PR_API_URL" ]; then echo "Failed to resolve repository from PR URL" >&2; exit 1; fi',
-  'COMMENTS=$(gh api --paginate --slurp "repos/${OWNER}/${REPO}/issues/${PR_NUMBER}/comments?per_page=100") || { echo "Failed to fetch Codex comments" >&2; exit 1; }',
-  'REACTIONS=$(gh api --paginate --slurp "repos/${OWNER}/${REPO}/issues/${PR_NUMBER}/reactions?per_page=100") || { echo "Failed to fetch Codex reactions" >&2; exit 1; }',
+  'if [ -z "$PR_HOST" ] || [ -z "$OWNER" ] || [ -z "$REPO" ] || [ "$OWNER" = "$PR_API_URL" ]; then echo "Failed to resolve repository from PR URL" >&2; exit 1; fi',
+  'COMMENTS=$(gh api --hostname "$PR_HOST" --paginate --slurp "repos/${OWNER}/${REPO}/issues/${PR_NUMBER}/comments?per_page=100") || { echo "Failed to fetch Codex comments" >&2; exit 1; }',
+  'REACTIONS=$(gh api --hostname "$PR_HOST" --paginate --slurp "repos/${OWNER}/${REPO}/issues/${PR_NUMBER}/reactions?per_page=100") || { echo "Failed to fetch Codex reactions" >&2; exit 1; }',
   'COMMENT_OK=$(jq --arg head "$HEAD_OID" \'[.[][] | select((.user.login == "codex[bot]" or .user.login == "chatgpt-codex-connector[bot]") and ((.body // "") | contains($head)))] | length\' <<< "$COMMENTS")',
   'REACTION_OK=$(jq \'[.[][] | select((.user.login == "codex[bot]" or .user.login == "chatgpt-codex-connector[bot]") and .content == "+1")] | length\' <<< "$REACTIONS")',
   'if [ "$COMMENT_OK" != "0" ]; then jq -n --arg url "$PR_URL" \'{"type":"allow","data":{"approved":true,"pr_url":$url,"codex_approved":true}}\'; exit 0; fi',
@@ -352,6 +354,26 @@ function makeHook(
   };
 }
 
+function findExistingRouteHookId(
+  hooks: Iterable<WorkflowHook>,
+  hook: WorkflowHook
+): string | undefined {
+  for (const existing of hooks) {
+    if (existing.id === hook.id) return existing.id;
+    if (
+      existing.method === hook.method &&
+      existing.sourceNode === hook.sourceNode &&
+      existing.targetNode === hook.targetNode &&
+      existing.classification === hook.classification &&
+      JSON.stringify(existing.authorizedCallers ?? []) ===
+        JSON.stringify(hook.authorizedCallers ?? [])
+    ) {
+      return existing.id;
+    }
+  }
+  return undefined;
+}
+
 function markDeprecatedGate(gate: Gate): Gate {
   return {
     ...gate,
@@ -371,7 +393,6 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
 ): WorkflowMigrationResult<T> {
   const warnings: WorkflowMigrationWarning[] = [];
   const hooksById = new Map((workflow.hooks ?? []).map((hook) => [hook.id, hook]));
-  const existingHookIds = new Set(hooksById.keys());
   const gatesById = new Map((workflow.gates ?? []).map((gate) => [gate.id, gate]));
   const migratedGateIds = new Set<string>();
   const planApprovalHookIds = new Set<string>();
@@ -416,14 +437,16 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
     }
 
     const hook = makeHook(pattern, channel, workflow.nodes, script);
-    if (existingHookIds.has(hook.id) && !workflow.templateName) return channel;
-    hooksById.set(hook.id, hook);
-    if (pattern.gateId === 'plan-approval-gate') planApprovalHookIds.add(hook.id);
+    const existingRouteHookId = findExistingRouteHookId(hooksById.values(), hook);
+    if (existingRouteHookId && !workflow.templateName) return channel;
+    const hookId = existingRouteHookId ?? hook.id;
+    if (!existingRouteHookId) hooksById.set(hook.id, hook);
+    if (pattern.gateId === 'plan-approval-gate') planApprovalHookIds.add(hookId);
     migratedGateIds.add(channel.gateId);
     warnings.push({
       code: 'known_gate_migrated_to_hook',
       gateId: channel.gateId,
-      hookId: hook.id,
+      hookId,
       channel: { from: channel.from, to: channel.to },
       docsUrl: MIGRATION_DOCS_URL,
     });

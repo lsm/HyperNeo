@@ -2599,6 +2599,27 @@ describe('seedBuiltInWorkflows()', () => {
     ]);
   });
 
+  test('migration reuses generated route hooks during restamp', () => {
+    const template = getBuiltInWorkflows().find(
+      (workflow) => workflow.name === PLAN_AND_DECOMPOSE_WORKFLOW.name
+    )!;
+    const workflow = migrateWorkflowGateProgressionToHooks({
+      ...PLAN_AND_DECOMPOSE_WORKFLOW,
+      hooks: template.hooks,
+      channels: PLAN_AND_DECOMPOSE_WORKFLOW.channels?.map((channel, index) => ({
+        ...channel,
+        id: `legacy-channel-${index}`,
+      })),
+      templateName: PLAN_AND_DECOMPOSE_WORKFLOW.name,
+      templateGates: PLAN_AND_DECOMPOSE_WORKFLOW.gates ?? [],
+    }).workflow;
+
+    const approvalHooks = workflow.hooks?.filter(
+      (hook) => hook.sourceNode === 'Plan Review' && hook.targetNode === 'Task Dispatcher'
+    );
+    expect(approvalHooks).toHaveLength(1);
+  });
+
   test('re-stamp installs generated hooks when replacing legacy template channels', () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;

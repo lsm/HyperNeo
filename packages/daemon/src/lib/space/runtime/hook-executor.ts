@@ -90,7 +90,6 @@ const GITHUB_LOOKUP_ENV_KEYS = new Set([
   'GITHUB_ENTERPRISE_TOKEN',
   'GH_HOST',
   'GH_CONFIG_DIR',
-  'XDG_CONFIG_HOME',
 ]);
 
 /** SSH agent / Git credential helper keys — stripped from restricted env. */
