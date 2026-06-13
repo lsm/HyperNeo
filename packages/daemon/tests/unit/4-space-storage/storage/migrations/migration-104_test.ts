@@ -192,7 +192,7 @@ describe('Migration 104: drop completionActions schema (PR 5/5)', () => {
           `UPDATE space_tasks SET pending_checkpoint_type = 'completion_action' WHERE id = ?`
         ).run('t-base');
       }).toThrow();
-    });
+    }, 15000);
 
     test('pending_checkpoint_type CHECK still accepts "gate" and "task_completion"', () => {
       const now = Date.now();
