@@ -446,6 +446,34 @@ describe('SDKMessageRepository', () => {
     });
   });
 
+  describe('getLastSDKMessage', () => {
+    it('should skip state-only frames when finding the last terminal message', () => {
+      repository.saveSDKMessage('session-1', {
+        type: 'result',
+        subtype: 'success',
+        duration_ms: 100,
+        duration_api_ms: 50,
+        is_error: false,
+        num_turns: 1,
+        result: 'Done',
+        session_id: 'session-1',
+        total_cost_usd: 0,
+        usage: {},
+      } as unknown as SDKMessage);
+      repository.saveSDKMessage('session-1', {
+        type: 'system',
+        subtype: 'session_state_changed',
+        state: 'idle',
+        uuid: 'state-only-idle',
+        session_id: 'session-1',
+      } as unknown as SDKMessage);
+
+      const message = repository.getLastSDKMessage('session-1');
+
+      expect(message?.type).toBe('result');
+    });
+  });
+
   describe('getSDKMessagesByType', () => {
     it('should return only messages of specified type', () => {
       repository.saveSDKMessage('session-1', createUserMessage('User msg'));

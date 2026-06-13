@@ -94,6 +94,46 @@ function getStartupTimeoutMs(): number {
 // in user-facing error messages reflect these module-load-time snapshots.
 const STARTUP_TIMEOUT_MS = getStartupTimeoutMs();
 
+const PROVIDER_MANAGED_ENV_VARS = new Set([
+  'ANTHROPIC_BASE_URL',
+  'ANTHROPIC_API_KEY',
+  'ANTHROPIC_AUTH_TOKEN',
+  'ANTHROPIC_MODEL',
+  'ANTHROPIC_DEFAULT_HAIKU_MODEL',
+  'ANTHROPIC_DEFAULT_SONNET_MODEL',
+  'ANTHROPIC_DEFAULT_OPUS_MODEL',
+  'API_TIMEOUT_MS',
+  'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC',
+  'CLAUDE_CODE_OAUTH_TOKEN',
+  'CLAUDE_CODE_AUTO_COMPACT_WINDOW',
+]);
+
+export function refreshQueryEnvFromProcess(
+  queryEnv: Record<string, string | undefined> | undefined,
+  processEnv: NodeJS.ProcessEnv = process.env
+): Record<string, string> {
+  const refreshedEnv: Record<string, string> = Object.fromEntries(
+    Object.entries(queryEnv ?? {}).filter(
+      (entry): entry is [string, string] => entry[1] !== undefined
+    )
+  );
+  for (const key of PROVIDER_MANAGED_ENV_VARS) {
+    const value = processEnv[key];
+    if (value === undefined) {
+      delete refreshedEnv[key];
+    } else {
+      refreshedEnv[key] = value;
+    }
+  }
+  for (const [key, value] of Object.entries(processEnv)) {
+    if (value === undefined || key === 'PORT' || key === 'NEOKAI_PORT') continue;
+    if (!(key in refreshedEnv)) {
+      refreshedEnv[key] = value;
+    }
+  }
+  return refreshedEnv;
+}
+
 const REQUIRED_SPACE_CHAT_MCP_SERVERS = SPACE_COORDINATOR_REQUIRED_MCP_SERVERS;
 const REQUIRED_SPACE_CHAT_COORDINATION_TOOLS = [
   'create_standalone_task',
@@ -509,34 +549,7 @@ export class QueryRunner {
       // so SDK subprocesses cannot inherit the daemon's listening port. Refresh
       // the full SDK env snapshot now so provider credentials applied to
       // process.env are included before SDK 0.3 treats options.env as complete.
-      const providerManagedEnvVars = new Set([
-        'ANTHROPIC_BASE_URL',
-        'ANTHROPIC_API_KEY',
-        'ANTHROPIC_AUTH_TOKEN',
-        'ANTHROPIC_MODEL',
-        'ANTHROPIC_DEFAULT_HAIKU_MODEL',
-        'ANTHROPIC_DEFAULT_SONNET_MODEL',
-        'ANTHROPIC_DEFAULT_OPUS_MODEL',
-        'API_TIMEOUT_MS',
-        'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC',
-        'CLAUDE_CODE_OAUTH_TOKEN',
-      ]);
-      const refreshedEnv = { ...queryOptions.env };
-      for (const key of providerManagedEnvVars) {
-        const value = process.env[key];
-        if (value === undefined) {
-          delete refreshedEnv[key];
-        } else {
-          refreshedEnv[key] = value;
-        }
-      }
-      for (const [key, value] of Object.entries(process.env)) {
-        if (value === undefined || key === 'PORT' || key === 'NEOKAI_PORT') continue;
-        if (!(key in refreshedEnv)) {
-          refreshedEnv[key] = value;
-        }
-      }
-      queryOptions.env = refreshedEnv;
+      queryOptions.env = refreshQueryEnvFromProcess(queryOptions.env);
 
       // Wrap spawnClaudeCodeProcess to track subprocess exit deterministically.
       // This lets stop() await the actual process exit instead of using arbitrary delays.

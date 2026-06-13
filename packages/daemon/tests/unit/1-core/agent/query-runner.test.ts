@@ -6,7 +6,11 @@
 
 import { describe, expect, it, beforeEach, afterEach, mock, jest } from 'bun:test';
 import { tmpdir } from 'node:os';
-import { QueryRunner, type QueryRunnerContext } from '../../../../src/lib/agent/query-runner';
+import {
+  QueryRunner,
+  refreshQueryEnvFromProcess,
+  type QueryRunnerContext,
+} from '../../../../src/lib/agent/query-runner';
 import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session';
 import type { Session, MessageHub } from '@neokai/shared';
 import type { SDKMessage } from '@neokai/shared/sdk';
@@ -2401,6 +2405,30 @@ describe('QueryRunner environment variable handling', () => {
     Object.keys(originalEnvVars).forEach((key) => delete originalEnvVars[key]);
 
     expect(Object.keys(originalEnvVars).length).toBe(0);
+  });
+
+  it('should refresh provider-managed auto-compact env from post-apply process env', () => {
+    const env = refreshQueryEnvFromProcess(
+      {
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW: '200000',
+        KEEP_SESSION: 'session',
+      },
+      {
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW: '262144',
+        KEEP_SESSION: 'ambient',
+        KEEP_PROCESS: 'process',
+        PORT: '8484',
+        NEOKAI_PORT: '8484',
+      }
+    );
+
+    expect(env).toMatchObject({
+      CLAUDE_CODE_AUTO_COMPACT_WINDOW: '262144',
+      KEEP_SESSION: 'session',
+      KEEP_PROCESS: 'process',
+    });
+    expect(env).not.toHaveProperty('PORT');
+    expect(env).not.toHaveProperty('NEOKAI_PORT');
   });
 });
 
