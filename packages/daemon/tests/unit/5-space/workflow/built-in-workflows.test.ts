@@ -966,14 +966,9 @@ describe('PLAN_AND_DECOMPOSE_WORKFLOW template', () => {
     if (resetHook.validator.kind === 'script' && codexResetHook.validator.kind === 'script') {
       expect(resetHook.validator.source).toContain('targetHookId":"plan-approval-hook');
       expect(codexResetHook.validator.source).toContain(
-        'targetHookId":"synthetic-codex-review-check-tpl-pd-plan-review'
+        'targetHookId":"synthetic-codex-review-check-plan-review'
       );
     }
-    expect(
-      PLAN_AND_DECOMPOSE_WORKFLOW.channels?.find(
-        (channel) => channel.from === 'Plan Review' && channel.to === 'Planning'
-      )?.hookIds
-    ).toEqual(['plan-approval-reset-hook', 'plan-codex-reset-hook']);
   });
 
   test('plan-pr-gate has script-based PR check with pr_url output', () => {
@@ -1568,10 +1563,7 @@ describe('seedBuiltInWorkflows()', () => {
     const cyclicChannels = wf.channels!.filter((c) => c.maxCycles !== undefined);
     // One cyclic feedback channel: Plan Review → Planning
     expect(cyclicChannels).toHaveLength(1);
-    expect(cyclicChannels[0].hookIds).toEqual([
-      'plan-approval-reset-hook',
-      'plan-codex-reset-hook',
-    ]);
+    expect(cyclicChannels[0].hookIds).toBeUndefined();
   });
 
   test('PLAN_AND_DECOMPOSE_WORKFLOW seeded channels reference node names or reviewer slot names', async () => {
@@ -3465,20 +3457,10 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
       expect(resetHook.validator.kind).toBe('script');
       if (resetHook.validator.kind === 'script') {
         expect(resetHook.validator.source).toContain(
-          'targetHookId":"synthetic-codex-review-check-tpl-fullstack-review'
+          'targetHookId":"synthetic-codex-review-check-review'
         );
       }
     }
-    expect(
-      FULLSTACK_QA_LOOP_WORKFLOW.channels?.find(
-        (channel) => channel.from === 'Review' && channel.to === 'Coding'
-      )?.hookIds
-    ).toEqual(['review-approval-reset-hook', 'review-codex-reset-hook']);
-    expect(
-      FULLSTACK_QA_LOOP_WORKFLOW.channels?.find(
-        (channel) => channel.from === 'QA' && channel.to === 'Coding'
-      )?.hookIds
-    ).toEqual(['qa-approval-reset-hook', 'qa-codex-reset-hook']);
   });
 
   test('FULLSTACK_QA_LOOP_WORKFLOW reviewer prompt instructs hook hand-off for codex reaction wait', () => {

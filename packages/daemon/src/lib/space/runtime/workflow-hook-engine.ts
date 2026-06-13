@@ -202,7 +202,7 @@ export class WorkflowHookEngine {
         userState: {
           status: 'blocked_by_hook',
           reason:
-            'Channel declares hookIds but no validation hook resolves. Action blocked (fail closed).',
+            'Channel declares hookIds but not all required validation hooks resolve. Action blocked (fail closed).',
         },
         executionLog: [],
       };
@@ -646,6 +646,7 @@ export class WorkflowHookEngine {
     // ChannelRouter.findMatchingWorkflowChannel) so overlapping routes don't
     // pull in unrelated hooks.
     const channelHookIds = new Set<string>();
+    const channelHookSources = new Map<string, string>();
     let hasChannelHookIds = false;
     if (methodName === 'send_message' && (actionTargets.size > 0 || rawActionTargets.size > 0)) {
       const target = params.target;
@@ -698,6 +699,7 @@ export class WorkflowHookEngine {
           hasChannelHookIds = true;
           for (const hid of firstCh.hookIds) {
             channelHookIds.add(hid);
+            channelHookSources.set(hid, firstCh.from);
           }
         }
         return true;
@@ -725,6 +727,7 @@ export class WorkflowHookEngine {
                 hasChannelHookIds = true;
                 for (const hid of ch.hookIds) {
                   channelHookIds.add(hid);
+                  channelHookSources.set(hid, ch.from);
                 }
               }
             }
@@ -781,15 +784,27 @@ export class WorkflowHookEngine {
       });
     });
 
-    // Fail closed only when a hook-managed channel has no runnable validation
-    // hooks for this caller. Wildcard channels can carry hook IDs for multiple
-    // source nodes, and unrelated source-specific IDs should not block.
+    // Fail closed when required channel hooks do not resolve. Wildcard channels
+    // can carry hook IDs for multiple source nodes; only hook IDs whose actual
+    // hook source differs from this caller may be ignored as unrelated.
+    const hooksById = new Map((workflow?.hooks ?? []).map((hook) => [hook.id, hook]));
     const resolvedHookIds = new Set(
       matchedHooks
         .filter((h) => (h.classification ?? 'validation') === 'validation')
         .map((h) => h.id)
     );
-    const missingChannelHooks = hasChannelHookIds && resolvedHookIds.size === 0;
+    const validationChannelHookIds = [...channelHookIds].filter((hid) => {
+      const hook = hooksById.get(hid);
+      return !hook || (hook.classification ?? 'validation') === 'validation';
+    });
+    const missingChannelHooks =
+      hasChannelHookIds &&
+      (validationChannelHookIds.length === 0 ||
+        validationChannelHookIds.some((hid) => {
+          if (resolvedHookIds.has(hid)) return false;
+          const hook = hooksById.get(hid);
+          return !hook || hook.sourceNode === nodeName || channelHookSources.get(hid) !== '*';
+        }));
     return { hooks: matchedHooks, missingChannelHooks };
   }
 

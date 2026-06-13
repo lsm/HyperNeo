@@ -363,7 +363,9 @@ export const codexReviewApprovedValidator: BuiltInValidatorFn = async (context) 
         const matched = rawTargets.some((t) => {
           if (typeof t !== 'string') return false;
           const resolved = resolveTargetToNodeNames(t, workflow);
-          return resolved.some((rn) => enforceForTargets.includes(rn));
+          return resolved.some(
+            (rn) => enforceForTargets.includes(rn) || enforceForTargets.includes('*')
+          );
         });
         if (!matched) {
           return {
@@ -431,12 +433,27 @@ export const codexReviewApprovedValidator: BuiltInValidatorFn = async (context) 
       };
     }
 
+    const now = Date.now();
     const hasPriorSha = persisted.currentHeadSha !== undefined;
     const headChanged = hasPriorSha && persisted.currentHeadSha !== currentHeadSha;
     const prChanged = !samePrUrl(persisted.prUrl, prUrl);
+    const reviewResetAt =
+      typeof context.hookLocalState?.reviewResetAt === 'number'
+        ? context.hookLocalState.reviewResetAt
+        : undefined;
+    const persistedTerminalAt =
+      typeof persisted.checkStartedAt === 'number' ? persisted.checkStartedAt : undefined;
+    const resetAfterTerminal =
+      reviewResetAt !== undefined &&
+      (persistedTerminalAt === undefined || reviewResetAt >= persistedTerminalAt);
 
     // Re-check terminal outcome after confirming head and PR identity have not changed
-    if (persisted.terminalOutcome === 'allow' && !headChanged && !prChanged) {
+    if (
+      persisted.terminalOutcome === 'allow' &&
+      !headChanged &&
+      !prChanged &&
+      !resetAfterTerminal
+    ) {
       return {
         type: 'allow',
         data: {
@@ -447,7 +464,12 @@ export const codexReviewApprovedValidator: BuiltInValidatorFn = async (context) 
         },
       };
     }
-    if (persisted.terminalOutcome === 'block' && !headChanged && !prChanged) {
+    if (
+      persisted.terminalOutcome === 'block' &&
+      !headChanged &&
+      !prChanged &&
+      !resetAfterTerminal
+    ) {
       return {
         type: 'block',
         reason: 'Codex review did not pass',
@@ -460,9 +482,8 @@ export const codexReviewApprovedValidator: BuiltInValidatorFn = async (context) 
       };
     }
 
-    const now = Date.now();
     const isFirstCheck = persisted.currentHeadSha === undefined;
-    const isNewReviewWindow = headChanged || prChanged || isFirstCheck;
+    const isNewReviewWindow = headChanged || prChanged || isFirstCheck || resetAfterTerminal;
     const workflowStartedAt = parseIsoMs(workflowStartIso);
     const firstCheckFreshnessAnchor = workflowStartedAt ?? now;
     let headCommitTimestamp: number | undefined;
@@ -479,7 +500,7 @@ export const codexReviewApprovedValidator: BuiltInValidatorFn = async (context) 
       isNewReviewWindow
         ? isFirstCheck
           ? Math.max(headCommitTimestamp ?? firstCheckFreshnessAnchor, firstCheckFreshnessAnchor)
-          : (headCommitTimestamp ?? now)
+          : now
         : (persisted.currentHeadBecameHeadAt ?? now)
     );
     const checkStartedAt = isNewReviewWindow ? now : (persisted.checkStartedAt ?? now);
@@ -533,6 +554,7 @@ export const codexReviewApprovedValidator: BuiltInValidatorFn = async (context) 
           lastReaction: 'current_plus_one' as const,
           lastReactionTimestamp,
           prUrl,
+          checkStartedAt,
           terminalOutcome: 'allow',
         },
       };
@@ -548,6 +570,7 @@ export const codexReviewApprovedValidator: BuiltInValidatorFn = async (context) 
           lastReaction,
           elapsedMs,
           prUrl,
+          checkStartedAt,
           terminalOutcome: 'block',
         },
       };

@@ -1562,6 +1562,42 @@ describe('WorkflowHookEngine', () => {
     expect(outcome.executionLog.map((entry) => entry.hookId)).toEqual(['hook-a']);
   });
 
+  test('same-source missing hookIds still fail closed', async () => {
+    const workflow = makeWorkflow([
+      makeHook({
+        id: 'hook-a',
+        sourceNode: 'Coding',
+        method: 'send_message',
+        authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+      }),
+    ]);
+    workflow.channels = [
+      { id: 'ch-1', from: 'Coding', to: 'Review', hookIds: ['hook-a', 'hook-b'] },
+    ];
+
+    const mockExecutor = new MockHookExecutor();
+    const engine = new WorkflowHookEngine({
+      workflow,
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo: makeMockHookStateRepo(),
+      hookExecutor: mockExecutor,
+      workspacePath: '/tmp',
+    });
+    mockExecutor.setResult('hook-a', { type: 'allow' });
+
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: 'Review', message: 'hi' },
+      defaultMeta
+    );
+
+    expect(outcome.decision).toBe('block');
+    expect(outcome.userState.reason).toContain('not all required validation hooks resolve');
+  });
+
   test('mixed gateId and hookIds channel runs declared hooks', async () => {
     const workflow = makeWorkflow([
       makeHook({
@@ -1624,7 +1660,7 @@ describe('WorkflowHookEngine', () => {
 
     expect(outcome.decision).toBe('block');
     expect(outcome.userState.status).toBe('blocked_by_hook');
-    expect(outcome.userState.reason).toContain('no validation hook resolves');
+    expect(outcome.userState.reason).toContain('not all required validation hooks resolve');
   });
 
   test('@worker address with agent slot matches slot-addressed channel', async () => {
@@ -1890,7 +1926,7 @@ describe('WorkflowHookEngine', () => {
 
     expect(outcome.decision).toBe('block');
     expect(outcome.userState.status).toBe('blocked_by_hook');
-    expect(outcome.userState.reason).toContain('no validation hook resolves');
+    expect(outcome.userState.reason).toContain('not all required validation hooks resolve');
   });
 
   test('PR_URL env var injected alongside NEOKAI_PR_URL', async () => {

@@ -362,7 +362,8 @@ interface SpawnTaskAgentOptions {
 
 function resolveSyntheticHookTarget(target: string, workflow: SpaceWorkflow): string[] {
   const trimmed = target.trim();
-  if (!trimmed || trimmed === '*') return [];
+  if (!trimmed) return [];
+  if (trimmed === '*') return ['*'];
   const node = (workflow.nodes ?? []).find((n) => n.name === trimmed);
   if (node) return [node.name];
   const slotNodes = (workflow.nodes ?? []).filter((n) =>
@@ -423,7 +424,11 @@ export function withSyntheticCodexHooks(workflow: SpaceWorkflow): SpaceWorkflow 
     if (!shouldEnforceCodex) continue;
 
     const existingCodexHook = enabledCodexHookBySource.get(node.name);
-    const hookId = existingCodexHook?.id ?? `synthetic-codex-review-check-${node.id}`;
+    const syntheticHookId = `synthetic-codex-review-check-${node.name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '')}`;
+    const hookId = existingCodexHook?.id ?? syntheticHookId;
     const enforceForTargets = new Set<string>();
     const targetChannels = node.requireCodexApproval ? approvalGatedChannels : legacyCodexChannels;
     for (const channel of targetChannels) {

@@ -374,6 +374,25 @@ describe('codexReviewApprovedValidator', () => {
     expect(fetchCalls.some((c) => c.url.includes('/pulls/42'))).toBe(true);
   });
 
+  test('terminal allow invalidated after review reset marker', async () => {
+    mockPrWith('abc123', []);
+    const ctx = makeContext({
+      currentArtifacts: PR_ARTIFACT,
+      hookLocalState: { reviewResetAt: Date.now() },
+      lastResult: {
+        type: 'allow',
+        data: {
+          terminalOutcome: 'allow',
+          currentHeadSha: 'abc123',
+          prUrl: PR_URL,
+          checkStartedAt: Date.now() - 1_000,
+        },
+      } as WorkflowHookResult,
+    });
+    const result = await codexReviewApprovedValidator(ctx);
+    expect(result.type).toBe('retryable_block');
+  });
+
   test('terminal allow invalidated when PR head changes', async () => {
     mockPrWith('new-sha', []);
     const ctx = makeContext({
@@ -615,7 +634,7 @@ describe('codexReviewApprovedValidator', () => {
     expect(result.type).toBe('allow');
   });
 
-  test('head change anchors freshness to commit timestamp', async () => {
+  test('head change anchors freshness to observation time', async () => {
     let callCount = 0;
     const commitDate = '2026-01-02T00:00:00Z';
     const approvalDate = '2026-01-02T00:00:30Z';
@@ -657,14 +676,14 @@ describe('codexReviewApprovedValidator', () => {
     expect(result1.type).toBe('retryable_block');
     expect((result1 as { data?: Record<string, unknown> }).data?.currentHeadSha).toBe('old-sha');
 
-    // Second call: new head, +1 after commit but before observation is accepted
+    // Second call: new head, +1 after commit but before head observation is stale
     const result2 = await codexReviewApprovedValidator(
       makeContext({
         currentArtifacts: artifacts,
         lastResult: result1 as WorkflowHookResult,
       })
     );
-    expect(result2.type).toBe('allow');
+    expect(result2.type).toBe('retryable_block');
     expect((result2 as { data?: Record<string, unknown> }).data?.currentHeadSha).toBe('new-sha');
   });
 });
@@ -682,7 +701,7 @@ describe('withSyntheticCodexHooks', () => {
       ],
       channels: [{ from: 'Coding', to: 'Review', gateId: 'approval-gate' }],
     });
-    const hook = workflow.hooks?.find((h) => h.id === 'synthetic-codex-review-check-node-coder');
+    const hook = workflow.hooks?.find((h) => h.id === 'synthetic-codex-review-check-coding');
     expect(hook).toBeDefined();
     expect(hook?.enabled).toBe(true);
     expect(hook?.sourceNode).toBe('Coding');
@@ -710,7 +729,7 @@ describe('withSyntheticCodexHooks', () => {
       ],
       channels: [{ from: 'Coding', to: 'Review', gateId: 'approval-gate' }],
     });
-    const hook = workflow.hooks?.find((h) => h.id === 'synthetic-codex-review-check-node-coder');
+    const hook = workflow.hooks?.find((h) => h.id === 'synthetic-codex-review-check-coding');
     expect(hook?.templateData).toEqual({
       enforceForTargets: ['Review'],
       forceCodexApproval: true,
@@ -739,9 +758,9 @@ describe('withSyntheticCodexHooks', () => {
       ],
       channels: [{ from: 'Coding', to: 'Review', gateId: 'approval-gate' }],
     });
-    expect(
-      workflow.hooks?.some((hook) => hook.id === 'synthetic-codex-review-check-node-coder')
-    ).toBe(true);
+    expect(workflow.hooks?.some((hook) => hook.id === 'synthetic-codex-review-check-coding')).toBe(
+      true
+    );
   });
 
   test('limits node-flag synthetic hooks to approval-gated targets', () => {
@@ -759,7 +778,7 @@ describe('withSyntheticCodexHooks', () => {
         { from: 'Coding', to: 'Drafting' },
       ],
     });
-    const hook = workflow.hooks?.find((h) => h.id === 'synthetic-codex-review-check-node-coder');
+    const hook = workflow.hooks?.find((h) => h.id === 'synthetic-codex-review-check-coding');
     expect(hook?.templateData).toEqual({ enforceForTargets: ['Review'], forceCodexApproval: true });
   });
 
@@ -794,11 +813,11 @@ describe('withSyntheticCodexHooks', () => {
     });
     expect(workflow.channels?.[0]).toMatchObject({
       gateId: 'approval-gate',
-      hookIds: ['other-hook', 'synthetic-codex-review-check-node-coder'],
+      hookIds: ['other-hook', 'synthetic-codex-review-check-coding'],
     });
-    expect(
-      workflow.hooks?.some((hook) => hook.id === 'synthetic-codex-review-check-node-coder')
-    ).toBe(true);
+    expect(workflow.hooks?.some((hook) => hook.id === 'synthetic-codex-review-check-coding')).toBe(
+      true
+    );
   });
 
   test('binds synthetic hooks to hook-only approval channels', () => {
@@ -831,7 +850,7 @@ describe('withSyntheticCodexHooks', () => {
       ],
     });
     expect(workflow.channels?.find((channel) => channel.id === 'hook-channel')?.hookIds).toContain(
-      'synthetic-codex-review-check-node-coder'
+      'synthetic-codex-review-check-coding'
     );
   });
 
@@ -876,7 +895,7 @@ describe('withSyntheticCodexHooks', () => {
       'existing-codex-review-check'
     );
     expect(
-      workflow.hooks?.filter((hook) => hook.id === 'synthetic-codex-review-check-node-coder')
+      workflow.hooks?.filter((hook) => hook.id === 'synthetic-codex-review-check-coding')
     ).toHaveLength(0);
   });
 
@@ -910,11 +929,11 @@ describe('withSyntheticCodexHooks', () => {
       ],
     });
     const syntheticHook = workflow.hooks?.find(
-      (hook) => hook.id === 'synthetic-codex-review-check-node-coder'
+      (hook) => hook.id === 'synthetic-codex-review-check-coding'
     );
     expect(syntheticHook?.method).toBe('send_message');
     expect(workflow.channels?.find((channel) => channel.id === 'hook-channel')?.hookIds).toContain(
-      'synthetic-codex-review-check-node-coder'
+      'synthetic-codex-review-check-coding'
     );
     expect(
       workflow.channels?.find((channel) => channel.id === 'hook-channel')?.hookIds
@@ -990,7 +1009,7 @@ describe('withSyntheticCodexHooks', () => {
       ],
       channels: [{ from: 'Coding', to: 'qa', gateId: 'approval-gate' }],
     });
-    const hook = workflow.hooks?.find((h) => h.id === 'synthetic-codex-review-check-node-coder');
+    const hook = workflow.hooks?.find((h) => h.id === 'synthetic-codex-review-check-coding');
     expect(hook?.templateData).toEqual({ enforceForTargets: ['QA'], forceCodexApproval: true });
   });
 
@@ -1006,8 +1025,24 @@ describe('withSyntheticCodexHooks', () => {
       ],
       channels: [{ from: '*', to: 'Review', gateId: 'approval-gate' }],
     });
-    const hook = workflow.hooks?.find((h) => h.id === 'synthetic-codex-review-check-node-coder');
+    const hook = workflow.hooks?.find((h) => h.id === 'synthetic-codex-review-check-coding');
     expect(hook?.templateData).toEqual({ enforceForTargets: ['Review'], forceCodexApproval: true });
+  });
+
+  test('scopes wildcard targets instead of leaving Codex target unrestricted', () => {
+    const workflow = withSyntheticCodexHooks({
+      ...WORKFLOW,
+      hooks: undefined,
+      gates: [
+        {
+          id: 'approval-gate',
+          fields: [{ name: 'approved', type: 'boolean', check: { op: '==', value: true } }],
+        },
+      ],
+      channels: [{ from: 'Coding', to: '*', gateId: 'approval-gate' }],
+    });
+    const hook = workflow.hooks?.find((h) => h.id === 'synthetic-codex-review-check-coding');
+    expect(hook?.templateData).toEqual({ enforceForTargets: ['*'], forceCodexApproval: true });
   });
 
   test('synthesizes Codex hooks for legacy codex_review_bot gate features', () => {
@@ -1018,7 +1053,7 @@ describe('withSyntheticCodexHooks', () => {
       gates: [{ id: 'approval-gate', features: { codex_review_bot: true } }],
       channels: [{ from: 'Coding', to: 'Review', gateId: 'approval-gate' }],
     });
-    const hook = workflow.hooks?.find((h) => h.id === 'synthetic-codex-review-check-node-coder');
+    const hook = workflow.hooks?.find((h) => h.id === 'synthetic-codex-review-check-coding');
     expect(hook).toBeDefined();
     expect(hook?.templateData).toEqual({ enforceForTargets: ['Review'], forceCodexApproval: true });
   });
