@@ -105,19 +105,23 @@ const PROVIDER_MANAGED_ENV_VARS = new Set([
   'API_TIMEOUT_MS',
   'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC',
   'CLAUDE_CODE_OAUTH_TOKEN',
-  'CLAUDE_CODE_AUTO_COMPACT_WINDOW',
 ]);
 
 export function refreshQueryEnvFromProcess(
   queryEnv: Record<string, string | undefined> | undefined,
-  processEnv: NodeJS.ProcessEnv = process.env
+  processEnv: NodeJS.ProcessEnv = process.env,
+  options: { refreshAutoCompactWindow?: boolean } = {}
 ): Record<string, string> {
   const refreshedEnv: Record<string, string> = Object.fromEntries(
     Object.entries(queryEnv ?? {}).filter(
       (entry): entry is [string, string] => entry[1] !== undefined
     )
   );
-  for (const key of PROVIDER_MANAGED_ENV_VARS) {
+  const providerManagedEnvVars = new Set(PROVIDER_MANAGED_ENV_VARS);
+  if (options.refreshAutoCompactWindow) {
+    providerManagedEnvVars.add('CLAUDE_CODE_AUTO_COMPACT_WINDOW');
+  }
+  for (const key of providerManagedEnvVars) {
     const value = processEnv[key];
     if (value === undefined) {
       delete refreshedEnv[key];
@@ -529,11 +533,12 @@ export class QueryRunner {
       queryOptions = await this.ensureMemberSpaceMcpInvariant(queryOptions);
 
       // Apply provider env vars
+      const resolvedProviderId = explicitProviderId ?? provider?.id ?? 'anthropic';
+      const refreshAutoCompactWindow = resolvedProviderId !== 'anthropic';
       {
         const { getProviderService } = await import('../provider-service');
         const providerService = getProviderService();
         // Use the resolved provider ID (falls back to 'anthropic' for legacy sessions)
-        const resolvedProviderId = explicitProviderId ?? provider?.id ?? 'anthropic';
         const originalEnvVars = providerService.applyEnvVarsToProcessForSession({
           ...session,
           config: {
@@ -549,7 +554,11 @@ export class QueryRunner {
       // so SDK subprocesses cannot inherit the daemon's listening port. Refresh
       // the full SDK env snapshot now so provider credentials applied to
       // process.env are included before SDK 0.3 treats options.env as complete.
-      queryOptions.env = refreshQueryEnvFromProcess(queryOptions.env);
+      // Non-Anthropic bridge providers own CLAUDE_CODE_AUTO_COMPACT_WINDOW;
+      // Anthropic sessions preserve configured env overrides from QueryOptionsBuilder.
+      queryOptions.env = refreshQueryEnvFromProcess(queryOptions.env, process.env, {
+        refreshAutoCompactWindow,
+      });
 
       // Wrap spawnClaudeCodeProcess to track subprocess exit deterministically.
       // This lets stop() await the actual process exit instead of using arbitrary delays.

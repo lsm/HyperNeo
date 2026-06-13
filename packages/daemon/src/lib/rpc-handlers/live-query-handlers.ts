@@ -2075,7 +2075,7 @@ WITH top_level AS (
   FROM sdk_messages
   WHERE session_id = ?1
     AND parent_tool_use_id IS NULL
-    AND COALESCE(message_subtype, '') NOT IN ('thinking_tokens', 'session_state_changed')
+    AND COALESCE(message_subtype, '') NOT IN ('thinking_tokens', 'session_state_changed', 'commands_changed')
     AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))
   ORDER BY timestamp DESC, id DESC
   LIMIT ?2
@@ -2098,7 +2098,7 @@ subagent AS (
   FROM sdk_messages sm
   WHERE sm.session_id = ?1
     AND sm.parent_tool_use_id IN (SELECT id FROM tool_use_ids)
-    AND COALESCE(sm.message_subtype, '') != 'thinking_tokens'
+    AND COALESCE(sm.message_subtype, '') NOT IN ('thinking_tokens', 'session_state_changed', 'commands_changed')
     AND (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
 )
 SELECT

@@ -282,15 +282,17 @@ describe('SDKMessageRepository', () => {
       expect(messages.length).toBe(50);
     });
 
-    it('should exclude thinking token progress rows before applying limit', () => {
+    it('should exclude operational system rows before applying limit', () => {
       repository.saveSDKMessage('session-1', createUserMessage('Visible'));
-      for (let i = 0; i < 10; i++) {
+      for (const subtype of ['thinking_tokens', 'session_state_changed', 'commands_changed']) {
         repository.saveSDKMessage('session-1', {
           type: 'system',
-          subtype: 'thinking_tokens',
-          estimated_tokens: i + 1,
+          subtype,
+          commands: [],
+          estimated_tokens: 1,
           estimated_tokens_delta: 1,
-          uuid: `thinking-${i}`,
+          state: 'idle',
+          uuid: `operational-${subtype}`,
           session_id: 'session-1',
         } as unknown as SDKMessage);
       }

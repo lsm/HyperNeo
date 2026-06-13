@@ -498,7 +498,7 @@ export class SDKMessageRepository {
     let query = `SELECT id, sdk_message, timestamp, send_status, origin FROM sdk_messages
       WHERE session_id = ?
         AND parent_tool_use_id IS NULL
-        AND COALESCE(message_subtype, '') NOT IN ('thinking_tokens', 'session_state_changed')
+        AND COALESCE(message_subtype, '') NOT IN ('thinking_tokens', 'session_state_changed', 'commands_changed')
         AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))`;
     const params: SQLiteValue[] = [sessionId];
 
@@ -571,7 +571,7 @@ export class SDKMessageRepository {
       const subagentQuery = `SELECT id, sdk_message, timestamp FROM sdk_messages
        WHERE session_id = ?
          AND parent_tool_use_id IN (${placeholders})
-         AND COALESCE(message_subtype, '') NOT IN ('thinking_tokens', 'session_state_changed')
+         AND COALESCE(message_subtype, '') NOT IN ('thinking_tokens', 'session_state_changed', 'commands_changed')
          AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))
         ORDER BY timestamp ASC`;
       const subagentParams: SQLiteValue[] = [sessionId, ...Array.from(toolUseIds)];
@@ -651,7 +651,7 @@ export class SDKMessageRepository {
       `SELECT id, sdk_message, timestamp FROM sdk_messages
 	       WHERE session_id = ?
 		       AND parent_tool_use_id IS NULL
-		       AND COALESCE(message_subtype, '') NOT IN ('thinking_tokens', 'session_state_changed')
+		       AND COALESCE(message_subtype, '') NOT IN ('thinking_tokens', 'session_state_changed', 'commands_changed')
 		       AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))
 	       ORDER BY timestamp DESC, rowid DESC
 	       LIMIT 1`

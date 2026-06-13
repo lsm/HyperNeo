@@ -2419,7 +2419,8 @@ describe('QueryRunner environment variable handling', () => {
         KEEP_PROCESS: 'process',
         PORT: '8484',
         NEOKAI_PORT: '8484',
-      }
+      },
+      { refreshAutoCompactWindow: true }
     );
 
     expect(env).toMatchObject({
@@ -2429,6 +2430,17 @@ describe('QueryRunner environment variable handling', () => {
     });
     expect(env).not.toHaveProperty('PORT');
     expect(env).not.toHaveProperty('NEOKAI_PORT');
+  });
+
+  it('should preserve configured auto-compact env when provider does not refresh it', () => {
+    const env = refreshQueryEnvFromProcess(
+      {
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW: '200000',
+      },
+      {}
+    );
+
+    expect(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('200000');
   });
 });
 
