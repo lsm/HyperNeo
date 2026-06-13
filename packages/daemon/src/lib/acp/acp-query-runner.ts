@@ -206,14 +206,19 @@ export function convertMcpServersForAcp(
     if (server.type === 'sdk' || server.instance) {
       if (proxyBridge && shouldProxy(name, server)) {
         const tools = proxyBridge.getToolsForServer(name);
+        if (tools.length === 0) {
+          warn(`Skipping ACP proxy for in-process MCP server '${name}'; no callable tools found.`);
+          return [];
+        }
         return [
           {
             type: 'stdio',
             name,
-            command: 'bun',
+            command: process.execPath,
             args: [
-              'run',
-              new URL('./mcp-proxy-server.ts', import.meta.url).pathname,
+              process.execPath.includes('/$bunfs/root/')
+                ? '--neokai-acp-mcp-proxy'
+                : new URL('./mcp-proxy-server.ts', import.meta.url).pathname,
               '--socketPath',
               proxyBridge.socketPath,
               '--serverName',
@@ -227,7 +232,11 @@ export function convertMcpServersForAcp(
           },
         ];
       }
-      warn(`Skipping in-process MCP server '${name}' for ACP; no proxy bridge was provided.`);
+      warn(
+        proxyBridge
+          ? `Skipping in-process MCP server '${name}' for ACP; server is not proxy-enabled.`
+          : `Skipping in-process MCP server '${name}' for ACP; no proxy bridge was provided.`
+      );
       return [];
     }
 

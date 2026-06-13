@@ -302,7 +302,7 @@ describe('AcpQueryRunner', () => {
             create_standalone_task: {
               description: 'Create a task',
               inputSchema: undefined,
-              handler: mock(async () => ({ content: [{ type: 'text', text: 'ok' }] })),
+              callback: mock(async () => ({ content: [{ type: 'text', text: 'ok' }] })),
             },
           },
         },
@@ -316,7 +316,7 @@ describe('AcpQueryRunner', () => {
     expect(converted[0]).toMatchObject({
       type: 'stdio',
       name: 'space-agent-tools',
-      command: 'bun',
+      command: process.execPath,
     });
     expect(converted[0].args).toContain('--token');
     const toolsArg = converted[0].args[converted[0].args.indexOf('--tools') + 1];
@@ -335,7 +335,7 @@ describe('AcpQueryRunner', () => {
             create_standalone_task: {
               description: 'Create a task',
               inputSchema: { title: z.string(), priority: z.enum(['low', 'normal']) },
-              handler: mock(async () => ({ content: [{ type: 'text', text: 'ok' }] })),
+              callback: mock(async () => ({ content: [{ type: 'text', text: 'ok' }] })),
             },
           },
         },
@@ -384,7 +384,11 @@ describe('AcpQueryRunner', () => {
     await ctx.queryPromise;
 
     expect(mockClient.createSession.mock.calls[0][1]).toEqual([
-      expect.objectContaining({ type: 'stdio', name: 'space-agent-tools', command: 'bun' }),
+      expect.objectContaining({
+        type: 'stdio',
+        name: 'space-agent-tools',
+        command: process.execPath,
+      }),
     ]);
   });
 

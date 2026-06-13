@@ -1,4 +1,4 @@
-import { createServer, type Server } from 'node:net';
+import { createServer, type Server, type Socket } from 'node:net';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
@@ -8,7 +8,10 @@ import type { McpServerConfig } from '@neokai/shared/sdk';
 
 type RegisteredTool = {
   description?: string;
-  inputSchema?: unknown;
+  inputSchema?:
+    | { parse?: (args: unknown) => unknown; parseAsync?: (args: unknown) => Promise<unknown> }
+    | unknown;
+  callback?: (args: unknown) => unknown;
   handler?: (args: unknown) => unknown;
 };
 
@@ -22,6 +25,7 @@ type ProxiedTool = {
   serverName: string;
   toolName: string;
   handler: (args: unknown) => unknown;
+  inputSchema?: RegisteredTool['inputSchema'];
   schema: AcpProxyToolSchema;
 };
 
@@ -41,6 +45,7 @@ export class AcpMcpProxyBridge {
   readonly tools: AcpProxyToolSchema[];
   private server: Server | null = null;
   private socketDir: string | null = null;
+  private readonly activeSockets = new Set<Socket>();
   private toolsByName = new Map<string, ProxiedTool>();
 
   constructor(mcpServers: Record<string, McpServerConfig>) {
@@ -62,6 +67,8 @@ export class AcpMcpProxyBridge {
 
     this.server = createServer((socket) => {
       let buffer = '';
+      this.activeSockets.add(socket);
+      socket.once('close', () => this.activeSockets.delete(socket));
       socket.setEncoding('utf8');
       socket.on('data', (chunk) => {
         buffer += chunk;
@@ -95,6 +102,10 @@ export class AcpMcpProxyBridge {
   async close(): Promise<void> {
     const server = this.server;
     this.server = null;
+    for (const socket of this.activeSockets) {
+      socket.destroy();
+    }
+    this.activeSockets.clear();
     if (server) {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
@@ -117,7 +128,8 @@ export class AcpMcpProxyBridge {
     if (!tool) {
       throw new Error(`Unknown proxied MCP tool ${request.serverName}.${request.toolName}`);
     }
-    return await tool.handler(request.arguments ?? {});
+    const args = await parseToolArgs(tool.inputSchema, request.arguments ?? {});
+    return await tool.handler(args);
   }
 
   private collectTools(mcpServers: Record<string, McpServerConfig>): AcpProxyToolSchema[] {
@@ -126,7 +138,8 @@ export class AcpMcpProxyBridge {
       if (!shouldProxy(serverName, config)) continue;
       const registeredTools = getRegisteredTools(config);
       for (const [toolName, registered] of Object.entries(registeredTools)) {
-        if (typeof registered.handler !== 'function') continue;
+        const callback = registered.callback ?? registered.handler;
+        if (typeof callback !== 'function') continue;
         const schema = {
           name: toolName,
           description: registered.description,
@@ -136,7 +149,8 @@ export class AcpMcpProxyBridge {
         this.toolsByName.set(toolKey(serverName, toolName), {
           serverName,
           toolName,
-          handler: registered.handler,
+          handler: callback,
+          inputSchema: registered.inputSchema,
           schema,
         });
       }
@@ -154,6 +168,21 @@ export function shouldProxy(serverName: string, config: unknown): boolean {
 function getRegisteredTools(config: unknown): Record<string, RegisteredTool> {
   const server = config as { instance?: { _registeredTools?: Record<string, RegisteredTool> } };
   return server.instance?._registeredTools ?? {};
+}
+
+async function parseToolArgs(
+  schema: RegisteredTool['inputSchema'],
+  args: unknown
+): Promise<unknown> {
+  if (!schema) return args;
+  const zodSchema = isZodSchema(schema) ? schema : z.object(schema as z.core.$ZodShape);
+  if ('parseAsync' in zodSchema && typeof zodSchema.parseAsync === 'function') {
+    return await zodSchema.parseAsync(args);
+  }
+  if ('parse' in zodSchema && typeof zodSchema.parse === 'function') {
+    return zodSchema.parse(args);
+  }
+  return args;
 }
 
 function toInputJsonSchema(schema: unknown): Record<string, unknown> {
