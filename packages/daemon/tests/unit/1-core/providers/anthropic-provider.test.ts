@@ -404,6 +404,7 @@ describe('AnthropicProvider', () => {
     it('keeps full claude-* version IDs and canonical short IDs', () => {
       const sdkModels = [
         { value: 'opus', displayName: 'Opus', description: 'Opus 4.6 · ...' },
+        { value: 'fable', displayName: 'Fable', description: 'Fable 4.6 · ...' },
         {
           value: 'claude-haiku-4-5-20251001',
           displayName: 'Haiku',
@@ -416,8 +417,14 @@ describe('AnthropicProvider', () => {
       const ids = converted.map((m) => m.id);
 
       expect(ids).toContain('opus');
+      expect(ids).toContain('fable');
       expect(ids).toContain('claude-haiku-4-5-20251001');
       expect(ids).not.toContain('MiniMax-M2.5');
+      expect(converted.find((m) => m.id === 'fable')?.family).toBe('fable');
+    });
+
+    it('claims the fable SDK alias as Anthropic', () => {
+      expect(provider.ownsModel('fable')).toBe(true);
     });
   });
 });

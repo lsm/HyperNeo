@@ -2442,6 +2442,26 @@ describe('QueryRunner environment variable handling', () => {
 
     expect(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('200000');
   });
+
+  it('should tombstone provider-managed env when omitted for ACP subprocesses', () => {
+    const env = refreshQueryEnvFromProcess(
+      {
+        ANTHROPIC_BASE_URL: 'https://stale.example.com',
+        ANTHROPIC_AUTH_TOKEN: 'stale-token',
+        KEEP_SESSION: 'session',
+      },
+      {
+        ANTHROPIC_BASE_URL: 'https://ambient.example.com',
+        KEEP_PROCESS: 'process',
+      },
+      { refreshAutoCompactWindow: true, omitProviderManaged: true }
+    );
+
+    expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+    expect(env.KEEP_SESSION).toBe('session');
+    expect(env.KEEP_PROCESS).toBe('process');
+  });
 });
 
 describe('QueryRunner cleaning up state', () => {

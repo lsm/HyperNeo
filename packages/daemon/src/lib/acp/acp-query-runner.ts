@@ -21,7 +21,11 @@ import { getProviderRegistry } from '../providers/factory';
 import { getProviderService } from '../provider-service';
 import { AcpProvider } from '../providers/acp-provider';
 import { TRANSIENT_CONNECTION_ERROR_SUBSTRINGS } from '../agent/transient-error-patterns';
-import type { QueryRunnerContext, TrackedAgentProcess } from '../agent/query-runner';
+import {
+  refreshQueryEnvFromProcess,
+  type QueryRunnerContext,
+  type TrackedAgentProcess,
+} from '../agent/query-runner';
 import {
   missingMcpServers,
   resolveSpaceMcpSessionPolicy,
@@ -546,11 +550,16 @@ export class AcpQueryRunner {
       };
       messageQueue.onMessageEnqueued = onMessageEnqueued;
 
+      const acpEnv = refreshQueryEnvFromProcess(queryOptions.env, process.env, {
+        refreshAutoCompactWindow: true,
+        omitProviderManaged: true,
+      });
+
       client = this.createAcpClient({
         command,
         args,
         cwd,
-        env: queryOptions.env as Record<string, string> | undefined,
+        env: acpEnv as Record<string, string> | undefined,
         onProcessSpawn: (proc) =>
           this.ctx.trackAgentProcess(proc as unknown as TrackedAgentProcess),
         onStderr: (data) => logger.warn(`ACP agent stderr: ${data.trimEnd()}`),

@@ -117,6 +117,10 @@ const FULL_BUILTIN_TOOL_LIST = [
   'Task',
   'TaskOutput',
   'TaskStop',
+  'TaskCreate',
+  'TaskGet',
+  'TaskUpdate',
+  'TaskList',
   'NotebookEdit',
   'TodoWrite',
   'AskUserQuestion',
@@ -522,6 +526,8 @@ export class QueryOptionsBuilder {
 
       // ============ Callbacks ============
       canUseTool: this.canUseTool,
+      onUserDialog: async () => ({ behavior: 'cancelled' }),
+      supportedDialogKinds: config.fallbackModel ? ['refusal_fallback_prompt'] : undefined,
     };
 
     // ============ Space Chat Session Restrictions ============

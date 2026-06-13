@@ -107,10 +107,17 @@ describe('QueryOptionsBuilder', () => {
       expect(options.allowDangerouslySkipPermissions).toBe(true);
     });
 
-    it('should include fallbackModel when configured', async () => {
+    it('should include fallbackModel and opt into refusal fallback dialogs when configured', async () => {
       mockSession.config.fallbackModel = 'haiku';
       const options = await builder.build();
       expect(options.fallbackModel).toBe('haiku');
+      expect(options.supportedDialogKinds).toEqual(['refusal_fallback_prompt']);
+      expect(
+        await options.onUserDialog?.(
+          { dialogKind: 'unknown', payload: {} },
+          { signal: new AbortController().signal }
+        )
+      ).toEqual({ behavior: 'cancelled' });
     });
 
     it('should include agents when configured', async () => {
@@ -1411,6 +1418,10 @@ describe('QueryOptionsBuilder', () => {
         expect(result).toContain('Task');
         expect(result).toContain('TaskOutput');
         expect(result).toContain('TaskStop');
+        expect(result).toContain('TaskCreate');
+        expect(result).toContain('TaskGet');
+        expect(result).toContain('TaskUpdate');
+        expect(result).toContain('TaskList');
         expect(result).toContain('Read');
         expect(result).toContain('Write');
         expect(result).toContain('REPL');
