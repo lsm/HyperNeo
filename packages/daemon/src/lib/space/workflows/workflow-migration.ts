@@ -299,13 +299,10 @@ function routeHookId(
   pattern: Pattern,
   sourceNode: string,
   targetNode: string,
-  channel: WorkflowChannel
+  _channel: WorkflowChannel
 ): string {
   if (!pattern.routeSpecific) return pattern.hookId;
-  const routeKey = channel.id
-    ? `channel-${hookIdComponent(channel.id)}`
-    : `${hookIdComponent(sourceNode)}:${hookIdComponent(targetNode)}`;
-  return `${pattern.hookId}:${routeKey}`;
+  return `${pattern.hookId}:${hookIdComponent(sourceNode)}:${hookIdComponent(targetNode)}`;
 }
 
 function channelAgentSlot(
@@ -402,6 +399,8 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
   const gatesById = new Map((workflow.gates ?? []).map((gate) => [gate.id, gate]));
   const migratedGateIds = new Set<string>();
   const planApprovalHookIds = new Set<string>();
+  const planApprovalSourceNodes = new Set<string>();
+  const planApprovalTargetNodes = new Set<string>();
 
   const channels = (workflow.channels ?? []).map((channel) => {
     if (!channel.gateId) return channel;
@@ -445,7 +444,11 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
     if (existingRouteHookId && !workflow.templateName) return channel;
     const hookId = existingRouteHookId ?? hook.id;
     if (!existingRouteHookId) hooksById.set(hook.id, hook);
-    if (pattern.gateId === 'plan-approval-gate') planApprovalHookIds.add(hookId);
+    if (pattern.gateId === 'plan-approval-gate') {
+      planApprovalHookIds.add(hookId);
+      planApprovalSourceNodes.add(hook.sourceNode);
+      if (hook.targetNode) planApprovalTargetNodes.add(hook.targetNode);
+    }
     migratedGateIds.add(channel.gateId);
     warnings.push({
       code: 'known_gate_migrated_to_hook',
@@ -460,12 +463,17 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
 
   const planFeedbackResetPattern = KNOWN_GATE_PATTERNS['plan-approval-feedback-reset'];
   if (workflow.templateName && planFeedbackResetPattern && planApprovalHookIds.size > 0) {
-    const planFeedbackChannel = (workflow.channels ?? []).find(
-      (channel) =>
-        resolveChannelNodeName(channel.from, workflow.nodes) === planFeedbackResetPattern.from &&
-        typeof channel.to === 'string' &&
-        resolveChannelNodeName(channel.to, workflow.nodes) === planFeedbackResetPattern.to
-    );
+    const planFeedbackChannel = (workflow.channels ?? []).find((channel) => {
+      if (typeof channel.to !== 'string') return false;
+      const sourceNode = resolveChannelNodeName(channel.from, workflow.nodes);
+      const targetNode = resolveChannelNodeName(channel.to, workflow.nodes);
+      return (
+        !!sourceNode &&
+        !!targetNode &&
+        planApprovalSourceNodes.has(sourceNode) &&
+        !planApprovalTargetNodes.has(targetNode)
+      );
+    });
     if (planFeedbackChannel && !hooksById.has(planFeedbackResetPattern.hookId)) {
       const stateForHook = Array.from(planApprovalHookIds)
         .map(

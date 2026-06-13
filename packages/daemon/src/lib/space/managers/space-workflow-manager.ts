@@ -123,6 +123,9 @@ export class SpaceWorkflowManager {
     params = migrateWorkflowGateProgressionToHooks({
       ...params,
       nodes: nodes as SpaceWorkflow['nodes'],
+      templateGates: params.templateName
+        ? (BUILT_IN_TEMPLATE_GATES.get(params.templateName) ?? [])
+        : [],
     }).workflow;
 
     if (params.channels && params.channels.length > 0) {

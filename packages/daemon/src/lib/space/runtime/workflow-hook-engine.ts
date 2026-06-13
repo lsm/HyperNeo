@@ -761,7 +761,7 @@ export class WorkflowHookEngine {
       // target to compare, so a hook with targetNode on those methods is skipped.
       if (hook.targetNode) {
         if (methodName !== 'send_message') return false;
-        if (actionTargets.size > 0 && !actionTargets.has(hook.targetNode)) return false;
+        if (!actionTargets.has(hook.targetNode)) return false;
       }
 
       // Authorized callers check
