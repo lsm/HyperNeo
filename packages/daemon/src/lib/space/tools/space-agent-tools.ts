@@ -4662,7 +4662,8 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
     );
   }
 
-  return createSdkMcpServer({ name: 'space-agent', tools });
+  const server = createSdkMcpServer({ name: 'space-agent', tools });
+  return { ...server, tools };
 }
 
 export type SpaceAgentMcpServer = ReturnType<typeof createSpaceAgentMcpServer>;

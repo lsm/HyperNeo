@@ -177,8 +177,15 @@ export function shouldProxy(serverName: string, config: unknown): boolean {
 }
 
 function getRegisteredTools(config: unknown): Record<string, RegisteredTool> {
-  const server = config as { instance?: { _registeredTools?: Record<string, RegisteredTool> } };
-  return server.instance?._registeredTools ?? {};
+  const server = config as {
+    tools?: Array<RegisteredTool & { name?: string }>;
+    instance?: { _registeredTools?: Record<string, RegisteredTool> };
+  };
+  const registered = server.instance?._registeredTools;
+  if (registered && Object.keys(registered).length > 0) return registered;
+  return Object.fromEntries(
+    (server.tools ?? []).flatMap((tool) => (tool.name ? [[tool.name, tool]] : []))
+  );
 }
 
 async function parseToolArgs(
