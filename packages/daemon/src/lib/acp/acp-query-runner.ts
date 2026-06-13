@@ -1,4 +1,5 @@
 import type { UUID } from 'crypto';
+import { fileURLToPath } from 'node:url';
 import type { CanUseTool, Options } from '@anthropic-ai/claude-agent-sdk';
 import {
   generateUUID,
@@ -218,7 +219,7 @@ export function convertMcpServersForAcp(
             args: [
               import.meta.url.includes('/$bunfs/root/')
                 ? '--neokai-acp-mcp-proxy'
-                : new URL('./mcp-proxy-server.ts', import.meta.url).pathname,
+                : fileURLToPath(new URL('./mcp-proxy-server.ts', import.meta.url)),
               '--socketPath',
               proxyBridge.socketPath,
               '--serverName',

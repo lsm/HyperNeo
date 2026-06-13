@@ -68,33 +68,35 @@ export function createAgentMemoryToolHandlers(config: AgentMemoryToolsConfig) {
 
 export function createAgentMemoryMcpServer(config: AgentMemoryToolsConfig) {
   const handlers = createAgentMemoryToolHandlers(config);
-  return createSdkMcpServer({
+  const tools = [
+    tool(
+      'memory.write',
+      'Save a fact, convention, decision, or project knowledge to persistent Space memory for future agent sessions.',
+      MemoryWriteSchema.shape,
+      (args) => handlers['memory.write'](args)
+    ),
+    tool(
+      'memory.search',
+      'Search persistent Space memory for relevant facts, conventions, decisions, or project knowledge from previous sessions.',
+      MemorySearchSchema.shape,
+      (args) => handlers['memory.search'](args)
+    ),
+    tool(
+      'memory.read',
+      'Read one persistent Space memory by key.',
+      MemoryReadSchema.shape,
+      (args) => handlers['memory.read'](args)
+    ),
+    tool(
+      'memory.delete',
+      'Delete one persistent Space memory by key when it is obsolete or wrong.',
+      MemoryDeleteSchema.shape,
+      (args) => handlers['memory.delete'](args)
+    ),
+  ];
+  const server = createSdkMcpServer({
     name: 'agent-memory',
-    tools: [
-      tool(
-        'memory.write',
-        'Save a fact, convention, decision, or project knowledge to persistent Space memory for future agent sessions.',
-        MemoryWriteSchema.shape,
-        (args) => handlers['memory.write'](args)
-      ),
-      tool(
-        'memory.search',
-        'Search persistent Space memory for relevant facts, conventions, decisions, or project knowledge from previous sessions.',
-        MemorySearchSchema.shape,
-        (args) => handlers['memory.search'](args)
-      ),
-      tool(
-        'memory.read',
-        'Read one persistent Space memory by key.',
-        MemoryReadSchema.shape,
-        (args) => handlers['memory.read'](args)
-      ),
-      tool(
-        'memory.delete',
-        'Delete one persistent Space memory by key when it is obsolete or wrong.',
-        MemoryDeleteSchema.shape,
-        (args) => handlers['memory.delete'](args)
-      ),
-    ],
+    tools,
   });
+  return { ...server, tools };
 }
