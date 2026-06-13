@@ -765,7 +765,8 @@ sdk_rows_raw AS (
   FROM target_group tg
   JOIN session_group_members gm ON gm.group_id = tg.id
   JOIN sdk_messages sm ON sm.session_id = gm.session_id
-  WHERE (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
+  WHERE COALESCE(sm.message_subtype, '') NOT IN ('thinking_tokens', 'session_state_changed', 'commands_changed')
+    AND (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
 ),
 sdk_rows_with_pos AS (
   SELECT

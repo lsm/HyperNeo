@@ -2006,10 +2006,15 @@ describe('NAMED_QUERY_REGISTRY', () => {
       );
     }
 
-    function insertSdkMessage(sessionId: string, id: string, timestampMs: number): void {
+    function insertSdkMessage(
+      sessionId: string,
+      id: string,
+      timestampMs: number,
+      subtype: string | null = null
+    ): void {
       db.exec(
         `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status)
-				 VALUES ('${id}', '${sessionId}', 'assistant', NULL,
+				 VALUES ('${id}', '${sessionId}', 'assistant', ${subtype ? `'${subtype}'` : 'NULL'},
 				 '${JSON.stringify({ type: 'assistant', uuid: id, message: { content: [] } })}',
 				 '${new Date(timestampMs).toISOString()}', 'consumed')`
       );
@@ -2063,6 +2068,19 @@ describe('NAMED_QUERY_REGISTRY', () => {
       expect(meta.iteration).toBeUndefined();
       expect(typeof meta.turnId).toBe('string');
       expect(parsed.uuid).toBe('worker-msg-1');
+    });
+
+    test('filters operational sdk rows before building the group timeline', () => {
+      insertTask();
+      insertGroup();
+      insertSdkMessage(workerSessionId, 'visible-worker-msg', 1000);
+      for (const subtype of ['thinking_tokens', 'session_state_changed', 'commands_changed']) {
+        insertSdkMessage(workerSessionId, `operational-${subtype}`, 2000, subtype);
+      }
+
+      const rows = executeSQLAndMap();
+
+      expect(rows.map((row) => row.id)).toEqual(['visible-worker-msg']);
     });
 
     test('event rows keep null sessionId and status text extraction', () => {
