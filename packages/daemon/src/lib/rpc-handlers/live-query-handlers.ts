@@ -582,7 +582,7 @@ sdk_rows AS (
            json_each(ref.sdk_message, '$.retracted_message_uuids') retracted
       WHERE ref.session_id = sm.session_id
         AND ref.message_subtype = 'model_refusal_fallback'
-        AND retracted.value = sm.id
+        AND retracted.value = COALESCE(json_extract(sm.sdk_message, '$.uuid'), sm.id)
     )
     AND (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
 ),
@@ -781,7 +781,7 @@ sdk_rows_raw AS (
            json_each(ref.sdk_message, '$.retracted_message_uuids') retracted
       WHERE ref.session_id = sm.session_id
         AND ref.message_subtype = 'model_refusal_fallback'
-        AND retracted.value = sm.id
+        AND retracted.value = COALESCE(json_extract(sm.sdk_message, '$.uuid'), sm.id)
     )
     AND (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
 ),
@@ -1165,7 +1165,7 @@ sdk_rows_raw AS (
            json_each(ref.sdk_message, '$.retracted_message_uuids') retracted
       WHERE ref.session_id = sm.session_id
         AND ref.message_subtype = 'model_refusal_fallback'
-        AND retracted.value = sm.id
+        AND retracted.value = COALESCE(json_extract(sm.sdk_message, '$.uuid'), sm.id)
     )
     AND (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
 ),

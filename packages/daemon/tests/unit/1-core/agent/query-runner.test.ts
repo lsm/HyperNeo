@@ -2443,6 +2443,32 @@ describe('QueryRunner environment variable handling', () => {
     expect(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('200000');
   });
 
+  it('should preserve Anthropic auth token from query env when provider cleanup clears process env', () => {
+    const env = refreshQueryEnvFromProcess(
+      {
+        ANTHROPIC_AUTH_TOKEN: 'real-anthropic-token',
+        KEEP_SESSION: 'session',
+      },
+      {},
+      { clearProviderManaged: true, preserveAnthropicAuthToken: true }
+    );
+
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe('real-anthropic-token');
+    expect(env.KEEP_SESSION).toBe('session');
+  });
+
+  it('should not preserve bridge auth token from query env when provider cleanup clears process env', () => {
+    const env = refreshQueryEnvFromProcess(
+      {
+        ANTHROPIC_AUTH_TOKEN: 'anthropic-copilot-proxy:/workspace',
+      },
+      {},
+      { clearProviderManaged: true, preserveAnthropicAuthToken: true }
+    );
+
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+  });
+
   it('should tombstone provider-managed env when omitted for ACP subprocesses', () => {
     const env = refreshQueryEnvFromProcess(
       {

@@ -114,6 +114,7 @@ export function refreshQueryEnvFromProcess(
     refreshAutoCompactWindow?: boolean;
     clearProviderManaged?: boolean;
     omitProviderManaged?: boolean;
+    preserveAnthropicAuthToken?: boolean;
   } = {}
 ): Record<string, string | undefined> {
   const refreshedEnv: Record<string, string | undefined> = Object.fromEntries(
@@ -135,6 +136,14 @@ export function refreshQueryEnvFromProcess(
     const value = processEnv[key];
     if (value === undefined) {
       if (options.clearProviderManaged) {
+        if (
+          key === 'ANTHROPIC_AUTH_TOKEN' &&
+          options.preserveAnthropicAuthToken &&
+          refreshedEnv.ANTHROPIC_AUTH_TOKEN &&
+          !refreshedEnv.ANTHROPIC_AUTH_TOKEN.startsWith('anthropic-copilot-proxy:')
+        ) {
+          continue;
+        }
         if (options.omitProviderManaged) {
           refreshedEnv[key] = undefined;
         } else {
@@ -576,6 +585,7 @@ export class QueryRunner {
       queryOptions.env = refreshQueryEnvFromProcess(queryOptions.env, process.env, {
         refreshAutoCompactWindow,
         clearProviderManaged: true,
+        preserveAnthropicAuthToken: resolvedProviderId === 'anthropic',
       }) as Record<string, string>;
 
       // Wrap spawnClaudeCodeProcess to track subprocess exit deterministically.

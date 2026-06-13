@@ -12,7 +12,7 @@
 
 import type { Session } from '@neokai/shared';
 import type { QueryLike } from './query-like';
-import type { SlashCommand } from '@neokai/shared/sdk';
+import { flattenSDKSlashCommands, type SlashCommand } from '@neokai/shared/sdk';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { Database } from '../../storage/database';
 import type { Logger } from '../logger';
@@ -136,7 +136,7 @@ export class SlashCommandManager {
 
     try {
       const commands = await queryObject.supportedCommands();
-      const commandNames = commands.map((cmd: SlashCommand) => cmd.name);
+      const commandNames = flattenSDKSlashCommands(commands as SlashCommand[]);
 
       // Add SDK built-in commands
       const sdkBuiltInCommands = ['clear', 'help'];

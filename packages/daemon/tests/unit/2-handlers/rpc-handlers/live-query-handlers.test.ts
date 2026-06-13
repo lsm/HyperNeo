@@ -802,7 +802,20 @@ describe('NAMED_QUERY_REGISTRY', () => {
       });
       insertSession(nodeSessionId, 'worker', '{"status":"processing"}');
       sessionTaskIds.set(nodeSessionId, taskId);
-      insertSdkMessageAt('sdk-retracted', nodeSessionId, now + 1000);
+      insertSdkMessageAt(
+        'row-retracted',
+        nodeSessionId,
+        now + 1000,
+        'assistant',
+        'consumed',
+        'system',
+        null,
+        {
+          type: 'assistant',
+          uuid: 'sdk-retracted',
+          message: { role: 'assistant', content: [{ type: 'text', text: 'retracted' }] },
+        }
+      );
       insertSdkMessageAt('sdk-visible-after-retry', nodeSessionId, now + 2000);
       insertSdkMessageAt(
         'sdk-fallback-notice',
@@ -1205,7 +1218,11 @@ describe('NAMED_QUERY_REGISTRY', () => {
       test('task feeds evict rows retracted by refusal fallback notices', () => {
         const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
         insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
-        insertSdkMessageAt('retracted', sessionId, now + 1000);
+        insertSdkMessageAt('row-retracted', sessionId, now + 1000, {
+          type: 'assistant',
+          uuid: 'retracted',
+          message: { role: 'assistant', content: [{ type: 'text', text: 'retracted' }] },
+        });
         insertSdkMessageAt('visible-after-retry', sessionId, now + 2000);
         insertSdkMessageAt(
           'fallback-notice',
@@ -2119,12 +2136,13 @@ describe('NAMED_QUERY_REGISTRY', () => {
       sessionId: string,
       id: string,
       timestampMs: number,
-      subtype: string | null = null
+      subtype: string | null = null,
+      sdkUuid = id
     ): void {
       db.exec(
         `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status)
 				 VALUES ('${id}', '${sessionId}', 'assistant', ${subtype ? `'${subtype}'` : 'NULL'},
-				 '${JSON.stringify({ type: 'assistant', uuid: id, message: { content: [] } })}',
+				 '${JSON.stringify({ type: 'assistant', uuid: sdkUuid, message: { content: [] } })}',
 				 '${new Date(timestampMs).toISOString()}', 'consumed')`
       );
     }
@@ -2195,7 +2213,13 @@ describe('NAMED_QUERY_REGISTRY', () => {
     test('evicts rows retracted by refusal fallback notices before building the group timeline', () => {
       insertTask();
       insertGroup();
-      insertSdkMessage(workerSessionId, 'retracted-worker-msg', 1000);
+      insertSdkMessage(
+        workerSessionId,
+        'row-retracted-worker-msg',
+        1000,
+        null,
+        'retracted-worker-msg'
+      );
       insertSdkMessage(workerSessionId, 'visible-worker-msg', 2000);
       db.exec(`INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status)
 				 VALUES ('fallback-notice', '${workerSessionId}', 'system', 'model_refusal_fallback',

@@ -147,8 +147,8 @@ describe('SlashCommandManager', () => {
 
       expect(supportedCommandsSpy).toHaveBeenCalled();
       expect(commands.length).toBeGreaterThan(0);
-      expect(commands).toContain('/help');
-      expect(commands).toContain('/context');
+      expect(commands).toContain('help');
+      expect(commands).toContain('context');
     });
 
     it('should fallback to built-in commands if SDK returns nothing', async () => {
@@ -185,13 +185,13 @@ describe('SlashCommandManager', () => {
 
       // Should update session in database
       expect(updateSessionSpy).toHaveBeenCalledWith('test-session-id', {
-        availableCommands: expect.arrayContaining(['/help', '/context']),
+        availableCommands: expect.arrayContaining(['help', 'context']),
       });
 
       // Should emit event
       expect(emitSpy).toHaveBeenCalledWith('commands.updated', {
         sessionId: 'test-session-id',
-        commands: expect.arrayContaining(['/help']),
+        commands: expect.arrayContaining(['help']),
       });
     });
 
@@ -246,10 +246,27 @@ describe('SlashCommandManager', () => {
       const commands = await manager.getSlashCommands();
 
       // Should have SDK command
-      expect(commands).toContain('/custom');
+      expect(commands).toContain('custom');
       // Should have SDK built-in commands
       expect(commands).toContain('clear');
       expect(commands).toContain('help');
+    });
+
+    it('should flatten aliases from the initial SDK command fetch', async () => {
+      supportedCommandsSpy.mockResolvedValue([
+        { name: '/status', aliases: ['/cost', 'stats'], description: 'Status command' },
+      ]);
+      manager = createManager();
+
+      await manager.fetchAndCache();
+
+      const commands = await manager.getSlashCommands();
+
+      expect(commands).toContain('status');
+      expect(commands).toContain('cost');
+      expect(commands).toContain('stats');
+      expect(commands).not.toContain('/status');
+      expect(commands).not.toContain('/cost');
     });
 
     it('should deduplicate commands', async () => {
