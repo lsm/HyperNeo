@@ -519,11 +519,20 @@ export class QueryRunner {
         'ANTHROPIC_DEFAULT_OPUS_MODEL',
         'API_TIMEOUT_MS',
         'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC',
+        'CLAUDE_CODE_OAUTH_TOKEN',
       ]);
       const refreshedEnv = { ...queryOptions.env };
+      for (const key of providerManagedEnvVars) {
+        const value = process.env[key];
+        if (value === undefined) {
+          delete refreshedEnv[key];
+        } else {
+          refreshedEnv[key] = value;
+        }
+      }
       for (const [key, value] of Object.entries(process.env)) {
         if (value === undefined || key === 'PORT' || key === 'NEOKAI_PORT') continue;
-        if (!(key in refreshedEnv) || providerManagedEnvVars.has(key)) {
+        if (!(key in refreshedEnv)) {
           refreshedEnv[key] = value;
         }
       }

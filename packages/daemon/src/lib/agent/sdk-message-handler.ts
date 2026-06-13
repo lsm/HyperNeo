@@ -27,8 +27,10 @@ import {
   isSDKAssistantMessage,
   isSDKCommandsChangedMessage,
   isSDKCompactBoundary,
+  isSDKModelRefusalFallbackMessage,
   isSDKResultMessage,
   isSDKResultSuccess,
+  isSDKSessionStateChangedMessage,
   isSDKStatusMessage,
   isSDKSystemInit,
   isSDKSystemMessage,
@@ -91,6 +93,7 @@ export class SDKMessageHandler {
   private contextFetcher: ContextFetcher;
   private circuitBreaker: ApiErrorCircuitBreaker;
   private acknowledgedPersistedUserThisTurn: boolean = false;
+  private usesSessionStateChangedTurnEnd: boolean = false;
 
   // Count of SDK stream events seen since the last context-usage refresh.
   // Resets whenever we call refreshContextUsage() (on 5-event tick, turn end,
@@ -588,6 +591,14 @@ export class SDKMessageHandler {
       await this.handleStatusMessage(message);
     }
 
+    if (isSDKModelRefusalFallbackMessage(message)) {
+      await this.handleModelRefusalFallbackMessage(message);
+    }
+
+    if (isSDKSessionStateChangedMessage(message)) {
+      await this.handleSessionStateChangedMessage(message);
+    }
+
     if (isSDKCompactBoundary(message)) {
       await this.handleCompactBoundary(message);
     }
@@ -753,8 +764,17 @@ export class SDKMessageHandler {
       sessionId: session.id,
     });
 
-    // Note: Terminal result handling resets processing state before this success-only branch runs.
-    // Title generation now handled by TitleGenerationQueue (decoupled via EventBus).
+    if (!this.usesSessionStateChangedTurnEnd) {
+      await this.finishTurn();
+    }
+  }
+
+  private async finishTurn(): Promise<void> {
+    const { session, internalEventBus, stateManager } = this.ctx;
+
+    // Set state back to idle
+    // Note: Title generation now handled by TitleGenerationQueue (decoupled via EventBus)
+    await stateManager.setIdle();
 
     // Auto-dispatch deferred messages in immediate mode (next-turn queue replay)
     if (session.config.queryMode !== 'manual') {
@@ -764,6 +784,32 @@ export class SDKMessageHandler {
         this.logger.warn('Failed to dispatch deferred messages on turn end:', error);
       }
     }
+  }
+
+  private async handleSessionStateChangedMessage(message: SDKMessage): Promise<void> {
+    if (!isSDKSessionStateChangedMessage(message)) return;
+
+    this.usesSessionStateChangedTurnEnd = true;
+    if (message.state === 'idle') {
+      await this.finishTurn();
+    }
+  }
+
+  private async handleModelRefusalFallbackMessage(message: SDKMessage): Promise<void> {
+    const { session, db, internalEventBus } = this.ctx;
+    if (!isSDKModelRefusalFallbackMessage(message) || message.direction !== 'retry') return;
+    if (!message.fallback_model || session.config.model === message.fallback_model) return;
+
+    session.config = {
+      ...session.config,
+      model: message.fallback_model,
+    };
+    db.updateSession(session.id, { config: session.config });
+    await internalEventBus.publish('session.updated', {
+      sessionId: session.id,
+      source: 'model-refusal-fallback',
+      session: { config: session.config },
+    });
   }
 
   private async handleUserMessage(message: SDKMessage): Promise<void> {
