@@ -824,8 +824,12 @@ export class ChannelRouter {
       return [];
     }
 
-    // Evict gate-open cache for terminal runs. Same rationale as deliverMessage.
-    if (run.status === 'done' || run.status === 'cancelled' || run.status === 'blocked') {
+    if (run.status === 'done' || run.status === 'cancelled') {
+      this.evictRunCache(runId);
+      return [];
+    }
+
+    if (run.status === 'blocked') {
       this.evictRunCache(runId);
     }
 
