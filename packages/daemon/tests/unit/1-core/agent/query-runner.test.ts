@@ -2446,27 +2446,46 @@ describe('QueryRunner environment variable handling', () => {
   it('should preserve Anthropic auth token from query env when provider cleanup clears process env', () => {
     const env = refreshQueryEnvFromProcess(
       {
-        ANTHROPIC_AUTH_TOKEN: 'real-anthropic-token',
+        ANTHROPIC_AUTH_TOKEN: 'sk-ant-oat-real-anthropic-token',
         KEEP_SESSION: 'session',
       },
       {},
       { clearProviderManaged: true, preserveAnthropicAuthToken: true }
     );
 
-    expect(env.ANTHROPIC_AUTH_TOKEN).toBe('real-anthropic-token');
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe('sk-ant-oat-real-anthropic-token');
     expect(env.KEEP_SESSION).toBe('session');
   });
 
   it('should not preserve bridge auth token from query env when provider cleanup clears process env', () => {
+    for (const token of [
+      'anthropic-copilot-proxy:/workspace',
+      'ollama-bridge',
+      'custom-endpoint:session-id',
+      'openrouter-api-key',
+    ]) {
+      const env = refreshQueryEnvFromProcess(
+        {
+          ANTHROPIC_AUTH_TOKEN: token,
+        },
+        {},
+        { clearProviderManaged: true, preserveAnthropicAuthToken: true }
+      );
+
+      expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+    }
+  });
+
+  it('should preserve Anthropic OAuth token from query env when provider cleanup clears process env', () => {
     const env = refreshQueryEnvFromProcess(
       {
-        ANTHROPIC_AUTH_TOKEN: 'anthropic-copilot-proxy:/workspace',
+        CLAUDE_CODE_OAUTH_TOKEN: 'session-oauth-token',
       },
       {},
-      { clearProviderManaged: true, preserveAnthropicAuthToken: true }
+      { clearProviderManaged: true, preserveAnthropicOAuthToken: true }
     );
 
-    expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+    expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe('session-oauth-token');
   });
 
   it('should tombstone provider-managed env when omitted for ACP subprocesses', () => {

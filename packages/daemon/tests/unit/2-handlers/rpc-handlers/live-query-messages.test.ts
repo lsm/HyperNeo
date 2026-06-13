@@ -267,6 +267,38 @@ describe('messages.bySession — SQL behavior', () => {
     expect(rows.map((r) => r.id)).toEqual(['older-real', 'fallback-notice']);
   });
 
+  test('filters superseded messages before applying the top-level window', () => {
+    insertSdkMessage(db, {
+      id: 'older-real',
+      sessionId: 's1',
+      messageType: 'assistant',
+      sdkMessage: { type: 'assistant', uuid: 'older-real-uuid', message: { content: [] } },
+      timestamp: '2024-01-01 00:00:01',
+    });
+    insertSdkMessage(db, {
+      id: 'row-superseded',
+      sessionId: 's1',
+      messageType: 'assistant',
+      sdkMessage: { type: 'assistant', uuid: 'sdk-superseded', message: { content: [] } },
+      timestamp: '2024-01-01 00:00:02',
+    });
+    insertSdkMessage(db, {
+      id: 'replacement',
+      sessionId: 's1',
+      messageType: 'assistant',
+      sdkMessage: {
+        type: 'assistant',
+        uuid: 'replacement-uuid',
+        supersedes: ['sdk-superseded'],
+        message: { content: [] },
+      },
+      timestamp: '2024-01-01 00:00:03',
+    });
+
+    const rows = query(db, 's1', 2);
+    expect(rows.map((r) => r.id)).toEqual(['older-real', 'replacement']);
+  });
+
   test('uses the session timestamp index for the top-level window', () => {
     const plan = queryPlan(db, 's1', 200);
     expect(plan).toContain('idx_sdk_messages_session_timestamp_id');

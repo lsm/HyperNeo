@@ -107,6 +107,10 @@ export const PROVIDER_MANAGED_ENV_VARS = new Set([
   'CLAUDE_CODE_OAUTH_TOKEN',
 ]);
 
+function isRealAnthropicAuthToken(token: string | undefined): boolean {
+  return typeof token === 'string' && token.startsWith('sk-ant-oat');
+}
+
 export function refreshQueryEnvFromProcess(
   queryEnv: Record<string, string | undefined> | undefined,
   processEnv: NodeJS.ProcessEnv = process.env,
@@ -115,6 +119,7 @@ export function refreshQueryEnvFromProcess(
     clearProviderManaged?: boolean;
     omitProviderManaged?: boolean;
     preserveAnthropicAuthToken?: boolean;
+    preserveAnthropicOAuthToken?: boolean;
   } = {}
 ): Record<string, string | undefined> {
   const refreshedEnv: Record<string, string | undefined> = Object.fromEntries(
@@ -139,8 +144,14 @@ export function refreshQueryEnvFromProcess(
         if (
           key === 'ANTHROPIC_AUTH_TOKEN' &&
           options.preserveAnthropicAuthToken &&
-          refreshedEnv.ANTHROPIC_AUTH_TOKEN &&
-          !refreshedEnv.ANTHROPIC_AUTH_TOKEN.startsWith('anthropic-copilot-proxy:')
+          isRealAnthropicAuthToken(refreshedEnv.ANTHROPIC_AUTH_TOKEN)
+        ) {
+          continue;
+        }
+        if (
+          key === 'CLAUDE_CODE_OAUTH_TOKEN' &&
+          options.preserveAnthropicOAuthToken &&
+          refreshedEnv.CLAUDE_CODE_OAUTH_TOKEN
         ) {
           continue;
         }
@@ -586,6 +597,7 @@ export class QueryRunner {
         refreshAutoCompactWindow,
         clearProviderManaged: true,
         preserveAnthropicAuthToken: resolvedProviderId === 'anthropic',
+        preserveAnthropicOAuthToken: resolvedProviderId === 'anthropic',
       }) as Record<string, string>;
 
       // Wrap spawnClaudeCodeProcess to track subprocess exit deterministically.

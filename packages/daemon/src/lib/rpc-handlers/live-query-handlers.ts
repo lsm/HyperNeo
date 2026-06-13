@@ -584,6 +584,13 @@ sdk_rows AS (
         AND ref.message_subtype = 'model_refusal_fallback'
         AND retracted.value = COALESCE(json_extract(sm.sdk_message, '$.uuid'), sm.id)
     )
+    AND NOT EXISTS (
+      SELECT 1
+      FROM sdk_messages ref,
+           json_each(ref.sdk_message, '$.supersedes') superseded
+      WHERE ref.session_id = sm.session_id
+        AND superseded.value = COALESCE(json_extract(sm.sdk_message, '$.uuid'), sm.id)
+    )
     AND (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
 ),
 pending_rows AS (
@@ -782,6 +789,13 @@ sdk_rows_raw AS (
       WHERE ref.session_id = sm.session_id
         AND ref.message_subtype = 'model_refusal_fallback'
         AND retracted.value = COALESCE(json_extract(sm.sdk_message, '$.uuid'), sm.id)
+    )
+    AND NOT EXISTS (
+      SELECT 1
+      FROM sdk_messages ref,
+           json_each(ref.sdk_message, '$.supersedes') superseded
+      WHERE ref.session_id = sm.session_id
+        AND superseded.value = COALESCE(json_extract(sm.sdk_message, '$.uuid'), sm.id)
     )
     AND (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
 ),
@@ -1166,6 +1180,13 @@ sdk_rows_raw AS (
       WHERE ref.session_id = sm.session_id
         AND ref.message_subtype = 'model_refusal_fallback'
         AND retracted.value = COALESCE(json_extract(sm.sdk_message, '$.uuid'), sm.id)
+    )
+    AND NOT EXISTS (
+      SELECT 1
+      FROM sdk_messages ref,
+           json_each(ref.sdk_message, '$.supersedes') superseded
+      WHERE ref.session_id = sm.session_id
+        AND superseded.value = COALESCE(json_extract(sm.sdk_message, '$.uuid'), sm.id)
     )
     AND (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
 ),
@@ -2111,6 +2132,13 @@ WITH top_level AS (
         AND ref.message_subtype = 'model_refusal_fallback'
         AND retracted.value = COALESCE(json_extract(sdk_messages.sdk_message, '$.uuid'), sdk_messages.id)
     )
+    AND NOT EXISTS (
+      SELECT 1
+      FROM sdk_messages ref,
+           json_each(ref.sdk_message, '$.supersedes') superseded
+      WHERE ref.session_id = sdk_messages.session_id
+        AND superseded.value = COALESCE(json_extract(sdk_messages.sdk_message, '$.uuid'), sdk_messages.id)
+    )
     AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))
   ORDER BY timestamp DESC, id DESC
   LIMIT ?2
@@ -2141,6 +2169,13 @@ subagent AS (
       WHERE ref.session_id = sm.session_id
         AND ref.message_subtype = 'model_refusal_fallback'
         AND retracted.value = COALESCE(json_extract(sm.sdk_message, '$.uuid'), sm.id)
+    )
+    AND NOT EXISTS (
+      SELECT 1
+      FROM sdk_messages ref,
+           json_each(ref.sdk_message, '$.supersedes') superseded
+      WHERE ref.session_id = sm.session_id
+        AND superseded.value = COALESCE(json_extract(sm.sdk_message, '$.uuid'), sm.id)
     )
     AND (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
 )

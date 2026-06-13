@@ -325,6 +325,27 @@ describe('SDKMessageRepository', () => {
       ]);
     });
 
+    it('should exclude superseded rows before applying limit', () => {
+      repository.saveSDKMessage('session-1', createUserMessage('Visible older', 'visible-older'));
+      repository.saveSDKMessage(
+        'session-1',
+        createUserMessage('Superseded newer', 'superseded-newer')
+      );
+      repository.saveSDKMessage('session-1', {
+        type: 'assistant',
+        uuid: 'replacement-message',
+        supersedes: ['superseded-newer'],
+        message: { role: 'assistant', content: [{ type: 'text', text: 'replacement' }] },
+      } as unknown as SDKMessage);
+
+      const { messages } = repository.getSDKMessages('session-1', 2);
+
+      expect(messages.map((message) => (message as { uuid?: string }).uuid)).toEqual([
+        'replacement-message',
+        'visible-older',
+      ]);
+    });
+
     it('should return messages before a timestamp (cursor pagination)', async () => {
       repository.saveSDKMessage('session-1', createUserMessage('First'));
       await new Promise((r) => setTimeout(r, 10));
