@@ -105,6 +105,14 @@ export interface WorkflowHookEngineConfig {
 }
 
 // ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+// ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
@@ -555,6 +563,11 @@ export class WorkflowHookEngine {
         case 'record_state':
           if (result.state && typeof result.state === 'object') {
             stateUpdates.push({ hookId: hook.id, state: result.state as Record<string, unknown> });
+          }
+          if (isRecord(result.stateForHook)) {
+            for (const [hookId, state] of Object.entries(result.stateForHook)) {
+              if (isRecord(state)) stateUpdates.push({ hookId, state });
+            }
           }
           break;
       }

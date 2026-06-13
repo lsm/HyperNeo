@@ -1302,7 +1302,14 @@ export function getBuiltInWorkflows(): SpaceWorkflow[] {
   if (errors.length > 0) {
     throw new Error(`Built-in workflow gate writer validation failed:\n${errors.join('\n')}`);
   }
-  return workflows.map((workflow) => migrateWorkflowGateProgressionToHooks(workflow).workflow);
+  return workflows.map(
+    (workflow) =>
+      migrateWorkflowGateProgressionToHooks({
+        ...workflow,
+        templateName: workflow.name,
+        templateGates: workflow.gates ?? [],
+      }).workflow
+  );
 }
 
 export interface SeedBuiltInWorkflowsResult {
@@ -1586,6 +1593,16 @@ const RETIRED_HARDCODED_FULLSTACK_CODING_READY_PROMPT =
 const CURRENT_FULLSTACK_CODING_STEP_PROMPT =
   '4. Hand off by calling `send_message` to the review target with ' +
   '`data: { pr_url: "<url>" }`; `save_artifact` alone will not deliver the handoff\n';
+const CURRENT_FULLSTACK_REVIEW_HANDOFF_PROMPT =
+  'terminal hand-off is sending `data: { approved: true, pr_url: "<url>" }` to QA after an ' +
+  'APPROVE verdict with zero P0-P3 findings. Send the handoff to start the 10-minute ' +
+  'Codex timeout, then wait for codex[bot] `+1` or timeout before proceeding. ';
+const RETIRED_FULLSTACK_REVIEW_HANDOFF_PROMPT =
+  'terminal handoff is to write `review-approval-gate` with approved=true after an APPROVE ' +
+  'verdict with zero P0-P3 findings. Wait for codex[bot] `+1` or timeout before proceeding. ';
+const RETIRED_HARDCODED_FULLSTACK_REVIEW_HANDOFF_PROMPT =
+  'terminal handoff is `send_message(target="QA", message="<approved>", data: { approved: true })` ' +
+  'after an APPROVE verdict with zero P0-P3 findings. Wait for codex[bot] `+1` or timeout before proceeding. ';
 const RETIRED_FULLSTACK_CODING_STEP_PROMPT =
   '4. Write code-pr-gate with field pr_url so Review can activate\n';
 const RETIRED_HARDCODED_FULLSTACK_CODING_STEP_PROMPT =
@@ -1610,6 +1627,8 @@ const BUILT_IN_PROMPT_PATCH_VARIANTS = [
     [CURRENT_FULLSTACK_CODING_READY_PROMPT, RETIRED_HARDCODED_FULLSTACK_CODING_READY_PROMPT],
     [CURRENT_FULLSTACK_CODING_STEP_PROMPT, RETIRED_HARDCODED_FULLSTACK_CODING_STEP_PROMPT],
   ],
+  [[CURRENT_FULLSTACK_REVIEW_HANDOFF_PROMPT, RETIRED_FULLSTACK_REVIEW_HANDOFF_PROMPT]],
+  [[CURRENT_FULLSTACK_REVIEW_HANDOFF_PROMPT, RETIRED_HARDCODED_FULLSTACK_REVIEW_HANDOFF_PROMPT]],
 ] as const;
 
 function patchKnownBuiltInPromptDrift<T extends WorkflowNodeAgentOverride | undefined>(
@@ -1813,19 +1832,11 @@ function mergeHooksFromTemplate(
 ): SpaceWorkflow['hooks'] {
   const remappedTemplateHooks =
     templateHooks?.map((hook) => remapTemplateHook(hook, templateNodes, existingNodes)) ?? [];
-  const remappedTemplateNodeNames = new Set(
-    templateNodes.map((node) => remapTemplateChannelRef(node.name, templateNodes, existingNodes))
-  );
   if (!existingHooks || existingHooks.length === 0) return remappedTemplateHooks;
 
   const templateHookIds = new Set(remappedTemplateHooks.map((hook) => hook.id));
   return [
-    ...existingHooks.filter(
-      (hook) =>
-        !templateHookIds.has(hook.id) &&
-        remappedTemplateNodeNames.has(hook.sourceNode) &&
-        (!hook.targetNode || remappedTemplateNodeNames.has(hook.targetNode))
-    ),
+    ...existingHooks.filter((hook) => !templateHookIds.has(hook.id)),
     ...remappedTemplateHooks,
   ];
 }

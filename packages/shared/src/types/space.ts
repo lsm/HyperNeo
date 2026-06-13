@@ -1607,7 +1607,8 @@ export interface WorkflowHookEmitFollowUpResult extends WorkflowHookBaseResult {
 
 export interface WorkflowHookRecordStateResult extends WorkflowHookBaseResult {
   type: 'record_state';
-  state: Record<string, unknown>;
+  state?: Record<string, unknown>;
+  stateForHook?: Record<string, Record<string, unknown>>;
 }
 
 export type WorkflowHookResult =

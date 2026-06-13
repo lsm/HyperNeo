@@ -57,14 +57,14 @@ const APPROVALS_SCRIPT = [
   'REPO=$(jq -r \'.name\' <<< "$REPO_JSON")',
   'COMMENTS=$(gh api "repos/${OWNER}/${REPO}/issues/${PR_NUMBER}/comments" 2>/dev/null || echo [])',
   'REACTIONS=$(gh api "repos/${OWNER}/${REPO}/issues/${PR_NUMBER}/reactions" 2>/dev/null || echo [])',
-  'COMMENT_OK=$(jq --arg since "$START_ISO" --arg head "$HEAD_OID" \'[.[] | select(.user.login == "codex[bot]" and (.created_at // "") > $since and ((.body // "") | contains($head)))] | length\' <<< "$COMMENTS")',
-  'REACTION_OK=$(jq --arg since "$START_ISO" \'[.[] | select(.user.login == "codex[bot]" and .content == "+1" and (.created_at // "") > $since)] | length\' <<< "$REACTIONS")',
-  'if [ "$COMMENT_OK" = "0" ] && [ "$REACTION_OK" = "0" ]; then START_EPOCH=$(date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "${START_ISO%%.*}Z" +%s 2>/dev/null || date -u -d "$START_ISO" +%s 2>/dev/null || echo 0); NOW_EPOCH=$(date -u +%s); if [ $((NOW_EPOCH - START_EPOCH)) -lt 600 ]; then echo "Plan approval requires fresh codex[bot] approval for this workflow run" >&2; exit 1; fi; fi',
+  'COMMENT_OK=$(jq --arg since "$START_ISO" --arg head "$HEAD_OID" \'[.[] | select((.user.login == "codex[bot]" or .user.login == "chatgpt-codex-connector[bot]") and (.created_at // "") > $since and ((.body // "") | contains($head)))] | length\' <<< "$COMMENTS")',
+  'REACTION_OK=$(jq --arg since "$START_ISO" \'[.[] | select((.user.login == "codex[bot]" or .user.login == "chatgpt-codex-connector[bot]") and .content == "+1" and (.created_at // "") > $since)] | length\' <<< "$REACTIONS")',
+  'if [ "$COMMENT_OK" = "0" ] && [ "$REACTION_OK" = "0" ]; then START_EPOCH=$(date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "${START_ISO%%.*}Z" +%s 2>/dev/null || date -u -d "$START_ISO" +%s 2>/dev/null || echo 0); NOW_EPOCH=$(date -u +%s); if [ $((NOW_EPOCH - START_EPOCH)) -lt 600 ]; then echo "Plan approval requires fresh Codex bot approval for this workflow run" >&2; exit 1; fi; fi',
   'jq -n --argjson approvals "$MERGED" \'{"type":"allow","data":{"approvals":$approvals,"codex_approved":true}}\'',
 ].join('\n');
 
 const PLAN_APPROVAL_RESET_SCRIPT = [
-  'jq -n \'{"type":"record_state","state":{"approvals":null,"approval_count":0}}\'',
+  'jq -n \'{"type":"record_state","stateForHook":{"plan-approval":{"approvals":null,"approval_count":0}}}\'',
 ].join('\n');
 
 const ALLOW_SCRIPT = ['jq -n \'{"type":"allow"}\''].join('\n');
@@ -84,15 +84,16 @@ const REVIEW_APPROVAL_SCRIPT = [
   'REPO=$(jq -r \'.name\' <<< "$REPO_JSON")',
   'COMMENTS=$(gh api "repos/${OWNER}/${REPO}/issues/${PR_NUMBER}/comments" 2>/dev/null || echo [])',
   'REACTIONS=$(gh api "repos/${OWNER}/${REPO}/issues/${PR_NUMBER}/reactions" 2>/dev/null || echo [])',
-  'COMMENT_OK=$(jq --arg since "$START_ISO" --arg head "$HEAD_OID" \'[.[] | select(.user.login == "codex[bot]" and (.created_at // "") > $since and ((.body // "") | contains($head)))] | length\' <<< "$COMMENTS")',
-  'REACTION_OK=$(jq --arg since "$START_ISO" \'[.[] | select(.user.login == "codex[bot]" and .content == "+1" and (.created_at // "") > $since)] | length\' <<< "$REACTIONS")',
-  'if [ "$COMMENT_OK" = "0" ] && [ "$REACTION_OK" = "0" ]; then START_EPOCH=$(date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "${START_ISO%%.*}Z" +%s 2>/dev/null || date -u -d "$START_ISO" +%s 2>/dev/null || echo 0); NOW_EPOCH=$(date -u +%s); if [ $((NOW_EPOCH - START_EPOCH)) -lt 600 ]; then echo "Review approval requires fresh codex[bot] approval for this workflow run" >&2; exit 1; fi; fi',
+  'COMMENT_OK=$(jq --arg since "$START_ISO" --arg head "$HEAD_OID" \'[.[] | select((.user.login == "codex[bot]" or .user.login == "chatgpt-codex-connector[bot]") and (.created_at // "") > $since and ((.body // "") | contains($head)))] | length\' <<< "$COMMENTS")',
+  'REACTION_OK=$(jq --arg since "$START_ISO" \'[.[] | select((.user.login == "codex[bot]" or .user.login == "chatgpt-codex-connector[bot]") and .content == "+1" and (.created_at // "") > $since)] | length\' <<< "$REACTIONS")',
+  'if [ "$COMMENT_OK" = "0" ] && [ "$REACTION_OK" = "0" ]; then START_EPOCH=$(date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "${START_ISO%%.*}Z" +%s 2>/dev/null || date -u -d "$START_ISO" +%s 2>/dev/null || echo 0); NOW_EPOCH=$(date -u +%s); if [ $((NOW_EPOCH - START_EPOCH)) -lt 600 ]; then echo "Review approval requires fresh Codex bot approval for this workflow run" >&2; exit 1; fi; fi',
   'jq -n --arg url "$PR_URL" \'{"type":"allow","data":{"approved":true,"pr_url":$url,"codex_approved":true}}\'',
 ].join('\n');
 
 type Pattern = {
   gateId: string;
   hookId: string;
+  routeSpecific?: boolean;
   label: string;
   method: WorkflowHook['method'];
   script: string;
@@ -122,6 +123,7 @@ const KNOWN_GATE_PATTERNS: Record<string, Pattern> = {
   'review-posted-gate': {
     gateId: 'review-posted-gate',
     hookId: 'review-posted',
+    routeSpecific: true,
     label: 'Review Posted',
     method: 'send_message',
     script: REVIEW_POSTED_SCRIPT,
@@ -129,6 +131,7 @@ const KNOWN_GATE_PATTERNS: Record<string, Pattern> = {
   'plan-approval-gate': {
     gateId: 'plan-approval-gate',
     hookId: 'plan-approval',
+    routeSpecific: true,
     label: 'Plan Approval',
     method: 'send_message',
     script: APPROVALS_SCRIPT,
@@ -145,6 +148,7 @@ const KNOWN_GATE_PATTERNS: Record<string, Pattern> = {
   'review-approval-gate': {
     gateId: 'review-approval-gate',
     hookId: 'review-approval',
+    routeSpecific: true,
     label: 'Review Approval',
     method: 'send_message',
     script: REVIEW_APPROVAL_SCRIPT,
@@ -223,17 +227,26 @@ function isBuiltInGateShape(gate: Gate | undefined, workflow: SpaceWorkflowLike)
   }
 }
 
+function routeHookId(pattern: Pattern, sourceNode: string, targetNode: string): string {
+  if (!pattern.routeSpecific) return pattern.hookId;
+  return `${pattern.hookId}:${sourceNode.replaceAll(' ', '-').toLowerCase()}:${targetNode
+    .replaceAll(' ', '-')
+    .toLowerCase()}`;
+}
+
 function makeHook(
   pattern: Pattern,
   channel: WorkflowChannel,
   nodes: WorkflowNode[] | undefined
 ): WorkflowHook {
+  const sourceNode = resolveChannelNodeName(channel.from, nodes)!;
+  const targetNode = resolveChannelNodeName(channel.to as string, nodes)!;
   return {
-    id: pattern.hookId,
+    id: routeHookId(pattern, sourceNode, targetNode),
     enabled: true,
     label: pattern.label,
-    sourceNode: resolveChannelNodeName(channel.from, nodes)!,
-    targetNode: resolveChannelNodeName(channel.to as string, nodes)!,
+    sourceNode,
+    targetNode,
     method: pattern.method,
     classification: 'validation',
     order: 0,
@@ -249,7 +262,7 @@ function makeHook(
           ? ['github']
           : undefined,
     },
-    authorizedCallers: [{ sourceNode: resolveChannelNodeName(channel.from, nodes)! }],
+    authorizedCallers: [{ sourceNode }],
   };
 }
 
@@ -284,10 +297,8 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
         resolveChannelNodeName(channel.to, workflow.nodes) === planFeedbackResetPattern.to
     );
     if (planFeedbackChannel && !hooksById.has(planFeedbackResetPattern.hookId)) {
-      hooksById.set(
-        planFeedbackResetPattern.hookId,
-        makeHook(planFeedbackResetPattern, planFeedbackChannel, workflow.nodes)
-      );
+      const hook = makeHook(planFeedbackResetPattern, planFeedbackChannel, workflow.nodes);
+      hooksById.set(hook.id, hook);
     }
   }
 
@@ -319,13 +330,14 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
       return channel;
     }
 
-    if (existingHookIds.has(pattern.hookId) && !workflow.templateName) return channel;
-    hooksById.set(pattern.hookId, makeHook(pattern, channel, workflow.nodes));
+    const hook = makeHook(pattern, channel, workflow.nodes);
+    if (existingHookIds.has(hook.id) && !workflow.templateName) return channel;
+    hooksById.set(hook.id, hook);
     migratedGateIds.add(channel.gateId);
     warnings.push({
       code: 'known_gate_migrated_to_hook',
       gateId: channel.gateId,
-      hookId: pattern.hookId,
+      hookId: hook.id,
       channel: { from: channel.from, to: channel.to },
       docsUrl: MIGRATION_DOCS_URL,
     });

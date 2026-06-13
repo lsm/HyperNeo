@@ -133,7 +133,12 @@ export function validateWorkflowHookResult(result: unknown): string[] {
       }
       break;
     case 'record_state':
-      if (!isRecord(result.state)) errors.push('result.state: expected object');
+      if (!isRecord(result.state) && !isRecord(result.stateForHook)) {
+        errors.push('result.state or result.stateForHook: expected object');
+      }
+      if (result.stateForHook !== undefined && !isRecord(result.stateForHook)) {
+        errors.push('result.stateForHook: expected object');
+      }
       break;
   }
   if (result.data !== undefined && !isRecord(result.data))
