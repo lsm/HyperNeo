@@ -817,8 +817,8 @@ export class ChannelRouter {
     const run = this.config.workflowRunRepo.getRun(runId);
     if (!run) return [];
 
-    // Archive is the only tombstone. Done / cancelled runs are reopened
-    // below when the gate re-evaluation opens a channel requiring activation.
+    // Archived tasks and terminal runs are tombstones for passive gate refresh.
+    // Only explicit activation paths opt into terminal reopen.
     if (this.isParentTaskArchived(runId)) {
       this.evictRunCache(runId);
       return [];

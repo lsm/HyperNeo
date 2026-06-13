@@ -22,6 +22,7 @@ import { SpaceAgentRepository } from '../../../../src/storage/repositories/space
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
 import { GateDataRepository } from '../../../../src/storage/repositories/gate-data-repository.ts';
 import { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository.ts';
+import { ToolContinuationRecoveryRepository } from '../../../../src/storage/repositories/tool-continuation-recovery-repository.ts';
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
@@ -632,6 +633,64 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
 
       expect(freshRuntime.executorCount).toBe(0);
       expect(freshRuntime.getExecutor(run.id)).toBeUndefined();
+    });
+
+    test('daemon restart with stale hook state does not reactivate done run', async () => {
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Step A', agentId: AGENT },
+      ]);
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Done Run With Stale Hook State',
+      });
+      const inProgress = workflowRunRepo.transitionStatus(run.id, 'in_progress');
+      taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Done Run With Stale Hook State',
+        description: '',
+        workflowRunId: inProgress.id,
+        status: 'done',
+      });
+      const execution = new NodeExecutionRepository(db).create({
+        workflowRunId: inProgress.id,
+        workflowNodeId: STEP_A,
+        agentName: 'agent',
+        agentId: AGENT,
+        agentSessionId: 'stale-session',
+        status: 'done',
+      });
+      workflowRunRepo.transitionStatus(inProgress.id, 'done');
+      const recoveryRepo = new ToolContinuationRecoveryRepository(db);
+      recoveryRepo.ensureSchema();
+      recoveryRepo.recordToolUse({
+        toolUseId: 'stale-tool-use',
+        sessionId: 'stale-session',
+        ttlMs: 60_000,
+        owner: { executionId: execution.id, workflowRunId: inProgress.id },
+      });
+      recoveryRepo.queueContinuation({
+        toolUseId: 'stale-tool-use',
+        sessionId: 'stale-session',
+        requestBody: { messages: [{ role: 'user', content: [] }] },
+        reason: 'late continuation after completion',
+        ttlMs: 60_000,
+      });
+
+      const freshRuntime = makeRuntime({
+        taskAgentManager: {
+          rehydrate: async () => {},
+          isSessionAlive: () => false,
+          getAgentSessionById: () => null,
+          isExecutionSpawning: () => false,
+        } as never,
+      });
+      await freshRuntime.executeTick();
+
+      expect(freshRuntime.executorCount).toBe(0);
+      expect(freshRuntime.getExecutor(inProgress.id)).toBeUndefined();
+      expect(workflowRunRepo.getRun(inProgress.id)?.status).toBe('done');
+      expect(new NodeExecutionRepository(db).getById(execution.id)?.status).toBe('done');
     });
 
     test('cancelled runs are not rehydrated', async () => {

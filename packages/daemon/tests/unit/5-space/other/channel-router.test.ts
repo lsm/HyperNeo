@@ -1471,6 +1471,43 @@ describe('ChannelRouter', () => {
       expect(new NodeExecutionRepository(db).listByNode(run.id, NODE_B)).toHaveLength(0);
     });
 
+    test('gate data refresh does not reactivate a cancelled run', async () => {
+      const gate: Gate = {
+        id: 'cancelled-gate',
+        fields: [
+          { name: 'approved', type: 'boolean', writers: ['*'], check: { op: '==', value: true } },
+        ],
+        resetOnCycle: false,
+      };
+      const workflow = buildWorkflowWithGates(
+        SPACE_ID,
+        workflowManager,
+        [
+          {
+            id: NODE_A,
+            name: 'Planner Node',
+            agents: [{ agentId: AGENT_PLANNER, name: 'planner' }],
+          },
+          { id: NODE_B, name: 'Coder Node', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+        ],
+        [{ id: 'cancelled-channel', from: 'Planner Node', to: 'coder', gateId: 'cancelled-gate' }],
+        [gate]
+      );
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Cancelled Gate Refresh Run',
+      });
+      workflowRunRepo.updateStatusUnchecked(run.id, 'cancelled');
+      gateDataRepo.set(run.id, 'cancelled-gate', { approved: true });
+
+      const activated = await router.onGateDataChanged(run.id, 'cancelled-gate');
+
+      expect(activated).toHaveLength(0);
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('cancelled');
+      expect(new NodeExecutionRepository(db).listByNode(run.id, NODE_B)).toHaveLength(0);
+    });
+
     test('gate data refresh does not reactivate an archived task', async () => {
       const gate: Gate = {
         id: 'archived-gate',

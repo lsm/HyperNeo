@@ -221,6 +221,7 @@ describe('ChannelRouter — reopen on inbound activity (archive tombstone)', () 
       workflowRunRepo.updateStatusUnchecked(run.id, 'done');
 
       const tasks = await router.activateNode(run.id, NODE_B, {
+        allowTerminalReopen: true,
         reopenReason: 'user followup',
         reopenBy: 'user',
       });
@@ -249,6 +250,7 @@ describe('ChannelRouter — reopen on inbound activity (archive tombstone)', () 
       workflowRunRepo.transitionStatus(run.id, 'cancelled');
 
       await router.activateNode(run.id, NODE_A, {
+        allowTerminalReopen: true,
         reopenReason: 'peer ping',
         reopenBy: 'agent:buddy',
       });
@@ -338,7 +340,7 @@ describe('ChannelRouter — reopen on inbound activity (archive tombstone)', () 
   // -------------------------------------------------------------------------
 
   describe('onGateDataChanged', () => {
-    test('re-activates target nodes on a done run when parent task is not archived', async () => {
+    test('does not reopen a done run on gate-data refresh', async () => {
       const gate: Gate = {
         id: 'ok-gate',
         fields: [{ name: 'done', type: 'string', writers: ['*'], check: { op: 'exists' } }],
@@ -365,13 +367,10 @@ describe('ChannelRouter — reopen on inbound activity (archive tombstone)', () 
 
       gateDataRepo.set(run.id, 'ok-gate', { done: true });
       const activated = await router.onGateDataChanged(run.id, 'ok-gate');
-      expect(activated.length).toBeGreaterThan(0);
+      expect(activated).toHaveLength(0);
 
-      expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
-      const reopens = collector.reopens();
-      expect(reopens).toHaveLength(1);
-      expect(reopens[0].by).toBe('gate:ok-gate');
-      expect(reopens[0].fromStatus).toBe('done');
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
+      expect(collector.reopens()).toHaveLength(0);
     });
 
     test('returns [] and emits no reopen when parent task is archived', async () => {
@@ -450,7 +449,7 @@ describe('ChannelRouter — reopen on inbound activity (archive tombstone)', () 
       workflowRunRepo.updateStatusUnchecked(run.id, 'done');
 
       // Should not throw despite the bus subscriber failing.
-      await localRouter.activateNode(run.id, NODE_A);
+      await localRouter.activateNode(run.id, NODE_A, { allowTerminalReopen: true });
       expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
     });
   });

@@ -78,7 +78,6 @@ import {
   MAX_TASK_AGENT_CRASH_RETRIES,
 } from './constants';
 import { evaluateGate } from './gate-evaluator';
-import { extractPrContext, type PollScriptContext } from './gate-poll-manager';
 import { executeGateScript } from './gate-script-executor';
 import { classifyLastMessageForIdleAgent } from './last-message-classifier';
 import type { SelectWorkflowWithLlm } from './llm-workflow-selector';
@@ -6015,35 +6014,6 @@ export class SpaceRuntime {
    * 2. Scan node_executions for those nodes.
    * 3. Return the first non-empty execution result.
    */
-
-  /**
-   * Build the poll script context for a workflow run.
-   *
-   * Resolves task metadata and PR URL from artifacts for injection as
-   * environment variables into poll scripts.
-   *
-   * @returns PollScriptContext, or null when the task is missing
-   */
-  private buildPollScriptContext(
-    task: SpaceTask,
-    run: SpaceWorkflowRun,
-    spaceId: string
-  ): PollScriptContext | null {
-    const prUrl = this.resolvePrUrlForRun(run.id);
-    const prCtx = extractPrContext(prUrl);
-
-    return {
-      TASK_ID: task.id,
-      TASK_TITLE: task.title,
-      SPACE_ID: spaceId,
-      PR_URL: prUrl,
-      PR_NUMBER: prCtx.PR_NUMBER,
-      REPO_OWNER: prCtx.REPO_OWNER,
-      REPO_NAME: prCtx.REPO_NAME,
-      WORKFLOW_RUN_ID: run.id,
-      WORKFLOW_START_ISO: new Date(run.createdAt).toISOString(),
-    };
-  }
 
   private resolvePrUrlForRun(runId: string): string {
     const fromData = (data: Record<string, unknown> | undefined): string =>
