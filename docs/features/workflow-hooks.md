@@ -51,11 +51,11 @@ Invalid JSON, unknown result type, schema-invalid patches, or script timeout bec
 
 Script hooks run with bounded stdout/stderr. Large params, artifacts, arrays, and objects are capped before injection into hook context so scripts cannot receive unbounded payloads. Scripts must emit compact JSON on stdout; diagnostic text belongs in `message` or stderr.
 
-Credential-bearing path environment variables are stripped before script execution. Do not depend on inherited config paths such as credential files. Use daemon-provided hook context and approved external lookups instead.
+Known credential path environment variables are stripped before script execution and hooks receive an isolated temporary `HOME`. This is not a full network or filesystem sandbox: unlisted environment variables and tools may still find credentials from the host environment. Operators should only install trusted hook scripts and should not rely on hook isolation as a secret-boundary control.
 
 ## External lookup policy
 
-Script validators must declare external lookup needs with `validator.externalLookups`. Current allowlist supports `github`. GitHub lookups must only call approved GitHub hosts used by repository remotes and standard GitHub API endpoints. Custom hosts require explicit allowlist support before workflow rollout.
+Script validators must declare external lookup needs with `validator.externalLookups`. Current declared lookup value is `github`. Runtime exposes the declaration to scripts through hook context/environment but does not sandbox network access or enforce `gh --hostname`/`curl` targets for custom scripts. Built-in migration scripts self-check GitHub hosts; custom scripts must implement their own host checks and should be treated as trusted operator code.
 
 ## Human approval flow
 
@@ -85,12 +85,12 @@ Legacy custom gates and poll-based progression are migrating to hooks:
 
 - PR-ready gates become `send_message` validation hooks with `pr_ready` built-in validator.
 - Approval poll scripts become validation hooks that return `record_state`, `allow`, or `block`.
-- Feedback-cycle reset behavior becomes non-blocking pre-action side-effect hooks.
+- Feedback-cycle reset behavior becomes validation hooks that reset hook-local state before feedback handoff; script errors block delivery until fixed.
 - Existing gate field approvals remain supported for human UI approval flows.
 
 Deprecation path:
 
-1. Current release: built-in workflows use hooks for PR readiness, review feedback evidence, Codex retry checks, and approval reset side effects. Legacy gates still load.
+1. Current release: built-in workflows use hooks for PR readiness, review feedback evidence, Codex retry checks, and approval reset state updates. Legacy gates still load.
 2. Next release: custom workflow save strips unsupported hook `poll` fields and warns on legacy poll configuration.
 3. Later release: legacy custom-gate polls stop running by default; operators must migrate to hooks or explicit human approval gates.
 
