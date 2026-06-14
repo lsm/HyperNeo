@@ -146,6 +146,19 @@ export class GlobalStore {
       this.cleanupFunctions.push(unsubSettings);
 
       this.initialized = true;
+
+      // Fetch initial system + settings snapshot so derived signals
+      // (authStatus, credentialStoreStatus, etc.) populate immediately
+      // instead of waiting for the first post-connect broadcast. Subsequent
+      // updates arrive via the GLOBAL_SYSTEM / GLOBAL_SETTINGS subscriptions.
+      const snapshot = await hub.request<{
+        system: SystemState;
+        settings: SettingsState;
+      }>(STATE_CHANNELS.GLOBAL_SNAPSHOT, {});
+      if (snapshot) {
+        this.systemState.value = snapshot.system || null;
+        this.settings.value = snapshot.settings?.settings || null;
+      }
     } catch {
       // Initialization failed - state will be empty
     }

@@ -351,9 +351,7 @@ export function ProvidersSettings() {
               <p class="text-sm text-yellow-400 font-medium">macOS Keychain unavailable</p>
               <p class="text-xs text-yellow-400/80 mt-1">
                 {credentialStore.warning ??
-                  'Credentials are being stored in the local encrypted database fallback.'}{' '}
-                Run <code class="font-mono bg-black/30 px-1 rounded">security unlock-keychain</code>{' '}
-                to restore Keychain access.
+                  'Credentials are being stored in the local encrypted database fallback.'}
               </p>
             </div>
           )}
