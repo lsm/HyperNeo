@@ -381,6 +381,82 @@ describe('ContextFetcher.toContextInfo', () => {
     expect(info.breakdown.Messages).toEqual({ tokens: 50000, percent: 25 });
   });
 
+  it('recalculates free space when metadata capacity differs from SDK capacity', () => {
+    const response = baseResponse({
+      totalTokens: 127300,
+      maxTokens: 1000000,
+      rawMaxTokens: 1000000,
+      percentage: 12.7,
+      model: 'glm-5.1',
+      categories: [
+        { name: 'System prompt', tokens: 3600, color: 'gray' },
+        { name: 'System tools', tokens: 18000, color: 'gray' },
+        { name: 'Messages', tokens: 105700, color: 'blue' },
+        { name: 'Free space', tokens: 872700, color: 'gray-dim' },
+      ],
+    });
+
+    const info = ContextFetcher.toContextInfo(response, {
+      id: 'glm-5.1',
+      alias: 'glm-5.1',
+      contextWindow: 200000,
+      provider: 'glm',
+    });
+
+    expect(info.totalCapacity).toBe(200000);
+    expect(info.breakdown['Free space']).toEqual({ tokens: 72700, percent: 36.4 });
+  });
+
+  it('keeps SDK free space when metadata matches SDK capacity', () => {
+    const response = baseResponse({
+      totalTokens: 127300,
+      maxTokens: 1000000,
+      rawMaxTokens: 1000000,
+      percentage: 12.7,
+      model: 'glm-5.2',
+      categories: [
+        { name: 'System prompt', tokens: 3600, color: 'gray' },
+        { name: 'System tools', tokens: 18000, color: 'gray' },
+        { name: 'Messages', tokens: 105700, color: 'blue' },
+        { name: 'Free space', tokens: 872700, color: 'gray-dim' },
+      ],
+    });
+
+    const info = ContextFetcher.toContextInfo(response, {
+      id: 'glm-5.2',
+      alias: 'glm-5.2',
+      contextWindow: 1000000,
+      provider: 'glm',
+    });
+
+    expect(info.totalCapacity).toBe(1000000);
+    expect(info.breakdown['Free space']).toEqual({ tokens: 872700, percent: 87.3 });
+  });
+
+  it('clamps recalculated free space to zero when usage exceeds metadata capacity', () => {
+    const response = baseResponse({
+      totalTokens: 250000,
+      maxTokens: 1000000,
+      rawMaxTokens: 1000000,
+      percentage: 25,
+      model: 'glm-5.1',
+      categories: [
+        { name: 'System tools', tokens: 50000, color: 'gray' },
+        { name: 'Messages', tokens: 200000, color: 'blue' },
+        { name: 'Free space', tokens: 750000, color: 'gray-dim' },
+      ],
+    });
+
+    const info = ContextFetcher.toContextInfo(response, {
+      id: 'glm-5.1',
+      alias: 'glm-5.1',
+      contextWindow: 200000,
+      provider: 'glm',
+    });
+
+    expect(info.breakdown['Free space']).toEqual({ tokens: 0, percent: 0 });
+  });
+
   it('uses SDK capacity for native Anthropic providers even when metadata differs', () => {
     const response = baseResponse({
       totalTokens: 50000,

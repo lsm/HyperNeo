@@ -29,7 +29,7 @@ export class GlmProvider implements Provider {
     streaming: true,
     extendedThinking: true,
     thinkingModes: 'granular',
-    maxContextWindow: 200000,
+    maxContextWindow: 1_000_000,
     functionCalling: true,
     vision: true,
   };
@@ -66,6 +66,17 @@ export class GlmProvider implements Provider {
       contextWindow: 200000,
       description: 'GLM-5.1 · Enhanced reasoning and instruction following',
       releaseDate: '2026-04-08',
+      available: true,
+    },
+    {
+      id: 'glm-5.2[1m]',
+      name: 'GLM-5.2',
+      alias: 'glm-5.2',
+      family: 'glm',
+      provider: 'glm',
+      contextWindow: 1_000_000,
+      description: 'GLM-5.2 · 1M context window, recommended thinking mode "max"',
+      releaseDate: '2026-06-10',
       available: true,
     },
     {
@@ -194,7 +205,12 @@ export class GlmProvider implements Provider {
     const baseUrl = sessionConfig?.baseUrl || GlmProvider.BASE_URL;
 
     // If modelId is not a GLM model ID (e.g. 'default'), fall back to glm-5-turbo.
-    const routingModelId = modelId.toLowerCase().startsWith('glm-') ? modelId : 'glm-5-turbo';
+    const routingModelId =
+      modelId === 'glm-5.2'
+        ? 'glm-5.2[1m]'
+        : modelId.toLowerCase().startsWith('glm-')
+          ? modelId
+          : 'glm-5-turbo';
 
     // Build environment variables
     const envVars: Record<string, string> = {
