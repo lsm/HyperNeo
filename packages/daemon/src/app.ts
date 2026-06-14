@@ -515,13 +515,13 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     );
     clientEventBridge.start();
 
-    // Broadcast initial system state so clients receive the credential-store
-    // status (e.g. Keychain-unavailable warning) as soon as they connect.
-    // FallbackCredentialStore has populated its status during the credential
-    // load above; without this, the warning only appears on the next state push.
-    queueMicrotask(() => {
-      void stateManager.broadcastSystemChange();
-    });
+    // Initial credential-store status (including Keychain-unavailable warning)
+    // is delivered to clients via the GLOBAL_SNAPSHOT RPC, which
+    // globalStore.initialize requests on connect and which calls
+    // getSystemState() fresh — see StateProjectionService.getGlobalSnapshot.
+    // A startup broadcast here would be dropped: MessageHub.event skips when
+    // there are no connected subscribers, and Bun.serve hasn't accepted any
+    // WebSocket clients yet at this point in startup.
 
     // Initialize GitHub service if configured
     let gitHubService: GitHubService | null = null;
