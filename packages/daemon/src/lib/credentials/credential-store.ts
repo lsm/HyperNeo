@@ -2,11 +2,11 @@ import { Database } from 'bun:sqlite';
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 import { homedir, platform } from 'node:os';
 import { execFile, spawn } from 'node:child_process';
-import { promisify } from 'node:util';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import type { CredentialStoreStatus } from '@neokai/shared/state-types';
+import { Logger } from '../logger';
 
-const execFileAsync = promisify(execFile);
 const DEFAULT_SERVICE_PREFIX = 'neokai.provider';
 const ENCRYPTION_KEY_ENV = 'NEOKAI_PROVIDER_CREDENTIAL_KEY';
 const KEY_FILE_NAME = '.provider-credential-key';
@@ -16,6 +16,31 @@ export interface CredentialStore {
   set(service: string, account: string, data: string): Promise<void>;
   delete(service: string, account: string): Promise<void>;
   listServices(prefix: string): Promise<string[]>;
+  /**
+   * Optional health snapshot. Implementations that don't track health
+   * (e.g. raw `DatabaseCredentialStore`) can omit this.
+   */
+  getStatus?(): CredentialStoreStatus;
+}
+
+/**
+ * Promise wrapper around `execFile`. Defined as a function (not via `promisify`)
+ * so tests using `mock.module('node:child_process')` can replace `execFile`
+ * through the live ESM binding before this is first invoked.
+ */
+function execFileAsync(cmd: string, args: string[]): Promise<{ stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    execFile(cmd, args, (err, stdout, stderr) => {
+      if (err) {
+        const wrapped = err as Error & { code?: number; stderr?: string };
+        wrapped.stderr = stderr ?? wrapped.stderr ?? '';
+        wrapped.code = typeof wrapped.code === 'number' ? wrapped.code : wrapped.code;
+        reject(wrapped);
+      } else {
+        resolve({ stdout: stdout ?? '', stderr: stderr ?? '' });
+      }
+    });
+  });
 }
 
 export class KeychainCredentialStore implements CredentialStore {
@@ -32,6 +57,7 @@ export class KeychainCredentialStore implements CredentialStore {
       return stdout.replace(/\n$/, '');
     } catch (error) {
       if (isSecurityItemNotFound(error)) return null;
+      if (isKeychainUnavailable(error)) return null;
       throw error;
     }
   }
@@ -60,6 +86,10 @@ export class KeychainCredentialStore implements CredentialStore {
       child.on('close', (code) => {
         if (code === 0) {
           resolve();
+        } else if (code === 36) {
+          // Keychain locked / no GUI session — don't crash; caller (FallbackCredentialStore)
+          // will persist to the DB store instead.
+          resolve();
         } else {
           reject(
             new Error(`security add-generic-password failed (exit ${code}): ${stderr.trim()}`)
@@ -74,6 +104,7 @@ export class KeychainCredentialStore implements CredentialStore {
       await execFileAsync('security', ['delete-generic-password', '-s', service, '-a', account]);
     } catch (error) {
       if (isSecurityItemNotFound(error)) return;
+      if (isKeychainUnavailable(error)) return;
       throw error;
     }
   }
@@ -90,6 +121,90 @@ export class KeychainCredentialStore implements CredentialStore {
     } catch {
       return [];
     }
+  }
+}
+
+/**
+ * Wraps a primary store (Keychain) and falls back to a secondary store (Database)
+ * when the primary is unavailable — e.g. macOS keychain locked (exit code 36,
+ * `errSecInteractionNotAllowed`) under SSH / CI / background launches.
+ *
+ * Reads: try primary first; on missing item OR thrown error, fall through to fallback.
+ * Writes: try primary; on throw, persist to fallback so the next read succeeds.
+ * Deletes: best-effort on both stores.
+ */
+export class FallbackCredentialStore implements CredentialStore {
+  private keychainWarned = false;
+  private primaryAvailable = true;
+  private readonly logger = new Logger('FallbackCredentialStore');
+
+  constructor(
+    private readonly primary: CredentialStore,
+    private readonly fallback: CredentialStore
+  ) {}
+
+  async get(service: string, account: string): Promise<string | null> {
+    try {
+      const result = await this.primary.get(service, account);
+      if (result !== null) return result;
+      // Item not in primary — try fallback.
+      return this.fallback.get(service, account);
+    } catch {
+      // Primary threw (locked/unavailable) — try fallback.
+      this.markPrimaryUnavailable();
+      return this.fallback.get(service, account);
+    }
+  }
+
+  async set(service: string, account: string, data: string): Promise<void> {
+    try {
+      await this.primary.set(service, account, data);
+    } catch {
+      this.markPrimaryUnavailable();
+      await this.fallback.set(service, account, data);
+    }
+  }
+
+  async delete(service: string, account: string): Promise<void> {
+    await Promise.allSettled([
+      this.primary.delete(service, account),
+      this.fallback.delete(service, account),
+    ]);
+  }
+
+  async listServices(prefix: string): Promise<string[]> {
+    const [primary, fallback] = await Promise.all([
+      this.primary.listServices(prefix).catch(() => []),
+      this.fallback.listServices(prefix),
+    ]);
+    return Array.from(new Set([...primary, ...fallback])).sort();
+  }
+
+  /**
+   * Snapshot of credential store health. Used to surface a UI warning when the
+   * macOS Keychain is locked / inaccessible.
+   */
+  getStatus(): CredentialStoreStatus {
+    if (this.primaryAvailable) {
+      return { backend: 'keychain', keychainAvailable: true };
+    }
+    return {
+      backend: 'database-fallback',
+      keychainAvailable: false,
+      warning:
+        'macOS Keychain unavailable — credentials stored in local encrypted DB. ' +
+        'Run `security unlock-keychain` to restore Keychain access.',
+    };
+  }
+
+  private markPrimaryUnavailable(): void {
+    this.primaryAvailable = false;
+    if (this.keychainWarned) return;
+    this.keychainWarned = true;
+    this.logger.warn(
+      'macOS Keychain unavailable — using local encrypted credential store. ' +
+        'Run `security unlock-keychain` to restore Keychain access.'
+    );
   }
 }
 
@@ -166,7 +281,10 @@ export class DatabaseCredentialStore implements CredentialStore {
 
 export function createCredentialStore(db: Database): CredentialStore {
   if (process.env.NODE_ENV !== 'test' && platform() === 'darwin') {
-    return new KeychainCredentialStore();
+    return new FallbackCredentialStore(
+      new KeychainCredentialStore(),
+      new DatabaseCredentialStore(db)
+    );
   }
   return new DatabaseCredentialStore(db);
 }
@@ -225,6 +343,18 @@ function isSecurityItemNotFound(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   const err = error as Error & { code?: number; stderr?: string };
   return err.code === 44 || err.stderr?.includes('could not be found') === true;
+}
+
+/**
+ * Detects `errSecInteractionNotAllowed` (exit code 36): the keychain exists but
+ * the process can't prompt for unlock — happens under SSH, CI, or background
+ * launches with no GUI session. Treat as "unavailable" so the caller can fall
+ * back to the DB store instead of crashing.
+ */
+function isKeychainUnavailable(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const err = error as Error & { code?: number; stderr?: string };
+  return err.code === 36 || err.stderr?.includes('User interaction is not allowed') === true;
 }
 
 interface CredentialRow {

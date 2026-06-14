@@ -16,7 +16,14 @@
  */
 
 import { signal, computed } from '@preact/signals';
-import type { Session, AuthStatus, HealthStatus, SystemState, SettingsState } from '@neokai/shared';
+import type {
+  Session,
+  AuthStatus,
+  HealthStatus,
+  SystemState,
+  SettingsState,
+  CredentialStoreStatus,
+} from '@neokai/shared';
 import type { LiveQueryDeltaEvent, LiveQuerySnapshotEvent } from '@neokai/shared';
 import { STATE_CHANNELS } from '@neokai/shared';
 import type { GlobalSettings } from '@neokai/shared/types/settings';
@@ -85,6 +92,16 @@ export class GlobalStore {
   /** API connection status */
   readonly apiConnectionStatus = computed<'connected' | 'degraded' | 'disconnected'>(
     () => this.systemState.value?.apiConnection?.status || 'connected'
+  );
+
+  /**
+   * Provider credential store status. When `keychainAvailable` is false on
+   * macOS, the daemon is using the local encrypted DB fallback because the
+   * Keychain is locked / inaccessible (SSH, CI, background launch). UI should
+   * surface `warning` to the user.
+   */
+  readonly credentialStoreStatus = computed<CredentialStoreStatus | null>(
+    () => this.systemState.value?.credentialStore || null
   );
 
   // ========================================

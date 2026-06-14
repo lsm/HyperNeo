@@ -107,6 +107,13 @@ async function applyStoredProviderCredentials(
         provider.setCredentials(credentials);
       }
     } catch (error) {
+      const isKeychainErr =
+        error instanceof Error && (error as Error & { code?: number }).code === 36;
+      if (isKeychainErr) {
+        // Keychain unavailable (locked / no GUI session) — credentials will load
+        // from env / settings.json fallback. Don't mark unhealthy; don't spam logs.
+        continue;
+      }
       credentialManager.markProviderHealth(provider.id, 'unhealthy');
       logError(`[Daemon] Failed to load stored credentials for ${provider.id}:`, error);
     }
@@ -492,7 +499,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       settingsManager,
       config,
       db,
-      internalEventBus
+      internalEventBus,
+      undefined,
+      credentialManager
     );
 
     // Initialize ClientEventBridge — forwards selected InternalEventBus events to
@@ -505,6 +514,14 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       stateManager
     );
     clientEventBridge.start();
+
+    // Broadcast initial system state so clients receive the credential-store
+    // status (e.g. Keychain-unavailable warning) as soon as they connect.
+    // FallbackCredentialStore has populated its status during the credential
+    // load above; without this, the warning only appears on the next state push.
+    queueMicrotask(() => {
+      void stateManager.broadcastSystemChange();
+    });
 
     // Initialize GitHub service if configured
     let gitHubService: GitHubService | null = null;

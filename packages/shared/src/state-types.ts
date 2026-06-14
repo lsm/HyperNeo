@@ -62,7 +62,32 @@ export interface SystemState {
   // API connectivity (daemon <-> Claude API)
   apiConnection: ApiConnectionState;
 
+  /**
+   * Provider credential store status. Surfaced so the UI can warn the user
+   * when the macOS Keychain is unavailable (e.g. daemon launched over SSH or
+   * in CI without GUI session access) and credentials are being read from /
+   * written to the local encrypted DB fallback instead.
+   */
+  credentialStore: CredentialStoreStatus;
+
   timestamp: number;
+}
+
+/**
+ * Status of the provider credential store.
+ *
+ * - `keychain`          — primary macOS Keychain is in use.
+ * - `database-fallback` — Keychain unavailable; using local encrypted SQLite store.
+ * - `database`          — non-darwin platform or test env; Keychain not in use.
+ */
+export type CredentialStoreBackend = 'keychain' | 'database-fallback' | 'database';
+
+export interface CredentialStoreStatus {
+  backend: CredentialStoreBackend;
+  /** True when the Keychain would be used but is currently inaccessible. */
+  keychainAvailable: boolean;
+  /** Human-readable hint shown to the user when `keychainAvailable` is false. */
+  warning?: string;
 }
 
 // State channel: global:state.settings

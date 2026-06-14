@@ -7,7 +7,8 @@
  */
 
 import { useEffect, useState } from 'preact/hooks';
-import type { ProviderRecord } from '@neokai/shared';
+import { useSignalEffect } from '@preact/signals';
+import type { ProviderRecord, CredentialStoreStatus } from '@neokai/shared';
 import type { ProviderAuthStatus } from '@neokai/shared/provider';
 import {
   listProviders,
@@ -21,6 +22,7 @@ import {
   refreshProvider,
 } from '../../lib/api-helpers.ts';
 import { toast } from '../../lib/toast.ts';
+import { credentialStoreStatus } from '../../lib/state.ts';
 import { SettingsSection } from './SettingsSection.tsx';
 import { Button } from '../ui/Button.tsx';
 import { AddProviderModal } from './AddProviderModal.tsx';
@@ -52,6 +54,12 @@ export function ProvidersSettings() {
   const [editingCustomId, setEditingCustomId] = useState<string | null>(null);
   const [savingCustom, setSavingCustom] = useState(false);
   const [testingCustom, setTestingCustom] = useState(false);
+  const [credentialStore, setCredentialStore] = useState<CredentialStoreStatus | null>(
+    credentialStoreStatus.value
+  );
+  useSignalEffect(() => {
+    setCredentialStore(credentialStoreStatus.value);
+  });
   const { fetchingModels, fetchedModels, fetchModelsError, fetchedAt, handleFetchModels } =
     useFetchModels(customEditor);
 
@@ -337,6 +345,18 @@ export function ProvidersSettings() {
               Add Provider
             </Button>
           </div>
+
+          {credentialStore && !credentialStore.keychainAvailable && (
+            <div class="rounded-lg border border-yellow-500/30 bg-yellow-500/10 px-4 py-3">
+              <p class="text-sm text-yellow-400 font-medium">macOS Keychain unavailable</p>
+              <p class="text-xs text-yellow-400/80 mt-1">
+                {credentialStore.warning ??
+                  'Credentials are being stored in the local encrypted database fallback.'}{' '}
+                Run <code class="font-mono bg-black/30 px-1 rounded">security unlock-keychain</code>{' '}
+                to restore Keychain access.
+              </p>
+            </div>
+          )}
 
           {providers.length === 0 && (
             <div class="rounded-lg border border-dashed border-dark-600 px-4 py-6 text-center">

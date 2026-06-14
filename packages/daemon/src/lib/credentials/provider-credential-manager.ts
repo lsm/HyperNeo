@@ -1,5 +1,6 @@
 import type { Database } from 'bun:sqlite';
 import type { ProviderCredentials } from '@neokai/shared/provider';
+import type { CredentialStoreStatus } from '@neokai/shared/state-types';
 import {
   createCredentialStore,
   credentialService,
@@ -102,6 +103,17 @@ export class ProviderCredentialManager {
          WHERE provider_id = ? OR id = ?`
       )
       .run(healthStatus, Date.now(), Date.now(), providerId, providerId);
+  }
+
+  /**
+   * Snapshot of credential store health — used to surface a UI warning when the
+   * macOS Keychain is locked / inaccessible.
+   */
+  getCredentialStoreStatus(): CredentialStoreStatus {
+    if (typeof this.store.getStatus === 'function') {
+      return this.store.getStatus();
+    }
+    return { backend: 'database', keychainAvailable: false };
   }
 
   private getEnvValue(keys: string[] | undefined): string | undefined {
