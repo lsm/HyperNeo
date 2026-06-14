@@ -16,21 +16,21 @@ Add `hooks` to a `SpaceWorkflow`:
   classification: 'validation',
   authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
   validator: { kind: 'built_in', id: 'pr_ready' },
-  retry: { maxAttempts: 3, delayMs: 5000, backoffMultiplier: 1 },
 }
 ```
 
 Fields:
 
-- `sourceNode` / `targetNode`: workflow node names, not node IDs.
+- `sourceNode`: workflow node name, not node ID.
+- `targetNode`: workflow node name used for `send_message` target matching. Omit it for non-`send_message` methods, because those actions have no target node to compare and target-specific hooks will not match.
 - `method`: MCP method that triggers hook.
 - `classification`: `validation` blocks or patches action before handler; `side_effect` records state or emits follow-up after validation.
 - `authorizedCallers`: fail-closed caller allowlist. Include node name and optional agent slots.
-- `validator`: built-in validator or script validator.
+- `validator`: script validator or built-in `pr_ready` validator. Other built-in IDs exist in shared types but create/update validation rejects them until implemented.
+- `retry`: retry budget for `retryable_block` results. Omit `retry` for `pr_ready` hooks so transient GitHub mergeability/check states do not become hard blocks after a small retry budget.
+- `localState`: default hook state plus references to recent results from other hooks.
 
 Unsupported today: `humanOnly: true` is present in shared types for future UI-only hook actions, but create/update validation rejects it. Do not set `humanOnly` until UI/human hook execution ships.
-- `retry`: retry budget for `retryable_block` results.
-- `localState`: default hook state plus references to recent results from other hooks.
 
 ## Hook result contract
 

@@ -451,7 +451,6 @@ describe('visualStateToCreateParams', () => {
         sourceNode: 'Step 1',
         targetNode: 'Review',
         authorizedCallers: [expect.objectContaining({ sourceNode: 'Step 1' })],
-        retry: { maxAttempts: 3, delayMs: 5000, backoffMultiplier: 1 },
       }),
     ]);
     expect(params.hooks![0].poll).toBeUndefined();
@@ -482,7 +481,7 @@ describe('visualStateToCreateParams', () => {
     });
   });
 
-  it('serializes hook result contract fields without dropping UI-only details', () => {
+  it('serializes hook result contract fields and strips unsupported humanOnly', () => {
     const params = visualStateToCreateParams(
       makeState({
         hooks: [
@@ -519,7 +518,6 @@ describe('visualStateToCreateParams', () => {
       id: 'hook-1',
       label: 'PR ready',
       classification: 'validation',
-      humanOnly: true,
       sourceNode: 'Step 1',
       targetNode: 'Step 2',
       validator: {
@@ -536,6 +534,7 @@ describe('visualStateToCreateParams', () => {
       templateData: { banner: 'needs_pr' },
       authorizedCallers: [{ sourceNode: 'Step 1', agentSlots: ['coder'] }],
     });
+    expect(params.hooks?.[0].humanOnly).toBeUndefined();
   });
 
   it('passes endNodeId through to create params', () => {
