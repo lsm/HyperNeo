@@ -941,7 +941,7 @@ describe('createCustomAgentInit', () => {
     );
 
     const prompt = init.systemPrompt?.append ?? '';
-    expect(prompt).toContain('hand off by calling `send_message` on the outbound gated');
+    expect(prompt).toContain('hand off by calling `send_message` to the review target');
     expect(prompt).toContain('Use the current target and required data fields');
     expect(prompt).toContain('`save_artifact` alone is insufficient');
     expect(prompt).not.toContain('send_message(target="Review"');

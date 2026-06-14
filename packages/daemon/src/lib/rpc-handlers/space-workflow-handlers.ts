@@ -135,6 +135,7 @@ function buildTemplateUpdateParams(
     endNodeId: newEndNodeId ?? null,
     channels: newChannels,
     gates: newGates,
+    hooks: template.hooks ? [...template.hooks] : null,
     tags: [...template.tags],
     completionAutonomyLevel: template.completionAutonomyLevel,
     templateName: template.name,

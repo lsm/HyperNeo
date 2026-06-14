@@ -3901,6 +3901,7 @@ export class TaskAgentManager {
       hookEngine = new WorkflowHookEngine({
         workflow,
         workflowRunId,
+        workflowRunCreatedAt: this.config.workflowRunRepo.getRun(workflowRunId)?.createdAt,
         nodeExecutionRepo: this.config.nodeExecutionRepo,
         artifactRepo: this.config.artifactRepo,
         hookStateRepo: new WorkflowHookStateRepository(this.config.db.getDatabase()),

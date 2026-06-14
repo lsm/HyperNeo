@@ -91,6 +91,7 @@ export interface HookExecutionRecord {
 export interface WorkflowHookEngineConfig {
   workflow: SpaceWorkflow;
   workflowRunId: string;
+  workflowRunCreatedAt?: number;
   nodeExecutionRepo: NodeExecutionRepository;
   artifactRepo?: WorkflowRunArtifactRepository;
   hookStateRepo: WorkflowHookStateRepository;
@@ -101,6 +102,14 @@ export interface WorkflowHookEngineConfig {
   getSourceNodeExecutionStatus?: (meta: HookActionMeta) => string | undefined;
   notifySourceSession?: (sessionId: string, message: string) => Promise<void>;
   onHookStateUpdated?: (hookId: string, hookState: WorkflowHookStateSnapshot) => void;
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 // ---------------------------------------------------------------------------
@@ -306,20 +315,25 @@ export class WorkflowHookEngine {
     state: Record<string, unknown>,
     lastResult?: WorkflowHookResult
   ): boolean {
-    try {
-      const repoState = this.config.hookStateRepo.get(this.config.workflowRunId, hookId);
-      const result = this.config.hookStateRepo.update(this.config.workflowRunId, hookId, {
-        expectedVersion: repoState?.version ?? 0,
-        localState: state,
-        lastResult,
-      });
-      if (result) {
-        this.config.onHookStateUpdated?.(hookId, result);
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const repoState =
+          this.config.hookStateRepo.get(this.config.workflowRunId, hookId) ??
+          this.config.hookStateRepo.ensure(this.config.workflowRunId, hookId);
+        const result = this.config.hookStateRepo.update(this.config.workflowRunId, hookId, {
+          expectedVersion: repoState.version,
+          localState: state,
+          lastResult,
+        });
+        if (result) {
+          this.config.onHookStateUpdated?.(hookId, result);
+          return true;
+        }
+      } catch {
+        // retry on version conflict or transient repo error
       }
-      return result !== null;
-    } catch {
-      return false;
     }
+    return false;
   }
 
   /**
@@ -446,6 +460,9 @@ export class WorkflowHookEngine {
           break;
 
         case 'block':
+          if (result.data && typeof result.data === 'object') {
+            stateUpdates.push({ hookId: hook.id, state: result.data as Record<string, unknown> });
+          }
           if ((hook.classification ?? 'validation') === 'validation') {
             blockedByValidation = { hookId: hook.id, result, isRetryable: false };
           }
@@ -551,6 +568,11 @@ export class WorkflowHookEngine {
         case 'record_state':
           if (result.state && typeof result.state === 'object') {
             stateUpdates.push({ hookId: hook.id, state: result.state as Record<string, unknown> });
+          }
+          if (isRecord(result.stateForHook)) {
+            for (const [hookId, state] of Object.entries(result.stateForHook)) {
+              if (isRecord(state)) stateUpdates.push({ hookId, state });
+            }
           }
           break;
       }
@@ -663,6 +685,34 @@ export class WorkflowHookEngine {
 
     // Resolve action target(s) for send_message
     const actionTargets = new Set<string>();
+    let allRequestedTargetsRoutable = true;
+    const isRoutableTarget = (targetNode: string): boolean =>
+      nodeNames.has(targetNode) &&
+      (resolver.canSend(fromNode, targetNode) || resolver.canSend(meta.agentName, targetNode));
+    const isBuiltInInterLevelTarget = (targetValue: string): boolean =>
+      targetValue.trim() === 'space-agent';
+    const hasValidAddressTarget = (targetValue: string): boolean => {
+      const trimmed = targetValue.trim();
+      if (isBuiltInInterLevelTarget(trimmed)) return true;
+      if (!trimmed.startsWith('@')) return true;
+      try {
+        const address = parseAddress(trimmed);
+        if (address.kind === 'worker') {
+          return (
+            (address.workflowRunId === undefined ||
+              address.workflowRunId === this.config.workflowRunId) &&
+            !!address.agentName
+          );
+        }
+        if (address.kind === 'role') {
+          return address.role.startsWith('actor-role:');
+        }
+        return false;
+      } catch {
+        return false;
+      }
+    };
+
     if (methodName === 'send_message') {
       const target = params.target;
       if (typeof target === 'string') {
@@ -687,18 +737,25 @@ export class WorkflowHookEngine {
             }
           }
         } else {
-          for (const resolved of this.resolveTargetEntries(
+          const resolvedTargets = this.resolveTargetEntries(
             target,
             nodeIdToName,
             slotToNodes,
             nodeNames
-          )) {
+          );
+          for (const resolved of resolvedTargets) {
             actionTargets.add(resolved);
+          }
+          if (!hasValidAddressTarget(target)) {
+            allRequestedTargetsRoutable = false;
           }
         }
       } else if (Array.isArray(target)) {
         for (const t of target) {
-          if (typeof t !== 'string') continue;
+          if (typeof t !== 'string') {
+            allRequestedTargetsRoutable = false;
+            continue;
+          }
           if (t.trim() === '*') {
             const permittedNode = resolver.getPermittedTargets(fromNode);
             const permittedSlot = resolver.getPermittedTargets(meta.agentName);
@@ -720,13 +777,22 @@ export class WorkflowHookEngine {
               }
             }
           } else {
-            for (const resolved of this.resolveTargetEntries(
+            const resolvedTargets = this.resolveTargetEntries(
               t,
               nodeIdToName,
               slotToNodes,
               nodeNames
-            )) {
+            );
+            for (const resolved of resolvedTargets) {
               actionTargets.add(resolved);
+            }
+            if (
+              (!isBuiltInInterLevelTarget(t) && !hasValidAddressTarget(t)) ||
+              resolvedTargets.some(
+                (resolved) => !isBuiltInInterLevelTarget(t) && !isRoutableTarget(resolved)
+              )
+            ) {
+              allRequestedTargetsRoutable = false;
             }
           }
         }
@@ -744,7 +810,8 @@ export class WorkflowHookEngine {
       // target to compare, so a hook with targetNode on those methods is skipped.
       if (hook.targetNode) {
         if (methodName !== 'send_message') return false;
-        if (actionTargets.size > 0 && !actionTargets.has(hook.targetNode)) return false;
+        if (!allRequestedTargetsRoutable) return false;
+        if (!actionTargets.has(hook.targetNode)) return false;
       }
 
       // Authorized callers check
@@ -855,6 +922,7 @@ export class WorkflowHookEngine {
       workspacePath: this.config.workspacePath ?? '',
       runId: this.config.workflowRunId,
       hookId: hook.id,
+      workflowRunCreatedAt: this.config.workflowRunCreatedAt,
       methodName,
       params: this.boundParams(params),
       rawParams: params,
