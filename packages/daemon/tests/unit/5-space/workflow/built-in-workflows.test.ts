@@ -1231,6 +1231,84 @@ describe('seedBuiltInWorkflows()', () => {
     }
   });
 
+  test('create rejects duplicate hook ids before migration', () => {
+    expect(() =>
+      manager.createWorkflow({
+        spaceId: SPACE_ID,
+        name: 'Duplicate Hook Workflow',
+        nodes: [
+          { id: 'node-a', name: 'A', agents: [{ agentId: PLANNER_ID, name: 'planner' }] },
+          { id: 'node-b', name: 'B', agents: [{ agentId: REVIEWER_ID, name: 'reviewer' }] },
+        ],
+        channels: [{ id: 'ch-a-b', from: 'A', to: 'B' }],
+        hooks: [
+          {
+            id: 'dup-hook',
+            enabled: true,
+            sourceNode: 'A',
+            targetNode: 'B',
+            method: 'send_message',
+            classification: 'validation',
+            order: 0,
+            validator: {
+              kind: 'script',
+              interpreter: 'bash',
+              source: 'jq -n \'{"type":"allow"}\'',
+            },
+            authorizedCallers: [{ sourceNode: 'A' }],
+          },
+          {
+            id: 'dup-hook',
+            enabled: true,
+            sourceNode: 'A',
+            targetNode: 'B',
+            method: 'send_message',
+            classification: 'validation',
+            order: 1,
+            validator: {
+              kind: 'script',
+              interpreter: 'bash',
+              source: 'jq -n \'{"type":"allow"}\'',
+            },
+            authorizedCallers: [{ sourceNode: 'A' }],
+          },
+        ],
+      })
+    ).toThrow('duplicate hook id "dup-hook"');
+  });
+
+  test('update rejects duplicate hook ids before migration', () => {
+    const workflow = manager.createWorkflow({
+      spaceId: SPACE_ID,
+      name: 'Update Duplicate Hook Workflow',
+      nodes: [
+        { id: 'node-a', name: 'A', agents: [{ agentId: PLANNER_ID, name: 'planner' }] },
+        { id: 'node-b', name: 'B', agents: [{ agentId: REVIEWER_ID, name: 'reviewer' }] },
+      ],
+      channels: [{ id: 'ch-a-b', from: 'A', to: 'B' }],
+    });
+
+    const hook = {
+      id: 'dup-hook',
+      enabled: true,
+      sourceNode: 'A',
+      targetNode: 'B',
+      method: 'send_message' as const,
+      classification: 'validation' as const,
+      order: 0,
+      validator: {
+        kind: 'script' as const,
+        interpreter: 'bash',
+        source: 'jq -n \'{"type":"allow"}\'',
+      },
+      authorizedCallers: [{ sourceNode: 'A' }],
+    };
+
+    expect(() => manager.updateWorkflow(workflow.id, { hooks: [hook, { ...hook }] })).toThrow(
+      'duplicate hook id "dup-hook"'
+    );
+  });
+
   test('seeds all built-in templates for an empty space', async () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const workflows = manager.listWorkflows(SPACE_ID);
@@ -2523,7 +2601,9 @@ describe('seedBuiltInWorkflows()', () => {
     const approvalHook = renamedWorkflow.hooks?.find(
       (hook) => hook.sourceNode === 'Plan Review' && hook.targetNode === 'Dispatch'
     );
-    const resetHook = renamedWorkflow.hooks?.find((hook) => hook.id === 'plan-approval-reset');
+    const resetHook = renamedWorkflow.hooks?.find(
+      (hook) => hook.id === 'plan-approval-reset' && hook.targetNode === 'Planning'
+    );
     expect(approvalHook?.id).toStartWith('plan-approval:');
     expect(resetHook?.validator.kind === 'script' ? resetHook.validator.source : '').toContain(
       approvalHook!.id
@@ -2531,6 +2611,34 @@ describe('seedBuiltInWorkflows()', () => {
     expect(resetHook?.validator.kind === 'script' ? resetHook.validator.source : '').not.toContain(
       'plan-approval:plan-review:task-dispatcher'
     );
+  });
+
+  test('migrated plan approval reset installs on all feedback routes', () => {
+    const workflow = migrateWorkflowGateProgressionToHooks({
+      ...PLAN_AND_DECOMPOSE_WORKFLOW,
+      nodes: [
+        ...PLAN_AND_DECOMPOSE_WORKFLOW.nodes,
+        {
+          id: 'pd-escalation',
+          name: 'Escalation',
+          agents: [{ agentId: 'Reviewer', name: 'escalation' }],
+        },
+      ],
+      channels: [
+        { id: 'extra-feedback', from: 'Plan Review', to: 'Escalation' },
+        ...(PLAN_AND_DECOMPOSE_WORKFLOW.channels ?? []),
+      ],
+      templateName: PLAN_AND_DECOMPOSE_WORKFLOW.name,
+      templateGates: PLAN_AND_DECOMPOSE_WORKFLOW.gates ?? [],
+    }).workflow;
+
+    const resetTargets = workflow.hooks
+      ?.filter((hook) => hook.id.startsWith('plan-approval-reset'))
+      .map((hook) => hook.targetNode)
+      .sort();
+    expect(resetTargets).toContain('Planning');
+    expect(resetTargets).toContain('Escalation');
+    expect(resetTargets).not.toContain('Task Dispatcher');
   });
 
   test('migration installs collision-free plan approval reset hook', () => {
@@ -2759,6 +2867,36 @@ describe('seedBuiltInWorkflows()', () => {
       (hook) => hook.sourceNode === 'Plan Review' && hook.targetNode === 'Task Dispatcher'
     );
     expect(approvalHooks).toHaveLength(1);
+  });
+
+  test('migration does not reuse hooks with edited external lookup permissions', () => {
+    const template = getBuiltInWorkflows().find(
+      (workflow) => workflow.name === PLAN_AND_DECOMPOSE_WORKFLOW.name
+    )!;
+    const generatedHook = template.hooks!.find(
+      (hook) => hook.sourceNode === 'Plan Review' && hook.targetNode === 'Task Dispatcher'
+    )!;
+    const workflow = migrateWorkflowGateProgressionToHooks({
+      ...PLAN_AND_DECOMPOSE_WORKFLOW,
+      hooks: [
+        {
+          ...generatedHook,
+          id: 'edited-generated-hook',
+          validator:
+            generatedHook.validator.kind === 'script'
+              ? { ...generatedHook.validator, externalLookups: undefined }
+              : generatedHook.validator,
+        },
+      ],
+      templateName: PLAN_AND_DECOMPOSE_WORKFLOW.name,
+      templateGates: PLAN_AND_DECOMPOSE_WORKFLOW.gates ?? [],
+    }).workflow;
+
+    const approvalHooks = workflow.hooks?.filter(
+      (hook) => hook.sourceNode === 'Plan Review' && hook.targetNode === 'Task Dispatcher'
+    );
+    expect(approvalHooks?.map((hook) => hook.id)).toContain('edited-generated-hook');
+    expect(approvalHooks?.some((hook) => hook.id.startsWith('plan-approval:'))).toBe(true);
   });
 
   test('migration does not reuse user route hooks as generated gate equivalents', () => {

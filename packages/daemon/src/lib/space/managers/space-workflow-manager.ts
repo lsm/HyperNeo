@@ -120,6 +120,7 @@ export class SpaceWorkflowManager {
     this.validateStartNodeId(startNodeId, nodes);
     this.validateEndNodeId(endNodeId, nodes);
 
+    this.validateNoDuplicateHookIds(params.hooks ?? []);
     params = migrateWorkflowGateProgressionToHooks({
       ...params,
       nodes: nodes as SpaceWorkflow['nodes'],
@@ -364,6 +365,7 @@ export class SpaceWorkflowManager {
       }
     }
 
+    this.validateNoDuplicateHookIds(params.hooks ?? []);
     const migrated = migrateWorkflowGateProgressionToHooks({
       channels: params.channels === undefined ? existing.channels : (params.channels ?? undefined),
       gates: params.gates === undefined ? existing.gates : (params.gates ?? undefined),
@@ -764,6 +766,20 @@ export class SpaceWorkflowManager {
     const errors = validateWorkflowHooks(hooks, nodes);
     if (errors.length > 0) {
       throw new WorkflowValidationError(errors.join('; '));
+    }
+  }
+
+  private validateNoDuplicateHookIds(hooks: unknown[]): void {
+    const seen = new Set<string>();
+    for (let hi = 0; hi < hooks.length; hi++) {
+      const hook = hooks[hi];
+      if (!hook || typeof hook !== 'object') continue;
+      const id = (hook as { id?: unknown }).id;
+      if (typeof id !== 'string') continue;
+      if (seen.has(id)) {
+        throw new WorkflowValidationError(`hooks[${hi}].id: duplicate hook id "${id}"`);
+      }
+      seen.add(id);
     }
   }
 

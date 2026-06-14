@@ -383,7 +383,11 @@ function equivalentGeneratedHook(existing: WorkflowHook, hook: WorkflowHook): bo
     existing.classification === hook.classification &&
     existing.validator.kind === 'script' &&
     hook.validator.kind === 'script' &&
+    existing.validator.interpreter === hook.validator.interpreter &&
     existing.validator.source === hook.validator.source &&
+    existing.validator.timeoutMs === hook.validator.timeoutMs &&
+    JSON.stringify(existing.validator.externalLookups ?? []) ===
+      JSON.stringify(hook.validator.externalLookups ?? []) &&
     JSON.stringify(existing.authorizedCallers ?? []) ===
       JSON.stringify(hook.authorizedCallers ?? [])
   );
@@ -494,18 +498,22 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
 
   const planFeedbackResetPattern = KNOWN_GATE_PATTERNS['plan-approval-feedback-reset'];
   if (workflow.templateName && planFeedbackResetPattern && planApprovalHookIds.size > 0) {
-    const planFeedbackChannel = (workflow.channels ?? []).find((channel) => {
+    const planFeedbackChannels = (workflow.channels ?? []).filter((channel) => {
       if (typeof channel.to !== 'string') return false;
       const sourceNode = resolveChannelNodeName(channel.from, workflow.nodes);
       const targetNode = resolveChannelNodeName(channel.to, workflow.nodes);
-      return (
-        !!sourceNode &&
-        !!targetNode &&
-        planApprovalSourceNodes.has(sourceNode) &&
-        !planApprovalTargetNodes.has(targetNode)
-      );
+      if (!sourceNode || !targetNode) return false;
+      if (!planApprovalSourceNodes.has(sourceNode)) return false;
+      return !planApprovalTargetNodes.has(targetNode);
     });
-    if (planFeedbackChannel) {
+    planFeedbackChannels.sort((a, b) => {
+      const aTarget = typeof a.to === 'string' ? resolveChannelNodeName(a.to, workflow.nodes) : '';
+      const bTarget = typeof b.to === 'string' ? resolveChannelNodeName(b.to, workflow.nodes) : '';
+      if (aTarget === 'Planning') return -1;
+      if (bTarget === 'Planning') return 1;
+      return 0;
+    });
+    for (const planFeedbackChannel of planFeedbackChannels) {
       const stateForHook = Array.from(planApprovalHookIds)
         .map(
           (hookId) =>

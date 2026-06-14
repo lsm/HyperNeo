@@ -689,16 +689,25 @@ export class WorkflowHookEngine {
     const isRoutableTarget = (targetNode: string): boolean =>
       nodeNames.has(targetNode) &&
       (resolver.canSend(fromNode, targetNode) || resolver.canSend(meta.agentName, targetNode));
-    const hasValidWorkerAddress = (targetValue: string): boolean => {
-      if (!targetValue.trim().startsWith('@worker:')) return true;
+    const isBuiltInInterLevelTarget = (targetValue: string): boolean =>
+      targetValue.trim() === 'space-agent';
+    const hasValidAddressTarget = (targetValue: string): boolean => {
+      const trimmed = targetValue.trim();
+      if (isBuiltInInterLevelTarget(trimmed)) return true;
+      if (!trimmed.startsWith('@')) return true;
       try {
-        const address = parseAddress(targetValue.trim());
-        return (
-          address.kind === 'worker' &&
-          (address.workflowRunId === undefined ||
-            address.workflowRunId === this.config.workflowRunId) &&
-          !!address.agentName
-        );
+        const address = parseAddress(trimmed);
+        if (address.kind === 'worker') {
+          return (
+            (address.workflowRunId === undefined ||
+              address.workflowRunId === this.config.workflowRunId) &&
+            !!address.agentName
+          );
+        }
+        if (address.kind === 'role') {
+          return address.role.startsWith('actor-role:');
+        }
+        return false;
       } catch {
         return false;
       }
@@ -737,7 +746,7 @@ export class WorkflowHookEngine {
           for (const resolved of resolvedTargets) {
             actionTargets.add(resolved);
           }
-          if (!hasValidWorkerAddress(target)) {
+          if (!hasValidAddressTarget(target)) {
             allRequestedTargetsRoutable = false;
           }
         }
@@ -778,8 +787,10 @@ export class WorkflowHookEngine {
               actionTargets.add(resolved);
             }
             if (
-              !hasValidWorkerAddress(t) ||
-              resolvedTargets.some((resolved) => !isRoutableTarget(resolved))
+              (!isBuiltInInterLevelTarget(t) && !hasValidAddressTarget(t)) ||
+              resolvedTargets.some(
+                (resolved) => !isBuiltInInterLevelTarget(t) && !isRoutableTarget(resolved)
+              )
             ) {
               allRequestedTargetsRoutable = false;
             }
