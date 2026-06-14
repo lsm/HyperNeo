@@ -34,13 +34,26 @@ function execFileAsync(cmd: string, args: string[]): Promise<{ stdout: string; s
       if (err) {
         const wrapped = err as Error & { code?: number; stderr?: string };
         wrapped.stderr = stderr ?? wrapped.stderr ?? '';
-        wrapped.code = typeof wrapped.code === 'number' ? wrapped.code : wrapped.code;
         reject(wrapped);
       } else {
         resolve({ stdout: stdout ?? '', stderr: stderr ?? '' });
       }
     });
   });
+}
+
+/**
+ * Tagged error thrown by `KeychainCredentialStore` operations when the macOS
+ * Keychain is locked or has no GUI session (`errSecInteractionNotAllowed`,
+ * exit code 36). `FallbackCredentialStore` catches this to (a) mark the
+ * primary unavailable so the UI banner can surface, and (b) fall through to
+ * the encrypted DB store.
+ */
+export class KeychainUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'KeychainUnavailableError';
+  }
 }
 
 export class KeychainCredentialStore implements CredentialStore {
@@ -57,7 +70,9 @@ export class KeychainCredentialStore implements CredentialStore {
       return stdout.replace(/\n$/, '');
     } catch (error) {
       if (isSecurityItemNotFound(error)) return null;
-      if (isKeychainUnavailable(error)) return null;
+      if (isKeychainUnavailable(error)) {
+        throw new KeychainUnavailableError(extractKeychainMessage(error));
+      }
       throw error;
     }
   }
@@ -87,9 +102,14 @@ export class KeychainCredentialStore implements CredentialStore {
         if (code === 0) {
           resolve();
         } else if (code === 36) {
-          // Keychain locked / no GUI session — don't crash; caller (FallbackCredentialStore)
-          // will persist to the DB store instead.
-          resolve();
+          // Keychain locked / no GUI session. Reject so FallbackCredentialStore
+          // catches and persists to the DB store; otherwise the credential
+          // would be silently dropped.
+          reject(
+            new KeychainUnavailableError(
+              `security add-generic-password failed (exit 36): ${stderr.trim()}`
+            )
+          );
         } else {
           reject(
             new Error(`security add-generic-password failed (exit ${code}): ${stderr.trim()}`)
@@ -104,7 +124,9 @@ export class KeychainCredentialStore implements CredentialStore {
       await execFileAsync('security', ['delete-generic-password', '-s', service, '-a', account]);
     } catch (error) {
       if (isSecurityItemNotFound(error)) return;
-      if (isKeychainUnavailable(error)) return;
+      if (isKeychainUnavailable(error)) {
+        throw new KeychainUnavailableError(extractKeychainMessage(error));
+      }
       throw error;
     }
   }
@@ -129,8 +151,10 @@ export class KeychainCredentialStore implements CredentialStore {
  * when the primary is unavailable — e.g. macOS keychain locked (exit code 36,
  * `errSecInteractionNotAllowed`) under SSH / CI / background launches.
  *
- * Reads: try primary first; on missing item OR thrown error, fall through to fallback.
- * Writes: try primary; on throw, persist to fallback so the next read succeeds.
+ * Reads: try primary first; on missing item OR `KeychainUnavailableError`, fall
+ *   through to fallback. Non-keychain errors propagate.
+ * Writes: try primary; on `KeychainUnavailableError`, persist to fallback so
+ *   the credential is not silently dropped.
  * Deletes: best-effort on both stores.
  */
 export class FallbackCredentialStore implements CredentialStore {
@@ -149,8 +173,10 @@ export class FallbackCredentialStore implements CredentialStore {
       if (result !== null) return result;
       // Item not in primary — try fallback.
       return this.fallback.get(service, account);
-    } catch {
-      // Primary threw (locked/unavailable) — try fallback.
+    } catch (error) {
+      // Primary threw. Only fall through for keychain-unavailable; re-throw
+      // anything else so genuine errors don't get masked by the fallback.
+      if (!(error instanceof KeychainUnavailableError)) throw error;
       this.markPrimaryUnavailable();
       return this.fallback.get(service, account);
     }
@@ -159,7 +185,8 @@ export class FallbackCredentialStore implements CredentialStore {
   async set(service: string, account: string, data: string): Promise<void> {
     try {
       await this.primary.set(service, account, data);
-    } catch {
+    } catch (error) {
+      if (!(error instanceof KeychainUnavailableError)) throw error;
       this.markPrimaryUnavailable();
       await this.fallback.set(service, account, data);
     }
@@ -355,6 +382,12 @@ function isKeychainUnavailable(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   const err = error as Error & { code?: number; stderr?: string };
   return err.code === 36 || err.stderr?.includes('User interaction is not allowed') === true;
+}
+
+function extractKeychainMessage(error: unknown): string {
+  if (!(error instanceof Error)) return 'macOS Keychain unavailable';
+  const err = error as Error & { stderr?: string };
+  return err.stderr?.trim() || error.message || 'macOS Keychain unavailable';
 }
 
 interface CredentialRow {

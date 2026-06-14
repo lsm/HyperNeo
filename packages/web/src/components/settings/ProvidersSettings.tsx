@@ -346,7 +346,7 @@ export function ProvidersSettings() {
             </Button>
           </div>
 
-          {credentialStore && !credentialStore.keychainAvailable && (
+          {credentialStore?.backend === 'database-fallback' && (
             <div class="rounded-lg border border-yellow-500/30 bg-yellow-500/10 px-4 py-3">
               <p class="text-sm text-yellow-400 font-medium">macOS Keychain unavailable</p>
               <p class="text-xs text-yellow-400/80 mt-1">

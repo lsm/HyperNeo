@@ -8,6 +8,7 @@ import {
   createCredentialStore,
   DatabaseCredentialStore,
   FallbackCredentialStore,
+  KeychainUnavailableError,
   type CredentialStore,
 } from '../../../../src/lib/credentials/credential-store';
 
@@ -231,7 +232,7 @@ describe('FallbackCredentialStore', () => {
   it('get() falls back to DB store when keychain throws', async () => {
     const primary = new StubCredentialStore(
       async () => {
-        throw new Error('keychain locked');
+        throw new KeychainUnavailableError('keychain locked');
       },
       async () => []
     );
@@ -278,7 +279,7 @@ describe('FallbackCredentialStore', () => {
   it('warns once, not per-call', async () => {
     const primary = new StubCredentialStore(
       async () => {
-        throw new Error('keychain locked');
+        throw new KeychainUnavailableError('keychain locked');
       },
       async () => []
     );
@@ -302,7 +303,7 @@ describe('FallbackCredentialStore', () => {
       async () => null,
       async () => [],
       async () => {
-        throw new Error('keychain locked');
+        throw new KeychainUnavailableError('keychain locked');
       }
     );
     const fallback = new StubCredentialStore(
@@ -337,7 +338,7 @@ describe('FallbackCredentialStore', () => {
   it('warns once, not per-call', async () => {
     const primary = new StubCredentialStore(
       async () => {
-        throw new Error('keychain locked');
+        throw new KeychainUnavailableError('keychain locked');
       },
       async () => []
     );
@@ -416,7 +417,7 @@ describe('FallbackCredentialStore', () => {
       async () => [],
       async () => {},
       async () => {
-        throw new Error('keychain locked');
+        throw new KeychainUnavailableError('keychain locked');
       }
     );
     const fallback = new StubCredentialStore(
