@@ -96,6 +96,7 @@ export class SDKMessageHandler {
   private circuitBreaker: ApiErrorCircuitBreaker;
   private acknowledgedPersistedUserThisTurn: boolean = false;
   private usesSessionStateChangedTurnEnd: boolean = false;
+  private lastResultWasSuccess: boolean | null = null;
 
   // Count of SDK stream events seen since the last context-usage refresh.
   // Resets whenever we call refreshContextUsage() (on 5-event tick, turn end,
@@ -572,6 +573,10 @@ export class SDKMessageHandler {
       await stateManager.setIdle();
     }
 
+    if (isSDKResultMessage(message)) {
+      this.lastResultWasSuccess = isSDKResultSuccess(message);
+    }
+
     // Handle specific message types
     if (isSDKUserMessage(message)) {
       await this.handleUserMessage(message);
@@ -771,7 +776,7 @@ export class SDKMessageHandler {
     }
   }
 
-  private async finishTurn(): Promise<void> {
+  private async finishTurn(allowQueueReplay = true): Promise<void> {
     const { session, internalEventBus, stateManager } = this.ctx;
 
     // Set state back to idle
@@ -779,7 +784,7 @@ export class SDKMessageHandler {
     await stateManager.setIdle();
 
     // Auto-dispatch deferred messages in immediate mode (next-turn queue replay)
-    if (session.config.queryMode !== 'manual') {
+    if (allowQueueReplay && session.config.queryMode !== 'manual') {
       try {
         await internalEventBus.publish('query.trigger', { sessionId: session.id });
       } catch (error) {
@@ -793,8 +798,10 @@ export class SDKMessageHandler {
 
     this.usesSessionStateChangedTurnEnd = true;
     if (message.state === 'idle') {
-      await this.finishTurn();
+      const allowQueueReplay = this.lastResultWasSuccess !== false;
+      await this.finishTurn(allowQueueReplay);
       this.usesSessionStateChangedTurnEnd = false;
+      this.lastResultWasSuccess = null;
     }
   }
 

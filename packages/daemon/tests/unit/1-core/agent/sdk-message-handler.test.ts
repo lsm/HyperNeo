@@ -780,6 +780,31 @@ describe('SDKMessageHandler', () => {
       expect(setIdleSpy).toHaveBeenCalled();
     });
 
+    it('should not replay queued turns after an error result followed by idle state', async () => {
+      await handler.handleMessage({
+        type: 'result',
+        subtype: 'error_during_execution',
+        uuid: 'error-result',
+        is_error: true,
+        duration_ms: 1,
+        duration_api_ms: 1,
+        num_turns: 1,
+        total_cost_usd: 0,
+      } as unknown as SDKMessage);
+      emitSpy.mockClear();
+      setIdleSpy.mockClear();
+
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'session_state_changed',
+        state: 'idle',
+        uuid: 'state-idle-after-error',
+      } as unknown as SDKMessage);
+
+      expect(setIdleSpy).toHaveBeenCalled();
+      expect(emitSpy).not.toHaveBeenCalledWith('query.trigger', { sessionId: 'test-session-id' });
+    });
+
     it('should include normalized slash-command aliases from commands_changed messages', async () => {
       await handler.handleMessage({
         type: 'system',

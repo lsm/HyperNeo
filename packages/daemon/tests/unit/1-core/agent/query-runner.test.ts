@@ -2443,6 +2443,20 @@ describe('QueryRunner environment variable handling', () => {
     expect(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('200000');
   });
 
+  it('should remove stale bridge auto-compact env after provider cleanup', () => {
+    const env = refreshQueryEnvFromProcess(
+      {
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW: '262144',
+        KEEP_SESSION: 'session',
+      },
+      {},
+      { refreshAutoCompactWindow: true, clearProviderManaged: true }
+    );
+
+    expect(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBeUndefined();
+    expect(env.KEEP_SESSION).toBe('session');
+  });
+
   it('should preserve Anthropic auth token from query env when provider cleanup clears process env', () => {
     const env = refreshQueryEnvFromProcess(
       {

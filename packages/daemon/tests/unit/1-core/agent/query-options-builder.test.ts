@@ -169,7 +169,7 @@ describe('QueryOptionsBuilder', () => {
       });
     });
 
-    it('should preserve user auto-compact env overrides for native Anthropic', async () => {
+    it('should filter user auto-compact env overrides so provider cleanup owns the SDK env', async () => {
       mockSettingsManager.getGlobalSettings = mock(() => ({
         env: { CLAUDE_CODE_AUTO_COMPACT_WINDOW: '200000', KEEP_GLOBAL: 'global' },
         settingSources: ['user', 'project', 'local'],
@@ -184,10 +184,10 @@ describe('QueryOptionsBuilder', () => {
       expect(options.env).toMatchObject({
         PATH: process.env.PATH,
         HOME: process.env.HOME,
-        CLAUDE_CODE_AUTO_COMPACT_WINDOW: '262144',
         KEEP_GLOBAL: 'global',
         KEEP_SESSION: 'session',
       });
+      expect(options.env).not.toHaveProperty('CLAUDE_CODE_AUTO_COMPACT_WINDOW');
     });
 
     it('should filter provider-managed auto-compact env overrides for bridge providers', async () => {

@@ -1026,15 +1026,13 @@ CRITICAL RULES:
       'API_TIMEOUT_MS',
       'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC',
     ]);
-    if (this.ctx.session.config.provider !== 'anthropic') {
-      providerEnvVars.add('CLAUDE_CODE_AUTO_COMPACT_WINDOW');
-    }
+    providerEnvVars.add('CLAUDE_CODE_AUTO_COMPACT_WINDOW');
 
     const excludedEnvVars = new Set(['PORT', 'NEOKAI_PORT']);
     const mergedEnv: Record<string, string> = Object.fromEntries(
       Object.entries(process.env).filter(
         (entry): entry is [string, string] =>
-          entry[1] !== undefined && !excludedEnvVars.has(entry[0])
+          entry[1] !== undefined && !excludedEnvVars.has(entry[0]) && !providerEnvVars.has(entry[0])
       )
     );
 

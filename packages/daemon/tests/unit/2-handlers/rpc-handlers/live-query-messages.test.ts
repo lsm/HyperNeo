@@ -299,6 +299,39 @@ describe('messages.bySession — SQL behavior', () => {
     expect(rows.map((r) => r.id)).toEqual(['older-real', 'replacement']);
   });
 
+  test('ignores malformed JSON rows while scanning retractions and supersedes', () => {
+    insertSdkMessage(db, {
+      id: 'malformed-ref',
+      sessionId: 's1',
+      messageType: 'system',
+      messageSubtype: 'model_refusal_fallback',
+      sdkMessage: {
+        type: 'system',
+        subtype: 'model_refusal_fallback',
+        parent_tool_use_id: 'unreferenced-tool',
+      },
+      timestamp: '2024-01-01 00:00:01',
+    });
+    db.exec('PRAGMA ignore_check_constraints = ON');
+    db.exec('DROP INDEX IF EXISTS idx_sdk_messages_uuid_status');
+    db.prepare(
+      `UPDATE sdk_messages
+       SET sdk_message = ?
+       WHERE id = ?`
+    ).run('{not-json', 'malformed-ref');
+    db.exec('PRAGMA ignore_check_constraints = OFF');
+    insertSdkMessage(db, {
+      id: 'normal',
+      sessionId: 's1',
+      messageType: 'assistant',
+      sdkMessage: { type: 'assistant', uuid: 'normal-uuid', message: { content: [] } },
+      timestamp: '2024-01-01 00:00:02',
+    });
+
+    const rows = query(db, 's1', 10);
+    expect(rows.map((r) => r.id)).toEqual(['normal']);
+  });
+
   test('uses the session timestamp index for the top-level window', () => {
     const plan = queryPlan(db, 's1', 200);
     expect(plan).toContain('idx_sdk_messages_session_timestamp_id');

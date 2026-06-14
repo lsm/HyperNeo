@@ -586,7 +586,7 @@ export class QueryRunner {
 
       // Apply provider env vars
       const resolvedProviderId = explicitProviderId ?? provider?.id ?? 'anthropic';
-      const refreshAutoCompactWindow = resolvedProviderId !== 'anthropic';
+      const refreshAutoCompactWindow = true;
       {
         const { getProviderService } = await import('../provider-service');
         const providerService = getProviderService();
@@ -606,8 +606,8 @@ export class QueryRunner {
       // so SDK subprocesses cannot inherit the daemon's listening port. Refresh
       // the full SDK env snapshot now so provider credentials applied to
       // process.env are included before SDK 0.3 treats options.env as complete.
-      // Non-Anthropic bridge providers own CLAUDE_CODE_AUTO_COMPACT_WINDOW;
-      // Anthropic sessions preserve configured env overrides from QueryOptionsBuilder.
+      // Provider-managed context-window overrides are refreshed from process.env for all
+      // providers so stale bridge values are removed after provider cleanup.
       queryOptions.env = refreshQueryEnvFromProcess(queryOptions.env, process.env, {
         refreshAutoCompactWindow,
         clearProviderManaged: true,
