@@ -503,6 +503,23 @@ export class SDKMessageRepository {
 			   AND parent_tool_use_id IS NULL
 			   AND is_renderable = 1
 			   AND message_type IN ('user', 'assistant')
+			   AND NOT EXISTS (
+			     SELECT 1
+			     FROM sdk_messages ref,
+			          json_each(ref.sdk_message, '$.retracted_message_uuids') retracted
+			     WHERE ref.session_id = sdk_messages.session_id
+			       AND json_valid(ref.sdk_message)
+			       AND ref.message_subtype = 'model_refusal_fallback'
+			       AND retracted.value = COALESCE(json_extract(sdk_messages.sdk_message, '$.uuid'), sdk_messages.id)
+			   )
+			   AND NOT EXISTS (
+			     SELECT 1
+			     FROM sdk_messages ref,
+			          json_each(ref.sdk_message, '$.supersedes') superseded
+			     WHERE ref.session_id = sdk_messages.session_id
+			       AND json_valid(ref.sdk_message)
+			       AND superseded.value = COALESCE(json_extract(sdk_messages.sdk_message, '$.uuid'), sdk_messages.id)
+			   )
 			   AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))
 			 ORDER BY timestamp DESC, rowid DESC
 			 LIMIT ? OFFSET ?`
@@ -660,6 +677,7 @@ export class SDKMessageRepository {
            FROM sdk_messages ref,
                 json_each(ref.sdk_message, '$.retracted_message_uuids') retracted
            WHERE ref.session_id = sdk_messages.session_id
+             AND json_valid(ref.sdk_message)
              AND ref.message_subtype = 'model_refusal_fallback'
              AND retracted.value = COALESCE(json_extract(sdk_messages.sdk_message, '$.uuid'), sdk_messages.id)
          )
@@ -668,6 +686,7 @@ export class SDKMessageRepository {
            FROM sdk_messages ref,
                 json_each(ref.sdk_message, '$.supersedes') superseded
            WHERE ref.session_id = sdk_messages.session_id
+             AND json_valid(ref.sdk_message)
              AND superseded.value = COALESCE(json_extract(sdk_messages.sdk_message, '$.uuid'), sdk_messages.id)
          )
          AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))

@@ -184,6 +184,7 @@ export class EvolutionTraceEvidenceService {
 							 FROM sdk_messages ref,
 								  json_each(ref.sdk_message, '$.retracted_message_uuids') retracted
 							 WHERE ref.task_id = sdk_messages.task_id
+							   AND json_valid(ref.sdk_message)
 							   AND ref.message_subtype = 'model_refusal_fallback'
 							   AND retracted.value = COALESCE(json_extract(sdk_messages.sdk_message, '$.uuid'), sdk_messages.id)
 						   )
@@ -192,6 +193,7 @@ export class EvolutionTraceEvidenceService {
 							 FROM sdk_messages ref,
 								  json_each(ref.sdk_message, '$.supersedes') superseded
 							 WHERE ref.task_id = sdk_messages.task_id
+							   AND json_valid(ref.sdk_message)
 							   AND superseded.value = COALESCE(json_extract(sdk_messages.sdk_message, '$.uuid'), sdk_messages.id)
 						   )
 					 ORDER BY timestamp DESC, id DESC

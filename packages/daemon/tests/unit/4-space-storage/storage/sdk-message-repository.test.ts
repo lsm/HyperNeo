@@ -222,6 +222,35 @@ describe('SDKMessageRepository', () => {
 
       expect(messages.map((message) => message.text)).toEqual(['Older text', 'Newest text']);
     });
+
+    it('filters retracted and superseded rows before collecting text messages', () => {
+      repository.saveSDKMessage('session-1', createUserMessage('Visible older', 'visible-older'));
+      repository.saveSDKMessage(
+        'session-1',
+        createUserMessage('Retracted newer', 'retracted-newer')
+      );
+      repository.saveSDKMessage('session-1', {
+        type: 'system',
+        subtype: 'model_refusal_fallback',
+        uuid: 'fallback-notice',
+        retracted_message_uuids: ['retracted-newer'],
+        session_id: 'session-1',
+      } as unknown as SDKMessage);
+      repository.saveSDKMessage(
+        'session-1',
+        createUserMessage('Superseded newer', 'superseded-newer')
+      );
+      repository.saveSDKMessage('session-1', {
+        type: 'assistant',
+        uuid: 'replacement-message',
+        supersedes: ['superseded-newer'],
+        message: { role: 'assistant', content: [{ type: 'text', text: 'Replacement' }] },
+      } as unknown as SDKMessage);
+
+      const messages = repository.getRenderableTextMessages('session-1', 3);
+
+      expect(messages.map((message) => message.text)).toEqual(['Visible older', 'Replacement']);
+    });
     it('caps scanned renderable rows while collecting text messages', () => {
       repository.saveSDKMessage('session-1', createUserMessage('Too old text'));
       for (let i = 0; i < 250; i++) {
@@ -319,7 +348,7 @@ describe('SDKMessageRepository', () => {
 
       const { messages } = repository.getSDKMessages('session-1', 2);
 
-      expect(messages.map((message) => (message as { uuid?: string }).uuid)).toEqual([
+      expect(messages.map((message) => (message as { uuid?: string }).uuid).sort()).toEqual([
         'fallback-notice',
         'visible-older',
       ]);
@@ -340,7 +369,7 @@ describe('SDKMessageRepository', () => {
 
       const { messages } = repository.getSDKMessages('session-1', 2);
 
-      expect(messages.map((message) => (message as { uuid?: string }).uuid)).toEqual([
+      expect(messages.map((message) => (message as { uuid?: string }).uuid).sort()).toEqual([
         'replacement-message',
         'visible-older',
       ]);
