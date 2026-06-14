@@ -29,7 +29,7 @@ export class GlmProvider implements Provider {
     streaming: true,
     extendedThinking: true,
     thinkingModes: 'granular',
-    maxContextWindow: 200000,
+    maxContextWindow: 1_000_000,
     functionCalling: true,
     vision: true,
   };
@@ -66,6 +66,17 @@ export class GlmProvider implements Provider {
       contextWindow: 200000,
       description: 'GLM-5.1 · Enhanced reasoning and instruction following',
       releaseDate: '2026-04-08',
+      available: true,
+    },
+    {
+      id: 'glm-5.2',
+      name: 'GLM-5.2',
+      alias: 'glm-5.2',
+      family: 'glm',
+      provider: 'glm',
+      contextWindow: 1_000_000,
+      description: 'GLM-5.2 · 1M context window, recommended thinking mode "max"',
+      releaseDate: '2026-06-10',
       available: true,
     },
     {

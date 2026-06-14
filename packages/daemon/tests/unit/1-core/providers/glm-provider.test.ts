@@ -35,7 +35,7 @@ describe('GlmProvider', () => {
       expect(provider.capabilities).toEqual({
         streaming: true,
         extendedThinking: true,
-        maxContextWindow: 200000,
+        maxContextWindow: 1_000_000,
         functionCalling: true,
         vision: true,
         thinkingModes: 'granular',
@@ -73,10 +73,11 @@ describe('GlmProvider', () => {
 
       const models = await provider.getModels();
 
-      expect(models).toHaveLength(5);
+      expect(models).toHaveLength(6);
       expect(models.map((m) => m.id)).toEqual([
         'glm-5',
         'glm-5.1',
+        'glm-5.2',
         'glm-5-turbo',
         'glm-5v-turbo',
         'glm-4.7',
@@ -245,14 +246,31 @@ describe('GlmProvider', () => {
 
   describe('static models', () => {
     it('should have static models defined', () => {
-      expect(GlmProvider.MODELS).toHaveLength(5);
+      expect(GlmProvider.MODELS).toHaveLength(6);
       expect(GlmProvider.MODELS.map((m) => m.id)).toEqual([
         'glm-5',
         'glm-5.1',
+        'glm-5.2',
         'glm-5-turbo',
         'glm-5v-turbo',
         'glm-4.7',
       ]);
+    });
+
+    it('should have correct glm-5.2 model definition', () => {
+      const model = GlmProvider.MODELS.find((m) => m.id === 'glm-5.2');
+      expect(model).toBeDefined();
+      expect(model).toEqual({
+        id: 'glm-5.2',
+        name: 'GLM-5.2',
+        alias: 'glm-5.2',
+        family: 'glm',
+        provider: 'glm',
+        contextWindow: 1_000_000,
+        description: 'GLM-5.2 · 1M context window, recommended thinking mode "max"',
+        releaseDate: '2026-06-10',
+        available: true,
+      });
     });
 
     it('should have correct glm-5-turbo model definition', () => {

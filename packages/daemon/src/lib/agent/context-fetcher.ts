@@ -144,6 +144,22 @@ export class ContextFetcher {
       };
     }
 
+    if (useMetadata && capacity > 0 && sdkCapacityValue !== capacity) {
+      const nonFreeSpaceTokens = Object.entries(breakdown)
+        .filter(([name]) => !name.toLowerCase().includes('free space'))
+        .reduce((sum, [, data]) => sum + data.tokens, 0);
+      const freeSpaceKey = Object.keys(breakdown).find((name) =>
+        name.toLowerCase().includes('free space')
+      );
+      if (freeSpaceKey) {
+        const correctedTokens = Math.max(0, capacity - nonFreeSpaceTokens);
+        breakdown[freeSpaceKey] = {
+          tokens: correctedTokens,
+          percent: Math.round((correctedTokens / capacity) * 1000) / 10,
+        };
+      }
+    }
+
     const apiUsage: ContextAPIUsage | undefined = response.apiUsage
       ? {
           inputTokens: response.apiUsage.input_tokens,
