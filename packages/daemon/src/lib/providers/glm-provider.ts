@@ -69,7 +69,7 @@ export class GlmProvider implements Provider {
       available: true,
     },
     {
-      id: 'glm-5.2',
+      id: 'glm-5.2[1m]',
       name: 'GLM-5.2',
       alias: 'glm-5.2',
       family: 'glm',
@@ -205,7 +205,12 @@ export class GlmProvider implements Provider {
     const baseUrl = sessionConfig?.baseUrl || GlmProvider.BASE_URL;
 
     // If modelId is not a GLM model ID (e.g. 'default'), fall back to glm-5-turbo.
-    const routingModelId = modelId.toLowerCase().startsWith('glm-') ? modelId : 'glm-5-turbo';
+    const routingModelId =
+      modelId === 'glm-5.2'
+        ? 'glm-5.2[1m]'
+        : modelId.toLowerCase().startsWith('glm-')
+          ? modelId
+          : 'glm-5-turbo';
 
     // Build environment variables
     const envVars: Record<string, string> = {
