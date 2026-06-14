@@ -190,14 +190,18 @@ export class KimiProvider implements Provider {
         ANTHROPIC_API_KEY: '',
         ANTHROPIC_AUTH_TOKEN: '',
         API_TIMEOUT_MS: '3000000',
-        // NOTE: CLAUDE_CODE_AUTO_COMPACT_WINDOW intentionally NOT set for Kimi.
-        // The SDK's PP() helper returns 200k for the unknown 'kimi-for-coding'
-        // model ID, so even with this env var the effective window would be
-        // min(200k, 262144) = 200k, and SDK auto-compact would fire at ~187k
-        // — 60k too early. Instead, Options.settings.autoCompactEnabled=false
-        // (set via buildProviderSettings) disables SDK auto-compact entirely,
-        // and NeoKai's fallback trigger (sdk-message-handler) handles
-        // compaction at the correct 85% of the real 262k window.
+        // Explicitly clear CLAUDE_CODE_AUTO_COMPACT_WINDOW so a previous
+        // provider's value (e.g. GLM's 1M, Codex's 272k) cannot leak into
+        // the Kimi subprocess. The SDK's PP() helper returns 200k for the
+        // unknown 'kimi-for-coding' model ID, so even an inherited 262144
+        // value would cap the effective window to min(200k, 262k) = 200k
+        // and make SDK auto-compact fire ~60k too early. SDK auto-compact
+        // is disabled via Options.settings.autoCompactEnabled=false (set
+        // by buildProviderSettings); NeoKai's fallback trigger handles
+        // compaction at the correct 85% of the real 262k window. The empty
+        // string deletes the env var when applied (see applyEnvVars in
+        // provider-service.ts).
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW: '',
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
         ANTHROPIC_DEFAULT_HAIKU_MODEL: routingModelId,
         ANTHROPIC_DEFAULT_SONNET_MODEL: routingModelId,

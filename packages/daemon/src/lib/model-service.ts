@@ -16,6 +16,8 @@ import { initializeProviders, waitForOptionalProviderRegistration } from './prov
 import { getProviderRegistry } from './providers/registry.js';
 import type { Provider } from '@neokai/shared/provider';
 import { getCodexBridgeModelInfos, resolveCodexBridgeModelId } from './providers/codex-models.js';
+import { GlmProvider } from './providers/glm-provider.js';
+import { KimiProvider } from './providers/kimi-provider.js';
 
 /**
  * Legacy model ID mappings to SDK model IDs
@@ -104,8 +106,20 @@ const FALLBACK_MODELS: ModelInfo[] = [
  * This is used only for deterministic metadata lookup (current model display,
  * context-window resolution) when live provider loading is unavailable. It does
  * not make those providers available for use.
+ *
+ * GLM and Kimi are included because their context windows must be resolvable
+ * even when the daemon starts without the provider's env var set globally but
+ * the session supplies credentials via `session.config.providerConfig.apiKey`.
+ * Without these entries, `getSessionModelInfo()` returns null and the NeoKai
+ * fallback compaction threshold can't be computed — sessions would run into the
+ * real context limit with no compaction trigger.
  */
-const STATIC_MODEL_METADATA: ModelInfo[] = [...FALLBACK_MODELS, ...getCodexBridgeModelInfos()];
+const STATIC_MODEL_METADATA: ModelInfo[] = [
+  ...FALLBACK_MODELS,
+  ...getCodexBridgeModelInfos(),
+  ...GlmProvider.MODELS,
+  ...KimiProvider.MODELS,
+];
 const CODEX_STATIC_MODEL_METADATA = getCodexBridgeModelInfos();
 
 /**

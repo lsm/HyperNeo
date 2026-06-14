@@ -216,14 +216,23 @@ describe('QueryOptionsBuilder', () => {
       expect(buildProviderSettings('anthropic-codex', 272_000)).toBeUndefined();
     });
 
+    it('should not override SDK auto-compaction for GLM (env var + [1m] suffix configures SDK correctly)', () => {
+      // GLM sets CLAUDE_CODE_AUTO_COMPACT_WINDOW per model in buildSdkConfig,
+      // and the [1m] suffix on glm-5.2[1m] is recognised by PP(). The SDK's
+      // effective window matches metadata, so SDK auto-compact fires at the
+      // correct threshold. If [1m] recognition regresses, the context-fetcher
+      // capacity-mismatch warning surfaces it. We must NOT enable NeoKai
+      // fallback here — it would fire at 850k (reserveBasedThreshold(1M)) and
+      // preempt the SDK's correct ~987k trigger, cutting off 137k of the
+      // advertised 1M context.
+      expect(buildProviderSettings('glm')).toBeUndefined();
+      expect(buildProviderSettings('glm', 1_000_000)).toBeUndefined();
+    });
+
     it('should enable SDK auto-compaction for non-native providers with context windows', () => {
       expect(buildProviderSettings('openrouter', 1_000_000)).toEqual({
         autoCompactEnabled: true,
         autoCompactWindow: 1_000_000,
-      });
-      expect(buildProviderSettings('glm', 128_000)).toEqual({
-        autoCompactEnabled: true,
-        autoCompactWindow: 128_000,
       });
       expect(buildProviderSettings('ollama', 32_000)).toEqual({
         autoCompactEnabled: true,

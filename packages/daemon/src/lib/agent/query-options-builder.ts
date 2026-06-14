@@ -194,11 +194,19 @@ export function ensureAgentTools(
  *                   capacities cover the real Codex windows, AND sets
  *                   CLAUDE_CODE_AUTO_COMPACT_WINDOW explicitly. SDK auto-compact
  *                   fires at the correct threshold.
+ * glm              — Sets CLAUDE_CODE_AUTO_COMPACT_WINDOW per model (1M for
+ *                   glm-5.2[1m], 200k for the rest). The `[1m]` suffix is
+ *                   recognised by PP() so the SDK's effective window matches
+ *                   metadata. NeoKai fallback would otherwise fire at 850k
+ *                   (reserveBasedThreshold(1M)) and preempt the SDK's correct
+ *                   ~987k trigger. If `[1m]` recognition regresses, the
+ *                   context-fetcher capacity-mismatch warning surfaces it.
  */
 export const NATIVE_CONTEXT_WINDOW_PROVIDER_IDS = [
   'anthropic',
   'anthropic-copilot',
   'anthropic-codex',
+  'glm',
 ];
 
 /**
