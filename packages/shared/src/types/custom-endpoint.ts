@@ -55,6 +55,14 @@ export interface CustomEndpointModelCapabilities {
    * that are known-good (e.g. real OpenAI, LiteLLM, OpenRouter).
    */
   streamUsage: boolean;
+  /**
+   * Per-model Jinja `chat_template_kwargs` merged into every upstream
+   * `/v1/chat/completions` request body. Used for fields the OpenAI Chat
+   * schema does not define but llama.cpp / vLLM templates read — most
+   * notably `{ enable_thinking: false }` to skip Qwen3 `<think>` blocks.
+   * Omit (or leave undefined) for models that should keep default behaviour.
+   */
+  chatTemplateKwargs?: Record<string, unknown>;
 }
 
 /**
