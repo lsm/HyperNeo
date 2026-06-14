@@ -1,6 +1,6 @@
 # Workflow hooks
 
-Workflow hooks replace legacy workflow gate polling for MCP action checks. They run inside the daemon before or after a node-agent MCP action such as `send_message`, `save_artifact`, or `approve_task`.
+Workflow hooks replace legacy workflow gate polling for MCP action checks. They run inside the daemon before a node-agent MCP action such as `send_message`, `save_artifact`, or `approve_task`. Hook results are persisted before the underlying action handler runs, so `side_effect` classification means "non-blocking pre-action side effect", not post-success handling.
 
 ## Configure hooks
 
@@ -26,8 +26,9 @@ Fields:
 - `method`: MCP method that triggers hook.
 - `classification`: `validation` blocks or patches action before handler; `side_effect` records state or emits follow-up after validation.
 - `authorizedCallers`: fail-closed caller allowlist. Include node name and optional agent slots.
-- `humanOnly`: only UI/human retry actions may trigger hook.
 - `validator`: built-in validator or script validator.
+
+Unsupported today: `humanOnly: true` is present in shared types for future UI-only hook actions, but create/update validation rejects it. Do not set `humanOnly` until UI/human hook execution ships.
 - `retry`: retry budget for `retryable_block` results.
 - `localState`: default hook state plus references to recent results from other hooks.
 
@@ -62,9 +63,9 @@ Hooks are MCP-action based; agents satisfy handoffs by sending required data on 
 
 ## Retryable block behavior
 
-`retryable_block` does not fail workflow immediately. Runtime persists queued action metadata, schedules retry, and rehydrates queued retries after daemon restart. Retry count resets after any non-retryable result. When attempts exceed `retry.maxAttempts`, runtime converts retryable block into hard `block` and notifies source session.
+`retryable_block` does not fail workflow immediately. For `send_message` hooks, runtime persists queued action metadata, schedules retry, and rehydrates queued retries after daemon restart. Other MCP methods return retryable metadata to the caller but are not auto-queued today. Retry count resets after any non-retryable result. When attempts exceed `retry.maxAttempts`, runtime converts retryable block into hard `block` and notifies source session.
 
-Codex review waits use this path: hook blocks retryably while codex[bot] review is pending, retries on configured delay, and eventually allows on `+1` or blocks after timeout depending workflow script.
+Current built-in Codex approval waits use `block` results with persisted hook-local wait metadata; agents retry the handoff after the documented delay. Use `retryable_block` only when automatic queued replay for `send_message` is desired.
 
 ## Restart recovery
 
@@ -83,8 +84,8 @@ Troubleshooting steps:
 Legacy custom gates and poll-based progression are migrating to hooks:
 
 - PR-ready gates become `send_message` validation hooks with `pr_ready` built-in validator.
-- Approval poll scripts become validation hooks that return `record_state`, `retryable_block`, or `block`.
-- Feedback-cycle reset behavior becomes side-effect hooks.
+- Approval poll scripts become validation hooks that return `record_state`, `allow`, or `block`.
+- Feedback-cycle reset behavior becomes non-blocking pre-action side-effect hooks.
 - Existing gate field approvals remain supported for human UI approval flows.
 
 Deprecation path:
