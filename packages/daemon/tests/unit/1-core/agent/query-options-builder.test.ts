@@ -204,21 +204,19 @@ describe('QueryOptionsBuilder', () => {
   });
 
   describe('provider settings', () => {
-    it('should disable SDK auto-compaction for Codex bridge without model context', () => {
-      expect(buildProviderSettings('anthropic-codex')).toEqual({
-        autoCompactEnabled: false,
-      });
-    });
-
     it('should not override SDK auto-compaction settings for native anthropic provider', () => {
       expect(buildProviderSettings('anthropic')).toBeUndefined();
     });
 
-    it('should enable SDK auto-compaction for all non-native providers with context windows', () => {
-      expect(buildProviderSettings('anthropic-codex', 128_000)).toEqual({
-        autoCompactEnabled: true,
-        autoCompactWindow: 128_000,
-      });
+    it('should not override SDK auto-compaction for anthropic-codex (handled natively)', () => {
+      // anthropic-codex routes through recognised Anthropic model IDs whose
+      // PP() capacities cover the real Codex windows, so SDK auto-compact is
+      // trusted. Belt-and-suspenders with CLAUDE_CODE_AUTO_COMPACT_WINDOW env.
+      expect(buildProviderSettings('anthropic-codex')).toBeUndefined();
+      expect(buildProviderSettings('anthropic-codex', 272_000)).toBeUndefined();
+    });
+
+    it('should enable SDK auto-compaction for non-native providers with context windows', () => {
       expect(buildProviderSettings('openrouter', 1_000_000)).toEqual({
         autoCompactEnabled: true,
         autoCompactWindow: 1_000_000,
@@ -239,10 +237,17 @@ describe('QueryOptionsBuilder', () => {
       });
     });
 
-    it('should enable SDK auto-compaction for Kimi with its known window', () => {
+    it('should disable SDK auto-compaction for Kimi (PP() caps at 200k, NeoKai fallback instead)', () => {
+      // The SDK's PP() returns 200k for 'kimi-for-coding'. Even with the
+      // autoCompactWindow setting, the SDK's effective window would be
+      // min(200k, 262k) = 200k, firing compaction at ~187k instead of ~249k.
+      // We disable SDK auto-compact entirely and let NeoKai's fallback
+      // (sdk-message-handler) trigger compaction at the correct threshold.
       expect(buildProviderSettings('kimi')).toEqual({
-        autoCompactEnabled: true,
-        autoCompactWindow: 262_144,
+        autoCompactEnabled: false,
+      });
+      expect(buildProviderSettings('kimi', 262_144)).toEqual({
+        autoCompactEnabled: false,
       });
     });
 

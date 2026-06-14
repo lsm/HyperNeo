@@ -139,6 +139,7 @@ describe('GlmProvider', () => {
         ANTHROPIC_AUTH_TOKEN: 'test-key',
         API_TIMEOUT_MS: '3000000',
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW: '200000',
         ANTHROPIC_DEFAULT_HAIKU_MODEL: 'glm-5',
         ANTHROPIC_DEFAULT_SONNET_MODEL: 'glm-5',
         ANTHROPIC_DEFAULT_OPUS_MODEL: 'glm-5',
@@ -174,6 +175,32 @@ describe('GlmProvider', () => {
       expect(config.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('glm-5.2[1m]');
       expect(config.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('glm-5.2[1m]');
       expect(config.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('glm-5.2[1m]');
+    });
+
+    it('should set CLAUDE_CODE_AUTO_COMPACT_WINDOW per model context window', () => {
+      process.env.GLM_API_KEY = 'test-key';
+
+      // glm-5.2[1m] has a 1M context window — env var must reflect it so the
+      // SDK's auto-compact threshold matches the real capacity (otherwise the
+      // SDK would cap to its 200k fallback for unknown models).
+      expect(provider.buildSdkConfig('glm-5.2').envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe(
+        '1000000'
+      );
+      expect(provider.buildSdkConfig('glm-5').envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe(
+        '200000'
+      );
+      expect(provider.buildSdkConfig('glm-5.1').envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe(
+        '200000'
+      );
+      expect(provider.buildSdkConfig('glm-5-turbo').envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe(
+        '200000'
+      );
+      expect(provider.buildSdkConfig('glm-5v-turbo').envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe(
+        '200000'
+      );
+      expect(provider.buildSdkConfig('glm-4.7').envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe(
+        '200000'
+      );
     });
 
     it('should build correct config for glm-5-turbo', () => {
@@ -277,10 +304,21 @@ describe('GlmProvider', () => {
         family: 'glm',
         provider: 'glm',
         contextWindow: 1_000_000,
+        preferContextWindowMetadata: true,
         description: 'GLM-5.2 · 1M context window, recommended thinking mode "max"',
         releaseDate: '2026-06-10',
         available: true,
       });
+    });
+
+    it('should mark every GLM model with preferContextWindowMetadata', () => {
+      // GLM IDs are unknown to the SDK's PP() helper. The context-fetcher must
+      // trust this metadata for the context bar instead of falling back to the
+      // SDK's reported capacity (which is the generic 200k fallback for unknown
+      // IDs and doesn't reflect the real GLM window).
+      for (const model of GlmProvider.MODELS) {
+        expect(model.preferContextWindowMetadata).toBe(true);
+      }
     });
 
     it('should have correct glm-5-turbo model definition', () => {

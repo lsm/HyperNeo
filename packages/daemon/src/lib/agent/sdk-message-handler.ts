@@ -45,6 +45,7 @@ import type { MessageQueue } from './message-queue';
 import type { QueryLifecycleManager } from './query-lifecycle-manager';
 import { getSessionModelInfo } from '../model-service';
 import { providerUsesNativeAutoCompact } from './query-options-builder.js';
+import { reserveBasedThreshold } from './context-tracker.js';
 
 /**
  * Number of SDK stream events between automatic context-usage refreshes.
@@ -898,27 +899,49 @@ export class SDKMessageHandler {
           contextInfo,
         });
 
-        // NeoKai-level compaction fallback for providers without SDK-native compaction.
+        // NeoKai-level compaction fallback.
+        //
+        // Two layers of defence against runaway context:
+        //   1. SDK native auto-compact — fires at `window - 13_000` when the
+        //      provider's model is recognised by the SDK's PP() helper (Anthropic
+        //      native, Anthropic-Codex bridge, GLM with `[1m]` suffix).
+        //   2. NeoKai fallback — fires at `contextWindow - max(13_000, 15%)`
+        //      when the SDK's auto-compact hasn't kept up. This catches:
+        //        - Providers whose model ID is unknown to PP() (Kimi, plain
+        //          GLM-5/5.1) where SDK auto-compact is disabled because it
+        //          would fire at the wrong threshold.
+        //        - Any case where the SDK reports `isAutoCompactEnabled: true`
+        //          but fails to actually trigger compaction (bug, hang, etc.).
+        //
+        // The raised threshold (vs. the SDK's 13k reserve) leaves the SDK a
+        // wider window to fire first; NeoKai only kicks in if the SDK hasn't
+        // compacted by the time context crosses the higher threshold. The
+        // shared cooldown prevents double-compaction when both layers race.
         const providerId = session.config.provider;
         if (!providerId) {
           return;
         }
-        const usesNativeAutoCompact =
-          providerUsesNativeAutoCompact(providerId, modelInfo?.contextWindow) ||
-          contextInfo.isAutoCompactEnabled;
-        if (
-          !usesNativeAutoCompact &&
-          modelInfo?.contextWindow &&
-          contextTracker.shouldCompact(modelInfo.contextWindow)
-        ) {
-          contextTracker.markCompactionTriggered();
-          this.logger.info(
-            `Triggering compaction for session ${session.id} ` +
-              `(${contextInfo.totalUsed} / ${modelInfo.contextWindow} tokens)`
-          );
-          void this.ctx.messageQueue.enqueue('/compact', /* internal */ true).catch((error) => {
-            this.logger.warn(`compaction enqueue failed for session ${session.id}:`, error);
-          });
+        const usesNativeAutoCompact = providerUsesNativeAutoCompact(
+          providerId,
+          modelInfo?.contextWindow
+        );
+        const actualContextWindow = modelInfo?.contextWindow;
+        if (!usesNativeAutoCompact && actualContextWindow && actualContextWindow > 0) {
+          const neoKaiCompactThreshold = reserveBasedThreshold(actualContextWindow);
+          if (
+            contextInfo.totalUsed >= neoKaiCompactThreshold &&
+            contextTracker.shouldCompactAt(neoKaiCompactThreshold)
+          ) {
+            contextTracker.markCompactionTriggered();
+            this.logger.info(
+              `Triggering NeoKai compaction fallback for session ${session.id} ` +
+                `(provider=${providerId}, ${contextInfo.totalUsed} >= ${neoKaiCompactThreshold} ` +
+                `of ${actualContextWindow} tokens)`
+            );
+            void this.ctx.messageQueue.enqueue('/compact', /* internal */ true).catch((error) => {
+              this.logger.warn(`compaction enqueue failed for session ${session.id}:`, error);
+            });
+          }
         }
       } catch (error) {
         this.logger.warn(`context refresh (${reason}) failed:`, error);

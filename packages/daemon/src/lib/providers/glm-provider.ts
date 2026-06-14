@@ -53,6 +53,12 @@ export class GlmProvider implements Provider {
       family: 'glm',
       provider: 'glm',
       contextWindow: 200000,
+      // GLM model IDs are unknown to the Claude Agent SDK's hardcoded model table.
+      // PP() falls back to 200k for unknown IDs, which happens to match the real
+      // GLM context window for these models — but the context-fetcher must still
+      // trust this metadata because the SDK may report the generic fallback as
+      // the model's actual capacity, which can drift if the SDK's default changes.
+      preferContextWindowMetadata: true,
       description: "GLM-5 · Zhipu AI's Next-Generation Frontier Model",
       releaseDate: '2026-02-11',
       available: true,
@@ -64,6 +70,7 @@ export class GlmProvider implements Provider {
       family: 'glm',
       provider: 'glm',
       contextWindow: 200000,
+      preferContextWindowMetadata: true,
       description: 'GLM-5.1 · Enhanced reasoning and instruction following',
       releaseDate: '2026-04-08',
       available: true,
@@ -75,6 +82,12 @@ export class GlmProvider implements Provider {
       family: 'glm',
       provider: 'glm',
       contextWindow: 1_000_000,
+      // The [1m] suffix is recognised by the SDK's PP() helper, so it returns
+      // 1M for this ID. Combined with CLAUDE_CODE_AUTO_COMPACT_WINDOW=1000000
+      // (set in buildSdkConfig), the SDK auto-compact window becomes
+      // min(1M, 1M) = 1M, matching the real GLM-5.2 context window. Compaction
+      // fires at ~987k (window - 13k SDK reserve).
+      preferContextWindowMetadata: true,
       description: 'GLM-5.2 · 1M context window, recommended thinking mode "max"',
       releaseDate: '2026-06-10',
       available: true,
@@ -86,6 +99,7 @@ export class GlmProvider implements Provider {
       family: 'glm',
       provider: 'glm',
       contextWindow: 200000,
+      preferContextWindowMetadata: true,
       description: 'GLM-5-Turbo · Optimized for long-chain agent tasks and tool calling',
       releaseDate: '2026-03-15',
       available: true,
@@ -97,6 +111,7 @@ export class GlmProvider implements Provider {
       family: 'glm',
       provider: 'glm',
       contextWindow: 200000,
+      preferContextWindowMetadata: true,
       description: 'GLM-5V-Turbo · Vision-capable turbo model optimized for multimodal agent tasks',
       releaseDate: '2026-05-01',
       available: true,
@@ -108,11 +123,22 @@ export class GlmProvider implements Provider {
       family: 'glm',
       provider: 'glm',
       contextWindow: 200000,
+      preferContextWindowMetadata: true,
       description: 'GLM-4.7 · Zhipu AI high-performance model',
       releaseDate: '2025-12-01',
       available: true,
     },
   ];
+
+  /**
+   * Lookup map for the real context window of each GLM model ID, including
+   * the [1m] suffix variant used for SDK routing. Used by buildSdkConfig()
+   * to set CLAUDE_CODE_AUTO_COMPACT_WINDOW so the SDK's auto-compact threshold
+   * matches the provider's real capacity instead of its hardcoded 200k fallback.
+   */
+  private static readonly CONTEXT_WINDOW_BY_MODEL_ID: Record<string, number> = Object.fromEntries(
+    GlmProvider.MODELS.map((m) => [m.id, m.contextWindow])
+  );
 
   private credentials: ProviderCredentials | null = null;
 
@@ -212,6 +238,14 @@ export class GlmProvider implements Provider {
           ? modelId
           : 'glm-5-turbo';
 
+    // Resolve the real context window for the routing model ID so we can tell
+    // the SDK the correct auto-compact threshold. Without this, the SDK uses
+    // PP(model) which returns 200k for unknown model IDs — wrong for glm-5.2[1m]
+    // (1M). Belt-and-suspenders with Options.settings.autoCompactWindow set by
+    // buildProviderSettings(): env var has highest priority in the SDK's
+    // resolution chain.
+    const contextWindow = GlmProvider.CONTEXT_WINDOW_BY_MODEL_ID[routingModelId] ?? 200_000;
+
     // Build environment variables
     const envVars: Record<string, string> = {
       ANTHROPIC_BASE_URL: baseUrl,
@@ -220,6 +254,12 @@ export class GlmProvider implements Provider {
       API_TIMEOUT_MS: '3000000',
       // Disable non-essential traffic (telemetry, etc.)
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+      // Tell the SDK the real GLM context window so auto-compact fires at the
+      // correct threshold instead of the SDK's hardcoded 200k fallback for
+      // unknown models. For glm-5.2[1m], this is 1M; for the 200k models, this
+      // matches the SDK fallback but pins it explicitly so future SDK defaults
+      // can't silently change compaction behaviour.
+      CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(contextWindow),
       // Route all tiers to the selected model
       ANTHROPIC_DEFAULT_HAIKU_MODEL: routingModelId,
       ANTHROPIC_DEFAULT_SONNET_MODEL: routingModelId,

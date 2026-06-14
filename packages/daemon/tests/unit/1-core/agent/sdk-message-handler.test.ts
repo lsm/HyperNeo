@@ -134,6 +134,7 @@ describe('SDKMessageHandler', () => {
       getContextInfo: getContextInfoSpy,
       updateWithDetailedBreakdown: updateWithDetailedBreakdownSpy,
       shouldCompact: mock(() => false),
+      shouldCompactAt: mock(() => false),
       markCompactionTriggered: mock(() => {}),
     } as unknown as ContextTracker;
 
@@ -1341,7 +1342,11 @@ describe('SDKMessageHandler', () => {
         setModelsCache(new Map());
       });
 
-      it('does not enqueue /compact when non-native provider exceeds 85% threshold', async () => {
+      it('enqueues /compact for non-native provider above reserve threshold even when SDK reports auto-compact enabled', async () => {
+        // Regression: OpenRouter and other non-native providers may report
+        // isAutoCompactEnabled=true from the SDK, but the SDK's auto-compact
+        // isn't reliable for unknown model IDs. NeoKai must still fire as a
+        // safety net at the higher reserve-based threshold.
         setModelsCache(
           new Map([
             [
@@ -1377,7 +1382,7 @@ describe('SDKMessageHandler', () => {
         mockContext.queryObject = { getContextUsage: getContextUsageSpy } as never;
         mockContext.session.config.provider = 'openrouter';
         mockContext.session.config.model = 'deepseek-v4';
-        mockContextTracker.shouldCompact = mock(() => true);
+        mockContextTracker.shouldCompactAt = mock(() => true);
 
         const h = new SDKMessageHandler(mockContext);
 
@@ -1399,7 +1404,72 @@ describe('SDKMessageHandler', () => {
         await new Promise((resolve) => setTimeout(resolve, 0));
 
         expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
-        expect(mockContextTracker.shouldCompact).not.toHaveBeenCalled();
+        expect(mockContextTracker.shouldCompactAt).toHaveBeenCalledWith(850_000);
+        expect(mockContextTracker.markCompactionTriggered).toHaveBeenCalled();
+        expect(enqueueMessageSpy).toHaveBeenCalledWith('/compact', true);
+      });
+
+      it('does not enqueue /compact for non-native provider below reserve threshold', async () => {
+        // totalUsed=800k vs contextWindow=1M. Reserve = max(13k, 150k) = 150k.
+        // Threshold = 850k. 800k < 850k → NeoKai does not fire.
+        setModelsCache(
+          new Map([
+            [
+              'global',
+              [
+                {
+                  id: 'deepseek-v4',
+                  name: 'DeepSeek V4',
+                  provider: 'openrouter',
+                  contextWindow: 1_000_000,
+                  available: true,
+                },
+              ],
+            ],
+          ])
+        );
+
+        const getContextUsageSpy = mock(async () => ({
+          categories: [{ name: 'Messages', tokens: 800_000 }],
+          totalTokens: 800_000,
+          maxTokens: 1_000_000,
+          rawMaxTokens: 1_000_000,
+          percentage: 80,
+          gridRows: [],
+          model: 'deepseek-v4',
+          memoryFiles: [],
+          mcpTools: [],
+          agents: [],
+          isAutoCompactEnabled: true,
+          apiUsage: null,
+        }));
+
+        mockContext.queryObject = { getContextUsage: getContextUsageSpy } as never;
+        mockContext.session.config.provider = 'openrouter';
+        mockContext.session.config.model = 'deepseek-v4';
+        mockContextTracker.shouldCompactAt = mock(() => false);
+
+        const h = new SDKMessageHandler(mockContext);
+
+        const resultMessage: SDKMessage = {
+          type: 'result',
+          subtype: 'success',
+          uuid: 'result-uuid',
+          usage: {
+            input_tokens: 10,
+            output_tokens: 5,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+          },
+          total_cost_usd: 0.001,
+          modelUsage: {},
+        } as unknown as SDKMessage;
+
+        await h.handleMessage(resultMessage);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
+        expect(mockContextTracker.markCompactionTriggered).not.toHaveBeenCalled();
         expect(enqueueMessageSpy).not.toHaveBeenCalledWith('/compact', true);
       });
 
@@ -1439,7 +1509,7 @@ describe('SDKMessageHandler', () => {
         mockContext.queryObject = { getContextUsage: getContextUsageSpy } as never;
         mockContext.session.config.provider = 'custom-provider';
         mockContext.session.config.model = 'fallback-model';
-        mockContextTracker.shouldCompact = mock(() => true);
+        mockContextTracker.shouldCompactAt = mock(() => true);
         enqueueMessageSpy = mock(async () => {
           throw new Error('queue stopped');
         });
@@ -1467,7 +1537,10 @@ describe('SDKMessageHandler', () => {
         expect(enqueueMessageSpy).toHaveBeenCalledWith('/compact', true);
       });
 
-      it('does not enqueue /compact for providers with native auto-compaction', async () => {
+      it('does not enqueue /compact for native anthropic provider (SDK handles)', async () => {
+        // Native Anthropic provider: SDK auto-compact works correctly, so
+        // NeoKai fallback is not installed. Verify no /compact enqueue even
+        // when context is near capacity.
         setModelsCache(
           new Map([
             [
@@ -1501,8 +1574,8 @@ describe('SDKMessageHandler', () => {
         }));
 
         mockContext.queryObject = { getContextUsage: getContextUsageSpy } as never;
-        mockContext.session.config.provider = 'kimi';
-        mockContext.session.config.model = 'kimi-for-coding';
+        mockContext.session.config.provider = 'anthropic';
+        mockContext.session.config.model = 'sonnet';
 
         const h = new SDKMessageHandler(mockContext);
 
@@ -1524,7 +1597,8 @@ describe('SDKMessageHandler', () => {
         await new Promise((resolve) => setTimeout(resolve, 0));
 
         expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
-        expect(enqueueMessageSpy).not.toHaveBeenCalled();
+        expect(mockContextTracker.shouldCompactAt).not.toHaveBeenCalled();
+        expect(enqueueMessageSpy).not.toHaveBeenCalledWith('/compact', true);
       });
 
       it('does not enqueue /compact when model info is missing', async () => {
@@ -1568,6 +1642,76 @@ describe('SDKMessageHandler', () => {
 
         expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
         expect(enqueueMessageSpy).not.toHaveBeenCalled();
+      });
+
+      it('enqueues /compact for Kimi (SDK auto-compact disabled, NeoKai fallback)', async () => {
+        // Kimi: SDK auto-compact is disabled because PP() caps kimi-for-coding
+        // to 200k while the real window is 262k. NeoKai fallback must fire at
+        // reserveBasedThreshold(262144) = 262144 - max(13k, ~39k) = ~223k.
+        setModelsCache(
+          new Map([
+            [
+              'global',
+              [
+                {
+                  id: 'kimi-for-coding',
+                  name: 'Kimi For Coding',
+                  provider: 'kimi',
+                  contextWindow: 262_144,
+                  preferContextWindowMetadata: true,
+                  available: true,
+                },
+              ],
+            ],
+          ])
+        );
+
+        const getContextUsageSpy = mock(async () => ({
+          categories: [{ name: 'Messages', tokens: 230_000 }],
+          totalTokens: 230_000,
+          // SDK reports the 200k PP fallback — display layer should override
+          // to 262k via preferContextWindowMetadata.
+          maxTokens: 200_000,
+          rawMaxTokens: 200_000,
+          percentage: 100,
+          gridRows: [],
+          model: 'kimi-for-coding',
+          memoryFiles: [],
+          mcpTools: [],
+          agents: [],
+          isAutoCompactEnabled: false,
+          apiUsage: null,
+        }));
+
+        mockContext.queryObject = { getContextUsage: getContextUsageSpy } as never;
+        mockContext.session.config.provider = 'kimi';
+        mockContext.session.config.model = 'kimi-for-coding';
+        mockContextTracker.shouldCompactAt = mock(() => true);
+
+        const h = new SDKMessageHandler(mockContext);
+
+        const resultMessage: SDKMessage = {
+          type: 'result',
+          subtype: 'success',
+          uuid: 'result-uuid',
+          usage: {
+            input_tokens: 10,
+            output_tokens: 5,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+          },
+          total_cost_usd: 0.001,
+          modelUsage: {},
+        } as unknown as SDKMessage;
+
+        await h.handleMessage(resultMessage);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
+        // reserveBasedThreshold(262144) = 262144 - 39321 = 222823
+        expect(mockContextTracker.shouldCompactAt).toHaveBeenCalledWith(222_823);
+        expect(mockContextTracker.markCompactionTriggered).toHaveBeenCalled();
+        expect(enqueueMessageSpy).toHaveBeenCalledWith('/compact', true);
       });
     });
 

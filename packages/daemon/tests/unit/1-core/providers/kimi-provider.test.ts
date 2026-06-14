@@ -180,7 +180,13 @@ describe('KimiProvider', () => {
       expect(config.envVars.ANTHROPIC_API_KEY).toBe('');
       expect(config.envVars.ANTHROPIC_AUTH_TOKEN).toBe('');
       expect(config.envVars.API_TIMEOUT_MS).toBe('3000000');
-      expect(config.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('262144');
+      // CLAUDE_CODE_AUTO_COMPACT_WINDOW intentionally NOT set for Kimi. The
+      // SDK's PP() caps unknown model IDs (kimi-for-coding) to 200k, so even
+      // with this env var the effective window would be min(200k, 262k) = 200k
+      // and SDK auto-compact would fire at ~187k — 60k too early. SDK
+      // auto-compact is disabled via Options.settings; NeoKai's fallback
+      // trigger handles compaction at the correct 85% of the real 262k window.
+      expect(config.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBeUndefined();
       expect(config.envVars.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC).toBe('1');
       expect(config.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('kimi-for-coding');
       expect(config.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('kimi-for-coding');
@@ -312,6 +318,12 @@ describe('KimiProvider', () => {
       expect(KimiProvider.MODELS.find((m) => m.id === 'kimi-for-coding')?.contextWindow).toBe(
         262144
       );
+    });
+
+    it('should mark Kimi model with preferContextWindowMetadata', () => {
+      // The SDK's PP() caps kimi-for-coding to 200k, but the real window is
+      // 262k. The context-fetcher must trust metadata for the context bar.
+      expect(KimiProvider.MODELS[0].preferContextWindowMetadata).toBe(true);
     });
   });
 

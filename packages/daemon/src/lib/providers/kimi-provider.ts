@@ -79,6 +79,14 @@ export class KimiProvider implements Provider {
       family: 'kimi',
       provider: 'kimi',
       contextWindow: 262144,
+      // Kimi's real context window is 262k but the SDK's PP() helper returns
+      // 200k for unknown model IDs (and there is no [1m] suffix we can use
+      // without breaking the upstream Kimi API call). We must trust this
+      // metadata for the context bar display; compaction is handled by
+      // NeoKai's fallback trigger (sdk-message-handler) rather than the SDK's
+      // native auto-compact, because the SDK would cap the window to 200k
+      // and fire compaction 60k too early.
+      preferContextWindowMetadata: true,
       description:
         'Kimi Code model (auto-upgrades to latest flagship). Fixed model ID for all requests.',
       releaseDate: '',
@@ -182,7 +190,14 @@ export class KimiProvider implements Provider {
         ANTHROPIC_API_KEY: '',
         ANTHROPIC_AUTH_TOKEN: '',
         API_TIMEOUT_MS: '3000000',
-        CLAUDE_CODE_AUTO_COMPACT_WINDOW: '262144',
+        // NOTE: CLAUDE_CODE_AUTO_COMPACT_WINDOW intentionally NOT set for Kimi.
+        // The SDK's PP() helper returns 200k for the unknown 'kimi-for-coding'
+        // model ID, so even with this env var the effective window would be
+        // min(200k, 262144) = 200k, and SDK auto-compact would fire at ~187k
+        // — 60k too early. Instead, Options.settings.autoCompactEnabled=false
+        // (set via buildProviderSettings) disables SDK auto-compact entirely,
+        // and NeoKai's fallback trigger (sdk-message-handler) handles
+        // compaction at the correct 85% of the real 262k window.
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
         ANTHROPIC_DEFAULT_HAIKU_MODEL: routingModelId,
         ANTHROPIC_DEFAULT_SONNET_MODEL: routingModelId,
