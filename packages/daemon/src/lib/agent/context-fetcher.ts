@@ -22,6 +22,7 @@ import type {
   ModelInfo,
 } from '@neokai/shared';
 import { Logger } from '../logger';
+import { PROVIDER_NO_SDK_AUTO_COMPACT } from './query-options-builder.js';
 
 type ContextMetadata =
   | Pick<
@@ -51,6 +52,17 @@ export class ContextFetcher {
   }
 
   /**
+   * Fraction above which a mismatch between the SDK-reported context capacity
+   * and the provider metadata is considered suspicious. The Claude Agent SDK's
+   * PP() helper hardcodes a 200k fallback for unknown model IDs; for providers
+   * whose real window differs from that fallback by more than this fraction
+   * (e.g. GLM-5.2[1m] at 1M, Kimi at 262k), we want a runtime breadcrumb in the
+   * daemon log so a regression in `[1m]` suffix recognition or env var plumbing
+   * is visible without having to attach a debugger.
+   */
+  private static readonly CAPACITY_MISMATCH_WARN_FRACTION = 0.1;
+
+  /**
    * Call the SDK's `getContextUsage()` and convert the result to `ContextInfo`.
    *
    * Returns null if the query handle is missing or the call fails. Failures
@@ -66,11 +78,55 @@ export class ContextFetcher {
 
     try {
       const response = await query.getContextUsage();
-      return ContextFetcher.toContextInfo(response, modelMetadata);
+      const info = ContextFetcher.toContextInfo(response, modelMetadata);
+      if (info) {
+        ContextFetcher.warnOnCapacityMismatch(response, modelMetadata, this.logger);
+      }
+      return info;
     } catch (error) {
       this.logger.warn('query.getContextUsage() failed:', error);
       return null;
     }
+  }
+
+  /**
+   * Log a warning when the SDK-reported capacity disagrees with provider
+   * metadata by more than `CAPACITY_MISMATCH_WARN_FRACTION`. This surfaces
+   * regressions in the SDK's PP() recognition of `[1m]` suffixes, env var
+   * plumbing for `CLAUDE_CODE_AUTO_COMPACT_WINDOW`, or any other path that
+   * would silently make the SDK use the wrong context window.
+   *
+   * The check is purely diagnostic — `toContextInfo` already overrides the
+   * SDK value with metadata when `preferContextWindowMetadata` is set, so the
+   * display layer is unaffected. The warning is for operator visibility.
+   */
+  private static warnOnCapacityMismatch(
+    response: SDKControlGetContextUsageResponse,
+    modelMetadata: ContextMetadata,
+    logger: Logger
+  ): void {
+    const providerId = modelMetadata?.provider;
+    // For providers we've already opted out of SDK auto-compact (e.g. Kimi,
+    // where PP() hardcodes 200k and the real window is 262k), the mismatch
+    // is expected — NeoKai's fallback handles compaction. Skip the warning
+    // so the log doesn't drown in expected-state noise.
+    if (providerId && PROVIDER_NO_SDK_AUTO_COMPACT.has(providerId)) return;
+    const metadataCapacity = positiveInteger(modelMetadata?.contextWindow);
+    if (!metadataCapacity) return;
+    const sdkCapacity =
+      positiveInteger(response.rawMaxTokens) ?? positiveInteger(response.maxTokens);
+    if (!sdkCapacity) return;
+    const larger = Math.max(sdkCapacity, metadataCapacity);
+    if (larger <= 0) return;
+    const mismatch = Math.abs(sdkCapacity - metadataCapacity) / larger;
+    if (mismatch <= ContextFetcher.CAPACITY_MISMATCH_WARN_FRACTION) return;
+    logger.warn(
+      `Context capacity mismatch: SDK reports ${sdkCapacity} tokens for ` +
+        `model=${response.model ?? '<unknown>'} but metadata declares ` +
+        `${metadataCapacity} tokens (mismatch ${(mismatch * 100).toFixed(1)}%). ` +
+        `Display will use metadata; SDK auto-compact may fire at the wrong threshold. ` +
+        `Check PP() model recognition and CLAUDE_CODE_AUTO_COMPACT_WINDOW env var.`
+    );
   }
 
   /**

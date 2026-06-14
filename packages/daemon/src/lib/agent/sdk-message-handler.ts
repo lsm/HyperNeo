@@ -916,15 +916,14 @@ export class SDKMessageHandler {
         // The raised threshold (vs. the SDK's 13k reserve) leaves the SDK a
         // wider window to fire first; NeoKai only kicks in if the SDK hasn't
         // compacted by the time context crosses the higher threshold. The
-        // shared cooldown prevents double-compaction when both layers race.
+        // NeoKai-only cooldown (60s) prevents back-to-back NeoKai `/compact`
+        // enqueues while a previous compaction is still in flight. The SDK has
+        // its own internal state and does not consult this cooldown.
         const providerId = session.config.provider;
         if (!providerId) {
           return;
         }
-        const usesNativeAutoCompact = providerUsesNativeAutoCompact(
-          providerId,
-          modelInfo?.contextWindow
-        );
+        const usesNativeAutoCompact = providerUsesNativeAutoCompact(providerId);
         const actualContextWindow = modelInfo?.contextWindow;
         if (!usesNativeAutoCompact && actualContextWindow && actualContextWindow > 0) {
           const neoKaiCompactThreshold = reserveBasedThreshold(actualContextWindow);

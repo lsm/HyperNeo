@@ -222,10 +222,7 @@ export const PROVIDER_NO_SDK_AUTO_COMPACT: ReadonlySet<string> = new Set(['kimi'
  *
  * Used by sdk-message-handler to decide whether to install the NeoKai fallback.
  */
-export function providerUsesNativeAutoCompact(
-  providerId: string,
-  _contextWindow?: number | null
-): boolean {
+export function providerUsesNativeAutoCompact(providerId: string): boolean {
   if (PROVIDER_NO_SDK_AUTO_COMPACT.has(providerId)) {
     return false;
   }

@@ -203,6 +203,24 @@ describe('GlmProvider', () => {
       );
     });
 
+    it('should route uppercase model IDs through the same lookup as lowercase', () => {
+      // Regression: without normalising case, "GLM-5.2" bypassed the
+      // glm-5.2 → [1m] shortcut, fell through to verbatim routing, missed
+      // the context-window lookup, and silently fell back to 200k.
+      process.env.GLM_API_KEY = 'test-key';
+
+      const upperConfig = provider.buildSdkConfig('GLM-5.2');
+      const lowerConfig = provider.buildSdkConfig('glm-5.2');
+      expect(upperConfig.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe(
+        lowerConfig.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL
+      );
+      expect(upperConfig.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('glm-5.2[1m]');
+      expect(upperConfig.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe(
+        lowerConfig.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW
+      );
+      expect(upperConfig.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('1000000');
+    });
+
     it('should build correct config for glm-5-turbo', () => {
       process.env.GLM_API_KEY = 'test-key';
 

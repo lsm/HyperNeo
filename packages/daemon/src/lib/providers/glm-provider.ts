@@ -230,12 +230,18 @@ export class GlmProvider implements Provider {
     // Get base URL: session override > default
     const baseUrl = sessionConfig?.baseUrl || GlmProvider.BASE_URL;
 
+    // Normalise case so "GLM-5.2" / "GLM-5" route the same as their lowercase
+    // forms. Without this, an uppercase modelId bypasses the glm-5.2 → [1m]
+    // shortcut, falls through to verbatim routing, misses the context-window
+    // lookup, and silently falls back to 200k.
+    const normalisedModelId = modelId.toLowerCase();
+
     // If modelId is not a GLM model ID (e.g. 'default'), fall back to glm-5-turbo.
     const routingModelId =
-      modelId === 'glm-5.2'
+      normalisedModelId === 'glm-5.2'
         ? 'glm-5.2[1m]'
-        : modelId.toLowerCase().startsWith('glm-')
-          ? modelId
+        : normalisedModelId.startsWith('glm-')
+          ? normalisedModelId
           : 'glm-5-turbo';
 
     // Resolve the real context window for the routing model ID so we can tell

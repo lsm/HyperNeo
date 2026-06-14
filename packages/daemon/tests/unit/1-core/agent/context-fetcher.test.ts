@@ -5,7 +5,7 @@
  * `query.getContextUsage()` response into NeoKai's `ContextInfo` shape.
  */
 
-import { describe, it, expect, mock } from 'bun:test';
+import { describe, it, expect, mock, spyOn } from 'bun:test';
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type { SDKControlGetContextUsageResponse } from '@anthropic-ai/claude-agent-sdk';
 import { ContextFetcher } from '../../../../src/lib/agent/context-fetcher';
@@ -684,5 +684,123 @@ describe('ContextFetcher.fetch', () => {
     const info = await fetcher.fetch(query);
 
     expect(info).toBeNull();
+  });
+
+  describe('capacity mismatch warning', () => {
+    it('warns when SDK capacity differs from metadata by more than 10%', async () => {
+      // Simulates a glm-5.2[1m] regression: PP() would return 200k if the
+      // SDK no longer recognises the [1m] suffix. The metadata still says 1M.
+      // Mismatch = (1M - 200k) / 1M = 80% > 10% → warn.
+      const getContextUsage = mock(async () =>
+        baseResponse({
+          totalTokens: 100_000,
+          maxTokens: 200_000,
+          rawMaxTokens: 200_000,
+          model: 'glm-5.2[1m]',
+        })
+      );
+      const query = { getContextUsage } as unknown as Query;
+
+      const fetcher = new ContextFetcher('mismatch-session');
+      const warnSpy = spyOn(fetcher.logger, 'warn');
+
+      await fetcher.fetch(query, {
+        id: 'glm-5.2[1m]',
+        contextWindow: 1_000_000,
+        provider: 'glm',
+        preferContextWindowMetadata: true,
+      });
+
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      const [message] = warnSpy.mock.calls[0] as unknown[];
+      expect(String(message)).toContain('Context capacity mismatch');
+      expect(String(message)).toContain('200000');
+      expect(String(message)).toContain('1000000');
+    });
+
+    it('does not warn when SDK capacity matches metadata within 10%', async () => {
+      // Trivial mismatch (e.g. 200k SDK vs 262k metadata = ~23% — should warn).
+      // Use 200k vs 210k (~4.8%) — should NOT warn.
+      const getContextUsage = mock(async () =>
+        baseResponse({
+          totalTokens: 10_000,
+          maxTokens: 210_000,
+          rawMaxTokens: 210_000,
+        })
+      );
+      const query = { getContextUsage } as unknown as Query;
+
+      const fetcher = new ContextFetcher('match-session');
+      const warnSpy = spyOn(fetcher.logger, 'warn');
+
+      await fetcher.fetch(query, {
+        id: 'some-model',
+        contextWindow: 200_000,
+        provider: 'custom',
+      });
+
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not warn when metadata is missing', async () => {
+      const getContextUsage = mock(async () => baseResponse({ maxTokens: 200_000 }));
+      const query = { getContextUsage } as unknown as Query;
+
+      const fetcher = new ContextFetcher('no-metadata-session');
+      const warnSpy = spyOn(fetcher.logger, 'warn');
+
+      await fetcher.fetch(query);
+
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not warn when SDK capacity is zero or unavailable', async () => {
+      const getContextUsage = mock(async () =>
+        baseResponse({
+          maxTokens: 0,
+          rawMaxTokens: 0,
+        })
+      );
+      const query = { getContextUsage } as unknown as Query;
+
+      const fetcher = new ContextFetcher('no-sdk-capacity-session');
+      const warnSpy = spyOn(fetcher.logger, 'warn');
+
+      await fetcher.fetch(query, {
+        id: 'some-model',
+        contextWindow: 1_000_000,
+        provider: 'custom',
+      });
+
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not warn for providers opted out of SDK auto-compact (e.g. Kimi)', async () => {
+      // Kimi is in PROVIDER_NO_SDK_AUTO_COMPACT because the SDK's PP() caps
+      // kimi-for-coding to 200k regardless of metadata. A 23% mismatch is the
+      // expected steady state, not a regression — skip the warning so the log
+      // isn't drowned in expected-state noise.
+      const getContextUsage = mock(async () =>
+        baseResponse({
+          totalTokens: 100_000,
+          maxTokens: 200_000,
+          rawMaxTokens: 200_000,
+          model: 'kimi-for-coding',
+        })
+      );
+      const query = { getContextUsage } as unknown as Query;
+
+      const fetcher = new ContextFetcher('kimi-session');
+      const warnSpy = spyOn(fetcher.logger, 'warn');
+
+      await fetcher.fetch(query, {
+        id: 'kimi-for-coding',
+        contextWindow: 262_144,
+        provider: 'kimi',
+        preferContextWindowMetadata: true,
+      });
+
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
   });
 });
