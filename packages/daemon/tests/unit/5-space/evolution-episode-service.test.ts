@@ -1592,4 +1592,99 @@ describe('EvolutionEpisodeService', () => {
       evidenceEpisodeIds: [result.episode.id],
     });
   });
+
+  it('preflight artifact diagnostics flag omitted workflow artifacts from the scope', () => {
+    const scope = evolutionRepo.createScope({
+      spaceId,
+      kind: 'custom',
+      name: 'Artifact omission',
+      objective: 'Surface missing artifact context',
+    });
+    const task = taskRepo.createTask({
+      spaceId,
+      title: 'Add preflight diagnostics',
+      description: 'Surface artifact gaps',
+      evolutionScopeId: scope.id,
+    });
+    taskRepo.updateTask(task.id, {
+      status: 'done',
+      result: 'PR merged with tests',
+      reportedSummary: 'Completed with task-only evidence',
+    });
+    const taskEvidence = evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'task',
+      sourceId: task.id,
+      summary: 'Task evidence only',
+    });
+    const workflow = workflowRepo.createWorkflow({ spaceId, name: 'Workflow' });
+    const run = workflowRunRepo.createRun({ spaceId, workflowId: workflow.id, title: 'Run' });
+    const workflowRunEvidence = evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'workflow_run',
+      sourceId: run.id,
+      summary: 'Workflow run evidence available but not selected',
+    });
+    const artifactEvidence = evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'artifact',
+      sourceId: run.id,
+      summary: 'Workflow artifact evidence available but not selected',
+    });
+
+    const service = new EvolutionEpisodeService({
+      evolutionRepo,
+      taskRepo,
+      workflowRunRepo,
+      artifactRepo,
+    });
+    const input = service.buildEpisodeInput({
+      scopeId: scope.id,
+      evidenceIds: [taskEvidence.id],
+    });
+
+    expect(input.preflight.counts.workflowArtifacts).toBe(0);
+    expect(input.preflight.artifactDiagnostics.status).toBe('available_omitted');
+    expect(input.preflight.artifactDiagnostics.availableKinds).toEqual([
+      'artifact',
+      'workflow_run',
+    ]);
+    expect(input.preflight.artifactDiagnostics.omittedCount).toBe(2);
+    const recommendationText = input.preflight.artifactDiagnostics.recommendations.join(' ');
+    expect(recommendationText).toMatch(/workflow_run evidence/);
+    expect(recommendationText).toMatch(/artifact evidence/);
+    expect(recommendationText).toMatch(/2 workflow artifact evidence rows/);
+
+    const allSelectedInput = service.buildEpisodeInput({
+      scopeId: scope.id,
+      evidenceIds: [taskEvidence.id, workflowRunEvidence.id, artifactEvidence.id],
+    });
+    expect(allSelectedInput.preflight.artifactDiagnostics.status).toBe('selected');
+    expect(allSelectedInput.preflight.artifactDiagnostics.recommendations).toEqual([]);
+
+    const emptyScope = evolutionRepo.createScope({
+      spaceId,
+      kind: 'custom',
+      name: 'Empty artifacts',
+      objective: 'No artifact context available',
+    });
+    const emptyScopeTask = taskRepo.createTask({
+      spaceId,
+      title: 'Task without artifacts',
+      description: 'No artifact evidence in scope',
+      evolutionScopeId: emptyScope.id,
+    });
+    const emptyScopeTaskEvidence = evolutionRepo.createEvidence({
+      scopeId: emptyScope.id,
+      kind: 'task',
+      sourceId: emptyScopeTask.id,
+      summary: 'Task only',
+    });
+    const emptyScopeInput = service.buildEpisodeInput({
+      scopeId: emptyScope.id,
+      evidenceIds: [emptyScopeTaskEvidence.id],
+    });
+    expect(emptyScopeInput.preflight.artifactDiagnostics.status).toBe('none_available');
+    expect(emptyScopeInput.preflight.artifactDiagnostics.availableKinds).toEqual([]);
+  });
 });
