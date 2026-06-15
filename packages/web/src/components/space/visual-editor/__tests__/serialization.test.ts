@@ -482,7 +482,7 @@ describe('visualStateToCreateParams', () => {
     });
   });
 
-  it('omits retry defaults for built-in pr_ready hooks', () => {
+  it('omits retry settings for built-in pr_ready hooks', () => {
     const params = visualStateToCreateParams(
       makeState({
         hooks: [
@@ -492,6 +492,7 @@ describe('visualStateToCreateParams', () => {
             sourceNode: 'Step 1',
             method: 'send_message',
             validator: { kind: 'built_in', id: 'pr_ready' },
+            retry: { maxAttempts: 3, delayMs: 5000, backoffMultiplier: 1 },
           },
         ],
       }),

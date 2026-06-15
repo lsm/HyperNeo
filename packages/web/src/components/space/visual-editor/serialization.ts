@@ -259,17 +259,22 @@ function remapHookNodeReference(value: string | undefined, nodeNames: Map<string
 }
 
 function serializeHook(hook: WorkflowHook, nodeNames: Map<string, string>): WorkflowHook | null {
-  const { poll: _poll, humanOnly: _humanOnly, ...hookWithoutUnsupportedFields } = hook;
+  const {
+    poll: _poll,
+    humanOnly: _humanOnly,
+    retry: _retry,
+    ...hookWithoutUnsupportedFields
+  } = hook;
   if (hook.humanOnly && (!hook.authorizedCallers || hook.authorizedCallers.length === 0)) {
     return null;
   }
-  const shouldMaterializeRetry =
-    !hook.retry && !(hook.validator.kind === 'built_in' && hook.validator.id === 'pr_ready');
+  const isPrReadyValidator = hook.validator.kind === 'built_in' && hook.validator.id === 'pr_ready';
+  const retry = isPrReadyValidator
+    ? undefined
+    : (hook.retry ?? { maxAttempts: 3, delayMs: 5000, backoffMultiplier: 1 });
   return {
     ...hookWithoutUnsupportedFields,
-    ...(shouldMaterializeRetry
-      ? { retry: { maxAttempts: 3, delayMs: 5000, backoffMultiplier: 1 } }
-      : {}),
+    ...(retry ? { retry } : {}),
     sourceNode: remapHookNodeReference(hook.sourceNode, nodeNames) ?? hook.sourceNode,
     targetNode: remapHookNodeReference(hook.targetNode, nodeNames),
     authorizedCallers: hook.authorizedCallers?.map((caller) => ({
