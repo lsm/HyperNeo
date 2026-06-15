@@ -202,9 +202,9 @@ const violations = oversized.filter((file) => {
 });
 
 const staleAllowlistEntries = Object.entries(config.allowlist)
-  .filter(([path]) => {
+  .filter(([path, entry]) => {
     const absolutePath = resolve(repoRoot, path);
-    return !existsSync(absolutePath) || countLines(absolutePath) <= config.hardLineCount;
+    return !existsSync(absolutePath) || countLines(absolutePath) < entry.maxLines;
   })
   .map(([path]) => path)
   .sort();

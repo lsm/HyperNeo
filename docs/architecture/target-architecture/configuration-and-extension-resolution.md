@@ -454,6 +454,9 @@ CREATE TABLE config_values (
 CREATE INDEX idx_config_values_key_scope
   ON config_values(key, scope_type, scope_id);
 
+CREATE UNIQUE INDEX idx_config_values_unique_scoped_key
+  ON config_values(key, scope_type, COALESCE(scope_id, ''));
+
 CREATE TABLE extension_packages (
   id TEXT PRIMARY KEY,
   package_type TEXT NOT NULL,
@@ -492,6 +495,8 @@ Existing specialized tables can remain:
 - settings tables
 
 The first implementation should not force all of them into `config_values`. It should introduce shared resolver concepts and migrate one area at a time.
+
+Each `config_values` row is a replace-style value for one key at one scope. Mergeable or ordered multi-value settings should use an explicit dimension in the key, such as `agent.runtime.profile.<profileId>`, instead of storing duplicate rows for the same `(key, scope_type, scope_id)`.
 
 ---
 

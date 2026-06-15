@@ -687,8 +687,11 @@ export const promptPolicyEffectivePreview = defineQuery({
   },
   auth: {
     action: 'promptPolicy.preview',
-    resource: 'space',
-    resourceIdFrom: (input) => input.spaceId ?? null,
+    resourceFrom: (input) => {
+      if (input.spaceId) return { type: 'space', id: input.spaceId };
+      if (input.sessionId) return { type: 'session', id: input.sessionId };
+      return { type: 'global', id: null };
+    },
   },
   supportsSubscribe: true,
 });

@@ -552,9 +552,20 @@ CREATE INDEX idx_prompt_policy_records_template
 
 CREATE INDEX idx_prompt_policy_records_suppresses
   ON prompt_policy_records(suppresses_template_id, enabled);
+
+CREATE UNIQUE INDEX idx_prompt_policy_records_enabled_target
+  ON prompt_policy_records(
+    scope_type,
+    COALESCE(scope_id, ''),
+    COALESCE(template_id, suppresses_template_id)
+  )
+  WHERE enabled = 1
+    AND record_type IN ('template', 'suppress');
 ```
 
 This table stores activation, suppression, and future internal content records. Built-in prompt text stays in code; rows reference stable template IDs such as `neokai.output-mode.compressed`.
+
+Enabled built-in activation and suppression rows are unique per scope and target template. A transaction that replaces an activation with suppression, or suppression with activation, must update/disable the existing enabled row before inserting the replacement.
 
 ### Optional `message_outbox_deliveries`
 
