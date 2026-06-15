@@ -16,7 +16,6 @@
  * fresh system:init is emitted with the correct model.
  */
 
-import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type {
   Provider,
   Session,
@@ -36,6 +35,8 @@ import type { ContextTracker } from './context-tracker';
 import type { MessageQueue } from './message-queue';
 import type { ProcessingStateManager } from './processing-state-manager';
 import type { QueryLifecycleManager } from './query-lifecycle-manager';
+import { AcpQueryAdapter } from '../acp/acp-query-adapter';
+import type { QueryLike } from './query-like';
 
 /**
  * Context interface - what ModelSwitchHandler needs from AgentSession
@@ -52,8 +53,8 @@ export interface ModelSwitchHandlerContext {
   readonly logger: Logger;
   readonly lifecycleManager: QueryLifecycleManager;
 
-  // SDK state
-  readonly queryObject: Query | null;
+  // Query state
+  readonly queryObject: QueryLike | null;
   readonly queryPromise: Promise<void> | null;
   readonly messageQueue: MessageQueue;
 }
@@ -150,8 +151,14 @@ export class ModelSwitchHandler {
       lifecycleManager,
     } = this.ctx;
 
+    const previousModel = session.config.model;
+    const previousProvider = session.config.provider;
+    const previousAcpSessionId = session.acpSessionId;
+    const previousSdkSessionId = session.sdkSessionId;
+    const previousSdkOriginPath = session.sdkOriginPath;
+
     try {
-      if (!session.config.provider) {
+      if (!previousProvider) {
         throw new Error('Session has no provider configured');
       }
 
@@ -179,7 +186,7 @@ export class ModelSwitchHandler {
       const currentResolvedModel = await resolveModelAlias(
         session.config.model,
         'global',
-        session.config.provider
+        previousProvider
       );
 
       // Check if already using this model (compare resolved IDs and provider).
@@ -193,9 +200,6 @@ export class ModelSwitchHandler {
           error: `Already using ${modelInfo?.name || resolvedModel}`,
         };
       }
-
-      const previousModel = session.config.model;
-      const previousProvider = session.config.provider;
 
       // Emit model switching event
       messageHub.event(
@@ -222,6 +226,10 @@ export class ModelSwitchHandler {
         return { success: false, model: session.config.model, error: errMsg };
       }
 
+      const nextProvider = newProviderInstance.id as Provider;
+      const clearAcpSessionId = previousProvider === 'acp' && nextProvider !== 'acp';
+      const clearSdkSessionState = previousProvider !== 'acp' && nextProvider === 'acp';
+
       if (!this.isQueryActiveOrStarting()) {
         // Query hasn't been created yet OR query was already completed/interrupted.
         // Persist the new model/provider only. The next user message will start a
@@ -230,15 +238,24 @@ export class ModelSwitchHandler {
         // is ready to consume it.
         session.config.model = resolvedModel;
         // newProviderInstance is guaranteed non-null here (we returned early above).
-        session.config.provider = newProviderInstance.id as Provider;
+        session.config.provider = nextProvider;
+        if (clearAcpSessionId) {
+          session.acpSessionId = undefined;
+        }
+        if (clearSdkSessionState) {
+          session.sdkSessionId = undefined;
+          session.sdkOriginPath = undefined;
+        }
         // Only pass serializable fields — session.config may contain runtime-only
         // objects (mcpServers with closures, agents, spawnClaudeCodeProcess) that
         // cannot be JSON-stringified and would cause a cyclic structure error.
         db.updateSession(session.id, {
           config: {
             model: resolvedModel,
-            provider: newProviderInstance.id as Provider,
+            provider: nextProvider,
           } as SessionConfig,
+          ...(clearAcpSessionId ? { acpSessionId: undefined } : {}),
+          ...(clearSdkSessionState ? { sdkSessionId: undefined, sdkOriginPath: undefined } : {}),
         });
 
         // Update context tracker model
@@ -267,15 +284,24 @@ export class ModelSwitchHandler {
         // Update session config first (will be used when query restarts)
         session.config.model = resolvedModel;
         // newProviderInstance is guaranteed non-null here (we returned early above).
-        session.config.provider = newProviderInstance.id as Provider;
+        session.config.provider = nextProvider;
+        if (clearAcpSessionId) {
+          session.acpSessionId = undefined;
+        }
+        if (clearSdkSessionState) {
+          session.sdkSessionId = undefined;
+          session.sdkOriginPath = undefined;
+        }
         // Only pass serializable fields — session.config may contain runtime-only
         // objects (mcpServers with closures, agents, spawnClaudeCodeProcess) that
         // cannot be JSON-stringified and would cause a cyclic structure error.
         db.updateSession(session.id, {
           config: {
             model: resolvedModel,
-            provider: newProviderInstance.id as Provider,
+            provider: nextProvider,
           } as SessionConfig,
+          ...(clearAcpSessionId ? { acpSessionId: undefined } : {}),
+          ...(clearSdkSessionState ? { sdkSessionId: undefined, sdkOriginPath: undefined } : {}),
         });
 
         // Update context tracker model
@@ -293,29 +319,57 @@ export class ModelSwitchHandler {
         // Strip thinking blocks from JSONL if switching to Anthropic from another provider
         this.stripThinkingBlocksIfNeeded(previousProvider, newProviderInstance.id);
 
-        // Restart the query via lifecycle manager
-        // This spawns a new SDK subprocess with the new model configuration
-        await lifecycleManager.restart();
+        if (this.ctx.queryObject instanceof AcpQueryAdapter && nextProvider === 'acp') {
+          await this.ctx.queryObject.setModel(resolvedModel);
+        } else {
+          // Restart the query via lifecycle manager
+          // This spawns a new SDK subprocess with the new model configuration
+          await lifecycleManager.restart();
+        }
       }
+
+      const selectedModel = session.config.model;
+      contextTracker.setModel(selectedModel);
 
       // Emit success event
       messageHub.event(
         'session.model-switched',
         {
           from: previousModel,
-          to: resolvedModel,
-          modelInfo: modelInfo || null,
+          to: selectedModel,
+          modelInfo: selectedModel === resolvedModel ? modelInfo || null : null,
         },
         { channel: `session:${session.id}` }
       );
 
       return {
         success: true,
-        model: resolvedModel,
+        model: selectedModel,
       };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.error(`Model switch failed:`, error);
+
+      session.config.model = previousModel;
+      session.config.provider = previousProvider;
+      session.acpSessionId = previousAcpSessionId;
+      session.sdkSessionId = previousSdkSessionId;
+      session.sdkOriginPath = previousSdkOriginPath;
+      db.updateSession(session.id, {
+        config: {
+          model: previousModel,
+          provider: previousProvider,
+        } as SessionConfig,
+        acpSessionId: previousAcpSessionId,
+        sdkSessionId: previousSdkSessionId,
+        sdkOriginPath: previousSdkOriginPath,
+      });
+      contextTracker.setModel(previousModel);
+      await internalEventBus.publish('session.updated', {
+        sessionId: session.id,
+        source: 'model-switch-rollback',
+        session: { config: session.config },
+      });
 
       await errorManager.handleError(
         session.id,

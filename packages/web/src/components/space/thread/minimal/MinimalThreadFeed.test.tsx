@@ -114,6 +114,24 @@ function replayUserMessage(uuid: string, text: string) {
   };
 }
 
+function compactBoundaryMessage(
+  uuid: string,
+  metadata: {
+    trigger: 'manual' | 'auto';
+    pre_tokens: number;
+    post_tokens?: number;
+    duration_ms?: number;
+  }
+) {
+  return {
+    type: 'system',
+    subtype: 'compact_boundary',
+    uuid,
+    session_id: 'test-session',
+    compact_metadata: metadata,
+  };
+}
+
 function systemInitMessage(uuid: string) {
   // Minimal `system:init` envelope. ResultInfoDropdown / MessageInfoDropdown
   // only require the discriminator fields to render the affordance trigger;
@@ -170,6 +188,45 @@ describe('MinimalThreadFeed', () => {
   it('renders nothing when there are no rows', () => {
     const { container } = render(<MinimalThreadFeed parsedRows={[]} />);
     expect(container.querySelector('[data-testid="space-task-event-feed-minimal"]')).toBeNull();
+  });
+
+  it('renders compact boundary rows with trigger and token counts', () => {
+    const baseTime = new Date('2026-04-25T18:00:00Z').getTime();
+    const rows = [
+      makeRow({
+        id: 'a1',
+        label: 'Coder Agent',
+        createdAt: baseTime,
+        message: assistantText('a1', 'before compaction'),
+      }),
+      makeRow({
+        id: 'c1',
+        label: 'Coder Agent',
+        createdAt: baseTime + 1000,
+        message: compactBoundaryMessage('c1', {
+          trigger: 'auto',
+          pre_tokens: 125000,
+          post_tokens: 24000,
+          duration_ms: 2100,
+        }),
+      }),
+      makeRow({
+        id: 'a2',
+        label: 'Coder Agent',
+        createdAt: baseTime + 2000,
+        message: assistantText('a2', 'after compaction'),
+      }),
+    ];
+
+    render(<MinimalThreadFeed parsedRows={rows} />);
+
+    const compactBoundary = screen.getByTestId('minimal-thread-compact-boundary');
+    expect(compactBoundary.textContent).toContain('Compact Boundary');
+    expect(compactBoundary.textContent).toContain('auto');
+    expect(compactBoundary.textContent).toContain('125,000 → 24,000 tokens');
+    expect(compactBoundary.textContent).toContain('saved 101,000');
+    expect(screen.getByText('before compaction')).not.toBeNull();
+    expect(screen.getByText('after compaction')).not.toBeNull();
   });
 
   it('renders one turn row per agent block with name and clock', () => {
@@ -844,6 +901,48 @@ describe('MinimalThreadFeed', () => {
       // The trigger button has title="Run result" (see ResultInfoButton).
       const trigger = container.querySelector('button[title="Run result"]');
       expect(trigger).not.toBeNull();
+    });
+
+    it('only renders result trigger on the segment that contains the result row', () => {
+      const t = Date.now();
+      const rows = [
+        makeRow({
+          id: 'a1',
+          label: 'Coder Agent',
+          createdAt: t,
+          message: assistantText('a1', 'before compact'),
+        }),
+        makeRow({
+          id: 'c1',
+          label: 'Coder Agent',
+          createdAt: t + 1000,
+          message: compactBoundaryMessage('c1', {
+            trigger: 'manual',
+            pre_tokens: 90000,
+            post_tokens: 15000,
+          }),
+        }),
+        makeRow({
+          id: 'a2',
+          label: 'Coder Agent',
+          createdAt: t + 2000,
+          message: assistantText('a2', 'after compact'),
+        }),
+        makeRow({
+          id: 'r1',
+          label: 'Coder Agent',
+          createdAt: t + 3000,
+          message: resultMessage('r1'),
+        }),
+      ];
+
+      const { container } = render(<MinimalThreadFeed parsedRows={rows} />);
+      const turns = screen.getAllByTestId('minimal-thread-turn');
+      const completedTurns = turns.filter((turn) => turn.dataset.turnState === 'completed');
+      expect(completedTurns.length).toBe(2);
+      expect(completedTurns[0].querySelector('button[title="Run result"]')).toBeNull();
+      expect(completedTurns[1].querySelector('button[title="Run result"]')).not.toBeNull();
+      expect(container.querySelectorAll('button[title="Run result"]').length).toBe(1);
     });
 
     it('does not render the result trigger when the block has no result envelope', () => {

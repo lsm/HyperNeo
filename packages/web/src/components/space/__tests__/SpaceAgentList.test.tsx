@@ -19,11 +19,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, waitFor, cleanup, screen } from '@testing-library/preact';
 import { signal } from '@preact/signals';
-import type { SpaceAgent, SpaceWorkflow } from '@neokai/shared';
+import type { SpaceAgent, SpaceLongHorizonAgent, SpaceWorkflow } from '@neokai/shared';
 
 // ── Mocks ────────────────────────────────────────────────────────────────────
 
 let mockAgents: ReturnType<typeof signal<SpaceAgent[]>>;
+let mockLongHorizonAgents: ReturnType<typeof signal<SpaceLongHorizonAgent[]>>;
 let mockWorkflows: ReturnType<typeof signal<SpaceWorkflow[]>>;
 let mockGoals: ReturnType<typeof signal<any[]>>;
 let mockSchedules: ReturnType<typeof signal<any[]>>;
@@ -36,6 +37,12 @@ const {
   mockCreateAgent,
   mockUpdateAgent,
   mockListSchedules,
+  mockListLongHorizonAgentSubscriptions,
+  mockCreateLongHorizonAgent,
+  mockUpdateLongHorizonAgent,
+  mockCreateLongHorizonAgentSubscription,
+  mockUpdateLongHorizonAgentSubscription,
+  mockDeleteLongHorizonAgentSubscription,
   mockOnceConnected,
   mockNavigateToSpaceGoals,
   mockNavigateToSpaceForge,
@@ -44,6 +51,12 @@ const {
   mockCreateAgent: vi.fn(),
   mockUpdateAgent: vi.fn(),
   mockListSchedules: vi.fn(),
+  mockListLongHorizonAgentSubscriptions: vi.fn(),
+  mockCreateLongHorizonAgent: vi.fn(),
+  mockUpdateLongHorizonAgent: vi.fn(),
+  mockCreateLongHorizonAgentSubscription: vi.fn(),
+  mockUpdateLongHorizonAgentSubscription: vi.fn(),
+  mockDeleteLongHorizonAgentSubscription: vi.fn(),
   mockOnceConnected: vi.fn(),
   mockNavigateToSpaceGoals: vi.fn(),
   mockNavigateToSpaceForge: vi.fn(),
@@ -58,6 +71,7 @@ vi.mock('../../../lib/space-store', () => ({
   get spaceStore() {
     return {
       agents: mockAgents,
+      longHorizonAgents: mockLongHorizonAgents,
       workflows: mockWorkflows,
       goals: mockGoals,
       schedules: mockSchedules,
@@ -68,6 +82,12 @@ vi.mock('../../../lib/space-store', () => ({
       createAgent: mockCreateAgent,
       updateAgent: mockUpdateAgent,
       listSchedules: mockListSchedules,
+      createLongHorizonAgent: mockCreateLongHorizonAgent,
+      updateLongHorizonAgent: mockUpdateLongHorizonAgent,
+      listLongHorizonAgentSubscriptions: mockListLongHorizonAgentSubscriptions,
+      createLongHorizonAgentSubscription: mockCreateLongHorizonAgentSubscription,
+      updateLongHorizonAgentSubscription: mockUpdateLongHorizonAgentSubscription,
+      deleteLongHorizonAgentSubscription: mockDeleteLongHorizonAgentSubscription,
     };
   },
 }));
@@ -217,6 +237,7 @@ vi.mock('../../ui/Modal', () => ({
 
 // Initialize signals before import
 mockAgents = signal<SpaceAgent[]>([]);
+mockLongHorizonAgents = signal<SpaceLongHorizonAgent[]>([]);
 mockWorkflows = signal<SpaceWorkflow[]>([]);
 mockGoals = signal<any[]>([]);
 mockSchedules = signal<any[]>([]);
@@ -248,6 +269,30 @@ function makeAgent(overrides: Partial<SpaceAgent> = {}): SpaceAgent {
   };
 }
 
+function makeLongHorizonAgent(
+  overrides: Partial<SpaceLongHorizonAgent> = {}
+): SpaceLongHorizonAgent {
+  return {
+    id: 'lh-agent-1',
+    spaceId: 'space-1',
+    handle: 'my-coder',
+    displayName: 'My Coder',
+    templateKey: null,
+    status: 'active',
+    sessionId: null,
+    instructions: '',
+    autonomyLevel: null,
+    model: null,
+    thinkingLevel: null,
+    provider: null,
+    settingSources: null,
+    toolPermissions: {},
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    ...overrides,
+  };
+}
+
 function makeWorkflow(agentId: string): SpaceWorkflow {
   return {
     id: 'wf-1',
@@ -269,6 +314,7 @@ describe('SpaceAgentList', () => {
   beforeEach(() => {
     cleanup();
     mockAgents.value = [];
+    mockLongHorizonAgents.value = [];
     mockWorkflows.value = [];
     mockGoals.value = [];
     mockSchedules.value = [];
@@ -279,6 +325,17 @@ describe('SpaceAgentList', () => {
     mockUpdateAgent.mockReset();
     mockListSchedules.mockReset();
     mockListSchedules.mockResolvedValue([]);
+    mockListLongHorizonAgentSubscriptions.mockReset();
+    mockListLongHorizonAgentSubscriptions.mockResolvedValue([]);
+    mockCreateLongHorizonAgent.mockReset();
+    mockCreateLongHorizonAgent.mockImplementation(async (params) => makeLongHorizonAgent(params));
+    mockUpdateLongHorizonAgent.mockReset();
+    mockUpdateLongHorizonAgent.mockImplementation(async (id, params) =>
+      makeLongHorizonAgent({ id, ...params })
+    );
+    mockCreateLongHorizonAgentSubscription.mockReset();
+    mockUpdateLongHorizonAgentSubscription.mockReset();
+    mockDeleteLongHorizonAgentSubscription.mockReset();
     mockOnceConnected.mockReset();
     mockOnceConnected.mockReturnValue(() => {});
     mockNavigateToSpaceGoals.mockReset();
@@ -334,7 +391,7 @@ describe('SpaceAgentList', () => {
   it('does not render model span when model is not set', () => {
     mockAgents.value = [makeAgent({ model: undefined })];
     const { container } = render(<SpaceAgentList {...DEFAULT_PROPS} />);
-    // The TaskAgentCard shows the resolved model, so check within custom agent cards only.
+    // The TaskAgentCard shows the resolved model, so check within worker agent cards only.
     const agentCards = container.querySelectorAll('.bg-dark-850.border.border-dark-700');
     for (const card of agentCards) {
       const modelSpans = card.querySelectorAll('span.text-xs.text-gray-500.font-mono');
@@ -451,7 +508,7 @@ describe('SpaceAgentList', () => {
     expect(container.textContent).toContain('reminders');
     expect(container.textContent).toContain('event subscriptions');
     expect(container.textContent).toContain('Per-Agent Forge scope policy coming soon.');
-    expect(container.textContent).toContain('Event subscriptions coming soon.');
+    expect(container.textContent).toContain('0 active event subscriptions');
     expect(queryByLabelText('Forge scope filter')).toBeNull();
     expect(queryByLabelText('Event subscription pattern')).toBeNull();
   });
@@ -472,6 +529,139 @@ describe('SpaceAgentList', () => {
     fireEvent.click(getByLabelText('Edit Coder'));
     expect(getByTestId('editor-mode').textContent).toBe('edit');
     expect(getByTestId('editor-agent-name').textContent).toBe('Coder');
+  });
+
+  it('opens event subscriptions using the seeded coordinator long-horizon agent id', async () => {
+    mockAgents.value = [
+      makeAgent({
+        id: 'space-agent-coordinator',
+        name: 'Coordinator',
+        handle: 'coordinator',
+        templateName: 'Coordinator',
+      }),
+    ];
+    mockLongHorizonAgents.value = [
+      makeLongHorizonAgent({
+        id: 'space-lh-agent:coordinator:space-1',
+        handle: 'coordinator',
+        displayName: 'Coordinator',
+        templateKey: 'coordinator.default',
+      }),
+    ];
+
+    const { getByLabelText, findByText } = render(<SpaceAgentList {...DEFAULT_PROPS} />);
+    fireEvent.click(getByLabelText('Edit event subscriptions for Coordinator'));
+
+    expect(await findByText('Event subscriptions')).toBeTruthy();
+    expect(mockListLongHorizonAgentSubscriptions).toHaveBeenCalledWith(
+      'space-lh-agent:coordinator:space-1'
+    );
+  });
+
+  it('refreshes active long-horizon rows when opening subscriptions', async () => {
+    mockAgents.value = [makeAgent({ id: 'space-agent-coder', name: 'Coder', handle: 'coder' })];
+    mockLongHorizonAgents.value = [
+      makeLongHorizonAgent({ id: 'space-agent-coder', handle: 'coder', status: 'active' }),
+    ];
+    mockUpdateLongHorizonAgent.mockResolvedValue(
+      makeLongHorizonAgent({ id: 'space-agent-coder', handle: 'coder', status: 'active' })
+    );
+
+    const { getByLabelText, findByText } = render(<SpaceAgentList {...DEFAULT_PROPS} />);
+    fireEvent.click(getByLabelText('Edit event subscriptions for Coder'));
+
+    expect(await findByText('Event subscriptions')).toBeTruthy();
+    expect(mockUpdateLongHorizonAgent).toHaveBeenCalledWith(
+      'space-agent-coder',
+      expect.objectContaining({ status: 'active' })
+    );
+    expect(mockListLongHorizonAgentSubscriptions).toHaveBeenCalledWith('space-agent-coder');
+  });
+
+  it('preserves inactive long-horizon rows when opening subscriptions for paused agents', async () => {
+    mockAgents.value = [
+      makeAgent({
+        id: 'space-agent-coder',
+        name: 'Coder',
+        handle: 'coder',
+        status: 'paused',
+        customPrompt: 'Use Coder prompt.',
+        model: 'claude-sonnet-4-6',
+        thinkingLevel: 'medium',
+        provider: 'openrouter',
+        settingSources: ['project'],
+        tools: ['Read', 'Edit'],
+      }),
+    ];
+    mockLongHorizonAgents.value = [
+      makeLongHorizonAgent({ id: 'space-agent-coder', handle: 'coder', status: 'paused' }),
+    ];
+    mockUpdateLongHorizonAgent.mockResolvedValue(
+      makeLongHorizonAgent({ id: 'space-agent-coder', handle: 'coder', status: 'paused' })
+    );
+
+    const { getByLabelText, findByText } = render(<SpaceAgentList {...DEFAULT_PROPS} />);
+    fireEvent.click(getByLabelText('Edit event subscriptions for Coder'));
+
+    expect(await findByText('Event subscriptions')).toBeTruthy();
+    expect(mockCreateLongHorizonAgent).not.toHaveBeenCalled();
+    expect(mockUpdateLongHorizonAgent).toHaveBeenCalledWith(
+      'space-agent-coder',
+      expect.objectContaining({
+        handle: 'coder',
+        displayName: 'Coder',
+        instructions: 'Use Coder prompt.',
+        model: 'claude-sonnet-4-6',
+        thinkingLevel: 'medium',
+        provider: 'openrouter',
+        settingSources: ['project'],
+        toolPermissions: { tools: ['Read', 'Edit'] },
+        status: 'paused',
+      })
+    );
+    expect(mockListLongHorizonAgentSubscriptions).toHaveBeenCalledWith('space-agent-coder');
+  });
+
+  it('creates a long-horizon row before opening subscriptions for new specialists', async () => {
+    mockAgents.value = [
+      makeAgent({
+        id: 'space-agent-coder',
+        name: 'Coder',
+        handle: 'coder',
+        status: 'paused',
+        tools: ['Read', 'Edit'],
+        provider: 'openrouter',
+        settingSources: ['project'],
+        description: 'Short UI summary only',
+        customPrompt: 'Use Coder prompt.',
+      }),
+    ];
+    mockCreateLongHorizonAgent.mockResolvedValue(
+      makeLongHorizonAgent({
+        id: 'space-agent-coder',
+        handle: 'coder',
+        displayName: 'Coder',
+        status: 'paused',
+      })
+    );
+
+    const { getByLabelText, findByText } = render(<SpaceAgentList {...DEFAULT_PROPS} />);
+    fireEvent.click(getByLabelText('Edit event subscriptions for Coder'));
+
+    expect(await findByText('Event subscriptions')).toBeTruthy();
+    expect(mockCreateLongHorizonAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'space-agent-coder',
+        handle: 'coder',
+        displayName: 'Coder',
+        instructions: 'Use Coder prompt.',
+        provider: 'openrouter',
+        settingSources: ['project'],
+        toolPermissions: { tools: ['Read', 'Edit'] },
+        status: 'paused',
+      })
+    );
+    expect(mockListLongHorizonAgentSubscriptions).toHaveBeenCalledWith('space-agent-coder');
   });
 
   it('closes editor when cancel is clicked', () => {

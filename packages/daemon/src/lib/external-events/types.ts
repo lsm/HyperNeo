@@ -108,6 +108,22 @@ export interface ExternalEventDeliveryRecord {
   updatedAt: number;
 }
 
+export interface ExternalEventDeliveryLogFilters {
+  spaceId: string;
+  status?: ExternalEventDeliveryState;
+  eventId?: string;
+  agentName?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface ExternalEventDeliveryLogRecord extends ExternalEventDeliveryRecord {
+  event: ExternalEvent;
+  eventState: ExternalEventState;
+  eventCreatedAt: number;
+  eventUpdatedAt: number;
+}
+
 /**
  * Result of a `store()` call.
  *

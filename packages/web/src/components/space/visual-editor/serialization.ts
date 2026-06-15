@@ -30,6 +30,7 @@ import type {
   WorkflowChannel,
   Gate,
   SpaceAutonomyLevel,
+  WorkflowHook,
 } from '@neokai/shared';
 import type { NodeDraft } from '../WorkflowNodeCard';
 import type { Point, WorkflowCondition } from './types';
@@ -90,6 +91,8 @@ export interface VisualEditorState {
   channels: WorkflowChannel[];
   /** First-class workflow gates referenced by channel.gateId. */
   gates: Gate[];
+  /** Workflow hooks for MCP action validation and side effects. */
+  hooks: WorkflowHook[];
   /**
    * Minimum space autonomy level required to run this workflow without
    * human approval at each completion gate. Defaults to 3 when not set.
@@ -141,6 +144,8 @@ export function workflowToVisualState(workflow: SpaceWorkflow): VisualEditorStat
       })),
       postApproval:
         s.postApproval ?? (s.id === workflow.endNodeId ? workflow.postApproval : undefined),
+      requireCodexApproval: s.requireCodexApproval,
+      codexPollIntervalMs: s.codexPollIntervalMs,
     };
     return { step, position };
   });
@@ -171,6 +176,7 @@ export function workflowToVisualState(workflow: SpaceWorkflow): VisualEditorStat
       to: Array.isArray(channel.to) ? [...channel.to] : channel.to,
     })),
     gates: workflow.gates ?? [],
+    hooks: workflow.hooks ?? [],
     completionAutonomyLevel: workflow.completionAutonomyLevel ?? (3 as SpaceAutonomyLevel),
     disabled: workflow.disabled,
   };
@@ -196,6 +202,7 @@ interface BuiltWorkflowFields {
   tags: string[];
   channels?: WorkflowChannel[];
   gates?: Gate[];
+  hooks?: WorkflowHook[];
 }
 
 /**
@@ -233,6 +240,36 @@ function deriveSingleAgentRoleName(node: VisualNode, fallbackIndex: number): str
 function derivePostApprovalTargetAgent(agents: WorkflowNodeAgent[], fallbackIndex: number): string {
   const namedAgent = agents.find((agent) => agent.name?.trim());
   return namedAgent?.name.trim() || `agent-${fallbackIndex + 1}`;
+}
+
+function buildHookNodeNameMap(nodes: VisualNode[]): Map<string, string> {
+  const nodeNames = new Map<string, string>();
+  nodes.forEach((node, i) => {
+    const name = node.step.name || `Step ${i + 1}`;
+    nodeNames.set(node.step.localId, name);
+    if (node.step.id) nodeNames.set(node.step.id, name);
+    if (node.step.name) nodeNames.set(node.step.name, name);
+  });
+  return nodeNames;
+}
+
+function remapHookNodeReference(value: string | undefined, nodeNames: Map<string, string>) {
+  if (!value) return value;
+  return nodeNames.get(value) ?? value;
+}
+
+function serializeHook(hook: WorkflowHook, nodeNames: Map<string, string>): WorkflowHook {
+  const { poll: _poll, ...hookWithoutUnsupportedPoll } = hook;
+  return {
+    ...hookWithoutUnsupportedPoll,
+    retry: hook.retry ?? { maxAttempts: 3, delayMs: 5000, backoffMultiplier: 1 },
+    sourceNode: remapHookNodeReference(hook.sourceNode, nodeNames) ?? hook.sourceNode,
+    targetNode: remapHookNodeReference(hook.targetNode, nodeNames),
+    authorizedCallers: hook.authorizedCallers?.map((caller) => ({
+      ...caller,
+      sourceNode: remapHookNodeReference(caller.sourceNode, nodeNames) ?? caller.sourceNode,
+    })),
+  };
 }
 
 /**
@@ -310,6 +347,10 @@ function buildWorkflowFields(state: VisualEditorState): {
       name: node.step.name || `Step ${i + 1}`,
       agents,
       ...(postApproval ? { postApproval } : {}),
+      ...(node.step.requireCodexApproval ? { requireCodexApproval: true } : {}),
+      ...(node.step.codexPollIntervalMs
+        ? { codexPollIntervalMs: node.step.codexPollIntervalMs }
+        : {}),
     };
   });
 
@@ -344,6 +385,8 @@ function buildWorkflowFields(state: VisualEditorState): {
     state.channels.map((channel) => channel.gateId).filter((gateId): gateId is string => !!gateId)
   );
   const gates = state.gates.filter((gate) => referencedGateIds.has(gate.id));
+  const hookNodeNames = buildHookNodeNameMap(persistableNodes);
+  const hooks = state.hooks.map((hook) => serializeHook(hook, hookNodeNames));
 
   return {
     fields: {
@@ -354,6 +397,7 @@ function buildWorkflowFields(state: VisualEditorState): {
       tags: state.tags,
       channels: state.channels,
       gates,
+      hooks,
     },
     keyToPersistedId,
   };
@@ -386,6 +430,7 @@ export function visualStateToCreateParams(
     tags: fields.tags,
     channels: fields.channels && fields.channels.length > 0 ? fields.channels : undefined,
     gates: fields.gates && fields.gates.length > 0 ? fields.gates : undefined,
+    hooks: fields.hooks && fields.hooks.length > 0 ? fields.hooks : undefined,
     completionAutonomyLevel: state.completionAutonomyLevel,
     disabled: state.disabled,
   };
@@ -412,6 +457,7 @@ export function visualStateToUpdateParams(
     tags: fields.tags,
     channels: fields.channels && fields.channels.length > 0 ? fields.channels : null,
     gates: fields.gates && fields.gates.length > 0 ? fields.gates : null,
+    hooks: fields.hooks && fields.hooks.length > 0 ? fields.hooks : null,
     completionAutonomyLevel: state.completionAutonomyLevel,
     postApproval: null,
     disabled: state.disabled ?? null,

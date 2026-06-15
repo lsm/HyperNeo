@@ -28,8 +28,8 @@ export class SessionRepository {
    */
   createSession(session: Session): void {
     const stmt = this.db.prepare(
-      `INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata, is_worktree, worktree_path, main_repo_path, worktree_branch, git_branch, sdk_session_id, sdk_origin_path, available_commands, processing_state, archived_at, type, session_context)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata, is_worktree, worktree_path, main_repo_path, worktree_branch, git_branch, sdk_session_id, acp_session_id, sdk_origin_path, available_commands, processing_state, archived_at, type, session_context)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
     stmt.run(
       session.id,
@@ -50,6 +50,7 @@ export class SessionRepository {
       session.worktree?.branch ?? null,
       session.gitBranch ?? null,
       session.sdkSessionId ?? null,
+      session.acpSessionId ?? null,
       session.sdkOriginPath ?? null,
       session.availableCommands ? JSON.stringify(session.availableCommands) : null,
       session.processingState ?? null,
@@ -171,6 +172,10 @@ export class SessionRepository {
     if ('sdkSessionId' in updates) {
       fields.push('sdk_session_id = ?');
       values.push(updates.sdkSessionId ?? null);
+    }
+    if ('acpSessionId' in updates) {
+      fields.push('acp_session_id = ?');
+      values.push(updates.acpSessionId ?? null);
     }
     if ('sdkOriginPath' in updates) {
       fields.push('sdk_origin_path = ?');
@@ -402,6 +407,7 @@ export class SessionRepository {
       worktree,
       gitBranch: (row.git_branch as string | null) ?? undefined,
       sdkSessionId: (row.sdk_session_id as string | null) ?? undefined,
+      acpSessionId: (row.acp_session_id as string | null) ?? undefined,
       sdkOriginPath: (row.sdk_origin_path as string | null) ?? undefined,
       availableCommands,
       processingState: (row.processing_state as string | null) ?? undefined,

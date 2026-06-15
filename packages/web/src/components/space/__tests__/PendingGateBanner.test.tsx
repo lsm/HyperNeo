@@ -130,7 +130,7 @@ describe('PendingGateBanner', () => {
     expect(queryByTestId('pending-gate-fetch-error')).toBeNull();
   });
 
-  it('renders the banner for a gate that is waiting_human', async () => {
+  it('renders the banner for a gate that is waiting_human with legacy migration copy', async () => {
     workflowsSignal.value = [makeWorkflow([approvalGate('g1', 'Merge PR')])];
     mockRequest.mockResolvedValue({
       gateData: [{ runId: 'r1', gateId: 'g1', data: {}, updatedAt: 0 }],
@@ -142,6 +142,10 @@ describe('PendingGateBanner', () => {
     expect(getByTestId('pending-gate-approve-btn')).toBeTruthy();
     expect(getByTestId('pending-gate-reject-btn')).toBeTruthy();
     expect(getByTestId('pending-gate-review-btn')).toBeTruthy();
+    expect(getByTestId('pending-gate-legacy-copy').textContent).toContain('Deprecated legacy gate');
+    expect(getByTestId('pending-gate-legacy-copy').textContent).toContain(
+      'maps to a workflow hook'
+    );
   });
 
   it('renders one row per pending gate in multi-gate workflows', async () => {

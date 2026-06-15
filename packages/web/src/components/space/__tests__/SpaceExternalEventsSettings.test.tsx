@@ -6,6 +6,7 @@ const mockRequest = vi.fn();
 const mockGetHubIfConnected = vi.fn();
 const mockToastSuccess = vi.fn();
 const mockToastError = vi.fn();
+const mockListExternalEventDeliveries = vi.fn();
 
 vi.mock('../../../lib/connection-manager', () => ({
   connectionManager: {
@@ -22,6 +23,14 @@ vi.mock('../../../lib/toast', () => ({
     },
     get error() {
       return mockToastError;
+    },
+  },
+}));
+
+vi.mock('../../../lib/space-store', () => ({
+  spaceStore: {
+    get listExternalEventDeliveries() {
+      return mockListExternalEventDeliveries;
     },
   },
 }));
@@ -72,6 +81,20 @@ const pollingDisabledExtensionResult = {
   ],
 };
 
+const webhooksDisabledExtensionResult = {
+  extensions: [
+    {
+      source: 'github',
+      status: 'started',
+      config: {
+        source: 'github',
+        globallyEnabled: true,
+        capabilities: { webhooks: false, polling: true, rpcConfig: true },
+      },
+    },
+  ],
+};
+
 const disabledExtensionResult = {
   extensions: [
     {
@@ -110,6 +133,13 @@ const repoResult = {
       webhookEnabled: true,
       pollingEnabled: false,
       webhookSecret: 'configured',
+      webhookRemoteId: null,
+      webhookUrl: null,
+      webhookAutoRegistered: false,
+      webhookActive: null,
+      webhookLastCheckedAt: null,
+      webhookLastError: null,
+      webhookConfiguredAt: null,
       lastWebhookAt: null,
       lastPollAt: null,
     },
@@ -126,6 +156,35 @@ const pollingOnlyRepoResult = {
     },
   ],
 };
+
+const deliveryResult = [
+  {
+    eventId: 'evt-1',
+    deliveryKey: 'delivery-1',
+    workflowRunId: 'run-1',
+    taskId: 'task-1',
+    nodeId: 'node-1',
+    agentName: 'coder',
+    state: 'failed',
+    failureReason: 'agent session missing',
+    deliveredAt: null,
+    updatedAt: 1_700_000_003_000,
+    event: {
+      id: 'evt-1',
+      spaceId: 'space-1',
+      topic: 'github/acme/widgets/pull_request/42.review_submitted',
+      occurredAt: 1_700_000_000_000,
+      ingestedAt: 1_700_000_001_000,
+      source: 'github',
+      summary: 'PR #42 review submitted',
+      payload: { number: 42, action: 'review_submitted' },
+      dedupeKey: 'github:pr:42:review_submitted',
+    },
+    eventState: 'failed',
+    eventCreatedAt: 1_700_000_001_000,
+    eventUpdatedAt: 1_700_000_003_000,
+  },
+];
 
 function setupRequests() {
   mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
@@ -146,6 +205,8 @@ describe('SpaceExternalEventsSettings', () => {
     mockGetHubIfConnected.mockReset();
     mockToastSuccess.mockReset();
     mockToastError.mockReset();
+    mockListExternalEventDeliveries.mockReset();
+    mockListExternalEventDeliveries.mockResolvedValue([]);
   });
 
   afterEach(() => cleanup());
@@ -209,6 +270,51 @@ describe('SpaceExternalEventsSettings', () => {
       'space.github.listWatchedRepos',
       expect.anything()
     );
+  });
+
+  it('shows delivery log rows and payload detail', async () => {
+    setupRequests();
+    mockListExternalEventDeliveries.mockResolvedValue(deliveryResult);
+    const { findByText, getByText } = render(<SpaceExternalEventsSettings spaceId="space-1" />);
+
+    expect(await findByText('github/acme/widgets/pull_request/42.review_submitted')).toBeTruthy();
+    expect(screen.getAllByText('failed')).toHaveLength(2);
+    expect(getByText('agent session missing')).toBeTruthy();
+    fireEvent.click(getByText('PR #42 review submitted'));
+    expect(getByText('Payload')).toBeTruthy();
+    expect(getByText(/"number": 42/)).toBeTruthy();
+    expect(mockListExternalEventDeliveries).toHaveBeenCalledWith({
+      spaceId: 'space-1',
+      status: '',
+      agentName: undefined,
+    });
+  });
+
+  it('filters deliveries by status and agent', async () => {
+    setupRequests();
+    const { findByText, getByLabelText, getByPlaceholderText, getByText } = render(
+      <SpaceExternalEventsSettings spaceId="space-1" />
+    );
+    await findByText('Event delivery log');
+
+    fireEvent.change(getByLabelText('Delivery status'), { target: { value: 'failed' } });
+    await waitFor(() => {
+      expect(mockListExternalEventDeliveries).toHaveBeenCalledWith({
+        spaceId: 'space-1',
+        status: 'failed',
+        agentName: undefined,
+      });
+    });
+
+    fireEvent.input(getByPlaceholderText('filter agent'), { target: { value: 'coder' } });
+    fireEvent.click(getByText('Apply'));
+    await waitFor(() => {
+      expect(mockListExternalEventDeliveries).toHaveBeenCalledWith({
+        spaceId: 'space-1',
+        status: 'failed',
+        agentName: 'coder',
+      });
+    });
   });
 
   it('toggles space enablement', async () => {
@@ -535,6 +641,70 @@ describe('SpaceExternalEventsSettings', () => {
     expect(mockRequest).not.toHaveBeenCalledWith('space.github.watchRepo', expect.anything());
   });
 
+  it('disables auto-configure controls when webhook capability is disabled', async () => {
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockImplementation((method) => {
+      if (method === 'externalEvents.extensions.list') {
+        return Promise.resolve(webhooksDisabledExtensionResult);
+      }
+      if (method === 'space.github.listConfig') {
+        return Promise.resolve({
+          spaceId: 'space-1',
+          source: 'github',
+          enabled: true,
+          settings: {},
+        });
+      }
+      if (method === 'space.github.listWatchedRepos') {
+        return Promise.resolve({
+          repositories: [{ ...repoResult.repositories[0], webhookRemoteId: 123 }],
+        });
+      }
+      return Promise.resolve({});
+    });
+    const { findByText, getByText } = render(<SpaceExternalEventsSettings spaceId="space-1" />);
+    await findByText('acme/widgets');
+
+    expect(getByText('Auto-configure')).toHaveProperty('disabled', true);
+    expect(getByText('Auto-configure webhook')).toHaveProperty('disabled', true);
+    expect(getByText('Check webhook')).toHaveProperty('disabled', true);
+  });
+
+  it('auto-configures new repositories without a manual secret when polling is disabled', async () => {
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockImplementation((method) => {
+      if (method === 'externalEvents.extensions.list') {
+        return Promise.resolve(pollingDisabledExtensionResult);
+      }
+      if (method === 'space.github.listConfig') {
+        return Promise.resolve({
+          spaceId: 'space-1',
+          source: 'github',
+          enabled: true,
+          settings: {},
+        });
+      }
+      if (method === 'space.github.listWatchedRepos') return Promise.resolve({ repositories: [] });
+      return Promise.resolve({});
+    });
+    const { findByText, getByPlaceholderText, getByText } = render(
+      <SpaceExternalEventsSettings spaceId="space-1" />
+    );
+    await findByText('github');
+
+    fireEvent.input(getByPlaceholderText('owner/repository'), { target: { value: 'foo/bar' } });
+    fireEvent.click(getByText('Auto-configure'));
+
+    await waitFor(() => {
+      expect(mockRequest).toHaveBeenCalledWith('space.github.autoConfigureWebhook', {
+        spaceId: 'space-1',
+        owner: 'foo',
+        repo: 'bar',
+      });
+    });
+    expect(mockRequest).not.toHaveBeenCalledWith('space.github.watchRepo', expect.anything());
+  });
+
   it('blocks repo toggles that remove every working delivery mode', async () => {
     mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
     mockRequest.mockImplementation((method) => {
@@ -582,6 +752,175 @@ describe('SpaceExternalEventsSettings', () => {
     await findByText('acme/widgets');
 
     expect(screen.getAllByRole('checkbox').at(-1)).toHaveProperty('disabled', true);
+  });
+
+  it('auto-configures webhooks for watched repositories', async () => {
+    setupRequests();
+    const { findByText, getByText } = render(<SpaceExternalEventsSettings spaceId="space-1" />);
+    await findByText('acme/widgets');
+
+    fireEvent.click(getByText('Auto-configure webhook'));
+
+    await waitFor(() => {
+      expect(mockRequest).toHaveBeenCalledWith('space.github.autoConfigureWebhook', {
+        spaceId: 'space-1',
+        owner: 'acme',
+        repo: 'widgets',
+      });
+    });
+    await waitFor(() => {
+      expect(mockToastSuccess).toHaveBeenCalledWith('Configured GitHub webhook for acme/widgets');
+    });
+  });
+
+  it('checks auto-configured webhook status', async () => {
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockImplementation((method) => {
+      if (method === 'externalEvents.extensions.list') return Promise.resolve(extensionResult);
+      if (method === 'space.github.listConfig') {
+        return Promise.resolve({
+          spaceId: 'space-1',
+          source: 'github',
+          enabled: true,
+          settings: {},
+        });
+      }
+      if (method === 'space.github.listWatchedRepos') {
+        return Promise.resolve({
+          repositories: [
+            { ...repoResult.repositories[0], webhookRemoteId: 123, webhookActive: true },
+          ],
+        });
+      }
+      if (method === 'space.github.checkWebhook') {
+        return Promise.resolve({
+          watchedRepo: { ...repoResult.repositories[0], webhookRemoteId: 123, webhookActive: true },
+        });
+      }
+      return Promise.resolve({});
+    });
+    const { findByText, getByText } = render(<SpaceExternalEventsSettings spaceId="space-1" />);
+    await findByText('webhook active');
+
+    fireEvent.click(getByText('Check webhook'));
+
+    await waitFor(() => {
+      expect(mockRequest).toHaveBeenCalledWith('space.github.checkWebhook', {
+        spaceId: 'space-1',
+        owner: 'acme',
+        repo: 'widgets',
+      });
+    });
+    expect(mockToastSuccess).toHaveBeenCalledWith('GitHub webhook is active for acme/widgets');
+  });
+
+  it('reports inactive auto-configured webhook status', async () => {
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockImplementation((method) => {
+      if (method === 'externalEvents.extensions.list') return Promise.resolve(extensionResult);
+      if (method === 'space.github.listConfig') {
+        return Promise.resolve({
+          spaceId: 'space-1',
+          source: 'github',
+          enabled: true,
+          settings: {},
+        });
+      }
+      if (method === 'space.github.listWatchedRepos') {
+        return Promise.resolve({
+          repositories: [
+            { ...repoResult.repositories[0], webhookRemoteId: 123, webhookActive: false },
+          ],
+        });
+      }
+      if (method === 'space.github.checkWebhook') {
+        return Promise.resolve({
+          watchedRepo: {
+            ...repoResult.repositories[0],
+            webhookRemoteId: 123,
+            webhookActive: false,
+            webhookLastError: 'GitHub webhook URL does not match this NeoKai endpoint',
+          },
+        });
+      }
+      return Promise.resolve({});
+    });
+    const { findByText, getByText } = render(<SpaceExternalEventsSettings spaceId="space-1" />);
+    await findByText('webhook inactive');
+
+    fireEvent.click(getByText('Check webhook'));
+
+    await waitFor(() => {
+      expect(mockToastError).toHaveBeenCalledWith(
+        'GitHub webhook is inactive for acme/widgets: GitHub webhook URL does not match this NeoKai endpoint'
+      );
+    });
+    expect(mockToastSuccess).not.toHaveBeenCalledWith('GitHub webhook is active for acme/widgets');
+  });
+
+  it('disables row actions during webhook setup', async () => {
+    let resolveAutoConfigure!: (value: unknown) => void;
+    setupRequests();
+    mockRequest.mockImplementation((method) => {
+      if (method === 'externalEvents.extensions.list') return Promise.resolve(extensionResult);
+      if (method === 'space.github.listConfig') {
+        return Promise.resolve({
+          spaceId: 'space-1',
+          source: 'github',
+          enabled: true,
+          settings: {},
+        });
+      }
+      if (method === 'space.github.listWatchedRepos') return Promise.resolve(repoResult);
+      if (method === 'space.github.autoConfigureWebhook') {
+        return new Promise((resolve) => {
+          resolveAutoConfigure = resolve;
+        });
+      }
+      return Promise.resolve({});
+    });
+    const { findByText, getByText } = render(<SpaceExternalEventsSettings spaceId="space-1" />);
+    await findByText('acme/widgets');
+
+    fireEvent.click(getByText('Auto-configure webhook'));
+    await waitFor(() => expect(resolveAutoConfigure).toBeTypeOf('function'));
+
+    expect(getByText('Remove')).toHaveProperty('disabled', true);
+    expect(getByText('Enabled').closest('label')?.querySelector('input')).toHaveProperty(
+      'disabled',
+      true
+    );
+    resolveAutoConfigure({});
+  });
+
+  it('shows auto-configure webhook errors', async () => {
+    setupRequests();
+    mockRequest.mockImplementation((method) => {
+      if (method === 'externalEvents.extensions.list') return Promise.resolve(extensionResult);
+      if (method === 'space.github.listConfig') {
+        return Promise.resolve({
+          spaceId: 'space-1',
+          source: 'github',
+          enabled: true,
+          settings: {},
+        });
+      }
+      if (method === 'space.github.listWatchedRepos') return Promise.resolve(repoResult);
+      if (method === 'space.github.autoConfigureWebhook') {
+        return Promise.reject(new Error('GITHUB_TOKEN is required to configure GitHub webhooks'));
+      }
+      return Promise.resolve({});
+    });
+    const { findByText, getByText } = render(<SpaceExternalEventsSettings spaceId="space-1" />);
+    await findByText('acme/widgets');
+
+    fireEvent.click(getByText('Auto-configure webhook'));
+
+    await waitFor(() => {
+      expect(mockToastError).toHaveBeenCalledWith(
+        'Failed to configure webhook for acme/widgets: GITHUB_TOKEN is required to configure GitHub webhooks'
+      );
+    });
   });
 
   it('removes watched repositories', async () => {

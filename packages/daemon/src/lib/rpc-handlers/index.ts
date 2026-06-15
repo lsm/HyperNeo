@@ -62,6 +62,7 @@ import { GateDataRepository } from '../../storage/repositories/gate-data-reposit
 import { GateOpenStateRepository } from '../../storage/repositories/gate-open-state-repository';
 import { WorkflowRunArtifactRepository } from '../../storage/repositories/workflow-run-artifact-repository';
 import { WorkflowRunArtifactCacheRepository } from '../../storage/repositories/workflow-run-artifact-cache-repository';
+import { WorkflowHookStateRepository } from '../../storage/repositories/workflow-hook-state-repository';
 import { createConversationFrictionEvidenceHandler } from '../job-handlers/conversation-friction-evidence.handler';
 import { handleGoalAutomationExecute } from '../job-handlers/goal-automation-execute.handler';
 import {
@@ -128,7 +129,15 @@ import {
   isRpcExtension,
   type ExternalEventExtensionManager,
 } from '../external-events/extension-manager';
-import type { ExternalEventExtensionContext } from '../external-events/types';
+import type {
+  ExternalEventDeliveryState,
+  ExternalEventExtensionContext,
+} from '../external-events/types';
+const EXTERNAL_EVENT_DELIVERY_STATES: ExternalEventDeliveryState[] = [
+  'pending',
+  'delivered',
+  'failed',
+];
 
 function validateCompletedTaskThreshold(policy: EvolutionScope['policy'] | undefined): void {
   const automation = policy?.automation;
@@ -338,6 +347,32 @@ export interface RPCHandlerDependencies {
 const log = new Logger('rpc-handlers');
 
 export function setupExternalEventExtensionHandlers(deps: RPCHandlerDependencies): void {
+  deps.messageHub.onRequest('space.externalEvents.listDeliveries', async (data) => {
+    const params = (data ?? {}) as {
+      spaceId?: string;
+      status?: ExternalEventDeliveryState;
+      eventId?: string;
+      agentName?: string;
+      limit?: number;
+      offset?: number;
+    };
+    if (!params.spaceId || typeof params.spaceId !== 'string') {
+      throw new Error('spaceId is required');
+    }
+    if (params.status && !EXTERNAL_EVENT_DELIVERY_STATES.includes(params.status)) {
+      throw new Error(`Invalid delivery status: ${params.status}`);
+    }
+    const deliveries = deps.externalEventStore.listDeliveryLog({
+      spaceId: params.spaceId,
+      status: params.status,
+      eventId: params.eventId,
+      agentName: params.agentName,
+      limit: params.limit,
+      offset: params.offset,
+    });
+    return { deliveries };
+  });
+
   deps.messageHub.onRequest('externalEvents.extensions.list', async () => {
     const extensions = [];
     for (const extension of deps.externalEventExtensionManager.getAll()) {
@@ -648,15 +683,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   };
 
   // Space agent handlers
-  setupSpaceAgentHandlers(
-    deps.messageHub,
-    deps.internalEventBus,
-    deps.spaceAgentManager,
-    deps.spaceManager,
-    deps.db
-  );
-  setupSpaceLongHorizonAgentHandlers(deps.messageHub, deps.spaceManager, longHorizonAgentRepo);
-
   setupSpaceWorkflowHandlers(
     deps.messageHub,
     deps.spaceManager,
@@ -780,6 +806,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       spaceRepo,
       sessionRepo,
       spaceAgentRepo,
+      longHorizonAgentRepo,
       workflowRepo: spaceWorkflowRepo,
       workflowRunRepo: spaceWorkflowRunRepo,
       nodeExecutionRepo,
@@ -809,6 +836,15 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     }
     spaceRuntimeService.recoverStalledWorkflowRunsAfterSpaceResume(spaceId);
   });
+
+  setupSpaceAgentHandlers(
+    deps.messageHub,
+    deps.internalEventBus,
+    deps.spaceAgentManager,
+    deps.spaceManager,
+    deps.db,
+    spaceRuntimeService
+  );
 
   // Session handlers — registered here (after spaceRuntimeService is built) so
   // session.create can synchronously call attachSpaceToolsToMemberSession for
@@ -846,6 +882,15 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     goalService: spaceGoalService,
     spaceManager: deps.spaceManager,
   });
+
+  setupSpaceLongHorizonAgentHandlers(
+    deps.messageHub,
+    deps.spaceManager,
+    longHorizonAgentRepo,
+    deps.spaceAgentManager,
+    spaceRuntimeService,
+    deps.internalEventBus
+  );
 
   // Register Space RPC handlers now that spaceRuntimeService exists.
   // spaceRuntimeService is passed so space.create can call setupSpaceAgentSession()
@@ -1005,6 +1050,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       evolutionScopeService
     );
   };
+  const hookStateRepo = new WorkflowHookStateRepository(deps.db.getDatabase());
   setupSpaceWorkflowRunHandlers(
     deps.messageHub,
     deps.spaceManager,
@@ -1018,7 +1064,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     spaceWorktreeManager,
     artifactRepo,
     artifactCacheRepo,
-    deps.jobQueue
+    deps.jobQueue,
+    hookStateRepo
   );
 
   // Register background sync handlers that populate workflow_run_artifact_cache.

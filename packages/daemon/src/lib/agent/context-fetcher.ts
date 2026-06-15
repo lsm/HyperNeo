@@ -12,8 +12,8 @@
  * fully typed `SDKControlGetContextUsageResponse`.
  */
 
-import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type { SDKControlGetContextUsageResponse } from '@anthropic-ai/claude-agent-sdk';
+import type { QueryLike } from './query-like';
 import type {
   ContextInfo,
   ContextCategoryBreakdown,
@@ -24,9 +24,18 @@ import type {
 import { Logger } from '../logger';
 
 type ContextMetadata =
-  | Pick<ModelInfo, 'id' | 'alias' | 'contextWindow' | 'preferContextWindowMetadata'>
+  | Pick<
+      ModelInfo,
+      'id' | 'alias' | 'sdkModelIds' | 'contextWindow' | 'preferContextWindowMetadata' | 'provider'
+    >
   | null
   | undefined;
+
+/** Providers whose SDK-reported context capacity is trustworthy. All others prefer metadata. */
+const NATIVE_CONTEXT_WINDOW_PROVIDERS = new Set(['anthropic', 'anthropic-copilot']);
+
+/** Generic SDK tier names that non-native providers map to via ANTHROPIC_DEFAULT_*_MODEL. */
+const SDK_GENERIC_MODEL_IDS = new Set(['default', 'haiku', 'sonnet', 'opus']);
 
 function positiveInteger(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) && value > 0
@@ -49,8 +58,11 @@ export class ContextFetcher {
    * a best-effort side effect of turn handling and should never cause a turn
    * to fail.
    */
-  async fetch(query: Query | null, modelMetadata?: ContextMetadata): Promise<ContextInfo | null> {
-    if (!query) return null;
+  async fetch(
+    query: QueryLike | null,
+    modelMetadata?: ContextMetadata
+  ): Promise<ContextInfo | null> {
+    if (!query?.getContextUsage) return null;
 
     try {
       const response = await query.getContextUsage();
@@ -83,17 +95,45 @@ export class ContextFetcher {
     const sdkRawCapacity = positiveInteger(response.rawMaxTokens);
     const sdkCapacity = positiveInteger(response.maxTokens);
     const responseModel = response.model || undefined;
+    const isNativeProvider =
+      modelMetadata?.provider && NATIVE_CONTEXT_WINDOW_PROVIDERS.has(modelMetadata.provider);
+    const isGenericSdkModel = responseModel ? SDK_GENERIC_MODEL_IDS.has(responseModel) : false;
+    const sdkModelIds = modelMetadata?.sdkModelIds;
+    const matchesSdkModelId =
+      responseModel && sdkModelIds ? sdkModelIds.includes(responseModel) : false;
     const metadataMatchesResponse =
       !responseModel ||
       modelMetadata?.id === responseModel ||
-      modelMetadata?.alias === responseModel;
+      modelMetadata?.alias === responseModel ||
+      matchesSdkModelId ||
+      (!isNativeProvider && isGenericSdkModel);
     const metadataCapacity = metadataMatchesResponse
       ? positiveInteger(modelMetadata?.contextWindow)
       : undefined;
-    const capacity =
-      modelMetadata?.preferContextWindowMetadata && metadataCapacity
-        ? metadataCapacity
-        : (sdkRawCapacity ?? sdkCapacity ?? metadataCapacity ?? 0);
+    const metadataCapacityAny = positiveInteger(modelMetadata?.contextWindow);
+    const shouldPreferMetadata = modelMetadata?.preferContextWindowMetadata ?? !isNativeProvider;
+    // For non-native providers the SDK's capacity is often a generic fallback
+    // (1 M, 200 k, etc.) that doesn't reflect the upstream model's real limit.
+    // When the SDK reports a capacity larger than the provider's metadata, or
+    // when the SDK capacity is unavailable, trust metadata even if the response
+    // model name doesn't exactly match. Native Anthropic providers keep the
+    // exact-match safety guard so fallback/switched models don't display stale
+    // metadata.
+    const sdkCapacityValue = sdkRawCapacity ?? sdkCapacity;
+    const sdkOverreporting =
+      shouldPreferMetadata &&
+      metadataCapacityAny !== undefined &&
+      sdkCapacityValue !== undefined &&
+      sdkCapacityValue > metadataCapacityAny;
+    const sdkCapacityUnavailable =
+      shouldPreferMetadata &&
+      metadataCapacityAny !== undefined &&
+      (sdkCapacityValue === undefined || sdkCapacityValue === 0);
+    const useMetadata =
+      (shouldPreferMetadata && metadataCapacity) || sdkOverreporting || sdkCapacityUnavailable;
+    const capacity = useMetadata
+      ? (metadataCapacityAny ?? 0)
+      : (sdkRawCapacity ?? sdkCapacity ?? metadataCapacity ?? 0);
     for (const category of response.categories ?? []) {
       // Compute percent relative to capacity (SDK response doesn't carry it).
       // Round to 1 decimal place to match the display the UI already expects.
@@ -102,6 +142,22 @@ export class ContextFetcher {
         tokens: category.tokens,
         percent,
       };
+    }
+
+    if (useMetadata && capacity > 0 && sdkCapacityValue !== capacity) {
+      const nonFreeSpaceTokens = Object.entries(breakdown)
+        .filter(([name]) => !name.toLowerCase().includes('free space'))
+        .reduce((sum, [, data]) => sum + data.tokens, 0);
+      const freeSpaceKey = Object.keys(breakdown).find((name) =>
+        name.toLowerCase().includes('free space')
+      );
+      if (freeSpaceKey) {
+        const correctedTokens = Math.max(0, capacity - nonFreeSpaceTokens);
+        breakdown[freeSpaceKey] = {
+          tokens: correctedTokens,
+          percent: Math.round((correctedTokens / capacity) * 1000) / 10,
+        };
+      }
     }
 
     const apiUsage: ContextAPIUsage | undefined = response.apiUsage

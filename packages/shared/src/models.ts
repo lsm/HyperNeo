@@ -22,6 +22,12 @@ export interface ModelInfo {
   name: string;
   /** Short alias for quick reference */
   alias: string;
+  /**
+   * Additional model IDs the SDK may report for this model (e.g. Anthropic
+   * bridge aliases). ContextFetcher treats these as equivalent to `id` and
+   * `alias` when matching SDK-reported model names to provider metadata.
+   */
+  sdkModelIds?: string[];
   /** Model family */
   family: ModelFamily;
   /** Provider that owns this model (e.g., 'anthropic', 'glm', 'deepseek') */

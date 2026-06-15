@@ -1,5 +1,5 @@
-import { hasEnabledGateFeature } from '@neokai/shared';
-import type { Gate, GatePoll, GateScript } from '@neokai/shared';
+import { hasEnabledGateFeature, resolveNodeAgents } from '@neokai/shared';
+import type { Gate, GatePoll, GateScript, SpaceWorkflow } from '@neokai/shared';
 
 export interface GateFeatureDefinition {
   script?: () => GateScript;
@@ -31,9 +31,134 @@ function getEnabledGateFeatureDefinitions(gate: Gate): GateFeatureDefinition[] {
     .filter((definition): definition is GateFeatureDefinition => !!definition);
 }
 
+/**
+ * Checks whether any node that sends messages through channels guarded by
+ * `gateId` has `requireCodexApproval: true`. Used to dynamically inject the
+ * codex review bot gate feature at runtime based on node-level config.
+ */
+function findNodesBySourceName(workflow: SpaceWorkflow, sourceName: string) {
+  const matches: typeof workflow.nodes = [];
+  for (const node of workflow.nodes) {
+    if (node.name === sourceName) matches.push(node);
+  }
+  for (const node of workflow.nodes) {
+    if (matches.includes(node)) continue;
+    try {
+      const agents = resolveNodeAgents(node);
+      if (agents.some((a) => a.name === sourceName)) matches.push(node);
+    } catch {
+      // skip malformed nodes
+    }
+  }
+  return matches;
+}
+
+function doesAnySourceNodeRequireCodex(gateId: string, workflow: SpaceWorkflow): boolean {
+  for (const channel of workflow.channels ?? []) {
+    if (channel.gateId !== gateId) continue;
+    if (channel.from === '*') {
+      if (workflow.nodes.some((n) => n.requireCodexApproval)) return true;
+      continue;
+    }
+
+    if (findNodesBySourceName(workflow, channel.from).some((node) => node.requireCodexApproval)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Checks whether the specific source node (by node name or agent slot name)
+ * that sends messages through channels guarded by `gateId` has
+ * `requireCodexApproval: true`. Used for source-scoped Codex injection so a
+ * shared gate only enforces Codex for flagged sources.
+ */
+function doesSpecificSourceNodeRequireCodex(
+  gateId: string,
+  workflow: SpaceWorkflow,
+  sourceName: string
+): boolean {
+  for (const channel of workflow.channels ?? []) {
+    if (channel.gateId !== gateId) continue;
+    const sourceMatches =
+      channel.from === '*' ||
+      channel.from === sourceName ||
+      findNodesBySourceName(workflow, channel.from).some((node) => node.name === sourceName);
+    if (!sourceMatches) continue;
+
+    return findNodesBySourceName(workflow, sourceName).some((node) => node.requireCodexApproval);
+  }
+  return false;
+}
+
+/**
+ * Returns the minimum custom poll interval (ms) among source nodes that both
+ * require Codex approval and set an explicit interval. Falls back to the
+ * default constant when no source node overrides it.
+ */
+function getMinCodexPollIntervalMs(gateId: string, workflow: SpaceWorkflow): number {
+  let min: number | undefined;
+  for (const channel of workflow.channels ?? []) {
+    if (channel.gateId !== gateId) continue;
+    if (channel.from === '*') {
+      for (const node of workflow.nodes) {
+        if (node.requireCodexApproval && node.codexPollIntervalMs) {
+          min =
+            min === undefined ? node.codexPollIntervalMs : Math.min(min, node.codexPollIntervalMs);
+        }
+      }
+      continue;
+    }
+
+    for (const node of findNodesBySourceName(workflow, channel.from)) {
+      if (node.requireCodexApproval && node.codexPollIntervalMs) {
+        min =
+          min === undefined ? node.codexPollIntervalMs : Math.min(min, node.codexPollIntervalMs);
+      }
+    }
+  }
+  return min ?? CODEX_REVIEW_BOT_POLL_INTERVAL_MS;
+}
+
+/**
+ * Returns the custom poll interval (ms) for the specific source node that
+ * requires Codex approval. Falls back to the default constant when the source
+ * does not set an explicit interval.
+ */
+function getSpecificCodexPollIntervalMs(
+  gateId: string,
+  workflow: SpaceWorkflow,
+  sourceName: string
+): number {
+  for (const channel of workflow.channels ?? []) {
+    if (channel.gateId !== gateId) continue;
+    const sourceMatches =
+      channel.from === '*' ||
+      channel.from === sourceName ||
+      findNodesBySourceName(workflow, channel.from).some((node) => node.name === sourceName);
+    if (!sourceMatches) continue;
+
+    const intervals = findNodesBySourceName(workflow, sourceName)
+      .filter((node) => node.requireCodexApproval && node.codexPollIntervalMs)
+      .map((node) => node.codexPollIntervalMs!);
+    if (intervals.length > 0) return Math.min(...intervals);
+  }
+  return CODEX_REVIEW_BOT_POLL_INTERVAL_MS;
+}
+
 export const CODEX_REVIEW_BOT_FEATURE = 'codex_review_bot';
 export const CODEX_REVIEW_BOT_TIMEOUT_SECONDS = 600;
-export const CODEX_REVIEW_BOT_POLL_INTERVAL_MS = 60_000;
+const DEFAULT_CODEX_REVIEW_BOT_POLL_INTERVAL_MS = 300000;
+
+export function resolveCodexPollIntervalMs(value: unknown): number {
+  const parsed = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_CODEX_REVIEW_BOT_POLL_INTERVAL_MS;
+}
+
+export const CODEX_REVIEW_BOT_POLL_INTERVAL_MS = resolveCodexPollIntervalMs(
+  process.env.NEOKAI_CODEX_POLL_INTERVAL_MS
+);
 
 const CODEX_REVIEW_BOT_SCRIPT = [
   'GATE_PR_URL=$(jq -r \'.pr_url // empty\' <<< "${NEOKAI_GATE_DATA_JSON:-{}}" 2>/dev/null || true)',
@@ -42,11 +167,11 @@ const CODEX_REVIEW_BOT_SCRIPT = [
   '  PR_URL=$(gh pr view --json url -q .url 2>/dev/null || true)',
   'fi',
   'if [ -z "$PR_URL" ]; then',
-  '  echo "No PR URL available to verify codex[bot] reaction. Provide pr_url gate data or run from a PR branch." >&2',
+  '  echo "No PR URL available to verify codex review bot reaction. Provide pr_url gate data or run from a PR branch." >&2',
   '  exit 1',
   'fi',
   'if [[ ! "$PR_URL" =~ ^https://([^/]+)/([^/]+)/([^/]+)/pull/([0-9]+) ]]; then',
-  '  echo "Unsupported PR URL for codex[bot] reaction check: ${PR_URL}" >&2',
+  '  echo "Unsupported PR URL for codex review bot reaction check: ${PR_URL}" >&2',
   '  exit 1',
   'fi',
   'PR_HOST="${BASH_REMATCH[1]}"',
@@ -63,7 +188,7 @@ const CODEX_REVIEW_BOT_SCRIPT = [
   '  fi',
   'done',
   'if [ "$ALLOWED" != "true" ]; then',
-  '  echo "Disallowed host for codex[bot] reaction check: ${PR_HOST}" >&2',
+  '  echo "Disallowed host for codex review bot reaction check: ${PR_HOST}" >&2',
   '  exit 1',
   'fi',
   'GH_HOST_ARGS=()',
@@ -98,7 +223,7 @@ const CODEX_REVIEW_BOT_SCRIPT = [
   '  FRESH_REACTIONS="$REACTIONS_JSON"',
   'fi',
   // Check fresh +1 before timeout so a late +1 is reported as a pass, not a timeout.
-  'CODEX_PLUS_ONE_COUNT=$(jq \'[.[] | select(.user.login == "codex[bot]" and .content == "+1")] | length\' <<< "$FRESH_REACTIONS")',
+  'CODEX_PLUS_ONE_COUNT=$(jq \'[.[] | select((.user.login == "codex[bot]" or .user.login == "chatgpt-codex-connector[bot]") and .content == "+1")] | length\' <<< "$FRESH_REACTIONS")',
   'if [ "$CODEX_PLUS_ONE_COUNT" != "0" ] && [ -n "$CODEX_PLUS_ONE_COUNT" ]; then',
   '  jq -n --arg url "$PR_URL" --arg sha "${HEAD_SHA}" \'{"pr_url":$url,"codex_bot_reaction":"+1","head_sha":$sha}\'',
   '  exit 0',
@@ -108,15 +233,15 @@ const CODEX_REVIEW_BOT_SCRIPT = [
   `  START_EPOCH=$(bun -e 'const t=Date.parse(process.argv[1]); if (Number.isNaN(t)) process.exit(1); console.log(Math.floor(t / 1000));' "$TIMEOUT_ISO" 2>/dev/null || true)`,
   '  NOW_EPOCH=$(date +%s)',
   `  if [ -n "$START_EPOCH" ] && [ $((NOW_EPOCH - START_EPOCH)) -ge ${CODEX_REVIEW_BOT_TIMEOUT_SECONDS} ]; then`,
-  '    jq -n --arg url "$PR_URL" --arg status "timeout" --arg sha "${HEAD_SHA}" \'{"pr_url":$url,"codex_bot_reaction":$status,"head_sha":$sha,"codex_bot_warning":"codex[bot] +1 reaction missing after timeout; allowing gate"}\'',
+  '    jq -n --arg url "$PR_URL" --arg status "timeout" --arg sha "${HEAD_SHA}" \'{"pr_url":$url,"codex_bot_reaction":$status,"head_sha":$sha,"codex_bot_warning":"codex review bot +1 reaction missing after timeout; allowing gate"}\'',
   '    exit 0',
   '  fi',
   'fi',
-  'CODEX_EYES_COUNT=$(jq \'[.[] | select(.user.login == "codex[bot]" and .content == "eyes")] | length\' <<< "$FRESH_REACTIONS")',
+  'CODEX_EYES_COUNT=$(jq \'[.[] | select((.user.login == "codex[bot]" or .user.login == "chatgpt-codex-connector[bot]") and .content == "eyes")] | length\' <<< "$FRESH_REACTIONS")',
   'if [ "$CODEX_EYES_COUNT" != "0" ] && [ -n "$CODEX_EYES_COUNT" ]; then',
-  '  echo "codex[bot] review still in progress (eyes reaction present); wait for +1 on ${PR_URL}" >&2',
+  '  echo "codex review bot still in progress (eyes reaction present); wait for +1 on ${PR_URL}" >&2',
   'else',
-  '  echo "codex[bot] has not started or has not reported on ${PR_URL}; comment \'@codex review\' on the PR, then wait for an eyes or +1 reaction" >&2',
+  '  echo "codex review bot has not started or has not reported on ${PR_URL}; comment \'@codex review\' on the PR, then wait for an eyes or +1 reaction" >&2',
   'fi',
   'exit 1',
 ].join('\n');
@@ -128,11 +253,11 @@ const CODEX_REVIEW_BOT_POLL_SCRIPT = [
   'GATE_PR_URL=$(jq -r \'.pr_url // empty\' <<< "${NEOKAI_GATE_DATA_JSON:-{}}" 2>/dev/null || true)',
   'PR_URL="${GATE_PR_URL:-${PR_URL:-}}"',
   'if [ -z "$PR_URL" ]; then',
-  '  echo "No PR URL available to verify codex[bot] reaction. Provide pr_url gate data or run from a PR branch."',
+  '  echo "No PR URL available to verify codex review bot reaction. Provide pr_url gate data or run from a PR branch."',
   '  exit 0',
   'fi',
   'if [[ ! "$PR_URL" =~ ^https://([^/]+)/([^/]+)/([^/]+)/pull/([0-9]+) ]]; then',
-  '  echo "Unsupported PR URL for codex[bot] reaction check: ${PR_URL}"',
+  '  echo "Unsupported PR URL for codex review bot reaction check: ${PR_URL}"',
   '  exit 0',
   'fi',
   'PR_HOST="${BASH_REMATCH[1]}"',
@@ -149,7 +274,7 @@ const CODEX_REVIEW_BOT_POLL_SCRIPT = [
   '  fi',
   'done',
   'if [ "$ALLOWED" != "true" ]; then',
-  '  echo "Disallowed host for codex[bot] reaction check: ${PR_HOST}" >&2',
+  '  echo "Disallowed host for codex review bot reaction check: ${PR_HOST}" >&2',
   '  exit 1',
   'fi',
   'GH_HOST_ARGS=()',
@@ -176,7 +301,7 @@ const CODEX_REVIEW_BOT_POLL_SCRIPT = [
   'else',
   '  FRESH_REACTIONS="$REACTIONS_JSON"',
   'fi',
-  'CODEX_PLUS_ONE_COUNT=$(jq \'[.[] | select(.user.login == "codex[bot]" and .content == "+1")] | length\' <<< "$FRESH_REACTIONS")',
+  'CODEX_PLUS_ONE_COUNT=$(jq \'[.[] | select((.user.login == "codex[bot]" or .user.login == "chatgpt-codex-connector[bot]") and .content == "+1")] | length\' <<< "$FRESH_REACTIONS")',
   'if [ "$CODEX_PLUS_ONE_COUNT" != "0" ] && [ -n "$CODEX_PLUS_ONE_COUNT" ]; then',
   '  jq -n --arg url "$PR_URL" --arg sha "${HEAD_SHA}" \'{"pr_url":$url,"codex_bot_reaction":"+1","head_sha":$sha}\'',
   '  exit 0',
@@ -185,15 +310,15 @@ const CODEX_REVIEW_BOT_POLL_SCRIPT = [
   `  START_EPOCH=$(bun -e 'const t=Date.parse(process.argv[1]); if (Number.isNaN(t)) process.exit(1); console.log(Math.floor(t / 1000));' "$TIMEOUT_ISO" 2>/dev/null || true)`,
   '  NOW_EPOCH=$(date +%s)',
   `  if [ -n "$START_EPOCH" ] && [ $((NOW_EPOCH - START_EPOCH)) -ge ${CODEX_REVIEW_BOT_TIMEOUT_SECONDS} ]; then`,
-  '    jq -n --arg url "$PR_URL" --arg status "timeout" --arg sha "${HEAD_SHA}" \'{"pr_url":$url,"codex_bot_reaction":$status,"head_sha":$sha,"codex_bot_warning":"codex[bot] +1 reaction missing after timeout; allowing gate"}\'',
+  '    jq -n --arg url "$PR_URL" --arg status "timeout" --arg sha "${HEAD_SHA}" \'{"pr_url":$url,"codex_bot_reaction":$status,"head_sha":$sha,"codex_bot_warning":"codex review bot +1 reaction missing after timeout; allowing gate"}\'',
   '    exit 0',
   '  fi',
   'fi',
-  'CODEX_EYES_COUNT=$(jq \'[.[] | select(.user.login == "codex[bot]" and .content == "eyes")] | length\' <<< "$FRESH_REACTIONS")',
+  'CODEX_EYES_COUNT=$(jq \'[.[] | select((.user.login == "codex[bot]" or .user.login == "chatgpt-codex-connector[bot]") and .content == "eyes")] | length\' <<< "$FRESH_REACTIONS")',
   'if [ "$CODEX_EYES_COUNT" != "0" ] && [ -n "$CODEX_EYES_COUNT" ]; then',
-  '  echo "codex[bot] review still in progress (eyes reaction present); wait for +1 on ${PR_URL}"',
+  '  echo "codex review bot still in progress (eyes reaction present); wait for +1 on ${PR_URL}"',
   'else',
-  '  echo "codex[bot] has not started or has not reported on ${PR_URL}; comment \'@codex review\' on the PR, then wait for an eyes or +1 reaction"',
+  '  echo "codex review bot has not started or has not reported on ${PR_URL}; comment \'@codex review\' on the PR, then wait for an eyes or +1 reaction"',
   'fi',
   'exit 0',
 ].join('\n');
@@ -206,12 +331,12 @@ export function getCodexReviewBotGateScript(): GateScript {
   };
 }
 
-export function getCodexReviewBotGatePoll(): GatePoll {
+export function getCodexReviewBotGatePoll(intervalMs?: number): GatePoll {
   return {
-    intervalMs: CODEX_REVIEW_BOT_POLL_INTERVAL_MS,
+    intervalMs: intervalMs ?? CODEX_REVIEW_BOT_POLL_INTERVAL_MS,
     target: 'from',
     script: CODEX_REVIEW_BOT_POLL_SCRIPT,
-    messageTemplate: 'codex[bot] reaction status update:\n{{output}}',
+    messageTemplate: 'codex review bot reaction status update:\n{{output}}',
   };
 }
 
@@ -244,8 +369,80 @@ export function validateGateFeatures(gate: Gate): string[] {
   return errors;
 }
 
-export function getEffectiveGate(gate: Gate): Gate {
+export function isApprovalGate(gate: Gate): boolean {
+  return (gate.fields ?? []).some((f) => {
+    const check = f.check as { op?: unknown; match?: unknown; value?: unknown } | undefined;
+    if (f.name === 'approved') return true;
+    if (f.type === 'boolean' && check?.op === '==' && check.value === true) return true;
+    if (f.type === 'map' && check?.op === 'count' && check.match === 'approved') return true;
+    return false;
+  });
+}
+
+function maybeInjectCodexFeature(
+  gate: Gate,
+  workflow: SpaceWorkflow | undefined,
+  definitions: GateFeatureDefinition[],
+  sourceNodeName?: string
+): void {
+  if (gate.script) return; // do not replace custom gate scripts
+  if (
+    workflow &&
+    isApprovalGate(gate) &&
+    !definitions.some((d) => d === gateFeatureRegistry.get(CODEX_REVIEW_BOT_FEATURE))
+  ) {
+    const needsCodex = sourceNodeName
+      ? doesSpecificSourceNodeRequireCodex(gate.id, workflow, sourceNodeName)
+      : doesAnySourceNodeRequireCodex(gate.id, workflow);
+    if (needsCodex) {
+      const codexDef = gateFeatureRegistry.get(CODEX_REVIEW_BOT_FEATURE);
+      if (codexDef) {
+        const intervalMs = sourceNodeName
+          ? getSpecificCodexPollIntervalMs(gate.id, workflow, sourceNodeName)
+          : getMinCodexPollIntervalMs(gate.id, workflow);
+        // Preserve an existing custom poll by injecting only the script half
+        // of the Codex feature when gate.poll is already present.
+        if (gate.poll) {
+          definitions.push({ script: codexDef.script });
+        } else {
+          definitions.push({
+            script: codexDef.script,
+            poll: () => getCodexReviewBotGatePoll(intervalMs),
+          });
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Returns true when the gate would have a script or poll injected by a registered
+ * gate feature (including the dynamically-injected codex review bot).
+ * When `sourceNodeName` is provided, the check is scoped to that specific source.
+ */
+export function hasInjectedGateFeature(
+  gate: Gate,
+  workflow?: SpaceWorkflow,
+  sourceNodeName?: string
+): boolean {
+  if (hasRegisteredGateFeatures(gate)) return true;
+  if (workflow && !gate.script && isApprovalGate(gate)) {
+    const needsCodex = sourceNodeName
+      ? doesSpecificSourceNodeRequireCodex(gate.id, workflow, sourceNodeName)
+      : doesAnySourceNodeRequireCodex(gate.id, workflow);
+    if (needsCodex) return true;
+  }
+  return false;
+}
+
+export function getEffectiveGate(
+  gate: Gate,
+  workflow?: SpaceWorkflow,
+  sourceNodeName?: string
+): Gate {
   const definitions = getEnabledGateFeatureDefinitions(gate);
+  maybeInjectCodexFeature(gate, workflow, definitions, sourceNodeName);
+
   const scriptDefinition = definitions.find((definition) => definition.script);
   const pollDefinition = definitions.find((definition) => definition.poll);
 
@@ -256,11 +453,4 @@ export function getEffectiveGate(gate: Gate): Gate {
     script: scriptDefinition?.script?.() ?? gate.script,
     poll: pollDefinition?.poll?.() ?? gate.poll,
   };
-}
-
-export function getEffectiveGatePoll(gate: Gate): GatePoll | undefined {
-  const pollDefinition = getEnabledGateFeatureDefinitions(gate).find(
-    (definition) => definition.poll
-  );
-  return pollDefinition?.poll?.() ?? gate.poll;
 }

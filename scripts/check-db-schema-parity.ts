@@ -58,7 +58,6 @@ export const HELPER_SCHEMA_TABLES = [
   'pending_agent_messages',
   'sdk_messages',
   'sessions',
-  'space_agent_event_subscriptions',
   'space_agent_forge_scope_assignments',
   'space_agent_goal_assignments',
   'space_agent_core_memory',
@@ -89,6 +88,8 @@ export const HELPER_SCHEMA_TABLES = [
   'space_worktrees',
   'spaces',
   'task_schedules',
+  'workflow_hook_result_artifacts',
+  'workflow_hook_state',
   'workflow_run_artifact_cache',
   'workflow_run_artifacts',
 ];

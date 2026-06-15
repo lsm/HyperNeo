@@ -143,7 +143,10 @@ export function setupSpaceAgentHandlers(
   internalEventBus: InternalEventBus<DaemonInternalEventMap>,
   spaceAgentManager: SpaceAgentManager,
   spaceManager: SpaceManager,
-  db: Database
+  db: Database,
+  runtimeService?: {
+    removeLongHorizonAgentSubscriptions(spaceId: string, agentId: string): void;
+  }
 ): void {
   // spaceAgent.listBuiltInTemplates — return built-in templates from seeding source
   messageHub.onRequest('spaceAgent.listBuiltInTemplates', async (data) => {
@@ -399,6 +402,7 @@ export function setupSpaceAgentHandlers(
       const detailsMsg = result.details?.length ? `\n${result.details.join('\n')}` : '';
       throw new Error(`${result.error}${detailsMsg}`);
     }
+    void runtimeService;
 
     // Await the event so subscribers (e.g. StateManager) see it before the
     // handler returns — consistent with how room.delete emits room.deleted.

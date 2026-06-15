@@ -10,8 +10,8 @@
  * - Combining SDK commands with built-in commands
  */
 
-import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type { Session } from '@neokai/shared';
+import type { QueryLike } from './query-like';
 import type { SlashCommand } from '@neokai/shared/sdk';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { Database } from '../../storage/database';
@@ -28,8 +28,8 @@ export interface SlashCommandManagerContext {
   readonly internalEventBus: InternalEventBus<DaemonInternalEventMap>;
   readonly logger: Logger;
 
-  // SDK state
-  readonly queryObject: Query | null;
+  // Query state
+  readonly queryObject: QueryLike | null;
 }
 
 /**

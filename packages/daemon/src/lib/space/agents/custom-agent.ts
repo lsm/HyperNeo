@@ -1,5 +1,5 @@
 /**
- * Custom Agent Factory
+ * Worker Agent Factory
  *
  * Creates `AgentSessionInit` from a visible `SpaceAgent` + workflow slot configuration.
  * Runtime behavior must be WYSIWYG: code provides structure and context, while agent
@@ -31,6 +31,7 @@ import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import { inferProviderForModel } from '../../providers/registry';
 import { Logger } from '../../logger';
 import { SUB_SESSION_FEATURES } from './seed-agents';
+import { formatGatedHandoffCall, getSendMessageTargets } from '../runtime/gated-handoff-guidance';
 
 const DEFAULT_CUSTOM_AGENT_MODEL = 'claude-sonnet-4-6';
 
@@ -177,7 +178,7 @@ export interface CustomAgentConfig {
 }
 
 /**
- * Build the runtime system prompt text for a custom agent.
+ * Build the runtime system prompt text for a worker agent.
  *
  * The NeoKai system contract (tool rules, completion semantics) is applied first by the
  * SDK preset; then the agent's `customPrompt` is appended, followed by any slot expansion.
@@ -230,7 +231,7 @@ function hashPrompt(prompt: string): string {
 }
 
 /**
- * Build the initial user message for a custom agent session.
+ * Build the initial user message for a worker agent session.
  *
  * Contains factual task/workflow/space context only.
  * Behavioral prompt (persona, operating procedure) lives in the system prompt.
@@ -507,6 +508,74 @@ function buildRoleSection(
     );
   }
 
+  const gatedHandoffs = buildGatedHandoffLines(workflow, currentNode, agentSlotName);
+  const hookValidatedHandoffs = buildHookValidatedHandoffLines(workflow, currentNode);
+  const handoffLines = [...hookValidatedHandoffs, ...gatedHandoffs];
+  if (handoffLines.length > 0) {
+    lines.push('- Outbound gated handoffs:');
+    lines.push(...handoffLines);
+  }
+
+  return lines;
+}
+
+function buildHookValidatedHandoffLines(
+  workflow: SpaceWorkflow,
+  currentNode: WorkflowNode
+): string[] {
+  const outboundHookValidatedChannels = (workflow.channels ?? []).filter(
+    (channel) =>
+      !channel.gateId &&
+      isChannelFromNode(channel, currentNode.name) &&
+      (workflow.hooks ?? []).some(
+        (hook) =>
+          hook.enabled !== false &&
+          hook.method === 'send_message' &&
+          hook.sourceNode === currentNode.name &&
+          hook.targetNode === channel.to &&
+          hook.validator?.kind === 'built_in' &&
+          hook.validator.id === 'pr_ready'
+      )
+  );
+
+  const lines: string[] = [];
+  for (const channel of outboundHookValidatedChannels) {
+    if (Array.isArray(channel.to)) continue;
+    lines.push(
+      `  - ${describeChannelTarget(channel, channel.to)}: call \`send_message(target=${JSON.stringify(channel.to)}, message="<short summary>", data: { "pr_url": "<pr_url>" })\`; \`save_artifact\` alone does not deliver this gated handoff.`
+    );
+  }
+  return lines;
+}
+
+function buildGatedHandoffLines(
+  workflow: SpaceWorkflow,
+  currentNode: WorkflowNode,
+  agentSlotName: string | undefined
+): string[] {
+  const gateById = new Map((workflow.gates ?? []).map((gate) => [gate.id, gate]));
+  const outboundGatedChannels = (workflow.channels ?? []).filter(
+    (channel) => channel.gateId && isChannelFromNode(channel, currentNode.name)
+  );
+  const lines: string[] = [];
+
+  for (const channel of outboundGatedChannels) {
+    const gate = gateById.get(channel.gateId!);
+    const writableFields = (gate?.fields ?? []).filter((field) =>
+      isGateWritableFromNode([field], currentNode.name, agentSlotName)
+    );
+    if (writableFields.length === 0) continue;
+
+    for (const target of getSendMessageTargets(
+      channel.to,
+      getBroadcastTargets(workflow, currentNode, agentSlotName)
+    )) {
+      lines.push(
+        `  - ${describeChannelTarget(channel, target)}: call \`${formatGatedHandoffCall(target, writableFields)}\`; \`save_artifact\` alone does not deliver this gated handoff.`
+      );
+    }
+  }
+
   return lines;
 }
 
@@ -518,6 +587,28 @@ function isChannelFromNode(channel: WorkflowChannel, nodeName: string): boolean 
 function describeChannel(channel: WorkflowChannel): string {
   const target = Array.isArray(channel.to) ? channel.to.join(', ') : channel.to;
   return channel.label ? `${target} (${channel.label})` : target;
+}
+
+function describeChannelTarget(channel: WorkflowChannel, target: string): string {
+  if (!Array.isArray(channel.to) && channel.to !== '*') return describeChannel(channel);
+  return channel.label ? `${target} (${channel.label})` : target;
+}
+
+function getBroadcastTargets(
+  workflow: SpaceWorkflow,
+  currentNode: WorkflowNode,
+  agentSlotName: string | undefined
+): string[] {
+  const targets = new Set<string>();
+  for (const node of workflow.nodes) {
+    if (node.id !== currentNode.id) targets.add(node.name);
+    for (const agent of node.agents ?? []) {
+      if (node.id === currentNode.id && agent.name === agentSlotName) continue;
+      targets.add(agent.name);
+    }
+  }
+  targets.delete(currentNode.name);
+  return [...targets];
 }
 
 function isGateWritableFromNode(
@@ -550,7 +641,7 @@ export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionIn
 
   const customTools =
     customAgent.tools && customAgent.tools.length > 0 ? customAgent.tools : undefined;
-  // Built-in tools the custom agent should NOT have (everything not in its
+  // Built-in tools the worker agent should NOT have (everything not in its
   // configured tool list). Expressed as a denylist so MCP tools — which are
   // never part of `customTools` — are not collaterally excluded.
   const customDisallowedBuiltins = customTools
@@ -584,7 +675,7 @@ export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionIn
   if (customTools) {
     const agentKey = sanitizeAgentKey(customAgent.name);
     const agentDef: AgentDefinition = {
-      description: customAgent.description ?? `Custom agent: ${customAgent.name}`,
+      description: customAgent.description ?? `Worker agent: ${customAgent.name}`,
       // Do NOT set `tools`. An AgentDefinition's `tools` is a strict allowlist;
       // since `customTools` only ever contains built-in tool names, setting it
       // here silently excludes every MCP tool (node-agent, fetch-mcp, …) that is

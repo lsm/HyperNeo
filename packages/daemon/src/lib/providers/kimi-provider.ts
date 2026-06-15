@@ -5,7 +5,16 @@
  * https://api.kimi.com/coding/ — designed for coding agents.
  *
  * The API uses a single fixed model ID `kimi-for-coding` that automatically
- * maps to the latest Kimi flagship model, so no bridge server or protocol
+ * maps to the latest Kimi flagship model.
+ *
+ * ## Bridge architecture
+ *
+ * The Claude Agent SDK has a hardcoded table of known model context windows.
+ * It does not recognise `kimi-for-coding` and falls back to a ~200 k default,
+ * rejecting requests that fit within Kimi's 262 k window.  To work around
+ * this, the provider routes SDK traffic through a lightweight local bridge that
+ * intercepts `GET /v1/models` and returns the correct context window metadata.
+ * All other requests are proxied verbatim to Kimi's API — no protocol
  * translation is needed.
  *
  * API Documentation: https://www.kimi.com/code/docs/
@@ -21,9 +30,22 @@ import type {
   ModelTier,
 } from '@neokai/shared/provider';
 import type { ModelInfo } from '@neokai/shared';
+import {
+  createAnthropicMessagesBridgeServer,
+  type AnthropicMessagesBridgeServer,
+} from './anthropic-messages-bridge/server.js';
+import { Logger } from '../logger.js';
+import * as crypto from 'crypto';
+
+const logger = new Logger('kimi-provider');
 
 function normalizeBaseUrl(url: string): string {
   return url.trim().replace(/\/+$/, '');
+}
+
+/** Return a short non-reversible fingerprint of `value` for log correlation. */
+function keyFingerprint(value: string): string {
+  return crypto.createHash('sha256').update(value).digest('hex').slice(0, 16);
 }
 
 export class KimiProvider implements Provider {
@@ -67,7 +89,18 @@ export class KimiProvider implements Provider {
   private readonly env: NodeJS.ProcessEnv;
   private credentials: ProviderCredentials | null = null;
 
-  constructor(env: NodeJS.ProcessEnv = process.env) {
+  /**
+   * Bridge servers keyed by `{baseUrl}::{apiKey}` so that sessions with
+   * different per-session credentials get isolated bridges that forward
+   * the correct auth upstream.  This avoids a singleton bridge leaking
+   * one session's credentials into another session's requests.
+   */
+  private readonly bridgeServers = new Map<string, AnthropicMessagesBridgeServer>();
+
+  constructor(
+    env: NodeJS.ProcessEnv = process.env,
+    private readonly bridgeFactory: typeof createAnthropicMessagesBridgeServer = createAnthropicMessagesBridgeServer
+  ) {
     this.env = env;
   }
 
@@ -114,12 +147,42 @@ export class KimiProvider implements Provider {
     // All Kimi Code requests use the fixed model ID
     const routingModelId = KimiProvider.DEFAULT_MODEL;
 
+    // Lazily start a per-credentials bridge.  Keyed by `{baseUrl}::{apiKey}`
+    // so sessions with different API keys or base URLs get isolated bridges
+    // that forward the correct auth upstream.
+    const bridgeKey = `${baseUrl}::${apiKey}`;
+    let bridgeServer = this.bridgeServers.get(bridgeKey);
+    if (!bridgeServer) {
+      bridgeServer = this.bridgeFactory({
+        baseUrl,
+        apiKey,
+        models: [
+          {
+            id: routingModelId,
+            display_name: 'Kimi For Coding',
+            context_window: 262144,
+            max_tokens: 32768,
+          },
+        ],
+      });
+      this.bridgeServers.set(bridgeKey, bridgeServer);
+      // Log a fingerprint, not the raw key — avoids leaking credential prefixes
+      // in daemon logs.
+      const logKey = `${baseUrl}::${keyFingerprint(apiKey)}`;
+      logger.info(`Kimi bridge server started on port ${bridgeServer.port} for key=${logKey}`);
+    }
+
     return {
       envVars: {
-        ANTHROPIC_BASE_URL: baseUrl,
-        ANTHROPIC_AUTH_TOKEN: apiKey,
+        ANTHROPIC_BASE_URL: `http://127.0.0.1:${bridgeServer.port}`,
+        // Blank ANTHROPIC_API_KEY and ANTHROPIC_AUTH_TOKEN explicitly so
+        // ProviderService clears any inherited Anthropic credentials from
+        // process.env. The bridge handles Kimi auth via its config.apiKey;
+        // the SDK subprocess does not need real Anthropic credentials.
         ANTHROPIC_API_KEY: '',
+        ANTHROPIC_AUTH_TOKEN: '',
         API_TIMEOUT_MS: '3000000',
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW: '262144',
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
         ANTHROPIC_DEFAULT_HAIKU_MODEL: routingModelId,
         ANTHROPIC_DEFAULT_SONNET_MODEL: routingModelId,
@@ -148,6 +211,12 @@ export class KimiProvider implements Provider {
   }
 
   async shutdown(): Promise<void> {
-    // No resources to clean up — direct API connection.
+    for (const [key, server] of this.bridgeServers) {
+      server.stop();
+      const [baseUrl, apiKey] = key.split('::');
+      const logKey = `${baseUrl}::${keyFingerprint(apiKey)}`;
+      logger.info(`Kimi bridge server stopped for key=${logKey}`);
+    }
+    this.bridgeServers.clear();
   }
 }

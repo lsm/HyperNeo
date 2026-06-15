@@ -11,7 +11,8 @@
  */
 
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import type { Options, Query, SpawnOptions, SpawnedProcess } from '@anthropic-ai/claude-agent-sdk';
+import type { Options, SpawnOptions, SpawnedProcess } from '@anthropic-ai/claude-agent-sdk';
+import type { QueryLike } from './query-like';
 import { spawn as nodeSpawn } from 'node:child_process';
 import type { UUID } from 'crypto';
 import type { MessageContent, Session, MessageHub } from '@neokai/shared';
@@ -32,6 +33,7 @@ import {
   SPACE_WORKFLOW_WORKER_REQUIRED_MCP_SERVERS,
 } from '../space/runtime/space-mcp-session-policy';
 import type { OriginalEnvVars } from '../provider-service';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 // Re-exported for callers that import OriginalEnvVars from this module — canonical definition lives in provider-service.ts.
 export type { OriginalEnvVars } from '../provider-service';
 
@@ -112,6 +114,7 @@ export interface QueryRunnerContext {
   readonly session: Session;
   readonly db: Database;
   readonly messageHub: MessageHub;
+  readonly internalEventBus: InternalEventBus<DaemonInternalEventMap>;
   readonly messageQueue: MessageQueue;
   readonly stateManager: ProcessingStateManager;
   readonly errorManager: ErrorManager;
@@ -119,8 +122,8 @@ export interface QueryRunnerContext {
   readonly optionsBuilder: QueryOptionsBuilder;
   readonly askUserQuestionHandler: AskUserQuestionHandler;
 
-  // Mutable SDK state (accessed directly)
-  queryObject: Query | null;
+  // Mutable query state (accessed directly)
+  queryObject: QueryLike | null;
   queryPromise: Promise<void> | null;
   queryAbortController: AbortController | null;
   firstMessageReceived: boolean;
@@ -1217,7 +1220,7 @@ export class QueryRunner {
    * Public for testing
    */
   async *createAbortableQuery(
-    queryObj: Query,
+    queryObj: QueryLike,
     signal: AbortSignal
   ): AsyncGenerator<unknown, void, unknown> {
     const iterator = queryObj[Symbol.asyncIterator]();

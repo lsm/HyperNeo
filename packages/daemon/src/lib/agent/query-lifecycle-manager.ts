@@ -13,8 +13,8 @@
  * - Full reset with cost tracking, state management, and client notification
  */
 
-import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type { MessageContent, Session, MessageHub, NeokaiActionMessage } from '@neokai/shared';
+import type { QueryLike } from './query-like';
 import { generateUUID } from '@neokai/shared';
 import type { MessageQueue } from './message-queue';
 import type { ProcessingStateManager } from './processing-state-manager';
@@ -56,8 +56,8 @@ export interface QueryLifecycleManagerContext {
   readonly interruptHandler: InterruptHandler;
   readonly errorManager: ErrorManager;
 
-  // Mutable SDK query state
-  queryObject: Query | null;
+  // Mutable query state
+  queryObject: QueryLike | null;
   queryPromise: Promise<void> | null;
   firstMessageReceived: boolean;
   /** Resolves when the SDK subprocess exits. Used by stop() to wait deterministically. */
@@ -92,6 +92,28 @@ export class QueryLifecycleManager {
 
   constructor(private ctx: QueryLifecycleManagerContext) {
     this.logger = new Logger(`QueryLifecycleManager ${ctx.session.id}`);
+  }
+
+  private clearAcpSessionStateForReset(): void {
+    const { session, db } = this.ctx;
+    if (session.config.provider !== 'acp') return;
+
+    const updates: Partial<Session> = {};
+    if (session.acpSessionId) {
+      session.acpSessionId = undefined;
+      updates.acpSessionId = undefined;
+    }
+    if (session.metadata?.acpInstructionsSent) {
+      session.metadata = {
+        ...session.metadata,
+        acpInstructionsSent: undefined,
+      };
+      updates.metadata = session.metadata;
+    }
+
+    if (Object.keys(updates).length > 0) {
+      db.updateSession(session.id, updates);
+    }
   }
 
   /**
@@ -368,7 +390,7 @@ export class QueryLifecycleManager {
       // The interrupted query may have left the session file in an inconsistent state
       // (e.g., orphaned tool_results from interrupted SDK context compaction).
       // Also detects stale sdkSessionId when the session file no longer exists.
-      if (session.sdkSessionId) {
+      if (session.config.provider !== 'acp' && session.sdkSessionId) {
         const isValid = this.validateAndRepairWithMigration();
         if (!isValid) {
           // Do NOT silently clear sdkSessionId — the user may be able to recover
@@ -428,6 +450,7 @@ export class QueryLifecycleManager {
       messageQueue.clear();
       this.ctx.pendingRestartReason = null;
       messageHandler.resetCircuitBreaker();
+      this.clearAcpSessionStateForReset();
       await stateManager.setIdle();
       // Clear models cache to ensure fresh model info is fetched from DB
       await this.ctx.clearModelsCache();
@@ -451,6 +474,7 @@ export class QueryLifecycleManager {
       messageQueue.clear();
       this.ctx.pendingRestartReason = null;
       messageHandler.resetCircuitBreaker();
+      this.clearAcpSessionStateForReset();
       await internalEventBus.publish('session.errorClear', { sessionId: session.id });
 
       // Stop the query with shorter timeout and catch errors
@@ -476,7 +500,7 @@ export class QueryLifecycleManager {
 
         // Validate and repair SDK session file before restarting.
         // Includes cross-path migration when effective CWD changed since session init.
-        if (session.sdkSessionId) {
+        if (session.config.provider !== 'acp' && session.sdkSessionId) {
           const isValid = this.validateAndRepairWithMigration();
           if (!isValid) {
             // Do NOT silently clear sdkSessionId — surface to user for manual
@@ -591,7 +615,7 @@ export class QueryLifecycleManager {
     }
 
     // Validate SDK session file, migrating it to the current workspace path if needed.
-    if (session.sdkSessionId) {
+    if (session.config.provider !== 'acp' && session.sdkSessionId) {
       const isValid = this.validateAndRepairWithMigration();
       if (!isValid) {
         // Transcript file not found — ask the user before proceeding.

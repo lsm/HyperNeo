@@ -22,19 +22,22 @@
 
 import type {
   DeclarativeToolGuard,
+  WorkflowNodeAgentOverride,
   GateField,
-  GatePoll,
   GateScript,
   Gate,
   SpaceWorkflow,
+  WorkflowChannel,
   WorkflowNode,
 } from '@neokai/shared';
-import { generateUUID } from '@neokai/shared';
+import { generateUUID, resolveNodeAgents, hasEnabledGateFeature } from '@neokai/shared';
 import { Logger } from '../../logger';
+import { isApprovalGate } from '../runtime/gate-features';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import { QA_SYSTEM_CONTRACT } from '../agents/system-contracts.ts';
 import { PR_MERGE_POST_APPROVAL_INSTRUCTIONS } from './post-approval-merge-template.ts';
 import { computeWorkflowHash } from './template-hash.ts';
+import { migrateWorkflowGateProgressionToHooks } from './workflow-migration.ts';
 
 // ---------------------------------------------------------------------------
 // Declarative tool guard: prevent coder agents from merging PRs
@@ -112,49 +115,20 @@ function validateGateFieldWriters(
   }
 }
 
-// ---------------------------------------------------------------------------
-// Shared gate poll: PR inline review comments
-// ---------------------------------------------------------------------------
-
-/**
- * Shared poll config that fetches all unresolved PR review thread comments.
- *
- * Uses the GitHub GraphQL API to query review threads with isResolved=false,
- * then formats the **latest** comment of each unresolved thread (using
- * `comments(last:1)`) with author, body, and URL. This ensures that follow-up
- * replies in existing threads change the poll output and trigger re-injection.
- *
- * NOTE: Capped at 100 review threads per query. Cursor-based pagination could
- * be added for PRs exceeding this, but 100 threads covers virtually all PRs.
- *
- * Available env vars (injected by GatePollManager):
- *   PR_URL, PR_NUMBER, REPO_OWNER, REPO_NAME, TASK_ID, SPACE_ID, WORKFLOW_RUN_ID
- */
-const PR_INLINE_COMMENTS_POLL: GatePoll = {
-  intervalMs: 30_000,
-  script: [
-    'GATE_PR_URL=$(jq -r \'.pr_url // empty\' <<< "${NEOKAI_GATE_DATA_JSON:-{}}" 2>/dev/null || true)',
-    'PR_URL="${GATE_PR_URL:-${PR_URL:-}}"',
-    'if [ -z "$PR_URL" ]; then exit 0; fi',
-    'PR_HOST="${PR_HOST:-}"',
-    'if [ -z "${REPO_OWNER:-}" ] || [ -z "${REPO_NAME:-}" ] || [ -z "${PR_NUMBER:-}" ] || [ -z "$PR_HOST" ]; then',
-    '  PR_META=$(jq -nr --arg url "$PR_URL" \'$url | capture("https?://(?<host>[^/]+)/(?<owner>[^/]+)/(?<repo>[^/]+)/pull/(?<number>[0-9]+)")\' 2>/dev/null || true)',
-    '  if [ -z "$PR_META" ]; then exit 0; fi',
-    '  REPO_OWNER="${REPO_OWNER:-$(jq -r .owner <<< "$PR_META")}"',
-    '  REPO_NAME="${REPO_NAME:-$(jq -r .repo <<< "$PR_META")}"',
-    '  PR_NUMBER="${PR_NUMBER:-$(jq -r .number <<< "$PR_META")}"',
-    '  PR_HOST="${PR_HOST:-$(jq -r .host <<< "$PR_META")}"',
-    'fi',
-    'GH_HOST_ARGS=()',
-    'if [ -n "$PR_HOST" ]; then GH_HOST_ARGS=(--hostname "$PR_HOST"); fi',
-    "QUERY='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100){nodes{isResolved comments(last:1){nodes{author{login} body url}}}}}}}'",
-    'gh api graphql "${GH_HOST_ARGS[@]}" -f query="$QUERY" -f owner="$REPO_OWNER" -f name="$REPO_NAME" -F number="$PR_NUMBER" --jq \'[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | .comments.nodes[0] | "- **" + .author.login + "**: " + .body + "\\n  " + .url] | join("\\n\\n")\'',
-  ].join('\n'),
-  target: 'from',
-  messageTemplate: 'Unresolved PR review comments:\n{{output}}',
-};
-
 const builtInSeederLog = new Logger('seed-built-in-workflows');
+
+const LEGACY_PR_READY_GATE_IDS = new Set([
+  'code-ready-gate',
+  'research-ready-gate',
+  'plan-pr-gate',
+  'code-pr-gate',
+]);
+const LEGACY_PR_READY_TEMPLATE_ROUTES = new Set([
+  'code-ready-gate:Coding:Review',
+  'research-ready-gate:Research:Review',
+  'plan-pr-gate:Planning:Plan Review',
+  'code-pr-gate:Coding:Review',
+]);
 
 // ---------------------------------------------------------------------------
 // Template node ID constants (used as stable IDs for workflow nodes and startNodeId)
@@ -172,71 +146,6 @@ const PD_TASK_DISPATCHER_NODE = 'tpl-pd-task-dispatcher';
 const FULLSTACK_CODING_NODE = 'tpl-fullstack-coding';
 const FULLSTACK_REVIEW_NODE = 'tpl-fullstack-review';
 const FULLSTACK_QA_NODE = 'tpl-fullstack-qa';
-
-const REVIEW_THREAD_CHECK_BASH_FUNCTION = [
-  'check_unresolved_review_threads() {',
-  '  local pr_url="$1"',
-  '  local pr_meta owner repo number gh_hostname threads_json unresolved_count unresolved_urls cursor has_more',
-  '  pr_meta=$(jq -nr --arg url "$pr_url" \'$url | capture("https?://(?<host>[^/]+)/(?<owner>[^/]+)/(?<repo>[^/]+)/pull/(?<number>[0-9]+)")\' 2>/dev/null || true)',
-  '  if [ -z "$pr_meta" ]; then',
-  '    echo "Unable to parse GitHub PR URL for review-thread check: ${pr_url}" >&2',
-  '    exit 1',
-  '  fi',
-  '  owner=$(jq -r .owner <<< "$pr_meta")',
-  '  repo=$(jq -r .repo <<< "$pr_meta")',
-  '  number=$(jq -r .number <<< "$pr_meta")',
-  '  gh_hostname=$(jq -r .host <<< "$pr_meta")',
-  '  local gh_host_args=("--hostname" "$gh_hostname")',
-  '  unresolved_count=0',
-  '  unresolved_urls=""',
-  '  cursor=""',
-  '  while true; do',
-  '    local page_args=("-f" "owner=$owner" "-f" "name=$repo" "-F" "number=$number")',
-  '    local page_query',
-  '    if [ -n "$cursor" ]; then',
-  '      page_args+=("-f" "cursor=$cursor")',
-  "      page_query='query($owner:String!,$name:String!,$number:Int!,$cursor:String!){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$cursor){nodes{id isResolved comments(first:1){nodes{url}}} pageInfo{hasNextPage endCursor}}}}}'",
-  '    else',
-  "      page_query='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100){nodes{id isResolved comments(first:1){nodes{url}}} pageInfo{hasNextPage endCursor}}}}}'",
-  '    fi',
-  '    page_args+=("-f" "query=$page_query")',
-  '    if ! threads_json=$(gh api graphql "${gh_host_args[@]}" "${page_args[@]}"); then',
-  '      echo "Failed to retrieve review conversations for ${pr_url}" >&2',
-  '      exit 1',
-  '    fi',
-  '    if [ "$(jq \'.errors\' <<< "$threads_json")" != "null" ]; then',
-  '      echo "GraphQL errors when retrieving review conversations for ${pr_url}: $(jq -c \'.errors\' <<< "$threads_json")" >&2',
-  '      exit 1',
-  '    fi',
-  '    if [ "$(jq \'.data.repository.pullRequest.reviewThreads\' <<< "$threads_json")" = "null" ]; then',
-  '      echo "Incomplete GraphQL response for ${pr_url} — reviewThreads data missing" >&2',
-  '      exit 1',
-  '    fi',
-  '    local page_unresolved',
-  '    page_unresolved=$(jq \'[.data.repository.pullRequest.reviewThreads.nodes[]? | select(.isResolved == false)] | length\' <<< "$threads_json")',
-  '    unresolved_count=$((unresolved_count + page_unresolved))',
-  '    if [ "$page_unresolved" != "0" ]; then',
-  '      local page_urls',
-  '      page_urls=$(jq -r \'.data.repository.pullRequest.reviewThreads.nodes[]? | select(.isResolved == false) | (.comments.nodes[0].url // .id)\' <<< "$threads_json")',
-  '      unresolved_urls="${unresolved_urls}${page_urls}"$\'\\n\'',
-  '    fi',
-  '    has_more=$(jq -r \'.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage // false\' <<< "$threads_json")',
-  '    if [ "$has_more" != "true" ]; then',
-  '      break',
-  '    fi',
-  '    cursor=$(jq -r \'.data.repository.pullRequest.reviewThreads.pageInfo.endCursor // ""\' <<< "$threads_json")',
-  '    if [ -z "$cursor" ]; then',
-  '      echo "Incomplete pagination for ${pr_url}: hasNextPage is true but endCursor is missing" >&2',
-  '      exit 1',
-  '    fi',
-  '  done',
-  '  if [ "$unresolved_count" != "0" ]; then',
-  '    echo "PR has ${unresolved_count} unresolved review conversation(s); resolve them before handoff:" >&2',
-  '    printf \'%s\\n\' "$unresolved_urls" >&2',
-  '    exit 1',
-  '  fi',
-  '}',
-].join('\n');
 
 const VALIDATION_NO_CHANGES_BASH_SCRIPT = [
   'if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then',
@@ -266,50 +175,6 @@ const VALIDATION_NO_CHANGES_BASH_SCRIPT = [
   '  exit 1',
   'fi',
   'jq -n --arg mode "validation_only" --argjson changed_files 0 \'{"completion_mode":$mode,"changed_files":$changed_files}\'',
-].join('\n');
-
-const PR_READY_BASH_SCRIPT = [
-  REVIEW_THREAD_CHECK_BASH_FUNCTION,
-  '# Prefer explicit PR URL from gate data JSON when available; fallback to current branch.',
-  'PR_TARGET=$(jq -r \'.pr_url // empty\' <<< "${NEOKAI_GATE_DATA_JSON:-{}}" 2>/dev/null || true)',
-  '# When pr_url is supplied, validate that exact PR rather than rediscovering via branch filters.',
-  'if [ -n "$PR_TARGET" ]; then',
-  '  PR_VIEW_SCOPE="$PR_TARGET"',
-  '  if ! PR_JSON=$(gh pr view "$PR_TARGET" --json url,state,mergeable,mergeStateStatus) || [ -z "$PR_JSON" ]; then',
-  '    echo "Failed to retrieve PR info for target ${PR_TARGET} (not authenticated, invalid PR URL, or network error)" >&2',
-  '    exit 1',
-  '  fi',
-  'else',
-  '  PR_VIEW_SCOPE="current branch"',
-  '  if ! PR_JSON=$(gh pr view --json url,state,mergeable,mergeStateStatus) || [ -z "$PR_JSON" ]; then',
-  '    echo "Failed to retrieve PR info for current branch (not authenticated, no PR, or network error)" >&2',
-  '    exit 1',
-  '  fi',
-  'fi',
-  'PR_URL=$(jq -r \'.url\' <<< "$PR_JSON")',
-  'if [ -z "$PR_URL" ] || [ "$PR_URL" = "null" ]; then',
-  '  echo "No PR URL found for ${PR_VIEW_SCOPE}" >&2',
-  '  exit 1',
-  'fi',
-  'PR_STATE=$(jq -r \'.state\' <<< "$PR_JSON")',
-  'if [ "$PR_STATE" != "OPEN" ]; then',
-  '  echo "No open PR found for ${PR_VIEW_SCOPE} (state: ${PR_STATE:-none})" >&2',
-  '  exit 1',
-  'fi',
-  'PR_MERGEABLE=$(jq -r \'.mergeable\' <<< "$PR_JSON")',
-  '# Block on UNKNOWN — orchestrator retries until GitHub resolves mergeability',
-  'if [ "$PR_MERGEABLE" != "MERGEABLE" ]; then',
-  '  echo "PR is not mergeable (mergeable: ${PR_MERGEABLE:-unknown})" >&2',
-  '  exit 1',
-  'fi',
-  'PR_STATUS=$(jq -r \'.mergeStateStatus\' <<< "$PR_JSON")',
-  '# Block on UNKNOWN — orchestrator retries until GitHub resolves status',
-  'if [ "$PR_STATUS" != "CLEAN" ] && [ "$PR_STATUS" != "HAS_HOOKS" ] && [ "$PR_STATUS" != "BLOCKED" ]; then',
-  '  echo "PR merge checks not satisfied (mergeStateStatus: ${PR_STATUS:-unknown})" >&2',
-  '  exit 1',
-  'fi',
-  'check_unresolved_review_threads "$PR_URL"',
-  'jq -n --arg url "$PR_URL" \'{"pr_url":$url}\'',
 ].join('\n');
 
 /**
@@ -391,7 +256,7 @@ const REVIEW_POSTED_BASH_SCRIPT = [
 function reviewerFeedbackProcedure(upstreamNodeName: string): string {
   return (
     'Follow the Reviewer System Contract and terminal-action tool contract. ' +
-    'Before any gate write or terminal action, post a visible GitHub review. ' +
+    'Before any progression handoff or terminal action, post a visible GitHub review. ' +
     `If requesting changes, send_message(target="${upstreamNodeName}", ...) with ` +
     'pr_url, review_url, and comment_urls, save a result artifact, then stop. '
   );
@@ -410,10 +275,9 @@ const PD_PLANNING_PROMPT =
   'Write the plan to `plan.md` at the repo root, commit it, and open/update a PR targeting the ' +
   'default branch. After the PR is open and mergeable, hand off to Plan Review by calling ' +
   '`send_message(target="Plan Review", message="<short summary>", data: { pr_url: "<plan PR url>" })`. ' +
-  'The `data: { pr_url }` payload is auto-merged into `plan-pr-gate`; the gate script then ' +
-  'verifies the PR is open and mergeable before Plan Review activates. Without this explicit ' +
-  '`pr_url` write the gate stays closed and Plan Review never starts. Always re-supply ' +
-  '`data: { pr_url }` on every send to Plan Review — `plan-pr-gate` resets each cycle, so the ' +
+  'The hook validates the PR is open and mergeable before Plan Review activates. Without this explicit ' +
+  '`pr_url` the send is blocked. Always re-supply ' +
+  '`data: { pr_url }` on every send to Plan Review — the hook runs on every send, so the ' +
   'URL must be reasserted after every revision.';
 
 const CODEX_REACTION_APPROVAL_GUIDANCE =
@@ -425,11 +289,11 @@ const CODEX_REACTION_APPROVAL_GUIDANCE =
   'reacted at all, comment `@codex review` on the PR to trigger its review, then wait ' +
   'for an `eyes` or `+1` reaction. ' +
   'Only a +1 newer than the current PR head commit counts — after a revision push, ' +
-  'an older +1 from a previous cycle is stale and will not open the gate. If the +1 ' +
+  'an older +1 from a previous cycle is stale and will not satisfy the hook. If the +1 ' +
   'looks old, retrigger Codex with a fresh `@codex review` comment. ' +
-  'Write the approval gate to start the Codex timeout (10 minutes). If the gate ' +
+  'Send the approval handoff to start the Codex timeout (10 minutes). If the hook ' +
   'blocks because Codex has not yet posted `+1`, poll every 60 seconds and retry the ' +
-  'gate write. If codex[bot] still has not posted `+1` after the timeout, proceed ' +
+  'handoff. If codex[bot] still has not posted `+1` after the timeout, proceed ' +
   'only with a warning recorded in your result artifact. Do not close the task ' +
   'before codex[bot] has `+1` unless that timeout has elapsed.';
 
@@ -437,15 +301,15 @@ const PD_PLAN_REVIEW_PROMPT =
   'You are one of four independent Plan Reviewers. Review the plan PR through your lens before ' +
   'tasks are dispatched. Use the Reviewer System Contract for review quality and severity.\n\n' +
   'Plan Review is not the end node: do not call approve_task or submit_for_approval. Your terminal ' +
-  'action is your `approvals` vote on `plan-approval-gate`. Vote approved only for zero P0-P3 ' +
+  'action is sending your `approvals` vote in the Task Dispatcher handoff data. Vote approved only for zero P0-P3 ' +
   'lens findings; otherwise vote rejected and send actionable feedback to Planning.\n\n' +
   CODEX_REACTION_APPROVAL_GUIDANCE +
   '\n\n' +
   'Procedure: read `gh pr diff`/`gh pr view`, post a visible PR review comment, then ' +
   'send_message(target="Task Dispatcher", message: "<short summary>", data: { approvals: { "<your lens>": "approved" }, ' +
-  'pr_url: "<plan PR url>" }). First three approvals normally get a gate-blocked response; ' +
-  'the vote is still recorded. On rejection, write `{ "<your lens>": "rejected" }` and also ' +
-  'message Planning with required changes.';
+  'pr_url: "<plan PR url>" }). Early approvals normally get a hook-blocked response; ' +
+  'the hook records each vote until all four approvals are present. On rejection, send ' +
+  '`{ "<your lens>": "rejected" }` to Planning with required changes.';
 
 const PD_TASK_DISPATCHER_PROMPT =
   'You are the Task Dispatcher in a Plan & Decompose Workflow. You are the end node. ' +
@@ -510,10 +374,10 @@ const REVIEW_THREAD_RESOLUTION_GUIDANCE =
   'After pushing fixes for review feedback, resolve ALL open GitHub review conversation ' +
   'threads — including those where you disagree with the reviewer. First reply with your ' +
   'reasoning, then resolve the thread with the `resolveReviewThread` mutation. The ' +
-  'PR-ready gate blocks on any unresolved thread, so leaving one open creates a deadlock. ' +
+  'PR-ready hook blocks on any unresolved thread, so leaving one open creates a deadlock. ' +
   'If the reviewer disagrees with your reasoning, they can re-open the thread. ' +
   'Use `gh api graphql` to verify no unresolved review conversations remain before ' +
-  'writing the PR-ready gate again. ' +
+  'sending a message to Review again. ' +
   'Never set a PR to auto-merge — auto-merge is not allowed.';
 
 const REVIEW_THREAD_APPROVAL_CHECK_GUIDANCE =
@@ -526,9 +390,12 @@ const REVIEW_THREAD_APPROVAL_CHECK_GUIDANCE =
 const FULLSTACK_CODING_PROMPT =
   'You are the Coder in a Fullstack QA Loop workflow. You implement backend + frontend changes, ' +
   'write tests, and keep one PR updated across review and QA cycles.\n\n' +
-  'When implementation is ready, ensure the PR is open and mergeable and write code-pr-gate with ' +
-  'field pr_url so Review can activate. Coding is not the end node — the task-completion tools ' +
-  '(`approve_task`, `submit_for_approval`) are not available to you.\n\n' +
+  'When implementation is ready, ensure the PR is open and mergeable, then call `send_message` ' +
+  'to the review target with `data: { pr_url: "<url>" }`. Use the current ' +
+  'target and required data fields from the Runtime Execution Contract injected into your task ' +
+  'prompt. `save_artifact` alone is insufficient; only `send_message` triggers the hook-validated ' +
+  'handoff. Coding is not the end node — the task-completion tools (`approve_task`, ' +
+  '`submit_for_approval`) are not available to you.\n\n' +
   REVIEW_THREAD_RESOLUTION_GUIDANCE;
 
 const FULLSTACK_REVIEW_PROMPT =
@@ -536,11 +403,11 @@ const FULLSTACK_REVIEW_PROMPT =
   'maintainability, and coverage before QA. Follow the Reviewer System Contract for ' +
   'review quality and severity.\n\n' +
   'Review is not the end node: approve_task/submit_for_approval are unavailable. Your ' +
-  'terminal hand-off is writing approved = true to review-approval-gate after an ' +
-  'APPROVE verdict with zero P0-P3 findings. Write the gate first to start the 10-minute ' +
+  'terminal hand-off is sending `data: { approved: true, pr_url: "<url>" }` to QA after an ' +
+  'APPROVE verdict with zero P0-P3 findings. Send the handoff to start the 10-minute ' +
   'Codex timeout, then wait for codex[bot] `+1` or timeout before proceeding. ' +
   CODEX_REACTION_APPROVAL_GUIDANCE +
-  ' If findings remain, do not write the gate; send actionable feedback to Coding and stop. ' +
+  ' If findings remain, do not send the QA handoff; send actionable feedback to Coding and stop. ' +
   'Never set a PR to auto-merge.';
 
 const FULLSTACK_QA_PROMPT =
@@ -563,8 +430,8 @@ const REVIEW_REVIEW_NODE = 'tpl-review-review';
  * Coding Workflow
  *
  * Two-node iterative graph: Coding ↔ Review (with cycle).
- * - Coding → Review: gated by `code-ready-gate` — a bash script verifies that an
- *   open, mergeable PR exists and emits its URL as `{"pr_url":"..."}`.
+ * - Coding → Review: validated by a `send_message` hook (`pr_ready`) that checks
+ *   the PR is open, mergeable, and has no unresolved review threads.
  * - Coding → Validation Complete: gated by `validation-complete-gate` — accepts
  *   no-code-change validation evidence (`completion_mode: "validation_only"`,
  *   `changed_files: 0`, `validation_outcome`) and bypasses PR validation.
@@ -599,15 +466,17 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
               '3. Write or update tests to cover new behavior\n' +
               '4. Run the test suite and fix any failures\n' +
               '5. If code changed: open a PR with `gh pr create` — include a clear title and description\n' +
-              '6. If code changed: hand off by sending a message to Review with ' +
-              '`data: { pr_url: "<url>" }`. The gate script verifies the PR is open and ' +
-              'mergeable, so make sure it actually is before sending. ' +
-              '**Always include `data: { pr_url }` on every send_message to Review** — the gate ' +
-              'data resets each cycle, so even on round 2+ you must re-supply it.\n' +
+              '6. If code changed: hand off by calling `send_message` to the review target ' +
+              'with `data: { pr_url: "<url>" }`. Use the current target and required data ' +
+              'fields from the Runtime Execution Contract injected into your task prompt. ' +
+              '`save_artifact` alone is insufficient; only `send_message` triggers the ' +
+              'hook-validated handoff. Always include the PR URL data field on every ' +
+              '`send_message` handoff — the hook validates every cycle, so even on round 2+ ' +
+              'you must re-supply it.\n' +
               '7. If the task is validation-only and produced no code changes: do NOT create an empty commit or PR. ' +
               'Instead, call `save_artifact({ type: "result", append: true, summary: "<validation outcome>", data: { completion_mode: "validation_only", changed_files: 0, validation_outcome: "<passed|failed + evidence>" } })`, then ' +
               '`send_message(target="Validation Complete", message="<short outcome>", data: { completion_mode: "validation_only", changed_files: 0, validation_outcome: "<outcome>" })`. ' +
-              'That validation-only handoff bypasses the PR-ready gate and closes the task without `pr_url`.\n\n' +
+              'That validation-only handoff bypasses the PR-ready hook and closes the task without `pr_url`.\n\n' +
               'If re-activated after review:\n' +
               '1. Read the incoming message `data` — you should find `review_url` and ' +
               '`comment_urls` (an array of comment thread URLs). Open each one; do not rely on ' +
@@ -623,8 +492,9 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
               REVIEW_THREAD_RESOLUTION_GUIDANCE +
               '\n' +
               '6. Verify no unresolved review conversations remain, verify tests still pass, ' +
-              'then send_message to Review again (again with `data: { pr_url }`) to ' +
-              're-trigger the review cycle',
+              'then call `send_message` to the review target again to re-trigger the review ' +
+              'cycle. Re-supplying the PR URL data field is required because the hook ' +
+              'validates each handoff; `save_artifact` alone will not deliver it.',
           },
           toolGuards: [CODER_NO_MERGE_GUARD],
         },
@@ -662,13 +532,13 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
               'might not surface (e.g. callers of changed functions, integration points).\n' +
               '- All feedback MUST be posted to the PR on GitHub — not just summarized in your ' +
               'response. Use the Reviewer System Contract GitHub review procedure.\n' +
-              '- The Review → Coding channel is gated by `review-posted-gate` — the runtime ' +
-              'checks GitHub for a fresh review before releasing your message. If you skip ' +
-              '`gh pr review`, the gate will block and the coder will never hear from you.\n\n' +
+              '- The Review → Coding handoff runs a hook that checks GitHub for a fresh review ' +
+              'before releasing your message. If you skip `gh pr review`, the hook will block ' +
+              'and the coder will never hear from you.\n\n' +
               reviewerFeedbackProcedure('Coding') +
               'Use save_artifact every cycle. Nest pr_url inside artifact data for post-approval dispatch.\n\n' +
               'Review checklist: inspect PR diff and related worktree context, run tests if uncertain, ' +
-              'post visible GitHub review before gate write. If changes needed, include pr_url, ' +
+              'post visible GitHub review before sending feedback. If changes needed, include pr_url, ' +
               'review_url, and comment_urls when messaging Coding. If approved, ' +
               REVIEW_THREAD_APPROVAL_CHECK_GUIDANCE +
               ' Call save_artifact({ type: "result", data: { pr_url: "<url>" } }) then approve_task() or submit_for_approval. ' +
@@ -692,27 +562,21 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
   // Default coding loop — reviewer may auto-close when space runs at the
   // standard "trusted but supervised" tier (3).
   completionAutonomyLevel: 3,
-  gates: [
+  hooks: [
     {
-      id: 'code-ready-gate',
+      id: 'code-pr-ready',
+      enabled: true,
       label: 'PR Ready',
-      description: 'Coder has opened an active, mergeable pull request',
-      fields: [
-        {
-          name: 'pr_url',
-          type: 'string',
-          writers: ['Coding', 'coder'],
-          check: { op: 'exists' },
-        },
-      ],
-      script: {
-        interpreter: 'bash',
-        source: PR_READY_BASH_SCRIPT,
-        timeoutMs: 30000,
-      },
-      poll: PR_INLINE_COMMENTS_POLL,
-      resetOnCycle: true,
+      sourceNode: 'Coding',
+      targetNode: 'Review',
+      method: 'send_message',
+      classification: 'validation',
+      order: 0,
+      validator: { kind: 'built_in', id: 'pr_ready' },
+      authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
     },
+  ],
+  gates: [
     {
       id: 'validation-complete-gate',
       label: 'Validated',
@@ -779,7 +643,6 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
     {
       from: 'Coding',
       to: 'Review',
-      gateId: 'code-ready-gate',
       label: 'Coding → Review',
     },
     {
@@ -809,7 +672,7 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
  * Research Workflow
  *
  * Two-node iterative graph:
- *   Research → Review (gated by research-ready-gate: PR opened and mergeable)
+ *   Research → Review (validated by a send_message hook that checks PR is open/mergeable)
  *   Review → Research (ungated back-channel, max 5 cycles)
  *
  * Research agent researches thoroughly, commits findings, opens a PR.
@@ -841,7 +704,10 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
               '2. Investigate using web search, code exploration, and available documentation\n' +
               '3. Write findings to well-structured markdown file(s)\n' +
               '4. Include sources, evidence, and clear conclusions\n' +
-              '5. Commit findings and open a PR with `gh pr create`\n\n' +
+              '5. Commit findings and open a PR with `gh pr create`\n' +
+              '6. Hand off to Review by calling `send_message(target="Review", message="<short summary>", data: { pr_url: "<PR url>" })`. ' +
+              'The hook validates the PR is open and mergeable before Review activates. ' +
+              'Always re-supply `data: { pr_url }` on every send — the hook runs on every send.\n\n' +
               'If re-activated after review feedback: address each point, expand research where requested, ' +
               'update the documents, and push new commits. ' +
               REVIEW_THREAD_RESOLUTION_GUIDANCE,
@@ -887,33 +753,24 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
   // Research is low-risk (read-only investigation + PR of findings) — permit
   // auto-close at a more conservative autonomy tier than coding loops.
   completionAutonomyLevel: 2,
-  gates: [
+  hooks: [
     {
-      id: 'research-ready-gate',
+      id: 'research-pr-ready',
+      enabled: true,
       label: 'PR Ready',
-      description: 'Research agent has opened an active, mergeable pull request',
-      fields: [
-        {
-          name: 'pr_url',
-          type: 'string',
-          writers: ['*'],
-          check: { op: 'exists' },
-        },
-      ],
-      script: {
-        interpreter: 'bash',
-        source: PR_READY_BASH_SCRIPT,
-        timeoutMs: 30000,
-      },
-      poll: PR_INLINE_COMMENTS_POLL,
-      resetOnCycle: true,
+      sourceNode: 'Research',
+      targetNode: 'Review',
+      method: 'send_message',
+      classification: 'validation',
+      order: 0,
+      validator: { kind: 'built_in', id: 'pr_ready' },
+      authorizedCallers: [{ sourceNode: 'Research', agentSlots: ['research'] }],
     },
   ],
   channels: [
     {
       from: 'Research',
       to: 'Review',
-      gateId: 'research-ready-gate',
       label: 'Research → Review',
     },
     {
@@ -979,7 +836,7 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
  * should be broken into smaller standalone tasks before any coding starts.
  *
  * Main progression:
- *   Planning → Plan Review (plan-pr-gate: script verifies plan PR is open/mergeable)
+ *   Planning → Plan Review (send_message hook validates plan PR is open/mergeable)
  *   Plan Review → Task Dispatcher (plan-approval-gate: all 4 reviewers approve)
  *
  * Cyclic feedback:
@@ -1024,13 +881,12 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
               '4. Commit and open/update a PR against the default branch\n' +
               '5. Hand off to Plan Review by calling ' +
               '`send_message(target="Plan Review", message="<short summary>", ' +
-              'data: { pr_url: "<plan PR url>" })`. The `data: { pr_url }` write is ' +
-              'auto-merged into `plan-pr-gate`, which verifies the PR is open and ' +
-              'mergeable before Plan Review activates. Skipping this call leaves ' +
-              '`plan-pr-gate` closed and Plan Review never starts.\n' +
+              'data: { pr_url: "<plan PR url>" })`. The hook validates the PR is open and ' +
+              'mergeable before Plan Review activates. Skipping this call or an unready PR ' +
+              'blocks the send.\n' +
               '6. Wait for Plan Review feedback. If re-activated, address each reviewer ' +
               'comment, update `plan.md`, push to the same PR branch, then repeat step 5 ' +
-              '(re-supply `data: { pr_url }` — `plan-pr-gate` resets each cycle).',
+              '(re-supply `data: { pr_url }` — the hook runs on every send).',
           },
         },
       ],
@@ -1038,6 +894,7 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
     {
       id: PD_PLAN_REVIEW_NODE,
       name: 'Plan Review',
+      requireCodexApproval: true,
       agents: [
         {
           agentId: 'Reviewer',
@@ -1050,9 +907,9 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
               'items, long-term maintainability, and whether the decomposition will hold up as ' +
               'the system grows. Flag items that smuggle unrelated concerns together or create ' +
               'hidden cross-cutting dependencies.\n\n' +
-              'When voting, your lens key is `"architecture"` — write ' +
-              '`data: { approvals: { architecture: "approved" } }` (or `"rejected"`) on the ' +
-              '`plan-approval-gate`.',
+              'When voting, your lens key is `"architecture"` — send ' +
+              '`data: { approvals: { architecture: "approved" }, pr_url: "<plan PR url>" }` ' +
+              'to Task Dispatcher when approving. Send rejected votes with findings to Planning.',
           },
         },
         {
@@ -1066,9 +923,9 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
               'authentication/authorization, secrets handling, and supply-chain risk for any ' +
               'new dependencies. Flag items that expose user data, bypass existing auth checks, ' +
               'or rely on untrusted input without validation.\n\n' +
-              'When voting, your lens key is `"security"` — write ' +
-              '`data: { approvals: { security: "approved" } }` (or `"rejected"`) on the ' +
-              '`plan-approval-gate`.',
+              'When voting, your lens key is `"security"` — send ' +
+              '`data: { approvals: { security: "approved" }, pr_url: "<plan PR url>" }` ' +
+              'to Task Dispatcher when approving. Send rejected votes with findings to Planning.',
           },
         },
         {
@@ -1082,9 +939,9 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
               'consistency across failures, idempotency, and race conditions. Flag items ' +
               'whose acceptance criteria are vague, whose failure modes are unclear, or ' +
               'whose tests would not catch the obvious regressions.\n\n' +
-              'When voting, your lens key is `"correctness"` — write ' +
-              '`data: { approvals: { correctness: "approved" } }` (or `"rejected"`) on the ' +
-              '`plan-approval-gate`.',
+              'When voting, your lens key is `"correctness"` — send ' +
+              '`data: { approvals: { correctness: "approved" }, pr_url: "<plan PR url>" }` ' +
+              'to Task Dispatcher when approving. Send rejected votes with findings to Planning.',
           },
         },
         {
@@ -1098,9 +955,9 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
               'documentation, error messages, and upgrade/migration experience for ' +
               'existing users. Flag items that change public interfaces without describing ' +
               'what users will see or how docs will be updated.\n\n' +
-              'When voting, your lens key is `"ux"` — write ' +
-              '`data: { approvals: { ux: "approved" } }` (or `"rejected"`) on the ' +
-              '`plan-approval-gate`.',
+              'When voting, your lens key is `"ux"` — send ' +
+              '`data: { approvals: { ux: "approved" }, pr_url: "<plan PR url>" }` ' +
+              'to Task Dispatcher when approving. Send rejected votes with findings to Planning.',
           },
         },
       ],
@@ -1116,8 +973,7 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
             value:
               PD_TASK_DISPATCHER_PROMPT +
               '\n\n' +
-              'Expected inputs: An approved plan PR (plan-approval-gate satisfied — all 4 ' +
-              'reviewers voted `approved: true`).\n' +
+              'Expected inputs: An approved plan PR (all 4 reviewers sent approved votes).\n' +
               'Expected outputs: One standalone task per actionable work item in the plan, ' +
               'then save_artifact({ type: "result", append: true, created_task_ids: [...] }).\n\n' +
               'Tool contract:\n' +
@@ -1137,20 +993,21 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
   // destructive actions) but does alter the task graph — match the default
   // Coding Workflow tier.
   completionAutonomyLevel: 3,
-  gates: [
+  hooks: [
     {
-      id: 'plan-pr-gate',
+      id: 'plan-pr-ready',
+      enabled: true,
       label: 'PR Ready',
-      description: 'Planning PR is open and mergeable so Plan Review can start.',
-      fields: [{ name: 'pr_url', type: 'string', writers: ['*'], check: { op: 'exists' } }],
-      script: {
-        interpreter: 'bash',
-        source: PR_READY_BASH_SCRIPT,
-        timeoutMs: 30000,
-      },
-      poll: PR_INLINE_COMMENTS_POLL,
-      resetOnCycle: true,
+      sourceNode: 'Planning',
+      targetNode: 'Plan Review',
+      method: 'send_message',
+      classification: 'validation',
+      order: 0,
+      validator: { kind: 'built_in', id: 'pr_ready' },
+      authorizedCallers: [{ sourceNode: 'Planning', agentSlots: ['planner'] }],
     },
+  ],
+  gates: [
     {
       id: 'plan-approval-gate',
       label: 'Plan Approvals',
@@ -1171,7 +1028,6 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
           check: { op: 'count', match: 'approved', min: 4 },
         },
       ],
-      features: { codex_review_bot: true },
       resetOnCycle: true,
     },
   ],
@@ -1179,7 +1035,6 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
     {
       from: 'Planning',
       to: 'Plan Review',
-      gateId: 'plan-pr-gate',
       label: 'Planning → Plan Review',
     },
     {
@@ -1204,7 +1059,7 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
  * and deeper QA validation (including browser-based checks).
  *
  * Main progression:
- *   Coding → Review (code-pr-gate: script verifies PR is open/mergeable)
+ *   Coding → Review (send_message hook validates PR is open/mergeable)
  *   Review → QA (review-approval-gate: reviewer approves)
  *
  * Feedback cycles:
@@ -1239,7 +1094,8 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
               '1. Implement backend and frontend changes with focused commits\n' +
               '2. Add/update unit, integration, and UI tests as needed\n' +
               '3. Open or update the PR and ensure it remains mergeable\n' +
-              '4. Write code-pr-gate with field pr_url so Review can activate\n' +
+              '4. Hand off by calling `send_message` to the review target with ' +
+              '`data: { pr_url: "<url>" }`; `save_artifact` alone will not deliver the handoff\n' +
               '5. Share blockers clearly with Reviewer/QA when needed',
           },
           toolGuards: [CODER_NO_MERGE_GUARD],
@@ -1249,6 +1105,7 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
     {
       id: FULLSTACK_REVIEW_NODE,
       name: 'Review',
+      requireCodexApproval: true,
       agents: [
         {
           agentId: 'Reviewer',
@@ -1258,10 +1115,10 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
               FULLSTACK_REVIEW_PROMPT +
               '\n\n' +
               'Expected inputs: Open PR from Coding.\n' +
-              'Expected outputs: Approval gate write or actionable feedback.\n\n' +
+              'Expected outputs: QA handoff or actionable feedback.\n\n' +
               'Steps:\n' +
               '1. Review diff quality, correctness, and test coverage\n' +
-              '2. If approved: write review-approval-gate (field: approved = true) to start the 10-minute Codex timeout, then wait for codex[bot] +1 or timeout\n' +
+              '2. If approved: send_message to QA with data: { approved: true, pr_url: "<url>" } to start the 10-minute Codex timeout, then wait for codex[bot] +1 or timeout\n' +
               '3. If changes needed: send clear feedback to Coding',
           },
         },
@@ -1325,22 +1182,21 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
   // "work is good" signal. Post-approval runs only after that approval has
   // already happened.
   completionAutonomyLevel: 3,
-  gates: [
+  hooks: [
     {
-      id: 'code-pr-gate',
+      id: 'fullstack-code-pr-ready',
+      enabled: true,
       label: 'PR Ready',
-      description: 'Coding PR is open and mergeable for review.',
-      fields: [
-        { name: 'pr_url', type: 'string', writers: ['Coding', 'coder'], check: { op: 'exists' } },
-      ],
-      script: {
-        interpreter: 'bash',
-        source: PR_READY_BASH_SCRIPT,
-        timeoutMs: 30000,
-      },
-      poll: PR_INLINE_COMMENTS_POLL,
-      resetOnCycle: true,
+      sourceNode: 'Coding',
+      targetNode: 'Review',
+      method: 'send_message',
+      classification: 'validation',
+      order: 0,
+      validator: { kind: 'built_in', id: 'pr_ready' },
+      authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
     },
+  ],
+  gates: [
     {
       id: 'review-approval-gate',
       label: 'Review',
@@ -1353,7 +1209,6 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
           check: { op: '==', value: true },
         },
       ],
-      features: { codex_review_bot: true },
       resetOnCycle: true,
     },
   ],
@@ -1366,7 +1221,6 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
     {
       from: 'Coding',
       to: 'Review',
-      gateId: 'code-pr-gate',
       label: 'Coding → Review',
     },
     {
@@ -1408,7 +1262,13 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
  * in that case.
  */
 export function getBuiltInGateScript(templateName: string, gateId: string): GateScript | undefined {
-  const template = getBuiltInWorkflows().find((t) => t.name === templateName);
+  const template = [
+    CODING_WORKFLOW,
+    PLAN_AND_DECOMPOSE_WORKFLOW,
+    FULLSTACK_QA_LOOP_WORKFLOW,
+    RESEARCH_WORKFLOW,
+    REVIEW_ONLY_WORKFLOW,
+  ].find((t) => t.name === templateName);
   if (!template) return undefined;
   const gate = (template.gates ?? []).find((g) => g.id === gateId);
   return gate?.script;
@@ -1420,7 +1280,7 @@ export function getBuiltInGateScript(templateName: string, gateId: string): Gate
  * The returned objects have empty `id` and `spaceId` fields and use role names
  * (e.g., `'planner'`, `'coder'`, `'general'`) as `agentId` placeholders.
  * They are templates, not persisted entities. Call `seedBuiltInWorkflows`
- * to persist them with real SpaceAgent IDs for a given space.
+ * to persist them with real worker agent IDs for a given space.
  */
 export function getBuiltInWorkflows(): SpaceWorkflow[] {
   // CODING_WORKFLOW is first so it becomes the default workflow selected by
@@ -1446,7 +1306,14 @@ export function getBuiltInWorkflows(): SpaceWorkflow[] {
   if (errors.length > 0) {
     throw new Error(`Built-in workflow gate writer validation failed:\n${errors.join('\n')}`);
   }
-  return workflows;
+  return workflows.map(
+    (workflow) =>
+      migrateWorkflowGateProgressionToHooks({
+        ...workflow,
+        templateName: workflow.name,
+        templateGates: workflow.gates ?? [],
+      }).workflow
+  );
 }
 
 export interface SeedBuiltInWorkflowsResult {
@@ -1457,7 +1324,8 @@ export interface SeedBuiltInWorkflowsResult {
    * PR 3/5 uses this path to land `postApproval` routes, updated
    * `completionAutonomyLevel`, and refreshed `templateHash` values onto
    * existing spaces without rewriting user-customisable fields (node
-   * UUIDs, prompt text, channels, gates).
+   * UUIDs, custom prompt text, channels, gates), except for known retired
+   * built-in prompt text patched during restamp.
    */
   restamped: string[];
   /** Errors for workflows that failed to seed or re-stamp */
@@ -1475,15 +1343,19 @@ export interface SeedBuiltInWorkflowsResult {
  * Unlike `customPrompt` (user-configurable), `toolGuards` are structural enforcement
  * metadata that must stay in sync with the template. `postApproval` is also structural
  * routing metadata for the terminal node. This function only touches `postApproval`
- * on the node and `toolGuards` on each agent slot — all other fields (customPrompt,
+ * on the node and `toolGuards` on each agent slot, with a narrow exception for known
+ * retired built-in prompt text that must be re-stamped. All other fields (customPrompt,
  * model, disabledSkillIds, etc.) are preserved from the existing row.
  *
  * Template matching is by node name + agent name. If a user renamed a node,
  * preserve its existing node-level route instead of clearing it.
  */
-function mergeNodeStructuralFieldsFromTemplate(
+export function mergeNodeStructuralFieldsFromTemplate(
   existingNodes: WorkflowNode[],
-  templateNodes: Pick<WorkflowNode, 'name' | 'agents' | 'postApproval'>[],
+  templateNodes: Pick<
+    WorkflowNode,
+    'name' | 'agents' | 'postApproval' | 'requireCodexApproval' | 'codexPollIntervalMs'
+  >[],
   resolveAgentId: (name: string) => string | undefined
 ): WorkflowNode[] {
   const templateNodesByName = new Map(templateNodes.map((node) => [node.name, node]));
@@ -1505,10 +1377,19 @@ function mergeNodeStructuralFieldsFromTemplate(
         agentId: resolveAgentId(agent.agentId) ?? agent.agentId,
       })),
     }));
-  const templateAgentsByKey = new Map<string, DeclarativeToolGuard[] | undefined>();
+  const templateAgentsByKey = new Map<
+    string,
+    {
+      toolGuards: DeclarativeToolGuard[] | undefined;
+      customPrompt?: WorkflowNodeAgentOverride;
+    }
+  >();
   for (const node of templateNodes) {
     for (const agent of node.agents) {
-      templateAgentsByKey.set(`${node.name}::${agent.name}`, agent.toolGuards);
+      templateAgentsByKey.set(`${node.name}::${agent.name}`, {
+        toolGuards: agent.toolGuards,
+        customPrompt: agent.customPrompt,
+      });
     }
   }
 
@@ -1517,17 +1398,272 @@ function mergeNodeStructuralFieldsFromTemplate(
     return {
       ...node,
       postApproval: templateNode ? templateNode.postApproval : node.postApproval,
+      requireCodexApproval: templateNode
+        ? templateNode.requireCodexApproval
+        : node.requireCodexApproval,
+      codexPollIntervalMs: templateNode
+        ? templateNode.codexPollIntervalMs
+        : node.codexPollIntervalMs,
       agents: node.agents.map((agent) => {
         const key = `${node.name}::${agent.name}`;
-        const templateGuards = templateAgentsByKey.get(key);
-        if (templateGuards === undefined) return agent;
-        // Merge: overwrite toolGuards from template, keep everything else
-        return { ...agent, toolGuards: templateGuards };
+        const templateAgent = templateAgentsByKey.get(key);
+        if (templateAgent === undefined) return agent;
+        // Merge: overwrite structural toolGuards, preserve user custom prompts except
+        // for known retired built-in prompt text that would otherwise survive restamp.
+        return {
+          ...agent,
+          ...(templateAgent.toolGuards === undefined
+            ? {}
+            : { toolGuards: templateAgent.toolGuards }),
+          customPrompt: patchKnownBuiltInPromptDrift(
+            agent.customPrompt,
+            templateAgent.customPrompt
+          ),
+        };
       }),
     };
   });
 
   return [...mergedExistingNodes, ...(missingTemplateNodes as WorkflowNode[])];
+}
+
+/**
+ * When a gate still carries the legacy `codex_review_bot` feature (preserved
+ * during restamp for backward compatibility), set `requireCodexApproval: true`
+ * on the source node(s) for that gate's channels so the visual editor toggle
+ * reflects reality and the node-level config drives runtime injection.
+ *
+ * Also strips `codex_review_bot` from the gate features so the node toggle
+ * becomes the single source of truth and can be disabled by unchecking it.
+ */
+function migrateCodexFeatureToNodeToggle(
+  nodes: WorkflowNode[],
+  channels: WorkflowChannel[],
+  gates: Gate[]
+): { nodes: WorkflowNode[]; gates: Gate[] } {
+  // Only migrate gates that do not have a custom script. For scripted gates,
+  // dynamic injection is blocked so the node flag cannot replace the legacy
+  // feature; leaving them untouched preserves the legacy feature as the sole
+  // mechanism and keeps the checkbox as a single source of truth for
+  // non-scripted gates.
+  // Only migrate legacy features on approval gates — dynamic Codex injection
+  // requires isApprovalGate(), so migrating a non-approval gate would break it.
+  const codexGateIds = new Set(
+    gates
+      .filter((g) => !g.script && isApprovalGate(g) && hasEnabledGateFeature(g, 'codex_review_bot'))
+      .map((g) => g.id)
+  );
+  // Scripted approval gates with legacy codex: strip node toggles so the UI
+  // doesn't show a misleading enabled checkbox for gates where dynamic
+  // injection is blocked and the legacy feature is the actual mechanism.
+  const scriptedCodexGateIds = new Set(
+    gates
+      .filter((g) => g.script && isApprovalGate(g) && hasEnabledGateFeature(g, 'codex_review_bot'))
+      .map((g) => g.id)
+  );
+
+  const collectSourceNodes = (gateIdSet: Set<string>): Set<string> => {
+    const result = new Set<string>();
+    for (const channel of channels) {
+      if (!channel.gateId || !gateIdSet.has(channel.gateId)) continue;
+      if (channel.from === '*') {
+        for (const node of nodes) result.add(node.id);
+        continue;
+      }
+      const nodeByName = nodes.find((n) => n.name === channel.from);
+      if (nodeByName) {
+        result.add(nodeByName.id);
+        continue;
+      }
+      for (const node of nodes) {
+        try {
+          const agents = resolveNodeAgents(node);
+          if (agents.some((a) => a.name === channel.from)) {
+            result.add(node.id);
+          }
+        } catch {
+          // skip malformed nodes
+        }
+      }
+    }
+    return result;
+  };
+
+  const nodesToFlag = collectSourceNodes(codexGateIds);
+  const nodesToUnflag = collectSourceNodes(scriptedCodexGateIds);
+
+  // Also strip toggles for nodes connected to ANY scripted approval gate
+  // (even without a legacy codex_review_bot feature). Dynamic Codex injection
+  // is blocked for scripted approval gates, so a node toggle is misleading
+  // when the node sends through one.
+  const allScriptedApprovalGateIds = new Set(
+    gates.filter((g) => g.script && isApprovalGate(g)).map((g) => g.id)
+  );
+  for (const nodeId of collectSourceNodes(allScriptedApprovalGateIds)) {
+    nodesToUnflag.add(nodeId);
+  }
+
+  const needsNodeChange = nodesToFlag.size > 0 || nodesToUnflag.size > 0;
+  const migratedNodes = needsNodeChange
+    ? nodes.map((node) => {
+        if (nodesToUnflag.has(node.id)) {
+          const next = { ...node };
+          delete next.requireCodexApproval;
+          return next;
+        }
+        if (nodesToFlag.has(node.id)) {
+          return { ...node, requireCodexApproval: true };
+        }
+        return node;
+      })
+    : nodes;
+
+  const migratedGateIdsToStrip = new Set<string>();
+  for (const gateId of codexGateIds) {
+    const sources = collectSourceNodes(new Set([gateId]));
+    const hasUnflaggedSource = Array.from(sources).some((nodeId) => nodesToUnflag.has(nodeId));
+    if (!hasUnflaggedSource) migratedGateIdsToStrip.add(gateId);
+  }
+
+  const migratedGates = gates.map((gate) => {
+    if (!gate.features?.codex_review_bot) return gate;
+    // Preserve legacy feature on gates that cannot be replaced by dynamic
+    // approval-gate injection.
+    if (gate.script || gate.poll || !migratedGateIdsToStrip.has(gate.id)) return gate;
+    const { codex_review_bot: _ignored, ...restFeatures } = gate.features;
+    return {
+      ...gate,
+      features: Object.keys(restFeatures).length > 0 ? restFeatures : undefined,
+    };
+  });
+
+  return { nodes: migratedNodes, gates: migratedGates };
+}
+
+const CURRENT_CODING_WORKFLOW_HANDOFF_PROMPT =
+  '6. If code changed: hand off by calling `send_message` to the review target ' +
+  'with `data: { pr_url: "<url>" }`. Use the current target and required data ' +
+  'fields from the Runtime Execution Contract injected into your task prompt. ' +
+  '`save_artifact` alone is insufficient; only `send_message` triggers the ' +
+  'hook-validated handoff. Always include the PR URL data field on every ' +
+  '`send_message` handoff — the hook validates every cycle, so even on round 2+ ' +
+  'you must re-supply it.\n';
+const RETIRED_CODING_WORKFLOW_HANDOFF_PROMPT =
+  '6. If code changed: hand off by sending a message to Review with ' +
+  '`data: { pr_url: "<url>" }`. The gate script verifies the PR is open and ' +
+  'mergeable, so make sure it actually is before sending. ' +
+  '**Always include `data: { pr_url }` on every send_message to Review** — the gate ' +
+  'data resets each cycle, so even on round 2+ you must re-supply it.\n';
+const RETIRED_HARDCODED_CODING_WORKFLOW_HANDOFF_PROMPT =
+  '6. If code changed: hand off by calling ' +
+  '`send_message(target="Review", message="<short summary>", data: { pr_url: "<url>" })`. ' +
+  'The `data.pr_url` payload is auto-merged into `code-ready-gate`; the gate script verifies ' +
+  'the PR is open and mergeable before Review activates. `save_artifact` alone is insufficient; ' +
+  'only `send_message` delivers the gated handoff. ' +
+  '**Always include `data: { pr_url }` on every send_message to Review** — the gate ' +
+  'data resets each cycle, so even on round 2+ you must re-supply it.\n';
+const CURRENT_CODING_WORKFLOW_REHANDOFF_PROMPT =
+  '6. Verify no unresolved review conversations remain, verify tests still pass, ' +
+  'then call `send_message` to the review target again to re-trigger the review ' +
+  'cycle. Re-supplying the PR URL data field is required because the hook ' +
+  'validates each handoff; `save_artifact` alone will not deliver it.';
+const RETIRED_CODING_WORKFLOW_REHANDOFF_PROMPT =
+  '6. Verify no unresolved review conversations remain, verify tests still pass, ' +
+  'then send_message to Review again (again with `data: { pr_url }`) to ' +
+  're-trigger the review cycle';
+const RETIRED_HARDCODED_CODING_WORKFLOW_REHANDOFF_PROMPT =
+  '6. Verify no unresolved review conversations remain, verify tests still pass, ' +
+  'then call `send_message(target="Review", message="<short summary>", data: { pr_url: "<url>" })` ' +
+  'again to re-trigger the review cycle. Re-supplying `data.pr_url` is required; ' +
+  '`save_artifact` alone will not open `code-ready-gate`.';
+const CURRENT_FULLSTACK_CODING_READY_PROMPT =
+  'When implementation is ready, ensure the PR is open and mergeable, then call `send_message` ' +
+  'to the review target with `data: { pr_url: "<url>" }`. Use the current ' +
+  'target and required data fields from the Runtime Execution Contract injected into your task ' +
+  'prompt. `save_artifact` alone is insufficient; only `send_message` triggers the hook-validated ' +
+  'handoff. Coding is not the end node — the task-completion tools (`approve_task`, ' +
+  '`submit_for_approval`) are not available to you.\n\n';
+const RETIRED_FULLSTACK_CODING_READY_PROMPT =
+  'When implementation is ready, ensure the PR is open and mergeable and write code-pr-gate with ' +
+  'field pr_url so Review can activate. Coding is not the end node — the task-completion tools ' +
+  '(`approve_task`, `submit_for_approval`) are not available to you.\n\n';
+const RETIRED_HARDCODED_FULLSTACK_CODING_READY_PROMPT =
+  'When implementation is ready, ensure the PR is open and mergeable, then call ' +
+  '`send_message(target="Review", message="<short summary>", data: { pr_url: "<url>" })`. ' +
+  'The `data.pr_url` payload is auto-merged into `code-pr-gate`; the gate script verifies ' +
+  'the PR is open and mergeable before Review activates. `save_artifact` alone is insufficient; ' +
+  'only `send_message` delivers the gated handoff. Coding is not the end node — the ' +
+  'task-completion tools (`approve_task`, `submit_for_approval`) are not available to you.\n\n';
+const CURRENT_FULLSTACK_CODING_STEP_PROMPT =
+  '4. Hand off by calling `send_message` to the review target with ' +
+  '`data: { pr_url: "<url>" }`; `save_artifact` alone will not deliver the handoff\n';
+const CURRENT_FULLSTACK_REVIEW_HANDOFF_PROMPT =
+  'terminal hand-off is sending `data: { approved: true, pr_url: "<url>" }` to QA after an ' +
+  'APPROVE verdict with zero P0-P3 findings. Send the handoff to start the 10-minute ' +
+  'Codex timeout, then wait for codex[bot] `+1` or timeout before proceeding. ';
+const RETIRED_FULLSTACK_REVIEW_HANDOFF_PROMPT =
+  'terminal handoff is to write `review-approval-gate` with approved=true after an APPROVE ' +
+  'verdict with zero P0-P3 findings. Wait for codex[bot] `+1` or timeout before proceeding. ';
+const RETIRED_HARDCODED_FULLSTACK_REVIEW_HANDOFF_PROMPT =
+  'terminal handoff is `send_message(target="QA", message="<approved>", data: { approved: true })` ' +
+  'after an APPROVE verdict with zero P0-P3 findings. Wait for codex[bot] `+1` or timeout before proceeding. ';
+const RETIRED_FULLSTACK_CODING_STEP_PROMPT =
+  '4. Write code-pr-gate with field pr_url so Review can activate\n';
+const RETIRED_HARDCODED_FULLSTACK_CODING_STEP_PROMPT =
+  '4. Hand off to Review by calling ' +
+  '`send_message(target="Review", message="<short summary>", data: { pr_url: "<url>" })`; ' +
+  '`save_artifact` alone will not open `code-pr-gate`\n';
+
+const BUILT_IN_PROMPT_PATCH_VARIANTS = [
+  [
+    [CURRENT_CODING_WORKFLOW_HANDOFF_PROMPT, RETIRED_CODING_WORKFLOW_HANDOFF_PROMPT],
+    [CURRENT_CODING_WORKFLOW_REHANDOFF_PROMPT, RETIRED_CODING_WORKFLOW_REHANDOFF_PROMPT],
+  ],
+  [
+    [CURRENT_CODING_WORKFLOW_HANDOFF_PROMPT, RETIRED_HARDCODED_CODING_WORKFLOW_HANDOFF_PROMPT],
+    [CURRENT_CODING_WORKFLOW_REHANDOFF_PROMPT, RETIRED_HARDCODED_CODING_WORKFLOW_REHANDOFF_PROMPT],
+  ],
+  [
+    [CURRENT_FULLSTACK_CODING_READY_PROMPT, RETIRED_FULLSTACK_CODING_READY_PROMPT],
+    [CURRENT_FULLSTACK_CODING_STEP_PROMPT, RETIRED_FULLSTACK_CODING_STEP_PROMPT],
+  ],
+  [
+    [CURRENT_FULLSTACK_CODING_READY_PROMPT, RETIRED_HARDCODED_FULLSTACK_CODING_READY_PROMPT],
+    [CURRENT_FULLSTACK_CODING_STEP_PROMPT, RETIRED_HARDCODED_FULLSTACK_CODING_STEP_PROMPT],
+  ],
+  [[CURRENT_FULLSTACK_REVIEW_HANDOFF_PROMPT, RETIRED_FULLSTACK_REVIEW_HANDOFF_PROMPT]],
+  [[CURRENT_FULLSTACK_REVIEW_HANDOFF_PROMPT, RETIRED_HARDCODED_FULLSTACK_REVIEW_HANDOFF_PROMPT]],
+] as const;
+
+function patchKnownBuiltInPromptDrift<T extends WorkflowNodeAgentOverride | undefined>(
+  existingPrompt: T,
+  templatePrompt: T
+): T {
+  const existingValue = existingPrompt?.value;
+  const templateValue = templatePrompt?.value;
+  if (!existingValue || !templateValue || existingValue === templateValue) return existingPrompt;
+  if (!isExactRetiredBuiltInPrompt(existingValue, templateValue)) return existingPrompt;
+  return { ...existingPrompt, value: templateValue } as T;
+}
+
+function isExactRetiredBuiltInPrompt(existingValue: string, templateValue: string): boolean {
+  return buildRetiredBuiltInPromptValues(templateValue).some((value) => existingValue === value);
+}
+
+function buildRetiredBuiltInPromptValues(templateValue: string): string[] {
+  const values: string[] = [];
+  for (const replacements of BUILT_IN_PROMPT_PATCH_VARIANTS) {
+    let value = templateValue;
+    for (const [currentText, retiredText] of replacements) {
+      if (!value.includes(currentText)) {
+        value = templateValue;
+        break;
+      }
+      value = value.replace(currentText, retiredText);
+    }
+    if (value !== templateValue) values.push(value);
+  }
+  return values;
 }
 
 function nodeReferences(node: WorkflowNode): Set<string> {
@@ -1546,13 +1682,24 @@ function remapTemplateChannelRef(
   const templateNode = templateNodes.find((node) => nodeReferences(node).has(ref));
   if (!templateNode) return ref;
 
+  const templateNodeIndex = templateNodes.findIndex((node) => node.id === templateNode.id);
   const existingNode =
+    existingNodes.find((node) => node.id === templateNode.id) ??
     existingNodes.find((node) => node.name === templateNode.name) ??
     existingNodes.find((node) =>
       templateNode.agents.some((templateAgent) =>
-        node.agents.some((agent) => agent.name && agent.name === templateAgent.name)
+        node.agents.some(
+          (agent) =>
+            (agent.name && agent.name === templateAgent.name) ||
+            agent.agentId === templateAgent.agentId
+        )
       )
-    );
+    ) ??
+    (ref === templateNode.name &&
+    templateNodeIndex >= 0 &&
+    existingNodes.length === templateNodes.length
+      ? existingNodes[templateNodeIndex]
+      : undefined);
   return existingNode?.name ?? ref;
 }
 
@@ -1567,6 +1714,31 @@ function remapTemplateChannel(
     from: remapRef(channel.from),
     to: Array.isArray(channel.to) ? channel.to.map(remapRef) : remapRef(channel.to),
   };
+}
+
+function removeLegacyPrReadyGateChannels(
+  channels: SpaceWorkflow['channels'],
+  templateNodes: WorkflowNode[],
+  existingNodes: WorkflowNode[]
+): SpaceWorkflow['channels'] {
+  const legacyRouteKeys = new Set(LEGACY_PR_READY_TEMPLATE_ROUTES);
+  for (const route of LEGACY_PR_READY_TEMPLATE_ROUTES) {
+    const [gateId, from, to] = route.split(':');
+    legacyRouteKeys.add(
+      `${gateId}:${remapTemplateChannelRef(from, templateNodes, existingNodes)}:${remapTemplateChannelRef(
+        to,
+        templateNodes,
+        existingNodes
+      )}`
+    );
+  }
+
+  return channels?.filter((channel) => {
+    const gateId = channel.gateId;
+    if (!gateId || !LEGACY_PR_READY_GATE_IDS.has(gateId)) return true;
+    const routeKey = `${gateId}:${channel.from}:${String(channel.to)}`;
+    return !legacyRouteKeys.has(routeKey);
+  });
 }
 
 function mergeChannelsFromTemplate(
@@ -1594,6 +1766,111 @@ function mergeChannelsFromTemplate(
   );
 
   return [...existingChannels, ...missingTemplateChannels];
+}
+
+function remapTemplateHookAgentSlots(
+  templateSourceNodeName: string,
+  existingSourceNodeName: string,
+  templateSlots: string[] | undefined,
+  templateNodes: WorkflowNode[],
+  existingNodes: WorkflowNode[]
+): string[] | undefined {
+  if (!templateSlots || templateSlots.length === 0) return undefined;
+
+  const templateNode = templateNodes.find((node) => node.name === templateSourceNodeName);
+  const existingNode = existingNodes.find((node) => node.name === existingSourceNodeName);
+  if (!templateNode || !existingNode) return undefined;
+
+  const existingAgentNames = new Set(
+    existingNode.agents.map((agent) => agent.name).filter((name): name is string => !!name)
+  );
+  const mappedSlots: string[] = [];
+  for (const slot of templateSlots) {
+    if (existingAgentNames.has(slot)) {
+      mappedSlots.push(slot);
+      continue;
+    }
+
+    const templateSlotIndex = templateNode.agents.findIndex((agent) => agent.name === slot);
+    const existingSlotName =
+      templateSlotIndex >= 0 ? existingNode.agents[templateSlotIndex]?.name : undefined;
+    if (existingSlotName) {
+      mappedSlots.push(existingSlotName);
+    }
+  }
+
+  return mappedSlots.length === templateSlots.length ? mappedSlots : undefined;
+}
+
+function remapTemplateHook(
+  hook: NonNullable<SpaceWorkflow['hooks']>[number],
+  templateNodes: WorkflowNode[],
+  existingNodes: WorkflowNode[]
+): NonNullable<SpaceWorkflow['hooks']>[number] {
+  const remapRef = (ref: string) => remapTemplateChannelRef(ref, templateNodes, existingNodes);
+  return {
+    ...hook,
+    sourceNode: remapRef(hook.sourceNode),
+    targetNode: hook.targetNode ? remapRef(hook.targetNode) : hook.targetNode,
+    authorizedCallers: hook.authorizedCallers?.map((caller) => {
+      const sourceNode = remapRef(caller.sourceNode);
+      const agentSlots = remapTemplateHookAgentSlots(
+        caller.sourceNode,
+        sourceNode,
+        caller.agentSlots,
+        templateNodes,
+        existingNodes
+      );
+      if (agentSlots) return { ...caller, sourceNode, agentSlots };
+      const { agentSlots: _agentSlots, ...callerWithoutSlots } = caller;
+      return { ...callerWithoutSlots, sourceNode };
+    }),
+  };
+}
+
+function equivalentGeneratedHook(
+  existingHook: NonNullable<SpaceWorkflow['hooks']>[number],
+  templateHook: NonNullable<SpaceWorkflow['hooks']>[number]
+): boolean {
+  return (
+    existingHook.method === templateHook.method &&
+    existingHook.sourceNode === templateHook.sourceNode &&
+    existingHook.targetNode === templateHook.targetNode &&
+    existingHook.classification === templateHook.classification &&
+    existingHook.validator.kind === 'script' &&
+    templateHook.validator.kind === 'script' &&
+    existingHook.validator.source === templateHook.validator.source &&
+    JSON.stringify(existingHook.authorizedCallers ?? []) ===
+      JSON.stringify(templateHook.authorizedCallers ?? [])
+  );
+}
+
+function mergeHooksFromTemplate(
+  templateHooks: SpaceWorkflow['hooks'],
+  templateNodes: WorkflowNode[],
+  existingNodes: WorkflowNode[],
+  existingHooks?: SpaceWorkflow['hooks']
+): SpaceWorkflow['hooks'] {
+  const remappedTemplateHooks =
+    templateHooks?.map((hook) => remapTemplateHook(hook, templateNodes, existingNodes)) ?? [];
+  if (!existingHooks || existingHooks.length === 0) return remappedTemplateHooks;
+
+  const templateHookIds = new Set(remappedTemplateHooks.map((hook) => hook.id));
+  const equivalentTemplateHooks = new Set(
+    existingHooks
+      .filter((existingHook) =>
+        remappedTemplateHooks.some((templateHook) =>
+          equivalentGeneratedHook(existingHook, templateHook)
+        )
+      )
+      .map((hook) => hook.id)
+  );
+  return [
+    ...existingHooks.filter(
+      (hook) => !templateHookIds.has(hook.id) && !equivalentTemplateHooks.has(hook.id)
+    ),
+    ...remappedTemplateHooks,
+  ];
 }
 
 /** @internal Exported for testing. */
@@ -1626,15 +1903,24 @@ export function mergeGateStructuralFieldsFromTemplate(
       // script or poll, so feature-backed mechanisms do not silently override
       // custom gate logic at runtime. When copying is allowed, propagate the
       // template's features (including undefined when the template removed them).
+      // Preserve existing codex_review_bot feature during transition to node-level
+      // config so pre-existing workflows that relied on gate-level codex keep working.
       const shouldCopyFeatures = !gate.script && !gate.poll;
+      let nextFeatures: Gate['features'] | undefined;
+      if (shouldCopyFeatures) {
+        if (templateGate.features) {
+          nextFeatures = { ...templateGate.features };
+        }
+        if (hasEnabledGateFeature(gate, 'codex_review_bot')) {
+          nextFeatures = { codex_review_bot: true, ...nextFeatures };
+        }
+      } else {
+        nextFeatures = gate.features;
+      }
       return {
         ...gate,
         fields,
-        features: shouldCopyFeatures
-          ? templateGate.features
-            ? { ...templateGate.features }
-            : undefined
-          : gate.features,
+        features: nextFeatures,
       };
     })
     .concat(missingTemplateGates);
@@ -1646,8 +1932,9 @@ export function mergeGateStructuralFieldsFromTemplate(
  *
  * - Node-level `postApproval`, `completionAutonomyLevel`, and `templateHash`
  *   are updated. The legacy workflow-level `postApproval` is cleared. Persisted
- *   node agent `customPrompt.value` is deliberately left untouched so daemon
- *   restart / startup seed passes cannot replace user-configured runtime prompts.
+ *   node agent `customPrompt.value` is preserved except for known retired built-in
+ *   prompt text, so daemon restart / startup seed passes cannot replace user-configured
+ *   runtime prompts.
  * - Agent `toolGuards` are merged onto matching agent slots (by node name +
  *   agent name) so structural enforcement metadata stays in sync with the
  *   template when node + agent names still match. Other node fields
@@ -1660,8 +1947,9 @@ export function mergeGateStructuralFieldsFromTemplate(
  *   checks land on pre-existing spaces. Missing template gates are appended.
  *   Existing checks, scripts, and gate topology remain untouched.
  * - Missing template channels are appended so newly-added built-in branches become
- *   reachable on pre-existing spaces. Existing channels, layout, and node rows
- *   are not regenerated. Workflow IDs, node IDs, and persisted node-agent slots
+ *   reachable on pre-existing spaces. Template hooks are copied from the built-in
+ *   template so hook-based runtime metadata lands during drift re-stamps. Existing
+ *   channels, layout, and node rows are not regenerated. Workflow IDs, node IDs, and persisted node-agent slots
  *   are stable identifiers for in-flight runs, so template drift must never
  *   replace node rows. Agent `toolGuards` are updated in-place on existing node
  *   configs instead.
@@ -1673,6 +1961,7 @@ const RESTAMP_FIELDS = [
   'nodes(postApproval + toolGuards in-place + missing template nodes)',
   'gates(field writers + features in-place + missing template gates)',
   'channels(missing template channels)',
+  'hooks(template hooks)',
 ] as const;
 
 /**
@@ -1741,29 +2030,43 @@ export function seedBuiltInWorkflows(
           template.nodes,
           resolveAgentId
         );
-        const mergedChannels = mergeChannelsFromTemplate(
+        const existingChannels = removeLegacyPrReadyGateChannels(
           row.channels,
+          template.nodes,
+          row.nodes
+        );
+        const mergedChannels = mergeChannelsFromTemplate(
+          existingChannels,
           template.channels,
           template.nodes,
           row.nodes
         );
         const mergedGates = mergeGateStructuralFieldsFromTemplate(row.gates, template.gates);
-        const hasNewTemplateNodes = mergedNodes.length > row.nodes.length;
-        const hasNewTemplateChannels = (mergedChannels?.length ?? 0) > (row.channels?.length ?? 0);
+        const { nodes: migratedNodes, gates: migratedGates } = migrateCodexFeatureToNodeToggle(
+          mergedNodes,
+          mergedChannels ?? row.channels ?? [],
+          mergedGates ?? row.gates ?? []
+        );
+        const removedLegacyPrReadyChannels =
+          (existingChannels?.length ?? 0) !== (row.channels?.length ?? 0);
+        const hasNewTemplateChannels =
+          (mergedChannels?.length ?? 0) > (existingChannels?.length ?? 0);
 
         workflowManager.updateWorkflow(row.id, {
           completionAutonomyLevel: template.completionAutonomyLevel,
           // Built-ins now store routes on terminal nodes. Clear any legacy
           // workflow-level value while the node updater writes node routes.
           postApproval: null,
-          gates: mergedGates,
-          ...(hasNewTemplateNodes ? { nodes: mergedNodes } : {}),
-          ...(hasNewTemplateChannels ? { channels: mergedChannels } : {}),
+          gates: migratedGates,
+          hooks:
+            mergeHooksFromTemplate(template.hooks, template.nodes, migratedNodes, row.hooks) ??
+            null,
+          nodes: migratedNodes,
+          ...(hasNewTemplateChannels || removedLegacyPrReadyChannels
+            ? { channels: mergedChannels }
+            : {}),
           templateHash: expectedHash,
         });
-        if (!hasNewTemplateNodes) {
-          workflowManager.updateWorkflowNodeToolGuards(row.id, mergedNodes);
-        }
         restamped.push(template.name);
         builtInSeederLog.info(
           `re-stamped built-in workflow '${template.name}' (id=${row.id}) ` +
@@ -1829,6 +2132,7 @@ export function seedBuiltInWorkflows(
           agentId: resolvedIds.get(a.agentId)!,
         })),
         ...(s.postApproval ? { postApproval: { ...s.postApproval } } : {}),
+        ...(s.requireCodexApproval ? { requireCodexApproval: true } : {}),
       }));
 
       const startNodeId = nodeIdMap.get(template.startNodeId);
@@ -1864,6 +2168,7 @@ export function seedBuiltInWorkflows(
           ? template.channels.map((ch) => ({ ...ch, id: ch.id ?? generateUUID() }))
           : undefined,
         gates: template.gates ? [...template.gates] : undefined,
+        hooks: template.hooks ? [...template.hooks] : undefined,
         layout: template.layout
           ? Object.fromEntries(
               Object.entries(template.layout).map(([templateNodeId, position]) => [

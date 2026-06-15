@@ -295,6 +295,8 @@ export function buildWorkflowCreateParams(
       name: exportedNode.name,
       agents,
       postApproval: exportedNode.postApproval,
+      requireCodexApproval: exportedNode.requireCodexApproval,
+      codexPollIntervalMs: exportedNode.codexPollIntervalMs,
     };
 
     return node;
@@ -318,6 +320,7 @@ export function buildWorkflowCreateParams(
   if (endNodeId) params.endNodeId = endNodeId;
   if (exported.description !== undefined) params.description = exported.description;
   if (exported.channels && exported.channels.length > 0) params.channels = exported.channels;
+  if (exported.hooks && exported.hooks.length > 0) params.hooks = exported.hooks;
   if (exported.disabled !== undefined) params.disabled = exported.disabled;
   // Only preserve the exported handle when it is unique in the target space
   // and not already used by another workflow in the same import batch.

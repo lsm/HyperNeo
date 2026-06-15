@@ -24,6 +24,7 @@ import { WorkflowRunArtifactRepository } from '../../../../src/storage/repositor
 import {
   createNodeAgentToolHandlers,
   createNodeAgentMcpServer,
+  evaluateTerminalGateFeatures,
   type NodeAgentToolsConfig,
 } from '../../../../src/lib/space/tools/node-agent-tools.ts';
 import { AgentMessageRouter } from '../../../../src/lib/space/runtime/agent-message-router.ts';
@@ -1419,6 +1420,116 @@ describe('node-agent-tools: send_message (gate-write)', () => {
     );
   });
 
+  test('gate-write treats broadcast channels as matching scalar targets', async () => {
+    const gate: Gate = {
+      id: 'gate-broadcast',
+      fields: [{ name: 'pr_url', type: 'string', writers: ['Coding'], check: { op: 'exists' } }],
+      resetOnCycle: false,
+    };
+    const workflow = makeWorkflowWithGatedChannel(gate);
+    workflow.channels = [{ id: 'ch-coder-all', from: 'Coding', to: '*', gateId: gate.id }];
+    const gateDataRepo = new GateDataRepository(ctx.db);
+    const config = makeConfig(ctx, { workflow, gateDataRepo });
+    const handlers = createNodeAgentToolHandlers(config);
+
+    const result = await handlers.send_message({
+      target: 'Review',
+      message: 'ready',
+      data: { pr_url: 'https://github.com/test/repo/pull/42' },
+    });
+    const data = JSON.parse(result.content[0].text);
+
+    expect(data.gateWrite).toEqual({ gateId: 'gate-broadcast', gateOpen: true });
+    expect(gateDataRepo.get(ctx.workflowRunId, 'gate-broadcast')?.data.pr_url).toBe(
+      'https://github.com/test/repo/pull/42'
+    );
+  });
+
+  test('gate-write prefers scalar target channels over broadcast channels', async () => {
+    const broadcastGate: Gate = {
+      id: 'gate-broadcast',
+      fields: [{ name: 'pr_url', type: 'string', writers: ['Coding'], check: { op: 'exists' } }],
+      resetOnCycle: false,
+    };
+    const reviewGate: Gate = {
+      id: 'gate-review',
+      fields: [{ name: 'pr_url', type: 'string', writers: ['Coding'], check: { op: 'exists' } }],
+      resetOnCycle: false,
+    };
+    const workflow = makeWorkflowWithGatedChannel(reviewGate);
+    workflow.channels = [
+      { id: 'ch-coder-all', from: 'Coding', to: '*', gateId: broadcastGate.id },
+      { id: 'ch-coder-review', from: 'Coding', to: 'Review', gateId: reviewGate.id },
+    ];
+    workflow.gates = [broadcastGate, reviewGate];
+    const gateDataRepo = new GateDataRepository(ctx.db);
+    const config = makeConfig(ctx, { workflow, gateDataRepo });
+    const handlers = createNodeAgentToolHandlers(config);
+
+    const result = await handlers.send_message({
+      target: 'Review',
+      message: 'ready',
+      data: { pr_url: 'https://github.com/test/repo/pull/42' },
+    });
+    const data = JSON.parse(result.content[0].text);
+
+    expect(data.gateWrite).toEqual({ gateId: 'gate-review', gateOpen: true });
+    expect(gateDataRepo.get(ctx.workflowRunId, 'gate-review')?.data.pr_url).toBe(
+      'https://github.com/test/repo/pull/42'
+    );
+    expect(gateDataRepo.get(ctx.workflowRunId, 'gate-broadcast')).toBeNull();
+  });
+
+  test('gate-write skips broadcast channels for unknown scalar targets', async () => {
+    const gate: Gate = {
+      id: 'gate-broadcast',
+      fields: [{ name: 'pr_url', type: 'string', writers: ['Coding'], check: { op: 'exists' } }],
+      resetOnCycle: false,
+    };
+    const workflow = makeWorkflowWithGatedChannel(gate);
+    workflow.channels = [{ id: 'ch-coder-all', from: 'Coding', to: '*', gateId: gate.id }];
+    const gateDataRepo = new GateDataRepository(ctx.db);
+    const config = makeConfig(ctx, { workflow, gateDataRepo });
+    const handlers = createNodeAgentToolHandlers(config);
+
+    const result = await handlers.send_message({
+      target: 'TypoReview',
+      message: 'ready',
+      data: { pr_url: 'https://github.com/test/repo/pull/42' },
+    });
+    const data = JSON.parse(result.content[0].text);
+
+    expect(data.success).toBe(false);
+    expect(data.gateWrite).toBeUndefined();
+    expect(gateDataRepo.get(ctx.workflowRunId, 'gate-broadcast')).toBeNull();
+  });
+
+  test('gate-write treats same-node peer agents as broadcast targets', async () => {
+    const gate: Gate = {
+      id: 'gate-broadcast-peer',
+      fields: [{ name: 'pr_url', type: 'string', writers: ['Coding'], check: { op: 'exists' } }],
+      resetOnCycle: false,
+    };
+    const workflow = makeWorkflowWithGatedChannel(gate);
+    workflow.nodes[0].agents.push({ agentId: 'agent-peer', name: 'peer' });
+    workflow.channels = [{ id: 'ch-coder-all', from: 'Coding', to: '*', gateId: gate.id }];
+    const gateDataRepo = new GateDataRepository(ctx.db);
+    const config = makeConfig(ctx, { workflow, gateDataRepo });
+    const handlers = createNodeAgentToolHandlers(config);
+
+    const result = await handlers.send_message({
+      target: 'peer',
+      message: 'ready',
+      data: { pr_url: 'https://github.com/test/repo/pull/42' },
+    });
+    const data = JSON.parse(result.content[0].text);
+
+    expect(data.gateWrite).toEqual({ gateId: 'gate-broadcast-peer', gateOpen: true });
+    expect(gateDataRepo.get(ctx.workflowRunId, 'gate-broadcast-peer')?.data.pr_url).toBe(
+      'https://github.com/test/repo/pull/42'
+    );
+  });
+
   test('no gateWrite in response when data not provided', async () => {
     const gate: Gate = {
       id: 'gate-no-data',
@@ -2483,7 +2594,14 @@ describe('node-agent-tools: async gate evaluation', () => {
    * Build a workflow with a gated channel from coder → reviewer.
    * Used by tests that drive gate-write via send_message.
    */
-  function makeWorkflowWithGate(gate: Gate, spaceId: string): SpaceWorkflow {
+  function makeWorkflowWithGate(
+    gate: Gate,
+    spaceId: string,
+    overrides: Partial<SpaceWorkflow> = {}
+  ): SpaceWorkflow {
+    const channels = overrides.channels ?? [
+      { id: 'ch-coder-reviewer', from: 'coder', to: 'reviewer', gateId: gate.id },
+    ];
     return {
       id: 'wf-1',
       spaceId,
@@ -2493,8 +2611,9 @@ describe('node-agent-tools: async gate evaluation', () => {
       startNodeId: '',
       rules: [],
       tags: [],
-      channels: [{ id: 'ch-coder-reviewer', from: 'coder', to: 'reviewer', gateId: gate.id }],
+      channels,
       gates: [gate],
+      ...overrides,
     };
   }
 
@@ -2728,6 +2847,111 @@ describe('node-agent-tools: async gate evaluation', () => {
     expect(data.success).toBe(true);
     expect(data.gateOpen).toBe(false);
     expect(data.reason).toContain('Feature script failed');
+  });
+
+  test('read_gate evaluates dynamic codex gate with agent-name channel source', async () => {
+    const gate: Gate = {
+      id: 'gate-read-agent-source',
+      fields: [
+        { name: 'approved', type: 'boolean', writers: [], check: { op: '==', value: true } },
+      ],
+      resetOnCycle: false,
+    };
+    const workflow = makeWorkflowWithGate(gate, ctx.spaceId, {
+      nodes: [
+        {
+          id: 'node-coder',
+          name: 'Coding',
+          agents: [{ agentId: 'agent-coder', name: 'coder' }],
+          requireCodexApproval: true,
+        },
+        {
+          id: 'node-reviewer',
+          name: 'Review',
+          agents: [{ agentId: 'agent-reviewer', name: 'reviewer' }],
+        },
+      ],
+      channels: [{ id: 'ch-coder-reviewer', from: 'coder', to: 'reviewer', gateId: gate.id }],
+    });
+
+    const gateDataRepo = new GateDataRepository(ctx.db);
+    gateDataRepo.set(ctx.workflowRunId, gate.id, { approved: true });
+    const mockExecutor = async () => ({
+      success: false,
+      data: {},
+      error: 'Codex still pending',
+    });
+
+    const config = makeConfig(ctx, {
+      workflow,
+      workflowNodeId: 'node-coder',
+      gateDataRepo,
+      scriptExecutor: mockExecutor,
+      scriptContext: {
+        workspacePath: '/tmp',
+        runId: ctx.workflowRunId,
+        gateId: gate.id,
+      },
+    });
+    const handlers = createNodeAgentToolHandlers(config);
+    const result = await handlers.read_gate({ gateId: gate.id });
+    const data = JSON.parse(result.content[0].text);
+
+    expect(data.success).toBe(true);
+    expect(data.gateOpen).toBe(false);
+    expect(data.reason).toContain('Codex still pending');
+  });
+
+  test('terminal gate feature checks use current node source for wildcard channels', async () => {
+    const gate: Gate = {
+      id: 'terminal-wildcard-codex-gate',
+      fields: [
+        { name: 'approved', type: 'boolean', writers: [], check: { op: '==', value: true } },
+      ],
+      resetOnCycle: false,
+    };
+    const workflow = makeWorkflowWithGate(gate, ctx.spaceId, {
+      nodes: [
+        {
+          id: 'node-coder',
+          name: 'Coding',
+          agents: [{ agentId: 'agent-coder', name: 'coder' }],
+          requireCodexApproval: true,
+        },
+        {
+          id: 'node-reviewer',
+          name: 'Review',
+          agents: [{ agentId: 'agent-reviewer', name: 'reviewer' }],
+        },
+      ],
+      channels: [{ id: 'ch-wildcard-reviewer', from: '*', to: 'reviewer', gateId: gate.id }],
+    });
+
+    const gateDataRepo = new GateDataRepository(ctx.db);
+    gateDataRepo.set(ctx.workflowRunId, gate.id, { approved: true });
+    const mockExecutor = async () => ({
+      success: false,
+      data: {},
+      error: 'Codex still pending',
+    });
+
+    const result = await evaluateTerminalGateFeatures(
+      workflow,
+      gateDataRepo,
+      ctx.workflowRunId,
+      mockExecutor,
+      {
+        workspacePath: '/tmp',
+        runId: ctx.workflowRunId,
+        gateId: gate.id,
+      },
+      'node-coder',
+      ctx.artifactRepo
+    );
+    const data = JSON.parse(result!.content[0].text);
+
+    expect(data.success).toBe(false);
+    expect(data.error).toContain('Codex still pending');
   });
 
   test('send_message gate-write without scriptExecutor skips script check and opens gate on field pass', async () => {

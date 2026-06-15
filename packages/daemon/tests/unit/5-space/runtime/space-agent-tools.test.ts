@@ -10,6 +10,7 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
+import type { ModelInfo } from '@neokai/shared';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
@@ -25,6 +26,7 @@ import { JobQueueRepository } from '../../../../src/storage/repositories/job-que
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
 import { GateDataRepository } from '../../../../src/storage/repositories/gate-data-repository.ts';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
+import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager.ts';
@@ -41,6 +43,7 @@ import {
 import type { SpaceTask, SpaceWorkflow } from '@neokai/shared';
 import type { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import { formatAgentMessage } from '../../../../src/lib/space/agent-message-envelope.ts';
+import { getModelsCache, setModelsCache } from '../../../../src/lib/model-service.ts';
 
 // ---------------------------------------------------------------------------
 // DB + space setup helpers
@@ -52,6 +55,31 @@ function makeDb(): BunDatabase {
   const db = new BunDatabase(':memory:');
   db.exec('PRAGMA foreign_keys = ON');
   runMigrations(db, () => {});
+
+  db.exec(`CREATE TABLE IF NOT EXISTS sessions (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    workspace_path TEXT,
+    created_at TEXT NOT NULL,
+    last_active_at TEXT NOT NULL,
+    status TEXT NOT NULL,
+    config TEXT NOT NULL,
+    metadata TEXT NOT NULL,
+    is_worktree INTEGER DEFAULT 0,
+    worktree_path TEXT,
+    main_repo_path TEXT,
+    worktree_branch TEXT,
+    git_branch TEXT,
+    sdk_session_id TEXT,
+    acp_session_id TEXT,
+    sdk_origin_path TEXT,
+    available_commands TEXT,
+    processing_state TEXT,
+    archived_at TEXT,
+    parent_id TEXT,
+    type TEXT DEFAULT 'worker',
+    session_context TEXT
+  )`);
 
   // runMigrations() applies migrations only; these unit fixtures need the base
   // sdk_messages table because runtime recovery inspects persisted SDK output.
@@ -66,7 +94,8 @@ function makeDb(): BunDatabase {
 		origin TEXT,
 		is_renderable INTEGER NOT NULL DEFAULT 1,
 		is_terminal INTEGER NOT NULL DEFAULT 0,
-		parent_tool_use_id TEXT
+		parent_tool_use_id TEXT,
+			task_id TEXT
 	)`);
 
   return db;
@@ -132,6 +161,7 @@ interface TestCtx {
   runtime: SpaceRuntime;
   nodeExecutionRepo: NodeExecutionRepository;
   spaceManager: SpaceManager;
+  longHorizonAgentRepo: SpaceLongHorizonAgentRepository;
   goalService: SpaceGoalService;
   evolutionRepo: EvolutionRepository;
   evolutionScopeService: EvolutionScopeService;
@@ -158,6 +188,7 @@ function makeCtx(): TestCtx {
   const nodeExecutionRepo = new NodeExecutionRepository(db);
   const taskRepo = new SpaceTaskRepository(db);
   const spaceManager = new SpaceManager(db);
+  const longHorizonAgentRepo = new SpaceLongHorizonAgentRepository(db);
 
   const runtime = new SpaceRuntime({
     db,
@@ -167,6 +198,7 @@ function makeCtx(): TestCtx {
     workflowRunRepo,
     taskRepo,
     nodeExecutionRepo,
+    longHorizonAgentRepo,
   });
 
   const taskManager = new SpaceTaskManager(db, spaceId);
@@ -245,6 +277,7 @@ function makeCtx(): TestCtx {
     runtime,
     nodeExecutionRepo,
     spaceManager,
+    longHorizonAgentRepo,
     goalService,
     evolutionRepo,
     evolutionScopeService,
@@ -252,7 +285,10 @@ function makeCtx(): TestCtx {
   };
 }
 
-function makeHandlers(ctx: TestCtx) {
+function makeHandlers(
+  ctx: TestCtx,
+  overrides: Partial<Parameters<typeof createSpaceAgentToolHandlers>[0]> = {}
+) {
   return createSpaceAgentToolHandlers({
     spaceId: ctx.spaceId,
     db: ctx.db,
@@ -264,9 +300,11 @@ function makeHandlers(ctx: TestCtx) {
     spaceAgentManager: ctx.agentManager,
     nodeExecutionRepo: ctx.nodeExecutionRepo,
     spaceManager: ctx.spaceManager,
+    longHorizonAgentRepo: ctx.longHorizonAgentRepo,
     goalService: ctx.goalService,
     evolutionScopeService: ctx.evolutionScopeService,
     evolutionEpisodeService: ctx.evolutionEpisodeService,
+    ...overrides,
   });
 }
 
@@ -293,6 +331,38 @@ async function startWorkflowRun(
 function getRegisteredToolNames(server: ReturnType<typeof createSpaceAgentMcpServer>): string[] {
   const instance = server.instance as unknown as { _registeredTools: Record<string, unknown> };
   return Object.keys(instance._registeredTools);
+}
+
+function getRegisteredTool(server: ReturnType<typeof createSpaceAgentMcpServer>, name: string) {
+  const instance = server.instance as unknown as {
+    _registeredTools: Record<string, { inputSchema: unknown }>;
+  };
+  return instance._registeredTools[name];
+}
+
+function parseResult(result: { content: Array<{ text: string }> }) {
+  return JSON.parse(result.content[0].text) as Record<string, unknown>;
+}
+
+function expectToolInputParses(
+  server: ReturnType<typeof createSpaceAgentMcpServer>,
+  name: string,
+  input: Record<string, unknown>
+) {
+  const inputSchema = getRegisteredTool(server, name).inputSchema;
+  if (hasParser(inputSchema)) {
+    inputSchema.parse(input);
+    return;
+  }
+  const shape = inputSchema as Record<string, unknown>;
+  for (const [key, value] of Object.entries(input)) {
+    const field = shape[key];
+    if (hasParser(field)) field.parse(value);
+  }
+}
+
+function hasParser(value: unknown): value is { parse: (input: unknown) => unknown } {
+  return typeof (value as { parse?: unknown } | null)?.parse === 'function';
 }
 
 describe('schema evolution setup', () => {
@@ -327,6 +397,12 @@ describe('createSpaceAgentMcpServer — tool registration', () => {
     const names = getRegisteredToolNames(server);
     expect(names).not.toContain('start_workflow_run');
     expect(names).toContain('create_standalone_task');
+    expect(names).toContain('list_sessions');
+    expect(names).toContain('get_session_detail');
+    expect(names).toContain('get_session_messages');
+    expect(names).toContain('send_session_message');
+    expect(names).toContain('update_session_state');
+    expect(names).toContain('interrupt_session');
     expect(names).not.toContain('create_agent');
     expect(names).not.toContain('assign_agent_to_goal');
     expect(names).not.toContain('create_agent_reminder');
@@ -350,6 +426,15 @@ describe('createSpaceAgentMcpServer — tool registration', () => {
     expect(names).toContain('create_agent');
     expect(names).toContain('assign_agent_to_goal');
     expect(names).toContain('create_agent_reminder');
+    expect(() =>
+      expectToolInputParses(server, 'update_agent', {
+        agent_id: 'agent-1',
+        status: 'disabled',
+      })
+    ).not.toThrow();
+    expect(() =>
+      expectToolInputParses(server, 'list_agents', { status: 'disabled' })
+    ).not.toThrow();
   });
 
   test('registers goal tools when goalService is configured', () => {
@@ -401,15 +486,480 @@ describe('createSpaceAgentMcpServer — tool registration', () => {
 });
 
 // ---------------------------------------------------------------------------
-// goal tools
+// session management tools
 // ---------------------------------------------------------------------------
 
-describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
+describe('createSpaceAgentToolHandlers — session management tools', () => {
   let ctx: TestCtx;
   beforeEach(() => {
     ctx = makeCtx();
   });
   afterEach(() => {
+    ctx.db.close();
+  });
+
+  function seedSession(
+    id: string,
+    spaceId = ctx.spaceId,
+    processingState = { status: 'idle' },
+    context: Record<string, unknown> = {}
+  ) {
+    ctx.db
+      .prepare(
+        `INSERT INTO sessions (
+          id, title, workspace_path, created_at, last_active_at, status, config, metadata,
+          is_worktree, git_branch, processing_state, type, session_context
+        ) VALUES (?, ?, ?, ?, ?, 'active', '{}', '{}', 1, 'feature/session-tools', ?, 'worker', ?)`
+      )
+      .run(
+        id,
+        `Session ${id}`,
+        '/tmp/session-workspace',
+        new Date(0).toISOString(),
+        new Date().toISOString(),
+        JSON.stringify(processingState),
+        JSON.stringify({ spaceId, ...context })
+      );
+  }
+
+  test('list_sessions includes ad-hoc sessions in current space only', async () => {
+    seedSession('adhoc-1', ctx.spaceId, { status: 'waiting_for_input' });
+    seedSession('other-space', 'other-space', { status: 'idle' });
+    const handlers = makeHandlers(ctx);
+
+    const parsed = parseResult(await handlers.list_sessions({}));
+
+    expect(parsed.success).toBe(true);
+    const sessions = parsed.sessions as Array<{ id: string; status: string; type: string }>;
+    expect(sessions.map((session) => session.id)).toContain('adhoc-1');
+    expect(sessions.map((session) => session.id)).not.toContain('other-space');
+    expect(sessions[0].status).toBe('waiting_for_input');
+    expect(sessions[0].type).toBe('ad-hoc');
+  });
+
+  test('get_session_detail returns parsed processing state and message summaries', async () => {
+    seedSession('stuck-1', ctx.spaceId, {
+      status: 'waiting_for_input',
+      pendingQuestion: { toolUseId: 'q1' },
+    });
+    ctx.db
+      .prepare(
+        `INSERT INTO sdk_messages (
+          id, session_id, message_type, message_subtype, sdk_message, timestamp,
+          send_status, origin, is_renderable, is_terminal, parent_tool_use_id, task_id
+        ) VALUES (?, ?, 'assistant', NULL, ?, ?, 'consumed', 'system', 1, 0, NULL, NULL)`
+      )
+      .run(
+        'msg-1',
+        'stuck-1',
+        JSON.stringify({
+          type: 'assistant',
+          message: { content: [{ type: 'text', text: 'Need input' }] },
+        }),
+        new Date().toISOString()
+      );
+    const handlers = makeHandlers(ctx);
+
+    const parsed = parseResult(await handlers.get_session_detail({ session_id: 'stuck-1' }));
+
+    expect(parsed.success).toBe(true);
+    const session = parsed.session as {
+      processing_state: { status: string; pendingQuestion: { toolUseId: string } };
+      last_messages: Array<{ content_summary: string }>;
+    };
+    expect(session.processing_state.status).toBe('waiting_for_input');
+    expect(session.processing_state.pendingQuestion.toolUseId).toBe('q1');
+    expect(session.last_messages[0].content_summary).toBe('Need input');
+  });
+
+  test('send_session_message resolves pending question through live session', async () => {
+    seedSession('adhoc-send', ctx.spaceId, {
+      status: 'waiting_for_input',
+      pendingQuestion: {
+        toolUseId: 'q1',
+        questions: [{ options: [{ label: 'Use option A' }] }],
+      },
+    });
+    const responses: unknown[] = [];
+    const handlers = makeHandlers(ctx, {
+      getRuntimeSession: () =>
+        ({
+          handleQuestionResponse: async (_toolUseId: string, draftResponses: unknown[]) => {
+            responses.push(_toolUseId, draftResponses);
+          },
+        }) as never,
+    });
+
+    const parsed = parseResult(
+      await handlers.send_session_message({
+        session_id: 'adhoc-send',
+        message: 'Use option A',
+        answer_question: true,
+      })
+    );
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.delivered).toBe(true);
+    expect(parsed.message_id).toBe('q1');
+    expect(responses).toEqual(['q1', [{ questionIndex: 0, selectedLabels: ['Use option A'] }]]);
+  });
+
+  test('send_session_message delivers normal input through SessionManager', async () => {
+    seedSession('adhoc-deliver', ctx.spaceId, { status: 'idle' });
+    const sent: unknown[] = [];
+    const handlers = makeHandlers(ctx, {
+      sessionManager: {
+        getCachedSession: () => null,
+        getSessionAsync: async () => ({ startQueryAndEnqueue: async () => {} }) as never,
+        sendUserMessage: async (message: unknown) => {
+          sent.push(message);
+        },
+      },
+    });
+
+    const parsed = parseResult(
+      await handlers.send_session_message({ session_id: 'adhoc-deliver', message: 'Proceed' })
+    );
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.delivered).toBe(true);
+    expect(sent).toEqual([
+      {
+        sessionId: 'adhoc-deliver',
+        messageId: parsed.message_id,
+        content: 'Proceed',
+      },
+    ]);
+  });
+
+  test('interrupt_session routes through live interrupt path with autonomy gate', async () => {
+    seedSession('adhoc-interrupt', ctx.spaceId, { status: 'processing' });
+    let interrupted = false;
+    const handlers = makeHandlers(ctx, {
+      getSpaceAutonomyLevel: async () => 4,
+      getRuntimeSession: () =>
+        ({
+          handleInterrupt: async () => {
+            interrupted = true;
+          },
+        }) as never,
+    });
+
+    const parsed = parseResult(
+      await handlers.interrupt_session({ session_id: 'adhoc-interrupt', reason: 'hung' })
+    );
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.interrupted).toBe(true);
+    expect(interrupted).toBe(true);
+    const resultRows = ctx.db
+      .prepare(`SELECT message_type FROM sdk_messages WHERE session_id = ?`)
+      .all('adhoc-interrupt') as Array<{ message_type: string }>;
+    expect(resultRows).toEqual([]);
+  });
+
+  test('interrupt_session rejects cold sessions without lazy-loading', async () => {
+    seedSession('adhoc-cold-interrupt', ctx.spaceId, { status: 'processing' });
+    let loaded = false;
+    const handlers = makeHandlers(ctx, {
+      getSpaceAutonomyLevel: async () => 4,
+      sessionManager: {
+        getCachedSession: () => null,
+        getSessionAsync: async () => {
+          loaded = true;
+          return null;
+        },
+        sendUserMessage: async () => {},
+      },
+    });
+
+    const parsed = parseResult(
+      await handlers.interrupt_session({ session_id: 'adhoc-cold-interrupt', reason: 'hung' })
+    );
+
+    expect(parsed.success).toBe(false);
+    expect(String(parsed.error)).toContain('requires a live cached session');
+    expect(loaded).toBe(false);
+  });
+
+  test('list_sessions applies filters before SQL pagination', async () => {
+    for (let i = 0; i < 3; i += 1) seedSession(`newer-adhoc-${i}`, ctx.spaceId, { status: 'idle' });
+    seedSession(
+      'older-worker-filtered',
+      ctx.spaceId,
+      { status: 'idle' },
+      { taskId: 'task-filtered' }
+    );
+    const handlers = makeHandlers(ctx);
+
+    const parsed = parseResult(await handlers.list_sessions({ type: 'worker', limit: 1 }));
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.sessions).toEqual([
+      expect.objectContaining({ id: 'older-worker-filtered', type: 'worker' }),
+    ]);
+  });
+
+  test('list_sessions treats rate-limit cooldown as active', async () => {
+    seedSession('cooldown-session', ctx.spaceId, { status: 'rate_limit_cooldown' });
+    const handlers = makeHandlers(ctx);
+
+    const active = parseResult(await handlers.list_sessions({ status: 'active' }));
+    const idle = parseResult(await handlers.list_sessions({ status: 'idle' }));
+
+    expect((active.sessions as Array<{ id: string }>).map((session) => session.id)).toContain(
+      'cooldown-session'
+    );
+    expect((idle.sessions as Array<{ id: string }>).map((session) => session.id)).not.toContain(
+      'cooldown-session'
+    );
+  });
+
+  test('list_sessions classifies task-bound sessions as workers after filtering', async () => {
+    seedSession('newer-adhoc', ctx.spaceId, { status: 'idle' });
+    seedSession('older-worker', ctx.spaceId, { status: 'idle' }, { taskId: 'task-1' });
+    const handlers = makeHandlers(ctx);
+
+    const parsed = parseResult(await handlers.list_sessions({ type: 'worker', limit: 2 }));
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.sessions).toEqual([
+      expect.objectContaining({ id: 'older-worker', type: 'worker' }),
+    ]);
+  });
+
+  test('get_session_messages returns requested message summaries', async () => {
+    seedSession('messages-session', ctx.spaceId, { status: 'idle' });
+    for (const [id, text] of [
+      ['msg-1', 'First'],
+      ['msg-2', 'Second'],
+    ]) {
+      ctx.db
+        .prepare(
+          `INSERT INTO sdk_messages (
+            id, session_id, message_type, message_subtype, sdk_message, timestamp,
+            send_status, origin, is_renderable, is_terminal, parent_tool_use_id, task_id
+          ) VALUES (?, 'messages-session', 'assistant', NULL, ?, ?, 'consumed', 'system', 1, 0, NULL, NULL)`
+        )
+        .run(
+          id,
+          JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text }] } }),
+          new Date(id === 'msg-1' ? 1 : 2).toISOString()
+        );
+    }
+    const handlers = makeHandlers(ctx);
+
+    const parsed = parseResult(
+      await handlers.get_session_messages({ session_id: 'messages-session', limit: 1 })
+    );
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.messages).toEqual([
+      expect.objectContaining({ id: 'msg-2', content_summary: 'Second' }),
+    ]);
+  });
+
+  test('update_session_state rejects cached ad-hoc live sessions', async () => {
+    seedSession('adhoc-live-update', ctx.spaceId, { status: 'processing' });
+    const handlers = makeHandlers(ctx, {
+      getSpaceAutonomyLevel: async () => 4,
+      sessionManager: {
+        getCachedSession: () => ({ getProcessingState: () => ({ status: 'processing' }) }) as never,
+        getSessionAsync: async () => null,
+        sendUserMessage: async () => {},
+      },
+    });
+
+    const parsed = parseResult(
+      await handlers.update_session_state({
+        session_id: 'adhoc-live-update',
+        processing_state: 'idle',
+      })
+    );
+
+    expect(parsed.success).toBe(false);
+    expect(String(parsed.error)).toContain('cannot mutate live sessions');
+  });
+
+  test('update_session_state does not lazy-load cold sessions', async () => {
+    seedSession('adhoc-cold-update', ctx.spaceId, { status: 'processing' });
+    let loaded = false;
+    const handlers = makeHandlers(ctx, {
+      getSpaceAutonomyLevel: async () => 4,
+      sessionManager: {
+        getCachedSession: () => null,
+        getSessionAsync: async () => {
+          loaded = true;
+          return null;
+        },
+        sendUserMessage: async () => {},
+      },
+    });
+
+    const parsed = parseResult(
+      await handlers.update_session_state({
+        session_id: 'adhoc-cold-update',
+        processing_state: 'idle',
+      })
+    );
+
+    expect(parsed.success).toBe(true);
+    expect(loaded).toBe(false);
+  });
+
+  test('send_session_message cross-session requires autonomy', async () => {
+    seedSession('other-member', ctx.spaceId, { status: 'idle' });
+    const handlers = makeHandlers(ctx, {
+      mySessionId: 'caller-session',
+      getSpaceAutonomyLevel: async () => 3,
+      getRuntimeSession: () => ({ startQueryAndEnqueue: async () => {} }) as never,
+    });
+
+    const parsed = parseResult(
+      await handlers.send_session_message({ session_id: 'other-member', message: 'Proceed' })
+    );
+
+    expect(parsed.success).toBe(false);
+    expect(String(parsed.error)).toContain('space autonomy level 3 < required level 4');
+  });
+
+  test('send_session_message cross-session gates named non-coordinator agents', async () => {
+    seedSession('other-member-named-agent', ctx.spaceId, { status: 'idle' });
+    const handlers = makeHandlers(ctx, {
+      myAgentName: 'scout',
+      mySessionId: 'caller-session',
+      getSpaceAutonomyLevel: async () => 3,
+      getRuntimeSession: () => ({ startQueryAndEnqueue: async () => {} }) as never,
+    });
+
+    const parsed = parseResult(
+      await handlers.send_session_message({
+        session_id: 'other-member-named-agent',
+        message: 'Proceed',
+      })
+    );
+
+    expect(parsed.success).toBe(false);
+    expect(String(parsed.error)).toContain('space autonomy level 3 < required level 4');
+  });
+
+  test('send_session_message coordinator can send cross-session without autonomy gate', async () => {
+    seedSession('other-member-coordinator', ctx.spaceId, { status: 'idle' });
+    const handlers = makeHandlers(ctx, {
+      myAgentName: 'space-agent',
+      mySessionId: 'caller-session',
+      getSpaceAutonomyLevel: async () => 3,
+      getRuntimeSession: () => ({ startQueryAndEnqueue: async () => {} }) as never,
+    });
+
+    const parsed = parseResult(
+      await handlers.send_session_message({
+        session_id: 'other-member-coordinator',
+        message: 'Proceed',
+      })
+    );
+
+    expect(parsed.success).toBe(true);
+  });
+
+  test('get_session_messages cursor handles duplicate timestamps', async () => {
+    seedSession('cursor-session', ctx.spaceId, { status: 'idle' });
+    for (const id of ['msg-c', 'msg-b', 'msg-a']) {
+      ctx.db
+        .prepare(
+          `INSERT INTO sdk_messages (
+            id, session_id, message_type, message_subtype, sdk_message, timestamp,
+            send_status, origin, is_renderable, is_terminal, parent_tool_use_id, task_id
+          ) VALUES (?, 'cursor-session', 'assistant', NULL, ?, ?, 'consumed', 'system', 1, 0, NULL, NULL)`
+        )
+        .run(
+          id,
+          JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: id }] } }),
+          new Date(1).toISOString()
+        );
+    }
+    const handlers = makeHandlers(ctx);
+
+    const firstPage = parseResult(
+      await handlers.get_session_messages({ session_id: 'cursor-session', limit: 1 })
+    );
+    const cursor = (firstPage.messages as Array<{ cursor: string }>)[0].cursor;
+    const secondPage = parseResult(
+      await handlers.get_session_messages({
+        session_id: 'cursor-session',
+        limit: 1,
+        before: cursor,
+      })
+    );
+
+    expect((firstPage.messages as Array<{ id: string }>)[0].id).toBe('msg-c');
+    expect((secondPage.messages as Array<{ id: string }>)[0].id).toBe('msg-b');
+  });
+
+  test('update_session_state updates state and clears pending question', async () => {
+    seedSession('adhoc-update', ctx.spaceId, {
+      status: 'waiting_for_input',
+      pendingQuestion: { toolUseId: 'q1' },
+    });
+    const handlers = makeHandlers(ctx, { getSpaceAutonomyLevel: async () => 4 });
+
+    const parsed = parseResult(
+      await handlers.update_session_state({
+        session_id: 'adhoc-update',
+        processing_state: 'idle',
+        clear_pending_question: true,
+      })
+    );
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.updated).toBe(true);
+    expect(parsed.new_state).toEqual({ status: 'idle' });
+  });
+
+  test('update_session_state rejects waiting state without pending question', async () => {
+    seedSession('adhoc-waiting-without-question', ctx.spaceId, { status: 'idle' });
+    const handlers = makeHandlers(ctx, { getSpaceAutonomyLevel: async () => 4 });
+
+    const parsed = parseResult(
+      await handlers.update_session_state({
+        session_id: 'adhoc-waiting-without-question',
+        processing_state: 'waiting_for_input',
+      })
+    );
+
+    expect(parsed.success).toBe(false);
+    expect(String(parsed.error)).toContain('without an existing pending question');
+  });
+
+  test('update_session_state rejects when autonomy level is too low', async () => {
+    seedSession('adhoc-low-autonomy', ctx.spaceId, { status: 'processing' });
+    const handlers = makeHandlers(ctx, { getSpaceAutonomyLevel: async () => 3 });
+
+    const parsed = parseResult(
+      await handlers.update_session_state({
+        session_id: 'adhoc-low-autonomy',
+        processing_state: 'idle',
+      })
+    );
+
+    expect(parsed.success).toBe(false);
+    expect(String(parsed.error)).toContain('space autonomy level 3 < required level 4');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// goal tools
+// ---------------------------------------------------------------------------
+
+describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
+  let ctx: TestCtx;
+  let modelsCacheSnapshot: Map<string, ModelInfo[]>;
+  beforeEach(() => {
+    modelsCacheSnapshot = getModelsCache();
+    ctx = makeCtx();
+  });
+  afterEach(() => {
+    setModelsCache(modelsCacheSnapshot);
     ctx.db.close();
   });
 
@@ -427,7 +977,20 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     );
     expect(created.success).toBe(true);
     expect(created.agent.status).toBe('active');
-    expect(created.agent.tools).toEqual(['Read', 'Grep']);
+    expect(created.agent.handle).toBe('scout');
+    expect(created.agent.toolPermissions).toEqual({ tools: ['Read', 'Grep'] });
+
+    const workerHandleCollision = JSON.parse(
+      (await handlers.create_agent({ name: 'Coder' })).content[0].text
+    );
+    expect(workerHandleCollision.success).toBe(true);
+    expect(workerHandleCollision.agent.handle).toBe('coder-2');
+
+    const slugged = JSON.parse(
+      (await handlers.create_agent({ name: 'QA/Review:@Lead' })).content[0].text
+    );
+    expect(slugged.success).toBe(true);
+    expect(slugged.agent.handle).toBe('qa-review-lead');
 
     const blankCreateName = JSON.parse(
       (await handlers.create_agent({ name: '  ' })).content[0].text
@@ -446,6 +1009,20 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     );
     expect(updated.success).toBe(true);
     expect(updated.agent.thinkingLevel).toBe('think8k');
+    expect(updated.agent.instructions).toBe('Tracks product-quality signals');
+
+    const cleared = JSON.parse(
+      (
+        await handlers.update_agent({
+          agent_id: created.agent.id,
+          custom_prompt: null,
+          setting_sources: null,
+        })
+      ).content[0].text
+    );
+    expect(cleared.success).toBe(true);
+    expect(cleared.agent.instructions).toBe('');
+    expect(cleared.agent.settingSources).toBeNull();
 
     const blankUpdateName = JSON.parse(
       (
@@ -476,8 +1053,28 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
       ).content[0].text
     );
     expect(templated.success).toBe(true);
-    expect(templated.agent.templateName).toBe('Reviewer');
+    expect(templated.agent.templateKey).toBe('Reviewer');
     expect(templated.agent.handle).toBe('reviewer-copy');
+    const templatedWorkerHandleCollision = JSON.parse(
+      (
+        await handlers.create_agent_from_template({
+          template_name: 'Coder',
+          name: 'Coder',
+        })
+      ).content[0].text
+    );
+    expect(templatedWorkerHandleCollision.success).toBe(true);
+    expect(templatedWorkerHandleCollision.agent.handle).toBe('coder-3');
+    const duplicateTemplate = JSON.parse(
+      (
+        await handlers.create_agent_from_template({
+          template_name: 'Reviewer',
+          name: 'Reviewer Copy',
+        })
+      ).content[0].text
+    );
+    expect(duplicateTemplate.success).toBe(true);
+    expect(duplicateTemplate.agent.handle).toBe('reviewer-copy-2');
 
     const blankTemplateName = JSON.parse(
       (
@@ -492,6 +1089,129 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
 
     const listed = JSON.parse((await handlers.list_agents({ status: 'archived' })).content[0].text);
     expect(listed.agents.map((agent: { id: string }) => agent.id)).toContain(created.agent.id);
+  });
+
+  test('rejects invalid model overrides for MCP-created long-horizon agents', async () => {
+    setModelsCache(
+      new Map([
+        [
+          'global',
+          [
+            {
+              id: 'sonnet',
+              name: 'Claude Sonnet',
+              alias: 'default',
+              provider: 'anthropic',
+              family: 'sonnet',
+              contextWindow: 200000,
+              description: 'Best balance of speed and intelligence',
+              releaseDate: '2025-01-01',
+              available: true,
+            },
+          ],
+        ],
+      ])
+    );
+    const handlers = makeHandlers(ctx);
+
+    const invalidCreate = JSON.parse(
+      (
+        await handlers.create_agent({
+          name: 'Bad Model',
+          model: 'not-a-model',
+          provider: 'anthropic',
+        })
+      ).content[0].text
+    );
+    expect(invalidCreate).toEqual({
+      success: false,
+      error: 'Unrecognized model "not-a-model" for provider "anthropic"',
+    });
+
+    const invalidTemplate = JSON.parse(
+      (
+        await handlers.create_agent_from_template({
+          template_name: 'Reviewer',
+          model: 'not-a-model',
+        })
+      ).content[0].text
+    );
+    expect(invalidTemplate).toEqual({
+      success: false,
+      error: 'Unrecognized model: "not-a-model"',
+    });
+
+    const created = JSON.parse(
+      (await handlers.create_agent({ name: 'Valid Model' })).content[0].text
+    );
+    const invalidUpdate = JSON.parse(
+      (
+        await handlers.update_agent({
+          agent_id: created.agent.id,
+          model: 'not-a-model',
+          provider: 'anthropic',
+        })
+      ).content[0].text
+    );
+    expect(invalidUpdate).toEqual({
+      success: false,
+      error: 'Unrecognized model "not-a-model" for provider "anthropic"',
+    });
+
+    const providerOnlyTarget = JSON.parse(
+      (
+        await handlers.create_agent({
+          name: 'Provider Switch',
+          model: 'sonnet',
+          provider: 'anthropic',
+        })
+      ).content[0].text
+    );
+    const invalidProviderOnlyUpdate = JSON.parse(
+      (
+        await handlers.update_agent({
+          agent_id: providerOnlyTarget.agent.id,
+          provider: 'openrouter',
+        })
+      ).content[0].text
+    );
+    expect(invalidProviderOnlyUpdate).toEqual({
+      success: false,
+      error: 'Unrecognized model "sonnet" for provider "openrouter"',
+    });
+  });
+
+  test('emits long-horizon agent events after MCP create and update', async () => {
+    const publish = mock(async () => {});
+    const handlers = makeHandlers(ctx, {
+      internalEventBus: {
+        publish,
+      } as unknown as Parameters<typeof createSpaceAgentToolHandlers>[0]['internalEventBus'],
+      mySessionId: 'mcp-session',
+    });
+
+    const created = JSON.parse((await handlers.create_agent({ name: 'Notifier' })).content[0].text);
+    expect(created.success).toBe(true);
+    expect(publish).toHaveBeenCalledWith('spaceLongHorizonAgent.created', {
+      sessionId: 'mcp-session',
+      spaceId: ctx.spaceId,
+      agent: expect.objectContaining({ id: created.agent.id, displayName: 'Notifier' }),
+    });
+
+    const updated = JSON.parse(
+      (
+        await handlers.update_agent({
+          agent_id: created.agent.id,
+          name: 'Notifier Renamed',
+        })
+      ).content[0].text
+    );
+    expect(updated.success).toBe(true);
+    expect(publish).toHaveBeenCalledWith('spaceLongHorizonAgent.updated', {
+      sessionId: 'mcp-session',
+      spaceId: ctx.spaceId,
+      agent: expect.objectContaining({ id: created.agent.id, displayName: 'Notifier Renamed' }),
+    });
   });
 
   test('manages agent assignments, reminders, and event subscriptions', async () => {
@@ -535,17 +1255,44 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
       ).content[0].text
     );
     expect(reminder.success).toBe(true);
+    expect(reminder.reminder.message).toBe('Check progress');
+    expect(reminder.reminder.remind_at).toBe(reminder.reminder.runAt);
+    await handlers.create_agent_reminder({
+      agent_id: agent.id,
+      message: 'Check earlier',
+      remind_at: reminder.reminder.remind_at - 1_000,
+    });
     const reminders = JSON.parse(
       (await handlers.list_agent_reminders({ agent_id: agent.id, status: 'active' })).content[0]
         .text
     );
-    expect(reminders.reminders).toHaveLength(1);
+    expect(reminders.reminders.map((item: { message: string }) => item.message)).toEqual([
+      'Check earlier',
+      'Check progress',
+    ]);
+    expect(reminders.reminders.map((item: { remind_at: number }) => item.remind_at)).toEqual(
+      reminders.reminders.map((item: { runAt: number }) => item.runAt)
+    );
+    ctx.db
+      .prepare(`UPDATE space_long_horizon_agent_reminders SET status = 'fired' WHERE id = ?`)
+      .run(reminder.reminder.id);
+    const completedReminders = JSON.parse(
+      (await handlers.list_agent_reminders({ agent_id: agent.id, status: 'done' })).content[0].text
+    );
+    expect(completedReminders.reminders).toHaveLength(1);
+    expect(completedReminders.reminders[0].status).toBe('done');
 
+    const longHorizonAgent = ctx.longHorizonAgentRepo.create({
+      id: 'lh-tools-agent',
+      spaceId: ctx.spaceId,
+      handle: '@tools-agent',
+      displayName: 'Tools Agent',
+    });
     expect(
       JSON.parse(
         (
           await handlers.subscribe_agent_event({
-            agent_id: agent.id,
+            agent_id: longHorizonAgent.id,
             topic_pattern: 'github/*/*/pull_request/*',
             label: 'PR activity',
           })
@@ -553,10 +1300,122 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
       ).success
     ).toBe(true);
     const subscriptions = JSON.parse(
-      (await handlers.list_agent_event_subscriptions({ agent_id: agent.id })).content[0].text
+      (await handlers.list_agent_event_subscriptions({ agent_id: longHorizonAgent.id })).content[0]
+        .text
     );
-    expect(subscriptions.subscriptions[0].topic_pattern).toBe('github/*/*/pull_request/*');
+    expect(subscriptions.subscriptions[0].topic).toBe('github/*/*/pull_request/*');
+    expect(subscriptions.subscriptions[0].filter).toEqual({ label: 'PR activity' });
 
+    const relabeled = JSON.parse(
+      (
+        await handlers.subscribe_agent_event({
+          agent_id: longHorizonAgent.id,
+          topic_pattern: 'github/*/*/pull_request/*',
+          label: 'PR triage',
+        })
+      ).content[0].text
+    );
+    expect(relabeled.success).toBe(true);
+    const afterRelabel = JSON.parse(
+      (await handlers.list_agent_event_subscriptions({ agent_id: longHorizonAgent.id })).content[0]
+        .text
+    );
+    expect(afterRelabel.subscriptions).toHaveLength(1);
+    expect(afterRelabel.subscriptions[0].filter).toEqual({ label: 'PR triage' });
+
+    const staleBeforePause = ctx.runtime['topicTrie'].lookup(
+      'github/lsm/neokai/pull_request/opened'
+    );
+    expect(staleBeforePause.some((target) => target.kind === 'long_horizon_agent')).toBe(true);
+    const pausedSubscribedAgent = JSON.parse(
+      (await handlers.pause_agent({ agent_id: longHorizonAgent.id })).content[0].text
+    );
+    expect(pausedSubscribedAgent.success).toBe(true);
+    const staleAfterPause = ctx.runtime['topicTrie'].lookup(
+      'github/lsm/neokai/pull_request/opened'
+    );
+    expect(staleAfterPause.some((target) => target.kind === 'long_horizon_agent')).toBe(false);
+
+    const removed = JSON.parse(
+      (
+        await handlers.unsubscribe_agent_event({
+          agent_id: longHorizonAgent.id,
+          topic_pattern: 'github/*/*/pull_request/*',
+        })
+      ).content[0].text
+    );
+    expect(removed.success).toBe(true);
+    const afterUnsubscribe = JSON.parse(
+      (await handlers.list_agent_event_subscriptions({ agent_id: longHorizonAgent.id })).content[0]
+        .text
+    );
+    expect(afterUnsubscribe.subscriptions).toEqual([]);
+
+    const workerOnlyAgent = await ctx.agentManager.create({
+      spaceId: ctx.spaceId,
+      name: 'Worker Only',
+    });
+    expect(workerOnlyAgent.ok).toBe(true);
+    if (!workerOnlyAgent.ok) throw new Error(workerOnlyAgent.error);
+
+    const listedWorkerOnly = JSON.parse(
+      (await handlers.list_agent_event_subscriptions({ agent_id: workerOnlyAgent.value.id }))
+        .content[0].text
+    );
+    expect(listedWorkerOnly).toEqual({ success: true, subscriptions: [] });
+    expect(ctx.longHorizonAgentRepo.getById(workerOnlyAgent.value.id)).toBeNull();
+    const unsubscribedWorkerOnly = JSON.parse(
+      (
+        await handlers.unsubscribe_agent_event({
+          agent_id: workerOnlyAgent.value.id,
+          topic_pattern: 'github/*/*/pull_request/*',
+        })
+      ).content[0].text
+    );
+    expect(unsubscribedWorkerOnly.success).toBe(true);
+    expect(ctx.longHorizonAgentRepo.getById(workerOnlyAgent.value.id)).toBeNull();
+    const subscribedWorkerOnly = JSON.parse(
+      (
+        await handlers.subscribe_agent_event({
+          agent_id: workerOnlyAgent.value.id,
+          topic_pattern: 'github/*/*/pull_request/*',
+        })
+      ).content[0].text
+    );
+    expect(subscribedWorkerOnly.success).toBe(false);
+    expect(subscribedWorkerOnly.error).toBe('Expected long-horizon agent id, got worker agent id.');
+    expect(ctx.longHorizonAgentRepo.getById(workerOnlyAgent.value.id)).toBeNull();
+
+    const sharedLongHorizonAgent = ctx.longHorizonAgentRepo.create({
+      id: workerOnlyAgent.value.id,
+      spaceId: ctx.spaceId,
+      handle: `${workerOnlyAgent.value.handle}-lh`,
+      displayName: 'Shared Legacy Agent',
+      instructions: 'Independent prompt',
+      toolPermissions: { tools: ['Read'] },
+    });
+    const subscribedShared = JSON.parse(
+      (
+        await handlers.subscribe_agent_event({
+          agent_id: workerOnlyAgent.value.id,
+          topic_pattern: 'github/*/*/pull_request/*',
+        })
+      ).content[0].text
+    );
+    expect(subscribedShared.success).toBe(true);
+    const updatedWorker = await ctx.agentManager.update(workerOnlyAgent.value.id, {
+      status: 'paused',
+      customPrompt: 'Worker-only prompt update',
+      tools: ['Read', 'Edit'],
+    });
+    expect(updatedWorker.ok).toBe(true);
+    expect(ctx.longHorizonAgentRepo.getById(sharedLongHorizonAgent.id)).toEqual(
+      expect.objectContaining({
+        status: 'active',
+        instructions: 'Independent prompt',
+        toolPermissions: { tools: ['Read'] },
+      })
+    );
     expect(
       JSON.parse(
         (await handlers.unassign_agent_from_goal({ agent_id: agent.id, goal_id: goal.id }))
@@ -577,7 +1436,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
 
     const missing = JSON.parse((await handlers.get_agent({ agent_id: missingId })).content[0].text);
     expect(missing.success).toBe(false);
-    expect(missing.error).toBe(`Agent not found: ${missingId}`);
+    expect(missing.error).toBe(`Long-horizon agent not found: ${missingId}`);
 
     const otherSpaceId = 'other-space';
     seedSpaceRow(ctx.db, otherSpaceId);
@@ -592,7 +1451,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
       ).content[0].text
     );
     expect(crossSpace.success).toBe(false);
-    expect(crossSpace.error).toBe('Agent not found: agent-other-space');
+    expect(crossSpace.error).toBe('Long-horizon agent not found: agent-other-space');
 
     const missingReminder = JSON.parse(
       (
@@ -604,7 +1463,69 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
       ).content[0].text
     );
     expect(missingReminder.success).toBe(false);
-    expect(missingReminder.error).toBe(`Agent not found: ${missingId}`);
+    expect(missingReminder.error).toBe(`Long-horizon agent not found: ${missingId}`);
+  });
+
+  test('rejects worker-only ids on long-horizon goal, scope, reminder, and get tools', async () => {
+    const handlers = makeHandlers(ctx);
+    const workerOnly = await ctx.agentManager.create({
+      spaceId: ctx.spaceId,
+      name: 'Worker Only',
+    });
+    expect(workerOnly.ok).toBe(true);
+    if (!workerOnly.ok) throw new Error(workerOnly.error);
+    const workerId = workerOnly.value.id;
+
+    const goal = ctx.goalService.createGoal({
+      spaceId: ctx.spaceId,
+      title: 'Test Goal',
+    });
+    const scope = ctx.evolutionScopeService.createScope({
+      spaceId: ctx.spaceId,
+      kind: 'custom',
+      name: 'Test Scope',
+      objective: 'Track evidence',
+    });
+
+    const expectedError = 'Expected long-horizon agent id, got worker agent id.';
+
+    const getResult = JSON.parse(
+      (await handlers.get_agent({ agent_id: workerId })).content[0].text
+    );
+    expect(getResult.success).toBe(false);
+    expect(getResult.error).toBe(expectedError);
+
+    const assignGoal = JSON.parse(
+      (await handlers.assign_agent_to_goal({ agent_id: workerId, goal_id: goal.id })).content[0]
+        .text
+    );
+    expect(assignGoal.success).toBe(false);
+    expect(assignGoal.error).toBe(expectedError);
+
+    const assignScope = JSON.parse(
+      (await handlers.assign_agent_to_forge_scope({ agent_id: workerId, scope_id: scope.id }))
+        .content[0].text
+    );
+    expect(assignScope.success).toBe(false);
+    expect(assignScope.error).toBe(expectedError);
+
+    const reminder = JSON.parse(
+      (
+        await handlers.create_agent_reminder({
+          agent_id: workerId,
+          message: 'No target',
+          remind_at: Date.now(),
+        })
+      ).content[0].text
+    );
+    expect(reminder.success).toBe(false);
+    expect(reminder.error).toBe(expectedError);
+
+    const listReminders = JSON.parse(
+      (await handlers.list_agent_reminders({ agent_id: workerId })).content[0].text
+    );
+    expect(listReminders.success).toBe(false);
+    expect(listReminders.error).toBe(expectedError);
   });
 
   test('returns errors from database-backed tools when database is not configured', async () => {
@@ -623,16 +1544,13 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
       evolutionEpisodeService: ctx.evolutionEpisodeService,
     });
 
-    const agent = JSON.parse(
-      (await handlers.create_agent({ name: 'No Db Agent' })).content[0].text
-    ).agent;
     const goal = JSON.parse(
       (await handlers.create_goal({ title: 'No DB Goal', description: 'Desc' })).content[0].text
     ).goal;
 
     const assignment = JSON.parse(
-      (await handlers.assign_agent_to_goal({ agent_id: agent.id, goal_id: goal.id })).content[0]
-        .text
+      (await handlers.assign_agent_to_goal({ agent_id: 'no-db-agent', goal_id: goal.id }))
+        .content[0].text
     );
     expect(assignment.success).toBe(false);
     expect(assignment.error).toBe('Long-horizon agent management not available');
@@ -640,7 +1558,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     const reminder = JSON.parse(
       (
         await handlers.create_agent_reminder({
-          agent_id: agent.id,
+          agent_id: 'no-db-agent',
           message: 'No DB',
           remind_at: Date.now(),
         })
@@ -652,7 +1570,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     const subscription = JSON.parse(
       (
         await handlers.subscribe_agent_event({
-          agent_id: agent.id,
+          agent_id: 'no-db-agent',
           topic_pattern: 'github/*',
         })
       ).content[0].text
@@ -3057,8 +3975,8 @@ describe('createSpaceAgentToolHandlers — reassign_task', () => {
 
   test('does not error when reassigning open task', async () => {
     const createResult = await makeHandlers(ctx).create_standalone_task({
-      title: 'Has custom agent',
-      description: 'Custom agent must be preserved',
+      title: 'Has worker agent',
+      description: 'Worker agent must be preserved',
     });
     const taskId = JSON.parse(createResult.content[0].text).task.id;
 
@@ -3071,10 +3989,10 @@ describe('createSpaceAgentToolHandlers — reassign_task', () => {
     expect(parsed.task.id).toBe(taskId);
   });
 
-  test('clears custom agent when custom_agent_id is null (field removed in M71)', async () => {
+  test('clears worker agent when custom_agent_id is null (field removed in M71)', async () => {
     const createResult = await makeHandlers(ctx).create_standalone_task({
       title: 'Clear agent',
-      description: 'Remove custom agent',
+      description: 'Remove worker agent',
     });
     const taskId = JSON.parse(createResult.content[0].text).task.id;
 
@@ -3818,8 +4736,8 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
     const tam = makeFakeTaskAgentManager(ctx);
     const handlers = makeHandlersWith(tam, {
       activateNode: async () => {},
-      myAgentName: 'space-agent',
-      myAgentNameAliases: ['@coordinator'],
+      myAgentName: 'Coder',
+      myAgentNameAliases: ['@coder-2'],
     });
 
     await handlers.send_message_to_task({
@@ -3828,11 +4746,12 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
       message: 'check routing',
     });
 
-    expect(tam.subSessionInjects[0]?.message).toContain('─── Message from space-agent ───');
+    expect(tam.subSessionInjects[0]?.message).toContain('─── Message from Coder ───');
     expect(tam.subSessionInjects[0]?.message).toContain(
-      'To reply, use: send_message with target "@coordinator"'
+      'To reply, use: send_message with target "@coder-2"'
     );
-    expect(tam.subSessionInjects[0]?.message).not.toContain('@@coordinator');
+    expect(tam.subSessionInjects[0]?.message).not.toContain('@@coder-2');
+    expect(tam.subSessionInjects[0]?.message).not.toContain('target "@coder"');
   });
 
   test('long-horizon sender falls back to display-name handle only when no alias exists', async () => {

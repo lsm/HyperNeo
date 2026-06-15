@@ -16,8 +16,8 @@
  *   (runs every N stream events, at every turn end, and after compaction)
  */
 
-import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type { UUID } from 'crypto';
+import type { QueryLike } from './query-like';
 import type { ContextInfo, MessageHub, Session } from '@neokai/shared';
 import { generateUUID } from '@neokai/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
@@ -44,6 +44,7 @@ import { ApiErrorCircuitBreaker } from './api-error-circuit-breaker';
 import type { MessageQueue } from './message-queue';
 import type { QueryLifecycleManager } from './query-lifecycle-manager';
 import { getSessionModelInfo } from '../model-service';
+import { providerUsesNativeAutoCompact } from './query-options-builder.js';
 
 /**
  * Number of SDK stream events between automatic context-usage refreshes.
@@ -70,7 +71,7 @@ export interface SDKMessageHandlerContext {
   readonly lifecycleManager: QueryLifecycleManager;
 
   // Mutable query state (needed to check if query is running and to call getContextUsage())
-  queryObject: Query | null;
+  queryObject: QueryLike | null;
   queryPromise: Promise<void> | null;
 
   // Called when the SDK init message provides the full slash commands list
@@ -554,6 +555,13 @@ export class SDKMessageHandler {
       message,
     });
 
+    // Terminal messages end the turn even when they represent errors.
+    // Clear stale waiting_for_input state before type-specific handling so
+    // interrupted AskUserQuestion turns cannot keep the composer locked.
+    if (isSDKResultMessage(message)) {
+      await stateManager.setIdle();
+    }
+
     // Handle specific message types
     if (isSDKUserMessage(message)) {
       await this.handleUserMessage(message);
@@ -646,7 +654,7 @@ export class SDKMessageHandler {
    * Handle result message (end of turn)
    */
   private async handleResultMessage(message: SDKMessage): Promise<void> {
-    const { session, db, internalEventBus, stateManager } = this.ctx;
+    const { session, db, internalEventBus } = this.ctx;
 
     // Type guard to ensure this is a successful result
     if (!isSDKResultSuccess(message)) return;
@@ -736,9 +744,8 @@ export class SDKMessageHandler {
       sessionId: session.id,
     });
 
-    // Set state back to idle
-    // Note: Title generation now handled by TitleGenerationQueue (decoupled via EventBus)
-    await stateManager.setIdle();
+    // Note: Terminal result handling resets processing state before this success-only branch runs.
+    // Title generation now handled by TitleGenerationQueue (decoupled via EventBus).
 
     // Auto-dispatch deferred messages in immediate mode (next-turn queue replay)
     if (session.config.queryMode !== 'manual') {
@@ -890,6 +897,29 @@ export class SDKMessageHandler {
           sessionId: session.id,
           contextInfo,
         });
+
+        // NeoKai-level compaction fallback for providers without SDK-native compaction.
+        const providerId = session.config.provider;
+        if (!providerId) {
+          return;
+        }
+        const usesNativeAutoCompact =
+          providerUsesNativeAutoCompact(providerId, modelInfo?.contextWindow) ||
+          contextInfo.isAutoCompactEnabled;
+        if (
+          !usesNativeAutoCompact &&
+          modelInfo?.contextWindow &&
+          contextTracker.shouldCompact(modelInfo.contextWindow)
+        ) {
+          contextTracker.markCompactionTriggered();
+          this.logger.info(
+            `Triggering compaction for session ${session.id} ` +
+              `(${contextInfo.totalUsed} / ${modelInfo.contextWindow} tokens)`
+          );
+          void this.ctx.messageQueue.enqueue('/compact', /* internal */ true).catch((error) => {
+            this.logger.warn(`compaction enqueue failed for session ${session.id}:`, error);
+          });
+        }
       } catch (error) {
         this.logger.warn(`context refresh (${reason}) failed:`, error);
       } finally {

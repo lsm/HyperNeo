@@ -52,7 +52,7 @@ import type { AgentMessageRouter } from '../runtime/agent-message-router';
 import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
 import type { SpaceWorkflow } from '@neokai/shared';
-import { computeGateDefaults, hasGateFeatures, resolveNodeAgents } from '@neokai/shared';
+import { computeGateDefaults, resolveNodeAgents } from '@neokai/shared';
 import { jsonResult } from './tool-result';
 import type { ToolResult } from './tool-result';
 import {
@@ -98,7 +98,9 @@ import type { SpaceTask } from '@neokai/shared';
 import type { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository';
 import { parseAddress } from '../../../../../messaging/src/address';
 import { translateLegacyNodeTargets } from '../messaging-adapter';
-import { getEffectiveGate } from '../runtime/gate-features';
+import { getEffectiveGate, hasInjectedGateFeature } from '../runtime/gate-features';
+import type { WorkflowHookEngine } from '../runtime/workflow-hook-engine';
+import { wrapHandlerWithHooks } from '../runtime/workflow-hook-engine';
 
 /**
  * Resolves the most recent PR URL for a workflow run by scanning gate
@@ -169,7 +171,7 @@ function normalizeAgentNameToken(value: string): string {
   return value.trim().toLowerCase();
 }
 
-async function evaluateTerminalGateFeatures(
+export async function evaluateTerminalGateFeatures(
   workflow: SpaceWorkflow | null,
   gateDataRepo: GateDataRepository,
   workflowRunId: string,
@@ -189,52 +191,79 @@ async function evaluateTerminalGateFeatures(
   // (to current node) are only included when there is exactly one incoming
   // channel total, so we do not falsely treat an unrelated incoming gate as the
   // traversed path when multiple paths converge on a shared terminal node.
-  let relevantGateIds: Set<string> | undefined;
+  // Maps gateId → all channel `from` values that matched, so source-scoped Codex
+  // injection uses the actual sender names (node name or agent slot) rather than
+  // the current node name. Multiple sources for the same gate are all evaluated.
+  const relevantGateSources = new Map<string, Set<string>>();
+  let scopingComputed = false;
   if (currentNodeId && workflow.channels) {
     const currentNodeName = workflow.nodes.find((n) => n.id === currentNodeId)?.name;
     if (currentNodeName) {
+      scopingComputed = true;
+      const currentNode = workflow.nodes.find((n) => n.id === currentNodeId);
+      const currentNodeAgentNames = new Set<string>();
+      if (currentNode) {
+        try {
+          for (const a of resolveNodeAgents(currentNode)) {
+            currentNodeAgentNames.add(a.name);
+          }
+        } catch {
+          // skip malformed node
+        }
+      }
       const incomingChannels = workflow.channels.filter((ch) => {
         const toList = Array.isArray(ch.to) ? ch.to : [ch.to];
-        return toList.includes(currentNodeName) || toList.includes('*');
+        if (toList.includes(currentNodeName) || toList.includes('*')) return true;
+        return currentNodeAgentNames.size > 0 && toList.some((t) => currentNodeAgentNames.has(t));
       });
       const includeIncoming = incomingChannels.length === 1;
-      relevantGateIds = new Set(
-        workflow.channels
-          .filter((ch) => {
-            if (ch.from === currentNodeName || ch.from === '*') return true;
-            if (!includeIncoming) return false;
-            const toList = Array.isArray(ch.to) ? ch.to : [ch.to];
-            return toList.includes(currentNodeName) || toList.includes('*');
-          })
-          .map((ch) => ch.gateId)
-          .filter((id): id is string => !!id)
-      );
+      for (const ch of workflow.channels) {
+        if (!ch.gateId) continue;
+        const isOutgoing =
+          ch.from === currentNodeName || ch.from === '*' || currentNodeAgentNames.has(ch.from);
+        let isIncoming = false;
+        if (includeIncoming) {
+          const toList = Array.isArray(ch.to) ? ch.to : [ch.to];
+          isIncoming =
+            toList.includes(currentNodeName) ||
+            toList.includes('*') ||
+            (currentNodeAgentNames.size > 0 && toList.some((t) => currentNodeAgentNames.has(t)));
+        }
+        if (isOutgoing || isIncoming) {
+          const set = relevantGateSources.get(ch.gateId) ?? new Set<string>();
+          set.add(ch.from === '*' ? currentNodeName : ch.from);
+          relevantGateSources.set(ch.gateId, set);
+        }
+      }
     }
   }
 
   for (const gate of workflow.gates ?? []) {
-    if (!hasGateFeatures(gate)) continue;
-    if (relevantGateIds && !relevantGateIds.has(gate.id)) continue;
-    const effectiveGate = getEffectiveGate(gate);
-    if (!effectiveGate.script) continue;
+    const sources = relevantGateSources.get(gate.id);
+    if (scopingComputed && !sources) continue;
+    for (const sourceName of sources ?? [undefined]) {
+      if (!hasInjectedGateFeature(gate, workflow, sourceName)) continue;
+      const effectiveGate = getEffectiveGate(gate, workflow, sourceName);
+      if (!effectiveGate.script) continue;
 
-    const gateDataRecord = gateDataRepo.get(workflowRunId, gate.id);
-    const data = gateDataRecord?.data ?? computeGateDefaults(gate.fields);
-    const result = await evaluateGate(effectiveGate, data, scriptExecutor, {
-      ...scriptContext,
-      gateId: gate.id,
-      gateData: data,
-      gateDataUpdatedIso: gateDataRecord
-        ? new Date(gateDataRecord.updatedAt).toISOString()
-        : undefined,
-      prUrl: freshPrUrl || scriptContext.prUrl,
-    });
-    if (!result.open) {
-      return jsonResult({
-        success: false,
-        error: result.reason ?? `Gate "${gate.id}" blocked terminal action.`,
+      const gateDataRecord = gateDataRepo.get(workflowRunId, gate.id);
+      const data = gateDataRecord?.data ?? computeGateDefaults(gate.fields);
+      const result = await evaluateGate(effectiveGate, data, scriptExecutor, {
+        ...scriptContext,
         gateId: gate.id,
+        gateData: data,
+        gateDataUpdatedIso: gateDataRecord
+          ? new Date(gateDataRecord.updatedAt).toISOString()
+          : undefined,
+        prUrl: freshPrUrl || scriptContext.prUrl,
       });
+      if (!result.open) {
+        return jsonResult({
+          success: false,
+          error: result.reason ?? `Gate "${gate.id}" blocked terminal action.`,
+          gateId: gate.id,
+        });
+      }
     }
   }
 
@@ -402,6 +431,12 @@ export interface NodeAgentToolsConfig {
    * visible MCP server names but performs no server-side reattachment.
    */
   onRestoreNodeAgent?: (args: { reason?: string }) => Promise<void> | void;
+  /**
+   * Optional workflow hook engine for intercepting and modifying MCP actions.
+   * When provided, registered hooks run before `send_message`, `save_artifact`,
+   * `submit_for_approval`, `approve_task`, and `mark_complete` handlers.
+   */
+  hookEngine?: WorkflowHookEngine;
 }
 
 // ---------------------------------------------------------------------------
@@ -464,6 +499,15 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
     }
   };
   const uniqueTargetRefs = (values: string[]): string[] => [...new Set(values)];
+  const resolveCurrentGateSource = (gateId: string): string => {
+    if (!workflow) return myAgentName;
+    const fromRefs = new Set([myAgentName, myNodeName]);
+    const channel = (workflow.channels ?? []).find(
+      (ch) => ch.gateId === gateId && (ch.from === '*' || fromRefs.has(ch.from))
+    );
+    if (channel?.from === '*') return myNodeName;
+    return channel?.from ?? myNodeName;
+  };
 
   const agentNameAliases = new Set(
     [myAgentName, myNodeName, ...(myAgentNameAliases ?? [])]
@@ -521,7 +565,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
     }
   }
 
-  return {
+  const handlers = {
     /**
      * List all peers (other group members) with their agent names, statuses, session IDs,
      * permitted channel connections, and completion state.
@@ -807,18 +851,41 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
           const myNodeName = node?.name ?? myAgentName;
           const fromRefs = new Set([myAgentName, myNodeName]);
 
-          const gatedChannel = (workflow.channels ?? []).find((ch) => {
+          const channelsFromCurrentNode = (workflow.channels ?? []).filter((ch) => {
             if (!ch.gateId) return false;
             if (ch.from !== '*' && !fromRefs.has(ch.from)) return false;
-            const tos = Array.isArray(ch.to) ? ch.to : [ch.to];
-            const candidateTargets = uniqueTargetRefs([
-              ...routedTargetNames,
-              ...routedTargetNames.map(resolveNodeName),
-            ]);
-            return tos.some(
-              (to) => candidateTargets.includes(to) || to === myNodeName || to === myAgentName
-            );
+            return true;
           });
+          const candidateTargets = uniqueTargetRefs([
+            ...routedTargetNames,
+            ...routedTargetNames.map(resolveNodeName),
+          ]);
+          const broadcastTargetRefs = new Set<string>();
+          for (const targetNode of workflow.nodes) {
+            broadcastTargetRefs.add(targetNode.name);
+            try {
+              for (const agent of resolveNodeAgents(targetNode)) {
+                if (targetNode.id === workflowNodeId && agent.name === myAgentName) continue;
+                broadcastTargetRefs.add(agent.name);
+              }
+            } catch {
+              // Malformed node definitions have no resolvable agent slots to include.
+            }
+          }
+          const targetIsBroadcastRecipient = candidateTargets.some((targetRef) =>
+            broadcastTargetRefs.has(targetRef)
+          );
+          const gatedChannel =
+            channelsFromCurrentNode.find((ch) => {
+              const tos = Array.isArray(ch.to) ? ch.to : [ch.to];
+              return tos.some(
+                (to) => candidateTargets.includes(to) || to === myNodeName || to === myAgentName
+              );
+            }) ??
+            channelsFromCurrentNode.find((ch) => {
+              const tos = Array.isArray(ch.to) ? ch.to : [ch.to];
+              return targetIsBroadcastRecipient && tos.includes('*');
+            });
 
           if (gatedChannel?.gateId) {
             const gateId = gatedChannel.gateId;
@@ -893,7 +960,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
                   workflowRunId
                 );
                 const evalResult = await evaluateGate(
-                  getEffectiveGate(gateDef),
+                  getEffectiveGate(gateDef, workflow, gatedChannel.from),
                   updated.data,
                   scriptExecutor,
                   scriptContext
@@ -1266,8 +1333,9 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
       // Evaluate current gate status. Uses scriptExecutor when available for
       // async script-based gates; otherwise falls back to field-only evaluation.
       const freshPrUrl = resolvePrUrlForRun(gateDataRepo, config.artifactRepo, workflowRunId);
+      const sourceName = resolveCurrentGateSource(gateId);
       const evalResult = await evaluateGate(
-        getEffectiveGate(gateDef),
+        getEffectiveGate(gateDef, workflow ?? undefined, sourceName),
         currentData,
         scriptExecutor,
         scriptContext
@@ -1686,6 +1754,37 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
       });
     },
   };
+
+  // Wrap action handlers with workflow hooks when engine is provided.
+  if (config.hookEngine) {
+    const meta = {
+      sessionId: mySessionId,
+      agentName: myAgentName,
+      nodeId: workflowNodeId,
+      taskId: config.taskId,
+    };
+
+    const handlerMap = handlers as unknown as Record<
+      string,
+      (...args: unknown[]) => Promise<ToolResult>
+    >;
+    const wrap = <T extends Record<string, unknown>>(
+      methodName: string,
+      handler: (args: T) => Promise<ToolResult>
+    ) => wrapHandlerWithHooks(methodName, handler, config.hookEngine, handlerMap, meta);
+
+    config.hookEngine.scheduleQueuedRetryableActions(handlerMap, meta);
+
+    handlers.send_message = wrap('send_message', handlers.send_message);
+    handlers.save_artifact = wrap('save_artifact', handlers.save_artifact);
+    handlers.approve_task = wrap('approve_task', handlers.approve_task);
+    handlers.create_standalone_task = wrap(
+      'create_standalone_task',
+      handlers.create_standalone_task
+    );
+  }
+
+  return handlers;
 }
 
 // ---------------------------------------------------------------------------
@@ -1711,6 +1810,36 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
     );
     if (gateBlock) return gateBlock;
     return config.onSubmitForApproval!(args);
+  }
+
+  // Wrap submit_for_approval and mark_complete with hooks when engine is provided.
+  let wrappedSubmitForApproval = submitForApproval;
+  let wrappedMarkComplete = config.onMarkComplete;
+  if (config.hookEngine) {
+    const meta = {
+      sessionId: config.mySessionId,
+      agentName: config.myAgentName,
+      nodeId: config.workflowNodeId,
+      taskId: config.taskId,
+    };
+
+    wrappedSubmitForApproval = wrapHandlerWithHooks(
+      'submit_for_approval',
+      submitForApproval,
+      config.hookEngine,
+      handlers as unknown as Record<string, (...args: unknown[]) => Promise<ToolResult>>,
+      meta
+    );
+
+    if (wrappedMarkComplete) {
+      wrappedMarkComplete = wrapHandlerWithHooks(
+        'mark_complete',
+        wrappedMarkComplete,
+        config.hookEngine,
+        handlers as unknown as Record<string, (...args: unknown[]) => Promise<ToolResult>>,
+        meta
+      );
+    }
   }
 
   const tools = [
@@ -1868,11 +1997,11 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
               'Same approval semantic and preconditions as approve_task: use only when work is approved/QA-passed, all findings are resolved, and required review/artifact evidence is saved. ' +
               'Use when autonomy blocks self-close or risk warrants human sign-off. Never use to defer judgment while findings, QA failures, or dispatch work remain open.',
             SubmitForApprovalSchema.shape,
-            submitForApproval
+            wrappedSubmitForApproval
           ),
         ]
       : []),
-    ...(config.onMarkComplete
+    ...(wrappedMarkComplete
       ? [
           tool(
             'mark_complete',
@@ -1883,7 +2012,7 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
               '`approve_task` handles `in_progress → approved`; `mark_complete` handles ' +
               '`approved → done`. Rejected if the task is not currently in `approved`.',
             MarkCompleteSchema.shape,
-            (args) => config.onMarkComplete!(args)
+            (args) => wrappedMarkComplete!(args)
           ),
         ]
       : []),
@@ -1919,7 +2048,8 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
       : []),
   ];
 
-  return createSdkMcpServer({ name: 'node-agent', tools });
+  const server = createSdkMcpServer({ name: 'node-agent', tools });
+  return { ...server, tools };
 }
 
 export type NodeAgentMcpServer = ReturnType<typeof createNodeAgentMcpServer>;

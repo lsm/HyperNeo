@@ -15,6 +15,7 @@ import { runMigration106 as runMigration106External } from './m106-backfill-agen
 import { RESERVED_SPACE_AGENT_HANDLES, slugify, validateSlug } from '../../lib/space/slug';
 import { createEvolutionTables } from './evolution';
 import { createLongHorizonAgentTables } from './long-horizon-agents';
+import { migrateLegacyLongHorizonAgentData } from '../../lib/space/agents/legacy-long-horizon-migration';
 
 /**
  * Run all database migrations
@@ -686,6 +687,24 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
   // Migration 150: Create providers table for unified provider registry.
   runMigration150(db);
+
+  // Migration 151: Consolidate agent event subscriptions into long-horizon table.
+  runMigration151(db);
+
+  // Migration 152: Preserve provider and setting sources on long-horizon agents.
+  runMigration152(db);
+
+  // Migration 153: Add workflow hook config and per-run hook state storage.
+  runMigration153(db);
+
+  // Migration 154: Store GitHub webhook auto-registration state.
+  runMigration154(db);
+
+  // Migration 155: Copy legacy ownership/automation rows into long-horizon tables.
+  runMigration155(db);
+
+  // Migration 156: Persist ACP agent session ids.
+  runMigration156(db);
 }
 
 /**
@@ -2334,7 +2353,7 @@ function runMigration28(db: BunDatabase): void {
  *
  * Creates the following tables in FK-safe order:
  * - spaces: workspace-first multi-agent container
- * - space_agents: custom agents per space (role/provider/inject_workflow_context included, no CHECK on role)
+ * - space_agents: worker agents per space (role/provider/inject_workflow_context included, no CHECK on role)
  * - space_workflows: workflow definitions per space (includes start_step_id)
  * - space_workflow_steps: ordered steps within a workflow
  * - space_workflow_transitions: directed edges between steps (graph navigation)
@@ -10169,6 +10188,48 @@ export function runMigration140(db: BunDatabase): void {
   );
 }
 
+export function runMigration153(db: BunDatabase): void {
+  if (tableExists(db, 'space_workflows') && !tableHasColumn(db, 'space_workflows', 'hooks')) {
+    db.exec(`ALTER TABLE space_workflows ADD COLUMN hooks TEXT`);
+  }
+
+  if (!tableExists(db, 'space_workflow_runs')) return;
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS workflow_hook_state (
+      run_id TEXT NOT NULL,
+      hook_id TEXT NOT NULL,
+      version INTEGER NOT NULL DEFAULT 0,
+      local_state TEXT NOT NULL DEFAULT '{}',
+      last_result TEXT,
+      retry_count INTEGER NOT NULL DEFAULT 0,
+      next_retry_at INTEGER,
+      vote_maps TEXT NOT NULL DEFAULT '{}',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (run_id, hook_id),
+      FOREIGN KEY (run_id) REFERENCES space_workflow_runs(id) ON DELETE CASCADE
+    )
+  `);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_workflow_hook_state_run ON workflow_hook_state(run_id)`);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS workflow_hook_result_artifacts (
+      id TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL,
+      hook_id TEXT NOT NULL,
+      version INTEGER NOT NULL,
+      result TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      FOREIGN KEY (run_id) REFERENCES space_workflow_runs(id) ON DELETE CASCADE
+    )
+  `);
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_workflow_hook_result_artifacts_run_hook ` +
+      `ON workflow_hook_result_artifacts(run_id, hook_id, created_at)`
+  );
+}
+
 export function runMigration144(db: BunDatabase): void {
   createLongHorizonAgentTables(db);
   createSpaceAgentManagementTables(db);
@@ -10412,4 +10473,161 @@ function runMigration150(db: BunDatabase): void {
   `);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_providers_provider_id ON providers(provider_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_providers_sort_order ON providers(sort_order)`);
+}
+
+/**
+ * Migration 151 — Consolidate legacy agent event subscriptions.
+ */
+export function runMigration151(db: BunDatabase): void {
+  const hasLegacy = db
+    .prepare(
+      `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'space_agent_event_subscriptions'`
+    )
+    .get();
+  if (!hasLegacy) return;
+
+  runMigration152(db);
+
+  const now = Date.now();
+  const hasSpaceAgentStatus = tableHasColumn(db, 'space_agents', 'status');
+  const hasSpaceAgentCustomPrompt = tableHasColumn(db, 'space_agents', 'custom_prompt');
+  const hasSpaceAgentProvider = tableHasColumn(db, 'space_agents', 'provider');
+  const hasSpaceAgentSettingSources = tableHasColumn(db, 'space_agents', 'setting_sources');
+  const statusExpr = hasSpaceAgentStatus
+    ? `COALESCE(NULLIF(space_agents.status, ''), 'active')`
+    : `'active'`;
+  const instructionsExpr = hasSpaceAgentCustomPrompt
+    ? `COALESCE(space_agents.custom_prompt, space_agents.instructions, space_agents.system_prompt, '')`
+    : `COALESCE(space_agents.instructions, space_agents.system_prompt, '')`;
+  const providerExpr = hasSpaceAgentProvider ? `space_agents.provider` : `NULL`;
+  const settingSourcesExpr = hasSpaceAgentSettingSources ? `space_agents.setting_sources` : `NULL`;
+
+  db.prepare(
+    `INSERT OR IGNORE INTO space_long_horizon_agents (
+      id, space_id, handle, display_name, template_key, status, session_id,
+      instructions, autonomy_level, model, thinking_level, provider, setting_sources,
+      tool_permissions_json, created_at, updated_at
+    )
+    SELECT
+      legacy.agent_id,
+      legacy.space_id,
+      CASE
+        WHEN EXISTS (
+          SELECT 1
+          FROM space_long_horizon_agents existing
+          WHERE existing.space_id = legacy.space_id
+            AND existing.id != legacy.agent_id
+            AND existing.status != 'archived'
+            AND existing.handle = COALESCE(space_agents.handle, space_agents.name, legacy.agent_id)
+        ) THEN COALESCE(space_agents.handle, space_agents.name, legacy.agent_id) || '-' || legacy.agent_id
+        ELSE COALESCE(space_agents.handle, space_agents.name, legacy.agent_id)
+      END,
+      COALESCE(space_agents.name, space_agents.handle, legacy.agent_id),
+      'migration.legacy_space_agent',
+      ${statusExpr},
+      NULL,
+      ${instructionsExpr},
+      NULL,
+      space_agents.model,
+      NULL,
+      ${providerExpr},
+      ${settingSourcesExpr},
+      CASE
+        WHEN space_agents.tools IS NULL OR space_agents.tools = '' OR space_agents.tools = '[]' THEN '{}'
+        ELSE json_object('tools', json(space_agents.tools))
+      END,
+      COALESCE(space_agents.created_at, legacy.created_at, ?),
+      ?
+    FROM space_agent_event_subscriptions legacy
+    LEFT JOIN space_agents ON space_agents.id = legacy.agent_id AND space_agents.space_id = legacy.space_id
+    GROUP BY legacy.space_id, legacy.agent_id`
+  ).run(now, now);
+
+  db.prepare(
+    `INSERT OR IGNORE INTO space_long_horizon_agent_event_subscriptions (
+      id, space_id, agent_id, source, topic, filter_json, status, created_at, updated_at
+    )
+    SELECT
+      'm151:' || legacy.space_id || ':' || legacy.agent_id || ':' || legacy.topic_pattern || ':' || COALESCE(legacy.label, ''),
+      legacy.space_id,
+      legacy.agent_id,
+      substr(legacy.topic_pattern, 1, instr(legacy.topic_pattern || '/', '/') - 1),
+      legacy.topic_pattern,
+      CASE
+        WHEN legacy.label IS NULL OR legacy.label = '' THEN '{}'
+        ELSE json_object('label', legacy.label)
+      END,
+      'active',
+      legacy.created_at,
+      ?
+    FROM space_agent_event_subscriptions legacy
+    JOIN space_long_horizon_agents agents ON agents.id = legacy.agent_id AND agents.space_id = legacy.space_id`
+  ).run(now);
+  db.exec(`DROP TABLE IF EXISTS space_agent_event_subscriptions`);
+}
+
+/**
+ * Migration 152 — Preserve provider and setting source policy on long-horizon agents.
+ */
+function runMigration152(db: BunDatabase): void {
+  if (!tableExists(db, 'space_long_horizon_agents')) return;
+  if (!tableHasColumn(db, 'space_long_horizon_agents', 'provider')) {
+    db.exec(`ALTER TABLE space_long_horizon_agents ADD COLUMN provider TEXT DEFAULT NULL`);
+  }
+  if (!tableHasColumn(db, 'space_long_horizon_agents', 'setting_sources')) {
+    db.exec(`ALTER TABLE space_long_horizon_agents ADD COLUMN setting_sources TEXT DEFAULT NULL`);
+  }
+}
+
+export function runMigration154(db: BunDatabase): void {
+  if (!tableExists(db, 'space_github_watched_repos')) return;
+  const columns: Array<[string, string]> = [
+    ['webhook_remote_id', 'INTEGER'],
+    ['webhook_url', 'TEXT'],
+    ['webhook_auto_registered', 'INTEGER NOT NULL DEFAULT 0'],
+    ['webhook_active', 'INTEGER'],
+    ['webhook_last_checked_at', 'INTEGER'],
+    ['webhook_last_error', 'TEXT'],
+    ['webhook_configured_at', 'INTEGER'],
+  ];
+  for (const [name, definition] of columns) {
+    if (!tableHasColumn(db, 'space_github_watched_repos', name)) {
+      db.exec(`ALTER TABLE space_github_watched_repos ADD COLUMN ${name} ${definition}`);
+    }
+  }
+}
+
+/**
+ * Migration 155 — Copy legacy long-horizon ownership/automation data.
+ */
+export function runMigration155(db: BunDatabase): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS migration_markers (
+      key TEXT PRIMARY KEY,
+      applied_at INTEGER NOT NULL
+    )
+  `);
+  const markerKey = 'm154_legacy_long_horizon_agent_data';
+  const existing = db.prepare(`SELECT key FROM migration_markers WHERE key = ?`).get(markerKey);
+  if (existing) return;
+  if (
+    !tableExists(db, 'space_agent_goal_assignments') ||
+    !tableExists(db, 'space_agent_forge_scope_assignments') ||
+    !tableExists(db, 'space_agent_reminders') ||
+    !tableExists(db, 'space_long_horizon_agents')
+  ) {
+    return;
+  }
+  migrateLegacyLongHorizonAgentData(db);
+  db.prepare(`INSERT INTO migration_markers (key, applied_at) VALUES (?, ?)`).run(
+    markerKey,
+    Date.now()
+  );
+}
+
+export function runMigration156(db: BunDatabase): void {
+  if (!tableExists(db, 'sessions')) return;
+  if (!tableHasColumn(db, 'sessions', 'acp_session_id')) {
+    db.exec(`ALTER TABLE sessions ADD COLUMN acp_session_id TEXT`);
+  }
 }

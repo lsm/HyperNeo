@@ -33,6 +33,7 @@ export * from './types/provider-record.ts';
 export * from './live-query-types.ts';
 export * from './validation/workspace-path.ts';
 export * from './lib/workflow-graph.ts';
+export * from './acp/index.ts';
 export * from './prompts/index.ts';
 
 // Unified logger
@@ -46,6 +47,7 @@ export {
   clearStructuredLogSubscribers,
   emitStructuredLogEvent,
   installConsoleLogCapture,
+  resetConsoleLogCaptureForTesting,
   withConsoleLogCaptureSuppressed,
 } from './logger.ts';
 export type {

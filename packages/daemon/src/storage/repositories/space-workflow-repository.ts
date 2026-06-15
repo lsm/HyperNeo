@@ -24,6 +24,7 @@ import type {
   WorkflowNodeAgent,
   WorkflowChannel,
   Gate,
+  WorkflowHook,
   CreateSpaceWorkflowParams,
   PostApprovalRoute,
   UpdateSpaceWorkflowParams,
@@ -46,6 +47,7 @@ interface WorkflowRow {
   tags: string;
   channels: string | null;
   gates: string | null;
+  hooks: string | null;
   layout: string | null;
   template_name: string | null;
   template_hash: string | null;
@@ -78,6 +80,10 @@ interface NodeConfigJson {
   agents?: WorkflowNodeAgent[];
   /** Optional post-approval route scoped to this workflow node. */
   postApproval?: PostApprovalRoute;
+  /** Require codex[bot] +1 on approval gates for channels from this node. */
+  requireCodexApproval?: boolean;
+  /** Custom poll interval (ms) for the codex review bot. */
+  codexPollIntervalMs?: number;
   /**
    * Forward-compat: rows persisted before PR 5/5 of the
    * task-agent-as-post-approval-executor refactor may carry a legacy
@@ -141,6 +147,8 @@ function rowToNode(row: NodeRow, ctx?: NodeMigrationContext): WorkflowNode {
     name: row.name,
     agents,
     ...(cfg.postApproval ? { postApproval: cfg.postApproval } : {}),
+    ...(cfg.requireCodexApproval ? { requireCodexApproval: true } : {}),
+    ...(cfg.codexPollIntervalMs ? { codexPollIntervalMs: cfg.codexPollIntervalMs } : {}),
   };
 }
 
@@ -150,6 +158,7 @@ function rowToWorkflow(row: WorkflowRow, nodes: WorkflowNode[]): SpaceWorkflow {
   const layout = parseJson<Record<string, { x: number; y: number }> | null>(row.layout, null);
   const channels = parseJson<WorkflowChannel[] | null>(row.channels, null);
   const gates = parseJson<Gate[] | null>(row.gates, null);
+  const hooks = parseJson<WorkflowHook[] | null>(row.hooks, null);
 
   const wf: SpaceWorkflow = {
     id: row.id,
@@ -166,6 +175,7 @@ function rowToWorkflow(row: WorkflowRow, nodes: WorkflowNode[]): SpaceWorkflow {
   if (row.end_node_id) wf.endNodeId = row.end_node_id;
   if (channels && channels.length > 0) wf.channels = channels;
   if (gates && gates.length > 0) wf.gates = gates;
+  if (hooks && hooks.length > 0) wf.hooks = hooks;
   if (layout) wf.layout = layout;
   if (row.template_name) wf.templateName = row.template_name;
   if (row.template_hash) wf.templateHash = row.template_hash;
@@ -219,13 +229,14 @@ export class SpaceWorkflowRepository {
     const channelsJson =
       params.channels && params.channels.length > 0 ? JSON.stringify(params.channels) : null;
     const gatesJson = params.gates && params.gates.length > 0 ? JSON.stringify(params.gates) : null;
+    const hooksJson = params.hooks && params.hooks.length > 0 ? JSON.stringify(params.hooks) : null;
     const layoutJson = params.layout ? JSON.stringify(params.layout) : null;
     const postApprovalJson = params.postApproval ? JSON.stringify(params.postApproval) : null;
 
     this.db
       .prepare(
-        `INSERT INTO space_workflows (id, space_id, name, description, start_node_id, end_node_id, tags, channels, gates, layout, template_name, template_hash, instructions, completion_autonomy_level, post_approval, disabled, handle, created_at, updated_at)
-	         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO space_workflows (id, space_id, name, description, start_node_id, end_node_id, tags, channels, gates, hooks, layout, template_name, template_hash, instructions, completion_autonomy_level, post_approval, disabled, handle, created_at, updated_at)
+	         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         workflowId,
@@ -237,6 +248,7 @@ export class SpaceWorkflowRepository {
         JSON.stringify(params.tags ?? []),
         channelsJson,
         gatesJson,
+        hooksJson,
         layoutJson,
         params.templateName ?? null,
         params.templateHash ?? null,
@@ -410,6 +422,11 @@ export class SpaceWorkflowRepository {
       values.push(params.gates && params.gates.length > 0 ? JSON.stringify(params.gates) : null);
     }
 
+    if (params.hooks !== undefined) {
+      fields.push('hooks = ?');
+      values.push(params.hooks && params.hooks.length > 0 ? JSON.stringify(params.hooks) : null);
+    }
+
     if (params.layout !== undefined) {
       fields.push('layout = ?');
       values.push(params.layout ? JSON.stringify(params.layout) : null);
@@ -483,6 +500,8 @@ export class SpaceWorkflowRepository {
       const cfg: NodeConfigJson = {
         agents: node.agents,
         ...(node.postApproval ? { postApproval: node.postApproval } : {}),
+        ...(node.requireCodexApproval ? { requireCodexApproval: true } : {}),
+        ...(node.codexPollIntervalMs ? { codexPollIntervalMs: node.codexPollIntervalMs } : {}),
       };
       const result = updateNode.run(JSON.stringify(cfg), now, workflowId, node.id);
       if (result.changes === 0) {
@@ -537,7 +556,7 @@ export class SpaceWorkflowRepository {
   // -------------------------------------------------------------------------
 
   /**
-   * Find all workflows in a space whose nodes reference the given custom SpaceAgent ID.
+   * Find all workflows in a space whose nodes reference the given worker agent ID.
    * Used by SpaceAgentManager to prevent deletion of agents that are still in use.
    *
    * Checks the `config` JSON column for multi-agent nodes (agents[] format).
@@ -682,6 +701,12 @@ export class SpaceWorkflowRepository {
     }
     if (input.postApproval) {
       nodeCfg.postApproval = input.postApproval;
+    }
+    if (input.requireCodexApproval) {
+      nodeCfg.requireCodexApproval = true;
+    }
+    if (input.codexPollIntervalMs) {
+      nodeCfg.codexPollIntervalMs = input.codexPollIntervalMs;
     }
 
     return nodeCfg;

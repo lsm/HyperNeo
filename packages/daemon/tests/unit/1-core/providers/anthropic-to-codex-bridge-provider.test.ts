@@ -21,6 +21,7 @@ import {
 } from 'node:fs';
 import * as path from 'path';
 import * as os from 'os';
+import type { ProviderCredentials } from '@neokai/shared/provider';
 import { AnthropicToCodexBridgeProvider } from '../../../../src/lib/providers/anthropic-to-codex-bridge-provider';
 
 // ---------------------------------------------------------------------------
@@ -419,6 +420,56 @@ describe('AnthropicToCodexBridgeProvider', () => {
       }
     });
 
+    it('reuses the same bridge server after OAuth token refresh', async () => {
+      const tmpDir = mkdtempSync(path.join(os.tmpdir(), 'neokai-build-cfg-refresh-'));
+      try {
+        const neokaiDir = path.join(tmpDir, 'neokai');
+        const accessToken1 = makeJwt({
+          'https://api.openai.com/auth': { chatgpt_account_id: 'acct_refresh' },
+          jti: 'token-1',
+        });
+        writeNeokaiAuth(neokaiDir, {
+          type: 'oauth',
+          access: accessToken1,
+          refresh: 'refresh-token-1',
+        });
+        const p = makeProvider({}, neokaiDir, path.join(tmpDir, 'codex'));
+        await p.getApiKey();
+
+        const cfg1 = p.buildSdkConfig('gpt-5.3-codex', { workspacePath: '/tmp/ws-refresh' });
+        const port1 = new URL(cfg1.envVars.ANTHROPIC_BASE_URL as string).port;
+
+        // Simulate token rotation while preserving account identity.
+        const accessToken2 = makeJwt({
+          'https://api.openai.com/auth': { chatgpt_account_id: 'acct_refresh' },
+          jti: 'token-2',
+        });
+        p.setCredentials({
+          type: 'oauth',
+          accessToken: accessToken2,
+          refreshToken: 'refresh-token-2',
+          expiresAt: Date.now() + 3600_000,
+          raw: { accountId: 'acct_refresh' },
+        } as ProviderCredentials);
+
+        const cfg2 = p.buildSdkConfig('gpt-5.3-codex', { workspacePath: '/tmp/ws-refresh' });
+        const port2 = new URL(cfg2.envVars.ANTHROPIC_BASE_URL as string).port;
+
+        expect(port2).toBe(port1);
+
+        // The original port must still be reachable: the bridge was not killed.
+        const resp = await fetch(`${cfg1.envVars.ANTHROPIC_BASE_URL}/v1/models`);
+        expect(resp.status).toBe(200);
+
+        const servers = (p as unknown as { bridgeServers: Map<string, unknown> }).bridgeServers;
+        expect(servers.size).toBe(1);
+
+        p.stopAllBridgeServers();
+      } finally {
+        rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
     it('recreates a Responses bridge when resolved auth changes', async () => {
       const tmpDir = mkdtempSync(path.join(os.tmpdir(), 'neokai-build-cfg-auth-change-'));
       const originalFetch = globalThis.fetch;
@@ -633,42 +684,117 @@ describe('AnthropicToCodexBridgeProvider', () => {
       }
     });
 
-    it('sets ANTHROPIC_DEFAULT_*_MODEL env vars to prevent SDK fallback to Anthropic models', () => {
-      // Regression test: without these env vars the Claude Agent SDK subprocess
-      // defaults to Anthropic model names (e.g. 'claude-haiku-4-5-20251001') which
-      // the Codex bridge does not recognise, producing "model does not exist" errors.
+    it('sets ANTHROPIC_DEFAULT_*_MODEL env vars to Anthropic IDs with large context windows', () => {
+      // The Claude Agent SDK has a hard-coded model database. When it sees an
+      // unknown Codex ID (e.g. 'gpt-5.5') it falls back to ~200 k context and
+      // rejects requests at ~175 k tokens. By presenting Anthropic IDs that the
+      // SDK recognises (claude-opus-4-7 = 1 M, claude-sonnet-4-20250514
+      // = 200 k) we avoid premature rejection. The bridge maps these back to
+      // real Codex IDs via modelAliases before forwarding to OpenAI.
       const cfg = provider.buildSdkConfig('gpt-5.3-codex', { workspacePath: '/tmp/ws-model' });
-      expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('gpt-5.3-codex');
-      expect(cfg.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('gpt-5.4-mini');
-      expect(cfg.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('gpt-5.5');
+      expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('claude-opus-4-7');
+      expect(cfg.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('claude-sonnet-4-20250514');
+      expect(cfg.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('claude-opus-4-7');
+      expect(cfg.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('272000');
     });
 
-    it('resolves model alias to canonical ID in ANTHROPIC_DEFAULT_SONNET_MODEL', () => {
+    it('routes GPT-5.5 through the 1 M SDK alias while keeping Codex context metadata', async () => {
+      const cfg = provider.buildSdkConfig('gpt-5.5', { workspacePath: '/tmp/ws-gpt-55' });
+      expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('claude-opus-4-7');
+      expect(cfg.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('claude-opus-4-7');
+
+      const models = await provider.getModels();
+      const gpt55 = models.find((model) => model.id === 'gpt-5.5');
+      expect(gpt55?.contextWindow).toBe(272_000);
+      expect(gpt55?.preferContextWindowMetadata).toBe(true);
+      expect(gpt55?.sdkModelIds).toContain('claude-opus-4-7');
+    });
+
+    it('resolves model alias to Anthropic ID in ANTHROPIC_DEFAULT_SONNET_MODEL', () => {
       const cfg = provider.buildSdkConfig('codex', { workspacePath: '/tmp/ws-alias' });
-      // 'codex' is an alias for 'gpt-5.3-codex'
-      expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('gpt-5.3-codex');
+      // 'codex' is an alias for 'gpt-5.3-codex' which maps to the 1 M Anthropic ID
+      expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('claude-opus-4-7');
     });
 
-    it('resolves codex-mini alias correctly', () => {
+    it('keeps the SDK sonnet tier on the mini Anthropic ID for mini Codex sessions', () => {
       const cfg = provider.buildSdkConfig('codex-mini', { workspacePath: '/tmp/ws-mini' });
-      // 'codex-mini' is an alias for the latest mini model.
-      expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('gpt-5.4-mini');
+      expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('claude-sonnet-4-20250514');
+      expect(cfg.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('claude-sonnet-4-20250514');
+      expect(cfg.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('128000');
     });
 
-    it('resolves gpt-5.1 mini alias correctly', () => {
+    it('keeps the SDK sonnet tier on the mini Anthropic ID for GPT-5.1 mini sessions', () => {
       const cfg = provider.buildSdkConfig('codex-5.1-mini', { workspacePath: '/tmp/ws-51-mini' });
-      expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('gpt-5.1-codex-mini');
+      expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('claude-sonnet-4-20250514');
+      expect(cfg.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('claude-sonnet-4-20250514');
     });
 
-    it('resolves codex-latest alias correctly', () => {
+    it('keeps cross-tier fallback registrations isolated by SDK alias', async () => {
+      const originalFetch = globalThis.fetch;
+      let fetchSpy: ReturnType<typeof spyOn> | undefined;
+      const capturedModels: string[] = [];
+      try {
+        fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(
+          (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+            const url = String(input);
+            if (url.startsWith('http://127.0.0.1:')) {
+              return originalFetch(input, init);
+            }
+            const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+            capturedModels.push(String(body.model));
+            return Promise.resolve(
+              new Response(
+                'event: response.completed\ndata: {"type":"response.completed","response":{"usage":{"input_tokens":1,"output_tokens":0},"output":[]}}\n\n',
+                { headers: { 'Content-Type': 'text/event-stream' } }
+              )
+            );
+          }
+        );
+
+        const miniSession = { sessionId: 'mini-with-frontier-fallback', workspacePath: '/tmp/ws' };
+        const miniPrimary = provider.buildSdkConfig('codex-mini', miniSession);
+        provider.buildSdkConfig('gpt-5.5', miniSession);
+        await originalFetch(`${miniPrimary.envVars.ANTHROPIC_BASE_URL}/v1/messages`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: 'claude-sonnet-4-20250514',
+            max_tokens: 128,
+            messages: [{ role: 'user', content: 'hi' }],
+          }),
+        });
+
+        const frontierSession = {
+          sessionId: 'frontier-with-mini-fallback',
+          workspacePath: '/tmp/ws',
+        };
+        const frontierPrimary = provider.buildSdkConfig('gpt-5.5', frontierSession);
+        provider.buildSdkConfig('codex-mini', frontierSession);
+        await originalFetch(`${frontierPrimary.envVars.ANTHROPIC_BASE_URL}/v1/messages`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: 'claude-opus-4-7',
+            max_tokens: 128,
+            messages: [{ role: 'user', content: 'hi' }],
+          }),
+        });
+
+        expect(capturedModels).toEqual(['gpt-5.4-mini', 'gpt-5.5']);
+      } finally {
+        fetchSpy?.mockRestore();
+      }
+    });
+
+    it('resolves codex-latest alias to the 1 M Anthropic ID', () => {
       const cfg = provider.buildSdkConfig('codex-latest', { workspacePath: '/tmp/ws-latest' });
-      // 'codex-latest' is an alias for 'gpt-5.5'
-      expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('gpt-5.5');
+      // 'codex-latest' is an alias for 'gpt-5.5' which maps to the 1 M Anthropic ID
+      expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('claude-opus-4-7');
     });
 
-    it('resolves gpt-5.4 alias correctly', () => {
+    it('resolves gpt-5.4 alias to the 1 M Anthropic ID', () => {
       const cfg = provider.buildSdkConfig('codex-5.4', { workspacePath: '/tmp/ws-54' });
-      expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('gpt-5.4');
+      expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('claude-opus-4-7');
     });
 
     it('throws for unknown model IDs instead of silently falling back', () => {
@@ -677,18 +803,36 @@ describe('AnthropicToCodexBridgeProvider', () => {
       ).toThrow('Unknown Codex model: unknown-model');
     });
 
-    it('no claude-* model name leaks through ANTHROPIC_DEFAULT_*_MODEL env vars', () => {
-      // Regression guard for the original bug: without these env vars being set to
-      // Codex model IDs, the Claude Agent SDK subprocess falls back to its built-in
-      // defaults (e.g. claude-haiku-4-5-20251001) for background calls such as
-      // summarisation and compaction. The Codex bridge rejects those names with
-      // "model does not exist". All three tier slots must be non-Anthropic model IDs.
+    it('intentionally uses claude-* Anthropic IDs in ANTHROPIC_DEFAULT_*_MODEL env vars', () => {
+      // The fix relies on the SDK recognising these Anthropic model IDs so it
+      // uses their real context windows (1 M for Opus, 200 k for Sonnet)
+      // instead of falling back to ~200 k for unknown Codex IDs.
       const cfg = provider.buildSdkConfig('gpt-5.3-codex', {
         workspacePath: '/tmp/ws-no-leak',
       });
-      expect(cfg.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).not.toMatch(/^claude-/);
-      expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).not.toMatch(/^claude-/);
-      expect(cfg.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).not.toMatch(/^claude-/);
+      expect(cfg.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toMatch(/^claude-/);
+      expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toMatch(/^claude-/);
+      expect(cfg.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toMatch(/^claude-/);
+    });
+
+    it('advertises real Codex limits for Anthropic aliases in the bridge models list', async () => {
+      const cfg = provider.buildSdkConfig('gpt-5.3-codex', {
+        workspacePath: '/tmp/ws-models',
+      });
+      const baseUrl = cfg.envVars.ANTHROPIC_BASE_URL as string;
+      const resp = await fetch(`${baseUrl}/v1/models`);
+      expect(resp.status).toBe(200);
+      const body = (await resp.json()) as {
+        data: Array<{ id: string; context_window: number }>;
+      };
+      const byId = new Map(body.data.map((m) => [m.id, m.context_window]));
+      // Alias models advertise real upstream limits so SDK preflight checks do not
+      // accept a request OpenAI would reject before NeoKai can compact.
+      expect(byId.get('claude-opus-4-7')).toBe(272_000);
+      expect(byId.get('claude-sonnet-4-20250514')).toBe(128_000);
+      // Codex models still advertise real upstream limits for NeoKai metadata.
+      expect(byId.get('gpt-5.5')).toBe(272_000);
+      expect(byId.get('gpt-5.4-mini')).toBe(128_000);
     });
   });
 
@@ -728,11 +872,14 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(provider.ownsModel('gpt-3.5-turbo')).toBe(false);
     });
 
-    it('translates aliases to canonical model IDs before SDK query creation', () => {
-      expect(provider.translateModelIdForSdk('codex-latest')).toBe('gpt-5.5');
-      expect(provider.translateModelIdForSdk('codex-mini')).toBe('gpt-5.4-mini');
-      expect(provider.translateModelIdForSdk('codex-5.1-mini')).toBe('gpt-5.1-codex-mini');
-      expect(provider.translateModelIdForSdk('gpt-5.5')).toBe('gpt-5.5');
+    it('translates aliases to Anthropic SDK model IDs before query creation', () => {
+      // Frontier models map to the 1 M context Anthropic ID; mini models map to
+      // the 200 k context Anthropic ID. This prevents the SDK from falling back
+      // to its default ~200 k limit for unknown Codex IDs.
+      expect(provider.translateModelIdForSdk('codex-latest')).toBe('claude-opus-4-7');
+      expect(provider.translateModelIdForSdk('codex-mini')).toBe('claude-sonnet-4-20250514');
+      expect(provider.translateModelIdForSdk('codex-5.1-mini')).toBe('claude-sonnet-4-20250514');
+      expect(provider.translateModelIdForSdk('gpt-5.5')).toBe('claude-opus-4-7');
       expect(provider.translateModelIdForSdk('unknown-model')).toBe('unknown-model');
     });
 
@@ -778,6 +925,18 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(contextWindows.get('gpt-5.5')).toBe(272000);
       expect(contextWindows.get('gpt-5.4-mini')).toBe(128000);
       expect(contextWindows.get('gpt-5.1-codex-mini')).toBe(128000);
+    });
+
+    it('advertises SDK Anthropic aliases so ContextFetcher matches SDK-reported model names', async () => {
+      provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, tmpDir, tmpDir);
+      const models = await provider.getModels();
+      const sdkIds = new Map(models.map((model) => [model.id, model.sdkModelIds]));
+
+      expect(sdkIds.get('gpt-5.5')).toContain('claude-opus-4-7');
+      expect(sdkIds.get('gpt-5.3-codex')).toContain('claude-opus-4-7');
+      expect(sdkIds.get('gpt-5.4')).toContain('claude-opus-4-7');
+      expect(sdkIds.get('gpt-5.4-mini')).toContain('claude-sonnet-4-20250514');
+      expect(sdkIds.get('gpt-5.1-codex-mini')).toContain('claude-sonnet-4-20250514');
     });
 
     it('sets thinkingModes to granular when Responses adapter is active', async () => {

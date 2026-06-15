@@ -2,8 +2,8 @@
  * ⚠️ IMPORTANT: GATE/CHANNEL FINGERPRINT RULES ⚠️
  *
  * This module computes a canonical hash of workflow templates for drift detection.
- * The fingerprint is derived from the FULL workflow structure — all gate fields,
- * channel fields, and node prompt fields are automatically included via exhaustive
+ * The fingerprint is derived from the FULL workflow structure — all hook fields,
+ * gate fields, channel fields, and node prompt fields are automatically included via exhaustive
  * JSON serialization.
  *
  * When adding new fields to Gate, GatePoll, Channel, or WorkflowNodeAgent types,
@@ -39,6 +39,11 @@ interface WorkflowFingerprint {
    */
   gates: string[];
   /**
+   * Exhaustive JSON serialization of each workflow hook.
+   * All structurally-meaningful fields are included automatically.
+   */
+  hooks: string[];
+  /**
    * Per-agent custom prompt entries, sorted. Format:
    * `<nodeName>|<agentName>|<customPrompt>` (empty string when absent).
    * Captures the most frequently updated field — agent behavior changes.
@@ -56,6 +61,17 @@ interface WorkflowFingerprint {
    * templates gain or modify node routes.
    */
   nodePostApproval: string[];
+  /**
+   * Node-level Codex approval flags, sorted. Format: `<nodeName>|true`.
+   * Detects changes to the requireCodexApproval toggle so drift detection
+   * catches user edits and template changes that flip this flag.
+   */
+  nodeCodexFlags: string[];
+  /**
+   * Node-level Codex poll intervals, sorted. Format: `<nodeName>|<ms>`.
+   * Empty string when absent. Detects changes to custom poll intervals.
+   */
+  nodeCodexPollIntervals: string[];
   /**
    * Legacy workflow-level post-approval route. Kept in the fingerprint so
    * clearing old template-level routes also triggers a re-stamp.
@@ -158,6 +174,8 @@ export function buildWorkflowFingerprint(workflow: SpaceWorkflow): WorkflowFinge
     )
     .sort();
 
+  const hooks = (workflow.hooks ?? []).map((hook) => JSON.stringify(hook)).sort();
+
   // Serialize per-agent custom prompts.
   // Format: `<nodeName>|<agentName>|<customPrompt>` — empty string when absent.
   const nodePrompts = workflow.nodes
@@ -172,6 +190,18 @@ export function buildWorkflowFingerprint(workflow: SpaceWorkflow): WorkflowFinge
     )
     .sort();
 
+  // Serialize node-level Codex approval flags.
+  const nodeCodexFlags = workflow.nodes
+    .filter((n) => n.requireCodexApproval)
+    .map((n) => `${n.name}|true`)
+    .sort();
+
+  // Serialize node-level Codex poll intervals.
+  const nodeCodexPollIntervals = workflow.nodes
+    .filter((n) => n.codexPollIntervalMs)
+    .map((n) => `${n.name}|${n.codexPollIntervalMs}`)
+    .sort();
+
   // Serialize legacy workflow-level post-approval route.
   const legacyPostApproval = workflow.postApproval
     ? `${workflow.postApproval.targetAgent}|${workflow.postApproval.instructions ?? ''}`
@@ -183,9 +213,12 @@ export function buildWorkflowFingerprint(workflow: SpaceWorkflow): WorkflowFinge
     nodeNames,
     channels,
     gates,
+    hooks,
     nodePrompts,
     completionAutonomyLevel: workflow.completionAutonomyLevel,
     nodePostApproval,
+    nodeCodexFlags,
+    nodeCodexPollIntervals,
     legacyPostApproval,
   };
 }

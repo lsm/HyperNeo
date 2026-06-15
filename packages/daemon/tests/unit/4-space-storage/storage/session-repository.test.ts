@@ -60,6 +60,7 @@ describe('SessionRepository', () => {
 				worktree_branch TEXT,
 				git_branch TEXT,
 				sdk_session_id TEXT,
+				acp_session_id TEXT,
 				sdk_origin_path TEXT,
 				available_commands TEXT,
 				processing_state TEXT,
@@ -136,6 +137,15 @@ describe('SessionRepository', () => {
 
       const retrieved = repository.getSession('session-1');
       expect(retrieved?.sdkSessionId).toBe('sdk-123');
+    });
+
+    it('should create a session with ACP session ID', () => {
+      const session = createDefaultSession({ acpSessionId: 'acp-123' });
+
+      repository.createSession(session);
+
+      const retrieved = repository.getSession('session-1');
+      expect(retrieved?.acpSessionId).toBe('acp-123');
     });
 
     it('should create a session with available commands', () => {
@@ -549,6 +559,24 @@ describe('SessionRepository', () => {
 
       const session = repository.getSession('session-1');
       expect(session?.sdkSessionId).toBeUndefined();
+    });
+
+    it('should update acpSessionId', () => {
+      repository.createSession(createDefaultSession());
+
+      repository.updateSession('session-1', { acpSessionId: 'new-acp-id' });
+
+      const session = repository.getSession('session-1');
+      expect(session?.acpSessionId).toBe('new-acp-id');
+    });
+
+    it('should clear acpSessionId when set to null', () => {
+      repository.createSession(createDefaultSession({ acpSessionId: 'acp-123' }));
+
+      repository.updateSession('session-1', { acpSessionId: null });
+
+      const session = repository.getSession('session-1');
+      expect(session?.acpSessionId).toBeUndefined();
     });
 
     it('should update availableCommands', () => {

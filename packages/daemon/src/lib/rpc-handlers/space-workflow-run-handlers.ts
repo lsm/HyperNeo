@@ -32,11 +32,16 @@ import type { GateDataRepository } from '../../storage/repositories/gate-data-re
 import type { WorkflowRunArtifactRepository } from '../../storage/repositories/workflow-run-artifact-repository';
 import type { WorkflowRunArtifactCacheRepository } from '../../storage/repositories/workflow-run-artifact-cache-repository';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository';
+import type { WorkflowHookStateRepository } from '../../storage/repositories/workflow-hook-state-repository';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service';
 import type { SpaceTaskManager } from '../space/managers/space-task-manager';
 import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository';
 import type { SpaceWorktreeManager } from '../space/managers/space-worktree-manager';
 import type { WorkflowRunFailureReason, WorkflowRunStatus } from '@neokai/shared';
+import {
+  QUEUED_RETRYABLE_ACTION_STATE_KEY,
+  triggerRetryableHookAction,
+} from '../space/runtime/workflow-hook-engine';
 import {
   execGit,
   isGitRepo,
@@ -179,7 +184,8 @@ export function setupSpaceWorkflowRunHandlers(
   spaceWorktreeManager: SpaceWorktreeManager,
   artifactRepo: WorkflowRunArtifactRepository,
   artifactCacheRepo: WorkflowRunArtifactCacheRepository,
-  jobQueue: JobQueueRepository
+  jobQueue: JobQueueRepository,
+  hookStateRepo: WorkflowHookStateRepository
 ): void {
   /**
    * Helper: notify the channel router that gate data has changed.
@@ -987,5 +993,158 @@ export function setupSpaceWorkflowRunHandlers(
       artifactType: params.artifactType,
     });
     return { artifacts };
+  });
+
+  // ─── spaceWorkflowRun.listHookStates ────────────────────────────────────
+  //
+  // Returns all hook state snapshots for a workflow run, paired with the
+  // workflow's hook definitions so the UI can render labels and configs.
+  messageHub.onRequest('spaceWorkflowRun.listHookStates', async (data) => {
+    const params = data as { runId: string };
+    if (!params.runId) throw new Error('runId is required');
+
+    const run = workflowRunRepo.getRun(params.runId);
+    if (!run) throw new Error(`WorkflowRun not found: ${params.runId}`);
+
+    const workflow = spaceWorkflowManager.getWorkflow(run.workflowId);
+    const hookStates = hookStateRepo.listByRun(params.runId);
+
+    return {
+      hookStates,
+      hooks: workflow?.hooks ?? [],
+    };
+  });
+
+  // ─── spaceWorkflowRun.approveHook ───────────────────────────────────────
+  //
+  // Writes a human approval decision into a hook's local state.
+  // Idempotent: repeated approvals are no-ops. Rejection stamps
+  // `humanApproved: false` so validators can surface the reason.
+  messageHub.onRequest('spaceWorkflowRun.approveHook', async (data) => {
+    const params = data as {
+      runId: string;
+      hookId: string;
+      approved: boolean;
+      reason?: string;
+    };
+
+    if (!params.runId) throw new Error('runId is required');
+    if (!params.hookId) throw new Error('hookId is required');
+    if (params.approved === undefined || params.approved === null) {
+      throw new Error('approved is required');
+    }
+
+    const run = workflowRunRepo.getRun(params.runId);
+    if (!run) throw new Error(`WorkflowRun not found: ${params.runId}`);
+
+    if (run.status === 'done' || run.status === 'cancelled' || run.status === 'pending') {
+      throw new Error(`Cannot modify hook on a ${run.status} workflow run`);
+    }
+
+    const existing = hookStateRepo.get(params.runId, params.hookId);
+    const baseVersion = existing?.version ?? 0;
+    const baseLocalState = existing?.localState ?? {};
+
+    const rejectionReason = params.reason?.trim() || 'Rejected by human';
+    const updateResult = hookStateRepo.update(params.runId, params.hookId, {
+      expectedVersion: baseVersion,
+      localState: {
+        ...baseLocalState,
+        humanApproved: params.approved,
+        humanApprovedAt: Date.now(),
+        humanRejectionReason: params.approved ? undefined : rejectionReason,
+      },
+      lastResult: params.approved
+        ? {
+            type: 'allow',
+            message: 'Approved by human',
+          }
+        : {
+            type: 'block',
+            reason: rejectionReason,
+            message: 'Rejected by human',
+          },
+      retryCount: 0,
+      nextRetryAt: null,
+    });
+
+    if (!updateResult) {
+      throw new Error('Hook state update failed due to version conflict');
+    }
+
+    internalEventBus
+      .publish('space.hookState.updated', {
+        sessionId: 'global',
+        spaceId: run.spaceId,
+        runId: params.runId,
+        hookId: params.hookId,
+        hookState: updateResult,
+      })
+      .catch((err) => {
+        log.warn('Failed to emit space.hookState.updated:', err);
+      });
+
+    return { hookState: updateResult };
+  });
+
+  // ─── spaceWorkflowRun.retryHook ─────────────────────────────────────────
+  //
+  // Clears retry backoff for a retryable_block hook so the next action
+  // re-executes the hook chain immediately.
+  messageHub.onRequest('spaceWorkflowRun.retryHook', async (data) => {
+    const params = data as { runId: string; hookId: string };
+
+    if (!params.runId) throw new Error('runId is required');
+    if (!params.hookId) throw new Error('hookId is required');
+
+    const run = workflowRunRepo.getRun(params.runId);
+    if (!run) throw new Error(`WorkflowRun not found: ${params.runId}`);
+
+    if (run.status === 'done' || run.status === 'cancelled' || run.status === 'pending') {
+      throw new Error(`Cannot retry hook on a ${run.status} workflow run`);
+    }
+
+    const existing = hookStateRepo.get(params.runId, params.hookId);
+    const baseVersion = existing?.version ?? 0;
+    const queuedAction = existing?.localState?.[QUEUED_RETRYABLE_ACTION_STATE_KEY];
+    const queuedActionKey =
+      queuedAction && typeof queuedAction === 'object'
+        ? (queuedAction as Record<string, unknown>).actionKey
+        : undefined;
+    const updateResult = hookStateRepo.update(params.runId, params.hookId, {
+      expectedVersion: baseVersion,
+      localState: {
+        ...existing?.localState,
+        [QUEUED_RETRYABLE_ACTION_STATE_KEY]: null,
+      },
+      lastResult: {
+        type: 'allow',
+        message: 'Retry requested by human',
+      },
+      retryCount: 0,
+      nextRetryAt: null,
+    });
+
+    if (!updateResult) {
+      throw new Error('Hook state update failed due to version conflict');
+    }
+
+    if (typeof queuedActionKey === 'string') {
+      triggerRetryableHookAction(queuedActionKey);
+    }
+
+    internalEventBus
+      .publish('space.hookState.updated', {
+        sessionId: 'global',
+        spaceId: run.spaceId,
+        runId: params.runId,
+        hookId: params.hookId,
+        hookState: updateResult,
+      })
+      .catch((err) => {
+        log.warn('Failed to emit space.hookState.updated:', err);
+      });
+
+    return { hookState: updateResult };
   });
 }

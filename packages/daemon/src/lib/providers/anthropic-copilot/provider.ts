@@ -819,7 +819,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
       headers: {
         'Content-Type': 'application/json',
         Accept: 'application/json',
-        'User-Agent': 'GitHubCopilotChat/0.35.0',
+        'User-Agent': 'GitHubCopilotChat/0.37.0',
       },
       body: JSON.stringify({ client_id: clientId, scope: 'read:user copilot' }),
     });

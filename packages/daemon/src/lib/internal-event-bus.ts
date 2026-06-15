@@ -681,6 +681,13 @@ interface ClientForwardingEvents {
     gateId: string;
     data: Record<string, unknown>;
   };
+  'space.hookState.updated': {
+    sessionId: string;
+    spaceId: string;
+    runId: string;
+    hookId: string;
+    hookState: import('@neokai/shared').WorkflowHookStateSnapshot;
+  };
   'spaceAgent.created': {
     sessionId: string;
     spaceId: string;
@@ -692,6 +699,17 @@ interface ClientForwardingEvents {
     agent: import('@neokai/shared').SpaceAgent;
   };
   'spaceAgent.deleted': { sessionId: string; spaceId: string; agentId: string };
+  'spaceLongHorizonAgent.created': {
+    sessionId: string;
+    spaceId: string;
+    agent: import('@neokai/shared').SpaceLongHorizonAgent;
+  };
+  'spaceLongHorizonAgent.updated': {
+    sessionId: string;
+    spaceId: string;
+    agent: import('@neokai/shared').SpaceLongHorizonAgent;
+  };
+  'spaceLongHorizonAgent.deleted': { sessionId: string; spaceId: string; agentId: string };
   'spaceWorkflow.created': {
     sessionId: string;
     spaceId: string;

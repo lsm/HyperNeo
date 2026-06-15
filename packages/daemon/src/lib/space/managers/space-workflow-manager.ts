@@ -5,7 +5,7 @@
  *
  * Responsibilities:
  * - Validate workflow integrity (unique name, node agent refs, channel graph validity)
- * - Protect custom agents that are referenced by nodes
+ * - Protect worker agents that are referenced by nodes
  *
  * Workflow selection: either explicit workflowId provided by the caller, or
  * AI auto-select at runtime via list_workflows + start_workflow_run. There is
@@ -19,7 +19,9 @@ import type {
   CreateSpaceWorkflowParams,
   UpdateSpaceWorkflowParams,
   WorkflowChannel,
+  Gate,
 } from '@neokai/shared';
+import { validateWorkflowHooks } from '../workflow-hook-validation';
 import { generateUUID } from '@neokai/shared';
 import type { SpaceWorkflowRepository } from '../../../storage/repositories/space-workflow-repository';
 import { validateGlobPattern } from '../../external-events/topic-validator';
@@ -30,10 +32,29 @@ import {
   validatePostApprovalRoutes,
 } from '../workflows/post-approval-validator';
 import { validateGate } from '../runtime/gate-evaluator';
+import { isApprovalGate } from '../runtime/gate-features';
 import { slugify, validateSlug } from '../slug';
+import {
+  CODING_WORKFLOW,
+  FULLSTACK_QA_LOOP_WORKFLOW,
+  PLAN_AND_DECOMPOSE_WORKFLOW,
+  RESEARCH_WORKFLOW,
+  REVIEW_ONLY_WORKFLOW,
+} from '../workflows/built-in-workflows';
+import { migrateWorkflowGateProgressionToHooks } from '../workflows/workflow-migration';
 
 const logger = new Logger('SpaceWorkflowManager');
 const RESERVED_WORKFLOW_AGENT_NAMES = new Set(['space-agent', 'task-agent']);
+
+const BUILT_IN_TEMPLATE_GATES = new Map(
+  [
+    CODING_WORKFLOW,
+    PLAN_AND_DECOMPOSE_WORKFLOW,
+    FULLSTACK_QA_LOOP_WORKFLOW,
+    RESEARCH_WORKFLOW,
+    REVIEW_ONLY_WORKFLOW,
+  ].map((workflow) => [workflow.name, workflow.gates ?? []])
+);
 
 function normalizeWorkflowAgentName(name: string): string {
   return name.trim().toLowerCase();
@@ -49,7 +70,7 @@ export function isReservedWorkflowAgentName(name: string): boolean {
 
 /**
  * Minimal interface the manager needs from SpaceAgentManager to validate
- * custom agent references in workflow nodes.
+ * worker agent references in workflow nodes.
  */
 export interface SpaceAgentLookup {
   /** Returns the SpaceAgent with the given UUID in the given space, or null if not found. */
@@ -99,6 +120,15 @@ export class SpaceWorkflowManager {
     this.validateStartNodeId(startNodeId, nodes);
     this.validateEndNodeId(endNodeId, nodes);
 
+    this.validateNoDuplicateHookIds(params.hooks ?? []);
+    params = migrateWorkflowGateProgressionToHooks({
+      ...params,
+      nodes: nodes as SpaceWorkflow['nodes'],
+      templateGates: params.templateName
+        ? (BUILT_IN_TEMPLATE_GATES.get(params.templateName) ?? [])
+        : [],
+    }).workflow;
+
     if (params.channels && params.channels.length > 0) {
       this.validateChannels(params.channels);
     }
@@ -106,6 +136,14 @@ export class SpaceWorkflowManager {
     if (params.gates && params.gates.length > 0) {
       this.validateGates(params.gates);
     }
+
+    this.validateHooks(params.hooks ?? [], nodes);
+
+    this.validateCodexApprovalAgainstScriptedGates(
+      nodes,
+      params.channels ?? [],
+      params.gates ?? []
+    );
 
     // Hard-reject invalid post-approval routes at create time. Stale routes
     // (target no longer exists) must be caught before the row lands in the DB,
@@ -211,8 +249,13 @@ export class SpaceWorkflowManager {
       return nextNode;
     });
 
-    if (!sanitized) return wf;
-    return { ...sanitized, nodes: nextNodes };
+    const withSanitizedNodes = sanitized ? { ...sanitized, nodes: nextNodes } : wf;
+    return migrateWorkflowGateProgressionToHooks({
+      ...withSanitizedNodes,
+      templateGates: withSanitizedNodes.templateName
+        ? (BUILT_IN_TEMPLATE_GATES.get(withSanitizedNodes.templateName) ?? [])
+        : [],
+    }).workflow;
   }
 
   // -------------------------------------------------------------------------
@@ -265,6 +308,8 @@ export class SpaceWorkflowManager {
               name: n.name,
               agents: n.agents,
               postApproval: n.postApproval,
+              requireCodexApproval: n.requireCodexApproval,
+              codexPollIntervalMs: n.codexPollIntervalMs,
             })
           )
         : existing.nodes.map(
@@ -273,6 +318,8 @@ export class SpaceWorkflowManager {
               name: n.name,
               agents: n.agents,
               postApproval: n.postApproval,
+              requireCodexApproval: n.requireCodexApproval,
+              codexPollIntervalMs: n.codexPollIntervalMs,
             })
           );
 
@@ -317,6 +364,40 @@ export class SpaceWorkflowManager {
         this.validateGates(changedGates);
       }
     }
+
+    this.validateNoDuplicateHookIds(params.hooks ?? []);
+    const migrated = migrateWorkflowGateProgressionToHooks({
+      channels: params.channels === undefined ? existing.channels : (params.channels ?? undefined),
+      gates: params.gates === undefined ? existing.gates : (params.gates ?? undefined),
+      hooks: params.hooks === undefined ? existing.hooks : (params.hooks ?? undefined),
+      nodes: effectiveNodes as SpaceWorkflow['nodes'],
+      templateName:
+        params.templateName === undefined
+          ? existing.templateName
+          : (params.templateName ?? undefined),
+      templateGates: existing.templateName
+        ? (BUILT_IN_TEMPLATE_GATES.get(existing.templateName) ?? [])
+        : [],
+    }).workflow;
+    params = {
+      ...params,
+      channels: migrated.channels ?? [],
+      gates: migrated.gates ?? [],
+      hooks: migrated.hooks ?? [],
+    };
+
+    const effectiveChannels =
+      params.channels === undefined ? (existing.channels ?? []) : (params.channels ?? []);
+    const effectiveGates =
+      params.gates === undefined ? (existing.gates ?? []) : (params.gates ?? []);
+    const effectiveHooks =
+      params.hooks === undefined ? (existing.hooks ?? []) : (params.hooks ?? []);
+    this.validateHooks(effectiveHooks, effectiveNodes);
+    this.validateCodexApprovalAgainstScriptedGates(
+      effectiveNodes,
+      effectiveChannels,
+      effectiveGates
+    );
 
     // Validate node-level postApproval plus the legacy workflow-level route
     // against the effective node set so a rename submitted in the same update
@@ -367,7 +448,7 @@ export class SpaceWorkflowManager {
   // -------------------------------------------------------------------------
 
   /**
-   * Returns all workflows whose nodes reference the given custom agent.
+   * Returns all workflows whose nodes reference the given worker agent.
    * Used by SpaceAgentManager to block deletion of in-use agents.
    */
   getWorkflowsReferencingAgent(agentId: string): SpaceWorkflow[] {
@@ -464,6 +545,75 @@ export class SpaceWorkflowManager {
       const node = nodes[i];
       this.validateNodeAgentRef(spaceId, node, i);
       this.validateEventInterests(node, i);
+      this.validateCodexPollInterval(node, i);
+      this.validateCodexApprovalFlag(node, i);
+    }
+  }
+
+  private validateCodexPollInterval(node: WorkflowNodeInput, index: number): void {
+    if (node.codexPollIntervalMs === undefined || node.codexPollIntervalMs === null) {
+      return;
+    }
+    if (
+      typeof node.codexPollIntervalMs !== 'number' ||
+      !Number.isFinite(node.codexPollIntervalMs)
+    ) {
+      throw new WorkflowValidationError(
+        `node[${index}]: codexPollIntervalMs must be a finite number`
+      );
+    }
+    if (node.codexPollIntervalMs <= 0) {
+      throw new WorkflowValidationError(
+        `node[${index}]: codexPollIntervalMs must be a positive number`
+      );
+    }
+    if (!Number.isInteger(node.codexPollIntervalMs)) {
+      throw new WorkflowValidationError(`node[${index}]: codexPollIntervalMs must be an integer`);
+    }
+  }
+
+  private validateCodexApprovalFlag(node: WorkflowNodeInput, index: number): void {
+    if (node.requireCodexApproval === undefined || node.requireCodexApproval === null) {
+      return;
+    }
+    if (typeof node.requireCodexApproval !== 'boolean') {
+      throw new WorkflowValidationError(`node[${index}]: requireCodexApproval must be a boolean`);
+    }
+  }
+
+  private validateCodexApprovalAgainstScriptedGates(
+    nodes: WorkflowNodeInput[],
+    channels: WorkflowChannel[],
+    gates: Gate[]
+  ): void {
+    const gateMap = new Map(gates.map((g) => [g.id, g]));
+
+    for (let i = 0; i < nodes.length; i++) {
+      const node = nodes[i];
+      if (!node.requireCodexApproval) continue;
+
+      const nodeRefs = new Set([node.name, ...(node.agents?.map((a) => a.name) ?? [])]);
+
+      for (let ci = 0; ci < channels.length; ci++) {
+        const ch = channels[ci];
+        if (!ch.gateId) continue;
+        const gate = gateMap.get(ch.gateId);
+        if (!gate?.script || !isApprovalGate(gate)) continue;
+
+        if (ch.from === '*') {
+          throw new WorkflowValidationError(
+            `node[${i}] "${node.name}": requireCodexApproval is incompatible with scripted approval gate "${ch.gateId}" on wildcard channel[${ci}]; ` +
+              'dynamic Codex injection is blocked when an approval gate has a custom script'
+          );
+        }
+
+        if (nodeRefs.has(ch.from)) {
+          throw new WorkflowValidationError(
+            `node[${i}] "${node.name}": requireCodexApproval is incompatible with scripted approval gate "${ch.gateId}" on channel[${ci}]; ` +
+              'dynamic Codex injection is blocked when an approval gate has a custom script'
+          );
+        }
+      }
     }
   }
 
@@ -609,6 +759,27 @@ export class SpaceWorkflowManager {
       if (errors.length > 0) {
         throw new WorkflowValidationError(`gates[${gi}]: ${errors.join('; ')}`);
       }
+    }
+  }
+
+  private validateHooks(hooks: unknown[], nodes: WorkflowNodeInput[]): void {
+    const errors = validateWorkflowHooks(hooks, nodes);
+    if (errors.length > 0) {
+      throw new WorkflowValidationError(errors.join('; '));
+    }
+  }
+
+  private validateNoDuplicateHookIds(hooks: unknown[]): void {
+    const seen = new Set<string>();
+    for (let hi = 0; hi < hooks.length; hi++) {
+      const hook = hooks[hi];
+      if (!hook || typeof hook !== 'object') continue;
+      const id = (hook as { id?: unknown }).id;
+      if (typeof id !== 'string') continue;
+      if (seen.has(id)) {
+        throw new WorkflowValidationError(`hooks[${hi}].id: duplicate hook id "${id}"`);
+      }
+      seen.add(id);
     }
   }
 

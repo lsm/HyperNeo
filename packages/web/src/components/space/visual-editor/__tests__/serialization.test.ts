@@ -286,6 +286,7 @@ describe('visualStateToCreateParams', () => {
       tags: [],
       channels: [],
       gates: [],
+      hooks: [],
       ...overrides,
     };
   }
@@ -392,6 +393,7 @@ describe('visualStateToCreateParams', () => {
       tags: [],
       channels: [],
       gates: [],
+      hooks: [],
     };
     const params = visualStateToCreateParams(state, 'space-1', 'WF');
     expect(params.nodes![0].id).toBeTruthy();
@@ -406,10 +408,78 @@ describe('visualStateToCreateParams', () => {
       tags: [],
       channels: [],
       gates: [],
+      hooks: [],
     };
     const params = visualStateToCreateParams(state, 'space-1', 'WF');
     expect(params.nodes).toHaveLength(0);
     expect(params.startNodeId).toBeUndefined();
+  });
+
+  it('serializes hook node localId references to persisted node names', () => {
+    const params = visualStateToCreateParams(
+      makeState({
+        nodes: [
+          {
+            step: { localId: 'local-unnamed', name: '', agentId: 'a1' },
+            position: { x: 0, y: 0 },
+          },
+          {
+            step: { localId: 'local-review', id: 'review-id', name: 'Review', agentId: 'a2' },
+            position: { x: 300, y: 0 },
+          },
+        ],
+        startNodeId: 'local-unnamed',
+        hooks: [
+          {
+            id: 'hook-1',
+            enabled: true,
+            sourceNode: 'local-unnamed',
+            targetNode: 'local-review',
+            method: 'send_message',
+            validator: { kind: 'script', interpreter: 'bash', source: 'echo ok' },
+            authorizedCallers: [{ sourceNode: 'local-unnamed' }],
+            poll: { intervalMs: 5000 },
+          },
+        ],
+      }),
+      'space-1',
+      'WF'
+    );
+
+    expect(params.hooks).toEqual([
+      expect.objectContaining({
+        sourceNode: 'Step 1',
+        targetNode: 'Review',
+        authorizedCallers: [expect.objectContaining({ sourceNode: 'Step 1' })],
+        retry: { maxAttempts: 3, delayMs: 5000, backoffMultiplier: 1 },
+      }),
+    ]);
+    expect(params.hooks![0].poll).toBeUndefined();
+  });
+
+  it('preserves explicit hook retry settings', () => {
+    const params = visualStateToCreateParams(
+      makeState({
+        hooks: [
+          {
+            id: 'hook-1',
+            enabled: true,
+            sourceNode: 'Step 1',
+            method: 'send_message',
+            validator: { kind: 'script', interpreter: 'bash', source: 'echo ok' },
+            retry: { maxAttempts: 9, delayMs: 1000, backoffMultiplier: 2 },
+          },
+        ],
+      }),
+      'space-1',
+      'WF'
+    );
+
+    expect(params.hooks?.[0].retry).toEqual({
+      maxAttempts: 9,
+      delayMs: 1000,
+      backoffMultiplier: 2,
+    });
   });
 
   it('passes endNodeId through to create params', () => {
@@ -602,6 +672,7 @@ describe('visualStateToUpdateParams', () => {
       tags: [],
       channels: [],
       gates: [],
+      hooks: [],
     };
     const params = visualStateToUpdateParams(state, {
       name: 'Updated Name',
@@ -629,6 +700,7 @@ describe('visualStateToUpdateParams', () => {
       tags: [],
       channels: [],
       gates: [],
+      hooks: [],
     };
     const params = visualStateToUpdateParams(state);
     expect(params.endNodeId).toBe('s2');
@@ -656,6 +728,7 @@ describe('visualStateToUpdateParams', () => {
       tags: [],
       channels: [],
       gates: [],
+      hooks: [],
     };
     const params = visualStateToUpdateParams(state);
     expect(params.nodes?.[0].postApproval).toEqual({
@@ -678,6 +751,7 @@ describe('visualStateToUpdateParams', () => {
       tags: [],
       channels: [],
       gates: [],
+      hooks: [],
     };
     const params = visualStateToUpdateParams(state);
     expect(params.endNodeId).toBeNull();
@@ -763,6 +837,7 @@ describe('multi-agent step serialization', () => {
       tags: [],
       channels: [],
       gates: [],
+      hooks: [],
     };
     const params = visualStateToCreateParams(state, 'space-1', 'WF');
     const step = params.nodes![0];
@@ -792,6 +867,7 @@ describe('multi-agent step serialization', () => {
       tags: [],
       channels: [],
       gates: [],
+      hooks: [],
     };
     const params = visualStateToCreateParams(state, 'space-1', 'WF');
     // Channels are not yet supported in visualStateToCreateParams output
@@ -853,6 +929,7 @@ describe('multi-agent step serialization', () => {
           resetOnCycle: false,
         },
       ],
+      hooks: [],
     };
     const params = visualStateToCreateParams(state, 'space-1', 'WF');
     expect(params.gates).toHaveLength(1);
