@@ -110,7 +110,25 @@ describe('KeychainCredentialStore — exit code 36 handling', () => {
     );
   });
 
-  it('set() rejects with generic Error on non-zero exit (not 36)', async () => {
+  it('set() rejects with KeychainUnavailableError when stderr says user interaction is not allowed', async () => {
+    spawnImpl = () => {
+      const proc = new EventEmitter() as MockSpawnProcess;
+      proc.stderr = new EventEmitter();
+      proc.stdout = new EventEmitter();
+      proc.stdin = { write: () => undefined, end: () => undefined };
+      queueMicrotask(() => {
+        proc.stderr.emit('data', Buffer.from('User interaction is not allowed.'));
+        proc.emit('close', 1);
+      });
+      return proc;
+    };
+    const store = new KeychainCredentialStore();
+    await expect(store.set('neokai.provider.test', 'default', 'secret')).rejects.toBeInstanceOf(
+      KeychainUnavailableError
+    );
+  });
+
+  it('set() rejects with generic Error on non-zero exit (not unavailable)', async () => {
     spawnImpl = () => {
       const proc = new EventEmitter() as MockSpawnProcess;
       proc.stderr = new EventEmitter();

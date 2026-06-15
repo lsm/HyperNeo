@@ -103,12 +103,12 @@ export class KeychainCredentialStore implements CredentialStore {
       child.on('close', (code) => {
         if (code === 0) {
           resolve();
-        } else if (code === 36) {
+        } else if (code === 36 || stderr.includes('User interaction is not allowed')) {
           // Keychain locked / no GUI session. Reject so callers fail with
           // actionable guidance rather than silently dropping credentials.
           reject(
             new KeychainUnavailableError(
-              `security add-generic-password failed (exit 36): ${stderr.trim()}`
+              `security add-generic-password failed (exit ${code}): ${stderr.trim()}`
             )
           );
         } else {
