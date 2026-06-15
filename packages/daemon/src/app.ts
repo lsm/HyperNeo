@@ -111,8 +111,9 @@ async function applyStoredProviderCredentials(
       if (error instanceof KeychainUnavailableError) {
         // Keychain unavailable (locked / no GUI session) — credentials will load
         // from env / settings.json fallback. Don't mark unhealthy; don't spam logs.
-        // FallbackCredentialStore normally swallows this, but provider.getCredentials
-        // implementations that hit the keychain directly re-throw it through here.
+        // KeychainStatusCredentialStore normally converts read failures to null,
+        // but provider.getCredentials implementations that hit the keychain
+        // directly can re-throw it through here.
         continue;
       }
       credentialManager.markProviderHealth(provider.id, 'unhealthy');

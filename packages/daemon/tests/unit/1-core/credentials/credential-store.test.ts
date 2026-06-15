@@ -7,8 +7,9 @@ import { configureLogger, subscribeToStructuredLogs, LogLevel } from '@neokai/sh
 import {
   createCredentialStore,
   DatabaseCredentialStore,
-  FallbackCredentialStore,
+  KeychainStatusCredentialStore,
   KeychainUnavailableError,
+  KEYCHAIN_UNAVAILABLE_MESSAGE,
   type CredentialStore,
 } from '../../../../src/lib/credentials/credential-store';
 
@@ -131,14 +132,15 @@ describe('createCredentialStore', () => {
     }
   });
 
-  it('wraps keychain in FallbackCredentialStore on darwin outside tests', () => {
+  it('uses Keychain-only store on darwin outside tests', () => {
     const platformSpy = spyOn(os, 'platform').mockReturnValue('darwin');
     const prevNodeEnv = process.env.NODE_ENV;
     process.env.NODE_ENV = 'production';
     const db = new Database(':memory:');
     try {
       const store = createCredentialStore(db);
-      expect(store).toBeInstanceOf(FallbackCredentialStore);
+      expect(store).toBeInstanceOf(KeychainStatusCredentialStore);
+      expect(store).not.toBeInstanceOf(DatabaseCredentialStore);
     } finally {
       db.close();
       platformSpy.mockRestore();
@@ -171,7 +173,7 @@ describe('createCredentialStore', () => {
 });
 
 // ---------------------------------------------------------------------------
-// FallbackCredentialStore — fallback behavior + warn-once.
+// KeychainStatusCredentialStore — Keychain-only macOS behavior + warn-once.
 // Uses in-memory stubs; no child_process mocking required.
 // ---------------------------------------------------------------------------
 
@@ -211,139 +213,157 @@ class StubCredentialStore implements CredentialStore {
   }
 }
 
-describe('FallbackCredentialStore', () => {
+describe('KeychainStatusCredentialStore', () => {
   let logEvents: Array<{ level: string; message: string }>;
   let unsubscribe: () => void;
 
   beforeEach(() => {
-    // Capture structured log events so we can assert warn-once behavior
-    // without depending on the console (which is suppressed in unit tests).
     configureLogger({ level: LogLevel.WARN, filter: ['kai:daemon:*'] });
     logEvents = [];
     unsubscribe = subscribeToStructuredLogs((event) => {
       logEvents.push({ level: event.level, message: event.message });
     });
   });
+
   afterEach(() => {
     unsubscribe();
     configureLogger({ level: LogLevel.SILENT, filter: [] });
   });
 
-  it('get() prefers fallback value when fallback has the row', async () => {
-    // Authority model: fallback is source of truth. Primary is consulted only
-    // when fallback is empty (legacy keychain-only entries).
-    const primary = new StubCredentialStore(
-      async () => 'stale-keychain-value',
+  it('get() reads from keychain only', async () => {
+    const keychain = new StubCredentialStore(
+      async () => 'keychain-value',
       async () => []
     );
-    const fallback = new StubCredentialStore(
-      async () => 'fresh-db-value',
-      async () => []
-    );
-    const store = new FallbackCredentialStore(primary, fallback);
+    const store = new KeychainStatusCredentialStore(keychain);
 
-    expect(await store.get('neokai.provider.test', 'default')).toBe('fresh-db-value');
-    // Primary is not even consulted when fallback has data.
-    expect(primary.gets).toHaveLength(0);
+    expect(await store.get('neokai.provider.test', 'default')).toBe('keychain-value');
+    expect(keychain.gets).toEqual([['neokai.provider.test', 'default']]);
+    expect(store.getStatus()).toEqual({ backend: 'keychain', keychainAvailable: true });
   });
 
-  it('get() falls through to primary when fallback is empty', async () => {
-    const primary = new StubCredentialStore(
-      async () => 'legacy-keychain-value',
-      async () => []
-    );
-    const fallback = new StubCredentialStore(
-      async () => null,
-      async () => []
-    );
-    const store = new FallbackCredentialStore(primary, fallback);
-
-    expect(await store.get('neokai.provider.test', 'default')).toBe('legacy-keychain-value');
-    expect(primary.gets).toHaveLength(1);
-  });
-
-  it('get() marks primary available when primary read succeeds after being unavailable', async () => {
-    const primary = new StubCredentialStore(
-      async () => null,
-      async () => []
-    );
-    const fallback = new StubCredentialStore(
-      async () => null,
-      async () => []
-    );
-    const store = new FallbackCredentialStore(primary, fallback);
-
-    expect(store.getStatus().backend).toBe('keychain');
-    expect(await store.get('a', 'b')).toBeNull();
-    // Primary read succeeded (returned null for missing item); status stays available.
-    expect(store.getStatus().backend).toBe('keychain');
-  });
-
-  it('get() does not warn when primary returns null (item just missing)', async () => {
-    const primary = new StubCredentialStore(
-      async () => null,
-      async () => []
-    );
-    const fallback = new StubCredentialStore(
-      async () => null,
-      async () => []
-    );
-    const store = new FallbackCredentialStore(primary, fallback);
-
-    await store.get('neokai.provider.test', 'default');
-    expect(logEvents.filter((e) => e.level === 'warn')).toHaveLength(0);
-  });
-
-  it('get() marks primary unavailable when primary throws KeychainUnavailableError', async () => {
-    const primary = new StubCredentialStore(
+  it('get() returns null and marks unavailable when keychain is locked', async () => {
+    const keychain = new StubCredentialStore(
       async () => {
         throw new KeychainUnavailableError('keychain locked');
       },
       async () => []
     );
-    const fallback = new StubCredentialStore(
-      async () => null,
-      async () => []
-    );
-    const store = new FallbackCredentialStore(primary, fallback);
+    const store = new KeychainStatusCredentialStore(keychain);
 
     expect(await store.get('neokai.provider.test', 'default')).toBeNull();
-    expect(store.getStatus().backend).toBe('database-fallback');
+    expect(store.getStatus()).toEqual({
+      backend: 'keychain-unavailable',
+      keychainAvailable: false,
+      warning: KEYCHAIN_UNAVAILABLE_MESSAGE,
+    });
   });
 
-  it('get() propagates non-keychain errors from primary', async () => {
-    const primary = new StubCredentialStore(
+  it('get() propagates non-keychain errors', async () => {
+    const keychain = new StubCredentialStore(
       async () => {
         throw new Error('corrupted keychain');
       },
       async () => []
     );
-    const fallback = new StubCredentialStore(
-      async () => null,
-      async () => []
-    );
-    const store = new FallbackCredentialStore(primary, fallback);
+    const store = new KeychainStatusCredentialStore(keychain);
 
     await expect(store.get('neokai.provider.test', 'default')).rejects.toThrow(
       'corrupted keychain'
     );
-    // Status unchanged — this isn't a keychain-availability issue.
     expect(store.getStatus().backend).toBe('keychain');
   });
 
-  it('warns once, not per-call', async () => {
-    const primary = new StubCredentialStore(
+  it('set() writes to keychain only', async () => {
+    const keychain = new StubCredentialStore(
+      async () => null,
+      async () => [],
+      async () => {}
+    );
+    const store = new KeychainStatusCredentialStore(keychain);
+
+    await store.set('neokai.provider.test', 'default', 'secret');
+    expect(keychain.sets).toEqual([['neokai.provider.test', 'default', 'secret']]);
+  });
+
+  it('set() rejects KeychainUnavailableError and does not persist elsewhere', async () => {
+    const keychain = new StubCredentialStore(
+      async () => null,
+      async () => [],
       async () => {
         throw new KeychainUnavailableError('keychain locked');
+      }
+    );
+    const store = new KeychainStatusCredentialStore(keychain);
+
+    await expect(store.set('neokai.provider.test', 'default', 'secret')).rejects.toThrow(
+      KEYCHAIN_UNAVAILABLE_MESSAGE
+    );
+    expect(store.getStatus().backend).toBe('keychain-unavailable');
+  });
+
+  it('delete() rejects KeychainUnavailableError so callers do not claim logout succeeded', async () => {
+    const keychain = new StubCredentialStore(
+      async () => null,
+      async () => [],
+      async () => {},
+      async () => {
+        throw new KeychainUnavailableError('keychain locked');
+      }
+    );
+    const store = new KeychainStatusCredentialStore(keychain);
+
+    await expect(store.delete('neokai.provider.test', 'default')).rejects.toThrow(
+      KEYCHAIN_UNAVAILABLE_MESSAGE
+    );
+    expect(keychain.deletes).toEqual([['neokai.provider.test', 'default']]);
+    expect(store.getStatus().backend).toBe('keychain-unavailable');
+  });
+
+  it('listServices() uses keychain only', async () => {
+    const keychain = new StubCredentialStore(
+      async () => null,
+      async () => ['neokai.provider.a', 'neokai.provider.b']
+    );
+    const store = new KeychainStatusCredentialStore(keychain);
+
+    expect(await store.listServices('neokai.provider.')).toEqual([
+      'neokai.provider.a',
+      'neokai.provider.b',
+    ]);
+  });
+
+  it('status change callback fires on unavailable → available transition', async () => {
+    let keychainThrowing = true;
+    const keychain = new StubCredentialStore(
+      async () => {
+        if (keychainThrowing) throw new KeychainUnavailableError('locked');
+        return null;
       },
       async () => []
     );
-    // Fallback returns null so primary is consulted each time (and throws).
-    const fallback = new StubCredentialStore(
-      async () => null,
+    const store = new KeychainStatusCredentialStore(keychain);
+    const calls: string[] = [];
+    store.setStatusChangeCallback(() => calls.push('fired'));
+
+    await store.get('a', 'b');
+    expect(store.getStatus().backend).toBe('keychain-unavailable');
+    expect(calls).toHaveLength(1);
+
+    keychainThrowing = false;
+    await store.get('a', 'b');
+    expect(store.getStatus().backend).toBe('keychain');
+    expect(calls).toHaveLength(2);
+  });
+
+  it('warns once when keychain remains unavailable', async () => {
+    const keychain = new StubCredentialStore(
+      async () => {
+        throw new KeychainUnavailableError('locked');
+      },
       async () => []
     );
-    const store = new FallbackCredentialStore(primary, fallback);
+    const store = new KeychainStatusCredentialStore(keychain);
 
     await store.get('a', 'b');
     await store.get('c', 'd');
@@ -351,200 +371,6 @@ describe('FallbackCredentialStore', () => {
 
     const warnEvents = logEvents.filter((e) => e.level === 'warn');
     expect(warnEvents).toHaveLength(1);
-    expect(warnEvents[0]?.message ?? '').toContain('Keychain unavailable');
-  });
-
-  it('set() always writes to fallback (authoritative) and mirrors to primary', async () => {
-    const primary = new StubCredentialStore(
-      async () => null,
-      async () => [],
-      async () => {}
-    );
-    const fallback = new StubCredentialStore(
-      async () => null,
-      async () => [],
-      async () => {}
-    );
-    const store = new FallbackCredentialStore(primary, fallback);
-
-    await store.set('neokai.provider.test', 'default', 'secret');
-    expect(fallback.sets).toEqual([['neokai.provider.test', 'default', 'secret']]);
-    expect(primary.sets).toEqual([['neokai.provider.test', 'default', 'secret']]);
-  });
-
-  it('set() marks primary unavailable when primary throws KeychainUnavailableError', async () => {
-    const primary = new StubCredentialStore(
-      async () => null,
-      async () => [],
-      async () => {
-        throw new KeychainUnavailableError('keychain locked');
-      }
-    );
-    const fallback = new StubCredentialStore(
-      async () => null,
-      async () => [],
-      async () => {}
-    );
-    const store = new FallbackCredentialStore(primary, fallback);
-
-    await store.set('neokai.provider.test', 'default', 'secret');
-    // Credential still persisted to fallback.
-    expect(fallback.sets).toEqual([['neokai.provider.test', 'default', 'secret']]);
-    expect(store.getStatus().backend).toBe('database-fallback');
-  });
-
-  it('set() propagates non-keychain errors from primary after fallback write succeeds', async () => {
-    const primary = new StubCredentialStore(
-      async () => null,
-      async () => [],
-      async () => {
-        throw new Error('primary disk full');
-      }
-    );
-    const fallback = new StubCredentialStore(
-      async () => null,
-      async () => [],
-      async () => {}
-    );
-    const store = new FallbackCredentialStore(primary, fallback);
-
-    await expect(store.set('a', 'b', 'c')).rejects.toThrow('primary disk full');
-    // Fallback write happened first.
-    expect(fallback.sets).toHaveLength(1);
-  });
-
-  it('listServices() merges both stores and de-duplicates', async () => {
-    const primary = new StubCredentialStore(
-      async () => null,
-      async () => ['neokai.provider.a', 'neokai.provider.b']
-    );
-    const fallback = new StubCredentialStore(
-      async () => null,
-      async () => ['neokai.provider.b', 'neokai.provider.c']
-    );
-    const store = new FallbackCredentialStore(primary, fallback);
-
-    expect(await store.listServices('neokai.provider.')).toEqual([
-      'neokai.provider.a',
-      'neokai.provider.b',
-      'neokai.provider.c',
-    ]);
-  });
-
-  it('listServices() tolerates primary throwing', async () => {
-    const primary = new StubCredentialStore(
-      async () => null,
-      async () => {
-        throw new Error('boom');
-      }
-    );
-    const fallback = new StubCredentialStore(
-      async () => null,
-      async () => ['neokai.provider.a']
-    );
-    const store = new FallbackCredentialStore(primary, fallback);
-
-    expect(await store.listServices('neokai.provider.')).toEqual(['neokai.provider.a']);
-  });
-
-  it('delete() deletes from both stores when primary is available', async () => {
-    const primary = new StubCredentialStore(
-      async () => null,
-      async () => [],
-      async () => {},
-      async () => {}
-    );
-    const fallback = new StubCredentialStore(
-      async () => null,
-      async () => [],
-      async () => {},
-      async () => {}
-    );
-    const store = new FallbackCredentialStore(primary, fallback);
-
-    await store.delete('neokai.provider.test', 'default');
-    expect(primary.deletes).toEqual([['neokai.provider.test', 'default']]);
-    expect(fallback.deletes).toEqual([['neokai.provider.test', 'default']]);
-  });
-
-  it('delete() rethrows KeychainUnavailableError after deleting from fallback', async () => {
-    // Logout must surface primary failure so the caller knows the keychain
-    // still has the credential — otherwise a locked keychain entry could
-    // silently re-authenticate the user after `security unlock-keychain`.
-    const primary = new StubCredentialStore(
-      async () => null,
-      async () => [],
-      async () => {},
-      async () => {
-        throw new KeychainUnavailableError('keychain locked');
-      }
-    );
-    const fallback = new StubCredentialStore(
-      async () => null,
-      async () => [],
-      async () => {},
-      async () => {}
-    );
-    const store = new FallbackCredentialStore(primary, fallback);
-
-    await expect(store.delete('neokai.provider.test', 'default')).rejects.toBeInstanceOf(
-      KeychainUnavailableError
-    );
-    // Fallback delete must still have happened.
-    expect(fallback.deletes).toHaveLength(1);
-    expect(store.getStatus().backend).toBe('database-fallback');
-  });
-
-  it('status change callback fires on unavailable → available transition', async () => {
-    // First call: primary throws → status flips to unavailable, callback fires.
-    // Second call: primary succeeds → status flips back, callback fires again.
-    let primaryThrowing = true;
-    const primary = new StubCredentialStore(
-      async () => {
-        if (primaryThrowing) throw new KeychainUnavailableError('locked');
-        return null;
-      },
-      async () => []
-    );
-    const fallback = new StubCredentialStore(
-      async () => null,
-      async () => []
-    );
-    const store = new FallbackCredentialStore(primary, fallback);
-
-    const calls: string[] = [];
-    store.setStatusChangeCallback(() => calls.push('fired'));
-
-    await store.get('a', 'b');
-    expect(store.getStatus().backend).toBe('database-fallback');
-    expect(calls).toHaveLength(1);
-
-    primaryThrowing = false;
-    await store.get('a', 'b');
-    expect(store.getStatus().backend).toBe('keychain');
-    expect(calls).toHaveLength(2);
-  });
-
-  it('status change callback does not fire when status stays the same', async () => {
-    const primary = new StubCredentialStore(
-      async () => {
-        throw new KeychainUnavailableError('locked');
-      },
-      async () => []
-    );
-    const fallback = new StubCredentialStore(
-      async () => null,
-      async () => []
-    );
-    const store = new FallbackCredentialStore(primary, fallback);
-
-    const calls: string[] = [];
-    store.setStatusChangeCallback(() => calls.push('fired'));
-
-    await store.get('a', 'b');
-    await store.get('c', 'd');
-    // First call flips available → unavailable, callback fires once.
-    // Second call: already unavailable, no transition.
-    expect(calls).toHaveLength(1);
+    expect(warnEvents[0]?.message ?? '').toContain('Keychain is locked or unavailable');
   });
 });

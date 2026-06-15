@@ -95,10 +95,9 @@ export class GlobalStore {
   );
 
   /**
-   * Provider credential store status. When `keychainAvailable` is false on
-   * macOS, the daemon is using the local encrypted DB fallback because the
-   * Keychain is locked / inaccessible (SSH, CI, background launch). UI should
-   * surface `warning` to the user.
+   * Provider credential store status. When macOS Keychain persistence is locked
+   * / inaccessible (SSH, CI, background launch), UI should surface `warning` to
+   * the user. No DB fallback is used for macOS secrets.
    */
   readonly credentialStoreStatus = computed<CredentialStoreStatus | null>(
     () => this.systemState.value?.credentialStore || null

@@ -9,7 +9,10 @@ import type { MessageHub } from '@neokai/shared';
 import type { CreateProviderParams, UpdateProviderParams } from '@neokai/shared';
 import type { ProviderRepository } from '../../storage/repositories/provider-repository';
 import type { ProviderCredentialManager } from '../credentials/provider-credential-manager';
-import { KeychainUnavailableError } from '../credentials/credential-store.js';
+import {
+  KEYCHAIN_UNAVAILABLE_MESSAGE,
+  KeychainUnavailableError,
+} from '../credentials/credential-store.js';
 import { syncProviderToRegistry, removeProviderFromRegistry } from '../providers/provider-sync.js';
 import { getProviderRegistry } from '../providers/registry.js';
 import { markBuiltInProviderDisabled } from '../providers/factory.js';
@@ -283,35 +286,31 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
     if (!record) throw new Error(`Provider ${data.id} not found`);
     const lock = record.kind === 'custom_endpoint' ? withCustomEndpointsLock : withProviderLock;
     return lock(async () => {
+      try {
+        // Keychain-only persistence: remove credentials before deleting provider
+        // config. If the Keychain is locked, block deletion so we don't leave a
+        // stale credential that can reappear if the provider is re-added.
+        await credentialManager.removeCredentials(record.providerId);
+      } catch (error) {
+        if (error instanceof KeychainUnavailableError) {
+          log.warn(
+            `Provider delete blocked for ${record.providerId}: ${KEYCHAIN_UNAVAILABLE_MESSAGE}`
+          );
+          throw new Error(KEYCHAIN_UNAVAILABLE_MESSAGE);
+        }
+        throw error;
+      }
+
       if (record.kind === 'built_in') {
         // Built-ins cannot be truly deleted; keep the row disabled so the
         // disabled state persists across daemon restarts.
         providerRepo.updateProvider(data.id, { isEnabled: false });
         markBuiltInProviderDisabled(record.providerId);
       } else {
-        // DB-first: delete the row before touching the registry so a failure in
-        // credential removal doesn't leave a ghost record that resurrects on restart.
         providerRepo.deleteProvider(data.id);
       }
       await removeProviderFromRegistry(record.providerId);
-      try {
-        await credentialManager.removeCredentials(record.providerId);
-      } catch (error) {
-        // Provider row and registry entry are already gone. If the macOS
-        // Keychain is locked, the credential still lives there and will be
-        // visible again if the user re-adds the provider after
-        // `security unlock-keychain` — but the provider itself is deleted,
-        // so report success and log the partial cleanup.
-        if (error instanceof KeychainUnavailableError) {
-          log.warn(
-            `Provider ${record.providerId} deleted but keychain entry could not be removed (keychain locked). Run \`security unlock-keychain\` to clean up.`
-          );
-        } else {
-          throw error;
-        }
-      } finally {
-        await clearCacheAndNotifyProvidersChanged(internalEventBus);
-      }
+      await clearCacheAndNotifyProvidersChanged(internalEventBus);
       return { success: true };
     });
   });

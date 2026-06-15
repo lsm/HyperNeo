@@ -529,12 +529,9 @@ describe('Provider RPC handlers', () => {
       );
     });
 
-    it('succeeds when removeCredentials throws KeychainUnavailableError', async () => {
-      // Custom-endpoint provider: row is deleted before credential removal.
-      // When the macOS Keychain is locked, removeCredentials rethrows
-      // KeychainUnavailableError. The handler must NOT propagate that — the
-      // row and registry entry are already gone, so report success and let
-      // the user clean up the stale keychain entry later.
+    it('blocks delete when removeCredentials throws KeychainUnavailableError', async () => {
+      // Keychain-only persistence: if the keychain is locked, do not delete the
+      // provider config while a stale credential may remain in Keychain.
       const created = repo.createProvider({
         providerId: 'my-endpoint',
         displayName: 'My Endpoint',
@@ -546,18 +543,13 @@ describe('Provider RPC handlers', () => {
       });
       const handlers = setup();
 
-      const result = (await handlers.get('providers.delete')!({ id: created.id }, {})) as {
-        success: boolean;
-      };
+      await expect(handlers.get('providers.delete')!({ id: created.id }, {})).rejects.toThrow(
+        'security unlock-keychain'
+      );
 
-      expect(result.success).toBe(true);
-      // Row actually deleted for custom endpoints.
-      expect(repo.getProvider(created.id)).toBeNull();
+      expect(repo.getProvider(created.id)).not.toBeNull();
       expect(creds.removeCredentials).toHaveBeenCalledWith('my-endpoint');
-      // Cache clear + notification still fire (cleanup runs in finally).
-      expect(eventBus.publishAsync).toHaveBeenCalledWith('providers.changed', {
-        sessionId: 'global',
-      });
+      expect(eventBus.publishAsync).not.toHaveBeenCalled();
     });
 
     it('rethrows non-keychain errors from removeCredentials', async () => {

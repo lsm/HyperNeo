@@ -68,17 +68,10 @@ export interface ProviderLogoutRequest {
  * Response from logging out of a provider
  */
 export interface ProviderLogoutResponse {
-  /** Whether the logout was successful (true even for partial keychain logout) */
+  /** Whether the logout was successful */
   success: boolean;
   /** Error message if logout failed */
   error?: string;
-  /**
-   * Non-fatal warning. Currently set when the macOS Keychain was unavailable
-   * (locked / no GUI session) — the local DB row was cleared, but the keychain
-   * entry still exists. The user should run `security unlock-keychain` and
-   * retry to fully remove the credential.
-   */
-  warning?: string;
 }
 
 /**

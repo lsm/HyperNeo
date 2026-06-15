@@ -176,6 +176,7 @@ vi.mock('../CustomEndpointEditor.tsx', () => ({
 }));
 
 import { ProvidersSettings } from '../ProvidersSettings.tsx';
+import { globalStore } from '../../../lib/global-store.ts';
 
 function createMockProvider(
   id: string,
@@ -205,6 +206,7 @@ describe('ProvidersSettings', () => {
     vi.clearAllMocks();
     mockListProviders.mockResolvedValue({ providers: [] });
     mockListProviderAuthStatus.mockResolvedValue({ providers: [] });
+    globalStore.systemState.value = null;
   });
 
   afterEach(() => {
@@ -237,6 +239,39 @@ describe('ProvidersSettings', () => {
     const { container } = render(<ProvidersSettings />);
     await waitFor(() => {
       expect(container.textContent).toContain('No providers configured');
+    });
+  });
+
+  it('shows keychain unavailable banner without DB fallback copy', async () => {
+    globalStore.systemState.value = {
+      credentialStore: {
+        backend: 'keychain-unavailable',
+        keychainAvailable: false,
+        warning:
+          'macOS Keychain is locked or unavailable. Run `security unlock-keychain`, launch NeoKai from Desktop/Terminal with a GUI session, or configure credentials via environment variables.',
+      },
+    } as never;
+
+    const { container } = render(<ProvidersSettings />);
+
+    await waitFor(() => {
+      expect(container.textContent).toContain('macOS Keychain unavailable');
+      expect(container.textContent).toContain('security unlock-keychain');
+      expect(container.textContent).toContain('environment variables');
+      expect(container.textContent).not.toContain('database fallback');
+      expect(container.textContent).not.toContain('local encrypted DB');
+    });
+  });
+
+  it('does not show keychain banner for non-darwin database store', async () => {
+    globalStore.systemState.value = {
+      credentialStore: { backend: 'database', keychainAvailable: false },
+    } as never;
+
+    const { container } = render(<ProvidersSettings />);
+
+    await waitFor(() => {
+      expect(container.textContent).not.toContain('macOS Keychain unavailable');
     });
   });
 
@@ -480,51 +515,6 @@ describe('ProvidersSettings', () => {
 
     await waitFor(() => {
       expect(mockLogoutProvider).toHaveBeenCalledWith('anthropic-copilot');
-    });
-  });
-
-  it('shows warning toast on partial logout when keychain is locked', async () => {
-    // Backend returns {success: true, warning: '...'} when removeCredentials
-    // throws KeychainUnavailableError. The UI must surface the warning so the
-    // user knows to `security unlock-keychain` and retry — otherwise the stale
-    // keychain entry silently re-authenticates them on the next unlock.
-    const providers = [
-      createMockProvider('1', 'anthropic-copilot', {
-        displayName: 'Copilot',
-        authType: 'oauth',
-        available: true,
-      }),
-    ];
-    mockListProviders.mockResolvedValue({ providers });
-    mockListProviderAuthStatus.mockResolvedValue({
-      providers: [
-        { id: 'anthropic-copilot', displayName: 'Copilot', isAuthenticated: true, method: 'oauth' },
-      ],
-    });
-    mockLogoutProvider.mockResolvedValue({
-      success: true,
-      warning:
-        'Logged out from local store. macOS Keychain is locked — run `security unlock-keychain` and retry to remove the keychain entry.',
-    });
-
-    const { container } = render(<ProvidersSettings />);
-    await waitFor(() => expect(container.textContent).toContain('Copilot'));
-
-    const row = container.querySelector('[class*="cursor-pointer"]');
-    if (row) fireEvent.click(row);
-    await waitFor(() => expect(container.textContent).toContain('Logout'));
-
-    const logoutButton = Array.from(container.querySelectorAll('button')).find((b) =>
-      b.textContent?.includes('Logout')
-    );
-    if (logoutButton) fireEvent.click(logoutButton);
-
-    await waitFor(() => {
-      expect(mockLogoutProvider).toHaveBeenCalledWith('anthropic-copilot');
-      // Warning toast shown — NOT the success toast.
-      expect(mockToastWarning).toHaveBeenCalledTimes(1);
-      expect(mockToastWarning).toHaveBeenCalledWith(expect.stringContaining('unlock-keychain'));
-      expect(mockToastSuccess).not.toHaveBeenCalled();
     });
   });
 

@@ -21,7 +21,10 @@ import type {
 } from '@neokai/shared/provider';
 import type { AuthManager } from '../auth-manager';
 import type { ProviderCredentialManager } from '../credentials/provider-credential-manager';
-import { KeychainUnavailableError } from '../credentials/credential-store.js';
+import {
+  KEYCHAIN_UNAVAILABLE_MESSAGE,
+  KeychainUnavailableError,
+} from '../credentials/credential-store.js';
 import { getProviderRegistry } from '../providers/registry';
 import { registerBuiltInProvider } from '../providers/factory.js';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
@@ -37,29 +40,22 @@ async function clearCacheAndNotifyProvidersChanged(
 }
 
 /**
- * Best-effort `removeCredentials`. `FallbackCredentialStore.delete()` rethrows
- * `KeychainUnavailableError` after the fallback row has been removed so callers
- * can surface partial logout (the keychain entry still exists and could
- * re-authenticate the user after `security unlock-keychain`). Wrap the call so
- * auth handlers can return a clear "logged out locally, retry after unlock"
- * message instead of double-throwing through outer catch blocks.
- *
- * Returns `'partial'` when the keychain was unavailable; `'removed'` otherwise.
+ * Remove stored credentials, converting macOS Keychain-unavailable failures
+ * into a clear user-facing error. With macOS Keychain-only persistence there is
+ * no local DB fallback to delete, so logout/delete must not claim success while
+ * the keychain item may still exist.
  */
-async function safeRemoveCredentials(
+async function removeCredentialsOrKeychainError(
   credentialManager: ProviderCredentialManager | undefined,
   providerId: string
-): Promise<'removed' | 'partial'> {
-  if (!credentialManager) return 'removed';
+): Promise<void> {
+  if (!credentialManager) return;
   try {
     await credentialManager.removeCredentials(providerId);
-    return 'removed';
   } catch (error) {
     if (error instanceof KeychainUnavailableError) {
-      log.warn(
-        `Partial logout for ${providerId}: macOS Keychain unavailable — credential still in keychain. Run \`security unlock-keychain\` and retry.`
-      );
-      return 'partial';
+      log.warn(`Logout blocked for ${providerId}: ${KEYCHAIN_UNAVAILABLE_MESSAGE}`);
+      throw new KeychainUnavailableError(KEYCHAIN_UNAVAILABLE_MESSAGE);
     }
     throw error;
   }
@@ -212,7 +208,7 @@ export function setupAuthHandlers(
         const hasEnvironmentCredentials =
           credentialManager?.hasEnvironmentCredentials(providerId) ?? false;
         if (!provider.logout && hasEnvironmentCredentials) {
-          await safeRemoveCredentials(credentialManager, providerId);
+          await removeCredentialsOrKeychainError(credentialManager, providerId);
           return {
             success: false,
             error: `Provider ${providerId} credentials are managed by environment variables. Remove the environment variable to log out.`,
@@ -224,7 +220,7 @@ export function setupAuthHandlers(
           storedCredentials = (await credentialManager?.getCredentials(providerId)) ?? null;
         } catch (readError) {
           // Unreadable stored row — clear it, then run provider logout if available
-          await safeRemoveCredentials(credentialManager, providerId);
+          await removeCredentialsOrKeychainError(credentialManager, providerId);
           if (provider.logout) {
             try {
               await provider.logout();
@@ -249,30 +245,23 @@ export function setupAuthHandlers(
         if (provider.logout) {
           await provider.logout();
         }
-        // Always clear the credential store row so stale rows don't resurrect
-        // on the next daemon startup. `safeRemoveCredentials` returns 'partial'
-        // when the macOS Keychain was unavailable (locked / no GUI session) —
-        // surface that to the user so they can `security unlock-keychain` and
-        // retry to fully remove the credential.
-        const removalStatus = await safeRemoveCredentials(credentialManager, providerId);
+        // Keychain-only persistence: if removal fails because the keychain is
+        // locked, do not claim logout succeeded. The credential may still exist
+        // and could authenticate again after unlock.
+        await removeCredentialsOrKeychainError(credentialManager, providerId);
         if (!provider.logout && provider.setCredentials) {
           provider.setCredentials({ type: 'api_key', apiKey: '' });
         }
         await clearCacheAndNotifyProvidersChanged(internalEventBus);
-        if (removalStatus === 'partial') {
-          return {
-            success: true,
-            warning:
-              'Logged out from local store. macOS Keychain is locked — run ' +
-              '`security unlock-keychain` and retry to remove the keychain entry.',
-          };
-        }
         return { success: true };
       } catch (error) {
-        // Best-effort cleanup; don't let a locked keychain mask the original
-        // error by re-throwing out of this catch and skipping the cache clear
-        // + structured error return below.
-        await safeRemoveCredentials(credentialManager, providerId);
+        try {
+          await removeCredentialsOrKeychainError(credentialManager, providerId);
+        } catch (cleanupError) {
+          if (!(cleanupError instanceof KeychainUnavailableError)) {
+            log.error(`Cleanup after logout failure failed for ${providerId}:`, cleanupError);
+          }
+        }
         await clearCacheAndNotifyProvidersChanged(internalEventBus);
         log.error(`Logout failed for ${providerId}:`, error);
         return {
@@ -313,7 +302,7 @@ export function setupAuthHandlers(
           // auth file after a definitive failure, making a post-logout probe
           // falsely truthy and leaving a stale row in place. Best-effort: if
           // the keychain is locked, the rethrow won't skip the restore below.
-          await safeRemoveCredentials(credentialManager, providerId);
+          await removeCredentialsOrKeychainError(credentialManager, providerId);
           const remaining = await provider.getCredentials?.();
           if (remaining?.type === 'oauth') {
             // Transient failure — provider still holds credentials. Restore row.

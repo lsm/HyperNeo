@@ -626,7 +626,7 @@ describe('Auth RPC Handlers', () => {
       expect(result.error).toBe('Logout failed');
     });
 
-    it('returns success with warning when removeCredentials throws KeychainUnavailableError', async () => {
+    it('returns failure when removeCredentials throws KeychainUnavailableError', async () => {
       const credentialManager = {
         getCredentials: mock(async () => ({ type: 'api_key' as const, apiKey: 'stored-key' })),
         removeCredentials: mock(async () => {
@@ -647,21 +647,17 @@ describe('Auth RPC Handlers', () => {
 
       const result = (await handler!({ providerId: 'test-provider' }, {})) as {
         success: boolean;
-        warning?: string;
+        error?: string;
       };
 
-      // Partial logout: local DB row cleared, keychain entry still present.
-      expect(result.success).toBe(true);
-      expect(result.warning).toContain('security unlock-keychain');
+      // Keychain-only persistence: if keychain removal fails, do not claim logout succeeded.
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('security unlock-keychain');
       expect(mockProvider.logout).toHaveBeenCalledTimes(1);
       expect(credentialManager.removeCredentials).toHaveBeenCalledWith('test-provider');
     });
 
-    it('does not double-throw when outer catch hits keychain-unavailable path', async () => {
-      // Env-managed credentials path: provider has no logout, env override is
-      // true, so removeCredentials is called inside the env-branch. If the
-      // keychain is locked, safeRemoveCredentials returns 'partial' and the
-      // handler returns an env-vars error without re-throwing.
+    it('returns keychain guidance when env-managed cleanup hits locked keychain', async () => {
       const credentialManager = {
         removeCredentials: mock(async () => {
           throw new KeychainUnavailableError('keychain locked');
@@ -685,9 +681,8 @@ describe('Auth RPC Handlers', () => {
       };
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain('managed by environment variables');
-      // removeCredentials was attempted (partial), not skipped
-      expect(credentialManager.removeCredentials).toHaveBeenCalledTimes(1);
+      expect(result.error).toContain('security unlock-keychain');
+      expect(credentialManager.removeCredentials).toHaveBeenCalledTimes(2);
     });
   });
 
@@ -856,11 +851,7 @@ describe('Auth RPC Handlers', () => {
       });
     });
 
-    it('still restores credential store row when removeCredentials throws KeychainUnavailableError', async () => {
-      // Regression: safeRemoveCredentials must swallow the keychain error so
-      // the storeOAuthTokens restore runs. Without the wrapper, the error
-      // would propagate out of removeCredentials and skip the restore entirely,
-      // leaving a transient-refresh-failure credential lost.
+    it('returns keychain guidance when refresh cleanup hits locked keychain', async () => {
       const credentialManager = {
         removeCredentials: mock(async () => {
           throw new KeychainUnavailableError('keychain locked');
@@ -890,12 +881,9 @@ describe('Auth RPC Handlers', () => {
       };
 
       expect(result.success).toBe(false);
-      // safeRemoveCredentials swallowed the keychain error, so the restore ran.
+      expect(result.error).toContain('security unlock-keychain');
       expect(credentialManager.removeCredentials).toHaveBeenCalledWith('test-provider');
-      expect(credentialManager.storeOAuthTokens).toHaveBeenCalledWith('test-provider', {
-        type: 'oauth',
-        accessToken: 'still-valid',
-      });
+      expect(credentialManager.storeOAuthTokens).not.toHaveBeenCalled();
     });
 
     it('handles refresh token errors', async () => {

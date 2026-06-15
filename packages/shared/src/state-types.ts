@@ -64,9 +64,8 @@ export interface SystemState {
 
   /**
    * Provider credential store status. Surfaced so the UI can warn the user
-   * when the macOS Keychain is unavailable (e.g. daemon launched over SSH or
-   * in CI without GUI session access) and credentials are being read from /
-   * written to the local encrypted DB fallback instead.
+   * when macOS Keychain persistence is unavailable (e.g. daemon launched over
+   * SSH or in CI without GUI session access).
    */
   credentialStore: CredentialStoreStatus;
 
@@ -76,17 +75,18 @@ export interface SystemState {
 /**
  * Status of the provider credential store.
  *
- * - `keychain`          — primary macOS Keychain is in use.
- * - `database-fallback` — Keychain unavailable; using local encrypted SQLite store.
- * - `database`          — non-darwin platform or test env; Keychain not in use.
+ * - `keychain`              — macOS Keychain is in use.
+ * - `keychain-unavailable`  — macOS Keychain is locked/unavailable; persistent
+ *   credential writes cannot proceed until unlocked.
+ * - `database`              — non-darwin platform or test env; Keychain not in use.
  */
-export type CredentialStoreBackend = 'keychain' | 'database-fallback' | 'database';
+export type CredentialStoreBackend = 'keychain' | 'keychain-unavailable' | 'database';
 
 export interface CredentialStoreStatus {
   backend: CredentialStoreBackend;
-  /** True when the Keychain would be used but is currently inaccessible. */
+  /** True when the macOS Keychain is currently usable. */
   keychainAvailable: boolean;
-  /** Human-readable hint shown to the user when `keychainAvailable` is false. */
+  /** Human-readable hint shown to the user when `keychainAvailable` is false on macOS. */
   warning?: string;
 }
 

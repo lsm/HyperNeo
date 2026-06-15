@@ -120,8 +120,7 @@ export class ProviderCredentialManager {
    * Register a listener that fires when the credential store's keychain
    * availability transitions. Wired by `DaemonApp` to
    * `stateManager.broadcastSystemChange()` so the UI banner appears / clears
-   * immediately on `markPrimaryUnavailable` / `markPrimaryAvailable` instead
-   * of waiting for a reconnect.
+   * immediately instead of waiting for a reconnect.
    */
   registerStatusChangeCallback(callback: () => void): void {
     const store = this.store as CredentialStore & {
@@ -130,7 +129,7 @@ export class ProviderCredentialManager {
     if (typeof store.setStatusChangeCallback === 'function') {
       store.setStatusChangeCallback(callback);
     }
-    // Non-FallbackCredentialStore implementations have no status to broadcast.
+    // Non-KeychainStatusCredentialStore implementations have no status to broadcast.
   }
 
   private getEnvValue(keys: string[] | undefined): string | undefined {

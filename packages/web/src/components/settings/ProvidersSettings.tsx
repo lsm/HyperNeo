@@ -223,15 +223,7 @@ export function ProvidersSettings() {
         toast.error(response.error || 'Logout failed');
         return;
       }
-      // Partial logout: local DB row cleared, keychain entry still present
-      // (keychain locked / no GUI session). Surface the warning so the user
-      // can `security unlock-keychain` and retry — otherwise the stale
-      // keychain value silently re-authenticates them on the next unlock.
-      if (response.warning) {
-        toast.warning(response.warning);
-      } else {
-        toast.success(`Logged out from ${provider.displayName}`);
-      }
+      toast.success(`Logged out from ${provider.displayName}`);
       await loadProviders();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Logout failed');
@@ -354,12 +346,12 @@ export function ProvidersSettings() {
             </Button>
           </div>
 
-          {credentialStore?.backend === 'database-fallback' && (
+          {credentialStore?.backend === 'keychain-unavailable' && (
             <div class="rounded-lg border border-yellow-500/30 bg-yellow-500/10 px-4 py-3">
               <p class="text-sm text-yellow-400 font-medium">macOS Keychain unavailable</p>
               <p class="text-xs text-yellow-400/80 mt-1">
                 {credentialStore.warning ??
-                  'Credentials are being stored in the local encrypted database fallback.'}
+                  'Persistent credential storage is unavailable until macOS Keychain is unlocked. Run `security unlock-keychain`, launch NeoKai from a desktop/GUI session, or use environment variables / a secret manager for headless deployments.'}
               </p>
             </div>
           )}

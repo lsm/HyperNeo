@@ -6,7 +6,6 @@
  */
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { EventEmitter } from 'node:events';
-import { Database } from 'bun:sqlite';
 
 interface MockSpawnProcess extends EventEmitter {
   stderr: EventEmitter;
@@ -35,9 +34,12 @@ mock.module('node:child_process', () => ({
   },
 }));
 
-const { KeychainCredentialStore, FallbackCredentialStore, KeychainUnavailableError } = await import(
-  '../../../../src/lib/credentials/credential-store.js'
-);
+const {
+  KeychainCredentialStore,
+  KeychainStatusCredentialStore,
+  KeychainUnavailableError,
+  KEYCHAIN_UNAVAILABLE_MESSAGE,
+} = await import('../../../../src/lib/credentials/credential-store.js');
 
 function makeExecFileError(code: number, stderr: string): Error {
   const err = new Error(`Command failed: security exit ${code}`) as Error & {
@@ -137,16 +139,11 @@ describe('KeychainCredentialStore — exit code 36 handling', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Integration: real KeychainCredentialStore + FallbackCredentialStore + real
-// DatabaseCredentialStore, with `node:child_process` mocked to drive the same
-// exit-code paths the daemon sees on a locked macOS Keychain.
-//
-// These tests guard against the P0 regression where KeychainCredentialStore
-// silently swallows code 36 and FallbackCredentialStore consequently drops
-// the credential. They use the REAL classes end-to-end.
+// Integration: real KeychainCredentialStore + KeychainStatusCredentialStore,
+// with `node:child_process` mocked to drive locked-Keychain paths.
 // ---------------------------------------------------------------------------
 
-describe('FallbackCredentialStore integration (real KeychainCredentialStore + DB fallback)', () => {
+describe('KeychainStatusCredentialStore integration (real KeychainCredentialStore)', () => {
   beforeEach(() => {
     execFileImpl = null;
     spawnImpl = null;
@@ -156,141 +153,80 @@ describe('FallbackCredentialStore integration (real KeychainCredentialStore + DB
     spawnImpl = null;
   });
 
-  function makeStore(): { store: FallbackCredentialStore; db: Database } {
-    const db = new Database(':memory:');
-    const store = new FallbackCredentialStore(
-      new KeychainCredentialStore(),
-      // Inject a stable encryption key so tests don't write to ~/.neokai
-      new (require('../../../../src/lib/credentials/credential-store.js').DatabaseCredentialStore)(
-        db,
-        'integration-test-secret'
-      )
-    );
-    return { store, db };
+  function makeStore(): KeychainStatusCredentialStore {
+    return new KeychainStatusCredentialStore(new KeychainCredentialStore());
   }
 
-  it('get() falls through to DB and marks keychain unavailable on code 36', async () => {
-    // Seed DB fallback with a credential.
-    const { store, db } = makeStore();
-    try {
-      // First write via the fallback so DB has the row.
-      execFileImpl = (_cmd: unknown, _args: unknown, cb: (err: unknown) => void) => {
-        // dump-keychain returns no services (clean keychain) — fine.
-        cb(null, '', '');
-        return undefined as unknown;
-      };
-      // Force keychain failure on write (set goes through spawn, but we also
-      // need get() to fail) — set up both.
-      spawnImpl = () => {
-        const proc = new EventEmitter() as MockSpawnProcess;
-        proc.stderr = new EventEmitter();
-        proc.stdout = new EventEmitter();
-        proc.stdin = { write: () => undefined, end: () => undefined };
-        queueMicrotask(() => {
-          proc.stderr.emit('data', Buffer.from('User interaction is not allowed.'));
-          proc.emit('close', 36);
-        });
-        return proc;
-      };
-      execFileImpl = (_c: unknown, _a: unknown, cb: (err: unknown) => void) => {
-        cb(makeExecFileError(36, 'User interaction is not allowed.'));
-        return undefined as unknown;
-      };
+  it('get() returns null and marks keychain unavailable on code 36', async () => {
+    execFileImpl = (_c: unknown, _a: unknown, cb: (err: unknown) => void) => {
+      cb(makeExecFileError(36, 'User interaction is not allowed.'));
+      return undefined as unknown;
+    };
+    const store = makeStore();
 
-      await store.set('neokai.provider.test', 'default', 'integration-secret');
-      // Status should now reflect unavailable.
-      expect(store.getStatus().backend).toBe('database-fallback');
-      expect(store.getStatus().keychainAvailable).toBe(false);
-
-      const result = await store.get('neokai.provider.test', 'default');
-      expect(result).toBe('integration-secret');
-
-      // Verify credential actually persisted in DB (keychain was unavailable).
-      const row = db
-        .query<{ encrypted_data: Uint8Array }, []>(
-          'SELECT encrypted_data FROM provider_credentials WHERE provider_id = ?'
-        )
-        .get('neokai.provider.test:default');
-      expect(row).not.toBeNull();
-    } finally {
-      db.close();
-    }
+    await expect(store.get('neokai.provider.test', 'default')).resolves.toBeNull();
+    expect(store.getStatus()).toEqual({
+      backend: 'keychain-unavailable',
+      keychainAvailable: false,
+      warning: KEYCHAIN_UNAVAILABLE_MESSAGE,
+    });
   });
 
-  it('set() persists to DB when keychain unavailable (does NOT silently drop)', async () => {
-    const { store, db } = makeStore();
-    try {
-      spawnImpl = () => {
-        const proc = new EventEmitter() as MockSpawnProcess;
-        proc.stderr = new EventEmitter();
-        proc.stdout = new EventEmitter();
-        proc.stdin = { write: () => undefined, end: () => undefined };
-        queueMicrotask(() => {
-          proc.stderr.emit('data', Buffer.from('User interaction is not allowed.'));
-          proc.emit('close', 36);
-        });
-        return proc;
-      };
+  it('set() rejects when keychain is unavailable and does not use DB fallback', async () => {
+    spawnImpl = () => {
+      const proc = new EventEmitter() as MockSpawnProcess;
+      proc.stderr = new EventEmitter();
+      proc.stdout = new EventEmitter();
+      proc.stdin = { write: () => undefined, end: () => undefined };
+      queueMicrotask(() => {
+        proc.stderr.emit('data', Buffer.from('User interaction is not allowed.'));
+        proc.emit('close', 36);
+      });
+      return proc;
+    };
+    const store = makeStore();
 
-      await store.set('neokai.provider.test', 'default', 'must-not-be-lost');
-
-      const row = db
-        .query<{ provider_id: string }, []>(
-          'SELECT provider_id FROM provider_credentials WHERE provider_id = ?'
-        )
-        .get('neokai.provider.test:default');
-      expect(row).not.toBeNull();
-      expect(store.getStatus().backend).toBe('database-fallback');
-    } finally {
-      db.close();
-    }
+    await expect(store.set('neokai.provider.test', 'default', 'must-not-be-lost')).rejects.toThrow(
+      KEYCHAIN_UNAVAILABLE_MESSAGE
+    );
+    expect(store.getStatus().backend).toBe('keychain-unavailable');
   });
 
-  it('delete() rethrows KeychainUnavailableError so logout surfaces partial removal', async () => {
-    const { store, db } = makeStore();
-    try {
-      execFileImpl = (_cmd: unknown, _args: unknown, cb: (err: unknown) => void) => {
-        cb(makeExecFileError(36, 'User interaction is not allowed.'));
-        return undefined as unknown;
-      };
-      // delete() must surface the primary failure (after the fallback row is
-      // removed) so the caller knows the keychain still holds the credential.
-      await expect(store.delete('neokai.provider.test', 'default')).rejects.toBeInstanceOf(
-        KeychainUnavailableError
-      );
-      expect(store.getStatus().backend).toBe('database-fallback');
-    } finally {
-      db.close();
-    }
+  it('delete() rejects when keychain is unavailable so logout fails clearly', async () => {
+    execFileImpl = (_cmd: unknown, _args: unknown, cb: (err: unknown) => void) => {
+      cb(makeExecFileError(36, 'User interaction is not allowed.'));
+      return undefined as unknown;
+    };
+    const store = makeStore();
+
+    await expect(store.delete('neokai.provider.test', 'default')).rejects.toBeInstanceOf(
+      KeychainUnavailableError
+    );
+    await expect(store.delete('neokai.provider.test', 'default')).rejects.toThrow(
+      KEYCHAIN_UNAVAILABLE_MESSAGE
+    );
+    expect(store.getStatus().backend).toBe('keychain-unavailable');
   });
 
-  it('delete() succeeds when primary is available', async () => {
-    const { store, db } = makeStore();
-    try {
-      execFileImpl = (_cmd: unknown, _args: unknown, cb: (err: unknown) => void) => {
-        // security delete-generic-password succeeds.
-        cb(null, '', '');
-        return undefined as unknown;
-      };
-      await expect(store.delete('neokai.provider.test', 'default')).resolves.toBeUndefined();
-      expect(store.getStatus().backend).toBe('keychain');
-    } finally {
-      db.close();
-    }
+  it('delete() succeeds when keychain is available', async () => {
+    execFileImpl = (_cmd: unknown, _args: unknown, cb: (err: unknown) => void) => {
+      cb(null, '', '');
+      return undefined as unknown;
+    };
+    const store = makeStore();
+
+    await expect(store.delete('neokai.provider.test', 'default')).resolves.toBeUndefined();
+    expect(store.getStatus().backend).toBe('keychain');
   });
 
   it('get() does NOT mark unavailable when primary throws a non-keychain error', async () => {
-    const { store, db } = makeStore();
-    try {
-      execFileImpl = (_cmd: unknown, _args: unknown, cb: (err: unknown) => void) => {
-        cb(makeExecFileError(99, 'unexpected'));
-        return undefined as unknown;
-      };
-      // Non-keychain error must propagate, not be masked by fallback.
-      await expect(store.get('neokai.provider.test', 'default')).rejects.toThrow();
-      expect(store.getStatus().backend).toBe('keychain');
-    } finally {
-      db.close();
-    }
+    execFileImpl = (_cmd: unknown, _args: unknown, cb: (err: unknown) => void) => {
+      cb(makeExecFileError(99, 'unexpected'));
+      return undefined as unknown;
+    };
+    const store = makeStore();
+
+    await expect(store.get('neokai.provider.test', 'default')).rejects.toThrow();
+    expect(store.getStatus().backend).toBe('keychain');
   });
 });
