@@ -280,7 +280,14 @@ describe('validateAgentDefinition', () => {
   });
 
   test('accepts valid model values', () => {
-    for (const model of ['sonnet', 'opus', 'haiku', 'inherit'] as const) {
+    for (const model of [
+      'sonnet',
+      'opus',
+      'haiku',
+      'fable',
+      'inherit',
+      'claude-fable-5',
+    ] as const) {
       const result = validateAgentDefinition('explorer', {
         description: 'Explores the codebase',
         prompt: 'You are a code explorer',
@@ -290,14 +297,14 @@ describe('validateAgentDefinition', () => {
     }
   });
 
-  test('rejects invalid model value', () => {
+  test('rejects empty model value', () => {
     const result = validateAgentDefinition('explorer', {
       description: 'Explores the codebase',
       prompt: 'You are a code explorer',
-      model: 'gpt-4' as never,
+      model: '',
     });
     expect(result.valid).toBe(false);
-    expect(result.error).toContain('invalid model');
+    expect(result.error).toContain('model must be a non-empty string');
   });
 
   test('rejects non-array tools', () => {

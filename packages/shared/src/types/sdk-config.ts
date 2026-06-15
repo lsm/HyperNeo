@@ -96,7 +96,7 @@ export interface ToolsSettings {
 /**
  * Model options for agents/subagents
  */
-export type AgentModel = 'sonnet' | 'opus' | 'haiku' | 'inherit';
+export type AgentModel = 'sonnet' | 'opus' | 'haiku' | 'fable' | 'inherit' | (string & {});
 
 /**
  * MCP server specification for agents
