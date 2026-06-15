@@ -482,6 +482,104 @@ describe('visualStateToCreateParams', () => {
     });
   });
 
+  it('omits retry settings for built-in pr_ready hooks', () => {
+    const params = visualStateToCreateParams(
+      makeState({
+        hooks: [
+          {
+            id: 'hook-1',
+            enabled: true,
+            sourceNode: 'Step 1',
+            method: 'send_message',
+            validator: { kind: 'built_in', id: 'pr_ready' },
+            retry: { maxAttempts: 3, delayMs: 5000, backoffMultiplier: 1 },
+          },
+        ],
+      }),
+      'space-1',
+      'WF'
+    );
+
+    expect(params.hooks?.[0].retry).toBeUndefined();
+  });
+
+  it('drops unsupported human-only hooks without authorized callers', () => {
+    const params = visualStateToCreateParams(
+      makeState({
+        hooks: [
+          {
+            id: 'hook-1',
+            enabled: true,
+            sourceNode: 'Step 1',
+            method: 'send_message',
+            humanOnly: true,
+            validator: { kind: 'script', interpreter: 'bash', source: 'echo ok' },
+          },
+        ],
+      }),
+      'space-1',
+      'WF'
+    );
+
+    expect(params.hooks).toBeUndefined();
+  });
+
+  it('serializes hook result contract fields and strips unsupported humanOnly', () => {
+    const params = visualStateToCreateParams(
+      makeState({
+        hooks: [
+          {
+            id: 'hook-1',
+            enabled: true,
+            sourceNode: 'Step 1',
+            targetNode: 'Step 2',
+            method: 'send_message',
+            label: 'PR ready',
+            classification: 'validation',
+            humanOnly: true,
+            validator: {
+              kind: 'script',
+              interpreter: 'bash',
+              source: 'echo {"type":"allow"}',
+              timeoutMs: 2000,
+              externalLookups: ['github'],
+            },
+            localState: {
+              defaults: { pr_url: null },
+              recentResultRef: { hookId: 'hook-0', key: 'lastResult' },
+            },
+            templateData: { banner: 'needs_pr' },
+            authorizedCallers: [{ sourceNode: 'Step 1', agentSlots: ['coder'] }],
+          },
+        ],
+      }),
+      'space-1',
+      'WF'
+    );
+
+    expect(params.hooks?.[0]).toMatchObject({
+      id: 'hook-1',
+      label: 'PR ready',
+      classification: 'validation',
+      sourceNode: 'Step 1',
+      targetNode: 'Step 2',
+      validator: {
+        kind: 'script',
+        interpreter: 'bash',
+        source: 'echo {"type":"allow"}',
+        timeoutMs: 2000,
+        externalLookups: ['github'],
+      },
+      localState: {
+        defaults: { pr_url: null },
+        recentResultRef: { hookId: 'hook-0', key: 'lastResult' },
+      },
+      templateData: { banner: 'needs_pr' },
+      authorizedCallers: [{ sourceNode: 'Step 1', agentSlots: ['coder'] }],
+    });
+    expect(params.hooks?.[0].humanOnly).toBeUndefined();
+  });
+
   it('passes endNodeId through to create params', () => {
     const state = makeState({ endNodeId: 's2' });
     const params = visualStateToCreateParams(state, 'space-1', 'WF');
