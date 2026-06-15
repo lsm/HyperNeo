@@ -194,9 +194,8 @@ export class EvolutionEpisodeService {
     const scope = this.requireScope(params.scopeId);
     const requestedIds = new Set(params.evidenceIds);
     if (requestedIds.size === 0) throw new Error('evidenceIds is required');
-    const evidence = this.deps.evolutionRepo
-      .listEvidence(params.scopeId)
-      .filter((item) => requestedIds.has(item.id));
+    const allEvidence = this.deps.evolutionRepo.listEvidence(params.scopeId);
+    const evidence = allEvidence.filter((item) => requestedIds.has(item.id));
     if (evidence.length !== requestedIds.size) {
       throw new Error('All evidenceIds must belong to the scope');
     }
@@ -212,6 +211,7 @@ export class EvolutionEpisodeService {
       timeWindow: params.timeWindow ?? deriveTimeWindow(evidence),
       preflight: scoreEvolutionEvidenceQuality({
         evidence,
+        availableScopeEvidence: allEvidence,
         tasks: tasks.map(({ task }) => task),
         workflowRuns: workflowRuns.map(({ run, tasks: runTasks, artifacts }) => ({
           run,
