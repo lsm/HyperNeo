@@ -216,6 +216,28 @@ describe('ContextFetcher.toContextInfo', () => {
     expect(info.autoCompactThreshold).toBe(244800);
   });
 
+  it('resolves SDK alias model name to canonical Codex model ID via sdkModelIds', () => {
+    const response = baseResponse({
+      totalTokens: 10000,
+      maxTokens: 272000,
+      rawMaxTokens: 272000,
+      percentage: 4,
+      model: 'claude-opus-4-7',
+      categories: [{ name: 'Messages', tokens: 10000, color: 'blue' }],
+    });
+
+    const info = ContextFetcher.toContextInfo(response, {
+      id: 'gpt-5.5',
+      sdkModelIds: ['claude-opus-4-7'],
+      provider: 'anthropic-codex',
+      preferContextWindowMetadata: true,
+      contextWindow: 272000,
+    });
+
+    expect(info.model).toBe('gpt-5.5');
+    expect(info.totalCapacity).toBe(272000);
+  });
+
   it('uses Codex model metadata when SDK reports the generic 200k capacity', () => {
     const response = baseResponse({
       totalTokens: 136000,

@@ -278,8 +278,11 @@ export class ContextFetcher {
       autoCompactThreshold = Math.floor(capacity * 0.9);
     }
 
+    const resolvedModel =
+      responseModel && matchesSdkModelId && modelMetadata?.id ? modelMetadata.id : responseModel;
+
     return {
-      model: response.model ?? null,
+      model: resolvedModel ?? null,
       totalUsed: response.totalTokens,
       totalCapacity: capacity,
       percentUsed,
