@@ -21,6 +21,7 @@ export type {
   ProviderAuthRequest,
   ProviderAuthResponse,
   ProviderLogoutRequest,
+  ProviderLogoutResponse,
   ProviderRefreshRequest,
   ProviderRefreshResponse,
   ListProviderAuthStatusResponse,

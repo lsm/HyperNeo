@@ -9,11 +9,15 @@ import type { MessageHub } from '@neokai/shared';
 import type { CreateProviderParams, UpdateProviderParams } from '@neokai/shared';
 import type { ProviderRepository } from '../../storage/repositories/provider-repository';
 import type { ProviderCredentialManager } from '../credentials/provider-credential-manager';
+import { KeychainUnavailableError } from '../credentials/credential-store.js';
 import { syncProviderToRegistry, removeProviderFromRegistry } from '../providers/provider-sync.js';
 import { getProviderRegistry } from '../providers/registry.js';
 import { markBuiltInProviderDisabled } from '../providers/factory.js';
 import { withCustomEndpointsLock } from './custom-endpoint-handlers.js';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
+import { Logger } from '../logger';
+
+const log = new Logger('provider-handlers');
 
 const VALID_PROVIDER_KINDS = new Set(['built_in', 'custom_endpoint']);
 const VALID_AUTH_TYPES = new Set(['api_key', 'oauth', 'none']);
@@ -292,6 +296,19 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
       await removeProviderFromRegistry(record.providerId);
       try {
         await credentialManager.removeCredentials(record.providerId);
+      } catch (error) {
+        // Provider row and registry entry are already gone. If the macOS
+        // Keychain is locked, the credential still lives there and will be
+        // visible again if the user re-adds the provider after
+        // `security unlock-keychain` — but the provider itself is deleted,
+        // so report success and log the partial cleanup.
+        if (error instanceof KeychainUnavailableError) {
+          log.warn(
+            `Provider ${record.providerId} deleted but keychain entry could not be removed (keychain locked). Run \`security unlock-keychain\` to clean up.`
+          );
+        } else {
+          throw error;
+        }
       } finally {
         await clearCacheAndNotifyProvidersChanged(internalEventBus);
       }

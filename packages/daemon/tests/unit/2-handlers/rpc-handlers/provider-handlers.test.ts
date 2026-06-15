@@ -9,6 +9,7 @@ import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/
 import { resetProviderFactory } from '../../../../src/lib/providers/factory';
 import type { ProviderRepository } from '../../../../src/storage/repositories/provider-repository';
 import type { ProviderCredentialManager } from '../../../../src/lib/credentials/provider-credential-manager';
+import { KeychainUnavailableError } from '../../../../src/lib/credentials/credential-store';
 import type { ProviderRecord, CreateProviderParams } from '@neokai/shared';
 import type { Provider } from '@neokai/shared/provider';
 import type {
@@ -525,6 +526,54 @@ describe('Provider RPC handlers', () => {
       const handlers = setup();
       await expect(handlers.get('providers.delete')!({ id: 'missing' }, {})).rejects.toThrow(
         'not found'
+      );
+    });
+
+    it('succeeds when removeCredentials throws KeychainUnavailableError', async () => {
+      // Custom-endpoint provider: row is deleted before credential removal.
+      // When the macOS Keychain is locked, removeCredentials rethrows
+      // KeychainUnavailableError. The handler must NOT propagate that — the
+      // row and registry entry are already gone, so report success and let
+      // the user clean up the stale keychain entry later.
+      const created = repo.createProvider({
+        providerId: 'my-endpoint',
+        displayName: 'My Endpoint',
+        kind: 'custom_endpoint',
+        authType: 'api_key',
+      });
+      creds.removeCredentials = mock(async () => {
+        throw new KeychainUnavailableError('The user name or passphrase is not correct');
+      });
+      const handlers = setup();
+
+      const result = (await handlers.get('providers.delete')!({ id: created.id }, {})) as {
+        success: boolean;
+      };
+
+      expect(result.success).toBe(true);
+      // Row actually deleted for custom endpoints.
+      expect(repo.getProvider(created.id)).toBeNull();
+      expect(creds.removeCredentials).toHaveBeenCalledWith('my-endpoint');
+      // Cache clear + notification still fire (cleanup runs in finally).
+      expect(eventBus.publishAsync).toHaveBeenCalledWith('providers.changed', {
+        sessionId: 'global',
+      });
+    });
+
+    it('rethrows non-keychain errors from removeCredentials', async () => {
+      const created = repo.createProvider({
+        providerId: 'my-endpoint',
+        displayName: 'My Endpoint',
+        kind: 'custom_endpoint',
+        authType: 'api_key',
+      });
+      creds.removeCredentials = mock(async () => {
+        throw new Error('database is locked');
+      });
+      const handlers = setup();
+
+      await expect(handlers.get('providers.delete')!({ id: created.id }, {})).rejects.toThrow(
+        'database is locked'
       );
     });
   });

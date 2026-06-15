@@ -15,6 +15,7 @@ import type { AuthManager } from '../../../../src/lib/auth-manager';
 import type { Provider } from '@neokai/shared/provider';
 import { resetProviderRegistry, getProviderRegistry } from '../../../../src/lib/providers/registry';
 import { resetProviderFactory } from '../../../../src/lib/providers/factory';
+import { KeychainUnavailableError } from '../../../../src/lib/credentials/credential-store';
 
 // Type for captured request handlers
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
@@ -624,6 +625,70 @@ describe('Auth RPC Handlers', () => {
       expect(result.success).toBe(false);
       expect(result.error).toBe('Logout failed');
     });
+
+    it('returns success with warning when removeCredentials throws KeychainUnavailableError', async () => {
+      const credentialManager = {
+        getCredentials: mock(async () => ({ type: 'api_key' as const, apiKey: 'stored-key' })),
+        removeCredentials: mock(async () => {
+          throw new KeychainUnavailableError('The user name or passphrase is not correct');
+        }),
+        hasEnvironmentCredentials: mock(() => false),
+      };
+      setupAuthHandlers(
+        messageHubData.hub,
+        mockAuthManager as unknown as AuthManager,
+        credentialManager as never
+      );
+      const mockProvider = createMockProvider();
+      registry.register(mockProvider);
+
+      const handler = messageHubData.handlers.get('auth.logout');
+      expect(handler).toBeDefined();
+
+      const result = (await handler!({ providerId: 'test-provider' }, {})) as {
+        success: boolean;
+        warning?: string;
+      };
+
+      // Partial logout: local DB row cleared, keychain entry still present.
+      expect(result.success).toBe(true);
+      expect(result.warning).toContain('security unlock-keychain');
+      expect(mockProvider.logout).toHaveBeenCalledTimes(1);
+      expect(credentialManager.removeCredentials).toHaveBeenCalledWith('test-provider');
+    });
+
+    it('does not double-throw when outer catch hits keychain-unavailable path', async () => {
+      // Env-managed credentials path: provider has no logout, env override is
+      // true, so removeCredentials is called inside the env-branch. If the
+      // keychain is locked, safeRemoveCredentials returns 'partial' and the
+      // handler returns an env-vars error without re-throwing.
+      const credentialManager = {
+        removeCredentials: mock(async () => {
+          throw new KeychainUnavailableError('keychain locked');
+        }),
+        hasEnvironmentCredentials: mock(() => true),
+      };
+      setupAuthHandlers(
+        messageHubData.hub,
+        mockAuthManager as unknown as AuthManager,
+        credentialManager as never
+      );
+      const mockProvider = createMockProvider({ logout: undefined });
+      registry.register(mockProvider);
+
+      const handler = messageHubData.handlers.get('auth.logout');
+      expect(handler).toBeDefined();
+
+      const result = (await handler!({ providerId: 'test-provider' }, {})) as {
+        success: boolean;
+        error?: string;
+      };
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('managed by environment variables');
+      // removeCredentials was attempted (partial), not skipped
+      expect(credentialManager.removeCredentials).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe('auth.refresh', () => {
@@ -784,6 +849,48 @@ describe('Auth RPC Handlers', () => {
 
       expect(result.success).toBe(false);
       // Row is removed first, then restored because provider still holds credentials
+      expect(credentialManager.removeCredentials).toHaveBeenCalledWith('test-provider');
+      expect(credentialManager.storeOAuthTokens).toHaveBeenCalledWith('test-provider', {
+        type: 'oauth',
+        accessToken: 'still-valid',
+      });
+    });
+
+    it('still restores credential store row when removeCredentials throws KeychainUnavailableError', async () => {
+      // Regression: safeRemoveCredentials must swallow the keychain error so
+      // the storeOAuthTokens restore runs. Without the wrapper, the error
+      // would propagate out of removeCredentials and skip the restore entirely,
+      // leaving a transient-refresh-failure credential lost.
+      const credentialManager = {
+        removeCredentials: mock(async () => {
+          throw new KeychainUnavailableError('keychain locked');
+        }),
+        storeOAuthTokens: mock(async () => {}),
+      };
+      setupAuthHandlers(
+        messageHubData.hub,
+        mockAuthManager as unknown as AuthManager,
+        credentialManager as never
+      );
+      const mockProvider = createMockProvider({
+        refreshToken: mock(async () => false),
+        getCredentials: mock(async () => ({
+          type: 'oauth' as const,
+          accessToken: 'still-valid',
+        })),
+      });
+      registry.register(mockProvider);
+
+      const handler = messageHubData.handlers.get('auth.refresh');
+      expect(handler).toBeDefined();
+
+      const result = (await handler!({ providerId: 'test-provider' }, {})) as {
+        success: boolean;
+        error?: string;
+      };
+
+      expect(result.success).toBe(false);
+      // safeRemoveCredentials swallowed the keychain error, so the restore ran.
       expect(credentialManager.removeCredentials).toHaveBeenCalledWith('test-provider');
       expect(credentialManager.storeOAuthTokens).toHaveBeenCalledWith('test-provider', {
         type: 'oauth',
