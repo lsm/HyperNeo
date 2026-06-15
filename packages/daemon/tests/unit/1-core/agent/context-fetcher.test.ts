@@ -238,6 +238,85 @@ describe('ContextFetcher.toContextInfo', () => {
     expect(info.totalCapacity).toBe(272000);
   });
 
+  it('keeps [1m] suffix in context display when effective capacity is 1M', () => {
+    const response = baseResponse({
+      totalTokens: 10000,
+      maxTokens: 1_000_000,
+      rawMaxTokens: 1_000_000,
+      percentage: 1,
+      model: 'glm-5.2[1m]',
+      categories: [{ name: 'Messages', tokens: 10000, color: 'blue' }],
+    });
+
+    const info = ContextFetcher.toContextInfo(response, {
+      id: 'glm-5.2[1m]',
+      provider: 'glm',
+      preferContextWindowMetadata: true,
+      contextWindow: 1_000_000,
+    });
+
+    expect(info.model).toBe('glm-5.2[1m]');
+    expect(info.totalCapacity).toBe(1_000_000);
+  });
+
+  it('strips stale [1m] suffix from context display when effective capacity is below 1M', () => {
+    const response = baseResponse({
+      totalTokens: 10000,
+      maxTokens: 200000,
+      rawMaxTokens: 200000,
+      percentage: 5,
+      model: 'glm-5.1[1m]',
+      categories: [{ name: 'Messages', tokens: 10000, color: 'blue' }],
+    });
+
+    const info = ContextFetcher.toContextInfo(response, {
+      id: 'glm-5.1',
+      provider: 'glm',
+      preferContextWindowMetadata: true,
+      contextWindow: 200000,
+    });
+
+    expect(info.model).toBe('glm-5.1');
+    expect(info.totalCapacity).toBe(200000);
+  });
+
+  it('strips stale [1m] suffix when raw capacity overreports but effective window is 200k', () => {
+    const response = baseResponse({
+      totalTokens: 10000,
+      maxTokens: 200000,
+      rawMaxTokens: 1_000_000,
+      percentage: 5,
+      model: 'glm-5.1[1m]',
+      categories: [{ name: 'Messages', tokens: 10000, color: 'blue' }],
+    });
+
+    const info = ContextFetcher.toContextInfo(response, {
+      id: 'glm-5.1',
+      provider: 'glm',
+      preferContextWindowMetadata: true,
+      contextWindow: 200000,
+    });
+
+    expect(info.model).toBe('glm-5.1');
+    expect(info.totalCapacity).toBe(200000);
+  });
+
+  it('ignores raw 1M capacity from stale [1m] suffix even without metadata', () => {
+    const response = baseResponse({
+      totalTokens: 10000,
+      maxTokens: 200000,
+      rawMaxTokens: 1_000_000,
+      percentage: 5,
+      model: 'glm-5.1[1m]',
+      categories: [{ name: 'Messages', tokens: 10000, color: 'blue' }],
+    });
+
+    const info = ContextFetcher.toContextInfo(response);
+
+    expect(info.model).toBe('glm-5.1');
+    expect(info.totalCapacity).toBe(200000);
+  });
+
   it('uses Codex model metadata when SDK reports the generic 200k capacity', () => {
     const response = baseResponse({
       totalTokens: 136000,

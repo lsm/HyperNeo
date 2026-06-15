@@ -221,6 +221,17 @@ describe('GlmProvider', () => {
       expect(upperConfig.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('1000000');
     });
 
+    it('should ignore [1m] suffix for non-1M GLM models', () => {
+      process.env.GLM_API_KEY = 'test-key';
+
+      const config = provider.buildSdkConfig('glm-5.1[1m]');
+
+      expect(config.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('glm-5.1');
+      expect(config.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('glm-5.1');
+      expect(config.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('glm-5.1');
+      expect(config.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('200000');
+    });
+
     it('should build correct config for glm-5-turbo', () => {
       process.env.GLM_API_KEY = 'test-key';
 

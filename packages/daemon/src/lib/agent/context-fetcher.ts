@@ -40,11 +40,30 @@ const NATIVE_CONTEXT_WINDOW_PROVIDERS = new Set(['anthropic', 'anthropic-copilot
 
 /** Generic SDK tier names that non-native providers map to via ANTHROPIC_DEFAULT_*_MODEL. */
 const SDK_GENERIC_MODEL_IDS = new Set(['default', 'haiku', 'sonnet', 'opus']);
+const ONE_MILLION_CONTEXT_WINDOW = 1_000_000;
+const ONE_MILLION_MODEL_SUFFIX = /\[1m\]$/i;
 
 function positiveInteger(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) && value > 0
     ? Math.floor(value)
     : undefined;
+}
+
+function resolveDisplayModel(
+  responseModel: string | undefined,
+  modelMetadata: ContextMetadata,
+  matchesSdkModelId: boolean,
+  sdkCapacity: number | undefined
+): string | undefined {
+  if (!responseModel) return undefined;
+  if (matchesSdkModelId && modelMetadata?.id) return modelMetadata.id;
+  const metadataCapacity = positiveInteger(modelMetadata?.contextWindow);
+  const isOneMillionWindow =
+    metadataCapacity === ONE_MILLION_CONTEXT_WINDOW || sdkCapacity === ONE_MILLION_CONTEXT_WINDOW;
+  if (ONE_MILLION_MODEL_SUFFIX.test(responseModel) && !isOneMillionWindow) {
+    return responseModel.replace(ONE_MILLION_MODEL_SUFFIX, '');
+  }
+  return responseModel;
 }
 
 export class ContextFetcher {
@@ -186,7 +205,14 @@ export class ContextFetcher {
     // model name doesn't exactly match. Native Anthropic providers keep the
     // exact-match safety guard so fallback/switched models don't display stale
     // metadata.
-    const sdkCapacityValue = sdkRawCapacity ?? sdkCapacity;
+    const hasStaleOneMillionSuffix =
+      responseModel &&
+      ONE_MILLION_MODEL_SUFFIX.test(responseModel) &&
+      sdkCapacity !== undefined &&
+      sdkCapacity < ONE_MILLION_CONTEXT_WINDOW;
+    const sdkCapacityValue = hasStaleOneMillionSuffix
+      ? sdkCapacity
+      : (sdkRawCapacity ?? sdkCapacity);
     const sdkOverreporting =
       shouldPreferMetadata &&
       metadataCapacityAny !== undefined &&
@@ -200,7 +226,7 @@ export class ContextFetcher {
       (shouldPreferMetadata && metadataCapacity) || sdkOverreporting || sdkCapacityUnavailable;
     const capacity = useMetadata
       ? (metadataCapacityAny ?? 0)
-      : (sdkRawCapacity ?? sdkCapacity ?? metadataCapacity ?? 0);
+      : (sdkCapacityValue ?? metadataCapacity ?? 0);
     for (const category of response.categories ?? []) {
       // Compute percent relative to capacity (SDK response doesn't carry it).
       // Round to 1 decimal place to match the display the UI already expects.
@@ -278,8 +304,12 @@ export class ContextFetcher {
       autoCompactThreshold = Math.floor(capacity * 0.9);
     }
 
-    const resolvedModel =
-      responseModel && matchesSdkModelId && modelMetadata?.id ? modelMetadata.id : responseModel;
+    const resolvedModel = resolveDisplayModel(
+      responseModel,
+      modelMetadata,
+      matchesSdkModelId,
+      sdkCapacity
+    );
 
     return {
       model: resolvedModel ?? null,

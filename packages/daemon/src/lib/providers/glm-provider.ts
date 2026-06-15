@@ -237,11 +237,12 @@ export class GlmProvider implements Provider {
     const normalisedModelId = modelId.toLowerCase();
 
     // If modelId is not a GLM model ID (e.g. 'default'), fall back to glm-5-turbo.
+    const baseModelId = normalisedModelId.replace(/\[1m\]$/, '');
     const routingModelId =
-      normalisedModelId === 'glm-5.2'
+      baseModelId === 'glm-5.2'
         ? 'glm-5.2[1m]'
-        : normalisedModelId.startsWith('glm-')
-          ? normalisedModelId
+        : baseModelId.startsWith('glm-')
+          ? baseModelId
           : 'glm-5-turbo';
 
     // Resolve the real context window for the routing model ID so we can tell
