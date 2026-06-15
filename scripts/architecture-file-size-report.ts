@@ -22,6 +22,19 @@ type SourceFile = {
   lines: number;
 };
 
+type ChangedPathInfo = {
+  status: string;
+  path: string;
+  previousPath: string | null;
+};
+
+type ReportFile = {
+  file: string;
+  lines: number;
+  maxLines: number | null;
+  followUp: string;
+};
+
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const defaultConfigPath = 'docs/plans/architecture-refactor-execution-plan/file-size-ratchet.json';
 
@@ -90,9 +103,43 @@ function getChangedPaths(ref: string): Set<string> {
   return new Set(output.split('\n').filter(Boolean).map(toPosix));
 }
 
+function getChangedPathInfo(ref: string): Map<string, ChangedPathInfo> {
+  const output = execFileSync('git', ['diff', '--name-status', `${ref}...HEAD`], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+  });
+  const changedPaths = new Map<string, ChangedPathInfo>();
+
+  for (const line of output.split('\n').filter(Boolean)) {
+    const [status, firstPath, secondPath] = line.split('\t');
+    const hasPreviousPath = status.startsWith('R') || status.startsWith('C');
+    const path = toPosix(hasPreviousPath ? secondPath : firstPath);
+    changedPaths.set(path, {
+      status,
+      path,
+      previousPath: hasPreviousPath ? toPosix(firstPath) : null,
+    });
+  }
+
+  return changedPaths;
+}
+
 function loadConfig(configPath: string): RatchetConfig {
   const absolutePath = resolve(repoRoot, configPath);
   return JSON.parse(readFileSync(absolutePath, 'utf8')) as RatchetConfig;
+}
+
+function loadConfigFromGitRef(ref: string, configPath: string): RatchetConfig | null {
+  try {
+    const output = execFileSync('git', ['show', `${ref}:${configPath}`], {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    return JSON.parse(output) as RatchetConfig;
+  } catch {
+    return null;
+  }
 }
 
 function formatTable(rows: string[][]): string {
@@ -104,18 +151,53 @@ function formatTable(rows: string[][]): string {
 
 const { configPath, changedFrom, json } = parseArgs();
 const config = loadConfig(configPath);
+const baseConfig = changedFrom ? loadConfigFromGitRef(changedFrom, configPath) : null;
+const enforcementConfig = baseConfig ?? config;
+const baselineConfigSource = baseConfig
+  ? `${changedFrom}:${configPath}`
+  : changedFrom
+    ? `${configPath} (base ref has no baseline yet)`
+    : configPath;
 const files: SourceFile[] = [];
 walk(resolve(repoRoot, 'packages'), files);
 
 const changedPaths = changedFrom ? getChangedPaths(changedFrom) : null;
+const changedPathInfo = changedFrom
+  ? getChangedPathInfo(changedFrom)
+  : new Map<string, ChangedPathInfo>();
 const scannedFiles = changedPaths ? files.filter((file) => changedPaths.has(file.path)) : files;
 const oversized = scannedFiles
-  .filter((file) => file.lines > config.hardLineCount)
+  .filter((file) => file.lines > enforcementConfig.hardLineCount)
   .sort((a, b) => b.lines - a.lines || a.path.localeCompare(b.path));
-const overTarget = scannedFiles.filter((file) => file.lines > config.targetLineCount);
+const overTarget = scannedFiles.filter((file) => file.lines > enforcementConfig.targetLineCount);
+
+function getBaselineEntry(filePath: string): AllowlistEntry | undefined {
+  const changedInfo = changedPathInfo.get(filePath);
+  if (changedInfo?.previousPath && changedInfo.status.startsWith('R')) {
+    return enforcementConfig.allowlist[changedInfo.previousPath];
+  }
+  return enforcementConfig.allowlist[filePath];
+}
+
+function toReportFile(file: SourceFile): ReportFile {
+  const allowlistEntry = getBaselineEntry(file.path);
+  const changedInfo = changedPathInfo.get(file.path);
+  const isNewFile = changedInfo?.status === 'A' || changedInfo?.status.startsWith('C');
+  return {
+    file: file.path,
+    lines: file.lines,
+    maxLines: isNewFile ? null : (allowlistEntry?.maxLines ?? null),
+    followUp: isNewFile
+      ? 'new production source file exceeds hard ceiling'
+      : (allowlistEntry?.followUp ?? 'missing allowlist entry'),
+  };
+}
 
 const violations = oversized.filter((file) => {
-  const allowlistEntry = config.allowlist[file.path];
+  const changedInfo = changedPathInfo.get(file.path);
+  if (changedInfo?.status === 'A' || changedInfo?.status.startsWith('C')) return true;
+
+  const allowlistEntry = getBaselineEntry(file.path);
   return !allowlistEntry || file.lines > allowlistEntry.maxLines;
 });
 
@@ -132,22 +214,13 @@ const report = {
   targetLineCount: config.targetLineCount,
   hardLineCount: config.hardLineCount,
   changedFrom,
+  baselineConfigSource,
   scannedFiles: scannedFiles.length,
   overTarget: overTarget.length,
   oversized: oversized.length,
-  violations: violations.map((file) => ({
-    file: file.path,
-    lines: file.lines,
-    maxLines: config.allowlist[file.path]?.maxLines ?? null,
-    followUp: config.allowlist[file.path]?.followUp ?? 'missing allowlist entry',
-  })),
+  violations: violations.map(toReportFile),
   staleAllowlistEntries,
-  topOversized: oversized.slice(0, 25).map((file) => ({
-    file: file.path,
-    lines: file.lines,
-    maxLines: config.allowlist[file.path]?.maxLines ?? null,
-    followUp: config.allowlist[file.path]?.followUp ?? 'missing allowlist entry',
-  })),
+  topOversized: oversized.slice(0, 25).map(toReportFile),
 };
 
 if (json) {
@@ -159,6 +232,7 @@ if (json) {
   console.log(`Target: ${report.targetLineCount} lines`);
   console.log(`Temporary hard ceiling: ${report.hardLineCount} lines`);
   if (changedFrom) console.log(`Changed-from ref: ${changedFrom}`);
+  console.log(`Baseline config: ${report.baselineConfigSource}`);
   console.log('');
   console.log(`Files scanned: ${report.scannedFiles}`);
   console.log(`Files over target: ${report.overTarget}`);
