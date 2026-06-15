@@ -1,7 +1,7 @@
 import type { EvolutionScope, SpaceGoal } from '@neokai/shared';
 import type { Signal } from '@preact/signals';
 import { signal } from '@preact/signals';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { mockRequest, mockToastSuccess } = vi.hoisted(() => ({
@@ -54,7 +54,7 @@ vi.mock('../visual-editor/WorkflowModelSelect', () => ({
 
 import { currentSpaceScopeIdSignal, rightPanelTargetSignal } from '../../../lib/signals';
 import { spaceStore } from '../../../lib/space-store';
-import { SpaceForge } from '../SpaceForge';
+import { ScopeDetail, SpaceForge } from '../SpaceForge';
 
 const mockSpaceId = signal<string | null>('space-1');
 const mockGoals = signal<SpaceGoal[]>([]);
@@ -278,5 +278,109 @@ describe('SpaceForge', () => {
 
     await waitFor(() => expect(screen.getByRole('heading', { name: 'New scope' })).toBeTruthy());
     await waitFor(() => expect(screen.getByText('Existing scope')).toBeTruthy());
+  });
+
+  describe('ScopeDetail episodes preflight', () => {
+    const taskEvidence = {
+      id: 'evidence-task',
+      scopeId: 'scope-1',
+      kind: 'task' as const,
+      summary: 'Task completed with merge',
+      sourceId: 'task-1',
+      metadata: {},
+      createdAt: Date.now(),
+    };
+    const workflowRunEvidence = {
+      id: 'evidence-run',
+      scopeId: 'scope-1',
+      kind: 'workflow_run' as const,
+      summary: 'Workflow run evidence available',
+      sourceId: 'run-1',
+      metadata: {},
+      createdAt: Date.now(),
+    };
+    const artifactEvidence = {
+      id: 'evidence-artifact',
+      scopeId: 'scope-1',
+      kind: 'artifact' as const,
+      summary: 'Workflow artifact evidence available',
+      sourceId: 'run-1',
+      metadata: {},
+      createdAt: Date.now(),
+    };
+
+    function setupScopeDetailRequests() {
+      mockRequest.mockImplementation(async (method: string) => {
+        if (method === 'evolution.review.get') {
+          return { episodes: [], lessons: [], proposals: [] };
+        }
+        if (method === 'evolution.evidence.list') {
+          return {
+            evidence: [taskEvidence, workflowRunEvidence, artifactEvidence],
+            preflightContext: {
+              tasks: [
+                {
+                  evidenceId: taskEvidence.id,
+                  task: {
+                    title: 'Task completed with merge',
+                    status: 'done',
+                    reportedStatus: null,
+                    reportedSummary: null,
+                    result: 'PR merged',
+                  },
+                },
+              ],
+              workflowRuns: [],
+            },
+          };
+        }
+        if (method === 'evolution.metricSnapshot.list') return { snapshots: [] };
+        throw new Error(`Unexpected RPC ${method}`);
+      });
+    }
+
+    function renderScopeDetail() {
+      return render(
+        <ScopeDetail scope={makeScope()} goals={[makeGoal()]} onScopeUpdated={() => undefined} />
+      );
+    }
+
+    it('renders artifact diagnostics when scope has artifacts omitted from the selection', async () => {
+      setupScopeDetailRequests();
+      renderScopeDetail();
+
+      fireEvent.click(await screen.findByRole('button', { name: 'episodes' }));
+
+      const taskLabel = await screen.findByText('Task completed with merge');
+      const taskCard = taskLabel.closest('label')!;
+      fireEvent.click(within(taskCard).getByRole('checkbox'));
+
+      await waitFor(() =>
+        expect(screen.getByText(/Artifact selection: available omitted/)).toBeTruthy()
+      );
+      expect(screen.getByText(/kinds: artifact, workflow_run/)).toBeTruthy();
+      expect(screen.getByText(/Add workflow_run evidence/)).toBeTruthy();
+      expect(screen.getByText(/2 workflow artifact evidence rows available/)).toBeTruthy();
+    });
+
+    it('hides artifact diagnostics once workflow artifacts are selected', async () => {
+      setupScopeDetailRequests();
+      renderScopeDetail();
+
+      fireEvent.click(await screen.findByRole('button', { name: 'episodes' }));
+
+      const taskLabel = await screen.findByText('Task completed with merge');
+      const taskCard = taskLabel.closest('label')!;
+      fireEvent.click(within(taskCard).getByRole('checkbox'));
+
+      await waitFor(() =>
+        expect(screen.getByText(/Artifact selection: available omitted/)).toBeTruthy()
+      );
+
+      const runLabel = await screen.findByText('Workflow run evidence available');
+      fireEvent.click(within(runLabel.closest('label')!).getByRole('checkbox'));
+
+      await waitFor(() => expect(screen.queryByText(/Artifact selection:/)).toBeNull());
+    });
   });
 });
