@@ -163,6 +163,7 @@ export function editorToConfig(state: EditorState): CustomEndpointConfig {
       'caching',
       'streamUsage',
       'maxContextTokens',
+      'chatTemplateKwargs',
     ];
     for (const k of keys) {
       if (m.resolved[k] !== baseDefaults[k]) {

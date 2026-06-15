@@ -1176,4 +1176,98 @@ describe('OpenAI Chat Completions bridge server', () => {
       expect(capturedRequest.reasoning_effort).toBe('medium');
     });
   });
+
+  describe('chat_template_kwargs injection', () => {
+    // Per-model Jinja template kwargs (e.g. `{ enable_thinking: false }`)
+    // forward verbatim into every upstream request body. The field is not
+    // part of the OpenAI Chat schema — only llama.cpp / vLLM-style backends
+    // read it — but other OpenAI-compatible servers ignore unknown fields
+    // silently, so it's safe to inject unconditionally.
+    it('forwards chat_template_kwargs into the upstream request body when configured', async () => {
+      let capturedRequest: Record<string, unknown> = {};
+      const fetchMock = mock(async (_url: string, init?: RequestInit) => {
+        capturedRequest = JSON.parse(String(init?.body));
+        return new Response(
+          sseBody([{ choices: [{ delta: { content: 'ok' }, finish_reason: 'stop' }] }]),
+          { status: 200 }
+        );
+      });
+      const server = createOpenAIChatBridgeServer({
+        baseUrl: 'http://upstream.test/v1',
+        fetchImpl: fetchMock as typeof fetch,
+        chatTemplateKwargs: { enable_thinking: false },
+      });
+      servers.push(server);
+      await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'm',
+          messages: [{ role: 'user', content: 'hi' }],
+          stream: true,
+        }),
+      });
+      expect(capturedRequest.chat_template_kwargs).toEqual({ enable_thinking: false });
+    });
+
+    it('omits chat_template_kwargs when not configured', async () => {
+      let capturedRequest: Record<string, unknown> = {};
+      const fetchMock = mock(async (_url: string, init?: RequestInit) => {
+        capturedRequest = JSON.parse(String(init?.body));
+        return new Response(
+          sseBody([{ choices: [{ delta: { content: 'ok' }, finish_reason: 'stop' }] }]),
+          { status: 200 }
+        );
+      });
+      const server = createOpenAIChatBridgeServer({
+        baseUrl: 'http://upstream.test/v1',
+        fetchImpl: fetchMock as typeof fetch,
+      });
+      servers.push(server);
+      await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'm',
+          messages: [{ role: 'user', content: 'hi' }],
+          stream: true,
+        }),
+      });
+      expect(capturedRequest).not.toHaveProperty('chat_template_kwargs');
+    });
+
+    it('does NOT overwrite model, messages, tools, or stream when injecting kwargs', async () => {
+      let capturedRequest: Record<string, unknown> = {};
+      const fetchMock = mock(async (_url: string, init?: RequestInit) => {
+        capturedRequest = JSON.parse(String(init?.body));
+        return new Response(
+          sseBody([{ choices: [{ delta: { content: 'ok' }, finish_reason: 'stop' }] }]),
+          { status: 200 }
+        );
+      });
+      const server = createOpenAIChatBridgeServer({
+        baseUrl: 'http://upstream.test/v1',
+        fetchImpl: fetchMock as typeof fetch,
+        chatTemplateKwargs: { enable_thinking: false },
+      });
+      servers.push(server);
+      await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'qwen3:32b',
+          messages: [{ role: 'user', content: 'hi' }],
+          stream: true,
+          tools: [{ name: 'lookup', description: '', input_schema: { type: 'object' } }],
+        }),
+      });
+      expect(capturedRequest.model).toBe('qwen3:32b');
+      expect(capturedRequest.messages).toEqual([{ role: 'user', content: 'hi' }]);
+      expect(capturedRequest.stream).toBe(true);
+      const tools = capturedRequest.tools as Array<{ function: { name: string } }>;
+      expect(tools).toHaveLength(1);
+      expect(tools[0].function.name).toBe('lookup');
+      expect(capturedRequest.chat_template_kwargs).toEqual({ enable_thinking: false });
+    });
+  });
 });
