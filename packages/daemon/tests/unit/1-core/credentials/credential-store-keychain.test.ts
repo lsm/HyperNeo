@@ -246,16 +246,34 @@ describe('FallbackCredentialStore integration (real KeychainCredentialStore + DB
     }
   });
 
-  it('delete() does not throw when keychain unavailable', async () => {
+  it('delete() rethrows KeychainUnavailableError so logout surfaces partial removal', async () => {
     const { store, db } = makeStore();
     try {
       execFileImpl = (_cmd: unknown, _args: unknown, cb: (err: unknown) => void) => {
         cb(makeExecFileError(36, 'User interaction is not allowed.'));
         return undefined as unknown;
       };
-      // FallbackCredentialStore.delete uses Promise.allSettled so primary
-      // rejection is swallowed; fallback delete still runs.
+      // delete() must surface the primary failure (after the fallback row is
+      // removed) so the caller knows the keychain still holds the credential.
+      await expect(store.delete('neokai.provider.test', 'default')).rejects.toBeInstanceOf(
+        KeychainUnavailableError
+      );
+      expect(store.getStatus().backend).toBe('database-fallback');
+    } finally {
+      db.close();
+    }
+  });
+
+  it('delete() succeeds when primary is available', async () => {
+    const { store, db } = makeStore();
+    try {
+      execFileImpl = (_cmd: unknown, _args: unknown, cb: (err: unknown) => void) => {
+        // security delete-generic-password succeeds.
+        cb(null, '', '');
+        return undefined as unknown;
+      };
       await expect(store.delete('neokai.provider.test', 'default')).resolves.toBeUndefined();
+      expect(store.getStatus().backend).toBe('keychain');
     } finally {
       db.close();
     }

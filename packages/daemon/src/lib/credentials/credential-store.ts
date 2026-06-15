@@ -147,19 +147,31 @@ export class KeychainCredentialStore implements CredentialStore {
 }
 
 /**
- * Wraps a primary store (Keychain) and falls back to a secondary store (Database)
- * when the primary is unavailable — e.g. macOS keychain locked (exit code 36,
- * `errSecInteractionNotAllowed`) under SSH / CI / background launches.
+ * Wraps a primary store (Keychain) and an authoritative fallback store
+ * (encrypted SQLite DB).
  *
- * Reads: try primary first; on missing item OR `KeychainUnavailableError`, fall
- *   through to fallback. Non-keychain errors propagate.
- * Writes: try primary; on `KeychainUnavailableError`, persist to fallback so
- *   the credential is not silently dropped.
- * Deletes: best-effort on both stores.
+ * Authority model: the DB fallback is the source of truth because it is always
+ * writable. The Keychain is treated as a best-effort mirror.
+ *
+ * Reads: prefer fallback. If fallback is empty, try primary (covers legacy
+ *   keychain-only entries that have not yet been mirrored). Non-keychain
+ *   errors from primary propagate.
+ * Writes: always write to fallback. Best-effort mirror to primary. If primary
+ *   throws `KeychainUnavailableError`, mark unavailable (drives the UI banner).
+ * Deletes: delete from fallback first, then primary. If primary throws
+ *   `KeychainUnavailableError`, re-throw so callers (e.g. logout) know the
+ *   credential still exists in the keychain — otherwise a stale keychain
+ *   entry could silently re-authenticate the user after `security
+ *   unlock-keychain`.
+ *
+ * Status resets to "available" on the next successful primary operation, so
+ * running `security unlock-keychain` clears the UI banner without a daemon
+ * restart.
  */
 export class FallbackCredentialStore implements CredentialStore {
   private keychainWarned = false;
   private primaryAvailable = true;
+  private statusChangeCallback: (() => void) | null = null;
   private readonly logger = new Logger('FallbackCredentialStore');
 
   constructor(
@@ -167,36 +179,62 @@ export class FallbackCredentialStore implements CredentialStore {
     private readonly fallback: CredentialStore
   ) {}
 
+  /**
+   * Register a listener fired when keychain availability transitions. Used by
+   * `ProviderCredentialManager` to trigger a `broadcastSystemChange()` so the
+   * UI banner appears / clears without waiting for a reconnect.
+   */
+  setStatusChangeCallback(callback: () => void): void {
+    this.statusChangeCallback = callback;
+  }
+
   async get(service: string, account: string): Promise<string | null> {
+    // Prefer fallback — it is the authoritative store (every `set()` mirrors
+    // there). Avoids stale keychain entries shadowing recent DB writes across
+    // daemon restarts or keychain lock/unlock cycles.
+    const fallbackResult = await this.fallback.get(service, account);
+    if (fallbackResult !== null) return fallbackResult;
+
+    // Fallback empty — try primary (legacy keychain-only entries).
     try {
       const result = await this.primary.get(service, account);
-      if (result !== null) return result;
-      // Item not in primary — try fallback.
-      return this.fallback.get(service, account);
+      this.markPrimaryAvailable();
+      return result;
     } catch (error) {
-      // Primary threw. Only fall through for keychain-unavailable; re-throw
-      // anything else so genuine errors don't get masked by the fallback.
       if (!(error instanceof KeychainUnavailableError)) throw error;
       this.markPrimaryUnavailable();
-      return this.fallback.get(service, account);
+      return null;
     }
   }
 
   async set(service: string, account: string, data: string): Promise<void> {
+    // Always write to fallback first so the authoritative store is current
+    // even if the keychain mirror fails.
+    await this.fallback.set(service, account, data);
+    // Best-effort mirror to primary.
     try {
       await this.primary.set(service, account, data);
+      this.markPrimaryAvailable();
     } catch (error) {
       if (!(error instanceof KeychainUnavailableError)) throw error;
       this.markPrimaryUnavailable();
-      await this.fallback.set(service, account, data);
     }
   }
 
   async delete(service: string, account: string): Promise<void> {
-    await Promise.allSettled([
-      this.primary.delete(service, account),
-      this.fallback.delete(service, account),
-    ]);
+    // Always delete from fallback.
+    await this.fallback.delete(service, account);
+    // Delete from primary too. If primary is unavailable, re-throw so the
+    // caller knows logout is partial — otherwise a stale keychain entry could
+    // re-authenticate the user after the keychain is unlocked.
+    try {
+      await this.primary.delete(service, account);
+      this.markPrimaryAvailable();
+    } catch (error) {
+      if (!(error instanceof KeychainUnavailableError)) throw error;
+      this.markPrimaryUnavailable();
+      throw error;
+    }
   }
 
   async listServices(prefix: string): Promise<string[]> {
@@ -225,13 +263,30 @@ export class FallbackCredentialStore implements CredentialStore {
   }
 
   private markPrimaryUnavailable(): void {
+    const wasAvailable = this.primaryAvailable;
     this.primaryAvailable = false;
+    if (wasAvailable) {
+      this.statusChangeCallback?.();
+    }
     if (this.keychainWarned) return;
     this.keychainWarned = true;
     this.logger.warn(
       'macOS Keychain unavailable — using local encrypted credential store. ' +
         'Run `security unlock-keychain` to restore Keychain access.'
     );
+  }
+
+  /**
+   * Flip `primaryAvailable` back to true after a successful primary operation.
+   * Called after the user runs `security unlock-keychain` and the next
+   * get/set/delete against the keychain succeeds.
+   */
+  private markPrimaryAvailable(): void {
+    const wasUnavailable = !this.primaryAvailable;
+    this.primaryAvailable = true;
+    if (wasUnavailable) {
+      this.statusChangeCallback?.();
+    }
   }
 }
 

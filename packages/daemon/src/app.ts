@@ -523,6 +523,15 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     // there are no connected subscribers, and Bun.serve hasn't accepted any
     // WebSocket clients yet at this point in startup.
 
+    // Wire credential-store status transitions (keychain unavailable → UI
+    // banner appears, keychain recovered → banner clears) to a system state
+    // broadcast so connected clients update immediately. Without this, a
+    // banner triggered by a provider save/login during a session would not
+    // appear until the next reconnect or unrelated system refresh.
+    credentialManager.registerStatusChangeCallback(() => {
+      void stateManager.broadcastSystemChange();
+    });
+
     // Initialize GitHub service if configured
     let gitHubService: GitHubService | null = null;
     const shouldEnableGitHub =
