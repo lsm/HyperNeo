@@ -276,6 +276,18 @@ describe('HookEditorPanel', () => {
     );
   });
 
+  it('hides retry inputs for pr_ready validators', () => {
+    const hook = makeHook({ validator: { kind: 'built_in', id: 'pr_ready' } });
+    const { getByTestId, queryByTestId } = render(
+      <HookEditorPanel hook={hook} onChange={onChange} onBack={onBack} nodeNames={nodeNames} />
+    );
+    fireEvent.click(getByTestId('hook-editor-section-retry'));
+    expect(getByTestId('hook-editor-pr-ready-retry-note').textContent).toContain('PR-ready');
+    expect(queryByTestId('hook-editor-retry-max-attempts')).toBeNull();
+    expect(queryByTestId('hook-editor-retry-delay')).toBeNull();
+    expect(queryByTestId('hook-editor-retry-backoff')).toBeNull();
+  });
+
   it('shows unsupported poll notice without editable poll controls', () => {
     const hook = makeHook({ poll: { intervalMs: 30_000 } });
     const { getByTestId, queryByTestId } = render(

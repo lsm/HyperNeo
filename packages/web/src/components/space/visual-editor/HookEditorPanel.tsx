@@ -134,6 +134,7 @@ export function HookEditorPanel({
     [validatorKind, scriptSource]
   );
 
+  const isPrReadyValidator = validatorKind === 'built_in' && builtInId === 'pr_ready';
   const maxAttempts = hook.retry?.maxAttempts ?? 3;
   const delayMs = hook.retry?.delayMs ?? 5000;
   const backoffMultiplier = hook.retry?.backoffMultiplier ?? 1;
@@ -691,57 +692,67 @@ export function HookEditorPanel({
             <label class="text-[11px] uppercase tracking-[0.12em] text-gray-400">
               Retry Settings
             </label>
-            <div class="grid grid-cols-3 gap-2">
-              <div class="space-y-0.5">
-                <label class="text-[10px] text-gray-400">Max attempts</label>
-                <input
-                  type="number"
-                  data-testid="hook-editor-retry-max-attempts"
-                  value={maxAttempts}
-                  min={1}
-                  max={20}
-                  onInput={(e) => {
-                    const val = Number((e.currentTarget as HTMLInputElement).value);
-                    if (isNaN(val)) return;
-                    updateRetry({ maxAttempts: Math.max(1, Math.min(20, val)) });
-                  }}
-                  class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1 text-gray-200 font-mono focus:outline-none focus:border-blue-500"
-                />
+            {isPrReadyValidator ? (
+              <p
+                class="rounded border border-blue-700/50 bg-blue-900/10 px-2 py-1.5 text-[11px] text-blue-200"
+                data-testid="hook-editor-pr-ready-retry-note"
+              >
+                PR-ready hooks retry on transient GitHub states without a visible attempt cap. Retry
+                fields are hidden so saved behavior matches built-in workflow defaults.
+              </p>
+            ) : (
+              <div class="grid grid-cols-3 gap-2">
+                <div class="space-y-0.5">
+                  <label class="text-[10px] text-gray-400">Max attempts</label>
+                  <input
+                    type="number"
+                    data-testid="hook-editor-retry-max-attempts"
+                    value={maxAttempts}
+                    min={1}
+                    max={20}
+                    onInput={(e) => {
+                      const val = Number((e.currentTarget as HTMLInputElement).value);
+                      if (isNaN(val)) return;
+                      updateRetry({ maxAttempts: Math.max(1, Math.min(20, val)) });
+                    }}
+                    class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1 text-gray-200 font-mono focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+                <div class="space-y-0.5">
+                  <label class="text-[10px] text-gray-400">Delay (ms)</label>
+                  <input
+                    type="number"
+                    data-testid="hook-editor-retry-delay"
+                    value={delayMs}
+                    min={0}
+                    step={1000}
+                    onInput={(e) => {
+                      const val = Number((e.currentTarget as HTMLInputElement).value);
+                      if (isNaN(val)) return;
+                      updateRetry({ delayMs: Math.max(0, val) });
+                    }}
+                    class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1 text-gray-200 font-mono focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+                <div class="space-y-0.5">
+                  <label class="text-[10px] text-gray-400">Backoff</label>
+                  <input
+                    type="number"
+                    data-testid="hook-editor-retry-backoff"
+                    value={backoffMultiplier}
+                    min={1}
+                    max={10}
+                    step={0.1}
+                    onInput={(e) => {
+                      const val = Number((e.currentTarget as HTMLInputElement).value);
+                      if (isNaN(val)) return;
+                      updateRetry({ backoffMultiplier: Math.max(1, Math.min(10, val)) });
+                    }}
+                    class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1 text-gray-200 font-mono focus:outline-none focus:border-blue-500"
+                  />
+                </div>
               </div>
-              <div class="space-y-0.5">
-                <label class="text-[10px] text-gray-400">Delay (ms)</label>
-                <input
-                  type="number"
-                  data-testid="hook-editor-retry-delay"
-                  value={delayMs}
-                  min={0}
-                  step={1000}
-                  onInput={(e) => {
-                    const val = Number((e.currentTarget as HTMLInputElement).value);
-                    if (isNaN(val)) return;
-                    updateRetry({ delayMs: Math.max(0, val) });
-                  }}
-                  class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1 text-gray-200 font-mono focus:outline-none focus:border-blue-500"
-                />
-              </div>
-              <div class="space-y-0.5">
-                <label class="text-[10px] text-gray-400">Backoff</label>
-                <input
-                  type="number"
-                  data-testid="hook-editor-retry-backoff"
-                  value={backoffMultiplier}
-                  min={1}
-                  max={10}
-                  step={0.1}
-                  onInput={(e) => {
-                    const val = Number((e.currentTarget as HTMLInputElement).value);
-                    if (isNaN(val)) return;
-                    updateRetry({ backoffMultiplier: Math.max(1, Math.min(10, val)) });
-                  }}
-                  class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1 text-gray-200 font-mono focus:outline-none focus:border-blue-500"
-                />
-              </div>
-            </div>
+            )}
           </div>
 
           <p
