@@ -44,7 +44,7 @@ import { ApiErrorCircuitBreaker } from './api-error-circuit-breaker';
 import type { MessageQueue } from './message-queue';
 import type { QueryLifecycleManager } from './query-lifecycle-manager';
 import { getSessionModelInfo } from '../model-service';
-import { providerUsesNativeAutoCompact } from './query-options-builder.js';
+import { PROVIDER_NO_SDK_AUTO_COMPACT } from './query-options-builder.js';
 import { reserveBasedThreshold } from './context-tracker.js';
 
 /**
@@ -901,31 +901,32 @@ export class SDKMessageHandler {
 
         // NeoKai-level compaction fallback.
         //
-        // Two layers of defence against runaway context:
-        //   1. SDK native auto-compact — fires at `window - 13_000` when the
-        //      provider's model is recognised by the SDK's PP() helper (Anthropic
-        //      native, Anthropic-Codex bridge, GLM with `[1m]` suffix).
-        //   2. NeoKai fallback — fires at `contextWindow - max(13_000, 15%)`
-        //      when the SDK's auto-compact hasn't kept up. This catches:
-        //        - Providers whose model ID is unknown to PP() (Kimi, plain
-        //          GLM-5/5.1) where SDK auto-compact is disabled because it
-        //          would fire at the wrong threshold.
-        //        - Any case where the SDK reports `isAutoCompactEnabled: true`
-        //          but fails to actually trigger compaction (bug, hang, etc.).
+        // Scoped to providers in `PROVIDER_NO_SDK_AUTO_COMPACT` (currently
+        // Kimi). For these providers, the SDK's PP() helper hardcodes a 200k
+        // capacity for unknown model IDs and we cannot use the `[1m]` suffix
+        // workaround (Kimi's bridge forwards the model name verbatim, so
+        // `kimi-for-coding[1m]` would be rejected upstream). SDK auto-compact
+        // is disabled via Options.settings; NeoKai is the sole compaction
+        // path and fires at the same threshold the SDK would have used
+        // (window - 13_000, clamped for small windows — see
+        // `reserveBasedThreshold`).
         //
-        // The raised threshold (vs. the SDK's 13k reserve) leaves the SDK a
-        // wider window to fire first; NeoKai only kicks in if the SDK hasn't
-        // compacted by the time context crosses the higher threshold. The
-        // NeoKai-only cooldown (60s) prevents back-to-back NeoKai `/compact`
-        // enqueues while a previous compaction is still in flight. The SDK has
-        // its own internal state and does not consult this cooldown.
+        // For all other providers (Anthropic native, GLM, Codex, OpenRouter,
+        // Ollama, custom endpoints) we trust the SDK's own auto-compact.
+        // Installing NeoKai as a competing trigger would either race with the
+        // SDK (same threshold) or preempt it (lower threshold, cutting off
+        // advertised context). The context-fetcher capacity-mismatch warning
+        // surfaces any regression in SDK behaviour for those providers.
+        //
+        // The NeoKai-only cooldown (60s) prevents back-to-back `/compact`
+        // enqueues while a previous compaction is still in flight.
         const providerId = session.config.provider;
         if (!providerId) {
           return;
         }
-        const usesNativeAutoCompact = providerUsesNativeAutoCompact(providerId);
+        const sdkAutoCompactDisabled = PROVIDER_NO_SDK_AUTO_COMPACT.has(providerId);
         const actualContextWindow = modelInfo?.contextWindow;
-        if (!usesNativeAutoCompact && actualContextWindow && actualContextWindow > 0) {
+        if (sdkAutoCompactDisabled && actualContextWindow && actualContextWindow > 0) {
           const neoKaiCompactThreshold = reserveBasedThreshold(actualContextWindow);
           if (
             contextInfo.totalUsed >= neoKaiCompactThreshold &&

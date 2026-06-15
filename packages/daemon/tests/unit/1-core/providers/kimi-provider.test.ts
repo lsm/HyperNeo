@@ -325,6 +325,16 @@ describe('KimiProvider', () => {
       // 262k. The context-fetcher must trust metadata for the context bar.
       expect(KimiProvider.MODELS[0].preferContextWindowMetadata).toBe(true);
     });
+
+    it('should expose moonshot-* aliases via sdkModelIds', () => {
+      // KimiProvider.ownsModel accepts moonshot-* IDs but model-service
+      // lookups go through findInModels which only checks id/alias/sdkModelIds.
+      // Without sdkModelIds, sessions stored with a moonshot-* ID have null
+      // modelInfo and NeoKai fallback compaction can't compute a threshold.
+      const sdkModelIds = KimiProvider.MODELS[0].sdkModelIds ?? [];
+      expect(sdkModelIds).toContain('moonshot-v1-32k');
+      expect(sdkModelIds).toContain('moonshot-v1-8k');
+    });
   });
 
   describe('getTitleGenerationModel', () => {

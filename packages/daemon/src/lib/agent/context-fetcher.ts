@@ -22,7 +22,10 @@ import type {
   ModelInfo,
 } from '@neokai/shared';
 import { Logger } from '../logger';
-import { PROVIDER_NO_SDK_AUTO_COMPACT } from './query-options-builder.js';
+import {
+  NATIVE_CONTEXT_WINDOW_PROVIDER_IDS,
+  PROVIDER_NO_SDK_AUTO_COMPACT,
+} from './query-options-builder.js';
 
 type ContextMetadata =
   | Pick<
@@ -106,15 +109,23 @@ export class ContextFetcher {
     logger: Logger
   ): void {
     const providerId = modelMetadata?.provider;
-    // For providers we've already opted out of SDK auto-compact (e.g. Kimi,
-    // where PP() hardcodes 200k and the real window is 262k), the mismatch
-    // is expected — NeoKai's fallback handles compaction. Skip the warning
-    // so the log doesn't drown in expected-state noise.
-    if (providerId && PROVIDER_NO_SDK_AUTO_COMPACT.has(providerId)) return;
+    // Only fire for providers where we expect SDK auto-compact to work
+    // correctly. This is the set in NATIVE_CONTEXT_WINDOW_PROVIDER_IDS
+    // (anthropic, anthropic-copilot, anthropic-codex, glm). For everyone
+    // else — Kimi (SDK disabled), OpenRouter/Ollama/custom (PP() returns
+    // 200k for unknown models so the SDK's effective window is always the
+    // wrong 200k) — the mismatch is the known steady state, not a regression,
+    // and logging it on every context refresh is pure noise.
+    if (!providerId || !NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId)) return;
+    if (PROVIDER_NO_SDK_AUTO_COMPACT.has(providerId)) return;
     const metadataCapacity = positiveInteger(modelMetadata?.contextWindow);
     if (!metadataCapacity) return;
-    const sdkCapacity =
-      positiveInteger(response.rawMaxTokens) ?? positiveInteger(response.maxTokens);
+    // Use the SDK's *effective* window (maxTokens), not the raw capacity
+    // (rawMaxTokens). For Codex, rawMaxTokens can be 1M (the SDK alias's PP
+    // value for claude-opus-4-7) while maxTokens is 272k (clamped by
+    // CLAUDE_CODE_AUTO_COMPACT_WINDOW) — comparing raw vs metadata would
+    // fire a false-positive warning on every refresh.
+    const sdkCapacity = positiveInteger(response.maxTokens);
     if (!sdkCapacity) return;
     const larger = Math.max(sdkCapacity, metadataCapacity);
     if (larger <= 0) return;

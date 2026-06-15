@@ -79,6 +79,15 @@ export class KimiProvider implements Provider {
       family: 'kimi',
       provider: 'kimi',
       contextWindow: 262144,
+      // Kimi accepts moonshot-* model IDs (e.g. moonshot-v1-32k) that all
+      // normalise to kimi-for-coding at the bridge layer. List them here so
+      // model-service lookups (used by getSessionModelInfo → context bar
+      // display and NeoKai fallback threshold) resolve them to the canonical
+      // Kimi entry instead of returning null. Without this, sessions whose
+      // stored model is a moonshot-* ID have SDK auto-compact disabled (via
+      // buildProviderSettings) AND no NeoKai fallback threshold — they would
+      // run into Kimi's real context limit with no compaction trigger.
+      sdkModelIds: ['moonshot-v1-32k', 'moonshot-v1-8k', 'moonshot-v1-128k'],
       // Kimi's real context window is 262k but the SDK's PP() helper returns
       // 200k for unknown model IDs (and there is no [1m] suffix we can use
       // without breaking the upstream Kimi API call). We must trust this

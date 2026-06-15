@@ -687,15 +687,16 @@ describe('ContextFetcher.fetch', () => {
   });
 
   describe('capacity mismatch warning', () => {
-    it('warns when SDK capacity differs from metadata by more than 10%', async () => {
+    it('warns when SDK effective capacity differs from metadata by >10% for NATIVE providers', async () => {
       // Simulates a glm-5.2[1m] regression: PP() would return 200k if the
-      // SDK no longer recognises the [1m] suffix. The metadata still says 1M.
+      // SDK no longer recognises the [1m] suffix. With CLAUDE_CODE_AUTO_COMPACT_WINDOW
+      // env=1M, effective window=min(200k, 1M)=200k. metadata=1M.
       // Mismatch = (1M - 200k) / 1M = 80% > 10% → warn.
       const getContextUsage = mock(async () =>
         baseResponse({
           totalTokens: 100_000,
           maxTokens: 200_000,
-          rawMaxTokens: 200_000,
+          rawMaxTokens: 1_000_000, // raw PP capacity — should NOT be used
           model: 'glm-5.2[1m]',
         })
       );
@@ -714,13 +715,12 @@ describe('ContextFetcher.fetch', () => {
       expect(warnSpy).toHaveBeenCalledTimes(1);
       const [message] = warnSpy.mock.calls[0] as unknown[];
       expect(String(message)).toContain('Context capacity mismatch');
-      expect(String(message)).toContain('200000');
+      // The warning should reference the effective maxTokens (200k), not raw.
+      expect(String(message)).toContain('reports 200000');
       expect(String(message)).toContain('1000000');
     });
 
-    it('does not warn when SDK capacity matches metadata within 10%', async () => {
-      // Trivial mismatch (e.g. 200k SDK vs 262k metadata = ~23% — should warn).
-      // Use 200k vs 210k (~4.8%) — should NOT warn.
+    it('does not warn when SDK effective capacity matches metadata within 10%', async () => {
       const getContextUsage = mock(async () =>
         baseResponse({
           totalTokens: 10_000,
@@ -736,7 +736,7 @@ describe('ContextFetcher.fetch', () => {
       await fetcher.fetch(query, {
         id: 'some-model',
         contextWindow: 200_000,
-        provider: 'custom',
+        provider: 'glm',
       });
 
       expect(warnSpy).not.toHaveBeenCalled();
@@ -754,11 +754,11 @@ describe('ContextFetcher.fetch', () => {
       expect(warnSpy).not.toHaveBeenCalled();
     });
 
-    it('does not warn when SDK capacity is zero or unavailable', async () => {
+    it('does not warn when SDK effective capacity is zero or unavailable', async () => {
       const getContextUsage = mock(async () =>
         baseResponse({
           maxTokens: 0,
-          rawMaxTokens: 0,
+          rawMaxTokens: 1_000_000,
         })
       );
       const query = { getContextUsage } as unknown as Query;
@@ -769,17 +769,15 @@ describe('ContextFetcher.fetch', () => {
       await fetcher.fetch(query, {
         id: 'some-model',
         contextWindow: 1_000_000,
-        provider: 'custom',
+        provider: 'glm',
       });
 
       expect(warnSpy).not.toHaveBeenCalled();
     });
 
-    it('does not warn for providers opted out of SDK auto-compact (e.g. Kimi)', async () => {
-      // Kimi is in PROVIDER_NO_SDK_AUTO_COMPACT because the SDK's PP() caps
-      // kimi-for-coding to 200k regardless of metadata. A 23% mismatch is the
-      // expected steady state, not a regression — skip the warning so the log
-      // isn't drowned in expected-state noise.
+    it('does not warn for providers opted out of SDK auto-compact (Kimi)', async () => {
+      // Kimi: PP() caps kimi-for-coding to 200k regardless of metadata.
+      // Mismatch is the expected steady state — skip to avoid log noise.
       const getContextUsage = mock(async () =>
         baseResponse({
           totalTokens: 100_000,
@@ -797,6 +795,59 @@ describe('ContextFetcher.fetch', () => {
         id: 'kimi-for-coding',
         contextWindow: 262_144,
         provider: 'kimi',
+        preferContextWindowMetadata: true,
+      });
+
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not warn for non-NATIVE providers (OpenRouter/Ollama/custom)', async () => {
+      // For these providers, SDK PP() returns 200k for unknown models —
+      // mismatch is the known steady state, not a regression.
+      const getContextUsage = mock(async () =>
+        baseResponse({
+          totalTokens: 100_000,
+          maxTokens: 200_000,
+          rawMaxTokens: 200_000,
+          model: 'deepseek-v4',
+        })
+      );
+      const query = { getContextUsage } as unknown as Query;
+
+      const fetcher = new ContextFetcher('openrouter-session');
+      const warnSpy = spyOn(fetcher.logger, 'warn');
+
+      await fetcher.fetch(query, {
+        id: 'deepseek-v4',
+        contextWindow: 1_000_000,
+        provider: 'openrouter',
+        preferContextWindowMetadata: true,
+      });
+
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not warn for Codex when SDK effective window matches metadata', async () => {
+      // Codex gpt-5.5: SDK alias claude-opus-4-7 has PP=1M (rawMaxTokens),
+      // but CLAUDE_CODE_AUTO_COMPACT_WINDOW=272000 caps the effective window
+      // to 272k (maxTokens). Comparing effective vs metadata → no mismatch.
+      const getContextUsage = mock(async () =>
+        baseResponse({
+          totalTokens: 100_000,
+          maxTokens: 272_000, // effective
+          rawMaxTokens: 1_000_000, // raw PP capacity — should NOT trigger warning
+          model: 'claude-opus-4-7',
+        })
+      );
+      const query = { getContextUsage } as unknown as Query;
+
+      const fetcher = new ContextFetcher('codex-session');
+      const warnSpy = spyOn(fetcher.logger, 'warn');
+
+      await fetcher.fetch(query, {
+        id: 'gpt-5.5',
+        contextWindow: 272_000,
+        provider: 'anthropic-codex',
         preferContextWindowMetadata: true,
       });
 

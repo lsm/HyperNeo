@@ -224,20 +224,6 @@ export const NATIVE_CONTEXT_WINDOW_PROVIDER_IDS = [
 export const PROVIDER_NO_SDK_AUTO_COMPACT: ReadonlySet<string> = new Set(['kimi']);
 
 /**
- * Returns true when the SDK's built-in auto-compaction works correctly for this
- * provider (i.e. the SDK reports the right context window AND fires compaction
- * at the right threshold without NeoKai's help).
- *
- * Used by sdk-message-handler to decide whether to install the NeoKai fallback.
- */
-export function providerUsesNativeAutoCompact(providerId: string): boolean {
-  if (PROVIDER_NO_SDK_AUTO_COMPACT.has(providerId)) {
-    return false;
-  }
-  return NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId);
-}
-
-/**
  * Provider-specific SDK settings overrides.
  *
  * For native Anthropic providers the SDK already knows the correct context

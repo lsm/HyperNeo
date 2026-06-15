@@ -533,7 +533,15 @@ function findInModels(models: ModelInfo[], idOrAlias: string): ModelInfo | undef
     found = models.find((m) => m.alias === idOrAlias);
   }
 
-  // 3. Legacy model mapping (maps old full IDs to SDK short IDs)
+  // 3. sdkModelIds match (additional IDs/aliases the provider accepts).
+  //    Used both by ContextFetcher for SDK-reported names AND by model-service
+  //    for provider-accepted aliases (e.g. Kimi accepts moonshot-v1-32k that
+  //    normalises to kimi-for-coding at the bridge layer).
+  if (!found) {
+    found = models.find((m) => m.sdkModelIds?.includes(idOrAlias));
+  }
+
+  // 4. Legacy model mapping (maps old full IDs to SDK short IDs)
   if (!found) {
     const legacyMappedId = LEGACY_MODEL_MAPPINGS[idOrAlias];
     if (legacyMappedId) {
