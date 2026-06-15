@@ -242,6 +242,21 @@ describe('CODING_WORKFLOW template', () => {
     expect(hook!.method).toBe('send_message');
     expect(hook!.validator).toEqual({ kind: 'built_in', id: 'pr_ready' });
     expect(hook!.enabled).toBe(true);
+    expect(hook!.classification).toBe('validation');
+    expect(hook!.authorizedCallers).toEqual([{ sourceNode: 'Coding', agentSlots: ['coder'] }]);
+  });
+
+  test('review feedback cycle is gated by fresh GitHub review evidence', () => {
+    const channel = CODING_WORKFLOW.channels!.find(
+      (c) => c.from === 'Review' && c.to === 'Coding'
+    )!;
+    const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'review-posted-gate')!;
+
+    expect(channel.gateId).toBe('review-posted-gate');
+    expect(channel.maxCycles).toBe(5);
+    expect(gate.script).toMatchObject({ interpreter: 'bash', timeoutMs: 30000 });
+    expect(gate.script?.source).toContain('FORMAL_REVIEW_COUNT');
+    expect(gate.fields?.map((field) => field.name)).toEqual(['pr_url', 'review_url']);
   });
 
   test('validation-complete-gate accepts no-code-change completion evidence without pr_url', () => {
@@ -895,6 +910,43 @@ describe('PLAN_AND_DECOMPOSE_WORKFLOW template', () => {
     // Codex is no longer hardcoded as a gate feature; it is opt-in via node-level config.
     expect(gate.features?.codex_review_bot).toBeUndefined();
     expect(gate.resetOnCycle).toBe(true);
+  });
+
+  test('plan review approval migration carries vote data and resets votes on revision feedback', () => {
+    const workflow = migrateWorkflowGateProgressionToHooks({
+      ...PLAN_AND_DECOMPOSE_WORKFLOW,
+      templateName: PLAN_AND_DECOMPOSE_WORKFLOW.name,
+      templateGates: PLAN_AND_DECOMPOSE_WORKFLOW.gates ?? [],
+    }).workflow;
+    const approvalHook = workflow.hooks!.find(
+      (hook) => hook.sourceNode === 'Plan Review' && hook.targetNode === 'Task Dispatcher'
+    )!;
+    const resetHook = workflow.hooks!.find(
+      (hook) => hook.id === 'plan-approval-reset' && hook.targetNode === 'Planning'
+    )!;
+
+    expect(approvalHook).toMatchObject({
+      enabled: true,
+      sourceNode: 'Plan Review',
+      targetNode: 'Task Dispatcher',
+      method: 'send_message',
+      classification: 'validation',
+    });
+    expect(approvalHook.validator).toMatchObject({ kind: 'script', interpreter: 'bash' });
+    const approvalSource =
+      approvalHook.validator.kind === 'script' ? approvalHook.validator.source : '';
+    expect(approvalSource).toContain('NEOKAI_HOOK_LOCAL_STATE_JSON');
+    expect(approvalSource).toContain('"approval_count":4');
+    expect(resetHook).toMatchObject({
+      enabled: true,
+      sourceNode: 'Plan Review',
+      targetNode: 'Planning',
+      method: 'send_message',
+      classification: 'validation',
+    });
+    const resetSource = resetHook.validator.kind === 'script' ? resetHook.validator.source : '';
+    expect(resetSource).toContain('"type":"record_state"');
+    expect(resetSource).toContain('"approvals":null');
   });
 
   test('has three channels', () => {
