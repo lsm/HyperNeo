@@ -258,10 +258,18 @@ function remapHookNodeReference(value: string | undefined, nodeNames: Map<string
   return nodeNames.get(value) ?? value;
 }
 
-function serializeHook(hook: WorkflowHook, nodeNames: Map<string, string>): WorkflowHook {
+function serializeHook(hook: WorkflowHook, nodeNames: Map<string, string>): WorkflowHook | null {
   const { poll: _poll, humanOnly: _humanOnly, ...hookWithoutUnsupportedFields } = hook;
+  if (hook.humanOnly && (!hook.authorizedCallers || hook.authorizedCallers.length === 0)) {
+    return null;
+  }
+  const shouldMaterializeRetry =
+    !hook.retry && !(hook.validator.kind === 'built_in' && hook.validator.id === 'pr_ready');
   return {
     ...hookWithoutUnsupportedFields,
+    ...(shouldMaterializeRetry
+      ? { retry: { maxAttempts: 3, delayMs: 5000, backoffMultiplier: 1 } }
+      : {}),
     sourceNode: remapHookNodeReference(hook.sourceNode, nodeNames) ?? hook.sourceNode,
     targetNode: remapHookNodeReference(hook.targetNode, nodeNames),
     authorizedCallers: hook.authorizedCallers?.map((caller) => ({
@@ -385,7 +393,9 @@ function buildWorkflowFields(state: VisualEditorState): {
   );
   const gates = state.gates.filter((gate) => referencedGateIds.has(gate.id));
   const hookNodeNames = buildHookNodeNameMap(persistableNodes);
-  const hooks = state.hooks.map((hook) => serializeHook(hook, hookNodeNames));
+  const hooks = state.hooks
+    .map((hook) => serializeHook(hook, hookNodeNames))
+    .filter((hook): hook is WorkflowHook => hook !== null);
 
   return {
     fields: {

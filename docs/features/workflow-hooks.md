@@ -59,7 +59,7 @@ Script validators must declare external lookup needs with `validator.externalLoo
 
 ## Human approval flow
 
-Hooks are MCP-action based; agents satisfy handoffs by sending required data on `send_message`. Human approval remains field-gate based where humans write gate fields through UI/RPC. Example: Plan Review writes approval votes, then approval hooks record/reset vote state as review cycles progress.
+Hooks are MCP-action based; agents satisfy handoffs by sending required data on `send_message`. Human approval remains field-gate based only for channels that still declare `gateId`. Migrated plan-approval channels remove the gate from the handoff path; Plan Review agents must include approval votes in the `send_message` payload so the approval hook can record them in hook-local state.
 
 ## Retryable block behavior
 

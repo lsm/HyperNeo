@@ -451,6 +451,7 @@ describe('visualStateToCreateParams', () => {
         sourceNode: 'Step 1',
         targetNode: 'Review',
         authorizedCallers: [expect.objectContaining({ sourceNode: 'Step 1' })],
+        retry: { maxAttempts: 3, delayMs: 5000, backoffMultiplier: 1 },
       }),
     ]);
     expect(params.hooks![0].poll).toBeUndefined();
@@ -479,6 +480,47 @@ describe('visualStateToCreateParams', () => {
       delayMs: 1000,
       backoffMultiplier: 2,
     });
+  });
+
+  it('omits retry defaults for built-in pr_ready hooks', () => {
+    const params = visualStateToCreateParams(
+      makeState({
+        hooks: [
+          {
+            id: 'hook-1',
+            enabled: true,
+            sourceNode: 'Step 1',
+            method: 'send_message',
+            validator: { kind: 'built_in', id: 'pr_ready' },
+          },
+        ],
+      }),
+      'space-1',
+      'WF'
+    );
+
+    expect(params.hooks?.[0].retry).toBeUndefined();
+  });
+
+  it('drops unsupported human-only hooks without authorized callers', () => {
+    const params = visualStateToCreateParams(
+      makeState({
+        hooks: [
+          {
+            id: 'hook-1',
+            enabled: true,
+            sourceNode: 'Step 1',
+            method: 'send_message',
+            humanOnly: true,
+            validator: { kind: 'script', interpreter: 'bash', source: 'echo ok' },
+          },
+        ],
+      }),
+      'space-1',
+      'WF'
+    );
+
+    expect(params.hooks).toBeUndefined();
   });
 
   it('serializes hook result contract fields and strips unsupported humanOnly', () => {
