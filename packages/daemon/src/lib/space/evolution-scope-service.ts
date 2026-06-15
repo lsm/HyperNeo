@@ -259,7 +259,10 @@ export class EvolutionScopeService {
     if (!scope) return [];
     const limit = Math.max(0, params.limit ?? 3);
     if (limit === 0) return [];
-    return this.deps.evolutionRepo.listLessons(scope.id, 'active').slice(0, limit);
+    const task = this.deps.taskRepo.getTask(params.taskId);
+    const lessons = this.deps.evolutionRepo.listLessons(scope.id, 'active');
+    if (!task || lessons.length === 0) return lessons.slice(0, limit);
+    return rankLessonsByTaskRelevance(lessons, task).slice(0, limit);
   }
 
   createEvidence(params: CreateEvidenceRefParams): EvidenceRef {
@@ -690,6 +693,150 @@ export class EvolutionScopeService {
     if (!task) throw new Error(`Task not found for workflow run: ${workflowRunId}`);
     return this.requireScopeForTask(task.id, task.evolutionScopeId ?? null, task.goalId ?? null);
   }
+}
+
+/** Common words to ignore when tokenizing for keyword overlap. */
+const STOP_WORDS = new Set([
+  'the',
+  'and',
+  'for',
+  'are',
+  'but',
+  'not',
+  'you',
+  'all',
+  'can',
+  'had',
+  'her',
+  'was',
+  'one',
+  'our',
+  'out',
+  'day',
+  'get',
+  'has',
+  'him',
+  'his',
+  'how',
+  'its',
+  'may',
+  'new',
+  'now',
+  'old',
+  'see',
+  'two',
+  'way',
+  'who',
+  'boy',
+  'did',
+  'she',
+  'use',
+  'her',
+  'its',
+  'say',
+  'too',
+  'any',
+  'set',
+  'she',
+  'try',
+  'let',
+  'put',
+  'end',
+  'why',
+  'per',
+  'via',
+]);
+
+function tokenize(text: string): Set<string> {
+  const tokens = new Set<string>();
+  for (const word of text.toLowerCase().split(/[^a-z0-9]+/)) {
+    if (word.length >= 3 && !STOP_WORDS.has(word)) {
+      tokens.add(word);
+    }
+  }
+  return tokens;
+}
+
+function buildTaskTokens(task: SpaceTask): Set<string> {
+  const tokens = tokenize(`${task.title} ${task.description}`);
+  for (const label of task.labels) {
+    const clean = label.toLowerCase().trim();
+    if (clean.length >= 2) tokens.add(clean);
+  }
+  return tokens;
+}
+
+function buildLessonTokens(lesson: EvolutionLesson): Set<string> {
+  const tokens = tokenize(`${lesson.rule} ${lesson.why}`);
+  for (const tag of lesson.appliesTo) {
+    const clean = tag.toLowerCase().trim();
+    if (clean.length >= 2) tokens.add(clean);
+  }
+  return tokens;
+}
+
+function countOverlap(a: Set<string>, b: Set<string>): number {
+  let count = 0;
+  for (const item of a) {
+    if (b.has(item)) count++;
+  }
+  return count;
+}
+
+function normalizeRecencyScore(lessons: EvolutionLesson[]): Map<string, number> {
+  const scores = new Map<string, number>();
+  if (lessons.length <= 1) {
+    for (const lesson of lessons) scores.set(lesson.id, 0);
+    return scores;
+  }
+  let minUpdated = Infinity;
+  let maxUpdated = -Infinity;
+  for (const lesson of lessons) {
+    if (lesson.updatedAt < minUpdated) minUpdated = lesson.updatedAt;
+    if (lesson.updatedAt > maxUpdated) maxUpdated = lesson.updatedAt;
+  }
+  const range = maxUpdated - minUpdated || 1;
+  for (const lesson of lessons) {
+    scores.set(lesson.id, ((lesson.updatedAt - minUpdated) / range) * 0.49);
+  }
+  return scores;
+}
+
+/**
+ * Rank active lessons by relevance to a specific task.
+ *
+ * Scoring:
+ * - Tag overlap between `lesson.appliesTo` and `task.labels`: +10 per match
+ * - Keyword overlap between task text and lesson text: +2 per match
+ * - Lesson confidence: +0.5 * confidence (max 0.5, tiebreaker only)
+ * - Recency: 0–0.49 tiebreaker based on relative updatedAt within the lesson set
+ */
+export function rankLessonsByTaskRelevance(
+  lessons: EvolutionLesson[],
+  task: SpaceTask
+): EvolutionLesson[] {
+  if (lessons.length <= 1) return [...lessons];
+  const taskTokens = buildTaskTokens(task);
+  const recencyScores = normalizeRecencyScore(lessons);
+  const scored = lessons.map((lesson) => {
+    const lessonTokens = buildLessonTokens(lesson);
+    const tagOverlap = countOverlap(
+      new Set(lesson.appliesTo.map((t) => t.trim().toLowerCase())),
+      new Set(task.labels.map((l) => l.trim().toLowerCase()))
+    );
+    const keywordOverlap = countOverlap(taskTokens, lessonTokens);
+    const score =
+      tagOverlap * 10 +
+      keywordOverlap * 2 +
+      lesson.confidence * 0.5 +
+      (recencyScores.get(lesson.id) ?? 0);
+    return { lesson, score };
+  });
+  scored.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    return b.lesson.updatedAt - a.lesson.updatedAt;
+  });
+  return scored.map((s) => s.lesson);
 }
 
 function buildTaskResultEvidenceSummary(task: SpaceTask): string {
