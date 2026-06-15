@@ -806,6 +806,9 @@ describe('createSpaceAgentToolHandlers — session management tools', () => {
       },
       2
     );
+    ctx.db
+      .prepare(`UPDATE sdk_messages SET sdk_message = ? WHERE id = ?`)
+      .run('{not-json', 'msg-retracted');
     insertMessage(
       'fallback-notice',
       'system',

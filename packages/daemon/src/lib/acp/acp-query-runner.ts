@@ -483,6 +483,8 @@ export class AcpQueryRunner {
         throw new Error('Set NEOKAI_ACP_COMMAND to enable ACP agents.');
       }
       const { command, args } = parseAcpCommand(acpCommand);
+      const preProviderAnthropicAuthToken = process.env.ANTHROPIC_AUTH_TOKEN;
+      const preProviderAnthropicOAuthToken = process.env.CLAUDE_CODE_OAUTH_TOKEN;
 
       const providerService = getProviderService();
       this.ctx.originalEnvVars = providerService.applyEnvVarsToProcessForSession({
@@ -555,6 +557,12 @@ export class AcpQueryRunner {
         omitProviderManaged: true,
         omitProviderManagedPreserveAuth: true,
       });
+      if (preProviderAnthropicAuthToken?.startsWith('sk-ant-oat')) {
+        acpEnv.ANTHROPIC_AUTH_TOKEN = preProviderAnthropicAuthToken;
+      }
+      if (preProviderAnthropicOAuthToken) {
+        acpEnv.CLAUDE_CODE_OAUTH_TOKEN = preProviderAnthropicOAuthToken;
+      }
 
       client = this.createAcpClient({
         command,
