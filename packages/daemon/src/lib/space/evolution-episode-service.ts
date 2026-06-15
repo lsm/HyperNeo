@@ -212,6 +212,7 @@ export class EvolutionEpisodeService {
       timeWindow: params.timeWindow ?? deriveTimeWindow(evidence),
       preflight: scoreEvolutionEvidenceQuality({
         evidence,
+        availableScopeEvidence: this.deps.evolutionRepo.listEvidence(params.scopeId),
         tasks: tasks.map(({ task }) => task),
         workflowRuns: workflowRuns.map(({ run, tasks: runTasks, artifacts }) => ({
           run,

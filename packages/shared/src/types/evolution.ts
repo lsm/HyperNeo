@@ -126,6 +126,15 @@ export interface CreateEvidenceRefParams {
 
 export type EvidenceQualityLevel = 'low' | 'medium' | 'high';
 
+export type EvidenceArtifactDiagnosticsStatus = 'selected' | 'available_omitted' | 'none_available';
+
+export interface EvidenceArtifactDiagnostics {
+  status: EvidenceArtifactDiagnosticsStatus;
+  availableKinds: string[];
+  omittedCount: number;
+  recommendations: string[];
+}
+
 export interface EvidenceQualityPreflight {
   level: EvidenceQualityLevel;
   score: number;
@@ -142,6 +151,7 @@ export interface EvidenceQualityPreflight {
     metricSnapshots: number;
     outcomes: number;
   };
+  artifactDiagnostics: EvidenceArtifactDiagnostics;
 }
 
 export interface EvolutionFinding {
