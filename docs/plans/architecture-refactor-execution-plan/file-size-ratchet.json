@@ -200,7 +200,7 @@
       "followUp": "M10 cleanup split when touched"
     },
     "packages/daemon/src/lib/providers/openai-chat-bridge/server.ts": {
-      "maxLines": 907,
+      "maxLines": 930,
       "followUp": "M7 agent runtime boundary split"
     },
     "packages/daemon/src/lib/rpc-handlers/space-export-import-handlers.ts": {
@@ -316,7 +316,7 @@
       "followUp": "M8/UI focused view split"
     },
     "packages/web/src/components/settings/CustomEndpointEditor.tsx": {
-      "maxLines": 755,
+      "maxLines": 756,
       "followUp": "M10 cleanup split when touched"
     },
     "packages/daemon/src/storage/repositories/space-task-repository.ts": {

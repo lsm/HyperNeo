@@ -227,6 +227,7 @@ Events:
 - `space.deleted`
 - `space.task.created`
 - `space.task.updated`
+- `space.task.archived`
 - `space.workflowRun.updated`
 
 Notes:
@@ -512,7 +513,7 @@ Owns Forge evolution read models and commands.
 Read models:
 
 - `forge.scope.list`
-- `forge.scope.get`
+- `forge.scope.detail`
 - `forge.scope.timeline`
 - `forge.evidence.list`
 - `forge.metricSnapshot.list`
@@ -565,9 +566,9 @@ Events:
 
 Cross-domain events:
 
-- `forge.taskProposal.createdTask` should cause `space.task.created`.
+- `forge.taskProposal.taskCreated` should cause `space.task.created`.
 - `forge.rollup.applied` should cause `space.goal.updated`.
-- `space.task.completed` may cause `forge.evidence.created` when completed-task evidence capture is enabled.
+- `space.task.updated` may cause `forge.evidence.created` when a task transitions to completed and completed-task evidence capture is enabled.
 
 Notes:
 

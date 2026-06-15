@@ -281,11 +281,13 @@ export interface MessageContract<TInput = unknown, TOutput = unknown> {
 }
 ```
 
-Contracts should live in `packages/messaging` or a successor package such as `@neokai/messaging`, with narrow exports:
+Initial contracts live under `@neokai/shared/contracts` to match the shared-boundaries plan and M1 execution plan. A future `@neokai/messaging` extraction may move the registry and envelopes later, but it must not create a second contract surface during migration.
 
 ```text
-packages/messaging/src/
-  envelope.ts
+packages/shared/src/contracts/
+  fabric/
+    envelope.ts
+    registry.ts
   contracts/
     space.ts
     session.ts
@@ -399,6 +401,10 @@ export interface AuthPolicy<TInput> {
   action: string;
   resource: 'global' | 'space' | 'session' | 'task' | 'workflowRun' | 'provider' | 'mcp';
   resourceIdFrom?: (input: TInput, envelope: MessageEnvelope<TInput>) => string | null;
+  resourceFrom?: (
+    input: TInput,
+    envelope: MessageEnvelope<TInput>
+  ) => { type: AuthPolicy<TInput>['resource']; id: string | null };
   allowLocalService?: boolean;
   allowExternal?: boolean;
 }
@@ -725,7 +731,7 @@ Handlers store and mutate `prompt_policy_records`; the Agent Runtime prompt poli
 ### Phase 0: Spec and Contracts
 
 - Add this design spec.
-- Define envelope, contract, subject, auth, and result types in `packages/messaging`.
+- Define envelope, contract, subject, auth, and result types under `@neokai/shared/contracts`.
 - Add a small contract registry with no transport changes.
 - Add lint or review guidance: new cross-boundary APIs should define contracts.
 
