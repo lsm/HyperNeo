@@ -361,6 +361,7 @@ The schema below is intentionally explicit. It can be split into migration helpe
 ```sql
 CREATE TABLE message_outbox (
   id TEXT PRIMARY KEY,
+  sequence INTEGER NOT NULL UNIQUE,
   message_id TEXT NOT NULL UNIQUE,
   kind TEXT NOT NULL CHECK(kind IN ('command', 'event')),
   name TEXT NOT NULL,
@@ -389,13 +390,13 @@ CREATE TABLE message_outbox (
 );
 
 CREATE INDEX idx_message_outbox_status_next
-  ON message_outbox(status, next_attempt_at);
+  ON message_outbox(status, next_attempt_at, sequence);
 
 CREATE INDEX idx_message_outbox_subject_created
-  ON message_outbox(subject, created_at);
+  ON message_outbox(subject, sequence);
 
 CREATE INDEX idx_message_outbox_name_created
-  ON message_outbox(name, created_at);
+  ON message_outbox(name, sequence);
 
 CREATE INDEX idx_message_outbox_correlation
   ON message_outbox(correlation_id);
@@ -404,6 +405,7 @@ CREATE INDEX idx_message_outbox_correlation
 Notes:
 
 - `message_id` is the durable fabric message id.
+- `sequence` is a monotonically increasing local commit-order key allocated by the storage layer.
 - `name` is the semantic contract name, such as `space.task.created`.
 - `subject` is the routable resource subject, such as `space/{spaceId}/task/{taskId}`.
 - `partition_key` is the ordering key for broker adapters. Usually it is `subject` or `spaceId`.
@@ -504,6 +506,7 @@ Behavior:
 CREATE TABLE read_model_cursors (
   projector TEXT PRIMARY KEY,
   last_message_id TEXT,
+  last_outbox_sequence INTEGER,
   last_outbox_created_at INTEGER,
   updated_at INTEGER NOT NULL
 );
@@ -786,10 +789,10 @@ Runtime events that should be durable early:
 | `space.workflowRun.blocked` | human/operator attention |
 | `space.task.created` | task board/read model |
 | `space.task.updated` | task state/read model |
-| `space.nodeExecution.created` | runtime canvas/projection |
-| `space.nodeExecution.updated` | runtime canvas/projection |
-| `space.pendingMessage.queued` | recovery and diagnostics |
-| `space.pendingMessage.delivered` | delivery audit |
+| `space.workflowNodeExecution.created` | runtime canvas/projection |
+| `space.workflowNodeExecution.updated` | runtime canvas/projection |
+| `space.workflowMessage.queued` | recovery and diagnostics |
+| `space.workflowMessage.delivered` | delivery audit |
 
 Runtime events that can remain ephemeral:
 
@@ -818,7 +821,7 @@ Durable Forge events:
 | --- | --- |
 | `forge.scope.created` | scope row committed |
 | `forge.scope.updated` | scope metadata changed |
-| `forge.evidence.added` | evidence row committed |
+| `forge.evidence.created` | evidence row committed |
 | `forge.metricSnapshot.created` | snapshot row committed |
 | `forge.episode.created` | episode row committed |
 | `forge.episode.updated` | episode row changed |
@@ -932,10 +935,10 @@ Local SQLite commit order is the source of truth.
 
 Outbox ordering rules:
 
-1. `created_at` and `id` define global local order.
+1. `sequence` defines global local order.
 2. `partition_key` defines broker partition/order key.
 3. Consumers that need per-subject ordering should process by `subject` or `partition_key`.
-4. The first dispatcher can publish due rows by `created_at`.
+4. The first dispatcher can publish due rows by `sequence`.
 5. Strict per-subject ordering can be added by not publishing a newer row for a subject while an older row for that subject is pending or failed.
 
 Kafka mapping:

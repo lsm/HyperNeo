@@ -437,7 +437,8 @@ Possible foundation:
 CREATE TABLE config_values (
   id TEXT PRIMARY KEY,
   key TEXT NOT NULL,
-  scope_type TEXT NOT NULL,
+  scope_type TEXT NOT NULL
+    CHECK(scope_type IN ('global', 'user', 'project', 'local', 'session', 'space', 'space_agent', 'workflow', 'workflow_node', 'task')),
   scope_id TEXT,
   value_json TEXT NOT NULL,
   source_kind TEXT NOT NULL,
@@ -469,7 +470,7 @@ CREATE TABLE extension_packages (
   enabled INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
-  CHECK(manifest_json IS NOT NULL AND json_valid(manifest_json))
+  CHECK(manifest_json IS NOT NULL AND json_valid(manifest_json) AND json_type(manifest_json) = 'object')
 );
 
 CREATE TABLE extension_contributions (
@@ -480,7 +481,7 @@ CREATE TABLE extension_contributions (
   manifest_json TEXT NOT NULL,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
-  CHECK(manifest_json IS NOT NULL AND json_valid(manifest_json))
+  CHECK(manifest_json IS NOT NULL AND json_valid(manifest_json) AND json_type(manifest_json) = 'object')
 );
 ```
 

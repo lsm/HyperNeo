@@ -377,12 +377,12 @@ Commands:
 
 Events:
 
-- `spaceAgent.created`
-- `spaceAgent.updated`
-- `spaceAgent.deleted`
-- `spaceWorkflow.created`
-- `spaceWorkflow.updated`
-- `spaceWorkflow.deleted`
+- `space.agent.created`
+- `space.agent.updated`
+- `space.agent.deleted`
+- `space.workflow.created`
+- `space.workflow.updated`
+- `space.workflow.deleted`
 
 Notes:
 
@@ -603,6 +603,8 @@ export interface ForgeReviewBundleReadModel {
 
 export interface ForgeScopeDetailReadModel {
   scope: EvolutionScope;
+  version: number;
+  updatedAt: number;
   linkedGoal?: SpaceGoal | null;
   evidence: EvidenceRef[];
   metricSnapshots: MetricSnapshot[];

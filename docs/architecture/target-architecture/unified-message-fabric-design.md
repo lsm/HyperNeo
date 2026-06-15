@@ -579,6 +579,11 @@ export const spaceTaskCreate = defineCommand({
     resource: 'space',
     resourceIdFrom: (input) => input.spaceId,
   },
+  idempotency: {
+    required: true,
+    scope: 'actor+subject',
+    keyFrom: (input) => input.idempotencyKey,
+  },
   durability: {
     delivery: 'durable',
     replay: 'none',
@@ -665,6 +670,11 @@ export const promptPolicyBuiltinActivate = defineCommand({
           return { type: 'space', id: input.spaceId };
       }
     },
+  },
+  idempotency: {
+    required: true,
+    scope: 'subject',
+    keyFrom: (input) => input.idempotencyKey,
   },
   durability: {
     delivery: 'durable',
