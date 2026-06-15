@@ -326,14 +326,15 @@ describe('KimiProvider', () => {
       expect(KimiProvider.MODELS[0].preferContextWindowMetadata).toBe(true);
     });
 
-    it('should expose moonshot-* aliases via sdkModelIds', () => {
+    it('should expose moonshot-* provider aliases via providerAliases', () => {
       // KimiProvider.ownsModel accepts moonshot-* IDs but model-service
-      // lookups go through findInModels which only checks id/alias/sdkModelIds.
-      // Without sdkModelIds, sessions stored with a moonshot-* ID have null
+      // lookups go through findInModels which checks id/alias/providerAliases.
+      // Without providerAliases, sessions stored with a moonshot-* ID have null
       // modelInfo and NeoKai fallback compaction can't compute a threshold.
-      const sdkModelIds = KimiProvider.MODELS[0].sdkModelIds ?? [];
-      expect(sdkModelIds).toContain('moonshot-v1-32k');
-      expect(sdkModelIds).toContain('moonshot-v1-8k');
+      const providerAliases = KimiProvider.MODELS[0].providerAliases ?? [];
+      expect(providerAliases).toContain('moonshot-v1-32k');
+      expect(providerAliases).toContain('moonshot-v1-8k');
+      expect(providerAliases).toContain('KIMI');
     });
   });
 

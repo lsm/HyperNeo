@@ -26,8 +26,16 @@ export interface ModelInfo {
    * Additional model IDs the SDK may report for this model (e.g. Anthropic
    * bridge aliases). ContextFetcher treats these as equivalent to `id` and
    * `alias` when matching SDK-reported model names to provider metadata.
+   * These are NOT provider-accepted/user-selectable aliases.
    */
   sdkModelIds?: string[];
+  /**
+   * Additional model spellings accepted by the provider/user config path.
+   * Model service lookups treat these as aliases for validation and metadata
+   * resolution. Keep separate from `sdkModelIds` so SDK-only bridge aliases
+   * (e.g. Codex's Anthropic IDs) do not become user-selectable model IDs.
+   */
+  providerAliases?: string[];
   /** Model family */
   family: ModelFamily;
   /** Provider that owns this model (e.g., 'anthropic', 'glm', 'deepseek') */

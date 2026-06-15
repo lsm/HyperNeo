@@ -525,23 +525,38 @@ export function setModelsCache(cache: Map<string, ModelInfo[]>, timestamp?: numb
  * 3. Legacy model mapping
  */
 function findInModels(models: ModelInfo[], idOrAlias: string): ModelInfo | undefined {
+  const normalized = idOrAlias.toLowerCase();
+
   // 1. Exact ID match (works for SDK's short IDs like 'opus', 'default')
   let found = models.find((m) => m.id === idOrAlias);
 
-  // 2. Alias field match
+  // 2. Case-insensitive ID match for providers whose routing accepts aliases
+  // after lowercasing (e.g. Kimi accepts `KIMI` and `Moonshot-v1-32k`).
+  if (!found) {
+    found = models.find((m) => m.id.toLowerCase() === normalized);
+  }
+
+  // 3. Alias field match
   if (!found) {
     found = models.find((m) => m.alias === idOrAlias);
   }
 
-  // 3. sdkModelIds match (additional IDs/aliases the provider accepts).
-  //    Used both by ContextFetcher for SDK-reported names AND by model-service
-  //    for provider-accepted aliases (e.g. Kimi accepts moonshot-v1-32k that
-  //    normalises to kimi-for-coding at the bridge layer).
+  // 4. Case-insensitive alias field match
   if (!found) {
-    found = models.find((m) => m.sdkModelIds?.includes(idOrAlias));
+    found = models.find((m) => m.alias.toLowerCase() === normalized);
   }
 
-  // 4. Legacy model mapping (maps old full IDs to SDK short IDs)
+  // 5. Provider-accepted aliases. These are user/config spellings that should
+  // pass validation and resolve metadata. Do NOT use sdkModelIds here: those are
+  // SDK-reported bridge aliases (e.g. Codex's claude-opus-4-7) and must not
+  // become user-selectable/provider-accepted IDs.
+  if (!found) {
+    found = models.find((m) =>
+      m.providerAliases?.some((alias) => alias.toLowerCase() === normalized)
+    );
+  }
+
+  // 6. Legacy model mapping (maps old full IDs to SDK short IDs)
   if (!found) {
     const legacyMappedId = LEGACY_MODEL_MAPPINGS[idOrAlias];
     if (legacyMappedId) {

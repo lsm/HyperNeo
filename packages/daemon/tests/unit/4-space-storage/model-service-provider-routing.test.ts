@@ -87,6 +87,8 @@ const codexModels: ModelInfo[] = [
     id: 'gpt-5.3-codex',
     name: 'GPT-5.3 Codex',
     alias: 'codex',
+    // SDK-only bridge alias. This must NOT become user-selectable/provider-accepted.
+    sdkModelIds: ['claude-opus-4-7'],
     family: 'gpt',
     provider: 'anthropic-codex',
     contextWindow: 200000,
@@ -94,8 +96,26 @@ const codexModels: ModelInfo[] = [
   },
 ];
 
-// All models from all three providers in one flat list (simulates populated cache)
-const allModels: ModelInfo[] = [...anthropicModels, ...copilotModels, ...codexModels];
+const kimiModels: ModelInfo[] = [
+  {
+    id: 'kimi-for-coding',
+    name: 'Kimi For Coding',
+    alias: 'kimi',
+    providerAliases: ['KIMI', 'Moonshot-v1-32k', 'moonshot-v1-8k'],
+    family: 'kimi',
+    provider: 'kimi',
+    contextWindow: 262144,
+    available: true,
+  },
+];
+
+// All models from all providers in one flat list (simulates populated cache)
+const allModels: ModelInfo[] = [
+  ...anthropicModels,
+  ...copilotModels,
+  ...codexModels,
+  ...kimiModels,
+];
 
 describe('Model Service — provider routing', () => {
   beforeEach(() => {
@@ -145,6 +165,26 @@ describe('Model Service — provider routing', () => {
       expect(model?.provider).toBe('anthropic-codex');
     });
 
+    it('does not treat Codex SDK-only model IDs as provider-accepted aliases', async () => {
+      const model = await getModelInfo('claude-opus-4-7', 'global', 'anthropic-codex');
+      expect(model).toBeNull();
+    });
+
+    it('resolves Kimi provider aliases case-insensitively to canonical metadata', async () => {
+      const byUpperAlias = await getModelInfo('KIMI', 'global', 'kimi');
+      const byMoonshotAlias = await getModelInfo('Moonshot-v1-32k', 'global', 'kimi');
+
+      expect(byUpperAlias?.id).toBe('kimi-for-coding');
+      expect(byUpperAlias?.contextWindow).toBe(262144);
+      expect(byMoonshotAlias?.id).toBe('kimi-for-coding');
+      expect(byMoonshotAlias?.contextWindow).toBe(262144);
+    });
+
+    it('returns null when Kimi alias is requested for a different provider', async () => {
+      const model = await getModelInfo('Moonshot-v1-32k', 'global', 'anthropic-codex');
+      expect(model).toBeNull();
+    });
+
     it('returns null when providerId is anthropic but model only exists in anthropic-codex', async () => {
       const model = await getModelInfo('gpt-5.3-codex', 'global', 'anthropic');
       expect(model).toBeNull();
@@ -179,6 +219,16 @@ describe('Model Service — provider routing', () => {
     it('resolves codex alias to gpt-5.3-codex for anthropic-codex', async () => {
       const resolved = await resolveModelAlias('codex', 'global', 'anthropic-codex');
       expect(resolved).toBe('gpt-5.3-codex');
+    });
+
+    it('does not resolve Codex SDK-only IDs as user-selectable aliases', async () => {
+      const resolved = await resolveModelAlias('claude-opus-4-7', 'global', 'anthropic-codex');
+      expect(resolved).toBe('claude-opus-4-7');
+    });
+
+    it('resolves Kimi provider aliases to canonical model ID', async () => {
+      expect(await resolveModelAlias('KIMI', 'global', 'kimi')).toBe('kimi-for-coding');
+      expect(await resolveModelAlias('Moonshot-v1-32k', 'global', 'kimi')).toBe('kimi-for-coding');
     });
 
     it('returns alias as-is when no matching model found for the specified provider', async () => {
@@ -246,6 +296,19 @@ describe('Model Service — provider routing', () => {
 
     it('validates gpt-5.3-codex as valid for anthropic-codex', async () => {
       expect(await isValidModel('gpt-5.3-codex', 'global', 'anthropic-codex')).toBe(true);
+    });
+
+    it('rejects Codex SDK-only IDs for anthropic-codex validation', async () => {
+      expect(await isValidModel('claude-opus-4-7', 'global', 'anthropic-codex')).toBe(false);
+    });
+
+    it('validates Kimi provider aliases case-insensitively', async () => {
+      expect(await isValidModel('KIMI', 'global', 'kimi')).toBe(true);
+      expect(await isValidModel('Moonshot-v1-32k', 'global', 'kimi')).toBe(true);
+    });
+
+    it('rejects Kimi provider aliases for other providers', async () => {
+      expect(await isValidModel('Moonshot-v1-32k', 'global', 'anthropic-codex')).toBe(false);
     });
 
     it('rejects unknown model for any provider', async () => {
