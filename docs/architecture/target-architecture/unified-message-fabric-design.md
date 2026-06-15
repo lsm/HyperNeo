@@ -651,8 +651,20 @@ export const promptPolicyBuiltinActivate = defineCommand({
   },
   auth: {
     action: 'promptPolicy.record.write',
-    resource: 'space',
-    resourceIdFrom: (input) => input.spaceId ?? null,
+    resourceFrom: (input) => {
+      switch (input.scopeType) {
+        case 'global':
+          return { type: 'global', id: null };
+        case 'session':
+          return { type: 'session', id: input.scopeId };
+        case 'space':
+        case 'space_agent':
+        case 'workflow':
+        case 'workflow_node':
+        case 'task':
+          return { type: 'space', id: input.spaceId };
+      }
+    },
   },
   durability: {
     delivery: 'durable',

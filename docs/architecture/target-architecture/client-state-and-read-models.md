@@ -595,13 +595,18 @@ export interface ForgeScopeReadModel {
   updatedAt: number;
 }
 
-export interface ForgeScopeDetailReadModel {
-  scope: EvolutionScope;
-  evidence: EvidenceRef[];
-  metricSnapshots: MetricSnapshot[];
+export interface ForgeReviewBundleReadModel {
   episodes: EvolutionEpisode[];
   lessons: EvolutionLesson[];
   proposals: TaskProposal[];
+}
+
+export interface ForgeScopeDetailReadModel {
+  scope: EvolutionScope;
+  linkedGoal?: SpaceGoal | null;
+  evidence: EvidenceRef[];
+  metricSnapshots: MetricSnapshot[];
+  reviewBundle: ForgeReviewBundleReadModel;
 }
 ```
 

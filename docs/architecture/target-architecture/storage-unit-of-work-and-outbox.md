@@ -470,6 +470,8 @@ CREATE TABLE command_receipts (
   actor_id TEXT NOT NULL,
   actor_type TEXT NOT NULL,
   idempotency_key TEXT NOT NULL,
+  receipt_scope TEXT NOT NULL,
+  receipt_key TEXT NOT NULL,
   request_hash TEXT NOT NULL,
   status TEXT NOT NULL
     CHECK(status IN ('accepted', 'completed', 'failed')),
@@ -479,7 +481,7 @@ CREATE TABLE command_receipts (
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
   completed_at INTEGER,
-  UNIQUE(command_name, subject, actor_id, idempotency_key)
+  UNIQUE(command_name, receipt_scope, receipt_key)
 );
 
 CREATE INDEX idx_command_receipts_operation
@@ -488,7 +490,9 @@ CREATE INDEX idx_command_receipts_operation
 
 Behavior:
 
-- duplicate `(command_name, subject, actor_id, idempotency_key)` with the same `request_hash` returns the existing receipt
+- `receipt_scope` stores the command contract's declared idempotency scope: `actor+subject`, `subject`, or `global`
+- `receipt_key` is a normalized key derived from `idempotency_key` plus only the fields required by `receipt_scope`
+- duplicate `(command_name, receipt_scope, receipt_key)` with the same `request_hash` returns the existing receipt
 - duplicate with a different `request_hash` is a command conflict
 - commands without explicit idempotency are allowed only when the command contract marks idempotency as not required
 - system or anonymous commands use explicit non-null sentinels, such as `actor_type = 'system'` with `actor_id = 'system'`
@@ -525,7 +529,7 @@ CREATE TABLE prompt_policy_records (
   source_kind TEXT NOT NULL
     CHECK(source_kind IN ('settings', 'session', 'space', 'space-agent', 'workflow', 'task', 'runtime')),
   source_ref TEXT,
-  constraints_json TEXT,
+  constraints TEXT,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
   CHECK(
@@ -537,7 +541,7 @@ CREATE TABLE prompt_policy_records (
     OR (record_type = 'content' AND template_id IS NULL AND suppresses_template_id IS NULL AND content IS NOT NULL AND length(content) > 0)
     OR (record_type = 'suppress' AND template_id IS NULL AND suppresses_template_id IS NOT NULL AND content IS NULL)
   ),
-  CHECK(constraints_json IS NULL OR (json_valid(constraints_json) AND json_type(constraints_json) = 'object'))
+  CHECK(constraints IS NULL OR (json_valid(constraints) AND json_type(constraints) = 'object'))
 );
 
 CREATE INDEX idx_prompt_policy_records_scope

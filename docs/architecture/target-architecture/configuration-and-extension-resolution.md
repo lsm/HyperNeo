@@ -444,7 +444,11 @@ CREATE TABLE config_values (
   secret INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
-  CHECK(value_json IS NOT NULL AND json_valid(value_json))
+  CHECK(value_json IS NOT NULL AND json_valid(value_json)),
+  CHECK(
+    (scope_type = 'global' AND scope_id IS NULL)
+    OR (scope_type <> 'global' AND scope_id IS NOT NULL AND length(scope_id) > 0)
+  )
 );
 
 CREATE INDEX idx_config_values_key_scope
