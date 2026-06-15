@@ -88,14 +88,8 @@ export class KimiProvider implements Provider {
       // SDK auto-compact disabled (via buildProviderSettings) AND no NeoKai
       // fallback threshold — they would run into Kimi's real context limit with
       // no compaction trigger.
-      providerAliases: [
-        'KIMI',
-        'Kimi',
-        'Moonshot-v1-32k',
-        'moonshot-v1-32k',
-        'moonshot-v1-8k',
-        'moonshot-v1-128k',
-      ],
+      providerAliases: ['KIMI', 'Kimi'],
+      providerAliasPrefixes: ['moonshot-'],
       // Kimi's real context window is 262k but the SDK's PP() helper returns
       // 200k for unknown model IDs (and there is no [1m] suffix we can use
       // without breaking the upstream Kimi API call). We must trust this

@@ -36,6 +36,12 @@ export interface ModelInfo {
    * (e.g. Codex's Anthropic IDs) do not become user-selectable model IDs.
    */
   providerAliases?: string[];
+  /**
+   * Provider-accepted alias prefixes. Used for open-ended alias families such
+   * as Kimi's `moonshot-*` IDs, where listing every spelling would be brittle.
+   * Matched case-insensitively by model-service lookup.
+   */
+  providerAliasPrefixes?: string[];
   /** Model family */
   family: ModelFamily;
   /** Provider that owns this model (e.g., 'anthropic', 'glm', 'deepseek') */

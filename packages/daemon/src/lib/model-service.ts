@@ -556,7 +556,16 @@ function findInModels(models: ModelInfo[], idOrAlias: string): ModelInfo | undef
     );
   }
 
-  // 6. Legacy model mapping (maps old full IDs to SDK short IDs)
+  // 6. Provider-accepted alias prefixes. Used for open-ended alias families
+  // such as Kimi's moonshot-* IDs. Keep separate from sdkModelIds for the same
+  // reason as providerAliases: SDK-only bridge IDs must not become valid input.
+  if (!found) {
+    found = models.find((m) =>
+      m.providerAliasPrefixes?.some((prefix) => normalized.startsWith(prefix.toLowerCase()))
+    );
+  }
+
+  // 7. Legacy model mapping (maps old full IDs to SDK short IDs)
   if (!found) {
     const legacyMappedId = LEGACY_MODEL_MAPPINGS[idOrAlias];
     if (legacyMappedId) {
