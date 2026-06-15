@@ -18,7 +18,6 @@
  */
 
 import type { SpaceAgent } from '@neokai/shared';
-import { KNOWN_TOOLS } from '@neokai/shared';
 import type { SpaceAgentManager, SpaceAgentResult } from '../managers/space-agent-manager';
 import { computeAgentTemplateHash } from './agent-template-hash';
 import { QA_SYSTEM_CONTRACT, REVIEWER_SYSTEM_CONTRACT } from './system-contracts';
@@ -45,9 +44,23 @@ export const SUB_SESSION_FEATURES = {
 // ---------------------------------------------------------------------------
 
 /** Full coding toolset: read, write, shell, search, web */
-const CODER_TOOLS = KNOWN_TOOLS.filter(
-  (t) => !['Task', 'TaskOutput', 'TaskStop'].includes(t)
-) as string[];
+const CODER_TOOLS: string[] = [
+  'Read',
+  'Write',
+  'Edit',
+  'Bash',
+  'Grep',
+  'Glob',
+  'WebFetch',
+  'WebSearch',
+  'NotebookEdit',
+  'TodoWrite',
+  'AskUserQuestion',
+  'EnterPlanMode',
+  'ExitPlanMode',
+  'Skill',
+  'ToolSearch',
+];
 
 /** General-purpose worker: full coding toolset */
 const GENERAL_TOOLS = CODER_TOOLS;

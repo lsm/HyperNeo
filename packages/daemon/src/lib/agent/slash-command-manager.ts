@@ -38,6 +38,7 @@ export interface SlashCommandManagerContext {
 export class SlashCommandManager {
   private slashCommands: string[] = [];
   private commandsFetchedFromSDK = false;
+  private commandsRestoredFromDb = false;
 
   constructor(private ctx: SlashCommandManagerContext) {
     // Restore from session if available — validate it's a real array, not a
@@ -46,7 +47,7 @@ export class SlashCommandManager {
     const stored = ctx.session.availableCommands;
     if (Array.isArray(stored) && stored.length > 0) {
       this.slashCommands = stored;
-      this.commandsFetchedFromSDK = true;
+      this.commandsRestoredFromDb = true;
     }
   }
 
@@ -58,8 +59,10 @@ export class SlashCommandManager {
 
     // Return cached commands if available
     if (this.slashCommands.length > 0) {
-      // Fire-and-forget: refresh from SDK in background
-      if (!this.commandsFetchedFromSDK && queryObject) {
+      // Fire-and-forget: refresh from SDK in background. DB-restored commands are
+      // a stale-session fallback only; system:init / supportedCommands must still
+      // reconcile live custom skills when the SDK is available.
+      if (!this.commandsFetchedFromSDK && !this.commandsRestoredFromDb && queryObject) {
         this.fetchAndCache().catch((e) => {
           logger.warn('Background refresh of slash commands failed:', e);
         });
@@ -93,6 +96,7 @@ export class SlashCommandManager {
 
     this.slashCommands = allCommands;
     this.commandsFetchedFromSDK = true;
+    this.commandsRestoredFromDb = false;
 
     session.availableCommands = this.slashCommands;
     db.updateSession(session.id, { availableCommands: this.slashCommands });
@@ -111,6 +115,7 @@ export class SlashCommandManager {
 
     this.slashCommands = allCommands;
     this.commandsFetchedFromSDK = true;
+    this.commandsRestoredFromDb = false;
 
     session.availableCommands = this.slashCommands;
     db.updateSession(session.id, { availableCommands: this.slashCommands });

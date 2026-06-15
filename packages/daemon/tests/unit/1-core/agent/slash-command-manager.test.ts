@@ -161,7 +161,7 @@ describe('SlashCommandManager', () => {
       expect(commands.length).toBeGreaterThan(0);
     });
 
-    it('should treat restored cached commands as authoritative', async () => {
+    it('should return restored cached commands without background supportedCommands refresh', async () => {
       const existingCommands = ['/cached-command'];
       manager = createManager({ availableCommands: existingCommands });
 
@@ -171,6 +171,20 @@ describe('SlashCommandManager', () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       expect(supportedCommandsSpy).not.toHaveBeenCalled();
+    });
+
+    it('should refresh restored commands from the next SDK init message', async () => {
+      manager = createManager({ availableCommands: ['stale-command'] });
+
+      await manager.updateFromInit(['fresh-sdk-command']);
+
+      expect(updateSessionSpy).toHaveBeenCalledWith('test-session-id', {
+        availableCommands: expect.arrayContaining(['fresh-sdk-command']),
+      });
+      expect(emitSpy).toHaveBeenCalledWith('commands.updated', {
+        sessionId: 'test-session-id',
+        commands: expect.arrayContaining(['fresh-sdk-command']),
+      });
     });
   });
 
