@@ -483,6 +483,89 @@ describe('ProvidersSettings', () => {
     });
   });
 
+  it('shows warning toast on partial logout when keychain is locked', async () => {
+    // Backend returns {success: true, warning: '...'} when removeCredentials
+    // throws KeychainUnavailableError. The UI must surface the warning so the
+    // user knows to `security unlock-keychain` and retry — otherwise the stale
+    // keychain entry silently re-authenticates them on the next unlock.
+    const providers = [
+      createMockProvider('1', 'anthropic-copilot', {
+        displayName: 'Copilot',
+        authType: 'oauth',
+        available: true,
+      }),
+    ];
+    mockListProviders.mockResolvedValue({ providers });
+    mockListProviderAuthStatus.mockResolvedValue({
+      providers: [
+        { id: 'anthropic-copilot', displayName: 'Copilot', isAuthenticated: true, method: 'oauth' },
+      ],
+    });
+    mockLogoutProvider.mockResolvedValue({
+      success: true,
+      warning:
+        'Logged out from local store. macOS Keychain is locked — run `security unlock-keychain` and retry to remove the keychain entry.',
+    });
+
+    const { container } = render(<ProvidersSettings />);
+    await waitFor(() => expect(container.textContent).toContain('Copilot'));
+
+    const row = container.querySelector('[class*="cursor-pointer"]');
+    if (row) fireEvent.click(row);
+    await waitFor(() => expect(container.textContent).toContain('Logout'));
+
+    const logoutButton = Array.from(container.querySelectorAll('button')).find((b) =>
+      b.textContent?.includes('Logout')
+    );
+    if (logoutButton) fireEvent.click(logoutButton);
+
+    await waitFor(() => {
+      expect(mockLogoutProvider).toHaveBeenCalledWith('anthropic-copilot');
+      // Warning toast shown — NOT the success toast.
+      expect(mockToastWarning).toHaveBeenCalledTimes(1);
+      expect(mockToastWarning).toHaveBeenCalledWith(expect.stringContaining('unlock-keychain'));
+      expect(mockToastSuccess).not.toHaveBeenCalled();
+    });
+  });
+
+  it('shows success toast on full logout (no warning field)', async () => {
+    // Sanity: when backend returns {success: true} with no warning, the UI
+    // still shows the success toast (regression guard for the new branch).
+    const providers = [
+      createMockProvider('1', 'anthropic-copilot', {
+        displayName: 'Copilot',
+        authType: 'oauth',
+        available: true,
+      }),
+    ];
+    mockListProviders.mockResolvedValue({ providers });
+    mockListProviderAuthStatus.mockResolvedValue({
+      providers: [
+        { id: 'anthropic-copilot', displayName: 'Copilot', isAuthenticated: true, method: 'oauth' },
+      ],
+    });
+    mockLogoutProvider.mockResolvedValue({ success: true });
+
+    const { container } = render(<ProvidersSettings />);
+    await waitFor(() => expect(container.textContent).toContain('Copilot'));
+
+    const row = container.querySelector('[class*="cursor-pointer"]');
+    if (row) fireEvent.click(row);
+    await waitFor(() => expect(container.textContent).toContain('Logout'));
+
+    const logoutButton = Array.from(container.querySelectorAll('button')).find((b) =>
+      b.textContent?.includes('Logout')
+    );
+    if (logoutButton) fireEvent.click(logoutButton);
+
+    await waitFor(() => {
+      expect(mockLogoutProvider).toHaveBeenCalledWith('anthropic-copilot');
+      expect(mockToastSuccess).toHaveBeenCalledTimes(1);
+      expect(mockToastSuccess).toHaveBeenCalledWith('Logged out from Copilot');
+      expect(mockToastWarning).not.toHaveBeenCalled();
+    });
+  });
+
   it('opens Add Provider modal when button clicked', async () => {
     mockListProviders.mockResolvedValue({ providers: [] });
     mockListProviderAuthStatus.mockResolvedValue({ providers: [] });

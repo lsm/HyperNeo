@@ -42,6 +42,7 @@ import {
 import { getProviderRegistry } from './lib/providers/registry.js';
 import { OAuthRefreshScheduler } from './lib/credentials/oauth-refresh-scheduler.js';
 import { ProviderCredentialManager } from './lib/credentials/provider-credential-manager.js';
+import { KeychainUnavailableError } from './lib/credentials/credential-store.js';
 import { syncAllProviders } from './lib/providers/provider-sync.js';
 import { migrateProvidersIfNeeded } from './lib/credential-discovery';
 import { createReactiveDatabase } from './storage/reactive-database';
@@ -107,11 +108,11 @@ async function applyStoredProviderCredentials(
         provider.setCredentials(credentials);
       }
     } catch (error) {
-      const isKeychainErr =
-        error instanceof Error && (error as Error & { code?: number }).code === 36;
-      if (isKeychainErr) {
+      if (error instanceof KeychainUnavailableError) {
         // Keychain unavailable (locked / no GUI session) — credentials will load
         // from env / settings.json fallback. Don't mark unhealthy; don't spam logs.
+        // FallbackCredentialStore normally swallows this, but provider.getCredentials
+        // implementations that hit the keychain directly re-throw it through here.
         continue;
       }
       credentialManager.markProviderHealth(provider.id, 'unhealthy');

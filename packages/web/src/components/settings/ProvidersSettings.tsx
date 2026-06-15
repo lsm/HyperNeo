@@ -223,7 +223,15 @@ export function ProvidersSettings() {
         toast.error(response.error || 'Logout failed');
         return;
       }
-      toast.success(`Logged out from ${provider.displayName}`);
+      // Partial logout: local DB row cleared, keychain entry still present
+      // (keychain locked / no GUI session). Surface the warning so the user
+      // can `security unlock-keychain` and retry — otherwise the stale
+      // keychain value silently re-authenticates them on the next unlock.
+      if (response.warning) {
+        toast.warning(response.warning);
+      } else {
+        toast.success(`Logged out from ${provider.displayName}`);
+      }
       await loadProviders();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Logout failed');
