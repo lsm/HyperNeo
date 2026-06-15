@@ -1036,6 +1036,17 @@ CRITICAL RULES:
       )
     );
 
+    if (this.ctx.session.config.provider === 'anthropic' || !this.ctx.session.config.provider) {
+      const authToken = process.env.ANTHROPIC_AUTH_TOKEN;
+      if (authToken?.startsWith('sk-ant-oat')) {
+        mergedEnv.ANTHROPIC_AUTH_TOKEN = authToken;
+      }
+      const oauthToken = process.env.CLAUDE_CODE_OAUTH_TOKEN;
+      if (oauthToken) {
+        mergedEnv.CLAUDE_CODE_OAUTH_TOKEN = oauthToken;
+      }
+    }
+
     // 1. Add global settings env vars (filtered)
     if (globalSettings.env) {
       for (const [key, value] of Object.entries(globalSettings.env)) {

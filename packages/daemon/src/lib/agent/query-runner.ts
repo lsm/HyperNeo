@@ -120,6 +120,8 @@ export function refreshQueryEnvFromProcess(
     omitProviderManaged?: boolean;
     preserveAnthropicAuthToken?: boolean;
     preserveAnthropicOAuthToken?: boolean;
+    omitProviderManagedPreserveAuth?: boolean;
+    skipAmbientAnthropicApiKey?: boolean;
   } = {}
 ): Record<string, string | undefined> {
   const refreshedEnv: Record<string, string | undefined> = Object.fromEntries(
@@ -133,6 +135,14 @@ export function refreshQueryEnvFromProcess(
   }
   if (options.omitProviderManaged) {
     for (const key of providerManagedEnvVars) {
+      if (
+        options.omitProviderManagedPreserveAuth &&
+        (key === 'ANTHROPIC_API_KEY' ||
+          key === 'ANTHROPIC_AUTH_TOKEN' ||
+          key === 'CLAUDE_CODE_OAUTH_TOKEN')
+      ) {
+        continue;
+      }
       refreshedEnv[key] = undefined;
     }
   }
@@ -170,17 +180,33 @@ export function refreshQueryEnvFromProcess(
         }
       }
     } else {
-      refreshedEnv[key] = value;
+      if (options.skipAmbientAnthropicApiKey && key === 'ANTHROPIC_API_KEY') {
+        delete refreshedEnv[key];
+      } else {
+        refreshedEnv[key] = value;
+      }
     }
   }
   for (const [key, value] of Object.entries(processEnv)) {
     if (value === undefined || key === 'PORT' || key === 'NEOKAI_PORT') continue;
-    if (options.omitProviderManaged && providerManagedEnvVars.has(key)) continue;
+    if (options.omitProviderManaged && providerManagedEnvVars.has(key)) {
+      if (
+        !options.omitProviderManagedPreserveAuth ||
+        (key !== 'ANTHROPIC_API_KEY' &&
+          key !== 'ANTHROPIC_AUTH_TOKEN' &&
+          key !== 'CLAUDE_CODE_OAUTH_TOKEN')
+      ) {
+        continue;
+      }
+    }
     if (
       options.clearProviderManaged &&
       key === 'CLAUDE_CODE_OAUTH_TOKEN' &&
       !options.preserveAnthropicOAuthToken
     ) {
+      continue;
+    }
+    if (options.skipAmbientAnthropicApiKey && key === 'ANTHROPIC_API_KEY') {
       continue;
     }
     if (!(key in refreshedEnv)) {
@@ -613,6 +639,7 @@ export class QueryRunner {
         clearProviderManaged: true,
         preserveAnthropicAuthToken: resolvedProviderId === 'anthropic',
         preserveAnthropicOAuthToken: resolvedProviderId === 'anthropic',
+        skipAmbientAnthropicApiKey: resolvedProviderId !== 'anthropic',
       }) as Record<string, string>;
 
       // Wrap spawnClaudeCodeProcess to track subprocess exit deterministically.

@@ -225,6 +225,10 @@ describe('SDKMessageRepository', () => {
 
     it('filters retracted and superseded rows before collecting text messages', () => {
       repository.saveSDKMessage('session-1', createUserMessage('Visible older', 'visible-older'));
+      db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp)
+         VALUES (?, ?, ?, ?, ?)`
+      ).run('malformed-row', 'session-1', 'assistant', '{not-json', new Date().toISOString());
       repository.saveSDKMessage(
         'session-1',
         createUserMessage('Retracted newer', 'retracted-newer')

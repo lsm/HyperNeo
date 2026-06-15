@@ -46,6 +46,7 @@ export class SlashCommandManager {
     const stored = ctx.session.availableCommands;
     if (Array.isArray(stored) && stored.length > 0) {
       this.slashCommands = stored;
+      this.commandsFetchedFromSDK = true;
     }
   }
 

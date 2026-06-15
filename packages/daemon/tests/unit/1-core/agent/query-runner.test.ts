@@ -2502,6 +2502,42 @@ describe('QueryRunner environment variable handling', () => {
     expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe('session-oauth-token');
   });
 
+  it('should not copy ambient Anthropic API keys for bridge providers', () => {
+    const env = refreshQueryEnvFromProcess(
+      {
+        ANTHROPIC_BASE_URL: 'https://glm.example.com',
+        ANTHROPIC_AUTH_TOKEN: 'glm-api-key',
+      },
+      {
+        ANTHROPIC_BASE_URL: 'https://glm.example.com',
+        ANTHROPIC_AUTH_TOKEN: 'glm-api-key',
+        ANTHROPIC_API_KEY: 'sk-ant-real-ambient-key',
+      },
+      { clearProviderManaged: true, skipAmbientAnthropicApiKey: true }
+    );
+
+    expect(env.ANTHROPIC_API_KEY).toBeUndefined();
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe('glm-api-key');
+  });
+
+  it('should preserve auth env when omitting provider-managed ACP env', () => {
+    const env = refreshQueryEnvFromProcess(
+      {},
+      {
+        ANTHROPIC_API_KEY: 'sk-ant-api-key',
+        ANTHROPIC_AUTH_TOKEN: 'sk-ant-oat-token',
+        CLAUDE_CODE_OAUTH_TOKEN: 'oauth-token',
+        ANTHROPIC_BASE_URL: 'https://stale-bridge.example.com',
+      },
+      { omitProviderManaged: true, omitProviderManagedPreserveAuth: true }
+    );
+
+    expect(env.ANTHROPIC_API_KEY).toBe('sk-ant-api-key');
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe('sk-ant-oat-token');
+    expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe('oauth-token');
+    expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
+  });
+
   it('should not copy ambient OAuth tokens for bridge providers', () => {
     const env = refreshQueryEnvFromProcess(
       {

@@ -190,6 +190,21 @@ describe('QueryOptionsBuilder', () => {
       expect(options.env).not.toHaveProperty('CLAUDE_CODE_AUTO_COMPACT_WINDOW');
     });
 
+    it('should preserve env-only Anthropic auth tokens for native provider', async () => {
+      const previousAuthToken = process.env.ANTHROPIC_AUTH_TOKEN;
+      process.env.ANTHROPIC_AUTH_TOKEN = 'sk-ant-oat-env-only-token';
+      try {
+        const options = await builder.build();
+        expect(options.env?.ANTHROPIC_AUTH_TOKEN).toBe('sk-ant-oat-env-only-token');
+      } finally {
+        if (previousAuthToken === undefined) {
+          delete process.env.ANTHROPIC_AUTH_TOKEN;
+        } else {
+          process.env.ANTHROPIC_AUTH_TOKEN = previousAuthToken;
+        }
+      }
+    });
+
     it('should filter provider-managed auto-compact env overrides for bridge providers', async () => {
       mockSettingsManager.getGlobalSettings = mock(() => ({
         env: { CLAUDE_CODE_AUTO_COMPACT_WINDOW: '200000', KEEP_GLOBAL: 'global' },

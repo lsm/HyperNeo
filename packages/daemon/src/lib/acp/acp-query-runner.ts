@@ -553,6 +553,7 @@ export class AcpQueryRunner {
       const acpEnv = refreshQueryEnvFromProcess(queryOptions.env, process.env, {
         refreshAutoCompactWindow: true,
         omitProviderManaged: true,
+        omitProviderManagedPreserveAuth: true,
       });
 
       client = this.createAcpClient({

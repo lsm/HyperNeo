@@ -161,19 +161,16 @@ describe('SlashCommandManager', () => {
       expect(commands.length).toBeGreaterThan(0);
     });
 
-    it('should trigger background refresh when returning cached commands', async () => {
+    it('should treat restored cached commands as authoritative', async () => {
       const existingCommands = ['/cached-command'];
       manager = createManager({ availableCommands: existingCommands });
 
-      // First call returns cached, triggers background refresh
       const commands = await manager.getSlashCommands();
       expect(commands).toEqual(existingCommands);
 
-      // Wait a tick for background refresh to start
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      // supportedCommands should have been called in background
-      expect(supportedCommandsSpy).toHaveBeenCalled();
+      expect(supportedCommandsSpy).not.toHaveBeenCalled();
     });
   });
 
