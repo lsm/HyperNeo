@@ -1,4 +1,8 @@
-import type { EvidenceQualityPreflight, EvidenceRef } from './types/evolution.ts';
+import type {
+  EvidenceArtifactDiagnostics,
+  EvidenceQualityPreflight,
+  EvidenceRef,
+} from './types/evolution.ts';
 
 export interface EvidencePreflightTaskContext {
   title?: string | null;
@@ -27,6 +31,12 @@ export interface EvidenceQualityScoreInput {
   tasks?: EvidencePreflightTaskContext[];
   workflowRuns?: EvidencePreflightWorkflowRunContext[];
   metricSnapshotCount?: number;
+  /**
+   * Full evidence list available in the scope. Used to distinguish "no artifacts
+   * available" from "artifacts available but omitted from the selection" in
+   * artifact diagnostics. Omit to fall back to selected-evidence-only behavior.
+   */
+  availableScopeEvidence?: EvidenceRef[];
 }
 
 const TASK_EVIDENCE_KINDS = new Set(['task', 'task_result']);
@@ -129,6 +139,12 @@ export function scoreEvolutionEvidenceQuality(
   if (counts.outcomes === 0) {
     warnings.push('No concrete PR, QA, CI, merge, error, or task-completion outcome found.');
   }
+  const artifactDiagnostics = computeArtifactDiagnostics({
+    selectedEvidence: evidence,
+    availableScopeEvidence: input.availableScopeEvidence,
+    selectedWorkflowArtifactCount: counts.workflowArtifacts,
+    workflowRunArtifactAvailable: workflowRuns.some((run) => (run.artifacts ?? []).length > 0),
+  });
   const boundedScore = Math.min(MAX_SCORE, score);
   const level =
     boundedScore >= HIGH_CONFIDENCE_SCORE
@@ -145,6 +161,90 @@ export function scoreEvolutionEvidenceQuality(
     reasons,
     warnings,
     counts,
+    artifactDiagnostics,
+  };
+}
+
+interface ComputeArtifactDiagnosticsParams {
+  selectedEvidence: EvidenceRef[];
+  availableScopeEvidence?: EvidenceRef[];
+  selectedWorkflowArtifactCount: number;
+  workflowRunArtifactAvailable: boolean;
+}
+
+const ARTIFACT_KIND_RECOMMENDATIONS: Array<[string, string]> = [
+  ['workflow_run', 'Add workflow_run evidence to capture run-level status and timing context.'],
+  [
+    'artifact',
+    'Add artifact evidence (e.g. PR URL, review summary, release note) before generation.',
+  ],
+  ['error', 'Add error evidence to surface exception context for triage findings.'],
+  ['daemon_error', 'Add daemon_error evidence to surface backend crash context.'],
+  ['runtime_crash', 'Add runtime_crash evidence to capture crash signals.'],
+  ['runtime_warning', 'Add runtime_warning evidence to capture degradation signals.'],
+  ['uncaught_exception', 'Add uncaught_exception evidence to capture unhandled failure context.'],
+];
+
+function computeArtifactDiagnostics(
+  params: ComputeArtifactDiagnosticsParams
+): EvidenceArtifactDiagnostics {
+  const { selectedWorkflowArtifactCount, workflowRunArtifactAvailable } = params;
+  const hasSelectedArtifacts = selectedWorkflowArtifactCount > 0 || workflowRunArtifactAvailable;
+  if (hasSelectedArtifacts) {
+    return {
+      status: 'selected',
+      availableKinds: [],
+      omittedCount: 0,
+      recommendations: [],
+    };
+  }
+  const availableScopeEvidence = params.availableScopeEvidence ?? params.selectedEvidence;
+  if (!availableScopeEvidence || availableScopeEvidence.length === 0) {
+    return {
+      status: 'none_available',
+      availableKinds: [],
+      omittedCount: 0,
+      recommendations: [
+        'No workflow run or artifact evidence exists in this scope. Run a workflow that emits artifacts before generating the episode.',
+      ],
+    };
+  }
+  const selectedIds = new Set(params.selectedEvidence.map((item) => item.id));
+  const availableKinds = new Set<string>();
+  let omittedCount = 0;
+  for (const item of availableScopeEvidence) {
+    if (!WORKFLOW_ARTIFACT_EVIDENCE_KINDS.has(item.kind)) continue;
+    availableKinds.add(item.kind);
+    if (!selectedIds.has(item.id)) omittedCount += 1;
+  }
+  if (availableKinds.size === 0) {
+    return {
+      status: 'none_available',
+      availableKinds: [],
+      omittedCount: 0,
+      recommendations: [
+        'No workflow run or artifact evidence exists in this scope. Run a workflow that emits artifacts before generating the episode.',
+      ],
+    };
+  }
+  const recommendations: string[] = [];
+  for (const [kind, message] of ARTIFACT_KIND_RECOMMENDATIONS) {
+    if (availableKinds.has(kind)) recommendations.push(message);
+  }
+  if (recommendations.length === 0) {
+    recommendations.push(
+      `Artifact evidence (${Array.from(availableKinds).join(', ')}) is available in this scope but omitted from the selection. Add at least one artifact row before generation.`
+    );
+  } else if (omittedCount > 0) {
+    recommendations.push(
+      `${omittedCount} workflow artifact evidence row${omittedCount === 1 ? '' : 's'} available in this scope would be omitted. Select at least one to unlock artifact-specific findings.`
+    );
+  }
+  return {
+    status: 'available_omitted',
+    availableKinds: Array.from(availableKinds).sort(),
+    omittedCount,
+    recommendations,
   };
 }
 

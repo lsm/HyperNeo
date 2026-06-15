@@ -156,6 +156,7 @@ function buildEvidenceQualityPreflight(
   const selectedIds = new Set(selected.map((item) => item.id));
   return scoreEvolutionEvidenceQuality({
     evidence: selected,
+    availableScopeEvidence: evidence,
     tasks: (preflightContext?.tasks ?? [])
       .filter((item) => selectedIds.has(item.evidenceId))
       .map(({ task }) => task),
@@ -913,6 +914,22 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
                     ))}
                   </ul>
                 )}
+                {preflight.artifactDiagnostics &&
+                  preflight.artifactDiagnostics.status !== 'selected' &&
+                  preflight.artifactDiagnostics.recommendations.length > 0 && (
+                    <div class="mt-2 rounded-md border border-white/10 bg-black/20 px-2 py-1.5 text-xs">
+                      <div class="font-medium">
+                        Artifact selection: {preflight.artifactDiagnostics.status.replace('_', ' ')}
+                        {preflight.artifactDiagnostics.availableKinds.length > 0 &&
+                          ` · kinds: ${preflight.artifactDiagnostics.availableKinds.join(', ')}`}
+                      </div>
+                      <ul class="mt-1 list-disc space-y-1 pl-5 opacity-90">
+                        {preflight.artifactDiagnostics.recommendations.map((rec) => (
+                          <li key={rec}>{rec}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
                 {preflight.requiresConfirmation && (
                   <label class="mt-3 flex items-center gap-2 text-xs">
                     <input

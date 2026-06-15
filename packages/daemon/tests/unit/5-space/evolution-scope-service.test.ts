@@ -3,6 +3,7 @@ import { Database } from 'bun:sqlite';
 import {
   EvolutionScopeService,
   mergeEvolutionPolicy,
+  rankLessonsByTaskRelevance,
 } from '../../../src/lib/space/evolution-scope-service';
 import { EvolutionRepository } from '../../../src/storage/repositories/evolution-repository';
 import { GateOpenStateRepository } from '../../../src/storage/repositories/gate-open-state-repository';
@@ -183,6 +184,97 @@ describe('EvolutionScopeService', () => {
         .selectActiveLessonsForTask({ taskId: task.id })
         .every((lesson) => lesson.status === 'active')
     ).toBe(true);
+  });
+
+  it('ranks lessons by tag overlap with task labels', () => {
+    const goal = goalRepo.create({ spaceId, title: 'Tag ranking check', type: 'recurring' });
+    const scope = service.createScopeFromGoal({ spaceGoalId: goal.id });
+    const task = taskRepo.createTask({
+      spaceId,
+      title: 'Fix gate writer config',
+      description: 'Update gate permissions for reviewer node',
+      goalId: goal.id,
+      labels: ['workflow', 'ui'],
+    });
+    const lessonA = evolutionRepo.createLesson({
+      scopeId: scope.id,
+      status: 'active',
+      rule: 'Always verify gate writers include reviewer node',
+      why: 'Missing writer causes deadlock',
+      appliesTo: ['workflow'],
+    });
+    const lessonB = evolutionRepo.createLesson({
+      scopeId: scope.id,
+      status: 'active',
+      rule: 'Use bun test for daemon unit tests',
+      why: 'Consistency with test suite',
+      appliesTo: ['tool'],
+    });
+
+    const selected = service.selectActiveLessonsForTask({ taskId: task.id, limit: 1 });
+
+    expect(selected).toHaveLength(1);
+    expect(selected[0].id).toBe(lessonA.id);
+  });
+
+  it('ranks lessons by keyword overlap when tags do not match', () => {
+    const goal = goalRepo.create({ spaceId, title: 'Keyword ranking check', type: 'recurring' });
+    const scope = service.createScopeFromGoal({ spaceGoalId: goal.id });
+    const task = taskRepo.createTask({
+      spaceId,
+      title: 'Refactor context panel switch cases',
+      description: 'Add missing forge branch in ContextPanel.tsx routing',
+      goalId: goal.id,
+    });
+    const lessonA = evolutionRepo.createLesson({
+      scopeId: scope.id,
+      status: 'active',
+      rule: 'When adding new switch case branches in ContextPanel.tsx, preserve existing cases',
+      why: 'PR 1968 caught missing forge case',
+    });
+    const lessonB = evolutionRepo.createLesson({
+      scopeId: scope.id,
+      status: 'active',
+      rule: 'Use GitHub CLI for all PR operations',
+      why: 'Avoids web UI inconsistency',
+    });
+
+    const selected = service.selectActiveLessonsForTask({ taskId: task.id, limit: 1 });
+
+    expect(selected).toHaveLength(1);
+    expect(selected[0].id).toBe(lessonA.id);
+  });
+
+  it('falls back to confidence and recency when no tag or keyword overlap', () => {
+    const goal = goalRepo.create({ spaceId, title: 'Fallback ranking check', type: 'recurring' });
+    const scope = service.createScopeFromGoal({ spaceGoalId: goal.id });
+    const task = taskRepo.createTask({
+      spaceId,
+      title: 'Unrelated task',
+      description: 'No overlap with lessons',
+      goalId: goal.id,
+    });
+    const lessonA = evolutionRepo.createLesson({
+      scopeId: scope.id,
+      status: 'active',
+      rule: 'Lesson A',
+      why: 'Why A',
+    });
+    // Wait a tick so updatedAt differs
+    const lessonB = evolutionRepo.createLesson({
+      scopeId: scope.id,
+      status: 'active',
+      rule: 'Lesson B',
+      why: 'Why B',
+    });
+    evolutionRepo.updateLesson(lessonA.id, { confidence: 1.0 });
+    evolutionRepo.updateLesson(lessonB.id, { confidence: 0.0 });
+
+    const selected = service.selectActiveLessonsForTask({ taskId: task.id, limit: 1 });
+
+    expect(selected).toHaveLength(1);
+    // lessonA has max confidence, so it should win even if slightly older
+    expect(selected[0].id).toBe(lessonA.id);
   });
 
   it('returns no active lessons for unscoped tasks', () => {
@@ -456,5 +548,99 @@ describe('mergeEvolutionPolicy', () => {
     );
     expect(merged).not.toHaveProperty('episodeJudgeModel');
     expect(merged.maxActiveLessons).toBe(3);
+  });
+});
+
+describe('rankLessonsByTaskRelevance', () => {
+  function makeLesson(overrides: Partial<EvolutionLesson> & { id?: string }): EvolutionLesson {
+    const now = Date.now();
+    return {
+      id: overrides.id ?? `lesson-${now}-${Math.random()}`,
+      scopeId: 'scope-1',
+      status: 'active',
+      appliesTo: [],
+      rule: '',
+      why: '',
+      evidenceEpisodeIds: [],
+      confidence: 0,
+      createdAt: now,
+      updatedAt: now,
+      ...overrides,
+    } as EvolutionLesson;
+  }
+
+  function makeTask(overrides: Partial<SpaceTask>): SpaceTask {
+    const now = Date.now();
+    return {
+      id: 'task-1',
+      spaceId: 'space-1',
+      taskNumber: 1,
+      title: '',
+      description: '',
+      status: 'open',
+      priority: 'normal',
+      labels: [],
+      dependsOn: [],
+      result: null,
+      createdAt: now,
+      startedAt: null,
+      completedAt: null,
+      archivedAt: null,
+      blockReason: null,
+      approvalSource: null,
+      approvalReason: null,
+      approvedAt: null,
+      pendingCheckpointType: null,
+      updatedAt: now,
+      ...overrides,
+    } as SpaceTask;
+  }
+
+  it('returns empty array when no lessons', () => {
+    const task = makeTask({ title: 'anything' });
+    expect(rankLessonsByTaskRelevance([], task)).toEqual([]);
+  });
+
+  it('returns single lesson unchanged', () => {
+    const lesson = makeLesson({ rule: 'Only lesson' });
+    const task = makeTask({ title: 'anything' });
+    expect(rankLessonsByTaskRelevance([lesson], task)).toEqual([lesson]);
+  });
+
+  it('ranks tag-matching lessons above non-matching', () => {
+    const task = makeTask({ title: 'Gate fix', labels: ['workflow'] });
+    const matching = makeLesson({ rule: 'Match', appliesTo: ['workflow'] });
+    const nonMatching = makeLesson({ rule: 'No match', appliesTo: ['tool'] });
+    const ranked = rankLessonsByTaskRelevance([nonMatching, matching], task);
+    expect(ranked[0].id).toBe(matching.id);
+    expect(ranked[1].id).toBe(nonMatching.id);
+  });
+
+  it('ranks keyword-matching lessons above non-matching', () => {
+    const task = makeTask({ title: 'ContextPanel switch case bug' });
+    const matching = makeLesson({ rule: 'Preserve switch cases in ContextPanel' });
+    const nonMatching = makeLesson({ rule: 'Use GitHub CLI for PRs' });
+    const ranked = rankLessonsByTaskRelevance([nonMatching, matching], task);
+    expect(ranked[0].id).toBe(matching.id);
+    expect(ranked[1].id).toBe(nonMatching.id);
+  });
+
+  it('uses recency as tiebreaker when scores are equal', () => {
+    const now = Date.now();
+    const older = makeLesson({ rule: 'Older', updatedAt: now - 10_000 });
+    const newer = makeLesson({ rule: 'Newer', updatedAt: now });
+    const task = makeTask({ title: 'Unrelated' });
+    const ranked = rankLessonsByTaskRelevance([older, newer], task);
+    expect(ranked[0].id).toBe(newer.id);
+    expect(ranked[1].id).toBe(older.id);
+  });
+
+  it('boosts higher-confidence lessons when other signals are equal', () => {
+    const lowConfidence = makeLesson({ rule: 'Low', confidence: 0.1 });
+    const highConfidence = makeLesson({ rule: 'High', confidence: 0.9 });
+    const task = makeTask({ title: 'Unrelated' });
+    const ranked = rankLessonsByTaskRelevance([lowConfidence, highConfidence], task);
+    expect(ranked[0].id).toBe(highConfidence.id);
+    expect(ranked[1].id).toBe(lowConfidence.id);
   });
 });
