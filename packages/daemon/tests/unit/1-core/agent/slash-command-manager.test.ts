@@ -186,6 +186,20 @@ describe('SlashCommandManager', () => {
         commands: expect.arrayContaining(['fresh-sdk-command']),
       });
     });
+
+    it('should let SDK init replace commands_changed caches after restart', async () => {
+      manager = createManager();
+
+      await manager.updateFromCommandsChanged(['dynamic-command']);
+      await manager.updateFromInit(['fresh-init-command']);
+
+      const commands = await manager.getSlashCommands();
+      expect(commands).toContain('fresh-init-command');
+      expect(commands).not.toContain('dynamic-command');
+      expect(updateSessionSpy).toHaveBeenLastCalledWith('test-session-id', {
+        availableCommands: expect.arrayContaining(['fresh-init-command']),
+      });
+    });
   });
 
   describe('fetchAndCache', () => {

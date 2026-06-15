@@ -780,6 +780,46 @@ describe('SDKMessageHandler', () => {
       expect(setIdleSpy).toHaveBeenCalled();
     });
 
+    it('should wait for idle before replaying queued turns after a success result', async () => {
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'session_state_changed',
+        state: 'busy',
+        uuid: 'state-busy-before-success',
+      } as unknown as SDKMessage);
+      emitSpy.mockClear();
+      setIdleSpy.mockClear();
+
+      await handler.handleMessage({
+        type: 'result',
+        subtype: 'success',
+        uuid: 'success-before-idle',
+        usage: {
+          input_tokens: 100,
+          output_tokens: 50,
+        },
+        total_cost_usd: 0.001,
+        modelUsage: {},
+      } as unknown as SDKMessage);
+
+      expect(emitSpy).not.toHaveBeenCalledWith('query.trigger', { sessionId: 'test-session-id' });
+
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'session_state_changed',
+        state: 'idle',
+        uuid: 'state-idle-after-success',
+      } as unknown as SDKMessage);
+
+      expect(setIdleSpy).toHaveBeenCalled();
+      expect(
+        emitSpy.mock.calls.filter(
+          ([event, payload]) =>
+            event === 'query.trigger' && payload?.sessionId === 'test-session-id'
+        )
+      ).toHaveLength(1);
+    });
+
     it('should not replay queued turns after an error result followed by idle state', async () => {
       await handler.handleMessage({
         type: 'result',

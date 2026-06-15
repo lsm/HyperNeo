@@ -96,6 +96,7 @@ export class SDKMessageHandler {
   private circuitBreaker: ApiErrorCircuitBreaker;
   private acknowledgedPersistedUserThisTurn: boolean = false;
   private usesSessionStateChangedTurnEnd: boolean = false;
+  private expectsSessionStateIdleAfterResult: boolean = false;
   private lastResultWasSuccess: boolean | null = null;
 
   // Count of SDK stream events seen since the last context-usage refresh.
@@ -566,6 +567,13 @@ export class SDKMessageHandler {
       message,
     });
 
+    if (isSDKSessionStateChangedMessage(message)) {
+      this.usesSessionStateChangedTurnEnd = true;
+      if (message.state !== 'idle') {
+        this.expectsSessionStateIdleAfterResult = true;
+      }
+    }
+
     // Terminal messages end the turn even when they represent errors.
     // Clear stale waiting_for_input state before type-specific handling so
     // interrupted AskUserQuestion turns cannot keep the composer locked.
@@ -771,7 +779,7 @@ export class SDKMessageHandler {
       sessionId: session.id,
     });
 
-    if (!this.usesSessionStateChangedTurnEnd) {
+    if (!this.usesSessionStateChangedTurnEnd && !this.expectsSessionStateIdleAfterResult) {
       await this.finishTurn();
     }
   }
@@ -801,6 +809,7 @@ export class SDKMessageHandler {
       const allowQueueReplay = this.lastResultWasSuccess !== false;
       await this.finishTurn(allowQueueReplay);
       this.usesSessionStateChangedTurnEnd = false;
+      this.expectsSessionStateIdleAfterResult = false;
       this.lastResultWasSuccess = null;
     }
   }

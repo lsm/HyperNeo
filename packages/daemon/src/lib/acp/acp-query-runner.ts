@@ -483,8 +483,16 @@ export class AcpQueryRunner {
         throw new Error('Set NEOKAI_ACP_COMMAND to enable ACP agents.');
       }
       const { command, args } = parseAcpCommand(acpCommand);
-      const preProviderAnthropicAuthToken = process.env.ANTHROPIC_AUTH_TOKEN;
-      const preProviderAnthropicOAuthToken = process.env.CLAUDE_CODE_OAUTH_TOKEN;
+      const preProviderEnv = {
+        ANTHROPIC_BASE_URL: process.env.ANTHROPIC_BASE_URL,
+        ANTHROPIC_AUTH_TOKEN: process.env.ANTHROPIC_AUTH_TOKEN,
+        CLAUDE_CODE_OAUTH_TOKEN: process.env.CLAUDE_CODE_OAUTH_TOKEN,
+        API_TIMEOUT_MS: process.env.API_TIMEOUT_MS,
+        ANTHROPIC_MODEL: process.env.ANTHROPIC_MODEL,
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL,
+        ANTHROPIC_DEFAULT_SONNET_MODEL: process.env.ANTHROPIC_DEFAULT_SONNET_MODEL,
+        ANTHROPIC_DEFAULT_OPUS_MODEL: process.env.ANTHROPIC_DEFAULT_OPUS_MODEL,
+      };
 
       const providerService = getProviderService();
       this.ctx.originalEnvVars = providerService.applyEnvVarsToProcessForSession({
@@ -557,11 +565,10 @@ export class AcpQueryRunner {
         omitProviderManaged: true,
         omitProviderManagedPreserveAuth: true,
       });
-      if (preProviderAnthropicAuthToken?.startsWith('sk-ant-oat')) {
-        acpEnv.ANTHROPIC_AUTH_TOKEN = preProviderAnthropicAuthToken;
-      }
-      if (preProviderAnthropicOAuthToken) {
-        acpEnv.CLAUDE_CODE_OAUTH_TOKEN = preProviderAnthropicOAuthToken;
+      for (const [key, value] of Object.entries(preProviderEnv)) {
+        if (value === undefined) continue;
+        if (key === 'ANTHROPIC_AUTH_TOKEN' && !value.startsWith('sk-ant-oat')) continue;
+        acpEnv[key] = value;
       }
 
       client = this.createAcpClient({

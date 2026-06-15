@@ -39,6 +39,7 @@ export class SlashCommandManager {
   private slashCommands: string[] = [];
   private commandsFetchedFromSDK = false;
   private commandsRestoredFromDb = false;
+  private commandsChangedSinceInit = false;
 
   constructor(private ctx: SlashCommandManagerContext) {
     // Restore from session if available — validate it's a real array, not a
@@ -87,7 +88,7 @@ export class SlashCommandManager {
    * and contains all built-in commands plus custom skills.
    */
   async updateFromInit(sdkCommands: string[]): Promise<void> {
-    if (this.commandsFetchedFromSDK) return;
+    if (this.commandsFetchedFromSDK && !this.commandsChangedSinceInit) return;
 
     const { session, db, internalEventBus } = this.ctx;
 
@@ -97,6 +98,7 @@ export class SlashCommandManager {
     this.slashCommands = allCommands;
     this.commandsFetchedFromSDK = true;
     this.commandsRestoredFromDb = false;
+    this.commandsChangedSinceInit = false;
 
     session.availableCommands = this.slashCommands;
     db.updateSession(session.id, { availableCommands: this.slashCommands });
@@ -116,6 +118,7 @@ export class SlashCommandManager {
     this.slashCommands = allCommands;
     this.commandsFetchedFromSDK = true;
     this.commandsRestoredFromDb = false;
+    this.commandsChangedSinceInit = true;
 
     session.availableCommands = this.slashCommands;
     db.updateSession(session.id, { availableCommands: this.slashCommands });
