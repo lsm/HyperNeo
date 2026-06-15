@@ -421,6 +421,8 @@ CREATE TABLE message_inbox (
   subject TEXT NOT NULL,
   source_transport TEXT,
   idempotency_key TEXT,
+  dedupe_scope TEXT,
+  dedupe_key TEXT,
   correlation_id TEXT,
   causation_id TEXT,
   actor_id TEXT,
@@ -449,10 +451,14 @@ CREATE INDEX idx_message_inbox_status_next
 CREATE INDEX idx_message_inbox_subject_received
   ON message_inbox(subject, received_at);
 
-CREATE INDEX idx_message_inbox_idempotency
-  ON message_inbox(consumer, name, subject, idempotency_key)
-  WHERE idempotency_key IS NOT NULL;
+CREATE UNIQUE INDEX idx_message_inbox_dedupe
+  ON message_inbox(consumer, dedupe_scope, dedupe_key)
+  WHERE dedupe_key IS NOT NULL;
 ```
+
+`MessageInboxRepository` computes `dedupe_scope` and `dedupe_key` from the message contract before insert. The normalized key must include the fields required by the contract's idempotency scope, such as message name, subject, actor/source identity, and `idempotency_key`.
+
+This means a broker redelivery with a fresh `message_id` but the same logical idempotency key is rejected before the handler runs, while contracts with different actor/source scopes do not collide accidentally.
 
 ### `command_receipts`
 
@@ -461,8 +467,8 @@ CREATE TABLE command_receipts (
   id TEXT PRIMARY KEY,
   command_name TEXT NOT NULL,
   subject TEXT NOT NULL,
-  actor_id TEXT,
-  actor_type TEXT,
+  actor_id TEXT NOT NULL,
+  actor_type TEXT NOT NULL,
   idempotency_key TEXT NOT NULL,
   request_hash TEXT NOT NULL,
   status TEXT NOT NULL
@@ -485,6 +491,8 @@ Behavior:
 - duplicate `(command_name, subject, actor_id, idempotency_key)` with the same `request_hash` returns the existing receipt
 - duplicate with a different `request_hash` is a command conflict
 - commands without explicit idempotency are allowed only when the command contract marks idempotency as not required
+- system or anonymous commands use explicit non-null sentinels, such as `actor_type = 'system'` with `actor_id = 'system'`
+- nullable actor identity is not allowed because SQLite treats `NULL` values as distinct in unique indexes
 
 ### `read_model_cursors`
 
@@ -529,7 +537,7 @@ CREATE TABLE prompt_policy_records (
     OR (record_type = 'content' AND template_id IS NULL AND suppresses_template_id IS NULL AND content IS NOT NULL AND length(content) > 0)
     OR (record_type = 'suppress' AND template_id IS NULL AND suppresses_template_id IS NOT NULL AND content IS NULL)
   ),
-  CHECK(constraints_json IS NULL OR json_valid(constraints_json))
+  CHECK(constraints_json IS NULL OR (json_valid(constraints_json) AND json_type(constraints_json) = 'object'))
 );
 
 CREATE INDEX idx_prompt_policy_records_scope
