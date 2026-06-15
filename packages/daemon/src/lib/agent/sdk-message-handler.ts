@@ -44,7 +44,8 @@ import { ApiErrorCircuitBreaker } from './api-error-circuit-breaker';
 import type { MessageQueue } from './message-queue';
 import type { QueryLifecycleManager } from './query-lifecycle-manager';
 import { getSessionModelInfo } from '../model-service';
-import { providerUsesNativeAutoCompact } from './query-options-builder.js';
+import { PROVIDER_NO_SDK_AUTO_COMPACT } from './query-options-builder.js';
+import { reserveBasedThreshold } from './context-tracker.js';
 
 /**
  * Number of SDK stream events between automatic context-usage refreshes.
@@ -898,27 +899,49 @@ export class SDKMessageHandler {
           contextInfo,
         });
 
-        // NeoKai-level compaction fallback for providers without SDK-native compaction.
+        // NeoKai-level compaction fallback.
+        //
+        // Scoped to providers in `PROVIDER_NO_SDK_AUTO_COMPACT` (currently
+        // Kimi). For these providers, the SDK's PP() helper hardcodes a 200k
+        // capacity for unknown model IDs and we cannot use the `[1m]` suffix
+        // workaround (Kimi's bridge forwards the model name verbatim, so
+        // `kimi-for-coding[1m]` would be rejected upstream). SDK auto-compact
+        // is disabled via Options.settings; NeoKai is the sole compaction
+        // path and fires at the same threshold the SDK would have used
+        // (window - 13_000, clamped for small windows — see
+        // `reserveBasedThreshold`).
+        //
+        // For all other providers (Anthropic native, GLM, Codex, OpenRouter,
+        // Ollama, custom endpoints) we trust the SDK's own auto-compact.
+        // Installing NeoKai as a competing trigger would either race with the
+        // SDK (same threshold) or preempt it (lower threshold, cutting off
+        // advertised context). The context-fetcher capacity-mismatch warning
+        // surfaces any regression in SDK behaviour for those providers.
+        //
+        // The NeoKai-only cooldown (60s) prevents back-to-back `/compact`
+        // enqueues while a previous compaction is still in flight.
         const providerId = session.config.provider;
         if (!providerId) {
           return;
         }
-        const usesNativeAutoCompact =
-          providerUsesNativeAutoCompact(providerId, modelInfo?.contextWindow) ||
-          contextInfo.isAutoCompactEnabled;
-        if (
-          !usesNativeAutoCompact &&
-          modelInfo?.contextWindow &&
-          contextTracker.shouldCompact(modelInfo.contextWindow)
-        ) {
-          contextTracker.markCompactionTriggered();
-          this.logger.info(
-            `Triggering compaction for session ${session.id} ` +
-              `(${contextInfo.totalUsed} / ${modelInfo.contextWindow} tokens)`
-          );
-          void this.ctx.messageQueue.enqueue('/compact', /* internal */ true).catch((error) => {
-            this.logger.warn(`compaction enqueue failed for session ${session.id}:`, error);
-          });
+        const sdkAutoCompactDisabled = PROVIDER_NO_SDK_AUTO_COMPACT.has(providerId);
+        const actualContextWindow = modelInfo?.contextWindow;
+        if (sdkAutoCompactDisabled && actualContextWindow && actualContextWindow > 0) {
+          const neoKaiCompactThreshold = reserveBasedThreshold(actualContextWindow);
+          if (
+            contextInfo.totalUsed >= neoKaiCompactThreshold &&
+            contextTracker.shouldCompactAt(neoKaiCompactThreshold)
+          ) {
+            contextTracker.markCompactionTriggered();
+            this.logger.info(
+              `Triggering NeoKai compaction fallback for session ${session.id} ` +
+                `(provider=${providerId}, ${contextInfo.totalUsed} >= ${neoKaiCompactThreshold} ` +
+                `of ${actualContextWindow} tokens)`
+            );
+            void this.ctx.messageQueue.enqueue('/compact', /* internal */ true).catch((error) => {
+              this.logger.warn(`compaction enqueue failed for session ${session.id}:`, error);
+            });
+          }
         }
       } catch (error) {
         this.logger.warn(`context refresh (${reason}) failed:`, error);
