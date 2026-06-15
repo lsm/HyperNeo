@@ -81,4 +81,12 @@ describe('WorkflowHookStateRepository', () => {
 
     expect(second?.voteMaps).toEqual({ approvals: { coder: 'yes', reviewer: 'yes' } });
   });
+
+  test('ensure tolerates concurrent insert races', () => {
+    const first = repo.ensure('run-1', 'hook-1', { first: true });
+    const second = repo.ensure('run-1', 'hook-1', { second: true });
+
+    expect(second).toEqual(first);
+    expect(second.localState).toEqual({ first: true });
+  });
 });

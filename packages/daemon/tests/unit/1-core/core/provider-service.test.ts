@@ -278,6 +278,7 @@ describe('ProviderService', () => {
       API_TIMEOUT_MS: process.env.API_TIMEOUT_MS,
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:
         process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC,
+      CLAUDE_CODE_AUTO_COMPACT_WINDOW: process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW,
       ANTHROPIC_DEFAULT_SONNET_MODEL: process.env.ANTHROPIC_DEFAULT_SONNET_MODEL,
       ANTHROPIC_DEFAULT_HAIKU_MODEL: process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL,
       ANTHROPIC_DEFAULT_OPUS_MODEL: process.env.ANTHROPIC_DEFAULT_OPUS_MODEL,
@@ -299,6 +300,7 @@ describe('ProviderService', () => {
     delete process.env.MOONSHOT_API_KEY;
     delete process.env.API_TIMEOUT_MS;
     delete process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC;
+    delete process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
     delete process.env.ANTHROPIC_DEFAULT_SONNET_MODEL;
     delete process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL;
     delete process.env.ANTHROPIC_DEFAULT_OPUS_MODEL;
@@ -945,6 +947,22 @@ describe('ProviderService', () => {
       service.restoreEnvVars(original);
     });
 
+    it('applies CLAUDE_CODE_AUTO_COMPACT_WINDOW and restores it', async () => {
+      registry.clear();
+      registry.register(
+        new AnthropicMockProvider(true, { CLAUDE_CODE_AUTO_COMPACT_WINDOW: '262144' })
+      );
+      process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = '200000';
+
+      const original = await service.applyEnvVarsToProcess('claude-3-opus', 'anthropic');
+
+      expect(process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('262144');
+      expect(original.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('200000');
+
+      service.restoreEnvVars(original);
+      expect(process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('200000');
+    });
+
     it('clears CLAUDE_CODE_OAUTH_TOKEN when provider returns empty-string sentinel, restores on restoreEnvVars', async () => {
       registry.register(new BridgeMockProvider());
       process.env.CLAUDE_CODE_OAUTH_TOKEN = 'real-oauth-token';
@@ -1004,6 +1022,18 @@ describe('ProviderService', () => {
 
       service.restoreEnvVars(original);
       expect(process.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+    });
+
+    it('clears provider-leaked auto compact window before Anthropic query', async () => {
+      process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = '262144';
+
+      const original = await service.applyEnvVarsToProcess('claude-3-opus', 'anthropic');
+
+      expect(process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBeUndefined();
+      expect(original.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('262144');
+
+      service.restoreEnvVars(original);
+      expect(process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('262144');
     });
 
     it('should clear provider-leaked GLM base URL after GLM query', async () => {

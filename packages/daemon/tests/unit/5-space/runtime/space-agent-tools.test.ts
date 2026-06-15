@@ -56,6 +56,31 @@ function makeDb(): BunDatabase {
   db.exec('PRAGMA foreign_keys = ON');
   runMigrations(db, () => {});
 
+  db.exec(`CREATE TABLE IF NOT EXISTS sessions (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    workspace_path TEXT,
+    created_at TEXT NOT NULL,
+    last_active_at TEXT NOT NULL,
+    status TEXT NOT NULL,
+    config TEXT NOT NULL,
+    metadata TEXT NOT NULL,
+    is_worktree INTEGER DEFAULT 0,
+    worktree_path TEXT,
+    main_repo_path TEXT,
+    worktree_branch TEXT,
+    git_branch TEXT,
+    sdk_session_id TEXT,
+    acp_session_id TEXT,
+    sdk_origin_path TEXT,
+    available_commands TEXT,
+    processing_state TEXT,
+    archived_at TEXT,
+    parent_id TEXT,
+    type TEXT DEFAULT 'worker',
+    session_context TEXT
+  )`);
+
   // runMigrations() applies migrations only; these unit fixtures need the base
   // sdk_messages table because runtime recovery inspects persisted SDK output.
   db.exec(`CREATE TABLE IF NOT EXISTS sdk_messages (
@@ -69,7 +94,8 @@ function makeDb(): BunDatabase {
 		origin TEXT,
 		is_renderable INTEGER NOT NULL DEFAULT 1,
 		is_terminal INTEGER NOT NULL DEFAULT 0,
-		parent_tool_use_id TEXT
+		parent_tool_use_id TEXT,
+			task_id TEXT
 	)`);
 
   return db;
@@ -314,6 +340,10 @@ function getRegisteredTool(server: ReturnType<typeof createSpaceAgentMcpServer>,
   return instance._registeredTools[name];
 }
 
+function parseResult(result: { content: Array<{ text: string }> }) {
+  return JSON.parse(result.content[0].text) as Record<string, unknown>;
+}
+
 function expectToolInputParses(
   server: ReturnType<typeof createSpaceAgentMcpServer>,
   name: string,
@@ -367,6 +397,12 @@ describe('createSpaceAgentMcpServer — tool registration', () => {
     const names = getRegisteredToolNames(server);
     expect(names).not.toContain('start_workflow_run');
     expect(names).toContain('create_standalone_task');
+    expect(names).toContain('list_sessions');
+    expect(names).toContain('get_session_detail');
+    expect(names).toContain('get_session_messages');
+    expect(names).toContain('send_session_message');
+    expect(names).toContain('update_session_state');
+    expect(names).toContain('interrupt_session');
     expect(names).not.toContain('create_agent');
     expect(names).not.toContain('assign_agent_to_goal');
     expect(names).not.toContain('create_agent_reminder');
@@ -446,6 +482,468 @@ describe('createSpaceAgentMcpServer — tool registration', () => {
     expect(names).toContain('resolve_forge_scope');
     expect(names).toContain('update_forge_lesson');
     expect(names).toContain('create_task_from_forge_proposal');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// session management tools
+// ---------------------------------------------------------------------------
+
+describe('createSpaceAgentToolHandlers — session management tools', () => {
+  let ctx: TestCtx;
+  beforeEach(() => {
+    ctx = makeCtx();
+  });
+  afterEach(() => {
+    ctx.db.close();
+  });
+
+  function seedSession(
+    id: string,
+    spaceId = ctx.spaceId,
+    processingState = { status: 'idle' },
+    context: Record<string, unknown> = {}
+  ) {
+    ctx.db
+      .prepare(
+        `INSERT INTO sessions (
+          id, title, workspace_path, created_at, last_active_at, status, config, metadata,
+          is_worktree, git_branch, processing_state, type, session_context
+        ) VALUES (?, ?, ?, ?, ?, 'active', '{}', '{}', 1, 'feature/session-tools', ?, 'worker', ?)`
+      )
+      .run(
+        id,
+        `Session ${id}`,
+        '/tmp/session-workspace',
+        new Date(0).toISOString(),
+        new Date().toISOString(),
+        JSON.stringify(processingState),
+        JSON.stringify({ spaceId, ...context })
+      );
+  }
+
+  test('list_sessions includes ad-hoc sessions in current space only', async () => {
+    seedSession('adhoc-1', ctx.spaceId, { status: 'waiting_for_input' });
+    seedSession('other-space', 'other-space', { status: 'idle' });
+    const handlers = makeHandlers(ctx);
+
+    const parsed = parseResult(await handlers.list_sessions({}));
+
+    expect(parsed.success).toBe(true);
+    const sessions = parsed.sessions as Array<{ id: string; status: string; type: string }>;
+    expect(sessions.map((session) => session.id)).toContain('adhoc-1');
+    expect(sessions.map((session) => session.id)).not.toContain('other-space');
+    expect(sessions[0].status).toBe('waiting_for_input');
+    expect(sessions[0].type).toBe('ad-hoc');
+  });
+
+  test('get_session_detail returns parsed processing state and message summaries', async () => {
+    seedSession('stuck-1', ctx.spaceId, {
+      status: 'waiting_for_input',
+      pendingQuestion: { toolUseId: 'q1' },
+    });
+    ctx.db
+      .prepare(
+        `INSERT INTO sdk_messages (
+          id, session_id, message_type, message_subtype, sdk_message, timestamp,
+          send_status, origin, is_renderable, is_terminal, parent_tool_use_id, task_id
+        ) VALUES (?, ?, 'assistant', NULL, ?, ?, 'consumed', 'system', 1, 0, NULL, NULL)`
+      )
+      .run(
+        'msg-1',
+        'stuck-1',
+        JSON.stringify({
+          type: 'assistant',
+          message: { content: [{ type: 'text', text: 'Need input' }] },
+        }),
+        new Date().toISOString()
+      );
+    const handlers = makeHandlers(ctx);
+
+    const parsed = parseResult(await handlers.get_session_detail({ session_id: 'stuck-1' }));
+
+    expect(parsed.success).toBe(true);
+    const session = parsed.session as {
+      processing_state: { status: string; pendingQuestion: { toolUseId: string } };
+      last_messages: Array<{ content_summary: string }>;
+    };
+    expect(session.processing_state.status).toBe('waiting_for_input');
+    expect(session.processing_state.pendingQuestion.toolUseId).toBe('q1');
+    expect(session.last_messages[0].content_summary).toBe('Need input');
+  });
+
+  test('send_session_message resolves pending question through live session', async () => {
+    seedSession('adhoc-send', ctx.spaceId, {
+      status: 'waiting_for_input',
+      pendingQuestion: {
+        toolUseId: 'q1',
+        questions: [{ options: [{ label: 'Use option A' }] }],
+      },
+    });
+    const responses: unknown[] = [];
+    const handlers = makeHandlers(ctx, {
+      getRuntimeSession: () =>
+        ({
+          handleQuestionResponse: async (_toolUseId: string, draftResponses: unknown[]) => {
+            responses.push(_toolUseId, draftResponses);
+          },
+        }) as never,
+    });
+
+    const parsed = parseResult(
+      await handlers.send_session_message({
+        session_id: 'adhoc-send',
+        message: 'Use option A',
+        answer_question: true,
+      })
+    );
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.delivered).toBe(true);
+    expect(parsed.message_id).toBe('q1');
+    expect(responses).toEqual(['q1', [{ questionIndex: 0, selectedLabels: ['Use option A'] }]]);
+  });
+
+  test('send_session_message delivers normal input through SessionManager', async () => {
+    seedSession('adhoc-deliver', ctx.spaceId, { status: 'idle' });
+    const sent: unknown[] = [];
+    const handlers = makeHandlers(ctx, {
+      sessionManager: {
+        getCachedSession: () => null,
+        getSessionAsync: async () => ({ startQueryAndEnqueue: async () => {} }) as never,
+        sendUserMessage: async (message: unknown) => {
+          sent.push(message);
+        },
+      },
+    });
+
+    const parsed = parseResult(
+      await handlers.send_session_message({ session_id: 'adhoc-deliver', message: 'Proceed' })
+    );
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.delivered).toBe(true);
+    expect(sent).toEqual([
+      {
+        sessionId: 'adhoc-deliver',
+        messageId: parsed.message_id,
+        content: 'Proceed',
+      },
+    ]);
+  });
+
+  test('interrupt_session routes through live interrupt path with autonomy gate', async () => {
+    seedSession('adhoc-interrupt', ctx.spaceId, { status: 'processing' });
+    let interrupted = false;
+    const handlers = makeHandlers(ctx, {
+      getSpaceAutonomyLevel: async () => 4,
+      getRuntimeSession: () =>
+        ({
+          handleInterrupt: async () => {
+            interrupted = true;
+          },
+        }) as never,
+    });
+
+    const parsed = parseResult(
+      await handlers.interrupt_session({ session_id: 'adhoc-interrupt', reason: 'hung' })
+    );
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.interrupted).toBe(true);
+    expect(interrupted).toBe(true);
+    const resultRows = ctx.db
+      .prepare(`SELECT message_type FROM sdk_messages WHERE session_id = ?`)
+      .all('adhoc-interrupt') as Array<{ message_type: string }>;
+    expect(resultRows).toEqual([]);
+  });
+
+  test('interrupt_session rejects cold sessions without lazy-loading', async () => {
+    seedSession('adhoc-cold-interrupt', ctx.spaceId, { status: 'processing' });
+    let loaded = false;
+    const handlers = makeHandlers(ctx, {
+      getSpaceAutonomyLevel: async () => 4,
+      sessionManager: {
+        getCachedSession: () => null,
+        getSessionAsync: async () => {
+          loaded = true;
+          return null;
+        },
+        sendUserMessage: async () => {},
+      },
+    });
+
+    const parsed = parseResult(
+      await handlers.interrupt_session({ session_id: 'adhoc-cold-interrupt', reason: 'hung' })
+    );
+
+    expect(parsed.success).toBe(false);
+    expect(String(parsed.error)).toContain('requires a live cached session');
+    expect(loaded).toBe(false);
+  });
+
+  test('list_sessions applies filters before SQL pagination', async () => {
+    for (let i = 0; i < 3; i += 1) seedSession(`newer-adhoc-${i}`, ctx.spaceId, { status: 'idle' });
+    seedSession(
+      'older-worker-filtered',
+      ctx.spaceId,
+      { status: 'idle' },
+      { taskId: 'task-filtered' }
+    );
+    const handlers = makeHandlers(ctx);
+
+    const parsed = parseResult(await handlers.list_sessions({ type: 'worker', limit: 1 }));
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.sessions).toEqual([
+      expect.objectContaining({ id: 'older-worker-filtered', type: 'worker' }),
+    ]);
+  });
+
+  test('list_sessions treats rate-limit cooldown as active', async () => {
+    seedSession('cooldown-session', ctx.spaceId, { status: 'rate_limit_cooldown' });
+    const handlers = makeHandlers(ctx);
+
+    const active = parseResult(await handlers.list_sessions({ status: 'active' }));
+    const idle = parseResult(await handlers.list_sessions({ status: 'idle' }));
+
+    expect((active.sessions as Array<{ id: string }>).map((session) => session.id)).toContain(
+      'cooldown-session'
+    );
+    expect((idle.sessions as Array<{ id: string }>).map((session) => session.id)).not.toContain(
+      'cooldown-session'
+    );
+  });
+
+  test('list_sessions classifies task-bound sessions as workers after filtering', async () => {
+    seedSession('newer-adhoc', ctx.spaceId, { status: 'idle' });
+    seedSession('older-worker', ctx.spaceId, { status: 'idle' }, { taskId: 'task-1' });
+    const handlers = makeHandlers(ctx);
+
+    const parsed = parseResult(await handlers.list_sessions({ type: 'worker', limit: 2 }));
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.sessions).toEqual([
+      expect.objectContaining({ id: 'older-worker', type: 'worker' }),
+    ]);
+  });
+
+  test('get_session_messages returns requested message summaries', async () => {
+    seedSession('messages-session', ctx.spaceId, { status: 'idle' });
+    for (const [id, text] of [
+      ['msg-1', 'First'],
+      ['msg-2', 'Second'],
+    ]) {
+      ctx.db
+        .prepare(
+          `INSERT INTO sdk_messages (
+            id, session_id, message_type, message_subtype, sdk_message, timestamp,
+            send_status, origin, is_renderable, is_terminal, parent_tool_use_id, task_id
+          ) VALUES (?, 'messages-session', 'assistant', NULL, ?, ?, 'consumed', 'system', 1, 0, NULL, NULL)`
+        )
+        .run(
+          id,
+          JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text }] } }),
+          new Date(id === 'msg-1' ? 1 : 2).toISOString()
+        );
+    }
+    const handlers = makeHandlers(ctx);
+
+    const parsed = parseResult(
+      await handlers.get_session_messages({ session_id: 'messages-session', limit: 1 })
+    );
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.messages).toEqual([
+      expect.objectContaining({ id: 'msg-2', content_summary: 'Second' }),
+    ]);
+  });
+
+  test('update_session_state rejects cached ad-hoc live sessions', async () => {
+    seedSession('adhoc-live-update', ctx.spaceId, { status: 'processing' });
+    const handlers = makeHandlers(ctx, {
+      getSpaceAutonomyLevel: async () => 4,
+      sessionManager: {
+        getCachedSession: () => ({ getProcessingState: () => ({ status: 'processing' }) }) as never,
+        getSessionAsync: async () => null,
+        sendUserMessage: async () => {},
+      },
+    });
+
+    const parsed = parseResult(
+      await handlers.update_session_state({
+        session_id: 'adhoc-live-update',
+        processing_state: 'idle',
+      })
+    );
+
+    expect(parsed.success).toBe(false);
+    expect(String(parsed.error)).toContain('cannot mutate live sessions');
+  });
+
+  test('update_session_state does not lazy-load cold sessions', async () => {
+    seedSession('adhoc-cold-update', ctx.spaceId, { status: 'processing' });
+    let loaded = false;
+    const handlers = makeHandlers(ctx, {
+      getSpaceAutonomyLevel: async () => 4,
+      sessionManager: {
+        getCachedSession: () => null,
+        getSessionAsync: async () => {
+          loaded = true;
+          return null;
+        },
+        sendUserMessage: async () => {},
+      },
+    });
+
+    const parsed = parseResult(
+      await handlers.update_session_state({
+        session_id: 'adhoc-cold-update',
+        processing_state: 'idle',
+      })
+    );
+
+    expect(parsed.success).toBe(true);
+    expect(loaded).toBe(false);
+  });
+
+  test('send_session_message cross-session requires autonomy', async () => {
+    seedSession('other-member', ctx.spaceId, { status: 'idle' });
+    const handlers = makeHandlers(ctx, {
+      mySessionId: 'caller-session',
+      getSpaceAutonomyLevel: async () => 3,
+      getRuntimeSession: () => ({ startQueryAndEnqueue: async () => {} }) as never,
+    });
+
+    const parsed = parseResult(
+      await handlers.send_session_message({ session_id: 'other-member', message: 'Proceed' })
+    );
+
+    expect(parsed.success).toBe(false);
+    expect(String(parsed.error)).toContain('space autonomy level 3 < required level 4');
+  });
+
+  test('send_session_message cross-session gates named non-coordinator agents', async () => {
+    seedSession('other-member-named-agent', ctx.spaceId, { status: 'idle' });
+    const handlers = makeHandlers(ctx, {
+      myAgentName: 'scout',
+      mySessionId: 'caller-session',
+      getSpaceAutonomyLevel: async () => 3,
+      getRuntimeSession: () => ({ startQueryAndEnqueue: async () => {} }) as never,
+    });
+
+    const parsed = parseResult(
+      await handlers.send_session_message({
+        session_id: 'other-member-named-agent',
+        message: 'Proceed',
+      })
+    );
+
+    expect(parsed.success).toBe(false);
+    expect(String(parsed.error)).toContain('space autonomy level 3 < required level 4');
+  });
+
+  test('send_session_message coordinator can send cross-session without autonomy gate', async () => {
+    seedSession('other-member-coordinator', ctx.spaceId, { status: 'idle' });
+    const handlers = makeHandlers(ctx, {
+      myAgentName: 'space-agent',
+      mySessionId: 'caller-session',
+      getSpaceAutonomyLevel: async () => 3,
+      getRuntimeSession: () => ({ startQueryAndEnqueue: async () => {} }) as never,
+    });
+
+    const parsed = parseResult(
+      await handlers.send_session_message({
+        session_id: 'other-member-coordinator',
+        message: 'Proceed',
+      })
+    );
+
+    expect(parsed.success).toBe(true);
+  });
+
+  test('get_session_messages cursor handles duplicate timestamps', async () => {
+    seedSession('cursor-session', ctx.spaceId, { status: 'idle' });
+    for (const id of ['msg-c', 'msg-b', 'msg-a']) {
+      ctx.db
+        .prepare(
+          `INSERT INTO sdk_messages (
+            id, session_id, message_type, message_subtype, sdk_message, timestamp,
+            send_status, origin, is_renderable, is_terminal, parent_tool_use_id, task_id
+          ) VALUES (?, 'cursor-session', 'assistant', NULL, ?, ?, 'consumed', 'system', 1, 0, NULL, NULL)`
+        )
+        .run(
+          id,
+          JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: id }] } }),
+          new Date(1).toISOString()
+        );
+    }
+    const handlers = makeHandlers(ctx);
+
+    const firstPage = parseResult(
+      await handlers.get_session_messages({ session_id: 'cursor-session', limit: 1 })
+    );
+    const cursor = (firstPage.messages as Array<{ cursor: string }>)[0].cursor;
+    const secondPage = parseResult(
+      await handlers.get_session_messages({
+        session_id: 'cursor-session',
+        limit: 1,
+        before: cursor,
+      })
+    );
+
+    expect((firstPage.messages as Array<{ id: string }>)[0].id).toBe('msg-c');
+    expect((secondPage.messages as Array<{ id: string }>)[0].id).toBe('msg-b');
+  });
+
+  test('update_session_state updates state and clears pending question', async () => {
+    seedSession('adhoc-update', ctx.spaceId, {
+      status: 'waiting_for_input',
+      pendingQuestion: { toolUseId: 'q1' },
+    });
+    const handlers = makeHandlers(ctx, { getSpaceAutonomyLevel: async () => 4 });
+
+    const parsed = parseResult(
+      await handlers.update_session_state({
+        session_id: 'adhoc-update',
+        processing_state: 'idle',
+        clear_pending_question: true,
+      })
+    );
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.updated).toBe(true);
+    expect(parsed.new_state).toEqual({ status: 'idle' });
+  });
+
+  test('update_session_state rejects waiting state without pending question', async () => {
+    seedSession('adhoc-waiting-without-question', ctx.spaceId, { status: 'idle' });
+    const handlers = makeHandlers(ctx, { getSpaceAutonomyLevel: async () => 4 });
+
+    const parsed = parseResult(
+      await handlers.update_session_state({
+        session_id: 'adhoc-waiting-without-question',
+        processing_state: 'waiting_for_input',
+      })
+    );
+
+    expect(parsed.success).toBe(false);
+    expect(String(parsed.error)).toContain('without an existing pending question');
+  });
+
+  test('update_session_state rejects when autonomy level is too low', async () => {
+    seedSession('adhoc-low-autonomy', ctx.spaceId, { status: 'processing' });
+    const handlers = makeHandlers(ctx, { getSpaceAutonomyLevel: async () => 3 });
+
+    const parsed = parseResult(
+      await handlers.update_session_state({
+        session_id: 'adhoc-low-autonomy',
+        processing_state: 'idle',
+      })
+    );
+
+    expect(parsed.success).toBe(false);
+    expect(String(parsed.error)).toContain('space autonomy level 3 < required level 4');
   });
 });
 

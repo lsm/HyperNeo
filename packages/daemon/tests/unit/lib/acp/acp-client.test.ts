@@ -195,6 +195,73 @@ describe('AcpClient', () => {
     await expect(promise).rejects.toThrow('session/new failed: Invalid cwd');
   });
 
+  test('loadSession sends session/load and stores returned session data', async () => {
+    const client = new AcpClient({ command: 'acp-agent' });
+    const transport = lastMockTransport!;
+
+    const initPromise = client.initialize();
+    transport.resolveRequest(1, {
+      protocolVersion: 1,
+      agentInfo: { name: 'a', version: '1' },
+      agentCapabilities: { loadSession: true },
+    });
+    await initPromise;
+
+    expect(client.canLoadSession()).toBe(true);
+
+    const promise = client.loadSession('sess-existing', '/tmp/project', [
+      { type: 'stdio', name: 'test-server', command: 'bun', args: [], env: [] },
+    ]);
+    transport.resolveRequest(2, {
+      sessionId: 'sess-loaded',
+      configOptions: [
+        { id: 'model', name: 'Model', type: 'select', options: [], currentValue: 'default' },
+      ],
+      modes: { currentModeId: 'code', availableModes: [{ id: 'code', name: 'Code' }] },
+    });
+
+    const result = await promise;
+    expect(result.sessionId).toBe('sess-loaded');
+    expect(result.configOptions.length).toBe(1);
+    expect(result.modes?.currentModeId).toBe('code');
+    expect(client.getSessionId()).toBe('sess-loaded');
+
+    expect(transport.sendRequest.mock.calls[1]).toEqual([
+      'session/load',
+      {
+        sessionId: 'sess-existing',
+        cwd: '/tmp/project',
+        mcpServers: [{ type: 'stdio', name: 'test-server', command: 'bun', args: [], env: [] }],
+      },
+    ]);
+  });
+
+  test('resumeSession sends session/resume and falls back to requested session id', async () => {
+    const client = new AcpClient({ command: 'acp-agent' });
+    const transport = lastMockTransport!;
+
+    const initPromise = client.initialize();
+    transport.resolveRequest(1, {
+      protocolVersion: 1,
+      agentInfo: { name: 'a', version: '1' },
+      agentCapabilities: { sessionCapabilities: { resume: null } },
+    });
+    await initPromise;
+
+    expect(client.canLoadSession()).toBe(true);
+
+    const promise = client.resumeSession('sess-existing', '/tmp/project');
+    transport.resolveRequest(2, { configOptions: [] });
+
+    const result = await promise;
+    expect(result.sessionId).toBe('sess-existing');
+    expect(client.getSessionId()).toBe('sess-existing');
+    expect(transport.sendRequest.mock.calls[1]).toEqual([
+      'session/resume',
+      { sessionId: 'sess-existing', cwd: '/tmp/project', mcpServers: [] },
+    ]);
+  });
+
   // -------------------------------------------------------------------------
   // Prompt streaming
   // -------------------------------------------------------------------------

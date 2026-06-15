@@ -275,29 +275,18 @@ export function SDKUserMessage({
     );
   }
 
-  // If this is a synthetic message (compaction summary, interrupt, agent→agent
-  // handoff, etc.), use the reusable amber-trimmed card component. Synthetic
-  // messages are always visually distinct from human input — the amber chrome
-  // marks that the message was system-generated, not typed by a human,
-  // regardless of whether we're in a normal chat or a task thread.
-  if (syntheticContentBlocks) {
-    const messageWithTimestamp = message as SDKMessage & { timestamp?: number };
-    return (
-      <div class={cn(messageSpacing.user.container.combined)}>
-        <SyntheticMessageBlock
-          content={syntheticContentBlocks}
-          timestamp={messageWithTimestamp.timestamp}
-          uuid={message.uuid}
-        />
-      </div>
-    );
-  }
-
   // Get message metadata for E2E tests
   const messageWithTimestamp = message as SDKMessage & { timestamp?: number };
 
   // Message bubble component - extracted for proper checkbox alignment
-  const messageBubble = (
+  const messageBubble = syntheticContentBlocks ? (
+    <SyntheticMessageBlock
+      content={syntheticContentBlocks}
+      timestamp={messageWithTimestamp.timestamp}
+      uuid={message.uuid}
+      showActions={false}
+    />
+  ) : (
     <div
       class={cn(
         messageColors.user.background,
@@ -430,8 +419,8 @@ export function SDKUserMessage({
   const messageContent = (
     <div
       class={cn(messageSpacing.user.container.combined, 'flex justify-end')}
-      data-testid="user-message"
-      data-message-role="user"
+      data-testid={syntheticContentBlocks ? 'synthetic-message' : 'user-message'}
+      data-message-role={syntheticContentBlocks ? 'synthetic' : 'user'}
       data-message-uuid={message.uuid ?? ''}
       data-message-timestamp={messageWithTimestamp.timestamp || 0}
     >

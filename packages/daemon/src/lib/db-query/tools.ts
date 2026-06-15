@@ -966,6 +966,7 @@ export function createDbQueryMcpServer(config: DbQueryToolsConfig): DbQueryMcpSe
 
   return {
     ...server,
+    tools,
     close() {
       db.close();
     },

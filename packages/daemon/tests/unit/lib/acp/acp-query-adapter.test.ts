@@ -18,6 +18,19 @@ class MockAcpClient {
   private notifications: AcpSessionUpdateNotification[] = [];
   cancel = mock(() => {});
   close = mock(() => {});
+  setConfigOption = mock((_configId: string, value: string) =>
+    Promise.resolve([
+      {
+        id: 'model-option',
+        name: 'Model',
+        type: 'select' as const,
+        category: 'model',
+        currentValue: value,
+        options: [{ name: 'Opus', value: 'opus' }],
+      },
+    ])
+  );
+  updateConfigOptions = mock((_configOptions: unknown[]) => {});
 
   constructor(sessionId: string) {
     this.sessionId = sessionId;
@@ -29,6 +42,30 @@ class MockAcpClient {
 
   getLastPromptStopReason() {
     return undefined;
+  }
+
+  getConfigOptions() {
+    return [
+      {
+        id: 'model-option',
+        name: 'Model',
+        type: 'select' as const,
+        category: 'model',
+        currentValue: 'sonnet',
+        options: [{ name: 'Opus', value: 'opus' }],
+      },
+      {
+        id: 'thought-option',
+        name: 'Thinking',
+        type: 'select' as const,
+        category: 'thought_level',
+        currentValue: 'low',
+        options: [
+          { name: 'Low', value: 'low' },
+          { name: 'High', value: 'high' },
+        ],
+      },
+    ];
   }
 
   queueNotification(notification: AcpSessionUpdateNotification) {
@@ -162,6 +199,26 @@ describe('AcpQueryAdapter', () => {
     expect((msg.value as { tool_use_id: string }).tool_use_id).toBe('tc-2');
   });
 
+  test('counts prompt estimate in result input tokens', async () => {
+    const client = new MockAcpClient('sess-usage');
+    const adapter = new AcpQueryAdapter(
+      client as unknown as InstanceType<
+        typeof import('../../../../src/lib/acp/acp-client').AcpClient
+      >,
+      [{ type: 'text', text: 'hello world' }]
+    );
+
+    const messages: SDKMessage[] = [];
+    for await (const msg of adapter) {
+      messages.push(msg);
+    }
+
+    const result = messages.find((msg) => msg.type === 'result') as {
+      usage: { input_tokens: number };
+    };
+    expect(result.usage.input_tokens).toBeGreaterThan(0);
+  });
+
   test('stops iteration when interrupted', async () => {
     const client = new MockAcpClient('sess-4');
     const adapter = new AcpQueryAdapter(
@@ -292,7 +349,110 @@ describe('AcpQueryAdapter', () => {
       [{ type: 'text', text: 'hello' }]
     );
 
-    await adapter.setMcpServers();
-    // No-op: should resolve without error
+    await expect(adapter.setMcpServers()).resolves.toEqual({ added: [], removed: [], errors: {} });
+  });
+
+  test('setModel updates ACP model config option and refreshes callback', async () => {
+    const client = new MockAcpClient('sess-model');
+    const onConfigOptionsUpdate = mock((_configOptions: unknown[]) => {});
+    const adapter = new AcpQueryAdapter(
+      client as unknown as InstanceType<
+        typeof import('../../../../src/lib/acp/acp-client').AcpClient
+      >,
+      [{ type: 'text', text: 'hello' }],
+      { onConfigOptionsUpdate }
+    );
+
+    await adapter.setModel('opus');
+
+    expect(client.setConfigOption).toHaveBeenCalledWith('model-option', 'opus');
+    expect(onConfigOptionsUpdate).toHaveBeenCalledWith([
+      {
+        id: 'model-option',
+        name: 'Model',
+        type: 'select',
+        category: 'model',
+        currentValue: 'opus',
+        options: [{ name: 'Opus', value: 'opus' }],
+      },
+    ]);
+  });
+
+  test('setMaxThinkingTokens updates ACP thought level config option', async () => {
+    const client = new MockAcpClient('sess-thinking');
+    const adapter = new AcpQueryAdapter(
+      client as unknown as InstanceType<
+        typeof import('../../../../src/lib/acp/acp-client').AcpClient
+      >,
+      [{ type: 'text', text: 'hello' }]
+    );
+
+    await adapter.setMaxThinkingTokens(12000);
+
+    expect(client.setConfigOption).toHaveBeenCalledWith('thought-option', 'high');
+  });
+
+  test('setMaxThinkingTokens maps null and zero to none', async () => {
+    const client = new MockAcpClient('sess-thinking-none');
+    const adapter = new AcpQueryAdapter(
+      client as unknown as InstanceType<
+        typeof import('../../../../src/lib/acp/acp-client').AcpClient
+      >,
+      [{ type: 'text', text: 'hello' }]
+    );
+
+    await adapter.setMaxThinkingTokens(null);
+    await adapter.setMaxThinkingTokens(0);
+
+    expect(client.setConfigOption).toHaveBeenNthCalledWith(1, 'thought-option', 'low');
+    expect(client.setConfigOption).toHaveBeenNthCalledWith(2, 'thought-option', 'low');
+  });
+
+  test('config option updates refresh client cache and callback', async () => {
+    const client = new MockAcpClient('sess-config-update');
+    const onConfigOptionsUpdate = mock((_configOptions: unknown[]) => {});
+    const adapter = new AcpQueryAdapter(
+      client as unknown as InstanceType<
+        typeof import('../../../../src/lib/acp/acp-client').AcpClient
+      >,
+      [{ type: 'text', text: 'hello' }],
+      { onConfigOptionsUpdate }
+    );
+    const configOptions = [
+      {
+        id: 'model-option',
+        name: 'Model',
+        type: 'select' as const,
+        category: 'model',
+        currentValue: 'opus',
+        options: [{ name: 'Opus', value: 'opus' }],
+      },
+    ];
+
+    client.queueNotification({
+      sessionId: 'sess-config-update',
+      update: { sessionUpdate: 'config_option_update', configOptions },
+    });
+
+    const iterator = adapter[Symbol.asyncIterator]();
+    await iterator.next();
+
+    expect(client.updateConfigOptions).toHaveBeenCalledWith(configOptions);
+    expect(onConfigOptionsUpdate).toHaveBeenCalledWith(configOptions);
+  });
+
+  test('rewindFiles reports unsupported for ACP sessions', async () => {
+    const client = new MockAcpClient('sess-12');
+    const adapter = new AcpQueryAdapter(
+      client as unknown as InstanceType<
+        typeof import('../../../../src/lib/acp/acp-client').AcpClient
+      >,
+      [{ type: 'text', text: 'hello' }]
+    );
+
+    await expect(adapter.rewindFiles()).resolves.toEqual({
+      canRewind: false,
+      error: 'ACP sessions do not support file rewind yet.',
+    });
   });
 });

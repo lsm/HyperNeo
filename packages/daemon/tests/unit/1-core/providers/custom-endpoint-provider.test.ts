@@ -539,4 +539,64 @@ describe('CustomEndpointProvider', () => {
       });
     });
   });
+
+  describe('chatTemplateKwargs', () => {
+    it('forwards chatTemplateKwargs into the bridge config when declared on a model', () => {
+      const fake = makeFakeBridge();
+      const p = new CustomEndpointProvider(
+        {
+          ...baseConfig,
+          models: [
+            {
+              id: 'qwen3',
+              capabilities: { toolUse: true, chatTemplateKwargs: { enable_thinking: false } },
+            },
+          ],
+          defaultModelId: 'qwen3',
+        },
+        { bridgeFactory: fake.factory }
+      );
+      p.buildSdkConfig('qwen3');
+      expect(fake.configs[0].chatTemplateKwargs).toEqual({ enable_thinking: false });
+    });
+
+    it('produces distinct bridge instances for models that differ only in chatTemplateKwargs', () => {
+      // Without chatTemplateKwargs in the cache key, the model declaring
+      // `enable_thinking:false` would silently share its bridge with the
+      // sibling model that wants thinking on.
+      const fake = makeFakeBridge();
+      const p = new CustomEndpointProvider(
+        {
+          id: 'qwen3-shop',
+          name: 'Qwen3 Shop',
+          baseUrl: 'http://localhost:1234/v1',
+          models: [
+            {
+              id: 'qwen3-thinking',
+              capabilities: { toolUse: true, chatTemplateKwargs: { enable_thinking: true } },
+            },
+            {
+              id: 'qwen3-fast',
+              capabilities: { toolUse: true, chatTemplateKwargs: { enable_thinking: false } },
+            },
+          ],
+          defaultModelId: 'qwen3-thinking',
+        },
+        { bridgeFactory: fake.factory }
+      );
+      const a = p.buildSdkConfig('qwen3-thinking');
+      const b = p.buildSdkConfig('qwen3-fast');
+      expect(a.envVars.ANTHROPIC_BASE_URL).not.toBe(b.envVars.ANTHROPIC_BASE_URL);
+      expect(fake.configs).toHaveLength(2);
+      expect(fake.configs[0].chatTemplateKwargs).toEqual({ enable_thinking: true });
+      expect(fake.configs[1].chatTemplateKwargs).toEqual({ enable_thinking: false });
+    });
+
+    it('omits chatTemplateKwargs from the bridge config when the model does not declare it', () => {
+      const fake = makeFakeBridge();
+      const p = new CustomEndpointProvider(baseConfig, { bridgeFactory: fake.factory });
+      p.buildSdkConfig('qwen2.5-7b');
+      expect(fake.configs[0].chatTemplateKwargs).toBeUndefined();
+    });
+  });
 });

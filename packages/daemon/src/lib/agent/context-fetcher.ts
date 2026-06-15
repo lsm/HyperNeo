@@ -12,8 +12,8 @@
  * fully typed `SDKControlGetContextUsageResponse`.
  */
 
-import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type { SDKControlGetContextUsageResponse } from '@anthropic-ai/claude-agent-sdk';
+import type { QueryLike } from './query-like';
 import type {
   ContextInfo,
   ContextCategoryBreakdown,
@@ -58,8 +58,11 @@ export class ContextFetcher {
    * a best-effort side effect of turn handling and should never cause a turn
    * to fail.
    */
-  async fetch(query: Query | null, modelMetadata?: ContextMetadata): Promise<ContextInfo | null> {
-    if (!query) return null;
+  async fetch(
+    query: QueryLike | null,
+    modelMetadata?: ContextMetadata
+  ): Promise<ContextInfo | null> {
+    if (!query?.getContextUsage) return null;
 
     try {
       const response = await query.getContextUsage();
@@ -139,6 +142,22 @@ export class ContextFetcher {
         tokens: category.tokens,
         percent,
       };
+    }
+
+    if (useMetadata && capacity > 0 && sdkCapacityValue !== capacity) {
+      const nonFreeSpaceTokens = Object.entries(breakdown)
+        .filter(([name]) => !name.toLowerCase().includes('free space'))
+        .reduce((sum, [, data]) => sum + data.tokens, 0);
+      const freeSpaceKey = Object.keys(breakdown).find((name) =>
+        name.toLowerCase().includes('free space')
+      );
+      if (freeSpaceKey) {
+        const correctedTokens = Math.max(0, capacity - nonFreeSpaceTokens);
+        breakdown[freeSpaceKey] = {
+          tokens: correctedTokens,
+          percent: Math.round((correctedTokens / capacity) * 1000) / 10,
+        };
+      }
     }
 
     const apiUsage: ContextAPIUsage | undefined = response.apiUsage

@@ -128,6 +128,7 @@ export function createSpaceAgentSchema(db: Database): void {
 			worktree_branch TEXT,
 			git_branch TEXT,
 			sdk_session_id TEXT,
+				acp_session_id TEXT,
 			sdk_origin_path TEXT,
 			available_commands TEXT,
 			processing_state TEXT,

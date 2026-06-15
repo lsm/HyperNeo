@@ -28,6 +28,8 @@ import type {
   AcpStopReason,
 } from '@neokai/shared/acp';
 
+const TOKEN_CHARS = 4;
+
 function zeroUsage(): {
   input_tokens: number;
   output_tokens: number;
@@ -50,9 +52,21 @@ export class AcpMessageTranslator {
   private textBuffer = '';
   private thinkingBuffer = '';
   private readonly sessionId: string;
+  private inputTokenEstimate = 0;
+  private outputTokenEstimate = 0;
+  private costUsdEstimate = 0;
+  private contextUsageEstimate = 0;
+  private reportedContextUsage: number | null = null;
 
-  constructor(sessionId: string) {
+  constructor(
+    sessionId: string,
+    private contextWindow = 0,
+    initialUsageEstimate = 0,
+    initialInputTokenEstimate = 0
+  ) {
     this.sessionId = sessionId;
+    this.contextUsageEstimate = initialUsageEstimate;
+    this.inputTokenEstimate = initialInputTokenEstimate;
   }
 
   /**
@@ -76,6 +90,28 @@ export class AcpMessageTranslator {
         }
         return messages;
       }
+      case 'plan':
+        return [...this.flush(), this.translateSyntheticAssistant('Plan', update.entries)];
+      case 'current_mode_update':
+        return [
+          ...this.flush(),
+          this.translateSyntheticAssistant('Current mode', update.currentModeId),
+        ];
+      case 'config_option_update':
+        return [
+          ...this.flush(),
+          this.translateSyntheticAssistant('Config options', update.configOptions),
+        ];
+      case 'session_info_update':
+        return [...this.flush(), this.translateSyntheticAssistant('Session info', update)];
+      case 'usage_update':
+        this.reportedContextUsage = update.used;
+        this.contextWindow = update.size;
+        if (update.cost) {
+          this.costUsdEstimate =
+            update.cost.currency.toUpperCase() === 'USD' ? update.cost.amount : 0;
+        }
+        return [];
       default:
         return [];
     }
@@ -110,6 +146,10 @@ export class AcpMessageTranslator {
    * containing a tool_use content block.
    */
   translateToolCall(call: AcpToolCallUpdateNotification): SDKAssistantMessage {
+    this.contextUsageEstimate += estimateTokens(
+      JSON.stringify({ name: call.title, input: call.rawInput ?? {} })
+    );
+
     return {
       type: 'assistant',
       uuid: generateUUID() as UUID,
@@ -151,6 +191,7 @@ export class AcpMessageTranslator {
   translateToolResult(update: AcpToolCallUpdateUpdate): SDKUserMessage {
     const output = update.rawOutput ?? update.content;
     const text = typeof output === 'string' ? output : JSON.stringify(output);
+    this.contextUsageEstimate += estimateTokens(text);
 
     return {
       type: 'user',
@@ -178,8 +219,12 @@ export class AcpMessageTranslator {
       is_error: isError,
       num_turns: 1,
       stop_reason: stopReason,
-      total_cost_usd: 0,
-      usage: zeroUsage(),
+      total_cost_usd: this.costUsdEstimate,
+      usage: {
+        ...zeroUsage(),
+        input_tokens: this.inputTokenEstimate,
+        output_tokens: this.outputTokenEstimate,
+      },
       modelUsage: {},
       permission_denials: [],
       uuid: generateUUID() as UUID,
@@ -201,16 +246,33 @@ export class AcpMessageTranslator {
     } as SDKResultMessage;
   }
 
+  getContextUsage(): { used: number; size: number } | null {
+    if (this.reportedContextUsage !== null) {
+      return { used: this.reportedContextUsage, size: this.contextWindow };
+    }
+
+    const used = this.contextUsageEstimate + this.outputTokenEstimate;
+    return used > 0 ? { used, size: this.contextWindow } : null;
+  }
+
   private accumulateAgentChunk(update: AcpAgentMessageChunkUpdate): void {
     if (update.content.type === 'text') {
       this.textBuffer += update.content.text;
+      this.outputTokenEstimate += estimateTokens(update.content.text);
     }
   }
 
   private accumulateThoughtChunk(update: AcpAgentThoughtChunkUpdate): void {
     if (update.content.type === 'text') {
       this.thinkingBuffer += update.content.text;
+      this.outputTokenEstimate += estimateTokens(update.content.text);
     }
+  }
+
+  private translateSyntheticAssistant(label: string, payload: unknown): SDKAssistantMessage {
+    const text = `${label}: ${formatPayload(payload)}`;
+    this.outputTokenEstimate += estimateTokens(text);
+    return this.buildAssistantMessage([{ type: 'text', text }]);
   }
 
   private buildAssistantMessage(content: ContentBlock[]): SDKAssistantMessage {
@@ -225,4 +287,12 @@ export class AcpMessageTranslator {
       },
     } as SDKAssistantMessage;
   }
+}
+
+function estimateTokens(text: string): number {
+  return Math.ceil(text.length / TOKEN_CHARS);
+}
+
+function formatPayload(payload: unknown): string {
+  return typeof payload === 'string' ? payload : JSON.stringify(payload);
 }

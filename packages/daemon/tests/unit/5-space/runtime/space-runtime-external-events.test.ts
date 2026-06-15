@@ -86,6 +86,10 @@ class MockTaskAgentManager {
     return this.alive.has(sessionId);
   }
 
+  getAgentSessionById(_sessionId: string): null {
+    return null;
+  }
+
   async rehydrate(): Promise<void> {}
 
   isExecutionSpawning(_executionId: string): boolean {
@@ -3114,6 +3118,8 @@ describe('SpaceRuntime external event subscriptions', () => {
       DEFAULT_TOPIC
     );
     runtime.start();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await runtime.executeTick();
 
     // Publish event → first dispatch attempt will fail transiently
     const event = makeEvent();
@@ -3124,16 +3130,22 @@ describe('SpaceRuntime external event subscriptions', () => {
     workflowRunRepo.updateRun(run.id, { status: 'blocked' });
     nodeExecutionRepo.update(execution.id, {
       status: 'idle',
+      agentSessionId: null,
       startedAt: null,
+      completedAt: Date.now(),
       result: 'blocked for test',
     });
 
-    // Trigger the retry by waiting for the retry timer
-    await new Promise((resolve) => setTimeout(resolve, 1100));
-    await runtime.executeTick();
+    // Trigger the retry by waiting for the retry timer. CI runners can delay the
+    // timer slightly, so poll the persisted delivery state rather than assuming
+    // one sleep lands after the retry callback.
+    let delivery = eventStore.listDeliveries(event.id)[0]!;
+    for (let attempt = 0; attempt < 10 && delivery.state === 'pending'; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      delivery = eventStore.listDeliveries(event.id)[0]!;
+    }
 
     // Blocked runs without active executions are not externally deliverable.
-    const delivery = eventStore.listDeliveries(event.id)[0]!;
     expect(delivery.state).toBe('failed');
     expect(delivery.failureReason).toBe('run_not_externally_deliverable');
   });

@@ -27,6 +27,7 @@ import { ScrollToBottomButton } from '../ScrollToBottomButton';
 import { Dropdown, type DropdownMenuItem } from '../ui/Dropdown';
 import { EditTaskModal } from './EditTaskModal';
 import { PendingGateBanner } from './PendingGateBanner';
+import { PendingHookBanner } from './PendingHookBanner';
 import { PendingPostApprovalBanner } from './PendingPostApprovalBanner';
 import { PendingTaskCompletionBanner } from './PendingTaskCompletionBanner';
 import { ReadOnlyWorkflowCanvas } from './ReadOnlyWorkflowCanvas';
@@ -36,6 +37,7 @@ import { TaskBlockedBanner } from './TaskBlockedBanner';
 import { TaskCanvasToggleButton, TaskSessionChatComposer } from './TaskSessionChatComposer';
 import { getTransitionActions } from './TaskStatusActions';
 import { useRunGateSummaries } from './use-run-gate-summaries.ts';
+import { useRunHookStates } from './use-run-hook-states.ts';
 
 interface SpaceTaskPaneProps {
   taskId: string | null;
@@ -244,6 +246,12 @@ export function SpaceTaskPane({
     : null;
   const _workflowIdForHook = _workflowRunForHook?.workflowId ?? null;
   const { summaries: gateSummaries } = useRunGateSummaries(_runId, _workflowIdForHook);
+  const {
+    summaries: hookSummaries,
+    fetchError: hookFetchError,
+    retry: retryHookFetch,
+    hasHooks: hasWorkflowHooks,
+  } = useRunHookStates(_runId, _workflowIdForHook);
   const navigationSpaceIdForTask =
     routeSpaceId ?? currentSpaceIdSignal.value ?? spaceId ?? task?.spaceId;
   const targetSpaceIdForTask = spaceId ?? task?.spaceId ?? navigationSpaceIdForTask;
@@ -486,7 +494,18 @@ export function SpaceTaskPane({
     !isTerminalTask && !ensuringThread && !sendingThread && composerTargets.length > 0;
   const canShowCanvasTab = !!task.workflowRunId && !!canvasWorkflowId;
   const activitySummary = STATUS_LABELS[task.status];
-  const activeBanner = resolveActiveTaskBanner(task, gateSummaries);
+  const resolvedBanner = resolveActiveTaskBanner(
+    task,
+    hookSummaries as unknown as import('../../lib/task-banner').HookBannerSummary[],
+    gateSummaries
+  );
+  const activeBanner =
+    hasWorkflowHooks &&
+    hookFetchError &&
+    _runId &&
+    (resolvedBanner === null || resolvedBanner.kind === 'gate_pending')
+      ? ({ kind: 'hook_pending', runId: _runId } as const)
+      : resolvedBanner;
   const showHeaderStatusBadge = activeBanner === null;
   const agentActionLabel =
     task.activeSession === 'leader'
@@ -951,7 +970,7 @@ export function SpaceTaskPane({
       {(() => {
         // Single-slot precedence renderer — at most one banner is ever
         // shown. Precedence (high → low):
-        //   blocked > post_approval_blocked > task_completion_pending > gate_pending
+        //   blocked > post_approval_blocked > task_completion_pending > hook_pending > gate_pending
         // The helper captures the rule so it can be unit-tested
         // independently of the render tree.
         const banner = activeBanner;
@@ -967,9 +986,20 @@ export function SpaceTaskPane({
             <PendingPostApprovalBanner task={task} spaceId={runtimeSpaceId} />
           ) : banner.kind === 'task_completion_pending' ? (
             <PendingTaskCompletionBanner task={task} spaceId={runtimeSpaceId} />
+          ) : banner.kind === 'hook_pending' ? (
+            // hook_pending — PendingHookBanner renders rows for every
+            // blocked or retryable hook on the run.
+            <PendingHookBanner
+              runId={banner.runId}
+              spaceId={runtimeSpaceId}
+              workflowId={canvasWorkflowId}
+              summaries={hookSummaries}
+              fetchError={hookFetchError}
+              retry={retryHookFetch}
+            />
           ) : (
             // gate_pending — PendingGateBanner renders rows for every
-            // waiting gate on the run.
+            // waiting gate on the run. Legacy workflows only.
             <PendingGateBanner
               runId={banner.runId}
               spaceId={runtimeSpaceId}

@@ -828,6 +828,9 @@ export class SpaceRuntimeService {
         this.config.evolutionScopeService
       ),
       spaceAgentManager: this.config.spaceAgentManager,
+      sessionManager: this.config.sessionManager,
+      getRuntimeSession: (sid) =>
+        this.taskAgentManager?.getCachedAgentSessionById(sid) ?? undefined,
       taskAgentManager: this.taskAgentManager ?? undefined,
       gateDataRepo: this.config.gateDataRepo,
       internalEventBus: this.config.internalEventBus,
@@ -1144,22 +1147,6 @@ export class SpaceRuntimeService {
     );
     this.unsubscribers.push(unsubCreated);
 
-    // When a workflow definition is updated, refresh gate poll timers for
-    // all active runs using that workflow so mid-run config changes are
-    // picked up without requiring a task restart.
-    const unsubWorkflowUpdated = internalEventBus.subscribe(
-      'spaceWorkflow.updated',
-      (event) => {
-        try {
-          this.runtime.onWorkflowDefChanged(event.workflow.id);
-        } catch (err) {
-          log.error(`Failed to refresh gate polls for workflow ${event.workflow.id}:`, err);
-        }
-      },
-      { sessionId: 'global', subscriberName: 'SpaceRuntimeService.global' }
-    );
-    this.unsubscribers.push(unsubWorkflowUpdated);
-
     // New sessions are routed through the explicit Space MCP policy. Coordinator
     // sessions are handled by `setupSpaceAgentSession`; ad-hoc Space member
     // sessions get the generic Space tools here; workflow workers are owned by
@@ -1462,6 +1449,9 @@ export class SpaceRuntimeService {
         this.config.evolutionScopeService
       ),
       spaceAgentManager: this.config.spaceAgentManager,
+      sessionManager: this.config.sessionManager,
+      getRuntimeSession: (sid) =>
+        this.taskAgentManager?.getCachedAgentSessionById(sid) ?? undefined,
       taskAgentManager: this.taskAgentManager ?? undefined,
       gateDataRepo: this.config.gateDataRepo,
       internalEventBus: this.config.internalEventBus,
@@ -1588,6 +1578,9 @@ export class SpaceRuntimeService {
         this.config.evolutionScopeService
       ),
       spaceAgentManager,
+      sessionManager: this.config.sessionManager,
+      getRuntimeSession: (sid) =>
+        this.taskAgentManager?.getCachedAgentSessionById(sid) ?? undefined,
       taskAgentManager: this.taskAgentManager ?? undefined,
       gateDataRepo: this.config.gateDataRepo,
       internalEventBus: this.config.internalEventBus,
@@ -1932,7 +1925,11 @@ export class SpaceRuntimeService {
       internalEventBus: this.config.internalEventBus,
       getPrUrlForRun: (rid) => this.resolvePrUrlForRun(rid),
     });
-    return router.activateNode(runId, nodeId);
+    return router.activateNode(runId, nodeId, {
+      allowTerminalReopen: true,
+      reopenBy: 'space-runtime-service',
+      reopenReason: 'explicit workflow node activation',
+    });
   }
 
   /**

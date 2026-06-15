@@ -68,6 +68,8 @@ interface Props {
   emptyMessageLabel?: string;
   /** Optional width classes for the right-aligned card wrapper. */
   widthClass?: string;
+  /** Whether to render this block's built-in timestamp/copy actions and wrappers. */
+  showActions?: boolean;
 }
 
 // Default visible height before "Show more". Matches the per-line height
@@ -106,6 +108,7 @@ export function SyntheticMessageBlock({
   renderAsPlainText = false,
   emptyMessageLabel = '(empty message)',
   widthClass = 'max-w-[85%] md:max-w-[70%]',
+  showActions = true,
 }: Props) {
   // Normalize content to array of blocks for the renderer below.
   const contentBlocks = typeof content === 'string' ? [{ type: 'text', text: content }] : content;
@@ -142,6 +145,188 @@ export function SyntheticMessageBlock({
   const empty = isEmpty(content);
   const copyText = extractCopyText(content);
 
+  const card = (
+    <div
+      class="border border-amber-700/50 rounded-lg overflow-hidden bg-dark-800/60"
+      data-testid="synthetic-card"
+    >
+      {/* Header — arrow icon + Synthetic label + optional FROM→TO route badge. */}
+      <div class="flex items-center gap-2 px-3 py-2 border-b border-amber-700/50 flex-wrap">
+        <svg
+          class="w-4 h-4 flex-shrink-0 text-amber-400"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+          aria-hidden="true"
+          data-testid="synthetic-icon"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M7.5 21L3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5"
+          />
+        </svg>
+        <span class="text-sm font-semibold text-amber-400" data-testid="synthetic-label">
+          Synthetic
+        </span>
+        {showRouteBadge && (
+          <>
+            <span class="text-gray-600 text-xs" aria-hidden="true">
+              ·
+            </span>
+            <span
+              class="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-wider font-medium px-1.5 py-px rounded bg-dark-800"
+              data-testid="synthetic-route-badge"
+              aria-label={`From ${fromAgent} agent to ${toAgent} agent`}
+            >
+              <span style={fromColor ? { color: fromColor } : undefined}>
+                {fromShort ?? fromAgent}
+              </span>
+              <span class="text-gray-600" aria-hidden="true">
+                →
+              </span>
+              <span style={toColor ? { color: toColor } : undefined}>{toShort ?? toAgent}</span>
+            </span>
+          </>
+        )}
+        <DeliveryStateBadge state={deliveryState} test-id="synthetic-delivery-state" />
+      </div>
+
+      {/* Body — capped preview + gradient fade + show more / less. */}
+      <div class="relative">
+        <div
+          class={`px-3 py-2${!isExpanded && needsCollapse ? ' overflow-hidden' : ''}`}
+          style={!isExpanded && needsCollapse ? { maxHeight: `${previewMaxHeight}px` } : undefined}
+        >
+          <div ref={contentRef} class="space-y-2" data-testid="synthetic-body">
+            {empty ? (
+              <p class="text-xs text-gray-500 italic">{emptyMessageLabel}</p>
+            ) : renderAsPlainText && typeof content === 'string' ? (
+              <p class="text-sm text-gray-200 leading-relaxed whitespace-pre-wrap break-words">
+                {content}
+              </p>
+            ) : (
+              contentBlocks.map((block, idx) => (
+                <div key={idx} class="text-sm">
+                  {block.type === 'text' && (
+                    <MarkdownRenderer
+                      content={block.text as string}
+                      class="text-sm leading-relaxed text-gray-200 [&_h1]:!text-amber-400 [&_h2]:!text-amber-400 [&_h3]:!text-amber-400 [&_h4]:!text-amber-400 [&_h5]:!text-amber-400 [&_h6]:!text-amber-400"
+                    />
+                  )}
+                  {block.type === 'image' && (
+                    <div class="space-y-1">
+                      <div class="text-xs text-amber-400">Image:</div>
+                      <div class="font-mono text-xs text-gray-300 bg-gray-800/50 p-2 rounded overflow-x-auto">
+                        {JSON.stringify(block, null, 2)}
+                      </div>
+                    </div>
+                  )}
+                  {block.type === 'tool_use' && (
+                    <div class="space-y-1">
+                      <div class="text-xs text-amber-400">Tool Use: {block.name as string}</div>
+                      <div class="font-mono text-xs text-gray-300 bg-gray-800/50 p-2 rounded overflow-x-auto">
+                        {JSON.stringify(block.input, null, 2)}
+                      </div>
+                    </div>
+                  )}
+                  {block.type === 'tool_result' && (
+                    <div class="space-y-1">
+                      <div class="text-xs text-amber-400">
+                        Tool Result: {(block.tool_use_id as string).slice(0, 12)}
+                        ...
+                      </div>
+                      <div class="font-mono text-xs text-gray-300 bg-gray-800/50 p-2 rounded max-h-48 overflow-auto">
+                        {block.content !== undefined && block.content !== null
+                          ? typeof block.content === 'string'
+                            ? block.content
+                            : JSON.stringify(block.content, null, 2)
+                          : '(empty)'}
+                      </div>
+                    </div>
+                  )}
+                  {!['text', 'image', 'tool_use', 'tool_result'].includes(block.type as string) && (
+                    <div class="space-y-1">
+                      <div class="text-xs text-amber-400">{block.type as string}:</div>
+                      <div class="font-mono text-xs text-gray-300 bg-gray-800/50 p-2 rounded overflow-x-auto">
+                        {JSON.stringify(block, null, 2)}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        {/* Gradient fade hint — only when collapsed. Matches the
+						    card's tinted backdrop so the fade composites cleanly
+						    against the body bg. */}
+        {needsCollapse && !isExpanded && (
+          <div
+            class="absolute bottom-0 left-0 right-0 h-12 bg-gradient-to-t from-dark-800/60 to-transparent pointer-events-none"
+            aria-hidden="true"
+          />
+        )}
+
+        {/* Show more / Show less toggle — pinned to the bottom edge of the card. */}
+        {needsCollapse && (
+          <div class="flex justify-center py-2 border-t border-amber-700/50 bg-dark-800/60">
+            <button
+              type="button"
+              onClick={() => setIsExpanded(!isExpanded)}
+              class="flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-md transition-colors hover:bg-amber-900/30 text-amber-300"
+              data-testid="synthetic-toggle"
+            >
+              {isExpanded ? (
+                <>
+                  <svg
+                    class="w-3.5 h-3.5"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    aria-hidden="true"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M5 15l7-7 7 7"
+                    />
+                  </svg>
+                  Show less
+                </>
+              ) : (
+                <>
+                  <svg
+                    class="w-3.5 h-3.5"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    aria-hidden="true"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M19 9l-7 7-7-7"
+                    />
+                  </svg>
+                  Show more
+                </>
+              )}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  if (!showActions) {
+    return card;
+  }
+
   return (
     <div
       class="flex justify-end"
@@ -151,188 +336,10 @@ export function SyntheticMessageBlock({
       data-message-timestamp={timestamp || 0}
     >
       <div class={`${widthClass} w-auto`}>
-        <div
-          class="border border-amber-700/50 rounded-lg overflow-hidden bg-dark-800/60"
-          data-testid="synthetic-card"
-        >
-          {/* Header — arrow icon + Synthetic label + optional FROM→TO route badge. */}
-          <div class="flex items-center gap-2 px-3 py-2 border-b border-amber-700/50 flex-wrap">
-            <svg
-              class="w-4 h-4 flex-shrink-0 text-amber-400"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              aria-hidden="true"
-              data-testid="synthetic-icon"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M7.5 21L3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5"
-              />
-            </svg>
-            <span class="text-sm font-semibold text-amber-400" data-testid="synthetic-label">
-              Synthetic
-            </span>
-            {showRouteBadge && (
-              <>
-                <span class="text-gray-600 text-xs" aria-hidden="true">
-                  ·
-                </span>
-                <span
-                  class="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-wider font-medium px-1.5 py-px rounded bg-dark-800"
-                  data-testid="synthetic-route-badge"
-                  aria-label={`From ${fromAgent} agent to ${toAgent} agent`}
-                >
-                  <span style={fromColor ? { color: fromColor } : undefined}>
-                    {fromShort ?? fromAgent}
-                  </span>
-                  <span class="text-gray-600" aria-hidden="true">
-                    →
-                  </span>
-                  <span style={toColor ? { color: toColor } : undefined}>{toShort ?? toAgent}</span>
-                </span>
-              </>
-            )}
-            <DeliveryStateBadge state={deliveryState} test-id="synthetic-delivery-state" />
-          </div>
-
-          {/* Body — capped preview + gradient fade + show more / less. */}
-          <div class="relative">
-            <div
-              class={`px-3 py-2${!isExpanded && needsCollapse ? ' overflow-hidden' : ''}`}
-              style={
-                !isExpanded && needsCollapse ? { maxHeight: `${previewMaxHeight}px` } : undefined
-              }
-            >
-              <div ref={contentRef} class="space-y-2" data-testid="synthetic-body">
-                {empty ? (
-                  <p class="text-xs text-gray-500 italic">{emptyMessageLabel}</p>
-                ) : renderAsPlainText && typeof content === 'string' ? (
-                  <p class="text-sm text-gray-200 leading-relaxed whitespace-pre-wrap break-words">
-                    {content}
-                  </p>
-                ) : (
-                  contentBlocks.map((block, idx) => (
-                    <div key={idx} class="text-sm">
-                      {block.type === 'text' && (
-                        <MarkdownRenderer
-                          content={block.text as string}
-                          class="text-sm leading-relaxed text-gray-200 [&_h1]:!text-amber-400 [&_h2]:!text-amber-400 [&_h3]:!text-amber-400 [&_h4]:!text-amber-400 [&_h5]:!text-amber-400 [&_h6]:!text-amber-400"
-                        />
-                      )}
-                      {block.type === 'image' && (
-                        <div class="space-y-1">
-                          <div class="text-xs text-amber-400">Image:</div>
-                          <div class="font-mono text-xs text-gray-300 bg-gray-800/50 p-2 rounded overflow-x-auto">
-                            {JSON.stringify(block, null, 2)}
-                          </div>
-                        </div>
-                      )}
-                      {block.type === 'tool_use' && (
-                        <div class="space-y-1">
-                          <div class="text-xs text-amber-400">Tool Use: {block.name as string}</div>
-                          <div class="font-mono text-xs text-gray-300 bg-gray-800/50 p-2 rounded overflow-x-auto">
-                            {JSON.stringify(block.input, null, 2)}
-                          </div>
-                        </div>
-                      )}
-                      {block.type === 'tool_result' && (
-                        <div class="space-y-1">
-                          <div class="text-xs text-amber-400">
-                            Tool Result: {(block.tool_use_id as string).slice(0, 12)}
-                            ...
-                          </div>
-                          <div class="font-mono text-xs text-gray-300 bg-gray-800/50 p-2 rounded max-h-48 overflow-auto">
-                            {block.content !== undefined && block.content !== null
-                              ? typeof block.content === 'string'
-                                ? block.content
-                                : JSON.stringify(block.content, null, 2)
-                              : '(empty)'}
-                          </div>
-                        </div>
-                      )}
-                      {!['text', 'image', 'tool_use', 'tool_result'].includes(
-                        block.type as string
-                      ) && (
-                        <div class="space-y-1">
-                          <div class="text-xs text-amber-400">{block.type as string}:</div>
-                          <div class="font-mono text-xs text-gray-300 bg-gray-800/50 p-2 rounded overflow-x-auto">
-                            {JSON.stringify(block, null, 2)}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-
-            {/* Gradient fade hint — only when collapsed. Matches the
-						    card's tinted backdrop so the fade composites cleanly
-						    against the body bg. */}
-            {needsCollapse && !isExpanded && (
-              <div
-                class="absolute bottom-0 left-0 right-0 h-12 bg-gradient-to-t from-dark-800/60 to-transparent pointer-events-none"
-                aria-hidden="true"
-              />
-            )}
-
-            {/* Show more / Show less toggle — pinned to the bottom edge of the card. */}
-            {needsCollapse && (
-              <div class="flex justify-center py-2 border-t border-amber-700/50 bg-dark-800/60">
-                <button
-                  type="button"
-                  onClick={() => setIsExpanded(!isExpanded)}
-                  class="flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-md transition-colors hover:bg-amber-900/30 text-amber-300"
-                  data-testid="synthetic-toggle"
-                >
-                  {isExpanded ? (
-                    <>
-                      <svg
-                        class="w-3.5 h-3.5"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
-                        aria-hidden="true"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M5 15l7-7 7 7"
-                        />
-                      </svg>
-                      Show less
-                    </>
-                  ) : (
-                    <>
-                      <svg
-                        class="w-3.5 h-3.5"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
-                        aria-hidden="true"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M19 9l-7 7-7-7"
-                        />
-                      </svg>
-                      Show more
-                    </>
-                  )}
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
+        {card}
 
         {/* Action row — timestamp + (optional) session-init + copy
-				    + (optional) open-in-session. */}
+					    + (optional) open-in-session. */}
         <SpaceTaskThreadMessageActions
           timestamp={timestamp ?? Date.now()}
           copyText={copyText}

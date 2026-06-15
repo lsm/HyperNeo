@@ -23,7 +23,7 @@
 import type { Database as BunDatabase } from 'bun:sqlite';
 import type { SdkMcpToolDefinition } from '@anthropic-ai/claude-agent-sdk';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
-import { KNOWN_TOOLS } from '@neokai/shared';
+import { generateUUID, KNOWN_TOOLS } from '@neokai/shared';
 import type {
   CreateEvolutionEpisodeParams,
   EvolutionEpisodeStatus,
@@ -33,6 +33,7 @@ import type {
   MetricDefinition,
   MetricSnapshotValues,
   NodeExecution,
+  QuestionDraftResponse,
   SpaceGoalStatus,
   SpaceGoalType,
   SpaceLongHorizonAgent,
@@ -52,8 +53,10 @@ import type { NodeExecutionRepository } from '../../../storage/repositories/node
 import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
+import type { AgentSession } from '../../agent/agent-session';
 import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus';
 import { Logger } from '../../logger';
+import type { SessionManager } from '../../session/session-manager';
 import type { PendingAgentMessageQueue } from '../../rpc-handlers/space-task-message-handlers';
 import { requireAgentFamily } from '../agents/agent-family-resolver';
 import { formatAgentMessage } from '../agent-message-envelope';
@@ -105,6 +108,45 @@ type GoalToolUpdateArgs = {
   preferred_workflow_id?: string | null;
   auto_trigger_next?: boolean;
 };
+
+type SpaceSessionStatusFilter = 'active' | 'idle' | 'waiting_for_input' | 'error' | 'archived';
+type SpaceSessionTypeFilter = 'worker' | 'ad-hoc';
+type MutableProcessingState = 'idle' | 'running' | 'waiting_for_input';
+
+type SpaceSessionRow = {
+  id: string;
+  title: string;
+  workspace_path: string | null;
+  created_at: string;
+  last_active_at: string;
+  status: string;
+  metadata: string | null;
+  is_worktree: number;
+  git_branch: string | null;
+  processing_state: string | null;
+  type: string | null;
+  session_context: string | null;
+};
+
+type SpaceSessionSummary = {
+  id: string;
+  title: string;
+  status: string;
+  type: SpaceSessionTypeFilter;
+  processing_state: unknown;
+  created_at: string;
+  last_active_at: string;
+  is_worktree: boolean;
+  git_branch: string | null;
+  workspace_path: string | null;
+};
+
+const SPACE_SESSION_MAX_LIMIT = 100;
+const SPACE_SESSION_DEFAULT_LIMIT = 50;
+const SESSION_DETAIL_MESSAGE_LIMIT = 5;
+const SESSION_MESSAGE_DEFAULT_LIMIT = 20;
+const SESSION_MESSAGE_MAX_LIMIT = 100;
+const SESSION_WRITE_AUTONOMY_LEVEL = 4;
 
 function normalizeGoalUpdateArgs(args: GoalToolUpdateArgs) {
   return {
@@ -293,6 +335,10 @@ export interface SpaceAgentToolsConfig {
   taskManager: SpaceTaskManager;
   /** Space agent manager for reassign validation. */
   spaceAgentManager: SpaceAgentManager;
+  /** Session manager for live Space session message delivery and interrupts. */
+  sessionManager?: Pick<SessionManager, 'getCachedSession' | 'getSessionAsync' | 'sendUserMessage'>;
+  /** Optional runtime live-session lookup (used for workflow node sessions). */
+  getRuntimeSession?: (sessionId: string) => AgentSession | undefined;
   /**
    * Task Agent Manager for injecting messages into running task agent sessions.
    * When provided, enables the `send_message_to_task` and `list_task_members` tools.
@@ -435,10 +481,14 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       .filter((v) => v.length > 0)
   );
   const outboundSenderName = myAgentName ?? (mySessionId ? 'space-member' : 'space-agent');
+  const isCoordinatorAgent =
+    !mySessionId ||
+    (typeof myAgentName === 'string' &&
+      ['space-agent', 'coordinator'].includes(normalizeAgentNameToken(myAgentName)));
   const outboundSenderLevel =
     outboundSenderName === 'task-agent'
       ? 'task-agent'
-      : myAgentName || !mySessionId
+      : isCoordinatorAgent
         ? 'space-agent'
         : 'session-agent';
   const outboundSenderDisplayName = outboundSenderName;
@@ -482,6 +532,207 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     if (!episode) throw new Error(`EvolutionEpisode not found: ${episodeId}`);
     requireEvolutionScopeInSpace(episode.scopeId);
     return episode;
+  }
+
+  function requireDb(): BunDatabase {
+    if (!config.db) throw new Error('Session management tools require database access');
+    return config.db;
+  }
+
+  function parseJsonValue(value: string | null | undefined): unknown {
+    if (!value) return null;
+    try {
+      return JSON.parse(value) as unknown;
+    } catch {
+      return null;
+    }
+  }
+
+  function parseProcessingState(value: string | null | undefined): Record<string, unknown> {
+    const parsed = parseJsonValue(value);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+    return { status: value ?? 'idle' };
+  }
+
+  function normalizeProcessingStatus(row: SpaceSessionRow): SpaceSessionStatusFilter {
+    if (row.status === 'archived') return 'archived';
+    const state = parseProcessingState(row.processing_state);
+    const status = typeof state.status === 'string' ? state.status : 'idle';
+    if (
+      status === 'processing' ||
+      status === 'queued' ||
+      status === 'running' ||
+      status === 'rate_limit_cooldown'
+    ) {
+      return 'active';
+    }
+    if (status === 'waiting_for_input') return 'waiting_for_input';
+    if (status === 'error') return 'error';
+    return 'idle';
+  }
+
+  function sessionKind(row: SpaceSessionRow): SpaceSessionTypeFilter {
+    const context = parseJsonValue(row.session_context) as Record<string, unknown> | null;
+    return row.type === 'space_task_agent' || typeof context?.taskId === 'string'
+      ? 'worker'
+      : 'ad-hoc';
+  }
+
+  function rowToSessionSummary(row: SpaceSessionRow): SpaceSessionSummary {
+    return {
+      id: row.id,
+      title: row.title,
+      status: normalizeProcessingStatus(row),
+      type: sessionKind(row),
+      processing_state: parseProcessingState(row.processing_state),
+      created_at: row.created_at,
+      last_active_at: row.last_active_at,
+      is_worktree: row.is_worktree === 1,
+      git_branch: row.git_branch,
+      workspace_path: row.workspace_path,
+    };
+  }
+
+  function getSpaceSessionRow(sessionId: string): SpaceSessionRow | null {
+    const row = requireDb()
+      .prepare(
+        `SELECT id, title, workspace_path, created_at, last_active_at, status, metadata,
+                is_worktree, git_branch, processing_state, type, session_context
+           FROM sessions
+          WHERE id = ?
+            AND json_extract(session_context, '$.spaceId') = ?
+          LIMIT 1`
+      )
+      .get(sessionId, spaceId) as SpaceSessionRow | undefined;
+    return row ?? null;
+  }
+
+  function requireSpaceSessionRow(sessionId: string): SpaceSessionRow {
+    const row = getSpaceSessionRow(sessionId);
+    if (!row) throw new Error(`Session not found in this space: ${sessionId}`);
+    return row;
+  }
+
+  function requireMutableSpaceSessionRow(sessionId: string): SpaceSessionRow {
+    const row = requireSpaceSessionRow(sessionId);
+    if (row.status === 'archived') throw new Error(`Session is archived: ${sessionId}`);
+    return row;
+  }
+
+  function getLiveSession(sessionId: string): AgentSession | null {
+    return (
+      config.getRuntimeSession?.(sessionId) ??
+      config.sessionManager?.getCachedSession(sessionId) ??
+      null
+    );
+  }
+
+  async function requireDeliverableSession(sessionId: string): Promise<AgentSession> {
+    const session =
+      getLiveSession(sessionId) ?? (await config.sessionManager?.getSessionAsync(sessionId));
+    if (!session) throw new Error(`Live session not available: ${sessionId}`);
+    return session;
+  }
+
+  function buildQuestionResponses(
+    pendingQuestion: Record<string, unknown>,
+    answerText: string
+  ): QuestionDraftResponse[] {
+    const questions = Array.isArray(pendingQuestion.questions) ? pendingQuestion.questions : [];
+    return questions.map((question, questionIndex) => {
+      const options =
+        question &&
+        typeof question === 'object' &&
+        Array.isArray((question as { options?: unknown }).options)
+          ? ((question as { options: Array<{ label?: unknown }> }).options ?? [])
+          : [];
+      const firstMatchingLabel = options.find(
+        (option) => typeof option.label === 'string' && option.label === answerText
+      )?.label as string | undefined;
+      return {
+        questionIndex,
+        selectedLabels: firstMatchingLabel ? [firstMatchingLabel] : [],
+        customText: firstMatchingLabel ? undefined : answerText,
+      };
+    });
+  }
+
+  async function requireSessionWriteAutonomy(toolName: string): Promise<void> {
+    const level = getSpaceAutonomyLevel ? await getSpaceAutonomyLevel(spaceId) : 1;
+    if (level < SESSION_WRITE_AUTONOMY_LEVEL) {
+      throw new Error(
+        `${toolName} not permitted: space autonomy level ${level} < required level ${SESSION_WRITE_AUTONOMY_LEVEL}. Request human approval.`
+      );
+    }
+  }
+
+  function summarizeMessageContent(raw: string): string {
+    const parsed = parseJsonValue(raw) as Record<string, unknown> | null;
+    const content = (parsed?.message as { content?: unknown } | undefined)?.content;
+    let text = '';
+    if (typeof content === 'string') {
+      text = content;
+    } else if (Array.isArray(content)) {
+      text = content
+        .map((block) => {
+          if (!block || typeof block !== 'object') return '';
+          const item = block as { text?: unknown; thinking?: unknown; type?: unknown };
+          if (typeof item.text === 'string') return item.text;
+          if (typeof item.thinking === 'string') return item.thinking;
+          if (typeof item.type === 'string') return `[${item.type}]`;
+          return '';
+        })
+        .filter(Boolean)
+        .join('\n');
+    }
+    const normalized = text.replace(/\s+/g, ' ').trim();
+    return normalized.length > 300 ? `${normalized.slice(0, 297)}...` : normalized;
+  }
+
+  function listSessionMessages(sessionId: string, limit: number, before?: string) {
+    const boundedLimit = Math.min(Math.max(limit, 1), SESSION_MESSAGE_MAX_LIMIT);
+    const params: (string | number)[] = [sessionId];
+    let beforeClause = '';
+    if (before) {
+      const [beforeTimestamp, beforeId] = before.includes('|')
+        ? before.split('|', 2)
+        : [before, ''];
+      if (beforeId) {
+        beforeClause = 'AND (timestamp < ? OR (timestamp = ? AND id < ?))';
+        params.push(beforeTimestamp, beforeTimestamp, beforeId);
+      } else {
+        beforeClause = 'AND timestamp < ?';
+        params.push(beforeTimestamp);
+      }
+    }
+    params.push(boundedLimit);
+    const rows = requireDb()
+      .prepare(
+        `SELECT id, message_type, message_subtype, is_terminal, timestamp, sdk_message
+           FROM sdk_messages
+          WHERE session_id = ? ${beforeClause}
+          ORDER BY timestamp DESC, id DESC
+          LIMIT ?`
+      )
+      .all(...params) as Array<{
+      id: string;
+      message_type: string;
+      message_subtype: string | null;
+      is_terminal: number | null;
+      timestamp: string;
+      sdk_message: string;
+    }>;
+    return rows.map((row) => ({
+      id: row.id,
+      message_type: row.message_type,
+      message_subtype: row.message_subtype,
+      is_terminal: row.is_terminal === 1,
+      timestamp: row.timestamp,
+      cursor: `${row.timestamp}|${row.id}`,
+      content_summary: summarizeMessageContent(row.sdk_message),
+    }));
   }
 
   function requireEvolutionLessonInSpace(lessonId: string) {
@@ -597,6 +848,248 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
   }
 
   return {
+    async list_sessions(args: {
+      status?: SpaceSessionStatusFilter;
+      type?: SpaceSessionTypeFilter;
+      limit?: number;
+      offset?: number;
+    }): Promise<ToolResult> {
+      try {
+        const limit = Math.min(args.limit ?? SPACE_SESSION_DEFAULT_LIMIT, SPACE_SESSION_MAX_LIMIT);
+        const offset = Math.max(args.offset ?? 0, 0);
+        const clauses = [`json_extract(session_context, '$.spaceId') = ?`];
+        const params: Array<string | number> = [spaceId];
+        const processingStatus = `COALESCE(json_extract(processing_state, '$.status'), 'idle')`;
+        if (args.status === 'archived') {
+          clauses.push(`status = 'archived'`);
+        } else if (args.status === 'active') {
+          clauses.push(`status != 'archived'`);
+          clauses.push(
+            `${processingStatus} IN ('processing', 'queued', 'running', 'rate_limit_cooldown')`
+          );
+        } else if (args.status === 'waiting_for_input' || args.status === 'error') {
+          clauses.push(`status != 'archived'`);
+          clauses.push(`${processingStatus} = ?`);
+          params.push(args.status);
+        } else if (args.status === 'idle') {
+          clauses.push(`status != 'archived'`);
+          clauses.push(
+            `${processingStatus} NOT IN ('processing', 'queued', 'running', 'rate_limit_cooldown', 'waiting_for_input', 'error')`
+          );
+        }
+        if (args.type === 'worker') {
+          clauses.push(
+            `(type = 'space_task_agent' OR json_type(session_context, '$.taskId') = 'text')`
+          );
+        } else if (args.type === 'ad-hoc') {
+          clauses.push(
+            `(type != 'space_task_agent' AND json_type(session_context, '$.taskId') IS NULL)`
+          );
+        }
+        params.push(limit, offset);
+        const rows = requireDb()
+          .prepare(
+            `SELECT id, title, workspace_path, created_at, last_active_at, status, metadata,
+                    is_worktree, git_branch, processing_state, type, session_context
+               FROM sessions
+              WHERE ${clauses.join(' AND ')}
+              ORDER BY last_active_at DESC
+              LIMIT ? OFFSET ?`
+          )
+          .all(...params) as SpaceSessionRow[];
+        const sessions = rows.map(rowToSessionSummary);
+        return jsonResult({ success: true, sessions });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return jsonResult({ success: false, error: message });
+      }
+    },
+
+    async get_session_detail(args: { session_id: string }): Promise<ToolResult> {
+      try {
+        const row = requireSpaceSessionRow(args.session_id);
+        return jsonResult({
+          success: true,
+          session: {
+            ...rowToSessionSummary(row),
+            raw_status: row.status,
+            metadata: parseJsonValue(row.metadata),
+            session_context: parseJsonValue(row.session_context),
+            last_messages: listSessionMessages(row.id, SESSION_DETAIL_MESSAGE_LIMIT),
+          },
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return jsonResult({ success: false, error: message });
+      }
+    },
+
+    async get_session_messages(args: {
+      session_id: string;
+      limit?: number;
+      before?: string;
+    }): Promise<ToolResult> {
+      try {
+        requireSpaceSessionRow(args.session_id);
+        return jsonResult({
+          success: true,
+          messages: listSessionMessages(
+            args.session_id,
+            args.limit ?? SESSION_MESSAGE_DEFAULT_LIMIT,
+            args.before
+          ),
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return jsonResult({ success: false, error: message });
+      }
+    },
+
+    async send_session_message(args: {
+      session_id: string;
+      message: string;
+      answer_question?: boolean;
+    }): Promise<ToolResult> {
+      try {
+        const row = requireMutableSpaceSessionRow(args.session_id);
+        if (
+          mySessionId &&
+          args.session_id !== mySessionId &&
+          outboundSenderLevel !== 'space-agent'
+        ) {
+          await requireSessionWriteAutonomy('send_session_message');
+        }
+        const liveSession = await requireDeliverableSession(args.session_id);
+        let messageId = generateUUID();
+        if (args.answer_question) {
+          const state = parseProcessingState(row.processing_state);
+          if (state.status !== 'waiting_for_input') {
+            return jsonResult({
+              success: false,
+              error: 'Session is not waiting for input',
+            });
+          }
+          const pendingQuestion = state.pendingQuestion;
+          if (!pendingQuestion || typeof pendingQuestion !== 'object') {
+            return jsonResult({
+              success: false,
+              error: 'Session has no pending question to answer',
+            });
+          }
+          const toolUseId = (pendingQuestion as { toolUseId?: unknown }).toolUseId;
+          if (typeof toolUseId !== 'string' || !toolUseId) {
+            return jsonResult({
+              success: false,
+              error: 'Pending question is missing toolUseId',
+            });
+          }
+          const questions = Array.isArray((pendingQuestion as { questions?: unknown }).questions)
+            ? (pendingQuestion as { questions: unknown[] }).questions
+            : [];
+          if (questions.length !== 1) {
+            return jsonResult({
+              success: false,
+              error:
+                'answer_question only supports pending prompts with exactly one question. Use the UI for multi-question prompts.',
+            });
+          }
+          await liveSession.handleQuestionResponse(
+            toolUseId,
+            buildQuestionResponses(pendingQuestion as Record<string, unknown>, args.message)
+          );
+          messageId = toolUseId;
+        } else {
+          await config.sessionManager?.sendUserMessage({
+            sessionId: args.session_id,
+            messageId,
+            content: args.message,
+          });
+          if (!config.sessionManager) {
+            await liveSession.startQueryAndEnqueue(messageId, args.message);
+          }
+        }
+        logAudit('send_session_message', {
+          session_id: args.session_id,
+          answer_question: args.answer_question ?? false,
+          message_length: args.message.length,
+        });
+        return jsonResult({ success: true, delivered: true, message_id: messageId });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return jsonResult({ success: false, error: message });
+      }
+    },
+
+    async update_session_state(args: {
+      session_id: string;
+      processing_state: MutableProcessingState;
+      clear_pending_question?: boolean;
+    }): Promise<ToolResult> {
+      try {
+        await requireSessionWriteAutonomy('update_session_state');
+        const row = requireMutableSpaceSessionRow(args.session_id);
+        const liveSession = getLiveSession(args.session_id);
+        if (liveSession) {
+          return jsonResult({
+            success: false,
+            error:
+              'update_session_state cannot mutate live sessions. Interrupt or message the live session instead.',
+          });
+        }
+        const previousState = parseProcessingState(row.processing_state);
+        const newStatus =
+          args.processing_state === 'running' ? 'processing' : args.processing_state;
+        const newState: Record<string, unknown> = { ...previousState, status: newStatus };
+        if (args.clear_pending_question || args.processing_state !== 'waiting_for_input') {
+          delete newState.pendingQuestion;
+        }
+        if (args.processing_state === 'waiting_for_input' && !newState.pendingQuestion) {
+          return jsonResult({
+            success: false,
+            error: 'Cannot set waiting_for_input without an existing pending question',
+          });
+        }
+        requireDb()
+          .prepare(`UPDATE sessions SET processing_state = ?, last_active_at = ? WHERE id = ?`)
+          .run(JSON.stringify(newState), new Date().toISOString(), args.session_id);
+        logAudit('update_session_state', {
+          session_id: args.session_id,
+          processing_state: args.processing_state,
+          clear_pending_question: args.clear_pending_question ?? false,
+        });
+        return jsonResult({
+          success: true,
+          updated: true,
+          previous_state: previousState,
+          new_state: newState,
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return jsonResult({ success: false, error: message });
+      }
+    },
+
+    async interrupt_session(args: { session_id: string; reason?: string }): Promise<ToolResult> {
+      try {
+        await requireSessionWriteAutonomy('interrupt_session');
+        requireMutableSpaceSessionRow(args.session_id);
+        const liveSession = getLiveSession(args.session_id);
+        if (!liveSession) {
+          return jsonResult({
+            success: false,
+            error:
+              'interrupt_session requires a live cached session. Use update_session_state for cold session recovery.',
+          });
+        }
+        await liveSession.handleInterrupt();
+        logAudit('interrupt_session', { session_id: args.session_id, reason: args.reason });
+        return jsonResult({ success: true, interrupted: true });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return jsonResult({ success: false, error: message });
+      }
+    },
+
     async list_agents(args: {
       status?: SpaceLongHorizonAgentStatus;
       compact?: boolean;
@@ -3052,8 +3545,70 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
   const agentStatusSchema = z.enum(['active', 'paused', 'disabled', 'archived']);
   const thinkingLevelSchema = z.enum(['off', 'think8k', 'think16k', 'think24k', 'think32k']);
   const settingSourcesSchema = z.array(z.enum(['user', 'project', 'local']));
+  const sessionStatusSchema = z.enum(['active', 'idle', 'waiting_for_input', 'error', 'archived']);
+  const sessionTypeSchema = z.enum(['worker', 'ad-hoc']);
+  const mutableProcessingStateSchema = z.enum(['idle', 'running', 'waiting_for_input']);
   // oxlint-disable-next-line typescript/no-explicit-any -- SDK tool list is heterogeneous by schema.
   const tools: SdkMcpToolDefinition<any>[] = [
+    tool(
+      'list_sessions',
+      'List all ad-hoc and worker sessions in this Space. Filter by derived status or type, with limit/offset pagination.',
+      {
+        status: sessionStatusSchema.optional().describe('Filter by status'),
+        type: sessionTypeSchema.optional().describe('Filter by session type'),
+        limit: z.number().int().positive().max(SPACE_SESSION_MAX_LIMIT).optional().default(50),
+        offset: z.number().int().min(0).optional().default(0),
+      },
+      (args) => handlers.list_sessions(args)
+    ),
+    tool(
+      'get_session_detail',
+      'Inspect one Space session including parsed processing_state and last 5 messages.',
+      { session_id: z.string().describe('Session ID') },
+      (args) => handlers.get_session_detail(args)
+    ),
+    tool(
+      'get_session_messages',
+      'Retrieve conversation messages for one Space session with summaries and optional timestamp cursor.',
+      {
+        session_id: z.string().describe('Session ID'),
+        limit: z.number().int().positive().max(SESSION_MESSAGE_MAX_LIMIT).optional().default(20),
+        before: z.string().optional().describe('Return messages before this timestamp'),
+      },
+      (args) => handlers.get_session_messages(args)
+    ),
+    tool(
+      'send_session_message',
+      'Send a user message to an ad-hoc Space session. Use answer_question:true to clear a waiting_for_input pending question.',
+      {
+        session_id: z.string().describe('Target session ID'),
+        message: z.string().min(1).describe('Message text'),
+        answer_question: z
+          .boolean()
+          .optional()
+          .describe('Clear pending question state while delivering this message'),
+      },
+      (args) => handlers.send_session_message(args)
+    ),
+    tool(
+      'update_session_state',
+      'Mutate a Space session processing state to recover stuck sessions. Requires sufficient Space autonomy.',
+      {
+        session_id: z.string().describe('Target session ID'),
+        processing_state: mutableProcessingStateSchema.describe('New processing state'),
+        clear_pending_question: z.boolean().optional().describe('Clear stale pendingQuestion'),
+      },
+      (args) => handlers.update_session_state(args)
+    ),
+    tool(
+      'interrupt_session',
+      'Force-interrupt a running or stuck Space session, append interrupt transcript entries, and reset state to idle. Requires sufficient Space autonomy.',
+      {
+        session_id: z.string().describe('Target session ID'),
+        reason: z.string().optional().describe('Reason recorded in the terminal result'),
+      },
+      (args) => handlers.interrupt_session(args)
+    ),
     tool(
       'list_workflows',
       'Show all workflows in this space with their descriptions and steps. Call this first to understand available options before creating a task.',
@@ -4107,7 +4662,8 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
     );
   }
 
-  return createSdkMcpServer({ name: 'space-agent', tools });
+  const server = createSdkMcpServer({ name: 'space-agent', tools });
+  return { ...server, tools };
 }
 
 export type SpaceAgentMcpServer = ReturnType<typeof createSpaceAgentMcpServer>;

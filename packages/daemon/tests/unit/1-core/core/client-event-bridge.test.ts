@@ -88,6 +88,7 @@ describe('ClientEventBridge', () => {
       expect(eventHandlers.has('space.workflowRun.created')).toBe(true);
       expect(eventHandlers.has('space.workflowRun.updated')).toBe(true);
       expect(eventHandlers.has('space.gateData.updated')).toBe(true);
+      expect(eventHandlers.has('space.hookState.updated')).toBe(true);
       expect(eventHandlers.has('space.artifactCache.updated')).toBe(true);
       expect(eventHandlers.has('space.pendingMessage.queued')).toBe(true);
       expect(eventHandlers.has('space.pendingMessage.delivered')).toBe(true);
@@ -150,9 +151,9 @@ describe('ClientEventBridge', () => {
       bridge.start();
       bridge.start();
 
-      // 23 space + 4 session + 2 conn/auth + 1 config + 2 error = 32 unique events
+      // 24 space + 4 session + 2 conn/auth + 1 config + 2 error = 33 unique events
       // (context.updated has 2 handlers but is 1 unique event key)
-      expect(eventHandlers.size).toBe(32);
+      expect(eventHandlers.size).toBe(33);
     });
   });
 
@@ -163,8 +164,8 @@ describe('ClientEventBridge', () => {
       bridge.start();
       bridge.stop();
 
-      // 33 internalEventBus.subscribe calls total (context.updated has 2 handlers)
-      expect(unsubscribers.length).toBe(33);
+      // 34 internalEventBus.subscribe calls total (context.updated has 2 handlers)
+      expect(unsubscribers.length).toBe(34);
     });
   });
 
@@ -302,6 +303,32 @@ describe('ClientEventBridge', () => {
       };
       eventHandlers.get('space.gateData.updated')![0](data);
 
+      expect(published[0].channel).toEqual({ kind: 'global' });
+    });
+
+    it('forwards space.hookState.updated to global channel', () => {
+      const { internalEventBus, gateway, eventHandlers, published } = buildFixture();
+      createClientEventBridge(internalEventBus, gateway).start();
+
+      const data = {
+        sessionId: 'global',
+        spaceId: 's-1',
+        runId: 'run-1',
+        hookId: 'hook-1',
+        hookState: {
+          runId: 'run-1',
+          hookId: 'hook-1',
+          version: 1,
+          localState: {},
+          retryCount: 0,
+          voteMaps: {},
+          createdAt: 1,
+          updatedAt: 2,
+        },
+      };
+      eventHandlers.get('space.hookState.updated')![0](data);
+
+      expect(published[0].method).toBe('space.hookState.updated');
       expect(published[0].channel).toEqual({ kind: 'global' });
     });
 

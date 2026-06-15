@@ -405,6 +405,10 @@ export class SessionManager {
     return this.sessionCache.get(sessionId);
   }
 
+  getCachedSession(sessionId: string): AgentSession | null {
+    return this.sessionCache.has(sessionId) ? this.sessionCache.get(sessionId) : null;
+  }
+
   /**
    * Get the session lifecycle manager.
    */

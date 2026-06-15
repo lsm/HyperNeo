@@ -851,18 +851,41 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
           const myNodeName = node?.name ?? myAgentName;
           const fromRefs = new Set([myAgentName, myNodeName]);
 
-          const gatedChannel = (workflow.channels ?? []).find((ch) => {
+          const channelsFromCurrentNode = (workflow.channels ?? []).filter((ch) => {
             if (!ch.gateId) return false;
             if (ch.from !== '*' && !fromRefs.has(ch.from)) return false;
-            const tos = Array.isArray(ch.to) ? ch.to : [ch.to];
-            const candidateTargets = uniqueTargetRefs([
-              ...routedTargetNames,
-              ...routedTargetNames.map(resolveNodeName),
-            ]);
-            return tos.some(
-              (to) => candidateTargets.includes(to) || to === myNodeName || to === myAgentName
-            );
+            return true;
           });
+          const candidateTargets = uniqueTargetRefs([
+            ...routedTargetNames,
+            ...routedTargetNames.map(resolveNodeName),
+          ]);
+          const broadcastTargetRefs = new Set<string>();
+          for (const targetNode of workflow.nodes) {
+            broadcastTargetRefs.add(targetNode.name);
+            try {
+              for (const agent of resolveNodeAgents(targetNode)) {
+                if (targetNode.id === workflowNodeId && agent.name === myAgentName) continue;
+                broadcastTargetRefs.add(agent.name);
+              }
+            } catch {
+              // Malformed node definitions have no resolvable agent slots to include.
+            }
+          }
+          const targetIsBroadcastRecipient = candidateTargets.some((targetRef) =>
+            broadcastTargetRefs.has(targetRef)
+          );
+          const gatedChannel =
+            channelsFromCurrentNode.find((ch) => {
+              const tos = Array.isArray(ch.to) ? ch.to : [ch.to];
+              return tos.some(
+                (to) => candidateTargets.includes(to) || to === myNodeName || to === myAgentName
+              );
+            }) ??
+            channelsFromCurrentNode.find((ch) => {
+              const tos = Array.isArray(ch.to) ? ch.to : [ch.to];
+              return targetIsBroadcastRecipient && tos.includes('*');
+            });
 
           if (gatedChannel?.gateId) {
             const gateId = gatedChannel.gateId;
@@ -1741,17 +1764,16 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
       taskId: config.taskId,
     };
 
+    const handlerMap = handlers as unknown as Record<
+      string,
+      (...args: unknown[]) => Promise<ToolResult>
+    >;
     const wrap = <T extends Record<string, unknown>>(
       methodName: string,
       handler: (args: T) => Promise<ToolResult>
-    ) =>
-      wrapHandlerWithHooks(
-        methodName,
-        handler,
-        config.hookEngine,
-        handlers as unknown as Record<string, (...args: unknown[]) => Promise<ToolResult>>,
-        meta
-      );
+    ) => wrapHandlerWithHooks(methodName, handler, config.hookEngine, handlerMap, meta);
+
+    config.hookEngine.scheduleQueuedRetryableActions(handlerMap, meta);
 
     handlers.send_message = wrap('send_message', handlers.send_message);
     handlers.save_artifact = wrap('save_artifact', handlers.save_artifact);
@@ -2026,7 +2048,8 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
       : []),
   ];
 
-  return createSdkMcpServer({ name: 'node-agent', tools });
+  const server = createSdkMcpServer({ name: 'node-agent', tools });
+  return { ...server, tools };
 }
 
 export type NodeAgentMcpServer = ReturnType<typeof createNodeAgentMcpServer>;

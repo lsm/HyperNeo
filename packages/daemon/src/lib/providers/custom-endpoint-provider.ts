@@ -308,6 +308,7 @@ export class CustomEndpointProvider implements Provider {
       params.caps.vision,
       params.caps.thinking,
       params.caps.streamUsage,
+      JSON.stringify(params.caps.chatTemplateKwargs ?? {}),
     ].join(' ');
     const existing = this.bridges.get(key);
     if (existing) return existing;
@@ -366,6 +367,7 @@ export class CustomEndpointProvider implements Provider {
           thinkingSupported: caps.thinking,
           streamUsageSupported: caps.streamUsage,
           modelContextWindow: caps.maxContextTokens,
+          ...(caps.chatTemplateKwargs ? { chatTemplateKwargs: caps.chatTemplateKwargs } : {}),
           ...(fetchImpl ? { fetchImpl } : {}),
         });
       }

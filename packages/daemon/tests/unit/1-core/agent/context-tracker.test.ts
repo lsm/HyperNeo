@@ -126,6 +126,26 @@ describe('ContextTracker', () => {
       expect(tracker.shouldCompact(128_000)).toBe(true);
     });
 
+    it('triggers at exactly 85% of the GPT-5.5 272k context window', () => {
+      tracker.updateWithDetailedBreakdown({
+        model: 'gpt-5.5',
+        totalUsed: 231_199,
+        totalCapacity: 272_000,
+        percentUsed: 85,
+        breakdown: {},
+      });
+      expect(tracker.shouldCompact(272_000)).toBe(false);
+
+      tracker.updateWithDetailedBreakdown({
+        model: 'gpt-5.5',
+        totalUsed: 231_200,
+        totalCapacity: 272_000,
+        percentUsed: 85,
+        breakdown: {},
+      });
+      expect(tracker.shouldCompact(272_000)).toBe(true);
+    });
+
     it('returns false when cooldown has not elapsed', () => {
       tracker.updateWithDetailedBreakdown({
         model: 'gpt-4',

@@ -18,10 +18,11 @@ import {
   MAX_BUFFER_BYTES,
   parseJsonStdout,
 } from './gate-script-executor';
-import { mkdtempSync } from 'fs';
-import { tmpdir } from 'os';
+import { existsSync, mkdtempSync } from 'fs';
+import { homedir, tmpdir } from 'os';
 import { join } from 'path';
 import { validateWorkflowHookResult } from '../workflow-hook-validation';
+import { createPrReadyValidator } from './built-in-validators/pr-ready-validator';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -33,11 +34,15 @@ export interface HookExecutorContext {
   runId: string;
   hookId: string;
   methodName: string;
+  /** Bounded action params safe for script env serialization. */
   params: Record<string, unknown>;
+  /** Original unbounded action params. Built-in validators may inspect routing fields here. */
+  rawParams?: Record<string, unknown>;
   nodeId: string;
   nodeName: string;
   sessionId: string;
   taskId: string;
+  workflowRunCreatedAt?: number;
   targetNode?: string;
   hookLocalState: Record<string, unknown>;
   currentArtifacts: Record<string, unknown>[];
@@ -84,6 +89,7 @@ const GITHUB_LOOKUP_ENV_KEYS = new Set([
   'GH_ENTERPRISE_TOKEN',
   'GITHUB_ENTERPRISE_TOKEN',
   'GH_HOST',
+  'GH_CONFIG_DIR',
 ]);
 
 /** SSH agent / Git credential helper keys — stripped from restricted env. */
@@ -137,10 +143,27 @@ registerBuiltInValidator('task_reported_status', async () => ({
   type: 'block',
   reason: NOT_IMPLEMENTED,
 }));
+registerBuiltInValidator('pr_ready', createPrReadyValidator());
 
 // ---------------------------------------------------------------------------
 // Environment builder
 // ---------------------------------------------------------------------------
+
+function resolveGithubConfigDir(): string | undefined {
+  const explicit = process.env.GH_CONFIG_DIR;
+  if (explicit && existsSync(explicit)) return explicit;
+
+  const xdgConfigHome = process.env.XDG_CONFIG_HOME;
+  if (xdgConfigHome) {
+    const xdgGhConfig = join(xdgConfigHome, 'gh');
+    if (existsSync(xdgGhConfig)) return xdgGhConfig;
+  }
+
+  const defaultGhConfig = join(homedir(), '.config', 'gh');
+  if (existsSync(defaultGhConfig)) return defaultGhConfig;
+
+  return undefined;
+}
 
 function buildHookRestrictedEnv(
   context: HookExecutorContext,
@@ -178,6 +201,11 @@ function buildHookRestrictedEnv(
     env[key] = value as string;
   }
 
+  if (permitGithub) {
+    const githubConfigDir = resolveGithubConfigDir();
+    if (githubConfigDir) env['GH_CONFIG_DIR'] = githubConfigDir;
+  }
+
   // Inject hook-specific environment variables
   env['NEOKAI_HOOK_ID'] = context.hookId;
   env['NEOKAI_WORKFLOW_RUN_ID'] = context.runId;
@@ -187,6 +215,15 @@ function buildHookRestrictedEnv(
   env['NEOKAI_NODE_NAME'] = context.nodeName;
   env['NEOKAI_SESSION_ID'] = context.sessionId;
   env['NEOKAI_TASK_ID'] = context.taskId;
+
+  const workflowRunCreatedAt = (context.workflowRunCreatedAt ??
+    context.templateData?.workflowRunCreatedAt ??
+    context.templateData?.runCreatedAt) as unknown;
+  if (typeof workflowRunCreatedAt === 'string') {
+    env['NEOKAI_WORKFLOW_START_ISO'] = workflowRunCreatedAt;
+  } else if (typeof workflowRunCreatedAt === 'number' && Number.isFinite(workflowRunCreatedAt)) {
+    env['NEOKAI_WORKFLOW_START_ISO'] = new Date(workflowRunCreatedAt).toISOString();
+  }
 
   if (context.targetNode) {
     env['NEOKAI_TARGET_NODE'] = context.targetNode;

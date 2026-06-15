@@ -15,7 +15,7 @@ const VALID_METHODS = new Set([
 ]);
 // Built-in validators are not yet implemented; reject them at validation time
 // so workflows cannot declare IDs that would unconditionally block at runtime.
-const VALID_BUILT_IN_VALIDATORS = new Set<string>([]);
+const VALID_BUILT_IN_VALIDATORS = new Set<string>(['pr_ready']);
 const VALID_RESULT_TYPES = new Set([
   'allow',
   'block',
@@ -133,7 +133,12 @@ export function validateWorkflowHookResult(result: unknown): string[] {
       }
       break;
     case 'record_state':
-      if (!isRecord(result.state)) errors.push('result.state: expected object');
+      if (!isRecord(result.state) && !isRecord(result.stateForHook)) {
+        errors.push('result.state or result.stateForHook: expected object');
+      }
+      if (result.stateForHook !== undefined && !isRecord(result.stateForHook)) {
+        errors.push('result.stateForHook: expected object');
+      }
       break;
   }
   if (result.data !== undefined && !isRecord(result.data))

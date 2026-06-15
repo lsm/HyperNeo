@@ -34,9 +34,27 @@ import {
 import { validateGate } from '../runtime/gate-evaluator';
 import { isApprovalGate } from '../runtime/gate-features';
 import { slugify, validateSlug } from '../slug';
+import {
+  CODING_WORKFLOW,
+  FULLSTACK_QA_LOOP_WORKFLOW,
+  PLAN_AND_DECOMPOSE_WORKFLOW,
+  RESEARCH_WORKFLOW,
+  REVIEW_ONLY_WORKFLOW,
+} from '../workflows/built-in-workflows';
+import { migrateWorkflowGateProgressionToHooks } from '../workflows/workflow-migration';
 
 const logger = new Logger('SpaceWorkflowManager');
 const RESERVED_WORKFLOW_AGENT_NAMES = new Set(['space-agent', 'task-agent']);
+
+const BUILT_IN_TEMPLATE_GATES = new Map(
+  [
+    CODING_WORKFLOW,
+    PLAN_AND_DECOMPOSE_WORKFLOW,
+    FULLSTACK_QA_LOOP_WORKFLOW,
+    RESEARCH_WORKFLOW,
+    REVIEW_ONLY_WORKFLOW,
+  ].map((workflow) => [workflow.name, workflow.gates ?? []])
+);
 
 function normalizeWorkflowAgentName(name: string): string {
   return name.trim().toLowerCase();
@@ -101,6 +119,15 @@ export class SpaceWorkflowManager {
 
     this.validateStartNodeId(startNodeId, nodes);
     this.validateEndNodeId(endNodeId, nodes);
+
+    this.validateNoDuplicateHookIds(params.hooks ?? []);
+    params = migrateWorkflowGateProgressionToHooks({
+      ...params,
+      nodes: nodes as SpaceWorkflow['nodes'],
+      templateGates: params.templateName
+        ? (BUILT_IN_TEMPLATE_GATES.get(params.templateName) ?? [])
+        : [],
+    }).workflow;
 
     if (params.channels && params.channels.length > 0) {
       this.validateChannels(params.channels);
@@ -222,8 +249,13 @@ export class SpaceWorkflowManager {
       return nextNode;
     });
 
-    if (!sanitized) return wf;
-    return { ...sanitized, nodes: nextNodes };
+    const withSanitizedNodes = sanitized ? { ...sanitized, nodes: nextNodes } : wf;
+    return migrateWorkflowGateProgressionToHooks({
+      ...withSanitizedNodes,
+      templateGates: withSanitizedNodes.templateName
+        ? (BUILT_IN_TEMPLATE_GATES.get(withSanitizedNodes.templateName) ?? [])
+        : [],
+    }).workflow;
   }
 
   // -------------------------------------------------------------------------
@@ -332,6 +364,27 @@ export class SpaceWorkflowManager {
         this.validateGates(changedGates);
       }
     }
+
+    this.validateNoDuplicateHookIds(params.hooks ?? []);
+    const migrated = migrateWorkflowGateProgressionToHooks({
+      channels: params.channels === undefined ? existing.channels : (params.channels ?? undefined),
+      gates: params.gates === undefined ? existing.gates : (params.gates ?? undefined),
+      hooks: params.hooks === undefined ? existing.hooks : (params.hooks ?? undefined),
+      nodes: effectiveNodes as SpaceWorkflow['nodes'],
+      templateName:
+        params.templateName === undefined
+          ? existing.templateName
+          : (params.templateName ?? undefined),
+      templateGates: existing.templateName
+        ? (BUILT_IN_TEMPLATE_GATES.get(existing.templateName) ?? [])
+        : [],
+    }).workflow;
+    params = {
+      ...params,
+      channels: migrated.channels ?? [],
+      gates: migrated.gates ?? [],
+      hooks: migrated.hooks ?? [],
+    };
 
     const effectiveChannels =
       params.channels === undefined ? (existing.channels ?? []) : (params.channels ?? []);
@@ -713,6 +766,20 @@ export class SpaceWorkflowManager {
     const errors = validateWorkflowHooks(hooks, nodes);
     if (errors.length > 0) {
       throw new WorkflowValidationError(errors.join('; '));
+    }
+  }
+
+  private validateNoDuplicateHookIds(hooks: unknown[]): void {
+    const seen = new Set<string>();
+    for (let hi = 0; hi < hooks.length; hi++) {
+      const hook = hooks[hi];
+      if (!hook || typeof hook !== 'object') continue;
+      const id = (hook as { id?: unknown }).id;
+      if (typeof id !== 'string') continue;
+      if (seen.has(id)) {
+        throw new WorkflowValidationError(`hooks[${hi}].id: duplicate hook id "${id}"`);
+      }
+      seen.add(id);
     }
   }
 

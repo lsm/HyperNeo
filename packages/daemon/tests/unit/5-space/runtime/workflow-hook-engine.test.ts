@@ -8,13 +8,20 @@
 
 import { describe, test, expect, beforeEach } from 'bun:test';
 import {
+  clearAllRetryableHookActionTimers,
+  QUEUED_RETRYABLE_ACTION_STATE_KEY,
   WorkflowHookEngine,
   wrapHandlerWithHooks,
   type HookActionMeta,
   type HookActionOutcome,
 } from '../../../../src/lib/space/runtime/workflow-hook-engine';
 import { HookExecutor } from '../../../../src/lib/space/runtime/hook-executor';
-import type { WorkflowHook, WorkflowHookResult, SpaceWorkflow } from '@neokai/shared';
+import type {
+  WorkflowHook,
+  WorkflowHookResult,
+  SpaceWorkflow,
+  WorkflowRunStatus,
+} from '@neokai/shared';
 import type { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
 import type { WorkflowHookStateRepository } from '../../../../src/storage/repositories/workflow-hook-state-repository';
 import type { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository';
@@ -63,8 +70,8 @@ function makeMockNodeExecutionRepo(): NodeExecutionRepository {
   } as unknown as NodeExecutionRepository;
 }
 
-function makeMockHookStateRepo(): WorkflowHookStateRepository {
-  const states = new Map<
+function makeMockHookStateRepo(
+  states = new Map<
     string,
     {
       version: number;
@@ -73,8 +80,8 @@ function makeMockHookStateRepo(): WorkflowHookStateRepository {
       retryCount: number;
       nextRetryAt: number | null;
     }
-  >();
-
+  >()
+): WorkflowHookStateRepository {
   return {
     get: (runId: string, hookId: string) => {
       const key = `${runId}:${hookId}`;
@@ -201,21 +208,36 @@ function makeHook(overrides: Partial<WorkflowHook> & { id: string }): WorkflowHo
   } as WorkflowHook;
 }
 
-function makeEngine(hooks: WorkflowHook[]): {
+function makeEngine(
+  hooks: WorkflowHook[],
+  options: {
+    hookStateRepo?: WorkflowHookStateRepository;
+    getWorkflowRunStatus?: (runId: string) => WorkflowRunStatus | undefined;
+    getTaskStatus?: (taskId: string) => string | undefined;
+    getSourceNodeExecutionStatus?: (meta: HookActionMeta) => string | undefined;
+    notifySourceSession?: (sessionId: string, message: string) => Promise<void>;
+  } = {}
+): {
   engine: WorkflowHookEngine;
   mockExecutor: MockHookExecutor;
+  hookStateRepo: WorkflowHookStateRepository;
 } {
   const mockExecutor = new MockHookExecutor();
+  const hookStateRepo = options.hookStateRepo ?? makeMockHookStateRepo();
   const engine = new WorkflowHookEngine({
     workflow: makeWorkflow(hooks),
     workflowRunId: 'run-1',
     nodeExecutionRepo: makeMockNodeExecutionRepo(),
     artifactRepo: makeMockArtifactRepo(),
-    hookStateRepo: makeMockHookStateRepo(),
+    hookStateRepo,
     hookExecutor: mockExecutor,
     workspacePath: '/tmp',
+    getWorkflowRunStatus: options.getWorkflowRunStatus,
+    getTaskStatus: options.getTaskStatus,
+    getSourceNodeExecutionStatus: options.getSourceNodeExecutionStatus,
+    notifySourceSession: options.notifySourceSession,
   });
-  return { engine, mockExecutor };
+  return { engine, mockExecutor, hookStateRepo };
 }
 
 const defaultMeta: HookActionMeta = {
@@ -230,6 +252,23 @@ const defaultMeta: HookActionMeta = {
 // ---------------------------------------------------------------------------
 
 describe('WorkflowHookEngine', () => {
+  test('persistStateUpdate retries version conflicts', () => {
+    let attempts = 0;
+    const stateRepo = makeMockHookStateRepo();
+    const originalUpdate = stateRepo.update.bind(stateRepo);
+    stateRepo.update = ((...args: Parameters<WorkflowHookStateRepository['update']>) => {
+      attempts += 1;
+      if (attempts === 1) return null;
+      return originalUpdate(...args);
+    }) as WorkflowHookStateRepository['update'];
+    const { engine } = makeEngine([makeHook({ id: 'hook-1' })], { hookStateRepo: stateRepo });
+
+    expect(engine.persistStateUpdate('hook-1', { approvals: { architecture: 'approved' } })).toBe(
+      true
+    );
+    expect(attempts).toBe(2);
+  });
+
   test('allow: no hooks registered → allow silently', async () => {
     const { engine } = makeEngine([]);
     const outcome = await engine.executeAction(
@@ -701,11 +740,15 @@ describe('WorkflowHookEngine', () => {
     expect(outcome.executionLog[0].hookId).toBe('hook-1');
   });
 
-  test('@role:Review resolves raw role to node name for hook matching', async () => {
+  test('@role:Review skips target-specific hook matching', async () => {
     const { engine, mockExecutor } = makeEngine([
       makeHook({ id: 'hook-1', targetNode: 'Review', method: 'send_message' }),
     ]);
-    mockExecutor.setResult('hook-1', { type: 'allow' });
+    mockExecutor.setResult('hook-1', {
+      type: 'block',
+      reason: 'would record state for generic role target',
+      data: { approvals: { architecture: 'approved' } },
+    });
 
     const outcome = await engine.executeAction(
       'send_message',
@@ -713,8 +756,8 @@ describe('WorkflowHookEngine', () => {
       defaultMeta
     );
 
-    expect(outcome.executionLog).toHaveLength(1);
-    expect(outcome.executionLog[0].hookId).toBe('hook-1');
+    expect(outcome.executionLog).toHaveLength(0);
+    expect(outcome.decision).toBe('allow');
   });
 
   test('broadcast * resolves agent slot names to node names for hook matching', async () => {
@@ -768,6 +811,78 @@ describe('WorkflowHookEngine', () => {
     const outcome = await engine.executeAction(
       'send_message',
       { target: '*', message: 'hi' },
+      defaultMeta
+    );
+
+    expect(outcome.executionLog).toHaveLength(1);
+    expect(outcome.executionLog[0].hookId).toBe('hook-1');
+  });
+
+  test('mixed invalid multicast target skips target-specific hooks', async () => {
+    const { engine, mockExecutor } = makeEngine([
+      makeHook({ id: 'hook-1', targetNode: 'Review', method: 'send_message' }),
+    ]);
+    mockExecutor.setResult('hook-1', {
+      type: 'block',
+      reason: 'would record state for undelivered multicast',
+      data: { approvals: { architecture: 'approved' } },
+    });
+
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: ['Review', 'Task Disptcher'], message: 'hi' },
+      defaultMeta
+    );
+
+    expect(outcome.executionLog).toHaveLength(0);
+    expect(outcome.decision).toBe('allow');
+  });
+
+  test('space-agent multicast keeps workflow target hooks active', async () => {
+    const { engine, mockExecutor } = makeEngine([
+      makeHook({ id: 'hook-1', targetNode: 'Review', method: 'send_message' }),
+    ]);
+    mockExecutor.setResult('hook-1', { type: 'allow' });
+
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: ['Review', 'space-agent'], message: 'hi' },
+      defaultMeta
+    );
+
+    expect(outcome.executionLog).toHaveLength(1);
+    expect(outcome.executionLog[0].hookId).toBe('hook-1');
+  });
+
+  test('invalid generic worker target skips target-specific hooks', async () => {
+    const { engine, mockExecutor } = makeEngine([
+      makeHook({ id: 'hook-1', targetNode: 'Review', method: 'send_message' }),
+    ]);
+    mockExecutor.setResult('hook-1', {
+      type: 'block',
+      reason: 'would record state for undelivered worker target',
+      data: { approvals: { architecture: 'approved' } },
+    });
+
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: '@worker:other-run/node-review/reviewer', message: 'hi' },
+      defaultMeta
+    );
+
+    expect(outcome.executionLog).toHaveLength(0);
+    expect(outcome.decision).toBe('allow');
+  });
+
+  test('runless worker target is treated as current-run target for hooks', async () => {
+    const { engine, mockExecutor } = makeEngine([
+      makeHook({ id: 'hook-1', targetNode: 'Review', method: 'send_message' }),
+    ]);
+    mockExecutor.setResult('hook-1', { type: 'allow' });
+
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: '@worker:node-review/reviewer', message: 'hi' },
       defaultMeta
     );
 
@@ -1286,6 +1401,117 @@ describe('WorkflowHookEngine', () => {
     expect(outcome.decision).toBe('block');
     expect(outcome.userState.reason).toContain('Patched params invalid');
   });
+
+  test('retryable send_message persists queued action and rehydrates after restart', async () => {
+    const args = { target: 'Review', message: 'hi' };
+    const actionKey = JSON.stringify({
+      runScopedTaskId: defaultMeta.taskId,
+      nodeId: defaultMeta.nodeId,
+      sessionId: defaultMeta.sessionId,
+      agentName: defaultMeta.agentName,
+      methodName: 'send_message',
+      args,
+    });
+    const hookStateRepo = makeMockHookStateRepo();
+
+    let replayCallCount = 0;
+    const { engine, mockExecutor } = makeEngine(
+      [makeHook({ id: 'hook-1', classification: 'validation', order: 0 })],
+      { hookStateRepo }
+    );
+    hookStateRepo.ensure('run-1', 'hook-1');
+    engine.persistQueuedRetryableAction({
+      actionKey,
+      hookId: 'hook-1',
+      methodName: 'send_message',
+      args,
+      meta: defaultMeta,
+      isFollowUp: false,
+      nextRetryAt: Date.now() - 1,
+      retryAfterMs: 5,
+      queuedAt: Date.now() - 10,
+    });
+    mockExecutor.setResult('hook-1', { type: 'allow' });
+    engine.scheduleQueuedRetryableActions(
+      {
+        send_message: async (replayedArgs: Record<string, unknown>) => {
+          replayCallCount++;
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: JSON.stringify({ success: true, target: replayedArgs.target }),
+              },
+            ],
+          };
+        },
+      },
+      defaultMeta
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(replayCallCount).toBe(1);
+    expect(
+      hookStateRepo.get('run-1', 'hook-1')?.localState[QUEUED_RETRYABLE_ACTION_STATE_KEY]
+    ).toBeNull();
+  });
+
+  test.each([
+    ['task is done', { getTaskStatus: () => 'done' }, false],
+    [
+      'source node execution is cancelled',
+      { getSourceNodeExecutionStatus: () => 'cancelled' },
+      false,
+    ],
+    ['source node execution is idle', { getSourceNodeExecutionStatus: () => 'idle' }, true],
+  ] as const)('queued retry replay expectation when %s', async (_name, options, shouldReplay) => {
+    const args = { target: 'Review', message: 'hi' };
+    const actionKey = JSON.stringify({
+      runScopedTaskId: defaultMeta.taskId,
+      nodeId: defaultMeta.nodeId,
+      sessionId: defaultMeta.sessionId,
+      agentName: defaultMeta.agentName,
+      methodName: 'send_message',
+      args,
+    });
+    const hookStateRepo = makeMockHookStateRepo();
+    const { engine } = makeEngine(
+      [makeHook({ id: 'hook-1', classification: 'validation', order: 0 })],
+      { hookStateRepo, ...options }
+    );
+    hookStateRepo.ensure('run-1', 'hook-1');
+    engine.persistQueuedRetryableAction({
+      actionKey,
+      hookId: 'hook-1',
+      methodName: 'send_message',
+      args,
+      meta: defaultMeta,
+      isFollowUp: false,
+      nextRetryAt: Date.now() - 1,
+      retryAfterMs: 5,
+      queuedAt: Date.now() - 10,
+    });
+
+    let handlerCallCount = 0;
+    engine.scheduleQueuedRetryableActions(
+      {
+        send_message: async () => {
+          handlerCallCount++;
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }],
+          };
+        },
+      },
+      defaultMeta
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(handlerCallCount).toBe(shouldReplay ? 1 : 0);
+    expect(
+      hookStateRepo.get('run-1', 'hook-1')?.localState[QUEUED_RETRYABLE_ACTION_STATE_KEY]
+    ).toBeNull();
+  });
 });
 
 describe('wrapHandlerWithHooks', () => {
@@ -1341,6 +1567,38 @@ describe('wrapHandlerWithHooks', () => {
     const data = JSON.parse(result.content[0].text);
     expect(data.success).toBe(true);
     expect(data.extra).toBe('data');
+  });
+
+  test('persists PR URL from allowed send_message hook to local state', async () => {
+    const hookStateRepo = makeMockHookStateRepo();
+    const mockExecutor = new MockHookExecutor();
+
+    const engine = new WorkflowHookEngine({
+      workflow: makeWorkflow([makeHook({ id: 'hook-1', classification: 'validation' })]),
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo,
+      hookExecutor: mockExecutor,
+      workspacePath: '/tmp',
+    });
+
+    mockExecutor.setResult('hook-1', { type: 'allow' });
+
+    const handler = async () => ({
+      content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }],
+    });
+
+    const wrapped = wrapHandlerWithHooks('send_message', handler, engine, {}, defaultMeta);
+    await wrapped({
+      target: 'Review',
+      message: 'handoff',
+      data: { pr_url: 'https://github.com/acme/corp/pull/42' },
+    });
+
+    expect(hookStateRepo.get('run-1', 'hook-1')?.localState.pr_url).toBe(
+      'https://github.com/acme/corp/pull/42'
+    );
   });
 
   test('persists hook results to state repo', async () => {
@@ -1448,9 +1706,217 @@ describe('wrapHandlerWithHooks', () => {
     expect(data.success).toBe(true);
   });
 
-  test('retryable block returns retryable error with metadata', async () => {
+  test('retryable send_message queues the action and dispatches after retry delay', async () => {
     const { engine, mockExecutor } = makeEngine([
-      makeHook({ id: 'hook-1', classification: 'validation' }),
+      makeHook({ id: 'hook-1', classification: 'validation', order: 0 }),
+      makeHook({ id: 'hook-side', classification: 'side_effect', order: 1 }),
+    ]);
+    mockExecutor.setResult('hook-1', {
+      type: 'retryable_block',
+      reason: 'Retry me',
+      retryAfterMs: 5,
+    });
+
+    let handlerCallCount = 0;
+    let followUpCallCount = 0;
+    const handler = async (args: { target: string; message: string }) => {
+      handlerCallCount++;
+      return {
+        content: [
+          { type: 'text' as const, text: JSON.stringify({ success: true, target: args.target }) },
+        ],
+      };
+    };
+    const followUpHandler = async () => {
+      followUpCallCount++;
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }],
+      };
+    };
+
+    const wrapped = wrapHandlerWithHooks(
+      'send_message',
+      handler,
+      engine,
+      { send_message: followUpHandler },
+      defaultMeta
+    );
+    const result = await wrapped({ target: 'Review', message: 'hi' });
+
+    const data = JSON.parse(result.content[0].text);
+    expect(data.success).toBe(true);
+    expect(data.queued).toBe(true);
+    expect(data.retryable).toBe(true);
+    expect(data.retryAfterMs).toBe(5);
+    expect(data.hookStatus).toBe('waiting_on_hook_retry');
+    expect(handlerCallCount).toBe(0);
+
+    mockExecutor.setResult('hook-1', { type: 'allow' });
+    mockExecutor.setResult('hook-side', {
+      type: 'emit_follow_up',
+      targetNode: 'Review',
+      message: 'follow-up',
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(followUpCallCount).toBe(1);
+    expect(handlerCallCount).toBe(1);
+  });
+
+  test('superseded queued retry timer is cancelled before replay', async () => {
+    const { engine, mockExecutor } = makeEngine([
+      makeHook({ id: 'hook-1', classification: 'validation', order: 0 }),
+    ]);
+    mockExecutor.setResult('hook-1', {
+      type: 'retryable_block',
+      reason: 'Retry me',
+      retryAfterMs: 10,
+    });
+
+    const deliveredMessages: string[] = [];
+    const handler = async (args: { target: string; message: string }) => {
+      deliveredMessages.push(args.message);
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }],
+      };
+    };
+
+    const wrapped = wrapHandlerWithHooks('send_message', handler, engine, {}, defaultMeta);
+    await wrapped({ target: 'Review', message: 'first' });
+    await wrapped({ target: 'Review', message: 'second' });
+
+    mockExecutor.setResult('hook-1', { type: 'allow' });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    expect(deliveredMessages).toEqual(['second']);
+  });
+
+  test('hard-block resend clears superseded queued retry before replay', async () => {
+    const { engine, mockExecutor } = makeEngine([
+      makeHook({ id: 'hook-1', classification: 'validation', order: 0 }),
+    ]);
+    mockExecutor.setResult('hook-1', {
+      type: 'retryable_block',
+      reason: 'Retry me',
+      retryAfterMs: 20,
+    });
+
+    const deliveredMessages: string[] = [];
+    const handler = async (args: { target: string; message: string }) => {
+      deliveredMessages.push(args.message);
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }],
+      };
+    };
+
+    const wrapped = wrapHandlerWithHooks('send_message', handler, engine, {}, defaultMeta);
+    await wrapped({ target: 'Review', message: 'queued' });
+
+    mockExecutor.setResult('hook-1', { type: 'block', reason: 'PR is not ready' });
+    const blockedResult = await wrapped({ target: 'Review', message: 'blocked resend' });
+    await new Promise((resolve) => setTimeout(resolve, 40));
+
+    expect(blockedResult.isError).toBe(true);
+    expect(deliveredMessages).toEqual([]);
+    expect(engine.getQueuedRetryableAction('hook-1')).toBeUndefined();
+  });
+
+  test('successful resend clears superseded queued retry before replay', async () => {
+    const { engine, mockExecutor } = makeEngine([
+      makeHook({ id: 'hook-1', classification: 'validation', order: 0 }),
+    ]);
+    mockExecutor.setResult('hook-1', {
+      type: 'retryable_block',
+      reason: 'Retry me',
+      retryAfterMs: 20,
+    });
+
+    const deliveredMessages: string[] = [];
+    const handler = async (args: { target: string; message: string }) => {
+      deliveredMessages.push(args.message);
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }],
+      };
+    };
+
+    const wrapped = wrapHandlerWithHooks('send_message', handler, engine, {}, defaultMeta);
+    await wrapped({ target: 'Review', message: 'queued' });
+
+    mockExecutor.setResult('hook-1', { type: 'allow' });
+    await wrapped({ target: 'Review', message: 'manual resend' });
+    await new Promise((resolve) => setTimeout(resolve, 40));
+
+    expect(deliveredMessages).toEqual(['manual resend']);
+  });
+
+  test('cleanup helper cancels queued retry timer before replay', async () => {
+    const { engine, mockExecutor } = makeEngine([
+      makeHook({ id: 'hook-1', classification: 'validation', order: 0 }),
+    ]);
+    mockExecutor.setResult('hook-1', {
+      type: 'retryable_block',
+      reason: 'Retry me',
+      retryAfterMs: 10,
+    });
+
+    const deliveredMessages: string[] = [];
+    const handler = async (args: { target: string; message: string }) => {
+      deliveredMessages.push(args.message);
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }],
+      };
+    };
+
+    const wrapped = wrapHandlerWithHooks('send_message', handler, engine, {}, defaultMeta);
+    await wrapped({ target: 'Review', message: 'queued' });
+    mockExecutor.setResult('hook-1', { type: 'allow' });
+
+    clearAllRetryableHookActionTimers();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    expect(deliveredMessages).toEqual([]);
+    expect(engine.getQueuedRetryableAction('hook-1')?.args).toEqual({
+      target: 'Review',
+      message: 'queued',
+    });
+  });
+
+  test('queued retry hard failure is reported to source session', async () => {
+    const notifications: Array<{ sessionId: string; message: string }> = [];
+    const { engine, mockExecutor } = makeEngine(
+      [makeHook({ id: 'hook-1', classification: 'validation', order: 0 })],
+      {
+        notifySourceSession: async (sessionId, message) => {
+          notifications.push({ sessionId, message });
+        },
+      }
+    );
+    mockExecutor.setResult('hook-1', {
+      type: 'retryable_block',
+      reason: 'Retry me',
+      retryAfterMs: 5,
+    });
+
+    const handler = async () => ({
+      content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }],
+    });
+
+    const wrapped = wrapHandlerWithHooks('send_message', handler, engine, {}, defaultMeta);
+    await wrapped({ target: 'Review', message: 'hi' });
+
+    mockExecutor.setResult('hook-1', { type: 'block', reason: 'PR is not mergeable' });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(notifications).toHaveLength(1);
+    expect(notifications[0]).toEqual({
+      sessionId: 'session-coder',
+      message: 'Queued send_message retry failed: PR is not mergeable',
+    });
+  });
+
+  test('non-message retryable block returns retryable error with metadata', async () => {
+    const { engine, mockExecutor } = makeEngine([
+      makeHook({ id: 'hook-1', method: 'save_artifact', classification: 'validation' }),
     ]);
     mockExecutor.setResult('hook-1', {
       type: 'retryable_block',
@@ -1462,8 +1928,8 @@ describe('wrapHandlerWithHooks', () => {
       content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }],
     });
 
-    const wrapped = wrapHandlerWithHooks('send_message', handler, engine, {}, defaultMeta);
-    const result = await wrapped({ target: 'Review' });
+    const wrapped = wrapHandlerWithHooks('save_artifact', handler, engine, {}, defaultMeta);
+    const result = await wrapped({ type: 'progress' });
 
     const data = JSON.parse(result.content[0].text);
     expect(data.success).toBe(false);

@@ -35,7 +35,7 @@ describe('GlmProvider', () => {
       expect(provider.capabilities).toEqual({
         streaming: true,
         extendedThinking: true,
-        maxContextWindow: 200000,
+        maxContextWindow: 1_000_000,
         functionCalling: true,
         vision: true,
         thinkingModes: 'granular',
@@ -73,10 +73,11 @@ describe('GlmProvider', () => {
 
       const models = await provider.getModels();
 
-      expect(models).toHaveLength(5);
+      expect(models).toHaveLength(6);
       expect(models.map((m) => m.id)).toEqual([
         'glm-5',
         'glm-5.1',
+        'glm-5.2[1m]',
         'glm-5-turbo',
         'glm-5v-turbo',
         'glm-4.7',
@@ -165,6 +166,16 @@ describe('GlmProvider', () => {
       expect(config.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('glm-4.7');
     });
 
+    it('should route glm-5.2 to the 1M SDK model id', () => {
+      process.env.GLM_API_KEY = 'test-key';
+
+      const config = provider.buildSdkConfig('glm-5.2');
+
+      expect(config.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('glm-5.2[1m]');
+      expect(config.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('glm-5.2[1m]');
+      expect(config.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('glm-5.2[1m]');
+    });
+
     it('should build correct config for glm-5-turbo', () => {
       process.env.GLM_API_KEY = 'test-key';
 
@@ -245,14 +256,31 @@ describe('GlmProvider', () => {
 
   describe('static models', () => {
     it('should have static models defined', () => {
-      expect(GlmProvider.MODELS).toHaveLength(5);
+      expect(GlmProvider.MODELS).toHaveLength(6);
       expect(GlmProvider.MODELS.map((m) => m.id)).toEqual([
         'glm-5',
         'glm-5.1',
+        'glm-5.2[1m]',
         'glm-5-turbo',
         'glm-5v-turbo',
         'glm-4.7',
       ]);
+    });
+
+    it('should have correct glm-5.2 model definition', () => {
+      const model = GlmProvider.MODELS.find((m) => m.id === 'glm-5.2[1m]');
+      expect(model).toBeDefined();
+      expect(model).toEqual({
+        id: 'glm-5.2[1m]',
+        name: 'GLM-5.2',
+        alias: 'glm-5.2',
+        family: 'glm',
+        provider: 'glm',
+        contextWindow: 1_000_000,
+        description: 'GLM-5.2 · 1M context window, recommended thinking mode "max"',
+        releaseDate: '2026-06-10',
+        available: true,
+      });
     });
 
     it('should have correct glm-5-turbo model definition', () => {

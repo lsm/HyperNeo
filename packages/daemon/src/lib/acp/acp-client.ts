@@ -16,6 +16,10 @@ import type {
   AcpSessionPromptResult,
   AcpSessionCancelParams,
   AcpSessionUpdateNotification,
+  AcpSessionLoadParams,
+  AcpSessionLoadResult,
+  AcpSessionResumeParams,
+  AcpSessionResumeResult,
   AcpConfigOption,
   AcpSessionModeState,
   AcpFsReadParams,
@@ -41,6 +45,7 @@ import type {
   AcpStopReason,
 } from '@neokai/shared';
 import { AcpTransport } from './acp-transport';
+import type { AcpTransportCallbacks } from './acp-transport';
 
 export interface AcpClientCallbacks {
   onFsRead?(params: AcpFsReadParams): Promise<AcpFsReadResult>;
@@ -55,7 +60,9 @@ export interface AcpClientCallbacks {
   onPermissionRequest?(params: AcpPermissionRequest): Promise<AcpPermissionResponseResult>;
 }
 
-export interface AcpClientOptions extends AcpClientCallbacks {
+export interface AcpClientOptions
+  extends AcpClientCallbacks,
+    Pick<AcpTransportCallbacks, 'onProcessSpawn' | 'onStderr' | 'onExit'> {
   command: string;
   args?: string[];
   env?: Record<string, string>;
@@ -199,6 +206,74 @@ export class AcpClient {
   }
 
   /**
+   * Load an existing ACP session.
+   */
+  async loadSession(
+    sessionId: string,
+    cwd: string,
+    mcpServers: AcpMcpServerConfig[] = []
+  ): Promise<{
+    sessionId: string;
+    configOptions: AcpConfigOption[];
+    modes?: AcpSessionModeState | null;
+  }> {
+    const params: AcpSessionLoadParams = { sessionId, cwd, mcpServers };
+    const response = await this.transport.sendRequest('session/load', params);
+
+    if ('error' in response) {
+      throw new Error(`session/load failed: ${response.error.message}`);
+    }
+
+    const result = response.result as AcpSessionLoadResult;
+    this.sessionId = result.sessionId ?? sessionId;
+    this.cachedConfigOptions = result.configOptions ?? [];
+    this.cachedModes = result.modes ?? undefined;
+
+    return {
+      sessionId: this.sessionId,
+      configOptions: this.cachedConfigOptions,
+      modes: result.modes,
+    };
+  }
+
+  /**
+   * Resume an existing ACP session.
+   */
+  async resumeSession(
+    sessionId: string,
+    cwd: string,
+    mcpServers: AcpMcpServerConfig[] = []
+  ): Promise<{
+    sessionId: string;
+    configOptions: AcpConfigOption[];
+    modes?: AcpSessionModeState | null;
+  }> {
+    const params: AcpSessionResumeParams = { sessionId, cwd, mcpServers };
+    const response = await this.transport.sendRequest('session/resume', params);
+
+    if ('error' in response) {
+      throw new Error(`session/resume failed: ${response.error.message}`);
+    }
+
+    const result = response.result as AcpSessionResumeResult;
+    this.sessionId = result.sessionId ?? sessionId;
+    this.cachedConfigOptions = result.configOptions ?? [];
+    this.cachedModes = result.modes ?? undefined;
+
+    return {
+      sessionId: this.sessionId,
+      configOptions: this.cachedConfigOptions,
+      modes: result.modes,
+    };
+  }
+
+  canLoadSession(): boolean {
+    if (this.agentCapabilities?.loadSession) return true;
+    const sessionCapabilities = this.agentCapabilities?.sessionCapabilities;
+    return !!sessionCapabilities && 'resume' in sessionCapabilities;
+  }
+
+  /**
    * Send a prompt and yield streaming update notifications.
    */
   async *sendPrompt(prompt: AcpContentBlock[]): AsyncGenerator<AcpSessionUpdateNotification> {
@@ -297,6 +372,10 @@ export class AcpClient {
     return this.cachedConfigOptions;
   }
 
+  updateConfigOptions(configOptions: AcpConfigOption[]): void {
+    this.cachedConfigOptions = configOptions;
+  }
+
   getModes(): AcpSessionModeState | undefined {
     return this.cachedModes;
   }
@@ -307,6 +386,26 @@ export class AcpClient {
 
   getLastPromptStopReason(): AcpStopReason | undefined {
     return this.lastPromptStopReason;
+  }
+
+  async setConfigOption(configId: string, value: string): Promise<AcpConfigOption[]> {
+    if (!this.sessionId) {
+      throw new Error('No active session. Call createSession() first.');
+    }
+
+    const response = await this.transport.sendRequest('session/set_config_option', {
+      sessionId: this.sessionId,
+      configId,
+      value,
+    });
+
+    if ('error' in response) {
+      throw new Error(`session/set_config_option failed: ${response.error.message}`);
+    }
+
+    const result = response.result as { configOptions?: AcpConfigOption[] | null };
+    this.cachedConfigOptions = result.configOptions ?? [];
+    return this.cachedConfigOptions;
   }
 
   private async handleRequest(request: AcpJsonRpcRequest): Promise<void> {

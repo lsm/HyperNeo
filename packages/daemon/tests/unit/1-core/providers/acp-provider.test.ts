@@ -126,6 +126,47 @@ describe('AcpProvider', () => {
       expect(models).toEqual([]);
     });
 
+    it('should discover cached models from model config option', async () => {
+      process.env.NEOKAI_ACP_COMMAND = 'claude --acp';
+      provider.setConfigOptions([
+        {
+          id: 'model',
+          name: 'Model',
+          type: 'select',
+          category: 'model',
+          currentValue: 'sonnet',
+          options: [
+            { name: 'Sonnet', value: 'sonnet' },
+            { group: 'more', name: 'More', options: [{ name: 'Opus', value: 'opus' }] },
+          ],
+        },
+      ]);
+
+      const models = await provider.getModels();
+
+      expect(models.map((model) => model.id)).toEqual(['sonnet', 'opus']);
+      expect(models[0].provider).toBe('acp');
+    });
+
+    it('should clear cached models when config options have no model selector', async () => {
+      process.env.NEOKAI_ACP_COMMAND = 'claude --acp';
+      provider.setConfigOptions([
+        {
+          id: 'model',
+          name: 'Model',
+          type: 'select',
+          category: 'model',
+          currentValue: 'sonnet',
+          options: [{ name: 'Sonnet', value: 'sonnet' }],
+        },
+      ]);
+
+      provider.setConfigOptions([]);
+      const models = await provider.getModels();
+
+      expect(models[0].id).toBe('acp-default');
+    });
+
     it('should return cached models when set', async () => {
       process.env.NEOKAI_ACP_COMMAND = 'claude --acp';
       const cached = [
@@ -172,6 +213,21 @@ describe('AcpProvider', () => {
       expect(provider.ownsModel('acp-default')).toBe(true);
       expect(provider.ownsModel('acp-custom')).toBe(true);
       expect(provider.ownsModel('ACP-DEFAULT')).toBe(true);
+    });
+
+    it('should own cached dynamic model IDs', () => {
+      provider.setConfigOptions([
+        {
+          id: 'model',
+          name: 'Model',
+          type: 'select',
+          category: 'model',
+          currentValue: 'sonnet',
+          options: [{ name: 'Sonnet', value: 'sonnet' }],
+        },
+      ]);
+
+      expect(provider.ownsModel('sonnet')).toBe(true);
     });
 
     it('should not own other provider models', () => {
