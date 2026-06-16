@@ -5,7 +5,7 @@
  */
 
 import { useMemo } from 'preact/hooks';
-import type { SpaceWorkflowSummary, WorkflowNodeAgent } from '@neokai/shared';
+import type { SpaceWorkflow, WorkflowNodeAgent } from '@neokai/shared';
 import { spaceStore } from '../../lib/space-store';
 
 interface WorkerAgentInfo {
@@ -58,18 +58,10 @@ function getToolPermissions(slot: WorkflowNodeAgent): string[] {
   return [...permissions].sort((a, b) => a.localeCompare(b));
 }
 
-function workflowHasNodes(
-  workflow: SpaceWorkflowSummary
-): workflow is SpaceWorkflowSummary & { nodes: Array<{ agents?: WorkflowNodeAgent[] }> } {
-  return Array.isArray((workflow as { nodes?: unknown }).nodes);
-}
-
-export function getWorkerAgentsFromWorkflows(workflows: SpaceWorkflowSummary[]): WorkerAgentInfo[] {
+export function getWorkerAgentsFromWorkflows(workflows: SpaceWorkflow[]): WorkerAgentInfo[] {
   const agentsByName = new Map<string, WorkerAgentInfo>();
 
   for (const workflow of workflows) {
-    if (!workflowHasNodes(workflow)) continue;
-
     const workflowAgentNames = new Set<string>();
     for (const node of workflow.nodes) {
       for (const slot of node.agents ?? []) {
@@ -180,8 +172,11 @@ function WorkerAgentCard({ agent }: { agent: WorkerAgentInfo }) {
 
 export function SpaceAgentList() {
   const loading = spaceStore.loading.value;
-  const workflows = spaceStore.workflows.value;
-  const workerAgents = useMemo(() => getWorkerAgentsFromWorkflows(workflows), [workflows]);
+  const workflowDetails = spaceStore.workflowDetails.value;
+  const workerAgents = useMemo(
+    () => getWorkerAgentsFromWorkflows(workflowDetails),
+    [workflowDetails]
+  );
 
   if (loading) {
     return (

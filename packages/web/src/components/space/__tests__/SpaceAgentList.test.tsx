@@ -10,7 +10,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 let mockAgents: ReturnType<typeof signal<SpaceAgent[]>>;
 let mockLongHorizonAgents: ReturnType<typeof signal<SpaceLongHorizonAgent[]>>;
-let mockWorkflows: ReturnType<typeof signal<SpaceWorkflow[]>>;
+let mockWorkflows: ReturnType<typeof signal<unknown[]>>;
+let mockWorkflowDetails: ReturnType<typeof signal<SpaceWorkflow[]>>;
 let mockLoading: ReturnType<typeof signal<boolean>>;
 
 vi.mock('../../../lib/space-store', () => ({
@@ -19,6 +20,7 @@ vi.mock('../../../lib/space-store', () => ({
       agents: mockAgents,
       longHorizonAgents: mockLongHorizonAgents,
       workflows: mockWorkflows,
+      workflowDetails: mockWorkflowDetails,
       loading: mockLoading,
     };
   },
@@ -26,7 +28,8 @@ vi.mock('../../../lib/space-store', () => ({
 
 mockAgents = signal<SpaceAgent[]>([]);
 mockLongHorizonAgents = signal<SpaceLongHorizonAgent[]>([]);
-mockWorkflows = signal<SpaceWorkflow[]>([]);
+mockWorkflows = signal<unknown[]>([]);
+mockWorkflowDetails = signal<SpaceWorkflow[]>([]);
 mockLoading = signal(false);
 
 import { SpaceAgentList } from '../SpaceAgentList';
@@ -90,7 +93,7 @@ function makeWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
     ],
     startNodeId: 'node-1',
     tags: [],
-    completionAutonomyLevel: 0 as SpaceAutonomyLevel,
+    completionAutonomyLevel: 1 as SpaceAutonomyLevel,
     createdAt: Date.now(),
     updatedAt: Date.now(),
     ...overrides,
@@ -103,6 +106,7 @@ describe('SpaceAgentList', () => {
     mockAgents.value = [];
     mockLongHorizonAgents.value = [];
     mockWorkflows.value = [];
+    mockWorkflowDetails.value = [];
     mockLoading.value = false;
   });
 
@@ -119,7 +123,7 @@ describe('SpaceAgentList', () => {
   });
 
   it('shows Worker Agents title and description', () => {
-    mockWorkflows.value = [makeWorkflow()];
+    mockWorkflowDetails.value = [makeWorkflow()];
 
     const { getByText } = render(<SpaceAgentList />);
 
@@ -132,7 +136,7 @@ describe('SpaceAgentList', () => {
   });
 
   it('lists agent types from workflow definitions', () => {
-    mockWorkflows.value = [makeWorkflow()];
+    mockWorkflowDetails.value = [makeWorkflow()];
 
     const { getByText } = render(<SpaceAgentList />);
 
@@ -144,7 +148,7 @@ describe('SpaceAgentList', () => {
 
   it('does not show long-horizon agents', () => {
     mockLongHorizonAgents.value = [makeLongHorizonAgent()];
-    mockWorkflows.value = [makeWorkflow()];
+    mockWorkflowDetails.value = [makeWorkflow()];
 
     const { queryByText } = render(<SpaceAgentList />);
 
@@ -153,7 +157,7 @@ describe('SpaceAgentList', () => {
   });
 
   it('shows description and tool permissions for worker agent cards', () => {
-    mockWorkflows.value = [makeWorkflow()];
+    mockWorkflowDetails.value = [makeWorkflow()];
 
     const { getByText } = render(<SpaceAgentList />);
 
@@ -163,15 +167,18 @@ describe('SpaceAgentList', () => {
     expect(getByText('Default workflow permissions')).toBeTruthy();
   });
 
-  it('shows empty state when no workflows define worker agents', () => {
-    const { getByText } = render(<SpaceAgentList />);
+  it('shows empty state when no workflow details define worker agents', () => {
+    mockWorkflows.value = [{ id: 'wf-1', name: 'Coding Workflow', nodeCount: 2 }];
+
+    const { getByText, queryByText } = render(<SpaceAgentList />);
 
     expect(getByText('No worker agents configured.')).toBeTruthy();
     expect(getByText('Create a workflow to define worker agents.')).toBeTruthy();
+    expect(queryByText('Coder')).toBeNull();
   });
 
   it('groups Used in workflow names per agent', () => {
-    mockWorkflows.value = [
+    mockWorkflowDetails.value = [
       makeWorkflow(),
       makeWorkflow({
         id: 'wf-2',

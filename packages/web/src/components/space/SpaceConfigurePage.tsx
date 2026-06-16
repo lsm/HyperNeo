@@ -47,7 +47,8 @@ interface SpaceConfigurePageProps {
 
 export function SpaceConfigurePage({ space }: SpaceConfigurePageProps) {
   const workflows = spaceStore.workflows.value;
-  const workerAgentCount = getWorkerAgentsFromWorkflows(workflows).length;
+  const workflowDetails = spaceStore.workflowDetails.value;
+  const workerAgentCount = getWorkerAgentsFromWorkflows(workflowDetails).length;
   const configLoaded = spaceStore.configDataLoaded.value;
 
   useEffect(() => {

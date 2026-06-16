@@ -183,8 +183,11 @@ class SpaceStore {
   /** Built-in long-horizon agent templates */
   readonly longHorizonAgentTemplates = signal<SpaceLongHorizonAgentTemplate[]>([]);
 
-  /** Workflow definitions for this space */
+  /** Workflow summaries for this space */
   readonly workflows = signal<SpaceWorkflowSummary[]>([]);
+
+  /** Full workflow definitions for configure views that need nodes */
+  readonly workflowDetails = signal<SpaceWorkflow[]>([]);
 
   /** Built-in workflow templates sourced from daemon seeding definitions */
   readonly workflowTemplates = signal<SpaceWorkflow[]>([]);
@@ -614,6 +617,7 @@ class SpaceStore {
     this.longHorizonAgents.value = [];
     this.longHorizonAgentTemplates.value = [];
     this.workflows.value = [];
+    this.workflowDetails.value = [];
     this.workflowTemplates.value = [];
     this.nodeExecutions.value = [];
     this.runtimeState.value = null;
@@ -917,6 +921,7 @@ class SpaceStore {
         if (!exists) {
           this.workflows.value = [...this.workflows.value, workflowToSummary(event.workflow)];
         }
+        this.workflowDetails.value = [...this.workflowDetails.value, event.workflow];
       }
     });
     this.cleanupFunctions.push(unsubWorkflowCreated);
@@ -938,6 +943,16 @@ class SpaceStore {
           ];
         } else {
           this.workflows.value = [...this.workflows.value, summary];
+        }
+        const detailIdx = this.workflowDetails.value.findIndex((w) => w.id === event.workflow.id);
+        if (detailIdx >= 0) {
+          this.workflowDetails.value = [
+            ...this.workflowDetails.value.slice(0, detailIdx),
+            event.workflow,
+            ...this.workflowDetails.value.slice(detailIdx + 1),
+          ];
+        } else {
+          this.workflowDetails.value = [...this.workflowDetails.value, event.workflow];
         }
         // Evict cached detail, cancel any in-flight request, bump the fetch
         // generation so stale responses skip caching, and advance the version
@@ -964,6 +979,9 @@ class SpaceStore {
     }>('spaceWorkflow.deleted', (event) => {
       if (event.spaceId === spaceId) {
         this.workflows.value = this.workflows.value.filter((w) => w.id !== event.workflowId);
+        this.workflowDetails.value = this.workflowDetails.value.filter(
+          (w) => w.id !== event.workflowId
+        );
         this.workflowDetailCache.delete(event.workflowId);
         this.workflowDetailPromises.delete(event.workflowId);
         this.workflowDetailFetchGens.set(
@@ -1093,9 +1111,14 @@ class SpaceStore {
           spaceId,
         }
       );
-      this.workflows.value = result?.workflows ?? [];
+      const workflows = result?.workflows ?? [];
+      this.workflows.value = workflows;
+      this.workflowDetails.value = (
+        await Promise.all(workflows.map((workflow) => this.fetchWorkflowDetail(workflow.id)))
+      ).filter((workflow): workflow is SpaceWorkflow => workflow !== null);
     } catch (err) {
       logger.error('Failed to fetch workflows:', err);
+      this.workflowDetails.value = [];
     }
   }
 
