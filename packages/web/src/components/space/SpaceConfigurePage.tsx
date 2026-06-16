@@ -4,6 +4,7 @@ import type { Space, SpaceWorkflow } from '@neokai/shared';
 import { Tab, TabGroup, TabList, TabPanel, TabPanels } from '@neokai/ui';
 import { spaceStore } from '../../lib/space-store';
 import { currentSpaceConfigureTabSignal, currentSpaceIdSignal } from '../../lib/signals';
+import { getWorkerAgentsFromWorkflows } from './SpaceAgentList';
 import { navigateToSpaceConfigure } from '../../lib/router';
 import { cn } from '../../lib/utils';
 
@@ -45,8 +46,8 @@ interface SpaceConfigurePageProps {
 }
 
 export function SpaceConfigurePage({ space }: SpaceConfigurePageProps) {
-  const agents = spaceStore.agents.value;
   const workflows = spaceStore.workflows.value;
+  const workerAgentCount = getWorkerAgentsFromWorkflows(workflows).length;
   const configLoaded = spaceStore.configDataLoaded.value;
 
   useEffect(() => {
@@ -151,7 +152,7 @@ export function SpaceConfigurePage({ space }: SpaceConfigurePageProps) {
                   <span>{tab.label}</span>
                   <span class="rounded-full bg-white/5 px-1.5 py-px text-xs text-gray-400">
                     {tab.count({
-                      agentCount: agents.length,
+                      agentCount: workerAgentCount,
                       workflowCount: workflows.length,
                     })}
                   </span>
