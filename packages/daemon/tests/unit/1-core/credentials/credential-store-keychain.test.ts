@@ -39,6 +39,7 @@ const {
   KeychainStatusCredentialStore,
   KeychainUnavailableError,
   KEYCHAIN_UNAVAILABLE_MESSAGE,
+  buildDefaultUnlockers,
 } = await import('../../../../src/lib/credentials/credential-store.js');
 
 function makeExecFileError(code: number, stderr: string): Error {
@@ -608,49 +609,14 @@ describe('KeychainStatusCredentialStore — ttyCheck gate on default unlocker', 
     spawnImpl = null;
   });
 
-  it('skips the GUI unlocker and routes to fallback when ttyCheck returns false', async () => {
-    // Simulates launchd / CI / non-interactive SSH: no controlling TTY.
-    // Without the gate, the GUI dialog would block the daemon on a prompt
-    // no one can see. This test pins the short-circuit so a future
-    // refactor dropping ttyCheck can't silently regress production.
-    makeLockedSpawn();
-    let unlockerCalled = false;
-    const fallback = {
-      get: async () => null as string | null,
-      set: async () => undefined,
-      delete: async () => undefined,
-      listServices: async () => [] as string[],
-    };
-    // Inline the same default-unlocker shape the factory uses, with a
-    // stubbed ttyCheck that returns false (the production check reads
-    // process.stdout.isTTY, which is undefined under bun test).
-    const unlockers = [
-      async () => {
-        unlockerCalled = true;
-        return false;
-      },
-    ];
-    const store = new KeychainStatusCredentialStore(
-      new KeychainCredentialStore(),
-      fallback,
-      unlockers,
-      () => false // ttyCheck gate: non-interactive
-    );
-
-    await store.set('neokai.provider.test', 'default', 'data');
-    expect(store.getStatus().backend).toBe('keychain-fallback');
-    // Unlocker body still runs in this test (we let it return false to
-    // simulate "no TTY available"), but the real production unlocker
-    // returns false immediately via the ttyCheck() short-circuit before
-    // ever spawning `security unlock-keychain`. Verify that short-circuit
-    // explicitly with a separate assertion below.
-    expect(unlockerCalled).toBe(true);
-  });
-
-  it('production unlocker shape: returns false immediately when ttyCheck is false (no spawn)', async () => {
-    // Re-implement the default unlocker with a controllable ttyCheck to
-    // prove the gate prevents the spawn entirely.
+  it('buildDefaultUnlockers: ttyCheck=false short-circuits before spawn (pins production gate)', async () => {
+    // Exercises the REAL buildDefaultUnlockers factory — not a stub. If a
+    // future refactor drops the ttyCheck gate inside the factory, the
+    // unlocker would fall through to tryUnlockKeychainViaGUI → spawnImpl
+    // would be invoked → spawnObserved becomes true → test fails. That's
+    // the regression the round 2 review asked us to pin.
     let spawnObserved = false;
+    let execFileObserved = false;
     spawnImpl = () => {
       spawnObserved = true;
       const proc = new EventEmitter() as MockSpawnProcess;
@@ -660,14 +626,44 @@ describe('KeychainStatusCredentialStore — ttyCheck gate on default unlocker', 
       queueMicrotask(() => proc.emit('close', 0));
       return proc;
     };
-    const ttyCheck = () => false;
-    const unlocker = async () => {
-      if (!ttyCheck()) return false;
-      // Would call tryUnlockKeychainViaGUI here — never reached.
-      return true;
+    execFileImpl = (
+      _cmd: unknown,
+      _args: unknown,
+      cb: (err: unknown, stdout: string, stderr: string) => void
+    ) => {
+      execFileObserved = true;
+      cb(null, '', '');
+      return undefined as unknown;
     };
-    expect(await unlocker()).toBe(false);
-    expect(spawnObserved).toBe(false); // No spawn attempted.
+
+    const unlockers = buildDefaultUnlockers(() => false);
+    expect(unlockers.length).toBe(1);
+    const result = await unlockers[0]();
+    expect(result).toBe(false);
+    expect(spawnObserved).toBe(false);
+    expect(execFileObserved).toBe(false);
+  });
+
+  it('buildDefaultUnlockers: ttyCheck=true falls through to tryUnlockKeychainViaGUI (spawn observed)', async () => {
+    // Positive control — verifies the gate is the ONLY thing preventing
+    // the spawn. With ttyCheck=true, the unlocker reaches the GUI spawn
+    // path. Uses execFile (tryUnlockKeychainViaGUI calls execFileAsync,
+    // not spawn), so assert against execFileImpl.
+    let execFileObserved = false;
+    execFileImpl = (
+      _cmd: unknown,
+      _args: unknown,
+      cb: (err: unknown, stdout: string, stderr: string) => void
+    ) => {
+      execFileObserved = true;
+      cb(null, '', '');
+      return undefined as unknown;
+    };
+
+    const unlockers = buildDefaultUnlockers(() => true);
+    const result = await unlockers[0]();
+    expect(result).toBe(true);
+    expect(execFileObserved).toBe(true);
   });
 });
 

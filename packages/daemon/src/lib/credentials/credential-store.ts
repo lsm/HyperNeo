@@ -162,12 +162,16 @@ const KEYCHAIN_FALLBACK_MESSAGE =
  * succeed. Reads tolerate a locked Keychain silently so env/settings
  * discovery can keep providers usable.
  *
- * `fallback`, `unlockers`, and `ttyCheck` are optional so unit tests can
- * pin behaviour without spawning real `security` invocations or touching
- * the real `process.stdout.isTTY`.
+ * `fallback` and `unlockers` are optional so unit tests can pin behaviour
+ * without spawning real `security` invocations. The TTY gate that
+ * determines whether the default unlocker fires is owned by
+ * `buildDefaultUnlockers(ttyCheck)` — tests exercise that factory
+ * directly rather than going through this constructor.
  *
- * Note on weaker isolation: the encrypted fallback file lives at
- * `~/.neokai/credentials.db` with its AES key at
+ * Note on weaker isolation: the encrypted fallback lives in a
+ * `provider_credentials` table inside the daemon's main SQLite database
+ * (path configurable via `DB_PATH`, defaults to
+ * `~/.neokai/data/daemon.db`), with its AES key at
  * `~/.neokai/.provider-credential-key` (0600). Any same-user process can
  * read both — this is weaker than the Keychain, which mitigates local
  * attackers via Secure Enclave / ACLs. The fallback exists because the
@@ -187,15 +191,7 @@ export class KeychainStatusCredentialStore implements CredentialStore {
   constructor(
     private readonly keychain: CredentialStore,
     private readonly fallback?: CredentialStore,
-    private readonly unlockers: Array<() => Promise<boolean>> = [],
-    /**
-     * Returns `true` when the daemon has a controlling TTY (interactive
-     * launch). Used by the default unlocker to decide whether triggering
-     * the macOS GUI password dialog is appropriate — non-interactive
-     * daemons (launchd, containerised, bun test runner) would block
-     * forever on a dialog no one can see. Overridable for tests.
-     */
-    private readonly ttyCheck: () => boolean = () => process.stdout.isTTY === true
+    private readonly unlockers: Array<() => Promise<boolean>> = []
   ) {}
 
   setStatusChangeCallback(callback: () => void): void {
@@ -373,9 +369,11 @@ export class KeychainStatusCredentialStore implements CredentialStore {
 /**
  * Builds the default unlocker list with the given TTY gate. Extracted so
  * `createCredentialStore` can hand in the production `process.stdout.isTTY`
- * check while tests construct their own instances with a stubbed gate.
+ * check while tests can import this factory and exercise the real gate
+ * against a mocked `spawnImpl` (rather than re-implementing the unlocker
+ * inline, which wouldn't catch a future refactor dropping the gate here).
  */
-function buildDefaultUnlockers(ttyCheck: () => boolean): Array<() => Promise<boolean>> {
+export function buildDefaultUnlockers(ttyCheck: () => boolean): Array<() => Promise<boolean>> {
   return [
     async () => {
       if (!ttyCheck()) return false;
@@ -497,8 +495,7 @@ export function createCredentialStore(db: Database): CredentialStore {
     return new KeychainStatusCredentialStore(
       new KeychainCredentialStore(),
       new DatabaseCredentialStore(db),
-      buildDefaultUnlockers(ttyCheck),
-      ttyCheck
+      buildDefaultUnlockers(ttyCheck)
     );
   }
   return new DatabaseCredentialStore(db);
