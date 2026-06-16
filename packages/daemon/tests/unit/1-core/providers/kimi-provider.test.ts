@@ -180,7 +180,13 @@ describe('KimiProvider', () => {
       expect(config.envVars.ANTHROPIC_API_KEY).toBe('');
       expect(config.envVars.ANTHROPIC_AUTH_TOKEN).toBe('');
       expect(config.envVars.API_TIMEOUT_MS).toBe('3000000');
-      expect(config.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('262144');
+      // CLAUDE_CODE_AUTO_COMPACT_WINDOW is explicitly cleared (empty string)
+      // so a previous GLM/Codex query's value cannot leak into Kimi's SDK
+      // subprocess. The SDK's PP() caps kimi-for-coding to 200k regardless,
+      // so an inherited 262144 would still cap to 200k and fire ~60k too
+      // early. SDK auto-compact is disabled via Options.settings; NeoKai's
+      // fallback trigger handles compaction at the correct 85% of 262k.
+      expect(config.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('');
       expect(config.envVars.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC).toBe('1');
       expect(config.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('kimi-for-coding');
       expect(config.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('kimi-for-coding');
@@ -312,6 +318,24 @@ describe('KimiProvider', () => {
       expect(KimiProvider.MODELS.find((m) => m.id === 'kimi-for-coding')?.contextWindow).toBe(
         262144
       );
+    });
+
+    it('should mark Kimi model with preferContextWindowMetadata', () => {
+      // The SDK's PP() caps kimi-for-coding to 200k, but the real window is
+      // 262k. The context-fetcher must trust metadata for the context bar.
+      expect(KimiProvider.MODELS[0].preferContextWindowMetadata).toBe(true);
+    });
+
+    it('should expose moonshot-* provider aliases via providerAliasPrefixes', () => {
+      // KimiProvider.ownsModel accepts any moonshot-* ID but model-service
+      // lookups go through findInModels which checks id/alias/providerAliases/
+      // providerAliasPrefixes. Without the prefix, sessions stored with a
+      // moonshot-* ID have null modelInfo and NeoKai fallback compaction can't
+      // compute a threshold.
+      const providerAliases = KimiProvider.MODELS[0].providerAliases ?? [];
+      const providerAliasPrefixes = KimiProvider.MODELS[0].providerAliasPrefixes ?? [];
+      expect(providerAliases).toContain('KIMI');
+      expect(providerAliasPrefixes).toContain('moonshot-');
     });
   });
 

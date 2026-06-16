@@ -189,23 +189,39 @@ export function ensureAgentTools(
  *
  * anthropic        — native Anthropic API, SDK knows all model context windows.
  * anthropic-copilot — Copilot bridge still routes to Anthropic API.
+ * anthropic-codex  — Codex bridge routes through recognised Anthropic model IDs
+ *                   (claude-opus-4-7, claude-sonnet-4-20250514) whose PP()
+ *                   capacities cover the real Codex windows, AND sets
+ *                   CLAUDE_CODE_AUTO_COMPACT_WINDOW explicitly. SDK auto-compact
+ *                   fires at the correct threshold.
+ * glm              — Sets CLAUDE_CODE_AUTO_COMPACT_WINDOW per model (1M for
+ *                   glm-5.2[1m], 200k for the rest). The `[1m]` suffix is
+ *                   recognised by PP() so the SDK's effective window matches
+ *                   metadata. NeoKai fallback would otherwise fire at 850k
+ *                   (reserveBasedThreshold(1M)) and preempt the SDK's correct
+ *                   ~987k trigger. If `[1m]` recognition regresses, the
+ *                   context-fetcher capacity-mismatch warning surfaces it.
  */
-export const NATIVE_CONTEXT_WINDOW_PROVIDER_IDS = ['anthropic', 'anthropic-copilot'];
+export const NATIVE_CONTEXT_WINDOW_PROVIDER_IDS = [
+  'anthropic',
+  'anthropic-copilot',
+  'anthropic-codex',
+  'glm',
+];
 
-export const PROVIDER_NATIVE_AUTO_COMPACT_WINDOWS: Record<string, number> = {
-  kimi: 262_144,
-};
-
-export function providerUsesNativeAutoCompact(
-  providerId: string,
-  contextWindow?: number | null
-): boolean {
-  return (
-    NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId) ||
-    providerId in PROVIDER_NATIVE_AUTO_COMPACT_WINDOWS ||
-    (providerId === 'anthropic-codex' && !!contextWindow)
-  );
-}
+/**
+ * Providers that cannot use SDK auto-compaction because the SDK's PP() helper
+ * caps unknown model IDs to 200k tokens, mismatching the real provider window.
+ * For these providers we disable SDK auto-compact entirely and rely on NeoKai's
+ * fallback trigger (sdk-message-handler) which uses the model metadata's real
+ * context window.
+ *
+ * kimi — kimi-for-coding is unknown to PP() (returns 200k). Real window is 262k.
+ *        Adding a [1m] suffix would break the upstream Kimi API call (the bridge
+ *        forwards the model name verbatim), so we cannot use the SDK workaround
+ *        that GLM-5.2[1m] uses.
+ */
+export const PROVIDER_NO_SDK_AUTO_COMPACT: ReadonlySet<string> = new Set(['kimi']);
 
 /**
  * Provider-specific SDK settings overrides.
@@ -217,6 +233,11 @@ export function providerUsesNativeAutoCompact(
  * SDK cannot infer the provider model's real context window from its Anthropic
  * model alias. We pass the real window here so SDK auto-compaction fires at the
  * correct threshold without injecting `/compact` as prompt text.
+ *
+ * Providers in PROVIDER_NO_SDK_AUTO_COMPACT (e.g. Kimi) cannot use SDK
+ * auto-compact at all because PP() caps the effective window below the real
+ * model capacity. For these, we disable SDK auto-compact and let NeoKai's
+ * fallback handle compaction.
  */
 export function buildProviderSettings(
   providerId: string,
@@ -226,8 +247,14 @@ export function buildProviderSettings(
     return undefined;
   }
 
-  const nativeAutoCompactWindow = PROVIDER_NATIVE_AUTO_COMPACT_WINDOWS[providerId];
-  const autoCompactWindow = nativeAutoCompactWindow ?? contextWindow;
+  if (PROVIDER_NO_SDK_AUTO_COMPACT.has(providerId)) {
+    // SDK auto-compact would fire at the wrong threshold (200k PP fallback
+    // instead of the real model window). Disable it and let NeoKai's
+    // fallback trigger handle compaction at 85% of the metadata context window.
+    return { autoCompactEnabled: false };
+  }
+
+  const autoCompactWindow = contextWindow;
   if (!autoCompactWindow) {
     return {
       autoCompactEnabled: false,
