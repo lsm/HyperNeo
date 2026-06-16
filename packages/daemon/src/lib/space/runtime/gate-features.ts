@@ -228,16 +228,18 @@ export function resolveCodexPollIntervalMs(value: unknown): number {
 
 /**
  * Parses a candidate timeout (seconds) for the codex review bot reaction
- * check. Accepts finite positive numbers; falls back to the supplied default
- * (or the global default) otherwise. Used both for the env-var resolution at
- * module load and for per-node `codexTimeoutSeconds` overrides.
+ * check. Accepts finite positive integers only; falls back to the supplied
+ * default (or the global default) otherwise. Strictness matches
+ * `SpaceWorkflowManager.validateCodexTimeout`, which rejects non-integers at
+ * the API boundary — keeping the resolver equally strict prevents a future
+ * caller from silently coercing a fractional value via Math.floor.
  */
 export function resolveCodexTimeoutSeconds(
   value: unknown,
   fallback: number = CODEX_REVIEW_BOT_TIMEOUT_SECONDS
 ): number {
   const parsed = typeof value === 'number' ? value : Number(value);
-  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
+  return Number.isFinite(parsed) && parsed > 0 && Number.isInteger(parsed) ? parsed : fallback;
 }
 
 export const CODEX_REVIEW_BOT_TIMEOUT_SECONDS = resolveCodexTimeoutSeconds(

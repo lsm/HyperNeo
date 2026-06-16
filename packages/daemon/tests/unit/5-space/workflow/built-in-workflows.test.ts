@@ -2085,10 +2085,12 @@ describe('seedBuiltInWorkflows()', () => {
       .agents[0].customPrompt!.value;
     const stalePrompt = templatePrompt.replace(
       'terminal hand-off is sending `data: { approved: true, pr_url: "<url>" }` to QA after an ' +
-        'APPROVE verdict with zero P0-P3 findings. Send the handoff to start the 10-minute ' +
-        'Codex timeout, then wait for codex[bot] `+1` or timeout before proceeding. ',
+        'APPROVE verdict with zero P0-P3 findings. Send the handoff to start the Codex review ' +
+        'timeout window (2 hours by default), then wait for a Codex bot `+1` reaction or the ' +
+        'timeout before proceeding. ',
       'terminal handoff is to write `review-approval-gate` with approved=true after an APPROVE ' +
-        'verdict with zero P0-P3 findings. Wait for codex[bot] `+1` or timeout before proceeding. '
+        'verdict with zero P0-P3 findings. Wait for a Codex bot `+1` reaction or the timeout ' +
+        'before proceeding. '
     );
     expect(stalePrompt).not.toBe(templatePrompt);
 
@@ -4199,10 +4201,10 @@ describe('PLAN_AND_DECOMPOSE_WORKFLOW agent slot customPrompt', () => {
   test('Plan Review prompt instructs waiting for codex reaction before voting', () => {
     const node = PLAN_AND_DECOMPOSE_WORKFLOW.nodes.find((n) => n.name === 'Plan Review')!;
     const prompt = node.agents[0].customPrompt!.value;
-    expect(prompt).toContain('codex[bot]');
+    expect(prompt).toContain('any login containing `codex`');
     expect(prompt).toContain('issues/{number}/reactions');
     expect(prompt).toContain('poll every 60 seconds');
-    expect(prompt).toContain('10 minutes');
+    expect(prompt).toContain('2 hours by default');
   });
 
   test('Task Dispatcher node prompt references create_standalone_task and save_artifact', () => {
@@ -5222,10 +5224,10 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     const reviewNode = FULLSTACK_QA_LOOP_WORKFLOW.nodes.find((n) => n.name === 'Review')!;
     const prompt = reviewNode.agents[0].customPrompt!.value;
 
-    expect(prompt).toContain('codex[bot]');
+    expect(prompt).toContain('any login containing `codex`');
     expect(prompt).toContain('issues/{number}/reactions');
     expect(prompt).toContain('poll every 60 seconds');
-    expect(prompt).toContain('10 minutes');
+    expect(prompt).toContain('2 hours by default');
   });
 });
 
