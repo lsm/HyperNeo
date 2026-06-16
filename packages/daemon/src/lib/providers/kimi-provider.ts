@@ -79,6 +79,25 @@ export class KimiProvider implements Provider {
       family: 'kimi',
       provider: 'kimi',
       contextWindow: 262144,
+      // Kimi accepts alternate model spellings (including case variants and
+      // moonshot-* IDs) that all normalise to kimi-for-coding at the bridge
+      // layer. List provider-accepted aliases here so model-service lookups
+      // (used by getSessionModelInfo → context bar display and NeoKai fallback
+      // threshold) resolve them to the canonical Kimi entry instead of returning
+      // null. Without this, sessions whose stored model is a moonshot-* ID have
+      // SDK auto-compact disabled (via buildProviderSettings) AND no NeoKai
+      // fallback threshold — they would run into Kimi's real context limit with
+      // no compaction trigger.
+      providerAliases: ['KIMI', 'Kimi'],
+      providerAliasPrefixes: ['moonshot-'],
+      // Kimi's real context window is 262k but the SDK's PP() helper returns
+      // 200k for unknown model IDs (and there is no [1m] suffix we can use
+      // without breaking the upstream Kimi API call). We must trust this
+      // metadata for the context bar display; compaction is handled by
+      // NeoKai's fallback trigger (sdk-message-handler) rather than the SDK's
+      // native auto-compact, because the SDK would cap the window to 200k
+      // and fire compaction 60k too early.
+      preferContextWindowMetadata: true,
       description:
         'Kimi Code model (auto-upgrades to latest flagship). Fixed model ID for all requests.',
       releaseDate: '',
@@ -182,7 +201,18 @@ export class KimiProvider implements Provider {
         ANTHROPIC_API_KEY: '',
         ANTHROPIC_AUTH_TOKEN: '',
         API_TIMEOUT_MS: '3000000',
-        CLAUDE_CODE_AUTO_COMPACT_WINDOW: '262144',
+        // Explicitly clear CLAUDE_CODE_AUTO_COMPACT_WINDOW so a previous
+        // provider's value (e.g. GLM's 1M, Codex's 272k) cannot leak into
+        // the Kimi subprocess. The SDK's PP() helper returns 200k for the
+        // unknown 'kimi-for-coding' model ID, so even an inherited 262144
+        // value would cap the effective window to min(200k, 262k) = 200k
+        // and make SDK auto-compact fire ~60k too early. SDK auto-compact
+        // is disabled via Options.settings.autoCompactEnabled=false (set
+        // by buildProviderSettings); NeoKai's fallback trigger handles
+        // compaction at the correct 85% of the real 262k window. The empty
+        // string deletes the env var when applied (see applyEnvVars in
+        // provider-service.ts).
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW: '',
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
         ANTHROPIC_DEFAULT_HAIKU_MODEL: routingModelId,
         ANTHROPIC_DEFAULT_SONNET_MODEL: routingModelId,

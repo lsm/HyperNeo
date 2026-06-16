@@ -606,7 +606,15 @@ export class ProviderService {
     }
     if (envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW !== undefined) {
       original.CLAUDE_CODE_AUTO_COMPACT_WINDOW = process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
-      process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
+      // Empty string means "explicitly clear" — providers whose auto-compact
+      // is disabled (e.g. Kimi, which would otherwise inherit a stale value
+      // from a previous GLM/Codex query) return '' so the SDK subprocess
+      // doesn't pick up the wrong window.
+      if (envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW === '') {
+        delete process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
+      } else {
+        process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
+      }
     }
     if (envVars.ANTHROPIC_DEFAULT_SONNET_MODEL !== undefined) {
       original.ANTHROPIC_DEFAULT_SONNET_MODEL = process.env.ANTHROPIC_DEFAULT_SONNET_MODEL;

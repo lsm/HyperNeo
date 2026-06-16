@@ -22,6 +22,10 @@ import type {
   ModelInfo,
 } from '@neokai/shared';
 import { Logger } from '../logger';
+import {
+  NATIVE_CONTEXT_WINDOW_PROVIDER_IDS,
+  PROVIDER_NO_SDK_AUTO_COMPACT,
+} from './query-options-builder.js';
 
 type ContextMetadata =
   | Pick<
@@ -36,11 +40,30 @@ const NATIVE_CONTEXT_WINDOW_PROVIDERS = new Set(['anthropic', 'anthropic-copilot
 
 /** Generic SDK tier names that non-native providers map to via ANTHROPIC_DEFAULT_*_MODEL. */
 const SDK_GENERIC_MODEL_IDS = new Set(['default', 'haiku', 'sonnet', 'opus']);
+const ONE_MILLION_CONTEXT_WINDOW = 1_000_000;
+const ONE_MILLION_MODEL_SUFFIX = /\[1m\]$/i;
 
 function positiveInteger(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) && value > 0
     ? Math.floor(value)
     : undefined;
+}
+
+function resolveDisplayModel(
+  responseModel: string | undefined,
+  modelMetadata: ContextMetadata,
+  matchesSdkModelId: boolean,
+  sdkCapacity: number | undefined
+): string | undefined {
+  if (!responseModel) return undefined;
+  if (matchesSdkModelId && modelMetadata?.id) return modelMetadata.id;
+  const metadataCapacity = positiveInteger(modelMetadata?.contextWindow);
+  const isOneMillionWindow =
+    metadataCapacity === ONE_MILLION_CONTEXT_WINDOW || sdkCapacity === ONE_MILLION_CONTEXT_WINDOW;
+  if (ONE_MILLION_MODEL_SUFFIX.test(responseModel) && !isOneMillionWindow) {
+    return responseModel.replace(ONE_MILLION_MODEL_SUFFIX, '');
+  }
+  return responseModel;
 }
 
 export class ContextFetcher {
@@ -49,6 +72,17 @@ export class ContextFetcher {
   constructor(private sessionId: string) {
     this.logger = new Logger(`ContextFetcher ${sessionId}`);
   }
+
+  /**
+   * Fraction above which a mismatch between the SDK-reported context capacity
+   * and the provider metadata is considered suspicious. The Claude Agent SDK's
+   * PP() helper hardcodes a 200k fallback for unknown model IDs; for providers
+   * whose real window differs from that fallback by more than this fraction
+   * (e.g. GLM-5.2[1m] at 1M, Kimi at 262k), we want a runtime breadcrumb in the
+   * daemon log so a regression in `[1m]` suffix recognition or env var plumbing
+   * is visible without having to attach a debugger.
+   */
+  private static readonly CAPACITY_MISMATCH_WARN_FRACTION = 0.1;
 
   /**
    * Call the SDK's `getContextUsage()` and convert the result to `ContextInfo`.
@@ -66,11 +100,63 @@ export class ContextFetcher {
 
     try {
       const response = await query.getContextUsage();
-      return ContextFetcher.toContextInfo(response, modelMetadata);
+      const info = ContextFetcher.toContextInfo(response, modelMetadata);
+      if (info) {
+        ContextFetcher.warnOnCapacityMismatch(response, modelMetadata, this.logger);
+      }
+      return info;
     } catch (error) {
       this.logger.warn('query.getContextUsage() failed:', error);
       return null;
     }
+  }
+
+  /**
+   * Log a warning when the SDK-reported capacity disagrees with provider
+   * metadata by more than `CAPACITY_MISMATCH_WARN_FRACTION`. This surfaces
+   * regressions in the SDK's PP() recognition of `[1m]` suffixes, env var
+   * plumbing for `CLAUDE_CODE_AUTO_COMPACT_WINDOW`, or any other path that
+   * would silently make the SDK use the wrong context window.
+   *
+   * The check is purely diagnostic — `toContextInfo` already overrides the
+   * SDK value with metadata when `preferContextWindowMetadata` is set, so the
+   * display layer is unaffected. The warning is for operator visibility.
+   */
+  private static warnOnCapacityMismatch(
+    response: SDKControlGetContextUsageResponse,
+    modelMetadata: ContextMetadata,
+    logger: Logger
+  ): void {
+    const providerId = modelMetadata?.provider;
+    // Only fire for providers where we expect SDK auto-compact to work
+    // correctly. This is the set in NATIVE_CONTEXT_WINDOW_PROVIDER_IDS
+    // (anthropic, anthropic-copilot, anthropic-codex, glm). For everyone
+    // else — Kimi (SDK disabled), OpenRouter/Ollama/custom (PP() returns
+    // 200k for unknown models so the SDK's effective window is always the
+    // wrong 200k) — the mismatch is the known steady state, not a regression,
+    // and logging it on every context refresh is pure noise.
+    if (!providerId || !NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId)) return;
+    if (PROVIDER_NO_SDK_AUTO_COMPACT.has(providerId)) return;
+    const metadataCapacity = positiveInteger(modelMetadata?.contextWindow);
+    if (!metadataCapacity) return;
+    // Use the SDK's *effective* window (maxTokens), not the raw capacity
+    // (rawMaxTokens). For Codex, rawMaxTokens can be 1M (the SDK alias's PP
+    // value for claude-opus-4-7) while maxTokens is 272k (clamped by
+    // CLAUDE_CODE_AUTO_COMPACT_WINDOW) — comparing raw vs metadata would
+    // fire a false-positive warning on every refresh.
+    const sdkCapacity = positiveInteger(response.maxTokens);
+    if (!sdkCapacity) return;
+    const larger = Math.max(sdkCapacity, metadataCapacity);
+    if (larger <= 0) return;
+    const mismatch = Math.abs(sdkCapacity - metadataCapacity) / larger;
+    if (mismatch <= ContextFetcher.CAPACITY_MISMATCH_WARN_FRACTION) return;
+    logger.warn(
+      `Context capacity mismatch: SDK reports ${sdkCapacity} tokens for ` +
+        `model=${response.model ?? '<unknown>'} but metadata declares ` +
+        `${metadataCapacity} tokens (mismatch ${(mismatch * 100).toFixed(1)}%). ` +
+        `Display will use metadata; SDK auto-compact may fire at the wrong threshold. ` +
+        `Check PP() model recognition and CLAUDE_CODE_AUTO_COMPACT_WINDOW env var.`
+    );
   }
 
   /**
@@ -119,7 +205,14 @@ export class ContextFetcher {
     // model name doesn't exactly match. Native Anthropic providers keep the
     // exact-match safety guard so fallback/switched models don't display stale
     // metadata.
-    const sdkCapacityValue = sdkRawCapacity ?? sdkCapacity;
+    const hasStaleOneMillionSuffix =
+      responseModel &&
+      ONE_MILLION_MODEL_SUFFIX.test(responseModel) &&
+      sdkCapacity !== undefined &&
+      sdkCapacity < ONE_MILLION_CONTEXT_WINDOW;
+    const sdkCapacityValue = hasStaleOneMillionSuffix
+      ? sdkCapacity
+      : (sdkRawCapacity ?? sdkCapacity);
     const sdkOverreporting =
       shouldPreferMetadata &&
       metadataCapacityAny !== undefined &&
@@ -133,7 +226,7 @@ export class ContextFetcher {
       (shouldPreferMetadata && metadataCapacity) || sdkOverreporting || sdkCapacityUnavailable;
     const capacity = useMetadata
       ? (metadataCapacityAny ?? 0)
-      : (sdkRawCapacity ?? sdkCapacity ?? metadataCapacity ?? 0);
+      : (sdkCapacityValue ?? metadataCapacity ?? 0);
     for (const category of response.categories ?? []) {
       // Compute percent relative to capacity (SDK response doesn't carry it).
       // Round to 1 decimal place to match the display the UI already expects.
@@ -211,8 +304,15 @@ export class ContextFetcher {
       autoCompactThreshold = Math.floor(capacity * 0.9);
     }
 
+    const resolvedModel = resolveDisplayModel(
+      responseModel,
+      modelMetadata,
+      matchesSdkModelId,
+      sdkCapacity
+    );
+
     return {
-      model: response.model ?? null,
+      model: resolvedModel ?? null,
       totalUsed: response.totalTokens,
       totalCapacity: capacity,
       percentUsed,
