@@ -532,6 +532,12 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     // appear until the next reconnect or unrelated system refresh.
     credentialManager.registerStatusChangeCallback(() => {
       void stateManager.broadcastSystemChange();
+      // On Keychain recovery, re-apply stored credentials to providers that
+      // were registered without credentials at startup because the Keychain
+      // was locked. applyStoredProviderCredentials is a no-op when the store
+      // is still unavailable (reads return null), so this is safe to run on
+      // both transitions.
+      void applyStoredProviderCredentials(providerRegistry.getAll(), credentialManager, logError);
     });
 
     // Initialize GitHub service if configured

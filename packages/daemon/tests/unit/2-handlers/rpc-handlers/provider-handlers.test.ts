@@ -204,6 +204,28 @@ describe('Provider RPC handlers', () => {
       expect(creds.storeApiKey).toHaveBeenCalledWith('openrouter', 'sk-or-test');
     });
 
+    it('does not store custom_endpoint credentials in the credential store', async () => {
+      // Custom endpoints keep auth inline in customEndpointConfigJson. The
+      // credential store must be skipped so a locked macOS Keychain cannot
+      // block creating the endpoint.
+      const handlers = setup();
+      const result = (await handlers.get('providers.create')!(
+        {
+          params: {
+            providerId: 'custom:lm',
+            displayName: 'LM Studio',
+            kind: 'custom_endpoint',
+            authType: 'api_key',
+          },
+          credentials: { apiKey: 'inline-key' },
+        },
+        {}
+      )) as { success: boolean; provider: ProviderRecord };
+
+      expect(result.success).toBe(true);
+      expect(creds.storeApiKey).not.toHaveBeenCalled();
+    });
+
     it('re-registers a built-in provider that was previously unregistered', async () => {
       // Simulate deleting and re-adding a built-in provider
       const registry = getProviderRegistry();

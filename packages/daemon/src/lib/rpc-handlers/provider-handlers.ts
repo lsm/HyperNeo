@@ -177,15 +177,19 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
         const record = providerRepo.createProvider(data.params);
 
         try {
-          // Store credentials if provided.
-          if (data.credentials?.apiKey) {
-            await credentialManager.storeApiKey(record.providerId, data.credentials.apiKey);
-          } else if (data.credentials?.oauthAccessToken) {
-            await credentialManager.storeOAuthTokens(record.providerId, {
-              accessToken: data.credentials.oauthAccessToken,
-              refreshToken: data.credentials.oauthRefreshToken,
-              expiresAt: data.credentials.oauthExpiresAt,
-            });
+          // Store credentials if provided. Custom endpoints keep auth inline in
+          // customEndpointConfigJson, so skip the credential store entirely —
+          // otherwise a locked macOS Keychain would block creating the endpoint.
+          if (record.kind !== 'custom_endpoint') {
+            if (data.credentials?.apiKey) {
+              await credentialManager.storeApiKey(record.providerId, data.credentials.apiKey);
+            } else if (data.credentials?.oauthAccessToken) {
+              await credentialManager.storeOAuthTokens(record.providerId, {
+                accessToken: data.credentials.oauthAccessToken,
+                refreshToken: data.credentials.oauthRefreshToken,
+                expiresAt: data.credentials.oauthExpiresAt,
+              });
+            }
           }
 
           // Sync to registry.
@@ -232,8 +236,9 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
             ? withCustomEndpointsLock
             : (fn: () => Promise<unknown>) => fn();
         return lock(async () => {
-          // Handle credential updates.
-          if (data.credentials) {
+          // Handle credential updates. Custom endpoints keep auth inline, so
+          // skip the credential store for them.
+          if (data.credentials && existing.kind !== 'custom_endpoint') {
             if (data.credentials.apiKey) {
               await credentialManager.storeApiKey(existing.providerId, data.credentials.apiKey);
               updates.authType = 'api_key';
