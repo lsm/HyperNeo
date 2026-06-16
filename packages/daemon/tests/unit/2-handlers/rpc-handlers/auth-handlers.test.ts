@@ -487,6 +487,44 @@ describe('Auth RPC Handlers', () => {
       expect(credentialManager.removeCredentials).not.toHaveBeenCalled();
     });
 
+    it('surfaces keychain guidance when locked-read returns null and provider has no logout', async () => {
+      // getCredentials() returns null on locked Keychain even if a credential
+      // exists there. Without explicit handling, logout would claim env-managed
+      // and leave the Keychain credential intact. Attempt remove to surface
+      // unlock guidance.
+      const credentialManager = {
+        getCredentials: mock(async () => null),
+        removeCredentials: mock(async () => {
+          throw new KeychainUnavailableError('keychain locked');
+        }),
+        hasEnvironmentCredentials: mock(() => false),
+        getCredentialStoreStatus: mock(() => ({
+          backend: 'keychain-unavailable',
+          keychainAvailable: false,
+          warning: 'macOS Keychain is locked or unavailable.',
+        })),
+      };
+      setupAuthHandlers(
+        messageHubData.hub,
+        mockAuthManager as unknown as AuthManager,
+        credentialManager as never
+      );
+      const mockProvider = createMockProvider({ logout: undefined });
+      registry.register(mockProvider);
+
+      const handler = messageHubData.handlers.get('auth.logout');
+      expect(handler).toBeDefined();
+
+      const result = (await handler!({ providerId: 'test-provider' }, {})) as {
+        success: boolean;
+        error?: string;
+      };
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('security unlock-keychain');
+      expect(credentialManager.removeCredentials).toHaveBeenCalledWith('test-provider');
+    });
+
     it('returns managed-by-environment error and removes stale row when env overrides storage', async () => {
       const credentialManager = {
         getCredentials: mock(async () => ({ type: 'api_key' as const, apiKey: 'stored-key' })),

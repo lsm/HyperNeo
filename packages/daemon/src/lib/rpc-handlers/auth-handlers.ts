@@ -236,6 +236,15 @@ export function setupAuthHandlers(
         }
 
         if (!provider.logout && !storedCredentials) {
+          // If the macOS Keychain is locked/unavailable, getCredentials() returns
+          // null even when a real credential exists there. Attempt the remove
+          // so the caller surfaces the unlock guidance instead of silently
+          // claiming the credential is env-managed and leaving it in Keychain.
+          const keychainUnavailable =
+            credentialManager?.getCredentialStoreStatus?.().backend === 'keychain-unavailable';
+          if (keychainUnavailable) {
+            await removeCredentialsOrKeychainError(credentialManager, providerId);
+          }
           return {
             success: false,
             error: `Provider ${providerId} credentials are managed by environment variables. Remove the environment variable to log out.`,
