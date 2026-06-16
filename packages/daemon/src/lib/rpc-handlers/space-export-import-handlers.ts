@@ -297,6 +297,7 @@ export function buildWorkflowCreateParams(
       postApproval: exportedNode.postApproval,
       requireCodexApproval: exportedNode.requireCodexApproval,
       codexPollIntervalMs: exportedNode.codexPollIntervalMs,
+      codexTimeoutSeconds: exportedNode.codexTimeoutSeconds,
     };
 
     return node;

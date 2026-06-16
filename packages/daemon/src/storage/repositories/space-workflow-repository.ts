@@ -84,6 +84,8 @@ interface NodeConfigJson {
   requireCodexApproval?: boolean;
   /** Custom poll interval (ms) for the codex review bot. */
   codexPollIntervalMs?: number;
+  /** Custom timeout (seconds) for the codex review bot reaction check. */
+  codexTimeoutSeconds?: number;
   /**
    * Forward-compat: rows persisted before PR 5/5 of the
    * task-agent-as-post-approval-executor refactor may carry a legacy
@@ -149,6 +151,7 @@ function rowToNode(row: NodeRow, ctx?: NodeMigrationContext): WorkflowNode {
     ...(cfg.postApproval ? { postApproval: cfg.postApproval } : {}),
     ...(cfg.requireCodexApproval ? { requireCodexApproval: true } : {}),
     ...(cfg.codexPollIntervalMs ? { codexPollIntervalMs: cfg.codexPollIntervalMs } : {}),
+    ...(cfg.codexTimeoutSeconds ? { codexTimeoutSeconds: cfg.codexTimeoutSeconds } : {}),
   };
 }
 
@@ -502,6 +505,7 @@ export class SpaceWorkflowRepository {
         ...(node.postApproval ? { postApproval: node.postApproval } : {}),
         ...(node.requireCodexApproval ? { requireCodexApproval: true } : {}),
         ...(node.codexPollIntervalMs ? { codexPollIntervalMs: node.codexPollIntervalMs } : {}),
+        ...(node.codexTimeoutSeconds ? { codexTimeoutSeconds: node.codexTimeoutSeconds } : {}),
       };
       const result = updateNode.run(JSON.stringify(cfg), now, workflowId, node.id);
       if (result.changes === 0) {
@@ -707,6 +711,9 @@ export class SpaceWorkflowRepository {
     }
     if (input.codexPollIntervalMs) {
       nodeCfg.codexPollIntervalMs = input.codexPollIntervalMs;
+    }
+    if (input.codexTimeoutSeconds) {
+      nodeCfg.codexTimeoutSeconds = input.codexTimeoutSeconds;
     }
 
     return nodeCfg;

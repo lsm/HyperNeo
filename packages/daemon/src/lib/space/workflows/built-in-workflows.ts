@@ -1354,7 +1354,12 @@ export function mergeNodeStructuralFieldsFromTemplate(
   existingNodes: WorkflowNode[],
   templateNodes: Pick<
     WorkflowNode,
-    'name' | 'agents' | 'postApproval' | 'requireCodexApproval' | 'codexPollIntervalMs'
+    | 'name'
+    | 'agents'
+    | 'postApproval'
+    | 'requireCodexApproval'
+    | 'codexPollIntervalMs'
+    | 'codexTimeoutSeconds'
   >[],
   resolveAgentId: (name: string) => string | undefined
 ): WorkflowNode[] {
@@ -1404,6 +1409,9 @@ export function mergeNodeStructuralFieldsFromTemplate(
       codexPollIntervalMs: templateNode
         ? templateNode.codexPollIntervalMs
         : node.codexPollIntervalMs,
+      codexTimeoutSeconds: templateNode
+        ? templateNode.codexTimeoutSeconds
+        : node.codexTimeoutSeconds,
       agents: node.agents.map((agent) => {
         const key = `${node.name}::${agent.name}`;
         const templateAgent = templateAgentsByKey.get(key);

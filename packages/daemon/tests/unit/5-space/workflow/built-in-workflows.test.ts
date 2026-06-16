@@ -4355,7 +4355,9 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     expect(gate.poll).toBeUndefined();
 
     const effectiveGate = getFullstackReviewApprovalGateWithCodex();
-    expect(effectiveGate.script?.source).toContain('codex[bot]');
+    // Matcher accepts any GitHub login whose name contains "codex" (case-insensitive)
+    // so both `codex[bot]` and `chatgpt-codex-connector[bot]` are recognized.
+    expect(effectiveGate.script?.source).toContain('test("codex"; "i")');
     expect(effectiveGate.script?.source).toContain('issues/${NUMBER}/reactions?per_page=100');
     expect(effectiveGate.script?.source).toContain('--paginate');
     expect(effectiveGate.script?.source).toContain("jq -s 'add // []'");
@@ -4402,7 +4404,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
       'Coder'
     );
 
-    expect(effectiveGate.script?.source).toContain('codex[bot]');
+    expect(effectiveGate.script?.source).toContain('test("codex"; "i")');
   });
 
   test('isApprovalGate recognizes vote-map approvals by check semantics', () => {
@@ -4486,12 +4488,16 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
       completionAutonomyLevel: 3,
     };
 
-    expect(getEffectiveGate(gate, workflow, 'Reviewer').script?.source).toContain('codex[bot]');
+    expect(getEffectiveGate(gate, workflow, 'Reviewer').script?.source).toContain(
+      'test("codex"; "i")'
+    );
 
     workflow.nodes[0] = { ...workflow.nodes[0], requireCodexApproval: true };
     workflow.nodes[1] = { ...workflow.nodes[1], requireCodexApproval: undefined };
 
-    expect(getEffectiveGate(gate, workflow, 'Reviewer').script?.source).toContain('codex[bot]');
+    expect(getEffectiveGate(gate, workflow, 'Reviewer').script?.source).toContain(
+      'test("codex"; "i")'
+    );
   });
 
   test('codex feature script and poll override custom script and poll consistently', () => {
@@ -4503,8 +4509,8 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
       poll: { intervalMs: 30_000, target: 'to', script: 'echo custom poll' },
     });
 
-    expect(gate.script?.source).toContain('codex[bot]');
-    expect(gate.poll?.script).toContain('codex[bot]');
+    expect(gate.script?.source).toContain('test("codex"; "i")');
+    expect(gate.poll?.script).toContain('test("codex"; "i")');
     expect(gate.script?.source).not.toContain('echo custom');
     expect(gate.poll?.script).not.toContain('echo custom poll');
   });
@@ -4777,10 +4783,13 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
           gateId: 'review-approval-gate',
           runId: 'run-1',
           // Reaction is before cycle_start_at — should be filtered as stale.
+          // cycle_start_at is also the timeout anchor, so it must be recent
+          // (i.e. within the 2-hour timeout window) to keep this test focused
+          // on the freshness filter rather than the timeout path.
           gateData: {
             pr_url: prUrl,
             approved: true,
-            cycle_start_at: new Date('2026-05-02T00:00:00Z').getTime(),
+            cycle_start_at: Date.now(),
           },
           gateDataUpdatedIso: new Date().toISOString(),
         },
@@ -5020,6 +5029,193 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     } finally {
       rmSync(workspace, { recursive: true, force: true });
     }
+  });
+
+  test('codex matcher accepts any login containing "codex" (substring, case-insensitive)', async () => {
+    // Regression for #596, #604: the repo's codex bot login is
+    // `chatgpt-codex-connector[bot]`, not `codex[bot]`. The matcher uses a
+    // case-insensitive substring test so future renames are also accepted
+    // without code changes.
+    const gate = getFullstackReviewApprovalGateWithCodex();
+    const source = gate.script?.source ?? '';
+    expect(source).toContain('test("codex"; "i")');
+    expect(source).not.toContain('.user.login == "codex[bot]"');
+
+    // Behavioral check: an unknown codex variant (e.g. a future rename to
+    // `codex-cli[bot]`) is recognized as a +1 pass.
+    const workspace = mkdtempSync(join(tmpdir(), 'neokai-codex-matcher-substring-'));
+    const binDir = join(workspace, 'bin');
+    const ghPath = join(binDir, 'gh');
+    const prUrl = 'https://github.com/test/repo/pull/42';
+    try {
+      mkdirSync(binDir);
+      writeFileSync(
+        ghPath,
+        [
+          '#!/usr/bin/env bash',
+          'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
+          `  printf '%s\\n' '[{"user":{"login":"codex-cli[bot]"},"content":"+1","created_at":"2026-05-29T00:00:00Z"}]'`,
+          '  exit 0',
+          'fi',
+          'if [[ "$*" =~ repos/test/repo/pulls/42 ]]; then',
+          `  printf '%s\\n' 'sha-substring'`,
+          '  exit 0',
+          'fi',
+          'printf "unexpected gh args: %s\\n" "$*" >&2',
+          'exit 2',
+        ].join('\n')
+      );
+      chmodSync(ghPath, 0o755);
+
+      const result = await executeGateScript(
+        gate.script!,
+        {
+          workspacePath: workspace,
+          gateId: 'review-approval-gate',
+          runId: 'run-1',
+          gateData: { pr_url: prUrl, approved: true },
+        },
+        { PATH: `${binDir}:${process.env.PATH ?? ''}` }
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.data).toEqual({
+        pr_url: prUrl,
+        codex_bot_reaction: '+1',
+        head_sha: 'sha-substring',
+      });
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+
+  test('codex timeout is measured from cycle_start_at, not updated_at', async () => {
+    // cycle_start_at is the per-cycle reset anchor; updated_at advances on
+    // every gate-data write (e.g. persisting head_sha), so anchoring the
+    // timeout to updated_at lets a single metadata write reset the window.
+    // After the fix: an old cycle_start_at triggers timeout even when
+    // gateDataUpdatedIso is fresh.
+    const gate = getFullstackReviewApprovalGateWithCodex();
+    const workspace = mkdtempSync(join(tmpdir(), 'neokai-codex-timeout-cycle-anchor-'));
+    const binDir = join(workspace, 'bin');
+    const ghPath = join(binDir, 'gh');
+    const prUrl = 'https://github.com/test/repo/pull/42';
+
+    try {
+      mkdirSync(binDir);
+      writeFileSync(
+        ghPath,
+        [
+          '#!/usr/bin/env bash',
+          'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
+          `  printf '%s\\n' '[]'`,
+          '  exit 0',
+          'fi',
+          'if [[ "$*" =~ repos/test/repo/pulls/42 ]]; then',
+          `  printf '%s\\n' 'sha-cycle-anchor'`,
+          '  exit 0',
+          'fi',
+          'printf "unexpected gh args: %s\\n" "$*" >&2',
+          'exit 2',
+        ].join('\n')
+      );
+      chmodSync(ghPath, 0o755);
+
+      const result = await executeGateScript(
+        gate.script!,
+        {
+          workspacePath: workspace,
+          gateId: 'review-approval-gate',
+          runId: 'run-1',
+          gateData: {
+            pr_url: prUrl,
+            approved: true,
+            // cycle_start_at is older than the 2-hour timeout window.
+            cycle_start_at: Date.now() - 3 * 60 * 60 * 1000,
+          },
+          // gateDataUpdatedIso is fresh — under the old (updated_at-anchored)
+          // logic this would have suppressed the timeout.
+          gateDataUpdatedIso: new Date().toISOString(),
+        },
+        { PATH: `${binDir}:${process.env.PATH ?? ''}` }
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.data).toMatchObject({
+        pr_url: prUrl,
+        codex_bot_reaction: 'timeout',
+        head_sha: 'sha-cycle-anchor',
+      });
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+
+  test('codex gate with 2-hour timeout does not expire after 10 minutes', async () => {
+    // Regression for the 600s default that timed out before Codex finished
+    // large-PR reviews (20–30 min). After the fix, the default is 7200s, so a
+    // 10-minute-old cycle is still within the window.
+    const gate = getFullstackReviewApprovalGateWithCodex();
+    const workspace = mkdtempSync(join(tmpdir(), 'neokai-codex-timeout-2h-window-'));
+    const binDir = join(workspace, 'bin');
+    const ghPath = join(binDir, 'gh');
+    const prUrl = 'https://github.com/test/repo/pull/42';
+
+    try {
+      mkdirSync(binDir);
+      writeFileSync(
+        ghPath,
+        [
+          '#!/usr/bin/env bash',
+          'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
+          `  printf '%s\\n' '[]'`,
+          '  exit 0',
+          'fi',
+          'printf "unexpected gh args: %s\\n" "$*" >&2',
+          'exit 2',
+        ].join('\n')
+      );
+      chmodSync(ghPath, 0o755);
+
+      const result = await executeGateScript(
+        gate.script!,
+        {
+          workspacePath: workspace,
+          gateId: 'review-approval-gate',
+          runId: 'run-1',
+          gateData: {
+            pr_url: prUrl,
+            approved: true,
+            // 10 minutes ago — would have timed out under the old 600s default.
+            cycle_start_at: Date.now() - 10 * 60 * 1000,
+          },
+        },
+        { PATH: `${binDir}:${process.env.PATH ?? ''}` }
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('@codex review');
+      expect(result.data).toEqual({});
+      expect(result.error).not.toContain('timeout');
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+
+  test('per-node codexTimeoutSeconds overrides the global default in the injected script', () => {
+    // The default gate uses CODEX_REVIEW_BOT_TIMEOUT_SECONDS (7200s). A node
+    // with codexTimeoutSeconds=300 should produce a script whose timeout
+    // comparison uses 300, not 7200.
+    const rawGate = FULLSTACK_QA_LOOP_WORKFLOW.gates!.find((g) => g.id === 'review-approval-gate')!;
+    const workflow: SpaceWorkflow = {
+      ...FULLSTACK_QA_LOOP_WORKFLOW,
+      nodes: FULLSTACK_QA_LOOP_WORKFLOW.nodes.map((n) =>
+        n.name === 'Review' ? { ...n, requireCodexApproval: true, codexTimeoutSeconds: 300 } : n
+      ),
+    };
+    const effective = getEffectiveGate(rawGate, workflow);
+    expect(effective.script?.source).toContain('-ge 300 ');
+    expect(effective.script?.source).not.toContain('-ge 7200 ');
   });
 
   test('FULLSTACK_QA_LOOP_WORKFLOW reviewer prompt instructs waiting for codex reaction', () => {
