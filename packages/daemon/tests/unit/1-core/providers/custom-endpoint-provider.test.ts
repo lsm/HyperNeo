@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'bun:test';
+import { describe, expect, it, mock } from 'bun:test';
 import {
   CustomEndpointProvider,
   customProviderIdFor,
@@ -106,7 +106,13 @@ describe('CustomEndpointProvider', () => {
   });
 
   it('lists models with provider id, family, and context window', async () => {
-    const p = new CustomEndpointProvider(baseConfig, { bridgeFactory: makeFakeBridge().factory });
+    const fetchImpl = mock(
+      async () => new Response('[]', { status: 200 })
+    ) as unknown as typeof fetch;
+    const p = new CustomEndpointProvider(baseConfig, {
+      bridgeFactory: makeFakeBridge().factory,
+      bridgeFetchImpl: fetchImpl,
+    });
     const models = await p.getModels();
     expect(models).toHaveLength(2);
     expect(models[0]).toMatchObject({
@@ -115,6 +121,75 @@ describe('CustomEndpointProvider', () => {
       family: 'lmstudio',
       contextWindow: 32000,
     });
+  });
+
+  it('probes the configured endpoint before returning the model list', async () => {
+    const fetchImpl = mock(
+      async () => new Response('[]', { status: 200 })
+    ) as unknown as typeof fetch;
+    const p = new CustomEndpointProvider(baseConfig, {
+      bridgeFactory: makeFakeBridge().factory,
+      bridgeFetchImpl: fetchImpl,
+    });
+    await p.getModels();
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const [url, init] = (fetchImpl.mock.calls[0] as [string, RequestInit]) ?? [];
+    // baseUrl has no trailing slash; openai-chat probe path is /models
+    expect(url).toBe('http://localhost:1234/v1/models');
+    expect(init?.method).toBe('GET');
+  });
+
+  it('throws when endpoint rejects the API key (401)', async () => {
+    const fetchImpl = mock(
+      async () => new Response('unauthorized', { status: 401 })
+    ) as unknown as typeof fetch;
+    const p = new CustomEndpointProvider(
+      { ...baseConfig, apiKey: 'bad-key' },
+      { bridgeFactory: makeFakeBridge().factory, bridgeFetchImpl: fetchImpl }
+    );
+
+    expect(p.getModels()).rejects.toThrow("Custom endpoint 'lmstudio' API key rejected (HTTP 401)");
+  });
+
+  it('throws when probe fails at the network layer', async () => {
+    const fetchImpl = mock(async () => {
+      throw new Error('ECONNREFUSED');
+    }) as unknown as typeof fetch;
+    const p = new CustomEndpointProvider(baseConfig, {
+      bridgeFactory: makeFakeBridge().factory,
+      bridgeFetchImpl: fetchImpl,
+    });
+
+    expect(p.getModels()).rejects.toThrow("Custom endpoint 'lmstudio' probe failed: ECONNREFUSED");
+  });
+
+  it('uses /v1/models probe path for anthropic-messages type', async () => {
+    const fetchImpl = mock(
+      async () => new Response('[]', { status: 200 })
+    ) as unknown as typeof fetch;
+    const p = new CustomEndpointProvider(
+      { ...baseConfig, type: 'anthropic-messages' },
+      { bridgeFactory: makeFakeBridge().factory, bridgeFetchImpl: fetchImpl }
+    );
+    await p.getModels();
+
+    const [url] = (fetchImpl.mock.calls[0] as [string, RequestInit]) ?? [];
+    expect(url).toBe('http://localhost:1234/v1/v1/models');
+  });
+
+  it('uses /api/tags probe path for ollama-native type', async () => {
+    const fetchImpl = mock(
+      async () => new Response('[]', { status: 200 })
+    ) as unknown as typeof fetch;
+    const p = new CustomEndpointProvider(
+      { ...baseConfig, type: 'ollama-native' },
+      { bridgeFactory: makeFakeBridge().factory, bridgeFetchImpl: fetchImpl }
+    );
+    await p.getModels();
+
+    const [url] = (fetchImpl.mock.calls[0] as [string, RequestInit]) ?? [];
+    expect(url).toBe('http://localhost:1234/v1/api/tags');
   });
 
   it('owns its own model ids and nothing else', () => {

@@ -8,7 +8,7 @@
  *  - buildSdkConfig(): Responses bridge server reuse and auth refresh
  */
 
-import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import * as fs from 'fs/promises';
 import {
   mkdirSync,
@@ -32,9 +32,12 @@ import { AnthropicToCodexBridgeProvider } from '../../../../src/lib/providers/an
 function makeProvider(
   env: Record<string, string | undefined> = {},
   authDir?: string,
-  codexAuthDir?: string
+  codexAuthDir?: string,
+  fetchImpl: typeof fetch = mock(
+    async () => new Response('{}', { status: 200 })
+  ) as unknown as typeof fetch
 ): AnthropicToCodexBridgeProvider {
-  return new AnthropicToCodexBridgeProvider(env, authDir, codexAuthDir);
+  return new AnthropicToCodexBridgeProvider(env, authDir, codexAuthDir, fetchImpl);
 }
 
 /**
@@ -964,6 +967,75 @@ describe('AnthropicToCodexBridgeProvider', () => {
       provider = makeProvider({}, tmpDir, tmpDir);
       const models = await provider.getModels();
       expect(models).toEqual([]);
+    });
+
+    it('probes OpenAI upstream with the resolved API key', async () => {
+      const fetchImpl = mock(
+        async () => new Response('{}', { status: 200 })
+      ) as unknown as typeof fetch;
+      provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, tmpDir, tmpDir, fetchImpl);
+
+      await provider.getModels();
+
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      const [url, init] = (fetchImpl.mock.calls[0] as [string, RequestInit]) ?? [];
+      expect(url).toBe('https://api.openai.com/v1/responses');
+      expect(init?.method).toBe('POST');
+      const headers = init?.headers as Record<string, string>;
+      expect(headers['authorization']).toBe('Bearer sk-env-key');
+    });
+
+    it('probes the ChatGPT codex backend for OAuth tokens', async () => {
+      const fetchImpl = mock(
+        async () => new Response('{}', { status: 200 })
+      ) as unknown as typeof fetch;
+      const neokaiDir = path.join(tmpDir, 'neokai');
+      const jwt = makeJwt({
+        https: { 'api.openai.com/auth': { user_id: 'u1', organization_id: 'org-1' } },
+        exp: Math.floor(Date.now() / 1000) + 60 * 60,
+      });
+      writeNeokaiAuth(neokaiDir, { type: 'oauth', access: jwt, refresh: 'r', accountId: 'acct-1' });
+      provider = makeProvider({}, neokaiDir, tmpDir, fetchImpl);
+
+      await provider.getModels();
+
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      const [url, init] = (fetchImpl.mock.calls[0] as [string, RequestInit]) ?? [];
+      expect(url).toBe('https://chatgpt.com/backend-api/codex/responses');
+      const headers = init?.headers as Record<string, string>;
+      expect(headers['authorization']).toBe(`Bearer ${jwt}`);
+      expect(headers['ChatGPT-Account-Id']).toBe('acct-1');
+      expect(headers['OpenAI-Beta']).toBe('responses=experimental');
+    });
+
+    it('throws when OpenAI rejects the API key (401)', async () => {
+      const fetchImpl = mock(
+        async () => new Response('unauthorized', { status: 401 })
+      ) as unknown as typeof fetch;
+      provider = makeProvider({ OPENAI_API_KEY: 'bad-key' }, tmpDir, tmpDir, fetchImpl);
+
+      expect(provider.getModels()).rejects.toThrow('Codex credentials rejected (HTTP 401)');
+    });
+
+    it('throws when probe fails at the network layer', async () => {
+      const fetchImpl = mock(async () => {
+        throw new Error('ECONNREFUSED');
+      }) as unknown as typeof fetch;
+      provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, tmpDir, tmpDir, fetchImpl);
+
+      expect(provider.getModels()).rejects.toThrow('Codex probe failed: ECONNREFUSED');
+    });
+
+    it('caches successful probe so repeated calls do not re-probe', async () => {
+      const fetchImpl = mock(
+        async () => new Response('{}', { status: 200 })
+      ) as unknown as typeof fetch;
+      provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, tmpDir, tmpDir, fetchImpl);
+
+      await provider.getModels();
+      await provider.getModels();
+
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
     });
   });
 

@@ -104,12 +104,21 @@ describe('KimiProvider', () => {
   });
 
   describe('getModels', () => {
-    beforeEach(() => {
-      provider = new KimiProvider();
-    });
+    /**
+     * Build a provider whose credential probe always succeeds, so existing
+     * tests that just want the static model list don't need to mock every
+     * fetch call individually.
+     */
+    function makeProbeOkProvider(): KimiProvider {
+      const fetchImpl = mock(
+        async () => new Response('{}', { status: 200 })
+      ) as unknown as typeof fetch;
+      return new KimiProvider(process.env, undefined, fetchImpl);
+    }
 
     it('should return Kimi models when API key is available', async () => {
       process.env.KIMI_API_KEY = 'test-key';
+      provider = makeProbeOkProvider();
 
       const models = await provider.getModels();
 
@@ -118,8 +127,60 @@ describe('KimiProvider', () => {
     });
 
     it('should return empty array when API key is not available', async () => {
+      provider = makeProbeOkProvider();
       const models = await provider.getModels();
       expect(models).toEqual([]);
+    });
+
+    it('probes the upstream Anthropic-compatible endpoint with the API key', async () => {
+      process.env.KIMI_API_KEY = 'test-key';
+      const fetchImpl = mock(
+        async () => new Response('{}', { status: 200 })
+      ) as unknown as typeof fetch;
+      provider = new KimiProvider(process.env, undefined, fetchImpl);
+
+      await provider.getModels();
+
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      const [url, init] = (fetchImpl.mock.calls[0] as [string, RequestInit]) ?? [];
+      expect(url).toBe('https://api.kimi.com/coding/v1/messages');
+      expect(init?.method).toBe('POST');
+      const headers = init?.headers as Record<string, string>;
+      expect(headers['x-api-key']).toBe('test-key');
+      expect(headers['authorization']).toBe('Bearer test-key');
+    });
+
+    it('throws when upstream rejects the API key (401)', async () => {
+      process.env.KIMI_API_KEY = 'bad-key';
+      const fetchImpl = mock(
+        async () => new Response('unauthorized', { status: 401 })
+      ) as unknown as typeof fetch;
+      provider = new KimiProvider(process.env, undefined, fetchImpl);
+
+      expect(provider.getModels()).rejects.toThrow('Kimi API key rejected (HTTP 401)');
+    });
+
+    it('throws when probe times out / network fails', async () => {
+      process.env.KIMI_API_KEY = 'test-key';
+      const fetchImpl = mock(async () => {
+        throw new Error('ECONNREFUSED');
+      }) as unknown as typeof fetch;
+      provider = new KimiProvider(process.env, undefined, fetchImpl);
+
+      expect(provider.getModels()).rejects.toThrow('Kimi probe failed: ECONNREFUSED');
+    });
+
+    it('caches successful probe for 30s so repeated calls do not re-probe', async () => {
+      process.env.KIMI_API_KEY = 'test-key';
+      const fetchImpl = mock(
+        async () => new Response('{}', { status: 200 })
+      ) as unknown as typeof fetch;
+      provider = new KimiProvider(process.env, undefined, fetchImpl);
+
+      await provider.getModels();
+      await provider.getModels();
+
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
     });
   });
 
