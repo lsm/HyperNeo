@@ -9,8 +9,11 @@ import {
   SDKMessageHandler,
   type SDKMessageHandlerContext,
 } from '../../../../src/lib/agent/sdk-message-handler';
-import type { Session, MessageHub } from '@neokai/shared';
+import type { Session, MessageHub, ModelInfo } from '@neokai/shared';
+import type { Provider, ProviderSdkConfig } from '@neokai/shared/provider';
 import type { SDKMessage } from '@neokai/shared/sdk';
+import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
+import { resetProviderFactory } from '../../../../src/lib/providers/factory';
 import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { Database } from '../../../../src/storage/database';
@@ -20,6 +23,42 @@ import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import type { ErrorManager } from '../../../../src/lib/error-manager';
 import type { QueryLifecycleManager } from '../../../../src/lib/agent/query-lifecycle-manager';
 import { setModelsCache } from '../../../../src/lib/model-service';
+
+class TranslatingMockProvider implements Provider {
+  readonly id = 'anthropic-codex';
+  readonly displayName = 'Anthropic Codex';
+  readonly capabilities = {
+    streaming: true,
+    extendedThinking: false,
+    maxContextWindow: 100000,
+    functionCalling: true,
+    vision: false,
+  };
+
+  isAvailable(): boolean {
+    return true;
+  }
+
+  async getModels(): Promise<ModelInfo[]> {
+    return [];
+  }
+
+  ownsModel(modelId: string): boolean {
+    return modelId.startsWith('gpt-') || modelId.startsWith('claude-');
+  }
+
+  getModelForTier(tier: string): string {
+    return `gpt-${tier}`;
+  }
+
+  buildSdkConfig(): ProviderSdkConfig {
+    return { envVars: {}, isAnthropicCompatible: true };
+  }
+
+  translateModelIdForSdk(modelId: string): string {
+    return modelId === 'gpt-5.4-mini' ? 'claude-sonnet-4-20250514' : modelId;
+  }
+}
 
 describe('SDKMessageHandler', () => {
   let handler: SDKMessageHandler;
@@ -55,6 +94,8 @@ describe('SDKMessageHandler', () => {
   let getStateSpy: ReturnType<typeof mock>;
 
   beforeEach(() => {
+    resetProviderRegistry();
+    resetProviderFactory();
     mockSession = {
       id: 'test-session-id',
       title: 'Test Session',
@@ -173,10 +214,16 @@ describe('SDKMessageHandler', () => {
       lifecycleManager: mockLifecycleManager,
       queryObject: null,
       queryPromise: null,
-      onInitSlashCommands: async () => {},
+      onInitSlashCommands: mock(async () => {}),
+      onCommandsChanged: mock(async () => {}),
     };
 
     handler = new SDKMessageHandler(mockContext);
+  });
+
+  afterEach(() => {
+    resetProviderRegistry();
+    resetProviderFactory();
   });
 
   describe('constructor', () => {
@@ -701,6 +748,138 @@ describe('SDKMessageHandler', () => {
       await handler.handleMessage(message);
 
       expect(setIdleSpy).toHaveBeenCalled();
+    });
+
+    it('should reset session-state turn mode after idle so later result can finish turn', async () => {
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'session_state_changed',
+        state: 'busy',
+        uuid: 'state-busy',
+      } as unknown as SDKMessage);
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'session_state_changed',
+        state: 'idle',
+        uuid: 'state-idle',
+      } as unknown as SDKMessage);
+      setIdleSpy.mockClear();
+
+      await handler.handleMessage({
+        type: 'result',
+        subtype: 'success',
+        uuid: 'later-result',
+        usage: {
+          input_tokens: 100,
+          output_tokens: 50,
+        },
+        total_cost_usd: 0.001,
+        modelUsage: {},
+      } as unknown as SDKMessage);
+
+      expect(setIdleSpy).toHaveBeenCalled();
+    });
+
+    it('should wait for idle before replaying queued turns after a success result', async () => {
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'session_state_changed',
+        state: 'busy',
+        uuid: 'state-busy-before-success',
+      } as unknown as SDKMessage);
+      emitSpy.mockClear();
+      setIdleSpy.mockClear();
+
+      await handler.handleMessage({
+        type: 'result',
+        subtype: 'success',
+        uuid: 'success-before-idle',
+        usage: {
+          input_tokens: 100,
+          output_tokens: 50,
+        },
+        total_cost_usd: 0.001,
+        modelUsage: {},
+      } as unknown as SDKMessage);
+
+      expect(emitSpy).not.toHaveBeenCalledWith('query.trigger', { sessionId: 'test-session-id' });
+
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'session_state_changed',
+        state: 'idle',
+        uuid: 'state-idle-after-success',
+      } as unknown as SDKMessage);
+
+      expect(setIdleSpy).toHaveBeenCalled();
+      expect(
+        emitSpy.mock.calls.filter(
+          ([event, payload]) =>
+            event === 'query.trigger' && payload?.sessionId === 'test-session-id'
+        )
+      ).toHaveLength(1);
+    });
+
+    it('should not replay queued turns after an error result followed by idle state', async () => {
+      await handler.handleMessage({
+        type: 'result',
+        subtype: 'error_during_execution',
+        uuid: 'error-result',
+        is_error: true,
+        duration_ms: 1,
+        duration_api_ms: 1,
+        num_turns: 1,
+        total_cost_usd: 0,
+      } as unknown as SDKMessage);
+      emitSpy.mockClear();
+      setIdleSpy.mockClear();
+
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'session_state_changed',
+        state: 'idle',
+        uuid: 'state-idle-after-error',
+      } as unknown as SDKMessage);
+
+      expect(setIdleSpy).toHaveBeenCalled();
+      expect(emitSpy).not.toHaveBeenCalledWith('query.trigger', { sessionId: 'test-session-id' });
+    });
+
+    it('should include normalized slash-command aliases from commands_changed messages', async () => {
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'commands_changed',
+        commands: [{ name: '/status', aliases: ['/cost', 'stats'] }],
+      } as unknown as SDKMessage);
+
+      expect(mockContext.onCommandsChanged).toHaveBeenCalledWith(['status', 'cost', 'stats']);
+    });
+
+    it('should persist provider-native fallback model after SDK fallback translation', async () => {
+      getProviderRegistry().register(new TranslatingMockProvider());
+      mockSession.config = {
+        ...mockSession.config,
+        provider: 'anthropic-codex',
+        model: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-mini',
+      };
+
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'model_refusal_fallback',
+        direction: 'retry',
+        original_model: 'claude-opus-4-7',
+        fallback_model: 'claude-sonnet-4-20250514',
+        content: 'Retrying with fallback model',
+      } as unknown as SDKMessage);
+
+      expect(mockSession.config.model).toBe('gpt-5.4-mini');
+      expect(updateSessionSpy).toHaveBeenCalledWith(
+        'test-session-id',
+        expect.objectContaining({
+          config: expect.objectContaining({ model: 'gpt-5.4-mini' }),
+        })
+      );
     });
 
     it('should emit session.errorClear event', async () => {

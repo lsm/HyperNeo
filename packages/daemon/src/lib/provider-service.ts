@@ -917,6 +917,36 @@ const userConfiguredDefaultSonnetModel = process.env.ANTHROPIC_DEFAULT_SONNET_MO
 const userConfiguredDefaultHaikuModel = process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL;
 const userConfiguredDefaultOpusModel = process.env.ANTHROPIC_DEFAULT_OPUS_MODEL;
 
+/**
+ * Snapshot of user-configured Anthropic env values captured at daemon startup.
+ *
+ * Excludes provider-leaked routing vars from concurrent bridge turns — those are
+ * set/cleared dynamically by `applyEnvVarsToProcessForSession`, while the values
+ * here are frozen at module load. Use this when a subprocess (e.g. an external
+ * ACP agent) must inherit the user's real endpoint/model/auth overrides without
+ * being contaminated by another provider's in-flight routing state.
+ *
+ * Auth tokens (ANTHROPIC_AUTH_TOKEN / CLAUDE_CODE_OAUTH_TOKEN) are intentionally
+ * read live from `process.env` at call time rather than snapshotted here, because
+ * credential discovery runs after module load and may populate them later.
+ */
+export function getUserConfiguredAnthropicEnv(): Record<string, string> {
+  const snapshot: Record<string, string> = {};
+  const entries: Array<[string, string | undefined]> = [
+    ['ANTHROPIC_BASE_URL', userConfiguredBaseUrl],
+    ['API_TIMEOUT_MS', userConfiguredApiTimeout],
+    ['ANTHROPIC_DEFAULT_SONNET_MODEL', userConfiguredDefaultSonnetModel],
+    ['ANTHROPIC_DEFAULT_HAIKU_MODEL', userConfiguredDefaultHaikuModel],
+    ['ANTHROPIC_DEFAULT_OPUS_MODEL', userConfiguredDefaultOpusModel],
+    ['ANTHROPIC_AUTH_TOKEN', process.env.ANTHROPIC_AUTH_TOKEN],
+    ['CLAUDE_CODE_OAUTH_TOKEN', process.env.CLAUDE_CODE_OAUTH_TOKEN],
+  ];
+  for (const [key, value] of entries) {
+    if (value !== undefined) snapshot[key] = value;
+  }
+  return snapshot;
+}
+
 export function getProviderService(): ProviderService {
   if (!(globalThis as Record<symbol, unknown>)[PROVIDER_SERVICE_KEY]) {
     (globalThis as Record<symbol, unknown>)[PROVIDER_SERVICE_KEY] = new ProviderService();

@@ -147,8 +147,8 @@ describe('SlashCommandManager', () => {
 
       expect(supportedCommandsSpy).toHaveBeenCalled();
       expect(commands.length).toBeGreaterThan(0);
-      expect(commands).toContain('/help');
-      expect(commands).toContain('/context');
+      expect(commands).toContain('help');
+      expect(commands).toContain('context');
     });
 
     it('should fallback to built-in commands if SDK returns nothing', async () => {
@@ -161,19 +161,44 @@ describe('SlashCommandManager', () => {
       expect(commands.length).toBeGreaterThan(0);
     });
 
-    it('should trigger background refresh when returning cached commands', async () => {
+    it('should return restored cached commands without background supportedCommands refresh', async () => {
       const existingCommands = ['/cached-command'];
       manager = createManager({ availableCommands: existingCommands });
 
-      // First call returns cached, triggers background refresh
       const commands = await manager.getSlashCommands();
       expect(commands).toEqual(existingCommands);
 
-      // Wait a tick for background refresh to start
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      // supportedCommands should have been called in background
-      expect(supportedCommandsSpy).toHaveBeenCalled();
+      expect(supportedCommandsSpy).not.toHaveBeenCalled();
+    });
+
+    it('should refresh restored commands from the next SDK init message', async () => {
+      manager = createManager({ availableCommands: ['stale-command'] });
+
+      await manager.updateFromInit(['fresh-sdk-command']);
+
+      expect(updateSessionSpy).toHaveBeenCalledWith('test-session-id', {
+        availableCommands: expect.arrayContaining(['fresh-sdk-command']),
+      });
+      expect(emitSpy).toHaveBeenCalledWith('commands.updated', {
+        sessionId: 'test-session-id',
+        commands: expect.arrayContaining(['fresh-sdk-command']),
+      });
+    });
+
+    it('should let SDK init replace commands_changed caches after restart', async () => {
+      manager = createManager();
+
+      await manager.updateFromCommandsChanged(['dynamic-command']);
+      await manager.updateFromInit(['fresh-init-command']);
+
+      const commands = await manager.getSlashCommands();
+      expect(commands).toContain('fresh-init-command');
+      expect(commands).not.toContain('dynamic-command');
+      expect(updateSessionSpy).toHaveBeenLastCalledWith('test-session-id', {
+        availableCommands: expect.arrayContaining(['fresh-init-command']),
+      });
     });
   });
 
@@ -185,13 +210,13 @@ describe('SlashCommandManager', () => {
 
       // Should update session in database
       expect(updateSessionSpy).toHaveBeenCalledWith('test-session-id', {
-        availableCommands: expect.arrayContaining(['/help', '/context']),
+        availableCommands: expect.arrayContaining(['help', 'context']),
       });
 
       // Should emit event
       expect(emitSpy).toHaveBeenCalledWith('commands.updated', {
         sessionId: 'test-session-id',
-        commands: expect.arrayContaining(['/help']),
+        commands: expect.arrayContaining(['help']),
       });
     });
 
@@ -246,10 +271,27 @@ describe('SlashCommandManager', () => {
       const commands = await manager.getSlashCommands();
 
       // Should have SDK command
-      expect(commands).toContain('/custom');
+      expect(commands).toContain('custom');
       // Should have SDK built-in commands
       expect(commands).toContain('clear');
       expect(commands).toContain('help');
+    });
+
+    it('should flatten aliases from the initial SDK command fetch', async () => {
+      supportedCommandsSpy.mockResolvedValue([
+        { name: '/status', aliases: ['/cost', 'stats'], description: 'Status command' },
+      ]);
+      manager = createManager();
+
+      await manager.fetchAndCache();
+
+      const commands = await manager.getSlashCommands();
+
+      expect(commands).toContain('status');
+      expect(commands).toContain('cost');
+      expect(commands).toContain('stats');
+      expect(commands).not.toContain('/status');
+      expect(commands).not.toContain('/cost');
     });
 
     it('should deduplicate commands', async () => {

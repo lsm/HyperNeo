@@ -53,7 +53,7 @@ export declare type AgentDefinition = {
      */
     prompt: string;
     /**
-     * Model alias (e.g. 'sonnet', 'opus', 'haiku') or full model ID (e.g. 'claude-opus-4-5'). If omitted or 'inherit', uses the main model
+     * Model alias (e.g. 'fable', 'opus', 'sonnet', 'haiku') or full model ID (e.g. 'claude-fable-5'). If omitted or 'inherit', uses the main model
      */
     model?: string;
     mcpServers?: AgentMcpServerSpec[];
@@ -118,6 +118,39 @@ export declare type ApiKeySource = 'user' | 'project' | 'org' | 'temporary' | 'o
 export declare type AsyncHookJSONOutput = {
     async: true;
     asyncTimeout?: number;
+};
+
+export declare type BackgroundTaskSummary = {
+    id: string;
+    /**
+     * Friendly task-type label (e.g. 'shell', 'subagent', 'monitor', 'workflow'). Falls back to the raw discriminant for unknown types.
+     */
+    type: string;
+    status: string;
+    /**
+     * Free-text description. Capped at 1000 chars; clipped values append an in-string "… [+N chars]" marker.
+     */
+    description: string;
+    /**
+     * Shell command line. Only present for 'shell' tasks. Capped at 1000 chars with the same "… [+N chars]" marker.
+     */
+    command?: string;
+    /**
+     * Subagent type name. Only present for 'subagent' tasks.
+     */
+    agent_type?: string;
+    /**
+     * MCP server name. Only present for 'monitor' / 'MCP task' tasks.
+     */
+    server?: string;
+    /**
+     * MCP tool name. Only present for 'monitor' / 'MCP task' tasks.
+     */
+    tool?: string;
+    /**
+     * Workflow name. Only present for 'workflow' tasks.
+     */
+    name?: string;
 };
 
 export declare type BaseHookInput = {
@@ -261,13 +294,28 @@ declare type ControlErrorResponse = {
     subtype: 'error';
     request_id: string;
     error: string;
+    /**
+     * Permission requests still awaiting a response. Sent on the `initialize` response so a client joining an already-initialized session learns about in-flight prompts.
+     */
     pending_permission_requests?: SDKControlRequest[];
+    /**
+     * request_user_dialog requests still awaiting a response. Sent on the `initialize` response (sibling of pending_permission_requests) so a client joining an already-initialized session can re-arm in-flight dialogs. Receivers must tolerate the same request_id also arriving as a live or replayed control_request frame and render it once.
+     */
+    pending_user_dialog_requests?: SDKControlRequest[];
 };
 
 declare type ControlResponse = {
     subtype: 'success';
     request_id: string;
     response?: Record<string, unknown>;
+    /**
+     * Permission requests still awaiting a response. Sent on the `initialize` response so a client joining an already-initialized session learns about in-flight prompts.
+     */
+    pending_permission_requests?: SDKControlRequest[];
+    /**
+     * request_user_dialog requests still awaiting a response. Sent on the `initialize` response (sibling of pending_permission_requests) so a client joining an already-initialized session can re-arm in-flight dialogs. Receivers must tolerate the same request_id also arriving as a live or replayed control_request frame and render it once.
+     */
+    pending_user_dialog_requests?: SDKControlRequest[];
 };
 
 declare namespace coreTypes {
@@ -286,6 +334,7 @@ declare namespace coreTypes {
         AgentMcpServerSpec,
         ApiKeySource,
         AsyncHookJSONOutput,
+        BackgroundTaskSummary,
         BaseHookInput,
         BaseOutputFormat,
         ConfigChangeHookInput,
@@ -316,6 +365,8 @@ declare namespace coreTypes {
         McpServerToolPolicy,
         McpSetServersResult,
         McpStdioServerConfig,
+        MessageDisplayHookInput,
+        MessageDisplayHookSpecificOutput,
         ModelInfo,
         ModelUsage,
         NotificationHookInput,
@@ -349,6 +400,7 @@ declare namespace coreTypes {
         SDKAssistantMessageError,
         SDKAssistantMessage,
         SDKAuthStatusMessage,
+        SDKCommandsChangedMessage,
         SDKCompactBoundaryMessage,
         SDKDeferredToolUse,
         SDKElicitationCompleteMessage,
@@ -361,6 +413,7 @@ declare namespace coreTypes {
         SDKMessageOrigin,
         SDKMessage,
         SDKMirrorErrorMessage,
+        SDKModelRefusalFallbackMessage,
         SDKNotificationMessage,
         SDKPartialAssistantMessage,
         SDKPermissionDenial,
@@ -382,12 +435,14 @@ declare namespace coreTypes {
         SDKTaskProgressMessage,
         SDKTaskStartedMessage,
         SDKTaskUpdatedMessage,
+        SDKThinkingTokensMessage,
         SDKToolProgressMessage,
         SDKToolUseSummaryMessage,
         SDKUserMessageReplay,
         SDKUserMessage,
         SdkBeta,
         SdkPluginConfig,
+        SessionCronSummary,
         SessionEndHookInput,
         SessionStartHookInput,
         SessionStartHookSpecificOutput,
@@ -397,9 +452,11 @@ declare namespace coreTypes {
         SlashCommand,
         StopFailureHookInput,
         StopHookInput,
+        StopHookSpecificOutput,
         SubagentStartHookInput,
         SubagentStartHookSpecificOutput,
         SubagentStopHookInput,
+        SubagentStopHookSpecificOutput,
         SyncHookJSONOutput,
         TaskCompletedHookInput,
         TaskCreatedHookInput,
@@ -430,6 +487,13 @@ export declare function createSdkMcpServer(_options: CreateSdkMcpServerOptions):
 declare type CreateSdkMcpServerOptions = {
     name: string;
     version?: string;
+    /**
+     * Server instructions returned from `initialize` and surfaced to the model
+     * as an MCP instructions block. When proxying a real MCP server through the
+     * SDK transport, pass the underlying server's `getInstructions()` here so
+     * it isn't dropped.
+     */
+    instructions?: string;
     tools?: Array<SdkMcpToolDefinition<any>>;
     /**
      * When true, all tools from this server are always included in the prompt
@@ -474,7 +538,7 @@ export declare function deleteSession(_sessionId: string, _options?: SessionMuta
  * - `'low'` — Minimal thinking, fastest responses
  * - `'medium'` — Moderate thinking
  * - `'high'` — Deep reasoning (default)
- * - `'xhigh'` — Deeper than high (Opus 4.7 only; falls back to `'high'` elsewhere)
+ * - `'xhigh'` — Deeper than high (Fable 5, Opus 4.7+; falls back to `'high'` elsewhere)
  * - `'max'` — Maximum effort (select models only)
  */
 export declare type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
@@ -635,7 +699,7 @@ export declare type ForkSessionOptions = SessionMutationOptions & {
  * Result of a fork operation.
  */
 export declare type ForkSessionResult = {
-    /** New session UUID. Resumable via `resumeSession(sessionId)`. */
+    /** New session UUID. Resumable via `query({ options: { resume: sessionId } })`. */
     sessionId: string;
 };
 
@@ -735,7 +799,7 @@ export declare type GetSubagentMessagesOptions = {
     sessionStore?: SessionStore;
 };
 
-export declare const HOOK_EVENTS: readonly ["PreToolUse", "PostToolUse", "PostToolUseFailure", "PostToolBatch", "Notification", "UserPromptSubmit", "UserPromptExpansion", "SessionStart", "SessionEnd", "Stop", "StopFailure", "SubagentStart", "SubagentStop", "PreCompact", "PostCompact", "PermissionRequest", "PermissionDenied", "Setup", "TeammateIdle", "TaskCreated", "TaskCompleted", "Elicitation", "ElicitationResult", "ConfigChange", "WorktreeCreate", "WorktreeRemove", "InstructionsLoaded", "CwdChanged", "FileChanged"];
+export declare const HOOK_EVENTS: readonly ["PreToolUse", "PostToolUse", "PostToolUseFailure", "PostToolBatch", "Notification", "UserPromptSubmit", "UserPromptExpansion", "SessionStart", "SessionEnd", "Stop", "StopFailure", "SubagentStart", "SubagentStop", "PreCompact", "PostCompact", "PermissionRequest", "PermissionDenied", "Setup", "TeammateIdle", "TaskCreated", "TaskCompleted", "Elicitation", "ElicitationResult", "ConfigChange", "WorktreeCreate", "WorktreeRemove", "InstructionsLoaded", "CwdChanged", "FileChanged", "MessageDisplay"];
 
 /**
  * Hook callback function for responding to events during execution.
@@ -754,9 +818,9 @@ export declare interface HookCallbackMatcher {
     timeout?: number;
 }
 
-export declare type HookEvent = 'PreToolUse' | 'PostToolUse' | 'PostToolUseFailure' | 'PostToolBatch' | 'Notification' | 'UserPromptSubmit' | 'UserPromptExpansion' | 'SessionStart' | 'SessionEnd' | 'Stop' | 'StopFailure' | 'SubagentStart' | 'SubagentStop' | 'PreCompact' | 'PostCompact' | 'PermissionRequest' | 'PermissionDenied' | 'Setup' | 'TeammateIdle' | 'TaskCreated' | 'TaskCompleted' | 'Elicitation' | 'ElicitationResult' | 'ConfigChange' | 'WorktreeCreate' | 'WorktreeRemove' | 'InstructionsLoaded' | 'CwdChanged' | 'FileChanged';
+export declare type HookEvent = 'PreToolUse' | 'PostToolUse' | 'PostToolUseFailure' | 'PostToolBatch' | 'Notification' | 'UserPromptSubmit' | 'UserPromptExpansion' | 'SessionStart' | 'SessionEnd' | 'Stop' | 'StopFailure' | 'SubagentStart' | 'SubagentStop' | 'PreCompact' | 'PostCompact' | 'PermissionRequest' | 'PermissionDenied' | 'Setup' | 'TeammateIdle' | 'TaskCreated' | 'TaskCompleted' | 'Elicitation' | 'ElicitationResult' | 'ConfigChange' | 'WorktreeCreate' | 'WorktreeRemove' | 'InstructionsLoaded' | 'CwdChanged' | 'FileChanged' | 'MessageDisplay';
 
-export declare type HookInput = PreToolUseHookInput | PostToolUseHookInput | PostToolUseFailureHookInput | PostToolBatchHookInput | PermissionDeniedHookInput | NotificationHookInput | UserPromptSubmitHookInput | UserPromptExpansionHookInput | SessionStartHookInput | SessionEndHookInput | StopHookInput | StopFailureHookInput | SubagentStartHookInput | SubagentStopHookInput | PreCompactHookInput | PostCompactHookInput | PermissionRequestHookInput | SetupHookInput | TeammateIdleHookInput | TaskCreatedHookInput | TaskCompletedHookInput | ElicitationHookInput | ElicitationResultHookInput | ConfigChangeHookInput | InstructionsLoadedHookInput | WorktreeCreateHookInput | WorktreeRemoveHookInput | CwdChangedHookInput | FileChangedHookInput;
+export declare type HookInput = PreToolUseHookInput | PostToolUseHookInput | PostToolUseFailureHookInput | PostToolBatchHookInput | PermissionDeniedHookInput | NotificationHookInput | UserPromptSubmitHookInput | UserPromptExpansionHookInput | SessionStartHookInput | SessionEndHookInput | StopHookInput | StopFailureHookInput | SubagentStartHookInput | SubagentStopHookInput | PreCompactHookInput | PostCompactHookInput | PermissionRequestHookInput | SetupHookInput | TeammateIdleHookInput | TaskCreatedHookInput | TaskCompletedHookInput | ElicitationHookInput | ElicitationResultHookInput | ConfigChangeHookInput | InstructionsLoadedHookInput | WorktreeCreateHookInput | WorktreeRemoveHookInput | CwdChangedHookInput | FileChangedHookInput | MessageDisplayHookInput;
 
 export declare type HookJSONOutput = AsyncHookJSONOutput | SyncHookJSONOutput;
 
@@ -946,6 +1010,10 @@ export declare type McpClaudeAIProxyServerConfig = {
     type: 'claudeai-proxy';
     url: string;
     id: string;
+    /**
+     * Per-server tool-call timeout in milliseconds. Overrides the MCP_TOOL_TIMEOUT environment variable for this server. Hard wall-clock limit per call; progress notifications do not extend it. Values below 1000ms are ignored (falls through to MCP_TOOL_TIMEOUT or the default).
+     */
+    timeout?: number;
 };
 
 export declare type McpHttpServerConfig = {
@@ -954,9 +1022,14 @@ export declare type McpHttpServerConfig = {
     headers?: Record<string, string>;
     tools?: McpServerToolPolicy[];
     /**
-     * When true, all tools from this server are always included in the prompt and never deferred behind tool search. Equivalent to setting defer_loading: false on the API. Default: tools are deferred when tool search is enabled. As a side effect this also blocks startup until the server is connected (capped at the standard 5s connect timeout) even when MCP_CONNECTION_NONBLOCKING=1, since the tools must be present when the turn-1 prompt is built.
+     * Per-server tool-call timeout in milliseconds. Overrides the MCP_TOOL_TIMEOUT environment variable for this server. Hard wall-clock limit per call; progress notifications do not extend it. Values below 1000ms are ignored (falls through to MCP_TOOL_TIMEOUT or the default).
+     */
+    timeout?: number;
+    /**
+     * When true, all tools from this server are always included in the prompt and never deferred behind tool search. Equivalent to setting defer_loading: false on the API. Default: tools are deferred when tool search is enabled. As a side effect this also blocks startup until the server is connected (capped at the standard 5s connect timeout) even though MCP startup is otherwise non-blocking by default, since the tools must be present when the turn-1 prompt is built.
      */
     alwaysLoad?: boolean;
+
 };
 
 export declare type McpSdkServerConfig = {
@@ -1032,7 +1105,11 @@ export declare type McpServerStatusConfig = McpServerConfigForProcessTransport |
  */
 export declare type McpServerToolPolicy = {
     name: string;
-    permission_policy: 'always_allow' | 'always_ask' | 'always_deny';
+    permission_policy?: 'always_allow' | 'always_ask' | 'always_deny';
+    /**
+     * Org admin's per-tool ceiling. Drives the auto-mode isOrgAskCeiling gate so an admin 'ask' cap forces a user prompt even in auto mode.
+     */
+    org_max_permission?: 'allow' | 'ask' | 'blocked';
 };
 
 /**
@@ -1059,9 +1136,14 @@ export declare type McpSSEServerConfig = {
     headers?: Record<string, string>;
     tools?: McpServerToolPolicy[];
     /**
-     * When true, all tools from this server are always included in the prompt and never deferred behind tool search. Equivalent to setting defer_loading: false on the API. Default: tools are deferred when tool search is enabled. As a side effect this also blocks startup until the server is connected (capped at the standard 5s connect timeout) even when MCP_CONNECTION_NONBLOCKING=1, since the tools must be present when the turn-1 prompt is built.
+     * Per-server tool-call timeout in milliseconds. Overrides the MCP_TOOL_TIMEOUT environment variable for this server. Hard wall-clock limit per call; progress notifications do not extend it. Values below 1000ms are ignored (falls through to MCP_TOOL_TIMEOUT or the default).
+     */
+    timeout?: number;
+    /**
+     * When true, all tools from this server are always included in the prompt and never deferred behind tool search. Equivalent to setting defer_loading: false on the API. Default: tools are deferred when tool search is enabled. As a side effect this also blocks startup until the server is connected (capped at the standard 5s connect timeout) even though MCP startup is otherwise non-blocking by default, since the tools must be present when the turn-1 prompt is built.
      */
     alwaysLoad?: boolean;
+
 };
 
 export declare type McpStdioServerConfig = {
@@ -1070,9 +1152,52 @@ export declare type McpStdioServerConfig = {
     args?: string[];
     env?: Record<string, string>;
     /**
-     * When true, all tools from this server are always included in the prompt and never deferred behind tool search. Equivalent to setting defer_loading: false on the API. Default: tools are deferred when tool search is enabled. As a side effect this also blocks startup until the server is connected (capped at the standard 5s connect timeout) even when MCP_CONNECTION_NONBLOCKING=1, since the tools must be present when the turn-1 prompt is built.
+     * Per-server tool-call timeout in milliseconds. Overrides the MCP_TOOL_TIMEOUT environment variable for this server. Hard wall-clock limit per call; progress notifications do not extend it. Values below 1000ms are ignored (falls through to MCP_TOOL_TIMEOUT or the default).
+     */
+    timeout?: number;
+    /**
+     * When true, all tools from this server are always included in the prompt and never deferred behind tool search. Equivalent to setting defer_loading: false on the API. Default: tools are deferred when tool search is enabled. As a side effect this also blocks startup until the server is connected (capped at the standard 5s connect timeout) even though MCP startup is otherwise non-blocking by default, since the tools must be present when the turn-1 prompt is built.
      */
     alwaysLoad?: boolean;
+
+};
+
+/**
+ * Hook input for the MessageDisplay event. Fired with each batch of newly completed lines while an assistant message streams. Display-only: the stored message and what the model sees are untouched.
+ */
+export declare type MessageDisplayHookInput = BaseHookInput & {
+    hook_event_name: 'MessageDisplay';
+    /**
+     * UUID of the current turn.
+     */
+    turn_id: string;
+    /**
+     * UUID of the assistant message being displayed. Stable across every flush of the same message. Not the API msg_… id.
+     */
+    message_id: string;
+    /**
+     * Zero-based index of this delta within the message. Increments by one per flush.
+     */
+    index: number;
+    /**
+     * True on the message's last flush. Exactly one flush per message has it.
+     */
+    final: boolean;
+    /**
+     * The newly completed lines since the prior flush. Always whole lines, except on the final flush which may end mid-line. The delta of the final flush is empty when the message ends on a newline; treat final as the end-of-message signal regardless.
+     */
+    delta: string;
+};
+
+/**
+ * Hook-specific output for the MessageDisplay event. Display-only: replaces the delta on screen without changing the stored message.
+ */
+export declare type MessageDisplayHookSpecificOutput = {
+    hookEventName: 'MessageDisplay';
+    /**
+     * Text displayed in place of the delta. Omit (or return the delta unchanged) to display the original.
+     */
+    displayContent?: string;
 };
 
 /**
@@ -1111,6 +1236,7 @@ export declare type ModelInfo = {
      * Whether this model supports auto mode
      */
     supportsAutoMode?: boolean;
+
 };
 
 export declare type ModelUsage = {
@@ -1147,6 +1273,16 @@ export declare type NotificationHookSpecificOutput = {
 export declare type OnElicitation = (request: ElicitationRequest, options: {
     signal: AbortSignal;
 }) => Promise<ElicitationResult>;
+
+/**
+ * Callback for handling `request_user_dialog` control requests.
+ * Called when the CLI asks the host to render a blocking dialog.
+ * If not provided, dialogs are answered as cancelled and the CLI applies
+ * each dialog's default behavior.
+ */
+export declare type OnUserDialog = (request: UserDialogRequest, options: {
+    signal: AbortSignal;
+}) => Promise<UserDialogResult>;
 
 /**
  * Options for the query function.
@@ -1227,25 +1363,58 @@ export declare type Options = {
      */
     disallowedTools?: string[];
     /**
+     * Map of tool-name aliases applied before name resolution. When the
+     * model emits a `tool_use` whose name is a key in this map, the tool
+     * execution path resolves the mapped name instead.
+     *
+     * This lets SDK consumers redirect built-in tool names to their own
+     * tools. For example, a host that runs Bash inside a remote sandbox via
+     * an MCP tool can set `{ Bash: 'mcp__workspace__bash' }` so that if the
+     * model emits `Bash` (e.g. because a skill document instructed it to),
+     * the call is routed to the MCP tool instead of failing as unknown.
+     *
+     * The redirect is single-hop: an alias that points at another aliased
+     * name resolves that target literally rather than following a chain, so
+     * cycles like `{A: 'B', B: 'A'}` cannot loop.
+     *
+     * `toolAliases` is complementary to `disallowedTools`, not a replacement
+     * for it: the alias only affects name-based lookup of model-emitted
+     * `tool_use` blocks, whereas `disallowedTools` also blocks harness-internal
+     * direct calls that hold the tool object without a name lookup.
+     *
+     * @example
+     * ```typescript
+     * toolAliases: { Bash: 'mcp__workspace__bash' }
+     * ```
+     */
+    toolAliases?: Record<string, string>;
+    /**
      * Specify the base set of available built-in tools.
      * - `string[]` - Array of specific tool names (e.g., `['Bash', 'Read', 'Edit']`)
      * - `[]` (empty array) - Disable all built-in tools
      * - `{ type: 'preset'; preset: 'claude_code' }` - Use all default Claude Code tools
+     *
+     * Note: native builds may provide search via Bash `find`/`grep` instead of the
+     * dedicated Grep/Glob tools. List Grep/Glob here or in `allowedTools` to get them.
      */
     tools?: string[] | {
         type: 'preset';
         preset: 'claude_code';
     };
     /**
-     * Environment variables to pass to the Claude Code process.
-     * Defaults to `process.env`.
+     * Environment variables for the Claude Code process.
+     *
+     * When set, this value REPLACES the subprocess environment entirely — it is
+     * not merged with `process.env`. Spread `process.env` yourself if the
+     * subprocess still needs inherited variables like `PATH`, `HOME`, or
+     * `ANTHROPIC_API_KEY`. When omitted, the subprocess inherits `process.env`.
      *
      * SDK consumers can identify their app/library to include in the User-Agent header by setting:
      * - `CLAUDE_AGENT_SDK_CLIENT_APP` - Your app/library identifier (e.g., "my-app/1.0.0", "my-library/2.1")
      *
      * @example
      * ```typescript
-     * env: { CLAUDE_AGENT_SDK_CLIENT_APP: 'my-app/1.0.0' }
+     * env: { ...process.env, CLAUDE_AGENT_SDK_CLIENT_APP: 'my-app/1.0.0' }
      * ```
      */
     env?: {
@@ -1267,7 +1436,10 @@ export declare type Options = {
      */
     extraArgs?: Record<string, string | null>;
     /**
-     * Fallback model to use if the primary model fails or is unavailable.
+     * Fallback model(s) to use if the primary model is overloaded or
+     * unavailable. Accepts a comma-separated list to try each in order. The
+     * primary model is re-tried at the start of each user turn, so a temporary
+     * outage doesn't permanently demote the session.
      */
     fallbackModel?: string;
     /**
@@ -1337,6 +1509,42 @@ export declare type Options = {
      * ```
      */
     onElicitation?: OnElicitation;
+    /**
+     * Callback for handling `request_user_dialog` control requests — blocking
+     * dialogs the CLI asks the host to render. Each `dialogKind` defines its
+     * own payload and result shape.
+     *
+     * When the host answers `{behavior: 'cancelled'}` — the required answer
+     * for an unrecognized `dialogKind` — the CLI applies the dialog's default
+     * behavior. If the callback is not provided at all, the SDK sends no
+     * answer: on a multi-client session another attached client may be the
+     * declared renderer, and an auto-reply from this one would settle the
+     * dialog out from under it. An unanswered dialog is bounded by the CLI's
+     * park deadline.
+     */
+    onUserDialog?: OnUserDialog;
+    /**
+     * Dialog kinds this consumer's `onUserDialog` can actually render
+     * (`request_user_dialog` `dialog_kind` values, e.g.
+     * 'refusal_fallback_prompt'). Declare only kinds your UI genuinely
+     * displays and answers. Providing `onUserDialog` alone does NOT opt the
+     * consumer into receiving dialogs — the CLI only emits a dialog kind
+     * declared here.
+     *
+     * The CLI fails closed on absence: a dialog kind not declared here is
+     * never emitted to this session — the flow behind it degrades to its
+     * no-dialog behavior instead (for 'refusal_fallback_prompt', the classic
+     * refusal error message ends the turn). Omitting the option entirely
+     * means no dialogs are emitted, even with `onUserDialog` wired.
+     *
+     * Requires `onUserDialog`; passing a non-empty list without the callback
+     * throws at option intake. On multi-client (remote) sessions the first
+     * attached client's declaration wins for the worker's lifetime, and the
+     * winning declaration is persisted to worker metadata so it survives
+     * worker restarts (restored as a default that the next epoch's first
+     * explicit declaration overrides).
+     */
+    supportedDialogKinds?: string[];
     /**
      * When false, disables session persistence to disk. Sessions will not be
      * saved to ~/.claude/projects/ and cannot be resumed later. Useful for
@@ -1417,8 +1625,8 @@ export declare type Options = {
      * - `'low'` — Minimal thinking, fastest responses
      * - `'medium'` — Moderate thinking
      * - `'high'` — Deep reasoning (default)
-     * - `'xhigh'` — Deeper than high (Opus 4.7 only)
-     * - `'max'` — Maximum effort (Opus 4.6/4.7, Sonnet 4.6)
+     * - `'xhigh'` — Deeper than high (Fable 5, Opus 4.7+)
+     * - `'max'` — Maximum effort (Fable 5, Opus 4.6+, Sonnet 4.6)
      *
      * @see https://docs.anthropic.com/en/docs/build-with-claude/effort
      */
@@ -1469,7 +1677,7 @@ export declare type Options = {
     mcpServers?: Record<string, McpServerConfig>;
     /**
      * Claude model to use. Defaults to the CLI default model.
-     * Examples: 'claude-sonnet-4-6', 'claude-opus-4-7'
+     * Examples: 'claude-sonnet-4-6', 'claude-opus-4-8', 'claude-fable-5'
      */
     model?: string;
     /**
@@ -1530,6 +1738,7 @@ export declare type Options = {
      * ```
      */
     plugins?: SdkPluginConfig[];
+
 
 
 
@@ -1709,8 +1918,11 @@ export declare type Options = {
      */
     stderr?: (data: string) => void;
     /**
-     * Enforce strict validation of MCP server configurations.
-     * When true, invalid configurations will cause errors instead of warnings.
+     * Only use MCP servers passed via the `mcpServers` option (and servers
+     * declared by explicitly-passed agent definitions in `agents`), ignoring
+     * all other MCP configurations: project `.mcp.json`, user settings,
+     * plugins, and on-disk agent frontmatter — including subagent frontmatter
+     * MCP. Maps to the CLI `--strict-mcp-config` flag.
      */
     strictMcpConfig?: boolean;
     /**
@@ -1799,6 +2011,9 @@ export declare type Options = {
      * spawnClaudeCodeProcess: (options) => {
      *   // Custom spawn logic for VM execution
      *   // options contains: command, args, cwd, env, signal
+     *   // `signal` is forwarded — it aborts only AFTER the SDK's
+     *   // stdin-EOF + ~2 s grace window, so passing it to spawn()/your
+     *   // VM API is safe (force-kill fires after the graceful chance).
      *   return myVMProcess; // Must satisfy SpawnedProcess interface
      * }
      * ```
@@ -2122,6 +2337,20 @@ export declare interface Query extends AsyncGenerator<SDKMessage, void> {
      */
     getContextUsage(): Promise<SDKControlGetContextUsageResponse>;
     /**
+     * Get the structured data behind the `/usage` command: session cost and
+     * token usage totals plus claude.ai plan rate-limit utilization windows
+     * (5-hour, 7-day, per-model) when available. `rate_limits_available` is
+     * false (and `rate_limits` null) for API key, Bedrock, Vertex, and other
+     * sessions where plan limits do not apply.
+     *
+     * EXPERIMENTAL: this API is unstable and may change or be removed in any
+     * release without notice — do not rely on it yet. The method name will
+     * change when the API is stabilized.
+     *
+     * @returns Structured session cost/usage data and plan rate-limit utilization
+     */
+    usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET(): Promise<SDKControlGetUsageResponse>;
+    /**
      * Read a file from the session's filesystem for the remote sidebar
      * viewer. Path is resolved against cwd and gated by the same
      * read-permission rules as the Read tool. Returns null on permission
@@ -2142,6 +2371,12 @@ export declare interface Query extends AsyncGenerator<SDKMessage, void> {
      * @returns The refreshed session components after plugin reload
      */
     reloadPlugins(): Promise<SDKControlReloadPluginsResponse>;
+    /**
+     * Reload skills from disk and return the refreshed skill list.
+     *
+     * @returns The refreshed skill commands after reload
+     */
+    reloadSkills(): Promise<SDKControlReloadSkillsResponse>;
     /**
      * Get information about the authenticated account.
      *
@@ -2465,9 +2700,35 @@ export declare type SDKAssistantMessage = {
     error?: SDKAssistantMessageError;
     uuid: UUID;
     session_id: string;
+    request_id?: string;
+    /**
+     * Wire uuids of previously-delivered messages that this message replaces (refusal-fallback supersede). The list can include tombstoned tool_result frames from the refused leg, not only assistant frames. Evict the named messages on arrival and treat this frame as their canonical replacement. Idempotent with the end-of-turn model_refusal_fallback notice, whose retracted_message_uuids remains the complete audit record for the turn.
+     */
+    supersedes?: UUID[];
+    /**
+     * Subagent type that produced this message.
+     */
+    subagent_type?: string;
+    /**
+     * Description of the subagent task that produced this message.
+     */
+    task_description?: string;
+
+
+
+
+
+
+
+
+
+
+
+
+
 };
 
-export declare type SDKAssistantMessageError = 'authentication_failed' | 'oauth_org_not_allowed' | 'billing_error' | 'rate_limit' | 'invalid_request' | 'server_error' | 'unknown' | 'max_output_tokens';
+export declare type SDKAssistantMessageError = 'authentication_failed' | 'oauth_org_not_allowed' | 'billing_error' | 'rate_limit' | 'overloaded' | 'invalid_request' | 'model_not_found' | 'server_error' | 'unknown' | 'max_output_tokens';
 
 export declare type SDKAuthStatusMessage = {
     type: 'auth_status';
@@ -2480,6 +2741,17 @@ export declare type SDKAuthStatusMessage = {
 
 export declare type SdkBeta = 'context-1m-2025-08-07';
 
+/**
+ * Fire-and-forget push of the full slash-command list after a mid-session change (e.g. skills discovered dynamically as the agent works in a subdirectory). Clients should REPLACE their cached command list with this payload: supportedCommands() is captured once at initialize and never reflects mid-session changes, so a client re-fetch would return the stale init list.
+ */
+export declare type SDKCommandsChangedMessage = {
+    type: 'system';
+    subtype: 'commands_changed';
+    commands: SlashCommand[];
+    uuid: UUID;
+    session_id: string;
+};
+
 export declare type SDKCompactBoundaryMessage = {
     type: 'system';
     subtype: 'compact_boundary';
@@ -2488,6 +2760,10 @@ export declare type SDKCompactBoundaryMessage = {
         pre_tokens: number;
         post_tokens?: number;
         duration_ms?: number;
+
+
+
+
         /**
          * Relink info for messagesToKeep. Loaders splice the preserved segment at anchor_uuid (summary for suffix-preserving, boundary for prefix-preserving partial compact) so resume includes preserved content. Unset when compaction summarizes everything (no messagesToKeep).
          */
@@ -2502,8 +2778,10 @@ export declare type SDKCompactBoundaryMessage = {
         preserved_messages?: {
             anchor_uuid: UUID;
             uuids: UUID[];
+
         };
     };
+
     uuid: UUID;
     session_id: string;
 };
@@ -2700,6 +2978,215 @@ declare type SDKControlGetSettingsRequest = {
 };
 
 /**
+ * Requests the structured /usage data: session cost/usage totals plus claude.ai plan rate-limit utilization when available. Experimental — the response shape may change.
+ */
+declare type SDKControlGetUsageRequest = {
+    subtype: 'get_usage';
+};
+
+/**
+ * Structured /usage data: session cost/usage totals plus claude.ai plan rate-limit utilization. Experimental — the shape may change.
+ */
+export declare type SDKControlGetUsageResponse = {
+    /**
+     * Cost and usage accumulated by the current session.
+     */
+    session: {
+        total_cost_usd: number;
+        total_api_duration_ms: number;
+        total_duration_ms: number;
+        total_lines_added: number;
+        total_lines_removed: number;
+        model_usage: Record<string, coreTypes.ModelUsage>;
+    };
+    /**
+     * Claude.ai subscription type ('pro', 'max', 'team', 'enterprise') or null for API key / 3P provider sessions.
+     */
+    subscription_type: string | null;
+    /**
+     * False when plan rate limits do not apply (API key, Bedrock, Vertex, or missing profile scope) — rate_limits will be null.
+     */
+    rate_limits_available: boolean;
+    /**
+     * Plan rate-limit utilization windows from the claude.ai usage endpoint, or null when unavailable.
+     */
+    rate_limits: {
+        five_hour?: {
+            /**
+             * Percentage of the window used, 0-100.
+             */
+            utilization: number | null;
+            /**
+             * ISO 8601 timestamp when the window resets.
+             */
+            resets_at: string | null;
+        } | null;
+        seven_day?: {
+            /**
+             * Percentage of the window used, 0-100.
+             */
+            utilization: number | null;
+            /**
+             * ISO 8601 timestamp when the window resets.
+             */
+            resets_at: string | null;
+        } | null;
+        seven_day_oauth_apps?: {
+            /**
+             * Percentage of the window used, 0-100.
+             */
+            utilization: number | null;
+            /**
+             * ISO 8601 timestamp when the window resets.
+             */
+            resets_at: string | null;
+        } | null;
+        seven_day_opus?: {
+            /**
+             * Percentage of the window used, 0-100.
+             */
+            utilization: number | null;
+            /**
+             * ISO 8601 timestamp when the window resets.
+             */
+            resets_at: string | null;
+        } | null;
+        seven_day_sonnet?: {
+            /**
+             * Percentage of the window used, 0-100.
+             */
+            utilization: number | null;
+            /**
+             * ISO 8601 timestamp when the window resets.
+             */
+            resets_at: string | null;
+        } | null;
+        extra_usage?: {
+            is_enabled: boolean;
+            monthly_limit: number | null;
+            used_credits: number | null;
+            utilization: number | null;
+            currency?: string | null;
+        } | null;
+    } | null;
+    /**
+     * What's contributing to limits usage, from a scan of local transcripts on this machine (the same data the /usage dialog renders): behavioral characteristics plus per-skill/agent/plugin/MCP-server attribution. Approximate, excludes other devices and claude.ai. Null for non-claude.ai-subscriber sessions (mirrors the dialog) or when the scan fails.
+     */
+    behaviors: {
+        /**
+         * Last 24 hours.
+         */
+        day: {
+            /**
+             * API requests found in local transcripts for this window.
+             */
+            request_count: number;
+            /**
+             * Distinct sessions observed in this window.
+             */
+            session_count: number;
+            /**
+             * Behavioral characteristics of local usage. Categories overlap — this is not a partition, so percentages do not sum to 100.
+             */
+            behaviors: {
+                key: 'cache_miss' | 'long_context' | 'subagent_heavy' | 'high_parallel' | 'cron';
+                /**
+                 * Share of the weighted local usage attributed to this behavior, 0-100.
+                 */
+                pct: number;
+                /**
+                 * Requests in this window exhibiting the behavior.
+                 */
+                count: number;
+            }[];
+            agents: {
+                name: string;
+                /**
+                 * Share of the weighted local usage attributed to this item, 0-100.
+                 */
+                pct: number;
+            }[];
+            skills: {
+                name: string;
+                /**
+                 * Share of the weighted local usage attributed to this item, 0-100.
+                 */
+                pct: number;
+            }[];
+            plugins: {
+                name: string;
+                /**
+                 * Share of the weighted local usage attributed to this item, 0-100.
+                 */
+                pct: number;
+            }[];
+            mcp_servers: {
+                name: string;
+                /**
+                 * Share of the weighted local usage attributed to this item, 0-100.
+                 */
+                pct: number;
+            }[];
+        };
+        /**
+         * Last 7 days.
+         */
+        week: {
+            /**
+             * API requests found in local transcripts for this window.
+             */
+            request_count: number;
+            /**
+             * Distinct sessions observed in this window.
+             */
+            session_count: number;
+            /**
+             * Behavioral characteristics of local usage. Categories overlap — this is not a partition, so percentages do not sum to 100.
+             */
+            behaviors: {
+                key: 'cache_miss' | 'long_context' | 'subagent_heavy' | 'high_parallel' | 'cron';
+                /**
+                 * Share of the weighted local usage attributed to this behavior, 0-100.
+                 */
+                pct: number;
+                /**
+                 * Requests in this window exhibiting the behavior.
+                 */
+                count: number;
+            }[];
+            agents: {
+                name: string;
+                /**
+                 * Share of the weighted local usage attributed to this item, 0-100.
+                 */
+                pct: number;
+            }[];
+            skills: {
+                name: string;
+                /**
+                 * Share of the weighted local usage attributed to this item, 0-100.
+                 */
+                pct: number;
+            }[];
+            plugins: {
+                name: string;
+                /**
+                 * Share of the weighted local usage attributed to this item, 0-100.
+                 */
+                pct: number;
+            }[];
+            mcp_servers: {
+                name: string;
+                /**
+                 * Share of the weighted local usage attributed to this item, 0-100.
+                 */
+                pct: number;
+            }[];
+        };
+    } | null;
+};
+
+/**
  * Initializes the SDK session with hooks, MCP servers, and agent configuration.
  */
 declare type SDKControlInitializeRequest = {
@@ -2714,6 +3201,10 @@ declare type SDKControlInitializeRequest = {
      */
     planModeInstructions?: string;
 
+    /**
+     * Map of tool-name aliases applied before name resolution. When the model emits a tool_use whose name is a key in this map, the tool execution path resolves the mapped name instead. Single-hop (no chains). See Options.toolAliases.
+     */
+    toolAliases?: Record<string, string>;
     /**
      * When true, omit per-user dynamic sections (working directory, auto-memory path) from the cached system prompt and re-inject them as the first user message. Lets cross-user prompt caching hit on a static system prompt prefix. Tradeoff: the model sees this context slightly later in the prompt, so steering on the working directory and memory location is marginally less authoritative. Has no effect when a custom (non-preset) system prompt is in use.
      */
@@ -2731,6 +3222,10 @@ declare type SDKControlInitializeRequest = {
     promptSuggestions?: boolean;
     agentProgressSummaries?: boolean;
     forwardSubagentText?: boolean;
+    /**
+     * Dialog kinds (request_user_dialog `dialog_kind` values) this consumer's onUserDialog can actually render. The CLI treats ABSENCE as 'cannot display' and fails closed: without the kind declared here, a dialog-gated flow degrades to its no-dialog behavior (for 'refusal_fallback_prompt', the classic refusal error) instead of parking a dialog the consumer may mishandle. First-attached-client-wins on multi-client sessions; later initializes do not change it.
+     */
+    supportedDialogKinds?: string[];
 };
 
 /**
@@ -2742,12 +3237,14 @@ export declare type SDKControlInitializeResponse = {
     output_style: string;
     available_output_styles: string[];
     models: coreTypes.ModelInfo[];
+
     /**
      * Information about the logged in user's account.
      */
     account: coreTypes.AccountInfo;
 
     fast_mode_state?: coreTypes.FastModeState;
+
 };
 
 /**
@@ -2755,6 +3252,7 @@ export declare type SDKControlInitializeResponse = {
  */
 declare type SDKControlInterruptRequest = {
     subtype: 'interrupt';
+
 };
 
 /**
@@ -2862,6 +3360,17 @@ export declare type SDKControlReadFileResponse = {
 };
 
 /**
+ * Add a directory as a working-directory root and optionally reload CLAUDE.md, skills, and plugins. The directory must resolve to a subdirectory of cwd.
+ */
+declare type SDKControlRegisterRepoRootRequest = {
+    subtype: 'register_repo_root';
+    directory: string;
+    reload_claude_md?: boolean;
+    reload_plugins?: boolean;
+    reload_skills?: boolean;
+};
+
+/**
  * Reloads plugins from disk and returns the refreshed session components.
  */
 declare type SDKControlReloadPluginsRequest = {
@@ -2884,6 +3393,20 @@ export declare type SDKControlReloadPluginsResponse = {
 };
 
 /**
+ * Reloads skills from disk and returns the refreshed skill list.
+ */
+declare type SDKControlReloadSkillsRequest = {
+    subtype: 'reload_skills';
+};
+
+/**
+ * Refreshed skill commands after reload.
+ */
+export declare type SDKControlReloadSkillsResponse = {
+    skills: coreTypes.SlashCommand[];
+};
+
+/**
  * Sets the user-facing title for the current session.
  */
 declare type SDKControlRenameSessionRequest = {
@@ -2897,7 +3420,7 @@ export declare type SDKControlRequest = {
     request: SDKControlRequestInner;
 };
 
-declare type SDKControlRequestInner = SDKControlInterruptRequest | SDKControlPermissionRequest | SDKControlInitializeRequest | SDKControlSetPermissionModeRequest | SDKControlSetModelRequest | SDKControlSetMaxThinkingTokensRequest | SDKControlRenameSessionRequest | SDKControlSetColorRequest | SDKControlMcpStatusRequest | SDKControlGetContextUsageRequest | SDKControlGetSessionCostRequest | SDKControlGetBinaryVersionRequest | SDKControlMcpCallRequest | SDKControlFileSuggestionsRequest | SDKHookCallbackRequest | SDKControlMcpMessageRequest | SDKControlRewindFilesRequest | SDKControlCancelAsyncMessageRequest | SDKControlReadFileRequest | SDKControlSeedReadStateRequest | SDKControlMcpSetServersRequest | SDKControlReloadPluginsRequest | SDKControlMcpReconnectRequest | SDKControlMcpToggleRequest | SDKControlChannelEnableRequest | SDKControlEndSessionRequest | SDKControlMcpAuthenticateRequest | SDKControlMcpClearAuthRequest | SDKControlMcpOAuthCallbackUrlRequest | SDKControlClaudeAuthenticateRequest | SDKControlClaudeOAuthCallbackRequest | SDKControlClaudeOAuthWaitForCompletionRequest | SDKControlRemoteControlRequest | SDKControlGenerateSessionTitleRequest | SDKControlSideQuestionRequest | SDKControlUltrareviewLaunchRequest | SDKControlMessageRatedRequest | SDKControlOAuthTokenRefreshRequest | SDKControlStopTaskRequest | SDKControlBackgroundTasksRequest | SDKControlApplyFlagSettingsRequest | SDKControlGetSettingsRequest | SDKControlElicitationRequest | SDKControlRequestUserDialogRequest | SDKControlSubmitFeedbackRequest;
+declare type SDKControlRequestInner = SDKControlInterruptRequest | SDKControlPermissionRequest | SDKControlInitializeRequest | SDKControlSetPermissionModeRequest | SDKControlSetModelRequest | SDKControlSetMaxThinkingTokensRequest | SDKControlRenameSessionRequest | SDKControlSetColorRequest | SDKControlMcpStatusRequest | SDKControlGetContextUsageRequest | SDKControlGetSessionCostRequest | SDKControlGetUsageRequest | SDKControlGetBinaryVersionRequest | SDKControlMcpCallRequest | SDKControlFileSuggestionsRequest | SDKHookCallbackRequest | SDKControlMcpMessageRequest | SDKControlRewindFilesRequest | SDKControlCancelAsyncMessageRequest | SDKControlReadFileRequest | SDKControlSeedReadStateRequest | SDKControlMcpSetServersRequest | SDKControlRegisterRepoRootRequest | SDKControlReloadPluginsRequest | SDKControlReloadSkillsRequest | SDKControlMcpReconnectRequest | SDKControlMcpToggleRequest | SDKControlChannelEnableRequest | SDKControlEndSessionRequest | SDKControlMcpAuthenticateRequest | SDKControlMcpClearAuthRequest | SDKControlMcpOAuthCallbackUrlRequest | SDKControlClaudeAuthenticateRequest | SDKControlClaudeOAuthCallbackRequest | SDKControlClaudeOAuthWaitForCompletionRequest | SDKControlRemoteControlRequest | SDKControlGenerateSessionTitleRequest | SDKControlSideQuestionRequest | SDKControlUltrareviewLaunchRequest | SDKControlStageFileRequest | SDKControlMessageRatedRequest | SDKControlOAuthTokenRefreshRequest | SDKControlHostAuthTokenRefreshRequest | SDKControlStopTaskRequest | SDKControlBackgroundTasksRequest | SDKControlApplyFlagSettingsRequest | SDKControlGetSettingsRequest | SDKControlElicitationRequest | SDKControlRequestUserDialogRequest | SDKControlSubmitFeedbackRequest;
 
 /**
  * Requests the SDK consumer to render a tool-driven blocking dialog and return the user choice. Used by tools that previously rendered Ink JSX via setToolJSX with an onDone callback.
@@ -2905,7 +3428,7 @@ declare type SDKControlRequestInner = SDKControlInterruptRequest | SDKControlPer
 declare type SDKControlRequestUserDialogRequest = {
     subtype: 'request_user_dialog';
     /**
-     * Identifier for the dialog the host should render. Open string union — known kinds include "it2_setup" and "computer_use_approval"; new kinds may be added without bumping the protocol.
+     * Identifier for the dialog the host should render. Open string union — new kinds may be added without bumping the protocol; hosts must answer unrecognized kinds with {behavior: "cancelled"}.
      */
     dialog_kind: string;
     /**
@@ -3117,12 +3640,12 @@ export declare type SDKMemoryRecallMessage = {
     mode: 'select' | 'synthesize';
     memories: {
         /**
-         * Absolute path to the memory file, or a synthesis sentinel of the form `<synthesis:DIR>` when mode is 'synthesize'.
+         * Absolute path to the memory file, a synthesis sentinel of the form `<synthesis:DIR>` when mode is 'synthesize', or an https URL when scope is 'organization'.
          */
         path: string;
-        scope: 'personal' | 'team';
+        scope: 'personal' | 'team' | 'organization';
         /**
-         * Synthesis paragraph. Only present when mode is 'synthesize'; always absent for 'select' (renderers lazy-load from path).
+         * The surfaced memory body. Always present for 'synthesize' mode and 'organization' scope (neither has an on-disk path to lazy-load from); absent for file-backed 'select' entries (renderers lazy-load from path).
          */
         content?: string;
     }[];
@@ -3130,7 +3653,7 @@ export declare type SDKMemoryRecallMessage = {
     session_id: string;
 };
 
-export declare type SDKMessage = SDKAssistantMessage | SDKUserMessage | SDKUserMessageReplay | SDKResultMessage | SDKSystemMessage | SDKPartialAssistantMessage | SDKCompactBoundaryMessage | SDKStatusMessage | SDKAPIRetryMessage | SDKLocalCommandOutputMessage | SDKHookStartedMessage | SDKHookProgressMessage | SDKHookResponseMessage | SDKPluginInstallMessage | SDKToolProgressMessage | SDKAuthStatusMessage | SDKTaskNotificationMessage | SDKTaskStartedMessage | SDKTaskUpdatedMessage | SDKTaskProgressMessage | SDKSessionStateChangedMessage | SDKNotificationMessage | SDKFilesPersistedEvent | SDKToolUseSummaryMessage | SDKMemoryRecallMessage | SDKRateLimitEvent | SDKElicitationCompleteMessage | SDKPermissionDeniedMessage | SDKPromptSuggestionMessage | SDKMirrorErrorMessage;
+export declare type SDKMessage = SDKAssistantMessage | SDKUserMessage | SDKUserMessageReplay | SDKResultMessage | SDKSystemMessage | SDKPartialAssistantMessage | SDKCompactBoundaryMessage | SDKStatusMessage | SDKAPIRetryMessage | SDKModelRefusalFallbackMessage | SDKLocalCommandOutputMessage | SDKHookStartedMessage | SDKHookProgressMessage | SDKHookResponseMessage | SDKPluginInstallMessage | SDKToolProgressMessage | SDKAuthStatusMessage | SDKTaskNotificationMessage | SDKTaskStartedMessage | SDKTaskUpdatedMessage | SDKTaskProgressMessage | SDKThinkingTokensMessage | SDKSessionStateChangedMessage | SDKCommandsChangedMessage | SDKNotificationMessage | SDKFilesPersistedEvent | SDKToolUseSummaryMessage | SDKMemoryRecallMessage | SDKRateLimitEvent | SDKElicitationCompleteMessage | SDKPermissionDeniedMessage | SDKPromptSuggestionMessage | SDKMirrorErrorMessage;
 
 /**
  * Provenance of a user-role message (peer session, team lead, channel). Absent or `human` means keyboard input from the user.
@@ -3144,10 +3667,13 @@ export declare type SDKMessageOrigin = {
     kind: 'peer';
     from: string;
     name?: string;
+
 } | {
     kind: 'task-notification';
 } | {
     kind: 'coordinator';
+} | {
+    kind: 'auto-continuation';
 };
 
 /**
@@ -3162,6 +3688,34 @@ export declare type SDKMirrorErrorMessage = {
         sessionId: string;
         subpath?: string;
     };
+    uuid: UUID;
+    session_id: string;
+};
+
+/**
+ * Emitted when the primary model ends the stream with stop_reason "refusal" and the turn is retried once on a fallback model with the swap made persistent for the session (direction: "retry"). "revert" and "sticky" are retained in the enum for SDK-consumer compat and are no longer emitted.
+ */
+export declare type SDKModelRefusalFallbackMessage = {
+    type: 'system';
+    subtype: 'model_refusal_fallback';
+    trigger: 'refusal';
+    direction: 'retry' | 'revert' | 'sticky';
+    original_model: string;
+    fallback_model: string;
+    request_id: string | null;
+    /**
+     * stop_details.category from the refused API response ("cyber", "bio", …). Open string — new categories ship on the wire ahead of schema updates. null when the response carried no category (normal, not an error). Absent when emitted by an older CLI.
+     */
+    api_refusal_category?: string | null;
+    /**
+     * stop_details.explanation from the refused API response. Unstable human prose — display only, never parse. null/absent under the same rules as api_refusal_category.
+     */
+    api_refusal_explanation?: string | null;
+    /**
+     * Wire uuids of the messages this fallback retracted — the refused partial as the consumer received it (one uuid per normalized SDK message; multi-block messages carry per-block derived uuids) plus any tombstoned tool_results. Emitted AFTER the retraction, so this is a resolution-time eviction signal: remove these messages from transcript state on receipt. Eviction is idempotent — unknown or already-removed uuids are a no-op. Absent when emitted by an older CLI.
+     */
+    retracted_message_uuids?: string[];
+    content: string;
     uuid: UUID;
     session_id: string;
 };
@@ -3236,6 +3790,10 @@ export declare type SdkPluginConfig = {
      * Absolute or relative path to the plugin directory
      */
     path: string;
+    /**
+     * When true, the engine loads skills/hooks/agents/commands from this plugin but does NOT read its .mcp.json or manifest mcpServers. Use when the SDK host owns this plugin's MCP connections.
+     */
+    skipMcpDiscovery?: boolean;
 };
 
 /**
@@ -3284,8 +3842,9 @@ export declare type SDKRateLimitInfo = {
     utilization?: number;
     overageStatus?: 'allowed' | 'allowed_warning' | 'rejected';
     overageResetsAt?: number;
-    overageDisabledReason?: 'overage_not_provisioned' | 'org_level_disabled' | 'org_level_disabled_until' | 'out_of_credits' | 'seat_tier_level_disabled' | 'member_level_disabled' | 'seat_tier_zero_credit_limit' | 'org_service_zero_credit_limit' | 'group_zero_credit_limit' | 'member_zero_credit_limit' | 'org_service_level_disabled' | 'no_limits_configured' | 'fetch_error' | 'unknown';
+    overageDisabledReason?: 'overage_not_provisioned' | 'org_level_disabled' | 'org_level_disabled_until' | 'out_of_credits' | 'seat_tier_level_disabled' | 'member_level_disabled' | 'seat_tier_zero_credit_limit' | 'group_zero_credit_limit' | 'member_zero_credit_limit' | 'org_service_level_disabled' | 'no_limits_configured' | 'fetch_error' | 'unknown';
     isUsingOverage?: boolean;
+    overageInUse?: boolean;
     surpassedThreshold?: number;
 };
 
@@ -3316,6 +3875,11 @@ export declare type SDKResultSuccess = {
     subtype: 'success';
     duration_ms: number;
     duration_api_ms: number;
+    ttft_ms?: number;
+    ttft_stream_ms?: number;
+    time_to_request_ms?: number;
+    time_to_request_from_spawn_ms?: number;
+    warm_spare_claimed?: boolean;
     is_error: boolean;
     api_error_status?: number | null;
     num_turns: number;
@@ -3333,30 +3897,6 @@ export declare type SDKResultSuccess = {
     uuid: UUID;
     session_id: string;
 };
-
-/**
- * V2 API - UNSTABLE
- * Session interface for multi-turn conversations.
- * Has methods, so not serializable.
- * @deprecated Use `query()` instead. The V2 session API will be removed in a future release.
- * @alpha
- */
-export declare interface SDKSession {
-    /**
-     * The session ID. Available after receiving the first message.
-     * For resumed sessions, available immediately.
-     * Throws if accessed before the session is initialized.
-     */
-    readonly sessionId: string;
-    /** Send a message to the agent */
-    send(message: string | SDKUserMessage): Promise<void>;
-    /** Stream messages from the agent */
-    stream(): AsyncGenerator<SDKMessage, void>;
-    /** Close the session */
-    close(): void;
-    /** Async disposal support (calls close if not already closed) */
-    [Symbol.asyncDispose](): Promise<void>;
-}
 
 /**
  * Session metadata returned by listSessions and getSessionInfo.
@@ -3402,85 +3942,6 @@ export declare type SDKSessionInfo = {
      * Creation time in milliseconds since epoch, extracted from the first entry's timestamp.
      */
     createdAt?: number;
-};
-
-/**
- * V2 API - UNSTABLE
- * Options for creating a session.
- * @deprecated Use `query()` instead. The V2 session API will be removed in a future release.
- * @alpha
- */
-export declare type SDKSessionOptions = {
-    /** Model to use */
-    model: string;
-    /** Path to Claude Code executable */
-    pathToClaudeCodeExecutable?: string;
-    /** Executable to use (node, bun) */
-    executable?: 'node' | 'bun';
-    /** Arguments to pass to executable */
-    executableArgs?: string[];
-    /**
-     * Environment variables to pass to the Claude Code process.
-     * Defaults to `process.env`.
-     *
-     * SDK consumers can identify their app/library to include in the User-Agent header by setting:
-     * - `CLAUDE_AGENT_SDK_CLIENT_APP` - Your app/library identifier (e.g., "my-app/1.0.0", "my-library/2.1")
-     */
-    env?: {
-        [envVar: string]: string | undefined;
-    };
-    /**
-     * Working directory for the Claude Code process. Defaults to the current
-     * process's working directory.
-     */
-    cwd?: string;
-    /**
-     * Which settings sources to load (CLAUDE.md, `.claude/settings.json`).
-     * Defaults to `[]`: no project/user settings are loaded unless specified.
-     * Note that `query()` has the opposite default and loads all sources when
-     * this is omitted.
-     */
-    settingSources?: SettingSource[];
-    /**
-     * Must be set to `true` when using `permissionMode: 'bypassPermissions'`.
-     * This is a safety measure to ensure intentional bypassing of permissions.
-     */
-    allowDangerouslySkipPermissions?: boolean;
-    /**
-     * List of tool names that are auto-allowed without prompting for permission.
-     * These tools will execute automatically without asking the user for approval.
-     */
-    allowedTools?: string[];
-    /**
-     * List of tool names that are disallowed. These tools will be removed
-     * from the model's context and cannot be used.
-     */
-    disallowedTools?: string[];
-    /**
-     * Custom permission handler for controlling tool usage. Called before each
-     * tool execution to determine if it should be allowed, denied, or prompt the user.
-     */
-    canUseTool?: CanUseTool;
-    /**
-     * Hook callbacks for responding to various events during execution.
-     */
-    hooks?: Partial<Record<HookEvent, HookCallbackMatcher[]>>;
-    /**
-     * Permission mode for the session.
-     * - `'default'` - Standard permission behavior, prompts for dangerous operations
-     * - `'acceptEdits'` - Auto-accept file edit operations
-     * - `'bypassPermissions'` - Bypass all permission checks (requires `allowDangerouslySkipPermissions`)
-     * - `'plan'` - Planning mode, no execution of tools
-     * - `'dontAsk'` - Don't prompt for permissions, deny if not pre-approved
-     */
-    permissionMode?: PermissionMode;
-    /**
-     * Custom workflow instructions for plan mode. When `permissionMode` is
-     * `'plan'`, this string replaces the default code-implementation workflow
-     * body in the plan-mode system reminder. The CLI still wraps it with the
-     * read-only enforcement preamble and the ExitPlanMode protocol footer.
-     */
-    planModeInstructions?: string;
 };
 
 /**
@@ -3556,6 +4017,7 @@ export declare type SDKSystemMessage = {
     fast_mode_state?: FastModeState;
 
 
+
     uuid: UUID;
     session_id: string;
 };
@@ -3584,6 +4046,10 @@ export declare type SDKTaskProgressMessage = {
     task_id: string;
     tool_use_id?: string;
     description: string;
+    /**
+     * Subagent type for Task tool subagents.
+     */
+    subagent_type?: string;
     usage: {
         total_tokens: number;
         tool_uses: number;
@@ -3602,6 +4068,10 @@ export declare type SDKTaskStartedMessage = {
     task_id: string;
     tool_use_id?: string;
     description: string;
+    /**
+     * Subagent type for Task tool subagents.
+     */
+    subagent_type?: string;
     task_type?: string;
     /**
      * meta.name from the workflow script (e.g. 'spec'). Only set when task_type is 'local_workflow'.
@@ -3624,13 +4094,25 @@ export declare type SDKTaskUpdatedMessage = {
      * Wire-safe subset of TaskState fields that changed. Excludes abortController, messages, result. Clients merge into their local task map.
      */
     patch: {
-        status?: 'pending' | 'running' | 'completed' | 'failed' | 'killed';
+        status?: 'pending' | 'running' | 'completed' | 'failed' | 'killed' | 'paused';
         description?: string;
         end_time?: number;
         total_paused_ms?: number;
         error?: string;
         is_backgrounded?: boolean;
     };
+    uuid: UUID;
+    session_id: string;
+};
+
+/**
+ * Live thinking-token estimate, digested from thinking_delta.estimated_tokens during the redacted-thinking phase (where the API otherwise streams only pings). estimated_tokens is the running total for the current thinking block; estimated_tokens_delta is the increment carried by this frame. Approximate progress for spinners/pills, not the authoritative billed output_tokens.
+ */
+export declare type SDKThinkingTokensMessage = {
+    type: 'system';
+    subtype: 'thinking_tokens';
+    estimated_tokens: number;
+    estimated_tokens_delta: number;
     uuid: UUID;
     session_id: string;
 };
@@ -3652,6 +4134,7 @@ export declare type SDKToolUseSummaryMessage = {
     preceding_tool_use_ids: string[];
     uuid: UUID;
     session_id: string;
+
 };
 
 export declare type SDKUserMessage = {
@@ -3663,6 +4146,7 @@ export declare type SDKUserMessage = {
     priority?: 'now' | 'next' | 'later';
     origin?: SDKMessageOrigin;
 
+
     /**
      * When false, the message is appended to the transcript without triggering an assistant turn. It will be merged into the next user message that does query.
      */
@@ -3671,8 +4155,28 @@ export declare type SDKUserMessage = {
      * ISO timestamp when the message was created on the originating process. Older emitters omit it; consumers should fall back to receive time.
      */
     timestamp?: string;
+
+
+
+
+
+
+
+
+
+
+
+
     uuid?: UUID;
     session_id?: string;
+    /**
+     * Subagent type that produced this message.
+     */
+    subagent_type?: string;
+    /**
+     * Description of the subagent task that produced this message.
+     */
+    task_description?: string;
 };
 
 export declare type SDKUserMessageReplay = {
@@ -3684,6 +4188,7 @@ export declare type SDKUserMessageReplay = {
     priority?: 'now' | 'next' | 'later';
     origin?: SDKMessageOrigin;
 
+
     /**
      * When false, the message is appended to the transcript without triggering an assistant turn. It will be merged into the next user message that does query.
      */
@@ -3692,10 +4197,38 @@ export declare type SDKUserMessageReplay = {
      * ISO timestamp when the message was created on the originating process. Older emitters omit it; consumers should fall back to receive time.
      */
     timestamp?: string;
+
+
+
+
+
+
+
+
+
+
+
+
     uuid: UUID;
     session_id: string;
     isReplay: true;
     file_attachments?: unknown[];
+};
+
+export declare type SessionCronSummary = {
+    id: string;
+    /**
+     * Cron expression, e.g. "0 9 * * 1-5".
+     */
+    schedule: string;
+    /**
+     * False for one-shot wakeups whose cron field encodes a single fire time; true for tasks that re-fire on every match.
+     */
+    recurring: boolean;
+    /**
+     * Prompt text submitted when the cron fires. Capped at 1000 chars; clipped values append an in-string "… [+N chars]" marker.
+     */
+    prompt: string;
 };
 
 export declare type SessionEndHookInput = BaseHookInput & {
@@ -3731,7 +4264,7 @@ export declare type SessionMessage = {
     uuid: string;
     session_id: string;
     message: unknown;
-    parent_tool_use_id: null;
+    parent_tool_use_id: string | null;
 };
 
 /**
@@ -3757,13 +4290,19 @@ export declare type SessionStartHookInput = BaseHookInput & {
     source: 'startup' | 'resume' | 'clear' | 'compact';
     agent_type?: string;
     model?: string;
+    session_title?: string;
 };
 
 export declare type SessionStartHookSpecificOutput = {
     hookEventName: 'SessionStart';
     additionalContext?: string;
     initialUserMessage?: string;
+    sessionTitle?: string;
     watchPaths?: string[];
+    /**
+     * Re-scan skill and command directories after SessionStart hooks complete, so skills installed by the hook are available in the same session
+     */
+    reloadSkills?: boolean;
 };
 
 /**
@@ -3929,7 +4468,7 @@ export declare interface Settings {
     /**
      * JSON Schema reference for Claude Code settings
      */
-    $schema?: 'https://json.schemastore.org/claude-code-settings.json';
+    $schema?: string;
     /**
      * Path to a script that outputs authentication values
      */
@@ -3972,6 +4511,8 @@ export declare interface Settings {
      * Whether file picker should respect .gitignore files (default: true). Note: .ignore files are always respected.
      */
     respectGitignore?: boolean;
+
+
     /**
      * Number of days to retain chat transcripts before automatic cleanup (default: 30). Minimum 1. Use a large value for long retention; use --no-session-persistence to disable transcript writes entirely.
      */
@@ -4050,9 +4591,17 @@ export declare interface Settings {
      */
     model?: string;
     /**
+     * Fallback model(s) tried in order when the primary model is overloaded or unavailable. Each element accepts a model name or alias; "default" expands to the default model. CLI --fallback-model takes precedence.
+     */
+    fallbackModel?: string[];
+    /**
      * Allowlist of models that users can select. Accepts family aliases ("opus" allows any opus version), version prefixes ("opus-4-5" allows only that version), and full model IDs. If undefined, all models are available. If empty array, only the default model is available. Typically set in managed settings by enterprise administrators.
      */
     availableModels?: string[];
+    /**
+     * When true and availableModels is a non-empty array, the Default model selection is also constrained: if the default model for the user tier is not in availableModels, Default resolves to the first allowed availableModels entry instead. Has no effect when availableModels is unset or an empty array. Typically set in managed settings by enterprise administrators.
+     */
+    enforceAvailableModels?: boolean;
     /**
      * Override mapping from Anthropic model ID (e.g. "claude-opus-4-6") to provider-specific model ID (e.g. a Bedrock inference profile ARN). Typically set in managed settings by enterprise administrators.
      */
@@ -4077,6 +4626,10 @@ export declare interface Settings {
     skillOverrides?: {
         [k: string]: 'on' | 'name-only' | 'user-invocable-only' | 'off';
     };
+    /**
+     * Disable the skills and workflows that ship with Claude Code: bundled skills and workflows are removed entirely; built-in slash commands stay typable but are hidden from the model. Plugins, .claude/skills/, and .claude/commands/ are unaffected. Equivalent to CLAUDE_CODE_DISABLE_BUNDLED_SKILLS=1.
+     */
+    disableBundledSkills?: boolean;
     /**
      * Enterprise allowlist of MCP servers that can be used. Applies to all scopes including enterprise servers from managed-mcp.json. If undefined, all servers are allowed. If empty array, no servers are allowed. Denylist takes precedence - if a server is on both lists, it is denied.
      */
@@ -4321,6 +4874,10 @@ export declare interface Settings {
          * Which ref new worktrees branch from. 'fresh' (default) branches from origin/<default-branch> for a clean tree. 'head' branches from your current local HEAD so unpushed commits and feature-branch state are present. Applies to --worktree, EnterWorktree, and agent isolation.
          */
         baseRef?: 'fresh' | 'head';
+        /**
+         * Isolation mode for background sessions in this repo. 'worktree' (default) blocks Edit/Write in the main checkout until EnterWorktree is called. 'none' lets background jobs edit the working copy directly.
+         */
+        bgIsolation?: 'worktree' | 'none';
     };
     /**
      * Disable all hooks and statusLine execution
@@ -4334,6 +4891,22 @@ export declare interface Settings {
      * Disable Remote Control (claude.ai/code, `claude remote-control`, `--remote-control`/`--rc`, auto-start, and the in-session toggle). Typically set in managed settings.
      */
     disableRemoteControl?: boolean;
+    /**
+     * Disable the Workflows feature (also via CLAUDE_CODE_DISABLE_WORKFLOWS).
+     */
+    disableWorkflows?: boolean;
+    /**
+     * Disable the Artifact tool (also via CLAUDE_CODE_DISABLE_ARTIFACT).
+     */
+    disableArtifact?: boolean;
+    /**
+     * Enable or disable the Workflows feature for this user. Unset = default by plan once the feature is available.
+     */
+    enableWorkflows?: boolean;
+    /**
+     * Enable the "ultracode" keyword trigger: including the keyword in a prompt opts that turn into the Workflow tool. Set to false to disable the trigger. Default: true.
+     */
+    workflowKeywordTriggerEnabled?: boolean;
     /**
      * Disable inline shell execution in skills and custom slash commands from user, project, or plugin sources. Commands are replaced with a placeholder instead of being run.
      */
@@ -4362,6 +4935,10 @@ export declare interface Settings {
      * When true (and set in managed settings), allowedMcpServers is only read from managed settings. deniedMcpServers still merges from all sources, so users can deny servers for themselves. Users can still add their own MCP servers, but only the admin-defined allowlist applies.
      */
     allowManagedMcpServersOnly?: boolean;
+    /**
+     * When true (and set in managed settings), claude.ai cloud MCP connectors load alongside managed-mcp.json instead of being suppressed by its exclusive-control lockdown. Default off preserves the lockdown. Read from managed settings only.
+     */
+    allowAllClaudeAiMcps?: boolean;
     /**
      * When set in managed settings, blocks non-plugin customization sources for the listed surfaces. Array form locks specific surfaces (e.g. ["skills", "hooks"]); `true` locks all four; `false` is an explicit no-op. Blocked: ~/.claude/{surface}/, .claude/{surface}/ (project), settings.json hooks, .mcp.json. NOT blocked: managed (policySettings) sources, plugin-provided customizations. Composes with strictKnownMarketplaces for end-to-end admin control — plugins gated by marketplace allowlist, everything else blocked here.
      */
@@ -4439,6 +5016,10 @@ export declare interface Settings {
                  * Directories to include via git sparse-checkout (cone mode). Use for monorepos where the marketplace lives in a subdirectory. Example: [".claude-plugin", "plugins"]. If omitted, the full repository is cloned.
                  */
                 sparsePaths?: string[];
+                /**
+                 * Skip Git LFS smudge during clone and update (sets GIT_LFS_SKIP_SMUDGE=1) so LFS pointer files stay as pointers instead of downloading their content. Use for marketplaces hosted in repos with large LFS objects.
+                 */
+                skipLfs?: boolean;
             } | {
                 source: 'git';
                 /**
@@ -4457,6 +5038,10 @@ export declare interface Settings {
                  * Directories to include via git sparse-checkout (cone mode). Use for monorepos where the marketplace lives in a subdirectory. Example: [".claude-plugin", "plugins"]. If omitted, the full repository is cloned.
                  */
                 sparsePaths?: string[];
+                /**
+                 * Skip Git LFS smudge during clone and update (sets GIT_LFS_SKIP_SMUDGE=1) so LFS pointer files stay as pointers instead of downloading their content. Use for marketplaces hosted in repos with large LFS objects.
+                 */
+                skipLfs?: boolean;
             } | {
                 source: 'npm';
                 /**
@@ -4631,6 +5216,10 @@ export declare interface Settings {
          * Directories to include via git sparse-checkout (cone mode). Use for monorepos where the marketplace lives in a subdirectory. Example: [".claude-plugin", "plugins"]. If omitted, the full repository is cloned.
          */
         sparsePaths?: string[];
+        /**
+         * Skip Git LFS smudge during clone and update (sets GIT_LFS_SKIP_SMUDGE=1) so LFS pointer files stay as pointers instead of downloading their content. Use for marketplaces hosted in repos with large LFS objects.
+         */
+        skipLfs?: boolean;
     } | {
         source: 'git';
         /**
@@ -4649,6 +5238,10 @@ export declare interface Settings {
          * Directories to include via git sparse-checkout (cone mode). Use for monorepos where the marketplace lives in a subdirectory. Example: [".claude-plugin", "plugins"]. If omitted, the full repository is cloned.
          */
         sparsePaths?: string[];
+        /**
+         * Skip Git LFS smudge during clone and update (sets GIT_LFS_SKIP_SMUDGE=1) so LFS pointer files stay as pointers instead of downloading their content. Use for marketplaces hosted in repos with large LFS objects.
+         */
+        skipLfs?: boolean;
     } | {
         source: 'npm';
         /**
@@ -4813,6 +5406,10 @@ export declare interface Settings {
          * Directories to include via git sparse-checkout (cone mode). Use for monorepos where the marketplace lives in a subdirectory. Example: [".claude-plugin", "plugins"]. If omitted, the full repository is cloned.
          */
         sparsePaths?: string[];
+        /**
+         * Skip Git LFS smudge during clone and update (sets GIT_LFS_SKIP_SMUDGE=1) so LFS pointer files stay as pointers instead of downloading their content. Use for marketplaces hosted in repos with large LFS objects.
+         */
+        skipLfs?: boolean;
     } | {
         source: 'git';
         /**
@@ -4831,6 +5428,10 @@ export declare interface Settings {
          * Directories to include via git sparse-checkout (cone mode). Use for monorepos where the marketplace lives in a subdirectory. Example: [".claude-plugin", "plugins"]. If omitted, the full repository is cloned.
          */
         sparsePaths?: string[];
+        /**
+         * Skip Git LFS smudge during clone and update (sets GIT_LFS_SKIP_SMUDGE=1) so LFS pointer files stay as pointers instead of downloading their content. Use for marketplaces hosted in repos with large LFS objects.
+         */
+        skipLfs?: boolean;
     } | {
         source: 'npm';
         /**
@@ -4963,9 +5564,14 @@ export declare interface Settings {
         };
     })[];
     /**
-     * Force a specific login method: "claudeai" for Claude Pro/Max, "console" for Console billing
+     * Marketplace names whose plugins may surface as contextual install suggestions (relevance-based tips). No marketplace-declared suggestions surface without this allowlist; the built-in first-party frontend-design tip is unaffected. Only honored when set in managed settings (policy scope); the key is ignored in user, project, and local settings. A name only takes effect when the marketplace is registered on the machine AND its registered source is also declared in managed settings, either as the extraKnownMarketplaces entry for that name or as an entry of strictKnownMarketplaces. A marketplace registered from a different source under an allowlisted name is ignored. The official marketplace is exempt from the source requirement: allowlisting its name alone suffices, since that name can only register from the official Anthropic source.
      */
-    forceLoginMethod?: 'claudeai' | 'console';
+    pluginSuggestionMarketplaces?: string[];
+    /**
+     * Force a specific login method: "claudeai" for Claude Pro/Max, "console" for Console billing, "gateway" for the Cloud gateway OIDC device flow
+     */
+    forceLoginMethod?: 'claudeai' | 'console' | 'gateway';
+
     /**
      * Controls whether the SDK parent tier (Options.managedSettings / --managed-settings) layers under this admin tier. "first-wins" (default): parent is dropped — admin tiers are the only policy source. "merge": parent's restrictive-only-filtered settings union under the admin winner. Has no effect when no admin tier exists (parent applies as the sole policy tier, still filtered restrictive-only).
      */
@@ -5129,6 +5735,10 @@ export declare interface Settings {
      */
     effortLevel?: 'low' | 'medium' | 'high' | 'xhigh';
     /**
+     * Enable ultracode for the session: xhigh effort plus standing dynamic-workflow orchestration. Session-scoped — typically provided via --settings or the apply_flag_settings control request; interactive toggles never persist it. Requires workflows to be enabled and an xhigh-capable model.
+     */
+    ultracode?: boolean;
+    /**
      * Auto-compact window size
      */
     autoCompactWindow?: number;
@@ -5183,11 +5793,11 @@ export declare interface Settings {
         };
     };
     /**
-     * Remote session configuration
+     * Cloud session configuration
      */
     remote?: {
         /**
-         * Default environment ID to use for remote sessions
+         * Default environment ID to use for cloud sessions
          */
         defaultEnvironmentId?: string;
     };
@@ -5199,6 +5809,14 @@ export declare interface Settings {
      * Minimum version to stay on - prevents downgrades when switching to stable channel
      */
     minimumVersion?: string;
+    /**
+     * Minimum Claude Code version required to start. If the running version is older, Claude Code exits at startup with instructions to update. Only enforced from managed (policy) settings.
+     */
+    requiredMinimumVersion?: string;
+    /**
+     * Maximum Claude Code version allowed to start. If the running version is newer, Claude Code exits at startup with instructions to install an approved version. Only enforced from managed (policy) settings.
+     */
+    requiredMaximumVersion?: string;
     /**
      * Custom directory for plan files, relative to project root. If not set, defaults to ~/.claude/plans/
      */
@@ -5250,13 +5868,14 @@ export declare interface Settings {
      */
     autoDreamEnabled?: boolean;
     /**
-     * Show thinking summaries in the transcript view (ctrl+o). Default: false.
+     * Request API-side thinking summaries and show them in the conversation and in the transcript view (ctrl+o). Set explicitly to override the default for your install.
      */
     showThinkingSummaries?: boolean;
     /**
      * Whether the user has accepted the bypass permissions mode dialog
      */
     skipDangerousModePermissionPrompt?: boolean;
+
     /**
      * Disable auto mode
      */
@@ -5323,9 +5942,17 @@ export declare interface Settings {
      */
     autoCompactEnabled?: boolean;
     /**
+     * When safety measures flag a message, automatically switch to a different model to keep chatting. When off, your session will pause instead.
+     */
+    switchModelsOnFlag?: boolean;
+    /**
      * Auto-scroll the conversation view to bottom (fullscreen mode only)
      */
     autoScrollEnabled?: boolean;
+    /**
+     * Ramp mouse-wheel scroll speed during fast scrolls (fullscreen mode only)
+     */
+    wheelScrollAccelerationEnabled?: boolean;
     /**
      * Snapshot files before edits so /rewind can restore them
      */
@@ -5479,7 +6106,28 @@ export declare interface SpawnOptions {
     env: {
         [envVar: string]: string | undefined;
     };
-    /** Abort signal for cancellation */
+    /**
+     * Abort signal for cancellation.
+     *
+     * This is a **forwarded** signal owned by `ProcessTransport`, not the
+     * caller's `Options.abortController.signal` directly. It aborts only
+     * after the SDK's graceful-close path has run: stdin EOF →
+     * `GRACEFUL_EXIT_TIMEOUT_MS` (~2 s) grace window. Anything you hang on
+     * it (Node `spawn({signal})` → `child.kill()`, VM/container teardown,
+     * fetch cancellation) fires **after** the child has had a chance to
+     * shut down cleanly via stdin close.
+     *
+     * Why: passing the caller's raw signal to Node `spawn()` registers
+     * Node's own abort listener that calls `child.kill()` — on Windows
+     * that's `TerminateProcess` (instant, uncatchable), and AbortSignal
+     * listeners fire synchronously in registration order, so it would race
+     * ahead of the SDK's stdin-EOF + grace path and the CLI's
+     * `gracefulShutdown` would never run.
+     *
+     * If you need the caller's *immediate* signal (no grace), it's the
+     * `AbortController` you passed to `Options.abortController` — capture
+     * it in closure.
+     */
     signal: AbortSignal;
 }
 
@@ -5508,8 +6156,24 @@ export declare type StopHookInput = BaseHookInput & {
      * Text content of the last assistant message before stopping. Avoids the need to read and parse the transcript file.
      */
     last_assistant_message?: string;
+    /**
+     * In-flight background work (running/pending + backgrounded) registered in this session. Lets hooks distinguish "session is done" from "session is paused waiting for background work to wake it". Empty array when nothing is in flight.
+     */
+    background_tasks?: BackgroundTaskSummary[];
+    /**
+     * Session-scoped cron tasks (CronCreate, ScheduleWakeup, /loop) that will wake this session later. Empty array when none are scheduled.
+     */
+    session_crons?: SessionCronSummary[];
 
 
+};
+
+/**
+ * Hook-specific output for the Stop event. additionalContext is non-error feedback delivered to the model; the conversation continues so the model can act on it.
+ */
+export declare type StopHookSpecificOutput = {
+    hookEventName: 'Stop';
+    additionalContext?: string;
 };
 
 export declare type SubagentStartHookInput = BaseHookInput & {
@@ -5533,8 +6197,24 @@ export declare type SubagentStopHookInput = BaseHookInput & {
      * Text content of the last assistant message before stopping. Avoids the need to read and parse the transcript file.
      */
     last_assistant_message?: string;
+    /**
+     * In-flight background work (running/pending + backgrounded) registered in this session. Lets hooks distinguish "session is done" from "session is paused waiting for background work to wake it". Empty array when nothing is in flight.
+     */
+    background_tasks?: BackgroundTaskSummary[];
+    /**
+     * Session-scoped cron tasks (CronCreate, ScheduleWakeup, /loop) that will wake this session later. Empty array when none are scheduled.
+     */
+    session_crons?: SessionCronSummary[];
 
 
+};
+
+/**
+ * Hook-specific output for the SubagentStop event. additionalContext is non-error feedback delivered to the subagent; the subagent continues so it can act on it.
+ */
+export declare type SubagentStopHookSpecificOutput = {
+    hookEventName: 'SubagentStop';
+    additionalContext?: string;
 };
 
 export declare type SyncHookJSONOutput = {
@@ -5550,7 +6230,7 @@ export declare type SyncHookJSONOutput = {
     reason?: string;
 
 
-    hookSpecificOutput?: PreToolUseHookSpecificOutput | UserPromptSubmitHookSpecificOutput | UserPromptExpansionHookSpecificOutput | SessionStartHookSpecificOutput | SetupHookSpecificOutput | SubagentStartHookSpecificOutput | PostToolUseHookSpecificOutput | PostToolUseFailureHookSpecificOutput | PostToolBatchHookSpecificOutput | PermissionDeniedHookSpecificOutput | NotificationHookSpecificOutput | PermissionRequestHookSpecificOutput | ElicitationHookSpecificOutput | ElicitationResultHookSpecificOutput | CwdChangedHookSpecificOutput | FileChangedHookSpecificOutput | WorktreeCreateHookSpecificOutput;
+    hookSpecificOutput?: PreToolUseHookSpecificOutput | UserPromptSubmitHookSpecificOutput | UserPromptExpansionHookSpecificOutput | SessionStartHookSpecificOutput | SetupHookSpecificOutput | SubagentStartHookSpecificOutput | PostToolUseHookSpecificOutput | PostToolUseFailureHookSpecificOutput | PostToolBatchHookSpecificOutput | StopHookSpecificOutput | SubagentStopHookSpecificOutput | PermissionDeniedHookSpecificOutput | NotificationHookSpecificOutput | PermissionRequestHookSpecificOutput | ElicitationHookSpecificOutput | ElicitationResultHookSpecificOutput | CwdChangedHookSpecificOutput | FileChangedHookSpecificOutput | WorktreeCreateHookSpecificOutput | MessageDisplayHookSpecificOutput;
 };
 
 /**
@@ -5693,35 +6373,37 @@ export declare interface Transport {
 }
 
 /**
- * V2 API - UNSTABLE
- * Create a persistent session for multi-turn conversations.
- * @deprecated Use `query()` instead. The V2 session API will be removed in a future release.
- * @alpha
+ * A `request_user_dialog` control request from the CLI, asking the SDK
+ * consumer to render a blocking dialog and return the user's choice.
+ * Each `dialogKind` defines its own payload and result shape; the protocol
+ * transports both opaquely.
  */
-export declare function unstable_v2_createSession(_options: SDKSessionOptions): SDKSession;
+export declare type UserDialogRequest = {
+    /**
+     * Identifier for the dialog the host should render. Open string union —
+     * new kinds may be added without a protocol bump, so hosts must answer
+     * unrecognized kinds with `{behavior: 'cancelled'}`.
+     */
+    dialogKind: string;
+    /** Dialog-specific data for the host renderer; shape is defined per dialogKind. */
+    payload: Record<string, unknown>;
+    /**
+     * Present when the dialog is tied to a specific tool invocation. Same
+     * value as the `toolUseID` passed to `canUseTool`.
+     */
+    toolUseID?: string;
+};
 
 /**
- * V2 API - UNSTABLE
- * One-shot convenience function for single prompts.
- * @deprecated Use `query()` instead. The V2 session API will be removed in a future release.
- * @alpha
- *
- * @example
- * ```typescript
- * const result = await unstable_v2_prompt("What files are here?", {
- *   model: 'claude-sonnet-4-6'
- * })
- * ```
+ * The host's answer to a {@link UserDialogRequest}. On `cancelled`, the CLI
+ * applies the dialog's default behavior.
  */
-export declare function unstable_v2_prompt(_message: string, _options: SDKSessionOptions): Promise<SDKResultMessage>;
-
-/**
- * V2 API - UNSTABLE
- * Resume an existing session by ID.
- * @deprecated Use `query()` instead. The V2 session API will be removed in a future release.
- * @alpha
- */
-export declare function unstable_v2_resumeSession(_sessionId: string, _options: SDKSessionOptions): SDKSession;
+export declare type UserDialogResult = {
+    behavior: 'completed';
+    result: unknown;
+} | {
+    behavior: 'cancelled';
+};
 
 export declare type UserPromptExpansionHookInput = BaseHookInput & {
     hook_event_name: 'UserPromptExpansion';

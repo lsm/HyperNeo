@@ -107,10 +107,23 @@ describe('QueryOptionsBuilder', () => {
       expect(options.allowDangerouslySkipPermissions).toBe(true);
     });
 
-    it('should include fallbackModel when configured', async () => {
+    it('should include fallbackModel and opt into refusal fallback dialogs when configured', async () => {
       mockSession.config.fallbackModel = 'haiku';
       const options = await builder.build();
       expect(options.fallbackModel).toBe('haiku');
+      expect(options.supportedDialogKinds).toEqual(['refusal_fallback_prompt']);
+      expect(
+        await options.onUserDialog?.(
+          { dialogKind: 'refusal_fallback_prompt', payload: {} },
+          { signal: new AbortController().signal }
+        )
+      ).toEqual({ behavior: 'completed', result: { continue: true } });
+      expect(
+        await options.onUserDialog?.(
+          { dialogKind: 'unknown', payload: {} },
+          { signal: new AbortController().signal }
+        )
+      ).toEqual({ behavior: 'cancelled' });
     });
 
     it('should include agents when configured', async () => {
@@ -149,10 +162,14 @@ describe('QueryOptionsBuilder', () => {
     it('should include env when configured', async () => {
       mockSession.config.env = { MY_VAR: 'value' };
       const options = await builder.build();
-      expect(options.env).toEqual({ MY_VAR: 'value' });
+      expect(options.env).toMatchObject({
+        PATH: process.env.PATH,
+        HOME: process.env.HOME,
+        MY_VAR: 'value',
+      });
     });
 
-    it('should preserve user auto-compact env overrides for native Anthropic', async () => {
+    it('should filter user auto-compact env overrides so provider cleanup owns the SDK env', async () => {
       mockSettingsManager.getGlobalSettings = mock(() => ({
         env: { CLAUDE_CODE_AUTO_COMPACT_WINDOW: '200000', KEEP_GLOBAL: 'global' },
         settingSources: ['user', 'project', 'local'],
@@ -164,11 +181,28 @@ describe('QueryOptionsBuilder', () => {
 
       const options = await builder.build();
 
-      expect(options.env).toEqual({
-        CLAUDE_CODE_AUTO_COMPACT_WINDOW: '262144',
+      expect(options.env).toMatchObject({
+        PATH: process.env.PATH,
+        HOME: process.env.HOME,
         KEEP_GLOBAL: 'global',
         KEEP_SESSION: 'session',
       });
+      expect(options.env).not.toHaveProperty('CLAUDE_CODE_AUTO_COMPACT_WINDOW');
+    });
+
+    it('should preserve env-only Anthropic auth tokens for native provider', async () => {
+      const previousAuthToken = process.env.ANTHROPIC_AUTH_TOKEN;
+      process.env.ANTHROPIC_AUTH_TOKEN = 'sk-ant-oat-env-only-token';
+      try {
+        const options = await builder.build();
+        expect(options.env?.ANTHROPIC_AUTH_TOKEN).toBe('sk-ant-oat-env-only-token');
+      } finally {
+        if (previousAuthToken === undefined) {
+          delete process.env.ANTHROPIC_AUTH_TOKEN;
+        } else {
+          process.env.ANTHROPIC_AUTH_TOKEN = previousAuthToken;
+        }
+      }
     });
 
     it('should filter provider-managed auto-compact env overrides for bridge providers', async () => {
@@ -185,7 +219,13 @@ describe('QueryOptionsBuilder', () => {
 
       const options = await builder.build();
 
-      expect(options.env).toEqual({ KEEP_GLOBAL: 'global', KEEP_SESSION: 'session' });
+      expect(options.env).toMatchObject({
+        PATH: process.env.PATH,
+        HOME: process.env.HOME,
+        KEEP_GLOBAL: 'global',
+        KEEP_SESSION: 'session',
+      });
+      expect(options.env).not.toHaveProperty('CLAUDE_CODE_AUTO_COMPACT_WINDOW');
     });
 
     it('should not override SDK auto-compaction settings for native anthropic provider', async () => {
@@ -738,6 +778,7 @@ describe('QueryOptionsBuilder', () => {
         'WebSearch',
         'ToolSearch',
         'AskUserQuestion',
+        'Agent',
         'Task',
         'TaskOutput',
         'TaskStop',
@@ -752,6 +793,7 @@ describe('QueryOptionsBuilder', () => {
           'WebSearch',
           'ToolSearch',
           'AskUserQuestion',
+          'Agent',
           'Task',
           'TaskOutput',
           'TaskStop',
@@ -1396,11 +1438,22 @@ describe('QueryOptionsBuilder', () => {
           'general'
         );
         expect(Array.isArray(result)).toBe(true);
+        expect(result).toContain('Agent');
         expect(result).toContain('Task');
         expect(result).toContain('TaskOutput');
         expect(result).toContain('TaskStop');
+        expect(result).toContain('TaskCreate');
+        expect(result).toContain('TaskGet');
+        expect(result).toContain('TaskUpdate');
+        expect(result).toContain('TaskList');
         expect(result).toContain('Read');
         expect(result).toContain('Write');
+        expect(result).toContain('REPL');
+        expect(result).toContain('Workflow');
+        expect(result).toContain('CronCreate');
+        expect(result).toContain('Artifact');
+        expect(result).toContain('Monitor');
+        expect(result).toContain('ShowOnboardingRolePicker');
       });
 
       it('expands undefined to full array for glm provider', () => {
@@ -1411,6 +1464,7 @@ describe('QueryOptionsBuilder', () => {
           'general'
         );
         expect(Array.isArray(result)).toBe(true);
+        expect(result).toContain('Agent');
         expect(result).toContain('Task');
       });
 
@@ -1421,17 +1475,17 @@ describe('QueryOptionsBuilder', () => {
           'anthropic-codex',
           'general'
         );
-        expect(result).toEqual(['Read', 'Write', 'Task', 'TaskOutput', 'TaskStop']);
+        expect(result).toEqual(['Read', 'Write', 'Agent', 'Task', 'TaskOutput', 'TaskStop']);
       });
 
       it('does not duplicate existing agent tools in explicit array for non-native providers', () => {
         const result = ensureAgentTools(
-          ['Read', 'Task', 'TaskOutput', 'TaskStop'],
+          ['Read', 'Agent', 'Task', 'TaskOutput', 'TaskStop'],
           { Coordinator: { description: 'c', prompt: 'p' } },
           'anthropic-codex',
           'general'
         );
-        expect(result).toEqual(['Read', 'Task', 'TaskOutput', 'TaskStop']);
+        expect(result).toEqual(['Read', 'Agent', 'Task', 'TaskOutput', 'TaskStop']);
       });
 
       it('preserves explicit array unchanged for Anthropic provider', () => {
@@ -1543,7 +1597,15 @@ describe('QueryOptionsBuilder', () => {
         const codexBuilder = new QueryOptionsBuilder(mockContext);
         const options = await codexBuilder.build();
 
-        expect(options.tools).toEqual(['Read', 'Write', 'Edit', 'Task', 'TaskOutput', 'TaskStop']);
+        expect(options.tools).toEqual([
+          'Read',
+          'Write',
+          'Edit',
+          'Agent',
+          'Task',
+          'TaskOutput',
+          'TaskStop',
+        ]);
       });
     });
   });

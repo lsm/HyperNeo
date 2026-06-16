@@ -14,6 +14,18 @@ const CLOSE_SIGTERM_TIMEOUT_MS = 5_000;
 
 const logger = new Logger('AcpTransport');
 
+export function buildAcpProcessEnv(env?: Record<string, string | undefined>): NodeJS.ProcessEnv {
+  const mergedEnv: NodeJS.ProcessEnv = { ...process.env };
+  for (const [key, value] of Object.entries(env ?? {})) {
+    if (value === undefined) {
+      delete mergedEnv[key];
+    } else {
+      mergedEnv[key] = value;
+    }
+  }
+  return mergedEnv;
+}
+
 export interface AcpTransportCallbacks {
   onNotification?: (notification: AcpJsonRpcNotification) => void;
   onRequest?: (request: AcpJsonRpcRequest) => void;
@@ -65,7 +77,7 @@ export class AcpTransport {
 
     const proc = spawn(command, args, {
       cwd,
-      env: { ...process.env, ...env } as NodeJS.ProcessEnv,
+      env: buildAcpProcessEnv(env),
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
       detached: process.platform !== 'win32',

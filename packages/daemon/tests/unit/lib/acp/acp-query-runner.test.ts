@@ -224,9 +224,13 @@ function createRunnerFixture(overrides: RunnerFixtureOverrides = {}) {
 
 describe('AcpQueryRunner', () => {
   let originalAcpCommand: string | undefined;
+  let originalAnthropicAuthToken: string | undefined;
+  let originalClaudeCodeOauthToken: string | undefined;
 
   beforeEach(() => {
     originalAcpCommand = process.env.NEOKAI_ACP_COMMAND;
+    originalAnthropicAuthToken = process.env.ANTHROPIC_AUTH_TOKEN;
+    originalClaudeCodeOauthToken = process.env.CLAUDE_CODE_OAUTH_TOKEN;
     process.env.NEOKAI_ACP_COMMAND = 'mock-acp --stdio';
     resetProviderRegistry();
     resetProviderFactory();
@@ -235,6 +239,10 @@ describe('AcpQueryRunner', () => {
   afterEach(() => {
     if (originalAcpCommand === undefined) delete process.env.NEOKAI_ACP_COMMAND;
     else process.env.NEOKAI_ACP_COMMAND = originalAcpCommand;
+    if (originalAnthropicAuthToken === undefined) delete process.env.ANTHROPIC_AUTH_TOKEN;
+    else process.env.ANTHROPIC_AUTH_TOKEN = originalAnthropicAuthToken;
+    if (originalClaudeCodeOauthToken === undefined) delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+    else process.env.CLAUDE_CODE_OAUTH_TOKEN = originalClaudeCodeOauthToken;
     resetProviderRegistry();
     resetProviderFactory();
   });
@@ -554,6 +562,23 @@ describe('AcpQueryRunner', () => {
     expect(onSDKMessage.mock.calls.some(([message]) => message.type === 'result')).toBe(true);
     expect(onMarkApiSuccess).toHaveBeenCalled();
     expect(stopSpy).toHaveBeenCalled();
+  });
+
+  test('preserves env-only Anthropic auth for ACP subprocesses', async () => {
+    // Auth tokens are read live from process.env at ACP env build time so that
+    // credential discovery (which runs after provider-service module load) still
+    // flows into the ACP child env. Base URL / model overrides come from the
+    // module-load startup snapshot in provider-service and are covered by the
+    // clearProviderRoutingEnvVars tests there.
+    process.env.ANTHROPIC_AUTH_TOKEN = 'sk-ant-oat-acp-token';
+    process.env.CLAUDE_CODE_OAUTH_TOKEN = 'acp-oauth-token';
+    const { runner, ctx, constructorOptions } = createRunnerFixture();
+
+    await runner.start();
+    await ctx.queryPromise;
+
+    expect(constructorOptions[0].env?.ANTHROPIC_AUTH_TOKEN).toBe('sk-ant-oat-acp-token');
+    expect(constructorOptions[0].env?.CLAUDE_CODE_OAUTH_TOKEN).toBe('acp-oauth-token');
   });
 
   test('maps ACP permission requests through AskUserQuestion approval callback', async () => {

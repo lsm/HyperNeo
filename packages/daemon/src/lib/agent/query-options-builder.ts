@@ -114,9 +114,14 @@ const FULL_BUILTIN_TOOL_LIST = [
   'Glob',
   'WebFetch',
   'WebSearch',
+  'Agent',
   'Task',
   'TaskOutput',
   'TaskStop',
+  'TaskCreate',
+  'TaskGet',
+  'TaskUpdate',
+  'TaskList',
   'NotebookEdit',
   'TodoWrite',
   'AskUserQuestion',
@@ -124,12 +129,26 @@ const FULL_BUILTIN_TOOL_LIST = [
   'ExitPlanMode',
   'Skill',
   'ToolSearch',
+  'Projects',
+  'REPL',
+  'Workflow',
+  'CronCreate',
+  'CronDelete',
+  'CronList',
+  'ScheduleWakeup',
+  'RemoteTrigger',
+  'ShowOnboardingRolePicker',
+  'Monitor',
+  'Artifact',
+  'PushNotification',
+  'EnterWorktree',
+  'ExitWorktree',
 ];
 
 /**
  * Agent invocation tools that must be present when agents are configured.
  */
-const AGENT_INVOCATION_TOOLS = ['Task', 'TaskOutput', 'TaskStop'];
+const AGENT_INVOCATION_TOOLS = ['Agent', 'Task', 'TaskOutput', 'TaskStop'];
 
 /**
  * Providers whose native SDK integration already includes agent tools in the
@@ -508,6 +527,13 @@ export class QueryOptionsBuilder {
 
       // ============ Callbacks ============
       canUseTool: this.canUseTool,
+      onUserDialog: async (request) => {
+        if (request.dialogKind === 'refusal_fallback_prompt') {
+          return { behavior: 'completed', result: { continue: true } };
+        }
+        return { behavior: 'cancelled' };
+      },
+      supportedDialogKinds: config.fallbackModel ? ['refusal_fallback_prompt'] : undefined,
     };
 
     // ============ Space Chat Session Restrictions ============
@@ -525,6 +551,7 @@ export class QueryOptionsBuilder {
         'WebSearch',
         'ToolSearch',
         'AskUserQuestion',
+        'Agent',
         'Task',
         'TaskOutput',
         'TaskStop',
@@ -999,11 +1026,26 @@ CRITICAL RULES:
       'API_TIMEOUT_MS',
       'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC',
     ]);
-    if (this.ctx.session.config.provider !== 'anthropic') {
-      providerEnvVars.add('CLAUDE_CODE_AUTO_COMPACT_WINDOW');
-    }
+    providerEnvVars.add('CLAUDE_CODE_AUTO_COMPACT_WINDOW');
 
-    const mergedEnv: Record<string, string> = {};
+    const excludedEnvVars = new Set(['PORT', 'NEOKAI_PORT']);
+    const mergedEnv: Record<string, string> = Object.fromEntries(
+      Object.entries(process.env).filter(
+        (entry): entry is [string, string] =>
+          entry[1] !== undefined && !excludedEnvVars.has(entry[0]) && !providerEnvVars.has(entry[0])
+      )
+    );
+
+    if (this.ctx.session.config.provider === 'anthropic' || !this.ctx.session.config.provider) {
+      const authToken = process.env.ANTHROPIC_AUTH_TOKEN;
+      if (authToken?.startsWith('sk-ant-oat')) {
+        mergedEnv.ANTHROPIC_AUTH_TOKEN = authToken;
+      }
+      const oauthToken = process.env.CLAUDE_CODE_OAUTH_TOKEN;
+      if (oauthToken) {
+        mergedEnv.CLAUDE_CODE_OAUTH_TOKEN = oauthToken;
+      }
+    }
 
     // 1. Add global settings env vars (filtered)
     if (globalSettings.env) {

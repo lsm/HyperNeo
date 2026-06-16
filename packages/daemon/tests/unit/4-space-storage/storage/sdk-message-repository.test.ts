@@ -222,6 +222,39 @@ describe('SDKMessageRepository', () => {
 
       expect(messages.map((message) => message.text)).toEqual(['Older text', 'Newest text']);
     });
+
+    it('filters retracted and superseded rows before collecting text messages', () => {
+      repository.saveSDKMessage('session-1', createUserMessage('Visible older', 'visible-older'));
+      db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp)
+         VALUES (?, ?, ?, ?, ?)`
+      ).run('malformed-row', 'session-1', 'assistant', '{not-json', new Date().toISOString());
+      repository.saveSDKMessage(
+        'session-1',
+        createUserMessage('Retracted newer', 'retracted-newer')
+      );
+      repository.saveSDKMessage('session-1', {
+        type: 'system',
+        subtype: 'model_refusal_fallback',
+        uuid: 'fallback-notice',
+        retracted_message_uuids: ['retracted-newer'],
+        session_id: 'session-1',
+      } as unknown as SDKMessage);
+      repository.saveSDKMessage(
+        'session-1',
+        createUserMessage('Superseded newer', 'superseded-newer')
+      );
+      repository.saveSDKMessage('session-1', {
+        type: 'assistant',
+        uuid: 'replacement-message',
+        supersedes: ['superseded-newer'],
+        message: { role: 'assistant', content: [{ type: 'text', text: 'Replacement' }] },
+      } as unknown as SDKMessage);
+
+      const messages = repository.getRenderableTextMessages('session-1', 3);
+
+      expect(messages.map((message) => message.text)).toEqual(['Visible older', 'Replacement']);
+    });
     it('caps scanned renderable rows while collecting text messages', () => {
       repository.saveSDKMessage('session-1', createUserMessage('Too old text'));
       for (let i = 0; i < 250; i++) {
@@ -282,6 +315,70 @@ describe('SDKMessageRepository', () => {
       expect(messages.length).toBe(50);
     });
 
+    it('should exclude operational system rows before applying limit', () => {
+      repository.saveSDKMessage('session-1', createUserMessage('Visible'));
+      for (const subtype of ['thinking_tokens', 'session_state_changed', 'commands_changed']) {
+        repository.saveSDKMessage('session-1', {
+          type: 'system',
+          subtype,
+          commands: [],
+          estimated_tokens: 1,
+          estimated_tokens_delta: 1,
+          state: 'idle',
+          uuid: `operational-${subtype}`,
+          session_id: 'session-1',
+        } as unknown as SDKMessage);
+      }
+
+      const { messages } = repository.getSDKMessages('session-1', 1);
+
+      expect(messages.length).toBe(1);
+      expect(messages[0]?.type).toBe('user');
+    });
+
+    it('should exclude retracted rows before applying limit', () => {
+      repository.saveSDKMessage('session-1', createUserMessage('Visible older', 'visible-older'));
+      repository.saveSDKMessage(
+        'session-1',
+        createUserMessage('Retracted newer', 'retracted-newer')
+      );
+      repository.saveSDKMessage('session-1', {
+        type: 'system',
+        subtype: 'model_refusal_fallback',
+        retracted_message_uuids: ['retracted-newer'],
+        uuid: 'fallback-notice',
+        session_id: 'session-1',
+      } as unknown as SDKMessage);
+
+      const { messages } = repository.getSDKMessages('session-1', 2);
+
+      expect(messages.map((message) => (message as { uuid?: string }).uuid).sort()).toEqual([
+        'fallback-notice',
+        'visible-older',
+      ]);
+    });
+
+    it('should exclude superseded rows before applying limit', () => {
+      repository.saveSDKMessage('session-1', createUserMessage('Visible older', 'visible-older'));
+      repository.saveSDKMessage(
+        'session-1',
+        createUserMessage('Superseded newer', 'superseded-newer')
+      );
+      repository.saveSDKMessage('session-1', {
+        type: 'assistant',
+        uuid: 'replacement-message',
+        supersedes: ['superseded-newer'],
+        message: { role: 'assistant', content: [{ type: 'text', text: 'replacement' }] },
+      } as unknown as SDKMessage);
+
+      const { messages } = repository.getSDKMessages('session-1', 2);
+
+      expect(messages.map((message) => (message as { uuid?: string }).uuid).sort()).toEqual([
+        'replacement-message',
+        'visible-older',
+      ]);
+    });
+
     it('should return messages before a timestamp (cursor pagination)', async () => {
       repository.saveSDKMessage('session-1', createUserMessage('First'));
       await new Promise((r) => setTimeout(r, 10));
@@ -340,6 +437,26 @@ describe('SDKMessageRepository', () => {
 
       // Only top-level message should be returned
       expect(messages.length).toBe(1);
+    });
+
+    it('should exclude subagent thinking token progress rows', () => {
+      const toolUseId = 'tool-use-123';
+      repository.saveSDKMessage('session-1', createAssistantMessage('Task started', toolUseId));
+      repository.saveSDKMessage('session-1', createSubagentMessage('Subagent work', toolUseId));
+      repository.saveSDKMessage('session-1', {
+        type: 'system',
+        subtype: 'thinking_tokens',
+        parent_tool_use_id: toolUseId,
+        estimated_tokens: 1,
+        estimated_tokens_delta: 1,
+        uuid: 'thinking-subagent',
+        session_id: 'session-1',
+      } as unknown as SDKMessage);
+
+      const { messages } = repository.getSDKMessages('session-1');
+
+      expect(messages.length).toBe(2);
+      expect(messages.some((message) => message.type === 'system')).toBe(false);
     });
 
     it('should inject id and timestamp into returned messages', () => {
@@ -404,6 +521,65 @@ describe('SDKMessageRepository', () => {
         }
       ).message?.content?.[0]?.text;
       expect(userContent).toBe('Sent user message');
+    });
+  });
+
+  describe('getLastSDKMessage', () => {
+    it('should skip state-only frames when finding the last terminal message', () => {
+      repository.saveSDKMessage('session-1', {
+        type: 'result',
+        subtype: 'success',
+        duration_ms: 100,
+        duration_api_ms: 50,
+        is_error: false,
+        num_turns: 1,
+        result: 'Done',
+        session_id: 'session-1',
+        total_cost_usd: 0,
+        usage: {},
+      } as unknown as SDKMessage);
+      repository.saveSDKMessage('session-1', {
+        type: 'system',
+        subtype: 'session_state_changed',
+        state: 'idle',
+        uuid: 'state-only-idle',
+        session_id: 'session-1',
+      } as unknown as SDKMessage);
+
+      const message = repository.getLastSDKMessage('session-1');
+
+      expect(message?.type).toBe('result');
+    });
+
+    it('should skip model fallback notices when finding the last terminal message', () => {
+      repository.saveSDKMessage('session-1', {
+        type: 'result',
+        subtype: 'success',
+        duration_ms: 100,
+        duration_api_ms: 50,
+        is_error: false,
+        num_turns: 1,
+        result: 'Done after fallback',
+        session_id: 'session-1',
+        total_cost_usd: 0,
+        usage: {},
+      } as unknown as SDKMessage);
+      repository.saveSDKMessage('session-1', {
+        type: 'system',
+        subtype: 'model_refusal_fallback',
+        trigger: 'refusal',
+        direction: 'retry',
+        original_model: 'opus',
+        fallback_model: 'sonnet',
+        request_id: 'req-1',
+        content: 'Retried with fallback model',
+        uuid: 'fallback-notice',
+        session_id: 'session-1',
+      } as unknown as SDKMessage);
+
+      const message = repository.getLastSDKMessage('session-1');
+
+      expect(message?.type).toBe('result');
     });
   });
 
@@ -1232,6 +1408,65 @@ describe('SDKMessageRepository', () => {
         taskNumber: 12,
         title: 'Orion title',
       });
+    });
+
+    it('removes fallback-retracted messages from search index', () => {
+      createSearchIndex();
+      repository.saveSDKMessage(
+        'session-1',
+        createUserMessage('refused searchable marker', 'refused-uuid')
+      );
+
+      expect(repository.searchMessages({ query: 'refused searchable' }).results).toHaveLength(1);
+      repository.saveSDKMessage('session-1', {
+        type: 'system',
+        subtype: 'model_refusal_fallback',
+        uuid: 'fallback-notice',
+        retracted_message_uuids: ['refused-uuid'],
+        session_id: 'session-1',
+      } as unknown as SDKMessage);
+
+      expect(repository.searchMessages({ query: 'refused searchable' }).results).toEqual([]);
+    });
+
+    it('keeps fallback-retracted messages out during search index rebuild', () => {
+      createSearchIndex();
+      repository.saveSDKMessage(
+        'session-1',
+        createUserMessage('rebuild hidden marker', 'hidden-uuid')
+      );
+      repository.saveSDKMessage('session-1', {
+        type: 'system',
+        subtype: 'model_refusal_fallback',
+        uuid: 'fallback-notice',
+        retracted_message_uuids: ['hidden-uuid'],
+        session_id: 'session-1',
+      } as unknown as SDKMessage);
+
+      const hiddenRow = db
+        .prepare(`SELECT id FROM sdk_messages WHERE json_extract(sdk_message, '$.uuid') = ?`)
+        .get('hidden-uuid') as { id: string };
+      repository.updateMessageTimestamp(hiddenRow.id);
+
+      expect(repository.searchMessages({ query: 'rebuild hidden' }).results).toEqual([]);
+    });
+
+    it('removes superseded messages from search index', () => {
+      createSearchIndex();
+      repository.saveSDKMessage(
+        'session-1',
+        createUserMessage('superseded searchable marker', 'superseded-uuid')
+      );
+
+      expect(repository.searchMessages({ query: 'superseded searchable' }).results).toHaveLength(1);
+      repository.saveSDKMessage('session-1', {
+        type: 'assistant',
+        uuid: 'replacement-uuid',
+        supersedes: ['superseded-uuid'],
+        message: { role: 'assistant', content: [{ type: 'text', text: 'replacement marker' }] },
+      } as unknown as SDKMessage);
+
+      expect(repository.searchMessages({ query: 'superseded searchable' }).results).toEqual([]);
     });
 
     it('removes deleted messages from search index', () => {

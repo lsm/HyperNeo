@@ -25,9 +25,13 @@ import type { SDKMessage, SDKUserMessage } from '@neokai/shared/sdk';
 import {
   isSDKAPIRetryMessage,
   isSDKAssistantMessage,
+  flattenSDKSlashCommands,
+  isSDKCommandsChangedMessage,
   isSDKCompactBoundary,
+  isSDKModelRefusalFallbackMessage,
   isSDKResultMessage,
   isSDKResultSuccess,
+  isSDKSessionStateChangedMessage,
   isSDKStatusMessage,
   isSDKSystemInit,
   isSDKSystemMessage,
@@ -37,6 +41,7 @@ import {
 import type { Database } from '../../storage/database';
 import { Logger } from '../logger';
 import { ErrorCategory, type ErrorManager } from '../error-manager';
+import { getProviderContextManager } from '../providers/factory';
 import type { ProcessingStateManager } from './processing-state-manager';
 import type { ContextTracker } from './context-tracker';
 import { ContextFetcher } from './context-fetcher';
@@ -77,6 +82,9 @@ export interface SDKMessageHandlerContext {
 
   // Called when the SDK init message provides the full slash commands list
   onInitSlashCommands: (commands: string[]) => Promise<void>;
+
+  // Called when the SDK pushes a mid-session slash command replacement list
+  onCommandsChanged: (commands: string[]) => Promise<void>;
 }
 
 type PersistedUserMessage = SDKMessage & { dbId: string; timestamp: number };
@@ -87,6 +95,9 @@ export class SDKMessageHandler {
   private contextFetcher: ContextFetcher;
   private circuitBreaker: ApiErrorCircuitBreaker;
   private acknowledgedPersistedUserThisTurn: boolean = false;
+  private usesSessionStateChangedTurnEnd: boolean = false;
+  private expectsSessionStateIdleAfterResult: boolean = false;
+  private lastResultWasSuccess: boolean | null = null;
 
   // Count of SDK stream events seen since the last context-usage refresh.
   // Resets whenever we call refreshContextUsage() (on 5-event tick, turn end,
@@ -556,11 +567,22 @@ export class SDKMessageHandler {
       message,
     });
 
+    if (isSDKSessionStateChangedMessage(message)) {
+      this.usesSessionStateChangedTurnEnd = true;
+      if (message.state !== 'idle') {
+        this.expectsSessionStateIdleAfterResult = true;
+      }
+    }
+
     // Terminal messages end the turn even when they represent errors.
     // Clear stale waiting_for_input state before type-specific handling so
     // interrupted AskUserQuestion turns cannot keep the composer locked.
-    if (isSDKResultMessage(message)) {
+    if (isSDKResultMessage(message) && !this.usesSessionStateChangedTurnEnd) {
       await stateManager.setIdle();
+    }
+
+    if (isSDKResultMessage(message)) {
+      this.lastResultWasSuccess = isSDKResultSuccess(message);
     }
 
     // Handle specific message types
@@ -582,6 +604,14 @@ export class SDKMessageHandler {
 
     if (isSDKStatusMessage(message)) {
       await this.handleStatusMessage(message);
+    }
+
+    if (isSDKModelRefusalFallbackMessage(message)) {
+      await this.handleModelRefusalFallbackMessage(message);
+    }
+
+    if (isSDKSessionStateChangedMessage(message)) {
+      await this.handleSessionStateChangedMessage(message);
     }
 
     if (isSDKCompactBoundary(message)) {
@@ -648,6 +678,10 @@ export class SDKMessageHandler {
     // Use isSDKSystemInit which narrows specifically to SDKSystemMessage (subtype: 'init').
     if (isSDKSystemInit(message) && message.slash_commands?.length > 0) {
       await this.ctx.onInitSlashCommands(message.slash_commands);
+    }
+
+    if (isSDKCommandsChangedMessage(message)) {
+      await this.ctx.onCommandsChanged(flattenSDKSlashCommands(message.commands));
     }
   }
 
@@ -745,17 +779,74 @@ export class SDKMessageHandler {
       sessionId: session.id,
     });
 
-    // Note: Terminal result handling resets processing state before this success-only branch runs.
-    // Title generation now handled by TitleGenerationQueue (decoupled via EventBus).
+    if (!this.usesSessionStateChangedTurnEnd && !this.expectsSessionStateIdleAfterResult) {
+      await this.finishTurn();
+    }
+  }
+
+  private async finishTurn(allowQueueReplay = true): Promise<void> {
+    const { session, internalEventBus, stateManager } = this.ctx;
+
+    // Set state back to idle
+    // Note: Title generation now handled by TitleGenerationQueue (decoupled via EventBus)
+    await stateManager.setIdle();
 
     // Auto-dispatch deferred messages in immediate mode (next-turn queue replay)
-    if (session.config.queryMode !== 'manual') {
+    if (allowQueueReplay && session.config.queryMode !== 'manual') {
       try {
         await internalEventBus.publish('query.trigger', { sessionId: session.id });
       } catch (error) {
         this.logger.warn('Failed to dispatch deferred messages on turn end:', error);
       }
     }
+  }
+
+  private async handleSessionStateChangedMessage(message: SDKMessage): Promise<void> {
+    if (!isSDKSessionStateChangedMessage(message)) return;
+
+    this.usesSessionStateChangedTurnEnd = true;
+    if (message.state === 'idle') {
+      const allowQueueReplay = this.lastResultWasSuccess !== false;
+      await this.finishTurn(allowQueueReplay);
+      this.usesSessionStateChangedTurnEnd = false;
+      this.expectsSessionStateIdleAfterResult = false;
+      this.lastResultWasSuccess = null;
+    }
+  }
+
+  private async handleModelRefusalFallbackMessage(message: SDKMessage): Promise<void> {
+    const { session, db, internalEventBus } = this.ctx;
+    if (!isSDKModelRefusalFallbackMessage(message) || message.direction !== 'retry') return;
+    const fallbackModel = this.resolveConfiguredFallbackModel(message.fallback_model);
+    if (!fallbackModel || session.config.model === fallbackModel) return;
+
+    session.config = {
+      ...session.config,
+      model: fallbackModel,
+    };
+    db.updateSession(session.id, { config: session.config });
+    await internalEventBus.publish('session.updated', {
+      sessionId: session.id,
+      source: 'model-refusal-fallback',
+      session: { config: session.config },
+    });
+  }
+
+  private resolveConfiguredFallbackModel(sdkFallbackModel: string | undefined): string | undefined {
+    const configuredFallbackModel = this.ctx.session.config.fallbackModel;
+    if (!sdkFallbackModel || !configuredFallbackModel) return sdkFallbackModel;
+
+    const fallbackSession = {
+      ...this.ctx.session,
+      config: {
+        ...this.ctx.session.config,
+        model: configuredFallbackModel,
+      },
+    };
+    const fallbackSdkModel = getProviderContextManager()
+      .createContext(fallbackSession)
+      .getSdkModelId();
+    return fallbackSdkModel === sdkFallbackModel ? configuredFallbackModel : sdkFallbackModel;
   }
 
   private async handleUserMessage(message: SDKMessage): Promise<void> {

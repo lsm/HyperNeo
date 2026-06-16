@@ -409,10 +409,20 @@ describe('SpaceAgentManager', () => {
       const result = await manager.create({
         spaceId: 'space-1',
         name: 'ToolAgent',
-        tools: ['Read', 'Write', 'Bash'],
+        tools: ['Read', 'Write', 'Bash', 'TaskCreate', 'TaskGet', 'TaskUpdate', 'TaskList'],
       });
       expect(result.ok).toBe(true);
-      if (result.ok) expect(result.value.tools).toEqual(['Read', 'Write', 'Bash']);
+      if (result.ok) {
+        expect(result.value.tools).toEqual([
+          'Read',
+          'Write',
+          'Bash',
+          'TaskCreate',
+          'TaskGet',
+          'TaskUpdate',
+          'TaskList',
+        ]);
+      }
     });
 
     it('rejects unknown tool names', async () => {

@@ -202,6 +202,7 @@ export class SDKMessageRepository {
     this.db
       .prepare(`DELETE FROM message_search_content WHERE kind = 'message' AND source_id = ?`)
       .run(row.id);
+    if (this.isMessageSuperseded(row.id, row.session_id, parsed)) return;
     if (!SEARCHABLE_MESSAGE_TYPES.has(row.message_type)) return;
     if (!this.isMessageSearchIndexEligible(row)) return;
     if (!body) return;
@@ -283,6 +284,70 @@ export class SDKMessageRepository {
     this.db
       .prepare(`DELETE FROM message_search_content WHERE kind = 'message' AND source_id = ?`)
       .run(rowId);
+  }
+
+  private getSupersededMessageUuids(message: SDKMessage): string[] {
+    const maybeSuperseding = message as SDKMessage & {
+      supersedes?: unknown;
+      retracted_message_uuids?: unknown;
+    };
+    return [
+      ...(Array.isArray(maybeSuperseding.supersedes) ? maybeSuperseding.supersedes : []),
+      ...(Array.isArray(maybeSuperseding.retracted_message_uuids)
+        ? maybeSuperseding.retracted_message_uuids
+        : []),
+    ].filter((uuid): uuid is string => typeof uuid === 'string' && uuid.length > 0);
+  }
+
+  private deleteSupersededMessageSearchRows(sessionId: string, message: SDKMessage): void {
+    if (!this.hasMessageSearchIndex()) return;
+    const supersededUuids = this.getSupersededMessageUuids(message);
+    if (supersededUuids.length === 0) return;
+
+    const placeholders = supersededUuids.map(() => '?').join(',');
+    this.db
+      .prepare(
+        `DELETE FROM message_search_content
+         WHERE kind = 'message'
+           AND session_id = ?
+           AND message_id IN (${placeholders})`
+      )
+      .run(sessionId, ...supersededUuids);
+  }
+
+  private isMessageSuperseded(rowId: string, sessionId: string, sdkMessage: SDKMessage): boolean {
+    const sdkUuid = (sdkMessage as { uuid?: unknown }).uuid;
+    if (typeof sdkUuid !== 'string' || sdkUuid.length === 0) return false;
+
+    const row = this.db
+      .prepare(
+        `SELECT 1
+         FROM sdk_messages ref,
+              json_each(ref.sdk_message, '$.retracted_message_uuids') retracted
+         WHERE ref.session_id = ?
+           AND ref.id != ?
+           AND json_valid(ref.sdk_message)
+           AND ref.message_subtype = 'model_refusal_fallback'
+           AND retracted.value = ?
+         LIMIT 1`
+      )
+      .get(sessionId, rowId, sdkUuid);
+    if (row) return true;
+
+    return Boolean(
+      this.db
+        .prepare(
+          `SELECT 1
+           FROM sdk_messages ref,
+                json_each(ref.sdk_message, '$.supersedes') superseded
+           WHERE ref.session_id = ?
+             AND ref.id != ?
+             AND json_valid(ref.sdk_message)
+             AND superseded.value = ?
+           LIMIT 1`
+        )
+        .get(sessionId, rowId, sdkUuid)
+    );
   }
 
   private isSearchableUserMessageStatus(rowId: string): boolean {
@@ -383,6 +448,7 @@ export class SDKMessageRepository {
         extractParentToolUseId(message),
         this.resolveTaskIdForSession(sessionId)
       );
+      this.deleteSupersededMessageSearchRows(sessionId, message);
       this.upsertMessageSearchRow(id);
       return true;
     } catch (error) {
@@ -437,6 +503,23 @@ export class SDKMessageRepository {
 			   AND parent_tool_use_id IS NULL
 			   AND is_renderable = 1
 			   AND message_type IN ('user', 'assistant')
+			   AND NOT EXISTS (
+			     SELECT 1
+			     FROM sdk_messages ref,
+			          json_each(ref.sdk_message, '$.retracted_message_uuids') retracted
+			     WHERE ref.session_id = sdk_messages.session_id
+			       AND json_valid(ref.sdk_message)
+			       AND ref.message_subtype = 'model_refusal_fallback'
+			       AND retracted.value = COALESCE(CASE WHEN json_valid(sdk_messages.sdk_message) THEN json_extract(sdk_messages.sdk_message, '$.uuid') END, sdk_messages.id)
+			   )
+			   AND NOT EXISTS (
+			     SELECT 1
+			     FROM sdk_messages ref,
+			          json_each(ref.sdk_message, '$.supersedes') superseded
+			     WHERE ref.session_id = sdk_messages.session_id
+			       AND json_valid(ref.sdk_message)
+			       AND superseded.value = COALESCE(CASE WHEN json_valid(sdk_messages.sdk_message) THEN json_extract(sdk_messages.sdk_message, '$.uuid') END, sdk_messages.id)
+			   )
 			   AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))
 			 ORDER BY timestamp DESC, rowid DESC
 			 LIMIT ? OFFSET ?`
@@ -498,6 +581,24 @@ export class SDKMessageRepository {
     let query = `SELECT id, sdk_message, timestamp, send_status, origin FROM sdk_messages
       WHERE session_id = ?
         AND parent_tool_use_id IS NULL
+        AND COALESCE(message_subtype, '') NOT IN ('thinking_tokens', 'session_state_changed', 'commands_changed')
+        AND NOT EXISTS (
+          SELECT 1
+          FROM sdk_messages ref,
+               json_each(ref.sdk_message, '$.retracted_message_uuids') retracted
+          WHERE ref.session_id = sdk_messages.session_id
+            AND json_valid(ref.sdk_message)
+            AND ref.message_subtype = 'model_refusal_fallback'
+            AND retracted.value = COALESCE(CASE WHEN json_valid(sdk_messages.sdk_message) THEN json_extract(sdk_messages.sdk_message, '$.uuid') END, sdk_messages.id)
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM sdk_messages ref,
+               json_each(ref.sdk_message, '$.supersedes') superseded
+          WHERE ref.session_id = sdk_messages.session_id
+            AND json_valid(ref.sdk_message)
+            AND superseded.value = COALESCE(CASE WHEN json_valid(sdk_messages.sdk_message) THEN json_extract(sdk_messages.sdk_message, '$.uuid') END, sdk_messages.id)
+        )
         AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))`;
     const params: SQLiteValue[] = [sessionId];
 
@@ -570,6 +671,24 @@ export class SDKMessageRepository {
       const subagentQuery = `SELECT id, sdk_message, timestamp FROM sdk_messages
        WHERE session_id = ?
          AND parent_tool_use_id IN (${placeholders})
+         AND COALESCE(message_subtype, '') NOT IN ('thinking_tokens', 'session_state_changed', 'commands_changed')
+         AND NOT EXISTS (
+           SELECT 1
+           FROM sdk_messages ref,
+                json_each(ref.sdk_message, '$.retracted_message_uuids') retracted
+           WHERE ref.session_id = sdk_messages.session_id
+             AND json_valid(ref.sdk_message)
+             AND ref.message_subtype = 'model_refusal_fallback'
+             AND retracted.value = COALESCE(CASE WHEN json_valid(sdk_messages.sdk_message) THEN json_extract(sdk_messages.sdk_message, '$.uuid') END, sdk_messages.id)
+         )
+         AND NOT EXISTS (
+           SELECT 1
+           FROM sdk_messages ref,
+                json_each(ref.sdk_message, '$.supersedes') superseded
+           WHERE ref.session_id = sdk_messages.session_id
+             AND json_valid(ref.sdk_message)
+             AND superseded.value = COALESCE(CASE WHEN json_valid(sdk_messages.sdk_message) THEN json_extract(sdk_messages.sdk_message, '$.uuid') END, sdk_messages.id)
+         )
          AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))
         ORDER BY timestamp ASC`;
       const subagentParams: SQLiteValue[] = [sessionId, ...Array.from(toolUseIds)];
@@ -649,6 +768,7 @@ export class SDKMessageRepository {
       `SELECT id, sdk_message, timestamp FROM sdk_messages
 	       WHERE session_id = ?
 		       AND parent_tool_use_id IS NULL
+		       AND COALESCE(message_subtype, '') NOT IN ('thinking_tokens', 'session_state_changed', 'commands_changed', 'model_refusal_fallback')
 		       AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))
 	       ORDER BY timestamp DESC, rowid DESC
 	       LIMIT 1`
