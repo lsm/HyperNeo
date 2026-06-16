@@ -48,6 +48,7 @@ import {
   type GateScriptExecutorFn,
   type GateScriptExecutorContext,
 } from '../runtime/gate-evaluator';
+import { RATE_LIMIT_MIN_BACKOFF_MS } from '../runtime/rate-limit-detector';
 import type { AgentMessageRouter } from '../runtime/agent-message-router';
 import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
@@ -1083,9 +1084,20 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
       }
 
       if (!result.success) {
+        // Rate-limited gate block: surface explicit retry guidance so the
+        // agent does not re-dispatch on the next tick. The error message is
+        // prefixed so callers parsing reason text still see a clear signal.
+        const rateLimited = result.rateLimited === true;
+        const retryAfterMs = rateLimited
+          ? (result.retryAfterMs ?? RATE_LIMIT_MIN_BACKOFF_MS)
+          : undefined;
+        const reason = result.reason ?? 'Message delivery failed.';
+        const error = rateLimited
+          ? `${reason} (rate-limited: retry after ${retryAfterMs}ms)`
+          : reason;
         return jsonResult({
           success: false,
-          error: result.reason ?? 'Message delivery failed.',
+          error,
           delivered: result.delivered.length > 0 ? result.delivered : undefined,
           failed: result.failed.length > 0 ? result.failed : undefined,
           queued: result.queued,
@@ -1093,6 +1105,8 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
           permittedTargets: result.permittedTargets,
           notFoundAgentNames: result.notFoundAgentNames,
           gateWrite: gateWriteResult ?? undefined,
+          rateLimited,
+          retryAfterMs,
         });
       }
 

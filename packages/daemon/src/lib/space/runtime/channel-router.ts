@@ -79,6 +79,13 @@ const log = new Logger('channel-router');
 export interface GateResult {
   allowed: boolean;
   reason?: string;
+  /**
+   * True when the gate closed because an upstream API returned a rate-limit
+   * response. UI / callers can use this to defer retry past `retryAfterMs`.
+   */
+  rateLimited?: boolean;
+  /** Suggested backoff in milliseconds when `rateLimited` is true. */
+  retryAfterMs?: number;
 }
 
 /**
@@ -101,12 +108,27 @@ interface WorkflowRunReopenedEvent {
  * Callers can inspect `gateIdentifier` to identify the blocking gate.
  */
 export class ChannelGateBlockedError extends Error {
+  /**
+   * True when the block was caused by a rate-limit response from an upstream
+   * API (e.g. a gate script's stderr matched GitHub rate-limit patterns).
+   * Consumers should defer retry past `retryAfterMs` rather than re-running
+   * the gate on the next dispatch.
+   */
+  public readonly rateLimited: boolean;
+  /**
+   * Suggested backoff in milliseconds when `rateLimited` is true. Defaults to
+   * the shared minimum backoff when the gate script did not provide one.
+   */
+  public readonly retryAfterMs?: number;
   constructor(
     message: string,
-    public readonly gateIdentifier: string
+    public readonly gateIdentifier: string,
+    options?: { rateLimited?: boolean; retryAfterMs?: number }
   ) {
     super(message);
     this.name = 'ChannelGateBlockedError';
+    this.rateLimited = options?.rateLimited ?? false;
+    this.retryAfterMs = options?.retryAfterMs;
   }
 }
 
@@ -558,7 +580,12 @@ export class ChannelRouter {
         workflow,
         gateSourceName
       );
-      return { allowed: gateResult.open, reason: gateResult.reason };
+      return {
+        allowed: gateResult.open,
+        reason: gateResult.reason,
+        rateLimited: gateResult.rateLimited,
+        retryAfterMs: gateResult.retryAfterMs,
+      };
     }
 
     return { allowed: true };
@@ -720,7 +747,11 @@ export class ChannelRouter {
           throw new ChannelGateBlockedError(
             gateResult.reason ??
               `Gate "${channel.gateId}" blocked delivery from "${fromRole}" to "${toTarget}"`,
-            channel.gateId
+            channel.gateId,
+            {
+              rateLimited: gateResult.rateLimited,
+              retryAfterMs: gateResult.retryAfterMs,
+            }
           );
         }
       }
@@ -770,7 +801,11 @@ export class ChannelRouter {
           throw new ChannelGateBlockedError(
             postActivationGate.reason ??
               `Gate "${channel.gateId}" closed during activation; blocking delivery from "${fromRole}" to "${toTarget}"`,
-            channel.gateId
+            channel.gateId,
+            {
+              rateLimited: postActivationGate.rateLimited,
+              retryAfterMs: postActivationGate.retryAfterMs,
+            }
           );
         }
       }

@@ -86,17 +86,7 @@ export function createPrReadyValidator(
     const deadlineMs = Date.now() + DEFAULT_TIMEOUT_MS;
     const prUrlResult = await resolvePrUrl(context, spawnImpl, deadlineMs);
     if (!prUrlResult.success) {
-      if (prUrlResult.rateLimited) {
-        return {
-          type: 'retryable_block',
-          reason: `PR is not ready for Review: GitHub rate limited — ${prUrlResult.error}`,
-          retryAfterMs: prUrlResult.retryAfterMs ?? RATE_LIMIT_MIN_BACKOFF_MS,
-        };
-      }
-      return {
-        type: 'block',
-        reason: `PR is not ready for Review: ${prUrlResult.error}`,
-      };
+      return commandFailureToHookResult(prUrlResult, 'PR is not ready for Review');
     }
     const prUrl = prUrlResult.prUrl;
     const shouldPatchPrUrl = prUrlResult.shouldPatchPrUrl;

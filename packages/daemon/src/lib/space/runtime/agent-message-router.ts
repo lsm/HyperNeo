@@ -162,6 +162,17 @@ export interface AgentMessageResult {
    * the target is a declared-but-inactive node agent.
    */
   queued?: Array<{ agentName: string; messageId: string }>;
+  /**
+   * True when the failure was caused by an upstream rate-limit (e.g. a gate
+   * script saw GitHub HTTP 403). Callers should defer retry past
+   * `retryAfterMs` rather than re-dispatching on the next tick.
+   */
+  rateLimited?: boolean;
+  /**
+   * Suggested backoff in milliseconds when `rateLimited` is true. Defaults to
+   * the shared minimum backoff when the gate script did not provide one.
+   */
+  retryAfterMs?: number;
 }
 
 import { Logger } from '../../logger';
@@ -760,6 +771,8 @@ export class AgentMessageRouter {
               delivered: [],
               failed: [],
               reason: err.message,
+              rateLimited: err.rateLimited,
+              retryAfterMs: err.retryAfterMs,
             };
           }
           if (err instanceof ActivationError) {

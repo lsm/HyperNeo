@@ -424,7 +424,9 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
    *
    * Replaces the timer regardless of any outstanding schedule. Used both for
    * the default fixed-interval cadence and for rate-limit-aware deferrals
-   * where `delayMs` is derived from `X-RateLimit-Reset`.
+   * where `delayMs` is derived from `X-RateLimit-Reset`. The delay is floored
+   * to 1 second so sub-second `pollIntervalMs` configs cannot starve the
+   * event loop — GitHub's API would reject such cadence anyway.
    */
   private scheduleNextPollAfter(delayMs: number): void {
     if (this.stopped) return;
@@ -795,6 +797,11 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       // 403 with the rate-limit headers attached.
       const rateLimit = parseRateLimitHeaders(response);
       if (rateLimit.limited || rateLimit.remaining < RATE_LIMIT_LOW_REMAINING_THRESHOLD) {
+        // Early return skips the end-of-loop cursor save, so events already
+        // published from earlier endpoints in this cycle will be re-fetched
+        // on the next poll. That is safe: ExternalEventStore dedupes by
+        // (spaceId, source, dedupeKey) via ON CONFLICT DO NOTHING, so
+        // re-publishing is a no-op.
         this.applyRateLimit(rateLimit);
         return count;
       }

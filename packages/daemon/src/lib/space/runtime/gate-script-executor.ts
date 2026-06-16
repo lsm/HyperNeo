@@ -11,7 +11,7 @@
  */
 
 import type { GateScript } from '@neokai/shared';
-import { isRateLimitError } from './rate-limit-detector';
+import { isRateLimitError, RATE_LIMIT_MIN_BACKOFF_MS } from './rate-limit-detector';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -34,6 +34,16 @@ export interface GateScriptResult {
    * and does not change the pass/fail verdict on its own.
    */
   rateLimited?: boolean;
+  /**
+   * Suggested backoff in milliseconds when `rateLimited` is true.
+   *
+   * Bash gate scripts cannot read the `X-RateLimit-Reset` header directly, so
+   * this defaults to `RATE_LIMIT_MIN_BACKOFF_MS` whenever rate-limiting is
+   * detected. Consumers may override with a more precise value when they have
+   * reset-window context (e.g. the pr-ready validator probes
+   * `gh api /rate_limit`).
+   */
+  retryAfterMs?: number;
 }
 
 /** Context provided to the script executor. */
@@ -463,6 +473,9 @@ export async function executeGateScript(
         ? `GitHub rate limit: ${stderrText}`
         : stderrText || `Script exited with code ${exitCode.code}`,
       rateLimited,
+      // Bash scripts cannot read X-RateLimit-Reset directly; fall back to the
+      // minimum backoff. Consumers with reset-window context can override.
+      retryAfterMs: rateLimited ? RATE_LIMIT_MIN_BACKOFF_MS : undefined,
     };
   }
 
