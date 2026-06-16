@@ -3,7 +3,11 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
-import { KimiProvider } from '../../../../src/lib/providers/kimi-provider';
+import {
+  KimiProvider,
+  KIMI_REGION_ENDPOINTS,
+  resolveKimiRegion,
+} from '../../../../src/lib/providers/kimi-provider';
 import type {
   AnthropicMessagesBridgeServer,
   AnthropicMessagesBridgeConfig,
@@ -294,6 +298,161 @@ describe('KimiProvider', () => {
       expect(() => provider.buildSdkConfig('kimi-for-coding')).toThrow(
         'Kimi API key not configured'
       );
+    });
+  });
+
+  describe('region resolution', () => {
+    beforeEach(() => {
+      provider = new KimiProvider();
+    });
+
+    it('exposes china + global endpoints in KIMI_REGION_ENDPOINTS', () => {
+      expect(KIMI_REGION_ENDPOINTS.china.anthropicBaseUrl).toBe('https://api.kimi.com/coding');
+      expect(KIMI_REGION_ENDPOINTS.china.openAiBaseUrl).toBe('https://api.kimi.com/coding/v1');
+      expect(KIMI_REGION_ENDPOINTS.global.anthropicBaseUrl).toBe(
+        'https://api.moonshot.ai/anthropic'
+      );
+      expect(KIMI_REGION_ENDPOINTS.global.openAiBaseUrl).toBe('https://api.moonshot.ai/v1');
+    });
+
+    it('resolveKimiRegion returns the region for valid inputs', () => {
+      expect(resolveKimiRegion('china')).toBe('china');
+      expect(resolveKimiRegion('global')).toBe('global');
+    });
+
+    it('resolveKimiRegion defaults to china for missing/invalid region', () => {
+      expect(resolveKimiRegion(undefined)).toBe('china');
+      expect(resolveKimiRegion(null)).toBe('china');
+      expect(resolveKimiRegion('')).toBe('china');
+      expect(resolveKimiRegion('us')).toBe('china');
+      expect(resolveKimiRegion(42)).toBe('china');
+    });
+
+    it('static getBaseUrlForRegion returns the correct Anthropic-compatible URL', () => {
+      expect(KimiProvider.getBaseUrlForRegion('china')).toBe('https://api.kimi.com/coding');
+      expect(KimiProvider.getBaseUrlForRegion('global')).toBe('https://api.moonshot.ai/anthropic');
+      // Default argument falls back to china.
+      expect(KimiProvider.getBaseUrlForRegion()).toBe('https://api.kimi.com/coding');
+    });
+
+    it('static getOpenAiBaseUrlForRegion returns the correct OpenAI-compatible URL', () => {
+      expect(KimiProvider.getOpenAiBaseUrlForRegion('china')).toBe(
+        'https://api.kimi.com/coding/v1'
+      );
+      expect(KimiProvider.getOpenAiBaseUrlForRegion('global')).toBe('https://api.moonshot.ai/v1');
+    });
+
+    it('default provider region is china when unset', () => {
+      expect(provider.getDefaultRegion()).toBe('china');
+    });
+
+    it('setDefaultRegion updates the provider-level default region', () => {
+      provider.setDefaultRegion('global');
+      expect(provider.getDefaultRegion()).toBe('global');
+    });
+
+    it('BASE_URL static stays on the China endpoint for backward compatibility', () => {
+      // Legacy callers that still reference KimiProvider.BASE_URL must keep
+      // resolving to api.kimi.com — existing credentials without a region
+      // continue to work unchanged.
+      expect(KimiProvider.BASE_URL).toBe('https://api.kimi.com/coding');
+      expect(KimiProvider.OPENAI_BASE_URL).toBe('https://api.kimi.com/coding/v1');
+    });
+  });
+
+  describe('buildSdkConfig region routing', () => {
+    it('routes to the China endpoint when no region is configured', () => {
+      const { factory, calls } = createFakeBridgeFactory();
+      process.env.KIMI_API_KEY = 'test-key';
+      provider = new KimiProvider(process.env, factory);
+
+      provider.buildSdkConfig('kimi-for-coding');
+
+      expect(calls).toHaveLength(1);
+      expect(calls[0].baseUrl).toBe('https://api.kimi.com/coding');
+    });
+
+    it('routes to the Global endpoint when sessionConfig.region is global', () => {
+      const { factory, calls } = createFakeBridgeFactory();
+      provider = new KimiProvider(process.env, factory);
+
+      provider.buildSdkConfig('kimi-for-coding', {
+        apiKey: 'key',
+        region: 'global',
+      });
+
+      expect(calls).toHaveLength(1);
+      expect(calls[0].baseUrl).toBe('https://api.moonshot.ai/anthropic');
+    });
+
+    it('routes to the China endpoint when sessionConfig.region is china', () => {
+      const { factory, calls } = createFakeBridgeFactory();
+      provider = new KimiProvider(process.env, factory);
+
+      provider.buildSdkConfig('kimi-for-coding', {
+        apiKey: 'key',
+        region: 'china',
+      });
+
+      expect(calls[0].baseUrl).toBe('https://api.kimi.com/coding');
+    });
+
+    it('falls back to provider-level default region when sessionConfig omits region', () => {
+      const { factory, calls } = createFakeBridgeFactory();
+      provider = new KimiProvider(process.env, factory);
+      // Simulate region loaded from ProviderRecord configJson by provider-sync.
+      provider.setDefaultRegion('global');
+
+      provider.buildSdkConfig('kimi-for-coding', { apiKey: 'key' });
+
+      expect(calls[0].baseUrl).toBe('https://api.moonshot.ai/anthropic');
+    });
+
+    it('per-session region overrides provider-level default region', () => {
+      const { factory, calls } = createFakeBridgeFactory();
+      provider = new KimiProvider(process.env, factory);
+      provider.setDefaultRegion('global');
+
+      provider.buildSdkConfig('kimi-for-coding', { apiKey: 'key', region: 'china' });
+
+      expect(calls[0].baseUrl).toBe('https://api.kimi.com/coding');
+    });
+
+    it('explicit sessionConfig.baseUrl overrides region selection', () => {
+      const { factory, calls } = createFakeBridgeFactory();
+      provider = new KimiProvider(process.env, factory);
+      provider.setDefaultRegion('global');
+
+      provider.buildSdkConfig('kimi-for-coding', {
+        apiKey: 'key',
+        baseUrl: 'https://custom.example.com/anthropic',
+      });
+
+      expect(calls[0].baseUrl).toBe('https://custom.example.com/anthropic');
+    });
+
+    it('invalid sessionConfig.region falls back to china (not global)', () => {
+      const { factory, calls } = createFakeBridgeFactory();
+      provider = new KimiProvider(process.env, factory);
+
+      provider.buildSdkConfig('kimi-for-coding', {
+        apiKey: 'key',
+        region: 'us' as unknown,
+      });
+
+      expect(calls[0].baseUrl).toBe('https://api.kimi.com/coding');
+    });
+
+    it('creates separate bridges for different regions', () => {
+      const { factory, calls } = createFakeBridgeFactory();
+      provider = new KimiProvider(process.env, factory);
+
+      provider.buildSdkConfig('kimi-for-coding', { apiKey: 'key', region: 'china' });
+      provider.buildSdkConfig('kimi-for-coding', { apiKey: 'key', region: 'global' });
+
+      expect(calls).toHaveLength(2);
+      expect(calls[0].baseUrl).toBe('https://api.kimi.com/coding');
+      expect(calls[1].baseUrl).toBe('https://api.moonshot.ai/anthropic');
     });
   });
 

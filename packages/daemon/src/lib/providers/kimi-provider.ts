@@ -1,11 +1,20 @@
 /**
  * Kimi Provider - Moonshot AI（月之暗面）
  *
- * Kimi Code exposes a native Anthropic-compatible API at
- * https://api.kimi.com/coding/ — designed for coding agents.
+ * Kimi Code exposes a native Anthropic-compatible API in two regions:
+ *
+ * - China (`api.kimi.com`): `https://api.kimi.com/coding/` — the original
+ *   domestic endpoint. Default for backward compatibility.
+ * - Global (`api.moonshot.ai`): `https://api.moonshot.ai/anthropic` — for
+ *   users outside China.
  *
  * The API uses a single fixed model ID `kimi-for-coding` that automatically
  * maps to the latest Kimi flagship model.
+ *
+ * Region is read from `sessionConfig.region` (string `'china' | 'global'`)
+ * falling back to `'china'` for backward compatibility with existing
+ * credentials that predate region support. An explicit `sessionConfig.baseUrl`
+ * always wins (used by tests and advanced overrides).
  *
  * ## Bridge architecture
  *
@@ -48,6 +57,51 @@ function keyFingerprint(value: string): string {
   return crypto.createHash('sha256').update(value).digest('hex').slice(0, 16);
 }
 
+/**
+ * Region identifiers supported by the Kimi provider.
+ *
+ * - `china`  — domestic endpoint at `api.kimi.com`.
+ * - `global` — international endpoint at `api.moonshot.ai`.
+ */
+export type KimiRegion = 'china' | 'global';
+
+const VALID_REGIONS: ReadonlySet<KimiRegion> = new Set<KimiRegion>(['china', 'global']);
+
+/**
+ * Per-region endpoint table for the Kimi provider.
+ *
+ * Anthropic-compatible base URLs are used by the bridge (which forwards
+ * `/v1/messages` traffic to the upstream Anthropic-compatible API). The
+ * OpenAI-compatible endpoints are exposed for direct callers that prefer the
+ * OpenAI schema (not currently used by the bridge).
+ */
+export const KIMI_REGION_ENDPOINTS: Record<
+  KimiRegion,
+  { anthropicBaseUrl: string; openAiBaseUrl: string }
+> = {
+  china: {
+    anthropicBaseUrl: 'https://api.kimi.com/coding',
+    openAiBaseUrl: 'https://api.kimi.com/coding/v1',
+  },
+  global: {
+    anthropicBaseUrl: 'https://api.moonshot.ai/anthropic',
+    openAiBaseUrl: 'https://api.moonshot.ai/v1',
+  },
+};
+
+/**
+ * Coerce an unknown region value into a valid `KimiRegion`, defaulting to
+ * `'china'` for anything missing or unrecognised. This is the single source
+ * of truth for backward compatibility — existing credentials without a region
+ * continue to route to the China endpoint.
+ */
+export function resolveKimiRegion(region: unknown): KimiRegion {
+  if (typeof region === 'string' && VALID_REGIONS.has(region as KimiRegion)) {
+    return region as KimiRegion;
+  }
+  return 'china';
+}
+
 export class KimiProvider implements Provider {
   readonly id = 'kimi';
   readonly displayName = 'Kimi (Moonshot AI)';
@@ -61,10 +115,16 @@ export class KimiProvider implements Provider {
     vision: false,
   };
 
-  /** Anthropic-compatible base URL for Kimi Code. */
-  static readonly BASE_URL = 'https://api.kimi.com/coding';
-  /** OpenAI-compatible base URL for Kimi Code. */
-  static readonly OPENAI_BASE_URL = 'https://api.kimi.com/coding/v1';
+  /**
+   * Anthropic-compatible base URL for the default (China) region. Retained for
+   * backward compatibility — new code should use `getBaseUrlForRegion()`.
+   */
+  static readonly BASE_URL = KIMI_REGION_ENDPOINTS.china.anthropicBaseUrl;
+  /**
+   * OpenAI-compatible base URL for the default (China) region. Retained for
+   * backward compatibility — new code should use `getOpenAiBaseUrlForRegion()`.
+   */
+  static readonly OPENAI_BASE_URL = KIMI_REGION_ENDPOINTS.china.openAiBaseUrl;
   /**
    * Fixed model ID that automatically maps to the latest Kimi flagship model.
    * See https://www.kimi.com/code/docs/ — "统一使用模型 ID kimi-for-coding"
@@ -107,6 +167,13 @@ export class KimiProvider implements Provider {
 
   private readonly env: NodeJS.ProcessEnv;
   private credentials: ProviderCredentials | null = null;
+  /**
+   * Provider-level default region, populated from the providers table
+   * `configJson` blob by `syncProviderToRegistry`. Falls back to `'china'`
+   * when unset (e.g., env-var-only setups, legacy credentials, or unit tests
+   * that construct the provider directly).
+   */
+  private defaultRegion: KimiRegion = 'china';
 
   /**
    * Bridge servers keyed by `{baseUrl}::{apiKey}` so that sessions with
@@ -129,6 +196,39 @@ export class KimiProvider implements Provider {
 
   getCredentials(): ProviderCredentials | null {
     return this.credentials;
+  }
+
+  /**
+   * Set the provider-level default region from the providers table
+   * `configJson` blob. Called by `syncProviderToRegistry` after reading the
+   * persisted record. Per-session `sessionConfig.region` overrides still win.
+   */
+  setDefaultRegion(region: KimiRegion): void {
+    this.defaultRegion = region;
+  }
+
+  /**
+   * Get the provider-level default region (set from the providers table).
+   * Mainly useful for diagnostics and tests.
+   */
+  getDefaultRegion(): KimiRegion {
+    return this.defaultRegion;
+  }
+
+  /**
+   * Resolve the Anthropic-compatible base URL for the given region, ignoring
+   * any per-session `baseUrl` override. Returns the China endpoint by default.
+   */
+  static getBaseUrlForRegion(region: KimiRegion = 'china'): string {
+    return KIMI_REGION_ENDPOINTS[region].anthropicBaseUrl;
+  }
+
+  /**
+   * Resolve the OpenAI-compatible base URL for the given region. Returns the
+   * China endpoint by default.
+   */
+  static getOpenAiBaseUrlForRegion(region: KimiRegion = 'china'): string {
+    return KIMI_REGION_ENDPOINTS[region].openAiBaseUrl;
   }
 
   isAvailable(): boolean {
@@ -162,7 +262,13 @@ export class KimiProvider implements Provider {
       throw new Error('Kimi API key not configured. Set KIMI_API_KEY or MOONSHOT_API_KEY.');
     }
 
-    const baseUrl = normalizeBaseUrl(sessionConfig?.baseUrl || KimiProvider.BASE_URL);
+    // Resolve base URL: explicit sessionConfig.baseUrl wins, otherwise pick the
+    // region endpoint. Per-session region overrides the provider-level default
+    // region (set from the providers table configJson); both default to 'china'
+    // for backward compatibility with pre-region credentials.
+    const region = resolveKimiRegion(sessionConfig?.region ?? this.defaultRegion);
+    const regionBaseUrl = KimiProvider.getBaseUrlForRegion(region);
+    const baseUrl = normalizeBaseUrl(sessionConfig?.baseUrl || regionBaseUrl);
     // All Kimi Code requests use the fixed model ID
     const routingModelId = KimiProvider.DEFAULT_MODEL;
 
