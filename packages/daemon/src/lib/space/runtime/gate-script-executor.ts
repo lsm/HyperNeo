@@ -11,6 +11,7 @@
  */
 
 import type { GateScript } from '@neokai/shared';
+import { isRateLimitError } from './rate-limit-detector';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -24,6 +25,15 @@ export interface GateScriptResult {
   data: Record<string, unknown>;
   /** Human-readable error string on failure (stderr or timeout message). */
   error?: string;
+  /**
+   * True when the script's stderr matched a GitHub rate-limit signature.
+   *
+   * Surfaced so callers (gate evaluator, workflow engine) can defer re-evaluation
+   * instead of re-running the failing script on every gate write. The script
+   * still counts as a failure (`success: false`); this flag is informational
+   * and does not change the pass/fail verdict on its own.
+   */
+  rateLimited?: boolean;
 }
 
 /** Context provided to the script executor. */
@@ -445,10 +455,14 @@ export async function executeGateScript(
 
   if (exitCode.code !== 0) {
     const stderrText = stderrResult.text.trim();
+    const rateLimited = isRateLimitError(stderrText);
     return {
       success: false,
       data: {},
-      error: stderrText || `Script exited with code ${exitCode.code}`,
+      error: rateLimited
+        ? `GitHub rate limit: ${stderrText}`
+        : stderrText || `Script exited with code ${exitCode.code}`,
+      rateLimited,
     };
   }
 

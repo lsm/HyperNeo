@@ -338,4 +338,110 @@ describe('pr-ready validator', () => {
       pr_url: 'https://github.com/acme/corp/pull/99',
     });
   });
+
+  test('rate-limited gh pr view → retryable_block with backoff from /rate_limit', async () => {
+    const resetEpochSeconds = Math.floor((Date.now() + 90_000) / 1000);
+    const spawn = makeMockSpawn([
+      {
+        // First call: gh pr view exits non-zero with rate-limit stderr
+        stdout: '',
+        stderr:
+          'HTTP 403: rate limit exceeded (https://docs.github.com/rest/overview/resources-in-the-rest-api#rate-limiting)',
+        exitCode: 1,
+      },
+      {
+        // Follow-up probe: gh api /rate_limit succeeds and reports reset
+        stdout: JSON.stringify({ resources: { core: { reset: resetEpochSeconds } } }),
+        stderr: '',
+        exitCode: 0,
+      },
+    ]);
+    const validator = createPrReadyValidator(spawn);
+    const result = await validator(makeContext('https://github.com/acme/corp/pull/42'));
+    expect(result.type).toBe('retryable_block');
+    expect((result as { reason: string }).reason).toContain('rate limited');
+    expect((result as { retryAfterMs?: number }).retryAfterMs).toBeGreaterThanOrEqual(60_000);
+  });
+
+  test('rate-limited gh pr view with failing probe → retryable_block with default backoff', async () => {
+    const spawn = makeMockSpawn([
+      {
+        stdout: '',
+        stderr: 'HTTP 429: Too Many Requests',
+        exitCode: 1,
+      },
+      {
+        // Probe fails too — should fall back to default backoff
+        stdout: '',
+        stderr: 'network unreachable',
+        exitCode: 1,
+      },
+    ]);
+    const validator = createPrReadyValidator(spawn);
+    const result = await validator(makeContext('https://github.com/acme/corp/pull/42'));
+    expect(result.type).toBe('retryable_block');
+    expect((result as { reason: string }).reason).toContain('rate limited');
+    expect((result as { retryAfterMs?: number }).retryAfterMs).toBe(60_000);
+  });
+
+  test('rate-limited current-branch PR discovery → retryable_block', async () => {
+    const resetEpochSeconds = Math.floor((Date.now() + 75_000) / 1000);
+    const spawn = makeMockSpawn([
+      {
+        // gh pr view --json url for current branch — rate-limited
+        stdout: '',
+        stderr: 'HTTP 403: rate limit exceeded',
+        exitCode: 1,
+      },
+      {
+        // /rate_limit probe
+        stdout: JSON.stringify({ resources: { core: { reset: resetEpochSeconds } } }),
+        stderr: '',
+        exitCode: 0,
+      },
+    ]);
+    const validator = createPrReadyValidator(spawn);
+    const result = await validator(makeContext());
+    expect(result.type).toBe('retryable_block');
+    expect((result as { reason: string }).reason).toContain('rate limited');
+    expect((result as { retryAfterMs?: number }).retryAfterMs).toBeGreaterThanOrEqual(60_000);
+  });
+
+  test('rate-limited review-threads query → retryable_block', async () => {
+    const resetEpochSeconds = Math.floor((Date.now() + 120_000) / 1000);
+    const spawn = makeMockSpawn([
+      { stdout: JSON.stringify(VALID_PR_VIEW), stderr: '', exitCode: 0 },
+      {
+        // reviewThreads query — rate-limited
+        stdout: '',
+        stderr: 'HTTP 403: rate limit exceeded',
+        exitCode: 1,
+      },
+      {
+        // /rate_limit probe
+        stdout: JSON.stringify({ resources: { core: { reset: resetEpochSeconds } } }),
+        stderr: '',
+        exitCode: 0,
+      },
+    ]);
+    const validator = createPrReadyValidator(spawn);
+    const result = await validator(makeContext('https://github.com/acme/corp/pull/42'));
+    expect(result.type).toBe('retryable_block');
+    expect((result as { reason: string }).reason).toContain('rate limited');
+    expect((result as { retryAfterMs?: number }).retryAfterMs).toBeGreaterThanOrEqual(60_000);
+  });
+
+  test('non-rate-limit gh error still hard-blocks (no retryable promotion)', async () => {
+    const spawn = makeMockSpawn([
+      {
+        stdout: '',
+        stderr: 'HTTP 404: Not Found',
+        exitCode: 1,
+      },
+    ]);
+    const validator = createPrReadyValidator(spawn);
+    const result = await validator(makeContext('https://github.com/acme/corp/pull/42'));
+    expect(result.type).toBe('block');
+    expect((result as { reason: string }).reason).toContain('Not Found');
+  });
 });

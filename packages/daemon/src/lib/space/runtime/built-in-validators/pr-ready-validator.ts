@@ -9,6 +9,11 @@
 import type { WorkflowHookResult } from '@neokai/shared';
 import type { HookExecutorContext } from '../hook-executor';
 import { collectWithMaxBuffer, parseJsonStdout } from '../gate-script-executor';
+import {
+  computeRateLimitRetryMs,
+  isRateLimitError,
+  RATE_LIMIT_MIN_BACKOFF_MS,
+} from '../rate-limit-detector';
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_BUFFER_BYTES = 1_048_576;
@@ -81,6 +86,13 @@ export function createPrReadyValidator(
     const deadlineMs = Date.now() + DEFAULT_TIMEOUT_MS;
     const prUrlResult = await resolvePrUrl(context, spawnImpl, deadlineMs);
     if (!prUrlResult.success) {
+      if (prUrlResult.rateLimited) {
+        return {
+          type: 'retryable_block',
+          reason: `PR is not ready for Review: GitHub rate limited — ${prUrlResult.error}`,
+          retryAfterMs: prUrlResult.retryAfterMs ?? RATE_LIMIT_MIN_BACKOFF_MS,
+        };
+      }
       return {
         type: 'block',
         reason: `PR is not ready for Review: ${prUrlResult.error}`,
@@ -105,10 +117,7 @@ export function createPrReadyValidator(
       spawnImpl
     );
     if (!prView.success) {
-      return {
-        type: 'block',
-        reason: `PR is not ready for Review: ${prView.error}`,
-      };
+      return commandFailureToHookResult(prView, 'PR is not ready for Review');
     }
 
     const prJson = prView.data;
@@ -162,10 +171,7 @@ export function createPrReadyValidator(
       deadlineMs
     );
     if (!threadsResult.success) {
-      return {
-        type: 'block',
-        reason: `PR is not ready for Review: ${threadsResult.error}`,
-      };
+      return commandFailureToHookResult(threadsResult, 'PR is not ready for Review');
     }
 
     const unresolvedUrls = threadsResult.unresolvedUrls;
@@ -198,7 +204,8 @@ async function resolvePrUrl(
   spawnImpl: typeof Bun.spawn,
   deadlineMs: number
 ): Promise<
-  { success: true; prUrl: string; shouldPatchPrUrl: boolean } | { success: false; error: string }
+  | { success: true; prUrl: string; shouldPatchPrUrl: boolean }
+  | ({ success: false; error: string } & Pick<CommandFailure, 'rateLimited' | 'retryAfterMs'>)
 > {
   const boundedPrUrl = extractPrUrlFromParams(context.params);
   if (boundedPrUrl) return { success: true, prUrl: boundedPrUrl, shouldPatchPrUrl: false };
@@ -219,6 +226,8 @@ async function resolvePrUrl(
     return {
       success: false,
       error: `no PR URL provided and current-branch PR discovery failed: ${currentBranchPr.error}`,
+      rateLimited: currentBranchPr.rateLimited,
+      retryAfterMs: currentBranchPr.retryAfterMs,
     };
   }
   if (typeof currentBranchPr.data.url !== 'string' || currentBranchPr.data.url.length === 0) {
@@ -272,7 +281,10 @@ async function runReviewThreadsQuery(
   cwd: string,
   spawnImpl: typeof Bun.spawn,
   deadlineMs: number
-): Promise<{ success: true; unresolvedUrls: string[] } | { success: false; error: string }> {
+): Promise<
+  | { success: true; unresolvedUrls: string[] }
+  | ({ success: false; error: string } & Pick<CommandFailure, 'rateLimited' | 'retryAfterMs'>)
+> {
   const unresolvedUrls: string[] = [];
   let cursor: string | null = null;
 
@@ -311,7 +323,12 @@ async function runReviewThreadsQuery(
       spawnImpl
     );
     if (!result.success) {
-      return { success: false, error: result.error };
+      return {
+        success: false,
+        error: result.error,
+        rateLimited: result.rateLimited,
+        retryAfterMs: result.retryAfterMs,
+      };
     }
 
     const json = result.data;
@@ -356,12 +373,63 @@ function buildGitHubLookupEnv(): Record<string, string> {
   return env;
 }
 
-async function runCommand<T>(
+/**
+ * Failure shape returned by `runCommand`.
+ *
+ * - `rateLimited: true` when stderr matched GitHub rate-limit patterns. The
+ *   caller converts this into a `retryable_block` so the workflow engine
+ *   backs off rather than re-running the validator on every action dispatch.
+ * - `retryAfterMs` is derived from a follow-up `gh api /rate_limit` probe
+ *   (when reachable) and bounded by `RATE_LIMIT_MIN_BACKOFF_MS`.
+ */
+type CommandFailure = {
+  success: false;
+  error: string;
+  rateLimited?: boolean;
+  retryAfterMs?: number;
+};
+type CommandSuccess<T> = { success: true; data: T };
+type CommandOutcome<T> = CommandSuccess<T> | CommandFailure;
+
+interface RateLimitPayload {
+  resources?: { core?: { reset?: number } };
+}
+
+/**
+ * Probes `gh api /rate_limit` to discover the current window's reset epoch.
+ *
+ * Uses `runCommandRaw` (not `runCommand`) so a persistent rate limit does
+ * not cause infinite recursion. Returns null when the probe itself fails —
+ * callers fall back to `RATE_LIMIT_MIN_BACKOFF_MS`.
+ */
+async function fetchRateLimitResetEpoch(
+  cwd: string,
+  spawnImpl: typeof Bun.spawn,
+  deadlineMs: number
+): Promise<number | null> {
+  const result = await runCommandRaw<RateLimitPayload>(
+    ['gh', 'api', '/rate_limit'],
+    cwd,
+    Math.min(remainingTimeoutMs(deadlineMs), 5_000),
+    spawnImpl
+  );
+  if (!result.success) return null;
+  const reset = result.data?.resources?.core?.reset;
+  return typeof reset === 'number' && Number.isFinite(reset) ? reset : null;
+}
+
+/**
+ * Spawns a `gh` command, captures stdout/stderr, and parses JSON stdout.
+ *
+ * This is the inner primitive — it does NOT interpret rate-limit errors.
+ * Callers that want rate-limit awareness should use `runCommand` instead.
+ */
+async function runCommandRaw<T>(
   args: string[],
   cwd: string,
   timeoutMs: number,
   spawnImpl: typeof Bun.spawn
-): Promise<{ success: true; data: T } | { success: false; error: string }> {
+): Promise<CommandOutcome<T>> {
   let proc;
   try {
     proc = spawnImpl(args, {
@@ -400,4 +468,49 @@ async function runCommand<T>(
   }
 
   return { success: true, data: parsed as T };
+}
+
+/**
+ * Runs a `gh` command, classifying non-zero exits as rate-limited when the
+ * stderr matches GitHub's rate-limit error patterns.
+ *
+ * On rate-limit detection, performs a follow-up `gh api /rate_limit` probe
+ * to compute `retryAfterMs` (bounded by `RATE_LIMIT_MIN_BACKOFF_MS`). All
+ * other failures pass through unchanged so existing block-path behavior is
+ * preserved.
+ */
+async function runCommand<T>(
+  args: string[],
+  cwd: string,
+  timeoutMs: number,
+  spawnImpl: typeof Bun.spawn
+): Promise<CommandOutcome<T>> {
+  const outcome = await runCommandRaw<T>(args, cwd, timeoutMs, spawnImpl);
+  if (outcome.success) return outcome;
+  if (!isRateLimitError(outcome.error)) return outcome;
+  const resetEpoch = await fetchRateLimitResetEpoch(cwd, spawnImpl, Date.now() + timeoutMs);
+  return {
+    success: false,
+    error: outcome.error,
+    rateLimited: true,
+    retryAfterMs: computeRateLimitRetryMs(resetEpoch),
+  };
+}
+
+/**
+ * Wraps a failed `runCommand` outcome into the right `WorkflowHookResult`.
+ *
+ * Rate-limited failures become `retryable_block` so the workflow engine
+ * defers the next attempt past the reset window. All other failures pass
+ * through as `block` with the original `prefix` framing.
+ */
+function commandFailureToHookResult(failure: CommandFailure, prefix: string): WorkflowHookResult {
+  if (failure.rateLimited) {
+    return {
+      type: 'retryable_block',
+      reason: `${prefix}: GitHub rate limited — ${failure.error}`,
+      retryAfterMs: failure.retryAfterMs ?? RATE_LIMIT_MIN_BACKOFF_MS,
+    };
+  }
+  return { type: 'block', reason: `${prefix}: ${failure.error}` };
 }

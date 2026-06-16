@@ -21,6 +21,51 @@ import {
 const log = new Logger('github-event-extension');
 const DEFAULT_POLL_INTERVAL_MS = 60_000;
 const GITHUB_API_BASE = 'https://api.github.com';
+/**
+ * When the rate-limit `remaining` counter drops to or below this threshold,
+ * polling is deferred until the reset epoch. Keeps a safety margin so the
+ * extension cannot exhaust the budget on rapid poll cycles.
+ */
+const RATE_LIMIT_LOW_REMAINING_THRESHOLD = 10;
+/** Minimum backoff applied when scheduling the next poll after rate-limit detection. */
+const RATE_LIMIT_MIN_BACKOFF_MS = 60_000;
+
+/**
+ * Parsed GitHub rate-limit state from response headers.
+ *
+ * - `remaining`: requests left in the current window (`Infinity` when the
+ *   header is absent — the request was likely served from a non-rate-limited
+ *   path such as an ETag hit).
+ * - `resetAt`: wall-clock epoch (ms) when the window resets. GitHub returns
+ *   this as seconds; multiplied to ms internally. `0` when missing.
+ * - `limited`: true when the response status is 403/429. Used to defer
+ *   subsequent polls even when `remaining` was not provided.
+ */
+export interface GitHubRateLimitInfo {
+  remaining: number;
+  resetAt: number;
+  limited: boolean;
+}
+
+/**
+ * Parses rate-limit headers from a GitHub API response.
+ *
+ * Headers are optional — GitHub does not always send them (e.g., 304 Not Modified
+ * responses lack rate-limit headers). When absent, `remaining` is `Infinity`
+ * and `resetAt` is `0`, so callers can treat the response as "unlimited" and
+ * fall back to the configured poll interval.
+ */
+export function parseRateLimitHeaders(res: Response): GitHubRateLimitInfo {
+  const remainingRaw = res.headers.get('X-RateLimit-Remaining');
+  const resetRaw = res.headers.get('X-RateLimit-Reset');
+  const remaining = remainingRaw ? parseInt(remainingRaw, 10) : Number.NaN;
+  const resetSeconds = resetRaw ? parseInt(resetRaw, 10) : Number.NaN;
+  return {
+    remaining: Number.isNaN(remaining) ? Infinity : remaining,
+    resetAt: Number.isNaN(resetSeconds) ? 0 : resetSeconds * 1000,
+    limited: res.status === 403 || res.status === 429,
+  };
+}
 const WEBHOOK_EVENTS = [
   'push',
   'pull_request',
@@ -61,6 +106,14 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
   private pollTimer: ReturnType<typeof setTimeout> | null = null;
   private activePollCycle?: Promise<void>;
   private stopped = true;
+  /**
+   * Wall-clock epoch (ms) until which polling is deferred because GitHub
+   * returned a rate-limit response or the `remaining` budget dropped below
+   * the safety threshold. `0` means no deferral is active. Set by
+   * `applyRateLimit()`, consulted by `pollEnabledSpaces()` and
+   * `runPollCycle()` so the next poll is scheduled after the reset window.
+   */
+  private rateLimitedUntil = 0;
 
   constructor(
     db: BunDatabase,
@@ -324,8 +377,20 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
   private async pollEnabledSpaces(fetchImpl: typeof fetch = fetch): Promise<number> {
     if (!this.context) return 0;
     if (!(await this.isPollingGloballyEnabled())) return 0;
+    // Skip the entire cycle when a prior endpoint flagged rate-limiting.
+    // runPollCycle() will have already deferred the next poll past the reset.
+    if (Date.now() < this.rateLimitedUntil) {
+      log.warn('GitHub polling cycle skipped — rate limited until', {
+        resetAt: new Date(this.rateLimitedUntil).toISOString(),
+      });
+      return 0;
+    }
     let count = 0;
     for (const repo of this.repo.listPollingRepos()) {
+      // A 403/429 or low-remaining response on an earlier repo defers the
+      // rest of the cycle so we don't burn additional calls against a budget
+      // we already know is exhausted.
+      if (Date.now() < this.rateLimitedUntil) break;
       const spaceConfig = await this.context.config.getSpaceConfig(repo.spaceId, this.sourceId);
       if (spaceConfig && !spaceConfig.enabled) continue;
       count += await this.pollWatchedRepo(repo, fetchImpl);
@@ -351,13 +416,27 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
   }
 
   private scheduleNextPoll(): void {
+    this.scheduleNextPollAfter(this.options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS);
+  }
+
+  /**
+   * Schedules the next poll cycle after `delayMs`.
+   *
+   * Replaces the timer regardless of any outstanding schedule. Used both for
+   * the default fixed-interval cadence and for rate-limit-aware deferrals
+   * where `delayMs` is derived from `X-RateLimit-Reset`.
+   */
+  private scheduleNextPollAfter(delayMs: number): void {
     if (this.stopped) return;
     if (this.pollTimer) clearTimeout(this.pollTimer);
-    this.pollTimer = setTimeout(() => {
-      this.activePollCycle = this.runPollCycle().finally(() => {
-        this.activePollCycle = undefined;
-      });
-    }, this.options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS);
+    this.pollTimer = setTimeout(
+      () => {
+        this.activePollCycle = this.runPollCycle().finally(() => {
+          this.activePollCycle = undefined;
+        });
+      },
+      Math.max(1_000, delayMs)
+    );
     this.pollTimer.unref?.();
   }
 
@@ -369,8 +448,35 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         error: error instanceof Error ? error.message : String(error),
       });
     } finally {
-      if (!this.stopped) this.scheduleNextPoll();
+      if (!this.stopped) {
+        const now = Date.now();
+        const delay =
+          now < this.rateLimitedUntil
+            ? Math.max(RATE_LIMIT_MIN_BACKOFF_MS, this.rateLimitedUntil - now)
+            : (this.options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS);
+        this.scheduleNextPollAfter(delay);
+      }
     }
+  }
+
+  /**
+   * Marks the extension as rate-limited until `rateLimit.resetAt` (or the
+   * minimum backoff when the reset header was absent / already past).
+   *
+   * Idempotent: the latest reset window wins. Callers in `pollWatchedRepo`
+   * invoke this once per endpoint that returns 403/429 or a low `remaining`
+   * counter, then abort the rest of the cycle.
+   */
+  private applyRateLimit(rateLimit: GitHubRateLimitInfo): void {
+    const resetDelay =
+      rateLimit.resetAt > Date.now() ? rateLimit.resetAt - Date.now() : RATE_LIMIT_MIN_BACKOFF_MS;
+    const delay = Math.max(RATE_LIMIT_MIN_BACKOFF_MS, resetDelay);
+    this.rateLimitedUntil = Date.now() + delay;
+    log.warn('GitHub rate limit detected — deferring next poll', {
+      remaining: rateLimit.remaining === Infinity ? 'unknown' : rateLimit.remaining,
+      resetAt: rateLimit.resetAt ? new Date(rateLimit.resetAt).toISOString() : 'unknown',
+      nextPollInMs: delay,
+    });
   }
 
   private async publishEvent(
@@ -683,6 +789,15 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       if (this.githubToken) headers.Authorization = `Bearer ${this.githubToken}`;
       if (page === 1 && etags[endpoint.key]) headers['If-None-Match'] = etags[endpoint.key];
       const response = await fetchImpl(url, { headers });
+      // Rate-limit check: a 403/429 response OR a low `remaining` counter
+      // defers this cycle and reschedules the next poll past the reset epoch.
+      // Done before the 304 / !ok guards so we still defer when GitHub returns
+      // 403 with the rate-limit headers attached.
+      const rateLimit = parseRateLimitHeaders(response);
+      if (rateLimit.limited || rateLimit.remaining < RATE_LIMIT_LOW_REMAINING_THRESHOLD) {
+        this.applyRateLimit(rateLimit);
+        return count;
+      }
       if (response.status === 304) continue;
       if (!response.ok) continue;
       const etag = response.headers.get('ETag');
