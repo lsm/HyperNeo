@@ -148,6 +148,11 @@ export class KeychainCredentialStore implements CredentialStore {
   }
 }
 
+const KEYCHAIN_FALLBACK_MESSAGE =
+  'macOS Keychain is locked or unavailable; using local encrypted file storage. ' +
+  'Run `security unlock-keychain` (prompts for your login password) or restart ' +
+  'NeoKai from a GUI session to restore Keychain persistence.';
+
 /**
  * macOS production credential store wrapper. Prefers Keychain for secure
  * persistence. When the Keychain is locked or unavailable (daemon running
@@ -157,8 +162,19 @@ export class KeychainCredentialStore implements CredentialStore {
  * succeed. Reads tolerate a locked Keychain silently so env/settings
  * discovery can keep providers usable.
  *
- * `fallback` and `unlockers` are optional so unit tests can pin behaviour
- * without spawning real `security` invocations.
+ * `fallback`, `unlockers`, and `ttyCheck` are optional so unit tests can
+ * pin behaviour without spawning real `security` invocations or touching
+ * the real `process.stdout.isTTY`.
+ *
+ * Note on weaker isolation: the encrypted fallback file lives at
+ * `~/.neokai/credentials.db` with its AES key at
+ * `~/.neokai/.provider-credential-key` (0600). Any same-user process can
+ * read both — this is weaker than the Keychain, which mitigates local
+ * attackers via Secure Enclave / ACLs. The fallback exists because the
+ * Keychain is unreachable from non-GUI security sessions and bricking
+ * credential writes in screen / SSH / launchd is worse than the
+ * weaker-isolation tradeoff. See `ProvidersSettings.tsx` banner for the
+ * user-facing disclosure.
  */
 export class KeychainStatusCredentialStore implements CredentialStore {
   private keychainWarned = false;
@@ -171,7 +187,15 @@ export class KeychainStatusCredentialStore implements CredentialStore {
   constructor(
     private readonly keychain: CredentialStore,
     private readonly fallback?: CredentialStore,
-    private readonly unlockers: Array<() => Promise<boolean>> = []
+    private readonly unlockers: Array<() => Promise<boolean>> = [],
+    /**
+     * Returns `true` when the daemon has a controlling TTY (interactive
+     * launch). Used by the default unlocker to decide whether triggering
+     * the macOS GUI password dialog is appropriate — non-interactive
+     * daemons (launchd, containerised, bun test runner) would block
+     * forever on a dialog no one can see. Overridable for tests.
+     */
+    private readonly ttyCheck: () => boolean = () => process.stdout.isTTY === true
   ) {}
 
   setStatusChangeCallback(callback: () => void): void {
@@ -179,32 +203,37 @@ export class KeychainStatusCredentialStore implements CredentialStore {
   }
 
   async get(service: string, account: string): Promise<string | null> {
-    if (this.usingFallback && this.fallback) {
-      const fb = await this.fallback.get(service, account);
-      if (fb !== null) return fb;
-      // Fall through and try keychain: the user may have unlocked it since.
-    }
+    // Always try the Keychain first when it's reachable. This lets the
+    // daemon pick up an external `security unlock-keychain` without a
+    // restart, and means the Keychain stays authoritative whenever it's
+    // available — even if we previously wrote a fallback copy.
     try {
       const result = await this.keychain.get(service, account);
       this.markKeychainAvailable();
-      return result;
+      if (result !== null) return result;
+      // Keychain reachable but miss — fall through to fallback in case the
+      // value was written while the Keychain was previously unavailable.
     } catch (error) {
       if (!(error instanceof KeychainUnavailableError)) throw error;
       // Reads stay silent on 36 so env-var/settings discovery keeps working.
       this.markKeychainUnavailable();
-      // If we previously fell back, surface the fallback copy (if any).
-      if (this.fallback) return await this.fallback.get(service, account);
-      return null;
     }
+    if (this.fallback) return await this.fallback.get(service, account);
+    return null;
   }
 
   async set(service: string, account: string, data: string): Promise<void> {
     const outcome = await this.runWithUnlockRetry(() => this.keychain.set(service, account, data));
     if (outcome === 'ok') {
       this.markKeychainAvailable();
-      // If a stale fallback copy exists, remove it so future reads only hit
-      // the authoritative Keychain.
-      await this.fallback?.delete(service, account).catch(() => {});
+      // Deliberately do NOT delete the fallback copy here. Concurrent
+      // writers outside `withProviderLock` (daemon startup at app.ts:98,102,
+      // OAuth refresh scheduler at oauth-refresh-scheduler.ts:80) could
+      // route a write to the fallback between our primary success and a
+      // cleanup delete, losing a freshly-written refresh token. Stale
+      // fallback copies are harmless: `get()` prefers the Keychain
+      // whenever it's reachable, so the fallback only matters when the
+      // Keychain is genuinely unavailable.
       return;
     }
     await this.runWithFallback(
@@ -217,6 +246,9 @@ export class KeychainStatusCredentialStore implements CredentialStore {
     const outcome = await this.runWithUnlockRetry(() => this.keychain.delete(service, account));
     if (outcome === 'ok') {
       this.markKeychainAvailable();
+      // Delete from both stores for tidiness; a delete racing with a
+      // concurrent write would lose the new write either way (deleting is
+      // the intent), so no regression vs the original keychain-only model.
       await this.fallback?.delete(service, account).catch(() => {});
       return;
     }
@@ -328,36 +360,45 @@ export class KeychainStatusCredentialStore implements CredentialStore {
     const wasUnavailable = !this.keychainAvailable || this.usingFallback;
     this.keychainAvailable = true;
     this.usingFallback = false;
+    // Reset the one-shot unlock latch: if the Keychain later re-locks
+    // (sleep, `security lock-keychain`, keychain timeout), the next write
+    // should attempt interactive unlock again rather than routing blindly
+    // to the fallback. Without this, the daemon is stuck on the weaker
+    // fallback store until process restart.
+    this.unlockAttempted = false;
     if (wasUnavailable) this.statusChangeCallback?.();
   }
 }
 
-const KEYCHAIN_FALLBACK_MESSAGE =
-  'macOS Keychain is locked or unavailable; using local encrypted file storage. ' +
-  'Run `security unlock-keychain` (prompts for your login password) or restart ' +
-  'NeoKai from a GUI session to restore Keychain persistence.';
+/**
+ * Builds the default unlocker list with the given TTY gate. Extracted so
+ * `createCredentialStore` can hand in the production `process.stdout.isTTY`
+ * check while tests construct their own instances with a stubbed gate.
+ */
+function buildDefaultUnlockers(ttyCheck: () => boolean): Array<() => Promise<boolean>> {
+  return [
+    async () => {
+      if (!ttyCheck()) return false;
+      return tryUnlockKeychainViaGUI();
+    },
+  ];
+}
 
 /**
  * Default interactive unlock strategy: trigger the macOS GUI password
  * dialog. We deliberately do NOT prompt on stdin/TTY because that path
  * risks hanging non-interactive daemons (launchd, test runners, CI) when
- * no one is around to type. We also gate on `process.stdout.isTTY` so
- * background processes (launchd, containerised daemons, bun test runners)
- * skip the unlock attempt entirely and fall straight through to the
- * encrypted file fallback instead of blocking on a dialog the user may
- * never see.
+ * no one is around to type. We also gate on the injected `ttyCheck`
+ * (production: `process.stdout.isTTY === true`) so background processes
+ * (launchd, containerised daemons, bun test runners) skip the unlock
+ * attempt entirely and fall straight through to the encrypted file
+ * fallback instead of blocking on a dialog the user may never see.
  *
  * The GUI dialog either pops on the user's desktop (they type, keychain
  * unlocks, retry succeeds) or fails fast with `errSecInteractionNotAllowed`
  * when there's no Aqua session attached, in which case we fall through to
  * the encrypted file store.
  */
-const defaultUnlockers: Array<() => Promise<boolean>> = [
-  async () => {
-    if (process.stdout.isTTY !== true) return false;
-    return tryUnlockKeychainViaGUI();
-  },
-];
 
 async function tryUnlockKeychainViaGUI(): Promise<boolean> {
   try {
@@ -452,10 +493,12 @@ export function createCredentialStore(db: Database): CredentialStore {
     // runners waiting on stdin), and finally falls back to the encrypted
     // SQLite store so the daemon still works in screen/SSH without forcing
     // the user to restart from a GUI session.
+    const ttyCheck = () => process.stdout.isTTY === true;
     return new KeychainStatusCredentialStore(
       new KeychainCredentialStore(),
       new DatabaseCredentialStore(db),
-      defaultUnlockers
+      buildDefaultUnlockers(ttyCheck),
+      ttyCheck
     );
   }
   return new DatabaseCredentialStore(db);

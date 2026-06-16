@@ -417,8 +417,14 @@ export function ProvidersSettings() {
                     : 'text-yellow-400/80'
                 }`}
               >
-                {credentialStore.warning ??
-                  'Persistent credential storage is unavailable until macOS Keychain is unlocked. Run `security unlock-keychain`, launch NeoKai from a desktop/GUI session, or use environment variables / a secret manager for headless deployments.'}
+                {credentialStore.backend === 'keychain-fallback'
+                  ? (credentialStore.warning ??
+                      'macOS Keychain is locked or unavailable; using local encrypted file storage. ' +
+                        'Run `security unlock-keychain` (prompts for your login password) or restart ' +
+                        'NeoKai from a GUI session to restore Keychain persistence.') +
+                    ' Note: file storage is encrypted but weaker than Keychain — any same-user process can read both the encrypted file and its key. Use environment variables for stronger isolation on headless deployments.'
+                  : (credentialStore.warning ??
+                    'Persistent credential storage is unavailable until macOS Keychain is unlocked. Run `security unlock-keychain`, launch NeoKai from a desktop/GUI session, or use environment variables / a secret manager for headless deployments.')}
               </p>
             </div>
           )}
