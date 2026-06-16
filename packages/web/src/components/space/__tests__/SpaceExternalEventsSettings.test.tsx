@@ -938,4 +938,168 @@ describe('SpaceExternalEventsSettings', () => {
       });
     });
   });
+
+  it('shows the GitHub connection card when RPC config is enabled', async () => {
+    setupRequests();
+    const { findByTestId } = render(<SpaceExternalEventsSettings spaceId="space-1" />);
+    expect(await findByTestId('github-connection-card')).toBeTruthy();
+  });
+
+  it('hides the GitHub connection card when RPC config is disabled', async () => {
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockImplementation((method) => {
+      if (method === 'externalEvents.extensions.list')
+        return Promise.resolve(rpcDisabledExtensionResult);
+      return Promise.resolve({});
+    });
+    const { queryByTestId } = render(<SpaceExternalEventsSettings spaceId="space-1" />);
+    await waitFor(() => {
+      expect(queryByTestId('github-connection-card')).toBeNull();
+    });
+  });
+
+  it('saves a token through the keychain RPC and refreshes status', async () => {
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    let statusCalls = 0;
+    mockRequest.mockImplementation((method) => {
+      if (method === 'externalEvents.extensions.list') return Promise.resolve(extensionResult);
+      if (method === 'space.github.listConfig') {
+        return Promise.resolve({
+          spaceId: 'space-1',
+          source: 'github',
+          enabled: true,
+          settings: {},
+        });
+      }
+      if (method === 'space.github.listWatchedRepos') return Promise.resolve(repoResult);
+      if (method === 'space.github.getTokenStatus') {
+        statusCalls++;
+        if (statusCalls === 1) return Promise.resolve({ configured: false, source: 'none' });
+        return Promise.resolve({
+          configured: true,
+          source: 'keychain',
+          login: 'octocat',
+        });
+      }
+      if (method === 'space.github.setToken') return Promise.resolve({ success: true });
+      return Promise.resolve({});
+    });
+
+    const { findByPlaceholderText, getByText, findByText } = render(
+      <SpaceExternalEventsSettings spaceId="space-1" />
+    );
+    await findByText('github');
+
+    const input = await findByPlaceholderText('ghp_…');
+    fireEvent.input(input, { target: { value: 'ghp_saved' } });
+    fireEvent.click(getByText('Save token'));
+
+    await waitFor(() => {
+      expect(mockRequest).toHaveBeenCalledWith('space.github.setToken', { token: 'ghp_saved' });
+    });
+    await waitFor(() => {
+      expect(mockToastSuccess).toHaveBeenCalledWith('GitHub token saved to keychain');
+    });
+    expect(await findByText('octocat')).toBeTruthy();
+  });
+
+  it('disconnects a configured token', async () => {
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    let cleared = false;
+    mockRequest.mockImplementation((method) => {
+      if (method === 'externalEvents.extensions.list') return Promise.resolve(extensionResult);
+      if (method === 'space.github.listConfig') {
+        return Promise.resolve({
+          spaceId: 'space-1',
+          source: 'github',
+          enabled: true,
+          settings: {},
+        });
+      }
+      if (method === 'space.github.listWatchedRepos') return Promise.resolve(repoResult);
+      if (method === 'space.github.getTokenStatus') {
+        if (cleared) return Promise.resolve({ configured: false, source: 'none' });
+        return Promise.resolve({
+          configured: true,
+          source: 'keychain',
+          login: 'octocat',
+        });
+      }
+      if (method === 'space.github.clearToken') {
+        cleared = true;
+        return Promise.resolve({ success: true });
+      }
+      return Promise.resolve({});
+    });
+
+    const { findByText } = render(<SpaceExternalEventsSettings spaceId="space-1" />);
+    await findByText('octocat');
+
+    fireEvent.click(await findByText('Disconnect'));
+
+    await waitFor(() => {
+      expect(mockRequest).toHaveBeenCalledWith('space.github.clearToken', {});
+    });
+    await waitFor(() => {
+      expect(mockToastSuccess).toHaveBeenCalledWith('GitHub token removed');
+    });
+  });
+
+  it('toggles space-level polling capability through RPC', async () => {
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    let pollingEnabled = false;
+    mockRequest.mockImplementation((method) => {
+      if (method === 'externalEvents.extensions.list') {
+        return Promise.resolve({
+          extensions: [
+            {
+              source: 'github',
+              status: 'started',
+              config: {
+                source: 'github',
+                globallyEnabled: true,
+                capabilities: {
+                  webhooks: true,
+                  polling: pollingEnabled,
+                  rpcConfig: true,
+                },
+              },
+            },
+          ],
+        });
+      }
+      if (method === 'space.github.listConfig') {
+        return Promise.resolve({
+          spaceId: 'space-1',
+          source: 'github',
+          enabled: true,
+          settings: {},
+        });
+      }
+      if (method === 'space.github.listWatchedRepos') return Promise.resolve(repoResult);
+      if (method === 'space.github.getTokenStatus') {
+        return Promise.resolve({ configured: false, source: 'none' });
+      }
+      if (method === 'space.github.setPollingEnabled') {
+        pollingEnabled = true;
+        return Promise.resolve({ spaceId: 'space-1', pollingEnabled: true });
+      }
+      return Promise.resolve({});
+    });
+
+    const { findByText } = render(<SpaceExternalEventsSettings spaceId="space-1" />);
+    const checkbox = await findByText('Polling (checks GitHub every 60s for new events)');
+
+    fireEvent.click(checkbox);
+
+    await waitFor(() => {
+      expect(mockRequest).toHaveBeenCalledWith('space.github.setPollingEnabled', {
+        spaceId: 'space-1',
+        enabled: true,
+      });
+    });
+    await waitFor(() => {
+      expect(mockToastSuccess).toHaveBeenCalledWith('GitHub polling enabled for this space');
+    });
+  });
 });

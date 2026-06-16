@@ -2192,3 +2192,517 @@ describe('GitHubEventExtension', () => {
     expect(stopped).toBe(true);
   });
 });
+
+class InMemoryCredentialStore {
+  private map = new Map<string, string>();
+  async get(service: string, account: string): Promise<string | null> {
+    return this.map.get(`${service}:${account}`) ?? null;
+  }
+  async set(service: string, account: string, data: string): Promise<void> {
+    this.map.set(`${service}:${account}`, data);
+  }
+  async delete(service: string, account: string): Promise<void> {
+    this.map.delete(`${service}:${account}`);
+  }
+  async listServices(): Promise<string[]> {
+    return [];
+  }
+}
+
+function setupHubPair() {
+  const clientHub = new MessageHub();
+  const hub = new MessageHub();
+  const [clientTransport, serverTransport] = InProcessTransport.createPair();
+  clientHub.registerTransport(clientTransport);
+  hub.registerTransport(serverTransport);
+  return {
+    clientHub,
+    hub,
+    ready: Promise.all([clientTransport.initialize(), serverTransport.initialize()]),
+  };
+}
+
+class RecordingConfigStore extends StaticExternalEventExtensionConfigStore {
+  private globals = new Map<
+    string,
+    Awaited<ReturnType<StaticExternalEventExtensionConfigStore['getGlobalConfig']>>
+  >();
+
+  constructor(options: { globallyEnabled?: boolean; webhooks?: boolean; polling?: boolean }) {
+    super(options);
+  }
+
+  override async getGlobalConfig(source: string) {
+    const cached = this.globals.get(source);
+    if (cached) return cached;
+    const fresh = await super.getGlobalConfig(source);
+    this.globals.set(source, fresh);
+    return fresh;
+  }
+
+  override async setGlobalConfig(
+    source: string,
+    config: Awaited<ReturnType<StaticExternalEventExtensionConfigStore['getGlobalConfig']>>
+  ): Promise<void> {
+    this.globals.set(source, config);
+  }
+}
+
+describe('GitHubEventExtension — credential store + token RPC', () => {
+  test('space.github.setToken persists token via credential store', async () => {
+    const db = setupDb();
+    const store = new InMemoryCredentialStore();
+    const extension = new GitHubEventExtension(db, undefined, { credentialStore: store });
+    const { clientHub, hub, ready } = setupHubPair();
+    await ready;
+    const context = {
+      publisher: { publish: async () => {} },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    try {
+      extension.registerRpcHandlers(hub, context);
+
+      const result = await clientHub.request<{ success: boolean }>('space.github.setToken', {
+        token: 'ghp_secret',
+      });
+      expect(result.success).toBe(true);
+      expect(await store.get('neokai.provider.github', 'default')).toBe('ghp_secret');
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('space.github.setToken rejects empty token without writing', async () => {
+    const db = setupDb();
+    const store = new InMemoryCredentialStore();
+    const extension = new GitHubEventExtension(db, undefined, { credentialStore: store });
+    const { clientHub, hub, ready } = setupHubPair();
+    await ready;
+    const context = {
+      publisher: { publish: async () => {} },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    try {
+      extension.registerRpcHandlers(hub, context);
+
+      await expect(clientHub.request('space.github.setToken', { token: '   ' })).rejects.toThrow(
+        'token is required'
+      );
+      expect(await store.get('neokai.provider.github', 'default')).toBeNull();
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('space.github.setToken throws when credential store is not wired', async () => {
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, undefined);
+    const { clientHub, hub, ready } = setupHubPair();
+    await ready;
+    const context = {
+      publisher: { publish: async () => {} },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    try {
+      extension.registerRpcHandlers(hub, context);
+
+      await expect(
+        clientHub.request('space.github.setToken', { token: 'ghp_secret' })
+      ).rejects.toThrow('Credential store is not available for GitHub tokens');
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('space.github.clearToken removes stored token', async () => {
+    const db = setupDb();
+    const store = new InMemoryCredentialStore();
+    await store.set('neokai.provider.github', 'default', 'ghp_secret');
+    const extension = new GitHubEventExtension(db, undefined, { credentialStore: store });
+    const { clientHub, hub, ready } = setupHubPair();
+    await ready;
+    const context = {
+      publisher: { publish: async () => {} },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    try {
+      extension.registerRpcHandlers(hub, context);
+
+      await clientHub.request('space.github.clearToken', {});
+      expect(await store.get('neokai.provider.github', 'default')).toBeNull();
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('space.github.getTokenStatus reports login when keychain token validates', async () => {
+    const db = setupDb();
+    const store = new InMemoryCredentialStore();
+    await store.set('neokai.provider.github', 'default', 'ghp_keychain');
+    const seenAuth = new Set<string>();
+    const extension = new GitHubEventExtension(db, 'env-fallback-token', {
+      credentialStore: store,
+      fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
+        const auth = (init?.headers as Record<string, string>)?.Authorization;
+        if (auth) seenAuth.add(auth);
+        if (String(url).endsWith('/user')) {
+          return new Response(JSON.stringify({ login: 'octocat' }), { status: 200 });
+        }
+        return new Response('{}', { status: 404 });
+      }) as typeof fetch,
+    });
+    const { clientHub, hub, ready } = setupHubPair();
+    await ready;
+    const context = {
+      publisher: { publish: async () => {} },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    try {
+      extension.registerRpcHandlers(hub, context);
+
+      const status = await clientHub.request<{
+        configured: boolean;
+        source: string;
+        login?: string;
+      }>('space.github.getTokenStatus', {});
+      expect(status.configured).toBe(true);
+      expect(status.source).toBe('keychain');
+      expect(status.login).toBe('octocat');
+      expect([...seenAuth]).toEqual(['Bearer ghp_keychain']);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('space.github.getTokenStatus falls back to env var and tags source', async () => {
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'ghp_env', {
+      fetchImpl: (async () =>
+        new Response(JSON.stringify({ login: 'env-user' }), { status: 200 })) as typeof fetch,
+    });
+    const { clientHub, hub, ready } = setupHubPair();
+    await ready;
+    const context = {
+      publisher: { publish: async () => {} },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    try {
+      extension.registerRpcHandlers(hub, context);
+
+      const status = await clientHub.request<{
+        configured: boolean;
+        source: string;
+        login?: string;
+      }>('space.github.getTokenStatus', {});
+      expect(status).toEqual({ configured: true, source: 'env', login: 'env-user' });
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('space.github.getTokenStatus reports unconfigured when no token available', async () => {
+    const db = setupDb();
+    let fetchCalled = false;
+    const extension = new GitHubEventExtension(db, undefined, {
+      fetchImpl: (async () => {
+        fetchCalled = true;
+        return new Response('{}', { status: 200 });
+      }) as typeof fetch,
+    });
+    const { clientHub, hub, ready } = setupHubPair();
+    await ready;
+    const context = {
+      publisher: { publish: async () => {} },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    try {
+      extension.registerRpcHandlers(hub, context);
+
+      const status = await clientHub.request<{ configured: boolean; source: string }>(
+        'space.github.getTokenStatus',
+        {}
+      );
+      expect(status).toEqual({ configured: false, source: 'none' });
+      expect(fetchCalled).toBe(false);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('space.github.getTokenStatus surfaces validation errors on configured token', async () => {
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'ghp_env', {
+      fetchImpl: (async () =>
+        new Response(JSON.stringify({ message: 'Bad credentials' }), {
+          status: 401,
+        })) as typeof fetch,
+    });
+    const { clientHub, hub, ready } = setupHubPair();
+    await ready;
+    const context = {
+      publisher: { publish: async () => {} },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    try {
+      extension.registerRpcHandlers(hub, context);
+
+      const status = await clientHub.request<{
+        configured: boolean;
+        source: string;
+        error?: string;
+      }>('space.github.getTokenStatus', {});
+      expect(status.configured).toBe(true);
+      expect(status.source).toBe('env');
+      expect(status.error).toBe('HTTP 401');
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('token RPCs respect globally disabled extension', async () => {
+    const db = setupDb();
+    const store = new InMemoryCredentialStore();
+    const extension = new GitHubEventExtension(db, undefined, { credentialStore: store });
+    const { clientHub, hub, ready } = setupHubPair();
+    await ready;
+    const context = {
+      publisher: { publish: async () => {} },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: false }),
+      onSourceConfigChanged() {},
+    };
+    try {
+      extension.registerRpcHandlers(hub, context);
+
+      await expect(
+        clientHub.request('space.github.setToken', { token: 'ghp_secret' })
+      ).rejects.toThrow('GitHub RPC configuration capability is disabled');
+      expect(await store.get('neokai.provider.github', 'default')).toBeNull();
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('resolveToken prefers credential store over env var when fetching', async () => {
+    const db = setupDb();
+    const store = new InMemoryCredentialStore();
+    await store.set('neokai.provider.github', 'default', 'ghp_keychain');
+    const seenAuth: string[] = [];
+    const extension = new GitHubEventExtension(db, 'ghp_env_fallback', {
+      credentialStore: store,
+      fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
+        const auth = (init?.headers as Record<string, string>)?.Authorization;
+        if (auth) seenAuth.push(auth);
+        if (String(url).endsWith('/hooks')) {
+          return new Response(
+            JSON.stringify({
+              id: 1,
+              active: true,
+              config: { url: 'https://example.com/webhook/github/space', content_type: 'json' },
+            }),
+            { status: 201 }
+          );
+        }
+        return new Response('{}', { status: 200 });
+      }) as typeof fetch,
+    });
+    const { clientHub, hub, ready } = setupHubPair();
+    await ready;
+    const previousPublicUrl = process.env.NEOKAI_PUBLIC_URL;
+    process.env.NEOKAI_PUBLIC_URL = 'https://example.com';
+    const context = {
+      publisher: { publish: async () => {} },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    try {
+      await extension.start(context);
+      extension.registerRpcHandlers(hub, context);
+
+      await clientHub.request('space.github.autoConfigureWebhook', {
+        spaceId: 'space-1',
+        owner: 'acme',
+        repo: 'widgets',
+      });
+
+      expect(seenAuth).toContain('Bearer ghp_keychain');
+      expect(seenAuth).not.toContain('Bearer ghp_env_fallback');
+    } finally {
+      await extension.stop();
+      if (previousPublicUrl === undefined) delete process.env.NEOKAI_PUBLIC_URL;
+      else process.env.NEOKAI_PUBLIC_URL = previousPublicUrl;
+    }
+  });
+
+  test('watchRepo auto-starts polling when first polling-enabled repo is added', async () => {
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, undefined, { pollIntervalMs: 60_000 });
+    const { clientHub, hub, ready } = setupHubPair();
+    await ready;
+    const context = {
+      publisher: { publish: async () => {} },
+      config: new RecordingConfigStore({ globallyEnabled: true, polling: false }),
+      onSourceConfigChanged() {},
+    };
+    try {
+      await extension.start(context);
+      const internals = extension as unknown as { pollTimer: { ref?: () => void } | null };
+      expect(internals.pollTimer).toBeNull();
+
+      extension.registerRpcHandlers(hub, context);
+      await clientHub.request('space.github.watchRepo', {
+        spaceId: 'space-1',
+        owner: 'acme',
+        repo: 'widgets',
+        pollingEnabled: true,
+      });
+
+      expect(internals.pollTimer).not.toBeNull();
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('runPollCycle stops the timer when no polling repos remain', async () => {
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, undefined, { pollIntervalMs: 60_000 });
+    const { clientHub, hub, ready } = setupHubPair();
+    await ready;
+    const context = {
+      publisher: { publish: async () => {} },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    try {
+      await extension.start(context);
+      extension.registerRpcHandlers(hub, context);
+      const internals = extension as unknown as {
+        pollTimer: { ref?: () => void } | null;
+        runPollCycle: () => Promise<void>;
+      };
+
+      await clientHub.request('space.github.watchRepo', {
+        spaceId: 'space-1',
+        owner: 'acme',
+        repo: 'widgets',
+        pollingEnabled: true,
+      });
+      expect(internals.pollTimer).not.toBeNull();
+
+      await clientHub.request('space.github.unwatchRepo', {
+        spaceId: 'space-1',
+        owner: 'acme',
+        repo: 'widgets',
+      });
+      await internals.runPollCycle();
+
+      expect(internals.pollTimer).toBeNull();
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('space.github.setPollingEnabled flips global capability and starts timer', async () => {
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, undefined, { pollIntervalMs: 60_000 });
+    const { clientHub, hub, ready } = setupHubPair();
+    await ready;
+    const configStore = new RecordingConfigStore({
+      globallyEnabled: true,
+      polling: false,
+    });
+    const context = {
+      publisher: { publish: async () => {} },
+      config: configStore,
+      onSourceConfigChanged() {},
+    };
+    try {
+      await extension.start(context);
+      extension.registerRpcHandlers(hub, context);
+      const internals = extension as unknown as { pollTimer: unknown };
+      expect(internals.pollTimer).toBeNull();
+
+      extension.repo.upsertWatchedRepo({
+        spaceId: 'space-1',
+        owner: 'acme',
+        repo: 'widgets',
+        pollingEnabled: false,
+      });
+
+      const result = await clientHub.request<{
+        pollingEnabled: boolean;
+      }>('space.github.setPollingEnabled', { spaceId: 'space-1', enabled: true });
+
+      expect(result.pollingEnabled).toBe(true);
+      const global = await configStore.getGlobalConfig('github');
+      expect(global.capabilities.polling).toBe(true);
+      expect(extension.repo.listWatchedRepos('space-1')[0].pollingEnabled).toBe(true);
+      expect(internals.pollTimer).not.toBeNull();
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('space.github.setPollingEnabled false clears the timer when no polling repos remain', async () => {
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, undefined, { pollIntervalMs: 60_000 });
+    const { clientHub, hub, ready } = setupHubPair();
+    await ready;
+    const context = {
+      publisher: { publish: async () => {} },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    try {
+      await extension.start(context);
+      extension.registerRpcHandlers(hub, context);
+
+      await clientHub.request('space.github.watchRepo', {
+        spaceId: 'space-1',
+        owner: 'acme',
+        repo: 'widgets',
+        pollingEnabled: true,
+      });
+      const internals = extension as unknown as { pollTimer: unknown };
+      expect(internals.pollTimer).not.toBeNull();
+
+      await clientHub.request('space.github.setPollingEnabled', {
+        spaceId: 'space-1',
+        enabled: false,
+      });
+
+      expect(extension.repo.listWatchedRepos('space-1')[0].pollingEnabled).toBe(false);
+      expect(internals.pollTimer).toBeNull();
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('space.github.setPollingEnabled requires spaceId and enabled flag', async () => {
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, undefined);
+    const { clientHub, hub, ready } = setupHubPair();
+    await ready;
+    const context = {
+      publisher: { publish: async () => {} },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    try {
+      extension.registerRpcHandlers(hub, context);
+
+      await expect(
+        clientHub.request('space.github.setPollingEnabled', { spaceId: 'space-1' })
+      ).rejects.toThrow('spaceId and enabled are required');
+    } finally {
+      await extension.stop();
+    }
+  });
+});

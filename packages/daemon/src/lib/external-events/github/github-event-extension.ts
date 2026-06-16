@@ -1,6 +1,7 @@
 import type { Database as BunDatabase } from 'bun:sqlite';
 import type { MessageHub } from '@neokai/shared';
 import { Logger } from '../../logger';
+import { credentialService, type CredentialStore } from '../../credentials/credential-store.js';
 import { verifySignature } from '../../github/webhook-handler';
 import type {
   ExternalEventExtensionContext,
@@ -21,6 +22,7 @@ import {
 const log = new Logger('github-event-extension');
 const DEFAULT_POLL_INTERVAL_MS = 60_000;
 const GITHUB_API_BASE = 'https://api.github.com';
+const GITHUB_CREDENTIAL_ACCOUNT = 'default';
 const WEBHOOK_EVENTS = [
   'push',
   'pull_request',
@@ -34,6 +36,19 @@ const WEBHOOK_PATH = '/webhook/github/space';
 interface GitHubEventExtensionOptions {
   pollIntervalMs?: number;
   fetchImpl?: typeof fetch;
+  /**
+   * Optional credential store used to persist the GitHub PAT outside env vars.
+   * When provided, the extension reads the token from the store first and
+   * falls back to the constructor-supplied env value.
+   */
+  credentialStore?: CredentialStore;
+}
+
+interface GitHubTokenStatus {
+  configured: boolean;
+  source: 'keychain' | 'env' | 'none';
+  login?: string;
+  error?: string;
 }
 
 interface GitHubHookResponse {
@@ -61,6 +76,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
   private pollTimer: ReturnType<typeof setTimeout> | null = null;
   private activePollCycle?: Promise<void>;
   private stopped = true;
+  private readonly credentialStore?: CredentialStore;
 
   constructor(
     db: BunDatabase,
@@ -68,6 +84,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     private readonly options: GitHubEventExtensionOptions = {}
   ) {
     this.repo = new GitHubEventExtensionRepository(db);
+    this.credentialStore = options.credentialStore;
   }
 
   async start(context: ExternalEventExtensionContext): Promise<void> {
@@ -151,6 +168,12 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         watchedRepo = this.repo.getWatchedRepoById(watchedRepo.id) ?? watchedRepo;
       }
       await this.persistSpaceConfig(context, watchedRepo.spaceId);
+      if (watchedRepo.pollingEnabled) {
+        await this.enablePollingCapability(context);
+        this.ensurePollingActive();
+      } else {
+        this.maybeStopPolling();
+      }
       context.onSourceConfigChanged({
         source: this.sourceId,
         spaceId: watchedRepo.spaceId,
@@ -225,6 +248,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       }
       const removed = this.repo.removeWatchedRepo(params.spaceId, params.owner, params.repo);
       await this.persistSpaceConfig(context, params.spaceId);
+      this.maybeStopPolling();
       context.onSourceConfigChanged({
         source: this.sourceId,
         spaceId: params.spaceId,
@@ -252,6 +276,62 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
           ? await this.pollSpace(params.spaceId)
           : await this.pollEnabledSpaces(),
       };
+    });
+
+    hub.onRequest('space.github.setToken', async (data) => {
+      await assertRpcConfigEnabled(context, this.sourceId);
+      if (!this.credentialStore) {
+        throw new Error('Credential store is not available for GitHub tokens');
+      }
+      const params = data as { token?: string };
+      const token = params.token?.trim();
+      if (!token) throw new Error('token is required');
+      await this.credentialStore.set(credentialService('github'), GITHUB_CREDENTIAL_ACCOUNT, token);
+      return { success: true };
+    });
+
+    hub.onRequest('space.github.getTokenStatus', async () => {
+      await assertRpcConfigEnabled(context, this.sourceId);
+      return await this.getTokenStatus();
+    });
+
+    hub.onRequest('space.github.clearToken', async () => {
+      await assertRpcConfigEnabled(context, this.sourceId);
+      if (!this.credentialStore) {
+        throw new Error('Credential store is not available for GitHub tokens');
+      }
+      await this.credentialStore.delete(credentialService('github'), GITHUB_CREDENTIAL_ACCOUNT);
+      return { success: true };
+    });
+
+    hub.onRequest('space.github.setPollingEnabled', async (data) => {
+      await assertRpcConfigEnabled(context, this.sourceId);
+      const params = data as { spaceId?: string; enabled?: boolean };
+      if (!params.spaceId || typeof params.enabled !== 'boolean') {
+        throw new Error('spaceId and enabled are required');
+      }
+      const repos = this.repo.listWatchedRepos(params.spaceId);
+      for (const repo of repos) {
+        this.repo.upsertWatchedRepo({
+          spaceId: repo.spaceId,
+          owner: repo.owner,
+          repo: repo.repo,
+          pollingEnabled: params.enabled,
+        });
+      }
+      if (params.enabled) {
+        await this.enablePollingCapability(context);
+        this.ensurePollingActive();
+      } else {
+        this.maybeStopPolling();
+      }
+      await this.persistSpaceConfig(context, params.spaceId);
+      context.onSourceConfigChanged({
+        source: this.sourceId,
+        spaceId: params.spaceId,
+        kind: 'watched_repo_changed',
+      });
+      return { spaceId: params.spaceId, pollingEnabled: params.enabled };
     });
   }
 
@@ -368,9 +448,116 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       log.warn('GitHub polling cycle failed', {
         error: error instanceof Error ? error.message : String(error),
       });
-    } finally {
-      if (!this.stopped) this.scheduleNextPoll();
     }
+    if (this.stopped) return;
+    if (this.repo.listPollingRepos().length === 0) {
+      // No work left — release the timer. watchRepo/setPollingEnabled will
+      // spin it back up when a polling-enabled repo reappears.
+      if (this.pollTimer) {
+        clearTimeout(this.pollTimer);
+        this.pollTimer = null;
+      }
+      return;
+    }
+    this.scheduleNextPoll();
+  }
+
+  /**
+   * Resolve the GitHub PAT from the credential store when wired, falling back
+   * to the env-supplied token. Returns undefined when neither is available.
+   */
+  private async resolveToken(): Promise<string | undefined> {
+    if (this.credentialStore) {
+      try {
+        const stored = await this.credentialStore.get(
+          credentialService('github'),
+          GITHUB_CREDENTIAL_ACCOUNT
+        );
+        if (stored) return stored;
+      } catch (error) {
+        log.warn('Failed to read GitHub token from credential store', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    return this.githubToken;
+  }
+
+  private async getTokenStatus(): Promise<GitHubTokenStatus> {
+    let source: GitHubTokenStatus['source'] = 'none';
+    let token: string | undefined;
+    if (this.credentialStore) {
+      try {
+        const stored = await this.credentialStore.get(
+          credentialService('github'),
+          GITHUB_CREDENTIAL_ACCOUNT
+        );
+        if (stored) {
+          token = stored;
+          source = 'keychain';
+        }
+      } catch (error) {
+        return {
+          configured: false,
+          source: 'none',
+          error: error instanceof Error ? error.message : 'credential store unavailable',
+        };
+      }
+    }
+    if (!token && this.githubToken) {
+      token = this.githubToken;
+      source = 'env';
+    }
+    if (!token) return { configured: false, source: 'none' };
+
+    try {
+      const fetchImpl = this.options.fetchImpl ?? fetch;
+      const response = await fetchImpl(`${GITHUB_API_BASE}/user`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/vnd.github+json',
+          'User-Agent': 'NeoKai-Space-GitHub/1.0',
+          'X-GitHub-Api-Version': '2022-11-28',
+        },
+      });
+      if (response.ok) {
+        const user = (await response.json()) as { login?: string };
+        return { configured: true, source, login: user.login };
+      }
+      return { configured: true, source, error: `HTTP ${response.status}` };
+    } catch (error) {
+      return {
+        configured: true,
+        source,
+        error: error instanceof Error ? error.message : 'validation failed',
+      };
+    }
+  }
+
+  /**
+   * Flip the global polling capability on. Called when a polling-enabled repo
+   * is added so subsequent poll cycles are not blocked by capability gating.
+   */
+  private async enablePollingCapability(context: ExternalEventExtensionContext): Promise<void> {
+    const global = await context.config.getGlobalConfig(this.sourceId);
+    if (global.capabilities.polling === true) return;
+    await context.config.setGlobalConfig(this.sourceId, {
+      ...global,
+      capabilities: { ...global.capabilities, polling: true },
+    });
+  }
+
+  private ensurePollingActive(): void {
+    if (this.stopped) return;
+    if (this.pollTimer) return;
+    this.scheduleNextPoll();
+  }
+
+  private maybeStopPolling(): void {
+    if (!this.pollTimer) return;
+    if (this.repo.listPollingRepos().length > 0) return;
+    clearTimeout(this.pollTimer);
+    this.pollTimer = null;
   }
 
   private async publishEvent(
@@ -429,7 +616,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     owner: string;
     repo: string;
   }): Promise<GitHubWatchedRepo> {
-    if (!this.githubToken) {
+    if (!(await this.resolveToken())) {
       throw new Error('GITHUB_TOKEN is required to configure GitHub webhooks');
     }
     const webhookUrl = getConfiguredWebhookUrl();
@@ -478,7 +665,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     owner: string,
     repo: string
   ): Promise<GitHubWatchedRepo> {
-    if (!this.githubToken) {
+    if (!(await this.resolveToken())) {
       throw new Error('GITHUB_TOKEN is required to check GitHub webhooks');
     }
     const watched = this.repo.getWatchedRepo(spaceId, owner, repo);
@@ -609,7 +796,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
   }
 
   private async deleteRemoteWebhook(watched: GitHubWatchedRepo): Promise<void> {
-    if (!this.githubToken) {
+    if (!(await this.resolveToken())) {
       throw new Error('GITHUB_TOKEN is required to delete GitHub webhooks');
     }
     const repoPath = gitHubRepoPath(watched.owner, watched.repo);
@@ -624,12 +811,16 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
   }
 
   private async githubFetch(path: string, init: RequestInit = {}): Promise<Response> {
+    const token = await this.resolveToken();
+    if (!token) {
+      throw new Error('GITHUB_TOKEN is required for GitHub API requests');
+    }
     const response = await (this.options.fetchImpl ?? fetch)(`${GITHUB_API_BASE}${path}`, {
       ...init,
       headers: {
         Accept: 'application/vnd.github+json',
         ...(init.body ? { 'Content-Type': 'application/json' } : {}),
-        Authorization: `Bearer ${this.githubToken}`,
+        Authorization: `Bearer ${token}`,
         'User-Agent': 'NeoKai-Space-GitHub/1.0',
         'X-GitHub-Api-Version': '2022-11-28',
         ...init.headers,
@@ -662,6 +853,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       { key: 'pulls', path: '/pulls', extra: 'state=all&sort=updated&direction=desc' },
     ];
 
+    const token = await this.resolveToken();
     for (const endpoint of endpoints) {
       const page = processedPages[endpoint.key] ?? 1;
       const query = new URLSearchParams();
@@ -680,7 +872,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         'User-Agent': 'NeoKai-Space-GitHub/1.0',
         'X-GitHub-Api-Version': '2022-11-28',
       };
-      if (this.githubToken) headers.Authorization = `Bearer ${this.githubToken}`;
+      if (token) headers.Authorization = `Bearer ${token}`;
       if (page === 1 && etags[endpoint.key]) headers['If-None-Match'] = etags[endpoint.key];
       const response = await fetchImpl(url, { headers });
       if (response.status === 304) continue;
