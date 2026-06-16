@@ -320,6 +320,12 @@ describe('KimiProvider', () => {
       expect(resolveKimiRegion('global')).toBe('global');
     });
 
+    it('resolveKimiRegion is case-insensitive for hand-crafted payloads', () => {
+      expect(resolveKimiRegion('CHINA')).toBe('china');
+      expect(resolveKimiRegion('Global')).toBe('global');
+      expect(resolveKimiRegion('  Global  ')).toBe('china'); // whitespace not trimmed
+    });
+
     it('resolveKimiRegion defaults to china for missing/invalid region', () => {
       expect(resolveKimiRegion(undefined)).toBe('china');
       expect(resolveKimiRegion(null)).toBe('china');

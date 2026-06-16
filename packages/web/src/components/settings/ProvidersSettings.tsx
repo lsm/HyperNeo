@@ -625,11 +625,15 @@ export function ProvidersSettings() {
                         {/* Kimi region selector — only for built-in Kimi rows. */}
                         {provider.providerId === 'kimi' && !isCustom && (
                           <div>
-                            <h5 class="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-2">
+                            <label
+                              for={`kimi-region-${provider.id}`}
+                              class="block text-xs font-semibold uppercase tracking-wider text-gray-400 mb-2"
+                            >
                               Region
-                            </h5>
+                            </label>
                             <div class="flex gap-2 items-center">
                               <select
+                                id={`kimi-region-${provider.id}`}
                                 value={kimiRegions[provider.id] ?? 'china'}
                                 onChange={(e) =>
                                   setKimiRegions((prev) => ({
@@ -647,7 +651,10 @@ export function ProvidersSettings() {
                                 variant="primary"
                                 onClick={() => handleUpdateKimiRegion(provider)}
                                 loading={isPending}
-                                disabled={isPending}
+                                disabled={
+                                  isPending ||
+                                  (kimiRegions[provider.id] ?? 'china') === readKimiRegion(provider)
+                                }
                               >
                                 Save
                               </Button>

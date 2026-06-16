@@ -94,10 +94,18 @@ export const KIMI_REGION_ENDPOINTS: Record<
  * `'china'` for anything missing or unrecognised. This is the single source
  * of truth for backward compatibility — existing credentials without a region
  * continue to route to the China endpoint.
+ *
+ * Matching is case-insensitive so hand-crafted payloads using `'CHINA'` or
+ * `'Global'` normalise correctly. The UI uses a `<select>` so it always
+ * emits a canonical lowercase value, but defensive normalisation here keeps
+ * the API tolerant of direct RPC callers.
  */
 export function resolveKimiRegion(region: unknown): KimiRegion {
-  if (typeof region === 'string' && VALID_REGIONS.has(region as KimiRegion)) {
-    return region as KimiRegion;
+  if (typeof region === 'string') {
+    const normalised = region.toLowerCase() as KimiRegion;
+    if (VALID_REGIONS.has(normalised)) {
+      return normalised;
+    }
   }
   return 'china';
 }
