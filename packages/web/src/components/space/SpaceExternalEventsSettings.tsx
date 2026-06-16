@@ -144,6 +144,7 @@ export function SpaceExternalEventsSettings({
   const githubWebhooksEnabled = githubExtension?.config.capabilities.webhooks !== false;
   const githubControlsEnabled = githubGloballyEnabled && githubRpcConfigEnabled;
   const githubSpaceEnabled = spaceConfig?.enabled ?? true;
+  const spacePollingActive = githubPollingEnabled && repos.some((repo) => repo.pollingEnabled);
   const webhookUrl = useMemo(getWebhookUrl, []);
 
   async function refreshDeliveries(): Promise<void> {
@@ -632,7 +633,8 @@ export function SpaceExternalEventsSettings({
               tokenInput={tokenInput}
               onTokenInputChange={setTokenInput}
               busy={busy === 'github:token' || busy === 'github:polling'}
-              pollingEnabled={githubPollingEnabled}
+              pollingEnabled={spacePollingActive}
+              pollingCapabilityDisabled={!githubPollingEnabled}
               onSaveToken={saveToken}
               onClearToken={clearToken}
               onTogglePolling={setPollingCapability}
@@ -1170,6 +1172,7 @@ interface GitHubConnectionCardProps {
   onTokenInputChange: (value: string) => void;
   busy: boolean;
   pollingEnabled: boolean;
+  pollingCapabilityDisabled: boolean;
   onSaveToken: () => Promise<void>;
   onClearToken: () => Promise<void>;
   onTogglePolling: (enabled: boolean) => Promise<void>;
@@ -1182,6 +1185,7 @@ function GitHubConnectionCard({
   onTokenInputChange,
   busy,
   pollingEnabled,
+  pollingCapabilityDisabled,
   onSaveToken,
   onClearToken,
   onTogglePolling,
@@ -1282,16 +1286,23 @@ function GitHubConnectionCard({
         </div>
       )}
 
-      <label class="flex items-center gap-2 text-xs text-gray-300">
-        <input
-          type="checkbox"
-          checked={pollingEnabled}
-          disabled={busy}
-          onChange={() => onTogglePolling(!pollingEnabled)}
-          class="h-4 w-4 rounded border-dark-500 bg-dark-700 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
-          aria-label="Enable GitHub polling"
-        />
-        Polling (daemon-wide capability; checks GitHub every 60s)
+      <label class="flex flex-col gap-1 text-xs text-gray-300">
+        <span class="flex items-center gap-2">
+          <input
+            type="checkbox"
+            checked={pollingEnabled}
+            disabled={busy}
+            onChange={() => onTogglePolling(!pollingEnabled)}
+            class="h-4 w-4 rounded border-dark-500 bg-dark-700 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
+            aria-label="Enable GitHub polling for this space"
+          />
+          Polling for this space (daemon-wide capability; checks GitHub every 60s)
+        </span>
+        {pollingCapabilityDisabled && (
+          <span class="ml-6 text-gray-500">
+            Polling capability is currently off daemon-wide — toggle to enable it.
+          </span>
+        )}
       </label>
     </div>
   );

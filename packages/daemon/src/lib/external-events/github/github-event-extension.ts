@@ -248,6 +248,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       }
       const removed = this.repo.removeWatchedRepo(params.spaceId, params.owner, params.repo);
       await this.persistSpaceConfig(context, params.spaceId);
+      await this.disablePollingCapabilityIfUnused(context);
       this.maybeStopPolling();
       context.onSourceConfigChanged({
         source: this.sourceId,
@@ -326,13 +327,21 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     });
 
     /**
-     * Toggle polling for every watched repo in a space.
+     * Toggle polling for watched repos in a space.
      *
-     * Side-effect: enabling polling also flips the GLOBAL polling capability
-     * on via setGlobalConfig, because that capability gates every poll cycle
-     * across the daemon. Disabling polling for a single space does NOT turn
-     * the global capability off — other spaces may still rely on it. The
-     * global capability is intentionally sticky.
+     * Scope rules:
+     * - Enabling polling only affects repos that do NOT already have webhook
+     *   delivery configured (webhookEnabled && webhookSecret). Polling and
+     *   webhooks produce independent dedupe keys (`action: 'polled'` vs
+     *   webhook actions), so enabling both on the same repo would backfill
+     *   and re-trigger workflow runs for already-delivered events. Repos
+     *   with webhook delivery stay on webhook delivery.
+     * - Disabling polling clears the flag on every repo in the space.
+     *
+     * Side-effect on the GLOBAL polling capability: enabling flips it on
+     * (it gates every poll cycle across the daemon). Disabling flips it
+     * back off only when no polling-enabled repos remain in any space —
+     * so the UI checkbox reflects reality after a disable.
      */
     hub.onRequest('space.github.setPollingEnabled', async (data) => {
       await assertRpcConfigEnabled(context, this.sourceId);
@@ -342,6 +351,11 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       }
       const repos = this.repo.listWatchedRepos(params.spaceId);
       for (const repo of repos) {
+        if (params.enabled && repo.webhookEnabled && repo.webhookSecret) {
+          // Webhook delivery is already active — leave polling off to avoid
+          // duplicate event publication.
+          continue;
+        }
         this.repo.upsertWatchedRepo({
           spaceId: repo.spaceId,
           owner: repo.owner,
@@ -353,6 +367,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         await this.enablePollingCapability(context);
         this.ensurePollingActive();
       } else {
+        await this.disablePollingCapabilityIfUnused(context);
         this.maybeStopPolling();
       }
       await this.persistSpaceConfig(context, params.spaceId);
@@ -574,6 +589,24 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     await context.config.setGlobalConfig(this.sourceId, {
       ...global,
       capabilities: { ...global.capabilities, polling: true },
+    });
+  }
+
+  /**
+   * Turn the global polling capability off if no watched repo in any space
+   * still has polling enabled. Called from setPollingEnabled(false) and from
+   * unwatchRepo so the UI checkbox reflects reality after the last polling
+   * consumer goes away.
+   */
+  private async disablePollingCapabilityIfUnused(
+    context: ExternalEventExtensionContext
+  ): Promise<void> {
+    if (this.repo.listPollingRepos().length > 0) return;
+    const global = await context.config.getGlobalConfig(this.sourceId);
+    if (global.capabilities.polling !== true) return;
+    await context.config.setGlobalConfig(this.sourceId, {
+      ...global,
+      capabilities: { ...global.capabilities, polling: false },
     });
   }
 

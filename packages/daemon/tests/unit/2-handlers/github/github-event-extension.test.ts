@@ -2806,6 +2806,119 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
     }
   });
 
+  test('space.github.setPollingEnabled(false) flips the global capability off when no polling repos remain', async () => {
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, undefined, { pollIntervalMs: 60_000 });
+    const { clientHub, hub, ready } = setupHubPair();
+    await ready;
+    const configStore = new RecordingConfigStore({ globallyEnabled: true, polling: true });
+    const context = {
+      publisher: { publish: async () => {} },
+      config: configStore,
+      onSourceConfigChanged() {},
+    };
+    try {
+      await extension.start(context);
+      extension.registerRpcHandlers(hub, context);
+      extension.repo.upsertWatchedRepo({
+        spaceId: 'space-1',
+        owner: 'acme',
+        repo: 'widgets',
+        pollingEnabled: true,
+      });
+
+      await clientHub.request('space.github.setPollingEnabled', {
+        spaceId: 'space-1',
+        enabled: false,
+      });
+
+      const global = await configStore.getGlobalConfig('github');
+      expect(global.capabilities.polling).toBe(false);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('space.github.setPollingEnabled(true) skips repos that already have webhook delivery', async () => {
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, undefined, { pollIntervalMs: 60_000 });
+    const { clientHub, hub, ready } = setupHubPair();
+    await ready;
+    const configStore = new RecordingConfigStore({ globallyEnabled: true, polling: false });
+    const context = {
+      publisher: { publish: async () => {} },
+      config: configStore,
+      onSourceConfigChanged() {},
+    };
+    try {
+      await extension.start(context);
+      extension.registerRpcHandlers(hub, context);
+      extension.repo.upsertWatchedRepo({
+        spaceId: 'space-1',
+        owner: 'acme',
+        repo: 'webhook-repo',
+        webhookEnabled: true,
+        webhookSecret: 'configured-secret',
+        pollingEnabled: false,
+      });
+      extension.repo.upsertWatchedRepo({
+        spaceId: 'space-1',
+        owner: 'acme',
+        repo: 'polling-repo',
+        webhookEnabled: false,
+        pollingEnabled: false,
+      });
+
+      await clientHub.request('space.github.setPollingEnabled', {
+        spaceId: 'space-1',
+        enabled: true,
+      });
+
+      const repos = extension.repo.listWatchedRepos('space-1');
+      const webhookRepo = repos.find((r) => r.repo === 'webhook-repo')!;
+      const pollingRepo = repos.find((r) => r.repo === 'polling-repo')!;
+      expect(webhookRepo.pollingEnabled).toBe(false);
+      expect(webhookRepo.webhookSecret).toBe('configured-secret');
+      expect(pollingRepo.pollingEnabled).toBe(true);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('unwatchRepo clears the global polling capability when the last polling repo goes away', async () => {
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, undefined, { pollIntervalMs: 60_000 });
+    const { clientHub, hub, ready } = setupHubPair();
+    await ready;
+    const configStore = new RecordingConfigStore({ globallyEnabled: true, polling: true });
+    const context = {
+      publisher: { publish: async () => {} },
+      config: configStore,
+      onSourceConfigChanged() {},
+    };
+    try {
+      await extension.start(context);
+      extension.registerRpcHandlers(hub, context);
+      extension.repo.upsertWatchedRepo({
+        spaceId: 'space-1',
+        owner: 'acme',
+        repo: 'widgets',
+        pollingEnabled: true,
+      });
+
+      await clientHub.request('space.github.unwatchRepo', {
+        spaceId: 'space-1',
+        owner: 'acme',
+        repo: 'widgets',
+      });
+
+      const global = await configStore.getGlobalConfig('github');
+      expect(global.capabilities.polling).toBe(false);
+    } finally {
+      await extension.stop();
+    }
+  });
+
   test('space.github.setPollingEnabled requires spaceId and enabled flag', async () => {
     const db = setupDb();
     const extension = new GitHubEventExtension(db, undefined);

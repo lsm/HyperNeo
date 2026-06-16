@@ -1095,7 +1095,9 @@ describe('SpaceExternalEventsSettings', () => {
     });
 
     const { findByText } = render(<SpaceExternalEventsSettings spaceId="space-1" />);
-    const checkbox = await findByText('Polling (daemon-wide capability; checks GitHub every 60s)');
+    const checkbox = await findByText(
+      'Polling for this space (daemon-wide capability; checks GitHub every 60s)'
+    );
 
     fireEvent.click(checkbox);
 
@@ -1116,7 +1118,7 @@ describe('SpaceExternalEventsSettings', () => {
     setupRequests();
     const { findByText } = render(<SpaceExternalEventsSettings spaceId="space-1" />);
     expect(
-      await findByText('Polling (daemon-wide capability; checks GitHub every 60s)')
+      await findByText('Polling for this space (daemon-wide capability; checks GitHub every 60s)')
     ).toBeTruthy();
   });
 
