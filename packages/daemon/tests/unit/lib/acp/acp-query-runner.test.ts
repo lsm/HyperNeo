@@ -564,32 +564,21 @@ describe('AcpQueryRunner', () => {
     expect(stopSpy).toHaveBeenCalled();
   });
 
-  test('preserves env-only Anthropic overrides for ACP subprocesses', async () => {
-    process.env.ANTHROPIC_BASE_URL = 'https://enterprise.example.com';
+  test('preserves env-only Anthropic auth for ACP subprocesses', async () => {
+    // Auth tokens are read live from process.env at ACP env build time so that
+    // credential discovery (which runs after provider-service module load) still
+    // flows into the ACP child env. Base URL / model overrides come from the
+    // module-load startup snapshot in provider-service and are covered by the
+    // clearProviderRoutingEnvVars tests there.
     process.env.ANTHROPIC_AUTH_TOKEN = 'sk-ant-oat-acp-token';
     process.env.CLAUDE_CODE_OAUTH_TOKEN = 'acp-oauth-token';
-    process.env.API_TIMEOUT_MS = '600000';
-    process.env.ANTHROPIC_MODEL = 'claude-enterprise';
-    process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = 'claude-haiku-enterprise';
-    process.env.ANTHROPIC_DEFAULT_SONNET_MODEL = 'claude-sonnet-enterprise';
-    process.env.ANTHROPIC_DEFAULT_OPUS_MODEL = 'claude-opus-enterprise';
     const { runner, ctx, constructorOptions } = createRunnerFixture();
 
     await runner.start();
     await ctx.queryPromise;
 
-    expect(constructorOptions[0].env?.ANTHROPIC_BASE_URL).toBe('https://enterprise.example.com');
     expect(constructorOptions[0].env?.ANTHROPIC_AUTH_TOKEN).toBe('sk-ant-oat-acp-token');
     expect(constructorOptions[0].env?.CLAUDE_CODE_OAUTH_TOKEN).toBe('acp-oauth-token');
-    expect(constructorOptions[0].env?.API_TIMEOUT_MS).toBe('600000');
-    expect(constructorOptions[0].env?.ANTHROPIC_MODEL).toBe('claude-enterprise');
-    expect(constructorOptions[0].env?.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe(
-      'claude-haiku-enterprise'
-    );
-    expect(constructorOptions[0].env?.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe(
-      'claude-sonnet-enterprise'
-    );
-    expect(constructorOptions[0].env?.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('claude-opus-enterprise');
   });
 
   test('maps ACP permission requests through AskUserQuestion approval callback', async () => {

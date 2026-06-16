@@ -18,7 +18,7 @@ import type { McpServerConfig, SDKMessage, SDKUserMessage } from '@neokai/shared
 import { ErrorCategory } from '../error-manager';
 import { getModelsCache, setModelsCache } from '../model-service';
 import { getProviderRegistry } from '../providers/factory';
-import { getProviderService } from '../provider-service';
+import { getProviderService, getUserConfiguredAnthropicEnv } from '../provider-service';
 import { AcpProvider } from '../providers/acp-provider';
 import { TRANSIENT_CONNECTION_ERROR_SUBSTRINGS } from '../agent/transient-error-patterns';
 import {
@@ -483,17 +483,14 @@ export class AcpQueryRunner {
         throw new Error('Set NEOKAI_ACP_COMMAND to enable ACP agents.');
       }
       const { command, args } = parseAcpCommand(acpCommand);
-      const preProviderEnv = {
-        ANTHROPIC_BASE_URL: process.env.ANTHROPIC_BASE_URL,
+      // Snapshot auth tokens BEFORE provider cleanup — clearProviderRoutingEnvVars()
+      // deletes ANTHROPIC_AUTH_TOKEN, and credential discovery populates tokens
+      // after provider-service module load, so neither the live env nor the
+      // startup snapshot has them by the time we build the ACP child env.
+      const preCleanupAuth = {
         ANTHROPIC_AUTH_TOKEN: process.env.ANTHROPIC_AUTH_TOKEN,
         CLAUDE_CODE_OAUTH_TOKEN: process.env.CLAUDE_CODE_OAUTH_TOKEN,
-        API_TIMEOUT_MS: process.env.API_TIMEOUT_MS,
-        ANTHROPIC_MODEL: process.env.ANTHROPIC_MODEL,
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL,
-        ANTHROPIC_DEFAULT_SONNET_MODEL: process.env.ANTHROPIC_DEFAULT_SONNET_MODEL,
-        ANTHROPIC_DEFAULT_OPUS_MODEL: process.env.ANTHROPIC_DEFAULT_OPUS_MODEL,
       };
-
       const providerService = getProviderService();
       this.ctx.originalEnvVars = providerService.applyEnvVarsToProcessForSession({
         ...session,
@@ -565,10 +562,24 @@ export class AcpQueryRunner {
         omitProviderManaged: true,
         omitProviderManagedPreserveAuth: true,
       });
-      for (const [key, value] of Object.entries(preProviderEnv)) {
-        if (value === undefined) continue;
+      // Restore user-configured Anthropic overrides so an Anthropic-backed ACP
+      // agent inherits the real endpoint/model/auth.
+      // - Base URL / model / timeout: from the daemon-startup snapshot in
+      //   provider-service (frozen at module load), which excludes routing vars
+      //   leaked by concurrent bridge provider turns.
+      // - Auth tokens: read live from process.env before this ACP env build,
+      //   because credential discovery runs after module load. The sk-ant-oat
+      //   prefix check excludes non-Anthropic bridge tokens.
+      const userEnv = getUserConfiguredAnthropicEnv();
+      for (const [key, value] of Object.entries(userEnv)) {
         if (key === 'ANTHROPIC_AUTH_TOKEN' && !value.startsWith('sk-ant-oat')) continue;
         acpEnv[key] = value;
+      }
+      if (preCleanupAuth.ANTHROPIC_AUTH_TOKEN?.startsWith('sk-ant-oat')) {
+        acpEnv.ANTHROPIC_AUTH_TOKEN = preCleanupAuth.ANTHROPIC_AUTH_TOKEN;
+      }
+      if (preCleanupAuth.CLAUDE_CODE_OAUTH_TOKEN) {
+        acpEnv.CLAUDE_CODE_OAUTH_TOKEN = preCleanupAuth.CLAUDE_CODE_OAUTH_TOKEN;
       }
 
       client = this.createAcpClient({
