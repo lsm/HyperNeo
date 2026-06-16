@@ -109,6 +109,21 @@ function withProviderLock<T>(fn: () => Promise<T>): Promise<T> {
   return run;
 }
 
+/**
+ * Normalises a `KeychainUnavailableError` into a plain `Error` carrying
+ * `KEYCHAIN_UNAVAILABLE_MESSAGE` so the RPC layer serialises actionable UX
+ * guidance to the client. Other errors pass through unchanged. `action` and
+ * `providerId` feed the structured warn log so operators can correlate the
+ * failed mutation in daemon logs.
+ */
+function rethrowKeychainError(err: unknown, action: string, providerId: string): never {
+  if (err instanceof KeychainUnavailableError) {
+    log.warn(`Provider ${action} blocked for ${providerId}: ${KEYCHAIN_UNAVAILABLE_MESSAGE}`);
+    throw new Error(KEYCHAIN_UNAVAILABLE_MESSAGE);
+  }
+  throw err;
+}
+
 // ---------------------------------------------------------------------------
 // Handler wiring
 // ---------------------------------------------------------------------------
@@ -203,7 +218,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
           // Compensating delete: remove the orphan DB record so retries don't fail
           // with 'already exists'.
           providerRepo.deleteProvider(record.id);
-          throw err;
+          rethrowKeychainError(err, 'create', record.providerId);
         }
 
         await clearCacheAndNotifyProvidersChanged(internalEventBus);
@@ -239,16 +254,20 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
           // Handle credential updates. Custom endpoints keep auth inline, so
           // skip the credential store for them.
           if (data.credentials && existing.kind !== 'custom_endpoint') {
-            if (data.credentials.apiKey) {
-              await credentialManager.storeApiKey(existing.providerId, data.credentials.apiKey);
-              updates.authType = 'api_key';
-            } else if (data.credentials.oauthAccessToken) {
-              await credentialManager.storeOAuthTokens(existing.providerId, {
-                accessToken: data.credentials.oauthAccessToken,
-                refreshToken: data.credentials.oauthRefreshToken,
-                expiresAt: data.credentials.oauthExpiresAt,
-              });
-              updates.authType = 'oauth';
+            try {
+              if (data.credentials.apiKey) {
+                await credentialManager.storeApiKey(existing.providerId, data.credentials.apiKey);
+                updates.authType = 'api_key';
+              } else if (data.credentials.oauthAccessToken) {
+                await credentialManager.storeOAuthTokens(existing.providerId, {
+                  accessToken: data.credentials.oauthAccessToken,
+                  refreshToken: data.credentials.oauthRefreshToken,
+                  expiresAt: data.credentials.oauthExpiresAt,
+                });
+                updates.authType = 'oauth';
+              }
+            } catch (err) {
+              rethrowKeychainError(err, 'update', existing.providerId);
             }
           }
 
@@ -302,13 +321,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
           // stale credential that can reappear if the provider is re-added.
           await credentialManager.removeCredentials(record.providerId);
         } catch (error) {
-          if (error instanceof KeychainUnavailableError) {
-            log.warn(
-              `Provider delete blocked for ${record.providerId}: ${KEYCHAIN_UNAVAILABLE_MESSAGE}`
-            );
-            throw new Error(KEYCHAIN_UNAVAILABLE_MESSAGE);
-          }
-          throw error;
+          rethrowKeychainError(error, 'delete', record.providerId);
         }
       }
 
