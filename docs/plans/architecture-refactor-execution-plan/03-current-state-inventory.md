@@ -2,25 +2,30 @@
 
 This inventory is the baseline for the architecture refactor. It is intentionally descriptive: no runtime behavior changes belong in M0.
 
-Generated/checked on 2026-05-31 from branch `codex/architecture-refactor-specs`.
+Generated/checked on 2026-06-15 from branch `codex/architecture-refactor-specs`.
 
 ## Legacy RPC And MessageHub Surface
 
-Current daemon RPC registration is centered on `setupRPCHandlers` and direct `messageHub.onRequest(...)` calls. Literal request names found in daemon RPC/external-event handlers: 235. This count excludes dynamic registration and state-channel constants.
+Current daemon RPC registration is centered on `setupRPCHandlers` and direct `messageHub.onRequest(...)` calls. Unique literal request names found under `packages/daemon/src`: 278. This count excludes dynamic registration and state-channel constants.
 
 Primary compatibility groups:
 
 | Prefix | Count | Main owner |
 | --- | ---: | --- |
 | `session.*` | 30 | `packages/daemon/src/lib/rpc-handlers/session-handlers.ts` |
-| `space.*` | 26 | `space-handlers`, `space-mcp-handlers`, task-message handlers, GitHub extension |
+| `evolution.*` | 26 | Forge/evolution handlers |
 | `config.*` | 24 | `config-handlers.ts` |
-| `spaceWorkflowRun.*` | 15 | `space-workflow-run-handlers.ts` |
+| `space.*` | 20 | `space-handlers`, `space-mcp-handlers`, task-message handlers, GitHub extension |
+| `spaceWorkflowRun.*` | 18 | `space-workflow-run-handlers.ts` |
 | `mcp.*` | 13 | app/space/global MCP handlers |
+| `spaceLongHorizonAgent.*` | 12 | long-horizon agent handlers |
 | `spaceAgent.*` | 10 | `space-agent-handlers.ts` |
 | `spaceWorkflow.*` | 10 | `space-workflow-handlers.ts` |
+| `providers.*` | 8 | provider handlers |
+| `settings.*` | 8 | settings handlers |
 | `spaceTask.*` | 8 | `space-task-handlers.ts` |
 | `spaceGoal.*` | 8 | `space-goal-handlers.ts` |
+| `skill.*` | 7 | skills handlers |
 | `taskSchedule.*` | 7 | `task-schedule-handlers.ts` |
 | `liveQuery.*` | 2 | `live-query-handlers.ts` |
 
@@ -57,20 +62,21 @@ Current root `@neokai/shared` imports dominate package boundaries.
 
 | Import style | Count |
 | --- | ---: |
-| Root `@neokai/shared` import specs | 873 |
-| Files with at least one root import | 588 |
-| `@neokai/shared/sdk*` import specs | 89 |
-| `@neokai/shared/provider*` import specs | 32 |
+| Root `@neokai/shared` literal specs | 941 |
+| Files with at least one root literal | 626 |
+| `@neokai/shared/sdk*` literal specs | 100 |
+| `@neokai/shared/provider*` literal specs | 44 |
 | `@neokai/shared/types*` import specs | 15 |
-| `@neokai/shared/message-hub*` import specs | 5 |
+| `@neokai/shared/message-hub*` literal specs | 7 |
 
-Root import specs by package:
+Root literals by package:
 
 | Package | Count |
 | --- | ---: |
-| `packages/daemon` | 556 |
-| `packages/web` | 313 |
+| `packages/daemon` | 597 |
+| `packages/web` | 339 |
 | `packages/cli` | 4 |
+| `packages/e2e` | 1 |
 
 Current `packages/shared/package.json` exports are root, selected `types`, selected `provider`, selected `message-hub`, and wildcard `sdk`. Before migrating callers, M1 must make export-map parity explicit and add subpath skeletons for `contracts`, `read-models`, `domain`, `messaging`, and `compat`.
 

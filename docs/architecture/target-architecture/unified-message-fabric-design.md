@@ -468,10 +468,13 @@ Initial durable outbox shape:
 ```sql
 CREATE TABLE message_outbox (
   id TEXT PRIMARY KEY,
+  sequence INTEGER NOT NULL UNIQUE,
+  message_id TEXT NOT NULL UNIQUE,
   kind TEXT NOT NULL,
   name TEXT NOT NULL,
   version INTEGER NOT NULL,
   subject TEXT,
+  partition_key TEXT,
   envelope_json TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'pending',
   attempts INTEGER NOT NULL DEFAULT 0,
@@ -481,13 +484,13 @@ CREATE TABLE message_outbox (
 );
 
 CREATE INDEX idx_message_outbox_status_next
-  ON message_outbox(status, next_attempt_at);
+  ON message_outbox(status, next_attempt_at, sequence);
 
 CREATE INDEX idx_message_outbox_subject_created
-  ON message_outbox(subject, created_at);
+  ON message_outbox(subject, sequence);
 ```
 
-The first implementation can publish durable messages in-process after writing the outbox row. Later broker adapters can drain the same outbox to NATS, Kafka, or other transports.
+The first implementation can publish durable messages in-process after writing the outbox row. Later broker adapters can drain the same outbox to NATS, Kafka, or other transports. `sequence` is the monotonic local ordering key used by replay cursors and dispatch loops; timestamps are metadata, not ordering authority.
 
 ### 10.3 Inbox and Dedupe
 
@@ -496,17 +499,27 @@ Inbox/deduplication is needed when external transports can redeliver messages.
 ```sql
 CREATE TABLE message_inbox (
   id TEXT PRIMARY KEY,
+  message_id TEXT NOT NULL,
   source TEXT NOT NULL,
+  consumer TEXT NOT NULL,
   name TEXT NOT NULL,
   subject TEXT,
+  idempotency_key TEXT,
+  dedupe_scope TEXT,
+  dedupe_key TEXT,
   envelope_json TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'received',
   received_at INTEGER NOT NULL,
-  handled_at INTEGER
+  handled_at INTEGER,
+  UNIQUE(consumer, message_id)
 );
+
+CREATE UNIQUE INDEX idx_message_inbox_dedupe
+  ON message_inbox(consumer, dedupe_scope, dedupe_key)
+  WHERE dedupe_key IS NOT NULL;
 ```
 
-Inbox can be deferred until the first cross-process durable transport, but the envelope must include enough identity and idempotency metadata from day one.
+Inbox can be deferred until the first cross-process durable transport, but the envelope must include enough identity and idempotency metadata from day one. External transports must populate `message_id` and the normalized `dedupe_scope` / `dedupe_key` before handler dispatch so redelivery with a fresh transport envelope cannot repeat side effects.
 
 ---
 

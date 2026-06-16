@@ -14,11 +14,11 @@ This milestone is mostly `foundation` phase work. It should not change runtime b
 
 Current facts:
 
-- `@neokai/shared` root import specs: 873.
-- Files with at least one root import: 588.
-- Root imports by package: `packages/daemon` 556, `packages/web` 313, `packages/cli` 4.
+- `@neokai/shared` root literal specs: 941.
+- Files with at least one root literal: 626.
+- Root literals by package: `packages/daemon` 597, `packages/web` 339, `packages/cli` 4, `packages/e2e` 1.
 - Current root barrel: `packages/shared/src/mod.ts`.
-- Current oversized shared files: `types/space.ts` 2422 lines, `api.ts` 1242 lines, `types.ts` 977 lines, `message-hub/message-hub.ts` 856 lines.
+- Current oversized shared files: `types/space.ts` 2681 lines, `api.ts` 1242 lines, `types.ts` 982 lines, `message-hub/message-hub.ts` 856 lines.
 - Current export map has missing paths for `./message-hub/unix-socket-transport` and `./message-hub/stdio-transport`; no current package imports were found for those paths.
 
 ## M1 Exit Criteria

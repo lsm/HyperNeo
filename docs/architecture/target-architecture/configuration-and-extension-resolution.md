@@ -476,7 +476,8 @@ CREATE TABLE extension_packages (
 CREATE TABLE extension_contributions (
   id TEXT PRIMARY KEY,
   package_id TEXT NOT NULL REFERENCES extension_packages(id) ON DELETE CASCADE,
-  contribution_type TEXT NOT NULL,
+  contribution_type TEXT NOT NULL
+    CHECK(contribution_type IN ('tool.mcp', 'tool.native', 'skill.command', 'prompt.policy', 'hook.policy', 'runtime.setting', 'ui.surface')),
   name TEXT NOT NULL,
   manifest_json TEXT NOT NULL,
   created_at INTEGER NOT NULL,
