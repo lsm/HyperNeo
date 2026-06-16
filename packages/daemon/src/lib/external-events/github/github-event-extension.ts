@@ -278,6 +278,20 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       };
     });
 
+    /**
+     * Store the GitHub PAT in the credential store.
+     *
+     * Scope: DAEMON-WIDE. The token is shared by every space that uses the
+     * GitHub event extension — there is no per-space isolation. Callers MUST
+     * confirm overwrite with the user when `getTokenStatus` reports an
+     * existing token. The UI is responsible for that confirmation; the RPC
+     * intentionally does not refuse overwrites because headless callers
+     * (CLI, migration scripts) also use it.
+     *
+     * Format: accepts classic PATs (`ghp_`), fine-grained PATs
+     * (`github_pat_`), OAuth tokens (`gho_`), and app tokens (`ghs_`).
+     * Rejects empty / malformed values.
+     */
     hub.onRequest('space.github.setToken', async (data) => {
       await assertRpcConfigEnabled(context, this.sourceId);
       if (!this.credentialStore) {
@@ -286,7 +300,9 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       const params = data as { token?: string };
       const token = params.token?.trim();
       if (!token) throw new Error('token is required');
+      validateGitHubTokenFormat(token);
       await this.credentialStore.set(credentialService('github'), GITHUB_CREDENTIAL_ACCOUNT, token);
+      log.info('GitHub token updated', { source: 'keychain' });
       return { success: true };
     });
 
@@ -295,15 +311,29 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       return await this.getTokenStatus();
     });
 
+    /**
+     * Remove the daemon-wide GitHub PAT from the credential store.
+     * Falls back to env-var token on the next resolveToken() call.
+     */
     hub.onRequest('space.github.clearToken', async () => {
       await assertRpcConfigEnabled(context, this.sourceId);
       if (!this.credentialStore) {
         throw new Error('Credential store is not available for GitHub tokens');
       }
       await this.credentialStore.delete(credentialService('github'), GITHUB_CREDENTIAL_ACCOUNT);
+      log.info('GitHub token removed from credential store');
       return { success: true };
     });
 
+    /**
+     * Toggle polling for every watched repo in a space.
+     *
+     * Side-effect: enabling polling also flips the GLOBAL polling capability
+     * on via setGlobalConfig, because that capability gates every poll cycle
+     * across the daemon. Disabling polling for a single space does NOT turn
+     * the global capability off — other spaces may still rely on it. The
+     * global capability is intentionally sticky.
+     */
     hub.onRequest('space.github.setPollingEnabled', async (data) => {
       await assertRpcConfigEnabled(context, this.sourceId);
       const params = data as { spaceId?: string; enabled?: boolean };
@@ -952,6 +982,25 @@ function generateWebhookSecret(): string {
   const bytes = new Uint8Array(32);
   crypto.getRandomValues(bytes);
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+const GITHUB_TOKEN_PREFIXES = ['ghp_', 'github_pat_', 'gho_', 'ghs_', 'ghr_', 'ghu_'] as const;
+const GITHUB_TOKEN_MIN_LENGTH = 16;
+
+/**
+ * Reject tokens that obviously aren't GitHub PATs. Intentionally permissive
+ * about length upper bound to accommodate fine-grained PATs; the floor catches
+ * accidental whitespace/paste truncation. The GitHub API is the source of
+ * truth for actual validity — see `getTokenStatus`.
+ */
+function validateGitHubTokenFormat(token: string): void {
+  if (token.length < GITHUB_TOKEN_MIN_LENGTH) {
+    throw new Error(`GitHub token is too short (minimum ${GITHUB_TOKEN_MIN_LENGTH} characters)`);
+  }
+  const matchesPrefix = GITHUB_TOKEN_PREFIXES.some((prefix) => token.startsWith(prefix));
+  if (!matchesPrefix) {
+    throw new Error(`GitHub token must start with one of: ${GITHUB_TOKEN_PREFIXES.join(', ')}`);
+  }
 }
 
 function gitHubRepoPath(owner: string, repo: string): string {

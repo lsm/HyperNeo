@@ -991,11 +991,13 @@ describe('SpaceExternalEventsSettings', () => {
     await findByText('github');
 
     const input = await findByPlaceholderText('ghp_…');
-    fireEvent.input(input, { target: { value: 'ghp_saved' } });
+    fireEvent.input(input, { target: { value: 'ghp_saved_token_value' } });
     fireEvent.click(getByText('Save token'));
 
     await waitFor(() => {
-      expect(mockRequest).toHaveBeenCalledWith('space.github.setToken', { token: 'ghp_saved' });
+      expect(mockRequest).toHaveBeenCalledWith('space.github.setToken', {
+        token: 'ghp_saved_token_value',
+      });
     });
     await waitFor(() => {
       expect(mockToastSuccess).toHaveBeenCalledWith('GitHub token saved to keychain');
@@ -1004,6 +1006,10 @@ describe('SpaceExternalEventsSettings', () => {
   });
 
   it('disconnects a configured token', async () => {
+    vi.stubGlobal(
+      'confirm',
+      vi.fn(() => true)
+    );
     mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
     let cleared = false;
     mockRequest.mockImplementation((method) => {
@@ -1043,6 +1049,7 @@ describe('SpaceExternalEventsSettings', () => {
     await waitFor(() => {
       expect(mockToastSuccess).toHaveBeenCalledWith('GitHub token removed');
     });
+    vi.unstubAllGlobals();
   });
 
   it('toggles space-level polling capability through RPC', async () => {
@@ -1088,7 +1095,7 @@ describe('SpaceExternalEventsSettings', () => {
     });
 
     const { findByText } = render(<SpaceExternalEventsSettings spaceId="space-1" />);
-    const checkbox = await findByText('Polling (checks GitHub every 60s for new events)');
+    const checkbox = await findByText('Polling (daemon-wide capability; checks GitHub every 60s)');
 
     fireEvent.click(checkbox);
 
@@ -1099,7 +1106,166 @@ describe('SpaceExternalEventsSettings', () => {
       });
     });
     await waitFor(() => {
-      expect(mockToastSuccess).toHaveBeenCalledWith('GitHub polling enabled for this space');
+      expect(mockToastSuccess).toHaveBeenCalledWith(
+        'GitHub polling enabled (daemon-wide capability)'
+      );
     });
+  });
+
+  it('reports daemon-wide capability in the polling checkbox label', async () => {
+    setupRequests();
+    const { findByText } = render(<SpaceExternalEventsSettings spaceId="space-1" />);
+    expect(
+      await findByText('Polling (daemon-wide capability; checks GitHub every 60s)')
+    ).toBeTruthy();
+  });
+
+  it('prompts for confirmation before overwriting an existing keychain token', async () => {
+    const confirmSpy = vi.fn(() => false);
+    vi.stubGlobal('confirm', confirmSpy);
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockImplementation((method) => {
+      if (method === 'externalEvents.extensions.list') return Promise.resolve(extensionResult);
+      if (method === 'space.github.listConfig') {
+        return Promise.resolve({
+          spaceId: 'space-1',
+          source: 'github',
+          enabled: true,
+          settings: {},
+        });
+      }
+      if (method === 'space.github.listWatchedRepos') return Promise.resolve(repoResult);
+      if (method === 'space.github.getTokenStatus') {
+        return Promise.resolve({
+          configured: true,
+          source: 'keychain',
+          login: 'octocat',
+        });
+      }
+      return Promise.resolve({});
+    });
+
+    const { findByText, getByText, getByPlaceholderText } = render(
+      <SpaceExternalEventsSettings spaceId="space-1" />
+    );
+    await findByText('octocat');
+
+    fireEvent.click(getByText('Replace token'));
+    const input = getByPlaceholderText('ghp_…');
+    fireEvent.input(input, { target: { value: 'ghp_replacement_token_value' } });
+    fireEvent.click(getByText('Replace token'));
+
+    // confirm() returned false → setToken must not fire.
+    expect(confirmSpy).toHaveBeenCalledWith('Replace the existing daemon-wide GitHub token?');
+    expect(mockRequest).not.toHaveBeenCalledWith('space.github.setToken', {
+      token: 'ghp_replacement_token_value',
+    });
+    vi.unstubAllGlobals();
+  });
+
+  it('overwrites the keychain token after user confirms', async () => {
+    const confirmSpy = vi.fn(() => true);
+    vi.stubGlobal('confirm', confirmSpy);
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockImplementation((method) => {
+      if (method === 'externalEvents.extensions.list') return Promise.resolve(extensionResult);
+      if (method === 'space.github.listConfig') {
+        return Promise.resolve({
+          spaceId: 'space-1',
+          source: 'github',
+          enabled: true,
+          settings: {},
+        });
+      }
+      if (method === 'space.github.listWatchedRepos') return Promise.resolve(repoResult);
+      if (method === 'space.github.getTokenStatus') {
+        return Promise.resolve({
+          configured: true,
+          source: 'keychain',
+          login: 'octocat',
+        });
+      }
+      if (method === 'space.github.setToken') return Promise.resolve({ success: true });
+      return Promise.resolve({});
+    });
+
+    const { findByText, getByText, getByPlaceholderText } = render(
+      <SpaceExternalEventsSettings spaceId="space-1" />
+    );
+    await findByText('octocat');
+
+    fireEvent.click(getByText('Replace token'));
+    fireEvent.input(getByPlaceholderText('ghp_…'), {
+      target: { value: 'ghp_replacement_token_value' },
+    });
+    fireEvent.click(getByText('Replace token'));
+
+    await waitFor(() => {
+      expect(mockRequest).toHaveBeenCalledWith('space.github.setToken', {
+        token: 'ghp_replacement_token_value',
+      });
+    });
+    vi.unstubAllGlobals();
+  });
+
+  it('confirms before disconnecting an existing keychain token', async () => {
+    const confirmSpy = vi.fn(() => false);
+    vi.stubGlobal('confirm', confirmSpy);
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockImplementation((method) => {
+      if (method === 'externalEvents.extensions.list') return Promise.resolve(extensionResult);
+      if (method === 'space.github.listConfig') {
+        return Promise.resolve({
+          spaceId: 'space-1',
+          source: 'github',
+          enabled: true,
+          settings: {},
+        });
+      }
+      if (method === 'space.github.listWatchedRepos') return Promise.resolve(repoResult);
+      if (method === 'space.github.getTokenStatus') {
+        return Promise.resolve({
+          configured: true,
+          source: 'keychain',
+          login: 'octocat',
+        });
+      }
+      return Promise.resolve({});
+    });
+
+    const { findByText, getByText } = render(<SpaceExternalEventsSettings spaceId="space-1" />);
+    await findByText('octocat');
+
+    fireEvent.click(getByText('Disconnect'));
+
+    expect(confirmSpy).toHaveBeenCalledWith(
+      'Remove the daemon-wide GitHub token from the keychain?'
+    );
+    expect(mockRequest).not.toHaveBeenCalledWith('space.github.clearToken', {});
+    vi.unstubAllGlobals();
+  });
+
+  it('renders an error state when getTokenStatus RPC fails', async () => {
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockImplementation((method) => {
+      if (method === 'externalEvents.extensions.list') return Promise.resolve(extensionResult);
+      if (method === 'space.github.listConfig') {
+        return Promise.resolve({
+          spaceId: 'space-1',
+          source: 'github',
+          enabled: true,
+          settings: {},
+        });
+      }
+      if (method === 'space.github.listWatchedRepos') return Promise.resolve(repoResult);
+      if (method === 'space.github.getTokenStatus') {
+        return Promise.reject(new Error('credential store offline'));
+      }
+      return Promise.resolve({});
+    });
+
+    const { findByTestId, queryByText } = render(<SpaceExternalEventsSettings spaceId="space-1" />);
+    expect(await findByTestId('github-token-status-error')).toBeTruthy();
+    expect(queryByText('Checking token status…')).toBeNull();
   });
 });

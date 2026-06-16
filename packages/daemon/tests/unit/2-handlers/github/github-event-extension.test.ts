@@ -2204,8 +2204,13 @@ class InMemoryCredentialStore {
   async delete(service: string, account: string): Promise<void> {
     this.map.delete(`${service}:${account}`);
   }
-  async listServices(): Promise<string[]> {
-    return [];
+  async listServices(prefix: string): Promise<string[]> {
+    const services = new Set<string>();
+    for (const key of this.map.keys()) {
+      const service = key.slice(0, key.lastIndexOf(':'));
+      if (service.startsWith(prefix)) services.add(service);
+    }
+    return Array.from(services).sort();
   }
 }
 
@@ -2264,10 +2269,12 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
       extension.registerRpcHandlers(hub, context);
 
       const result = await clientHub.request<{ success: boolean }>('space.github.setToken', {
-        token: 'ghp_secret',
+        token: 'ghp_persisted_token_value',
       });
       expect(result.success).toBe(true);
-      expect(await store.get('neokai.provider.github', 'default')).toBe('ghp_secret');
+      expect(await store.get('neokai.provider.github', 'default')).toBe(
+        'ghp_persisted_token_value'
+      );
     } finally {
       await extension.stop();
     }
@@ -2312,6 +2319,120 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
       await expect(
         clientHub.request('space.github.setToken', { token: 'ghp_secret' })
       ).rejects.toThrow('Credential store is not available for GitHub tokens');
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('space.github.setToken overwrites an existing keychain token', async () => {
+    const db = setupDb();
+    const store = new InMemoryCredentialStore();
+    await store.set('neokai.provider.github', 'default', 'ghp_old_token_value');
+    const extension = new GitHubEventExtension(db, undefined, { credentialStore: store });
+    const { clientHub, hub, ready } = setupHubPair();
+    await ready;
+    const context = {
+      publisher: { publish: async () => {} },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    try {
+      extension.registerRpcHandlers(hub, context);
+
+      await clientHub.request('space.github.setToken', { token: 'ghp_new_token_value' });
+      expect(await store.get('neokai.provider.github', 'default')).toBe('ghp_new_token_value');
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('space.github.setToken rejects tokens without a known GitHub prefix', async () => {
+    const db = setupDb();
+    const store = new InMemoryCredentialStore();
+    const extension = new GitHubEventExtension(db, undefined, { credentialStore: store });
+    const { clientHub, hub, ready } = setupHubPair();
+    await ready;
+    const context = {
+      publisher: { publish: async () => {} },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    try {
+      extension.registerRpcHandlers(hub, context);
+
+      await expect(
+        clientHub.request('space.github.setToken', { token: 'not-a-github-token' })
+      ).rejects.toThrow(/GitHub token must start with one of/);
+      expect(await store.get('neokai.provider.github', 'default')).toBeNull();
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('space.github.setToken rejects tokens below the length floor', async () => {
+    const db = setupDb();
+    const store = new InMemoryCredentialStore();
+    const extension = new GitHubEventExtension(db, undefined, { credentialStore: store });
+    const { clientHub, hub, ready } = setupHubPair();
+    await ready;
+    const context = {
+      publisher: { publish: async () => {} },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    try {
+      extension.registerRpcHandlers(hub, context);
+
+      await expect(
+        clientHub.request('space.github.setToken', { token: 'ghp_short' })
+      ).rejects.toThrow(/GitHub token is too short/);
+      expect(await store.get('neokai.provider.github', 'default')).toBeNull();
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('space.github.setToken accepts fine-grained PAT prefix', async () => {
+    const db = setupDb();
+    const store = new InMemoryCredentialStore();
+    const extension = new GitHubEventExtension(db, undefined, { credentialStore: store });
+    const { clientHub, hub, ready } = setupHubPair();
+    await ready;
+    const context = {
+      publisher: { publish: async () => {} },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    try {
+      extension.registerRpcHandlers(hub, context);
+
+      await clientHub.request('space.github.setToken', {
+        token: 'github_pat_long_finegrained_token_value',
+      });
+      expect(await store.get('neokai.provider.github', 'default')).toBe(
+        'github_pat_long_finegrained_token_value'
+      );
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('space.github.clearToken throws when credential store is not wired', async () => {
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, undefined);
+    const { clientHub, hub, ready } = setupHubPair();
+    await ready;
+    const context = {
+      publisher: { publish: async () => {} },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    try {
+      extension.registerRpcHandlers(hub, context);
+
+      await expect(clientHub.request('space.github.clearToken', {})).rejects.toThrow(
+        'Credential store is not available for GitHub tokens'
+      );
     } finally {
       await extension.stop();
     }
