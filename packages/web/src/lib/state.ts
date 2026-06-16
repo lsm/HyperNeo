@@ -17,6 +17,7 @@ import type {
   AgentProcessingState,
   SDKMessagesUpdate,
   ChatMessage,
+  CredentialStoreStatus,
 } from '@neokai/shared';
 import { STATE_CHANNELS } from '@neokai/shared';
 import { StateChannel } from './state-channel';
@@ -378,6 +379,11 @@ export const apiConnectionStatus = computed<import('@neokai/shared').ApiConnecti
     return system?.apiConnection || null;
   }
 );
+
+/** @public - Preact signal accessed via .value in components */
+export const credentialStoreStatus = computed<CredentialStoreStatus | null>(() => {
+  return globalStore.credentialStoreStatus.value;
+});
 
 /** @public - Preact signal accessed via .value in components */
 export const globalSettings = computed<import('@neokai/shared').GlobalSettings | null>(() => {

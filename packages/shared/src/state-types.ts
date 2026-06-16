@@ -62,7 +62,32 @@ export interface SystemState {
   // API connectivity (daemon <-> Claude API)
   apiConnection: ApiConnectionState;
 
+  /**
+   * Provider credential store status. Surfaced so the UI can warn the user
+   * when macOS Keychain persistence is unavailable (e.g. daemon launched over
+   * SSH or in CI without GUI session access).
+   */
+  credentialStore: CredentialStoreStatus;
+
   timestamp: number;
+}
+
+/**
+ * Status of the provider credential store.
+ *
+ * - `keychain`              — macOS Keychain is in use.
+ * - `keychain-unavailable`  — macOS Keychain is locked/unavailable; persistent
+ *   credential writes cannot proceed until unlocked.
+ * - `database`              — non-darwin platform or test env; Keychain not in use.
+ */
+export type CredentialStoreBackend = 'keychain' | 'keychain-unavailable' | 'database';
+
+export interface CredentialStoreStatus {
+  backend: CredentialStoreBackend;
+  /** True when the macOS Keychain is currently usable. */
+  keychainAvailable: boolean;
+  /** Human-readable hint shown to the user when `keychainAvailable` is false on macOS. */
+  warning?: string;
 }
 
 // State channel: global:state.settings

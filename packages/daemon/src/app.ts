@@ -42,6 +42,7 @@ import {
 import { getProviderRegistry } from './lib/providers/registry.js';
 import { OAuthRefreshScheduler } from './lib/credentials/oauth-refresh-scheduler.js';
 import { ProviderCredentialManager } from './lib/credentials/provider-credential-manager.js';
+import { KeychainUnavailableError } from './lib/credentials/credential-store.js';
 import { syncAllProviders } from './lib/providers/provider-sync.js';
 import { migrateProvidersIfNeeded } from './lib/credential-discovery';
 import { createReactiveDatabase } from './storage/reactive-database';
@@ -107,6 +108,14 @@ async function applyStoredProviderCredentials(
         provider.setCredentials(credentials);
       }
     } catch (error) {
+      if (error instanceof KeychainUnavailableError) {
+        // Keychain unavailable (locked / no GUI session) — credentials will load
+        // from env / settings.json fallback. Don't mark unhealthy; don't spam logs.
+        // KeychainStatusCredentialStore normally converts read failures to null,
+        // but provider.getCredentials implementations that hit the keychain
+        // directly can re-throw it through here.
+        continue;
+      }
       credentialManager.markProviderHealth(provider.id, 'unhealthy');
       logError(`[Daemon] Failed to load stored credentials for ${provider.id}:`, error);
     }
@@ -492,7 +501,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       settingsManager,
       config,
       db,
-      internalEventBus
+      internalEventBus,
+      undefined,
+      credentialManager
     );
 
     // Initialize ClientEventBridge — forwards selected InternalEventBus events to
@@ -505,6 +516,29 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       stateManager
     );
     clientEventBridge.start();
+
+    // Initial credential-store status (including Keychain-unavailable warning)
+    // is delivered to clients via the GLOBAL_SNAPSHOT RPC, which
+    // globalStore.initialize requests on connect and which calls
+    // getSystemState() fresh — see StateProjectionService.getGlobalSnapshot.
+    // A startup broadcast here would be dropped: MessageHub.event skips when
+    // there are no connected subscribers, and Bun.serve hasn't accepted any
+    // WebSocket clients yet at this point in startup.
+
+    // Wire credential-store status transitions (keychain unavailable → UI
+    // banner appears, keychain recovered → banner clears) to a system state
+    // broadcast so connected clients update immediately. Without this, a
+    // banner triggered by a provider save/login during a session would not
+    // appear until the next reconnect or unrelated system refresh.
+    credentialManager.registerStatusChangeCallback(() => {
+      void stateManager.broadcastSystemChange();
+      // On Keychain recovery, re-apply stored credentials to providers that
+      // were registered without credentials at startup because the Keychain
+      // was locked. applyStoredProviderCredentials is a no-op when the store
+      // is still unavailable (reads return null), so this is safe to run on
+      // both transitions.
+      void applyStoredProviderCredentials(providerRegistry.getAll(), credentialManager, logError);
+    });
 
     // Initialize GitHub service if configured
     let gitHubService: GitHubService | null = null;
