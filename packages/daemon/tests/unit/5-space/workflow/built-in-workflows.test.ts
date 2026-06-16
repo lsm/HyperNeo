@@ -4531,7 +4531,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
         [
           '#!/usr/bin/env bash',
           'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
-          `  printf '%s\n' '[{"user":{"login":"codex[bot]"},"content":"eyes","created_at":"2026-05-29T00:00:00Z"}]'`,
+          `  printf '%s\n' '[{"user":{"login":"codex[bot]","type":"Bot"},"content":"eyes","created_at":"2026-05-29T00:00:00Z"}]'`,
           '  exit 0',
           'fi',
           'printf "unexpected gh args: %s\n" "$*" >&2',
@@ -4572,7 +4572,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
         [
           '#!/usr/bin/env bash',
           'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
-          `  printf '%s\n' '[{"user":{"login":"chatgpt-codex-connector[bot]"},"content":"+1","created_at":"2026-05-29T00:00:00Z"}]'`,
+          `  printf '%s\n' '[{"user":{"login":"chatgpt-codex-connector[bot]","type":"Bot"},"content":"+1","created_at":"2026-05-29T00:00:00Z"}]'`,
           '  exit 0',
           'fi',
           'if [[ "$*" =~ repos/test/repo/pulls/42 ]]; then',
@@ -4717,7 +4717,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
         [
           '#!/usr/bin/env bash',
           'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
-          `  printf '%s\\n' '[{"user":{"login":"codex[bot]"},"content":"+1","created_at":"2026-05-01T00:00:00Z"}]'`,
+          `  printf '%s\\n' '[{"user":{"login":"codex[bot]","type":"Bot"},"content":"+1","created_at":"2026-05-01T00:00:00Z"}]'`,
           '  exit 0',
           'fi',
           'if [[ "$*" =~ repos/test/repo/pulls/42 ]]; then',
@@ -4769,7 +4769,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
         [
           '#!/usr/bin/env bash',
           'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
-          `  printf '%s\n' '[{"user":{"login":"codex[bot]"},"content":"+1","created_at":"2026-05-01T00:00:00Z"}]'`,
+          `  printf '%s\n' '[{"user":{"login":"codex[bot]","type":"Bot"},"content":"+1","created_at":"2026-05-01T00:00:00Z"}]'`,
           '  exit 0',
           'fi',
           'printf "unexpected gh args: %s\n" "$*" >&2',
@@ -4785,13 +4785,13 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
           gateId: 'review-approval-gate',
           runId: 'run-1',
           // Reaction is before cycle_start_at — should be filtered as stale.
-          // cycle_start_at is also the timeout anchor, so it must be recent
-          // (i.e. within the 2-hour timeout window) to keep this test focused
-          // on the freshness filter rather than the timeout path.
+          // Timeout anchor is gateDataUpdatedIso (the approval-handoff write),
+          // so it must be recent to keep this test focused on the freshness
+          // filter rather than the timeout path.
           gateData: {
             pr_url: prUrl,
             approved: true,
-            cycle_start_at: Date.now(),
+            cycle_start_at: new Date('2026-05-02T00:00:00Z').getTime(),
           },
           gateDataUpdatedIso: new Date().toISOString(),
         },
@@ -4819,7 +4819,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
         [
           '#!/usr/bin/env bash',
           'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
-          `  printf '%s\\n' '[{"user":{"login":"codex[bot]"},"content":"+1","created_at":"2026-05-02T00:00:00Z"}]'`,
+          `  printf '%s\\n' '[{"user":{"login":"codex[bot]","type":"Bot"},"content":"+1","created_at":"2026-05-02T00:00:00Z"}]'`,
           '  exit 0',
           'fi',
           'if [[ "$*" =~ repos/test/repo/pulls/42 ]]; then',
@@ -4869,7 +4869,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
           '  exit 2',
           'fi',
           'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
-          `  printf '%s\\n' '[{"user":{"login":"codex[bot]"},"content":"+1","created_at":"2026-05-29T00:00:00Z"}]'`,
+          `  printf '%s\\n' '[{"user":{"login":"codex[bot]","type":"Bot"},"content":"+1","created_at":"2026-05-29T00:00:00Z"}]'`,
           '  exit 0',
           'fi',
           'if [[ "$*" =~ repos/test/repo/pulls/42 ]]; then',
@@ -5056,7 +5056,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
         [
           '#!/usr/bin/env bash',
           'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
-          `  printf '%s\\n' '[{"user":{"login":"codex-cli[bot]"},"content":"+1","created_at":"2026-05-29T00:00:00Z"}]'`,
+          `  printf '%s\\n' '[{"user":{"login":"codex-cli[bot]","type":"Bot"},"content":"+1","created_at":"2026-05-29T00:00:00Z"}]'`,
           '  exit 0',
           'fi',
           'if [[ "$*" =~ repos/test/repo/pulls/42 ]]; then',
@@ -5091,14 +5091,22 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     }
   });
 
-  test('codex timeout is measured from cycle_start_at, not updated_at', async () => {
-    // cycle_start_at is the per-cycle reset anchor; updated_at advances on
-    // every gate-data write (e.g. persisting head_sha), so anchoring the
-    // timeout to updated_at lets a single metadata write reset the window.
-    // After the fix: an old cycle_start_at triggers timeout even when
-    // gateDataUpdatedIso is fresh.
+  test('codex timeout is measured from gate-data updated_at (approval handoff), not cycle_start_at', async () => {
+    // Two anchors exist:
+    //   - cycle_start_at: filters stale reactions; set by initializeForRun at
+    //     workflow-run start (NOT the timeout anchor).
+    //   - NEOKAI_GATE_DATA_UPDATED_ISO: advances on the approval-handoff write;
+    //     metadata writes (head_sha) use mergePreserveTimestamp so they do not
+    //     advance it. This is the timeout anchor.
+    // Why not cycle_start_at for the timeout: initializeForRun stamps it at
+    // run start, so for a workflow that takes hours to reach Review, the
+    // window would already have elapsed when the reviewer first hands off —
+    // the first poll would immediately emit the timeout result without giving
+    // Codex any time to react.
+    // After the fix: an old cycle_start_at with a fresh approval-handoff
+    // (updated_at) does NOT time out; an old approval-handoff does.
     const gate = getFullstackReviewApprovalGateWithCodex();
-    const workspace = mkdtempSync(join(tmpdir(), 'neokai-codex-timeout-cycle-anchor-'));
+    const workspace = mkdtempSync(join(tmpdir(), 'neokai-codex-timeout-anchor-'));
     const binDir = join(workspace, 'bin');
     const ghPath = join(binDir, 'gh');
     const prUrl = 'https://github.com/test/repo/pull/42';
@@ -5114,7 +5122,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
           '  exit 0',
           'fi',
           'if [[ "$*" =~ repos/test/repo/pulls/42 ]]; then',
-          `  printf '%s\\n' 'sha-cycle-anchor'`,
+          `  printf '%s\\n' 'sha-anchor'`,
           '  exit 0',
           'fi',
           'printf "unexpected gh args: %s\\n" "$*" >&2',
@@ -5123,7 +5131,10 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
       );
       chmodSync(ghPath, 0o755);
 
-      const result = await executeGateScript(
+      // Long-running workflow: cycle_start_at is 3 hours old (Coding/QA took
+      // a while), but the reviewer only just handed off approval —
+      // gateDataUpdatedIso is fresh. Timeout must NOT fire.
+      const freshHandoff = await executeGateScript(
         gate.script!,
         {
           workspacePath: workspace,
@@ -5132,21 +5143,38 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
           gateData: {
             pr_url: prUrl,
             approved: true,
-            // cycle_start_at is older than the 2-hour timeout window.
             cycle_start_at: Date.now() - 3 * 60 * 60 * 1000,
           },
-          // gateDataUpdatedIso is fresh — under the old (updated_at-anchored)
-          // logic this would have suppressed the timeout.
           gateDataUpdatedIso: new Date().toISOString(),
         },
         { PATH: `${binDir}:${process.env.PATH ?? ''}` }
       );
+      expect(freshHandoff.success).toBe(false);
+      expect(freshHandoff.error).toContain('@codex review');
+      expect(freshHandoff.error).not.toContain('timeout');
 
-      expect(result.success).toBe(true);
-      expect(result.data).toMatchObject({
+      // Now the approval handoff itself is older than the window — timeout
+      // fires regardless of how recently cycle_start_at was reset.
+      const staleHandoff = await executeGateScript(
+        gate.script!,
+        {
+          workspacePath: workspace,
+          gateId: 'review-approval-gate',
+          runId: 'run-1',
+          gateData: {
+            pr_url: prUrl,
+            approved: true,
+            cycle_start_at: Date.now() - 3 * 60 * 60 * 1000,
+          },
+          gateDataUpdatedIso: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(),
+        },
+        { PATH: `${binDir}:${process.env.PATH ?? ''}` }
+      );
+      expect(staleHandoff.success).toBe(true);
+      expect(staleHandoff.data).toMatchObject({
         pr_url: prUrl,
         codex_bot_reaction: 'timeout',
-        head_sha: 'sha-cycle-anchor',
+        head_sha: 'sha-anchor',
       });
     } finally {
       rmSync(workspace, { recursive: true, force: true });
@@ -5156,7 +5184,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
   test('codex gate with 2-hour timeout does not expire after 10 minutes', async () => {
     // Regression for the 600s default that timed out before Codex finished
     // large-PR reviews (20–30 min). After the fix, the default is 7200s, so a
-    // 10-minute-old cycle is still within the window.
+    // 10-minute-old approval handoff is still within the window.
     const gate = getFullstackReviewApprovalGateWithCodex();
     const workspace = mkdtempSync(join(tmpdir(), 'neokai-codex-timeout-2h-window-'));
     const binDir = join(workspace, 'bin');
@@ -5185,12 +5213,10 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
           workspacePath: workspace,
           gateId: 'review-approval-gate',
           runId: 'run-1',
-          gateData: {
-            pr_url: prUrl,
-            approved: true,
-            // 10 minutes ago — would have timed out under the old 600s default.
-            cycle_start_at: Date.now() - 10 * 60 * 1000,
-          },
+          gateData: { pr_url: prUrl, approved: true },
+          // Approval handoff 10 minutes ago — would have timed out under the
+          // old 600s default.
+          gateDataUpdatedIso: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
         },
         { PATH: `${binDir}:${process.env.PATH ?? ''}` }
       );
@@ -5199,6 +5225,52 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
       expect(result.error).toContain('@codex review');
       expect(result.data).toEqual({});
       expect(result.error).not.toContain('timeout');
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+
+  test('codex matcher rejects +1 from non-bot users whose login contains "codex"', async () => {
+    // P1 hardening: a human GitHub account named e.g. "codex-fan" must NOT
+    // satisfy the +1 check. Only GitHub App bots (user.type == "Bot") count.
+    const gate = getFullstackReviewApprovalGateWithCodex();
+    const workspace = mkdtempSync(join(tmpdir(), 'neokai-codex-matcher-bot-only-'));
+    const binDir = join(workspace, 'bin');
+    const ghPath = join(binDir, 'gh');
+    const prUrl = 'https://github.com/test/repo/pull/42';
+
+    try {
+      mkdirSync(binDir);
+      writeFileSync(
+        ghPath,
+        [
+          '#!/usr/bin/env bash',
+          'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
+          `  printf '%s\\n' '[{"user":{"login":"codex-fan","type":"User"},"content":"+1","created_at":"2026-05-29T00:00:00Z"}]'`,
+          '  exit 0',
+          'fi',
+          'printf "unexpected gh args: %s\\n" "$*" >&2',
+          'exit 2',
+        ].join('\n')
+      );
+      chmodSync(ghPath, 0o755);
+
+      const result = await executeGateScript(
+        gate.script!,
+        {
+          workspacePath: workspace,
+          gateId: 'review-approval-gate',
+          runId: 'run-1',
+          gateData: { pr_url: prUrl, approved: true },
+          gateDataUpdatedIso: new Date().toISOString(),
+        },
+        { PATH: `${binDir}:${process.env.PATH ?? ''}` }
+      );
+
+      // Non-bot reaction is ignored — gate blocks (no timeout because
+      // gateDataUpdatedIso is fresh).
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('@codex review');
     } finally {
       rmSync(workspace, { recursive: true, force: true });
     }

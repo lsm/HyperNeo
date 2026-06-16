@@ -312,19 +312,27 @@ function buildCodexReviewBotScriptSource(timeoutSeconds: number): string {
     '  exit 1',
     'fi',
     'REACTIONS_JSON=$(jq -s \'add // []\' <<< "$REACTIONS_RAW")',
-    // Per-cycle anchor: cycle_start_at from gate data (set on init and cyclic
-    // reset) so reactions from prior cycles are filtered out AND the timeout
-    // window is measured from the start of the current review cycle. Legacy
-    // gate-data (predating cycle_start_at) falls back to updated_at for the
-    // timeout anchor, and to workflow start for the freshness filter only.
+    // Two distinct anchors:
+    //   - Freshness: cycle_start_at (set by GateDataRepository.initializeForRun
+    //     at run start and by reset() on every cyclic revision) filters out
+    //     +1 / eyes reactions from prior review cycles. Falls back to workflow
+    //     start when the gate has not been initialized yet.
+    //   - Timeout: NEOKAI_GATE_DATA_UPDATED_ISO (advanced when the reviewer
+    //     writes approval data via the gate-data merge path; metadata writes
+    //     such as persisting `head_sha` use mergePreserveTimestamp and do NOT
+    //     advance it). This is the approval-handoff anchor.
+    // We intentionally do NOT use cycle_start_at for the timeout even though
+    // it is reset on revision cycles: initializeForRun stamps it at workflow-
+    // run start, so a long Coding/QA phase would let the window elapse before
+    // the reviewer ever hands off — the first approval poll would immediately
+    // emit the timeout result without giving Codex time to react.
     'CYCLE_START_MS=$(jq -r \'.cycle_start_at // empty\' <<< "${NEOKAI_GATE_DATA_JSON:-{}}" 2>/dev/null || true)',
     'if [ -n "$CYCLE_START_MS" ]; then',
     `  FRESHNESS_ISO=$(bun -e 'const d=new Date(parseInt(process.argv[1])); if(Number.isNaN(d.getTime())) process.exit(1); console.log(d.toISOString());' "$CYCLE_START_MS" 2>/dev/null || true)`,
-    '  TIMEOUT_ISO="$FRESHNESS_ISO"',
     'else',
     '  FRESHNESS_ISO="${NEOKAI_WORKFLOW_START_ISO:-}"',
-    '  TIMEOUT_ISO="${NEOKAI_GATE_DATA_UPDATED_ISO:-}"',
     'fi',
+    'TIMEOUT_ISO="${NEOKAI_GATE_DATA_UPDATED_ISO:-}"',
     // GitHub created_at is second-precision; normalize JS millisecond ISO to match.
     'if [ -n "$FRESHNESS_ISO" ] && [[ "$FRESHNESS_ISO" =~ \\.[0-9]+Z$ ]]; then',
     '  FRESHNESS_ISO="${FRESHNESS_ISO%.*}Z"',
@@ -341,16 +349,18 @@ function buildCodexReviewBotScriptSource(timeoutSeconds: number): string {
     'fi',
     // Codex bot login matcher: case-insensitive substring "codex" so we accept
     // every GitHub Codex variant (codex[bot], chatgpt-codex-connector[bot], and
-    // any future rename) without code changes.
+    // any future rename) without code changes. The `type == "Bot"` guard blocks
+    // non-bot GitHub accounts whose login happens to contain "codex" from
+    // spoofing the +1 check — only GitHub App bots have type "Bot".
     // Check fresh +1 before timeout so a late +1 is reported as a pass, not a timeout.
-    'CODEX_PLUS_ONE_COUNT=$(jq \'[.[] | select((.user.login | test("codex"; "i")) and .content == "+1")] | length\' <<< "$FRESH_REACTIONS")',
+    'CODEX_PLUS_ONE_COUNT=$(jq \'[.[] | select((.user.login | test("codex"; "i")) and .user.type == "Bot" and .content == "+1")] | length\' <<< "$FRESH_REACTIONS")',
     'if [ "$CODEX_PLUS_ONE_COUNT" != "0" ] && [ -n "$CODEX_PLUS_ONE_COUNT" ]; then',
     '  jq -n --arg url "$PR_URL" --arg sha "${HEAD_SHA}" \'{"pr_url":$url,"codex_bot_reaction":"+1","head_sha":$sha}\'',
     '  exit 0',
     'fi',
-    // Timeout anchored to cycle_start_at (or legacy updated_at). No
-    // workflow-start fallback — see "codex timeout does not trigger when only
-    // workflowStartIso is old".
+    // Timeout anchored to NEOKAI_GATE_DATA_UPDATED_ISO (approval-handoff time).
+    // No workflow-start fallback — see "codex timeout does not trigger when
+    // only workflowStartIso is old".
     'if [ -n "$TIMEOUT_ISO" ]; then',
     `  START_EPOCH=$(bun -e 'const t=Date.parse(process.argv[1]); if (Number.isNaN(t)) process.exit(1); console.log(Math.floor(t / 1000));' "$TIMEOUT_ISO" 2>/dev/null || true)`,
     '  NOW_EPOCH=$(date +%s)',
@@ -359,7 +369,7 @@ function buildCodexReviewBotScriptSource(timeoutSeconds: number): string {
     '    exit 0',
     '  fi',
     'fi',
-    'CODEX_EYES_COUNT=$(jq \'[.[] | select((.user.login | test("codex"; "i")) and .content == "eyes")] | length\' <<< "$FRESH_REACTIONS")',
+    'CODEX_EYES_COUNT=$(jq \'[.[] | select((.user.login | test("codex"; "i")) and .user.type == "Bot" and .content == "eyes")] | length\' <<< "$FRESH_REACTIONS")',
     'if [ "$CODEX_EYES_COUNT" != "0" ] && [ -n "$CODEX_EYES_COUNT" ]; then',
     '  echo "codex review bot still in progress (eyes reaction present); wait for +1 on ${PR_URL}" >&2',
     'else',
@@ -415,11 +425,10 @@ function buildCodexReviewBotPollScriptSource(timeoutSeconds: number): string {
     'CYCLE_START_MS=$(jq -r \'.cycle_start_at // empty\' <<< "${NEOKAI_GATE_DATA_JSON:-{}}" 2>/dev/null || true)',
     'if [ -n "$CYCLE_START_MS" ]; then',
     `  FRESHNESS_ISO=$(bun -e 'const d=new Date(parseInt(process.argv[1])); if(Number.isNaN(d.getTime())) process.exit(1); console.log(d.toISOString());' "$CYCLE_START_MS" 2>/dev/null || true)`,
-    '  TIMEOUT_ISO="$FRESHNESS_ISO"',
     'else',
     '  FRESHNESS_ISO="${NEOKAI_WORKFLOW_START_ISO:-}"',
-    '  TIMEOUT_ISO="${NEOKAI_GATE_DATA_UPDATED_ISO:-}"',
     'fi',
+    'TIMEOUT_ISO="${NEOKAI_GATE_DATA_UPDATED_ISO:-}"',
     'if [ -n "$FRESHNESS_ISO" ] && [[ "$FRESHNESS_ISO" =~ \\.[0-9]+Z$ ]]; then',
     '  FRESHNESS_ISO="${FRESHNESS_ISO%.*}Z"',
     'fi',
@@ -432,7 +441,7 @@ function buildCodexReviewBotPollScriptSource(timeoutSeconds: number): string {
     'else',
     '  FRESH_REACTIONS="$REACTIONS_JSON"',
     'fi',
-    'CODEX_PLUS_ONE_COUNT=$(jq \'[.[] | select((.user.login | test("codex"; "i")) and .content == "+1")] | length\' <<< "$FRESH_REACTIONS")',
+    'CODEX_PLUS_ONE_COUNT=$(jq \'[.[] | select((.user.login | test("codex"; "i")) and .user.type == "Bot" and .content == "+1")] | length\' <<< "$FRESH_REACTIONS")',
     'if [ "$CODEX_PLUS_ONE_COUNT" != "0" ] && [ -n "$CODEX_PLUS_ONE_COUNT" ]; then',
     '  jq -n --arg url "$PR_URL" --arg sha "${HEAD_SHA}" \'{"pr_url":$url,"codex_bot_reaction":"+1","head_sha":$sha}\'',
     '  exit 0',
@@ -445,7 +454,7 @@ function buildCodexReviewBotPollScriptSource(timeoutSeconds: number): string {
     '    exit 0',
     '  fi',
     'fi',
-    'CODEX_EYES_COUNT=$(jq \'[.[] | select((.user.login | test("codex"; "i")) and .content == "eyes")] | length\' <<< "$FRESH_REACTIONS")',
+    'CODEX_EYES_COUNT=$(jq \'[.[] | select((.user.login | test("codex"; "i")) and .user.type == "Bot" and .content == "eyes")] | length\' <<< "$FRESH_REACTIONS")',
     'if [ "$CODEX_EYES_COUNT" != "0" ] && [ -n "$CODEX_EYES_COUNT" ]; then',
     '  echo "codex review bot still in progress (eyes reaction present); wait for +1 on ${PR_URL}"',
     'else',

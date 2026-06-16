@@ -146,6 +146,7 @@ export function workflowToVisualState(workflow: SpaceWorkflow): VisualEditorStat
         s.postApproval ?? (s.id === workflow.endNodeId ? workflow.postApproval : undefined),
       requireCodexApproval: s.requireCodexApproval,
       codexPollIntervalMs: s.codexPollIntervalMs,
+      codexTimeoutSeconds: s.codexTimeoutSeconds,
     };
     return { step, position };
   });
@@ -362,6 +363,9 @@ function buildWorkflowFields(state: VisualEditorState): {
       ...(node.step.requireCodexApproval ? { requireCodexApproval: true } : {}),
       ...(node.step.codexPollIntervalMs
         ? { codexPollIntervalMs: node.step.codexPollIntervalMs }
+        : {}),
+      ...(node.step.codexTimeoutSeconds
+        ? { codexTimeoutSeconds: node.step.codexTimeoutSeconds }
         : {}),
     };
   });
