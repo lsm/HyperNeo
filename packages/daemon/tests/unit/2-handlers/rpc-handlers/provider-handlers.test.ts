@@ -529,13 +529,13 @@ describe('Provider RPC handlers', () => {
       );
     });
 
-    it('blocks delete when removeCredentials throws KeychainUnavailableError', async () => {
+    it('blocks delete when removeCredentials throws KeychainUnavailableError for built_in', async () => {
       // Keychain-only persistence: if the keychain is locked, do not delete the
       // provider config while a stale credential may remain in Keychain.
       const created = repo.createProvider({
-        providerId: 'my-endpoint',
-        displayName: 'My Endpoint',
-        kind: 'custom_endpoint',
+        providerId: 'my-provider',
+        displayName: 'My Provider',
+        kind: 'built_in',
         authType: 'api_key',
       });
       creds.removeCredentials = mock(async () => {
@@ -548,15 +548,41 @@ describe('Provider RPC handlers', () => {
       );
 
       expect(repo.getProvider(created.id)).not.toBeNull();
-      expect(creds.removeCredentials).toHaveBeenCalledWith('my-endpoint');
+      expect(creds.removeCredentials).toHaveBeenCalledWith('my-provider');
       expect(eventBus.publishAsync).not.toHaveBeenCalled();
     });
 
-    it('rethrows non-keychain errors from removeCredentials', async () => {
+    it('allows custom_endpoint delete even when keychain is locked', async () => {
+      // Custom endpoints store auth inline in config JSON, not the credential
+      // store. A locked keychain must not block removing the endpoint row.
       const created = repo.createProvider({
         providerId: 'my-endpoint',
         displayName: 'My Endpoint',
         kind: 'custom_endpoint',
+        authType: 'api_key',
+      });
+      creds.removeCredentials = mock(async () => {
+        throw new KeychainUnavailableError('keychain locked');
+      });
+      const handlers = setup();
+
+      const result = (await handlers.get('providers.delete')!({ id: created.id }, {})) as {
+        success: boolean;
+      };
+
+      expect(result.success).toBe(true);
+      expect(repo.getProvider(created.id)).toBeNull();
+      expect(creds.removeCredentials).not.toHaveBeenCalled();
+      expect(eventBus.publishAsync).toHaveBeenCalledWith('providers.changed', {
+        sessionId: 'global',
+      });
+    });
+
+    it('rethrows non-keychain errors from removeCredentials', async () => {
+      const created = repo.createProvider({
+        providerId: 'my-provider',
+        displayName: 'My Provider',
+        kind: 'built_in',
         authType: 'api_key',
       });
       creds.removeCredentials = mock(async () => {

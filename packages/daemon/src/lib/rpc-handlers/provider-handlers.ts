@@ -286,19 +286,25 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
     if (!record) throw new Error(`Provider ${data.id} not found`);
     const lock = record.kind === 'custom_endpoint' ? withCustomEndpointsLock : withProviderLock;
     return lock(async () => {
-      try {
-        // Keychain-only persistence: remove credentials before deleting provider
-        // config. If the Keychain is locked, block deletion so we don't leave a
-        // stale credential that can reappear if the provider is re-added.
-        await credentialManager.removeCredentials(record.providerId);
-      } catch (error) {
-        if (error instanceof KeychainUnavailableError) {
-          log.warn(
-            `Provider delete blocked for ${record.providerId}: ${KEYCHAIN_UNAVAILABLE_MESSAGE}`
-          );
-          throw new Error(KEYCHAIN_UNAVAILABLE_MESSAGE);
+      // Custom endpoints store auth inline in customEndpointConfigJson, not in
+      // the credential store, so skip keychain cleanup for them — otherwise a
+      // locked Keychain would block removing an endpoint that has nothing in
+      // the Keychain to clean up.
+      if (record.kind !== 'custom_endpoint') {
+        try {
+          // Keychain-only persistence: remove credentials before deleting provider
+          // config. If the Keychain is locked, block deletion so we don't leave a
+          // stale credential that can reappear if the provider is re-added.
+          await credentialManager.removeCredentials(record.providerId);
+        } catch (error) {
+          if (error instanceof KeychainUnavailableError) {
+            log.warn(
+              `Provider delete blocked for ${record.providerId}: ${KEYCHAIN_UNAVAILABLE_MESSAGE}`
+            );
+            throw new Error(KEYCHAIN_UNAVAILABLE_MESSAGE);
+          }
+          throw error;
         }
-        throw error;
       }
 
       if (record.kind === 'built_in') {
