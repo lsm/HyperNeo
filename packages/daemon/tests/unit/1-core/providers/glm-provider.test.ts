@@ -218,7 +218,31 @@ describe('GlmProvider', () => {
       expect(upperConfig.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe(
         lowerConfig.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW
       );
-      expect(upperConfig.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('1000000');
+    });
+
+    it('should handle double [1m] suffix by stripping all trailing suffixes', () => {
+      // Regression: glm-5.2[1m][1m] would only strip ONE suffix, leaving glm-5.2[1m],
+      // which then gets another [1m] appended → glm-5.2[1m][1m] again, breaking the
+      // metadata lookup (CONTEXT_WINDOW_BY_MODEL_ID only has glm-5.2[1m]).
+      process.env.GLM_API_KEY = 'test-key';
+
+      const config = provider.buildSdkConfig('glm-5.2[1m][1m]');
+
+      // Should route to single-suffix glm-5.2[1m]
+      expect(config.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('glm-5.2[1m]');
+      // Should use 1M capacity from metadata, not 200K fallback
+      expect(config.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('1000000');
+    });
+
+    it('should handle triple [1m] suffix by stripping all trailing suffixes', () => {
+      process.env.GLM_API_KEY = 'test-key';
+
+      const config = provider.buildSdkConfig('glm-5.2[1m][1m][1m]');
+
+      // Should route to single-suffix glm-5.2[1m]
+      expect(config.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('glm-5.2[1m]');
+      // Should use 1M capacity from metadata
+      expect(config.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('1000000');
     });
 
     it('should ignore [1m] suffix for non-1M GLM models', () => {
