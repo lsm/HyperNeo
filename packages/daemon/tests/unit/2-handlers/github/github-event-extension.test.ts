@@ -2839,7 +2839,7 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
     }
   });
 
-  test('space.github.setPollingEnabled(true) skips repos that already have webhook delivery', async () => {
+  test('space.github.setPollingEnabled(true) skips repos with active webhooks but enables polling for inactive ones', async () => {
     const db = setupDb();
     const extension = new GitHubEventExtension(db, undefined, { pollIntervalMs: 60_000 });
     const { clientHub, hub, ready } = setupHubPair();
@@ -2856,9 +2856,19 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
       extension.repo.upsertWatchedRepo({
         spaceId: 'space-1',
         owner: 'acme',
-        repo: 'webhook-repo',
+        repo: 'webhook-active',
         webhookEnabled: true,
         webhookSecret: 'configured-secret',
+        webhookActive: true,
+        pollingEnabled: false,
+      });
+      extension.repo.upsertWatchedRepo({
+        spaceId: 'space-1',
+        owner: 'acme',
+        repo: 'webhook-inactive',
+        webhookEnabled: true,
+        webhookSecret: 'configured-secret',
+        webhookActive: false,
         pollingEnabled: false,
       });
       extension.repo.upsertWatchedRepo({
@@ -2875,11 +2885,94 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
       });
 
       const repos = extension.repo.listWatchedRepos('space-1');
-      const webhookRepo = repos.find((r) => r.repo === 'webhook-repo')!;
+      const activeRepo = repos.find((r) => r.repo === 'webhook-active')!;
+      const inactiveRepo = repos.find((r) => r.repo === 'webhook-inactive')!;
       const pollingRepo = repos.find((r) => r.repo === 'polling-repo')!;
-      expect(webhookRepo.pollingEnabled).toBe(false);
-      expect(webhookRepo.webhookSecret).toBe('configured-secret');
+      expect(activeRepo.pollingEnabled).toBe(false);
+      expect(inactiveRepo.pollingEnabled).toBe(true);
       expect(pollingRepo.pollingEnabled).toBe(true);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('space.github.enable restarts polling capability for previously-disabled spaces', async () => {
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, undefined, { pollIntervalMs: 60_000 });
+    const { clientHub, hub, ready } = setupHubPair();
+    await ready;
+    const configStore = new RecordingConfigStore({ globallyEnabled: true, polling: true });
+    const context = {
+      publisher: { publish: async () => {} },
+      config: configStore,
+      onSourceConfigChanged() {},
+    };
+    try {
+      await extension.start(context);
+      extension.registerRpcHandlers(hub, context);
+      // Add a polling-enabled repo, then disable the space. Disabling drops
+      // it from listPollingRepos (which filters enabled=1), so a naive
+      // capability check would flip polling off — but the polling-configured
+      // row still exists.
+      extension.repo.upsertWatchedRepo({
+        spaceId: 'space-1',
+        owner: 'acme',
+        repo: 'widgets',
+        pollingEnabled: true,
+      });
+      await clientHub.request('space.github.disable', { spaceId: 'space-1' });
+      // Force capability off manually to simulate the daemon-wide clearing
+      // path that disablePollingCapabilityIfUnused would have triggered if
+      // listPollingRepos was the source of truth.
+      const globalBefore = await configStore.getGlobalConfig('github');
+      await configStore.setGlobalConfig('github', {
+        ...globalBefore,
+        capabilities: { ...globalBefore.capabilities, polling: false },
+      });
+
+      await clientHub.request('space.github.enable', { spaceId: 'space-1' });
+
+      const globalAfter = await configStore.getGlobalConfig('github');
+      expect(globalAfter.capabilities.polling).toBe(true);
+      const internals = extension as unknown as { pollTimer: unknown };
+      expect(internals.pollTimer).not.toBeNull();
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('space.github.watchRepo clears the global polling capability when the last polling row is turned off', async () => {
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, undefined, { pollIntervalMs: 60_000 });
+    const { clientHub, hub, ready } = setupHubPair();
+    await ready;
+    const configStore = new RecordingConfigStore({ globallyEnabled: true, polling: true });
+    const context = {
+      publisher: { publish: async () => {} },
+      config: configStore,
+      onSourceConfigChanged() {},
+    };
+    try {
+      await extension.start(context);
+      extension.registerRpcHandlers(hub, context);
+      await clientHub.request('space.github.watchRepo', {
+        spaceId: 'space-1',
+        owner: 'acme',
+        repo: 'widgets',
+        pollingEnabled: true,
+      });
+      expect((await configStore.getGlobalConfig('github')).capabilities.polling).toBe(true);
+
+      await clientHub.request('space.github.watchRepo', {
+        spaceId: 'space-1',
+        owner: 'acme',
+        repo: 'widgets',
+        pollingEnabled: false,
+        webhookEnabled: true,
+        webhookSecret: 'manual-secret',
+      });
+
+      expect((await configStore.getGlobalConfig('github')).capabilities.polling).toBe(false);
     } finally {
       await extension.stop();
     }

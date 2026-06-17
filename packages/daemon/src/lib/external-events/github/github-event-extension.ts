@@ -107,6 +107,16 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       const params = data as { spaceId: string };
       if (!params.spaceId) throw new Error('spaceId is required');
       this.repo.setRepoEnabled(params.spaceId, true);
+      // Re-enabling a space can revive polling-configured rows whose
+      // `enabled` flag was just flipped back on. If the global polling
+      // capability was cleared while the space was disabled (see
+      // disablePollingCapabilityIfUnused), the timer would never restart
+      // on its own. Re-arm the capability + timer here when any newly
+      // re-enabled polling row exists.
+      if (this.repo.listPollingRepos(params.spaceId).length > 0) {
+        await this.enablePollingCapability(context);
+        this.ensurePollingActive();
+      }
       await this.persistSpaceConfig(context, params.spaceId);
       context.onSourceConfigChanged({
         source: this.sourceId,
@@ -172,6 +182,11 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         await this.enablePollingCapability(context);
         this.ensurePollingActive();
       } else {
+        // Per-row polling was turned off (or the row was added without
+        // polling). If that was the last polling-configured row in the
+        // daemon, drop the global capability so the UI checkbox and the
+        // "no-secret watch defaults to polling" heuristic reflect reality.
+        await this.disablePollingCapabilityIfUnused(context);
         this.maybeStopPolling();
       }
       context.onSourceConfigChanged({
@@ -351,9 +366,16 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       }
       const repos = this.repo.listWatchedRepos(params.spaceId);
       for (const repo of repos) {
-        if (params.enabled && repo.webhookEnabled && repo.webhookSecret) {
-          // Webhook delivery is already active — leave polling off to avoid
-          // duplicate event publication.
+        if (
+          params.enabled &&
+          repo.webhookEnabled &&
+          repo.webhookSecret &&
+          repo.webhookActive === true
+        ) {
+          // Webhook delivery is already ACTIVE — leave polling off to avoid
+          // duplicate event publication. Repos with inactive or unverified
+          // webhooks still get polling enabled so a broken webhook path
+          // doesn't silently drop events.
           continue;
         }
         this.repo.upsertWatchedRepo({
@@ -594,14 +616,21 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 
   /**
    * Turn the global polling capability off if no watched repo in any space
-   * still has polling enabled. Called from setPollingEnabled(false) and from
-   * unwatchRepo so the UI checkbox reflects reality after the last polling
-   * consumer goes away.
+   * has `polling_enabled = 1`. Called from setPollingEnabled(false),
+   * unwatchRepo, and watchRepo (when the row ends up without polling) so
+   * the UI checkbox reflects reality after the last polling consumer goes
+   * away.
+   *
+   * Uses `listAllPollingConfiguredRepos` (NOT `listPollingRepos`) so a
+   * disabled space or row that still carries a polling row doesn't strand
+   * the capability in the OFF state — those rows need polling to resume
+   * when they are re-enabled, and `space.github.enable` re-arms the timer
+   * under the assumption that the capability is still ON.
    */
   private async disablePollingCapabilityIfUnused(
     context: ExternalEventExtensionContext
   ): Promise<void> {
-    if (this.repo.listPollingRepos().length > 0) return;
+    if (this.repo.listAllPollingConfiguredRepos().length > 0) return;
     const global = await context.config.getGlobalConfig(this.sourceId);
     if (global.capabilities.polling !== true) return;
     await context.config.setGlobalConfig(this.sourceId, {

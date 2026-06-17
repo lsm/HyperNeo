@@ -230,18 +230,30 @@ export function SpaceExternalEventsSettings({
           spaceId: refreshSpaceId,
         }),
       ]);
-      let tokenResult: GitHubTokenStatus | null = null;
-      let tokenError: string | null = null;
-      try {
-        tokenResult = await hub.request<GitHubTokenStatus>('space.github.getTokenStatus', {});
-      } catch (err) {
-        tokenError = err instanceof Error ? err.message : String(err);
-      }
       if (!isCurrentRefresh()) return;
+      // Surface local config/repos first so the panel becomes interactive
+      // even if the auxiliary `/user` token-validation call hangs.
       setSpaceConfig(configResult);
       setRepos(repoResult.repositories);
-      setTokenStatus(tokenResult);
-      setTokenStatusError(tokenError);
+      setTokenStatus(null);
+      setTokenStatusError(null);
+      // Fire token-status fetch in the background; setLoading(false) below
+      // does NOT wait on it.
+      void (async () => {
+        try {
+          const tokenResult = await hub.request<GitHubTokenStatus>(
+            'space.github.getTokenStatus',
+            {}
+          );
+          if (!isCurrentRefresh()) return;
+          setTokenStatus(tokenResult);
+          setTokenStatusError(null);
+        } catch (err) {
+          if (!isCurrentRefresh()) return;
+          setTokenStatus(null);
+          setTokenStatusError(err instanceof Error ? err.message : String(err));
+        }
+      })();
     } catch (err) {
       if (!isCurrentRefresh()) return;
       setSpaceConfig(null);
@@ -328,6 +340,15 @@ export function SpaceExternalEventsSettings({
       tokenStatus?.configured === true &&
       tokenStatus.source === 'keychain' &&
       !window.confirm('Replace the existing daemon-wide GitHub token?')
+    ) {
+      return;
+    }
+    if (
+      tokenStatus?.configured === true &&
+      tokenStatus.source === 'env' &&
+      !window.confirm(
+        'A GITHUB_TOKEN env var is currently in use. Saving a keychain token will shadow it across every space. Continue?'
+      )
     ) {
       return;
     }
@@ -633,6 +654,7 @@ export function SpaceExternalEventsSettings({
               tokenInput={tokenInput}
               onTokenInputChange={setTokenInput}
               busy={busy === 'github:token' || busy === 'github:polling'}
+              disabled={disabled}
               pollingEnabled={spacePollingActive}
               pollingCapabilityDisabled={!githubPollingEnabled}
               onSaveToken={saveToken}
@@ -1171,6 +1193,7 @@ interface GitHubConnectionCardProps {
   tokenInput: string;
   onTokenInputChange: (value: string) => void;
   busy: boolean;
+  disabled: boolean;
   pollingEnabled: boolean;
   pollingCapabilityDisabled: boolean;
   onSaveToken: () => Promise<void>;
@@ -1184,15 +1207,18 @@ function GitHubConnectionCard({
   tokenInput,
   onTokenInputChange,
   busy,
+  disabled,
   pollingEnabled,
   pollingCapabilityDisabled,
   onSaveToken,
   onClearToken,
   onTogglePolling,
 }: GitHubConnectionCardProps) {
-  const connected = tokenStatus?.configured === true;
+  const tokenInvalid = tokenStatus?.configured === true && Boolean(tokenStatus.error);
+  const connected = tokenStatus?.configured === true && !tokenInvalid;
+  const controlDisabled = busy || disabled;
   const [replaceMode, setReplaceMode] = useState(false);
-  const showInput = !connected || replaceMode;
+  const showInput = !connected || tokenInvalid || replaceMode;
   return (
     <div
       class="rounded-lg border border-dark-700 bg-dark-800 px-3 py-3 space-y-3"
@@ -1210,10 +1236,18 @@ function GitHubConnectionCard({
         </p>
       </div>
 
-      {connected && (
-        <div class="flex flex-wrap items-center gap-2 text-xs">
-          <span class="inline-flex items-center gap-1 rounded-full bg-green-500/10 px-2 py-0.5 text-green-300">
-            Connected
+      {(connected || tokenInvalid) && (
+        <div
+          class="flex flex-wrap items-center gap-2 text-xs"
+          data-testid="github-token-status-row"
+        >
+          <span
+            class={cn(
+              'inline-flex items-center gap-1 rounded-full px-2 py-0.5',
+              connected ? 'bg-green-500/10 text-green-300' : 'bg-red-500/10 text-red-300'
+            )}
+          >
+            {connected ? 'Connected' : 'Token invalid'}
           </span>
           {tokenStatus?.login && (
             <span class="text-gray-300">
@@ -1223,24 +1257,26 @@ function GitHubConnectionCard({
           {tokenStatus?.source === 'env' && (
             <span class="text-gray-500">(token from GITHUB_TOKEN env var)</span>
           )}
-          {tokenStatus?.error && (
-            <span class="text-yellow-300">validation: {tokenStatus.error}</span>
+          {tokenInvalid && (
+            <span class="text-red-300" data-testid="github-token-invalid-error">
+              {tokenStatus?.error}
+            </span>
           )}
           <div class="ml-auto flex flex-wrap items-center gap-2">
-            {tokenStatus?.source === 'keychain' && !replaceMode && (
+            {(tokenStatus?.source === 'keychain' || tokenInvalid) && !replaceMode && (
               <button
                 type="button"
                 onClick={() => setReplaceMode(true)}
-                disabled={busy}
+                disabled={controlDisabled}
                 class="text-gray-300 hover:text-gray-100 disabled:cursor-not-allowed disabled:text-gray-600"
               >
-                Replace token
+                {connected ? 'Replace token' : 'Replace invalid token'}
               </button>
             )}
             <button
               type="button"
               onClick={onClearToken}
-              disabled={busy || tokenStatus?.source === 'env'}
+              disabled={controlDisabled || tokenStatus?.source === 'env'}
               class="text-red-400 hover:text-red-300 disabled:cursor-not-allowed disabled:text-red-900"
             >
               Disconnect
@@ -1256,19 +1292,24 @@ function GitHubConnectionCard({
             value={tokenInput}
             onInput={(event) => onTokenInputChange((event.target as HTMLInputElement).value)}
             placeholder="ghp_…"
-            disabled={busy}
+            disabled={controlDisabled}
             class="w-full rounded-lg border border-white/10 bg-dark-850 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
             aria-label="GitHub personal access token"
           />
           <div class="flex flex-wrap items-center gap-2">
-            <Button type="button" size="sm" onClick={onSaveToken} disabled={busy || !tokenInput}>
+            <Button
+              type="button"
+              size="sm"
+              onClick={onSaveToken}
+              disabled={controlDisabled || !tokenInput}
+            >
               {connected ? 'Replace token' : 'Save token'}
             </Button>
-            {connected && replaceMode && (
+            {(connected || tokenInvalid) && replaceMode && (
               <button
                 type="button"
                 onClick={() => setReplaceMode(false)}
-                disabled={busy}
+                disabled={controlDisabled}
                 class="text-xs text-gray-400 hover:text-gray-200"
               >
                 Cancel
@@ -1291,7 +1332,7 @@ function GitHubConnectionCard({
           <input
             type="checkbox"
             checked={pollingEnabled}
-            disabled={busy}
+            disabled={controlDisabled}
             onChange={() => onTogglePolling(!pollingEnabled)}
             class="h-4 w-4 rounded border-dark-500 bg-dark-700 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
             aria-label="Enable GitHub polling for this space"

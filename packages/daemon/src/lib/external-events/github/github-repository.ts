@@ -236,6 +236,29 @@ export class GitHubEventExtensionRepository {
     return rows.map((r) => this.rowToRepo(r));
   }
 
+  /**
+   * Every watched row with `polling_enabled = 1`, regardless of the
+   * row-level `enabled` flag. Used to decide whether the GLOBAL polling
+   * capability should stay on: a disabled space may still hold
+   * polling-configured rows that need polling to resume when the space
+   * (or row) is re-enabled, so capability gating must NOT use the
+   * enabled-and-polling filter that `listPollingRepos` uses.
+   */
+  listAllPollingConfiguredRepos(spaceId?: string): GitHubWatchedRepo[] {
+    const rows = spaceId
+      ? (this.db
+          .prepare(
+            `SELECT * FROM space_github_watched_repos WHERE space_id = ? AND polling_enabled = 1 ORDER BY owner, repo`
+          )
+          .all(spaceId) as Record<string, unknown>[])
+      : (this.db
+          .prepare(
+            `SELECT * FROM space_github_watched_repos WHERE polling_enabled = 1 ORDER BY space_id, owner, repo`
+          )
+          .all() as Record<string, unknown>[]);
+    return rows.map((r) => this.rowToRepo(r));
+  }
+
   getWatchedRepo(spaceId: string, owner: string, repo: string): GitHubWatchedRepo | null {
     const row = this.db
       .prepare(

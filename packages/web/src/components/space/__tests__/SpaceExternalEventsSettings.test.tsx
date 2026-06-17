@@ -1270,4 +1270,119 @@ describe('SpaceExternalEventsSettings', () => {
     expect(await findByTestId('github-token-status-error')).toBeTruthy();
     expect(queryByText('Checking token status…')).toBeNull();
   });
+
+  it('does not block the panel while token status loads', async () => {
+    let resolveTokenStatus!: (value: { configured: boolean; source: string }) => void;
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockImplementation((method) => {
+      if (method === 'externalEvents.extensions.list') return Promise.resolve(extensionResult);
+      if (method === 'space.github.listConfig') {
+        return Promise.resolve({
+          spaceId: 'space-1',
+          source: 'github',
+          enabled: true,
+          settings: {},
+        });
+      }
+      if (method === 'space.github.listWatchedRepos') return Promise.resolve(repoResult);
+      if (method === 'space.github.getTokenStatus') {
+        return new Promise((resolve) => {
+          resolveTokenStatus = resolve;
+        });
+      }
+      return Promise.resolve({});
+    });
+
+    const { findByText, queryByText } = render(<SpaceExternalEventsSettings spaceId="space-1" />);
+    // Panel is interactive (shows watched repo) while token status is still
+    // pending — proves refresh() did not await getTokenStatus before
+    // setLoading(false).
+    expect(await findByText('acme/widgets')).toBeTruthy();
+    expect(queryByText('Loading external event sources…')).toBeNull();
+    resolveTokenStatus({ configured: false, source: 'none' });
+  });
+
+  it('renders an invalid-token state when getTokenStatus returns an error', async () => {
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockImplementation((method) => {
+      if (method === 'externalEvents.extensions.list') return Promise.resolve(extensionResult);
+      if (method === 'space.github.listConfig') {
+        return Promise.resolve({
+          spaceId: 'space-1',
+          source: 'github',
+          enabled: true,
+          settings: {},
+        });
+      }
+      if (method === 'space.github.listWatchedRepos') return Promise.resolve(repoResult);
+      if (method === 'space.github.getTokenStatus') {
+        return Promise.resolve({
+          configured: true,
+          source: 'keychain',
+          login: 'octocat',
+          error: 'HTTP 401',
+        });
+      }
+      return Promise.resolve({});
+    });
+
+    const { findByText, findByTestId, queryByText } = render(
+      <SpaceExternalEventsSettings spaceId="space-1" />
+    );
+    expect(await findByText('Token invalid')).toBeTruthy();
+    expect(await findByTestId('github-token-invalid-error')).toBeTruthy();
+    expect(await findByText('Replace invalid token')).toBeTruthy();
+    expect(queryByText('Connected')).toBeNull();
+  });
+
+  it('disables connection card controls when the panel is disabled', async () => {
+    setupRequests();
+    const { findByText } = render(<SpaceExternalEventsSettings spaceId="space-1" disabled />);
+    const checkbox = await findByText(
+      'Polling for this space (daemon-wide capability; checks GitHub every 60s)'
+    );
+    const pollingInput = checkbox.closest('label')?.querySelector('input');
+    expect(pollingInput).toHaveProperty('disabled', true);
+  });
+
+  it('confirms before shadowing an env-sourced token with a keychain token', async () => {
+    const confirmSpy = vi.fn(() => false);
+    vi.stubGlobal('confirm', confirmSpy);
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockImplementation((method) => {
+      if (method === 'externalEvents.extensions.list') return Promise.resolve(extensionResult);
+      if (method === 'space.github.listConfig') {
+        return Promise.resolve({
+          spaceId: 'space-1',
+          source: 'github',
+          enabled: true,
+          settings: {},
+        });
+      }
+      if (method === 'space.github.listWatchedRepos') return Promise.resolve(repoResult);
+      if (method === 'space.github.getTokenStatus') {
+        return Promise.resolve({
+          configured: true,
+          source: 'env',
+          login: 'env-user',
+          error: 'HTTP 401',
+        });
+      }
+      return Promise.resolve({});
+    });
+
+    const { findByPlaceholderText, getByText } = render(
+      <SpaceExternalEventsSettings spaceId="space-1" />
+    );
+    // Status has env + error → tokenInvalid true → input visible.
+    const input = await findByPlaceholderText('ghp_…');
+    fireEvent.input(input, { target: { value: 'ghp_replacement_token_value' } });
+    fireEvent.click(getByText('Save token'));
+
+    expect(confirmSpy).toHaveBeenCalledWith(expect.stringMatching(/GITHUB_TOKEN env var/));
+    expect(mockRequest).not.toHaveBeenCalledWith('space.github.setToken', {
+      token: 'ghp_replacement_token_value',
+    });
+    vi.unstubAllGlobals();
+  });
 });
