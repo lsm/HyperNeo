@@ -33,6 +33,15 @@ export class SpaceTaskRepository {
     }
   }
 
+  private tableExists(tableName: string): boolean {
+    try {
+      const row = this.db.prepare(`SELECT name FROM sqlite_master WHERE name = ?`).get(tableName);
+      return !!row;
+    } catch {
+      return false;
+    }
+  }
+
   private upsertTaskSearchRow(taskId: string): void {
     if (!this.hasMessageSearchIndex()) return;
     const row = this.db
@@ -85,6 +94,45 @@ export class SpaceTaskRepository {
     this.db
       .prepare(`DELETE FROM message_search_content WHERE kind = 'message' AND task_id = ?`)
       .run(taskId);
+  }
+
+  private archiveTerminalTaskWorkerSessions(taskId: string): void {
+    if (!this.tableExists('sessions')) return;
+    const rows = this.db
+      .prepare(
+        `SELECT DISTINCT s.id
+         FROM sessions s
+         LEFT JOIN space_tasks t ON t.id = ?
+         WHERE s.status != 'archived'
+           AND COALESCE(s.type, 'worker') NOT IN ('room_chat', 'space_chat', 'spaces_global')
+           AND (
+             (json_valid(s.session_context) AND json_extract(s.session_context, '$.taskId') = ?)
+             OR s.id = t.task_agent_session_id
+             OR s.id LIKE ('space:%:task:' || ? || ':%')
+           )`
+      )
+      .all(taskId, taskId, taskId) as Array<{ id: string }>;
+    if (rows.length === 0) return;
+
+    const archivedAt = new Date().toISOString();
+    const updateSession = this.db.prepare(
+      `UPDATE sessions
+       SET status = 'archived',
+           archived_at = COALESCE(archived_at, ?)
+       WHERE id = ?`
+    );
+    const deleteSearchRows = this.hasMessageSearchIndex()
+      ? this.db.prepare(
+          `DELETE FROM message_search_content WHERE kind = 'message' AND session_id = ?`
+        )
+      : null;
+    const tx = this.db.transaction((sessionIds: string[]) => {
+      for (const sessionId of sessionIds) {
+        updateSession.run(archivedAt, sessionId);
+        deleteSearchRows?.run(sessionId);
+      }
+    });
+    tx(rows.map((row) => row.id));
   }
 
   private deleteExpiredTerminalTaskMessageRows(taskId: string): void {
@@ -536,6 +584,13 @@ export class SpaceTaskRepository {
       } else if (params.status !== undefined || params.completedAt !== undefined) {
         this.deleteExpiredTerminalTaskMessageRows(id);
       }
+      if (
+        params.status === 'done' ||
+        params.status === 'cancelled' ||
+        params.status === 'archived'
+      ) {
+        this.archiveTerminalTaskWorkerSessions(id);
+      }
 
       this.reactiveDb?.notifyChange('space_tasks');
     }
@@ -555,6 +610,7 @@ export class SpaceTaskRepository {
     stmt.run(now, now, id);
     this.upsertTaskSearchRow(id);
     this.deleteTaskMessageRows(id);
+    this.archiveTerminalTaskWorkerSessions(id);
     this.reactiveDb?.notifyChange('space_tasks');
     return this.getTask(id);
   }

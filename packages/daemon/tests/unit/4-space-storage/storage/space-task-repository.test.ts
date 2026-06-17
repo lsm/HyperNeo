@@ -103,6 +103,16 @@ describe('SpaceTaskRepository', () => {
     ).map((row) => row.source_id);
   }
 
+  function insertWorkerSession(id: string, taskId: string, type = 'worker'): void {
+    const now = new Date().toISOString();
+    db.prepare(
+      `INSERT INTO sessions (
+        id, title, workspace_path, created_at, last_active_at, status, config, metadata, type,
+        session_context
+       ) VALUES (?, ?, ?, ?, ?, 'active', '{}', '{}', ?, ?)`
+    ).run(id, id, '/tmp/workspace', now, now, type, JSON.stringify({ spaceId, taskId }));
+  }
+
   describe('createTask', () => {
     it('creates a task with required fields', () => {
       const task = repo.createTask({
@@ -365,6 +375,36 @@ describe('SpaceTaskRepository', () => {
       expect(updated!.activeSession).toBeNull();
     });
 
+    it('archives linked runtime sessions when task is done', () => {
+      const task = repo.createTask({ spaceId, title: 'T', description: '' });
+      insertWorkerSession('worker-session-1', task.id);
+      insertWorkerSession('legacy-coder-session', task.id, 'coder');
+      insertWorkerSession('space-chat-session', task.id, 'space_chat');
+
+      repo.updateTask(task.id, { status: 'done' });
+
+      const rows = db
+        .prepare(`SELECT id, status, archived_at FROM sessions ORDER BY id`)
+        .all() as Array<{ id: string; status: string; archived_at: string | null }>;
+      expect(rows).toEqual([
+        { id: 'legacy-coder-session', status: 'archived', archived_at: expect.any(String) },
+        { id: 'space-chat-session', status: 'active', archived_at: null },
+        { id: 'worker-session-1', status: 'archived', archived_at: expect.any(String) },
+      ]);
+    });
+
+    it('does not archive linked worker sessions when task is blocked', () => {
+      const task = repo.createTask({ spaceId, title: 'T', description: '' });
+      insertWorkerSession('worker-session-1', task.id);
+
+      repo.updateTask(task.id, { status: 'blocked' });
+
+      const row = db
+        .prepare(`SELECT status FROM sessions WHERE id = ?`)
+        .get('worker-session-1') as { status: string };
+      expect(row.status).toBe('active');
+    });
+
     it('updates workflowRunId', () => {
       const task = repo.createTask({ spaceId, title: 'T', description: '' });
       const updated = repo.updateTask(task.id, {
@@ -473,6 +513,19 @@ describe('SpaceTaskRepository', () => {
       expect(archived!.status).toBe('archived');
       expect(archived!.archivedAt).toBeDefined();
       expect(archived!.archivedAt).toBeGreaterThan(0);
+    });
+
+    it('archives linked worker sessions', () => {
+      const task = repo.createTask({ spaceId, title: 'T', description: '' });
+      insertWorkerSession('worker-session-1', task.id);
+
+      repo.archiveTask(task.id);
+
+      const row = db
+        .prepare(`SELECT status, archived_at FROM sessions WHERE id = ?`)
+        .get('worker-session-1') as { status: string; archived_at: string | null };
+      expect(row.status).toBe('archived');
+      expect(row.archived_at).toBeTruthy();
     });
 
     it('archived tasks are excluded from listBySpace by default', () => {
