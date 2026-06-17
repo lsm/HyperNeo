@@ -428,13 +428,48 @@ export function getMessageTypeDescription(msg: SDKMessage): string {
 }
 
 /**
+ * System message subtypes that should never render in the chat transcript.
+ * These are persisted to DB for audit/debug but hidden from UI to reduce noise.
+ *
+ * Hidden for these reasons:
+ * - session_state_changed: Internal state machine; handler uses for turn-end detection
+ * - commands_changed: Palette already updated via onCommandsChanged; chat row = noise
+ * - hook_started: Redundant - hook_response carries the result
+ * - hook_progress: Streaming stdout/stderr; hook_response is persisted result
+ * - task_started: Task tool_use card already fires on subagent spawn
+ * - task_progress: Periodic usage stats; task_notification carries final usage
+ * - task_updated: Status patch; child messages + result already reflect status
+ * - mirror_error: Internal group/session-mirror plumbing
+ * - elicitation_complete: Niche MCP elicitation
+ */
+const HIDDEN_SYSTEM_SUBTYPES = new Set([
+  'session_state_changed',
+  'commands_changed',
+  'hook_started',
+  'hook_progress',
+  'task_started',
+  'task_progress',
+  'task_updated',
+  'mirror_error',
+  'elicitation_complete',
+]);
+
+/**
+ * Check if a system message subtype is in the explicit hidden set.
+ */
+export function isHiddenSystemSubtype(subtype: string): boolean {
+  return HIDDEN_SYSTEM_SUBTYPES.has(subtype);
+}
+
+/**
  * Check if a message should be displayed to the user (vs internal system messages)
  */
 export function isUserVisibleMessage(msg: SDKMessage): boolean {
   // User should see: assistant, user, result, tool_progress, auth_status, user replays,
-  // compact_boundary, api_retry, and compacting status messages
-  // User should NOT see: stream events or thinking_tokens deltas (transient only)
+  // compact_boundary, and compacting status messages
+  // User should NOT see: stream events or API retry messages
   if (isSDKStreamEvent(msg)) return false;
+  if (isSDKAPIRetryMessage(msg)) return false;
   if (isSDKThinkingTokensMessage(msg)) return false;
   if (isSDKSessionStateChangedMessage(msg)) return false;
 

@@ -6,30 +6,41 @@
  * - compact_boundary: Compaction metadata
  * - status: Status updates (compacting, etc.)
  * - hook_response: Hook execution results
+ * - informational: Non-info level messages
+ * - worker_shutting_down: Worker shutdown (live-tail only)
+ * - model_refusal_fallback: Model fallback events
+ * - permission_denied: Tool permission denial
+ * - task_notification: Subagent completion with usage
+ * - memory_recall: Memory recall events
+ * - local_command_output: Slash command output
+ * - notification: Priority notifications
+ * - files_persisted: File persistence failures (conditional)
+ * - plugin_install: Plugin install status (conditional)
  */
 
 import type { ComponentChildren } from 'preact';
 import { useState } from 'preact/hooks';
 import type {
-  SDKAPIRetryMessage,
-  SDKCommandsChangedMessage,
   SDKHookResponseMessage,
   SDKInformationalMessage,
   SDKMessage,
   SDKModelRefusalFallbackMessage,
-  SDKSessionStateChangedMessage,
+  SDKNotificationMessage,
+  SDKPermissionDeniedMessage,
+  SDKFilesPersistedEvent,
+  SDKPluginInstallMessage,
+  SDKTaskNotificationMessage,
+  SDKMemoryRecallMessage,
+  SDKLocalCommandOutputMessage,
   SDKStatusMessage,
   SDKWorkerShuttingDownMessage,
 } from '@neokai/shared/sdk/sdk.d.ts';
 import {
-  isSDKAPIRetryMessage,
   isSDKSystemInit,
   isSDKCompactBoundary,
   isSDKStatusMessage,
   isSDKHookResponse,
   isSDKModelRefusalFallbackMessage,
-  isSDKSessionStateChangedMessage,
-  isSDKCommandsChangedMessage,
 } from '@neokai/shared/sdk/type-guards';
 import { customColors } from '../../lib/design-tokens.ts';
 
@@ -80,30 +91,59 @@ export function SDKSystemMessage({ message, isLiveTail = false }: Props) {
     return <HookResponseCard message={hookMessage} />;
   }
 
-  // API retry message
-  if (isSDKAPIRetryMessage(message)) {
-    return <ApiRetryMessage message={message as SDKAPIRetryMessage} />;
-  }
-
-  if (isSDKSessionStateChangedMessage(message)) {
-    return <SessionStateChangedMessage message={message} />;
-  }
-
-  if (isSDKCommandsChangedMessage(message)) {
-    return <CommandsChangedMessage message={message} />;
-  }
-
+  // Informational message - only render when level is not 'info'
   if (message.subtype === 'informational') {
-    if (message.level === 'info') return null;
-    return <InformationalMessage message={message} />;
+    if ((message as SDKInformationalMessage).level === 'info') return null;
+    return <InformationalMessage message={message as SDKInformationalMessage} />;
   }
 
+  // Worker shutting down - only render in live-tail mode
   if (message.subtype === 'worker_shutting_down' && isLiveTail) {
-    return <WorkerShuttingDownMessage message={message} />;
+    return <WorkerShuttingDownMessage message={message as SDKWorkerShuttingDownMessage} />;
   }
 
+  // Model refusal fallback
   if (isSDKModelRefusalFallbackMessage(message)) {
     return <ModelRefusalFallbackMessage message={message} />;
+  }
+
+  // Permission denied
+  if (message.subtype === 'permission_denied') {
+    return <PermissionDeniedMessage message={message as SDKPermissionDeniedMessage} />;
+  }
+
+  // Task notification (subagent completion)
+  if (message.subtype === 'task_notification') {
+    return <TaskNotificationMessage message={message as SDKTaskNotificationMessage} />;
+  }
+
+  // Memory recall
+  if (message.subtype === 'memory_recall') {
+    return <MemoryRecallMessage message={message as SDKMemoryRecallMessage} />;
+  }
+
+  // Local command output
+  if (message.subtype === 'local_command_output') {
+    return <LocalCommandOutputMessage message={message as SDKLocalCommandOutputMessage} />;
+  }
+
+  // Notification
+  if (message.subtype === 'notification') {
+    return <NotificationMessage message={message as SDKNotificationMessage} />;
+  }
+
+  // Files persisted - only render on failure
+  if (message.subtype === 'files_persisted') {
+    const filesMsg = message as SDKFilesPersistedEvent;
+    if (filesMsg.failed.length === 0) return null; // Hide success = noise
+    return <FilesPersistedMessage message={filesMsg} />;
+  }
+
+  // Plugin install - render on failed/completed, hide started
+  if (message.subtype === 'plugin_install') {
+    const pluginMsg = message as SDKPluginInstallMessage;
+    if (pluginMsg.status === 'started') return null; // Hide started
+    return <PluginInstallMessage message={pluginMsg} />;
   }
 
   return null;
@@ -123,68 +163,6 @@ function OperationalSystemMessage({
       </div>
       <div>{children}</div>
     </div>
-  );
-}
-
-function ApiRetryMessage({ message }: { message: SDKAPIRetryMessage }) {
-  const maxRetries = message.max_retries;
-  const currentAttempt = message.attempt;
-  const delayMs = message.retry_delay_ms;
-  const errorStatus = message.error_status;
-  const errorMessage = message.error;
-
-  return (
-    <OperationalSystemMessage title="API retry">
-      <div class="flex flex-col gap-1">
-        <div class="flex items-center gap-2 text-xs">
-          <span class="font-medium">Attempt {currentAttempt}</span>
-          {maxRetries > 0 && (
-            <span class="text-slate-500 dark:text-slate-400">of {maxRetries}</span>
-          )}
-          {delayMs > 0 && (
-            <span class="text-slate-500 dark:text-slate-400">• delay {delayMs}ms</span>
-          )}
-        </div>
-        {errorStatus && (
-          <div class="text-xs text-slate-600 dark:text-slate-400">Status: {errorStatus}</div>
-        )}
-        <div class="text-xs text-amber-700 dark:text-amber-400 font-mono break-words">
-          {errorMessage}
-        </div>
-      </div>
-    </OperationalSystemMessage>
-  );
-}
-
-function SessionStateChangedMessage({ message }: { message: SDKSessionStateChangedMessage }) {
-  return <OperationalSystemMessage title="Session state">{message.state}</OperationalSystemMessage>;
-}
-
-function CommandsChangedMessage({ message }: { message: SDKCommandsChangedMessage }) {
-  const visibleCommands = message.commands.slice(0, 12);
-  const hiddenCount = message.commands.length - visibleCommands.length;
-
-  return (
-    <OperationalSystemMessage title="Commands changed">
-      <div class="mb-2">{message.commands.length.toLocaleString()} slash commands available</div>
-      {visibleCommands.length > 0 && (
-        <div class="flex flex-wrap gap-1">
-          {visibleCommands.map((command) => (
-            <span
-              key={command.name}
-              class="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs text-slate-700 dark:bg-slate-800 dark:text-slate-200"
-            >
-              /{command.name}
-            </span>
-          ))}
-          {hiddenCount > 0 && (
-            <span class="rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500 dark:bg-slate-800 dark:text-slate-400">
-              +{hiddenCount.toLocaleString()} more
-            </span>
-          )}
-        </div>
-      )}
-    </OperationalSystemMessage>
   );
 }
 
@@ -215,6 +193,204 @@ function ModelRefusalFallbackMessage({ message }: { message: SDKModelRefusalFall
       <div class="mt-2 text-xs text-amber-700 dark:text-amber-300">
         {message.original_model} → {message.fallback_model}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Permission Denied Message - Shows when a tool call is auto-denied
+ */
+function PermissionDeniedMessage({ message }: { message: SDKPermissionDeniedMessage }) {
+  return (
+    <div class="my-2 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-900 dark:border-rose-800 dark:bg-rose-950/30 dark:text-rose-100">
+      <div class="mb-1 font-semibold">Permission denied</div>
+      <div class="font-mono text-xs">{message.tool_name}</div>
+      {message.decision_reason && (
+        <div class="mt-1 text-xs text-rose-700 dark:text-rose-300">{message.decision_reason}</div>
+      )}
+      <div class="mt-1 text-xs text-rose-600 dark:text-rose-400">{message.message}</div>
+    </div>
+  );
+}
+
+/**
+ * Task Notification Message - Shows subagent completion with usage stats
+ */
+function TaskNotificationMessage({ message }: { message: SDKTaskNotificationMessage }) {
+  const isSuccess = message.status === 'completed';
+  const isError = message.status === 'failed' || message.status === 'stopped';
+
+  return (
+    <div
+      class={`my-2 rounded-lg border p-3 text-sm ${
+        isSuccess
+          ? 'border-green-200 bg-green-50 text-green-900 dark:border-green-800 dark:bg-green-950/30 dark:text-green-100'
+          : isError
+            ? 'border-red-200 bg-red-50 text-red-900 dark:border-red-800 dark:bg-red-950/30 dark:text-red-100'
+            : 'border-slate-200 bg-slate-50 text-slate-900 dark:border-slate-700 dark:bg-slate-900/30 dark:text-slate-100'
+      }`}
+    >
+      <div class="mb-1 font-semibold">
+        {message.status === 'completed' && 'Task completed'}
+        {message.status === 'failed' && 'Task failed'}
+        {message.status === 'stopped' && 'Task stopped'}
+      </div>
+      <div class="text-xs">{message.summary}</div>
+      {message.usage && (
+        <div class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs font-mono opacity-80">
+          <span>{message.usage.total_tokens.toLocaleString()} tokens</span>
+          <span>{message.usage.tool_uses} tool uses</span>
+          <span>{(message.usage.duration_ms / 1000).toFixed(1)}s</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Memory Recall Message - Shows surfaced memories
+ */
+function MemoryRecallMessage({ message }: { message: SDKMemoryRecallMessage }) {
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  return (
+    <div class="my-2 rounded-lg border border-violet-200 bg-violet-50 p-3 text-sm text-violet-900 dark:border-violet-800 dark:bg-violet-950/30 dark:text-violet-100">
+      <button
+        onClick={() => setIsExpanded(!isExpanded)}
+        class="w-full flex items-center justify-between"
+      >
+        <div class="flex items-center gap-2">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M4 7v10c0 2 1 3 3 3h10c2 0 3-1 3-3V7c0-2-1-3-3-3H7C5 4 4 5 4 7z"
+            />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h8" />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 8h8" />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16h8" />
+          </svg>
+          <span class="font-semibold">Memory recalled</span>
+          <span class="text-xs opacity-80">({message.memories.length} items)</span>
+        </div>
+        <svg
+          class={`w-4 h-4 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+
+      {isExpanded && (
+        <div class="mt-2 space-y-1">
+          {message.memories.map((memory, index) => (
+            <div
+              key={index}
+              class="flex items-start gap-2 text-xs bg-white dark:bg-gray-900 rounded p-2 border border-violet-100 dark:border-violet-900"
+            >
+              <span class="font-mono text-violet-600 dark:text-violet-400 flex-shrink-0">
+                {memory.scope}
+              </span>
+              <span class="font-mono text-violet-700 dark:text-violet-300 truncate">
+                {memory.path}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Local Command Output Message - Shows slash command output
+ */
+function LocalCommandOutputMessage({ message }: { message: SDKLocalCommandOutputMessage }) {
+  return (
+    <div class="my-2 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900/30 dark:text-slate-100">
+      <pre class="text-xs font-mono whitespace-pre-wrap overflow-x-auto">{message.content}</pre>
+    </div>
+  );
+}
+
+/**
+ * Notification Message - Priority notification banner
+ */
+function NotificationMessage({ message }: { message: SDKNotificationMessage }) {
+  const priorityColors = {
+    low: 'border-blue-200 bg-blue-50 text-blue-900 dark:border-blue-800 dark:bg-blue-950/30 dark:text-blue-100',
+    medium:
+      'border-yellow-200 bg-yellow-50 text-yellow-900 dark:border-yellow-800 dark:bg-yellow-950/30 dark:text-yellow-100',
+    high: 'border-orange-200 bg-orange-50 text-orange-900 dark:border-orange-800 dark:bg-orange-950/30 dark:text-orange-100',
+    immediate:
+      'border-red-200 bg-red-50 text-red-900 dark:border-red-800 dark:bg-red-950/30 dark:text-red-100',
+  };
+
+  const colors = message.color ? message.color : priorityColors[message.priority];
+
+  return (
+    <div class={`my-2 rounded-lg border p-3 text-sm ${colors}`}>
+      <div class="font-medium">{message.text}</div>
+    </div>
+  );
+}
+
+/**
+ * Files Persisted Message - Shows file persistence failures
+ */
+function FilesPersistedMessage({ message }: { message: SDKFilesPersistedEvent }) {
+  return (
+    <div class="my-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-900 dark:border-red-800 dark:bg-red-950/30 dark:text-red-100">
+      <div class="mb-1 font-semibold">File persistence failed</div>
+      <div class="text-xs">
+        {message.failed.length} file{message.failed.length !== 1 ? 's' : ''} failed to persist
+      </div>
+      {message.failed.length > 0 && (
+        <div class="mt-2 space-y-1">
+          {message.failed.map((failure, index) => (
+            <div
+              key={index}
+              class="text-xs bg-white dark:bg-gray-900 rounded p-2 border border-red-100 dark:border-red-900"
+            >
+              <div class="font-mono">{failure.filename}</div>
+              <div class="text-red-700 dark:text-red-300 mt-1">{failure.error}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Plugin Install Message - Shows plugin install status
+ */
+function PluginInstallMessage({ message }: { message: SDKPluginInstallMessage }) {
+  const isSuccess = message.status === 'completed' || message.status === 'installed';
+  const isError = message.status === 'failed';
+
+  return (
+    <div
+      class={`my-2 rounded-lg border p-3 text-sm ${
+        isSuccess
+          ? 'border-green-200 bg-green-50 text-green-900 dark:border-green-800 dark:bg-green-950/30 dark:text-green-100'
+          : isError
+            ? 'border-red-200 bg-red-50 text-red-900 dark:border-red-800 dark:bg-red-950/30 dark:text-red-100'
+            : 'border-slate-200 bg-slate-50 text-slate-900 dark:border-slate-700 dark:bg-slate-900/30 dark:text-slate-100'
+      }`}
+    >
+      <div class="font-semibold">
+        {message.name && <span class="font-mono">{message.name}</span>}
+        {!message.name && 'Plugin'}
+        {isSuccess && ' installed'}
+        {isError && ' installation failed'}
+      </div>
+      {message.error && (
+        <div class="mt-1 text-xs text-red-700 dark:text-red-300">{message.error}</div>
+      )}
     </div>
   );
 }

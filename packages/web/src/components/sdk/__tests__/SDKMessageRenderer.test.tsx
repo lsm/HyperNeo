@@ -207,7 +207,7 @@ describe('SDKMessageRenderer', () => {
       expect(container.textContent).toContain('tokens');
     });
 
-    it('should suppress thinking token system messages (not rendered through main renderer)', () => {
+    it('should render hidden subtypes as null (thinking_tokens)', () => {
       const message = {
         type: 'system',
         subtype: 'thinking_tokens',
@@ -219,11 +219,11 @@ describe('SDKMessageRenderer', () => {
 
       const { container } = render(<SDKMessageRenderer message={message} />);
 
-      // thinking_tokens messages should be suppressed (return null from SDKSystemMessage)
-      expect(container.firstChild).toBeNull();
+      // thinking_tokens is now hidden - should render nothing
+      expect(container.innerHTML).toBe('');
     });
 
-    it('should render session state system messages through the main renderer', () => {
+    it('should render hidden subtypes as null (session_state_changed)', () => {
       const message = {
         type: 'system',
         subtype: 'session_state_changed',
@@ -234,8 +234,8 @@ describe('SDKMessageRenderer', () => {
 
       const { container } = render(<SDKMessageRenderer message={message} />);
 
-      expect(container.textContent).toContain('Session state');
-      expect(container.textContent).toContain('requires_action');
+      // session_state_changed is now hidden - should render nothing
+      expect(container.innerHTML).toBe('');
     });
 
     it('should render worker shutdown messages only at the live tail', () => {
