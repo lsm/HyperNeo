@@ -131,7 +131,7 @@ Materialized built-in prompt content must use a separate ID namespace so activat
 - `materialized.<activation-row-id>`
 - `materialized.space.<spaceId>.neokai.output-mode.compressed`
 
-The materialized record keeps `templateId = 'neokai.output-mode.compressed'` and provenance should link back to the activation row ID.
+The materialized record is a `content` record and must not keep `templateId`; provenance should link back to the activation row ID through `activationId` and source metadata.
 
 ## Storage
 
