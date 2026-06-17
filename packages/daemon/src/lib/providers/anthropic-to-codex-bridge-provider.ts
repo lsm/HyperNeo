@@ -546,11 +546,17 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 
   /**
    * Verify the resolved Codex credentials actually work against the OpenAI
-   * upstream by sending a minimal `/responses` request with
-   * `max_output_tokens: 1`. The request URL is chosen by auth source so both
-   * API-key mode (`api.openai.com/v1`) and ChatGPT OAuth mode
-   * (`chatgpt.com/backend-api/codex`) are exercised through their real
-   * upstream paths.
+   * upstream by sending a minimal `/responses` request. The request URL is
+   * chosen by auth source so both API-key mode (`api.openai.com/v1`) and
+   * ChatGPT OAuth mode (`chatgpt.com/backend-api/codex`) are exercised
+   * through their real upstream paths.
+   *
+   * The request body differs per auth source: API-key mode sends
+   * `max_output_tokens: 1` to keep the probe cheap, but the ChatGPT Codex
+   * backend hard-rejects that field (see
+   * `openai-responses-bridge/server.ts:1170-1176` —
+   * `includeMaxOutputTokens: !isChatgptOAuth`), so the OAuth branch omits
+   * it and relies on the upstream's default.
    *
    * @throws {Error} when credentials are rejected, the upstream is
    *   unreachable, or the request times out.
