@@ -438,8 +438,8 @@ export function SpaceExternalEventsSettings({
       setBusy(autoConfigure ? 'repo:add:auto' : 'repo:add');
       setFormError(null);
       const secret = webhookSecret.trim();
-      if (!secret && !githubPollingEnabled && !autoConfigure) {
-        setFormError('Webhook secret is required because polling is disabled for GitHub');
+      if (!secret && !spacePollingActive && !autoConfigure) {
+        setFormError('Webhook secret is required because polling is disabled for this space');
         return;
       }
       await hub.request(
@@ -456,7 +456,10 @@ export function SpaceExternalEventsSettings({
               repo: parsed.repo,
               webhookSecret: secret || undefined,
               webhookEnabled: Boolean(secret),
-              pollingEnabled: !secret,
+              // Default to polling only when this space's polling control is
+              // already active — daemon-wide capability alone is not enough,
+              // since another space may be the one keeping it on.
+              pollingEnabled: !secret && spacePollingActive,
             }
       );
       if (!isActionCurrent(actionSpaceId)) return;
@@ -651,6 +654,7 @@ export function SpaceExternalEventsSettings({
             <GitHubConnectionCard
               tokenStatus={tokenStatus}
               tokenStatusError={tokenStatusError}
+              tokenStatusUnknown={!tokenStatus && !tokenStatusError}
               tokenInput={tokenInput}
               onTokenInputChange={setTokenInput}
               busy={busy === 'github:token' || busy === 'github:polling'}
@@ -1190,6 +1194,7 @@ function WebhookStatus({ repo }: { repo: GitHubWatchedRepo }) {
 interface GitHubConnectionCardProps {
   tokenStatus: GitHubTokenStatus | null;
   tokenStatusError: string | null;
+  tokenStatusUnknown: boolean;
   tokenInput: string;
   onTokenInputChange: (value: string) => void;
   busy: boolean;
@@ -1204,6 +1209,7 @@ interface GitHubConnectionCardProps {
 function GitHubConnectionCard({
   tokenStatus,
   tokenStatusError,
+  tokenStatusUnknown,
   tokenInput,
   onTokenInputChange,
   busy,
@@ -1216,7 +1222,10 @@ function GitHubConnectionCard({
 }: GitHubConnectionCardProps) {
   const tokenInvalid = tokenStatus?.configured === true && Boolean(tokenStatus.error);
   const connected = tokenStatus?.configured === true && !tokenInvalid;
-  const controlDisabled = busy || disabled;
+  // Block destructive token writes while we don't yet know whether a token
+  // is already configured. Without this guard the overwrite/shadow confirm
+  // prompts would silently no-op because saveToken sees tokenStatus === null.
+  const controlDisabled = busy || disabled || tokenStatusUnknown;
   const [replaceMode, setReplaceMode] = useState(false);
   const showInput = !connected || tokenInvalid || replaceMode;
   return (

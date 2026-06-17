@@ -2272,7 +2272,7 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
         token: 'ghp_persisted_token_value',
       });
       expect(result.success).toBe(true);
-      expect(await store.get('neokai.provider.github', 'default')).toBe(
+      expect(await store.get('neokai.external-events.github', 'default')).toBe(
         'ghp_persisted_token_value'
       );
     } finally {
@@ -2297,7 +2297,7 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
       await expect(clientHub.request('space.github.setToken', { token: '   ' })).rejects.toThrow(
         'token is required'
       );
-      expect(await store.get('neokai.provider.github', 'default')).toBeNull();
+      expect(await store.get('neokai.external-events.github', 'default')).toBeNull();
     } finally {
       await extension.stop();
     }
@@ -2327,7 +2327,7 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
   test('space.github.setToken overwrites an existing keychain token', async () => {
     const db = setupDb();
     const store = new InMemoryCredentialStore();
-    await store.set('neokai.provider.github', 'default', 'ghp_old_token_value');
+    await store.set('neokai.external-events.github', 'default', 'ghp_old_token_value');
     const extension = new GitHubEventExtension(db, undefined, { credentialStore: store });
     const { clientHub, hub, ready } = setupHubPair();
     await ready;
@@ -2340,7 +2340,9 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
       extension.registerRpcHandlers(hub, context);
 
       await clientHub.request('space.github.setToken', { token: 'ghp_new_token_value' });
-      expect(await store.get('neokai.provider.github', 'default')).toBe('ghp_new_token_value');
+      expect(await store.get('neokai.external-events.github', 'default')).toBe(
+        'ghp_new_token_value'
+      );
     } finally {
       await extension.stop();
     }
@@ -2363,7 +2365,7 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
       await expect(
         clientHub.request('space.github.setToken', { token: 'not-a-github-token' })
       ).rejects.toThrow(/GitHub token must start with one of/);
-      expect(await store.get('neokai.provider.github', 'default')).toBeNull();
+      expect(await store.get('neokai.external-events.github', 'default')).toBeNull();
     } finally {
       await extension.stop();
     }
@@ -2386,7 +2388,7 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
       await expect(
         clientHub.request('space.github.setToken', { token: 'ghp_short' })
       ).rejects.toThrow(/GitHub token is too short/);
-      expect(await store.get('neokai.provider.github', 'default')).toBeNull();
+      expect(await store.get('neokai.external-events.github', 'default')).toBeNull();
     } finally {
       await extension.stop();
     }
@@ -2409,7 +2411,7 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
       await clientHub.request('space.github.setToken', {
         token: 'github_pat_long_finegrained_token_value',
       });
-      expect(await store.get('neokai.provider.github', 'default')).toBe(
+      expect(await store.get('neokai.external-events.github', 'default')).toBe(
         'github_pat_long_finegrained_token_value'
       );
     } finally {
@@ -2441,7 +2443,7 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
   test('space.github.clearToken removes stored token', async () => {
     const db = setupDb();
     const store = new InMemoryCredentialStore();
-    await store.set('neokai.provider.github', 'default', 'ghp_secret');
+    await store.set('neokai.external-events.github', 'default', 'ghp_secret');
     const extension = new GitHubEventExtension(db, undefined, { credentialStore: store });
     const { clientHub, hub, ready } = setupHubPair();
     await ready;
@@ -2454,7 +2456,7 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
       extension.registerRpcHandlers(hub, context);
 
       await clientHub.request('space.github.clearToken', {});
-      expect(await store.get('neokai.provider.github', 'default')).toBeNull();
+      expect(await store.get('neokai.external-events.github', 'default')).toBeNull();
     } finally {
       await extension.stop();
     }
@@ -2463,7 +2465,7 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
   test('space.github.getTokenStatus reports login when keychain token validates', async () => {
     const db = setupDb();
     const store = new InMemoryCredentialStore();
-    await store.set('neokai.provider.github', 'default', 'ghp_keychain');
+    await store.set('neokai.external-events.github', 'default', 'ghp_keychain');
     const seenAuth = new Set<string>();
     const extension = new GitHubEventExtension(db, 'env-fallback-token', {
       credentialStore: store,
@@ -2605,7 +2607,7 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
       await expect(
         clientHub.request('space.github.setToken', { token: 'ghp_secret' })
       ).rejects.toThrow('GitHub RPC configuration capability is disabled');
-      expect(await store.get('neokai.provider.github', 'default')).toBeNull();
+      expect(await store.get('neokai.external-events.github', 'default')).toBeNull();
     } finally {
       await extension.stop();
     }
@@ -2614,7 +2616,7 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
   test('resolveToken prefers credential store over env var when fetching', async () => {
     const db = setupDb();
     const store = new InMemoryCredentialStore();
-    await store.set('neokai.provider.github', 'default', 'ghp_keychain');
+    await store.set('neokai.external-events.github', 'default', 'ghp_keychain');
     const seenAuth: string[] = [];
     const extension = new GitHubEventExtension(db, 'ghp_env_fallback', {
       credentialStore: store,
@@ -2839,7 +2841,7 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
     }
   });
 
-  test('space.github.setPollingEnabled(true) skips repos with active webhooks but enables polling for inactive ones', async () => {
+  test('space.github.setPollingEnabled(true) skips repos with webhook delivery configured (manual or auto)', async () => {
     const db = setupDb();
     const extension = new GitHubEventExtension(db, undefined, { pollIntervalMs: 60_000 });
     const { clientHub, hub, ready } = setupHubPair();
@@ -2856,7 +2858,7 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
       extension.repo.upsertWatchedRepo({
         spaceId: 'space-1',
         owner: 'acme',
-        repo: 'webhook-active',
+        repo: 'webhook-active-auto',
         webhookEnabled: true,
         webhookSecret: 'configured-secret',
         webhookActive: true,
@@ -2865,10 +2867,10 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
       extension.repo.upsertWatchedRepo({
         spaceId: 'space-1',
         owner: 'acme',
-        repo: 'webhook-inactive',
+        repo: 'webhook-manual-inactive',
         webhookEnabled: true,
-        webhookSecret: 'configured-secret',
-        webhookActive: false,
+        webhookSecret: 'manual-secret',
+        webhookActive: null,
         pollingEnabled: false,
       });
       extension.repo.upsertWatchedRepo({
@@ -2885,11 +2887,11 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
       });
 
       const repos = extension.repo.listWatchedRepos('space-1');
-      const activeRepo = repos.find((r) => r.repo === 'webhook-active')!;
-      const inactiveRepo = repos.find((r) => r.repo === 'webhook-inactive')!;
+      const activeRepo = repos.find((r) => r.repo === 'webhook-active-auto')!;
+      const manualRepo = repos.find((r) => r.repo === 'webhook-manual-inactive')!;
       const pollingRepo = repos.find((r) => r.repo === 'polling-repo')!;
       expect(activeRepo.pollingEnabled).toBe(false);
-      expect(inactiveRepo.pollingEnabled).toBe(true);
+      expect(manualRepo.pollingEnabled).toBe(false);
       expect(pollingRepo.pollingEnabled).toBe(true);
     } finally {
       await extension.stop();

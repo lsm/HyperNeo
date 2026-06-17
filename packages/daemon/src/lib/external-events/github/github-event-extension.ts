@@ -1,7 +1,7 @@
 import type { Database as BunDatabase } from 'bun:sqlite';
 import type { MessageHub } from '@neokai/shared';
 import { Logger } from '../../logger';
-import { credentialService, type CredentialStore } from '../../credentials/credential-store.js';
+import { type CredentialStore } from '../../credentials/credential-store.js';
 import { verifySignature } from '../../github/webhook-handler';
 import type {
   ExternalEventExtensionContext,
@@ -22,6 +22,14 @@ import {
 const log = new Logger('github-event-extension');
 const DEFAULT_POLL_INTERVAL_MS = 60_000;
 const GITHUB_API_BASE = 'https://api.github.com';
+/**
+ * Distinct credential-store namespace for the GitHub event extension's PAT.
+ * Deliberately separate from `credentialService('github')`
+ * (`neokai.provider.github`) so a user-created provider whose `providerId`
+ * is 'github' cannot collide with the extension's secret (each would
+ * corrupt the other's payload).
+ */
+const GITHUB_CREDENTIAL_SERVICE = 'neokai.external-events.github';
 const GITHUB_CREDENTIAL_ACCOUNT = 'default';
 const WEBHOOK_EVENTS = [
   'push',
@@ -317,7 +325,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       const token = params.token?.trim();
       if (!token) throw new Error('token is required');
       validateGitHubTokenFormat(token);
-      await this.credentialStore.set(credentialService('github'), GITHUB_CREDENTIAL_ACCOUNT, token);
+      await this.credentialStore.set(GITHUB_CREDENTIAL_SERVICE, GITHUB_CREDENTIAL_ACCOUNT, token);
       log.info('GitHub token updated', { source: 'keychain' });
       return { success: true };
     });
@@ -336,7 +344,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       if (!this.credentialStore) {
         throw new Error('Credential store is not available for GitHub tokens');
       }
-      await this.credentialStore.delete(credentialService('github'), GITHUB_CREDENTIAL_ACCOUNT);
+      await this.credentialStore.delete(GITHUB_CREDENTIAL_SERVICE, GITHUB_CREDENTIAL_ACCOUNT);
       log.info('GitHub token removed from credential store');
       return { success: true };
     });
@@ -346,16 +354,18 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
      *
      * Scope rules:
      * - Enabling polling only affects repos that do NOT already have webhook
-     *   delivery configured (webhookEnabled && webhookSecret). Polling and
-     *   webhooks produce independent dedupe keys (`action: 'polled'` vs
-     *   webhook actions), so enabling both on the same repo would backfill
-     *   and re-trigger workflow runs for already-delivered events. Repos
-     *   with webhook delivery stay on webhook delivery.
+     *   delivery configured (webhookEnabled && webhookSecret, manual or
+     *   auto-registered). Polling and webhooks produce independent dedupe
+     *   keys (`action: 'polled'` vs webhook actions), so enabling both on
+     *   the same repo would backfill and re-trigger workflow runs for
+     *   already-delivered events. Repos with webhook delivery stay on
+     *   webhook delivery; the user can still flip the per-row Polling
+     *   checkbox explicitly.
      * - Disabling polling clears the flag on every repo in the space.
      *
      * Side-effect on the GLOBAL polling capability: enabling flips it on
      * (it gates every poll cycle across the daemon). Disabling flips it
-     * back off only when no polling-enabled repos remain in any space —
+     * back off only when no polling-configured repos remain in any space —
      * so the UI checkbox reflects reality after a disable.
      */
     hub.onRequest('space.github.setPollingEnabled', async (data) => {
@@ -366,16 +376,14 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       }
       const repos = this.repo.listWatchedRepos(params.spaceId);
       for (const repo of repos) {
-        if (
-          params.enabled &&
-          repo.webhookEnabled &&
-          repo.webhookSecret &&
-          repo.webhookActive === true
-        ) {
-          // Webhook delivery is already ACTIVE — leave polling off to avoid
-          // duplicate event publication. Repos with inactive or unverified
-          // webhooks still get polling enabled so a broken webhook path
-          // doesn't silently drop events.
+        if (params.enabled && repo.webhookEnabled && repo.webhookSecret) {
+          // Webhook delivery is configured for this row (manual or
+          // auto-registered). Polling and webhooks emit independent dedupe
+          // keys (`action: 'polled'` vs webhook actions), so enabling both
+          // would backfill events webhooks already delivered. Leave polling
+          // off and let the user opt in via the per-row Polling checkbox.
+          // Inactive/broken webhooks should be fixed at the webhook layer
+          // rather than papered over with duplicate polling delivery.
           continue;
         }
         this.repo.upsertWatchedRepo({
@@ -537,7 +545,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     if (this.credentialStore) {
       try {
         const stored = await this.credentialStore.get(
-          credentialService('github'),
+          GITHUB_CREDENTIAL_SERVICE,
           GITHUB_CREDENTIAL_ACCOUNT
         );
         if (stored) return stored;
@@ -556,7 +564,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     if (this.credentialStore) {
       try {
         const stored = await this.credentialStore.get(
-          credentialService('github'),
+          GITHUB_CREDENTIAL_SERVICE,
           GITHUB_CREDENTIAL_ACCOUNT
         );
         if (stored) {
@@ -1046,7 +1054,15 @@ function generateWebhookSecret(): string {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
-const GITHUB_TOKEN_PREFIXES = ['ghp_', 'github_pat_', 'gho_', 'ghs_', 'ghr_', 'ghu_'] as const;
+/**
+ * Accepted GitHub token prefixes. Limited to user-scoped tokens that the
+ * `/user` validation endpoint will accept: classic PATs (`ghp_`), fine-grained
+ * PATs (`github_pat_`), and OAuth user tokens (`gho_`). App installation
+ * (`ghs_`) and app user-to-server (`ghu_`/`ghr_`) tokens are NOT accepted
+ * because they cannot validate via `/user` and would surface as a false
+ * "Token invalid" state even though repository API calls would succeed.
+ */
+const GITHUB_TOKEN_PREFIXES = ['ghp_', 'github_pat_', 'gho_'] as const;
 const GITHUB_TOKEN_MIN_LENGTH = 16;
 
 /**

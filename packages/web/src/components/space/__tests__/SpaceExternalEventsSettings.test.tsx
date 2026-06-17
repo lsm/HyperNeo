@@ -588,8 +588,23 @@ describe('SpaceExternalEventsSettings', () => {
     });
   });
 
-  it('adds repository watches with polling when no webhook secret is provided', async () => {
-    setupRequests();
+  it('adds repository watches with polling when no webhook secret is provided and the space already has polling active', async () => {
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockImplementation((method) => {
+      if (method === 'externalEvents.extensions.list') return Promise.resolve(extensionResult);
+      if (method === 'space.github.listConfig') {
+        return Promise.resolve({
+          spaceId: 'space-1',
+          source: 'github',
+          enabled: true,
+          settings: {},
+        });
+      }
+      if (method === 'space.github.listWatchedRepos') {
+        return Promise.resolve(pollingOnlyRepoResult);
+      }
+      return Promise.resolve({});
+    });
     const { findByText, getByPlaceholderText, getByText } = render(
       <SpaceExternalEventsSettings spaceId="space-1" />
     );
@@ -608,6 +623,26 @@ describe('SpaceExternalEventsSettings', () => {
         pollingEnabled: true,
       });
     });
+  });
+
+  it('requires a webhook secret when space polling is off even if daemon-wide capability is on', async () => {
+    // Daemon-wide polling capability is on (extensionResult default), but
+    // this space has no polling-enabled repos, so spacePollingActive is false.
+    // Adding a repo with no webhook secret must be rejected rather than
+    // silently defaulting the new repo to polling.
+    setupRequests();
+    const { findByText, getByPlaceholderText, getByText } = render(
+      <SpaceExternalEventsSettings spaceId="space-1" />
+    );
+    await findByText('github');
+
+    fireEvent.input(getByPlaceholderText('owner/repository'), { target: { value: 'foo/bar' } });
+    fireEvent.click(getByText('Add watch'));
+
+    expect(
+      await findByText('Webhook secret is required because polling is disabled for this space')
+    ).toBeTruthy();
+    expect(mockRequest).not.toHaveBeenCalledWith('space.github.watchRepo', expect.anything());
   });
 
   it('requires a webhook secret when polling capability is disabled', async () => {
@@ -636,7 +671,7 @@ describe('SpaceExternalEventsSettings', () => {
     fireEvent.click(getByText('Add watch'));
 
     expect(
-      await findByText('Webhook secret is required because polling is disabled for GitHub')
+      await findByText('Webhook secret is required because polling is disabled for this space')
     ).toBeTruthy();
     expect(mockRequest).not.toHaveBeenCalledWith('space.github.watchRepo', expect.anything());
   });
