@@ -684,49 +684,46 @@ describe('AnthropicToCodexBridgeProvider', () => {
       }
     });
 
-    it('sets ANTHROPIC_DEFAULT_*_MODEL env vars to Anthropic IDs with large context windows', () => {
-      // The Claude Agent SDK has a hard-coded model database. When it sees an
-      // unknown Codex ID (e.g. 'gpt-5.5') it falls back to ~200 k context and
-      // rejects requests at ~175 k tokens. By presenting Anthropic IDs that the
-      // SDK recognises (claude-opus-4-7 = 1 M, claude-sonnet-4-20250514
-      // = 200 k) we avoid premature rejection. The bridge maps these back to
-      // real Codex IDs via modelAliases before forwarding to OpenAI.
+    it('sets ANTHROPIC_DEFAULT_*_MODEL env vars to real Codex model IDs', () => {
+      // Following the GLM/Kimi pattern, we use real Codex model IDs directly.
+      // The SDK reads context window from /v1/models metadata (preferContextWindowMetadata: true)
+      // instead of its hardcoded database, avoiding token counting mismatch.
       const cfg = provider.buildSdkConfig('gpt-5.3-codex', { workspacePath: '/tmp/ws-model' });
-      expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('claude-opus-4-7');
-      expect(cfg.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('claude-sonnet-4-20250514');
-      expect(cfg.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('claude-opus-4-7');
+      expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('gpt-5.3-codex');
+      expect(cfg.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('gpt-5.4-mini');
+      expect(cfg.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('gpt-5.5');
       expect(cfg.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('272000');
     });
 
-    it('routes GPT-5.5 through the 1 M SDK alias while keeping Codex context metadata', async () => {
+    it('routes GPT-5.5 using real Codex ID with context metadata', async () => {
       const cfg = provider.buildSdkConfig('gpt-5.5', { workspacePath: '/tmp/ws-gpt-55' });
-      expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('claude-opus-4-7');
-      expect(cfg.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('claude-opus-4-7');
+      expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('gpt-5.5');
+      expect(cfg.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('gpt-5.5');
 
       const models = await provider.getModels();
       const gpt55 = models.find((model) => model.id === 'gpt-5.5');
       expect(gpt55?.contextWindow).toBe(272_000);
       expect(gpt55?.preferContextWindowMetadata).toBe(true);
-      expect(gpt55?.sdkModelIds).toContain('claude-opus-4-7');
+      expect(gpt55?.sdkModelIds).toContain('gpt-5.5');
     });
 
-    it('resolves model alias to Anthropic ID in ANTHROPIC_DEFAULT_SONNET_MODEL', () => {
+    it('resolves model alias to real Codex ID in ANTHROPIC_DEFAULT_SONNET_MODEL', () => {
       const cfg = provider.buildSdkConfig('codex', { workspacePath: '/tmp/ws-alias' });
-      // 'codex' is an alias for 'gpt-5.3-codex' which maps to the 1 M Anthropic ID
-      expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('claude-opus-4-7');
+      // 'codex' is an alias for 'gpt-5.3-codex', now uses real Codex ID
+      expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('gpt-5.3-codex');
     });
 
     it('keeps the SDK sonnet tier on the mini Anthropic ID for mini Codex sessions', () => {
       const cfg = provider.buildSdkConfig('codex-mini', { workspacePath: '/tmp/ws-mini' });
-      expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('claude-sonnet-4-20250514');
-      expect(cfg.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('claude-sonnet-4-20250514');
+      expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('gpt-5.4-mini');
+      expect(cfg.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('gpt-5.4-mini');
       expect(cfg.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('128000');
     });
 
-    it('keeps the SDK sonnet tier on the mini Anthropic ID for GPT-5.1 mini sessions', () => {
+    it('uses real Codex mini model IDs for GPT-5.1 mini sessions', () => {
       const cfg = provider.buildSdkConfig('codex-5.1-mini', { workspacePath: '/tmp/ws-51-mini' });
-      expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('claude-sonnet-4-20250514');
-      expect(cfg.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('claude-sonnet-4-20250514');
+      expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('gpt-5.1-codex-mini');
+      expect(cfg.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('gpt-5.4-mini');
     });
 
     it('keeps cross-tier fallback registrations isolated by SDK alias', async () => {
@@ -758,7 +755,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            model: 'claude-sonnet-4-20250514',
+            model: 'gpt-5.4-mini',
             max_tokens: 128,
             messages: [{ role: 'user', content: 'hi' }],
           }),
@@ -774,7 +771,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            model: 'claude-opus-4-7',
+            model: 'gpt-5.5',
             max_tokens: 128,
             messages: [{ role: 'user', content: 'hi' }],
           }),
@@ -786,15 +783,15 @@ describe('AnthropicToCodexBridgeProvider', () => {
       }
     });
 
-    it('resolves codex-latest alias to the 1 M Anthropic ID', () => {
+    it('resolves codex-latest alias to real Codex ID', () => {
       const cfg = provider.buildSdkConfig('codex-latest', { workspacePath: '/tmp/ws-latest' });
-      // 'codex-latest' is an alias for 'gpt-5.5' which maps to the 1 M Anthropic ID
-      expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('claude-opus-4-7');
+      // 'codex-latest' is an alias for 'gpt-5.5', now uses real Codex ID
+      expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('gpt-5.5');
     });
 
-    it('resolves gpt-5.4 alias to the 1 M Anthropic ID', () => {
+    it('resolves gpt-5.4 alias to real Codex ID', () => {
       const cfg = provider.buildSdkConfig('codex-5.4', { workspacePath: '/tmp/ws-54' });
-      expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('claude-opus-4-7');
+      expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('gpt-5.4');
     });
 
     it('throws for unknown model IDs instead of silently falling back', () => {
@@ -803,19 +800,17 @@ describe('AnthropicToCodexBridgeProvider', () => {
       ).toThrow('Unknown Codex model: unknown-model');
     });
 
-    it('intentionally uses claude-* Anthropic IDs in ANTHROPIC_DEFAULT_*_MODEL env vars', () => {
-      // The fix relies on the SDK recognising these Anthropic model IDs so it
-      // uses their real context windows (1 M for Opus, 200 k for Sonnet)
-      // instead of falling back to ~200 k for unknown Codex IDs.
+    it('uses real Codex model IDs in ANTHROPIC_DEFAULT_*_MODEL env vars', () => {
+      // Following GLM/Kimi pattern: use real Codex IDs, context window from metadata
       const cfg = provider.buildSdkConfig('gpt-5.3-codex', {
         workspacePath: '/tmp/ws-no-leak',
       });
-      expect(cfg.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toMatch(/^claude-/);
-      expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toMatch(/^claude-/);
-      expect(cfg.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toMatch(/^claude-/);
+      expect(cfg.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toMatch(/^gpt-/);
+      expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toMatch(/^gpt-/);
+      expect(cfg.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toMatch(/^gpt-/);
     });
 
-    it('advertises real Codex limits for Anthropic aliases in the bridge models list', async () => {
+    it('advertises real Codex context windows in bridge models list', async () => {
       const cfg = provider.buildSdkConfig('gpt-5.3-codex', {
         workspacePath: '/tmp/ws-models',
       });
@@ -826,13 +821,12 @@ describe('AnthropicToCodexBridgeProvider', () => {
         data: Array<{ id: string; context_window: number }>;
       };
       const byId = new Map(body.data.map((m) => [m.id, m.context_window]));
-      // Alias models advertise real upstream limits so SDK preflight checks do not
-      // accept a request OpenAI would reject before NeoKai can compact.
-      expect(byId.get('claude-opus-4-7')).toBe(272_000);
-      expect(byId.get('claude-sonnet-4-20250514')).toBe(128_000);
-      // Codex models still advertise real upstream limits for NeoKai metadata.
+      // Real Codex models advertise their actual context windows.
       expect(byId.get('gpt-5.5')).toBe(272_000);
       expect(byId.get('gpt-5.4-mini')).toBe(128_000);
+      // No Anthropic alias models should be present.
+      expect(byId.has('claude-opus-4-7')).toBe(false);
+      expect(byId.has('claude-sonnet-4-20250514')).toBe(false);
     });
   });
 
@@ -872,15 +866,14 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(provider.ownsModel('gpt-3.5-turbo')).toBe(false);
     });
 
-    it('translates aliases to Anthropic SDK model IDs before query creation', () => {
-      // Frontier models map to the 1 M context Anthropic ID; mini models map to
-      // the 200 k context Anthropic ID. This prevents the SDK from falling back
-      // to its default ~200 k limit for unknown Codex IDs.
-      expect(provider.translateModelIdForSdk('codex-latest')).toBe('claude-opus-4-7');
-      expect(provider.translateModelIdForSdk('codex-mini')).toBe('claude-sonnet-4-20250514');
-      expect(provider.translateModelIdForSdk('codex-5.1-mini')).toBe('claude-sonnet-4-20250514');
-      expect(provider.translateModelIdForSdk('gpt-5.5')).toBe('claude-opus-4-7');
-      expect(provider.translateModelIdForSdk('unknown-model')).toBe('unknown-model');
+    it('translates all model IDs to "default" following GLM/Kimi pattern', () => {
+      // Following GLM/Kimi pattern: return 'default' and let SDK use ANTHROPIC_DEFAULT_*_MODEL
+      // env vars to route to real Codex model IDs. Context window comes from /v1/models metadata.
+      expect(provider.translateModelIdForSdk('codex-latest')).toBe('default');
+      expect(provider.translateModelIdForSdk('codex-mini')).toBe('default');
+      expect(provider.translateModelIdForSdk('codex-5.1-mini')).toBe('default');
+      expect(provider.translateModelIdForSdk('gpt-5.5')).toBe('default');
+      expect(provider.translateModelIdForSdk('unknown-model')).toBe('default');
     });
 
     it('does not own claude- models', () => {
@@ -927,16 +920,16 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(contextWindows.get('gpt-5.1-codex-mini')).toBe(128000);
     });
 
-    it('advertises SDK Anthropic aliases so ContextFetcher matches SDK-reported model names', async () => {
+    it('advertises real Codex model IDs in sdkModelIds', async () => {
       provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, tmpDir, tmpDir);
       const models = await provider.getModels();
       const sdkIds = new Map(models.map((model) => [model.id, model.sdkModelIds]));
 
-      expect(sdkIds.get('gpt-5.5')).toContain('claude-opus-4-7');
-      expect(sdkIds.get('gpt-5.3-codex')).toContain('claude-opus-4-7');
-      expect(sdkIds.get('gpt-5.4')).toContain('claude-opus-4-7');
-      expect(sdkIds.get('gpt-5.4-mini')).toContain('claude-sonnet-4-20250514');
-      expect(sdkIds.get('gpt-5.1-codex-mini')).toContain('claude-sonnet-4-20250514');
+      expect(sdkIds.get('gpt-5.5')).toContain('gpt-5.5');
+      expect(sdkIds.get('gpt-5.3-codex')).toContain('gpt-5.3-codex');
+      expect(sdkIds.get('gpt-5.4')).toContain('gpt-5.4');
+      expect(sdkIds.get('gpt-5.4-mini')).toContain('gpt-5.4-mini');
+      expect(sdkIds.get('gpt-5.1-codex-mini')).toContain('gpt-5.1-codex-mini');
     });
 
     it('sets thinkingModes to granular when Responses adapter is active', async () => {

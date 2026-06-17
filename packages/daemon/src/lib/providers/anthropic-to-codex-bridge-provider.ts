@@ -36,12 +36,7 @@ import {
   type OpenAIResponsesBridgeServer,
   createOpenAIResponsesBridgeServer,
 } from './openai-responses-bridge/server.js';
-import {
-  getCodexBridgeModelInfos,
-  resolveCodexBridgeModelId,
-  CODEX_TO_SDK_ANTHROPIC_MODEL,
-  SDK_ANTHROPIC_TO_CODEX_MODEL,
-} from './codex-models.js';
+import { getCodexBridgeModelInfos, CODEX_TO_SDK_MODEL } from './codex-models.js';
 import { Logger } from '../logger.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
@@ -417,20 +412,13 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   }
 
   private modelAliases(): Record<string, string> {
+    // User-facing aliases (e.g. 'codex' → 'gpt-5.3-codex')
     const userAliases = Object.fromEntries(
       ANTHROPIC_CODEX_MODELS.flatMap((model) =>
         model.alias ? [[model.alias, model.id] as const] : []
       )
     );
-    // Map Anthropic SDK model IDs back to real Codex IDs so the bridge
-    // forwards the correct model to OpenAI.
-    const sdkAliases = Object.fromEntries(
-      Object.entries(SDK_ANTHROPIC_TO_CODEX_MODEL).map(([anthropicId, codexId]) => [
-        anthropicId,
-        codexId,
-      ])
-    );
-    return { ...userAliases, ...sdkAliases };
+    return userAliases;
   }
 
   private responsesBridgeModels() {
@@ -441,29 +429,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       context_window: model.contextWindow,
       max_tokens: 16384,
     }));
-    // Also advertise the Anthropic SDK aliases so the SDK can look them up
-    // if it queries the models list for context window info. Alias rows must
-    // report real Codex limits, not larger Anthropic limits: the SDK can preflight
-    // a request before the bridge has any stream usage event to trigger NeoKai
-    // compaction, so accepting prompts above the upstream limit causes OpenAI
-    // prompt-too-long failures before NeoKai can intervene.
-    const anthropicModels = [
-      {
-        id: 'claude-opus-4-7',
-        display_name: 'Claude Opus 4.7 (Codex bridge)',
-        created_at: '2025-08-05T00:00:00Z',
-        context_window: 272_000,
-        max_tokens: 16384,
-      },
-      {
-        id: 'claude-sonnet-4-20250514',
-        display_name: 'Claude Sonnet 4 (Codex bridge)',
-        created_at: '2025-05-14T00:00:00Z',
-        context_window: 128_000,
-        max_tokens: 16384,
-      },
-    ];
-    return [...codexModels, ...anthropicModels];
+    return codexModels;
   }
 
   private async refreshStoredOauthCredentials(): Promise<StoredCredentials | undefined> {
@@ -550,12 +516,10 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     return ANTHROPIC_CODEX_MODELS.some((m) => m.id === modelId || m.alias === modelId);
   }
 
-  translateModelIdForSdk(modelId: string): string {
-    const resolved = resolveCodexBridgeModelId(modelId) ?? modelId;
-    return (
-      CODEX_TO_SDK_ANTHROPIC_MODEL[resolved as import('./codex-models.js').CodexBridgeModelId] ??
-      resolved
-    );
+  translateModelIdForSdk(_modelId: string): string {
+    // Following GLM/Kimi pattern: return 'default' and let SDK use ANTHROPIC_DEFAULT_*_MODEL
+    // env vars to route to real Codex model IDs. Context window comes from /v1/models metadata.
+    return 'default';
   }
 
   getModelForTier(tier: ModelTier): string | undefined {
@@ -626,16 +590,15 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     const bridgeBaseUrl =
       bridgeServer.baseUrlForSession?.(sessionId) || `http://127.0.0.1:${bridgeServer.port}`;
 
-    const sdkAnthropicId =
-      CODEX_TO_SDK_ANTHROPIC_MODEL[resolvedId as import('./codex-models.js').CodexBridgeModelId];
-    if (!sdkAnthropicId) {
+    const sdkModelId =
+      CODEX_TO_SDK_MODEL[resolvedId as import('./codex-models.js').CodexBridgeModelId];
+    if (!sdkModelId) {
       throw new Error(`Unknown Codex model: ${modelId}`);
     }
 
     // Register a per-session override so the bridge sends the originally-selected
-    // Codex model ID upstream instead of the default alias target. Without this,
-    // models that share an SDK alias would collapse to the alias default.
-    bridgeServer.setSessionModelConfig?.(sessionId, sdkAnthropicId, resolvedId);
+    // Codex model ID upstream instead of the default alias target.
+    bridgeServer.setSessionModelConfig?.(sessionId, sdkModelId, resolvedId);
 
     return {
       envVars: {
@@ -644,12 +607,11 @@ export class AnthropicToCodexBridgeProvider implements Provider {
         CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(entry.contextWindow),
         CLAUDE_CODE_OAUTH_TOKEN: '',
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
-        // Present Anthropic model IDs the Claude Agent SDK recognises while the
-        // bridge maps them back to real Codex IDs. Sonnet follows the selected
-        // model tier so cross-tier fallbacks do not overwrite primary alias routes.
-        ANTHROPIC_DEFAULT_OPUS_MODEL: CODEX_TO_SDK_ANTHROPIC_MODEL['gpt-5.5'],
-        ANTHROPIC_DEFAULT_SONNET_MODEL: sdkAnthropicId,
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: CODEX_TO_SDK_ANTHROPIC_MODEL['gpt-5.4-mini'],
+        // Route all tiers to real Codex model IDs. SDK uses these for sub-agent
+        // selection and fallback. Context window comes from /v1/models metadata.
+        ANTHROPIC_DEFAULT_OPUS_MODEL: CODEX_TO_SDK_MODEL['gpt-5.5'],
+        ANTHROPIC_DEFAULT_SONNET_MODEL: sdkModelId,
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: CODEX_TO_SDK_MODEL['gpt-5.4-mini'],
       },
       isAnthropicCompatible: true,
       apiVersion: 'v1',

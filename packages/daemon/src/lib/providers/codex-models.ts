@@ -70,60 +70,26 @@ export function getModelContextWindow(modelId: string): number | undefined {
 }
 
 /**
- * Anthropic model IDs to present to the Claude Agent SDK so it uses recognised
- * Anthropic IDs instead of falling back for unknown Codex IDs.
+ * Codex model IDs for SDK routing.
  *
- * The SDK has a hard-coded model database and also preflights context using
- * provider `/v1/models` responses. Alias rows in the bridge model list advertise
- * real Codex limits so the SDK rejects prompts OpenAI would reject before NeoKai
- * has a stream usage event that can trigger compaction.
+ * Following the GLM/Kimi pattern, we use real Codex model IDs directly instead
+ * of aliasing to Anthropic model IDs. The SDK reads context window from
+ * `/v1/models` metadata (via preferContextWindowMetadata: true) instead of its
+ * hardcoded database, avoiding token counting mismatch.
  *
- * We route Codex frontier models through `claude-opus-4-7` because it is a
- * current large-context Opus ID the SDK (0.2.141) recognises. Unknown model IDs
- * trigger fallback behaviour with smaller context windows.
+ * This identity mapping is used for:
+ *   - `ANTHROPIC_DEFAULT_*_MODEL` env vars (so SDK sub-agents use real Codex IDs)
+ *   - `buildSdkConfig()` resolution
  *
- * These overrides are used for:
- *   - `translateModelIdForSdk()` (so the SDK sends the Anthropic ID in the
- *     request body to the bridge)
- *   - `ANTHROPIC_DEFAULT_*_MODEL` env vars (so SDK sub-agents use the same
- *     large-context IDs)
- *
- * The bridge then maps the Anthropic ID back to the real Codex model ID via
- * `modelAliases` (plus per-session overrides) before forwarding to OpenAI.
- *
- * Architectural limitation: multiple Codex models share the same SDK alias
- * (e.g. gpt-5.5, gpt-5.3-codex, gpt-5.4 all map to claude-opus-4-7).
- * The bridge cannot distinguish between different logical uses of the same
- * alias (primary vs fallback vs sub-agent tier). Per-session overrides use
- * last-wins semantics so model switching works correctly. Known trade-offs:
- *   - Opus sub-agents use the user's selected model instead of gpt-5.5
- *   - Same-tier fallback registration overwrites the primary model override
- * Both are acceptable: sub-agent tier routing is approximate, and same-tier
- * fallback is rare (models are similar within a tier).
+ * The bridge's per-session model overrides ensure the originally-selected Codex
+ * model ID is preserved when the SDK sends requests.
  */
-export const CODEX_TO_SDK_ANTHROPIC_MODEL: Record<CodexBridgeModelId, string> = {
-  'gpt-5.5': 'claude-opus-4-7',
-  'gpt-5.3-codex': 'claude-opus-4-7',
-  'gpt-5.4': 'claude-opus-4-7',
-  'gpt-5.4-mini': 'claude-sonnet-4-20250514',
-  'gpt-5.1-codex-mini': 'claude-sonnet-4-20250514',
-};
-
-/**
- * Reverse mapping: Anthropic SDK model ID → default Codex model ID.
- * Used by the bridge's `modelAliases` so incoming requests are resolved to
- * a canonical OpenAI model before being sent upstream.
- *
- * Note: multiple Codex models map to the same Anthropic ID (we only have one
- * 1 M Anthropic model ID). The bridge resolves to the canonical model for that
- * tier — `gpt-5.5` for the 1 M tier and `gpt-5.4-mini` for the 200 k tier.
- *
- * Per-session overrides (via `setSessionModelConfig`) take precedence over
- * this default mapping so the originally-selected Codex model is preserved.
- */
-export const SDK_ANTHROPIC_TO_CODEX_MODEL: Record<string, CodexBridgeModelId> = {
-  'claude-opus-4-7': 'gpt-5.5',
-  'claude-sonnet-4-20250514': 'gpt-5.4-mini',
+export const CODEX_TO_SDK_MODEL: Record<CodexBridgeModelId, string> = {
+  'gpt-5.5': 'gpt-5.5',
+  'gpt-5.3-codex': 'gpt-5.3-codex',
+  'gpt-5.4': 'gpt-5.4',
+  'gpt-5.4-mini': 'gpt-5.4-mini',
+  'gpt-5.1-codex-mini': 'gpt-5.1-codex-mini',
 };
 
 export function getCodexBridgeModelInfos(): ModelInfo[] {
@@ -133,7 +99,7 @@ export function getCodexBridgeModelInfos(): ModelInfo[] {
       id,
       name: details.name,
       alias: details.alias,
-      sdkModelIds: [CODEX_TO_SDK_ANTHROPIC_MODEL[id]].filter(Boolean),
+      sdkModelIds: [CODEX_TO_SDK_MODEL[id]].filter(Boolean),
       family: 'gpt',
       provider: 'anthropic-codex',
       contextWindow: MODEL_CONTEXT_WINDOWS[id],
