@@ -444,6 +444,7 @@ CREATE TABLE message_inbox (
   started_at INTEGER,
   processed_at INTEGER,
   updated_at INTEGER NOT NULL,
+  CHECK(dedupe_key IS NULL OR (dedupe_scope IS NOT NULL AND length(dedupe_scope) > 0)),
   UNIQUE(consumer, message_id)
 );
 
@@ -787,10 +788,14 @@ Runtime events that should be durable early:
 | `space.workflowRun.updated` | run status/progress changed |
 | `space.workflowRun.completed` | terminal fact, replayable |
 | `space.workflowRun.blocked` | human/operator attention |
+| `space.workflowRun.reopened` | terminal/blocked run reopened for valid follow-up activity |
 | `space.task.created` | task board/read model |
 | `space.task.updated` | task state/read model |
-| `space.workflowNodeExecution.created` | runtime canvas/projection |
-| `space.workflowNodeExecution.updated` | runtime canvas/projection |
+| `space.workflowNodeExecution.started` | runtime canvas/projection |
+| `space.workflowNodeExecution.idle` | runtime canvas/projection |
+| `space.workflowNodeExecution.blocked` | runtime canvas/projection |
+| `space.workflowNodeExecution.restarted` | runtime canvas/projection |
+| `space.workflowGate.pendingApproval` | human approval UI state |
 | `space.workflowMessage.queued` | recovery and diagnostics |
 | `space.workflowMessage.delivered` | delivery audit |
 

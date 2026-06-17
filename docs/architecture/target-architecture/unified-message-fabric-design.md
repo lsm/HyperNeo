@@ -278,8 +278,16 @@ export interface MessageContract<TInput = unknown, TOutput = unknown> {
   auth: AuthPolicy<TInput>;
   durability?: DurabilityPolicy;
   idempotency?: IdempotencyPolicy<TInput>;
+  subscription?: QuerySubscriptionPolicy<TInput>;
+}
+
+export interface QuerySubscriptionPolicy<TInput> {
+  mode: 'live';
+  subjectFrom: (input: TInput) => string;
 }
 ```
+
+`subscription` is only valid for query contracts. It declares whether the query can be subscribed/live and which subject or read-model key drives invalidation.
 
 Initial contracts live under `@neokai/shared/contracts` to match the shared-boundaries plan and M1 execution plan. A future `@neokai/messaging` extraction may move the registry and envelopes later, but it must not create a second contract surface during migration.
 
@@ -511,6 +519,7 @@ CREATE TABLE message_inbox (
   status TEXT NOT NULL DEFAULT 'received',
   received_at INTEGER NOT NULL,
   handled_at INTEGER,
+  CHECK(dedupe_key IS NULL OR (dedupe_scope IS NOT NULL AND length(dedupe_scope) > 0)),
   UNIQUE(consumer, message_id)
 );
 
@@ -627,7 +636,10 @@ export const spaceTaskList = defineQuery({
     resource: 'space',
     resourceIdFrom: (input) => input.spaceId,
   },
-  supportsSubscribe: true,
+  subscription: {
+    mode: 'live',
+    subjectFrom: (input) => `space/${input.spaceId}/tasks`,
+  },
 });
 ```
 
@@ -722,7 +734,10 @@ export const promptPolicyEffectivePreview = defineQuery({
       return { type: 'global', id: null };
     },
   },
-  supportsSubscribe: true,
+  subscription: {
+    mode: 'live',
+    subjectFrom: (input) => `promptPolicy/preview/${input.sessionId ?? input.spaceId ?? 'global'}`,
+  },
 });
 ```
 

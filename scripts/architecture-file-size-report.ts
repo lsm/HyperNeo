@@ -96,7 +96,7 @@ function walk(dir: string, out: SourceFile[]): void {
 }
 
 function getChangedPaths(ref: string): Set<string> {
-  const output = execFileSync('git', ['diff', '--name-only', `${ref}...HEAD`], {
+  const output = execFileSync('git', ['diff', '-M', '--name-only', `${ref}...HEAD`], {
     cwd: repoRoot,
     encoding: 'utf8',
   });
@@ -104,7 +104,7 @@ function getChangedPaths(ref: string): Set<string> {
 }
 
 function getChangedPathInfo(ref: string): Map<string, ChangedPathInfo> {
-  const output = execFileSync('git', ['diff', '--name-status', `${ref}...HEAD`], {
+  const output = execFileSync('git', ['diff', '-M', '--name-status', `${ref}...HEAD`], {
     cwd: repoRoot,
     encoding: 'utf8',
   });
