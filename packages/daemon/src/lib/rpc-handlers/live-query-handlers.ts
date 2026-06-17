@@ -2107,7 +2107,12 @@ WITH top_level AS (
       message_type != 'system'
       OR COALESCE(message_subtype, '') != 'informational'
       OR NOT json_valid(sdk_message)
-      OR COALESCE(json_extract(sdk_message, '$.level'), '') != 'info'
+      OR COALESCE(
+        CASE
+          WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.level')
+        END,
+        ''
+      ) != 'info'
     )
     AND (
       message_type != 'system'

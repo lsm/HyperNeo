@@ -138,7 +138,8 @@ function operationalSystemMessage(
     | 'thinking_tokens'
     | 'session_state_changed'
     | 'commands_changed'
-    | 'model_refusal_fallback',
+    | 'model_refusal_fallback'
+    | 'informational',
   fields: Record<string, unknown>
 ) {
   return {
@@ -285,12 +286,21 @@ describe('MinimalThreadFeed', () => {
           fallback_model: 'claude-sonnet-4-5',
         }),
       }),
+      makeRow({
+        id: 'notice',
+        label: 'Coder Agent',
+        createdAt: baseTime + 4000,
+        message: operationalSystemMessage('notice-uuid', 'informational', {
+          level: 'warning',
+          content: 'Hook warning shown to the user',
+        }),
+      }),
     ];
 
     render(<MinimalThreadFeed parsedRows={rows} />);
 
     const systemRows = screen.getAllByTestId('minimal-thread-system');
-    expect(systemRows).toHaveLength(4);
+    expect(systemRows).toHaveLength(5);
     expect(systemRows[0].textContent).toContain('Thinking tokens');
     expect(systemRows[0].textContent).toContain('1,250 estimated tokens (+25)');
     expect(systemRows[1].textContent).toContain('Session state');
@@ -300,6 +310,8 @@ describe('MinimalThreadFeed', () => {
     expect(systemRows[3].textContent).toContain('Model fallback');
     expect(systemRows[3].textContent).toContain('Retried with fallback model');
     expect(systemRows[3].textContent).toContain('claude-opus-4-5 -> claude-sonnet-4-5');
+    expect(systemRows[4].textContent).toContain('Warning');
+    expect(systemRows[4].textContent).toContain('Hook warning shown to the user');
   });
 
   it('renders one turn row per agent block with name and clock', () => {

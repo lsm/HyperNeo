@@ -716,6 +716,10 @@ function buildOperationalSystemTurn(row: ParsedThreadRow): SystemFeedTurn | null
   const message = row.message;
   if (!message || message.type !== 'system') return null;
   const subtype = (message as { subtype?: string }).subtype;
+  if (!subtype || subtype === 'init') return null;
+  if (subtype === 'informational' && (message as { level?: string }).level === 'info') {
+    return null;
+  }
   const highlightUuid =
     typeof (message as { uuid?: unknown }).uuid === 'string'
       ? ((message as { uuid: string }).uuid as string)
@@ -805,7 +809,72 @@ function buildOperationalSystemTurn(row: ParsedThreadRow): SystemFeedTurn | null
     };
   }
 
+  const fallback = buildGenericSystemSummary(message);
+  if (!fallback) return null;
+  return {
+    state: 'system',
+    id: `system-${String(row.id)}`,
+    agent: row.label,
+    agentKind: row.kind,
+    agentRole: row.role,
+    agentNodeExecutionId: row.nodeExecutionId ?? null,
+    createdAt: row.createdAt,
+    title: fallback.title,
+    body: fallback.body,
+    sessionId: row.sessionId,
+    highlightMessageUuid: highlightUuid,
+    replacementStatus: row.replacementStatus,
+  };
+}
+
+function buildGenericSystemSummary(message: Extract<SDKMessage, { type: 'system' }>): {
+  title: string;
+  body: string;
+} | null {
+  const subtype = (message as { subtype?: string }).subtype;
+  if (!subtype) return null;
+
+  if (subtype === 'informational') {
+    const level = (message as { level?: unknown }).level;
+    return {
+      title: typeof level === 'string' ? humanizeSystemSubtype(level) : 'Notice',
+      body: firstStringField(message, ['content', 'message', 'title']) ?? 'System notice',
+    };
+  }
+
+  if (subtype === 'hook_response') {
+    const hookName = firstStringField(message, ['hook_name', 'hook_event']);
+    const stderr = firstStringField(message, ['stderr']);
+    const stdout = firstStringField(message, ['stdout']);
+    return {
+      title: 'Hook response',
+      body: [hookName, stderr ?? stdout].filter(Boolean).join(': ') || 'Hook completed',
+    };
+  }
+
+  return {
+    title: humanizeSystemSubtype(subtype),
+    body:
+      firstStringField(message, ['content', 'message', 'reason', 'status', 'description']) ??
+      subtype,
+  };
+}
+
+function firstStringField(message: object, fields: string[]): string | null {
+  const record = message as Record<string, unknown>;
+  for (const field of fields) {
+    const value = record[field];
+    if (typeof value === 'string' && value.trim().length > 0) return value;
+  }
   return null;
+}
+
+function humanizeSystemSubtype(value: string): string {
+  return value
+    .split('_')
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
 }
 
 function buildMessageTurn(
