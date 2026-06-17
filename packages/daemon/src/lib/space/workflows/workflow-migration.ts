@@ -186,6 +186,14 @@ type Pattern = {
   script: string;
   from?: string;
   to?: string;
+  /**
+   * When true, generated hooks declare `externalLookups: ['github']` so the
+   * hook executor preserves GitHub auth env (GH_TOKEN, GITHUB_TOKEN, GH_HOST,
+   * GH_CONFIG_DIR). Declared on the pattern (rather than inferred from script
+   * identity in makeHook) so custom-timeout variants built via the script
+   * builders also receive the lookup.
+   */
+  githubLookup?: boolean;
 };
 
 const KNOWN_GATE_PATTERNS: Record<string, Pattern> = {
@@ -214,6 +222,7 @@ const KNOWN_GATE_PATTERNS: Record<string, Pattern> = {
     label: 'Review Posted',
     method: 'send_message',
     script: REVIEW_POSTED_SCRIPT,
+    githubLookup: true,
   },
   'plan-approval-gate': {
     gateId: 'plan-approval-gate',
@@ -222,6 +231,7 @@ const KNOWN_GATE_PATTERNS: Record<string, Pattern> = {
     label: 'Plan Approval',
     method: 'send_message',
     script: APPROVALS_SCRIPT,
+    githubLookup: true,
   },
   'plan-approval-feedback-reset': {
     gateId: 'plan-approval-feedback-reset',
@@ -239,6 +249,7 @@ const KNOWN_GATE_PATTERNS: Record<string, Pattern> = {
     label: 'Review Approval',
     method: 'send_message',
     script: REVIEW_APPROVAL_SCRIPT,
+    githubLookup: true,
   },
 };
 
@@ -397,12 +408,10 @@ function makeHook(
       interpreter: 'bash',
       source: script,
       timeoutMs: 30000,
-      externalLookups:
-        script === REVIEW_POSTED_SCRIPT ||
-        script === REVIEW_APPROVAL_SCRIPT ||
-        script === APPROVALS_SCRIPT
-          ? ['github']
-          : undefined,
+      // Use pattern.githubLookup (not script identity) so custom-timeout
+      // variants built via buildApprovalsScript/buildReviewApprovalScript
+      // also declare the lookup and keep GitHub auth env in the executor.
+      externalLookups: pattern.githubLookup ? ['github'] : undefined,
     },
     authorizedCallers: [
       {

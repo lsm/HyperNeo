@@ -5420,6 +5420,108 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     expect(mergedPrompt).not.toContain('codex[bot] reaction status');
   });
 
+  test('patchKnownBuiltInPromptDrift rewrites persisted pre-fix Fullstack Review prompt (send_message + 10-minute + codex[bot])', () => {
+    // P2 follow-up: production prompts seeded immediately before this PR
+    // combined the pre-fix send_message handoff ("10-minute Codex timeout",
+    // "codex[bot]") with the pre-fix shared guidance. Both halves must be
+    // recognized together so restamp swaps them to the current wording.
+    const templateNode = FULLSTACK_QA_LOOP_WORKFLOW.nodes.find((n) => n.name === 'Review')!;
+    const templatePrompt = templateNode.agents[0].customPrompt!;
+    const preFixHandoff =
+      'terminal hand-off is sending `data: { approved: true, pr_url: "<url>" }` to QA after an ' +
+      'APPROVE verdict with zero P0-P3 findings. Send the handoff to start the 10-minute ' +
+      'Codex timeout, then wait for codex[bot] `+1` or timeout before proceeding. ';
+    const retiredGuidance =
+      'After posting your approval review, verify codex[bot] reaction status before ' +
+      'closing or handing off. Use `gh api repos/{owner}/{repo}/issues/{number}/reactions` ' +
+      'and inspect reactions from `user.login == "codex[bot]"`: content `+1` means ' +
+      'Codex passed, content `eyes` means Codex is still reviewing, and no codex[bot] ' +
+      'reaction means it has not started or has not reported yet. If codex[bot] has not ' +
+      'reacted at all, comment `@codex review` on the PR to trigger its review, then wait ' +
+      'for an `eyes` or `+1` reaction. ' +
+      'Only a +1 newer than the current PR head commit counts — after a revision push, ' +
+      'an older +1 from a previous cycle is stale and will not satisfy the hook. If the +1 ' +
+      'looks old, retrigger Codex with a fresh `@codex review` comment. ' +
+      'Send the approval handoff to start the Codex timeout (10 minutes). If the hook ' +
+      'blocks because Codex has not yet posted `+1`, poll every 60 seconds and retry the ' +
+      'handoff. If codex[bot] still has not posted `+1` after the timeout, proceed ' +
+      'only with a warning recorded in your result artifact. Do not close the task ' +
+      'before codex[bot] has `+1` unless that timeout has elapsed.';
+    const stalePromptValue = templatePrompt.value
+      .replace(
+        'terminal hand-off is sending `data: { approved: true, pr_url: "<url>" }` to QA after an ' +
+          'APPROVE verdict with zero P0-P3 findings. Send the handoff to start the Codex review ' +
+          'timeout window (2 hours by default), then wait for a Codex bot `+1` reaction or the ' +
+          'timeout before proceeding. ',
+        preFixHandoff
+      )
+      .replace(
+        /After posting your approval review, verify the Codex review bot reaction status[\s\S]*?unless that timeout window has elapsed\./,
+        retiredGuidance
+      );
+    expect(stalePromptValue).not.toBe(templatePrompt.value);
+    expect(stalePromptValue).toContain('10-minute Codex timeout');
+
+    const existingNode: WorkflowNode = {
+      ...templateNode,
+      agents: templateNode.agents.map((a, i) =>
+        i === 0 ? { ...a, customPrompt: { value: stalePromptValue } } : a
+      ),
+    };
+
+    const merged = mergeNodeStructuralFieldsFromTemplate(
+      [existingNode],
+      FULLSTACK_QA_LOOP_WORKFLOW.nodes,
+      () => 'agent-review'
+    );
+    const mergedReview = merged.find((n) => n.name === 'Review')!;
+    const mergedPrompt = mergedReview.agents[0].customPrompt!.value;
+    expect(mergedPrompt).toBe(templatePrompt.value);
+    expect(mergedPrompt).not.toContain('10-minute Codex timeout');
+    expect(mergedPrompt).toContain('2 hours by default');
+  });
+
+  test('migrated review-approval hook with per-node timeout preserves GitHub auth lookup', () => {
+    // P2: when codexTimeoutSeconds differs from the default, migration builds
+    // a fresh script string (not REVIEW_APPROVAL_SCRIPT identity). The hook
+    // must still declare externalLookups=['github'] so hook-executor preserves
+    // GH_TOKEN/GITHUB_TOKEN/GH_HOST/GH_CONFIG_DIR. Coverage comes from
+    // pattern.githubLookup, not script identity.
+    const workflow = migrateWorkflowGateProgressionToHooks({
+      ...FULLSTACK_QA_LOOP_WORKFLOW,
+      nodes: FULLSTACK_QA_LOOP_WORKFLOW.nodes.map((n) =>
+        n.name === 'Review' ? { ...n, requireCodexApproval: true, codexTimeoutSeconds: 300 } : n
+      ),
+      templateName: FULLSTACK_QA_LOOP_WORKFLOW.name,
+      templateGates: FULLSTACK_QA_LOOP_WORKFLOW.gates ?? [],
+    }).workflow;
+    const hook = workflow.hooks?.find((h) => h.sourceNode === 'Review');
+    expect(hook?.validator.kind).toBe('script');
+    if (hook?.validator.kind === 'script') {
+      expect(hook.validator.externalLookups).toEqual(['github']);
+    }
+  });
+
+  test('mergeNodeStructuralFieldsFromTemplate preserves operator-configured codexTimeoutSeconds when template omits it', () => {
+    // P2: built-in templates leave codexTimeoutSeconds undefined. Restamp
+    // must not silently delete an operator- or RPC-configured non-default
+    // timeout on a seeded node.
+    const templateNode = FULLSTACK_QA_LOOP_WORKFLOW.nodes.find((n) => n.name === 'Review')!;
+    expect(templateNode.codexTimeoutSeconds).toBeUndefined();
+    const existingNode: WorkflowNode = {
+      ...templateNode,
+      codexTimeoutSeconds: 900,
+    };
+
+    const merged = mergeNodeStructuralFieldsFromTemplate(
+      [existingNode],
+      FULLSTACK_QA_LOOP_WORKFLOW.nodes,
+      () => 'agent-review'
+    );
+    const mergedReview = merged.find((n) => n.name === 'Review')!;
+    expect(mergedReview.codexTimeoutSeconds).toBe(900);
+  });
+
   test('FULLSTACK_QA_LOOP_WORKFLOW reviewer prompt instructs waiting for codex reaction', () => {
     const reviewNode = FULLSTACK_QA_LOOP_WORKFLOW.nodes.find((n) => n.name === 'Review')!;
     const prompt = reviewNode.agents[0].customPrompt!.value;

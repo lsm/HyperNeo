@@ -1413,9 +1413,12 @@ export function mergeNodeStructuralFieldsFromTemplate(
       codexPollIntervalMs: templateNode
         ? templateNode.codexPollIntervalMs
         : node.codexPollIntervalMs,
-      codexTimeoutSeconds: templateNode
-        ? templateNode.codexTimeoutSeconds
-        : node.codexTimeoutSeconds,
+      // Preserve an existing operator-/RPC-configured codexTimeoutSeconds when
+      // the template does not explicitly set an override. Built-in templates
+      // leave this field undefined, so blindly taking templateNode.codexTimeoutSeconds
+      // would silently delete any non-default timeout on a seeded node during
+      // restamp and revert the Codex hook to the global default window.
+      codexTimeoutSeconds: templateNode?.codexTimeoutSeconds ?? node.codexTimeoutSeconds,
       agents: node.agents.map((agent) => {
         const key = `${node.name}::${agent.name}`;
         const templateAgent = templateAgentsByKey.get(key);
@@ -1622,6 +1625,17 @@ const RETIRED_HARDCODED_FULLSTACK_REVIEW_HANDOFF_PROMPT =
   'terminal handoff is `send_message(target="QA", message="<approved>", data: { approved: true })` ' +
   'after an APPROVE verdict with zero P0-P3 findings. Wait for a Codex bot `+1` reaction or ' +
   'the timeout before proceeding. ';
+// Pre-fix send_message Fullstack Review handoff (the variant that shipped in
+// production immediately before this PR). Distinguished from
+// RETIRED_FULLSTACK_REVIEW_HANDOFF_PROMPT (older gate-writing handoff) by
+// the send_message phrasing and the "10-minute Codex timeout" + `codex[bot]`
+// wording. Persisted prompts from seeded spaces that use this exact sentence
+// need a dedicated patch variant so restamp can swap them to the current
+// 2-hour / Codex-bot wording.
+const RETIRED_PRE_FIX_FULLSTACK_REVIEW_HANDOFF_PROMPT =
+  'terminal hand-off is sending `data: { approved: true, pr_url: "<url>" }` to QA after an ' +
+  'APPROVE verdict with zero P0-P3 findings. Send the handoff to start the 10-minute ' +
+  'Codex timeout, then wait for codex[bot] `+1` or timeout before proceeding. ';
 const RETIRED_FULLSTACK_CODING_STEP_PROMPT =
   '4. Write code-pr-gate with field pr_url so Review can activate\n';
 const RETIRED_HARDCODED_FULLSTACK_CODING_STEP_PROMPT =
@@ -1685,6 +1699,17 @@ const BUILT_IN_PROMPT_PATCH_VARIANTS = [
     [CURRENT_FULLSTACK_REVIEW_HANDOFF_PROMPT, RETIRED_HARDCODED_FULLSTACK_REVIEW_HANDOFF_PROMPT],
     [CODEX_REACTION_APPROVAL_GUIDANCE, RETIRED_CODEX_REACTION_APPROVAL_GUIDANCE],
   ],
+  // Pre-fix production variant: persisted Fullstack Review prompts seeded
+  // immediately before this PR used the send_message handoff with the old
+  // "10-minute Codex timeout" + codex[bot] wording AND the old shared
+  // guidance. Cover that exact combination so restamp swaps both halves.
+  [
+    [CURRENT_FULLSTACK_REVIEW_HANDOFF_PROMPT, RETIRED_PRE_FIX_FULLSTACK_REVIEW_HANDOFF_PROMPT],
+    [CODEX_REACTION_APPROVAL_GUIDANCE, RETIRED_CODEX_REACTION_APPROVAL_GUIDANCE],
+  ],
+  // Handoff-only swap for the pre-fix variant (covers the rare case where
+  // guidance was already patched but handoff was not).
+  [[CURRENT_FULLSTACK_REVIEW_HANDOFF_PROMPT, RETIRED_PRE_FIX_FULLSTACK_REVIEW_HANDOFF_PROMPT]],
 ] as const;
 
 function patchKnownBuiltInPromptDrift<T extends WorkflowNodeAgentOverride | undefined>(
