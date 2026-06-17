@@ -643,7 +643,7 @@ sdk_rows AS (
               'Attempt %d/%d, delay %dms, status %s%s',
               COALESCE(json_extract(sm.sdk_message, '$.attempt'), 1),
               COALESCE(json_extract(sm.sdk_message, '$.max_retries'), '?'),
-              COALESCE(json_extract(sm.sdk_message, '$.retry_after_ms'), 0),
+              COALESCE(json_extract(sm.sdk_message, '$.retry_delay_ms'), 0),
               COALESCE(json_extract(sm.sdk_message, '$.error_status'), 'unknown'),
               CASE
                 WHEN json_valid(sm.sdk_message) AND json_extract(sm.sdk_message, '$.error') IS NOT NULL THEN

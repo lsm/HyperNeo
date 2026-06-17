@@ -283,16 +283,6 @@ export function SDKAssistantMessage({
         />
       ))}
 
-      {/* Estimate-only thinking card for omitted thinking blocks */}
-      {thinkingBlocks.length === 0 && estimatedThinkingTokens && (
-        <ThinkingBlock
-          key="thinking-estimate-only"
-          content=""
-          isRunning={!!isRunning}
-          estimatedTokens={estimatedThinkingTokens}
-        />
-      )}
-
       {/* Text blocks - bubble + actions */}
       {textBlockBubble && (
         <div class="w-full space-y-3">
