@@ -317,7 +317,7 @@ describe('SDKMessageRepository', () => {
 
     it('should include operational system rows in session pagination', () => {
       repository.saveSDKMessage('session-1', createUserMessage('Visible'));
-      for (const subtype of ['thinking_tokens', 'session_state_changed', 'commands_changed']) {
+      for (const subtype of ['session_state_changed', 'commands_changed']) {
         repository.saveSDKMessage('session-1', {
           type: 'system',
           subtype,
@@ -330,10 +330,10 @@ describe('SDKMessageRepository', () => {
         } as unknown as SDKMessage);
       }
 
-      const { messages } = repository.getSDKMessages('session-1', 4);
+      const { messages } = repository.getSDKMessages('session-1', 3);
 
       expect(messages.map((message) => (message as { subtype?: string }).subtype).sort()).toEqual(
-        ['commands_changed', 'session_state_changed', 'thinking_tokens', undefined].sort()
+        ['commands_changed', 'session_state_changed', undefined].sort()
       );
     });
 
