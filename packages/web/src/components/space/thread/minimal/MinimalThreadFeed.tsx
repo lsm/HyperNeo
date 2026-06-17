@@ -49,6 +49,11 @@ import { SpaceTaskThreadMessageActions } from '../SpaceTaskThreadMessageActions'
 import { getAgentColor } from '../space-task-thread-agent-colors';
 import type { ParsedThreadRow } from '../space-task-thread-events';
 import { pushOverlayHistory } from '../../../../lib/router';
+import {
+  buildMessageReplacementStatusMap,
+  getMessageUuid,
+  type MessageReplacementStatus,
+} from '../../../../lib/sdk-message-replacement';
 import { agentInitial, formatClock, formatDuration, shortAgentName } from './minimal-mock-data';
 import { ToolIcon } from '../../../sdk/tools/ToolIcon';
 import { getToolColors, getToolDisplayName } from '../../../sdk/tools/tool-utils';
@@ -171,6 +176,7 @@ interface CompletedFeedTurn {
    * we fell back to `fallbackText` and no SDK message was available.
    */
   highlightMessageUuid?: string;
+  replacementStatus?: MessageReplacementStatus;
   /**
    * SDK `result` envelope for the exec that produced this turn. When
    * present, the actions row renders a result-info dropdown surfacing
@@ -217,6 +223,21 @@ interface CompactBoundaryFeedTurn {
   highlightMessageUuid?: string;
 }
 
+interface SystemFeedTurn {
+  state: 'system';
+  id: string;
+  agent: string;
+  agentKind: 'task_agent' | 'node_agent';
+  agentRole: string;
+  agentNodeExecutionId?: string | null;
+  createdAt: number;
+  title: string;
+  body: string;
+  sessionId: string | null;
+  highlightMessageUuid?: string;
+  replacementStatus?: MessageReplacementStatus;
+}
+
 interface MessageFeedTurn {
   state: 'message';
   id: string;
@@ -242,6 +263,7 @@ interface MessageFeedTurn {
   deliveryState?: ActorMessageDeliveryState | null;
   /** SDK message UUID, used to deep-link the slide-over. */
   highlightMessageUuid?: string;
+  replacementStatus?: MessageReplacementStatus;
   /**
    * SDK `system:init` envelope for the recipient agent's exec — the agent
    * state this user message landed in. When present, the actions row
@@ -252,9 +274,43 @@ interface MessageFeedTurn {
   sessionInit?: SystemInitMessage;
 }
 
-type FeedTurn = CompletedFeedTurn | ActiveFeedTurn | CompactBoundaryFeedTurn | MessageFeedTurn;
+type FeedTurn =
+  | CompletedFeedTurn
+  | ActiveFeedTurn
+  | CompactBoundaryFeedTurn
+  | SystemFeedTurn
+  | MessageFeedTurn;
 
 const ROSTER_MAX_ENTRIES = 8;
+
+function applyReplacementStatuses(rows: ParsedThreadRow[]): ParsedThreadRow[] {
+  const messages = rows
+    .map((row) => row.message)
+    .filter((message): message is SDKMessage => message !== null);
+  const statusMap = buildMessageReplacementStatusMap(messages);
+  if (statusMap.size === 0) return rows;
+
+  return rows.map((row) => {
+    const uuid = getMessageUuid(row.message);
+    const replacementStatus = uuid ? statusMap.get(uuid) : undefined;
+    return replacementStatus ? { ...row, replacementStatus } : row;
+  });
+}
+
+function ReplacementBadge({ status }: { status?: MessageReplacementStatus }) {
+  if (!status) return null;
+  const isRetracted = status === 'retracted';
+  return (
+    <div
+      class={`mb-1 text-[10px] font-semibold uppercase tracking-wide ${
+        isRetracted ? 'text-rose-300' : 'text-amber-300'
+      }`}
+      data-message-replacement-status={status}
+    >
+      {isRetracted ? 'Retracted by fallback' : 'Superseded by replacement'}
+    </div>
+  );
+}
 
 function getToolUseContentBlocks(row: ParsedThreadRow) {
   if (!row.message || !isSDKAssistantMessage(row.message)) return [];
@@ -525,6 +581,7 @@ function buildCompletedTurn(
     fallback,
     sessionId: highlightSource?.sessionId ?? lastRow.sessionId,
     highlightMessageUuid: highlightUuid,
+    replacementStatus: sourceRow?.replacementStatus,
     resultInfo,
   };
 }
@@ -655,6 +712,175 @@ function buildCompactBoundaryTurn(row: ParsedThreadRow): CompactBoundaryFeedTurn
   };
 }
 
+function buildOperationalSystemTurn(
+  row: ParsedThreadRow,
+  isSessionTail: boolean
+): SystemFeedTurn | null {
+  const message = row.message;
+  if (!message || message.type !== 'system') return null;
+  const subtype = (message as { subtype?: string }).subtype;
+  if (!subtype || subtype === 'init') return null;
+  if (subtype === 'informational' && (message as { level?: string }).level === 'info') {
+    return null;
+  }
+  if (subtype === 'worker_shutting_down' && !isSessionTail) return null;
+  const highlightUuid =
+    typeof (message as { uuid?: unknown }).uuid === 'string'
+      ? ((message as { uuid: string }).uuid as string)
+      : undefined;
+
+  if (subtype === 'thinking_tokens') {
+    const estimatedTokens = (message as { estimated_tokens?: unknown }).estimated_tokens;
+    const delta = (message as { estimated_tokens_delta?: unknown }).estimated_tokens_delta;
+    const tokenText =
+      typeof estimatedTokens === 'number' ? estimatedTokens.toLocaleString() : 'unknown';
+    const deltaText =
+      typeof delta === 'number' ? ` (${delta >= 0 ? '+' : ''}${delta.toLocaleString()})` : '';
+    return {
+      state: 'system',
+      id: `system-${String(row.id)}`,
+      agent: row.label,
+      agentKind: row.kind,
+      agentRole: row.role,
+      agentNodeExecutionId: row.nodeExecutionId ?? null,
+      createdAt: row.createdAt,
+      title: 'Thinking tokens',
+      body: `${tokenText} estimated tokens${deltaText}`,
+      sessionId: row.sessionId,
+      highlightMessageUuid: highlightUuid,
+      replacementStatus: row.replacementStatus,
+    };
+  }
+
+  if (subtype === 'session_state_changed') {
+    const state = (message as { state?: unknown }).state;
+    return {
+      state: 'system',
+      id: `system-${String(row.id)}`,
+      agent: row.label,
+      agentKind: row.kind,
+      agentRole: row.role,
+      agentNodeExecutionId: row.nodeExecutionId ?? null,
+      createdAt: row.createdAt,
+      title: 'Session state',
+      body: typeof state === 'string' ? state : 'changed',
+      sessionId: row.sessionId,
+      highlightMessageUuid: highlightUuid,
+      replacementStatus: row.replacementStatus,
+    };
+  }
+
+  if (subtype === 'commands_changed') {
+    const commands = (message as { commands?: unknown }).commands;
+    const count = Array.isArray(commands) ? commands.length : 0;
+    return {
+      state: 'system',
+      id: `system-${String(row.id)}`,
+      agent: row.label,
+      agentKind: row.kind,
+      agentRole: row.role,
+      agentNodeExecutionId: row.nodeExecutionId ?? null,
+      createdAt: row.createdAt,
+      title: 'Commands changed',
+      body: `${count.toLocaleString()} slash commands available`,
+      sessionId: row.sessionId,
+      highlightMessageUuid: highlightUuid,
+      replacementStatus: row.replacementStatus,
+    };
+  }
+
+  if (subtype === 'model_refusal_fallback') {
+    const content = (message as { content?: unknown }).content;
+    const originalModel = (message as { original_model?: unknown }).original_model;
+    const fallbackModel = (message as { fallback_model?: unknown }).fallback_model;
+    const modelText =
+      typeof originalModel === 'string' && typeof fallbackModel === 'string'
+        ? ` (${originalModel} -> ${fallbackModel})`
+        : '';
+    return {
+      state: 'system',
+      id: `system-${String(row.id)}`,
+      agent: row.label,
+      agentKind: row.kind,
+      agentRole: row.role,
+      agentNodeExecutionId: row.nodeExecutionId ?? null,
+      createdAt: row.createdAt,
+      title: 'Model fallback',
+      body: `${typeof content === 'string' && content.length > 0 ? content : 'Retried with fallback model'}${modelText}`,
+      sessionId: row.sessionId,
+      highlightMessageUuid: highlightUuid,
+      replacementStatus: row.replacementStatus,
+    };
+  }
+
+  const fallback = buildGenericSystemSummary(message);
+  if (!fallback) return null;
+  return {
+    state: 'system',
+    id: `system-${String(row.id)}`,
+    agent: row.label,
+    agentKind: row.kind,
+    agentRole: row.role,
+    agentNodeExecutionId: row.nodeExecutionId ?? null,
+    createdAt: row.createdAt,
+    title: fallback.title,
+    body: fallback.body,
+    sessionId: row.sessionId,
+    highlightMessageUuid: highlightUuid,
+    replacementStatus: row.replacementStatus,
+  };
+}
+
+function buildGenericSystemSummary(message: Extract<SDKMessage, { type: 'system' }>): {
+  title: string;
+  body: string;
+} | null {
+  const subtype = (message as { subtype?: string }).subtype;
+  if (!subtype) return null;
+
+  if (subtype === 'informational') {
+    const level = (message as { level?: unknown }).level;
+    return {
+      title: typeof level === 'string' ? humanizeSystemSubtype(level) : 'Notice',
+      body: firstStringField(message, ['content', 'message', 'title']) ?? 'System notice',
+    };
+  }
+
+  if (subtype === 'hook_response') {
+    const hookName = firstStringField(message, ['hook_name', 'hook_event']);
+    const stderr = firstStringField(message, ['stderr']);
+    const stdout = firstStringField(message, ['stdout']);
+    return {
+      title: 'Hook response',
+      body: [hookName, stderr ?? stdout].filter(Boolean).join(': ') || 'Hook completed',
+    };
+  }
+
+  return {
+    title: humanizeSystemSubtype(subtype),
+    body:
+      firstStringField(message, ['content', 'message', 'reason', 'status', 'description']) ??
+      subtype,
+  };
+}
+
+function firstStringField(message: object, fields: string[]): string | null {
+  const record = message as Record<string, unknown>;
+  for (const field of fields) {
+    const value = record[field];
+    if (typeof value === 'string' && value.trim().length > 0) return value;
+  }
+  return null;
+}
+
+function humanizeSystemSubtype(value: string): string {
+  return value
+    .split('_')
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
 function buildMessageTurn(
   row: ParsedThreadRow,
   previousAgentLabel: string | null,
@@ -684,6 +910,7 @@ function buildMessageTurn(
     deliveryState: row.deliveryState ?? null,
     sessionId: row.sessionId,
     highlightMessageUuid: highlightUuid,
+    replacementStatus: row.replacementStatus,
     sessionInit,
   };
 }
@@ -734,8 +961,14 @@ function buildFeedTurns(
   activeAgentLabels: ReadonlySet<string>,
   activeTurnSummaries: ActiveTurnSummary[]
 ): FeedTurn[] {
-  const blocks = buildAgentTurns(parsedRows);
+  const rowsWithReplacementStatus = applyReplacementStatuses(parsedRows);
+  const blocks = buildAgentTurns(rowsWithReplacementStatus);
   if (blocks.length === 0) return [];
+
+  const latestRowIdBySession = new Map<string, string>();
+  for (const row of rowsWithReplacementStatus) {
+    if (row.sessionId) latestRowIdBySession.set(row.sessionId, String(row.id));
+  }
 
   // Index summaries by sessionId so the trailing-block upgrade can pick the
   // right summary in O(1) rather than scanning the (small but not bounded)
@@ -796,6 +1029,15 @@ function buildFeedTurns(
       if (compactBoundaryTurn) {
         flushAgent();
         turns.push(compactBoundaryTurn);
+        continue;
+      }
+      const operationalSystemTurn = buildOperationalSystemTurn(
+        row,
+        row.sessionId ? latestRowIdBySession.get(row.sessionId) === String(row.id) : false
+      );
+      if (operationalSystemTurn) {
+        flushAgent();
+        turns.push(operationalSystemTurn);
         continue;
       }
       if (isUserRow(row)) {
@@ -1048,6 +1290,7 @@ function CompletedBody({
         class="bg-dark-800 border border-dark-700 rounded-lg px-3 py-2"
         data-testid="minimal-thread-agent-bubble"
       >
+        <ReplacementBadge status={turn.replacementStatus} />
         {turn.lastMessage ? (
           <div class="text-sm text-gray-100 leading-relaxed [&_a]:text-blue-400">
             {turn.fallback ? (
@@ -1255,6 +1498,7 @@ function HumanMessageTurn({ turn }: { turn: MessageFeedTurn }) {
           class="bg-blue-500 text-white rounded-[20px] px-4 py-2 leading-relaxed break-words"
           data-testid="minimal-thread-human-bubble"
         >
+          <ReplacementBadge status={turn.replacementStatus} />
           {turn.body ? (
             <p class="whitespace-pre-wrap break-words">{turn.body}</p>
           ) : (
@@ -1374,6 +1618,62 @@ function CompactBoundaryTurn({
   );
 }
 
+function SystemTurn({ turn, overlayTaskId }: { turn: SystemFeedTurn; overlayTaskId?: string }) {
+  const color = getAgentColor(turn.agent);
+  const openSession = turn.sessionId
+    ? () => {
+        if (overlayTaskId && turn.agentKind === 'node_agent') {
+          pushOverlayHistory(turn.sessionId as string, turn.agent, turn.highlightMessageUuid, {
+            taskId: overlayTaskId,
+            agentName: turn.agentRole,
+            ...(turn.agentNodeExecutionId ? { nodeExecutionId: turn.agentNodeExecutionId } : {}),
+          });
+        } else {
+          pushOverlayHistory(turn.sessionId as string, turn.agent, turn.highlightMessageUuid);
+        }
+      }
+    : undefined;
+  const card = (
+    <div class="w-fit max-w-full rounded-lg border border-slate-700 bg-slate-900/40 px-3 py-2 text-slate-200">
+      <ReplacementBadge status={turn.replacementStatus} />
+      <div class="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+        <span class="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+          {turn.title}
+        </span>
+        <span class="text-[11px] text-slate-500" style={{ color }}>
+          {shortAgentName(turn.agent)}
+        </span>
+        <span class="text-[11px] text-slate-500">{formatClock(turn.createdAt)}</span>
+      </div>
+      <div class="mt-1 text-xs text-slate-200">{turn.body}</div>
+    </div>
+  );
+
+  return (
+    <div
+      data-testid="minimal-thread-turn"
+      data-turn-state="system"
+      data-agent-label={turn.agent}
+      data-agent-color={color}
+    >
+      {openSession ? (
+        <button
+          type="button"
+          class="rounded-lg text-left transition-colors hover:bg-slate-800/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400/60"
+          onClick={openSession}
+          title="Open session"
+          aria-label={`Open ${turn.agent} session at ${turn.title}`}
+          data-testid="minimal-thread-system"
+        >
+          {card}
+        </button>
+      ) : (
+        <div data-testid="minimal-thread-system">{card}</div>
+      )}
+    </div>
+  );
+}
+
 function SyntheticMessageTurn({
   turn,
   overlayTaskId,
@@ -1385,6 +1685,51 @@ function SyntheticMessageTurn({
   const toColor = getAgentColor(turn.toLabel);
   const fromShort = shortAgentName(turn.fromLabel);
   const toShort = shortAgentName(turn.toLabel);
+  const replacementFrameClass =
+    turn.replacementStatus === 'retracted'
+      ? 'border-rose-500/35 bg-rose-500/5'
+      : 'border-amber-500/35 bg-amber-500/5';
+  const syntheticBlock = (
+    <SyntheticMessageBlock
+      deliveryState={turn.deliveryState}
+      content={turn.body ?? ''}
+      timestamp={turn.createdAt}
+      uuid={turn.highlightMessageUuid}
+      fromAgent={turn.fromLabel}
+      toAgent={turn.toLabel}
+      fromColor={fromColor}
+      toColor={toColor}
+      fromShort={fromShort}
+      toShort={toShort}
+      renderAsPlainText={turn.bodyIsFallback}
+      sessionInit={turn.sessionInit}
+      widthClass={TASK_THREAD_MESSAGE_BUBBLE_WIDTH_CLASS}
+      onOpenSession={
+        turn.sessionId
+          ? () => {
+              if (overlayTaskId && turn.toKind === 'node_agent') {
+                pushOverlayHistory(
+                  turn.sessionId as string,
+                  turn.toLabel,
+                  turn.highlightMessageUuid,
+                  {
+                    taskId: overlayTaskId,
+                    agentName: turn.toRole,
+                    ...(turn.toNodeExecutionId ? { nodeExecutionId: turn.toNodeExecutionId } : {}),
+                  }
+                );
+              } else {
+                pushOverlayHistory(
+                  turn.sessionId as string,
+                  turn.toLabel,
+                  turn.highlightMessageUuid
+                );
+              }
+            }
+          : undefined
+      }
+    />
+  );
 
   return (
     <div
@@ -1396,47 +1741,16 @@ function SyntheticMessageTurn({
       data-from-label={turn.fromLabel}
       data-to-label={turn.toLabel}
     >
-      <SyntheticMessageBlock
-        deliveryState={turn.deliveryState}
-        content={turn.body ?? ''}
-        timestamp={turn.createdAt}
-        uuid={turn.highlightMessageUuid}
-        fromAgent={turn.fromLabel}
-        toAgent={turn.toLabel}
-        fromColor={fromColor}
-        toColor={toColor}
-        fromShort={fromShort}
-        toShort={toShort}
-        renderAsPlainText={turn.bodyIsFallback}
-        sessionInit={turn.sessionInit}
-        widthClass={TASK_THREAD_MESSAGE_BUBBLE_WIDTH_CLASS}
-        onOpenSession={
-          turn.sessionId
-            ? () => {
-                if (overlayTaskId && turn.toKind === 'node_agent') {
-                  pushOverlayHistory(
-                    turn.sessionId as string,
-                    turn.toLabel,
-                    turn.highlightMessageUuid,
-                    {
-                      taskId: overlayTaskId,
-                      agentName: turn.toRole,
-                      ...(turn.toNodeExecutionId
-                        ? { nodeExecutionId: turn.toNodeExecutionId }
-                        : {}),
-                    }
-                  );
-                } else {
-                  pushOverlayHistory(
-                    turn.sessionId as string,
-                    turn.toLabel,
-                    turn.highlightMessageUuid
-                  );
-                }
-              }
-            : undefined
-        }
-      />
+      {turn.replacementStatus ? (
+        <div class={`${TASK_THREAD_MESSAGE_BUBBLE_WIDTH_CLASS}`}>
+          <div class={`mb-1 rounded-lg border px-2 py-1 ${replacementFrameClass}`}>
+            <ReplacementBadge status={turn.replacementStatus} />
+          </div>
+          {syntheticBlock}
+        </div>
+      ) : (
+        syntheticBlock
+      )}
     </div>
   );
 }
@@ -1444,6 +1758,9 @@ function SyntheticMessageTurn({
 function MinimalTurnRow({ turn, overlayTaskId }: { turn: FeedTurn; overlayTaskId?: string }) {
   if (turn.state === 'compact_boundary') {
     return <CompactBoundaryTurn turn={turn} overlayTaskId={overlayTaskId} />;
+  }
+  if (turn.state === 'system') {
+    return <SystemTurn turn={turn} overlayTaskId={overlayTaskId} />;
   }
   if (turn.state === 'message') {
     return turn.isSynthetic ? (

@@ -29,6 +29,7 @@ import { Tooltip } from '../ui/Tooltip.tsx';
 import { SubagentBlock } from './SubagentBlock.tsx';
 import { ThinkingBlock } from './ThinkingBlock.tsx';
 import { ToolResultCard } from './tools/index.ts';
+import type { MessageReplacementStatus } from '../../lib/sdk-message-replacement.ts';
 
 type AssistantMessage = Extract<SDKMessage, { type: 'assistant' }>;
 
@@ -36,6 +37,7 @@ interface Props {
   message: AssistantMessage;
   toolResultsMap?: Map<string, unknown>;
   subagentMessagesMap?: Map<string, SDKMessage[]>;
+  replacementStatusMap?: Map<string, MessageReplacementStatus>;
   // Question handling props for inline QuestionPrompt rendering
   sessionId?: string;
   resolvedQuestions?: Map<string, ResolvedQuestion>;
@@ -61,6 +63,7 @@ export function SDKAssistantMessage({
   message,
   toolResultsMap,
   subagentMessagesMap,
+  replacementStatusMap,
   sessionId,
   resolvedQuestions,
   pendingQuestion,
@@ -254,6 +257,7 @@ export function SDKAssistantMessage({
             toolResult={toolResult}
             nestedMessages={nestedMessages}
             toolResultsMap={toolResultsMap}
+            replacementStatusMap={replacementStatusMap}
             sessionId={sessionId}
             resolvedQuestions={resolvedQuestions}
             pendingQuestion={pendingQuestion}
@@ -292,6 +296,7 @@ function ToolUseBlock({
   toolResult,
   nestedMessages,
   toolResultsMap,
+  replacementStatusMap,
   sessionId: propSessionId,
   resolvedQuestions,
   pendingQuestion,
@@ -303,6 +308,7 @@ function ToolUseBlock({
   toolResult?: unknown;
   nestedMessages?: SDKMessage[];
   toolResultsMap?: Map<string, unknown>;
+  replacementStatusMap?: Map<string, MessageReplacementStatus>;
   sessionId?: string;
   resolvedQuestions?: Map<string, ResolvedQuestion>;
   pendingQuestion?: PendingUserQuestion | null;
@@ -342,6 +348,7 @@ function ToolUseBlock({
         toolId={block.id}
         nestedMessages={nestedMessages}
         toolResultsMap={toolResultsMap}
+        replacementStatusMap={replacementStatusMap}
         isRunning={isRunning}
       />
     );

@@ -299,50 +299,6 @@ export class SDKMessageRepository {
     ].filter((uuid): uuid is string => typeof uuid === 'string' && uuid.length > 0);
   }
 
-  private getHiddenMessageUuids(sessionId: string): Set<string> {
-    const rows = this.db
-      .prepare(
-        `SELECT sdk_message FROM sdk_messages
-         WHERE session_id = ?
-           AND (
-             sdk_message LIKE '%"supersedes"%'
-             OR sdk_message LIKE '%"retracted_message_uuids"%'
-           )`
-      )
-      .all(sessionId) as Array<{ sdk_message: string }>;
-    const hidden = new Set<string>();
-    for (const row of rows) {
-      let parsed: SDKMessage;
-      try {
-        parsed = JSON.parse(row.sdk_message) as SDKMessage;
-      } catch {
-        continue;
-      }
-      const message = parsed as SDKMessage & {
-        message?: { subtype?: unknown };
-        supersedes?: unknown;
-        retracted_message_uuids?: unknown;
-      };
-      if (Array.isArray(message.supersedes)) {
-        for (const uuid of message.supersedes) {
-          if (typeof uuid === 'string' && uuid.length > 0) hidden.add(uuid);
-        }
-      }
-      const subtype =
-        typeof (message as { subtype?: unknown }).subtype === 'string'
-          ? (message as { subtype?: string }).subtype
-          : typeof message.message?.subtype === 'string'
-            ? message.message.subtype
-            : null;
-      if (subtype === 'model_refusal_fallback' && Array.isArray(message.retracted_message_uuids)) {
-        for (const uuid of message.retracted_message_uuids) {
-          if (typeof uuid === 'string' && uuid.length > 0) hidden.add(uuid);
-        }
-      }
-    }
-    return hidden;
-  }
-
   private deleteSupersededMessageSearchRows(sessionId: string, message: SDKMessage): void {
     if (!this.hasMessageSearchIndex()) return;
     const supersededUuids = this.getSupersededMessageUuids(message);
@@ -622,12 +578,36 @@ export class SDKMessageRepository {
   } {
     // Step 1: Get top-level messages (excluding subagent messages)
     // Show user messages that were consumed to SDK, plus any that failed to deliver.
-    const hiddenMessageUuids = this.getHiddenMessageUuids(sessionId);
     let query = `SELECT id, sdk_message, timestamp, send_status, origin FROM sdk_messages
       WHERE session_id = ?
         AND parent_tool_use_id IS NULL
-        AND COALESCE(message_subtype, '') NOT IN ('thinking_tokens', 'session_state_changed', 'commands_changed')
-        AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))`;
+        AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))
+        AND (
+          message_type != 'system'
+          OR COALESCE(message_subtype, '') != 'informational'
+          OR NOT json_valid(sdk_message)
+          OR COALESCE(
+            CASE
+              WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.level')
+            END,
+            ''
+          ) != 'info'
+        )
+        AND (
+          message_type != 'system'
+          OR COALESCE(message_subtype, '') != 'worker_shutting_down'
+          OR NOT EXISTS (
+            SELECT 1
+            FROM sdk_messages newer
+            WHERE newer.session_id = sdk_messages.session_id
+              AND newer.parent_tool_use_id IS NULL
+              AND (
+                newer.timestamp > sdk_messages.timestamp
+                OR (newer.timestamp = sdk_messages.timestamp AND newer.id > sdk_messages.id)
+              )
+              AND (newer.message_type != 'user' OR COALESCE(newer.send_status, 'consumed') IN ('consumed', 'failed'))
+          )
+        )`;
     const params: SQLiteValue[] = [sessionId];
 
     // Cursor-based pagination: get messages BEFORE a timestamp (for loading older)
@@ -644,7 +624,7 @@ export class SDKMessageRepository {
 
     // Order DESC to get newest messages first, then reverse for chronological display
     query += ` ORDER BY timestamp DESC LIMIT ?`;
-    params.push(limit + hiddenMessageUuids.size);
+    params.push(limit);
 
     const stmt = this.db.prepare(query);
     const rows = stmt.all(...params) as Record<string, unknown>[];
@@ -657,10 +637,12 @@ export class SDKMessageRepository {
     // type inconsistent across messages.
     const messages: Array<SDKMessage & { timestamp: number }> = [];
     for (const r of rows) {
-      const sdkMessage = JSON.parse(r.sdk_message as string) as SDKMessage;
-      const uuid = (sdkMessage as { uuid?: unknown }).uuid;
-      const messageKey = typeof uuid === 'string' && uuid.length > 0 ? uuid : (r.id as string);
-      if (hiddenMessageUuids.has(messageKey)) continue;
+      let sdkMessage: SDKMessage;
+      try {
+        sdkMessage = JSON.parse(r.sdk_message as string) as SDKMessage;
+      } catch {
+        sdkMessage = { type: 'unknown', rawContent: r.sdk_message } as unknown as SDKMessage;
+      }
       const timestamp = new Date(r.timestamp as string).getTime();
       const extra: Record<string, unknown> = {
         id: r.id,
@@ -704,7 +686,6 @@ export class SDKMessageRepository {
       const subagentQuery = `SELECT id, sdk_message, timestamp FROM sdk_messages
        WHERE session_id = ?
          AND parent_tool_use_id IN (${placeholders})
-         AND COALESCE(message_subtype, '') NOT IN ('thinking_tokens', 'session_state_changed', 'commands_changed')
          AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))
         ORDER BY timestamp ASC`;
       const subagentParams: SQLiteValue[] = [sessionId, ...Array.from(toolUseIds)];
@@ -713,10 +694,12 @@ export class SDKMessageRepository {
       const subagentRows = subagentStmt.all(...subagentParams) as Record<string, unknown>[];
 
       subagentMessages = subagentRows.flatMap((r) => {
-        const sdkMessage = JSON.parse(r.sdk_message as string) as SDKMessage;
-        const uuid = (sdkMessage as { uuid?: unknown }).uuid;
-        const messageKey = typeof uuid === 'string' && uuid.length > 0 ? uuid : (r.id as string);
-        if (hiddenMessageUuids.has(messageKey)) return [];
+        let sdkMessage: SDKMessage;
+        try {
+          sdkMessage = JSON.parse(r.sdk_message as string) as SDKMessage;
+        } catch {
+          sdkMessage = { type: 'unknown', rawContent: r.sdk_message } as unknown as SDKMessage;
+        }
         const timestamp = new Date(r.timestamp as string).getTime();
         // Subagent messages have no DB origin column; explicitly set undefined to strip
         // any SDK-level origin object from the JSON blob (same reasoning as top-level).

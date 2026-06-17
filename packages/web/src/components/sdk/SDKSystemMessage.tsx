@@ -8,12 +8,18 @@
  * - hook_response: Hook execution results
  */
 
+import type { ComponentChildren } from 'preact';
 import { useState } from 'preact/hooks';
 import type {
+  SDKCommandsChangedMessage,
   SDKHookResponseMessage,
+  SDKInformationalMessage,
   SDKMessage,
   SDKModelRefusalFallbackMessage,
+  SDKSessionStateChangedMessage,
   SDKStatusMessage,
+  SDKThinkingTokensMessage,
+  SDKWorkerShuttingDownMessage,
 } from '@neokai/shared/sdk/sdk.d.ts';
 import {
   isSDKSystemInit,
@@ -21,6 +27,9 @@ import {
   isSDKStatusMessage,
   isSDKHookResponse,
   isSDKModelRefusalFallbackMessage,
+  isSDKThinkingTokensMessage,
+  isSDKSessionStateChangedMessage,
+  isSDKCommandsChangedMessage,
 } from '@neokai/shared/sdk/type-guards';
 import { customColors } from '../../lib/design-tokens.ts';
 
@@ -28,9 +37,10 @@ type SystemMessage = Extract<SDKMessage, { type: 'system' }>;
 
 interface Props {
   message: SystemMessage;
+  isLiveTail?: boolean;
 }
 
-export function SDKSystemMessage({ message }: Props) {
+export function SDKSystemMessage({ message, isLiveTail = false }: Props) {
   // Init message - session started
   if (isSDKSystemInit(message)) {
     return <SystemInitMessage message={message} />;
@@ -70,11 +80,110 @@ export function SDKSystemMessage({ message }: Props) {
     return <HookResponseCard message={hookMessage} />;
   }
 
+  if (isSDKThinkingTokensMessage(message)) {
+    return <ThinkingTokensMessage message={message} />;
+  }
+
+  if (isSDKSessionStateChangedMessage(message)) {
+    return <SessionStateChangedMessage message={message} />;
+  }
+
+  if (isSDKCommandsChangedMessage(message)) {
+    return <CommandsChangedMessage message={message} />;
+  }
+
+  if (message.subtype === 'informational') {
+    if (message.level === 'info') return null;
+    return <InformationalMessage message={message} />;
+  }
+
+  if (message.subtype === 'worker_shutting_down' && isLiveTail) {
+    return <WorkerShuttingDownMessage message={message} />;
+  }
+
   if (isSDKModelRefusalFallbackMessage(message)) {
     return <ModelRefusalFallbackMessage message={message} />;
   }
 
   return null;
+}
+
+function OperationalSystemMessage({
+  title,
+  children,
+}: {
+  title: string;
+  children: ComponentChildren;
+}) {
+  return (
+    <div class="my-2 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-800 dark:border-slate-700 dark:bg-slate-900/30 dark:text-slate-100">
+      <div class="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+        {title}
+      </div>
+      <div>{children}</div>
+    </div>
+  );
+}
+
+function ThinkingTokensMessage({ message }: { message: SDKThinkingTokensMessage }) {
+  const delta = message.estimated_tokens_delta;
+  const deltaText = `${delta >= 0 ? '+' : ''}${delta.toLocaleString()}`;
+  return (
+    <OperationalSystemMessage title="Thinking tokens">
+      {message.estimated_tokens.toLocaleString()} estimated tokens ({deltaText})
+    </OperationalSystemMessage>
+  );
+}
+
+function SessionStateChangedMessage({ message }: { message: SDKSessionStateChangedMessage }) {
+  return <OperationalSystemMessage title="Session state">{message.state}</OperationalSystemMessage>;
+}
+
+function CommandsChangedMessage({ message }: { message: SDKCommandsChangedMessage }) {
+  const visibleCommands = message.commands.slice(0, 12);
+  const hiddenCount = message.commands.length - visibleCommands.length;
+
+  return (
+    <OperationalSystemMessage title="Commands changed">
+      <div class="mb-2">{message.commands.length.toLocaleString()} slash commands available</div>
+      {visibleCommands.length > 0 && (
+        <div class="flex flex-wrap gap-1">
+          {visibleCommands.map((command) => (
+            <span
+              key={command.name}
+              class="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs text-slate-700 dark:bg-slate-800 dark:text-slate-200"
+            >
+              /{command.name}
+            </span>
+          ))}
+          {hiddenCount > 0 && (
+            <span class="rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+              +{hiddenCount.toLocaleString()} more
+            </span>
+          )}
+        </div>
+      )}
+    </OperationalSystemMessage>
+  );
+}
+
+function InformationalMessage({ message }: { message: SDKInformationalMessage }) {
+  return (
+    <OperationalSystemMessage title={`Info: ${message.level}`}>
+      {message.content}
+      {message.prevent_continuation && (
+        <div class="mt-1 text-xs text-slate-500 dark:text-slate-400">Continuation stopped</div>
+      )}
+    </OperationalSystemMessage>
+  );
+}
+
+function WorkerShuttingDownMessage({ message }: { message: SDKWorkerShuttingDownMessage }) {
+  return (
+    <OperationalSystemMessage title="Worker shutting down">
+      <span class="font-mono">{message.reason}</span>
+    </OperationalSystemMessage>
+  );
 }
 
 function ModelRefusalFallbackMessage({ message }: { message: SDKModelRefusalFallbackMessage }) {

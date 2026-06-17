@@ -456,14 +456,13 @@ class SessionStore {
           ((b as ChatMessage & { timestamp?: number }).timestamp || 0)
       );
 
-    const visible = this._withoutSupersededMessages(sorted);
-    this.sdkMessages.value = visible;
+    this.sdkMessages.value = sorted;
     this._hasMoreMessages.value = rows.length >= LIVE_QUERY_MESSAGE_LIMIT;
     this._initialMessageCount.value = rows.length;
     // Mark the messages as loaded so the UI can transition from the loading
     // skeleton to either the message list or the empty-state placeholder.
     this.messagesLoaded.value = true;
-    this._syncCommandsFromSDKMessages(visible);
+    this._syncCommandsFromSDKMessages(sorted);
   }
 
   /**
@@ -531,32 +530,8 @@ class SessionStore {
     }
 
     if (changed) {
-      this.sdkMessages.value = this._withoutSupersededMessages(next);
+      this.sdkMessages.value = next;
     }
-  }
-
-  private _withoutSupersededMessages(messages: ChatMessage[]): ChatMessage[] {
-    const superseded = new Set<string>();
-    for (const msg of messages) {
-      const maybeSuperseding = msg as ChatMessage & {
-        supersedes?: unknown;
-        retracted_message_uuids?: unknown;
-      };
-      const supersededUuids = [
-        ...(Array.isArray(maybeSuperseding.supersedes) ? maybeSuperseding.supersedes : []),
-        ...(Array.isArray(maybeSuperseding.retracted_message_uuids)
-          ? maybeSuperseding.retracted_message_uuids
-          : []),
-      ];
-      for (const uuid of supersededUuids) {
-        if (typeof uuid === 'string') superseded.add(uuid);
-      }
-    }
-    if (superseded.size === 0) return messages;
-    return messages.filter((msg) => {
-      const uuid = (msg as ChatMessage & { uuid?: unknown }).uuid;
-      return typeof uuid !== 'string' || !superseded.has(uuid);
-    });
   }
 
   /**
@@ -766,10 +741,7 @@ class SessionStore {
       return id == null || !seenIds.has(id);
     });
     if (uniqueMessages.length === 0) return;
-    this.sdkMessages.value = this._withoutSupersededMessages([
-      ...uniqueMessages,
-      ...this.sdkMessages.value,
-    ]);
+    this.sdkMessages.value = [...uniqueMessages, ...this.sdkMessages.value];
   }
 
   /**

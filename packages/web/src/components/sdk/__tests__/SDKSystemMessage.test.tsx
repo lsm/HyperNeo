@@ -98,6 +98,22 @@ function createHookResponseWithError(): Extract<SDKMessage, { type: 'system' }> 
   };
 }
 
+function createModelRefusalFallbackMessage(): Extract<SDKMessage, { type: 'system' }> {
+  return {
+    type: 'system',
+    subtype: 'model_refusal_fallback',
+    trigger: 'refusal',
+    direction: 'retry',
+    original_model: 'claude-opus-4-5',
+    fallback_model: 'claude-sonnet-4-5',
+    request_id: 'req-1',
+    content: 'Retried with fallback model',
+    retracted_message_uuids: ['original-message'],
+    uuid: createUUID(),
+    session_id: 'test-session',
+  };
+}
+
 describe('SDKSystemMessage', () => {
   describe('System Init Message', () => {
     it('should render session started header', () => {
@@ -383,6 +399,122 @@ describe('SDKSystemMessage', () => {
       // Collapse
       fireEvent.click(button);
       expect(container.querySelector('.p-3.border-t')).toBeFalsy();
+    });
+  });
+
+  describe('Operational System Messages', () => {
+    it('should render thinking token updates', () => {
+      const message = {
+        type: 'system',
+        subtype: 'thinking_tokens',
+        estimated_tokens: 12345,
+        estimated_tokens_delta: 678,
+        uuid: createUUID(),
+        session_id: 'test-session',
+      } as Extract<SDKMessage, { type: 'system' }>;
+
+      const { container } = render(<SDKSystemMessage message={message} />);
+
+      expect(container.textContent).toContain('Thinking tokens');
+      expect(container.textContent).toContain('12,345 estimated tokens');
+      expect(container.textContent).toContain('+678');
+    });
+
+    it('should render session state changes', () => {
+      const message = {
+        type: 'system',
+        subtype: 'session_state_changed',
+        state: 'requires_action',
+        uuid: createUUID(),
+        session_id: 'test-session',
+      } as Extract<SDKMessage, { type: 'system' }>;
+
+      const { container } = render(<SDKSystemMessage message={message} />);
+
+      expect(container.textContent).toContain('Session state');
+      expect(container.textContent).toContain('requires_action');
+    });
+
+    it('should render command list changes', () => {
+      const message = {
+        type: 'system',
+        subtype: 'commands_changed',
+        commands: [
+          { name: 'help', description: 'Show help', argumentHint: '' },
+          { name: 'status', description: 'Show status', argumentHint: '' },
+        ],
+        uuid: createUUID(),
+        session_id: 'test-session',
+      } as Extract<SDKMessage, { type: 'system' }>;
+
+      const { container } = render(<SDKSystemMessage message={message} />);
+
+      expect(container.textContent).toContain('Commands changed');
+      expect(container.textContent).toContain('2 slash commands available');
+      expect(container.textContent).toContain('/help');
+      expect(container.textContent).toContain('/status');
+    });
+
+    it('should render model refusal fallback messages', () => {
+      const message = createModelRefusalFallbackMessage();
+      const { container } = render(<SDKSystemMessage message={message} />);
+
+      expect(container.textContent).toContain('Model fallback');
+      expect(container.textContent).toContain('Retried with fallback model');
+      expect(container.textContent).toContain('claude-opus-4-5');
+      expect(container.textContent).toContain('claude-sonnet-4-5');
+    });
+
+    it('should render informational messages', () => {
+      const message = {
+        type: 'system',
+        subtype: 'informational',
+        content: 'Hook blocked continuation',
+        level: 'warning',
+        prevent_continuation: true,
+        uuid: createUUID(),
+        session_id: 'test-session',
+      } as Extract<SDKMessage, { type: 'system' }>;
+
+      const { container } = render(<SDKSystemMessage message={message} />);
+
+      expect(container.textContent).toContain('Info: warning');
+      expect(container.textContent).toContain('Hook blocked continuation');
+      expect(container.textContent).toContain('Continuation stopped');
+    });
+
+    it('should suppress info-level informational messages in normal chat', () => {
+      const message = {
+        type: 'system',
+        subtype: 'informational',
+        content: 'Internal transcript note',
+        level: 'info',
+        uuid: createUUID(),
+        session_id: 'test-session',
+      } as Extract<SDKMessage, { type: 'system' }>;
+
+      const { container } = render(<SDKSystemMessage message={message} />);
+
+      expect(container.textContent).not.toContain('Internal transcript note');
+      expect(container.innerHTML).toBe('');
+    });
+
+    it('should render worker shutdown messages only for live tail rows', () => {
+      const message = {
+        type: 'system',
+        subtype: 'worker_shutting_down',
+        reason: 'host_exit',
+        uuid: createUUID(),
+        session_id: 'test-session',
+      } as Extract<SDKMessage, { type: 'system' }>;
+
+      const stale = render(<SDKSystemMessage message={message} />);
+      expect(stale.container.textContent).not.toContain('Worker shutting down');
+
+      const { container } = render(<SDKSystemMessage message={message} isLiveTail={true} />);
+
+      expect(container.textContent).toContain('Worker shutting down');
+      expect(container.textContent).toContain('host_exit');
     });
   });
 

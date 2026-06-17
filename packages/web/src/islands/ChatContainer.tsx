@@ -1362,6 +1362,7 @@ export default function ChatContainer({
                     toolResultsMap={maps.toolResultsMap}
                     toolInputsMap={maps.toolInputsMap}
                     subagentMessagesMap={maps.subagentMessagesMap}
+                    replacementStatusMap={maps.replacementStatusMap}
                     sessionInfo={
                       msg.uuid
                         ? (maps.sessionInfoMap.get(msg.uuid) as SDKSystemMessage | undefined)
@@ -1373,6 +1374,10 @@ export default function ChatContainer({
                     onRewind={handleRewindClick}
                     rewindingMessageUuid={isRewinding ? rewindTargetUuid : null}
                     onQuestionResolved={handleQuestionResolved}
+                    replacementStatus={
+                      msg.uuid ? maps.replacementStatusMap.get(msg.uuid) : undefined
+                    }
+                    isLiveTail={idx === messages.length - 1}
                   />
                 </div>
               ))}
