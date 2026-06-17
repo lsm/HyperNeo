@@ -84,11 +84,39 @@ describe('parseRateLimitHeaders', () => {
     expect(info.limited).toBe(false);
   });
 
-  test('marks 403 and 429 as limited regardless of remaining', () => {
-    const res403 = makeResponse({ status: 403, remaining: '0', reset: '1700000000' });
-    expect(parseRateLimitHeaders(res403).limited).toBe(true);
+  test('marks 403 as limited only when X-RateLimit-Remaining is 0', () => {
+    // 403 + remaining=0 → rate-limited
+    const resLimiter = makeResponse({ status: 403, remaining: '0', reset: '1700000000' });
+    expect(parseRateLimitHeaders(resLimiter).limited).toBe(true);
+    // 403 + remaining>0 → permission error, NOT rate-limited
+    const resPerms = makeResponse({ status: 403, remaining: '4999', reset: '1700000000' });
+    expect(parseRateLimitHeaders(resPerms).limited).toBe(false);
+    // 403 + missing remaining → cannot prove rate-limit, treat as not limited
+    const resMissing = new Response('[]', { status: 403 });
+    expect(parseRateLimitHeaders(resMissing).limited).toBe(false);
+  });
+
+  test('marks 429 as limited regardless of remaining', () => {
     const res429 = makeResponse({ status: 429, remaining: '0', reset: '1700000000' });
     expect(parseRateLimitHeaders(res429).limited).toBe(true);
+    const res429Missing = new Response('[]', { status: 429 });
+    expect(parseRateLimitHeaders(res429Missing).limited).toBe(true);
+  });
+
+  test('Retry-After overrides X-RateLimit-Reset when present', () => {
+    const now = Date.now();
+    const res = new Response('[]', {
+      status: 429,
+      headers: {
+        'X-RateLimit-Remaining': '0',
+        // X-RateLimit-Reset far in the future; Retry-After should win.
+        'X-RateLimit-Reset': String(Math.floor((now + 60 * 60_000) / 1000)),
+        'Retry-After': '30',
+      },
+    });
+    const info = parseRateLimitHeaders(res);
+    expect(info.resetAt).toBeGreaterThan(now + 25_000);
+    expect(info.resetAt).toBeLessThan(now + 35_000);
   });
 
   test('treats missing headers as Infinity remaining / 0 reset', () => {
@@ -231,6 +259,43 @@ describe('GitHubEventExtension rate-limit-aware polling', () => {
           pollEnabledSpaces: (f: typeof fetch) => Promise<number>;
         }
       ).pollEnabledSpaces(fetchImpl);
+      expect(count).toBe(0);
+      expect(fetchCalled).toBe(0);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('pollSpace (scoped pollOnce) also honors the rate-limit cooldown', async () => {
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: { publish: async () => {} },
+      config: new EnabledConfigStore(),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+
+    // Shared cooldown active — scoped poll must short-circuit.
+    (extension as unknown as { rateLimitedUntil: number }).rateLimitedUntil = Date.now() + 300_000;
+
+    let fetchCalled = 0;
+    const fetchImpl = (async () => {
+      fetchCalled++;
+      return makeResponse({ status: 200, remaining: '5000', reset: '', body: [] });
+    }) as typeof fetch;
+
+    try {
+      const count = await (
+        extension as unknown as {
+          pollSpace: (spaceId: string, f: typeof fetch) => Promise<number>;
+        }
+      ).pollSpace('space-1', fetchImpl);
       expect(count).toBe(0);
       expect(fetchCalled).toBe(0);
     } finally {

@@ -444,4 +444,86 @@ describe('pr-ready validator', () => {
     expect(result.type).toBe('block');
     expect((result as { reason: string }).reason).toContain('Not Found');
   });
+
+  test('permission-error 403 without rate-limit text does NOT promote to retryable', async () => {
+    // gh stderr from a token lacking permissions — bare 403 must not be
+    // classified as a rate-limit, otherwise the workflow would back off
+    // instead of surfacing the credential issue.
+    const spawn = makeMockSpawn([
+      {
+        stdout: '',
+        stderr: 'HTTP 403: Resource not accessible by integration',
+        exitCode: 1,
+      },
+    ]);
+    const validator = createPrReadyValidator(spawn);
+    const result = await validator(makeContext('https://github.com/acme/corp/pull/42'));
+    expect(result.type).toBe('block');
+    expect((result as { reason: string }).reason).toContain('Resource not accessible');
+  });
+
+  test('graphql rate-limit probe reads both core and graphql reset windows', async () => {
+    // core.reset far in future, graphql.reset sooner — pick earliest.
+    const graphqlReset = Math.floor((Date.now() + 75_000) / 1000);
+    const coreReset = Math.floor((Date.now() + 300_000) / 1000);
+    const spawn = makeMockSpawn([
+      { stdout: JSON.stringify(VALID_PR_VIEW), stderr: '', exitCode: 0 },
+      {
+        // reviewThreads query rate-limited
+        stdout: '',
+        stderr: 'API rate limit exceeded',
+        exitCode: 1,
+      },
+      {
+        // /rate_limit probe — both windows present
+        stdout: JSON.stringify({
+          resources: {
+            core: { reset: coreReset },
+            graphql: { reset: graphqlReset },
+          },
+        }),
+        stderr: '',
+        exitCode: 0,
+      },
+    ]);
+    const validator = createPrReadyValidator(spawn);
+    const result = await validator(makeContext('https://github.com/acme/corp/pull/42'));
+    expect(result.type).toBe('retryable_block');
+    const retryAfterMs = (result as { retryAfterMs?: number }).retryAfterMs;
+    expect(retryAfterMs).toBeGreaterThanOrEqual(60_000);
+    // Closer to the graphql reset (75s) than the core reset (300s).
+    expect(retryAfterMs!).toBeLessThanOrEqual(75_000);
+  });
+
+  test('Enterprise host passed through to /rate_limit probe', async () => {
+    const resetEpochSeconds = Math.floor((Date.now() + 120_000) / 1000);
+    const calls: Array<{ cmd: string[] }> = [];
+    const spawn = makeMockSpawn(
+      [
+        { stdout: JSON.stringify(VALID_PR_VIEW), stderr: '', exitCode: 0 },
+        {
+          // reviewThreads query for Enterprise PR rate-limited
+          stdout: '',
+          stderr: 'API rate limit exceeded',
+          exitCode: 1,
+        },
+        {
+          // /rate_limit probe
+          stdout: JSON.stringify({ resources: { core: { reset: resetEpochSeconds } } }),
+          stderr: '',
+          exitCode: 0,
+        },
+      ],
+      calls
+    );
+    const validator = createPrReadyValidator(spawn);
+    const result = await validator(makeContext('https://github.example.com/acme/corp/pull/42'));
+    expect(result.type).toBe('retryable_block');
+    // The /rate_limit probe call should include --hostname github.example.com
+    const rateLimitCall = calls.find((c) => c.cmd.includes('/rate_limit'));
+    expect(rateLimitCall).toBeDefined();
+    const hostnameIdx = rateLimitCall!.cmd.indexOf('--hostname');
+    expect(hostnameIdx).toBeGreaterThan(-1);
+    expect(rateLimitCall!.cmd[hostnameIdx + 1]).toBe('github.example.com');
+  });
 });

@@ -310,7 +310,8 @@ async function runReviewThreadsQuery(
       args,
       cwd,
       remainingTimeoutMs(deadlineMs),
-      spawnImpl
+      spawnImpl,
+      { hostHint: meta.host }
     );
     if (!result.success) {
       return {
@@ -382,30 +383,62 @@ type CommandSuccess<T> = { success: true; data: T };
 type CommandOutcome<T> = CommandSuccess<T> | CommandFailure;
 
 interface RateLimitPayload {
-  resources?: { core?: { reset?: number } };
+  resources?: {
+    core?: { reset?: number };
+    graphql?: { reset?: number };
+  };
+}
+
+/**
+ * Picks the earliest finite reset epoch across REST (`core`) and GraphQL
+ * windows from a `/rate_limit` payload.
+ *
+ * Returns null when neither is present. Picking the earliest reset gives the
+ * most conservative backoff when one of the two windows is exhausted but the
+ * other is not — the probe cannot tell which call hit the limit, so we wait
+ * for whichever window recovers first.
+ */
+function pickRateLimitResetEpoch(payload: RateLimitPayload): number | null {
+  const resets: number[] = [];
+  const coreReset = payload.resources?.core?.reset;
+  const graphqlReset = payload.resources?.graphql?.reset;
+  if (typeof coreReset === 'number' && Number.isFinite(coreReset)) {
+    resets.push(coreReset);
+  }
+  if (typeof graphqlReset === 'number' && Number.isFinite(graphqlReset)) {
+    resets.push(graphqlReset);
+  }
+  if (resets.length === 0) return null;
+  return Math.min(...resets);
 }
 
 /**
  * Probes `gh api /rate_limit` to discover the current window's reset epoch.
  *
  * Uses `runCommandRaw` (not `runCommand`) so a persistent rate limit does
- * not cause infinite recursion. Returns null when the probe itself fails —
- * callers fall back to `RATE_LIMIT_MIN_BACKOFF_MS`.
+ * not cause infinite recursion. When `host` is provided (e.g. a GitHub
+ * Enterprise hostname from the rate-limited request), it is forwarded via
+ * `--hostname` so the probe queries the same host instead of `github.com`.
+ * Returns null when the probe itself fails — callers fall back to
+ * `RATE_LIMIT_MIN_BACKOFF_MS`.
  */
 async function fetchRateLimitResetEpoch(
   cwd: string,
   spawnImpl: typeof Bun.spawn,
-  deadlineMs: number
+  deadlineMs: number,
+  host?: string
 ): Promise<number | null> {
+  const args = ['gh', 'api'];
+  if (host) args.push('--hostname', host);
+  args.push('/rate_limit');
   const result = await runCommandRaw<RateLimitPayload>(
-    ['gh', 'api', '/rate_limit'],
+    args,
     cwd,
     Math.min(remainingTimeoutMs(deadlineMs), 5_000),
     spawnImpl
   );
   if (!result.success) return null;
-  const reset = result.data?.resources?.core?.reset;
-  return typeof reset === 'number' && Number.isFinite(reset) ? reset : null;
+  return pickRateLimitResetEpoch(result.data);
 }
 
 /**
@@ -465,20 +498,27 @@ async function runCommandRaw<T>(
  * stderr matches GitHub's rate-limit error patterns.
  *
  * On rate-limit detection, performs a follow-up `gh api /rate_limit` probe
- * to compute `retryAfterMs` (bounded by `RATE_LIMIT_MIN_BACKOFF_MS`). All
- * other failures pass through unchanged so existing block-path behavior is
- * preserved.
+ * to compute `retryAfterMs` (bounded by `RATE_LIMIT_MIN_BACKOFF_MS`).
+ * `options.hostHint` is forwarded to the probe so an Enterprise rate-limit
+ * is measured against the right host. All other failures pass through
+ * unchanged so existing block-path behavior is preserved.
  */
 async function runCommand<T>(
   args: string[],
   cwd: string,
   timeoutMs: number,
-  spawnImpl: typeof Bun.spawn
+  spawnImpl: typeof Bun.spawn,
+  options?: { hostHint?: string }
 ): Promise<CommandOutcome<T>> {
   const outcome = await runCommandRaw<T>(args, cwd, timeoutMs, spawnImpl);
   if (outcome.success) return outcome;
   if (!isRateLimitError(outcome.error)) return outcome;
-  const resetEpoch = await fetchRateLimitResetEpoch(cwd, spawnImpl, Date.now() + timeoutMs);
+  const resetEpoch = await fetchRateLimitResetEpoch(
+    cwd,
+    spawnImpl,
+    Date.now() + timeoutMs,
+    options?.hostHint
+  );
   return {
     success: false,
     error: outcome.error,

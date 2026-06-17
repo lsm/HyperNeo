@@ -54,16 +54,39 @@ export interface GitHubRateLimitInfo {
  * responses lack rate-limit headers). When absent, `remaining` is `Infinity`
  * and `resetAt` is `0`, so callers can treat the response as "unlimited" and
  * fall back to the configured poll interval.
+ *
+ * `limited` requires rate-limit evidence, not just a 403/429 status: GitHub
+ * also returns 403 for permission/auth failures. We treat the response as
+ * rate-limited only when either (a) the status is 429, or (b) the status is
+ * 403 AND the `X-RateLimit-Remaining` header is present and equals 0. A bare
+ * 403 with missing/positive remaining (e.g. `Resource not accessible by
+ * integration`) is not classified as rate-limiting so a permission error is
+ * not hidden behind a backoff.
+ *
+ * `resetAt` prefers `Retry-After` (used for secondary rate limits) over
+ * `X-RateLimit-Reset` when both are present, per GitHub's guidance.
  */
 export function parseRateLimitHeaders(res: Response): GitHubRateLimitInfo {
   const remainingRaw = res.headers.get('X-RateLimit-Remaining');
   const resetRaw = res.headers.get('X-RateLimit-Reset');
+  const retryAfterRaw = res.headers.get('Retry-After');
   const remaining = remainingRaw ? parseInt(remainingRaw, 10) : Number.NaN;
   const resetSeconds = resetRaw ? parseInt(resetRaw, 10) : Number.NaN;
+  const retryAfterSeconds = retryAfterRaw ? parseInt(retryAfterRaw, 10) : Number.NaN;
+  const remainingValue = Number.isNaN(remaining) ? Infinity : remaining;
+  // 429 is always rate-limit; 403 is rate-limit only when remaining=0.
+  const limited = res.status === 429 || (res.status === 403 && remainingValue === 0);
+  // Retry-After wins when present (seconds from now). Otherwise use the
+  // X-RateLimit-Reset epoch.
+  const resetAt = !Number.isNaN(retryAfterSeconds)
+    ? Date.now() + retryAfterSeconds * 1000
+    : Number.isNaN(resetSeconds)
+      ? 0
+      : resetSeconds * 1000;
   return {
-    remaining: Number.isNaN(remaining) ? Infinity : remaining,
-    resetAt: Number.isNaN(resetSeconds) ? 0 : resetSeconds * 1000,
-    limited: res.status === 403 || res.status === 429,
+    remaining: remainingValue,
+    resetAt,
+    limited,
   };
 }
 const WEBHOOK_EVENTS = [
@@ -401,6 +424,17 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
   private async pollSpace(spaceId: string, fetchImpl: typeof fetch = fetch): Promise<number> {
     if (!this.context) return 0;
     if (!(await this.isPollingGloballyEnabled())) return 0;
+    // Honor the shared rate-limit window so a UI-triggered scoped poll does
+    // not bypass the backoff applied by the regular poll loop. pollOnce
+    // shares the same GitHub API budget, so firing during cooldown would
+    // re-hit the exhausted quota.
+    if (Date.now() < this.rateLimitedUntil) {
+      log.warn('GitHub scoped poll skipped — rate limited until', {
+        spaceId,
+        resetAt: new Date(this.rateLimitedUntil).toISOString(),
+      });
+      return 0;
+    }
     const spaceConfig = await this.context.config.getSpaceConfig(spaceId, this.sourceId);
     if (spaceConfig && !spaceConfig.enabled) return 0;
     let count = 0;
