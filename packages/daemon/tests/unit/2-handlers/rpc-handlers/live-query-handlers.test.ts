@@ -1358,6 +1358,91 @@ describe('NAMED_QUERY_REGISTRY', () => {
         expect(resultRow.turnHiddenMessageCount).toBe(2);
       });
 
+      test('filters transcript-only informational rows before task-feed compaction', () => {
+        const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+        insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+
+        insertSdkMessageAt('visible-before', sessionId, now + 1000);
+        insertSdkMessageAt(
+          'hidden-info',
+          sessionId,
+          now + 2000,
+          {
+            type: 'system',
+            subtype: 'informational',
+            level: 'info',
+            content: 'transcript-only',
+          },
+          'system'
+        );
+        insertSdkMessageAt(
+          'visible-warning',
+          sessionId,
+          now + 3000,
+          {
+            type: 'system',
+            subtype: 'informational',
+            level: 'warning',
+            content: 'shown to user',
+          },
+          'system'
+        );
+
+        const compactRows = queryCompact(taskId);
+        const entry = NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask')!;
+        const rawRows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
+        const fullRows = entry.mapRow ? rawRows.map(entry.mapRow) : rawRows;
+
+        expect(compactRows.map((row) => row.id)).toEqual(['visible-before', 'visible-warning']);
+        expect(fullRows.map((row) => row.id)).toEqual(['visible-before', 'visible-warning']);
+      });
+
+      test('keeps worker shutdown task-feed rows only at the session tail', () => {
+        const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+        insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+
+        insertSdkMessageAt('visible-before', sessionId, now + 1000);
+        insertSdkMessageAt(
+          'stale-shutdown',
+          sessionId,
+          now + 2000,
+          {
+            type: 'system',
+            subtype: 'worker_shutting_down',
+            reason: 'host_exit',
+          },
+          'system'
+        );
+        insertSdkMessageAt('visible-after', sessionId, now + 3000);
+        insertSdkMessageAt(
+          'tail-shutdown',
+          sessionId,
+          now + 4000,
+          {
+            type: 'system',
+            subtype: 'worker_shutting_down',
+            reason: 'host_exit',
+          },
+          'system'
+        );
+
+        const compactRows = queryCompact(taskId);
+        const entry = NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask')!;
+        const rawRows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
+        const fullRows = entry.mapRow ? rawRows.map(entry.mapRow) : rawRows;
+
+        expect(compactRows.map((row) => row.id)).toEqual([
+          'visible-before',
+          'visible-after',
+          'tail-shutdown',
+        ]);
+        expect(fullRows.map((row) => row.id)).toEqual([
+          'visible-before',
+          'visible-after',
+          'tail-shutdown',
+        ]);
+      });
+
       test('final ordering is createdAt ASC, id ASC', () => {
         const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
         insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');

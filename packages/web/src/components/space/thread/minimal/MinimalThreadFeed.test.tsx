@@ -139,7 +139,8 @@ function operationalSystemMessage(
     | 'session_state_changed'
     | 'commands_changed'
     | 'model_refusal_fallback'
-    | 'informational',
+    | 'informational'
+    | 'worker_shutting_down',
   fields: Record<string, unknown>
 ) {
   return {
@@ -312,6 +313,43 @@ describe('MinimalThreadFeed', () => {
     expect(systemRows[3].textContent).toContain('claude-opus-4-5 -> claude-sonnet-4-5');
     expect(systemRows[4].textContent).toContain('Warning');
     expect(systemRows[4].textContent).toContain('Hook warning shown to the user');
+  });
+
+  it('renders worker shutdown rows only at the session tail', () => {
+    const baseTime = new Date('2026-04-25T18:00:00Z').getTime();
+    const rows = [
+      makeRow({
+        id: 'stale-shutdown',
+        label: 'Coder Agent',
+        createdAt: baseTime,
+        message: operationalSystemMessage('stale-shutdown-uuid', 'worker_shutting_down', {
+          reason: 'host_exit',
+        }),
+      }),
+      makeRow({
+        id: 'newer-work',
+        label: 'Coder Agent',
+        createdAt: baseTime + 1000,
+        message: assistantText('newer-work-uuid', 'continued work'),
+      }),
+      makeRow({
+        id: 'tail-shutdown',
+        label: 'Reviewer Agent',
+        sessionId: 'reviewer-session',
+        createdAt: baseTime + 2000,
+        message: operationalSystemMessage('tail-shutdown-uuid', 'worker_shutting_down', {
+          reason: 'host_exit',
+        }),
+      }),
+    ];
+
+    render(<MinimalThreadFeed parsedRows={rows} />);
+
+    expect(screen.queryByText('continued work')).not.toBeNull();
+    const systemRows = screen.getAllByTestId('minimal-thread-system');
+    expect(systemRows).toHaveLength(1);
+    expect(systemRows[0].textContent).toContain('Worker Shutting Down');
+    expect(systemRows[0].textContent).toContain('host_exit');
   });
 
   it('renders one turn row per agent block with name and clock', () => {

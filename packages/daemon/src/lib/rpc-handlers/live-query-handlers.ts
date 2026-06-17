@@ -1168,6 +1168,33 @@ sdk_rows_raw AS (
    AND sne.rn = 1
   LEFT JOIN space_agents sa ON sa.id = sne.agent_id
   WHERE (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
+    AND (
+      sm.message_type != 'system'
+      OR COALESCE(sm.message_subtype, '') != 'informational'
+      OR NOT json_valid(sm.sdk_message)
+      OR COALESCE(
+        CASE
+          WHEN json_valid(sm.sdk_message) THEN json_extract(sm.sdk_message, '$.level')
+        END,
+        ''
+      ) != 'info'
+    )
+    AND (
+      sm.message_type != 'system'
+      OR COALESCE(sm.message_subtype, '') != 'worker_shutting_down'
+      OR NOT EXISTS (
+        SELECT 1
+        FROM sdk_messages newer
+        WHERE newer.session_id = sm.session_id
+          AND newer.task_id = sm.task_id
+          AND newer.parent_tool_use_id IS NULL
+          AND (
+            newer.timestamp > sm.timestamp
+            OR (newer.timestamp = sm.timestamp AND newer.id > sm.id)
+          )
+          AND (newer.message_type != 'user' OR COALESCE(newer.send_status, 'consumed') IN ('consumed', 'failed'))
+      )
+    )
 ),
 sdk_rows_numbered AS (
   SELECT

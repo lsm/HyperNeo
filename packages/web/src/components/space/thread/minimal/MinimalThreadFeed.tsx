@@ -712,7 +712,10 @@ function buildCompactBoundaryTurn(row: ParsedThreadRow): CompactBoundaryFeedTurn
   };
 }
 
-function buildOperationalSystemTurn(row: ParsedThreadRow): SystemFeedTurn | null {
+function buildOperationalSystemTurn(
+  row: ParsedThreadRow,
+  isSessionTail: boolean
+): SystemFeedTurn | null {
   const message = row.message;
   if (!message || message.type !== 'system') return null;
   const subtype = (message as { subtype?: string }).subtype;
@@ -720,6 +723,7 @@ function buildOperationalSystemTurn(row: ParsedThreadRow): SystemFeedTurn | null
   if (subtype === 'informational' && (message as { level?: string }).level === 'info') {
     return null;
   }
+  if (subtype === 'worker_shutting_down' && !isSessionTail) return null;
   const highlightUuid =
     typeof (message as { uuid?: unknown }).uuid === 'string'
       ? ((message as { uuid: string }).uuid as string)
@@ -961,6 +965,11 @@ function buildFeedTurns(
   const blocks = buildAgentTurns(rowsWithReplacementStatus);
   if (blocks.length === 0) return [];
 
+  const latestRowIdBySession = new Map<string, string>();
+  for (const row of rowsWithReplacementStatus) {
+    if (row.sessionId) latestRowIdBySession.set(row.sessionId, String(row.id));
+  }
+
   // Index summaries by sessionId so the trailing-block upgrade can pick the
   // right summary in O(1) rather than scanning the (small but not bounded)
   // list once per render. The server emits at most one summary per session.
@@ -1022,7 +1031,10 @@ function buildFeedTurns(
         turns.push(compactBoundaryTurn);
         continue;
       }
-      const operationalSystemTurn = buildOperationalSystemTurn(row);
+      const operationalSystemTurn = buildOperationalSystemTurn(
+        row,
+        row.sessionId ? latestRowIdBySession.get(row.sessionId) === String(row.id) : false
+      );
       if (operationalSystemTurn) {
         flushAgent();
         turns.push(operationalSystemTurn);
