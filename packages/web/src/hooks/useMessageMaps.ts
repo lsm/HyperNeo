@@ -59,16 +59,23 @@ export function useMessageMaps(
   // 'user'/'assistant'/'system' checks and will be safely skipped by all maps.
   const sdkMessages = messages as SDKMessage[];
 
+  const replacementStatusMap = useMemo(
+    () => buildMessageReplacementStatusMap(sdkMessages),
+    [sdkMessages]
+  );
+
   // Map of tool use IDs to their results
   const toolResultsMap = useMemo(() => {
     const map = new Map<string, ToolResultData>();
     sdkMessages.forEach((msg) => {
       if (msg.type === 'user' && Array.isArray(msg.message.content)) {
+        const replacementStatus = msg.uuid ? replacementStatusMap.get(msg.uuid) : undefined;
         msg.message.content.forEach((block: unknown) => {
           const blockObj = block as Record<string, unknown>;
           if (blockObj.type === 'tool_result' && blockObj.tool_use_id) {
             const toolUseId = blockObj.tool_use_id as string;
-            const isRemoved = msg.uuid ? removedOutputs.includes(msg.uuid) : false;
+            const isRemoved =
+              (msg.uuid ? removedOutputs.includes(msg.uuid) : false) || !!replacementStatus;
             map.set(toolUseId, {
               content: block,
               messageUuid: msg.uuid,
@@ -80,7 +87,7 @@ export function useMessageMaps(
       }
     });
     return map;
-  }, [sdkMessages, removedOutputs, sessionId]);
+  }, [sdkMessages, removedOutputs, replacementStatusMap, sessionId]);
 
   // Map of tool use IDs to their input data
   const toolInputsMap = useMemo(() => {
@@ -145,11 +152,6 @@ export function useMessageMaps(
     });
     return map;
   }, [sdkMessages]);
-
-  const replacementStatusMap = useMemo(
-    () => buildMessageReplacementStatusMap(sdkMessages),
-    [sdkMessages]
-  );
 
   return {
     toolResultsMap,

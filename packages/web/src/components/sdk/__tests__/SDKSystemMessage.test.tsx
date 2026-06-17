@@ -483,7 +483,7 @@ describe('SDKSystemMessage', () => {
       expect(container.textContent).toContain('Continuation stopped');
     });
 
-    it('should render worker shutdown messages', () => {
+    it('should render worker shutdown messages only for live tail rows', () => {
       const message = {
         type: 'system',
         subtype: 'worker_shutting_down',
@@ -492,7 +492,10 @@ describe('SDKSystemMessage', () => {
         session_id: 'test-session',
       } as Extract<SDKMessage, { type: 'system' }>;
 
-      const { container } = render(<SDKSystemMessage message={message} />);
+      const stale = render(<SDKSystemMessage message={message} />);
+      expect(stale.container.textContent).not.toContain('Worker shutting down');
+
+      const { container } = render(<SDKSystemMessage message={message} isLiveTail={true} />);
 
       expect(container.textContent).toContain('Worker shutting down');
       expect(container.textContent).toContain('host_exit');

@@ -84,6 +84,8 @@ interface Props {
   isRunning?: boolean;
   /** Visual marker for messages superseded/retracted by later SDK rows. */
   replacementStatus?: MessageReplacementStatus;
+  /** True when this row is the latest visible SDK row in the session stream. */
+  isLiveTail?: boolean;
 }
 
 function ReplacementStatusFrame({
@@ -122,6 +124,19 @@ function isSubagentMessage(message: SDKMessage): boolean {
     parent_tool_use_id?: string | null;
   };
   return !!msgWithParent.parent_tool_use_id;
+}
+
+function isRenderableSystemMessage(message: SDKMessage): boolean {
+  if (!isSDKSystemMessage(message)) return false;
+  const subtype = (message as { subtype?: unknown }).subtype;
+  return (
+    subtype === 'thinking_tokens' ||
+    subtype === 'session_state_changed' ||
+    subtype === 'commands_changed' ||
+    subtype === 'informational' ||
+    subtype === 'worker_shutting_down' ||
+    subtype === 'model_refusal_fallback'
+  );
 }
 
 /**
@@ -225,6 +240,7 @@ function SDKMessageRendererImpl({
   showToolResultUserMessages = false,
   isRunning,
   replacementStatus,
+  isLiveTail = false,
 }: Props) {
   // NeoKai-native action messages are always shown and handled separately.
   if (isNeokaiActionMessage(message)) {
@@ -242,7 +258,7 @@ function SDKMessageRendererImpl({
   const sdkMessage = message as SDKMessage;
 
   // Skip messages that shouldn't be shown to user (e.g., stream events)
-  if (!isUserVisibleMessage(sdkMessage)) {
+  if (!isUserVisibleMessage(sdkMessage) && !isRenderableSystemMessage(sdkMessage)) {
     return null;
   }
 
@@ -304,7 +320,7 @@ function SDKMessageRendererImpl({
   } else if (isSDKResultMessage(sdkMessage)) {
     renderedMessage = <SDKResultMessage message={sdkMessage} />;
   } else if (isSDKSystemMessage(sdkMessage)) {
-    renderedMessage = <SDKSystemMessage message={sdkMessage} />;
+    renderedMessage = <SDKSystemMessage message={sdkMessage} isLiveTail={isLiveTail} />;
   } else if (isSDKToolProgressMessage(sdkMessage)) {
     const toolInput = toolInputsMap?.get((sdkMessage as SDKToolProgressMessageType).tool_use_id);
     renderedMessage = <SDKToolProgressMessage message={sdkMessage} toolInput={toolInput} />;
@@ -362,7 +378,8 @@ function areMessageRendererPropsEqual(prev: Props, next: Props): boolean {
     prev.flattenSubagentTools === next.flattenSubagentTools &&
     prev.showToolResultUserMessages === next.showToolResultUserMessages &&
     prev.isRunning === next.isRunning &&
-    prev.replacementStatus === next.replacementStatus
+    prev.replacementStatus === next.replacementStatus &&
+    prev.isLiveTail === next.isLiveTail
   );
 }
 

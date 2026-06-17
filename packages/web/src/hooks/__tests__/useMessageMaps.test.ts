@@ -118,6 +118,39 @@ describe('useMessageMaps', () => {
       expect(toolResult?.isOutputRemoved).toBe(true);
     });
 
+    it('should mark retracted tool results as removed', () => {
+      const messages = [
+        {
+          type: 'user',
+          uuid: uuid1,
+          session_id: 'session-1',
+          message: {
+            role: 'user',
+            content: [
+              {
+                type: 'tool_result',
+                tool_use_id: 'tool-use-123',
+                content: 'Retracted result content',
+              },
+            ],
+          },
+        },
+        {
+          type: 'system',
+          subtype: 'model_refusal_fallback',
+          uuid: uuid2,
+          session_id: 'session-1',
+          retracted_message_uuids: [uuid1],
+        },
+      ] as unknown as SDKMessage[];
+
+      const { result } = renderHook(() => useMessageMaps(messages, 'session-1'));
+
+      const toolResult = result.current.toolResultsMap.get('tool-use-123');
+      expect(toolResult?.messageUuid).toBe(uuid1);
+      expect(toolResult?.isOutputRemoved).toBe(true);
+    });
+
     it('should handle multiple tool results in the same message', () => {
       const messages = [
         {

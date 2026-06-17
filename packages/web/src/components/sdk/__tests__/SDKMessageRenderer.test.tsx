@@ -207,6 +207,54 @@ describe('SDKMessageRenderer', () => {
       expect(container.textContent).toContain('tokens');
     });
 
+    it('should render thinking token system messages through the main renderer', () => {
+      const message = {
+        type: 'system',
+        subtype: 'thinking_tokens',
+        estimated_tokens: 12345,
+        estimated_tokens_delta: 678,
+        uuid: createUUID(),
+        session_id: 'test-session',
+      } as unknown as SDKMessage;
+
+      const { container } = render(<SDKMessageRenderer message={message} />);
+
+      expect(container.textContent).toContain('Thinking tokens');
+      expect(container.textContent).toContain('12,345 estimated tokens');
+    });
+
+    it('should render session state system messages through the main renderer', () => {
+      const message = {
+        type: 'system',
+        subtype: 'session_state_changed',
+        state: 'requires_action',
+        uuid: createUUID(),
+        session_id: 'test-session',
+      } as unknown as SDKMessage;
+
+      const { container } = render(<SDKMessageRenderer message={message} />);
+
+      expect(container.textContent).toContain('Session state');
+      expect(container.textContent).toContain('requires_action');
+    });
+
+    it('should render worker shutdown messages only at the live tail', () => {
+      const message = {
+        type: 'system',
+        subtype: 'worker_shutting_down',
+        reason: 'host_exit',
+        uuid: createUUID(),
+        session_id: 'test-session',
+      } as unknown as SDKMessage;
+
+      const stale = render(<SDKMessageRenderer message={message} />);
+      expect(stale.container.textContent).not.toContain('Worker shutting down');
+
+      const liveTail = render(<SDKMessageRenderer message={message} isLiveTail={true} />);
+      expect(liveTail.container.textContent).toContain('Worker shutting down');
+      expect(liveTail.container.textContent).toContain('host_exit');
+    });
+
     it('should render assistant message', () => {
       const message = createAssistantMessage('Hi there!');
       const { container } = render(<SDKMessageRenderer message={message} />);

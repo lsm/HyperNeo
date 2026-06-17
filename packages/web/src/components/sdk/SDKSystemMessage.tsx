@@ -37,9 +37,10 @@ type SystemMessage = Extract<SDKMessage, { type: 'system' }>;
 
 interface Props {
   message: SystemMessage;
+  isLiveTail?: boolean;
 }
 
-export function SDKSystemMessage({ message }: Props) {
+export function SDKSystemMessage({ message, isLiveTail = false }: Props) {
   // Init message - session started
   if (isSDKSystemInit(message)) {
     return <SystemInitMessage message={message} />;
@@ -95,7 +96,7 @@ export function SDKSystemMessage({ message }: Props) {
     return <InformationalMessage message={message} />;
   }
 
-  if (message.subtype === 'worker_shutting_down') {
+  if (message.subtype === 'worker_shutting_down' && isLiveTail) {
     return <WorkerShuttingDownMessage message={message} />;
   }
 

@@ -1376,6 +1376,7 @@ export default function ChatContainer({
                     replacementStatus={
                       msg.uuid ? maps.replacementStatusMap.get(msg.uuid) : undefined
                     }
+                    isLiveTail={idx === messages.length - 1}
                   />
                 </div>
               ))}
