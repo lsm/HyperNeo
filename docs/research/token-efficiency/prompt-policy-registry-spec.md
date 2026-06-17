@@ -491,7 +491,7 @@ Provider emits this only when resolver finds an enabled `neokai.output-mode.comp
 ```json
 {
 	"id": "materialized.space.<space-id>.neokai.output-mode.compressed",
-	"templateId": "neokai.output-mode.compressed",
+	"recordType": "content",
 	"activationId": "space.<space-id>.neokai.output-mode.compressed",
 	"channel": "system.append",
 	"priority": 650,
@@ -501,6 +501,8 @@ Provider emits this only when resolver finds an enabled `neokai.output-mode.comp
 	"content": "## Output style\n\nWhen the compressed output policy is active, be terse and action-first.\n\n- Drop filler, pleasantries, hedging, and recap prose.\n- Prefer fragments and bullets over paragraphs.\n- Report only: result, blocker, changed files, verification, next required action.\n- Keep code blocks, identifiers, paths, URLs, commands, and exact errors unchanged.\n- Use normal clear prose for security warnings, irreversible actions, approval requests, and multi-step instructions where compression could create ambiguity.\n- Do not reduce review thoroughness, test expectations, or tool diligence."
 }
 ```
+
+The materialized record is a valid `content` prompt-policy record. It intentionally keeps only `activationId` as provenance; it must not include `templateId`, because the activation row already points to the built-in template and content records are validated as concrete prompt text.
 
 Subagent behavior is resolved for MVP: compressed output must reach SDK subagents. Composer should create an `agent.prompt.append` copy when `scope.appliesToSubagents` is true, so subagents receive equivalent output style without relying on parent prompt inheritance. Renderer should only apply composer-provided `agentPromptEntries`.
 

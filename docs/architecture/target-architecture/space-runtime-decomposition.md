@@ -387,6 +387,8 @@ These contracts are internal first. Some can become public later after auth, sch
 | `space.workflowMessage.deliver` | `space/{spaceId}/workflowRun/{runId}` | `ChannelDeliveryService` |
 | `space.workflowGate.dataChanged` | `space/{spaceId}/workflowRun/{runId}/gate/{gateId}` | `GateOrchestrator` |
 | `space.workflowGate.approve` | `space/{spaceId}/workflowRun/{runId}/gate/{gateId}` | `GateOrchestrator` |
+| `space.workflowHook.approve` | `space/{spaceId}/workflowRun/{runId}/hook/{hookId}` | `GateOrchestrator` |
+| `space.workflowHook.retry` | `space/{spaceId}/workflowRun/{runId}/hook/{hookId}` | `GateOrchestrator` |
 | `space.workflowAgent.spawn` | `space/{spaceId}/workflowRun/{runId}/execution/{executionId}` | `NodeExecutionSupervisor` |
 | `space.workflowAgent.injectMessage` | `space/{spaceId}/session/{sessionId}` | `AgentSessionGateway` |
 
@@ -400,6 +402,13 @@ These contracts are internal first. Some can become public later after auth, sch
 | `space.workflowRun.active` | Active/recoverable workflow runs for a space or daemon. |
 | `space.workflowNodeExecution.list` | Node execution rows for a workflow run. |
 | `space.workflowGate.status` | Gate data, open state, and pending approval state. |
+| `space.workflowRun.artifacts` | Materialized artifacts produced by a workflow run. |
+| `space.workflowRun.gateArtifacts` | Worktree changes and diff summary for a human gate. |
+| `space.workflowRun.fileDiff` | Unified diff for an uncommitted workflow-run file. |
+| `space.workflowRun.commits` | Commits produced by a workflow run. |
+| `space.workflowRun.commitFiles` | Files changed by a workflow-run commit. |
+| `space.workflowRun.commitFileDiff` | Unified diff for a file in a workflow-run commit. |
+| `space.workflowRun.hookStates` | Pending hook state snapshots for a workflow run. |
 
 ### Events
 

@@ -142,6 +142,8 @@ export interface MessageEnvelope<TData = unknown> {
   correlationId?: string;
   /** Points to the message that caused this one. */
   causationId?: string;
+  /** Client- or caller-provided retry key for idempotent command receipts. */
+  idempotencyKey?: string;
   /** Optional reply address for request/reply transports. */
   replyTo?: string;
   /** Wall-clock creation time in Unix ms. */
@@ -154,6 +156,8 @@ export interface MessageEnvelope<TData = unknown> {
   meta?: Record<string, unknown>;
 }
 ```
+
+`idempotencyKey` is envelope/options metadata, not business input. Client command APIs pass it alongside `execute()` options, transport adapters project it into the canonical envelope, and contract `idempotency.keyFrom` functions read `envelope.idempotencyKey`.
 
 `name` and `subject` are intentionally separate:
 

@@ -173,10 +173,11 @@ const overTarget = scannedFiles.filter((file) => file.lines > thresholdConfig.ta
 
 function getAllowlistEntry(
   configSource: RatchetConfig,
-  filePath: string
+  filePath: string,
+  options: { usePreviousPath?: boolean } = {}
 ): AllowlistEntry | undefined {
   const changedInfo = changedPathInfo.get(filePath);
-  if (changedInfo?.previousPath && changedInfo.status.startsWith('R')) {
+  if (options.usePreviousPath && changedInfo?.previousPath && changedInfo.status.startsWith('R')) {
     return configSource.allowlist[changedInfo.previousPath];
   }
   return configSource.allowlist[filePath];
@@ -184,7 +185,9 @@ function getAllowlistEntry(
 
 function getBaselineEntry(filePath: string): AllowlistEntry | undefined {
   const currentEntry = getAllowlistEntry(config, filePath);
-  const baseEntry = baseConfig ? getAllowlistEntry(baseConfig, filePath) : undefined;
+  const baseEntry = baseConfig
+    ? getAllowlistEntry(baseConfig, filePath, { usePreviousPath: true })
+    : undefined;
   if (baseConfig && !baseEntry) return undefined;
   if (!currentEntry) return baseEntry;
   if (!baseEntry) return currentEntry;

@@ -320,13 +320,21 @@ Read models:
 - `space.workflowNodeExecution.list`
 - `space.workflowGate.status`
 - `space.workflowRun.artifacts`
+- `space.workflowRun.gateArtifacts`
+- `space.workflowRun.fileDiff`
+- `space.workflowRun.commits`
+- `space.workflowRun.commitFiles`
+- `space.workflowRun.commitFileDiff`
+- `space.workflowRun.hookStates`
 
 State:
 
 - workflow runs by ID;
 - node executions by run ID and by workflow node ID;
 - gate status by run/gate;
-- artifacts by run.
+- artifacts by run;
+- file diffs and commit metadata by run;
+- pending hook state by run and hook ID.
 
 Commands:
 
@@ -335,6 +343,8 @@ Commands:
 - `space.workflowRun.resumeBlocked`
 - `space.workflowNode.activate`
 - `space.workflowGate.approve`
+- `space.workflowHook.approve`
+- `space.workflowHook.retry`
 
 Events:
 
@@ -353,6 +363,8 @@ Events:
 Notes:
 
 - Current per-run `nodeExecutions.byRun` subscriptions should be replaced by a space-scoped runtime read model when available.
+- Existing artifact RPCs map as follows during migration: `spaceWorkflowRun.getGateArtifacts` -> `space.workflowRun.gateArtifacts`, `spaceWorkflowRun.getFileDiff` -> `space.workflowRun.fileDiff`, `spaceWorkflowRun.getCommits` -> `space.workflowRun.commits`, `spaceWorkflowRun.getCommitFiles` -> `space.workflowRun.commitFiles`, `spaceWorkflowRun.getCommitFileDiff` -> `space.workflowRun.commitFileDiff`, and `spaceWorkflowRun.listArtifacts` -> `space.workflowRun.artifacts`.
+- Existing hook RPCs map as follows during migration: `spaceWorkflowRun.listHookStates` -> `space.workflowRun.hookStates`, `spaceWorkflowRun.approveHook` -> `space.workflowHook.approve`, and `spaceWorkflowRun.retryHook` -> `space.workflowHook.retry`.
 - The canvas should depend on this store, not raw `spaceStore.nodeExecutions`.
 
 ### 7.6 SpaceConfigureStore
@@ -366,6 +378,10 @@ Read models:
 - `space.workflow.list`
 - `space.workflowTemplate.list`
 - `space.workflow.get`
+- `externalEvents.extensions.list`
+- `space.externalEvents.deliveries.list`
+- `space.github.config.list`
+- `space.github.watchedRepos.list`
 
 Commands:
 
@@ -376,6 +392,10 @@ Commands:
 - `space.workflow.update`
 - `space.workflow.delete`
 - `space.workflow.syncFromTemplate`
+- `externalEvents.extensions.setGlobalEnabled`
+- `space.github.config.set`
+- `space.github.watchedRepos.add`
+- `space.github.watchedRepos.remove`
 
 Events:
 
@@ -385,10 +405,14 @@ Events:
 - `space.workflow.created`
 - `space.workflow.updated`
 - `space.workflow.deleted`
+- `externalEvents.extension.updated`
+- `space.externalEvents.delivery.created`
+- `space.externalEvents.delivery.updated`
 
 Notes:
 
 - Current workflow detail cache and version map move here.
+- External-event source enablement and delivery inspection belong to the configure surface because they drive Space settings. Existing RPCs map as follows during migration: `externalEvents.extensions.list` stays under the same global extension query name, `externalEvents.extensions.setGlobalEnabled` stays under the same global command name, and `space.externalEvents.listDeliveries` maps to `space.externalEvents.deliveries.list`.
 
 ### 7.7 SpaceGoalStore
 
@@ -459,13 +483,14 @@ Read models:
 
 Events:
 
-- `space.session.created`
-- `space.session.updated`
-- `space.session.deleted`
+- `session.created`
+- `session.updated`
+- `session.deleted`
 
 Notes:
 
 - Current `spaceSessions.bySpace` LiveQuery moves behind `space.session.list` subscribed query.
+- The target event namespace remains `session.*`; `space.session.list` filters/project sessions by Space membership instead of requiring new `space.session.*` producers. A bridge may expose Space-scoped invalidation subjects, but canonical durable event contracts stay aligned with current session lifecycle events.
 
 ### 7.10 PromptPolicyStore
 
