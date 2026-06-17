@@ -295,4 +295,4 @@ if (json) {
   }
 }
 
-exit(violations.length > 0 ? 1 : 0);
+exit(violations.length > 0 || staleAllowlistEntries.length > 0 ? 1 : 0);
