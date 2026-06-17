@@ -508,22 +508,12 @@ export class SDKMessageHandler {
       // DO NOT return - let it fall through to persistence and rendering
     }
 
-    // Handle thinking tokens messages: emit live event and stash estimate, but do not persist deltas
+    // Handle thinking tokens messages: stash estimate, but do not persist or broadcast
     // These fire frequently during the redacted thinking phase and would bloat the DB if persisted.
     // The final estimate is persisted on the assistant message when the thinking block completes.
     if (isSDKThinkingTokensMessage(message)) {
       this.currentThinkingTokensEstimate = message.estimated_tokens;
-      // Emit live event for transient progress UI
-      messageHub.event(
-        'state.thinkingProgress',
-        {
-          sessionId: session.id,
-          estimatedTokens: message.estimated_tokens,
-          delta: message.estimated_tokens_delta,
-        },
-        { channel: `session:${session.id}` }
-      );
-      return; // Skip persistence - this is a transient progress message
+      return; // Skip persistence and broadcast - this is internal tracking only
     }
 
     // Automatically update phase based on message type

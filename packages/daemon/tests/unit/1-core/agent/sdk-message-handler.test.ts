@@ -579,7 +579,7 @@ describe('SDKMessageHandler', () => {
       });
     });
 
-    it('should not persist thinking_tokens but emit live event', async () => {
+    it('should not persist thinking_tokens but stash estimate', async () => {
       const message: SDKMessage = {
         type: 'system',
         subtype: 'thinking_tokens',
@@ -593,16 +593,8 @@ describe('SDKMessageHandler', () => {
 
       // Should NOT be persisted
       expect(saveSDKMessageSpy).not.toHaveBeenCalled();
-      // Should emit live progress event via messageHub.event
-      expect(publishSpy).toHaveBeenCalledWith(
-        'state.thinkingProgress',
-        expect.objectContaining({
-          sessionId: 'test-session-id',
-          estimatedTokens: 1500,
-          delta: 500,
-        }),
-        expect.anything() // channel option
-      );
+      // Estimate should be stashed for later stamping on assistant message
+      expect(handler['currentThinkingTokensEstimate']).toBe(1500);
     });
 
     it('should stamp thinking estimate on assistant message with thinking block', async () => {
