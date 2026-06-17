@@ -119,13 +119,17 @@ function createNestedResultMessage(result: string, isError = false): SDKMessage 
   } as unknown as SDKMessage;
 }
 
-function createNestedSystemMessage(subtype?: string): SDKMessage {
+function createNestedSystemMessage(
+  subtype?: string,
+  fields: Record<string, unknown> = {}
+): SDKMessage {
   return {
     type: 'system',
     subtype: subtype || 'status',
     parent_tool_use_id: 'toolu_task123',
     uuid: createUUID(),
     session_id: 'test-session',
+    ...fields,
   } as unknown as SDKMessage;
 }
 
@@ -728,9 +732,14 @@ describe('SubagentBlock', () => {
       expect(container.textContent).not.toContain('System: init');
     });
 
-    it('should render non-init system messages', () => {
+    it('should render visible system messages through the SDK system renderer', () => {
       const input = createAgentInput('Explore', 'Find files', 'Search for test files');
-      const nestedMessages = [createNestedSystemMessage('status')];
+      const nestedMessages = [
+        createNestedSystemMessage('thinking_tokens', {
+          estimated_tokens: 1200,
+          estimated_tokens_delta: 50,
+        }),
+      ];
 
       const { container } = render(
         <SubagentBlock input={input} toolId="toolu_task123" nestedMessages={nestedMessages} />
@@ -739,7 +748,56 @@ describe('SubagentBlock', () => {
       const button = container.querySelector('button')!;
       fireEvent.click(button);
 
-      expect(container.textContent).toContain('System: status');
+      expect(container.textContent).toContain('Thinking tokens');
+      expect(container.textContent).toContain('1,200 estimated tokens (+50)');
+    });
+
+    it('should suppress nested transcript-only info and stale worker shutdown rows', async () => {
+      const input = createAgentInput('Explore', 'Find files', 'Search for test files');
+      const nestedMessages = [
+        createNestedSystemMessage('informational', {
+          level: 'info',
+          content: 'hidden transcript detail',
+        }),
+        createNestedSystemMessage('worker_shutting_down', {
+          reason: 'host_exit',
+        }),
+        createNestedAssistantMessage('newer visible work'),
+      ];
+
+      const { container } = render(
+        <SubagentBlock input={input} toolId="toolu_task123" nestedMessages={nestedMessages} />
+      );
+
+      const button = container.querySelector('button')!;
+      fireEvent.click(button);
+
+      expect(container.textContent).not.toContain('hidden transcript detail');
+      expect(container.textContent).not.toContain('Worker shutting down');
+      expect(container.textContent).not.toContain('host_exit');
+      await waitFor(() => {
+        expect(container.textContent).toContain('newer visible work');
+      });
+    });
+
+    it('should render nested worker shutdown only at the live tail', () => {
+      const input = createAgentInput('Explore', 'Find files', 'Search for test files');
+      const nestedMessages = [
+        createNestedAssistantMessage('last visible work'),
+        createNestedSystemMessage('worker_shutting_down', {
+          reason: 'host_exit',
+        }),
+      ];
+
+      const { container } = render(
+        <SubagentBlock input={input} toolId="toolu_task123" nestedMessages={nestedMessages} />
+      );
+
+      const button = container.querySelector('button')!;
+      fireEvent.click(button);
+
+      expect(container.textContent).toContain('Worker shutting down');
+      expect(container.textContent).toContain('host_exit');
     });
 
     it('should skip user messages with only tool results', () => {
@@ -830,7 +888,7 @@ describe('SubagentBlock', () => {
       expect(container.textContent).toContain('Messages (1)');
     });
 
-    it('should handle system message without subtype', () => {
+    it('should hide system message without subtype', () => {
       const input = createAgentInput('Explore', 'Find files', 'Search for test files');
       const nestedMessages = [
         {
@@ -848,7 +906,8 @@ describe('SubagentBlock', () => {
       const button = container.querySelector('button')!;
       fireEvent.click(button);
 
-      expect(container.textContent).toContain('System: message');
+      expect(container.textContent).not.toContain('System: message');
+      expect(container.textContent).not.toContain('Messages (1)');
     });
   });
 

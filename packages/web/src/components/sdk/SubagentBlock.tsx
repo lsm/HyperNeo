@@ -25,6 +25,7 @@ import {
 } from '@neokai/shared/sdk/type-guards';
 import { ToolResultCard } from './tools/index.ts';
 import { ThinkingBlock } from './ThinkingBlock.tsx';
+import { SDKSystemMessage } from './SDKSystemMessage.tsx';
 import {
   getMessageUuid,
   type MessageReplacementStatus,
@@ -49,6 +50,28 @@ function getUserMessageText(message: SDKMessage): string | null {
   }
 
   return null;
+}
+
+function shouldRenderNestedSystemMessage(message: SDKMessage, isLiveTail: boolean): boolean {
+  if (message.type !== 'system') return true;
+  const subtype = (message as { subtype?: string }).subtype;
+  if (!subtype) return false;
+  if (subtype === 'init') return false;
+  if (subtype === 'informational' && (message as { level?: string }).level === 'info') return false;
+  if (subtype === 'worker_shutting_down' && !isLiveTail) return false;
+  if (subtype === 'status' && (message as { status?: string }).status !== 'compacting')
+    return false;
+  return (
+    subtype === 'compact_boundary' ||
+    subtype === 'hook_response' ||
+    subtype === 'status' ||
+    subtype === 'thinking_tokens' ||
+    subtype === 'session_state_changed' ||
+    subtype === 'commands_changed' ||
+    subtype === 'informational' ||
+    subtype === 'worker_shutting_down' ||
+    subtype === 'model_refusal_fallback'
+  );
 }
 
 interface SubagentBlockProps {
@@ -270,6 +293,10 @@ export function SubagentBlock({
     if (nestedMessages.length === 0) return [];
 
     return nestedMessages.filter((msg, idx) => {
+      if (!shouldRenderNestedSystemMessage(msg, idx === nestedMessages.length - 1)) {
+        return false;
+      }
+
       // Only check the first message
       if (idx !== 0) return true;
 
@@ -372,6 +399,7 @@ export function SubagentBlock({
                   <NestedMessageRenderer
                     key={msg.uuid || `nested-${idx}`}
                     message={msg}
+                    isLiveTail={idx === filteredNestedMessages.length - 1}
                     toolResultsMap={toolResultsMap}
                     replacementStatusMap={replacementStatusMap}
                   />
@@ -415,10 +443,12 @@ export function SubagentBlock({
  */
 function NestedMessageRenderer({
   message,
+  isLiveTail,
   toolResultsMap,
   replacementStatusMap,
 }: {
   message: SDKMessage;
+  isLiveTail: boolean;
   toolResultsMap?: Map<string, unknown>;
   replacementStatusMap?: Map<string, MessageReplacementStatus>;
 }) {
@@ -592,17 +622,11 @@ function NestedMessageRenderer({
 
   // Handle system messages
   if (message.type === 'system') {
-    const systemMessage = message as SDKMessage & { subtype?: string };
-
-    // Skip init messages
-    if (systemMessage.subtype === 'init') {
-      return null;
-    }
-
     return withReplacementStatus(
-      <div class="bg-gray-100 dark:bg-gray-800 p-2 rounded text-xs text-gray-600 dark:text-gray-400 italic">
-        System: {systemMessage.subtype || 'message'}
-      </div>
+      <SDKSystemMessage
+        message={message as Extract<SDKMessage, { type: 'system' }>}
+        isLiveTail={isLiveTail}
+      />
     );
   }
 

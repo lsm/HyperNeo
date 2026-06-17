@@ -501,6 +501,28 @@ describe('SDKMessageRepository', () => {
       ).toBe(true);
     });
 
+    it('should not throw when an informational row has malformed JSON', () => {
+      repository.saveSDKMessage('session-1', {
+        type: 'system',
+        subtype: 'informational',
+        level: 'notice',
+        content: 'will be corrupted',
+        uuid: 'malformed-info',
+        session_id: 'session-1',
+      } as unknown as SDKMessage);
+      db.prepare(
+        `UPDATE sdk_messages
+         SET sdk_message = ?
+         WHERE message_subtype = 'informational'`
+      ).run('{not-json');
+
+      const { messages } = repository.getSDKMessages('session-1');
+
+      expect(messages).toHaveLength(1);
+      expect(messages[0].type).toBe('unknown');
+      expect((messages[0] as { rawContent?: string }).rawContent).toBe('{not-json');
+    });
+
     it('should inject id and timestamp into returned messages', () => {
       repository.saveSDKMessage('session-1', createUserMessage('Test'));
 

@@ -772,7 +772,30 @@ describe('NAMED_QUERY_REGISTRY', () => {
       insertSession(nodeSessionId, 'worker', '{"status":"processing"}');
       sessionTaskIds.set(nodeSessionId, taskId);
       insertSdkMessageAt('sdk-visible', nodeSessionId, now + 1000);
-      for (const subtype of ['thinking_tokens', 'session_state_changed', 'commands_changed']) {
+      const operationalRows = [
+        {
+          subtype: 'thinking_tokens',
+          payload: {
+            type: 'system',
+            subtype: 'thinking_tokens',
+            estimated_tokens: 1200,
+            estimated_tokens_delta: 50,
+          },
+        },
+        {
+          subtype: 'session_state_changed',
+          payload: { type: 'system', subtype: 'session_state_changed', state: 'running' },
+        },
+        {
+          subtype: 'commands_changed',
+          payload: {
+            type: 'system',
+            subtype: 'commands_changed',
+            commands: [{ name: 'review' }, { name: 'test' }],
+          },
+        },
+      ];
+      for (const { subtype, payload } of operationalRows) {
         insertSdkMessageAt(
           `sdk-operational-${subtype}`,
           nodeSessionId,
@@ -781,7 +804,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
           'consumed',
           'system',
           subtype,
-          { type: 'system', subtype }
+          payload
         );
       }
 
@@ -795,6 +818,22 @@ describe('NAMED_QUERY_REGISTRY', () => {
         'msg:sdk-operational-session_state_changed',
         'msg:sdk-operational-thinking_tokens',
       ]);
+      expect(mapped.find((row) => row.id === 'msg:sdk-operational-thinking_tokens')).toMatchObject({
+        title: 'Thinking tokens',
+        summary: '1200 estimated tokens (+50)',
+      });
+      expect(
+        mapped.find((row) => row.id === 'msg:sdk-operational-session_state_changed')
+      ).toMatchObject({
+        title: 'Session state',
+        summary: 'running',
+      });
+      expect(mapped.find((row) => row.id === 'msg:sdk-operational-commands_changed')).toMatchObject(
+        {
+          title: 'Commands changed',
+          summary: '2 slash commands available',
+        }
+      );
     });
 
     test('actorMessages.byTask includes rows retracted by refusal fallback notices', () => {

@@ -554,6 +554,9 @@ sdk_rows AS (
       WHEN sm.message_type = 'user' THEN 'Handoff'
       WHEN sm.message_type = 'result' THEN 'Status'
       WHEN sm.message_type = 'assistant' THEN 'Answer'
+      WHEN sm.message_type = 'system' AND sm.message_subtype = 'thinking_tokens' THEN 'Thinking tokens'
+      WHEN sm.message_type = 'system' AND sm.message_subtype = 'session_state_changed' THEN 'Session state'
+      WHEN sm.message_type = 'system' AND sm.message_subtype = 'commands_changed' THEN 'Commands changed'
       ELSE 'System event'
     END AS title,
     CASE
@@ -563,6 +566,30 @@ sdk_rows AS (
       WHEN sm.message_type = 'user' AND sm.send_status = 'failed' THEN 'Actor message failed'
       WHEN sm.message_type = 'user' AND sm.origin = 'human' THEN 'Human message delivered'
       WHEN sm.message_type = 'user' THEN 'Actor message delivered'
+      WHEN sm.message_type = 'system' AND sm.message_subtype = 'thinking_tokens' THEN
+        CASE
+          WHEN json_valid(sm.sdk_message) THEN
+            printf(
+              '%s estimated tokens (%+d)',
+              COALESCE(json_extract(sm.sdk_message, '$.estimated_tokens'), 'unknown'),
+              COALESCE(json_extract(sm.sdk_message, '$.estimated_tokens_delta'), 0)
+            )
+          ELSE 'Thinking token update'
+        END
+      WHEN sm.message_type = 'system' AND sm.message_subtype = 'session_state_changed' THEN
+        CASE
+          WHEN json_valid(sm.sdk_message) THEN COALESCE(json_extract(sm.sdk_message, '$.state'), 'changed')
+          ELSE 'Session state changed'
+        END
+      WHEN sm.message_type = 'system' AND sm.message_subtype = 'commands_changed' THEN
+        CASE
+          WHEN json_valid(sm.sdk_message) THEN
+            printf(
+              '%d slash commands available',
+              COALESCE(json_array_length(json_extract(sm.sdk_message, '$.commands')), 0)
+            )
+          ELSE 'Slash commands changed'
+        END
       ELSE sm.message_type
     END AS summary,
     NULL AS details,
@@ -2079,6 +2106,7 @@ WITH top_level AS (
     AND (
       message_type != 'system'
       OR COALESCE(message_subtype, '') != 'informational'
+      OR NOT json_valid(sdk_message)
       OR COALESCE(json_extract(sdk_message, '$.level'), '') != 'info'
     )
     AND (
@@ -2102,8 +2130,16 @@ WITH top_level AS (
 tool_use_ids AS (
   SELECT DISTINCT json_extract(je.value, '$.id') AS id
   FROM top_level,
-       json_each(json_extract(top_level.sdk_message, '$.message.content')) AS je
-  WHERE json_extract(top_level.sdk_message, '$.type') = 'assistant'
+       json_each(
+         CASE
+           WHEN json_valid(top_level.sdk_message)
+            AND json_extract(top_level.sdk_message, '$.type') = 'assistant'
+           THEN json_extract(top_level.sdk_message, '$.message.content')
+           ELSE '[]'
+         END
+       ) AS je
+  WHERE json_valid(top_level.sdk_message)
+    AND json_extract(top_level.sdk_message, '$.type') = 'assistant'
     AND json_extract(je.value, '$.type') = 'tool_use'
     AND json_extract(je.value, '$.id') IS NOT NULL
 ),

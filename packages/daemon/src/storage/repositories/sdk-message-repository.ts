@@ -585,6 +585,7 @@ export class SDKMessageRepository {
         AND (
           message_type != 'system'
           OR COALESCE(message_subtype, '') != 'informational'
+          OR NOT json_valid(sdk_message)
           OR COALESCE(json_extract(sdk_message, '$.level'), '') != 'info'
         )
         AND (
@@ -631,7 +632,12 @@ export class SDKMessageRepository {
     // type inconsistent across messages.
     const messages: Array<SDKMessage & { timestamp: number }> = [];
     for (const r of rows) {
-      const sdkMessage = JSON.parse(r.sdk_message as string) as SDKMessage;
+      let sdkMessage: SDKMessage;
+      try {
+        sdkMessage = JSON.parse(r.sdk_message as string) as SDKMessage;
+      } catch {
+        sdkMessage = { type: 'unknown', rawContent: r.sdk_message } as unknown as SDKMessage;
+      }
       const timestamp = new Date(r.timestamp as string).getTime();
       const extra: Record<string, unknown> = {
         id: r.id,
@@ -683,7 +689,12 @@ export class SDKMessageRepository {
       const subagentRows = subagentStmt.all(...subagentParams) as Record<string, unknown>[];
 
       subagentMessages = subagentRows.flatMap((r) => {
-        const sdkMessage = JSON.parse(r.sdk_message as string) as SDKMessage;
+        let sdkMessage: SDKMessage;
+        try {
+          sdkMessage = JSON.parse(r.sdk_message as string) as SDKMessage;
+        } catch {
+          sdkMessage = { type: 'unknown', rawContent: r.sdk_message } as unknown as SDKMessage;
+        }
         const timestamp = new Date(r.timestamp as string).getTime();
         // Subagent messages have no DB origin column; explicitly set undefined to strip
         // any SDK-level origin object from the JSON blob (same reasoning as top-level).
