@@ -801,11 +801,34 @@ describe('SubagentBlock', () => {
       expect(container.textContent).toContain('host_exit');
     });
 
-    it('should preserve nested SDK system notices without specialized renderers', () => {
+    it('should hide nested system messages in the centralized HIDDEN set', () => {
       const input = createAgentInput('Explore', 'Find files', 'Search for test files');
       const nestedMessages = [
         createNestedSystemMessage('permission_denied', {
           reason: 'requires approval',
+        }),
+        createNestedSystemMessage('task_started', {
+          description: 'nested task',
+        }),
+      ];
+
+      const { container } = render(
+        <SubagentBlock input={input} toolId="toolu_task123" nestedMessages={nestedMessages} />
+      );
+
+      const button = container.querySelector('button')!;
+      fireEvent.click(button);
+
+      // Hidden subtypes must not surface anywhere in the nested timeline.
+      expect(container.textContent).not.toContain('permission_denied');
+      expect(container.textContent).not.toContain('task_started');
+    });
+
+    it('should preserve nested SDK system notices without specialized renderers', () => {
+      const input = createAgentInput('Explore', 'Find files', 'Search for test files');
+      const nestedMessages = [
+        createNestedSystemMessage('generic_system_event', {
+          detail: 'unrecognized event',
         }),
       ];
 
@@ -817,7 +840,7 @@ describe('SubagentBlock', () => {
       fireEvent.click(button);
 
       expect(container.textContent).toContain('Messages (1)');
-      expect(container.textContent).toContain('System: permission_denied');
+      expect(container.textContent).toContain('System: generic_system_event');
     });
 
     it('should skip user messages with only tool results', () => {
