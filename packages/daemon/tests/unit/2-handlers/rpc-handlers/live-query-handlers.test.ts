@@ -819,8 +819,8 @@ describe('NAMED_QUERY_REGISTRY', () => {
         'msg:sdk-operational-thinking_tokens',
       ]);
       expect(mapped.find((row) => row.id === 'msg:sdk-operational-thinking_tokens')).toMatchObject({
-        title: 'Thinking tokens',
-        summary: '1200 estimated tokens (+50)',
+        title: 'System event',
+        summary: 'system',
       });
       expect(
         mapped.find((row) => row.id === 'msg:sdk-operational-session_state_changed')
@@ -834,6 +834,47 @@ describe('NAMED_QUERY_REGISTRY', () => {
           summary: '2 slash commands available',
         }
       );
+    });
+
+    test('actorMessages.byTask renders api_retry with attempt/delay/status details', () => {
+      const workflowRunId = 'wr-actor-api-retry';
+      const nodeSessionId = 'node-agent-actor-api-retry';
+      const taskId = insertSpaceTask({
+        id: 'actor-api-retry-task',
+        workflowRunId,
+        status: 'in_progress',
+      });
+      insertSession(nodeSessionId, 'worker', '{"status":"processing"}');
+      sessionTaskIds.set(nodeSessionId, taskId);
+      insertSdkMessageAt('sdk-visible', nodeSessionId, now + 1000);
+      insertSdkMessageAt(
+        'sdk-api-retry',
+        nodeSessionId,
+        now + 2000,
+        'system',
+        'consumed',
+        'system',
+        'api_retry',
+        {
+          type: 'system',
+          subtype: 'api_retry',
+          attempt: 2,
+          max_retries: 3,
+          retry_delay_ms: 5000,
+          error_status: 429,
+          error: 'rate_limit',
+        }
+      );
+
+      const entry = NAMED_QUERY_REGISTRY.get('actorMessages.byTask')!;
+      const rows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
+      const mapped = entry.mapRow ? rows.map(entry.mapRow) : rows;
+
+      expect(mapped.map((row) => row.id)).toEqual(['msg:sdk-visible', 'msg:sdk-api-retry']);
+      expect(mapped.find((row) => row.id === 'msg:sdk-api-retry')).toMatchObject({
+        title: 'API retry',
+        summary: expect.stringContaining('delay 5000ms'),
+      });
     });
 
     test('actorMessages.byTask filters SDK-only system rows and projects visible notices', () => {

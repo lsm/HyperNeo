@@ -136,6 +136,11 @@ export function SDKAssistantMessage({
   const toolBlocks = apiMessage.content.filter((block: ContentBlock) => isToolUseBlock(block));
   const thinkingBlocks = apiMessage.content.filter(isThinkingBlock).filter(hasRenderableThinking);
 
+  // Extract the estimated thinking tokens if present (stashed by daemon during thinking phase)
+  const estimatedThinkingTokens = (message as Record<string, unknown>).estimated_thinking_tokens as
+    | number
+    | undefined;
+
   // Get message metadata for E2E tests
   const messageWithTimestamp = message as SDKMessage & { timestamp?: number };
 
@@ -270,7 +275,12 @@ export function SDKAssistantMessage({
 
       {/* Thinking blocks - visible by default with expand/collapse for long content */}
       {thinkingBlocks.map((block: Extract<ContentBlock, { type: 'thinking' }>, idx: number) => (
-        <ThinkingBlock key={`thinking-${idx}`} content={block.thinking} isRunning={!!isRunning} />
+        <ThinkingBlock
+          key={`thinking-${idx}`}
+          content={block.thinking}
+          isRunning={!!isRunning}
+          estimatedTokens={estimatedThinkingTokens}
+        />
       ))}
 
       {/* Text blocks - bubble + actions */}

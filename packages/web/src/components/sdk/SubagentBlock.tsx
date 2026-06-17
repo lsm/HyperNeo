@@ -70,7 +70,7 @@ function shouldUseSDKSystemRenderer(message: Extract<SDKMessage, { type: 'system
   return (
     subtype === 'compact_boundary' ||
     subtype === 'hook_response' ||
-    subtype === 'thinking_tokens' ||
+    subtype === 'api_retry' ||
     subtype === 'session_state_changed' ||
     subtype === 'commands_changed' ||
     subtype === 'informational' ||
@@ -485,6 +485,10 @@ function NestedMessageRenderer({
     const apiMessage = message.message;
     const content = apiMessage.content as ContentBlock[];
 
+    // Extract estimated thinking tokens if present (stamped by daemon handler on SDK wrapper)
+    const estimatedThinkingTokens = (message as { estimated_thinking_tokens?: number })
+      .estimated_thinking_tokens;
+
     const textBlocks = content.filter((block) => isTextBlock(block));
     const toolBlocks = content.filter((block) => isToolUseBlock(block));
     // Filter out Opus 4.7 "omitted" thinking stubs (empty `thinking`
@@ -503,6 +507,7 @@ function NestedMessageRenderer({
           <ThinkingBlock
             key={`thinking-${idx}`}
             content={(block as { thinking: string }).thinking}
+            estimatedTokens={estimatedThinkingTokens}
           />
         ))}
 

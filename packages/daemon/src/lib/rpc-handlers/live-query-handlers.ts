@@ -598,7 +598,7 @@ sdk_rows AS (
       WHEN sm.message_type = 'user' THEN 'Handoff'
       WHEN sm.message_type = 'result' THEN 'Status'
       WHEN sm.message_type = 'assistant' THEN 'Answer'
-      WHEN sm.message_type = 'system' AND sm.message_subtype = 'thinking_tokens' THEN 'Thinking tokens'
+      WHEN sm.message_type = 'system' AND sm.message_subtype = 'api_retry' THEN 'API retry'
       WHEN sm.message_type = 'system' AND sm.message_subtype = 'session_state_changed' THEN 'Session state'
       WHEN sm.message_type = 'system' AND sm.message_subtype = 'commands_changed' THEN 'Commands changed'
       WHEN sm.message_type = 'system' AND sm.message_subtype = 'informational' THEN
@@ -617,16 +617,6 @@ sdk_rows AS (
       WHEN sm.message_type = 'user' AND sm.send_status = 'failed' THEN 'Actor message failed'
       WHEN sm.message_type = 'user' AND sm.origin = 'human' THEN 'Human message delivered'
       WHEN sm.message_type = 'user' THEN 'Actor message delivered'
-      WHEN sm.message_type = 'system' AND sm.message_subtype = 'thinking_tokens' THEN
-        CASE
-          WHEN json_valid(sm.sdk_message) THEN
-            printf(
-              '%s estimated tokens (%+d)',
-              COALESCE(json_extract(sm.sdk_message, '$.estimated_tokens'), 'unknown'),
-              COALESCE(json_extract(sm.sdk_message, '$.estimated_tokens_delta'), 0)
-            )
-          ELSE 'Thinking token update'
-        END
       WHEN sm.message_type = 'system' AND sm.message_subtype = 'session_state_changed' THEN
         CASE
           WHEN json_valid(sm.sdk_message) THEN COALESCE(json_extract(sm.sdk_message, '$.state'), 'changed')
@@ -645,6 +635,23 @@ sdk_rows AS (
         CASE
           WHEN json_valid(sm.sdk_message) THEN COALESCE(json_extract(sm.sdk_message, '$.content'), 'System notice')
           ELSE 'System notice'
+        END
+      WHEN sm.message_type = 'system' AND sm.message_subtype = 'api_retry' THEN
+        CASE
+          WHEN json_valid(sm.sdk_message) THEN
+            printf(
+              'Attempt %d/%d, delay %dms, status %s%s',
+              COALESCE(json_extract(sm.sdk_message, '$.attempt'), 1),
+              COALESCE(json_extract(sm.sdk_message, '$.max_retries'), '?'),
+              COALESCE(json_extract(sm.sdk_message, '$.retry_delay_ms'), 0),
+              COALESCE(json_extract(sm.sdk_message, '$.error_status'), 'unknown'),
+              CASE
+                WHEN json_valid(sm.sdk_message) AND json_extract(sm.sdk_message, '$.error') IS NOT NULL THEN
+                  printf(': %s', SUBSTR(json_extract(sm.sdk_message, '$.error'), 1, 50))
+                ELSE ''
+              END
+            )
+          ELSE 'API retry'
         END
       ELSE sm.message_type
     END AS summary,
@@ -2222,6 +2229,7 @@ WITH top_level AS (
   WHERE session_id = ?1
     AND parent_tool_use_id IS NULL
     AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))
+    AND COALESCE(message_subtype,'') != 'thinking_tokens'
     AND (
       message_type != 'system'
       OR COALESCE(message_subtype, '') != 'informational'
@@ -2277,6 +2285,7 @@ subagent AS (
   FROM sdk_messages sm
   WHERE sm.session_id = ?1
     AND sm.parent_tool_use_id IN (SELECT id FROM tool_use_ids)
+    AND COALESCE(sm.message_subtype,'') != 'thinking_tokens'
     AND (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
 )
 SELECT

@@ -317,6 +317,32 @@ describe('ContextFetcher.toContextInfo', () => {
     expect(info.totalCapacity).toBe(200000);
   });
 
+  it('normalizes double [1m] suffix and uses 1M capacity from metadata', () => {
+    // Regression test for glm-5.2[1m][1m] causing 1M → 200K fallback.
+    // The double suffix is normalized to glm-5.2[1m], which matches metadata
+    // and returns 1M capacity instead of falling back to 200K.
+    const response = baseResponse({
+      totalTokens: 10000,
+      maxTokens: 1_000_000,
+      rawMaxTokens: 1_000_000,
+      percentage: 1,
+      model: 'glm-5.2[1m][1m]', // Double suffix from accumulated routing
+      categories: [{ name: 'Messages', tokens: 10000, color: 'blue' }],
+    });
+
+    const info = ContextFetcher.toContextInfo(response, {
+      id: 'glm-5.2[1m]',
+      provider: 'glm',
+      preferContextWindowMetadata: true,
+      contextWindow: 1_000_000,
+    });
+
+    // Normalized model ID should be glm-5.2[1m] (single suffix)
+    expect(info.model).toBe('glm-5.2[1m]');
+    // Should use 1M capacity from metadata, not 200K fallback
+    expect(info.totalCapacity).toBe(1_000_000);
+  });
+
   it('uses Codex model metadata when SDK reports the generic 200k capacity', () => {
     const response = baseResponse({
       totalTokens: 136000,

@@ -237,7 +237,9 @@ export class GlmProvider implements Provider {
     const normalisedModelId = modelId.toLowerCase();
 
     // If modelId is not a GLM model ID (e.g. 'default'), fall back to glm-5-turbo.
-    const baseModelId = normalisedModelId.replace(/\[1m\]$/, '');
+    // Strip ALL trailing [1m] suffixes (e.g. 'glm-5.2[1m][1m]' → 'glm-5.2')
+    // to prevent double-suffix regressions from accumulating.
+    const baseModelId = normalisedModelId.replace(/(\[1m\])+$/, '');
     const routingModelId =
       baseModelId === 'glm-5.2'
         ? 'glm-5.2[1m]'
