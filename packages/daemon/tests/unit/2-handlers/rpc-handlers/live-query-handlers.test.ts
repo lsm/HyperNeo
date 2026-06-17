@@ -819,8 +819,8 @@ describe('NAMED_QUERY_REGISTRY', () => {
         'msg:sdk-operational-thinking_tokens',
       ]);
       expect(mapped.find((row) => row.id === 'msg:sdk-operational-thinking_tokens')).toMatchObject({
-        title: 'Thinking tokens',
-        summary: '1200 estimated tokens (+50)',
+        title: 'System event',
+        summary: 'system',
       });
       expect(
         mapped.find((row) => row.id === 'msg:sdk-operational-session_state_changed')

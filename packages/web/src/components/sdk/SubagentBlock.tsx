@@ -70,7 +70,7 @@ function shouldUseSDKSystemRenderer(message: Extract<SDKMessage, { type: 'system
   return (
     subtype === 'compact_boundary' ||
     subtype === 'hook_response' ||
-    subtype === 'thinking_tokens' ||
+    subtype === 'api_retry' ||
     subtype === 'session_state_changed' ||
     subtype === 'commands_changed' ||
     subtype === 'informational' ||

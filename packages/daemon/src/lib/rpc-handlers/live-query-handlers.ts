@@ -598,7 +598,6 @@ sdk_rows AS (
       WHEN sm.message_type = 'user' THEN 'Handoff'
       WHEN sm.message_type = 'result' THEN 'Status'
       WHEN sm.message_type = 'assistant' THEN 'Answer'
-      WHEN sm.message_type = 'system' AND sm.message_subtype = 'thinking_tokens' THEN 'Thinking tokens'
       WHEN sm.message_type = 'system' AND sm.message_subtype = 'session_state_changed' THEN 'Session state'
       WHEN sm.message_type = 'system' AND sm.message_subtype = 'commands_changed' THEN 'Commands changed'
       WHEN sm.message_type = 'system' AND sm.message_subtype = 'informational' THEN
@@ -617,16 +616,6 @@ sdk_rows AS (
       WHEN sm.message_type = 'user' AND sm.send_status = 'failed' THEN 'Actor message failed'
       WHEN sm.message_type = 'user' AND sm.origin = 'human' THEN 'Human message delivered'
       WHEN sm.message_type = 'user' THEN 'Actor message delivered'
-      WHEN sm.message_type = 'system' AND sm.message_subtype = 'thinking_tokens' THEN
-        CASE
-          WHEN json_valid(sm.sdk_message) THEN
-            printf(
-              '%s estimated tokens (%+d)',
-              COALESCE(json_extract(sm.sdk_message, '$.estimated_tokens'), 'unknown'),
-              COALESCE(json_extract(sm.sdk_message, '$.estimated_tokens_delta'), 0)
-            )
-          ELSE 'Thinking token update'
-        END
       WHEN sm.message_type = 'system' AND sm.message_subtype = 'session_state_changed' THEN
         CASE
           WHEN json_valid(sm.sdk_message) THEN COALESCE(json_extract(sm.sdk_message, '$.state'), 'changed')
