@@ -379,6 +379,41 @@ describe('SDKMessageRepository', () => {
       ]);
     });
 
+    it('does not let hidden newer rows consume the requested limit', () => {
+      repository.saveSDKMessage('session-1', createUserMessage('Visible oldest', 'visible-oldest'));
+      repository.saveSDKMessage('session-1', createUserMessage('Visible older', 'visible-older'));
+      repository.saveSDKMessage(
+        'session-1',
+        createUserMessage('Retracted newer', 'retracted-newer')
+      );
+      repository.saveSDKMessage(
+        'session-1',
+        createUserMessage('Superseded newest', 'superseded-newest')
+      );
+      repository.saveSDKMessage('session-1', {
+        type: 'system',
+        subtype: 'model_refusal_fallback',
+        retracted_message_uuids: ['retracted-newer'],
+        uuid: 'fallback-notice',
+        session_id: 'session-1',
+      } as unknown as SDKMessage);
+      repository.saveSDKMessage('session-1', {
+        type: 'assistant',
+        uuid: 'replacement-message',
+        supersedes: ['superseded-newest'],
+        message: { role: 'assistant', content: [{ type: 'text', text: 'replacement' }] },
+      } as unknown as SDKMessage);
+
+      const { messages } = repository.getSDKMessages('session-1', 4);
+
+      expect(messages.map((message) => (message as { uuid?: string }).uuid).sort()).toEqual([
+        'fallback-notice',
+        'replacement-message',
+        'visible-older',
+        'visible-oldest',
+      ]);
+    });
+
     it('should return messages before a timestamp (cursor pagination)', async () => {
       repository.saveSDKMessage('session-1', createUserMessage('First'));
       await new Promise((r) => setTimeout(r, 10));
@@ -631,6 +666,29 @@ describe('SDKMessageRepository', () => {
       const messages = repository.getSDKMessagesByType('session-1', 'nonexistent');
 
       expect(messages).toEqual([]);
+    });
+  });
+
+  describe('getLatestSystemInitTimestamp', () => {
+    it('returns the latest system init timestamp without loading the full transcript', async () => {
+      repository.saveSDKMessage('session-1', {
+        type: 'system',
+        subtype: 'init',
+        uuid: 'init-1',
+        session_id: 'session-1',
+      } as unknown as SDKMessage);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      const beforeLatest = Date.now();
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      repository.saveSDKMessage('session-1', {
+        type: 'system',
+        subtype: 'init',
+        uuid: 'init-2',
+        session_id: 'session-1',
+      } as unknown as SDKMessage);
+
+      expect(repository.getLatestSystemInitTimestamp('session-1')).toBeGreaterThan(beforeLatest);
+      expect(repository.getLatestSystemInitTimestamp('missing-session')).toBe(0);
     });
   });
 

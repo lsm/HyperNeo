@@ -299,6 +299,50 @@ export class SDKMessageRepository {
     ].filter((uuid): uuid is string => typeof uuid === 'string' && uuid.length > 0);
   }
 
+  private getHiddenMessageUuids(sessionId: string): Set<string> {
+    const rows = this.db
+      .prepare(
+        `SELECT sdk_message FROM sdk_messages
+         WHERE session_id = ?
+           AND (
+             sdk_message LIKE '%"supersedes"%'
+             OR sdk_message LIKE '%"retracted_message_uuids"%'
+           )`
+      )
+      .all(sessionId) as Array<{ sdk_message: string }>;
+    const hidden = new Set<string>();
+    for (const row of rows) {
+      let parsed: SDKMessage;
+      try {
+        parsed = JSON.parse(row.sdk_message) as SDKMessage;
+      } catch {
+        continue;
+      }
+      const message = parsed as SDKMessage & {
+        message?: { subtype?: unknown };
+        supersedes?: unknown;
+        retracted_message_uuids?: unknown;
+      };
+      if (Array.isArray(message.supersedes)) {
+        for (const uuid of message.supersedes) {
+          if (typeof uuid === 'string' && uuid.length > 0) hidden.add(uuid);
+        }
+      }
+      const subtype =
+        typeof (message as { subtype?: unknown }).subtype === 'string'
+          ? (message as { subtype?: string }).subtype
+          : typeof message.message?.subtype === 'string'
+            ? message.message.subtype
+            : null;
+      if (subtype === 'model_refusal_fallback' && Array.isArray(message.retracted_message_uuids)) {
+        for (const uuid of message.retracted_message_uuids) {
+          if (typeof uuid === 'string' && uuid.length > 0) hidden.add(uuid);
+        }
+      }
+    }
+    return hidden;
+  }
+
   private deleteSupersededMessageSearchRows(sessionId: string, message: SDKMessage): void {
     if (!this.hasMessageSearchIndex()) return;
     const supersededUuids = this.getSupersededMessageUuids(message);
@@ -578,27 +622,11 @@ export class SDKMessageRepository {
   } {
     // Step 1: Get top-level messages (excluding subagent messages)
     // Show user messages that were consumed to SDK, plus any that failed to deliver.
+    const hiddenMessageUuids = this.getHiddenMessageUuids(sessionId);
     let query = `SELECT id, sdk_message, timestamp, send_status, origin FROM sdk_messages
       WHERE session_id = ?
         AND parent_tool_use_id IS NULL
         AND COALESCE(message_subtype, '') NOT IN ('thinking_tokens', 'session_state_changed', 'commands_changed')
-        AND NOT EXISTS (
-          SELECT 1
-          FROM sdk_messages ref,
-               json_each(ref.sdk_message, '$.retracted_message_uuids') retracted
-          WHERE ref.session_id = sdk_messages.session_id
-            AND json_valid(ref.sdk_message)
-            AND ref.message_subtype = 'model_refusal_fallback'
-            AND retracted.value = COALESCE(CASE WHEN json_valid(sdk_messages.sdk_message) THEN json_extract(sdk_messages.sdk_message, '$.uuid') END, sdk_messages.id)
-        )
-        AND NOT EXISTS (
-          SELECT 1
-          FROM sdk_messages ref,
-               json_each(ref.sdk_message, '$.supersedes') superseded
-          WHERE ref.session_id = sdk_messages.session_id
-            AND json_valid(ref.sdk_message)
-            AND superseded.value = COALESCE(CASE WHEN json_valid(sdk_messages.sdk_message) THEN json_extract(sdk_messages.sdk_message, '$.uuid') END, sdk_messages.id)
-        )
         AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))`;
     const params: SQLiteValue[] = [sessionId];
 
@@ -616,7 +644,7 @@ export class SDKMessageRepository {
 
     // Order DESC to get newest messages first, then reverse for chronological display
     query += ` ORDER BY timestamp DESC LIMIT ?`;
-    params.push(limit);
+    params.push(limit + hiddenMessageUuids.size);
 
     const stmt = this.db.prepare(query);
     const rows = stmt.all(...params) as Record<string, unknown>[];
@@ -627,8 +655,12 @@ export class SDKMessageRepository {
     // spread result. Without this, messages whose DB origin column is null would carry an
     // SDKMessageOrigin object instead of a NeoKai MessageOrigin string, making the field's
     // type inconsistent across messages.
-    const messages = rows.map((r) => {
+    const messages: Array<SDKMessage & { timestamp: number }> = [];
+    for (const r of rows) {
       const sdkMessage = JSON.parse(r.sdk_message as string) as SDKMessage;
+      const uuid = (sdkMessage as { uuid?: unknown }).uuid;
+      const messageKey = typeof uuid === 'string' && uuid.length > 0 ? uuid : (r.id as string);
+      if (hiddenMessageUuids.has(messageKey)) continue;
       const timestamp = new Date(r.timestamp as string).getTime();
       const extra: Record<string, unknown> = {
         id: r.id,
@@ -639,8 +671,9 @@ export class SDKMessageRepository {
       if (r.send_status === 'failed') {
         extra.sendStatus = 'failed';
       }
-      return { ...sdkMessage, ...extra } as SDKMessage & { timestamp: number };
-    });
+      messages.push({ ...sdkMessage, ...extra } as SDKMessage & { timestamp: number });
+      if (messages.length >= limit) break;
+    }
 
     // Reverse to get chronological order (oldest to newest) for display
     const topLevelMessages = messages.reverse();
@@ -672,23 +705,6 @@ export class SDKMessageRepository {
        WHERE session_id = ?
          AND parent_tool_use_id IN (${placeholders})
          AND COALESCE(message_subtype, '') NOT IN ('thinking_tokens', 'session_state_changed', 'commands_changed')
-         AND NOT EXISTS (
-           SELECT 1
-           FROM sdk_messages ref,
-                json_each(ref.sdk_message, '$.retracted_message_uuids') retracted
-           WHERE ref.session_id = sdk_messages.session_id
-             AND json_valid(ref.sdk_message)
-             AND ref.message_subtype = 'model_refusal_fallback'
-             AND retracted.value = COALESCE(CASE WHEN json_valid(sdk_messages.sdk_message) THEN json_extract(sdk_messages.sdk_message, '$.uuid') END, sdk_messages.id)
-         )
-         AND NOT EXISTS (
-           SELECT 1
-           FROM sdk_messages ref,
-                json_each(ref.sdk_message, '$.supersedes') superseded
-           WHERE ref.session_id = sdk_messages.session_id
-             AND json_valid(ref.sdk_message)
-             AND superseded.value = COALESCE(CASE WHEN json_valid(sdk_messages.sdk_message) THEN json_extract(sdk_messages.sdk_message, '$.uuid') END, sdk_messages.id)
-         )
          AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))
         ORDER BY timestamp ASC`;
       const subagentParams: SQLiteValue[] = [sessionId, ...Array.from(toolUseIds)];
@@ -696,19 +712,24 @@ export class SDKMessageRepository {
       const subagentStmt = this.db.prepare(subagentQuery);
       const subagentRows = subagentStmt.all(...subagentParams) as Record<string, unknown>[];
 
-      subagentMessages = subagentRows.map((r) => {
+      subagentMessages = subagentRows.flatMap((r) => {
         const sdkMessage = JSON.parse(r.sdk_message as string) as SDKMessage;
+        const uuid = (sdkMessage as { uuid?: unknown }).uuid;
+        const messageKey = typeof uuid === 'string' && uuid.length > 0 ? uuid : (r.id as string);
+        if (hiddenMessageUuids.has(messageKey)) return [];
         const timestamp = new Date(r.timestamp as string).getTime();
         // Subagent messages have no DB origin column; explicitly set undefined to strip
         // any SDK-level origin object from the JSON blob (same reasoning as top-level).
-        return {
-          ...sdkMessage,
-          id: r.id,
-          timestamp,
-          origin: undefined,
-        } as unknown as SDKMessage & {
-          timestamp: number;
-        };
+        return [
+          {
+            ...sdkMessage,
+            id: r.id,
+            timestamp,
+            origin: undefined,
+          } as unknown as SDKMessage & {
+            timestamp: number;
+          },
+        ];
       });
     }
 
@@ -749,6 +770,20 @@ export class SDKMessageRepository {
     const rows = stmt.all(...params) as Record<string, unknown>[];
 
     return rows.map((r) => JSON.parse(r.sdk_message as string) as SDKMessage);
+  }
+
+  getLatestSystemInitTimestamp(sessionId: string): number {
+    const row = this.db
+      .prepare(
+        `SELECT timestamp FROM sdk_messages
+         WHERE session_id = ?
+           AND message_type = 'system'
+           AND message_subtype = 'init'
+         ORDER BY timestamp DESC
+         LIMIT 1`
+      )
+      .get(sessionId) as { timestamp: string } | undefined;
+    return row ? new Date(row.timestamp).getTime() : 0;
   }
 
   /**
