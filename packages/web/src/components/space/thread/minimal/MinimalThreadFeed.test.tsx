@@ -132,6 +132,20 @@ function compactBoundaryMessage(
   };
 }
 
+function operationalSystemMessage(
+  uuid: string,
+  subtype: 'thinking_tokens' | 'session_state_changed' | 'commands_changed',
+  fields: Record<string, unknown>
+) {
+  return {
+    type: 'system',
+    subtype,
+    uuid,
+    session_id: 'test-session',
+    ...fields,
+  };
+}
+
 function systemInitMessage(uuid: string) {
   // Minimal `system:init` envelope. ResultInfoDropdown / MessageInfoDropdown
   // only require the discriminator fields to render the affordance trigger;
@@ -227,6 +241,48 @@ describe('MinimalThreadFeed', () => {
     expect(compactBoundary.textContent).toContain('saved 101,000');
     expect(screen.getByText('before compaction')).not.toBeNull();
     expect(screen.getByText('after compaction')).not.toBeNull();
+  });
+
+  it('renders operational system rows in compact task feeds', () => {
+    const baseTime = new Date('2026-04-25T18:00:00Z').getTime();
+    const rows = [
+      makeRow({
+        id: 'thinking',
+        label: 'Coder Agent',
+        createdAt: baseTime,
+        message: operationalSystemMessage('thinking-uuid', 'thinking_tokens', {
+          estimated_tokens: 1250,
+          estimated_tokens_delta: 25,
+        }),
+      }),
+      makeRow({
+        id: 'state',
+        label: 'Coder Agent',
+        createdAt: baseTime + 1000,
+        message: operationalSystemMessage('state-uuid', 'session_state_changed', {
+          state: 'running',
+        }),
+      }),
+      makeRow({
+        id: 'commands',
+        label: 'Coder Agent',
+        createdAt: baseTime + 2000,
+        message: operationalSystemMessage('commands-uuid', 'commands_changed', {
+          commands: [{ name: 'review' }, { name: 'test' }],
+        }),
+      }),
+    ];
+
+    render(<MinimalThreadFeed parsedRows={rows} />);
+
+    const systemRows = screen.getAllByTestId('minimal-thread-system');
+    expect(systemRows).toHaveLength(3);
+    expect(systemRows[0].textContent).toContain('Thinking tokens');
+    expect(systemRows[0].textContent).toContain('1,250 estimated tokens (+25)');
+    expect(systemRows[1].textContent).toContain('Session state');
+    expect(systemRows[1].textContent).toContain('running');
+    expect(systemRows[2].textContent).toContain('Commands changed');
+    expect(systemRows[2].textContent).toContain('2 slash commands available');
   });
 
   it('renders one turn row per agent block with name and clock', () => {

@@ -299,6 +299,110 @@ describe('messages.bySession — SQL behavior', () => {
     expect(rows.map((r) => r.id)).toEqual(['row-superseded', 'replacement']);
   });
 
+  test('filters info-level informational rows before applying the top-level limit', () => {
+    insertSdkMessage(db, {
+      id: 'older-visible',
+      sessionId: 's1',
+      messageType: 'assistant',
+      sdkMessage: { type: 'assistant', uuid: 'older-visible-uuid', message: { content: [] } },
+      timestamp: '2024-01-01 00:00:01',
+    });
+    insertSdkMessage(db, {
+      id: 'hidden-info',
+      sessionId: 's1',
+      messageType: 'system',
+      messageSubtype: 'informational',
+      sdkMessage: {
+        type: 'system',
+        subtype: 'informational',
+        uuid: 'hidden-info-uuid',
+        session_id: 's1',
+        level: 'info',
+        content: 'transcript-only',
+      },
+      timestamp: '2024-01-01 00:00:02',
+    });
+    insertSdkMessage(db, {
+      id: 'visible-notice',
+      sessionId: 's1',
+      messageType: 'system',
+      messageSubtype: 'informational',
+      sdkMessage: {
+        type: 'system',
+        subtype: 'informational',
+        uuid: 'visible-notice-uuid',
+        session_id: 's1',
+        level: 'notice',
+        content: 'visible notice',
+      },
+      timestamp: '2024-01-01 00:00:03',
+    });
+
+    const rows = query(db, 's1', 2);
+    expect(rows.map((r) => r.id)).toEqual(['older-visible', 'visible-notice']);
+  });
+
+  test('filters stale worker shutdown rows before applying the top-level limit', () => {
+    insertSdkMessage(db, {
+      id: 'older-visible',
+      sessionId: 's1',
+      messageType: 'assistant',
+      sdkMessage: { type: 'assistant', uuid: 'older-visible-uuid', message: { content: [] } },
+      timestamp: '2024-01-01 00:00:01',
+    });
+    insertSdkMessage(db, {
+      id: 'stale-shutdown',
+      sessionId: 's1',
+      messageType: 'system',
+      messageSubtype: 'worker_shutting_down',
+      sdkMessage: {
+        type: 'system',
+        subtype: 'worker_shutting_down',
+        uuid: 'stale-shutdown-uuid',
+        session_id: 's1',
+        reason: 'host_exit',
+      },
+      timestamp: '2024-01-01 00:00:02',
+    });
+    insertSdkMessage(db, {
+      id: 'newer-visible',
+      sessionId: 's1',
+      messageType: 'assistant',
+      sdkMessage: { type: 'assistant', uuid: 'newer-visible-uuid', message: { content: [] } },
+      timestamp: '2024-01-01 00:00:03',
+    });
+
+    const rows = query(db, 's1', 2);
+    expect(rows.map((r) => r.id)).toEqual(['older-visible', 'newer-visible']);
+  });
+
+  test('keeps worker shutdown rows when they are the top-level live tail', () => {
+    insertSdkMessage(db, {
+      id: 'visible',
+      sessionId: 's1',
+      messageType: 'assistant',
+      sdkMessage: { type: 'assistant', uuid: 'visible-uuid', message: { content: [] } },
+      timestamp: '2024-01-01 00:00:01',
+    });
+    insertSdkMessage(db, {
+      id: 'tail-shutdown',
+      sessionId: 's1',
+      messageType: 'system',
+      messageSubtype: 'worker_shutting_down',
+      sdkMessage: {
+        type: 'system',
+        subtype: 'worker_shutting_down',
+        uuid: 'tail-shutdown-uuid',
+        session_id: 's1',
+        reason: 'host_exit',
+      },
+      timestamp: '2024-01-01 00:00:02',
+    });
+
+    const rows = query(db, 's1', 2);
+    expect(rows.map((r) => r.id)).toEqual(['visible', 'tail-shutdown']);
+  });
+
   test('ignores malformed JSON rows while scanning retractions and supersedes', () => {
     insertSdkMessage(db, {
       id: 'malformed-ref',

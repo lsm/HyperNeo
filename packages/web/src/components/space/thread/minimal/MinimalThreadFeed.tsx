@@ -223,6 +223,21 @@ interface CompactBoundaryFeedTurn {
   highlightMessageUuid?: string;
 }
 
+interface SystemFeedTurn {
+  state: 'system';
+  id: string;
+  agent: string;
+  agentKind: 'task_agent' | 'node_agent';
+  agentRole: string;
+  agentNodeExecutionId?: string | null;
+  createdAt: number;
+  title: string;
+  body: string;
+  sessionId: string | null;
+  highlightMessageUuid?: string;
+  replacementStatus?: MessageReplacementStatus;
+}
+
 interface MessageFeedTurn {
   state: 'message';
   id: string;
@@ -259,7 +274,12 @@ interface MessageFeedTurn {
   sessionInit?: SystemInitMessage;
 }
 
-type FeedTurn = CompletedFeedTurn | ActiveFeedTurn | CompactBoundaryFeedTurn | MessageFeedTurn;
+type FeedTurn =
+  | CompletedFeedTurn
+  | ActiveFeedTurn
+  | CompactBoundaryFeedTurn
+  | SystemFeedTurn
+  | MessageFeedTurn;
 
 const ROSTER_MAX_ENTRIES = 8;
 
@@ -692,6 +712,78 @@ function buildCompactBoundaryTurn(row: ParsedThreadRow): CompactBoundaryFeedTurn
   };
 }
 
+function buildOperationalSystemTurn(row: ParsedThreadRow): SystemFeedTurn | null {
+  const message = row.message;
+  if (!message || message.type !== 'system') return null;
+  const subtype = (message as { subtype?: string }).subtype;
+  const highlightUuid =
+    typeof (message as { uuid?: unknown }).uuid === 'string'
+      ? ((message as { uuid: string }).uuid as string)
+      : undefined;
+
+  if (subtype === 'thinking_tokens') {
+    const estimatedTokens = (message as { estimated_tokens?: unknown }).estimated_tokens;
+    const delta = (message as { estimated_tokens_delta?: unknown }).estimated_tokens_delta;
+    const tokenText =
+      typeof estimatedTokens === 'number' ? estimatedTokens.toLocaleString() : 'unknown';
+    const deltaText =
+      typeof delta === 'number' ? ` (${delta >= 0 ? '+' : ''}${delta.toLocaleString()})` : '';
+    return {
+      state: 'system',
+      id: `system-${String(row.id)}`,
+      agent: row.label,
+      agentKind: row.kind,
+      agentRole: row.role,
+      agentNodeExecutionId: row.nodeExecutionId ?? null,
+      createdAt: row.createdAt,
+      title: 'Thinking tokens',
+      body: `${tokenText} estimated tokens${deltaText}`,
+      sessionId: row.sessionId,
+      highlightMessageUuid: highlightUuid,
+      replacementStatus: row.replacementStatus,
+    };
+  }
+
+  if (subtype === 'session_state_changed') {
+    const state = (message as { state?: unknown }).state;
+    return {
+      state: 'system',
+      id: `system-${String(row.id)}`,
+      agent: row.label,
+      agentKind: row.kind,
+      agentRole: row.role,
+      agentNodeExecutionId: row.nodeExecutionId ?? null,
+      createdAt: row.createdAt,
+      title: 'Session state',
+      body: typeof state === 'string' ? state : 'changed',
+      sessionId: row.sessionId,
+      highlightMessageUuid: highlightUuid,
+      replacementStatus: row.replacementStatus,
+    };
+  }
+
+  if (subtype === 'commands_changed') {
+    const commands = (message as { commands?: unknown }).commands;
+    const count = Array.isArray(commands) ? commands.length : 0;
+    return {
+      state: 'system',
+      id: `system-${String(row.id)}`,
+      agent: row.label,
+      agentKind: row.kind,
+      agentRole: row.role,
+      agentNodeExecutionId: row.nodeExecutionId ?? null,
+      createdAt: row.createdAt,
+      title: 'Commands changed',
+      body: `${count.toLocaleString()} slash commands available`,
+      sessionId: row.sessionId,
+      highlightMessageUuid: highlightUuid,
+      replacementStatus: row.replacementStatus,
+    };
+  }
+
+  return null;
+}
+
 function buildMessageTurn(
   row: ParsedThreadRow,
   previousAgentLabel: string | null,
@@ -835,6 +927,12 @@ function buildFeedTurns(
       if (compactBoundaryTurn) {
         flushAgent();
         turns.push(compactBoundaryTurn);
+        continue;
+      }
+      const operationalSystemTurn = buildOperationalSystemTurn(row);
+      if (operationalSystemTurn) {
+        flushAgent();
+        turns.push(operationalSystemTurn);
         continue;
       }
       if (isUserRow(row)) {
@@ -1415,6 +1513,62 @@ function CompactBoundaryTurn({
   );
 }
 
+function SystemTurn({ turn, overlayTaskId }: { turn: SystemFeedTurn; overlayTaskId?: string }) {
+  const color = getAgentColor(turn.agent);
+  const openSession = turn.sessionId
+    ? () => {
+        if (overlayTaskId && turn.agentKind === 'node_agent') {
+          pushOverlayHistory(turn.sessionId as string, turn.agent, turn.highlightMessageUuid, {
+            taskId: overlayTaskId,
+            agentName: turn.agentRole,
+            ...(turn.agentNodeExecutionId ? { nodeExecutionId: turn.agentNodeExecutionId } : {}),
+          });
+        } else {
+          pushOverlayHistory(turn.sessionId as string, turn.agent, turn.highlightMessageUuid);
+        }
+      }
+    : undefined;
+  const card = (
+    <div class="w-fit max-w-full rounded-lg border border-slate-700 bg-slate-900/40 px-3 py-2 text-slate-200">
+      <ReplacementBadge status={turn.replacementStatus} />
+      <div class="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+        <span class="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+          {turn.title}
+        </span>
+        <span class="text-[11px] text-slate-500" style={{ color }}>
+          {shortAgentName(turn.agent)}
+        </span>
+        <span class="text-[11px] text-slate-500">{formatClock(turn.createdAt)}</span>
+      </div>
+      <div class="mt-1 text-xs text-slate-200">{turn.body}</div>
+    </div>
+  );
+
+  return (
+    <div
+      data-testid="minimal-thread-turn"
+      data-turn-state="system"
+      data-agent-label={turn.agent}
+      data-agent-color={color}
+    >
+      {openSession ? (
+        <button
+          type="button"
+          class="rounded-lg text-left transition-colors hover:bg-slate-800/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400/60"
+          onClick={openSession}
+          title="Open session"
+          aria-label={`Open ${turn.agent} session at ${turn.title}`}
+          data-testid="minimal-thread-system"
+        >
+          {card}
+        </button>
+      ) : (
+        <div data-testid="minimal-thread-system">{card}</div>
+      )}
+    </div>
+  );
+}
+
 function SyntheticMessageTurn({
   turn,
   overlayTaskId,
@@ -1499,6 +1653,9 @@ function SyntheticMessageTurn({
 function MinimalTurnRow({ turn, overlayTaskId }: { turn: FeedTurn; overlayTaskId?: string }) {
   if (turn.state === 'compact_boundary') {
     return <CompactBoundaryTurn turn={turn} overlayTaskId={overlayTaskId} />;
+  }
+  if (turn.state === 'system') {
+    return <SystemTurn turn={turn} overlayTaskId={overlayTaskId} />;
   }
   if (turn.state === 'message') {
     return turn.isSynthetic ? (

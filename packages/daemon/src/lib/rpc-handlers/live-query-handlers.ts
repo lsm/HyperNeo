@@ -2076,6 +2076,26 @@ WITH top_level AS (
   WHERE session_id = ?1
     AND parent_tool_use_id IS NULL
     AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))
+    AND (
+      message_type != 'system'
+      OR COALESCE(message_subtype, '') != 'informational'
+      OR COALESCE(json_extract(sdk_message, '$.level'), '') != 'info'
+    )
+    AND (
+      message_type != 'system'
+      OR COALESCE(message_subtype, '') != 'worker_shutting_down'
+      OR NOT EXISTS (
+        SELECT 1
+        FROM sdk_messages newer
+        WHERE newer.session_id = sdk_messages.session_id
+          AND newer.parent_tool_use_id IS NULL
+          AND (
+            newer.timestamp > sdk_messages.timestamp
+            OR (newer.timestamp = sdk_messages.timestamp AND newer.id > sdk_messages.id)
+          )
+          AND (newer.message_type != 'user' OR COALESCE(newer.send_status, 'consumed') IN ('consumed', 'failed'))
+      )
+    )
   ORDER BY timestamp DESC, id DESC
   LIMIT ?2
 ),

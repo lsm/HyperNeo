@@ -581,7 +581,27 @@ export class SDKMessageRepository {
     let query = `SELECT id, sdk_message, timestamp, send_status, origin FROM sdk_messages
       WHERE session_id = ?
         AND parent_tool_use_id IS NULL
-        AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))`;
+        AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))
+        AND (
+          message_type != 'system'
+          OR COALESCE(message_subtype, '') != 'informational'
+          OR COALESCE(json_extract(sdk_message, '$.level'), '') != 'info'
+        )
+        AND (
+          message_type != 'system'
+          OR COALESCE(message_subtype, '') != 'worker_shutting_down'
+          OR NOT EXISTS (
+            SELECT 1
+            FROM sdk_messages newer
+            WHERE newer.session_id = sdk_messages.session_id
+              AND newer.parent_tool_use_id IS NULL
+              AND (
+                newer.timestamp > sdk_messages.timestamp
+                OR (newer.timestamp = sdk_messages.timestamp AND newer.id > sdk_messages.id)
+              )
+              AND (newer.message_type != 'user' OR COALESCE(newer.send_status, 'consumed') IN ('consumed', 'failed'))
+          )
+        )`;
     const params: SQLiteValue[] = [sessionId];
 
     // Cursor-based pagination: get messages BEFORE a timestamp (for loading older)
