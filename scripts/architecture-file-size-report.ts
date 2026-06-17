@@ -152,7 +152,7 @@ function formatTable(rows: string[][]): string {
 const { configPath, changedFrom, json } = parseArgs();
 const config = loadConfig(configPath);
 const baseConfig = changedFrom ? loadConfigFromGitRef(changedFrom, configPath) : null;
-const enforcementConfig = baseConfig ?? config;
+const thresholdConfig = baseConfig ?? config;
 const baselineConfigSource = baseConfig
   ? `${changedFrom}:${configPath}`
   : changedFrom
@@ -167,16 +167,27 @@ const changedPathInfo = changedFrom
   : new Map<string, ChangedPathInfo>();
 const scannedFiles = changedPaths ? files.filter((file) => changedPaths.has(file.path)) : files;
 const oversized = scannedFiles
-  .filter((file) => file.lines > enforcementConfig.hardLineCount)
+  .filter((file) => file.lines > thresholdConfig.hardLineCount)
   .sort((a, b) => b.lines - a.lines || a.path.localeCompare(b.path));
-const overTarget = scannedFiles.filter((file) => file.lines > enforcementConfig.targetLineCount);
+const overTarget = scannedFiles.filter((file) => file.lines > thresholdConfig.targetLineCount);
 
-function getBaselineEntry(filePath: string): AllowlistEntry | undefined {
+function getAllowlistEntry(
+  configSource: RatchetConfig,
+  filePath: string
+): AllowlistEntry | undefined {
   const changedInfo = changedPathInfo.get(filePath);
   if (changedInfo?.previousPath && changedInfo.status.startsWith('R')) {
-    return enforcementConfig.allowlist[changedInfo.previousPath];
+    return configSource.allowlist[changedInfo.previousPath];
   }
-  return enforcementConfig.allowlist[filePath];
+  return configSource.allowlist[filePath];
+}
+
+function getBaselineEntry(filePath: string): AllowlistEntry | undefined {
+  const currentEntry = getAllowlistEntry(config, filePath);
+  const baseEntry = baseConfig ? getAllowlistEntry(baseConfig, filePath) : undefined;
+  if (!currentEntry) return baseEntry;
+  if (!baseEntry) return currentEntry;
+  return currentEntry.maxLines <= baseEntry.maxLines ? currentEntry : baseEntry;
 }
 
 function toReportFile(file: SourceFile): ReportFile {

@@ -484,6 +484,7 @@ CREATE TABLE command_receipts (
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
   completed_at INTEGER,
+  CHECK(receipt_scope IN ('actor+subject', 'subject', 'global')),
   UNIQUE(command_name, receipt_scope, receipt_key)
 );
 
