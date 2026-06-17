@@ -768,11 +768,8 @@ function seedHistoricalMigrationMarkers(db: BunDatabase): void {
     'm157_archive_terminal_space_task_worker_sessions'
   );
   const hasBaselineSchema = hasCurrentBaselineSchema(db);
-  const currentThrough = alreadyRanMigration157 && hasBaselineSchema
-    ? 157
-    : hasBaselineSchema
-      ? 156
-      : 0;
+  const currentThrough =
+    alreadyRanMigration157 && hasBaselineSchema ? 157 : hasBaselineSchema ? 156 : 0;
 
   if (currentThrough === 0) return;
 
