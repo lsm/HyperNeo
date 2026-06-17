@@ -483,6 +483,22 @@ describe('SDKSystemMessage', () => {
       expect(container.textContent).toContain('Continuation stopped');
     });
 
+    it('should suppress info-level informational messages in normal chat', () => {
+      const message = {
+        type: 'system',
+        subtype: 'informational',
+        content: 'Internal transcript note',
+        level: 'info',
+        uuid: createUUID(),
+        session_id: 'test-session',
+      } as Extract<SDKMessage, { type: 'system' }>;
+
+      const { container } = render(<SDKSystemMessage message={message} />);
+
+      expect(container.textContent).not.toContain('Internal transcript note');
+      expect(container.innerHTML).toBe('');
+    });
+
     it('should render worker shutdown messages only for live tail rows', () => {
       const message = {
         type: 'system',

@@ -116,6 +116,7 @@ describe('useMessageMaps', () => {
 
       const toolResult = result.current.toolResultsMap.get('tool-use-123');
       expect(toolResult?.isOutputRemoved).toBe(true);
+      expect(toolResult?.content).toBeDefined();
     });
 
     it('should mark retracted tool results as removed', () => {

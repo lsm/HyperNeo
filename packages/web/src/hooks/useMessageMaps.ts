@@ -74,10 +74,11 @@ export function useMessageMaps(
           const blockObj = block as Record<string, unknown>;
           if (blockObj.type === 'tool_result' && blockObj.tool_use_id) {
             const toolUseId = blockObj.tool_use_id as string;
+            const isReplacementRemoved = !!replacementStatus;
             const isRemoved =
-              (msg.uuid ? removedOutputs.includes(msg.uuid) : false) || !!replacementStatus;
+              (msg.uuid ? removedOutputs.includes(msg.uuid) : false) || isReplacementRemoved;
             map.set(toolUseId, {
-              content: isRemoved ? undefined : block,
+              content: isReplacementRemoved ? undefined : block,
               messageUuid: msg.uuid,
               sessionId,
               isOutputRemoved: isRemoved,

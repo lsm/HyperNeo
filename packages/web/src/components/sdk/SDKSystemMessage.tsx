@@ -93,6 +93,7 @@ export function SDKSystemMessage({ message, isLiveTail = false }: Props) {
   }
 
   if (message.subtype === 'informational') {
+    if (message.level === 'info') return null;
     return <InformationalMessage message={message} />;
   }
 
