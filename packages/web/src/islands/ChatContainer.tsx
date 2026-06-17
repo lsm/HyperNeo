@@ -1373,6 +1373,9 @@ export default function ChatContainer({
                     onRewind={handleRewindClick}
                     rewindingMessageUuid={isRewinding ? rewindTargetUuid : null}
                     onQuestionResolved={handleQuestionResolved}
+                    replacementStatus={
+                      msg.uuid ? maps.replacementStatusMap.get(msg.uuid) : undefined
+                    }
                   />
                 </div>
               ))}

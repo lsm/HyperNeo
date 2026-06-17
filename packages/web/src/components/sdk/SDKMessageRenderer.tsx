@@ -41,6 +41,7 @@ import { SDKToolProgressMessage } from './SDKToolProgressMessage.tsx';
 import { SDKUserMessage } from './SDKUserMessage.tsx';
 import { AuthStatusCard } from './tools/index.ts';
 import { SDKResumeChoiceMessage } from './SDKResumeChoiceMessage.tsx';
+import type { MessageReplacementStatus } from '../../lib/sdk-message-replacement';
 
 type SystemInitMessage = Extract<SDKMessage, { type: 'system'; subtype: 'init' }>;
 
@@ -81,6 +82,35 @@ interface Props {
    * animated arc traces exactly that element's rounded-rect border.
    */
   isRunning?: boolean;
+  /** Visual marker for messages superseded/retracted by later SDK rows. */
+  replacementStatus?: MessageReplacementStatus;
+}
+
+function ReplacementStatusFrame({
+  status,
+  children,
+}: {
+  status: MessageReplacementStatus;
+  children: JSX.Element;
+}) {
+  const isRetracted = status === 'retracted';
+  return (
+    <div
+      class={`my-1 rounded-lg border px-2 py-1 ${
+        isRetracted ? 'border-rose-500/45 bg-rose-500/5' : 'border-amber-500/45 bg-amber-500/5'
+      }`}
+      data-message-replacement-status={status}
+    >
+      <div
+        class={`mb-1 text-[10px] font-semibold uppercase tracking-wide ${
+          isRetracted ? 'text-rose-500 dark:text-rose-300' : 'text-amber-600 dark:text-amber-300'
+        }`}
+      >
+        {isRetracted ? 'Retracted by fallback' : 'Superseded by replacement'}
+      </div>
+      <div class="opacity-80">{children}</div>
+    </div>
+  );
 }
 
 /**
@@ -194,6 +224,7 @@ function SDKMessageRendererImpl({
   flattenSubagentTools = false,
   showToolResultUserMessages = false,
   isRunning,
+  replacementStatus,
 }: Props) {
   // NeoKai-native action messages are always shown and handled separately.
   if (isNeokaiActionMessage(message)) {
@@ -304,9 +335,13 @@ function SDKMessageRendererImpl({
     );
   }
 
-  // Default path - just return the rendered message as-is
-  // Checkbox rendering is now handled by individual message components
-  return renderedMessage;
+  if (!renderedMessage || !replacementStatus) {
+    return renderedMessage;
+  }
+
+  return (
+    <ReplacementStatusFrame status={replacementStatus}>{renderedMessage}</ReplacementStatusFrame>
+  );
 }
 
 function areMessageRendererPropsEqual(prev: Props, next: Props): boolean {
@@ -326,7 +361,8 @@ function areMessageRendererPropsEqual(prev: Props, next: Props): boolean {
     prev.showSubagentMessages === next.showSubagentMessages &&
     prev.flattenSubagentTools === next.flattenSubagentTools &&
     prev.showToolResultUserMessages === next.showToolResultUserMessages &&
-    prev.isRunning === next.isRunning
+    prev.isRunning === next.isRunning &&
+    prev.replacementStatus === next.replacementStatus
   );
 }
 

@@ -22,6 +22,10 @@
 import { useMemo } from 'preact/hooks';
 import type { SDKMessage, SDKSystemMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import type { ChatMessage } from '@neokai/shared';
+import {
+  buildMessageReplacementStatusMap,
+  type MessageReplacementStatus,
+} from '../lib/sdk-message-replacement';
 
 export interface ToolResultData {
   content: unknown;
@@ -39,6 +43,8 @@ export interface UseMessageMapsResult {
   sessionInfoMap: Map<string, SDKSystemMessage>;
   /** Map of parent tool use IDs to their sub-agent messages */
   subagentMessagesMap: Map<string, SDKMessage[]>;
+  /** Map of SDK message UUIDs to replacement/retraction status */
+  replacementStatusMap: Map<string, MessageReplacementStatus>;
 }
 
 /**
@@ -140,10 +146,16 @@ export function useMessageMaps(
     return map;
   }, [sdkMessages]);
 
+  const replacementStatusMap = useMemo(
+    () => buildMessageReplacementStatusMap(sdkMessages),
+    [sdkMessages]
+  );
+
   return {
     toolResultsMap,
     toolInputsMap,
     sessionInfoMap,
     subagentMessagesMap,
+    replacementStatusMap,
   };
 }

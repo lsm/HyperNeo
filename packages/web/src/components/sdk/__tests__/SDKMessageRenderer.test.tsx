@@ -215,6 +215,30 @@ describe('SDKMessageRenderer', () => {
       expect(assistantMessage).toBeTruthy();
     });
 
+    it('should visually mark superseded messages without hiding them', () => {
+      const message = createUserMessage('Old message');
+      const { container } = render(
+        <SDKMessageRenderer message={message} replacementStatus="superseded" />
+      );
+
+      expect(container.textContent).toContain('Superseded by replacement');
+      expect(container.textContent).toContain('Old message');
+      expect(
+        container.querySelector('[data-message-replacement-status="superseded"]')
+      ).toBeTruthy();
+    });
+
+    it('should visually mark retracted messages without hiding them', () => {
+      const message = createUserMessage('Retracted message');
+      const { container } = render(
+        <SDKMessageRenderer message={message} replacementStatus="retracted" />
+      );
+
+      expect(container.textContent).toContain('Retracted by fallback');
+      expect(container.textContent).toContain('Retracted message');
+      expect(container.querySelector('[data-message-replacement-status="retracted"]')).toBeTruthy();
+    });
+
     it('should render result message', () => {
       const message = createResultMessage(true);
       const { container } = render(<SDKMessageRenderer message={message} />);

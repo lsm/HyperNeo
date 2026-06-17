@@ -49,6 +49,11 @@ import { SpaceTaskThreadMessageActions } from '../SpaceTaskThreadMessageActions'
 import { getAgentColor } from '../space-task-thread-agent-colors';
 import type { ParsedThreadRow } from '../space-task-thread-events';
 import { pushOverlayHistory } from '../../../../lib/router';
+import {
+  buildMessageReplacementStatusMap,
+  getMessageUuid,
+  type MessageReplacementStatus,
+} from '../../../../lib/sdk-message-replacement';
 import { agentInitial, formatClock, formatDuration, shortAgentName } from './minimal-mock-data';
 import { ToolIcon } from '../../../sdk/tools/ToolIcon';
 import { getToolColors, getToolDisplayName } from '../../../sdk/tools/tool-utils';
@@ -171,6 +176,7 @@ interface CompletedFeedTurn {
    * we fell back to `fallbackText` and no SDK message was available.
    */
   highlightMessageUuid?: string;
+  replacementStatus?: MessageReplacementStatus;
   /**
    * SDK `result` envelope for the exec that produced this turn. When
    * present, the actions row renders a result-info dropdown surfacing
@@ -242,6 +248,7 @@ interface MessageFeedTurn {
   deliveryState?: ActorMessageDeliveryState | null;
   /** SDK message UUID, used to deep-link the slide-over. */
   highlightMessageUuid?: string;
+  replacementStatus?: MessageReplacementStatus;
   /**
    * SDK `system:init` envelope for the recipient agent's exec — the agent
    * state this user message landed in. When present, the actions row
@@ -255,6 +262,35 @@ interface MessageFeedTurn {
 type FeedTurn = CompletedFeedTurn | ActiveFeedTurn | CompactBoundaryFeedTurn | MessageFeedTurn;
 
 const ROSTER_MAX_ENTRIES = 8;
+
+function applyReplacementStatuses(rows: ParsedThreadRow[]): ParsedThreadRow[] {
+  const messages = rows
+    .map((row) => row.message)
+    .filter((message): message is SDKMessage => message !== null);
+  const statusMap = buildMessageReplacementStatusMap(messages);
+  if (statusMap.size === 0) return rows;
+
+  return rows.map((row) => {
+    const uuid = getMessageUuid(row.message);
+    const replacementStatus = uuid ? statusMap.get(uuid) : undefined;
+    return replacementStatus ? { ...row, replacementStatus } : row;
+  });
+}
+
+function ReplacementBadge({ status }: { status?: MessageReplacementStatus }) {
+  if (!status) return null;
+  const isRetracted = status === 'retracted';
+  return (
+    <div
+      class={`mb-1 text-[10px] font-semibold uppercase tracking-wide ${
+        isRetracted ? 'text-rose-300' : 'text-amber-300'
+      }`}
+      data-message-replacement-status={status}
+    >
+      {isRetracted ? 'Retracted by fallback' : 'Superseded by replacement'}
+    </div>
+  );
+}
 
 function getToolUseContentBlocks(row: ParsedThreadRow) {
   if (!row.message || !isSDKAssistantMessage(row.message)) return [];
@@ -525,6 +561,7 @@ function buildCompletedTurn(
     fallback,
     sessionId: highlightSource?.sessionId ?? lastRow.sessionId,
     highlightMessageUuid: highlightUuid,
+    replacementStatus: sourceRow?.replacementStatus,
     resultInfo,
   };
 }
@@ -684,6 +721,7 @@ function buildMessageTurn(
     deliveryState: row.deliveryState ?? null,
     sessionId: row.sessionId,
     highlightMessageUuid: highlightUuid,
+    replacementStatus: row.replacementStatus,
     sessionInit,
   };
 }
@@ -734,7 +772,8 @@ function buildFeedTurns(
   activeAgentLabels: ReadonlySet<string>,
   activeTurnSummaries: ActiveTurnSummary[]
 ): FeedTurn[] {
-  const blocks = buildAgentTurns(parsedRows);
+  const rowsWithReplacementStatus = applyReplacementStatuses(parsedRows);
+  const blocks = buildAgentTurns(rowsWithReplacementStatus);
   if (blocks.length === 0) return [];
 
   // Index summaries by sessionId so the trailing-block upgrade can pick the
@@ -1048,6 +1087,7 @@ function CompletedBody({
         class="bg-dark-800 border border-dark-700 rounded-lg px-3 py-2"
         data-testid="minimal-thread-agent-bubble"
       >
+        <ReplacementBadge status={turn.replacementStatus} />
         {turn.lastMessage ? (
           <div class="text-sm text-gray-100 leading-relaxed [&_a]:text-blue-400">
             {turn.fallback ? (
@@ -1255,6 +1295,7 @@ function HumanMessageTurn({ turn }: { turn: MessageFeedTurn }) {
           class="bg-blue-500 text-white rounded-[20px] px-4 py-2 leading-relaxed break-words"
           data-testid="minimal-thread-human-bubble"
         >
+          <ReplacementBadge status={turn.replacementStatus} />
           {turn.body ? (
             <p class="whitespace-pre-wrap break-words">{turn.body}</p>
           ) : (
@@ -1385,6 +1426,51 @@ function SyntheticMessageTurn({
   const toColor = getAgentColor(turn.toLabel);
   const fromShort = shortAgentName(turn.fromLabel);
   const toShort = shortAgentName(turn.toLabel);
+  const replacementFrameClass =
+    turn.replacementStatus === 'retracted'
+      ? 'border-rose-500/35 bg-rose-500/5'
+      : 'border-amber-500/35 bg-amber-500/5';
+  const syntheticBlock = (
+    <SyntheticMessageBlock
+      deliveryState={turn.deliveryState}
+      content={turn.body ?? ''}
+      timestamp={turn.createdAt}
+      uuid={turn.highlightMessageUuid}
+      fromAgent={turn.fromLabel}
+      toAgent={turn.toLabel}
+      fromColor={fromColor}
+      toColor={toColor}
+      fromShort={fromShort}
+      toShort={toShort}
+      renderAsPlainText={turn.bodyIsFallback}
+      sessionInit={turn.sessionInit}
+      widthClass={TASK_THREAD_MESSAGE_BUBBLE_WIDTH_CLASS}
+      onOpenSession={
+        turn.sessionId
+          ? () => {
+              if (overlayTaskId && turn.toKind === 'node_agent') {
+                pushOverlayHistory(
+                  turn.sessionId as string,
+                  turn.toLabel,
+                  turn.highlightMessageUuid,
+                  {
+                    taskId: overlayTaskId,
+                    agentName: turn.toRole,
+                    ...(turn.toNodeExecutionId ? { nodeExecutionId: turn.toNodeExecutionId } : {}),
+                  }
+                );
+              } else {
+                pushOverlayHistory(
+                  turn.sessionId as string,
+                  turn.toLabel,
+                  turn.highlightMessageUuid
+                );
+              }
+            }
+          : undefined
+      }
+    />
+  );
 
   return (
     <div
@@ -1396,47 +1482,16 @@ function SyntheticMessageTurn({
       data-from-label={turn.fromLabel}
       data-to-label={turn.toLabel}
     >
-      <SyntheticMessageBlock
-        deliveryState={turn.deliveryState}
-        content={turn.body ?? ''}
-        timestamp={turn.createdAt}
-        uuid={turn.highlightMessageUuid}
-        fromAgent={turn.fromLabel}
-        toAgent={turn.toLabel}
-        fromColor={fromColor}
-        toColor={toColor}
-        fromShort={fromShort}
-        toShort={toShort}
-        renderAsPlainText={turn.bodyIsFallback}
-        sessionInit={turn.sessionInit}
-        widthClass={TASK_THREAD_MESSAGE_BUBBLE_WIDTH_CLASS}
-        onOpenSession={
-          turn.sessionId
-            ? () => {
-                if (overlayTaskId && turn.toKind === 'node_agent') {
-                  pushOverlayHistory(
-                    turn.sessionId as string,
-                    turn.toLabel,
-                    turn.highlightMessageUuid,
-                    {
-                      taskId: overlayTaskId,
-                      agentName: turn.toRole,
-                      ...(turn.toNodeExecutionId
-                        ? { nodeExecutionId: turn.toNodeExecutionId }
-                        : {}),
-                    }
-                  );
-                } else {
-                  pushOverlayHistory(
-                    turn.sessionId as string,
-                    turn.toLabel,
-                    turn.highlightMessageUuid
-                  );
-                }
-              }
-            : undefined
-        }
-      />
+      {turn.replacementStatus ? (
+        <div class={`${TASK_THREAD_MESSAGE_BUBBLE_WIDTH_CLASS}`}>
+          <div class={`mb-1 rounded-lg border px-2 py-1 ${replacementFrameClass}`}>
+            <ReplacementBadge status={turn.replacementStatus} />
+          </div>
+          {syntheticBlock}
+        </div>
+      ) : (
+        syntheticBlock
+      )}
     </div>
   );
 }

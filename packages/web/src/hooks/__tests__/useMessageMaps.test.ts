@@ -745,4 +745,53 @@ describe('useMessageMaps', () => {
       expect(result.current.sessionInfoMap.get('user-249')?.uuid).toBe('init-249');
     });
   });
+
+  describe('replacementStatusMap', () => {
+    it('should mark superseded and retracted messages by uuid', () => {
+      const messages = [
+        {
+          type: 'assistant',
+          uuid: uuid1,
+          session_id: 'session-1',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'original' }],
+          },
+        },
+        {
+          type: 'assistant',
+          uuid: uuid2,
+          session_id: 'session-1',
+          supersedes: [uuid1],
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'replacement' }],
+          },
+        },
+        {
+          type: 'assistant',
+          uuid: uuid3,
+          session_id: 'session-1',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'retracted' }],
+          },
+        },
+        {
+          type: 'system',
+          subtype: 'model_refusal_fallback',
+          uuid: uuid4,
+          session_id: 'session-1',
+          retracted_message_uuids: [uuid3],
+        },
+      ] as unknown as SDKMessage[];
+
+      const { result } = renderHook(() => useMessageMaps(messages, 'session-1'));
+
+      expect(result.current.replacementStatusMap.get(uuid1)).toBe('superseded');
+      expect(result.current.replacementStatusMap.get(uuid3)).toBe('retracted');
+      expect(result.current.replacementStatusMap.has(uuid2)).toBe(false);
+      expect(result.current.replacementStatusMap.has(uuid4)).toBe(false);
+    });
+  });
 });
