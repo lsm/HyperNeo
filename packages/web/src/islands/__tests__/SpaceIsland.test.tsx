@@ -238,6 +238,7 @@ vi.mock('../../lib/space-store', () => ({
       error: mockError,
       space: mockSpace,
       workflows: mockWorkflows,
+      workflowDetails: mockWorkflows,
       agents: mockAgents,
       sessions: { value: [] },
       tasks: { value: [] },
