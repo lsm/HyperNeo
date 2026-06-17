@@ -9,7 +9,6 @@
  * - informational: Non-info level messages
  * - worker_shutting_down: Worker shutdown (live-tail only)
  * - model_refusal_fallback: Model fallback events
- * - permission_denied: Tool permission denial
  * - task_notification: Subagent completion with usage
  * - memory_recall: Memory recall events
  * - local_command_output: Slash command output
@@ -26,7 +25,6 @@ import type {
   SDKMessage,
   SDKModelRefusalFallbackMessage,
   SDKNotificationMessage,
-  SDKPermissionDeniedMessage,
   SDKFilesPersistedEvent,
   SDKPluginInstallMessage,
   SDKTaskNotificationMessage,
@@ -105,11 +103,6 @@ export function SDKSystemMessage({ message, isLiveTail = false }: Props) {
   // Model refusal fallback
   if (isSDKModelRefusalFallbackMessage(message)) {
     return <ModelRefusalFallbackMessage message={message} />;
-  }
-
-  // Permission denied
-  if (message.subtype === 'permission_denied') {
-    return <PermissionDeniedMessage message={message as SDKPermissionDeniedMessage} />;
   }
 
   // Task notification (subagent completion)
@@ -193,22 +186,6 @@ function ModelRefusalFallbackMessage({ message }: { message: SDKModelRefusalFall
       <div class="mt-2 text-xs text-amber-700 dark:text-amber-300">
         {message.original_model} → {message.fallback_model}
       </div>
-    </div>
-  );
-}
-
-/**
- * Permission Denied Message - Shows when a tool call is auto-denied
- */
-function PermissionDeniedMessage({ message }: { message: SDKPermissionDeniedMessage }) {
-  return (
-    <div class="my-2 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-900 dark:border-rose-800 dark:bg-rose-950/30 dark:text-rose-100">
-      <div class="mb-1 font-semibold">Permission denied</div>
-      <div class="font-mono text-xs">{message.tool_name}</div>
-      {message.decision_reason && (
-        <div class="mt-1 text-xs text-rose-700 dark:text-rose-300">{message.decision_reason}</div>
-      )}
-      <div class="mt-1 text-xs text-rose-600 dark:text-rose-400">{message.message}</div>
     </div>
   );
 }
@@ -329,7 +306,9 @@ function NotificationMessage({ message }: { message: SDKNotificationMessage }) {
       'border-red-200 bg-red-50 text-red-900 dark:border-red-800 dark:bg-red-950/30 dark:text-red-100',
   };
 
-  const colors = message.color ? message.color : priorityColors[message.priority];
+  const colors = message.color
+    ? message.color
+    : (priorityColors[message.priority] ?? priorityColors.low);
 
   return (
     <div class={`my-2 rounded-lg border p-3 text-sm ${colors}`}>

@@ -466,45 +466,6 @@ describe('SDKSystemMessage', () => {
     });
   });
 
-  describe('Permission Denied Message', () => {
-    it('should render permission denied card', () => {
-      const message = {
-        type: 'system',
-        subtype: 'permission_denied',
-        tool_name: 'Bash',
-        tool_use_id: 'tool-1',
-        decision_reason_type: 'classifier',
-        decision_reason: 'Unsafe command detected',
-        message: 'Command denied for safety reasons',
-        uuid: createUUID(),
-        session_id: 'test-session',
-      } as Extract<SDKMessage, { type: 'system' }>;
-
-      const { container } = render(<SDKSystemMessage message={message} />);
-
-      expect(container.textContent).toContain('Permission denied');
-      expect(container.textContent).toContain('Bash');
-      expect(container.textContent).toContain('Unsafe command detected');
-      expect(container.textContent).toContain('Command denied for safety reasons');
-    });
-
-    it('should have rose color scheme', () => {
-      const message = {
-        type: 'system',
-        subtype: 'permission_denied',
-        tool_name: 'Bash',
-        tool_use_id: 'tool-1',
-        message: 'Denied',
-        uuid: createUUID(),
-        session_id: 'test-session',
-      } as Extract<SDKMessage, { type: 'system' }>;
-
-      const { container } = render(<SDKSystemMessage message={message} />);
-
-      expect(container.querySelector('.border-rose-200, .border-rose-800')).toBeTruthy();
-    });
-  });
-
   describe('Task Notification Message', () => {
     it('should render completed task with usage', () => {
       const message = {
