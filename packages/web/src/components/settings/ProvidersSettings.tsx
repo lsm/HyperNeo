@@ -390,12 +390,41 @@ export function ProvidersSettings() {
             </Button>
           </div>
 
-          {credentialStore?.backend === 'keychain-unavailable' && (
-            <div class="rounded-lg border border-yellow-500/30 bg-yellow-500/10 px-4 py-3">
-              <p class="text-sm text-yellow-400 font-medium">macOS Keychain unavailable</p>
-              <p class="text-xs text-yellow-400/80 mt-1">
-                {credentialStore.warning ??
-                  'Persistent credential storage is unavailable until macOS Keychain is unlocked. Run `security unlock-keychain`, launch NeoKai from a desktop/GUI session, or use environment variables / a secret manager for headless deployments.'}
+          {(credentialStore?.backend === 'keychain-unavailable' ||
+            credentialStore?.backend === 'keychain-fallback') && (
+            <div
+              class={`rounded-lg border px-4 py-3 ${
+                credentialStore.backend === 'keychain-fallback'
+                  ? 'border-blue-500/30 bg-blue-500/10'
+                  : 'border-yellow-500/30 bg-yellow-500/10'
+              }`}
+            >
+              <p
+                class={`text-sm font-medium ${
+                  credentialStore.backend === 'keychain-fallback'
+                    ? 'text-blue-400'
+                    : 'text-yellow-400'
+                }`}
+              >
+                {credentialStore.backend === 'keychain-fallback'
+                  ? 'Using local encrypted storage (macOS Keychain unavailable)'
+                  : 'macOS Keychain unavailable'}
+              </p>
+              <p
+                class={`text-xs mt-1 ${
+                  credentialStore.backend === 'keychain-fallback'
+                    ? 'text-blue-400/80'
+                    : 'text-yellow-400/80'
+                }`}
+              >
+                {credentialStore.backend === 'keychain-fallback'
+                  ? (credentialStore.warning ??
+                      'macOS Keychain is locked or unavailable; using local encrypted file storage. ' +
+                        'Run `security unlock-keychain` (prompts for your login password) or restart ' +
+                        'NeoKai from a GUI session to restore Keychain persistence.') +
+                    ' Note: file storage is encrypted but weaker than Keychain — any same-user process can read both the encrypted file and its key. Use environment variables for stronger isolation on headless deployments.'
+                  : (credentialStore.warning ??
+                    'Persistent credential storage is unavailable until macOS Keychain is unlocked. Run `security unlock-keychain`, launch NeoKai from a desktop/GUI session, or use environment variables / a secret manager for headless deployments.')}
               </p>
             </div>
           )}

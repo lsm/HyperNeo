@@ -240,9 +240,17 @@ export function setupAuthHandlers(
           // null even when a real credential exists there. Attempt the remove
           // so the caller surfaces the unlock guidance instead of silently
           // claiming the credential is env-managed and leaving it in Keychain.
-          const keychainUnavailable =
-            credentialManager?.getCredentialStoreStatus?.().backend === 'keychain-unavailable';
-          if (keychainUnavailable) {
+          //
+          // Both `keychain-unavailable` and `keychain-fallback` mean the
+          // Keychain is unreachable: the former blocks all writes, the
+          // latter has at least one fallback-routed entry. Either way, the
+          // Keychain copy of this provider (if any) is still locked behind
+          // the GUI wall and we want the removeCredentials attempt to
+          // surface unlock guidance rather than report env-managed.
+          const backend = credentialManager?.getCredentialStoreStatus?.().backend;
+          const keychainLocked =
+            backend === 'keychain-unavailable' || backend === 'keychain-fallback';
+          if (keychainLocked) {
             await removeCredentialsOrKeychainError(credentialManager, providerId);
           }
           return {
