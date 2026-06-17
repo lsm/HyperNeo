@@ -500,7 +500,12 @@ describe('KeychainStatusCredentialStore integration (real KeychainCredentialStor
     expect(unlockCalls).toBe(1); // Only the first failure triggers unlock attempt.
   });
 
-  it('delete() falls back when keychain delete is locked', async () => {
+  it('delete() throws when keychain is locked — no fallback for irreversible op', async () => {
+    // Delete is an irreversible op against the authoritative store.
+    // Deleting only from the fallback would leave the keychain copy
+    // behind, and the next time the keychain becomes reachable `get()`
+    // would prefer it — provider appears re-authenticated after the
+    // user explicitly logged out. Surface the failure instead.
     makeLockedExecFile();
     let fallbackDeleteCalled = false;
     const fallback = {
@@ -513,9 +518,90 @@ describe('KeychainStatusCredentialStore integration (real KeychainCredentialStor
     };
     const store = new KeychainStatusCredentialStore(new KeychainCredentialStore(), fallback);
 
-    await store.delete('neokai.provider.test', 'default');
-    expect(fallbackDeleteCalled).toBe(true);
-    expect(store.getStatus().backend).toBe('keychain-fallback');
+    await expect(store.delete('neokai.provider.test', 'default')).rejects.toThrow(
+      /\(blocked: delete\(neokai\.provider\.test:default\)\)$/
+    );
+    // Fallback must NOT be touched: partial delete would mislead callers
+    // (UI shows "logged out" but keychain copy survives).
+    expect(fallbackDeleteCalled).toBe(false);
+    expect(store.getStatus().backend).toBe('keychain-unavailable');
+  });
+
+  it('set() refreshes an existing fallback copy on keychain-success (no stale rotation)', async () => {
+    // API key was written to fallback while keychain was locked.
+    // Keychain later unlocks; user rotates key. Without write-through,
+    // fallback has stale key, surfaces on next keychain lock.
+    let fallbackValue: string | null = 'old-rotated-away-value';
+    let fallbackSetCalls = 0;
+    const fallback = {
+      get: async () => fallbackValue,
+      set: async (_s: string, _a: string, data: string) => {
+        fallbackSetCalls += 1;
+        fallbackValue = data;
+      },
+      delete: async () => {
+        fallbackValue = null;
+      },
+      listServices: async () => [] as string[],
+    };
+    // Keychain set succeeds (keychain reachable).
+    makeSuccessSpawn();
+    const store = new KeychainStatusCredentialStore(new KeychainCredentialStore(), fallback);
+
+    await store.set('neokai.provider.test', 'default', 'new-rotated-value');
+    expect(fallbackSetCalls).toBe(1);
+    expect(fallbackValue).toBe('new-rotated-value');
+  });
+
+  it('set() does NOT create a new fallback entry on keychain-success (keeps weaker-isolation surface minimal)', async () => {
+    // Entry was never in fallback (user wrote it while keychain was
+    // reachable). Don't broaden the weaker-isolation surface by writing
+    // a copy now.
+    let fallbackValue: string | null = null;
+    let fallbackSetCalls = 0;
+    const fallback = {
+      get: async () => fallbackValue,
+      set: async () => {
+        fallbackSetCalls += 1;
+      },
+      delete: async () => undefined,
+      listServices: async () => [] as string[],
+    };
+    makeSuccessSpawn();
+    const store = new KeychainStatusCredentialStore(new KeychainCredentialStore(), fallback);
+
+    await store.set('neokai.provider.test', 'default', 'value');
+    expect(fallbackSetCalls).toBe(0);
+  });
+
+  it('statusChangeCallback fires AFTER fallback write completes (no re-entrant race)', async () => {
+    // Reproduces the round 4 re-entrancy concern: callback fires inline
+    // during state transition while the fallback write is still pending.
+    // Reorder guarantees the write is durable before subscribers observe
+    // the keychain-fallback transition.
+    makeLockedSpawn();
+    let callbackFiredBeforeFallbackSet = false;
+    let fallbackSetDone = false;
+    let callbackFireCount = 0;
+    const fallback = {
+      get: async () => null as string | null,
+      set: async () => {
+        // Defer slightly so we can observe ordering.
+        await new Promise((r) => setTimeout(r, 5));
+        fallbackSetDone = true;
+      },
+      delete: async () => undefined,
+      listServices: async () => [] as string[],
+    };
+    const store = new KeychainStatusCredentialStore(new KeychainCredentialStore(), fallback);
+    store.setStatusChangeCallback(() => {
+      callbackFireCount += 1;
+      if (!fallbackSetDone) callbackFiredBeforeFallbackSet = true;
+    });
+
+    await store.set('neokai.provider.test', 'default', 'data');
+    expect(callbackFireCount).toBeGreaterThanOrEqual(1);
+    expect(callbackFiredBeforeFallbackSet).toBe(false);
   });
 
   it('delete() succeeds on the primary when keychain is available', async () => {

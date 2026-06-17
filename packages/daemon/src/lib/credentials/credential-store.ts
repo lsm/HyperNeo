@@ -222,14 +222,14 @@ export class KeychainStatusCredentialStore implements CredentialStore {
     const outcome = await this.runWithUnlockRetry(() => this.keychain.set(service, account, data));
     if (outcome === 'ok') {
       this.markKeychainAvailable();
-      // Deliberately do NOT delete the fallback copy here. Concurrent
-      // writers outside `withProviderLock` (daemon startup at app.ts:98,102,
-      // OAuth refresh scheduler at oauth-refresh-scheduler.ts:80) could
-      // route a write to the fallback between our primary success and a
-      // cleanup delete, losing a freshly-written refresh token. Stale
-      // fallback copies are harmless: `get()` prefers the Keychain
-      // whenever it's reachable, so the fallback only matters when the
-      // Keychain is genuinely unavailable.
+      // Write-through: if the fallback already has a copy of this entry
+      // (because it was previously written while the Keychain was locked),
+      // refresh it so a subsequent Keychain lock doesn't surface a stale
+      // rotated credential. We deliberately do NOT create a new fallback
+      // entry here — only keep an existing one current — so the fallback
+      // stays empty for users who never hit the locked-Keychain path and
+      // the weaker-isolation surface stays minimal.
+      await this.refreshFallbackIfPresent(service, account, data);
       return;
     }
     await this.runWithFallback(
@@ -242,16 +242,48 @@ export class KeychainStatusCredentialStore implements CredentialStore {
     const outcome = await this.runWithUnlockRetry(() => this.keychain.delete(service, account));
     if (outcome === 'ok') {
       this.markKeychainAvailable();
-      // Delete from both stores for tidiness; a delete racing with a
-      // concurrent write would lose the new write either way (deleting is
-      // the intent), so no regression vs the original keychain-only model.
+      // Primary delete succeeded — clear any fallback copy too so a
+      // subsequent Keychain lock doesn't surface a stale credential.
       await this.fallback?.delete(service, account).catch(() => {});
       return;
     }
-    await this.runWithFallback(
-      () => this.fallback?.delete(service, account),
-      `delete(${service}:${account})`
+    // Keychain delete did not succeed (locked / no GUI session / unlock
+    // attempt failed). Deleting only from the fallback would leave the
+    // authoritative Keychain copy behind, and the next time the Keychain
+    // becomes reachable `get()` would prefer it — provider appears
+    // re-authenticated after the user explicitly logged out. Delete is
+    // an irreversible operation against the authoritative store, so we
+    // surface the failure rather than claim partial success. Callers
+    // (providers.delete, auth.logout) propagate the error to the UI so
+    // the user knows to unlock the Keychain and retry.
+    this.markKeychainUnavailable();
+    throw new KeychainUnavailableError(
+      `${KEYCHAIN_UNAVAILABLE_MESSAGE} (blocked: delete(${service}:${account}))`
     );
+  }
+
+  /**
+   * If the fallback store already has a value for `(service, account)`,
+   * overwrite it with `data`. Used by `set()` on successful Keychain
+   * writes to keep a previously-fallback-only entry from going stale
+   * after a credential rotation. No-op when the fallback has no entry
+   * (so we don't broaden the weaker-isolation surface for entries that
+   * never needed the fallback). Best-effort: errors are swallowed
+   * because the Keychain write already succeeded and is authoritative.
+   */
+  private async refreshFallbackIfPresent(
+    service: string,
+    account: string,
+    data: string
+  ): Promise<void> {
+    if (!this.fallback) return;
+    try {
+      const existing = await this.fallback.get(service, account);
+      if (existing === null) return;
+      await this.fallback.set(service, account, data);
+    } catch {
+      // Swallow — Keychain write succeeded, refresh is best-effort.
+    }
   }
 
   async listServices(prefix: string): Promise<string[]> {
@@ -324,13 +356,18 @@ export class KeychainStatusCredentialStore implements CredentialStore {
     op: () => Promise<unknown> | undefined,
     label: string
   ): Promise<void> {
-    if (this.fallback) {
-      this.markUsingFallback();
-      await op();
-      return;
+    if (!this.fallback) {
+      this.markKeychainUnavailable();
+      throw new KeychainUnavailableError(`${KEYCHAIN_UNAVAILABLE_MESSAGE} (blocked: ${label})`);
     }
-    this.markKeychainUnavailable();
-    throw new KeychainUnavailableError(`${KEYCHAIN_UNAVAILABLE_MESSAGE} (blocked: ${label})`);
+    // Run the fallback op FIRST, then mark state + fire the status
+    // callback. Firing the callback before the write completes lets an
+    // app-level subscriber (e.g. app.ts applyStoredProviderCredentials)
+    // re-enter the store mid-flight and race with the in-progress write.
+    // Ordering op-before-mark guarantees the write is durable by the
+    // time any subscriber observes the `keychain-fallback` transition.
+    await op();
+    this.markUsingFallback();
   }
 
   private markKeychainUnavailable(): void {
@@ -399,11 +436,20 @@ export function buildDefaultUnlockers(ttyCheck: () => boolean): Array<() => Prom
  */
 
 async function tryUnlockKeychainViaGUI(): Promise<boolean> {
+  // Cap the wait so a detached screen / SSH / tmux session where the GUI
+  // dialog can't be seen (or where the user stepped away) does not block
+  // a credential write indefinitely. The spike proved `security
+  // unlock-keychain` fails fast with code 36 when there is genuinely no
+  // Aqua session, so this timeout only fires in the rarer "Aqua session
+  // exists but the user cannot interact with it" case.
+  const TIMEOUT_MS = 30_000;
   try {
-    // No `-p`: macOS pops a dialog on the user's desktop. Call resolves
-    // when the user submits or cancels. Fails fast with code 36 when no
-    // Aqua session is attached (SSH, screen without GUI, launchd).
-    await execFileAsync('security', ['unlock-keychain']);
+    await Promise.race([
+      execFileAsync('security', ['unlock-keychain']),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('security unlock-keychain timed out')), TIMEOUT_MS)
+      ),
+    ]);
     return true;
   } catch {
     return false;
