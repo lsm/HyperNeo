@@ -441,6 +441,9 @@ export function getMessageTypeDescription(msg: SDKMessage): string {
  * - task_updated: Status patch; child messages + result already reflect status
  * - mirror_error: Internal group/session-mirror plumbing
  * - elicitation_complete: Niche MCP elicitation
+ * - permission_denied: Unreachable in current NeoKai deny paths (loop-detector-hook
+ *   denies via PreToolUse; SDK excludes PreToolUse from this event). Revisit if an
+ *   emit site is added.
  */
 const HIDDEN_SYSTEM_SUBTYPES = new Set([
   'session_state_changed',
@@ -452,6 +455,7 @@ const HIDDEN_SYSTEM_SUBTYPES = new Set([
   'task_updated',
   'mirror_error',
   'elicitation_complete',
+  'permission_denied',
 ]);
 
 /**

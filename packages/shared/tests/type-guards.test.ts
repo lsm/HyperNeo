@@ -787,6 +787,10 @@ describe('isHiddenSystemSubtype', () => {
     expect(isHiddenSystemSubtype('elicitation_complete')).toBe(true);
   });
 
+  test('should return true for permission_denied (unreachable emit in NeoKai)', () => {
+    expect(isHiddenSystemSubtype('permission_denied')).toBe(true);
+  });
+
   test('should return false for visible subtypes', () => {
     expect(isHiddenSystemSubtype('init')).toBe(false);
     expect(isHiddenSystemSubtype('compact_boundary')).toBe(false);
@@ -795,7 +799,6 @@ describe('isHiddenSystemSubtype', () => {
     expect(isHiddenSystemSubtype('informational')).toBe(false);
     expect(isHiddenSystemSubtype('worker_shutting_down')).toBe(false);
     expect(isHiddenSystemSubtype('model_refusal_fallback')).toBe(false);
-    expect(isHiddenSystemSubtype('permission_denied')).toBe(false);
     expect(isHiddenSystemSubtype('task_notification')).toBe(false);
     expect(isHiddenSystemSubtype('memory_recall')).toBe(false);
     expect(isHiddenSystemSubtype('local_command_output')).toBe(false);
