@@ -11,6 +11,7 @@
 import type { ComponentChildren } from 'preact';
 import { useState } from 'preact/hooks';
 import type {
+  SDKAPIRetryMessage,
   SDKCommandsChangedMessage,
   SDKHookResponseMessage,
   SDKInformationalMessage,
@@ -18,16 +19,15 @@ import type {
   SDKModelRefusalFallbackMessage,
   SDKSessionStateChangedMessage,
   SDKStatusMessage,
-  SDKThinkingTokensMessage,
   SDKWorkerShuttingDownMessage,
 } from '@neokai/shared/sdk/sdk.d.ts';
 import {
+  isSDKAPIRetryMessage,
   isSDKSystemInit,
   isSDKCompactBoundary,
   isSDKStatusMessage,
   isSDKHookResponse,
   isSDKModelRefusalFallbackMessage,
-  isSDKThinkingTokensMessage,
   isSDKSessionStateChangedMessage,
   isSDKCommandsChangedMessage,
 } from '@neokai/shared/sdk/type-guards';
@@ -80,8 +80,9 @@ export function SDKSystemMessage({ message, isLiveTail = false }: Props) {
     return <HookResponseCard message={hookMessage} />;
   }
 
-  if (isSDKThinkingTokensMessage(message)) {
-    return <ThinkingTokensMessage message={message} />;
+  // API retry message
+  if (isSDKAPIRetryMessage(message)) {
+    return <ApiRetryMessage message={message as SDKAPIRetryMessage} />;
   }
 
   if (isSDKSessionStateChangedMessage(message)) {
@@ -125,12 +126,38 @@ function OperationalSystemMessage({
   );
 }
 
-function ThinkingTokensMessage({ message }: { message: SDKThinkingTokensMessage }) {
-  const delta = message.estimated_tokens_delta;
-  const deltaText = `${delta >= 0 ? '+' : ''}${delta.toLocaleString()}`;
+function ApiRetryMessage({ message }: { message: SDKAPIRetryMessage }) {
+  const maxRetries = message.max_retries;
+  const currentAttempt = message.attempt;
+  const delayMs = message.retry_delay_ms;
+  const errorStatus = message.error_status;
+  const errorMessage = message.error;
+
   return (
-    <OperationalSystemMessage title="Thinking tokens">
-      {message.estimated_tokens.toLocaleString()} estimated tokens ({deltaText})
+    <OperationalSystemMessage title="API retry">
+      <div class="flex flex-col gap-1">
+        <div class="flex items-center gap-2 text-xs">
+          <span class="font-medium">Attempt {currentAttempt}</span>
+          {maxRetries > 0 && (
+            <span class="text-slate-500 dark:text-slate-400">
+              of {maxRetries}
+            </span>
+          )}
+          {delayMs > 0 && (
+            <span class="text-slate-500 dark:text-slate-400">
+              • delay {delayMs}ms
+            </span>
+          )}
+        </div>
+        {errorStatus && (
+          <div class="text-xs text-slate-600 dark:text-slate-400">
+            Status: {errorStatus}
+          </div>
+        )}
+        <div class="text-xs text-amber-700 dark:text-amber-400 font-mono break-words">
+          {errorMessage}
+        </div>
+      </div>
     </OperationalSystemMessage>
   );
 }

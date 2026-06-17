@@ -582,6 +582,7 @@ export class SDKMessageRepository {
       WHERE session_id = ?
         AND parent_tool_use_id IS NULL
         AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))
+        AND COALESCE(message_subtype,'') != 'thinking_tokens'
         AND (
           message_type != 'system'
           OR COALESCE(message_subtype, '') != 'informational'
