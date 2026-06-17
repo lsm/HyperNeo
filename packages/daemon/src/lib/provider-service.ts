@@ -345,14 +345,15 @@ export class ProviderService {
       };
     }
 
-    const models = await provider.getModels();
-
-    // Use provider override when available; otherwise use haiku tier model for title generation (fast/cheap).
+    // Resolve the title-model override BEFORE calling getModels() so providers
+    // that probe upstream in getModels() (Kimi, GLM, MiniMax, Codex, ACP,
+    // Custom Endpoint) don't fire a network request just to compute a
+    // title-model fallback we won't actually use. The models list is only
+    // fetched when neither override nor tier fallback produced an answer.
+    const titleOverride = provider.getTitleGenerationModel?.();
+    const tierFallback = provider.getModelForTier('haiku');
     const modelId =
-      provider.getTitleGenerationModel?.() ||
-      provider.getModelForTier('haiku') ||
-      models[0]?.id ||
-      'default';
+      titleOverride || tierFallback || (await provider.getModels())[0]?.id || 'default';
 
     // Get base URL from SDK config
     let baseUrl = 'https://api.anthropic.com';

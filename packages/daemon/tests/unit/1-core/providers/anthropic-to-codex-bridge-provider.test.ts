@@ -983,6 +983,10 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(init?.method).toBe('POST');
       const headers = init?.headers as Record<string, string>;
       expect(headers['authorization']).toBe('Bearer sk-env-key');
+      // API-key mode accepts max_output_tokens — keep the field so the
+      // probe costs ~1 token instead of a full completion.
+      const body = JSON.parse(init?.body as string) as Record<string, unknown>;
+      expect(body['max_output_tokens']).toBe(1);
     });
 
     it('probes the ChatGPT codex backend for OAuth tokens', async () => {
@@ -1004,8 +1008,16 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(url).toBe('https://chatgpt.com/backend-api/codex/responses');
       const headers = init?.headers as Record<string, string>;
       expect(headers['authorization']).toBe(`Bearer ${jwt}`);
-      expect(headers['ChatGPT-Account-Id']).toBe('acct-1');
-      expect(headers['OpenAI-Beta']).toBe('responses=experimental');
+      // Capital `ID` — matches buildOpenAIHeaders at openai-responses-bridge/server.ts:648.
+      // The gateway is case-sensitive on this header.
+      expect(headers['ChatGPT-Account-ID']).toBe('acct-1');
+      // No speculative OpenAI-Beta header — the bridge's own traffic does
+      // not send it, so the probe must not either.
+      expect(headers['OpenAI-Beta']).toBeUndefined();
+      // ChatGPT Codex backend hard-rejects max_output_tokens
+      // (see openai-responses-bridge/server.ts:1170-1176).
+      const body = JSON.parse(init?.body as string) as Record<string, unknown>;
+      expect(body['max_output_tokens']).toBeUndefined();
     });
 
     it('throws when OpenAI rejects the API key (401)', async () => {

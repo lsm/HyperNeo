@@ -208,7 +208,18 @@ export class CustomEndpointProvider implements Provider {
     const url = `${baseUrl}${probePath}`;
 
     const headers: Record<string, string> = {};
-    if (this.config.apiKey) headers.authorization = `Bearer ${this.config.apiKey}`;
+    if (this.config.apiKey) {
+      // For anthropic-messages endpoints, also send `x-api-key` so
+      // Anthropic-native upstreams that enforce the x-api-key header
+      // (rather than Bearer) accept the probe. Mirrors
+      // anthropic-messages-bridge/server.ts:206-211 and
+      // shared/credential-probe.ts:85-86. OpenAI Chat and Ollama variants
+      // ignore the extra header.
+      if (this.type === 'anthropic-messages') {
+        headers['x-api-key'] = this.config.apiKey;
+      }
+      headers.authorization = `Bearer ${this.config.apiKey}`;
+    }
     if (this.config.headers) Object.assign(headers, this.config.headers);
 
     let response: Response;

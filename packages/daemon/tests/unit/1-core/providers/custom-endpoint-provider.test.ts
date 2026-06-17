@@ -178,6 +178,40 @@ describe('CustomEndpointProvider', () => {
     expect(url).toBe('http://localhost:1234/v1/v1/models');
   });
 
+  it('sends x-api-key (not just Bearer) for anthropic-messages probes', async () => {
+    const fetchImpl = mock(
+      async () => new Response('[]', { status: 200 })
+    ) as unknown as typeof fetch;
+    const p = new CustomEndpointProvider(
+      { ...baseConfig, type: 'anthropic-messages', apiKey: 'anthropic-key' },
+      { bridgeFactory: makeFakeBridge().factory, bridgeFetchImpl: fetchImpl }
+    );
+    await p.getModels();
+
+    const [, init] = (fetchImpl.mock.calls[0] as [string, RequestInit]) ?? [];
+    const headers = init?.headers as Record<string, string>;
+    // Anthropic-native upstreams enforce x-api-key; bridge sends both
+    // (anthropic-messages-bridge/server.ts:206-211), probe must too.
+    expect(headers['x-api-key']).toBe('anthropic-key');
+    expect(headers['authorization']).toBe('Bearer anthropic-key');
+  });
+
+  it('does not send x-api-key for openai-chat probes', async () => {
+    const fetchImpl = mock(
+      async () => new Response('[]', { status: 200 })
+    ) as unknown as typeof fetch;
+    const p = new CustomEndpointProvider(
+      { ...baseConfig, type: 'openai-chat', apiKey: 'openai-key' },
+      { bridgeFactory: makeFakeBridge().factory, bridgeFetchImpl: fetchImpl }
+    );
+    await p.getModels();
+
+    const [, init] = (fetchImpl.mock.calls[0] as [string, RequestInit]) ?? [];
+    const headers = init?.headers as Record<string, string>;
+    expect(headers['x-api-key']).toBeUndefined();
+    expect(headers['authorization']).toBe('Bearer openai-key');
+  });
+
   it('uses /api/tags probe path for ollama-native type', async () => {
     const fetchImpl = mock(
       async () => new Response('[]', { status: 200 })

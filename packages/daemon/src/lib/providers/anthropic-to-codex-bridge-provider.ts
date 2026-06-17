@@ -573,21 +573,41 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   }
 
   private async probeUpstream(auth: OpenAIResponsesBridgeAuth): Promise<void> {
-    const baseUrl =
-      auth.source === 'chatgpt_oauth'
-        ? 'https://chatgpt.com/backend-api/codex'
-        : 'https://api.openai.com/v1';
+    const isChatgptOAuth = auth.source === 'chatgpt_oauth';
+    const baseUrl = isChatgptOAuth
+      ? 'https://chatgpt.com/backend-api/codex'
+      : 'https://api.openai.com/v1';
     const url = `${baseUrl}/responses`;
 
     const headers: Record<string, string> = {
       'content-type': 'application/json',
       authorization: `Bearer ${auth.apiKey}`,
     };
-    if (auth.source === 'chatgpt_oauth') {
-      // ChatGPT Codex backend requires the experimental beta header and the
-      // account-id so the gateway routes the request to the right tenant.
-      headers['OpenAI-Beta'] = 'responses=experimental';
-      if (auth.accountId) headers['ChatGPT-Account-Id'] = auth.accountId;
+    if (isChatgptOAuth && auth.accountId) {
+      // Match buildOpenAIHeaders in openai-responses-bridge/server.ts:648
+      // (capital `ID`). The gateway is case-sensitive on this header; the
+      // bridge's own traffic uses capital ID, so the probe must too or it
+      // will 4xx and false-mark the provider unhealthy.
+      headers['ChatGPT-Account-ID'] = auth.accountId;
+    }
+
+    // Build request body. ChatGPT Codex backend hard-rejects
+    // `max_output_tokens` and `parallel_tool_calls` (see
+    // openai-responses-bridge/server.ts:1170-1176 — `includeMaxOutputTokens:
+    // !isChatgptOAuth`). Only API-key mode accepts the field.
+    const body: Record<string, unknown> = {
+      model: 'gpt-5.4-mini',
+      input: [
+        {
+          type: 'message',
+          role: 'user',
+          content: [{ type: 'input_text', text: '.' }],
+        },
+      ],
+      stream: false,
+    };
+    if (!isChatgptOAuth) {
+      body.max_output_tokens = 1;
     }
 
     let response: Response;
@@ -595,18 +615,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       response = await this.fetchImpl(url, {
         method: 'POST',
         headers,
-        body: JSON.stringify({
-          model: 'gpt-5.4-mini',
-          input: [
-            {
-              type: 'message',
-              role: 'user',
-              content: [{ type: 'input_text', text: '.' }],
-            },
-          ],
-          max_output_tokens: 1,
-          stream: false,
-        }),
+        body: JSON.stringify(body),
         signal: AbortSignal.timeout(AnthropicToCodexBridgeProvider.PROBE_TIMEOUT_MS),
       });
     } catch (err) {
