@@ -77,7 +77,7 @@ export function useMessageMaps(
             const isRemoved =
               (msg.uuid ? removedOutputs.includes(msg.uuid) : false) || !!replacementStatus;
             map.set(toolUseId, {
-              content: block,
+              content: isRemoved ? undefined : block,
               messageUuid: msg.uuid,
               sessionId,
               isOutputRemoved: isRemoved,

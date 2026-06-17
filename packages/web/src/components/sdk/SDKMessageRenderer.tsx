@@ -50,6 +50,7 @@ interface Props {
   toolResultsMap?: Map<string, unknown>;
   toolInputsMap?: Map<string, unknown>;
   subagentMessagesMap?: Map<string, SDKMessage[]>;
+  replacementStatusMap?: Map<string, MessageReplacementStatus>;
   sessionInfo?: SystemInitMessage; // Optional session init info to attach to user messages
   // Question handling props for inline QuestionPrompt rendering
   sessionId?: string;
@@ -136,6 +137,15 @@ function isRenderableSystemMessage(message: SDKMessage): boolean {
     subtype === 'informational' ||
     subtype === 'worker_shutting_down' ||
     subtype === 'model_refusal_fallback'
+  );
+}
+
+function isToolResultUserMessage(message: SDKMessage): boolean {
+  if (!isSDKUserMessage(message) && !isSDKUserMessageReplay(message)) return false;
+  const content = message.message.content;
+  return (
+    Array.isArray(content) &&
+    content.some((block: unknown) => (block as Record<string, unknown>).type === 'tool_result')
   );
 }
 
@@ -227,6 +237,7 @@ function SDKMessageRendererImpl({
   toolResultsMap,
   toolInputsMap,
   subagentMessagesMap,
+  replacementStatusMap,
   sessionInfo,
   sessionId,
   resolvedQuestions,
@@ -276,6 +287,10 @@ function SDKMessageRendererImpl({
     return null;
   }
 
+  if (!showToolResultUserMessages && isToolResultUserMessage(sdkMessage)) {
+    return null;
+  }
+
   // Compute the rendered message component
   let renderedMessage: JSX.Element | null = null;
 
@@ -309,6 +324,7 @@ function SDKMessageRendererImpl({
         message={sdkMessage}
         toolResultsMap={toolResultsMap}
         subagentMessagesMap={subagentMessagesMap}
+        replacementStatusMap={replacementStatusMap}
         sessionId={sessionId}
         resolvedQuestions={resolvedQuestions}
         pendingQuestion={pendingQuestion}
@@ -366,6 +382,7 @@ function areMessageRendererPropsEqual(prev: Props, next: Props): boolean {
     prev.toolResultsMap === next.toolResultsMap &&
     prev.toolInputsMap === next.toolInputsMap &&
     prev.subagentMessagesMap === next.subagentMessagesMap &&
+    prev.replacementStatusMap === next.replacementStatusMap &&
     prev.sessionInfo === next.sessionInfo &&
     prev.sessionId === next.sessionId &&
     prev.resolvedQuestions === next.resolvedQuestions &&

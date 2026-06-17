@@ -326,6 +326,33 @@ describe('SubagentBlock', () => {
       });
     });
 
+    it('should visually mark replaced nested assistant messages', async () => {
+      const input = createAgentInput('Explore', 'Find files', 'Search for test files');
+      const nestedMessage = createNestedAssistantMessage('Superseded nested answer.');
+      const nestedMessages = [nestedMessage];
+      const replacementStatusMap = new Map([[nestedMessage.uuid, 'superseded']]);
+
+      const { container } = render(
+        <SubagentBlock
+          input={input}
+          toolId="toolu_task123"
+          nestedMessages={nestedMessages}
+          replacementStatusMap={replacementStatusMap}
+        />
+      );
+
+      const button = container.querySelector('button')!;
+      fireEvent.click(button);
+
+      await waitFor(() => {
+        expect(container.textContent).toContain('Superseded by replacement');
+        expect(container.textContent).toContain('Superseded nested answer');
+      });
+      expect(
+        container.querySelector('[data-message-replacement-status="superseded"]')
+      ).toBeTruthy();
+    });
+
     it('should render nested user messages', () => {
       const input = createAgentInput('Explore', 'Find files', 'Search for test files');
       const nestedMessages = [createNestedUserMessage('Check in the src folder.')];

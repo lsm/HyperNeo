@@ -149,6 +149,7 @@ describe('useMessageMaps', () => {
       const toolResult = result.current.toolResultsMap.get('tool-use-123');
       expect(toolResult?.messageUuid).toBe(uuid1);
       expect(toolResult?.isOutputRemoved).toBe(true);
+      expect(toolResult?.content).toBeUndefined();
     });
 
     it('should handle multiple tool results in the same message', () => {

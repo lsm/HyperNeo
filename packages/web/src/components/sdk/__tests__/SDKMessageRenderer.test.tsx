@@ -287,6 +287,31 @@ describe('SDKMessageRenderer', () => {
       expect(container.querySelector('[data-message-replacement-status="retracted"]')).toBeTruthy();
     });
 
+    it('should not wrap hidden tool-result user rows with replacement markers', () => {
+      const message = {
+        type: 'user',
+        uuid: createUUID(),
+        session_id: 'test-session',
+        message: {
+          role: 'user',
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'tool-use-123',
+              content: 'Retracted tool output',
+            },
+          ],
+        },
+      } as unknown as SDKMessage;
+
+      const { container } = render(
+        <SDKMessageRenderer message={message} replacementStatus="retracted" />
+      );
+
+      expect(container.textContent).toBe('');
+      expect(container.querySelector('[data-message-replacement-status="retracted"]')).toBeFalsy();
+    });
+
     it('should render result message', () => {
       const message = createResultMessage(true);
       const { container } = render(<SDKMessageRenderer message={message} />);
