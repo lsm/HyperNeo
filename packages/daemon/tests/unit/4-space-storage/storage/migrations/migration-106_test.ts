@@ -22,8 +22,8 @@
  *   - Empty `space_agents` table → safe
  */
 
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { rmSync, mkdirSync } from 'node:fs';
+import { describe, test, expect, beforeEach, afterEach, beforeAll, afterAll } from 'bun:test';
+import { rmSync, mkdirSync, copyFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigrations } from '../../../../../src/storage/schema/index.ts';
@@ -105,8 +105,36 @@ function readAgentTimestamps(
 }
 
 describe('Migration 106: backfill preset agent template tracking', () => {
+  let templateDir: string;
+  let templateDbPath: string;
   let testDir: string;
   let db: BunDatabase;
+
+  beforeAll(() => {
+    templateDir = join(
+      process.cwd(),
+      'tmp',
+      'test-migration-106',
+      `template-${Date.now()}-${Math.random()}`
+    );
+    mkdirSync(templateDir, { recursive: true });
+    templateDbPath = join(templateDir, 'template.db');
+    const templateDb = new BunDatabase(templateDbPath);
+    try {
+      templateDb.exec('PRAGMA foreign_keys = ON');
+      runMigrations(templateDb, () => {});
+    } finally {
+      templateDb.close();
+    }
+  });
+
+  afterAll(() => {
+    try {
+      rmSync(templateDir, { recursive: true, force: true });
+    } catch {
+      // ignore
+    }
+  });
 
   beforeEach(() => {
     testDir = join(
@@ -116,9 +144,10 @@ describe('Migration 106: backfill preset agent template tracking', () => {
       `test-${Date.now()}-${Math.random()}`
     );
     mkdirSync(testDir, { recursive: true });
-    db = new BunDatabase(join(testDir, 'test.db'));
+    const dbPath = join(testDir, 'test.db');
+    copyFileSync(templateDbPath, dbPath);
+    db = new BunDatabase(dbPath);
     db.exec('PRAGMA foreign_keys = ON');
-    runMigrations(db, () => {});
     insertSpace(db, 'sp-1');
   });
 
