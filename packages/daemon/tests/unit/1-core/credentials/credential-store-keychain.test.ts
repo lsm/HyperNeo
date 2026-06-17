@@ -683,6 +683,40 @@ describe('KeychainStatusCredentialStore — statusChangeCallback on transitions'
     expect(store.getStatus().backend).toBe('keychain-fallback');
     expect(calls).toBeGreaterThanOrEqual(1);
   });
+
+  it('fires statusChangeCallback on unavailable → fallback transition (not just from available)', async () => {
+    // Reproduces the round 6 codex finding: a locked-Keychain READ first
+    // flips status to keychain-unavailable (callback fires). A later
+    // successful fallback write flips to keychain-fallback — but the
+    // previous markUsingFallback only fired the callback when transitioning
+    // from fully-available, so the UI stayed stuck on the yellow
+    // unavailable banner even though writes now succeed via fallback.
+    const calls: string[] = [];
+    const fallback = {
+      get: async () => null as string | null,
+      set: async () => undefined,
+      delete: async () => undefined,
+      listServices: async () => [] as string[],
+    };
+    const store = new KeychainStatusCredentialStore(new KeychainCredentialStore(), fallback);
+    store.setStatusChangeCallback(() => {
+      calls.push(store.getStatus().backend);
+    });
+
+    // Step 1: locked read flips to keychain-unavailable.
+    makeLockedExecFile();
+    await store.get('neokai.provider.test', 'default');
+    expect(store.getStatus().backend).toBe('keychain-unavailable');
+
+    // Step 2: successful fallback write flips to keychain-fallback.
+    // The buggy version skipped the callback here because wasAvailable
+    // was false (we were already unavailable). The fixed version
+    // compares backend labels before/after and fires on any real change.
+    makeLockedSpawn();
+    await store.set('neokai.provider.test', 'default', 'data');
+    expect(store.getStatus().backend).toBe('keychain-fallback');
+    expect(calls).toContain('keychain-fallback');
+  });
 });
 
 describe('KeychainStatusCredentialStore — ttyCheck gate on default unlocker', () => {
@@ -733,23 +767,24 @@ describe('KeychainStatusCredentialStore — ttyCheck gate on default unlocker', 
   it('buildDefaultUnlockers: ttyCheck=true falls through to tryUnlockKeychainViaGUI (spawn observed)', async () => {
     // Positive control — verifies the gate is the ONLY thing preventing
     // the spawn. With ttyCheck=true, the unlocker reaches the GUI spawn
-    // path. Uses execFile (tryUnlockKeychainViaGUI calls execFileAsync,
-    // not spawn), so assert against execFileImpl.
-    let execFileObserved = false;
-    execFileImpl = (
-      _cmd: unknown,
-      _args: unknown,
-      cb: (err: unknown, stdout: string, stderr: string) => void
-    ) => {
-      execFileObserved = true;
-      cb(null, '', '');
-      return undefined as unknown;
+    // path. tryUnlockKeychainViaGUI now uses spawn+kill (not execFile) so
+    // that the 30s timeout can actually cancel the child process; assert
+    // against spawnImpl.
+    let spawnObserved = false;
+    spawnImpl = () => {
+      spawnObserved = true;
+      const proc = new EventEmitter() as MockSpawnProcess;
+      proc.stderr = new EventEmitter();
+      proc.stdout = new EventEmitter();
+      proc.stdin = { write: () => undefined, end: () => undefined };
+      queueMicrotask(() => proc.emit('exit', 0));
+      return proc;
     };
 
     const unlockers = buildDefaultUnlockers(() => true);
     const result = await unlockers[0]();
     expect(result).toBe(true);
-    expect(execFileObserved).toBe(true);
+    expect(spawnObserved).toBe(true);
   });
 });
 

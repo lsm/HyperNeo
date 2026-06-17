@@ -370,27 +370,44 @@ export class KeychainStatusCredentialStore implements CredentialStore {
     this.markUsingFallback();
   }
 
+  /**
+   * Compute the current backend label so mark* helpers can detect actual
+   * transitions. The previous logic only fired the statusChangeCallback
+   * when transitioning out of the fully-available state, which meant the
+   * `keychain-unavailable` → `keychain-fallback` transition (a locked
+   * Keychain read followed by a successful fallback write) was silent —
+   * connected clients kept showing the yellow unavailable banner even
+   * though writes were now succeeding via the fallback. Comparing the
+   * backend label before and after fires the callback on every real
+   * transition, including the unavailable→fallback recovery.
+   */
+  private currentBackend(): CredentialStoreStatus['backend'] {
+    if (this.usingFallback) return 'keychain-fallback';
+    if (this.keychainAvailable) return 'keychain';
+    return 'keychain-unavailable';
+  }
+
   private markKeychainUnavailable(): void {
-    const wasAvailable = this.keychainAvailable && !this.usingFallback;
+    const previousBackend = this.currentBackend();
     this.keychainAvailable = false;
-    if (wasAvailable) this.statusChangeCallback?.();
+    if (previousBackend !== this.currentBackend()) this.statusChangeCallback?.();
     if (this.keychainWarned) return;
     this.keychainWarned = true;
     this.logger.warn(KEYCHAIN_UNAVAILABLE_MESSAGE);
   }
 
   private markUsingFallback(): void {
-    const wasAvailable = this.keychainAvailable && !this.usingFallback;
+    const previousBackend = this.currentBackend();
     this.usingFallback = true;
     this.keychainAvailable = false;
-    if (wasAvailable) this.statusChangeCallback?.();
+    if (previousBackend !== this.currentBackend()) this.statusChangeCallback?.();
     if (this.keychainWarned) return;
     this.keychainWarned = true;
     this.logger.warn(KEYCHAIN_FALLBACK_MESSAGE);
   }
 
   private markKeychainAvailable(): void {
-    const wasUnavailable = !this.keychainAvailable || this.usingFallback;
+    const previousBackend = this.currentBackend();
     this.keychainAvailable = true;
     this.usingFallback = false;
     // Reset the one-shot unlock latch: if the Keychain later re-locks
@@ -399,7 +416,7 @@ export class KeychainStatusCredentialStore implements CredentialStore {
     // to the fallback. Without this, the daemon is stuck on the weaker
     // fallback store until process restart.
     this.unlockAttempted = false;
-    if (wasUnavailable) this.statusChangeCallback?.();
+    if (previousBackend !== this.currentBackend()) this.statusChangeCallback?.();
   }
 }
 
@@ -442,18 +459,35 @@ async function tryUnlockKeychainViaGUI(): Promise<boolean> {
   // unlock-keychain` fails fast with code 36 when there is genuinely no
   // Aqua session, so this timeout only fires in the rarer "Aqua session
   // exists but the user cannot interact with it" case.
-  const TIMEOUT_MS = 30_000;
-  try {
-    await Promise.race([
-      execFileAsync('security', ['unlock-keychain']),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('security unlock-keychain timed out')), TIMEOUT_MS)
-      ),
-    ]);
-    return true;
-  } catch {
-    return false;
-  }
+  //
+  // Uses spawn+kill rather than Promise.race+execFile so the timeout
+  // actually cancels the child process. With Promise.race alone the
+  // `security unlock-keychain` subprocess keeps running behind the hung
+  // dialog and accumulates one stray process per credential write until
+  // the user finally dismisses the dialog (or never). Kill on timeout
+  // guarantees no stray processes; the dialog itself may linger on the
+  // desktop but the daemon does not.
+  return new Promise<boolean>((resolve) => {
+    const child = spawn('security', ['unlock-keychain'], { stdio: 'ignore' });
+    let settled = false;
+    const TIMEOUT_MS = 30_000;
+    const finish = (ok: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(ok);
+    };
+    const timer = setTimeout(() => {
+      try {
+        child.kill('SIGKILL');
+      } catch {
+        // Already exited — nothing to kill.
+      }
+      finish(false);
+    }, TIMEOUT_MS);
+    child.on('error', () => finish(false));
+    child.on('exit', (code) => finish(code === 0));
+  });
 }
 
 export class DatabaseCredentialStore implements CredentialStore {
