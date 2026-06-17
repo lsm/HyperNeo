@@ -2089,8 +2089,7 @@ describe('seedBuiltInWorkflows()', () => {
         'timeout window (2 hours by default), then wait for a Codex bot `+1` reaction or the ' +
         'timeout before proceeding. ',
       'terminal handoff is to write `review-approval-gate` with approved=true after an APPROVE ' +
-        'verdict with zero P0-P3 findings. Wait for a Codex bot `+1` reaction or the timeout ' +
-        'before proceeding. '
+        'verdict with zero P0-P3 findings. Wait for codex[bot] `+1` or timeout before proceeding. '
     );
     expect(stalePrompt).not.toBe(templatePrompt);
 
@@ -5499,6 +5498,48 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     expect(hook?.validator.kind).toBe('script');
     if (hook?.validator.kind === 'script') {
       expect(hook.validator.externalLookups).toEqual(['github']);
+    }
+  });
+
+  test('migrateWorkflowGateProgressionToHooks regenerates plan/review approval hooks when codexTimeoutSeconds changes', () => {
+    // P2: once a channel is migrated to a hook, its gateId is stripped, so
+    // the main migration loop can no longer reach it. A later RPC/import
+    // update that changes codexTimeoutSeconds would otherwise leave the
+    // existing hook baked with the old timeout. Post-pass must detect the
+    // drift and rebuild the script.
+    //
+    // Step 1: migrate with codexTimeoutSeconds=300 -> hook source has -lt 300.
+    const initial = migrateWorkflowGateProgressionToHooks({
+      ...FULLSTACK_QA_LOOP_WORKFLOW,
+      nodes: FULLSTACK_QA_LOOP_WORKFLOW.nodes.map((n) =>
+        n.name === 'Review' ? { ...n, requireCodexApproval: true, codexTimeoutSeconds: 300 } : n
+      ),
+      templateName: FULLSTACK_QA_LOOP_WORKFLOW.name,
+      templateGates: FULLSTACK_QA_LOOP_WORKFLOW.gates ?? [],
+    }).workflow;
+    const initialHook = initial.hooks?.find((h) => h.sourceNode === 'Review');
+    expect(initialHook?.validator.kind).toBe('script');
+    if (initialHook?.validator.kind === 'script') {
+      expect(initialHook.validator.source).toContain('-lt 300 ');
+    }
+
+    // Step 2: re-run migration on the already-migrated workflow (channels
+    // now have gateId stripped) with codexTimeoutSeconds bumped to 900.
+    // Post-pass must rebuild the hook source with -lt 900.
+    const reMigrated = migrateWorkflowGateProgressionToHooks({
+      ...initial,
+      nodes: initial.nodes.map((n) =>
+        n.name === 'Review' ? { ...n, requireCodexApproval: true, codexTimeoutSeconds: 900 } : n
+      ),
+      templateName: FULLSTACK_QA_LOOP_WORKFLOW.name,
+      templateGates: FULLSTACK_QA_LOOP_WORKFLOW.gates ?? [],
+    }).workflow;
+    const reMigratedHook = reMigrated.hooks?.find((h) => h.sourceNode === 'Review');
+    expect(reMigratedHook?.validator.kind).toBe('script');
+    if (reMigratedHook?.validator.kind === 'script') {
+      expect(reMigratedHook.validator.source).toContain('-lt 900 ');
+      expect(reMigratedHook.validator.source).not.toContain('-lt 300 ');
+      expect(reMigratedHook.validator.source).toContain('15-minute timeout');
     }
   });
 

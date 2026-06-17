@@ -608,6 +608,33 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
     }
   }
 
+  // Post-pass: regenerate already-migrated plan/review approval hooks when
+  // the source node's codexTimeoutSeconds has changed since the hook was
+  // built. Once a channel is migrated, its gateId is stripped, so the main
+  // migration loop above can no longer reach it; without this pass, an
+  // RPC/import/editor update that changes codexTimeoutSeconds would persist
+  // on the node but leave the existing hook source baked with the old
+  // timeout (typically the 7200s default).
+  for (const hook of hooksById.values()) {
+    if (hook.validator.kind !== 'script') continue;
+    const isPlan = hook.id.startsWith('plan-approval:') || hook.id === 'plan-approval';
+    const isReview = hook.id.startsWith('review-approval:') || hook.id === 'review-approval';
+    if (!isPlan && !isReview) continue;
+    const sourceNode = workflow.nodes?.find((node) => node.name === hook.sourceNode);
+    if (!sourceNode?.requireCodexApproval || sourceNode.codexTimeoutSeconds === undefined) continue;
+    const expectedTimeout = resolveCodexTimeoutSeconds(sourceNode.codexTimeoutSeconds);
+    const match = hook.validator.source.match(/-lt (\d+) /);
+    const bakedTimeout = match ? Number.parseInt(match[1]!, 10) : null;
+    if (bakedTimeout === expectedTimeout) continue;
+    const rebuiltScript = isPlan
+      ? buildApprovalsScript(expectedTimeout)
+      : buildReviewApprovalScript(expectedTimeout);
+    hooksById.set(hook.id, {
+      ...hook,
+      validator: { ...hook.validator, source: rebuiltScript },
+    });
+  }
+
   const retainedGateIds = new Set(
     channels.flatMap((channel) => ('gateId' in channel && channel.gateId ? [channel.gateId] : []))
   );

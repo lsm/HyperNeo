@@ -1619,12 +1619,10 @@ const CURRENT_FULLSTACK_REVIEW_HANDOFF_PROMPT =
   'timeout before proceeding. ';
 const RETIRED_FULLSTACK_REVIEW_HANDOFF_PROMPT =
   'terminal handoff is to write `review-approval-gate` with approved=true after an APPROVE ' +
-  'verdict with zero P0-P3 findings. Wait for a Codex bot `+1` reaction or the timeout ' +
-  'before proceeding. ';
+  'verdict with zero P0-P3 findings. Wait for codex[bot] `+1` or timeout before proceeding. ';
 const RETIRED_HARDCODED_FULLSTACK_REVIEW_HANDOFF_PROMPT =
   'terminal handoff is `send_message(target="QA", message="<approved>", data: { approved: true })` ' +
-  'after an APPROVE verdict with zero P0-P3 findings. Wait for a Codex bot `+1` reaction or ' +
-  'the timeout before proceeding. ';
+  'after an APPROVE verdict with zero P0-P3 findings. Wait for codex[bot] `+1` or timeout before proceeding. ';
 // Pre-fix send_message Fullstack Review handoff (the variant that shipped in
 // production immediately before this PR). Distinguished from
 // RETIRED_FULLSTACK_REVIEW_HANDOFF_PROMPT (older gate-writing handoff) by
