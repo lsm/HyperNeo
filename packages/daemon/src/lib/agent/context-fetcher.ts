@@ -149,10 +149,9 @@ export class ContextFetcher {
     const metadataCapacity = positiveInteger(modelMetadata?.contextWindow);
     if (!metadataCapacity) return;
     // Use the SDK's *effective* window (maxTokens), not the raw capacity
-    // (rawMaxTokens). For Codex, rawMaxTokens can be 1M (the SDK alias's PP
-    // value for claude-opus-4-7) while maxTokens is 272k (clamped by
-    // CLAUDE_CODE_AUTO_COMPACT_WINDOW) — comparing raw vs metadata would
-    // fire a false-positive warning on every refresh.
+    // (rawMaxTokens). Some providers may report a different raw capacity than
+    // their effective window (e.g., due to SDK-side clamping or overrides).
+    // Comparing raw vs metadata would fire false-positive warnings.
     const sdkCapacity = positiveInteger(response.maxTokens);
     if (!sdkCapacity) return;
     const larger = Math.max(sdkCapacity, metadataCapacity);

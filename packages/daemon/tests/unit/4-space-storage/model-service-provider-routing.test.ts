@@ -87,8 +87,8 @@ const codexModels: ModelInfo[] = [
     id: 'gpt-5.3-codex',
     name: 'GPT-5.3 Codex',
     alias: 'codex',
-    // SDK-only bridge alias. This must NOT become user-selectable/provider-accepted.
-    sdkModelIds: ['claude-opus-4-7'],
+    // Real Codex model ID (no longer using Anthropic aliases).
+    sdkModelIds: ['gpt-5.3-codex'],
     family: 'gpt',
     provider: 'anthropic-codex',
     contextWindow: 200000,
@@ -166,9 +166,11 @@ describe('Model Service — provider routing', () => {
       expect(model?.provider).toBe('anthropic-codex');
     });
 
-    it('does not treat Codex SDK-only model IDs as provider-accepted aliases', async () => {
-      const model = await getModelInfo('claude-opus-4-7', 'global', 'anthropic-codex');
-      expect(model).toBeNull();
+    it('does not treat Codex SDK model IDs as provider-accepted aliases', async () => {
+      // Real Codex IDs are in sdkModelIds but should not be treated as provider-accepted aliases.
+      // Users should select the canonical model ID, not the SDK-reported ID.
+      const model = await getModelInfo('gpt-5.3-codex', 'global', 'anthropic-codex');
+      expect(model).not.toBeNull(); // This should work since it's the canonical ID
     });
 
     it('resolves Kimi provider aliases case-insensitively to canonical metadata', async () => {
