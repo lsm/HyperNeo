@@ -1273,6 +1273,82 @@ describe('SDKMessageRepository', () => {
     });
   });
 
+  describe('getConsumedUserMessagesAfterLatestInit', () => {
+    function insertMessage(
+      id: string,
+      sessionId: string,
+      message: SDKMessage,
+      timestamp: string,
+      sendStatus: SendStatus | null = 'consumed'
+    ): void {
+      db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        id,
+        sessionId,
+        message.type,
+        (message as SDKMessage & { subtype?: string }).subtype ?? null,
+        JSON.stringify(message),
+        timestamp,
+        sendStatus
+      );
+    }
+
+    it('returns only consumed user messages after the latest system init', () => {
+      insertMessage(
+        'old-user',
+        'session-1',
+        createUserMessage('before init', 'old-user'),
+        '2026-01-01T00:00:00.000Z'
+      );
+      insertMessage(
+        'init',
+        'session-1',
+        { type: 'system', subtype: 'init', session_id: 'session-1' } as unknown as SDKMessage,
+        '2026-01-01T00:01:00.000Z',
+        null
+      );
+      insertMessage(
+        'assistant-after-init',
+        'session-1',
+        createAssistantMessage('after init'),
+        '2026-01-01T00:02:00.000Z'
+      );
+      insertMessage(
+        'deferred-user-after-init',
+        'session-1',
+        createUserMessage('deferred after init', 'deferred-user-after-init'),
+        '2026-01-01T00:03:00.000Z',
+        'deferred'
+      );
+      insertMessage(
+        'candidate-user',
+        'session-1',
+        createUserMessage('candidate', 'candidate-user'),
+        '2026-01-01T00:04:00.000Z'
+      );
+
+      const messages = repository.getConsumedUserMessagesAfterLatestInit('session-1');
+
+      expect(messages.map((message) => message.dbId)).toEqual(['candidate-user']);
+      expect(messages[0]?.uuid).toBe('candidate-user');
+    });
+
+    it('returns consumed user messages when no system init exists', () => {
+      insertMessage(
+        'candidate-user',
+        'session-1',
+        createUserMessage('candidate', 'candidate-user'),
+        '2026-01-01T00:04:00.000Z'
+      );
+
+      const messages = repository.getConsumedUserMessagesAfterLatestInit('session-1');
+
+      expect(messages.map((message) => message.dbId)).toEqual(['candidate-user']);
+    });
+  });
+
   describe('searchMessages', () => {
     it('returns scoped matches with snippets', () => {
       createSearchIndex();

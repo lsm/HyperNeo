@@ -786,6 +786,33 @@ export class SDKMessageRepository {
     return row ? new Date(row.timestamp).getTime() : 0;
   }
 
+  getConsumedUserMessagesAfterLatestInit(
+    sessionId: string
+  ): Array<SDKMessage & { dbId: string; timestamp: number }> {
+    const stmt = this.db.prepare(
+      `SELECT id, sdk_message, timestamp FROM sdk_messages
+       WHERE session_id = ?
+         AND send_status = 'consumed'
+         AND message_type = 'user'
+         AND timestamp > COALESCE((
+           SELECT timestamp FROM sdk_messages
+           WHERE session_id = ?
+             AND message_type = 'system'
+             AND message_subtype = 'init'
+           ORDER BY timestamp DESC
+           LIMIT 1
+         ), '')
+       ORDER BY timestamp ASC`
+    );
+    const rows = stmt.all(sessionId, sessionId) as Array<{
+      id: string;
+      sdk_message: string;
+      timestamp: string;
+    }>;
+
+    return rows.map((row) => this.inflatePersistedMessage(row));
+  }
+
   /**
    * Get the most recently persisted top-level SDK message for a session.
    *
