@@ -72,12 +72,15 @@ export function getWorkerAgentsFromWorkflows(workflows: SpaceWorkflow[]): Worker
         if (!agent) {
           agent = {
             name,
-            description: describeAgent(name, slot),
+            description: '',
             toolPermissions: [],
             usedIn: [],
           };
           agentsByName.set(name, agent);
-        } else if (!agent.description && slot.customPrompt?.value?.trim()) {
+        }
+        if (slot.customPrompt?.value?.trim()) {
+          agent.description = slot.customPrompt.value.trim();
+        } else if (!agent.description) {
           agent.description = describeAgent(name, slot);
         }
 

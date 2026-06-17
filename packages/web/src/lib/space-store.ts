@@ -1112,13 +1112,32 @@ class SpaceStore {
         }
       );
       const workflows = result?.workflows ?? [];
+      // Avoid returning stale cached details on reconnect/refresh: clear the
+      // cache before the bulk fetch so every workflow gets a fresh RPC.
+      for (const workflow of workflows) {
+        this.workflowDetailCache.delete(workflow.id);
+        this.workflowDetailPromises.delete(workflow.id);
+        this.workflowDetailFetchGens.set(
+          workflow.id,
+          (this.workflowDetailFetchGens.get(workflow.id) ?? 0) + 1
+        );
+      }
       this.workflows.value = workflows;
-      this.workflowDetails.value = (
-        await Promise.all(workflows.map((workflow) => this.fetchWorkflowDetail(workflow.id)))
-      ).filter((workflow): workflow is SpaceWorkflow => workflow !== null);
+      const details = await Promise.all(
+        workflows.map((workflow) => this.fetchWorkflowDetail(workflow.id))
+      );
+      // Guard against races: if the space switched, or workflows were updated
+      // or deleted while this batch was in flight, drop stale entries instead
+      // of overwriting event-applied state.
+      if (this.spaceId.value !== spaceId) return;
+      const currentWorkflowIds = new Set(this.workflows.value.map((workflow) => workflow.id));
+      this.workflowDetails.value = details.filter(
+        (workflow): workflow is SpaceWorkflow =>
+          workflow !== null && currentWorkflowIds.has(workflow.id)
+      );
     } catch (err) {
       logger.error('Failed to fetch workflows:', err);
-      this.workflowDetails.value = [];
+      if (this.spaceId.value === spaceId) this.workflowDetails.value = [];
     }
   }
 

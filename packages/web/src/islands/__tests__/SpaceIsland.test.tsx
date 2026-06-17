@@ -200,6 +200,7 @@ vi.mock('../../components/space/SpaceSessionsPage', () => ({
 
 vi.mock('../../components/space/SpaceAgentList', () => ({
   SpaceAgentList: () => <div data-testid="space-agent-list" />,
+  getWorkerAgentsFromWorkflows: () => [],
 }));
 
 vi.mock('../../components/space/SpaceLongHorizonAgents', () => ({
