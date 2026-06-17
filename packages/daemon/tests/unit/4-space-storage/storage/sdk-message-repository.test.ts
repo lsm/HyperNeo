@@ -315,7 +315,7 @@ describe('SDKMessageRepository', () => {
       expect(messages.length).toBe(50);
     });
 
-    it('should exclude operational system rows before applying limit', () => {
+    it('should include operational system rows in session pagination', () => {
       repository.saveSDKMessage('session-1', createUserMessage('Visible'));
       for (const subtype of ['thinking_tokens', 'session_state_changed', 'commands_changed']) {
         repository.saveSDKMessage('session-1', {
@@ -330,13 +330,14 @@ describe('SDKMessageRepository', () => {
         } as unknown as SDKMessage);
       }
 
-      const { messages } = repository.getSDKMessages('session-1', 1);
+      const { messages } = repository.getSDKMessages('session-1', 4);
 
-      expect(messages.length).toBe(1);
-      expect(messages[0]?.type).toBe('user');
+      expect(messages.map((message) => (message as { subtype?: string }).subtype).sort()).toEqual(
+        ['commands_changed', 'session_state_changed', 'thinking_tokens', undefined].sort()
+      );
     });
 
-    it('should exclude retracted rows before applying limit', () => {
+    it('should include retracted rows in session pagination', () => {
       repository.saveSDKMessage('session-1', createUserMessage('Visible older', 'visible-older'));
       repository.saveSDKMessage(
         'session-1',
@@ -350,15 +351,16 @@ describe('SDKMessageRepository', () => {
         session_id: 'session-1',
       } as unknown as SDKMessage);
 
-      const { messages } = repository.getSDKMessages('session-1', 2);
+      const { messages } = repository.getSDKMessages('session-1', 3);
 
       expect(messages.map((message) => (message as { uuid?: string }).uuid).sort()).toEqual([
         'fallback-notice',
+        'retracted-newer',
         'visible-older',
       ]);
     });
 
-    it('should exclude superseded rows before applying limit', () => {
+    it('should include superseded rows in session pagination', () => {
       repository.saveSDKMessage('session-1', createUserMessage('Visible older', 'visible-older'));
       repository.saveSDKMessage(
         'session-1',
@@ -371,15 +373,16 @@ describe('SDKMessageRepository', () => {
         message: { role: 'assistant', content: [{ type: 'text', text: 'replacement' }] },
       } as unknown as SDKMessage);
 
-      const { messages } = repository.getSDKMessages('session-1', 2);
+      const { messages } = repository.getSDKMessages('session-1', 3);
 
       expect(messages.map((message) => (message as { uuid?: string }).uuid).sort()).toEqual([
         'replacement-message',
+        'superseded-newer',
         'visible-older',
       ]);
     });
 
-    it('does not let hidden newer rows consume the requested limit', () => {
+    it('applies limit to raw rows instead of replacement-filtered rows', () => {
       repository.saveSDKMessage('session-1', createUserMessage('Visible oldest', 'visible-oldest'));
       repository.saveSDKMessage('session-1', createUserMessage('Visible older', 'visible-older'));
       repository.saveSDKMessage(
@@ -404,11 +407,13 @@ describe('SDKMessageRepository', () => {
         message: { role: 'assistant', content: [{ type: 'text', text: 'replacement' }] },
       } as unknown as SDKMessage);
 
-      const { messages } = repository.getSDKMessages('session-1', 4);
+      const { messages } = repository.getSDKMessages('session-1', 6);
 
       expect(messages.map((message) => (message as { uuid?: string }).uuid).sort()).toEqual([
         'fallback-notice',
         'replacement-message',
+        'retracted-newer',
+        'superseded-newest',
         'visible-older',
         'visible-oldest',
       ]);
@@ -474,7 +479,7 @@ describe('SDKMessageRepository', () => {
       expect(messages.length).toBe(1);
     });
 
-    it('should exclude subagent thinking token progress rows', () => {
+    it('should include subagent thinking token progress rows', () => {
       const toolUseId = 'tool-use-123';
       repository.saveSDKMessage('session-1', createAssistantMessage('Task started', toolUseId));
       repository.saveSDKMessage('session-1', createSubagentMessage('Subagent work', toolUseId));
@@ -490,8 +495,32 @@ describe('SDKMessageRepository', () => {
 
       const { messages } = repository.getSDKMessages('session-1');
 
-      expect(messages.length).toBe(2);
-      expect(messages.some((message) => message.type === 'system')).toBe(false);
+      expect(messages.length).toBe(3);
+      expect(
+        messages.some((message) => (message as { subtype?: string }).subtype === 'thinking_tokens')
+      ).toBe(true);
+    });
+
+    it('should not throw when an informational row has malformed JSON', () => {
+      repository.saveSDKMessage('session-1', {
+        type: 'system',
+        subtype: 'informational',
+        level: 'notice',
+        content: 'will be corrupted',
+        uuid: 'malformed-info',
+        session_id: 'session-1',
+      } as unknown as SDKMessage);
+      db.prepare(
+        `UPDATE sdk_messages
+         SET sdk_message = ?
+         WHERE message_subtype = 'informational'`
+      ).run('{not-json');
+
+      const { messages } = repository.getSDKMessages('session-1');
+
+      expect(messages).toHaveLength(1);
+      expect(messages[0].type).toBe('unknown');
+      expect((messages[0] as { rawContent?: string }).rawContent).toBe('{not-json');
     });
 
     it('should inject id and timestamp into returned messages', () => {
@@ -1270,6 +1299,82 @@ describe('SDKMessageRepository', () => {
       const count = repository.countMessagesAfter('session-1', middleTime);
 
       expect(count).toBe(0);
+    });
+  });
+
+  describe('getConsumedUserMessagesAfterLatestInit', () => {
+    function insertMessage(
+      id: string,
+      sessionId: string,
+      message: SDKMessage,
+      timestamp: string,
+      sendStatus: SendStatus | null = 'consumed'
+    ): void {
+      db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        id,
+        sessionId,
+        message.type,
+        (message as SDKMessage & { subtype?: string }).subtype ?? null,
+        JSON.stringify(message),
+        timestamp,
+        sendStatus
+      );
+    }
+
+    it('returns only consumed user messages after the latest system init', () => {
+      insertMessage(
+        'old-user',
+        'session-1',
+        createUserMessage('before init', 'old-user'),
+        '2026-01-01T00:00:00.000Z'
+      );
+      insertMessage(
+        'init',
+        'session-1',
+        { type: 'system', subtype: 'init', session_id: 'session-1' } as unknown as SDKMessage,
+        '2026-01-01T00:01:00.000Z',
+        null
+      );
+      insertMessage(
+        'assistant-after-init',
+        'session-1',
+        createAssistantMessage('after init'),
+        '2026-01-01T00:02:00.000Z'
+      );
+      insertMessage(
+        'deferred-user-after-init',
+        'session-1',
+        createUserMessage('deferred after init', 'deferred-user-after-init'),
+        '2026-01-01T00:03:00.000Z',
+        'deferred'
+      );
+      insertMessage(
+        'candidate-user',
+        'session-1',
+        createUserMessage('candidate', 'candidate-user'),
+        '2026-01-01T00:04:00.000Z'
+      );
+
+      const messages = repository.getConsumedUserMessagesAfterLatestInit('session-1');
+
+      expect(messages.map((message) => message.dbId)).toEqual(['candidate-user']);
+      expect(messages[0]?.uuid).toBe('candidate-user');
+    });
+
+    it('returns consumed user messages when no system init exists', () => {
+      insertMessage(
+        'candidate-user',
+        'session-1',
+        createUserMessage('candidate', 'candidate-user'),
+        '2026-01-01T00:04:00.000Z'
+      );
+
+      const messages = repository.getConsumedUserMessagesAfterLatestInit('session-1');
+
+      expect(messages.map((message) => message.dbId)).toEqual(['candidate-user']);
     });
   });
 

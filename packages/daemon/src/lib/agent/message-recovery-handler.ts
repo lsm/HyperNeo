@@ -41,16 +41,14 @@ export class MessageRecoveryHandler {
     const { session, db, logger } = this;
 
     try {
-      // Consumed messages may need recovery if they never got a corresponding
-      // system:init/response boundary after being marked consumed.
-      const consumedMessages = db.getMessagesByStatus(session.id, 'consumed');
-      const allStuckMessages = [...consumedMessages];
+      // Only consumed user messages after the latest system:init can be orphaned.
+      // Do the status/type/timestamp filtering in SQL so cold-opening an old,
+      // large session does not parse the whole transcript.
+      const candidateMessages = db.getConsumedUserMessagesAfterLatestInit(session.id);
 
-      if (allStuckMessages.length === 0) {
+      if (candidateMessages.length === 0) {
         return;
       }
-
-      const latestInitTimestamp = db.getLatestSystemInitTimestamp(session.id);
 
       // Find orphaned user messages
       const orphanedMessages: Array<{
@@ -59,7 +57,7 @@ export class MessageRecoveryHandler {
         timestamp: number;
       }> = [];
 
-      for (const consumedMsg of allStuckMessages) {
+      for (const consumedMsg of candidateMessages) {
         if (!isSDKUserMessage(consumedMsg)) {
           continue;
         }
@@ -79,17 +77,12 @@ export class MessageRecoveryHandler {
           continue;
         }
 
-        const msgWithTimestamp = consumedMsg as SDKMessage & { timestamp?: number };
-        const msgTimestamp = msgWithTimestamp.timestamp || 0;
-
-        // If no system:init after this message, it's orphaned
-        if (msgTimestamp > latestInitTimestamp) {
-          orphanedMessages.push({
-            dbId: consumedMsg.dbId,
-            uuid: consumedMsg.uuid || 'unknown',
-            timestamp: msgTimestamp,
-          });
-        }
+        const msgTimestamp = (consumedMsg as SDKMessage & { timestamp?: number }).timestamp || 0;
+        orphanedMessages.push({
+          dbId: consumedMsg.dbId,
+          uuid: consumedMsg.uuid || 'unknown',
+          timestamp: msgTimestamp,
+        });
       }
 
       if (orphanedMessages.length === 0) {

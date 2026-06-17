@@ -41,6 +41,7 @@ import { SDKToolProgressMessage } from './SDKToolProgressMessage.tsx';
 import { SDKUserMessage } from './SDKUserMessage.tsx';
 import { AuthStatusCard } from './tools/index.ts';
 import { SDKResumeChoiceMessage } from './SDKResumeChoiceMessage.tsx';
+import type { MessageReplacementStatus } from '../../lib/sdk-message-replacement';
 
 type SystemInitMessage = Extract<SDKMessage, { type: 'system'; subtype: 'init' }>;
 
@@ -49,6 +50,7 @@ interface Props {
   toolResultsMap?: Map<string, unknown>;
   toolInputsMap?: Map<string, unknown>;
   subagentMessagesMap?: Map<string, SDKMessage[]>;
+  replacementStatusMap?: Map<string, MessageReplacementStatus>;
   sessionInfo?: SystemInitMessage; // Optional session init info to attach to user messages
   // Question handling props for inline QuestionPrompt rendering
   sessionId?: string;
@@ -81,6 +83,37 @@ interface Props {
    * animated arc traces exactly that element's rounded-rect border.
    */
   isRunning?: boolean;
+  /** Visual marker for messages superseded/retracted by later SDK rows. */
+  replacementStatus?: MessageReplacementStatus;
+  /** True when this row is the latest visible SDK row in the session stream. */
+  isLiveTail?: boolean;
+}
+
+function ReplacementStatusFrame({
+  status,
+  children,
+}: {
+  status: MessageReplacementStatus;
+  children: JSX.Element;
+}) {
+  const isRetracted = status === 'retracted';
+  return (
+    <div
+      class={`my-1 rounded-lg border px-2 py-1 ${
+        isRetracted ? 'border-rose-500/45 bg-rose-500/5' : 'border-amber-500/45 bg-amber-500/5'
+      }`}
+      data-message-replacement-status={status}
+    >
+      <div
+        class={`mb-1 text-[10px] font-semibold uppercase tracking-wide ${
+          isRetracted ? 'text-rose-500 dark:text-rose-300' : 'text-amber-600 dark:text-amber-300'
+        }`}
+      >
+        {isRetracted ? 'Retracted by fallback' : 'Superseded by replacement'}
+      </div>
+      <div class="opacity-80">{children}</div>
+    </div>
+  );
 }
 
 /**
@@ -92,6 +125,28 @@ function isSubagentMessage(message: SDKMessage): boolean {
     parent_tool_use_id?: string | null;
   };
   return !!msgWithParent.parent_tool_use_id;
+}
+
+function isRenderableSystemMessage(message: SDKMessage): boolean {
+  if (!isSDKSystemMessage(message)) return false;
+  const subtype = (message as { subtype?: unknown }).subtype;
+  return (
+    subtype === 'thinking_tokens' ||
+    subtype === 'session_state_changed' ||
+    subtype === 'commands_changed' ||
+    subtype === 'informational' ||
+    subtype === 'worker_shutting_down' ||
+    subtype === 'model_refusal_fallback'
+  );
+}
+
+function isToolResultUserMessage(message: SDKMessage): boolean {
+  if (!isSDKUserMessage(message) && !isSDKUserMessageReplay(message)) return false;
+  const content = message.message.content;
+  return (
+    Array.isArray(content) &&
+    content.some((block: unknown) => (block as Record<string, unknown>).type === 'tool_result')
+  );
 }
 
 /**
@@ -182,6 +237,7 @@ function SDKMessageRendererImpl({
   toolResultsMap,
   toolInputsMap,
   subagentMessagesMap,
+  replacementStatusMap,
   sessionInfo,
   sessionId,
   resolvedQuestions,
@@ -194,6 +250,8 @@ function SDKMessageRendererImpl({
   flattenSubagentTools = false,
   showToolResultUserMessages = false,
   isRunning,
+  replacementStatus,
+  isLiveTail = false,
 }: Props) {
   // NeoKai-native action messages are always shown and handled separately.
   if (isNeokaiActionMessage(message)) {
@@ -211,7 +269,7 @@ function SDKMessageRendererImpl({
   const sdkMessage = message as SDKMessage;
 
   // Skip messages that shouldn't be shown to user (e.g., stream events)
-  if (!isUserVisibleMessage(sdkMessage)) {
+  if (!isUserVisibleMessage(sdkMessage) && !isRenderableSystemMessage(sdkMessage)) {
     return null;
   }
 
@@ -226,6 +284,10 @@ function SDKMessageRendererImpl({
 
   // Skip sub-agent messages - they're now shown inside SubagentBlock
   if (!showSubagentMessages && isSubagentMessage(sdkMessage)) {
+    return null;
+  }
+
+  if (!showToolResultUserMessages && isToolResultUserMessage(sdkMessage)) {
     return null;
   }
 
@@ -262,6 +324,7 @@ function SDKMessageRendererImpl({
         message={sdkMessage}
         toolResultsMap={toolResultsMap}
         subagentMessagesMap={subagentMessagesMap}
+        replacementStatusMap={replacementStatusMap}
         sessionId={sessionId}
         resolvedQuestions={resolvedQuestions}
         pendingQuestion={pendingQuestion}
@@ -273,7 +336,7 @@ function SDKMessageRendererImpl({
   } else if (isSDKResultMessage(sdkMessage)) {
     renderedMessage = <SDKResultMessage message={sdkMessage} />;
   } else if (isSDKSystemMessage(sdkMessage)) {
-    renderedMessage = <SDKSystemMessage message={sdkMessage} />;
+    renderedMessage = <SDKSystemMessage message={sdkMessage} isLiveTail={isLiveTail} />;
   } else if (isSDKToolProgressMessage(sdkMessage)) {
     const toolInput = toolInputsMap?.get((sdkMessage as SDKToolProgressMessageType).tool_use_id);
     renderedMessage = <SDKToolProgressMessage message={sdkMessage} toolInput={toolInput} />;
@@ -304,9 +367,13 @@ function SDKMessageRendererImpl({
     );
   }
 
-  // Default path - just return the rendered message as-is
-  // Checkbox rendering is now handled by individual message components
-  return renderedMessage;
+  if (!renderedMessage || !replacementStatus) {
+    return renderedMessage;
+  }
+
+  return (
+    <ReplacementStatusFrame status={replacementStatus}>{renderedMessage}</ReplacementStatusFrame>
+  );
 }
 
 function areMessageRendererPropsEqual(prev: Props, next: Props): boolean {
@@ -315,6 +382,7 @@ function areMessageRendererPropsEqual(prev: Props, next: Props): boolean {
     prev.toolResultsMap === next.toolResultsMap &&
     prev.toolInputsMap === next.toolInputsMap &&
     prev.subagentMessagesMap === next.subagentMessagesMap &&
+    prev.replacementStatusMap === next.replacementStatusMap &&
     prev.sessionInfo === next.sessionInfo &&
     prev.sessionId === next.sessionId &&
     prev.resolvedQuestions === next.resolvedQuestions &&
@@ -326,7 +394,9 @@ function areMessageRendererPropsEqual(prev: Props, next: Props): boolean {
     prev.showSubagentMessages === next.showSubagentMessages &&
     prev.flattenSubagentTools === next.flattenSubagentTools &&
     prev.showToolResultUserMessages === next.showToolResultUserMessages &&
-    prev.isRunning === next.isRunning
+    prev.isRunning === next.isRunning &&
+    prev.replacementStatus === next.replacementStatus &&
+    prev.isLiveTail === next.isLiveTail
   );
 }
 
