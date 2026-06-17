@@ -282,6 +282,7 @@ export interface AgentRuntimeGateway {
   interrupt(sessionId: string, reason?: string): Promise<RuntimeInterruptResult>;
   updateConfig(sessionId: string, patch: RuntimeConfigPatch): Promise<RuntimeConfigResult>;
   getStatus(sessionId: string): Promise<AgentRuntimeStatus>;
+  listRuntimeMcpServers(sessionId: string): Promise<RuntimeMcpServerInventory>;
   stopSession(sessionId: string): Promise<void>;
 }
 ```
@@ -296,8 +297,11 @@ The gateway should expose fabric commands and events over time:
 | `agentRuntime.session.interrupt` | command | Interrupt/cancel active execution. |
 | `agentRuntime.config.update` | command | Change model, tools, permissions, or runtime config. |
 | `agentRuntime.session.status.get` | query | Read runtime status. |
+| `agentRuntime.mcpServers.list` | query | Read runtime-attached MCP servers visible to tool panels. |
 | `agentRuntime.capabilities.resolve` | query | Validate runtime/provider/model compatibility. |
 | `agentRuntime.event.stream` | event | Normalized output, tool, status, and error events. |
+
+`agentRuntime.mcpServers.list` preserves the current `session.listRuntimeMcpServers` surface. It returns in-process runtime SDK MCP servers and Space/task tool servers attached to the selected session; it should not be folded into coarse status if tool panels need names, scopes, and capability metadata without polling the full runtime state.
 
 ### 7.2 AgentRuntimeAdapter
 

@@ -679,6 +679,8 @@ export const spaceTaskCreated = defineEvent({
 });
 ```
 
+Task creation also invalidates the collection subject `space/${spaceId}/tasks` used by `space.task.list` live subscriptions. The event keeps its entity subject for replay and per-task subscribers, but the in-process projector or fabric fan-out must publish an invalidation for both the entity subject and the collection subject so task-list stores observe creates without relying on a full refresh.
+
 ### 13.4 Prompt Policy Contracts
 
 Prompt policy is managed through the same command/query/event surface as other cross-boundary state. Settings UI, Space configuration, workflow editors, and task-run options should not write feature-specific prompt fields; they should create or suppress scoped policy records.

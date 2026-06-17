@@ -383,6 +383,7 @@ Read models:
 - `space.agent.list`
 - `space.agentTemplate.list`
 - `space.agentTemplate.builtin.list`
+- `space.agentTemplate.driftReport`
 - `space.longHorizonAgent.list`
 - `space.longHorizonAgentTemplate.builtin.list`
 - `space.longHorizonAgent.reminders.list`
@@ -390,6 +391,8 @@ Read models:
 - `space.workflow.list`
 - `space.workflowTemplate.list`
 - `space.workflowTemplate.builtin.list`
+- `space.workflowTemplate.drift`
+- `space.workflowTemplate.duplicateDrift`
 - `space.workflow.get`
 - `space.mcp.enablement.list`
 - `externalEvents.extensions.list`
@@ -454,6 +457,7 @@ Notes:
 - Current workflow detail cache and version map move here.
 - External-event source enablement and delivery inspection belong to the configure surface because they drive Space settings. Existing RPCs map as follows during migration: `externalEvents.extensions.list` stays under the same global extension query name, `externalEvents.extensions.setGlobalEnabled` stays under the same global command name, and `space.externalEvents.listDeliveries` maps to `space.externalEvents.deliveries.list`.
 - Existing agent/template RPCs map as follows during migration: `spaceAgent.listBuiltInTemplates` -> `space.agentTemplate.builtin.list`, `spaceAgent.syncFromTemplate` -> `space.agent.syncFromTemplate`, `spaceAgent.getPromotionDraft` -> `space.agent.promotionDraft.get`, and `spaceAgent.promoteSession` -> `space.agent.promoteSession`.
+- Existing template drift RPCs map as follows during migration: `spaceAgent.getDriftReport` -> `space.agentTemplate.driftReport`, `spaceWorkflow.detectDrift` -> `space.workflowTemplate.drift`, and `spaceWorkflow.detectDuplicateDrift` -> `space.workflowTemplate.duplicateDrift`.
 - Existing workflow-template RPCs map as follows during migration: `spaceWorkflow.listBuiltInTemplates` -> `space.workflowTemplate.builtin.list`, `spaceWorkflow.syncFromTemplate` -> `space.workflow.syncFromTemplate`, and `spaceWorkflow.resyncDuplicates` -> `space.workflow.resyncDuplicates`.
 - Existing export/import RPCs map as follows during migration: `spaceExport.bundle` -> `space.export.bundle`, `spaceExport.workflows` -> `space.export.workflows`, `spaceImport.preview` -> `space.import.preview`, and `spaceImport.execute` -> `space.import.execute`.
 - Existing long-horizon-agent RPCs map under the `space.longHorizonAgent.*` namespace: `spaceLongHorizonAgent.list`, `listBuiltInTemplates`, `create`, `update`, `delete`, `listReminders`, `createReminder`, `deleteReminder`, `listSubscriptions`, `createSubscription`, `updateSubscription`, and `deleteSubscription`.
@@ -728,6 +732,9 @@ This policy should be implemented once in a small helper rather than repeatedly 
 | `nodeExecution.list` | `space.workflowNodeExecution.list` |
 | `nodeExecutions.byRun` | `space.workflowNodeExecution.list` subscribed |
 | `spaceTaskActivity.byTask` | `space.task.activity` subscribed |
+| `spaceTaskMessages.byTask` | `space.task.thread.messages` subscribed |
+| `spaceTaskMessages.byTask.compact` | `space.task.thread.messages.compact` subscribed |
+| `spaceTaskActiveTurn.byTask` | `space.task.thread.activeTurn` subscribed |
 | `spaceSessions.bySpace` | `space.session.list` subscribed |
 | `spaceGoal.list` | `space.goal.list` |
 | `spaceGoal.listEvents` | `space.goal.events` |
