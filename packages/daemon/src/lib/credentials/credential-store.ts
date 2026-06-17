@@ -11,8 +11,9 @@ const DEFAULT_SERVICE_PREFIX = 'neokai.provider';
 const ENCRYPTION_KEY_ENV = 'NEOKAI_PROVIDER_CREDENTIAL_KEY';
 const KEY_FILE_NAME = '.provider-credential-key';
 export const KEYCHAIN_UNAVAILABLE_MESSAGE =
-  'macOS Keychain is locked or unavailable. Run `security unlock-keychain`, ' +
-  'launch NeoKai from Desktop/Terminal with a GUI session, or configure credentials via environment variables.';
+  'macOS Keychain is locked or unavailable. Run `security unlock-keychain` ' +
+  '(prompts for your login password), launch NeoKai from Desktop/Terminal with a ' +
+  'GUI session, or configure credentials via environment variables.';
 
 export interface CredentialStore {
   get(service: string, account: string): Promise<string | null>;
@@ -147,55 +148,141 @@ export class KeychainCredentialStore implements CredentialStore {
   }
 }
 
+const KEYCHAIN_FALLBACK_MESSAGE =
+  'macOS Keychain is locked or unavailable; using local encrypted file storage. ' +
+  'Run `security unlock-keychain` (prompts for your login password) or restart ' +
+  'NeoKai from a GUI session to restore Keychain persistence.';
+
 /**
- * macOS production credential store wrapper. Persistence stays Keychain-only:
- * no SQLite fallback for secrets. Reads tolerate a locked/unavailable Keychain
- * by returning null so env/settings discovery can still make providers usable;
- * writes/deletes rethrow a tagged error so RPC handlers can show actionable UX.
+ * macOS production credential store wrapper. Prefers Keychain for secure
+ * persistence. When the Keychain is locked or unavailable (daemon running
+ * in screen / SSH / launchd without a GUI security session), the wrapper
+ * tries to recover via the macOS GUI unlock dialog and then falls back to
+ * the encrypted `DatabaseCredentialStore` so credential writes still
+ * succeed. Reads tolerate a locked Keychain silently so env/settings
+ * discovery can keep providers usable.
+ *
+ * `fallback` and `unlockers` are optional so unit tests can pin behaviour
+ * without spawning real `security` invocations. The TTY gate that
+ * determines whether the default unlocker fires is owned by
+ * `buildDefaultUnlockers(ttyCheck)` — tests exercise that factory
+ * directly rather than going through this constructor.
+ *
+ * Note on weaker isolation: the encrypted fallback lives in a
+ * `provider_credentials` table inside the daemon's main SQLite database
+ * (path configurable via `DB_PATH`, defaults to
+ * `~/.neokai/data/daemon.db`), with its AES key at
+ * `~/.neokai/.provider-credential-key` (0600). Any same-user process can
+ * read both — this is weaker than the Keychain, which mitigates local
+ * attackers via Secure Enclave / ACLs. The fallback exists because the
+ * Keychain is unreachable from non-GUI security sessions and bricking
+ * credential writes in screen / SSH / launchd is worse than the
+ * weaker-isolation tradeoff. See `ProvidersSettings.tsx` banner for the
+ * user-facing disclosure.
  */
 export class KeychainStatusCredentialStore implements CredentialStore {
   private keychainWarned = false;
   private keychainAvailable = true;
+  private usingFallback = false;
+  private unlockAttempted = false;
   private statusChangeCallback: (() => void) | null = null;
   private readonly logger = new Logger('KeychainStatusCredentialStore');
 
-  constructor(private readonly keychain: CredentialStore) {}
+  constructor(
+    private readonly keychain: CredentialStore,
+    private readonly fallback?: CredentialStore,
+    private readonly unlockers: Array<() => Promise<boolean>> = []
+  ) {}
 
   setStatusChangeCallback(callback: () => void): void {
     this.statusChangeCallback = callback;
   }
 
   async get(service: string, account: string): Promise<string | null> {
+    // Always try the Keychain first when it's reachable. This lets the
+    // daemon pick up an external `security unlock-keychain` without a
+    // restart, and means the Keychain stays authoritative whenever it's
+    // available — even if we previously wrote a fallback copy.
     try {
       const result = await this.keychain.get(service, account);
       this.markKeychainAvailable();
-      return result;
+      if (result !== null) return result;
+      // Keychain reachable but miss — fall through to fallback in case the
+      // value was written while the Keychain was previously unavailable.
     } catch (error) {
       if (!(error instanceof KeychainUnavailableError)) throw error;
+      // Reads stay silent on 36 so env-var/settings discovery keeps working.
       this.markKeychainUnavailable();
-      return null;
     }
+    if (this.fallback) return await this.fallback.get(service, account);
+    return null;
   }
 
   async set(service: string, account: string, data: string): Promise<void> {
-    try {
-      await this.keychain.set(service, account, data);
+    const outcome = await this.runWithUnlockRetry(() => this.keychain.set(service, account, data));
+    if (outcome === 'ok') {
       this.markKeychainAvailable();
-    } catch (error) {
-      if (!(error instanceof KeychainUnavailableError)) throw error;
-      this.markKeychainUnavailable();
-      throw new KeychainUnavailableError(KEYCHAIN_UNAVAILABLE_MESSAGE);
+      // Write-through: if the fallback already has a copy of this entry
+      // (because it was previously written while the Keychain was locked),
+      // refresh it so a subsequent Keychain lock doesn't surface a stale
+      // rotated credential. We deliberately do NOT create a new fallback
+      // entry here — only keep an existing one current — so the fallback
+      // stays empty for users who never hit the locked-Keychain path and
+      // the weaker-isolation surface stays minimal.
+      await this.refreshFallbackIfPresent(service, account, data);
+      return;
     }
+    await this.runWithFallback(
+      () => this.fallback?.set(service, account, data),
+      `set(${service}:${account})`
+    );
   }
 
   async delete(service: string, account: string): Promise<void> {
-    try {
-      await this.keychain.delete(service, account);
+    const outcome = await this.runWithUnlockRetry(() => this.keychain.delete(service, account));
+    if (outcome === 'ok') {
       this.markKeychainAvailable();
-    } catch (error) {
-      if (!(error instanceof KeychainUnavailableError)) throw error;
-      this.markKeychainUnavailable();
-      throw new KeychainUnavailableError(KEYCHAIN_UNAVAILABLE_MESSAGE);
+      // Primary delete succeeded — clear any fallback copy too so a
+      // subsequent Keychain lock doesn't surface a stale credential.
+      await this.fallback?.delete(service, account).catch(() => {});
+      return;
+    }
+    // Keychain delete did not succeed (locked / no GUI session / unlock
+    // attempt failed). Deleting only from the fallback would leave the
+    // authoritative Keychain copy behind, and the next time the Keychain
+    // becomes reachable `get()` would prefer it — provider appears
+    // re-authenticated after the user explicitly logged out. Delete is
+    // an irreversible operation against the authoritative store, so we
+    // surface the failure rather than claim partial success. Callers
+    // (providers.delete, auth.logout) propagate the error to the UI so
+    // the user knows to unlock the Keychain and retry.
+    this.markKeychainUnavailable();
+    throw new KeychainUnavailableError(
+      `${KEYCHAIN_UNAVAILABLE_MESSAGE} (blocked: delete(${service}:${account}))`
+    );
+  }
+
+  /**
+   * If the fallback store already has a value for `(service, account)`,
+   * overwrite it with `data`. Used by `set()` on successful Keychain
+   * writes to keep a previously-fallback-only entry from going stale
+   * after a credential rotation. No-op when the fallback has no entry
+   * (so we don't broaden the weaker-isolation surface for entries that
+   * never needed the fallback). Best-effort: errors are swallowed
+   * because the Keychain write already succeeded and is authoritative.
+   */
+  private async refreshFallbackIfPresent(
+    service: string,
+    account: string,
+    data: string
+  ): Promise<void> {
+    if (!this.fallback) return;
+    try {
+      const existing = await this.fallback.get(service, account);
+      if (existing === null) return;
+      await this.fallback.set(service, account, data);
+    } catch {
+      // Swallow — Keychain write succeeded, refresh is best-effort.
     }
   }
 
@@ -203,15 +290,27 @@ export class KeychainStatusCredentialStore implements CredentialStore {
     try {
       const services = await this.keychain.listServices(prefix);
       this.markKeychainAvailable();
+      if (this.fallback) {
+        const fb = await this.fallback.listServices(prefix);
+        return Array.from(new Set([...services, ...fb])).sort();
+      }
       return services;
     } catch (error) {
       if (!(error instanceof KeychainUnavailableError)) throw error;
       this.markKeychainUnavailable();
+      if (this.fallback) return await this.fallback.listServices(prefix);
       return [];
     }
   }
 
   getStatus(): CredentialStoreStatus {
+    if (this.usingFallback) {
+      return {
+        backend: 'keychain-fallback',
+        keychainAvailable: false,
+        warning: KEYCHAIN_FALLBACK_MESSAGE,
+      };
+    }
     if (this.keychainAvailable) {
       return { backend: 'keychain', keychainAvailable: true };
     }
@@ -222,20 +321,179 @@ export class KeychainStatusCredentialStore implements CredentialStore {
     };
   }
 
+  /**
+   * Runs an operation against the primary Keychain store. On
+   * `KeychainUnavailableError` triggers the configured unlockers once per
+   * daemon session, then retries the operation a single time. Returns
+   * `'ok'` on success or `'fallback'` when the operation could not
+   * complete against the Keychain.
+   */
+  private async runWithUnlockRetry(op: () => Promise<void>): Promise<'ok' | 'fallback'> {
+    try {
+      await op();
+      return 'ok';
+    } catch (error) {
+      if (!(error instanceof KeychainUnavailableError)) throw error;
+    }
+    if (!this.unlockAttempted && this.unlockers.length > 0) {
+      this.unlockAttempted = true;
+      for (const unlock of this.unlockers) {
+        const ok = await Promise.resolve(unlock()).catch(() => false);
+        if (!ok) continue;
+        try {
+          await op();
+          return 'ok';
+        } catch (error) {
+          if (!(error instanceof KeychainUnavailableError)) throw error;
+          break;
+        }
+      }
+    }
+    return 'fallback';
+  }
+
+  private async runWithFallback(
+    op: () => Promise<unknown> | undefined,
+    label: string
+  ): Promise<void> {
+    if (!this.fallback) {
+      this.markKeychainUnavailable();
+      throw new KeychainUnavailableError(`${KEYCHAIN_UNAVAILABLE_MESSAGE} (blocked: ${label})`);
+    }
+    // Run the fallback op FIRST, then mark state + fire the status
+    // callback. Firing the callback before the write completes lets an
+    // app-level subscriber (e.g. app.ts applyStoredProviderCredentials)
+    // re-enter the store mid-flight and race with the in-progress write.
+    // Ordering op-before-mark guarantees the write is durable by the
+    // time any subscriber observes the `keychain-fallback` transition.
+    await op();
+    this.markUsingFallback();
+  }
+
+  /**
+   * Compute the current backend label so mark* helpers can detect actual
+   * transitions. The previous logic only fired the statusChangeCallback
+   * when transitioning out of the fully-available state, which meant the
+   * `keychain-unavailable` → `keychain-fallback` transition (a locked
+   * Keychain read followed by a successful fallback write) was silent —
+   * connected clients kept showing the yellow unavailable banner even
+   * though writes were now succeeding via the fallback. Comparing the
+   * backend label before and after fires the callback on every real
+   * transition, including the unavailable→fallback recovery.
+   */
+  private currentBackend(): CredentialStoreStatus['backend'] {
+    if (this.usingFallback) return 'keychain-fallback';
+    if (this.keychainAvailable) return 'keychain';
+    return 'keychain-unavailable';
+  }
+
   private markKeychainUnavailable(): void {
-    const wasAvailable = this.keychainAvailable;
+    const previousBackend = this.currentBackend();
     this.keychainAvailable = false;
-    if (wasAvailable) this.statusChangeCallback?.();
+    if (previousBackend !== this.currentBackend()) this.statusChangeCallback?.();
     if (this.keychainWarned) return;
     this.keychainWarned = true;
     this.logger.warn(KEYCHAIN_UNAVAILABLE_MESSAGE);
   }
 
-  private markKeychainAvailable(): void {
-    const wasUnavailable = !this.keychainAvailable;
-    this.keychainAvailable = true;
-    if (wasUnavailable) this.statusChangeCallback?.();
+  private markUsingFallback(): void {
+    const previousBackend = this.currentBackend();
+    this.usingFallback = true;
+    this.keychainAvailable = false;
+    if (previousBackend !== this.currentBackend()) this.statusChangeCallback?.();
+    if (this.keychainWarned) return;
+    this.keychainWarned = true;
+    this.logger.warn(KEYCHAIN_FALLBACK_MESSAGE);
   }
+
+  private markKeychainAvailable(): void {
+    const previousBackend = this.currentBackend();
+    this.keychainAvailable = true;
+    this.usingFallback = false;
+    // Reset the one-shot unlock latch: if the Keychain later re-locks
+    // (sleep, `security lock-keychain`, keychain timeout), the next write
+    // should attempt interactive unlock again rather than routing blindly
+    // to the fallback. Without this, the daemon is stuck on the weaker
+    // fallback store until process restart.
+    this.unlockAttempted = false;
+    if (previousBackend !== this.currentBackend()) this.statusChangeCallback?.();
+  }
+}
+
+/**
+ * Builds the default unlocker list with the given TTY gate. Extracted so
+ * `createCredentialStore` can hand in the production `process.stdout.isTTY`
+ * check while tests can import this factory and exercise the real gate
+ * against a mocked `spawnImpl` (rather than re-implementing the unlocker
+ * inline, which wouldn't catch a future refactor dropping the gate here).
+ *
+ * `timeoutMs` is also injectable so tests can drive the kill-on-timeout
+ * path without waiting the full 30s — pass `10` to exercise the
+ * setTimeout + child.kill branch with a hung fake child.
+ */
+export function buildDefaultUnlockers(
+  ttyCheck: () => boolean,
+  timeoutMs: number = 30_000
+): Array<() => Promise<boolean>> {
+  return [
+    async () => {
+      if (!ttyCheck()) return false;
+      return tryUnlockKeychainViaGUI(timeoutMs);
+    },
+  ];
+}
+
+/**
+ * Default interactive unlock strategy: trigger the macOS GUI password
+ * dialog. We deliberately do NOT prompt on stdin/TTY because that path
+ * risks hanging non-interactive daemons (launchd, test runners, CI) when
+ * no one is around to type. We also gate on the injected `ttyCheck`
+ * (production: `process.stdout.isTTY === true`) so background processes
+ * (launchd, containerised daemons, bun test runners) skip the unlock
+ * attempt entirely and fall straight through to the encrypted file
+ * fallback instead of blocking on a dialog the user may never see.
+ *
+ * The GUI dialog either pops on the user's desktop (they type, keychain
+ * unlocks, retry succeeds) or fails fast with `errSecInteractionNotAllowed`
+ * when there's no Aqua session attached, in which case we fall through to
+ * the encrypted file store.
+ */
+
+async function tryUnlockKeychainViaGUI(timeoutMs: number = 30_000): Promise<boolean> {
+  // Cap the wait so a detached screen / SSH / tmux session where the GUI
+  // dialog can't be seen (or where the user stepped away) does not block
+  // a credential write indefinitely. The spike proved `security
+  // unlock-keychain` fails fast with code 36 when there is genuinely no
+  // Aqua session, so this timeout only fires in the rarer "Aqua session
+  // exists but the user cannot interact with it" case.
+  //
+  // Uses spawn+kill rather than Promise.race+execFile so the timeout
+  // actually cancels the child process. With Promise.race alone the
+  // `security unlock-keychain` subprocess keeps running behind the hung
+  // dialog and accumulates one stray process per credential write until
+  // the user finally dismisses the dialog (or never). Kill on timeout
+  // guarantees no stray processes; the dialog itself may linger on the
+  // desktop but the daemon does not.
+  return new Promise<boolean>((resolve) => {
+    const child = spawn('security', ['unlock-keychain'], { stdio: 'ignore' });
+    let settled = false;
+    const finish = (ok: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(ok);
+    };
+    const timer = setTimeout(() => {
+      try {
+        child.kill('SIGKILL');
+      } catch {
+        // Already exited — nothing to kill.
+      }
+      finish(false);
+    }, timeoutMs);
+    child.on('error', () => finish(false));
+    child.on('exit', (code) => finish(code === 0));
+  });
 }
 
 export class DatabaseCredentialStore implements CredentialStore {
@@ -311,7 +569,20 @@ export class DatabaseCredentialStore implements CredentialStore {
 
 export function createCredentialStore(db: Database): CredentialStore {
   if (process.env.NODE_ENV !== 'test' && platform() === 'darwin') {
-    return new KeychainStatusCredentialStore(new KeychainCredentialStore());
+    // macOS Keychain is preferred for secure storage. When it's locked or
+    // running in a headless security session (screen, SSH, launchd), writes
+    // fail with `errSecInteractionNotAllowed` (exit 36). The wrapper catches
+    // that, tries to recover via the macOS GUI unlock dialog (no TTY prompt
+    // — that would hang non-interactive daemons like launchd or test
+    // runners waiting on stdin), and finally falls back to the encrypted
+    // SQLite store so the daemon still works in screen/SSH without forcing
+    // the user to restart from a GUI session.
+    const ttyCheck = () => process.stdout.isTTY === true;
+    return new KeychainStatusCredentialStore(
+      new KeychainCredentialStore(),
+      new DatabaseCredentialStore(db),
+      buildDefaultUnlockers(ttyCheck)
+    );
   }
   return new DatabaseCredentialStore(db);
 }
