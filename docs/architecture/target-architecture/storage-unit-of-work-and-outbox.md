@@ -796,6 +796,7 @@ Runtime events that should be durable early:
 | `space.workflowNodeExecution.idle` | runtime canvas/projection |
 | `space.workflowNodeExecution.blocked` | runtime canvas/projection |
 | `space.workflowNodeExecution.restarted` | runtime canvas/projection |
+| `space.workflowGate.opened` | gate open-state changed and must be replayable for runtime projections |
 | `space.workflowGate.pendingApproval` | human approval UI state |
 | `space.workflowMessage.queued` | recovery and diagnostics |
 | `space.workflowMessage.delivered` | delivery audit |
@@ -843,6 +844,7 @@ Durable Forge events:
 - new `space_tasks` row
 - proposal `created_task_id` and status update
 - `space.task.created` event
+- `forge.taskProposal.updated` event
 - `forge.taskProposal.taskCreated` event
 - live query invalidations for `space_tasks` and Forge tables
 
@@ -852,6 +854,8 @@ Durable Forge events:
 - goal event row
 - episode status and `rollup_applied_at`
 - `space.goal.updated` event
+- `space.goal.event.created` event
+- `forge.episode.updated` event
 - `forge.rollup.applied` event
 
 ## Job Queue Integration

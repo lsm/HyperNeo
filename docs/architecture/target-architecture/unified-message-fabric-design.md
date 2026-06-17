@@ -287,11 +287,11 @@ export interface MessageContract<TInput = unknown, TOutput = unknown> {
 
 export interface QuerySubscriptionPolicy<TInput> {
   mode: 'live';
-  subjectFrom: (input: TInput) => string;
+  subjectFrom: (input: TInput, envelope: MessageEnvelope<TInput>) => string | string[];
 }
 ```
 
-`subscription` is only valid for query contracts. It declares whether the query can be subscribed/live and which subject or read-model key drives invalidation.
+`subscription` is only valid for query contracts. It declares whether the query can be subscribed/live and which subject or read-model keys drive invalidation. Queries whose effective result inherits broader scopes may subscribe to multiple subjects.
 
 Initial contracts live under `@neokai/shared/contracts` to match the shared-boundaries plan and M1 execution plan. A future `@neokai/messaging` extraction may move the registry and envelopes later, but it must not create a second contract surface during migration.
 
@@ -745,10 +745,12 @@ export const promptPolicyEffectivePreview = defineQuery({
   },
   subscription: {
     mode: 'live',
-    subjectFrom: (input) => `promptPolicy/preview/${input.sessionId ?? input.spaceId ?? 'global'}`,
+    subjectFrom: (input, envelope) => promptPolicyPreviewScopeChain(input, envelope),
   },
 });
 ```
+
+`promptPolicyPreviewScopeChain` returns every scope that contributes to the effective preview, not only the requested target. For example, a session preview subscribes to its session, parent Space, and global prompt-policy effective subjects. The projector may implement this as multi-subject invalidation or by fanning out a durable `promptPolicy.effective.changed` event to affected preview subjects when broader-scope records change.
 
 Example events:
 

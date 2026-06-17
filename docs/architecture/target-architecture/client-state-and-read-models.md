@@ -375,9 +375,15 @@ Read models:
 
 - `space.agent.list`
 - `space.agentTemplate.list`
+- `space.agentTemplate.builtin.list`
+- `space.longHorizonAgent.list`
+- `space.longHorizonAgentTemplate.builtin.list`
+- `space.longHorizonAgent.reminders.list`
+- `space.longHorizonAgent.subscriptions.list`
 - `space.workflow.list`
 - `space.workflowTemplate.list`
 - `space.workflow.get`
+- `space.mcp.enablement.list`
 - `externalEvents.extensions.list`
 - `space.externalEvents.deliveries.list`
 - `space.github.config.list`
@@ -388,23 +394,44 @@ Commands:
 - `space.agent.create`
 - `space.agent.update`
 - `space.agent.delete`
+- `space.agent.syncFromTemplate`
+- `space.agent.promotionDraft.get`
+- `space.agent.promoteSession`
+- `space.longHorizonAgent.create`
+- `space.longHorizonAgent.update`
+- `space.longHorizonAgent.delete`
+- `space.longHorizonAgent.reminder.create`
+- `space.longHorizonAgent.reminder.delete`
+- `space.longHorizonAgent.subscription.create`
+- `space.longHorizonAgent.subscription.update`
+- `space.longHorizonAgent.subscription.delete`
 - `space.workflow.create`
 - `space.workflow.update`
 - `space.workflow.delete`
 - `space.workflow.syncFromTemplate`
+- `space.mcp.setEnabled`
+- `space.mcp.clearOverride`
+- `mcp.imports.refresh`
 - `externalEvents.extensions.setGlobalEnabled`
 - `space.github.config.set`
 - `space.github.watchedRepos.add`
 - `space.github.watchedRepos.remove`
+- `space.github.webhook.autoConfigure`
+- `space.github.webhook.check`
 
 Events:
 
 - `space.agent.created`
 - `space.agent.updated`
 - `space.agent.deleted`
+- `space.longHorizonAgent.created`
+- `space.longHorizonAgent.updated`
+- `space.longHorizonAgent.deleted`
 - `space.workflow.created`
 - `space.workflow.updated`
 - `space.workflow.deleted`
+- `space.mcp.enablement.updated`
+- `mcp.imports.refreshed`
 - `externalEvents.extension.updated`
 - `space.externalEvents.delivery.created`
 - `space.externalEvents.delivery.updated`
@@ -413,6 +440,10 @@ Notes:
 
 - Current workflow detail cache and version map move here.
 - External-event source enablement and delivery inspection belong to the configure surface because they drive Space settings. Existing RPCs map as follows during migration: `externalEvents.extensions.list` stays under the same global extension query name, `externalEvents.extensions.setGlobalEnabled` stays under the same global command name, and `space.externalEvents.listDeliveries` maps to `space.externalEvents.deliveries.list`.
+- Existing agent/template RPCs map as follows during migration: `spaceAgent.listBuiltInTemplates` -> `space.agentTemplate.builtin.list`, `spaceAgent.syncFromTemplate` -> `space.agent.syncFromTemplate`, `spaceAgent.getPromotionDraft` -> `space.agent.promotionDraft.get`, and `spaceAgent.promoteSession` -> `space.agent.promoteSession`.
+- Existing long-horizon-agent RPCs map under the `space.longHorizonAgent.*` namespace: `spaceLongHorizonAgent.list`, `listBuiltInTemplates`, `create`, `update`, `delete`, `listReminders`, `createReminder`, `deleteReminder`, `listSubscriptions`, `createSubscription`, `updateSubscription`, and `deleteSubscription`.
+- Existing MCP settings paths map as follows during migration: `mcpEnablement.bySpace` -> `space.mcp.enablement.list`, `space.mcp.setEnabled` and `space.mcp.clearOverride` keep their command names, and `mcp.imports.refresh` keeps its global import-refresh command name.
+- Existing GitHub webhook RPCs map as follows during migration: `space.github.autoConfigureWebhook` -> `space.github.webhook.autoConfigure` and `space.github.checkWebhook` -> `space.github.webhook.check`.
 
 ### 7.7 SpaceGoalStore
 

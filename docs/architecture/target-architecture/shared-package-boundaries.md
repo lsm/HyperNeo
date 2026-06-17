@@ -100,6 +100,7 @@ The target can be implemented as subpath exports inside `@neokai/shared` first.
     "./domain/config": "./src/domain/config/index.ts",
     "./domain/extensions": "./src/domain/extensions/index.ts",
     "./domain/prompt-policy": "./src/domain/prompt-policy/index.ts",
+    "./domain/agent-runtime": "./src/domain/agent-runtime/index.ts",
     "./provider": "./src/provider/index.ts",
     "./sdk/*": "./src/sdk/*",
     "./messaging/protocol": "./src/messaging/protocol.ts",
