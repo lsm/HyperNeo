@@ -30,6 +30,7 @@ import {
   isSDKUserMessageReplay,
   isUserVisibleMessage,
   isNeokaiActionMessage,
+  isHiddenSystemSubtype,
 } from '@neokai/shared/sdk/type-guards';
 
 // Component imports
@@ -129,15 +130,9 @@ function isSubagentMessage(message: SDKMessage): boolean {
 
 function isRenderableSystemMessage(message: SDKMessage): boolean {
   if (!isSDKSystemMessage(message)) return false;
-  const subtype = (message as { subtype?: unknown }).subtype;
-  return (
-    subtype === 'thinking_tokens' ||
-    subtype === 'session_state_changed' ||
-    subtype === 'commands_changed' ||
-    subtype === 'informational' ||
-    subtype === 'worker_shutting_down' ||
-    subtype === 'model_refusal_fallback'
-  );
+  const subtype = (message as { subtype?: unknown }).subtype as string;
+  // Render system messages unless they're in the explicit hidden set
+  return !isHiddenSystemSubtype(subtype);
 }
 
 function isToolResultUserMessage(message: SDKMessage): boolean {

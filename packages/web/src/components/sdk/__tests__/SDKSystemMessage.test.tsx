@@ -403,58 +403,6 @@ describe('SDKSystemMessage', () => {
   });
 
   describe('Operational System Messages', () => {
-    it('should render thinking token updates', () => {
-      const message = {
-        type: 'system',
-        subtype: 'thinking_tokens',
-        estimated_tokens: 12345,
-        estimated_tokens_delta: 678,
-        uuid: createUUID(),
-        session_id: 'test-session',
-      } as Extract<SDKMessage, { type: 'system' }>;
-
-      const { container } = render(<SDKSystemMessage message={message} />);
-
-      expect(container.textContent).toContain('Thinking tokens');
-      expect(container.textContent).toContain('12,345 estimated tokens');
-      expect(container.textContent).toContain('+678');
-    });
-
-    it('should render session state changes', () => {
-      const message = {
-        type: 'system',
-        subtype: 'session_state_changed',
-        state: 'requires_action',
-        uuid: createUUID(),
-        session_id: 'test-session',
-      } as Extract<SDKMessage, { type: 'system' }>;
-
-      const { container } = render(<SDKSystemMessage message={message} />);
-
-      expect(container.textContent).toContain('Session state');
-      expect(container.textContent).toContain('requires_action');
-    });
-
-    it('should render command list changes', () => {
-      const message = {
-        type: 'system',
-        subtype: 'commands_changed',
-        commands: [
-          { name: 'help', description: 'Show help', argumentHint: '' },
-          { name: 'status', description: 'Show status', argumentHint: '' },
-        ],
-        uuid: createUUID(),
-        session_id: 'test-session',
-      } as Extract<SDKMessage, { type: 'system' }>;
-
-      const { container } = render(<SDKSystemMessage message={message} />);
-
-      expect(container.textContent).toContain('Commands changed');
-      expect(container.textContent).toContain('2 slash commands available');
-      expect(container.textContent).toContain('/help');
-      expect(container.textContent).toContain('/status');
-    });
-
     it('should render model refusal fallback messages', () => {
       const message = createModelRefusalFallbackMessage();
       const { container } = render(<SDKSystemMessage message={message} />);
@@ -515,6 +463,571 @@ describe('SDKSystemMessage', () => {
 
       expect(container.textContent).toContain('Worker shutting down');
       expect(container.textContent).toContain('host_exit');
+    });
+  });
+
+  describe('Permission Denied Message', () => {
+    it('should render permission denied card', () => {
+      const message = {
+        type: 'system',
+        subtype: 'permission_denied',
+        tool_name: 'Bash',
+        tool_use_id: 'tool-1',
+        decision_reason_type: 'classifier',
+        decision_reason: 'Unsafe command detected',
+        message: 'Command denied for safety reasons',
+        uuid: createUUID(),
+        session_id: 'test-session',
+      } as Extract<SDKMessage, { type: 'system' }>;
+
+      const { container } = render(<SDKSystemMessage message={message} />);
+
+      expect(container.textContent).toContain('Permission denied');
+      expect(container.textContent).toContain('Bash');
+      expect(container.textContent).toContain('Unsafe command detected');
+      expect(container.textContent).toContain('Command denied for safety reasons');
+    });
+
+    it('should have rose color scheme', () => {
+      const message = {
+        type: 'system',
+        subtype: 'permission_denied',
+        tool_name: 'Bash',
+        tool_use_id: 'tool-1',
+        message: 'Denied',
+        uuid: createUUID(),
+        session_id: 'test-session',
+      } as Extract<SDKMessage, { type: 'system' }>;
+
+      const { container } = render(<SDKSystemMessage message={message} />);
+
+      expect(container.querySelector('.border-rose-200, .border-rose-800')).toBeTruthy();
+    });
+  });
+
+  describe('Task Notification Message', () => {
+    it('should render completed task with usage', () => {
+      const message = {
+        type: 'system',
+        subtype: 'task_notification',
+        task_id: 'task-1',
+        tool_use_id: 'tool-1',
+        status: 'completed' as const,
+        output_file: '/output.txt',
+        summary: 'Task completed successfully',
+        usage: {
+          total_tokens: 15000,
+          tool_uses: 8,
+          duration_ms: 5000,
+        },
+        uuid: createUUID(),
+        session_id: 'test-session',
+      } as Extract<SDKMessage, { type: 'system' }>;
+
+      const { container } = render(<SDKSystemMessage message={message} />);
+
+      expect(container.textContent).toContain('Task completed');
+      expect(container.textContent).toContain('Task completed successfully');
+      expect(container.textContent).toContain('15,000 tokens');
+      expect(container.textContent).toContain('8 tool uses');
+      expect(container.textContent).toContain('5.0s');
+    });
+
+    it('should render failed task', () => {
+      const message = {
+        type: 'system',
+        subtype: 'task_notification',
+        task_id: 'task-1',
+        tool_use_id: 'tool-1',
+        status: 'failed' as const,
+        output_file: '/output.txt',
+        summary: 'Task failed: timeout',
+        uuid: createUUID(),
+        session_id: 'test-session',
+      } as Extract<SDKMessage, { type: 'system' }>;
+
+      const { container } = render(<SDKSystemMessage message={message} />);
+
+      expect(container.textContent).toContain('Task failed');
+      expect(container.textContent).toContain('Task failed: timeout');
+    });
+
+    it('should have green color for completed, red for failed', () => {
+      const completed = {
+        type: 'system',
+        subtype: 'task_notification',
+        task_id: 'task-1',
+        status: 'completed' as const,
+        output_file: '/output.txt',
+        summary: 'Done',
+        uuid: createUUID(),
+        session_id: 'test-session',
+      } as Extract<SDKMessage, { type: 'system' }>;
+
+      const { container: completedContainer } = render(<SDKSystemMessage message={completed} />);
+      expect(completedContainer.querySelector('.border-green-200, .border-green-800')).toBeTruthy();
+
+      const failed = {
+        type: 'system',
+        subtype: 'task_notification',
+        task_id: 'task-1',
+        status: 'failed' as const,
+        output_file: '/output.txt',
+        summary: 'Failed',
+        uuid: createUUID(),
+        session_id: 'test-session',
+      } as Extract<SDKMessage, { type: 'system' }>;
+
+      const { container: failedContainer } = render(<SDKSystemMessage message={failed} />);
+      expect(failedContainer.querySelector('.border-red-200, .border-red-800')).toBeTruthy();
+    });
+  });
+
+  describe('Memory Recall Message', () => {
+    it('should render memory recall card with item count', () => {
+      const message = {
+        type: 'system',
+        subtype: 'memory_recall',
+        mode: 'select' as const,
+        memories: [
+          { path: '/project/memory/conventions.md', scope: 'project' },
+          { path: '/project/memory/architecture.md', scope: 'project' },
+        ],
+        uuid: createUUID(),
+        session_id: 'test-session',
+      } as Extract<SDKMessage, { type: 'system' }>;
+
+      const { container } = render(<SDKSystemMessage message={message} />);
+
+      expect(container.textContent).toContain('Memory recalled');
+      expect(container.textContent).toContain('(2 items)');
+    });
+
+    it('should be expandable to show memory paths', () => {
+      const message = {
+        type: 'system',
+        subtype: 'memory_recall',
+        mode: 'select' as const,
+        memories: [
+          { path: '/project/memory/conventions.md', scope: 'project' },
+          { path: '/user/memory/preferences.md', scope: 'personal' },
+        ],
+        uuid: createUUID(),
+        session_id: 'test-session',
+      } as Extract<SDKMessage, { type: 'system' }>;
+
+      const { container } = render(<SDKSystemMessage message={message} />);
+
+      const button = container.querySelector('button')!;
+      fireEvent.click(button);
+
+      expect(container.textContent).toContain('/project/memory/conventions.md');
+      expect(container.textContent).toContain('project');
+      expect(container.textContent).toContain('/user/memory/preferences.md');
+      expect(container.textContent).toContain('personal');
+    });
+
+    it('should have violet color scheme', () => {
+      const message = {
+        type: 'system',
+        subtype: 'memory_recall',
+        mode: 'select' as const,
+        memories: [{ path: '/memory/file.md', scope: 'project' }],
+        uuid: createUUID(),
+        session_id: 'test-session',
+      } as Extract<SDKMessage, { type: 'system' }>;
+
+      const { container } = render(<SDKSystemMessage message={message} />);
+
+      expect(container.querySelector('.border-violet-200, .border-violet-800')).toBeTruthy();
+    });
+  });
+
+  describe('Local Command Output Message', () => {
+    it('should render command output as plaintext', () => {
+      const message = {
+        type: 'system',
+        subtype: 'local_command_output',
+        content: 'Line 1\nLine 2\nLine 3',
+        uuid: createUUID(),
+        session_id: 'test-session',
+      } as Extract<SDKMessage, { type: 'system' }>;
+
+      const { container } = render(<SDKSystemMessage message={message} />);
+
+      expect(container.textContent).toContain('Line 1');
+      expect(container.textContent).toContain('Line 2');
+      expect(container.textContent).toContain('Line 3');
+    });
+
+    it('should preserve whitespace formatting', () => {
+      const message = {
+        type: 'system',
+        subtype: 'local_command_output',
+        content: '  Indented line\n\nDouble newline',
+        uuid: createUUID(),
+        session_id: 'test-session',
+      } as Extract<SDKMessage, { type: 'system' }>;
+
+      const { container } = render(<SDKSystemMessage message={message} />);
+
+      expect(container.textContent).toContain('  Indented line');
+      expect(container.textContent).toContain('Double newline');
+    });
+
+    it('should have slate color scheme', () => {
+      const message = {
+        type: 'system',
+        subtype: 'local_command_output',
+        content: 'Test output',
+        uuid: createUUID(),
+        session_id: 'test-session',
+      } as Extract<SDKMessage, { type: 'system' }>;
+
+      const { container } = render(<SDKSystemMessage message={message} />);
+
+      expect(container.querySelector('.border-slate-200, .border-slate-700')).toBeTruthy();
+    });
+  });
+
+  describe('Notification Message', () => {
+    it('should render notification with text', () => {
+      const message = {
+        type: 'system',
+        subtype: 'notification',
+        key: 'test-note',
+        text: 'This is a notification',
+        priority: 'medium' as const,
+        uuid: createUUID(),
+        session_id: 'test-session',
+      } as Extract<SDKMessage, { type: 'system' }>;
+
+      const { container } = render(<SDKSystemMessage message={message} />);
+
+      expect(container.textContent).toContain('This is a notification');
+    });
+
+    it('should use priority-based colors', () => {
+      const low = {
+        type: 'system',
+        subtype: 'notification',
+        key: 'low',
+        text: 'Low priority',
+        priority: 'low' as const,
+        uuid: createUUID(),
+        session_id: 'test-session',
+      } as Extract<SDKMessage, { type: 'system' }>;
+
+      const { container: lowContainer } = render(<SDKSystemMessage message={low} />);
+      expect(lowContainer.querySelector('.border-blue-200, .border-blue-800')).toBeTruthy();
+
+      const high = {
+        type: 'system',
+        subtype: 'notification',
+        key: 'high',
+        text: 'High priority',
+        priority: 'high' as const,
+        uuid: createUUID(),
+        session_id: 'test-session',
+      } as Extract<SDKMessage, { type: 'system' }>;
+
+      const { container: highContainer } = render(<SDKSystemMessage message={high} />);
+      expect(highContainer.querySelector('.border-orange-200, .border-orange-800')).toBeTruthy();
+    });
+
+    it('should use custom color when provided', () => {
+      const message = {
+        type: 'system',
+        subtype: 'notification',
+        key: 'custom',
+        text: 'Custom color',
+        priority: 'medium' as const,
+        color: 'border-purple-200 bg-purple-50 text-purple-900',
+        uuid: createUUID(),
+        session_id: 'test-session',
+      } as Extract<SDKMessage, { type: 'system' }>;
+
+      const { container } = render(<SDKSystemMessage message={message} />);
+
+      // Should use the custom color class
+      expect(container.querySelector('.border-purple-200')).toBeTruthy();
+    });
+  });
+
+  describe('Files Persisted Message', () => {
+    it('should render when there are failures', () => {
+      const message = {
+        type: 'system',
+        subtype: 'files_persisted',
+        files: [{ filename: 'saved.txt', file_id: 'file-1' }],
+        failed: [
+          { filename: 'failed.txt', error: 'Permission denied' },
+          { filename: 'error.txt', error: 'Disk full' },
+        ],
+        processed_at: '2024-01-01T00:00:00Z',
+        uuid: createUUID(),
+        session_id: 'test-session',
+      } as Extract<SDKMessage, { type: 'system' }>;
+
+      const { container } = render(<SDKSystemMessage message={message} />);
+
+      expect(container.textContent).toContain('File persistence failed');
+      expect(container.textContent).toContain('2 files');
+      expect(container.textContent).toContain('failed to persist');
+      expect(container.textContent).toContain('failed.txt');
+      expect(container.textContent).toContain('Permission denied');
+      expect(container.textContent).toContain('error.txt');
+      expect(container.textContent).toContain('Disk full');
+    });
+
+    it('should return null when all files persisted successfully', () => {
+      const message = {
+        type: 'system',
+        subtype: 'files_persisted',
+        files: [{ filename: 'saved.txt', file_id: 'file-1' }],
+        failed: [],
+        processed_at: '2024-01-01T00:00:00Z',
+        uuid: createUUID(),
+        session_id: 'test-session',
+      } as Extract<SDKMessage, { type: 'system' }>;
+
+      const { container } = render(<SDKSystemMessage message={message} />);
+
+      expect(container.innerHTML).toBe('');
+    });
+
+    it('should have red color scheme', () => {
+      const message = {
+        type: 'system',
+        subtype: 'files_persisted',
+        files: [],
+        failed: [{ filename: 'failed.txt', error: 'Error' }],
+        processed_at: '2024-01-01T00:00:00Z',
+        uuid: createUUID(),
+        session_id: 'test-session',
+      } as Extract<SDKMessage, { type: 'system' }>;
+
+      const { container } = render(<SDKSystemMessage message={message} />);
+
+      expect(container.querySelector('.border-red-200, .border-red-800')).toBeTruthy();
+    });
+  });
+
+  describe('Plugin Install Message', () => {
+    it('should render failed plugin install', () => {
+      const message = {
+        type: 'system',
+        subtype: 'plugin_install',
+        status: 'failed' as const,
+        name: 'test-plugin',
+        error: 'Failed to download plugin',
+        uuid: createUUID(),
+        session_id: 'test-session',
+      } as Extract<SDKMessage, { type: 'system' }>;
+
+      const { container } = render(<SDKSystemMessage message={message} />);
+
+      expect(container.textContent).toContain('test-plugin');
+      expect(container.textContent).toContain('installation failed');
+      expect(container.textContent).toContain('Failed to download plugin');
+    });
+
+    it('should render completed plugin install', () => {
+      const message = {
+        type: 'system',
+        subtype: 'plugin_install',
+        status: 'completed' as const,
+        name: 'test-plugin',
+        uuid: createUUID(),
+        session_id: 'test-session',
+      } as Extract<SDKMessage, { type: 'system' }>;
+
+      const { container } = render(<SDKSystemMessage message={message} />);
+
+      expect(container.textContent).toContain('test-plugin');
+      expect(container.textContent).toContain('installed');
+    });
+
+    it('should return null for started status', () => {
+      const message = {
+        type: 'system',
+        subtype: 'plugin_install',
+        status: 'started' as const,
+        name: 'test-plugin',
+        uuid: createUUID(),
+        session_id: 'test-session',
+      } as Extract<SDKMessage, { type: 'system' }>;
+
+      const { container } = render(<SDKSystemMessage message={message} />);
+
+      expect(container.innerHTML).toBe('');
+    });
+
+    it('should have green color for completed, red for failed', () => {
+      const completed = {
+        type: 'system',
+        subtype: 'plugin_install',
+        status: 'completed' as const,
+        name: 'test-plugin',
+        uuid: createUUID(),
+        session_id: 'test-session',
+      } as Extract<SDKMessage, { type: 'system' }>;
+
+      const { container: completedContainer } = render(<SDKSystemMessage message={completed} />);
+      expect(completedContainer.querySelector('.border-green-200, .border-green-800')).toBeTruthy();
+
+      const failed = {
+        type: 'system',
+        subtype: 'plugin_install',
+        status: 'failed' as const,
+        name: 'test-plugin',
+        error: 'Error',
+        uuid: createUUID(),
+        session_id: 'test-session',
+      } as Extract<SDKMessage, { type: 'system' }>;
+
+      const { container: failedContainer } = render(<SDKSystemMessage message={failed} />);
+      expect(failedContainer.querySelector('.border-red-200, .border-red-800')).toBeTruthy();
+    });
+  });
+
+  describe('Hidden System Subtypes', () => {
+    it('should return null for session_state_changed', () => {
+      const message = {
+        type: 'system',
+        subtype: 'session_state_changed',
+        state: 'requires_action',
+        uuid: createUUID(),
+        session_id: 'test-session',
+      } as Extract<SDKMessage, { type: 'system' }>;
+
+      const { container } = render(<SDKSystemMessage message={message} />);
+
+      expect(container.innerHTML).toBe('');
+    });
+
+    it('should return null for commands_changed', () => {
+      const message = {
+        type: 'system',
+        subtype: 'commands_changed',
+        commands: [
+          { name: 'help', description: 'Show help', argumentHint: '' },
+          { name: 'status', description: 'Show status', argumentHint: '' },
+        ],
+        uuid: createUUID(),
+        session_id: 'test-session',
+      } as Extract<SDKMessage, { type: 'system' }>;
+
+      const { container } = render(<SDKSystemMessage message={message} />);
+
+      expect(container.innerHTML).toBe('');
+    });
+
+    it('should return null for hook_started', () => {
+      const message = {
+        type: 'system',
+        subtype: 'hook_started',
+        hook_name: 'pre-commit',
+        hook_event: 'PreToolUse',
+        uuid: createUUID(),
+        session_id: 'test-session',
+      } as Extract<SDKMessage, { type: 'system' }>;
+
+      const { container } = render(<SDKSystemMessage message={message} />);
+
+      expect(container.innerHTML).toBe('');
+    });
+
+    it('should return null for hook_progress', () => {
+      const message = {
+        type: 'system',
+        subtype: 'hook_progress',
+        hook_name: 'pre-commit',
+        hook_event: 'PreToolUse',
+        stdout: 'Progress...',
+        uuid: createUUID(),
+        session_id: 'test-session',
+      } as Extract<SDKMessage, { type: 'system' }>;
+
+      const { container } = render(<SDKSystemMessage message={message} />);
+
+      expect(container.innerHTML).toBe('');
+    });
+
+    it('should return null for task_started', () => {
+      const message = {
+        type: 'system',
+        subtype: 'task_started',
+        task_id: 'task-1',
+        tool_use_id: 'tool-1',
+        description: 'Test task',
+        uuid: createUUID(),
+        session_id: 'test-session',
+      } as Extract<SDKMessage, { type: 'system' }>;
+
+      const { container } = render(<SDKSystemMessage message={message} />);
+
+      expect(container.innerHTML).toBe('');
+    });
+
+    it('should return null for task_progress', () => {
+      const message = {
+        type: 'system',
+        subtype: 'task_progress',
+        task_id: 'task-1',
+        tool_use_id: 'tool-1',
+        description: 'Progress update',
+        usage: { total_tokens: 1000, tool_uses: 2, duration_ms: 100 },
+        uuid: createUUID(),
+        session_id: 'test-session',
+      } as Extract<SDKMessage, { type: 'system' }>;
+
+      const { container } = render(<SDKSystemMessage message={message} />);
+
+      expect(container.innerHTML).toBe('');
+    });
+
+    it('should return null for task_updated', () => {
+      const message = {
+        type: 'system',
+        subtype: 'task_updated',
+        task_id: 'task-1',
+        tool_use_id: 'tool-1',
+        patch: { status: 'running' },
+        uuid: createUUID(),
+        session_id: 'test-session',
+      } as Extract<SDKMessage, { type: 'system' }>;
+
+      const { container } = render(<SDKSystemMessage message={message} />);
+
+      expect(container.innerHTML).toBe('');
+    });
+
+    it('should return null for mirror_error', () => {
+      const message = {
+        type: 'system',
+        subtype: 'mirror_error',
+        error: 'Mirror failed',
+        uuid: createUUID(),
+        session_id: 'test-session',
+      } as Extract<SDKMessage, { type: 'system' }>;
+
+      const { container } = render(<SDKSystemMessage message={message} />);
+
+      expect(container.innerHTML).toBe('');
+    });
+
+    it('should return null for elicitation_complete', () => {
+      const message = {
+        type: 'system',
+        subtype: 'elicitation_complete',
+        uuid: createUUID(),
+        session_id: 'test-session',
+      } as Extract<SDKMessage, { type: 'system' }>;
+
+      const { container } = render(<SDKSystemMessage message={message} />);
+
+      expect(container.innerHTML).toBe('');
     });
   });
 

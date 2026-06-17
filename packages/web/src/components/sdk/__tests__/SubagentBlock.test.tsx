@@ -735,9 +735,10 @@ describe('SubagentBlock', () => {
     it('should render visible system messages through the SDK system renderer', () => {
       const input = createAgentInput('Explore', 'Find files', 'Search for test files');
       const nestedMessages = [
-        createNestedSystemMessage('thinking_tokens', {
-          estimated_tokens: 1200,
-          estimated_tokens_delta: 50,
+        createNestedSystemMessage('informational', {
+          level: 'warning',
+          content: 'Task running longer than expected',
+          prevent_continuation: false,
         }),
       ];
 
@@ -748,8 +749,8 @@ describe('SubagentBlock', () => {
       const button = container.querySelector('button')!;
       fireEvent.click(button);
 
-      expect(container.textContent).toContain('Thinking tokens');
-      expect(container.textContent).toContain('1,200 estimated tokens (+50)');
+      expect(container.textContent).toContain('Info: warning');
+      expect(container.textContent).toContain('Task running longer than expected');
     });
 
     it('should suppress nested transcript-only info and stale worker shutdown rows', async () => {

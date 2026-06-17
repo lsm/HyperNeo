@@ -27,6 +27,7 @@ import {
   hasRenderableThinking,
   getMessageTypeDescription,
   isUserVisibleMessage,
+  isHiddenSystemSubtype,
   type ContentBlock,
 } from '../src/sdk/type-guards';
 import type { SDKMessage } from '../src/sdk/sdk';
@@ -746,5 +747,60 @@ describe('isUserVisibleMessage', () => {
       status: 'thinking',
     };
     expect(isUserVisibleMessage(msg as unknown as SDKMessage)).toBe(true);
+  });
+});
+
+describe('isHiddenSystemSubtype', () => {
+  test('should return true for session_state_changed', () => {
+    expect(isHiddenSystemSubtype('session_state_changed')).toBe(true);
+  });
+
+  test('should return true for commands_changed', () => {
+    expect(isHiddenSystemSubtype('commands_changed')).toBe(true);
+  });
+
+  test('should return true for hook_started', () => {
+    expect(isHiddenSystemSubtype('hook_started')).toBe(true);
+  });
+
+  test('should return true for hook_progress', () => {
+    expect(isHiddenSystemSubtype('hook_progress')).toBe(true);
+  });
+
+  test('should return true for task_started', () => {
+    expect(isHiddenSystemSubtype('task_started')).toBe(true);
+  });
+
+  test('should return true for task_progress', () => {
+    expect(isHiddenSystemSubtype('task_progress')).toBe(true);
+  });
+
+  test('should return true for task_updated', () => {
+    expect(isHiddenSystemSubtype('task_updated')).toBe(true);
+  });
+
+  test('should return true for mirror_error', () => {
+    expect(isHiddenSystemSubtype('mirror_error')).toBe(true);
+  });
+
+  test('should return true for elicitation_complete', () => {
+    expect(isHiddenSystemSubtype('elicitation_complete')).toBe(true);
+  });
+
+  test('should return false for visible subtypes', () => {
+    expect(isHiddenSystemSubtype('init')).toBe(false);
+    expect(isHiddenSystemSubtype('compact_boundary')).toBe(false);
+    expect(isHiddenSystemSubtype('status')).toBe(false);
+    expect(isHiddenSystemSubtype('hook_response')).toBe(false);
+    expect(isHiddenSystemSubtype('informational')).toBe(false);
+    expect(isHiddenSystemSubtype('worker_shutting_down')).toBe(false);
+    expect(isHiddenSystemSubtype('model_refusal_fallback')).toBe(false);
+    expect(isHiddenSystemSubtype('permission_denied')).toBe(false);
+    expect(isHiddenSystemSubtype('task_notification')).toBe(false);
+    expect(isHiddenSystemSubtype('memory_recall')).toBe(false);
+    expect(isHiddenSystemSubtype('local_command_output')).toBe(false);
+    expect(isHiddenSystemSubtype('notification')).toBe(false);
+    expect(isHiddenSystemSubtype('files_persisted')).toBe(false);
+    expect(isHiddenSystemSubtype('plugin_install')).toBe(false);
   });
 });
