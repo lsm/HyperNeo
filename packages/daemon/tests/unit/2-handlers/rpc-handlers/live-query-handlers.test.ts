@@ -836,6 +836,74 @@ describe('NAMED_QUERY_REGISTRY', () => {
       );
     });
 
+    test('actorMessages.byTask filters SDK-only system rows and projects visible notices', () => {
+      const workflowRunId = 'wr-actor-system-visibility';
+      const nodeSessionId = 'node-agent-actor-system-visibility';
+      const taskId = insertSpaceTask({
+        id: 'actor-system-visibility-task',
+        workflowRunId,
+        status: 'in_progress',
+      });
+      insertSession(nodeSessionId, 'worker', '{"status":"processing"}');
+      sessionTaskIds.set(nodeSessionId, taskId);
+      insertSdkMessageAt('sdk-visible', nodeSessionId, now + 1000);
+      insertSdkMessageAt(
+        'sdk-hidden-info',
+        nodeSessionId,
+        now + 2000,
+        'system',
+        'consumed',
+        'system',
+        'informational',
+        {
+          type: 'system',
+          subtype: 'informational',
+          level: 'info',
+          content: 'transcript-only',
+        }
+      );
+      insertSdkMessageAt(
+        'sdk-visible-warning',
+        nodeSessionId,
+        now + 3000,
+        'system',
+        'consumed',
+        'system',
+        'informational',
+        {
+          type: 'system',
+          subtype: 'informational',
+          level: 'warning',
+          content: 'Hook warning shown to the user',
+        }
+      );
+      insertSdkMessageAt(
+        'sdk-stale-shutdown',
+        nodeSessionId,
+        now + 4000,
+        'system',
+        'consumed',
+        'system',
+        'worker_shutting_down',
+        { type: 'system', subtype: 'worker_shutting_down', reason: 'host_exit' }
+      );
+      insertSdkMessageAt('sdk-after-shutdown', nodeSessionId, now + 5000);
+
+      const entry = NAMED_QUERY_REGISTRY.get('actorMessages.byTask')!;
+      const rows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
+      const mapped = entry.mapRow ? rows.map(entry.mapRow) : rows;
+
+      expect(mapped.map((row) => row.id)).toEqual([
+        'msg:sdk-visible',
+        'msg:sdk-visible-warning',
+        'msg:sdk-after-shutdown',
+      ]);
+      expect(mapped.find((row) => row.id === 'msg:sdk-visible-warning')).toMatchObject({
+        title: 'Warning',
+        summary: 'Hook warning shown to the user',
+      });
+    });
+
     test('actorMessages.byTask includes rows retracted by refusal fallback notices', () => {
       const workflowRunId = 'wr-actor-retracted';
       const nodeSessionId = 'node-agent-actor-retracted';
@@ -860,6 +928,20 @@ describe('NAMED_QUERY_REGISTRY', () => {
           message: { role: 'assistant', content: [{ type: 'text', text: 'retracted' }] },
         }
       );
+      insertSdkMessageAt(
+        'row-superseded',
+        nodeSessionId,
+        now + 1500,
+        'assistant',
+        'consumed',
+        'system',
+        null,
+        {
+          type: 'assistant',
+          uuid: 'sdk-superseded',
+          message: { role: 'assistant', content: [{ type: 'text', text: 'superseded' }] },
+        }
+      );
       insertSdkMessageAt('sdk-visible-after-retry', nodeSessionId, now + 2000);
       insertSdkMessageAt(
         'sdk-fallback-notice',
@@ -875,6 +957,21 @@ describe('NAMED_QUERY_REGISTRY', () => {
           retracted_message_uuids: ['sdk-retracted'],
         }
       );
+      insertSdkMessageAt(
+        'sdk-superseding-message',
+        nodeSessionId,
+        now + 4000,
+        'assistant',
+        'consumed',
+        'system',
+        null,
+        {
+          type: 'assistant',
+          uuid: 'sdk-superseding-message',
+          supersedes: ['sdk-superseded'],
+          message: { role: 'assistant', content: [{ type: 'text', text: 'replacement' }] },
+        }
+      );
 
       const entry = NAMED_QUERY_REGISTRY.get('actorMessages.byTask')!;
       const rows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
@@ -882,9 +979,21 @@ describe('NAMED_QUERY_REGISTRY', () => {
 
       expect(mapped.map((row) => row.id)).toEqual([
         'msg:row-retracted',
+        'msg:row-superseded',
         'msg:sdk-visible-after-retry',
         'msg:sdk-fallback-notice',
+        'msg:sdk-superseding-message',
       ]);
+      expect(mapped.find((row) => row.id === 'msg:row-retracted')).toMatchObject({
+        title: 'Retracted Answer',
+        details: 'Retracted by a later model fallback.',
+        severity: 'warning',
+      });
+      expect(mapped.find((row) => row.id === 'msg:row-superseded')).toMatchObject({
+        title: 'Superseded Answer',
+        details: 'Superseded by a later SDK message.',
+        severity: 'warning',
+      });
     });
 
     test('actorMessages.byWorkflowRun does not fan out node or artifact rows across tasks', () => {
