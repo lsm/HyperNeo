@@ -1379,6 +1379,8 @@ export class SpaceRuntimeService {
         includeSpaceSessions: true,
       });
       for (const session of all) {
+        if (!session.context?.spaceId && session.type !== 'space_chat') continue;
+
         const policy = this.resolveMcpSessionPolicy(session);
         if (policy.owner !== 'space-runtime') continue;
         try {

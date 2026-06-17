@@ -255,6 +255,10 @@ export class Database {
     return this.sdkMessageRepo.getMessagesByStatus(sessionId, status);
   }
 
+  getLatestSystemInitTimestamp(sessionId: string): number {
+    return this.sdkMessageRepo.getLatestSystemInitTimestamp(sessionId);
+  }
+
   getMessageByStatusAndUuid(
     sessionId: string,
     status: SendStatus,

@@ -7,9 +7,9 @@
  * - Marking those messages as 'failed' so they appear in the UI as undelivered
  */
 
-import type { Session, ChatMessage } from '@neokai/shared';
+import type { Session } from '@neokai/shared';
 import type { SDKMessage, SDKUserMessage } from '@neokai/shared/sdk';
-import { isSDKUserMessage, isSDKSystemMessage } from '@neokai/shared/sdk/type-guards';
+import { isSDKUserMessage } from '@neokai/shared/sdk/type-guards';
 import { Database } from '../../storage/database';
 import { Logger } from '../logger';
 
@@ -50,24 +50,7 @@ export class MessageRecoveryHandler {
         return;
       }
 
-      // Get all SDK messages to check for responses
-      const { messages: allMessages } = db.getSDKMessages(session.id, 10000);
-
-      // Find the latest system:init message timestamp
-      let latestInitTimestamp = 0;
-      for (const msg of allMessages as Array<ChatMessage & { timestamp?: number }>) {
-        // Skip NeoKai-native action messages — they are not SDK messages.
-        if ((msg as ChatMessage).type === 'neokai_action') continue;
-        if (
-          isSDKSystemMessage(msg as SDKMessage) &&
-          (msg as SDKMessage & { subtype?: string }).subtype === 'init'
-        ) {
-          const msgWithTimestamp = msg as SDKMessage & { timestamp?: number };
-          if (msgWithTimestamp.timestamp && msgWithTimestamp.timestamp > latestInitTimestamp) {
-            latestInitTimestamp = msgWithTimestamp.timestamp;
-          }
-        }
-      }
+      const latestInitTimestamp = db.getLatestSystemInitTimestamp(session.id);
 
       // Find orphaned user messages
       const orphanedMessages: Array<{

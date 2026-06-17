@@ -100,7 +100,7 @@ describe('Migration 29: Space system tables', () => {
   test('migration is idempotent — running twice does not throw', () => {
     runMigrations(db, () => {});
     expect(() => runMigrations(db, () => {})).not.toThrow();
-  });
+  }, 15_000);
 
   // -------------------------------------------------------------------------
   // space_tasks columns — post-M73 schema

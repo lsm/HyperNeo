@@ -218,6 +218,26 @@ export interface DaemonAppContext {
 export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<DaemonAppContext> {
   const { config, verbose = true, standalone = false } = options;
   let startupLogCaptureCleanup: (() => void) | null = null;
+  // Startup phase fences. Each heavy init step logs `[startup N] <name>` with
+  // elapsed-since-previous (+ms = duration of the prior phase) and cumulative
+  // total, so a slow/hanging phase is obvious. verbose-gated to mirror logInfo.
+  let __startupStep = 0;
+  let __startupStart = 0;
+  let __startupPrev = 0;
+  const startupPhase = (name: string) => {
+    const now = Date.now();
+    if (__startupStart === 0) {
+      __startupStart = now;
+      __startupPrev = now;
+    }
+    const delta = now - __startupPrev;
+    __startupPrev = now;
+    if (verbose) {
+      console.log(
+        `[startup ${++__startupStep}] ${name} (+${delta}ms, total ${now - __startupStart}ms)`
+      );
+    }
+  };
 
   try {
     // Clear CLAUDECODE env var so SDK subprocesses don't refuse to start.
@@ -229,6 +249,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     const db = new Database(config.dbPath);
     // Create reactiveDb before initialize() so GoalRepository can receive it
     const reactiveDb = createReactiveDatabase(db);
+    startupPhase('database initialize (open + migrate)');
     await db.initialize(reactiveDb);
     const liveQueries = new LiveQueryEngine(db.getDatabase(), reactiveDb);
     const earlySpaceRepo = new SpaceRepository(db.getDatabase());
@@ -338,6 +359,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       }
     }
 
+    startupPhase('providers (register + credentials)');
     const providerRegistry = initializeProviders();
     await waitForOptionalProviderRegistration(providerRegistry);
     const credentialManager = ProviderCredentialManager.create(db.getDatabase());
@@ -347,6 +369,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     });
 
     // One-time migration: env vars / auth files / customEndpoints → providers table.
+    startupPhase('provider sync (migrate / custom endpoints / registry)');
     try {
       await migrateProvidersIfNeeded(db, credentialManager);
     } catch (err) {
@@ -381,10 +404,15 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     const hasAnthropicAuth =
       authStatus.isAuthenticated || (anthropicProvider?.isAvailable() ?? false);
 
-    // Initialize dynamic models on app startup (global cache fallback)
+    // Initialize dynamic models in the background. Startup can serve with static
+    // fallback metadata; provider model catalogs refresh into the global cache.
     if (hasAnthropicAuth) {
-      const { initializeModels } = await import('./lib/model-service');
-      await initializeModels();
+      startupPhase('model service init (background)');
+      void import('./lib/model-service')
+        .then(({ initializeModels }) => initializeModels())
+        .catch((err) => {
+          logError('[Daemon] Background model initialization failed (non-fatal):', err);
+        });
     } /* v8 ignore next 3 */ else {
       logInfo('[Daemon] NO CREDENTIALS DETECTED - set ANTHROPIC_API_KEY or authenticate via OAuth');
       logInfo('[Daemon] Model initialization skipped - no credentials available');
@@ -441,6 +469,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     // online/e2e suites set their own `TEST_USER_SETTINGS_DIR` or construct the
     // service explicitly.
     const mcpImportService = new McpImportService(db);
+    startupPhase('mcp import sweep (.mcp.json)');
     if (process.env.NODE_ENV !== 'test') {
       try {
         const workspacePaths = db.workspaceHistory.list(100).map((row) => row.path);
@@ -465,6 +494,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     // Errors are non-fatal: if a wrapper can't be created the slash command
     // just won't appear, but the daemon must still come up.
     try {
+      startupPhase('skill plugin wrappers');
       await skillsManager.ensureBuiltinPluginWrappers();
     } catch (err) {
       logError('[Daemon] Failed to ensure builtin skill plugin wrappers (non-fatal):', err);
@@ -473,6 +503,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     // Initialize session manager (with InternalEventBus<DaemonInternalEventMap>, SettingsManager, no StateManager dependency!)
     // Use reactiveDb.db so sdk_messages writes emitted by AgentSession pipelines
     // trigger LiveQuery invalidation immediately.
+    startupPhase('session manager');
     sessionManager = new SessionManager(
       reactiveDb.db,
       messageHub,
@@ -494,6 +525,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     sessionManager.start();
 
     // Initialize StateProjectionService (read-model caches from InternalEventBus)
+    startupPhase('state projection service');
     const stateManager = new StateProjectionService(
       messageHub,
       sessionManager,
@@ -540,6 +572,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       void applyStoredProviderCredentials(providerRegistry.getAll(), credentialManager, logError);
     });
 
+    startupPhase('github service');
     // Initialize GitHub service if configured
     let gitHubService: GitHubService | null = null;
     const shouldEnableGitHub =
@@ -633,6 +666,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       )
     );
 
+    startupPhase('external event extensions');
     for (const extension of extensionManager.getAll()) {
       const globalConfig = await extensionContext.config.getGlobalConfig(extension.sourceId);
       if (!globalConfig.globallyEnabled) continue;
@@ -649,6 +683,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     }
 
     // Setup RPC handlers (returns cleanup function + exposed services)
+    startupPhase('rpc handlers + space runtime provision');
     const rpcHandlers = setupRPCHandlers({
       messageHub,
       sessionManager,
@@ -684,15 +719,12 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     } = rpcHandlers;
     taskAgentManager = rpcHandlers.taskAgentManager;
 
-    // Wait for SpaceRuntimeService startup provisioning to complete before we
-    // bind the WebSocket/HTTP server. `start()` inside `setupRPCHandlers` kicks
-    // off MCP re-attachment for every existing space_chat / space member session
-    // as an async task; if we begin accepting queries before it settles, any
-    // session-bound RPC can run with `mcpServers: undefined` (strictMcpConfig is
-    // on globally) and fail to reach `space-agent-tools`. That was the root
-    // cause of task #83. `ready()` never rejects — errors are already logged by
-    // the provisioning path.
-    await spaceRuntimeService.ready();
+    // Start the readiness wait, but do not block HTTP/WS bind on the full
+    // existing-session reattach/rehydrate sweep. Session query startup has
+    // runtime MCP self-heal callbacks, so this avoids penalising health checks
+    // and UI load on every historical active session.
+    startupPhase('space runtime ready (background MCP re-attach)');
+    const spaceRuntimeReadyPromise = spaceRuntimeService.ready();
 
     // Create WebSocket handlers
     const wsHandlers = createWebSocketHandlers(transport, sessionManager);
@@ -794,6 +826,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       },
     });
 
+    startupPhase('HTTP/WS server bound — createDaemonApp init complete');
+    void spaceRuntimeReadyPromise.then(() => {
+      logInfo('[Daemon] Space runtime startup provisioning complete');
+    });
     // Start GitHub service after server is ready.
     // GitHubService.start() registers the github.poll handler and enqueues the
     // initial job when jobProcessor/jobQueue are provided.
