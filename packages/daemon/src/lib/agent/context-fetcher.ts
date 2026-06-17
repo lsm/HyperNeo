@@ -43,6 +43,15 @@ const SDK_GENERIC_MODEL_IDS = new Set(['default', 'haiku', 'sonnet', 'opus']);
 const ONE_MILLION_CONTEXT_WINDOW = 1_000_000;
 const ONE_MILLION_MODEL_SUFFIX = /\[1m\]$/i;
 
+/**
+ * Normalize a model ID by stripping duplicate trailing [1m] suffixes.
+ * Collapses glm-5.2[1m][1m] → glm-5.2[1m], glm-5.2[1m] → glm-5.2[1m].
+ * Used before metadata lookups to handle sessions with accumulated suffixes.
+ */
+function normalizeModelId(modelId: string): string {
+  return modelId.replace(/(\[1m\])+$/, '[1m]');
+}
+
 function positiveInteger(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) && value > 0
     ? Math.floor(value)
@@ -180,7 +189,9 @@ export class ContextFetcher {
     const breakdown: Record<string, ContextCategoryBreakdown> = {};
     const sdkRawCapacity = positiveInteger(response.rawMaxTokens);
     const sdkCapacity = positiveInteger(response.maxTokens);
-    const responseModel = response.model || undefined;
+    // Normalize model ID to handle double [1m] suffixes (e.g. glm-5.2[1m][1m] → glm-5.2[1m])
+    const rawResponseModel = response.model || undefined;
+    const responseModel = rawResponseModel ? normalizeModelId(rawResponseModel) : undefined;
     const isNativeProvider =
       modelMetadata?.provider && NATIVE_CONTEXT_WINDOW_PROVIDERS.has(modelMetadata.provider);
     const isGenericSdkModel = responseModel ? SDK_GENERIC_MODEL_IDS.has(responseModel) : false;
