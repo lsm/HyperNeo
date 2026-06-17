@@ -20,7 +20,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { SpaceAgent, SpaceWorkflow, WorkflowNode } from '@neokai/shared';
+import type { SpaceAgent, SpaceWorkflow, WorkflowHook, WorkflowNode } from '@neokai/shared';
 import {
   exportWorkflow,
   validateExportedWorkflow,
@@ -5540,6 +5540,92 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
       expect(reMigratedHook.validator.source).toContain('-lt 900 ');
       expect(reMigratedHook.validator.source).not.toContain('-lt 300 ');
       expect(reMigratedHook.validator.source).toContain('15-minute timeout');
+    }
+  });
+
+  test('migrateWorkflowGateProgressionToHooks rebuilds hook to default when codexTimeoutSeconds is cleared', () => {
+    // P2: when codexTimeoutSeconds is removed (undefined) on a previously
+    // custom-timeout node, the hook must revert to the default window
+    // (7200s) rather than staying baked at the prior custom value.
+    const initial = migrateWorkflowGateProgressionToHooks({
+      ...FULLSTACK_QA_LOOP_WORKFLOW,
+      nodes: FULLSTACK_QA_LOOP_WORKFLOW.nodes.map((n) =>
+        n.name === 'Review' ? { ...n, requireCodexApproval: true, codexTimeoutSeconds: 300 } : n
+      ),
+      templateName: FULLSTACK_QA_LOOP_WORKFLOW.name,
+      templateGates: FULLSTACK_QA_LOOP_WORKFLOW.gates ?? [],
+    }).workflow;
+    const initialHook = initial.hooks?.find((h) => h.sourceNode === 'Review');
+    if (initialHook?.validator.kind === 'script') {
+      expect(initialHook.validator.source).toContain('-lt 300 ');
+    }
+
+    // Re-run migration with codexTimeoutSeconds cleared (undefined). Node
+    // still requires codex approval, so hook must remain, but script source
+    // should revert to the 7200s default.
+    const reMigrated = migrateWorkflowGateProgressionToHooks({
+      ...initial,
+      nodes: initial.nodes.map((n) =>
+        n.name === 'Review'
+          ? { ...n, requireCodexApproval: true, codexTimeoutSeconds: undefined }
+          : n
+      ),
+      templateName: FULLSTACK_QA_LOOP_WORKFLOW.name,
+      templateGates: FULLSTACK_QA_LOOP_WORKFLOW.gates ?? [],
+    }).workflow;
+    const reMigratedHook = reMigrated.hooks?.find((h) => h.sourceNode === 'Review');
+    expect(reMigratedHook?.validator.kind).toBe('script');
+    if (reMigratedHook?.validator.kind === 'script') {
+      expect(reMigratedHook.validator.source).toContain('-lt 7200 ');
+      expect(reMigratedHook.validator.source).not.toContain('-lt 300 ');
+    }
+  });
+
+  test('migrateWorkflowGateProgressionToHooks leaves custom plan/review-approval hooks alone', () => {
+    // P2: hook IDs are user-supplied. A custom script hook whose id starts
+    // with `review-approval:` (or `plan-approval:`) must NOT be replaced
+    // with the built-in Codex script just because the source node has
+    // requireCodexApproval + codexTimeoutSeconds set. Scope guard: only
+    // generated scripts with the `-lt N` marker are rebuilt.
+    const baseWorkflow = migrateWorkflowGateProgressionToHooks({
+      ...FULLSTACK_QA_LOOP_WORKFLOW,
+      templateName: FULLSTACK_QA_LOOP_WORKFLOW.name,
+      templateGates: FULLSTACK_QA_LOOP_WORKFLOW.gates ?? [],
+    }).workflow;
+
+    const customHook: WorkflowHook = {
+      id: 'review-approval:custom-audit',
+      enabled: true,
+      label: 'Custom Audit',
+      sourceNode: 'Review',
+      targetNode: 'QA',
+      method: 'send_message',
+      classification: 'validation',
+      order: 0,
+      validator: {
+        kind: 'script',
+        interpreter: 'bash',
+        // No `-lt N` marker — this is a user-authored script.
+        source: 'echo custom audit script',
+        timeoutMs: 30_000,
+      },
+      authorizedCallers: [{ sourceNode: 'Review' }],
+    };
+
+    const reMigrated = migrateWorkflowGateProgressionToHooks({
+      ...baseWorkflow,
+      nodes: baseWorkflow.nodes.map((n) =>
+        n.name === 'Review' ? { ...n, requireCodexApproval: true, codexTimeoutSeconds: 300 } : n
+      ),
+      hooks: [...(baseWorkflow.hooks ?? []), customHook],
+      templateName: FULLSTACK_QA_LOOP_WORKFLOW.name,
+      templateGates: FULLSTACK_QA_LOOP_WORKFLOW.gates ?? [],
+    }).workflow;
+
+    const preserved = reMigrated.hooks?.find((h) => h.id === 'review-approval:custom-audit');
+    expect(preserved?.validator.kind).toBe('script');
+    if (preserved?.validator.kind === 'script') {
+      expect(preserved.validator.source).toBe('echo custom audit script');
     }
   });
 

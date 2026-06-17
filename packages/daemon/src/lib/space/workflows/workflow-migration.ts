@@ -615,16 +615,29 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
   // RPC/import/editor update that changes codexTimeoutSeconds would persist
   // on the node but leave the existing hook source baked with the old
   // timeout (typically the 7200s default).
+  //
+  // Scope guard: only generated codex scripts contain the `-lt N` marker
+  // emitted by buildApprovalsScript / buildReviewApprovalScript. A custom
+  // user-supplied hook whose id happens to start with `review-approval:`
+  // would not match the regex (`bakedTimeout === null`) and is left alone,
+  // so we never overwrite a user-authored script with the built-in one.
   for (const hook of hooksById.values()) {
     if (hook.validator.kind !== 'script') continue;
     const isPlan = hook.id.startsWith('plan-approval:') || hook.id === 'plan-approval';
     const isReview = hook.id.startsWith('review-approval:') || hook.id === 'review-approval';
     if (!isPlan && !isReview) continue;
     const sourceNode = workflow.nodes?.find((node) => node.name === hook.sourceNode);
-    if (!sourceNode?.requireCodexApproval || sourceNode.codexTimeoutSeconds === undefined) continue;
-    const expectedTimeout = resolveCodexTimeoutSeconds(sourceNode.codexTimeoutSeconds);
+    if (!sourceNode?.requireCodexApproval) continue;
     const match = hook.validator.source.match(/-lt (\d+) /);
-    const bakedTimeout = match ? Number.parseInt(match[1]!, 10) : null;
+    if (!match) continue; // not a generated codex script; leave custom hooks alone
+    const bakedTimeout = Number.parseInt(match[1]!, 10);
+    // Treat a cleared (`undefined`) override as the global default so a
+    // save that removes codexTimeoutSeconds still rebuilds the hook back
+    // to the default window instead of leaving the prior custom value.
+    const expectedTimeout =
+      sourceNode.codexTimeoutSeconds === undefined
+        ? CODEX_REVIEW_BOT_TIMEOUT_SECONDS
+        : resolveCodexTimeoutSeconds(sourceNode.codexTimeoutSeconds);
     if (bakedTimeout === expectedTimeout) continue;
     const rebuiltScript = isPlan
       ? buildApprovalsScript(expectedTimeout)
