@@ -149,6 +149,29 @@ export type AgentOutput =
        * Whether the calling agent has Read/Bash tools to check progress
        */
       canReadOutputFile?: boolean;
+    }
+  | {
+      status: "remote_launched";
+      /**
+       * The ID of the remote agent task
+       */
+      taskId: string;
+      /**
+       * The URL of the cloud session
+       */
+      sessionUrl: string;
+      /**
+       * The description of the task
+       */
+      description: string;
+      /**
+       * The prompt for the agent
+       */
+      prompt: string;
+      /**
+       * Path to the output file for checking agent progress
+       */
+      outputFile: string;
     };
 export type FileReadOutput =
   | {
@@ -323,6 +346,17 @@ export type ProjectsOutput =
         path: string;
         created_at: string | null;
       }[];
+      files?: {
+        path: string;
+        file_kind: string;
+        created_at: string | null;
+      }[];
+      sync_sources?: {
+        type: string | null;
+        config: {
+          [k: string]: unknown;
+        };
+      }[];
       knowledge: {
         knowledge_size: number;
         max_knowledge_size: number;
@@ -335,6 +369,7 @@ export type ProjectsOutput =
       method: "project_read";
       notice?: string;
       path: string;
+      file_kind?: string;
       content?: string;
       local_file?: string;
       created_at: string | null;
@@ -385,7 +420,7 @@ export interface AgentInput {
    */
   subagent_type?: string;
   /**
-   * Optional model override for this agent. Takes precedence over the agent definition's model frontmatter. If omitted, uses the agent definition's model, or inherits from the parent.
+   * Optional model override for this agent. Takes precedence over the agent definition's model frontmatter. If omitted, uses the agent definition's model, or inherits from the parent. Ignored for subagent_type: "fork" — forks always inherit the parent model.
    */
   model?: "sonnet" | "opus" | "haiku" | "fable";
   /**
@@ -397,7 +432,7 @@ export interface AgentInput {
    */
   name?: string;
   /**
-   * Team name for spawning. Uses current team context if omitted.
+   * Deprecated; ignored. The session has a single implicit team.
    */
   team_name?: string;
   /**
@@ -405,9 +440,9 @@ export interface AgentInput {
    */
   mode?: "acceptEdits" | "auto" | "bypassPermissions" | "default" | "dontAsk" | "plan" | "bubble";
   /**
-   * Isolation mode. "worktree" creates a temporary git worktree so the agent works on an isolated copy of the repo.
+   * Isolation mode. "worktree" creates a temporary git worktree so the agent works on an isolated copy of the repo. "remote" launches the agent in a remote cloud environment (always runs in background; availability is gated).
    */
-  isolation?: "worktree";
+  isolation?: "worktree" | "remote";
 }
 export interface BashInput {
   /**
@@ -2874,6 +2909,10 @@ export interface WebFetchOutput {
    * The URL that was fetched
    */
   url: string;
+  artifactRead?: {
+    slug: string;
+    ver: string;
+  };
 }
 export interface WebSearchOutput {
   /**

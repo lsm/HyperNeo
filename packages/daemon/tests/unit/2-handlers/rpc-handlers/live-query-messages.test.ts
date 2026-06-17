@@ -235,7 +235,7 @@ describe('messages.bySession — SQL behavior', () => {
     expect(ids).toEqual(['t3', 't4', 't5']);
   });
 
-  test('filters retracted messages before applying the top-level window', () => {
+  test('includes retracted messages in the top-level window', () => {
     insertSdkMessage(db, {
       id: 'older-real',
       sessionId: 's1',
@@ -264,10 +264,10 @@ describe('messages.bySession — SQL behavior', () => {
     });
 
     const rows = query(db, 's1', 2);
-    expect(rows.map((r) => r.id)).toEqual(['older-real', 'fallback-notice']);
+    expect(rows.map((r) => r.id)).toEqual(['row-retracted', 'fallback-notice']);
   });
 
-  test('filters superseded messages before applying the top-level window', () => {
+  test('includes superseded messages in the top-level window', () => {
     insertSdkMessage(db, {
       id: 'older-real',
       sessionId: 's1',
@@ -296,7 +296,7 @@ describe('messages.bySession — SQL behavior', () => {
     });
 
     const rows = query(db, 's1', 2);
-    expect(rows.map((r) => r.id)).toEqual(['older-real', 'replacement']);
+    expect(rows.map((r) => r.id)).toEqual(['row-superseded', 'replacement']);
   });
 
   test('ignores malformed JSON rows while scanning retractions and supersedes', () => {

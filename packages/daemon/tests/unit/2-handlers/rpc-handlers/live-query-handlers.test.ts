@@ -761,7 +761,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
       expect((mapped[0].from as Record<string, unknown>).nodeExecutionId).toBe('actor-sdk-current');
     });
 
-    test('actorMessages.byTask filters operational SDK rows', () => {
+    test('actorMessages.byTask includes operational SDK rows', () => {
       const workflowRunId = 'wr-actor-operational';
       const nodeSessionId = 'node-agent-actor-operational';
       const taskId = insertSpaceTask({
@@ -789,10 +789,15 @@ describe('NAMED_QUERY_REGISTRY', () => {
       const rows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
       const mapped = entry.mapRow ? rows.map(entry.mapRow) : rows;
 
-      expect(mapped.map((row) => row.id)).toEqual(['msg:sdk-visible']);
+      expect(mapped.map((row) => row.id)).toEqual([
+        'msg:sdk-visible',
+        'msg:sdk-operational-commands_changed',
+        'msg:sdk-operational-session_state_changed',
+        'msg:sdk-operational-thinking_tokens',
+      ]);
     });
 
-    test('actorMessages.byTask evicts rows retracted by refusal fallback notices', () => {
+    test('actorMessages.byTask includes rows retracted by refusal fallback notices', () => {
       const workflowRunId = 'wr-actor-retracted';
       const nodeSessionId = 'node-agent-actor-retracted';
       const taskId = insertSpaceTask({
@@ -837,6 +842,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
       const mapped = entry.mapRow ? rows.map(entry.mapRow) : rows;
 
       expect(mapped.map((row) => row.id)).toEqual([
+        'msg:row-retracted',
         'msg:sdk-visible-after-retry',
         'msg:sdk-fallback-notice',
       ]);
@@ -1215,7 +1221,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
         expect(rows.map((r) => r.id)).not.toContain('u1');
       });
 
-      test('task feeds evict rows retracted by refusal fallback notices', () => {
+      test('task feeds include rows retracted by refusal fallback notices', () => {
         const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
         insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
         insertSdkMessageAt('row-retracted', sessionId, now + 1000, {
@@ -1248,10 +1254,15 @@ describe('NAMED_QUERY_REGISTRY', () => {
         const fullRows = entry.mapRow ? rawRows.map(entry.mapRow) : rawRows;
 
         expect(compactRows.map((row) => row.id)).toEqual([
+          'row-retracted',
           'visible-after-retry',
           'fallback-notice',
         ]);
-        expect(fullRows.map((row) => row.id)).toEqual(['visible-after-retry', 'fallback-notice']);
+        expect(fullRows.map((row) => row.id)).toEqual([
+          'row-retracted',
+          'visible-after-retry',
+          'fallback-notice',
+        ]);
       });
 
       test('always includes system rows (init / compact_boundary) regardless of tail position', () => {
@@ -1322,7 +1333,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
         expect(createdAts).toEqual(sorted);
       });
 
-      test('task feeds exclude operational system rows', () => {
+      test('task feeds include operational system rows', () => {
         const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
         insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
 
@@ -1352,8 +1363,18 @@ describe('NAMED_QUERY_REGISTRY', () => {
         const rawRows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
         const fullRows = entry.mapRow ? rawRows.map(entry.mapRow) : rawRows;
 
-        expect(compactRows.map((row) => row.id)).toEqual(['visible']);
-        expect(fullRows.map((row) => row.id)).toEqual(['visible']);
+        expect(compactRows.map((row) => row.id)).toEqual([
+          'visible',
+          'operational-commands_changed',
+          'operational-session_state_changed',
+          'operational-thinking_tokens',
+        ]);
+        expect(fullRows.map((row) => row.id)).toEqual([
+          'visible',
+          'operational-commands_changed',
+          'operational-session_state_changed',
+          'operational-thinking_tokens',
+        ]);
       });
 
       test('legacy full query variant is unaffected by compact slicing', () => {
@@ -2197,7 +2218,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
       expect(parsed.uuid).toBe('worker-msg-1');
     });
 
-    test('filters operational sdk rows before building the group timeline', () => {
+    test('includes operational sdk rows when building the group timeline', () => {
       insertTask();
       insertGroup();
       insertSdkMessage(workerSessionId, 'visible-worker-msg', 1000);
@@ -2207,10 +2228,15 @@ describe('NAMED_QUERY_REGISTRY', () => {
 
       const rows = executeSQLAndMap();
 
-      expect(rows.map((row) => row.id)).toEqual(['visible-worker-msg']);
+      expect(rows.map((row) => row.id)).toEqual([
+        'visible-worker-msg',
+        'operational-commands_changed',
+        'operational-session_state_changed',
+        'operational-thinking_tokens',
+      ]);
     });
 
-    test('evicts rows retracted by refusal fallback notices before building the group timeline', () => {
+    test('includes rows retracted by refusal fallback notices when building the group timeline', () => {
       insertTask();
       insertGroup();
       insertSdkMessage(
@@ -2228,7 +2254,11 @@ describe('NAMED_QUERY_REGISTRY', () => {
 
       const rows = executeSQLAndMap();
 
-      expect(rows.map((row) => row.id)).toEqual(['visible-worker-msg', 'fallback-notice']);
+      expect(rows.map((row) => row.id)).toEqual([
+        'row-retracted-worker-msg',
+        'visible-worker-msg',
+        'fallback-notice',
+      ]);
     });
 
     test('event rows keep null sessionId and status text extraction', () => {
