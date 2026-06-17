@@ -1629,6 +1629,29 @@ const RETIRED_HARDCODED_FULLSTACK_CODING_STEP_PROMPT =
   '`send_message(target="Review", message="<short summary>", data: { pr_url: "<url>" })`; ' +
   '`save_artifact` alone will not open `code-pr-gate`\n';
 
+// Retired shared Codex approval guidance (pre codex-bot-rename + 2h timeout
+// fix). Used by patchKnownBuiltInPromptDrift to recognize persisted Plan
+// Review and Fullstack Review agent prompts that still cite `codex[bot]` and
+// the old "10 minutes" timeout, and swap them to the current guidance during
+// restamp. Without this, existing seeded spaces keep telling reviewers the
+// window is 10 minutes while the migrated gate/hook now blocks for 2 hours.
+const RETIRED_CODEX_REACTION_APPROVAL_GUIDANCE =
+  'After posting your approval review, verify codex[bot] reaction status before ' +
+  'closing or handing off. Use `gh api repos/{owner}/{repo}/issues/{number}/reactions` ' +
+  'and inspect reactions from `user.login == "codex[bot]"`: content `+1` means ' +
+  'Codex passed, content `eyes` means Codex is still reviewing, and no codex[bot] ' +
+  'reaction means it has not started or has not reported yet. If codex[bot] has not ' +
+  'reacted at all, comment `@codex review` on the PR to trigger its review, then wait ' +
+  'for an `eyes` or `+1` reaction. ' +
+  'Only a +1 newer than the current PR head commit counts — after a revision push, ' +
+  'an older +1 from a previous cycle is stale and will not satisfy the hook. If the +1 ' +
+  'looks old, retrigger Codex with a fresh `@codex review` comment. ' +
+  'Send the approval handoff to start the Codex timeout (10 minutes). If the hook ' +
+  'blocks because Codex has not yet posted `+1`, poll every 60 seconds and retry the ' +
+  'handoff. If codex[bot] still has not posted `+1` after the timeout, proceed ' +
+  'only with a warning recorded in your result artifact. Do not close the task ' +
+  'before codex[bot] has `+1` unless that timeout has elapsed.';
+
 const BUILT_IN_PROMPT_PATCH_VARIANTS = [
   [
     [CURRENT_CODING_WORKFLOW_HANDOFF_PROMPT, RETIRED_CODING_WORKFLOW_HANDOFF_PROMPT],
@@ -1648,6 +1671,20 @@ const BUILT_IN_PROMPT_PATCH_VARIANTS = [
   ],
   [[CURRENT_FULLSTACK_REVIEW_HANDOFF_PROMPT, RETIRED_FULLSTACK_REVIEW_HANDOFF_PROMPT]],
   [[CURRENT_FULLSTACK_REVIEW_HANDOFF_PROMPT, RETIRED_HARDCODED_FULLSTACK_REVIEW_HANDOFF_PROMPT]],
+  // Guidance-only swap: covers PD_PLAN_REVIEW_PROMPT and any other persisted
+  // prompt that embeds the retired shared Codex guidance but none of the
+  // fullstack handoff snippets.
+  [[CODEX_REACTION_APPROVAL_GUIDANCE, RETIRED_CODEX_REACTION_APPROVAL_GUIDANCE]],
+  // Fullstack review handoff + guidance swap: covers FULLSTACK_REVIEW_PROMPT,
+  // which embeds both snippets.
+  [
+    [CURRENT_FULLSTACK_REVIEW_HANDOFF_PROMPT, RETIRED_FULLSTACK_REVIEW_HANDOFF_PROMPT],
+    [CODEX_REACTION_APPROVAL_GUIDANCE, RETIRED_CODEX_REACTION_APPROVAL_GUIDANCE],
+  ],
+  [
+    [CURRENT_FULLSTACK_REVIEW_HANDOFF_PROMPT, RETIRED_HARDCODED_FULLSTACK_REVIEW_HANDOFF_PROMPT],
+    [CODEX_REACTION_APPROVAL_GUIDANCE, RETIRED_CODEX_REACTION_APPROVAL_GUIDANCE],
+  ],
 ] as const;
 
 function patchKnownBuiltInPromptDrift<T extends WorkflowNodeAgentOverride | undefined>(

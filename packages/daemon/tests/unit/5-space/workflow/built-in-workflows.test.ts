@@ -20,7 +20,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { SpaceAgent, SpaceWorkflow } from '@neokai/shared';
+import type { SpaceAgent, SpaceWorkflow, WorkflowNode } from '@neokai/shared';
 import {
   exportWorkflow,
   validateExportedWorkflow,
@@ -5290,6 +5290,134 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     const effective = getEffectiveGate(rawGate, workflow);
     expect(effective.script?.source).toContain('-ge 300 ');
     expect(effective.script?.source).not.toContain('-ge 7200 ');
+  });
+
+  test('codex matcher ignores reaction entries with null user', async () => {
+    // P2 null-safety: GitHub may return a reaction whose `user` is null
+    // (e.g. deleted account). Without coalescing, `null | test(...)` raises
+    // in jq and aborts the matcher before reaching a later valid Codex +1.
+    const gate = getFullstackReviewApprovalGateWithCodex();
+    const workspace = mkdtempSync(join(tmpdir(), 'neokai-codex-matcher-null-user-'));
+    const binDir = join(workspace, 'bin');
+    const ghPath = join(binDir, 'gh');
+    const prUrl = 'https://github.com/test/repo/pull/42';
+
+    try {
+      mkdirSync(binDir);
+      writeFileSync(
+        ghPath,
+        [
+          '#!/usr/bin/env bash',
+          'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
+          // First entry has null user (must be skipped silently); second is a
+          // valid Codex bot +1 that must still be recognized.
+          `  printf '%s\\n' '[{"user":null,"content":"+1","created_at":"2026-05-29T00:00:00Z"},{"user":{"login":"codex[bot]","type":"Bot"},"content":"+1","created_at":"2026-05-29T00:00:00Z"}]'`,
+          '  exit 0',
+          'fi',
+          'if [[ "$*" =~ repos/test/repo/pulls/42 ]]; then',
+          `  printf '%s\\n' 'sha-null-user'`,
+          '  exit 0',
+          'fi',
+          'printf "unexpected gh args: %s\\n" "$*" >&2',
+          'exit 2',
+        ].join('\n')
+      );
+      chmodSync(ghPath, 0o755);
+
+      const result = await executeGateScript(
+        gate.script!,
+        {
+          workspacePath: workspace,
+          gateId: 'review-approval-gate',
+          runId: 'run-1',
+          gateData: { pr_url: prUrl, approved: true },
+        },
+        { PATH: `${binDir}:${process.env.PATH ?? ''}` }
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.data).toEqual({
+        pr_url: prUrl,
+        codex_bot_reaction: '+1',
+        head_sha: 'sha-null-user',
+      });
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+
+  test('migrated review-approval hook honors per-node codexTimeoutSeconds override', () => {
+    // P2: migration must source the timeout from the source node's
+    // codexTimeoutSeconds when set, not bake in the default 7200.
+    const workflow = migrateWorkflowGateProgressionToHooks({
+      ...FULLSTACK_QA_LOOP_WORKFLOW,
+      nodes: FULLSTACK_QA_LOOP_WORKFLOW.nodes.map((n) =>
+        n.name === 'Review'
+          ? {
+              ...n,
+              requireCodexApproval: true,
+              codexTimeoutSeconds: 300,
+            }
+          : n
+      ),
+      templateName: FULLSTACK_QA_LOOP_WORKFLOW.name,
+      templateGates: FULLSTACK_QA_LOOP_WORKFLOW.gates ?? [],
+    }).workflow;
+    const hook = workflow.hooks?.find((h) => h.sourceNode === 'Review');
+    expect(hook).toBeDefined();
+    const source = hook?.validator.kind === 'script' ? hook.validator.source : '';
+    expect(source).toContain('-lt 300 ');
+    expect(source).not.toContain('-lt 7200 ');
+    expect(source).toContain('5-minute timeout');
+  });
+
+  test('patchKnownBuiltInPromptDrift rewrites persisted Plan Review prompt with retired codex guidance', () => {
+    // P2: existing seeded spaces still carry the retired shared Codex
+    // guidance (codex[bot] + 10 minutes). Restamp must recognize the retired
+    // text and swap to the current guidance.
+    const templateNode = PLAN_AND_DECOMPOSE_WORKFLOW.nodes.find((n) => n.name === 'Plan Review')!;
+    const templatePrompt = templateNode.agents[0].customPrompt!;
+    const retiredGuidance =
+      'After posting your approval review, verify codex[bot] reaction status before ' +
+      'closing or handing off. Use `gh api repos/{owner}/{repo}/issues/{number}/reactions` ' +
+      'and inspect reactions from `user.login == "codex[bot]"`: content `+1` means ' +
+      'Codex passed, content `eyes` means Codex is still reviewing, and no codex[bot] ' +
+      'reaction means it has not started or has not reported yet. If codex[bot] has not ' +
+      'reacted at all, comment `@codex review` on the PR to trigger its review, then wait ' +
+      'for an `eyes` or `+1` reaction. ' +
+      'Only a +1 newer than the current PR head commit counts — after a revision push, ' +
+      'an older +1 from a previous cycle is stale and will not satisfy the hook. If the +1 ' +
+      'looks old, retrigger Codex with a fresh `@codex review` comment. ' +
+      'Send the approval handoff to start the Codex timeout (10 minutes). If the hook ' +
+      'blocks because Codex has not yet posted `+1`, poll every 60 seconds and retry the ' +
+      'handoff. If codex[bot] still has not posted `+1` after the timeout, proceed ' +
+      'only with a warning recorded in your result artifact. Do not close the task ' +
+      'before codex[bot] has `+1` unless that timeout has elapsed.';
+    const stalePromptValue = templatePrompt.value.replace(
+      // The current guidance is embedded in the template prompt; swap it out
+      // for the retired text to simulate a persisted pre-fix prompt.
+      /After posting your approval review, verify the Codex review bot reaction status[\s\S]*?unless that timeout window has elapsed\./,
+      retiredGuidance
+    );
+    expect(stalePromptValue).not.toBe(templatePrompt.value);
+
+    const existingNode: WorkflowNode = {
+      ...templateNode,
+      agents: templateNode.agents.map((a, i) =>
+        i === 0 ? { ...a, customPrompt: { value: stalePromptValue } } : a
+      ),
+    };
+
+    const merged = mergeNodeStructuralFieldsFromTemplate(
+      [existingNode],
+      PLAN_AND_DECOMPOSE_WORKFLOW.nodes,
+      () => 'agent-plan-review'
+    );
+    const mergedPlanReview = merged.find((n) => n.name === 'Plan Review')!;
+    const mergedPrompt = mergedPlanReview.agents[0].customPrompt!.value;
+    expect(mergedPrompt).toBe(templatePrompt.value);
+    expect(mergedPrompt).toContain('any login containing `codex`');
+    expect(mergedPrompt).not.toContain('codex[bot] reaction status');
   });
 
   test('FULLSTACK_QA_LOOP_WORKFLOW reviewer prompt instructs waiting for codex reaction', () => {
