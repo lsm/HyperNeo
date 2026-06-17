@@ -395,6 +395,7 @@ These contracts are internal first. Some can become public later after auth, sch
 | Name | Purpose |
 | --- | --- |
 | `space.runtime.health` | Scheduler, recovery, and queue health. |
+| `space.workflowRun.list` | Workflow runs for a space, including history needed by runtime views. |
 | `space.workflowRun.get` | Workflow run plus canonical task and node execution summary. |
 | `space.workflowRun.active` | Active/recoverable workflow runs for a space or daemon. |
 | `space.workflowNodeExecution.list` | Node execution rows for a workflow run. |

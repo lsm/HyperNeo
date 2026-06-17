@@ -346,6 +346,7 @@ Events:
 - `space.workflowNodeExecution.started`
 - `space.workflowNodeExecution.idle`
 - `space.workflowNodeExecution.blocked`
+- `space.workflowNodeExecution.restarted`
 - `space.workflowGate.opened`
 - `space.workflowGate.pendingApproval`
 

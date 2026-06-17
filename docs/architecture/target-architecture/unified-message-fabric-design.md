@@ -296,13 +296,12 @@ packages/shared/src/contracts/
   fabric/
     envelope.ts
     registry.ts
-  contracts/
-    space.ts
-    session.ts
-    prompt-policy.ts
-    agent.ts
-    provider.ts
-    mcp.ts
+  space.ts
+  session.ts
+  prompt-policy.ts
+  agent.ts
+  provider.ts
+  mcp.ts
   transport/
     in-process.ts
     websocket-bridge.ts
@@ -405,17 +404,23 @@ The fabric normalizes every envelope:
 Each contract declares required capability and resource derivation.
 
 ```typescript
-export interface AuthPolicy<TInput> {
+export type AuthPolicy<TInput> = {
   action: string;
-  resource: 'global' | 'space' | 'session' | 'task' | 'workflowRun' | 'provider' | 'mcp';
+  resource: AuthResourceType;
   resourceIdFrom?: (input: TInput, envelope: MessageEnvelope<TInput>) => string | null;
-  resourceFrom?: (
+  allowLocalService?: boolean;
+  allowExternal?: boolean;
+} | {
+  action: string;
+  resourceFrom: (
     input: TInput,
     envelope: MessageEnvelope<TInput>
-  ) => { type: AuthPolicy<TInput>['resource']; id: string | null };
+  ) => { type: AuthResourceType; id: string | null };
   allowLocalService?: boolean;
   allowExternal?: boolean;
 }
+
+export type AuthResourceType = 'global' | 'space' | 'session' | 'task' | 'workflowRun' | 'provider' | 'mcp';
 ```
 
 Example:
@@ -610,7 +615,7 @@ export const spaceTaskCreate = defineCommand({
   idempotency: {
     required: true,
     scope: 'actor+subject',
-    keyFrom: (input) => input.idempotencyKey,
+    keyFrom: (_input, envelope) => envelope.idempotencyKey,
   },
   durability: {
     delivery: 'durable',
@@ -705,7 +710,7 @@ export const promptPolicyBuiltinActivate = defineCommand({
   idempotency: {
     required: true,
     scope: 'subject',
-    keyFrom: (input) => input.idempotencyKey,
+    keyFrom: (_input, envelope) => envelope.idempotencyKey,
   },
   durability: {
     delivery: 'durable',

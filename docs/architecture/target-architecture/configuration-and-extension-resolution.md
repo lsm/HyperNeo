@@ -465,7 +465,8 @@ CREATE TABLE extension_packages (
   version TEXT,
   source_kind TEXT NOT NULL,
   source_ref TEXT,
-  trust_level TEXT NOT NULL,
+  trust_level TEXT NOT NULL
+    CHECK(trust_level IN ('builtin', 'signed', 'workspace', 'user-local')),
   manifest_json TEXT NOT NULL,
   enabled INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL,
