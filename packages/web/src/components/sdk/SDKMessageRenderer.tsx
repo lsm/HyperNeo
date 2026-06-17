@@ -131,9 +131,9 @@ function isRenderableSystemMessage(message: SDKMessage): boolean {
   if (!isSDKSystemMessage(message)) return false;
   const subtype = (message as { subtype?: unknown }).subtype;
   return (
-    subtype === 'thinking_tokens' ||
     subtype === 'session_state_changed' ||
     subtype === 'commands_changed' ||
+    subtype === 'api_retry' ||
     subtype === 'informational' ||
     subtype === 'worker_shutting_down' ||
     subtype === 'model_refusal_fallback'

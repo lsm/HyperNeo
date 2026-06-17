@@ -19,6 +19,8 @@ interface ThinkingBlockProps {
   /** When true, wrap this card in <RunningBorder> so the animated arc traces
    * this card's outer rounded-rectangle border. */
   isRunning?: boolean;
+  /** Optional estimated token count for this thinking block (persisted from SDK) */
+  estimatedTokens?: number;
 }
 
 // Number of lines to show in preview mode
@@ -40,6 +42,7 @@ export function ThinkingBlock({
   className,
   compact = false,
   isRunning = false,
+  estimatedTokens,
 }: ThinkingBlockProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [needsTruncation, setNeedsTruncation] = useState(false);
@@ -67,6 +70,12 @@ export function ThinkingBlock({
 
   const charCount = content.length;
 
+  // Build the stats text: show token estimate if available, otherwise just character count
+  const statsText =
+    estimatedTokens !== undefined
+      ? `• ~${estimatedTokens.toLocaleString()} token${estimatedTokens !== 1 ? 's' : ''}${charCount > 0 ? ` • ${charCount.toLocaleString()} character${charCount !== 1 ? 's' : ''}` : ''}`
+      : `• ${charCount.toLocaleString()} character${charCount !== 1 ? 's' : ''}`;
+
   const inner = (
     <div
       class={cn('border rounded-lg overflow-hidden', colors.bg, colors.border, className)}
@@ -89,9 +98,7 @@ export function ThinkingBlock({
           />
         </svg>
         <span class={cn('text-sm font-semibold', colors.text)}>Thinking</span>
-        <span class={cn('text-xs', colors.lightText)}>
-          • {charCount.toLocaleString()} character{charCount !== 1 ? 's' : ''}
-        </span>
+        <span class={cn('text-xs', colors.lightText)}>{statsText}</span>
       </div>
 
       {/* Content area */}

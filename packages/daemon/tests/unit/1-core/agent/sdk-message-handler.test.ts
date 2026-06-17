@@ -546,7 +546,7 @@ describe('SDKMessageHandler', () => {
       expect(mockSession.sdkSessionId).toBe('existing-session-id');
     });
 
-    it('should not set sdkSessionId from api_retry message', async () => {
+    it('should persist and broadcast api_retry message', async () => {
       // api_retry has session_id but should not overwrite sdkSessionId
       // — only system/init messages are the authoritative source
       const message: SDKMessage = {
@@ -564,9 +564,99 @@ describe('SDKMessageHandler', () => {
       await handler.handleMessage(message);
 
       expect(mockSession.sdkSessionId).toBeUndefined();
-      // api_retry is suppressed before DB/broadcast — should not appear in transcript
+      // api_retry is now persisted and broadcast to appear in transcript
+      expect(saveSDKMessageSpy).toHaveBeenCalled();
+      expect(publishSpy).toHaveBeenCalled();
+      // Internal event should still be emitted for existing consumers
+      // Check that the FIRST call to emitSpy is the retryAttempt event
+      const firstEmitCall = emitSpy.mock.calls[0];
+      expect(firstEmitCall).toBeTruthy();
+      expect(firstEmitCall[0]).toBe('session.retryAttempt');
+      expect(firstEmitCall[1]).toMatchObject({
+        sessionId: 'test-session-id',
+        attempt: 1,
+        max_retries: 3,
+      });
+    });
+
+    it('should not persist thinking_tokens but stash estimate', async () => {
+      const message: SDKMessage = {
+        type: 'system',
+        subtype: 'thinking_tokens',
+        uuid: 'thinking-uuid',
+        session_id: 'test-session-id',
+        estimated_tokens: 1500,
+        estimated_tokens_delta: 500,
+      } as unknown as SDKMessage;
+
+      await handler.handleMessage(message);
+
+      // Should NOT be persisted
       expect(saveSDKMessageSpy).not.toHaveBeenCalled();
-      expect(publishSpy).not.toHaveBeenCalled();
+      // Estimate should be stashed for later stamping on assistant message
+      expect(handler['currentThinkingTokensEstimate']).toBe(1500);
+    });
+
+    it('should stamp thinking estimate on assistant message with thinking block', async () => {
+      // First, send a thinking_tokens message to stash the estimate
+      const thinkingMessage: SDKMessage = {
+        type: 'system',
+        subtype: 'thinking_tokens',
+        uuid: 'thinking-uuid',
+        session_id: 'test-session-id',
+        estimated_tokens: 2000,
+        estimated_tokens_delta: 1000,
+      } as unknown as SDKMessage;
+
+      await handler.handleMessage(thinkingMessage);
+
+      // Then send an assistant message with a thinking block
+      const assistantMessage: SDKMessage = {
+        type: 'assistant',
+        uuid: 'assistant-uuid',
+        session_id: 'test-session-id',
+        message: {
+          role: 'assistant',
+          content: [
+            { type: 'thinking', thinking: 'Some thinking content' },
+            { type: 'text', text: 'Response text' },
+          ],
+        },
+        parent_tool_use_id: null,
+      } as unknown as SDKMessage;
+
+      await handler.handleMessage(assistantMessage);
+
+      // Verify the estimate was stamped on the message
+      expect(saveSDKMessageSpy).toHaveBeenCalledWith(
+        'test-session-id',
+        expect.objectContaining({
+          type: 'assistant',
+          estimated_thinking_tokens: 2000,
+        })
+      );
+
+      // Verify the handler reset the estimate after consuming it
+      const secondAssistantMessage: SDKMessage = {
+        type: 'assistant',
+        uuid: 'assistant-uuid-2',
+        session_id: 'test-session-id',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'Another response' }],
+        },
+        parent_tool_use_id: null,
+      } as unknown as SDKMessage;
+
+      await handler.handleMessage(secondAssistantMessage);
+
+      // Second message should NOT have the estimate (it was reset)
+      // Check the last call to saveSDKMessageSpy
+      const lastCall = saveSDKMessageSpy.mock.calls[saveSDKMessageSpy.mock.calls.length - 1];
+      expect(lastCall).toBeTruthy();
+      const savedMessage = lastCall[1] as SDKMessage;
+      expect(savedMessage.type).toBe('assistant');
+      expect(savedMessage).not.toHaveProperty('estimated_thinking_tokens');
     });
   });
 

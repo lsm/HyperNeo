@@ -207,7 +207,7 @@ describe('SDKMessageRenderer', () => {
       expect(container.textContent).toContain('tokens');
     });
 
-    it('should render thinking token system messages through the main renderer', () => {
+    it('should suppress thinking token system messages (not rendered through main renderer)', () => {
       const message = {
         type: 'system',
         subtype: 'thinking_tokens',
@@ -219,8 +219,8 @@ describe('SDKMessageRenderer', () => {
 
       const { container } = render(<SDKMessageRenderer message={message} />);
 
-      expect(container.textContent).toContain('Thinking tokens');
-      expect(container.textContent).toContain('12,345 estimated tokens');
+      // thinking_tokens messages should be suppressed (return null from SDKSystemMessage)
+      expect(container.firstChild).toBeNull();
     });
 
     it('should render session state system messages through the main renderer', () => {

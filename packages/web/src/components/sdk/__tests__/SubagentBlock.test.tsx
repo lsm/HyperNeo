@@ -732,7 +732,7 @@ describe('SubagentBlock', () => {
       expect(container.textContent).not.toContain('System: init');
     });
 
-    it('should render visible system messages through the SDK system renderer', () => {
+    it('should suppress thinking token system messages (not rendered through SDK system renderer)', () => {
       const input = createAgentInput('Explore', 'Find files', 'Search for test files');
       const nestedMessages = [
         createNestedSystemMessage('thinking_tokens', {
@@ -748,8 +748,9 @@ describe('SubagentBlock', () => {
       const button = container.querySelector('button')!;
       fireEvent.click(button);
 
-      expect(container.textContent).toContain('Thinking tokens');
-      expect(container.textContent).toContain('1,200 estimated tokens (+50)');
+      // thinking_tokens messages should be suppressed (not rendered)
+      expect(container.textContent).not.toContain('Thinking tokens');
+      expect(container.textContent).not.toContain('1,200 estimated tokens');
     });
 
     it('should suppress nested transcript-only info and stale worker shutdown rows', async () => {
