@@ -767,9 +767,10 @@ function seedHistoricalMigrationMarkers(db: BunDatabase): void {
     db,
     'm157_archive_terminal_space_task_worker_sessions'
   );
-  const currentThrough = alreadyRanMigration157
+  const hasBaselineSchema = hasCurrentBaselineSchema(db);
+  const currentThrough = alreadyRanMigration157 && hasBaselineSchema
     ? 157
-    : tableExists(db, 'sessions') && tableHasColumn(db, 'sessions', 'acp_session_id')
+    : hasBaselineSchema
       ? 156
       : 0;
 
@@ -780,6 +781,31 @@ function seedHistoricalMigrationMarkers(db: BunDatabase): void {
     markMigration(db, migrationMarkerKey(version));
   }
   markMigration(db, 'migration_room_cleanup');
+}
+
+function hasCurrentBaselineSchema(db: BunDatabase): boolean {
+  return (
+    tableExists(db, 'sessions') &&
+    tableHasColumn(db, 'sessions', 'acp_session_id') &&
+    tableHasColumn(db, 'sessions', 'status') &&
+    tableHasColumn(db, 'sessions', 'type') &&
+    tableHasColumn(db, 'sessions', 'session_context') &&
+    tableHasColumn(db, 'sessions', 'archived_at') &&
+    tableExists(db, 'spaces') &&
+    tableExists(db, 'space_agents') &&
+    tableExists(db, 'space_tasks') &&
+    tableHasColumn(db, 'space_tasks', 'status') &&
+    tableHasColumn(db, 'space_tasks', 'task_agent_session_id') &&
+    tableExists(db, 'space_workflows') &&
+    tableExists(db, 'space_workflow_runs') &&
+    tableHasColumn(db, 'space_workflow_runs', 'status') &&
+    tableExists(db, 'node_executions') &&
+    tableHasColumn(db, 'node_executions', 'workflow_run_id') &&
+    tableHasColumn(db, 'node_executions', 'status') &&
+    tableHasColumn(db, 'node_executions', 'completed_at') &&
+    tableHasColumn(db, 'node_executions', 'updated_at') &&
+    tableHasColumn(db, 'node_executions', 'created_at')
+  );
 }
 
 /**

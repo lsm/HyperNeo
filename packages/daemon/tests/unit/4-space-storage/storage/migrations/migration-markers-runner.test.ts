@@ -12,6 +12,31 @@ function markerExists(db: BunDatabase, key: string): boolean {
   return !!db.prepare(`SELECT key FROM migration_markers WHERE key = ?`).get(key);
 }
 
+function createBaselineSchemaSentinels(db: BunDatabase): void {
+  db.exec(`
+    CREATE TABLE spaces (id TEXT PRIMARY KEY);
+    CREATE TABLE space_agents (id TEXT PRIMARY KEY);
+    CREATE TABLE space_tasks (
+      id TEXT PRIMARY KEY,
+      status TEXT NOT NULL DEFAULT 'open',
+      task_agent_session_id TEXT
+    );
+    CREATE TABLE space_workflows (id TEXT PRIMARY KEY);
+    CREATE TABLE space_workflow_runs (
+      id TEXT PRIMARY KEY,
+      status TEXT NOT NULL DEFAULT 'running'
+    );
+    CREATE TABLE node_executions (
+      id TEXT PRIMARY KEY,
+      workflow_run_id TEXT,
+      status TEXT NOT NULL DEFAULT 'pending',
+      completed_at INTEGER,
+      updated_at INTEGER,
+      created_at INTEGER
+    );
+  `);
+}
+
 describe('migration runner markers', () => {
   let db: BunDatabase;
 
@@ -44,9 +69,14 @@ describe('migration runner markers', () => {
     db.exec(`
       CREATE TABLE sessions (
         id TEXT PRIMARY KEY,
+        status TEXT NOT NULL DEFAULT 'active',
+        type TEXT,
+        session_context TEXT,
+        archived_at TEXT,
         acp_session_id TEXT
       );
     `);
+    createBaselineSchemaSentinels(db);
     let backups = 0;
 
     runMigrations(db, () => {
@@ -62,10 +92,34 @@ describe('migration runner markers', () => {
     expect(tableHasColumn(db, 'sessions', 'is_worktree')).toBe(false);
   });
 
+  test('does not seed historical markers for partial schemas with only late sessions columns', () => {
+    db.exec(`
+      CREATE TABLE sessions (
+        id TEXT PRIMARY KEY,
+        acp_session_id TEXT
+      );
+    `);
+    let backups = 0;
+
+    expect(() =>
+      runMigrations(db, () => {
+        backups++;
+      })
+    ).toThrow();
+
+    expect(backups).toBe(1);
+    expect(markerExists(db, 'migration_001')).toBe(true);
+    expect(markerExists(db, 'migration_029')).toBe(false);
+  });
+
   test('seeds through 157 and runs the next pending migration', () => {
     db.exec(`
       CREATE TABLE sessions (
         id TEXT PRIMARY KEY,
+        status TEXT NOT NULL DEFAULT 'active',
+        type TEXT,
+        session_context TEXT,
+        archived_at TEXT,
         acp_session_id TEXT
       );
       CREATE TABLE migration_markers (
@@ -77,6 +131,7 @@ describe('migration runner markers', () => {
         ('m154_legacy_long_horizon_agent_data', 1),
         ('m157_archive_terminal_space_task_worker_sessions', 1);
     `);
+    createBaselineSchemaSentinels(db);
     let backups = 0;
 
     runMigrations(db, () => {
