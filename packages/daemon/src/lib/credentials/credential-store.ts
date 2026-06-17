@@ -426,12 +426,19 @@ export class KeychainStatusCredentialStore implements CredentialStore {
  * check while tests can import this factory and exercise the real gate
  * against a mocked `spawnImpl` (rather than re-implementing the unlocker
  * inline, which wouldn't catch a future refactor dropping the gate here).
+ *
+ * `timeoutMs` is also injectable so tests can drive the kill-on-timeout
+ * path without waiting the full 30s — pass `10` to exercise the
+ * setTimeout + child.kill branch with a hung fake child.
  */
-export function buildDefaultUnlockers(ttyCheck: () => boolean): Array<() => Promise<boolean>> {
+export function buildDefaultUnlockers(
+  ttyCheck: () => boolean,
+  timeoutMs: number = 30_000
+): Array<() => Promise<boolean>> {
   return [
     async () => {
       if (!ttyCheck()) return false;
-      return tryUnlockKeychainViaGUI();
+      return tryUnlockKeychainViaGUI(timeoutMs);
     },
   ];
 }
@@ -452,7 +459,7 @@ export function buildDefaultUnlockers(ttyCheck: () => boolean): Array<() => Prom
  * the encrypted file store.
  */
 
-async function tryUnlockKeychainViaGUI(): Promise<boolean> {
+async function tryUnlockKeychainViaGUI(timeoutMs: number = 30_000): Promise<boolean> {
   // Cap the wait so a detached screen / SSH / tmux session where the GUI
   // dialog can't be seen (or where the user stepped away) does not block
   // a credential write indefinitely. The spike proved `security
@@ -470,7 +477,6 @@ async function tryUnlockKeychainViaGUI(): Promise<boolean> {
   return new Promise<boolean>((resolve) => {
     const child = spawn('security', ['unlock-keychain'], { stdio: 'ignore' });
     let settled = false;
-    const TIMEOUT_MS = 30_000;
     const finish = (ok: boolean) => {
       if (settled) return;
       settled = true;
@@ -484,7 +490,7 @@ async function tryUnlockKeychainViaGUI(): Promise<boolean> {
         // Already exited — nothing to kill.
       }
       finish(false);
-    }, TIMEOUT_MS);
+    }, timeoutMs);
     child.on('error', () => finish(false));
     child.on('exit', (code) => finish(code === 0));
   });

@@ -11,6 +11,7 @@ interface MockSpawnProcess extends EventEmitter {
   stderr: EventEmitter;
   stdout: EventEmitter;
   stdin: { write: () => void; end: () => void };
+  kill?(signal?: string): void;
 }
 
 let execFileImpl: ((...args: unknown[]) => unknown) | null = null;
@@ -785,6 +786,37 @@ describe('KeychainStatusCredentialStore — ttyCheck gate on default unlocker', 
     const result = await unlockers[0]();
     expect(result).toBe(true);
     expect(spawnObserved).toBe(true);
+  });
+
+  it('buildDefaultUnlockers: hung child is killed on timeout (pins safety path)', async () => {
+    // Reproduces the round 8 review finding: the setTimeout + child.kill
+    // safety path is load-bearing for the narrow case where ttyCheck
+    // returns true (interactive launch) but the user can't interact with
+    // the dialog (detached screen / SSH with Aqua session attached). If a
+    // future refactor dropped the setTimeout, removed child.kill, or
+    // changed stdio handling, this test fails.
+    //
+    // Mock child never emits 'exit' (simulates hung dialog). Inject
+    // timeoutMs=10 so the test doesn't wait the full 30s. Assert:
+    //   1. child.kill was called with SIGKILL
+    //   2. unlocker resolved to false
+    let killSignal: string | null = null;
+    spawnImpl = () => {
+      const proc = new EventEmitter() as MockSpawnProcess;
+      proc.stderr = new EventEmitter();
+      proc.stdout = new EventEmitter();
+      proc.stdin = { write: () => undefined, end: () => undefined };
+      proc.kill = (sig: string) => {
+        killSignal = sig;
+      };
+      // Deliberately do NOT emit 'exit' — child stays "running".
+      return proc;
+    };
+
+    const unlockers = buildDefaultUnlockers(() => true, 10);
+    const result = await unlockers[0]();
+    expect(result).toBe(false);
+    expect(killSignal).toBe('SIGKILL');
   });
 });
 
