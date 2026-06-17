@@ -485,8 +485,8 @@ function NestedMessageRenderer({
     const apiMessage = message.message;
     const content = apiMessage.content as ContentBlock[];
 
-    // Extract estimated thinking tokens if present (stamped by daemon handler)
-    const estimatedThinkingTokens = (apiMessage as { estimated_thinking_tokens?: number })
+    // Extract estimated thinking tokens if present (stamped by daemon handler on SDK wrapper)
+    const estimatedThinkingTokens = (message as { estimated_thinking_tokens?: number })
       .estimated_thinking_tokens;
 
     const textBlocks = content.filter((block) => isTextBlock(block));

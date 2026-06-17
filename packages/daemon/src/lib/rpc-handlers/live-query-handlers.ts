@@ -598,6 +598,7 @@ sdk_rows AS (
       WHEN sm.message_type = 'user' THEN 'Handoff'
       WHEN sm.message_type = 'result' THEN 'Status'
       WHEN sm.message_type = 'assistant' THEN 'Answer'
+      WHEN sm.message_type = 'system' AND sm.message_subtype = 'api_retry' THEN 'API retry'
       WHEN sm.message_type = 'system' AND sm.message_subtype = 'session_state_changed' THEN 'Session state'
       WHEN sm.message_type = 'system' AND sm.message_subtype = 'commands_changed' THEN 'Commands changed'
       WHEN sm.message_type = 'system' AND sm.message_subtype = 'informational' THEN
@@ -634,6 +635,23 @@ sdk_rows AS (
         CASE
           WHEN json_valid(sm.sdk_message) THEN COALESCE(json_extract(sm.sdk_message, '$.content'), 'System notice')
           ELSE 'System notice'
+        END
+      WHEN sm.message_type = 'system' AND sm.message_subtype = 'api_retry' THEN
+        CASE
+          WHEN json_valid(sm.sdk_message) THEN
+            printf(
+              'Attempt %d/%d, delay %dms, status %s%s',
+              COALESCE(json_extract(sm.sdk_message, '$.attempt'), 1),
+              COALESCE(json_extract(sm.sdk_message, '$.max_retries'), '?'),
+              COALESCE(json_extract(sm.sdk_message, '$.retry_after_ms'), 0),
+              COALESCE(json_extract(sm.sdk_message, '$.error_status'), 'unknown'),
+              CASE
+                WHEN json_valid(sm.sdk_message) AND json_extract(sm.sdk_message, '$.error') IS NOT NULL THEN
+                  printf(': %s', SUBSTR(json_extract(sm.sdk_message, '$.error'), 1, 50))
+                ELSE ''
+              END
+            )
+          ELSE 'API retry'
         END
       ELSE sm.message_type
     END AS summary,
