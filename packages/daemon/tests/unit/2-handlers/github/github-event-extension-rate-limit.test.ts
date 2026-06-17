@@ -51,11 +51,13 @@ function makeResponse(opts: {
   status?: number;
   remaining?: string | null;
   reset?: string | null;
+  retryAfter?: string | null;
   body?: unknown;
 }): Response {
   const headers = new Headers();
   if (opts.remaining !== null) headers.set('X-RateLimit-Remaining', opts.remaining ?? '5000');
   if (opts.reset !== null) headers.set('X-RateLimit-Reset', opts.reset ?? '');
+  if (opts.retryAfter !== null) headers.set('Retry-After', opts.retryAfter ?? '');
   return new Response(JSON.stringify(opts.body ?? []), {
     status: opts.status ?? 200,
     headers,
@@ -341,6 +343,104 @@ describe('GitHubEventExtension rate-limit-aware polling', () => {
       // 180s reset window (so somewhere between 60s and 180s).
       expect(capturedDelay!).toBeGreaterThanOrEqual(60_000);
       expect(capturedDelay!).toBeLessThanOrEqual(180_000);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('403 with Retry-After is treated as rate-limited even when remaining > 0', async () => {
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'token', { pollIntervalMs: 60_000 });
+    await extension.start({
+      publisher: { publish: async () => {} },
+      config: new EnabledConfigStore(),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+
+    let fetchCalled = 0;
+    const fetchImpl = (async () => {
+      fetchCalled++;
+      // 403 with remaining=100 BUT Retry-After=30s → should be rate-limited
+      return new Response('[]', {
+        status: 403,
+        headers: {
+          'X-RateLimit-Remaining': '100',
+          'Retry-After': '30',
+        },
+      });
+    }) as typeof fetch;
+
+    try {
+      const count = await extension.pollWatchedRepo(
+        extension.repo.listPollingRepos()[0],
+        fetchImpl
+      );
+      expect(count).toBe(0);
+      expect(fetchCalled).toBe(1);
+      const until = (extension as unknown as { rateLimitedUntil: number }).rateLimitedUntil;
+      expect(until).toBeGreaterThan(Date.now());
+      // Should honor Retry-After (~30s) not the default 60s
+      const delayMs = until - Date.now();
+      expect(delayMs).toBeLessThan(35_000);
+      expect(delayMs).toBeGreaterThan(25_000);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('pollSpace breaks loop when rate limit is hit mid-cycle', async () => {
+    const db = setupDb();
+    let callCount = 0;
+    const fetchImpl = (async () => {
+      callCount++;
+      // First repo: rate-limited, should break loop before second repo
+      if (callCount === 1) {
+        return rateLimitedResetResponse({
+          status: 429,
+          remaining: 0,
+          resetEpochSeconds: Math.floor((Date.now() + 300_000) / 1000),
+        });
+      }
+      // Second repo should never be called
+      throw new Error('Second repo should not be called due to rate-limit break');
+    }) as typeof fetch;
+
+    const extension = new GitHubEventExtension(db, 'token', { pollIntervalMs: 60_000, fetchImpl });
+    await extension.start({
+      publisher: { publish: async () => {} },
+      config: new EnabledConfigStore(),
+      onSourceConfigChanged() {},
+    });
+    // Add two repos for the same space
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'gadgets',
+      pollingEnabled: true,
+    });
+
+    try {
+      // Access private method via cast
+      const count = await (
+        extension as unknown as {
+          pollSpace: (spaceId: string, f: typeof fetch) => Promise<number>;
+        }
+      ).pollSpace('space-1', fetchImpl);
+      expect(count).toBe(0);
+      // Only first repo should have been called
+      expect(callCount).toBe(1);
     } finally {
       await extension.stop();
     }

@@ -40,11 +40,15 @@ const RATE_LIMIT_MIN_BACKOFF_MS = 60_000;
  *   this as seconds; multiplied to ms internally. `0` when missing.
  * - `limited`: true when the response status is 403/429. Used to defer
  *   subsequent polls even when `remaining` was not provided.
+ * - `retryAfter`: true when `resetAt` was derived from a `Retry-After` header.
+ *   When true, callers should honor the exact `resetAt` delay without flooring
+ *   to the minimum backoff (secondary limits use short Retry-After values).
  */
 export interface GitHubRateLimitInfo {
   remaining: number;
   resetAt: number;
   limited: boolean;
+  retryAfter: boolean;
 }
 
 /**
@@ -74,8 +78,10 @@ export function parseRateLimitHeaders(res: Response): GitHubRateLimitInfo {
   const resetSeconds = resetRaw ? parseInt(resetRaw, 10) : Number.NaN;
   const retryAfterSeconds = retryAfterRaw ? parseInt(retryAfterRaw, 10) : Number.NaN;
   const remainingValue = Number.isNaN(remaining) ? Infinity : remaining;
-  // 429 is always rate-limit; 403 is rate-limit only when remaining=0.
-  const limited = res.status === 429 || (res.status === 403 && remainingValue === 0);
+  const hasRetryAfter = !Number.isNaN(retryAfterSeconds);
+  // 429 is always rate-limit; 403 is rate-limit when remaining=0 OR Retry-After present.
+  const limited =
+    res.status === 429 || (res.status === 403 && (remainingValue === 0 || hasRetryAfter));
   // Retry-After wins when present (seconds from now). Otherwise use the
   // X-RateLimit-Reset epoch.
   const resetAt = !Number.isNaN(retryAfterSeconds)
@@ -87,6 +93,7 @@ export function parseRateLimitHeaders(res: Response): GitHubRateLimitInfo {
     remaining: remainingValue,
     resetAt,
     limited,
+    retryAfter: hasRetryAfter,
   };
 }
 const WEBHOOK_EVENTS = [
@@ -438,8 +445,11 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     const spaceConfig = await this.context.config.getSpaceConfig(spaceId, this.sourceId);
     if (spaceConfig && !spaceConfig.enabled) return 0;
     let count = 0;
-    for (const repo of this.repo.listPollingRepos(spaceId))
+    for (const repo of this.repo.listPollingRepos(spaceId)) {
       count += await this.pollWatchedRepo(repo, fetchImpl);
+      // Break loop if rate limit was hit mid-cycle (same guard as pollEnabledSpaces).
+      if (Date.now() < this.rateLimitedUntil) break;
+    }
     return count;
   }
 
@@ -504,9 +514,13 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
    * counter, then abort the rest of the cycle.
    */
   private applyRateLimit(rateLimit: GitHubRateLimitInfo): void {
+    // When resetAt is derived from Retry-After, honor it directly (not floored to min backoff).
+    // When resetAt is derived from X-RateLimit-Reset (or missing), floor to min backoff.
     const resetDelay =
       rateLimit.resetAt > Date.now() ? rateLimit.resetAt - Date.now() : RATE_LIMIT_MIN_BACKOFF_MS;
-    const delay = Math.max(RATE_LIMIT_MIN_BACKOFF_MS, resetDelay);
+    const delay = rateLimit.retryAfter
+      ? resetDelay
+      : Math.max(RATE_LIMIT_MIN_BACKOFF_MS, resetDelay);
     this.rateLimitedUntil = Date.now() + delay;
     log.warn('GitHub rate limit detected — deferring next poll', {
       remaining: rateLimit.remaining === Infinity ? 'unknown' : rateLimit.remaining,

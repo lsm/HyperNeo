@@ -17,6 +17,7 @@
 import { describe, test, expect } from 'bun:test';
 import { createPrReadyValidator } from '../../../../src/lib/space/runtime/built-in-validators/pr-ready-validator';
 import type { HookExecutorContext } from '../../../../src/lib/space/runtime/hook-executor';
+import { RATE_LIMIT_MIN_BACKOFF_MS } from '../../../../src/lib/space/runtime/rate-limit-detector';
 
 function streamFromString(text: string): ReadableStream<Uint8Array> {
   return new ReadableStream({
@@ -525,5 +526,55 @@ describe('pr-ready validator', () => {
     const hostnameIdx = rateLimitCall!.cmd.indexOf('--hostname');
     expect(hostnameIdx).toBeGreaterThan(-1);
     expect(rateLimitCall!.cmd[hostnameIdx + 1]).toBe('github.example.com');
+  });
+
+  test('secondary rate-limit error skips /rate_limit probe and returns min backoff', async () => {
+    const calls: Array<{ cmd: string[]; options?: unknown }> = [];
+    const spawn = makeMockSpawn(
+      [
+        { stdout: JSON.stringify(VALID_PR_VIEW), stderr: '', exitCode: 0 },
+        {
+          stdout: '',
+          stderr: 'HTTP 403: You have exceeded a secondary rate limit',
+          exitCode: 1,
+        },
+      ],
+      calls
+    );
+    const validator = createPrReadyValidator(spawn);
+    const result = await validator(makeContext('https://github.com/acme/corp/pull/42'));
+    // Should be retryable_block with RATE_LIMIT_MIN_BACKOFF_MS, not the result of a /rate_limit probe
+    expect(result.type).toBe('retryable_block');
+    const retryAfterMs = (result as { retryAfterMs?: number }).retryAfterMs;
+    expect(retryAfterMs).toBe(RATE_LIMIT_MIN_BACKOFF_MS);
+    // No /rate_limit probe should have been made (only 2 calls: pr view + review threads)
+    expect(calls.length).toBe(2);
+  });
+
+  test('graphql rate-limit probe uses graphql resource hint (not core)', async () => {
+    const now = Date.now();
+    const coreReset = Math.floor((now + 300_000) / 1000); // 5 min
+    const graphqlReset = Math.floor((now + 75_000) / 1000); // 75 sec
+    const spawn = makeMockSpawn([
+      { stdout: JSON.stringify(VALID_PR_VIEW), stderr: '', exitCode: 0 },
+      { stdout: '', stderr: 'API rate limit exceeded', exitCode: 1 },
+      {
+        stdout: JSON.stringify({
+          resources: {
+            core: { reset: coreReset },
+            graphql: { reset: graphqlReset },
+          },
+        }),
+        stderr: '',
+        exitCode: 0,
+      },
+    ]);
+    const validator = createPrReadyValidator(spawn);
+    const result = await validator(makeContext('https://github.com/acme/corp/pull/42'));
+    expect(result.type).toBe('retryable_block');
+    const retryAfterMs = (result as { retryAfterMs?: number }).retryAfterMs;
+    // Should use graphql reset (75s) not core (5 min) since review-threads query is GraphQL
+    expect(retryAfterMs!).toBeLessThanOrEqual(75_000);
+    expect(retryAfterMs!).toBeGreaterThan(60_000);
   });
 });

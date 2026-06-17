@@ -5,6 +5,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   computeRateLimitRetryMs,
   isRateLimitError,
+  isSecondaryRateLimitError,
   RATE_LIMIT_MIN_BACKOFF_MS,
 } from '../../../../src/lib/space/runtime/rate-limit-detector';
 
@@ -63,6 +64,30 @@ describe('computeRateLimitRetryMs', () => {
   test('returns min backoff when reset is in the past', () => {
     const pastSeconds = Math.floor((Date.now() - 1000) / 1000);
     expect(computeRateLimitRetryMs(pastSeconds)).toBe(RATE_LIMIT_MIN_BACKOFF_MS);
+  });
+});
+
+describe('isSecondaryRateLimitError', () => {
+  test('matches secondary rate-limit message', () => {
+    expect(isSecondaryRateLimitError('HTTP 403: You have exceeded a secondary rate limit')).toBe(
+      true
+    );
+  });
+
+  test('matches secondary rate limit with different casing', () => {
+    expect(isSecondaryRateLimitError('SECONDARY RATE LIMIT EXCEEDED')).toBe(true);
+    expect(isSecondaryRateLimitError('Secondary Rate-Limit detected')).toBe(true);
+  });
+
+  test('does not match primary rate-limit messages', () => {
+    expect(isSecondaryRateLimitError('rate limit exceeded')).toBe(false);
+    expect(isSecondaryRateLimitError('API rate limit')).toBe(false);
+    expect(isSecondaryRateLimitError('too many requests')).toBe(false);
+  });
+
+  test('does not match non-rate-limit errors', () => {
+    expect(isSecondaryRateLimitError('HTTP 404: Not Found')).toBe(false);
+    expect(isSecondaryRateLimitError('')).toBe(false);
   });
 });
 

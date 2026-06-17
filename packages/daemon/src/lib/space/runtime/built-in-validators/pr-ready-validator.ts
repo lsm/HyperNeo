@@ -12,6 +12,7 @@ import { collectWithMaxBuffer, parseJsonStdout } from '../gate-script-executor';
 import {
   computeRateLimitRetryMs,
   isRateLimitError,
+  isSecondaryRateLimitError,
   RATE_LIMIT_MIN_BACKOFF_MS,
 } from '../rate-limit-detector';
 
@@ -104,7 +105,8 @@ export function createPrReadyValidator(
       ['gh', 'pr', 'view', prUrl, '--json', 'url,state,mergeable,mergeStateStatus'],
       context.workspacePath,
       remainingTimeoutMs(deadlineMs),
-      spawnImpl
+      spawnImpl,
+      { hostHint: prMeta.host, resourceHint: 'core' }
     );
     if (!prView.success) {
       return commandFailureToHookResult(prView, 'PR is not ready for Review');
@@ -210,7 +212,8 @@ async function resolvePrUrl(
     ['gh', 'pr', 'view', '--json', 'url'],
     context.workspacePath,
     remainingTimeoutMs(deadlineMs),
-    spawnImpl
+    spawnImpl,
+    { resourceHint: 'core' }
   );
   if (!currentBranchPr.success) {
     return {
@@ -311,7 +314,7 @@ async function runReviewThreadsQuery(
       cwd,
       remainingTimeoutMs(deadlineMs),
       spawnImpl,
-      { hostHint: meta.host }
+      { hostHint: meta.host, resourceHint: 'graphql' }
     );
     if (!result.success) {
       return {
@@ -390,15 +393,26 @@ interface RateLimitPayload {
 }
 
 /**
- * Picks the earliest finite reset epoch across REST (`core`) and GraphQL
- * windows from a `/rate_limit` payload.
+ * Picks the appropriate reset epoch from a `/rate_limit` payload.
  *
- * Returns null when neither is present. Picking the earliest reset gives the
- * most conservative backoff when one of the two windows is exhausted but the
- * other is not — the probe cannot tell which call hit the limit, so we wait
- * for whichever window recovers first.
+ * When `resource` is 'core' or 'graphql', returns that specific window's reset
+ * (or null if missing). When undefined, returns the earliest finite reset across
+ * both windows as a conservative fallback for cases where the caller doesn't
+ * know which resource was exhausted.
  */
-function pickRateLimitResetEpoch(payload: RateLimitPayload): number | null {
+function pickRateLimitResetEpoch(
+  payload: RateLimitPayload,
+  resource?: 'core' | 'graphql'
+): number | null {
+  if (resource === 'core') {
+    const coreReset = payload.resources?.core?.reset;
+    return typeof coreReset === 'number' && Number.isFinite(coreReset) ? coreReset : null;
+  }
+  if (resource === 'graphql') {
+    const graphqlReset = payload.resources?.graphql?.reset;
+    return typeof graphqlReset === 'number' && Number.isFinite(graphqlReset) ? graphqlReset : null;
+  }
+  // Fallback: pick the earliest available reset when resource is unknown.
   const resets: number[] = [];
   const coreReset = payload.resources?.core?.reset;
   const graphqlReset = payload.resources?.graphql?.reset;
@@ -419,6 +433,8 @@ function pickRateLimitResetEpoch(payload: RateLimitPayload): number | null {
  * not cause infinite recursion. When `host` is provided (e.g. a GitHub
  * Enterprise hostname from the rate-limited request), it is forwarded via
  * `--hostname` so the probe queries the same host instead of `github.com`.
+ * When `resource` is 'core' or 'graphql', returns that specific window's
+ * reset; otherwise returns the earliest available reset as a fallback.
  * Returns null when the probe itself fails — callers fall back to
  * `RATE_LIMIT_MIN_BACKOFF_MS`.
  */
@@ -426,7 +442,8 @@ async function fetchRateLimitResetEpoch(
   cwd: string,
   spawnImpl: typeof Bun.spawn,
   deadlineMs: number,
-  host?: string
+  host?: string,
+  resource?: 'core' | 'graphql'
 ): Promise<number | null> {
   const args = ['gh', 'api'];
   if (host) args.push('--hostname', host);
@@ -438,7 +455,7 @@ async function fetchRateLimitResetEpoch(
     spawnImpl
   );
   if (!result.success) return null;
-  return pickRateLimitResetEpoch(result.data);
+  return pickRateLimitResetEpoch(result.data, resource);
 }
 
 /**
@@ -508,16 +525,26 @@ async function runCommand<T>(
   cwd: string,
   timeoutMs: number,
   spawnImpl: typeof Bun.spawn,
-  options?: { hostHint?: string }
+  options?: { hostHint?: string; resourceHint?: 'core' | 'graphql' }
 ): Promise<CommandOutcome<T>> {
   const outcome = await runCommandRaw<T>(args, cwd, timeoutMs, spawnImpl);
   if (outcome.success) return outcome;
   if (!isRateLimitError(outcome.error)) return outcome;
+  // Secondary rate limits don't update /rate_limit — skip the probe and use minimum backoff.
+  if (isSecondaryRateLimitError(outcome.error)) {
+    return {
+      success: false,
+      error: outcome.error,
+      rateLimited: true,
+      retryAfterMs: RATE_LIMIT_MIN_BACKOFF_MS,
+    };
+  }
   const resetEpoch = await fetchRateLimitResetEpoch(
     cwd,
     spawnImpl,
     Date.now() + timeoutMs,
-    options?.hostHint
+    options?.hostHint,
+    options?.resourceHint
   );
   return {
     success: false,

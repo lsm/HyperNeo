@@ -40,6 +40,19 @@ export function isRateLimitError(stderr: string): boolean {
 }
 
 /**
+ * Returns true if stderr indicates a GitHub secondary rate limit.
+ *
+ * Secondary limits (burst / abuse-detection) return 403 with a message like
+ * "You have exceeded a secondary rate limit" but do NOT update the
+ * `/rate_limit` endpoint. When true, callers should skip the primary-reset
+ * probe and fall back to the minimum backoff or any `Retry-After` header.
+ */
+export function isSecondaryRateLimitError(stderr: string): boolean {
+  if (!stderr) return false;
+  return /secondary rate/i.test(stderr);
+}
+
+/**
  * Computes the retry-after delay in milliseconds from a GitHub `X-RateLimit-Reset`
  * epoch (seconds). Returns `RATE_LIMIT_MIN_BACKOFF_MS` when reset is missing,
  * not finite, or already in the past. Never returns a value below the minimum
