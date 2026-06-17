@@ -18,10 +18,12 @@ interface SessionTodo {
   activeForm?: string;
 }
 
+type BackgroundTaskStatus = 'pending' | 'running' | 'paused' | 'completed' | 'failed' | 'killed';
+
 interface BackgroundTask {
   id: string;
   label: string;
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'killed';
+  status: BackgroundTaskStatus;
   backgrounded: boolean;
 }
 
@@ -49,6 +51,20 @@ function basename(path: string | null | undefined): string {
 function asTodoStatus(value: unknown): TodoStatus {
   if (value === 'completed' || value === 'in_progress' || value === 'pending') return value;
   return 'pending';
+}
+
+function asBackgroundTaskStatus(value: unknown): BackgroundTaskStatus | null {
+  if (
+    value === 'pending' ||
+    value === 'running' ||
+    value === 'paused' ||
+    value === 'completed' ||
+    value === 'failed' ||
+    value === 'killed'
+  ) {
+    return value;
+  }
+  return null;
 }
 
 function truncate(value: string, maxLength = 48): string {
@@ -97,7 +113,7 @@ function extractLatestTodos(messages: ChatMessage[]): SessionTodo[] {
   return [];
 }
 
-function extractBackgroundTasks(
+export function extractBackgroundTasks(
   messages: ChatMessage[],
   toolInputsMap: Map<string, unknown>
 ): BackgroundTask[] {
@@ -129,14 +145,8 @@ function extractBackgroundTasks(
     if (!existing) continue;
 
     if (record.subtype === 'task_updated' && isRecord(record.patch)) {
-      const status = getString(record.patch, 'status');
-      if (
-        status === 'pending' ||
-        status === 'running' ||
-        status === 'completed' ||
-        status === 'failed' ||
-        status === 'killed'
-      ) {
+      const status = asBackgroundTaskStatus(getString(record.patch, 'status'));
+      if (status) {
         existing.status = status;
       }
       if (typeof record.patch.is_backgrounded === 'boolean') {
@@ -155,7 +165,7 @@ function extractBackgroundTasks(
   }
 
   return [...tasks.values()]
-    .filter((task) => task.backgrounded || task.status === 'running')
+    .filter((task) => task.backgrounded || task.status === 'running' || task.status === 'paused')
     .slice(-4);
 }
 

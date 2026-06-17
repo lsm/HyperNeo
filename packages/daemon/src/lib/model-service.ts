@@ -16,6 +16,8 @@ import { initializeProviders, waitForOptionalProviderRegistration } from './prov
 import { getProviderRegistry } from './providers/registry.js';
 import type { Provider } from '@neokai/shared/provider';
 import { getCodexBridgeModelInfos, resolveCodexBridgeModelId } from './providers/codex-models.js';
+import { GlmProvider } from './providers/glm-provider.js';
+import { KimiProvider } from './providers/kimi-provider.js';
 
 /**
  * Legacy model ID mappings to SDK model IDs
@@ -104,8 +106,20 @@ const FALLBACK_MODELS: ModelInfo[] = [
  * This is used only for deterministic metadata lookup (current model display,
  * context-window resolution) when live provider loading is unavailable. It does
  * not make those providers available for use.
+ *
+ * GLM and Kimi are included because their context windows must be resolvable
+ * even when the daemon starts without the provider's env var set globally but
+ * the session supplies credentials via `session.config.providerConfig.apiKey`.
+ * Without these entries, `getSessionModelInfo()` returns null and the NeoKai
+ * fallback compaction threshold can't be computed — sessions would run into the
+ * real context limit with no compaction trigger.
  */
-const STATIC_MODEL_METADATA: ModelInfo[] = [...FALLBACK_MODELS, ...getCodexBridgeModelInfos()];
+const STATIC_MODEL_METADATA: ModelInfo[] = [
+  ...FALLBACK_MODELS,
+  ...getCodexBridgeModelInfos(),
+  ...GlmProvider.MODELS,
+  ...KimiProvider.MODELS,
+];
 const CODEX_STATIC_MODEL_METADATA = getCodexBridgeModelInfos();
 
 /**
@@ -511,15 +525,47 @@ export function setModelsCache(cache: Map<string, ModelInfo[]>, timestamp?: numb
  * 3. Legacy model mapping
  */
 function findInModels(models: ModelInfo[], idOrAlias: string): ModelInfo | undefined {
+  const normalized = idOrAlias.toLowerCase();
+
   // 1. Exact ID match (works for SDK's short IDs like 'opus', 'default')
   let found = models.find((m) => m.id === idOrAlias);
 
-  // 2. Alias field match
+  // 2. Case-insensitive ID match for providers whose routing accepts aliases
+  // after lowercasing (e.g. Kimi accepts `KIMI` and `Moonshot-v1-32k`).
+  if (!found) {
+    found = models.find((m) => m.id.toLowerCase() === normalized);
+  }
+
+  // 3. Alias field match
   if (!found) {
     found = models.find((m) => m.alias === idOrAlias);
   }
 
-  // 3. Legacy model mapping (maps old full IDs to SDK short IDs)
+  // 4. Case-insensitive alias field match
+  if (!found) {
+    found = models.find((m) => m.alias.toLowerCase() === normalized);
+  }
+
+  // 5. Provider-accepted aliases. These are user/config spellings that should
+  // pass validation and resolve metadata. Do NOT use sdkModelIds here: those are
+  // SDK-reported bridge aliases (e.g. Codex's claude-opus-4-7) and must not
+  // become user-selectable/provider-accepted IDs.
+  if (!found) {
+    found = models.find((m) =>
+      m.providerAliases?.some((alias) => alias.toLowerCase() === normalized)
+    );
+  }
+
+  // 6. Provider-accepted alias prefixes. Used for open-ended alias families
+  // such as Kimi's moonshot-* IDs. Keep separate from sdkModelIds for the same
+  // reason as providerAliases: SDK-only bridge IDs must not become valid input.
+  if (!found) {
+    found = models.find((m) =>
+      m.providerAliasPrefixes?.some((prefix) => normalized.startsWith(prefix.toLowerCase()))
+    );
+  }
+
+  // 7. Legacy model mapping (maps old full IDs to SDK short IDs)
   if (!found) {
     const legacyMappedId = LEGACY_MODEL_MAPPINGS[idOrAlias];
     if (legacyMappedId) {

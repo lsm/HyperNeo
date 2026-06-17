@@ -742,8 +742,16 @@ async function streamChatToAnthropic(params: {
       'openai-chat-bridge: streaming failed:',
       error instanceof Error ? error.message : String(error)
     );
-    send(errorSSE('api_error', error instanceof Error ? error.message : 'OpenAI stream failed'));
-    send(messageStopSSE());
+    try {
+      send(errorSSE('api_error', error instanceof Error ? error.message : 'OpenAI stream failed'));
+    } catch {
+      // Controller already closed (client disconnect or upstream tear-down).
+    }
+    try {
+      send(messageStopSSE());
+    } catch {
+      // Controller already closed.
+    }
   } finally {
     try {
       controller.close();

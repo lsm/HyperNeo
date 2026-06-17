@@ -618,17 +618,23 @@ describe('NAMED_QUERY_REGISTRY', () => {
       timestampMs: number,
       messageType = 'assistant',
       sendStatus = 'consumed',
-      origin = 'system'
+      origin = 'system',
+      subtype: string | null = null,
+      payload?: Record<string, unknown>
     ): void {
       const iso = new Date(timestampMs).toISOString();
       const taskIdForSession = sessionTaskIds.get(sessionIdValue) ?? null;
+      const messagePayload = payload ?? {
+        type: messageType,
+        message: { role: 'assistant', content: [{ type: 'text', text: 'hi' }] },
+      };
       db.exec(`
 				INSERT INTO sdk_messages (
 					id, session_id, message_type, message_subtype, sdk_message, timestamp,
 					send_status, origin, task_id
 				) VALUES (
-					'${id}', '${sessionIdValue}', '${messageType}', NULL,
-					'{"type":"${messageType}","message":{"role":"assistant","content":[{"type":"text","text":"hi"}]}}',
+					'${id}', '${sessionIdValue}', '${messageType}', ${subtype ? `'${subtype}'` : 'NULL'},
+					'${JSON.stringify(messagePayload)}',
 					'${iso}', '${sendStatus}', '${origin}', ${taskIdForSession ? `'${taskIdForSession}'` : 'NULL'}
 				)
 			`);
@@ -753,6 +759,87 @@ describe('NAMED_QUERY_REGISTRY', () => {
       expect(mapped).toHaveLength(1);
       expect(mapped[0].id).toBe('msg:sdk-actor-one');
       expect((mapped[0].from as Record<string, unknown>).nodeExecutionId).toBe('actor-sdk-current');
+    });
+
+    test('actorMessages.byTask filters operational SDK rows', () => {
+      const workflowRunId = 'wr-actor-operational';
+      const nodeSessionId = 'node-agent-actor-operational';
+      const taskId = insertSpaceTask({
+        id: 'actor-operational-task',
+        workflowRunId,
+        status: 'in_progress',
+      });
+      insertSession(nodeSessionId, 'worker', '{"status":"processing"}');
+      sessionTaskIds.set(nodeSessionId, taskId);
+      insertSdkMessageAt('sdk-visible', nodeSessionId, now + 1000);
+      for (const subtype of ['thinking_tokens', 'session_state_changed', 'commands_changed']) {
+        insertSdkMessageAt(
+          `sdk-operational-${subtype}`,
+          nodeSessionId,
+          now + 2000,
+          'system',
+          'consumed',
+          'system',
+          subtype,
+          { type: 'system', subtype }
+        );
+      }
+
+      const entry = NAMED_QUERY_REGISTRY.get('actorMessages.byTask')!;
+      const rows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
+      const mapped = entry.mapRow ? rows.map(entry.mapRow) : rows;
+
+      expect(mapped.map((row) => row.id)).toEqual(['msg:sdk-visible']);
+    });
+
+    test('actorMessages.byTask evicts rows retracted by refusal fallback notices', () => {
+      const workflowRunId = 'wr-actor-retracted';
+      const nodeSessionId = 'node-agent-actor-retracted';
+      const taskId = insertSpaceTask({
+        id: 'actor-retracted-task',
+        workflowRunId,
+        status: 'in_progress',
+      });
+      insertSession(nodeSessionId, 'worker', '{"status":"processing"}');
+      sessionTaskIds.set(nodeSessionId, taskId);
+      insertSdkMessageAt(
+        'row-retracted',
+        nodeSessionId,
+        now + 1000,
+        'assistant',
+        'consumed',
+        'system',
+        null,
+        {
+          type: 'assistant',
+          uuid: 'sdk-retracted',
+          message: { role: 'assistant', content: [{ type: 'text', text: 'retracted' }] },
+        }
+      );
+      insertSdkMessageAt('sdk-visible-after-retry', nodeSessionId, now + 2000);
+      insertSdkMessageAt(
+        'sdk-fallback-notice',
+        nodeSessionId,
+        now + 3000,
+        'system',
+        'consumed',
+        'system',
+        'model_refusal_fallback',
+        {
+          type: 'system',
+          subtype: 'model_refusal_fallback',
+          retracted_message_uuids: ['sdk-retracted'],
+        }
+      );
+
+      const entry = NAMED_QUERY_REGISTRY.get('actorMessages.byTask')!;
+      const rows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
+      const mapped = entry.mapRow ? rows.map(entry.mapRow) : rows;
+
+      expect(mapped.map((row) => row.id)).toEqual([
+        'msg:sdk-visible-after-retry',
+        'msg:sdk-fallback-notice',
+      ]);
     });
 
     test('actorMessages.byWorkflowRun does not fan out node or artifact rows across tasks', () => {
@@ -918,13 +1005,14 @@ describe('NAMED_QUERY_REGISTRY', () => {
         const isRenderable = computeIsRenderable(sdkLike);
         const isTerminal = computeIsTerminal(sdkLike);
         const parentToolUseId = extractParentToolUseId(sdkLike);
+        const messageSubtype = typeof payload.subtype === 'string' ? payload.subtype : null;
         const taskIdForSession = sessionTaskIds.get(sessionIdValue) ?? null;
         db.exec(`
 					INSERT INTO sdk_messages (
 						id, session_id, message_type, message_subtype, sdk_message, timestamp,
 						send_status, origin, is_renderable, is_terminal, parent_tool_use_id, task_id
 					) VALUES (
-						'${id}', '${sessionIdValue}', '${messageType}', NULL, '${JSON.stringify(payload)}',
+						'${id}', '${sessionIdValue}', '${messageType}', ${messageSubtype ? `'${messageSubtype}'` : 'NULL'}, '${JSON.stringify(payload)}',
 						'${iso}', 'consumed', 'system', ${isRenderable}, ${isTerminal},
 						${parentToolUseId ? `'${parentToolUseId}'` : 'NULL'},
 						${taskIdForSession ? `'${taskIdForSession}'` : 'NULL'}
@@ -1127,6 +1215,45 @@ describe('NAMED_QUERY_REGISTRY', () => {
         expect(rows.map((r) => r.id)).not.toContain('u1');
       });
 
+      test('task feeds evict rows retracted by refusal fallback notices', () => {
+        const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+        insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+        insertSdkMessageAt('row-retracted', sessionId, now + 1000, {
+          type: 'assistant',
+          uuid: 'retracted',
+          message: { role: 'assistant', content: [{ type: 'text', text: 'retracted' }] },
+        });
+        insertSdkMessageAt('visible-after-retry', sessionId, now + 2000);
+        insertSdkMessageAt(
+          'fallback-notice',
+          sessionId,
+          now + 3000,
+          {
+            type: 'system',
+            subtype: 'model_refusal_fallback',
+            trigger: 'refusal',
+            direction: 'retry',
+            original_model: 'opus',
+            fallback_model: 'sonnet',
+            request_id: 'req-1',
+            retracted_message_uuids: ['retracted'],
+            content: 'Retried with fallback model',
+          },
+          'system'
+        );
+
+        const compactRows = queryCompact(taskId);
+        const entry = NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask')!;
+        const rawRows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
+        const fullRows = entry.mapRow ? rawRows.map(entry.mapRow) : rawRows;
+
+        expect(compactRows.map((row) => row.id)).toEqual([
+          'visible-after-retry',
+          'fallback-notice',
+        ]);
+        expect(fullRows.map((row) => row.id)).toEqual(['visible-after-retry', 'fallback-notice']);
+      });
+
       test('always includes system rows (init / compact_boundary) regardless of tail position', () => {
         const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
         insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
@@ -1195,7 +1322,41 @@ describe('NAMED_QUERY_REGISTRY', () => {
         expect(createdAts).toEqual(sorted);
       });
 
-      test('legacy full query variant is unaffected (no compact slicing)', () => {
+      test('task feeds exclude operational system rows', () => {
+        const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+        insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+
+        insertSdkMessageAt('visible', sessionId, now, {
+          type: 'assistant',
+          message: { role: 'assistant', content: [{ type: 'text', text: 'visible' }] },
+        });
+        for (const subtype of ['thinking_tokens', 'session_state_changed', 'commands_changed']) {
+          insertSdkMessageAt(
+            `operational-${subtype}`,
+            sessionId,
+            now + 1000,
+            {
+              type: 'system',
+              subtype,
+              commands: [],
+              state: 'idle',
+              estimated_tokens: 1,
+              estimated_tokens_delta: 1,
+            },
+            'system'
+          );
+        }
+
+        const compactRows = queryCompact(taskId);
+        const entry = NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask')!;
+        const rawRows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
+        const fullRows = entry.mapRow ? rawRows.map(entry.mapRow) : rawRows;
+
+        expect(compactRows.map((row) => row.id)).toEqual(['visible']);
+        expect(fullRows.map((row) => row.id)).toEqual(['visible']);
+      });
+
+      test('legacy full query variant is unaffected by compact slicing', () => {
         const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
         insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
 
@@ -1971,11 +2132,17 @@ describe('NAMED_QUERY_REGISTRY', () => {
       );
     }
 
-    function insertSdkMessage(sessionId: string, id: string, timestampMs: number): void {
+    function insertSdkMessage(
+      sessionId: string,
+      id: string,
+      timestampMs: number,
+      subtype: string | null = null,
+      sdkUuid = id
+    ): void {
       db.exec(
         `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status)
-				 VALUES ('${id}', '${sessionId}', 'assistant', NULL,
-				 '${JSON.stringify({ type: 'assistant', uuid: id, message: { content: [] } })}',
+				 VALUES ('${id}', '${sessionId}', 'assistant', ${subtype ? `'${subtype}'` : 'NULL'},
+				 '${JSON.stringify({ type: 'assistant', uuid: sdkUuid, message: { content: [] } })}',
 				 '${new Date(timestampMs).toISOString()}', 'consumed')`
       );
     }
@@ -2028,6 +2195,40 @@ describe('NAMED_QUERY_REGISTRY', () => {
       expect(meta.iteration).toBeUndefined();
       expect(typeof meta.turnId).toBe('string');
       expect(parsed.uuid).toBe('worker-msg-1');
+    });
+
+    test('filters operational sdk rows before building the group timeline', () => {
+      insertTask();
+      insertGroup();
+      insertSdkMessage(workerSessionId, 'visible-worker-msg', 1000);
+      for (const subtype of ['thinking_tokens', 'session_state_changed', 'commands_changed']) {
+        insertSdkMessage(workerSessionId, `operational-${subtype}`, 2000, subtype);
+      }
+
+      const rows = executeSQLAndMap();
+
+      expect(rows.map((row) => row.id)).toEqual(['visible-worker-msg']);
+    });
+
+    test('evicts rows retracted by refusal fallback notices before building the group timeline', () => {
+      insertTask();
+      insertGroup();
+      insertSdkMessage(
+        workerSessionId,
+        'row-retracted-worker-msg',
+        1000,
+        null,
+        'retracted-worker-msg'
+      );
+      insertSdkMessage(workerSessionId, 'visible-worker-msg', 2000);
+      db.exec(`INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status)
+				 VALUES ('fallback-notice', '${workerSessionId}', 'system', 'model_refusal_fallback',
+				 '${JSON.stringify({ type: 'system', subtype: 'model_refusal_fallback', retracted_message_uuids: ['retracted-worker-msg'] })}',
+				 '${new Date(3000).toISOString()}', 'consumed')`);
+
+      const rows = executeSQLAndMap();
+
+      expect(rows.map((row) => row.id)).toEqual(['visible-worker-msg', 'fallback-notice']);
     });
 
     test('event rows keep null sessionId and status text extraction', () => {

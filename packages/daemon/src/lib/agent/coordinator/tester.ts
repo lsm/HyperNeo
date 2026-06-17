@@ -13,6 +13,7 @@ export const testerAgent: AgentDefinition = {
     'WebFetch',
     'WebSearch',
     'Skill',
+    'Agent',
     'Task',
     'TodoWrite',
     'TaskOutput',

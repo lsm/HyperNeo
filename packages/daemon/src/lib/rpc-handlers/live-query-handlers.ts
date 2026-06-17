@@ -575,7 +575,25 @@ sdk_rows AS (
    AND ne.agent_session_id = sm.session_id
    AND ne.rn = 1
   LEFT JOIN space_agents sa ON sa.id = ne.agent_id
-  WHERE (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
+  WHERE COALESCE(sm.message_subtype, '') NOT IN ('thinking_tokens', 'session_state_changed', 'commands_changed')
+    AND NOT EXISTS (
+      SELECT 1
+      FROM sdk_messages ref,
+           json_each(ref.sdk_message, '$.retracted_message_uuids') retracted
+      WHERE ref.session_id = sm.session_id
+        AND json_valid(ref.sdk_message)
+        AND ref.message_subtype = 'model_refusal_fallback'
+        AND retracted.value = COALESCE(CASE WHEN json_valid(sm.sdk_message) THEN json_extract(sm.sdk_message, '$.uuid') END, sm.id)
+    )
+    AND NOT EXISTS (
+      SELECT 1
+      FROM sdk_messages ref,
+           json_each(ref.sdk_message, '$.supersedes') superseded
+      WHERE ref.session_id = sm.session_id
+        AND json_valid(ref.sdk_message)
+        AND superseded.value = COALESCE(CASE WHEN json_valid(sm.sdk_message) THEN json_extract(sm.sdk_message, '$.uuid') END, sm.id)
+    )
+    AND (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
 ),
 pending_rows AS (
   SELECT
@@ -765,7 +783,25 @@ sdk_rows_raw AS (
   FROM target_group tg
   JOIN session_group_members gm ON gm.group_id = tg.id
   JOIN sdk_messages sm ON sm.session_id = gm.session_id
-  WHERE (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
+  WHERE COALESCE(sm.message_subtype, '') NOT IN ('thinking_tokens', 'session_state_changed', 'commands_changed')
+    AND NOT EXISTS (
+      SELECT 1
+      FROM sdk_messages ref,
+           json_each(ref.sdk_message, '$.retracted_message_uuids') retracted
+      WHERE ref.session_id = sm.session_id
+        AND json_valid(ref.sdk_message)
+        AND ref.message_subtype = 'model_refusal_fallback'
+        AND retracted.value = COALESCE(CASE WHEN json_valid(sm.sdk_message) THEN json_extract(sm.sdk_message, '$.uuid') END, sm.id)
+    )
+    AND NOT EXISTS (
+      SELECT 1
+      FROM sdk_messages ref,
+           json_each(ref.sdk_message, '$.supersedes') superseded
+      WHERE ref.session_id = sm.session_id
+        AND json_valid(ref.sdk_message)
+        AND superseded.value = COALESCE(CASE WHEN json_valid(sm.sdk_message) THEN json_extract(sm.sdk_message, '$.uuid') END, sm.id)
+    )
+    AND (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
 ),
 sdk_rows_with_pos AS (
   SELECT
@@ -1140,7 +1176,25 @@ sdk_rows_raw AS (
    AND sne.session_id = sm.session_id
    AND sne.rn = 1
   LEFT JOIN space_agents sa ON sa.id = sne.agent_id
-  WHERE (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
+  WHERE COALESCE(sm.message_subtype, '') NOT IN ('thinking_tokens', 'session_state_changed', 'commands_changed')
+    AND NOT EXISTS (
+      SELECT 1
+      FROM sdk_messages ref,
+           json_each(ref.sdk_message, '$.retracted_message_uuids') retracted
+      WHERE ref.session_id = sm.session_id
+        AND json_valid(ref.sdk_message)
+        AND ref.message_subtype = 'model_refusal_fallback'
+        AND retracted.value = COALESCE(CASE WHEN json_valid(sm.sdk_message) THEN json_extract(sm.sdk_message, '$.uuid') END, sm.id)
+    )
+    AND NOT EXISTS (
+      SELECT 1
+      FROM sdk_messages ref,
+           json_each(ref.sdk_message, '$.supersedes') superseded
+      WHERE ref.session_id = sm.session_id
+        AND json_valid(ref.sdk_message)
+        AND superseded.value = COALESCE(CASE WHEN json_valid(sm.sdk_message) THEN json_extract(sm.sdk_message, '$.uuid') END, sm.id)
+    )
+    AND (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
 ),
 sdk_rows_numbered AS (
   SELECT
@@ -2075,6 +2129,24 @@ WITH top_level AS (
   FROM sdk_messages
   WHERE session_id = ?1
     AND parent_tool_use_id IS NULL
+    AND COALESCE(message_subtype, '') NOT IN ('thinking_tokens', 'session_state_changed', 'commands_changed')
+    AND NOT EXISTS (
+      SELECT 1
+      FROM sdk_messages ref,
+           json_each(ref.sdk_message, '$.retracted_message_uuids') retracted
+      WHERE ref.session_id = sdk_messages.session_id
+        AND json_valid(ref.sdk_message)
+        AND ref.message_subtype = 'model_refusal_fallback'
+        AND retracted.value = COALESCE(CASE WHEN json_valid(sdk_messages.sdk_message) THEN json_extract(sdk_messages.sdk_message, '$.uuid') END, sdk_messages.id)
+    )
+    AND NOT EXISTS (
+      SELECT 1
+      FROM sdk_messages ref,
+           json_each(ref.sdk_message, '$.supersedes') superseded
+      WHERE ref.session_id = sdk_messages.session_id
+        AND json_valid(ref.sdk_message)
+        AND superseded.value = COALESCE(CASE WHEN json_valid(sdk_messages.sdk_message) THEN json_extract(sdk_messages.sdk_message, '$.uuid') END, sdk_messages.id)
+    )
     AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))
   ORDER BY timestamp DESC, id DESC
   LIMIT ?2
@@ -2097,6 +2169,24 @@ subagent AS (
   FROM sdk_messages sm
   WHERE sm.session_id = ?1
     AND sm.parent_tool_use_id IN (SELECT id FROM tool_use_ids)
+    AND COALESCE(sm.message_subtype, '') NOT IN ('thinking_tokens', 'session_state_changed', 'commands_changed')
+    AND NOT EXISTS (
+      SELECT 1
+      FROM sdk_messages ref,
+           json_each(ref.sdk_message, '$.retracted_message_uuids') retracted
+      WHERE ref.session_id = sm.session_id
+        AND json_valid(ref.sdk_message)
+        AND ref.message_subtype = 'model_refusal_fallback'
+        AND retracted.value = COALESCE(CASE WHEN json_valid(sm.sdk_message) THEN json_extract(sm.sdk_message, '$.uuid') END, sm.id)
+    )
+    AND NOT EXISTS (
+      SELECT 1
+      FROM sdk_messages ref,
+           json_each(ref.sdk_message, '$.supersedes') superseded
+      WHERE ref.session_id = sm.session_id
+        AND json_valid(ref.sdk_message)
+        AND superseded.value = COALESCE(CASE WHEN json_valid(sm.sdk_message) THEN json_extract(sm.sdk_message, '$.uuid') END, sm.id)
+    )
     AND (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
 )
 SELECT

@@ -13,6 +13,7 @@ export const coderAgent: AgentDefinition = {
     'WebFetch',
     'WebSearch',
     'Skill',
+    'Agent',
     'Task',
     'TodoWrite',
     'TaskOutput',

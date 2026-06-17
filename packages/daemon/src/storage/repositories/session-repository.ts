@@ -289,7 +289,7 @@ export class SessionRepository {
 				)
 				SELECT
 					'message', sm.id,
-					COALESCE(json_extract(sm.sdk_message, '$.uuid'), sm.id), sm.session_id,
+					COALESCE(CASE WHEN json_valid(sm.sdk_message) THEN json_extract(sm.sdk_message, '$.uuid') END, sm.id), sm.session_id,
 					sm.task_id, ${spaceTaskColumns}, sm.message_type, s.title,
 					CASE
 						WHEN json_type(sm.sdk_message, '$.message.content') = 'array' THEN (
@@ -312,7 +312,24 @@ export class SessionRepository {
 				WHERE sm.session_id = ?
 				  AND json_valid(sm.sdk_message)
 				  AND sm.message_type IN ('system', 'user', 'assistant')
-				  AND (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
+				  AND NOT EXISTS (
+						SELECT 1
+						FROM sdk_messages ref,
+							 json_each(ref.sdk_message, '$.retracted_message_uuids') retracted
+						WHERE ref.session_id = sm.session_id
+						  AND json_valid(ref.sdk_message)
+						  AND ref.message_subtype = 'model_refusal_fallback'
+						  AND retracted.value = COALESCE(CASE WHEN json_valid(sm.sdk_message) THEN json_extract(sm.sdk_message, '$.uuid') END, sm.id)
+					  )
+					  AND NOT EXISTS (
+						SELECT 1
+						FROM sdk_messages ref,
+							 json_each(ref.sdk_message, '$.supersedes') superseded
+						WHERE ref.session_id = sm.session_id
+						  AND json_valid(ref.sdk_message)
+						  AND superseded.value = COALESCE(CASE WHEN json_valid(sm.sdk_message) THEN json_extract(sm.sdk_message, '$.uuid') END, sm.id)
+					  )
+					  AND (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
 				  AND COALESCE(s.status, '') != 'archived'
 				  AND NOT (COALESCE(s.status, '') = 'ended' AND strftime('%s', s.last_active_at) < strftime('%s', 'now', '-30 days'))
 				  AND COALESCE(s.type, 'worker') NOT IN ('room_chat', 'planner', 'coder', 'leader', 'general')

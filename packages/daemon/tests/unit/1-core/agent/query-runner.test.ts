@@ -6,7 +6,11 @@
 
 import { describe, expect, it, beforeEach, afterEach, mock, jest } from 'bun:test';
 import { tmpdir } from 'node:os';
-import { QueryRunner, type QueryRunnerContext } from '../../../../src/lib/agent/query-runner';
+import {
+  QueryRunner,
+  refreshQueryEnvFromProcess,
+  type QueryRunnerContext,
+} from '../../../../src/lib/agent/query-runner';
 import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session';
 import type { Session, MessageHub } from '@neokai/shared';
 import type { SDKMessage } from '@neokai/shared/sdk';
@@ -2401,6 +2405,173 @@ describe('QueryRunner environment variable handling', () => {
     Object.keys(originalEnvVars).forEach((key) => delete originalEnvVars[key]);
 
     expect(Object.keys(originalEnvVars).length).toBe(0);
+  });
+
+  it('should refresh provider-managed auto-compact env from post-apply process env', () => {
+    const env = refreshQueryEnvFromProcess(
+      {
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW: '200000',
+        KEEP_SESSION: 'session',
+      },
+      {
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW: '262144',
+        KEEP_SESSION: 'ambient',
+        KEEP_PROCESS: 'process',
+        PORT: '8484',
+        NEOKAI_PORT: '8484',
+      },
+      { refreshAutoCompactWindow: true, clearProviderManaged: true }
+    );
+
+    expect(env).toMatchObject({
+      CLAUDE_CODE_AUTO_COMPACT_WINDOW: '262144',
+      KEEP_SESSION: 'session',
+      KEEP_PROCESS: 'process',
+    });
+    expect(env).not.toHaveProperty('PORT');
+    expect(env).not.toHaveProperty('NEOKAI_PORT');
+  });
+
+  it('should preserve configured auto-compact env when provider does not refresh it', () => {
+    const env = refreshQueryEnvFromProcess(
+      {
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW: '200000',
+      },
+      {}
+    );
+
+    expect(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('200000');
+  });
+
+  it('should remove stale bridge auto-compact env after provider cleanup', () => {
+    const env = refreshQueryEnvFromProcess(
+      {
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW: '262144',
+        KEEP_SESSION: 'session',
+      },
+      {},
+      { refreshAutoCompactWindow: true, clearProviderManaged: true }
+    );
+
+    expect(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBeUndefined();
+    expect(env.KEEP_SESSION).toBe('session');
+  });
+
+  it('should preserve Anthropic auth token from query env when provider cleanup clears process env', () => {
+    const env = refreshQueryEnvFromProcess(
+      {
+        ANTHROPIC_AUTH_TOKEN: 'sk-ant-oat-real-anthropic-token',
+        KEEP_SESSION: 'session',
+      },
+      {},
+      { clearProviderManaged: true, preserveAnthropicAuthToken: true }
+    );
+
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe('sk-ant-oat-real-anthropic-token');
+    expect(env.KEEP_SESSION).toBe('session');
+  });
+
+  it('should not preserve bridge auth token from query env when provider cleanup clears process env', () => {
+    for (const token of [
+      'anthropic-copilot-proxy:/workspace',
+      'ollama-bridge',
+      'custom-endpoint:session-id',
+      'openrouter-api-key',
+    ]) {
+      const env = refreshQueryEnvFromProcess(
+        {
+          ANTHROPIC_AUTH_TOKEN: token,
+        },
+        {},
+        { clearProviderManaged: true, preserveAnthropicAuthToken: true }
+      );
+
+      expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+    }
+  });
+
+  it('should preserve Anthropic OAuth token from query env when provider cleanup clears process env', () => {
+    const env = refreshQueryEnvFromProcess(
+      {
+        CLAUDE_CODE_OAUTH_TOKEN: 'session-oauth-token',
+      },
+      {},
+      { clearProviderManaged: true, preserveAnthropicOAuthToken: true }
+    );
+
+    expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe('session-oauth-token');
+  });
+
+  it('should not copy ambient Anthropic API keys for bridge providers', () => {
+    const env = refreshQueryEnvFromProcess(
+      {
+        ANTHROPIC_BASE_URL: 'https://glm.example.com',
+        ANTHROPIC_AUTH_TOKEN: 'glm-api-key',
+      },
+      {
+        ANTHROPIC_BASE_URL: 'https://glm.example.com',
+        ANTHROPIC_AUTH_TOKEN: 'glm-api-key',
+        ANTHROPIC_API_KEY: 'sk-ant-real-ambient-key',
+      },
+      { clearProviderManaged: true, skipAmbientAnthropicApiKey: true }
+    );
+
+    expect(env.ANTHROPIC_API_KEY).toBeUndefined();
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe('glm-api-key');
+  });
+
+  it('should preserve auth env when omitting provider-managed ACP env', () => {
+    const env = refreshQueryEnvFromProcess(
+      {},
+      {
+        ANTHROPIC_API_KEY: 'sk-ant-api-key',
+        ANTHROPIC_AUTH_TOKEN: 'sk-ant-oat-token',
+        CLAUDE_CODE_OAUTH_TOKEN: 'oauth-token',
+        ANTHROPIC_BASE_URL: 'https://stale-bridge.example.com',
+      },
+      { omitProviderManaged: true, omitProviderManagedPreserveAuth: true }
+    );
+
+    expect(env.ANTHROPIC_API_KEY).toBe('sk-ant-api-key');
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe('sk-ant-oat-token');
+    expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe('oauth-token');
+    expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
+  });
+
+  it('should not copy ambient OAuth tokens for bridge providers', () => {
+    const env = refreshQueryEnvFromProcess(
+      {
+        ANTHROPIC_AUTH_TOKEN: 'glm-api-key',
+      },
+      {
+        ANTHROPIC_AUTH_TOKEN: 'glm-api-key',
+        CLAUDE_CODE_OAUTH_TOKEN: 'ambient-anthropic-oauth',
+      },
+      { clearProviderManaged: true }
+    );
+
+    expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe('glm-api-key');
+  });
+
+  it('should tombstone provider-managed env when omitted for ACP subprocesses', () => {
+    const env = refreshQueryEnvFromProcess(
+      {
+        ANTHROPIC_BASE_URL: 'https://stale.example.com',
+        ANTHROPIC_AUTH_TOKEN: 'stale-token',
+        KEEP_SESSION: 'session',
+      },
+      {
+        ANTHROPIC_BASE_URL: 'https://ambient.example.com',
+        KEEP_PROCESS: 'process',
+      },
+      { refreshAutoCompactWindow: true, omitProviderManaged: true }
+    );
+
+    expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+    expect(env.KEEP_SESSION).toBe('session');
+    expect(env.KEEP_PROCESS).toBe('process');
   });
 });
 

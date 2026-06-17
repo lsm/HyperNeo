@@ -12,7 +12,7 @@
 
 import type { Session } from '@neokai/shared';
 import type { QueryLike } from './query-like';
-import type { SlashCommand } from '@neokai/shared/sdk';
+import { flattenSDKSlashCommands, type SlashCommand } from '@neokai/shared/sdk';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { Database } from '../../storage/database';
 import type { Logger } from '../logger';
@@ -38,6 +38,8 @@ export interface SlashCommandManagerContext {
 export class SlashCommandManager {
   private slashCommands: string[] = [];
   private commandsFetchedFromSDK = false;
+  private commandsRestoredFromDb = false;
+  private commandsChangedSinceInit = false;
 
   constructor(private ctx: SlashCommandManagerContext) {
     // Restore from session if available — validate it's a real array, not a
@@ -46,6 +48,7 @@ export class SlashCommandManager {
     const stored = ctx.session.availableCommands;
     if (Array.isArray(stored) && stored.length > 0) {
       this.slashCommands = stored;
+      this.commandsRestoredFromDb = true;
     }
   }
 
@@ -57,8 +60,10 @@ export class SlashCommandManager {
 
     // Return cached commands if available
     if (this.slashCommands.length > 0) {
-      // Fire-and-forget: refresh from SDK in background
-      if (!this.commandsFetchedFromSDK && queryObject) {
+      // Fire-and-forget: refresh from SDK in background. DB-restored commands are
+      // a stale-session fallback only; system:init / supportedCommands must still
+      // reconcile live custom skills when the SDK is available.
+      if (!this.commandsFetchedFromSDK && !this.commandsRestoredFromDb && queryObject) {
         this.fetchAndCache().catch((e) => {
           logger.warn('Background refresh of slash commands failed:', e);
         });
@@ -83,7 +88,7 @@ export class SlashCommandManager {
    * and contains all built-in commands plus custom skills.
    */
   async updateFromInit(sdkCommands: string[]): Promise<void> {
-    if (this.commandsFetchedFromSDK) return;
+    if (this.commandsFetchedFromSDK && !this.commandsChangedSinceInit) return;
 
     const { session, db, internalEventBus } = this.ctx;
 
@@ -92,6 +97,28 @@ export class SlashCommandManager {
 
     this.slashCommands = allCommands;
     this.commandsFetchedFromSDK = true;
+    this.commandsRestoredFromDb = false;
+    this.commandsChangedSinceInit = false;
+
+    session.availableCommands = this.slashCommands;
+    db.updateSession(session.id, { availableCommands: this.slashCommands });
+
+    await internalEventBus.publish('commands.updated', {
+      sessionId: session.id,
+      commands: this.slashCommands,
+    });
+  }
+
+  async updateFromCommandsChanged(sdkCommands: string[]): Promise<void> {
+    const { session, db, internalEventBus } = this.ctx;
+
+    const kaiBuiltInCommands = getBuiltInCommandNames();
+    const allCommands = [...new Set([...sdkCommands, ...kaiBuiltInCommands])];
+
+    this.slashCommands = allCommands;
+    this.commandsFetchedFromSDK = true;
+    this.commandsRestoredFromDb = false;
+    this.commandsChangedSinceInit = true;
 
     session.availableCommands = this.slashCommands;
     db.updateSession(session.id, { availableCommands: this.slashCommands });
@@ -118,7 +145,7 @@ export class SlashCommandManager {
 
     try {
       const commands = await queryObject.supportedCommands();
-      const commandNames = commands.map((cmd: SlashCommand) => cmd.name);
+      const commandNames = flattenSDKSlashCommands(commands as SlashCommand[]);
 
       // Add SDK built-in commands
       const sdkBuiltInCommands = ['clear', 'help'];

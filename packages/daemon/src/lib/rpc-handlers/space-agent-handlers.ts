@@ -62,8 +62,25 @@ function extractTools(session: Session): string[] | undefined {
   const disallowedTools = session.config.disallowedTools?.filter((tool) => known.has(tool)) ?? [];
   if (disallowedTools.length === 0) return undefined;
 
+  const defaultTools = [
+    'Read',
+    'Write',
+    'Edit',
+    'Bash',
+    'Grep',
+    'Glob',
+    'WebFetch',
+    'WebSearch',
+    'NotebookEdit',
+    'TodoWrite',
+    'AskUserQuestion',
+    'EnterPlanMode',
+    'ExitPlanMode',
+    'Skill',
+    'ToolSearch',
+  ];
   const disallowed = new Set(disallowedTools);
-  return KNOWN_TOOLS.filter((tool) => !disallowed.has(tool));
+  return defaultTools.filter((tool) => !disallowed.has(tool));
 }
 
 function extractSettingSources(session: Session): SettingSource[] | undefined {

@@ -187,11 +187,10 @@ export function validateAgentDefinition(name: string, agent: AgentDefinition): V
   }
 
   if (agent.model !== undefined) {
-    const validModels = ['sonnet', 'opus', 'haiku', 'inherit'];
-    if (!validModels.includes(agent.model)) {
+    if (typeof agent.model !== 'string' || agent.model.length === 0) {
       return {
         valid: false,
-        error: `Agent ${name}: invalid model '${agent.model}'. Must be one of: ${validModels.join(', ')}`,
+        error: `Agent ${name}: model must be a non-empty string`,
       };
     }
   }

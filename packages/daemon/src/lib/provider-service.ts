@@ -606,7 +606,15 @@ export class ProviderService {
     }
     if (envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW !== undefined) {
       original.CLAUDE_CODE_AUTO_COMPACT_WINDOW = process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
-      process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
+      // Empty string means "explicitly clear" — providers whose auto-compact
+      // is disabled (e.g. Kimi, which would otherwise inherit a stale value
+      // from a previous GLM/Codex query) return '' so the SDK subprocess
+      // doesn't pick up the wrong window.
+      if (envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW === '') {
+        delete process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
+      } else {
+        process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
+      }
     }
     if (envVars.ANTHROPIC_DEFAULT_SONNET_MODEL !== undefined) {
       original.ANTHROPIC_DEFAULT_SONNET_MODEL = process.env.ANTHROPIC_DEFAULT_SONNET_MODEL;
@@ -908,6 +916,36 @@ const userConfiguredAutoCompactWindow = process.env.CLAUDE_CODE_AUTO_COMPACT_WIN
 const userConfiguredDefaultSonnetModel = process.env.ANTHROPIC_DEFAULT_SONNET_MODEL;
 const userConfiguredDefaultHaikuModel = process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL;
 const userConfiguredDefaultOpusModel = process.env.ANTHROPIC_DEFAULT_OPUS_MODEL;
+
+/**
+ * Snapshot of user-configured Anthropic env values captured at daemon startup.
+ *
+ * Excludes provider-leaked routing vars from concurrent bridge turns — those are
+ * set/cleared dynamically by `applyEnvVarsToProcessForSession`, while the values
+ * here are frozen at module load. Use this when a subprocess (e.g. an external
+ * ACP agent) must inherit the user's real endpoint/model/auth overrides without
+ * being contaminated by another provider's in-flight routing state.
+ *
+ * Auth tokens (ANTHROPIC_AUTH_TOKEN / CLAUDE_CODE_OAUTH_TOKEN) are intentionally
+ * read live from `process.env` at call time rather than snapshotted here, because
+ * credential discovery runs after module load and may populate them later.
+ */
+export function getUserConfiguredAnthropicEnv(): Record<string, string> {
+  const snapshot: Record<string, string> = {};
+  const entries: Array<[string, string | undefined]> = [
+    ['ANTHROPIC_BASE_URL', userConfiguredBaseUrl],
+    ['API_TIMEOUT_MS', userConfiguredApiTimeout],
+    ['ANTHROPIC_DEFAULT_SONNET_MODEL', userConfiguredDefaultSonnetModel],
+    ['ANTHROPIC_DEFAULT_HAIKU_MODEL', userConfiguredDefaultHaikuModel],
+    ['ANTHROPIC_DEFAULT_OPUS_MODEL', userConfiguredDefaultOpusModel],
+    ['ANTHROPIC_AUTH_TOKEN', process.env.ANTHROPIC_AUTH_TOKEN],
+    ['CLAUDE_CODE_OAUTH_TOKEN', process.env.CLAUDE_CODE_OAUTH_TOKEN],
+  ];
+  for (const [key, value] of entries) {
+    if (value !== undefined) snapshot[key] = value;
+  }
+  return snapshot;
+}
 
 export function getProviderService(): ProviderService {
   if (!(globalThis as Record<symbol, unknown>)[PROVIDER_SERVICE_KEY]) {

@@ -218,6 +218,46 @@ describe('OpenAI Chat Completions bridge server', () => {
     expect(body.error.type).toBe('authentication_error');
   });
 
+  it('does not crash when controller is already closed before upstream error', async () => {
+    // Regression: catch-block `send()` calls used to throw TypeError when the
+    // ReadableStreamDefaultController was already closed (client disconnect /
+    // upstream tear-down), taking the daemon down with them. The catch block
+    // must now swallow those secondary errors.
+    const upstreamBody = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.error(new Error('upstream blew up mid-stream'));
+      },
+    });
+    const upstreamResponse = new Response(upstreamBody, {
+      status: 200,
+      headers: { 'Content-Type': 'text/event-stream' },
+    });
+
+    // Create a stream that is already closed by the time streamChatToAnthropic
+    // reaches its catch block.
+    let captured: ReadableStreamDefaultController<Uint8Array> | undefined;
+    const closedStream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        captured = controller;
+      },
+    });
+    const reader = closedStream.getReader();
+    // Close the underlying controller and release the reader so the controller
+    // is in the "closed" state.
+    captured!.close();
+    reader.releaseLock();
+
+    // Must NOT throw — this is the regression.
+    await expect(
+      _openAIChatBridgeTesting.streamChatToAnthropic({
+        upstreamResponse,
+        controller: captured!,
+        model: 'm',
+        inputTokens: 1,
+      })
+    ).resolves.toBeUndefined();
+  });
+
   it('serves Anthropic-compatible model listing for SDK initialization', async () => {
     const fetchMock = mock(async () => new Response('', { status: 500 }));
     const server = createOpenAIChatBridgeServer({

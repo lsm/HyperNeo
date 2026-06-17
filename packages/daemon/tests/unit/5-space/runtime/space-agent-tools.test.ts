@@ -759,6 +759,110 @@ describe('createSpaceAgentToolHandlers — session management tools', () => {
     ]);
   });
 
+  test('get_session_messages excludes operational and retracted frames before limiting', async () => {
+    seedSession('operational-session', ctx.spaceId, { status: 'idle' });
+    const insertMessage = (
+      id: string,
+      messageType: string,
+      messageSubtype: string | null,
+      sdkMessage: Record<string, unknown>,
+      timestampMs: number
+    ) => {
+      ctx.db
+        .prepare(
+          `INSERT INTO sdk_messages (
+            id, session_id, message_type, message_subtype, sdk_message, timestamp,
+            send_status, origin, is_renderable, is_terminal, parent_tool_use_id, task_id
+          ) VALUES (?, 'operational-session', ?, ?, ?, ?, 'consumed', 'system', 1, 0, NULL, NULL)`
+        )
+        .run(
+          id,
+          messageType,
+          messageSubtype,
+          JSON.stringify(sdkMessage),
+          new Date(timestampMs).toISOString()
+        );
+    };
+
+    insertMessage(
+      'msg-visible',
+      'assistant',
+      null,
+      {
+        type: 'assistant',
+        uuid: 'visible-uuid',
+        message: { content: [{ type: 'text', text: 'Visible' }] },
+      },
+      1
+    );
+    insertMessage(
+      'msg-retracted',
+      'assistant',
+      null,
+      {
+        type: 'assistant',
+        uuid: 'retracted-uuid',
+        message: { content: [{ type: 'text', text: 'Retracted' }] },
+      },
+      2
+    );
+    ctx.db
+      .prepare(`UPDATE sdk_messages SET sdk_message = ? WHERE id = ?`)
+      .run('{not-json', 'msg-retracted');
+    insertMessage(
+      'fallback-notice',
+      'system',
+      'model_refusal_fallback',
+      {
+        type: 'system',
+        subtype: 'model_refusal_fallback',
+        retracted_message_uuids: ['retracted-uuid'],
+      },
+      3
+    );
+    insertMessage(
+      'msg-superseded',
+      'assistant',
+      null,
+      {
+        type: 'assistant',
+        uuid: 'superseded-uuid',
+        message: { content: [{ type: 'text', text: 'Superseded' }] },
+      },
+      4
+    );
+    insertMessage(
+      'msg-replacement',
+      'assistant',
+      null,
+      {
+        type: 'assistant',
+        uuid: 'replacement-uuid',
+        supersedes: ['superseded-uuid'],
+        message: { content: [{ type: 'text', text: 'Replacement' }] },
+      },
+      5
+    );
+    for (const [id, subtype, timestampMs] of [
+      ['msg-thinking', 'thinking_tokens', 6],
+      ['msg-state', 'session_state_changed', 7],
+      ['msg-commands', 'commands_changed', 8],
+    ] as const) {
+      insertMessage(id, 'system', subtype, { type: 'system', subtype }, timestampMs);
+    }
+    const handlers = makeHandlers(ctx);
+
+    const parsed = parseResult(
+      await handlers.get_session_messages({ session_id: 'operational-session', limit: 2 })
+    );
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.messages).toEqual([
+      expect.objectContaining({ id: 'msg-replacement', content_summary: 'Replacement' }),
+      expect.objectContaining({ id: 'fallback-notice' }),
+    ]);
+  });
+
   test('update_session_state rejects cached ad-hoc live sessions', async () => {
     seedSession('adhoc-live-update', ctx.spaceId, { status: 'processing' });
     const handlers = makeHandlers(ctx, {

@@ -65,6 +65,16 @@ export interface ProviderLogoutRequest {
 }
 
 /**
+ * Response from logging out of a provider
+ */
+export interface ProviderLogoutResponse {
+  /** Whether the logout was successful */
+  success: boolean;
+  /** Error message if logout failed */
+  error?: string;
+}
+
+/**
  * Request to refresh token for a provider
  */
 export interface ProviderRefreshRequest {

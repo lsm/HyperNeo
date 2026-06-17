@@ -14,6 +14,7 @@ import { initializeProviders, registerBuiltInProvider } from './factory.js';
 import { CustomEndpointProvider, customProviderIdFor } from './custom-endpoint-provider.js';
 import { Logger } from '../logger.js';
 import type { ProviderCredentialManager } from '../credentials/provider-credential-manager.js';
+import { resolveKimiRegion } from './kimi-provider.js';
 
 const logger = new Logger('providers:sync');
 
@@ -34,6 +35,21 @@ export async function syncProviderToRegistry(
   if (record.kind === 'built_in') {
     await registerBuiltInProvider(registry, record.providerId);
     const provider = registry.get(record.providerId);
+    // Kimi: apply provider-level region from configJson so the correct base
+    // URL (api.kimi.com vs api.moonshot.ai) is used without requiring
+    // per-session configuration. Falls back to 'china' when configJson is
+    // missing or malformed.
+    if (provider && provider.id === 'kimi' && 'setDefaultRegion' in provider) {
+      let parsedRegion: unknown;
+      try {
+        parsedRegion = record.configJson ? JSON.parse(record.configJson).region : undefined;
+      } catch {
+        parsedRegion = undefined;
+      }
+      const region = resolveKimiRegion(parsedRegion);
+      (provider as { setDefaultRegion: (r: 'china' | 'global') => void }).setDefaultRegion(region);
+      logger.info(`Kimi provider region set to '${region}'`);
+    }
     if (provider?.setCredentials && credentials) {
       // On startup sync, for providers that manage their own auth state (e.g.
       // Codex), skip applying stale credential-store rows when the provider's

@@ -5,6 +5,7 @@ export type * from "./sdk-tools.d.ts";
 // Re-export type guards with explicit exports to avoid conflicts
 // We exclude AskUserQuestionInput since it's already exported from sdk-tools.d.ts
 export {
+  flattenSDKSlashCommands,
   isSDKAssistantMessage,
   isSDKUserMessage,
   isSDKUserMessageReplay,
@@ -30,4 +31,5 @@ export {
   isUserVisibleMessage,
   isNeokaiActionMessage,
   type ContentBlock,
+  type SDKSlashCommand,
 } from "./type-guards.ts";

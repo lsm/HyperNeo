@@ -25,6 +25,7 @@ describe('getCoordinatorAgents', () => {
     const agents = getCoordinatorAgents();
     const coordinator = agents.Coordinator;
 
+    expect(coordinator.tools).toContain('Agent');
     expect(coordinator.tools).toContain('Task');
     expect(coordinator.tools).toContain('TodoWrite');
     expect(coordinator.tools).toContain('AskUserQuestion');
@@ -37,10 +38,15 @@ describe('getCoordinatorAgents', () => {
     // Coder should have file editing tools
     expect(agents.Coder.tools).toContain('Edit');
     expect(agents.Coder.tools).toContain('Write');
+    expect(agents.Coder.tools).toContain('Agent');
 
     // Debugger should have file tools for writing tests
     expect(agents.Debugger.tools).toContain('Bash');
     expect(agents.Debugger.tools).toContain('Write');
+    expect(agents.Debugger.tools).toContain('Agent');
+
+    // Tester should be able to delegate focused follow-up work
+    expect(agents.Tester.tools).toContain('Agent');
 
     // VCS should have Bash for git operations
     expect(agents.VCS.tools).toContain('Bash');
@@ -110,6 +116,7 @@ describe('getCoordinatorAgents', () => {
   it('should have coordinator with orchestration and monitoring tools only', () => {
     const agents = getCoordinatorAgents();
     expect(agents.Coordinator.tools).toEqual([
+      'Agent',
       'Task',
       'TaskOutput',
       'TaskStop',

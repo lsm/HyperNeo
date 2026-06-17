@@ -21,6 +21,7 @@ import type { MessageHub, AgentProcessingState, IClientEventGateway } from '@neo
 import type { SessionManager } from './session-manager';
 import type { AuthManager } from './auth-manager';
 import type { SettingsManager } from './settings-manager';
+import type { ProviderCredentialManager } from './credentials/provider-credential-manager';
 import type { Config } from '../config';
 import type { Database } from '../storage/database';
 import { Logger } from './logger';
@@ -87,7 +88,8 @@ export class StateProjectionService {
     private config: Config,
     private db?: Database,
     private internalEventBus?: InternalEventBus<DaemonInternalEventMap>,
-    clientEvents?: IClientEventGateway
+    clientEvents?: IClientEventGateway,
+    private credentialManager?: ProviderCredentialManager
   ) {
     this.clientEvents = clientEvents ?? new ClientEventGateway({ hub: messageHub });
     this.setupHandlers();
@@ -387,6 +389,12 @@ export class StateProjectionService {
 
       // API connectivity (daemon <-> Claude API)
       apiConnection: this.apiConnectionState,
+
+      // Credential store health (surfaces Keychain-unavailable warning to UI)
+      credentialStore: this.credentialManager?.getCredentialStoreStatus() ?? {
+        backend: 'database',
+        keychainAvailable: false,
+      },
 
       timestamp: Date.now(),
     };

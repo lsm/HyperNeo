@@ -25,9 +25,13 @@ import type { SDKMessage, SDKUserMessage } from '@neokai/shared/sdk';
 import {
   isSDKAPIRetryMessage,
   isSDKAssistantMessage,
+  flattenSDKSlashCommands,
+  isSDKCommandsChangedMessage,
   isSDKCompactBoundary,
+  isSDKModelRefusalFallbackMessage,
   isSDKResultMessage,
   isSDKResultSuccess,
+  isSDKSessionStateChangedMessage,
   isSDKStatusMessage,
   isSDKSystemInit,
   isSDKSystemMessage,
@@ -37,6 +41,7 @@ import {
 import type { Database } from '../../storage/database';
 import { Logger } from '../logger';
 import { ErrorCategory, type ErrorManager } from '../error-manager';
+import { getProviderContextManager } from '../providers/factory';
 import type { ProcessingStateManager } from './processing-state-manager';
 import type { ContextTracker } from './context-tracker';
 import { ContextFetcher } from './context-fetcher';
@@ -44,7 +49,8 @@ import { ApiErrorCircuitBreaker } from './api-error-circuit-breaker';
 import type { MessageQueue } from './message-queue';
 import type { QueryLifecycleManager } from './query-lifecycle-manager';
 import { getSessionModelInfo } from '../model-service';
-import { providerUsesNativeAutoCompact } from './query-options-builder.js';
+import { PROVIDER_NO_SDK_AUTO_COMPACT } from './query-options-builder.js';
+import { reserveBasedThreshold } from './context-tracker.js';
 
 /**
  * Number of SDK stream events between automatic context-usage refreshes.
@@ -76,6 +82,9 @@ export interface SDKMessageHandlerContext {
 
   // Called when the SDK init message provides the full slash commands list
   onInitSlashCommands: (commands: string[]) => Promise<void>;
+
+  // Called when the SDK pushes a mid-session slash command replacement list
+  onCommandsChanged: (commands: string[]) => Promise<void>;
 }
 
 type PersistedUserMessage = SDKMessage & { dbId: string; timestamp: number };
@@ -86,6 +95,9 @@ export class SDKMessageHandler {
   private contextFetcher: ContextFetcher;
   private circuitBreaker: ApiErrorCircuitBreaker;
   private acknowledgedPersistedUserThisTurn: boolean = false;
+  private usesSessionStateChangedTurnEnd: boolean = false;
+  private expectsSessionStateIdleAfterResult: boolean = false;
+  private lastResultWasSuccess: boolean | null = null;
 
   // Count of SDK stream events seen since the last context-usage refresh.
   // Resets whenever we call refreshContextUsage() (on 5-event tick, turn end,
@@ -555,11 +567,22 @@ export class SDKMessageHandler {
       message,
     });
 
+    if (isSDKSessionStateChangedMessage(message)) {
+      this.usesSessionStateChangedTurnEnd = true;
+      if (message.state !== 'idle') {
+        this.expectsSessionStateIdleAfterResult = true;
+      }
+    }
+
     // Terminal messages end the turn even when they represent errors.
     // Clear stale waiting_for_input state before type-specific handling so
     // interrupted AskUserQuestion turns cannot keep the composer locked.
-    if (isSDKResultMessage(message)) {
+    if (isSDKResultMessage(message) && !this.usesSessionStateChangedTurnEnd) {
       await stateManager.setIdle();
+    }
+
+    if (isSDKResultMessage(message)) {
+      this.lastResultWasSuccess = isSDKResultSuccess(message);
     }
 
     // Handle specific message types
@@ -581,6 +604,14 @@ export class SDKMessageHandler {
 
     if (isSDKStatusMessage(message)) {
       await this.handleStatusMessage(message);
+    }
+
+    if (isSDKModelRefusalFallbackMessage(message)) {
+      await this.handleModelRefusalFallbackMessage(message);
+    }
+
+    if (isSDKSessionStateChangedMessage(message)) {
+      await this.handleSessionStateChangedMessage(message);
     }
 
     if (isSDKCompactBoundary(message)) {
@@ -647,6 +678,10 @@ export class SDKMessageHandler {
     // Use isSDKSystemInit which narrows specifically to SDKSystemMessage (subtype: 'init').
     if (isSDKSystemInit(message) && message.slash_commands?.length > 0) {
       await this.ctx.onInitSlashCommands(message.slash_commands);
+    }
+
+    if (isSDKCommandsChangedMessage(message)) {
+      await this.ctx.onCommandsChanged(flattenSDKSlashCommands(message.commands));
     }
   }
 
@@ -744,17 +779,74 @@ export class SDKMessageHandler {
       sessionId: session.id,
     });
 
-    // Note: Terminal result handling resets processing state before this success-only branch runs.
-    // Title generation now handled by TitleGenerationQueue (decoupled via EventBus).
+    if (!this.usesSessionStateChangedTurnEnd && !this.expectsSessionStateIdleAfterResult) {
+      await this.finishTurn();
+    }
+  }
+
+  private async finishTurn(allowQueueReplay = true): Promise<void> {
+    const { session, internalEventBus, stateManager } = this.ctx;
+
+    // Set state back to idle
+    // Note: Title generation now handled by TitleGenerationQueue (decoupled via EventBus)
+    await stateManager.setIdle();
 
     // Auto-dispatch deferred messages in immediate mode (next-turn queue replay)
-    if (session.config.queryMode !== 'manual') {
+    if (allowQueueReplay && session.config.queryMode !== 'manual') {
       try {
         await internalEventBus.publish('query.trigger', { sessionId: session.id });
       } catch (error) {
         this.logger.warn('Failed to dispatch deferred messages on turn end:', error);
       }
     }
+  }
+
+  private async handleSessionStateChangedMessage(message: SDKMessage): Promise<void> {
+    if (!isSDKSessionStateChangedMessage(message)) return;
+
+    this.usesSessionStateChangedTurnEnd = true;
+    if (message.state === 'idle') {
+      const allowQueueReplay = this.lastResultWasSuccess !== false;
+      await this.finishTurn(allowQueueReplay);
+      this.usesSessionStateChangedTurnEnd = false;
+      this.expectsSessionStateIdleAfterResult = false;
+      this.lastResultWasSuccess = null;
+    }
+  }
+
+  private async handleModelRefusalFallbackMessage(message: SDKMessage): Promise<void> {
+    const { session, db, internalEventBus } = this.ctx;
+    if (!isSDKModelRefusalFallbackMessage(message) || message.direction !== 'retry') return;
+    const fallbackModel = this.resolveConfiguredFallbackModel(message.fallback_model);
+    if (!fallbackModel || session.config.model === fallbackModel) return;
+
+    session.config = {
+      ...session.config,
+      model: fallbackModel,
+    };
+    db.updateSession(session.id, { config: session.config });
+    await internalEventBus.publish('session.updated', {
+      sessionId: session.id,
+      source: 'model-refusal-fallback',
+      session: { config: session.config },
+    });
+  }
+
+  private resolveConfiguredFallbackModel(sdkFallbackModel: string | undefined): string | undefined {
+    const configuredFallbackModel = this.ctx.session.config.fallbackModel;
+    if (!sdkFallbackModel || !configuredFallbackModel) return sdkFallbackModel;
+
+    const fallbackSession = {
+      ...this.ctx.session,
+      config: {
+        ...this.ctx.session.config,
+        model: configuredFallbackModel,
+      },
+    };
+    const fallbackSdkModel = getProviderContextManager()
+      .createContext(fallbackSession)
+      .getSdkModelId();
+    return fallbackSdkModel === sdkFallbackModel ? configuredFallbackModel : sdkFallbackModel;
   }
 
   private async handleUserMessage(message: SDKMessage): Promise<void> {
@@ -898,27 +990,49 @@ export class SDKMessageHandler {
           contextInfo,
         });
 
-        // NeoKai-level compaction fallback for providers without SDK-native compaction.
+        // NeoKai-level compaction fallback.
+        //
+        // Scoped to providers in `PROVIDER_NO_SDK_AUTO_COMPACT` (currently
+        // Kimi). For these providers, the SDK's PP() helper hardcodes a 200k
+        // capacity for unknown model IDs and we cannot use the `[1m]` suffix
+        // workaround (Kimi's bridge forwards the model name verbatim, so
+        // `kimi-for-coding[1m]` would be rejected upstream). SDK auto-compact
+        // is disabled via Options.settings; NeoKai is the sole compaction
+        // path and fires at the same threshold the SDK would have used
+        // (window - 13_000, clamped for small windows — see
+        // `reserveBasedThreshold`).
+        //
+        // For all other providers (Anthropic native, GLM, Codex, OpenRouter,
+        // Ollama, custom endpoints) we trust the SDK's own auto-compact.
+        // Installing NeoKai as a competing trigger would either race with the
+        // SDK (same threshold) or preempt it (lower threshold, cutting off
+        // advertised context). The context-fetcher capacity-mismatch warning
+        // surfaces any regression in SDK behaviour for those providers.
+        //
+        // The NeoKai-only cooldown (60s) prevents back-to-back `/compact`
+        // enqueues while a previous compaction is still in flight.
         const providerId = session.config.provider;
         if (!providerId) {
           return;
         }
-        const usesNativeAutoCompact =
-          providerUsesNativeAutoCompact(providerId, modelInfo?.contextWindow) ||
-          contextInfo.isAutoCompactEnabled;
-        if (
-          !usesNativeAutoCompact &&
-          modelInfo?.contextWindow &&
-          contextTracker.shouldCompact(modelInfo.contextWindow)
-        ) {
-          contextTracker.markCompactionTriggered();
-          this.logger.info(
-            `Triggering compaction for session ${session.id} ` +
-              `(${contextInfo.totalUsed} / ${modelInfo.contextWindow} tokens)`
-          );
-          void this.ctx.messageQueue.enqueue('/compact', /* internal */ true).catch((error) => {
-            this.logger.warn(`compaction enqueue failed for session ${session.id}:`, error);
-          });
+        const sdkAutoCompactDisabled = PROVIDER_NO_SDK_AUTO_COMPACT.has(providerId);
+        const actualContextWindow = modelInfo?.contextWindow;
+        if (sdkAutoCompactDisabled && actualContextWindow && actualContextWindow > 0) {
+          const neoKaiCompactThreshold = reserveBasedThreshold(actualContextWindow);
+          if (
+            contextInfo.totalUsed >= neoKaiCompactThreshold &&
+            contextTracker.shouldCompactAt(neoKaiCompactThreshold)
+          ) {
+            contextTracker.markCompactionTriggered();
+            this.logger.info(
+              `Triggering NeoKai compaction fallback for session ${session.id} ` +
+                `(provider=${providerId}, ${contextInfo.totalUsed} >= ${neoKaiCompactThreshold} ` +
+                `of ${actualContextWindow} tokens)`
+            );
+            void this.ctx.messageQueue.enqueue('/compact', /* internal */ true).catch((error) => {
+              this.logger.warn(`compaction enqueue failed for session ${session.id}:`, error);
+            });
+          }
         }
       } catch (error) {
         this.logger.warn(`context refresh (${reason}) failed:`, error);
