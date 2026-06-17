@@ -479,7 +479,7 @@ describe('SDKMessageRepository', () => {
       expect(messages.length).toBe(1);
     });
 
-    it('should include subagent thinking token progress rows', () => {
+    it('should filter subagent thinking token progress rows', () => {
       const toolUseId = 'tool-use-123';
       repository.saveSDKMessage('session-1', createAssistantMessage('Task started', toolUseId));
       repository.saveSDKMessage('session-1', createSubagentMessage('Subagent work', toolUseId));
@@ -495,10 +495,11 @@ describe('SDKMessageRepository', () => {
 
       const { messages } = repository.getSDKMessages('session-1');
 
-      expect(messages.length).toBe(3);
+      // Only top-level assistant and subagent response should be returned (thinking_tokens filtered)
+      expect(messages.length).toBe(2);
       expect(
         messages.some((message) => (message as { subtype?: string }).subtype === 'thinking_tokens')
-      ).toBe(true);
+      ).toBe(false);
     });
 
     it('should not throw when an informational row has malformed JSON', () => {

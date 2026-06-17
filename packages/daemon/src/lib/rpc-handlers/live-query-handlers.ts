@@ -2267,6 +2267,7 @@ subagent AS (
   FROM sdk_messages sm
   WHERE sm.session_id = ?1
     AND sm.parent_tool_use_id IN (SELECT id FROM tool_use_ids)
+    AND COALESCE(sm.message_subtype,'') != 'thinking_tokens'
     AND (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
 )
 SELECT
