@@ -781,6 +781,30 @@ function buildOperationalSystemTurn(row: ParsedThreadRow): SystemFeedTurn | null
     };
   }
 
+  if (subtype === 'model_refusal_fallback') {
+    const content = (message as { content?: unknown }).content;
+    const originalModel = (message as { original_model?: unknown }).original_model;
+    const fallbackModel = (message as { fallback_model?: unknown }).fallback_model;
+    const modelText =
+      typeof originalModel === 'string' && typeof fallbackModel === 'string'
+        ? ` (${originalModel} -> ${fallbackModel})`
+        : '';
+    return {
+      state: 'system',
+      id: `system-${String(row.id)}`,
+      agent: row.label,
+      agentKind: row.kind,
+      agentRole: row.role,
+      agentNodeExecutionId: row.nodeExecutionId ?? null,
+      createdAt: row.createdAt,
+      title: 'Model fallback',
+      body: `${typeof content === 'string' && content.length > 0 ? content : 'Retried with fallback model'}${modelText}`,
+      sessionId: row.sessionId,
+      highlightMessageUuid: highlightUuid,
+      replacementStatus: row.replacementStatus,
+    };
+  }
+
   return null;
 }
 

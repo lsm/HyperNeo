@@ -52,19 +52,24 @@ function getUserMessageText(message: SDKMessage): string | null {
   return null;
 }
 
-function shouldRenderNestedSystemMessage(message: SDKMessage, isLiveTail: boolean): boolean {
-  if (message.type !== 'system') return true;
+function shouldHideNestedSystemMessage(message: SDKMessage, isLiveTail: boolean): boolean {
+  if (message.type !== 'system') return false;
   const subtype = (message as { subtype?: string }).subtype;
-  if (!subtype) return false;
-  if (subtype === 'init') return false;
-  if (subtype === 'informational' && (message as { level?: string }).level === 'info') return false;
-  if (subtype === 'worker_shutting_down' && !isLiveTail) return false;
-  if (subtype === 'status' && (message as { status?: string }).status !== 'compacting')
-    return false;
+  if (!subtype) return true;
+  if (subtype === 'init') return true;
+  if (subtype === 'informational' && (message as { level?: string }).level === 'info') return true;
+  if (subtype === 'worker_shutting_down' && !isLiveTail) return true;
+  return false;
+}
+
+function shouldUseSDKSystemRenderer(message: Extract<SDKMessage, { type: 'system' }>): boolean {
+  const subtype = (message as { subtype?: string }).subtype;
+  if (subtype === 'status') {
+    return (message as { status?: string }).status === 'compacting';
+  }
   return (
     subtype === 'compact_boundary' ||
     subtype === 'hook_response' ||
-    subtype === 'status' ||
     subtype === 'thinking_tokens' ||
     subtype === 'session_state_changed' ||
     subtype === 'commands_changed' ||
@@ -293,7 +298,7 @@ export function SubagentBlock({
     if (nestedMessages.length === 0) return [];
 
     return nestedMessages.filter((msg, idx) => {
-      if (!shouldRenderNestedSystemMessage(msg, idx === nestedMessages.length - 1)) {
+      if (shouldHideNestedSystemMessage(msg, idx === nestedMessages.length - 1)) {
         return false;
       }
 
@@ -622,11 +627,16 @@ function NestedMessageRenderer({
 
   // Handle system messages
   if (message.type === 'system') {
+    const systemMessage = message as Extract<SDKMessage, { type: 'system' }>;
+    if (shouldUseSDKSystemRenderer(systemMessage)) {
+      return withReplacementStatus(
+        <SDKSystemMessage message={systemMessage} isLiveTail={isLiveTail} />
+      );
+    }
     return withReplacementStatus(
-      <SDKSystemMessage
-        message={message as Extract<SDKMessage, { type: 'system' }>}
-        isLiveTail={isLiveTail}
-      />
+      <div class="bg-gray-100 dark:bg-gray-800 p-2 rounded text-xs text-gray-600 dark:text-gray-300">
+        System: {(systemMessage as { subtype?: string }).subtype ?? 'message'}
+      </div>
     );
   }
 

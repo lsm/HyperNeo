@@ -134,7 +134,11 @@ function compactBoundaryMessage(
 
 function operationalSystemMessage(
   uuid: string,
-  subtype: 'thinking_tokens' | 'session_state_changed' | 'commands_changed',
+  subtype:
+    | 'thinking_tokens'
+    | 'session_state_changed'
+    | 'commands_changed'
+    | 'model_refusal_fallback',
   fields: Record<string, unknown>
 ) {
   return {
@@ -271,18 +275,31 @@ describe('MinimalThreadFeed', () => {
           commands: [{ name: 'review' }, { name: 'test' }],
         }),
       }),
+      makeRow({
+        id: 'fallback',
+        label: 'Coder Agent',
+        createdAt: baseTime + 3000,
+        message: operationalSystemMessage('fallback-uuid', 'model_refusal_fallback', {
+          content: 'Retried with fallback model',
+          original_model: 'claude-opus-4-5',
+          fallback_model: 'claude-sonnet-4-5',
+        }),
+      }),
     ];
 
     render(<MinimalThreadFeed parsedRows={rows} />);
 
     const systemRows = screen.getAllByTestId('minimal-thread-system');
-    expect(systemRows).toHaveLength(3);
+    expect(systemRows).toHaveLength(4);
     expect(systemRows[0].textContent).toContain('Thinking tokens');
     expect(systemRows[0].textContent).toContain('1,250 estimated tokens (+25)');
     expect(systemRows[1].textContent).toContain('Session state');
     expect(systemRows[1].textContent).toContain('running');
     expect(systemRows[2].textContent).toContain('Commands changed');
     expect(systemRows[2].textContent).toContain('2 slash commands available');
+    expect(systemRows[3].textContent).toContain('Model fallback');
+    expect(systemRows[3].textContent).toContain('Retried with fallback model');
+    expect(systemRows[3].textContent).toContain('claude-opus-4-5 -> claude-sonnet-4-5');
   });
 
   it('renders one turn row per agent block with name and clock', () => {
