@@ -69,9 +69,7 @@ describe('ThinkingBlock', () => {
 
     it('should show estimated tokens when provided', () => {
       const content = 'Some thinking content';
-      const { container } = render(
-        <ThinkingBlock content={content} estimatedTokens={2000} />
-      );
+      const { container } = render(<ThinkingBlock content={content} estimatedTokens={2000} />);
 
       expect(container.textContent).toContain('~2,000');
       expect(container.textContent).toContain('token');
@@ -79,9 +77,7 @@ describe('ThinkingBlock', () => {
 
     it('should show plural "tokens" for multiple tokens', () => {
       const content = 'Thinking...';
-      const { container } = render(
-        <ThinkingBlock content={content} estimatedTokens={1500} />
-      );
+      const { container } = render(<ThinkingBlock content={content} estimatedTokens={1500} />);
 
       expect(container.textContent).toContain('1,500 tokens');
       // Check that it's plural, not singular (should have "tokens" not "token" alone)
@@ -91,9 +87,7 @@ describe('ThinkingBlock', () => {
 
     it('should show singular "token" for 1 token', () => {
       const content = 'Thinking...';
-      const { container } = render(
-        <ThinkingBlock content={content} estimatedTokens={1} />
-      );
+      const { container } = render(<ThinkingBlock content={content} estimatedTokens={1} />);
 
       expect(container.textContent).toContain('1 token');
       expect(container.textContent).not.toContain('1 tokens');
@@ -101,9 +95,7 @@ describe('ThinkingBlock', () => {
 
     it('should show both tokens and characters when estimate provided', () => {
       const content = 'Some thinking';
-      const { container } = render(
-        <ThinkingBlock content={content} estimatedTokens={1000} />
-      );
+      const { container } = render(<ThinkingBlock content={content} estimatedTokens={1000} />);
 
       expect(container.textContent).toContain('~1,000');
       expect(container.textContent).toContain('token');

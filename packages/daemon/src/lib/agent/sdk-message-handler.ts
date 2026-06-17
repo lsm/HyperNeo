@@ -847,6 +847,8 @@ export class SDKMessageHandler {
       this.usesSessionStateChangedTurnEnd = false;
       this.expectsSessionStateIdleAfterResult = false;
       this.lastResultWasSuccess = null;
+      // Reset turn-scoped thinking tokens estimate to prevent stale leak
+      this.currentThinkingTokensEstimate = null;
     }
   }
 

@@ -137,7 +137,9 @@ export function SDKAssistantMessage({
   const thinkingBlocks = apiMessage.content.filter(isThinkingBlock).filter(hasRenderableThinking);
 
   // Extract the estimated thinking tokens if present (stashed by daemon during thinking phase)
-  const estimatedThinkingTokens = (message as Record<string, unknown>).estimated_thinking_tokens as number | undefined;
+  const estimatedThinkingTokens = (message as Record<string, unknown>).estimated_thinking_tokens as
+    | number
+    | undefined;
 
   // Get message metadata for E2E tests
   const messageWithTimestamp = message as SDKMessage & { timestamp?: number };

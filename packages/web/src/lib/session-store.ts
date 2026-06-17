@@ -90,6 +90,13 @@ class SessionStore {
     }>
   >([]);
 
+  /** Current thinking progress (populated from state.thinkingProgress events) */
+  readonly thinkingProgress = signal<{
+    estimatedTokens: number;
+    delta: number;
+    updatedAt: number;
+  } | null>(null);
+
   // ========================================
   // Computed Accessors
   // ========================================
@@ -224,6 +231,7 @@ class SessionStore {
     this.sessionState.value = null;
     this.sdkMessages.value = [];
     this.retryAttempts.value = []; // Clear retry attempts on session switch
+    this.thinkingProgress.value = null; // Clear thinking progress on session switch
     this._initialMessageCount.value = 0;
     this._hasMoreMessages.value = false;
     this._contextInfo.value = null; // Clear context info on session switch
@@ -259,7 +267,8 @@ class SessionStore {
    *   1. `state.session` — session metadata + agent state + commands + error
    *   2. `context.updated` — fast-path context info updates
    *   3. `session.retryAttempt` — SDK retry events
-   *   4. LiveQuery `messages.bySession` — realtime SDK message stream
+   *   4. `state.thinkingProgress` — transient thinking token progress
+   *   5. LiveQuery `messages.bySession` — realtime SDK message stream
    *      (snapshot on subscribe, deltas on subsequent row changes)
    *
    * ARCHITECTURE: LiveQuery supersedes the previous
@@ -341,14 +350,31 @@ class SessionStore {
       });
       this.cleanupFunctions.push(unsubRetryAttempt);
 
-      // 4. Fetch session-scoped state (metadata + agent state + commands) via RPC.
+      // 4. Thinking progress events (transient progress during redacted thinking phase)
+      const unsubThinkingProgress = hub.onEvent<{
+        sessionId: string;
+        estimatedTokens: number;
+        delta: number;
+      }>('state.thinkingProgress', (progress) => {
+        // Only handle events for the current session
+        if (progress.sessionId !== sessionId) return;
+        // Update thinking progress signal
+        this.thinkingProgress.value = {
+          estimatedTokens: progress.estimatedTokens,
+          delta: progress.delta,
+          updatedAt: Date.now(),
+        };
+      });
+      this.cleanupFunctions.push(unsubThinkingProgress);
+
+      // 5. Fetch session-scoped state (metadata + agent state + commands) via RPC.
       //    Messages are NOT fetched here — they arrive via the LiveQuery snapshot
       //    below.  We still need the session RPC because session state is
       //    push-based (server decides when to broadcast) and there is no
       //    LiveQuery yet for the `sessions` row.
       await this.fetchInitialSessionState(hub, sessionId);
 
-      // 5. Subscribe to the messages LiveQuery for this session.
+      // 6. Subscribe to the messages LiveQuery for this session.
       //    Errors here are intentionally non-fatal — session state can still
       //    be useful to display (e.g. to show the error banner), and the
       //    LiveQuery will re-subscribe automatically on reconnect.

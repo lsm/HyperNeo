@@ -651,9 +651,7 @@ describe('SDKMessageHandler', () => {
         session_id: 'test-session-id',
         message: {
           role: 'assistant',
-          content: [
-            { type: 'text', text: 'Another response' },
-          ],
+          content: [{ type: 'text', text: 'Another response' }],
         },
         parent_tool_use_id: null,
       } as unknown as SDKMessage;

@@ -71,9 +71,10 @@ export function ThinkingBlock({
   const charCount = content.length;
 
   // Build the stats text: show token estimate if available, otherwise just character count
-  const statsText = estimatedTokens !== undefined
-    ? `• ~${estimatedTokens.toLocaleString()} token${estimatedTokens !== 1 ? 's' : ''}${charCount > 0 ? ` • ${charCount.toLocaleString()} character${charCount !== 1 ? 's' : ''}` : ''}`
-    : `• ${charCount.toLocaleString()} character${charCount !== 1 ? 's' : ''}`;
+  const statsText =
+    estimatedTokens !== undefined
+      ? `• ~${estimatedTokens.toLocaleString()} token${estimatedTokens !== 1 ? 's' : ''}${charCount > 0 ? ` • ${charCount.toLocaleString()} character${charCount !== 1 ? 's' : ''}` : ''}`
+      : `• ${charCount.toLocaleString()} character${charCount !== 1 ? 's' : ''}`;
 
   const inner = (
     <div
@@ -97,9 +98,7 @@ export function ThinkingBlock({
           />
         </svg>
         <span class={cn('text-sm font-semibold', colors.text)}>Thinking</span>
-        <span class={cn('text-xs', colors.lightText)}>
-          {statsText}
-        </span>
+        <span class={cn('text-xs', colors.lightText)}>{statsText}</span>
       </div>
 
       {/* Content area */}
