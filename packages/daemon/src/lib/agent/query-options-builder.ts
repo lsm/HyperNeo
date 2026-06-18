@@ -246,22 +246,30 @@ export const PROVIDER_NO_SDK_AUTO_COMPACT: ReadonlySet<string> = new Set();
  * model alias. We pass the real window here so SDK auto-compaction fires at the
  * correct threshold without injecting `/compact` as prompt text.
  *
- * Providers in PROVIDER_NO_SDK_AUTO_COMPACT cannot use SDK auto-compact at all.
- * For these, we disable SDK auto-compact and let NeoKai's fallback handle
- * compaction.
+ * Providers/routes selected by `shouldUseNeoKaiCompactFallback` cannot use SDK
+ * auto-compact at the right threshold. For these, we disable SDK auto-compact
+ * and let NeoKai's fallback handle compaction.
  */
+export function shouldUseNeoKaiCompactFallback(providerId: string, sdkModelId?: string): boolean {
+  if (providerId === 'kimi') {
+    return sdkModelId !== 'kimi-k2.7-code';
+  }
+  return PROVIDER_NO_SDK_AUTO_COMPACT.has(providerId);
+}
+
 export function buildProviderSettings(
   providerId: string,
-  contextWindow?: number | null
+  contextWindow?: number | null,
+  sdkModelId?: string
 ): Options['settings'] {
   if (NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId)) {
     return undefined;
   }
 
-  if (PROVIDER_NO_SDK_AUTO_COMPACT.has(providerId)) {
+  if (shouldUseNeoKaiCompactFallback(providerId, sdkModelId)) {
     // SDK auto-compact would fire at the wrong threshold (200k PP fallback
     // instead of the real model window). Disable it and let NeoKai's
-    // fallback trigger handle compaction at 85% of the metadata context window.
+    // fallback trigger handle compaction at the SDK-style reserve threshold.
     return { autoCompactEnabled: false };
   }
 
@@ -504,7 +512,7 @@ export class QueryOptionsBuilder {
       // output style, CLAUDE.md content, etc.).
       settingSources:
         config.settingSources ?? this.ctx.settingsManager.getGlobalSettings().settingSources,
-      settings: buildProviderSettings(providerId, modelInfo?.contextWindow),
+      settings: buildProviderSettings(providerId, modelInfo?.contextWindow, sdkModelId),
 
       // ============ Streaming ============
       includePartialMessages: config.includePartialMessages,
@@ -1017,16 +1025,19 @@ CRITICAL RULES:
       'ANTHROPIC_DEFAULT_OPUS_MODEL',
       'API_TIMEOUT_MS',
       'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC',
-      'CLAUDE_CODE_SUBAGENT_MODEL',
-      'ENABLE_TOOL_SEARCH',
     ]);
     providerEnvVars.add('CLAUDE_CODE_AUTO_COMPACT_WINDOW');
+    const processProviderEnvVars = new Set(providerEnvVars);
+    processProviderEnvVars.add('CLAUDE_CODE_SUBAGENT_MODEL');
+    processProviderEnvVars.add('ENABLE_TOOL_SEARCH');
 
     const excludedEnvVars = new Set(['PORT', 'NEOKAI_PORT']);
     const mergedEnv: Record<string, string> = Object.fromEntries(
       Object.entries(process.env).filter(
         (entry): entry is [string, string] =>
-          entry[1] !== undefined && !excludedEnvVars.has(entry[0]) && !providerEnvVars.has(entry[0])
+          entry[1] !== undefined &&
+          !excludedEnvVars.has(entry[0]) &&
+          !processProviderEnvVars.has(entry[0])
       )
     );
 
@@ -1059,7 +1070,6 @@ CRITICAL RULES:
         'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC',
         'CLAUDE_CODE_SUBAGENT_MODEL',
         'ENABLE_TOOL_SEARCH',
-        'CLAUDE_CODE_AUTO_COMPACT_WINDOW',
       ];
       for (const key of providerVars) {
         const value = process.env[key];

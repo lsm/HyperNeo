@@ -318,9 +318,16 @@ export class ProviderService {
     const registry = await this.getReadyRegistry();
     const provider = registry.get(providerId);
     const providerModelId = provider?.getTitleGenerationModel?.() ?? sessionModelId;
+    let sdkModelId = provider?.translateModelIdForSdk?.(providerModelId) ?? providerModelId;
+    try {
+      const sdkConfig = provider?.buildSdkConfig(providerModelId);
+      sdkModelId = sdkConfig?.envVars.ANTHROPIC_MODEL ?? sdkModelId;
+    } catch {
+      // Provider not initialised yet; keep translated fallback.
+    }
     return {
       providerModelId,
-      sdkModelId: provider?.translateModelIdForSdk?.(providerModelId) ?? providerModelId,
+      sdkModelId,
     };
   }
 
@@ -357,14 +364,14 @@ export class ProviderService {
     // fetched when neither override nor tier fallback produced an answer.
     const titleOverride = provider.getTitleGenerationModel?.();
     const tierFallback = provider.getModelForTier('haiku');
-    const modelId =
-      titleOverride || tierFallback || (await provider.getModels())[0]?.id || 'default';
+    let modelId = titleOverride || tierFallback || (await provider.getModels())[0]?.id || 'default';
 
     // Get base URL from SDK config
     let baseUrl = 'https://api.anthropic.com';
     let apiVersion = 'v1';
     try {
       const sdkConfig = provider.buildSdkConfig(modelId);
+      modelId = sdkConfig.envVars.ANTHROPIC_MODEL ?? modelId;
       baseUrl = (sdkConfig.envVars.ANTHROPIC_BASE_URL as string | undefined) || baseUrl;
       apiVersion = sdkConfig.apiVersion || apiVersion;
     } catch (err) {
@@ -672,9 +679,40 @@ export class ProviderService {
     };
 
     clear('ANTHROPIC_AUTH_TOKEN');
-    clear('ANTHROPIC_MODEL');
-    clear('CLAUDE_CODE_SUBAGENT_MODEL');
-    clear('ENABLE_TOOL_SEARCH');
+
+    // Preserve user's custom ANTHROPIC_MODEL while clearing provider leaks.
+    if (process.env.ANTHROPIC_MODEL !== undefined) {
+      original.ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL;
+      changed = true;
+      if (
+        userConfiguredAnthropicModel === undefined ||
+        process.env.ANTHROPIC_MODEL !== userConfiguredAnthropicModel
+      ) {
+        delete process.env.ANTHROPIC_MODEL;
+      }
+    }
+
+    // Preserve user's Claude Code subagent/tool-search settings while clearing provider leaks.
+    if (process.env.CLAUDE_CODE_SUBAGENT_MODEL !== undefined) {
+      original.CLAUDE_CODE_SUBAGENT_MODEL = process.env.CLAUDE_CODE_SUBAGENT_MODEL;
+      changed = true;
+      if (
+        userConfiguredSubagentModel === undefined ||
+        process.env.CLAUDE_CODE_SUBAGENT_MODEL !== userConfiguredSubagentModel
+      ) {
+        delete process.env.CLAUDE_CODE_SUBAGENT_MODEL;
+      }
+    }
+    if (process.env.ENABLE_TOOL_SEARCH !== undefined) {
+      original.ENABLE_TOOL_SEARCH = process.env.ENABLE_TOOL_SEARCH;
+      changed = true;
+      if (
+        userConfiguredToolSearch === undefined ||
+        process.env.ENABLE_TOOL_SEARCH !== userConfiguredToolSearch
+      ) {
+        delete process.env.ENABLE_TOOL_SEARCH;
+      }
+    }
 
     // Preserve user's custom ANTHROPIC_BASE_URL from environment/settings.json
     if (process.env.ANTHROPIC_BASE_URL !== undefined) {
@@ -954,6 +992,9 @@ const userConfiguredApiTimeout = process.env.API_TIMEOUT_MS;
 const userConfiguredDisableNonEssentialTraffic =
   process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC;
 const userConfiguredAutoCompactWindow = process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
+const userConfiguredAnthropicModel = process.env.ANTHROPIC_MODEL;
+const userConfiguredSubagentModel = process.env.CLAUDE_CODE_SUBAGENT_MODEL;
+const userConfiguredToolSearch = process.env.ENABLE_TOOL_SEARCH;
 const userConfiguredDefaultSonnetModel = process.env.ANTHROPIC_DEFAULT_SONNET_MODEL;
 const userConfiguredDefaultHaikuModel = process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL;
 const userConfiguredDefaultOpusModel = process.env.ANTHROPIC_DEFAULT_OPUS_MODEL;
@@ -975,6 +1016,9 @@ export function getUserConfiguredAnthropicEnv(): Record<string, string> {
   const snapshot: Record<string, string> = {};
   const entries: Array<[string, string | undefined]> = [
     ['ANTHROPIC_BASE_URL', userConfiguredBaseUrl],
+    ['ANTHROPIC_MODEL', userConfiguredAnthropicModel],
+    ['CLAUDE_CODE_SUBAGENT_MODEL', userConfiguredSubagentModel],
+    ['ENABLE_TOOL_SEARCH', userConfiguredToolSearch],
     ['API_TIMEOUT_MS', userConfiguredApiTimeout],
     ['ANTHROPIC_DEFAULT_SONNET_MODEL', userConfiguredDefaultSonnetModel],
     ['ANTHROPIC_DEFAULT_HAIKU_MODEL', userConfiguredDefaultHaikuModel],

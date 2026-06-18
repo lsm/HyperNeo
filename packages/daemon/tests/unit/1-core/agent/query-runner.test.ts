@@ -2426,7 +2426,11 @@ describe('QueryRunner environment variable handling', () => {
         PORT: '8484',
         NEOKAI_PORT: '8484',
       },
-      { refreshAutoCompactWindow: true, clearProviderManaged: true }
+      {
+        refreshAutoCompactWindow: true,
+        clearProviderManaged: true,
+        extraProviderManagedEnvVars: ['CLAUDE_CODE_SUBAGENT_MODEL', 'ENABLE_TOOL_SEARCH'],
+      }
     );
 
     expect(env).toMatchObject({

@@ -195,8 +195,8 @@ describe('QueryOptionsBuilder', () => {
         KEEP_SESSION: 'session',
       });
       expect(options.env).not.toHaveProperty('CLAUDE_CODE_AUTO_COMPACT_WINDOW');
-      expect(options.env).not.toHaveProperty('CLAUDE_CODE_SUBAGENT_MODEL');
-      expect(options.env).not.toHaveProperty('ENABLE_TOOL_SEARCH');
+      expect(options.env?.CLAUDE_CODE_SUBAGENT_MODEL).toBe('session-subagent');
+      expect(options.env?.ENABLE_TOOL_SEARCH).toBe('false');
     });
 
     it('should preserve env-only Anthropic auth tokens for native provider', async () => {
@@ -234,8 +234,8 @@ describe('QueryOptionsBuilder', () => {
         KEEP_GLOBAL: 'global',
         KEEP_SESSION: 'session',
       });
-      // Bridge provider buildSdkConfig owns this value; user overrides must not win.
-      expect(options.env?.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('272000');
+      // Provider cleanup owns this value later; user overrides must not win here.
+      expect(options.env).not.toHaveProperty('CLAUDE_CODE_AUTO_COMPACT_WINDOW');
     });
 
     it('should not override SDK auto-compaction settings for native anthropic provider', async () => {
@@ -296,13 +296,16 @@ describe('QueryOptionsBuilder', () => {
       });
     });
 
-    it('should enable SDK auto-compaction for Kimi when context metadata is available', () => {
-      // Kimi follows Moonshot's Claude Code docs: ANTHROPIC_MODEL plus
-      // CLAUDE_CODE_AUTO_COMPACT_WINDOW=262144 are set by the provider.
+    it('should use NeoKai fallback for China Kimi and SDK auto-compact for Global Kimi', () => {
+      // China routes kimi-for-coding, which SDK PP() still treats as 200k.
+      // Global routes kimi-k2.7-code, which follows Moonshot's Claude Code docs.
       expect(buildProviderSettings('kimi')).toEqual({
         autoCompactEnabled: false,
       });
-      expect(buildProviderSettings('kimi', 262_144)).toEqual({
+      expect(buildProviderSettings('kimi', 262_144, 'kimi-for-coding')).toEqual({
+        autoCompactEnabled: false,
+      });
+      expect(buildProviderSettings('kimi', 262_144, 'kimi-k2.7-code')).toEqual({
         autoCompactEnabled: true,
         autoCompactWindow: 262_144,
       });

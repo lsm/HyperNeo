@@ -498,6 +498,13 @@ describe('KimiProvider', () => {
     it('should return default China model', () => {
       expect(provider.getTitleGenerationModel()).toBe('kimi-for-coding');
     });
+
+    it('provider service overrides helper SDK model from regional env routing', () => {
+      provider.setDefaultRegion('global');
+      const config = provider.buildSdkConfig(provider.getTitleGenerationModel(), { apiKey: 'key' });
+
+      expect(config.envVars.ANTHROPIC_MODEL).toBe('kimi-k2.7-code');
+    });
   });
 
   describe('getAuthStatus', () => {

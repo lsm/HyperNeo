@@ -5,7 +5,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import type { ProviderId } from '@neokai/shared/provider';
+import type { ProviderId, ProviderSessionConfig } from '@neokai/shared/provider';
 import type { Session } from '@neokai/shared';
 import type { ModelInfo } from '@neokai/shared';
 import type { Provider, ProviderSdkConfig } from '@neokai/shared/provider';
@@ -113,6 +113,38 @@ class TitleOverrideMockProvider extends MockProvider {
 
   getTitleGenerationModel(): string {
     return 'title-turbo';
+  }
+}
+
+class RegionAwareTitleMockProvider extends MockProvider {
+  readonly id = 'region-aware-title' as const;
+  readonly displayName = 'Region Aware Title Provider';
+  private defaultRegion: 'china' | 'global' = 'china';
+
+  constructor() {
+    super('region-aware-title', 'Region Aware Title Provider', true, 'kimi-');
+  }
+
+  setDefaultRegion(region: 'china' | 'global'): void {
+    this.defaultRegion = region;
+  }
+
+  buildSdkConfig(_modelId: string, sessionConfig?: ProviderSessionConfig): ProviderSdkConfig {
+    const region = sessionConfig?.region === 'global' ? 'global' : this.defaultRegion;
+    const modelId = region === 'global' ? 'kimi-k2.7-code' : 'kimi-for-coding';
+    return {
+      envVars: {
+        ANTHROPIC_BASE_URL:
+          region === 'global' ? 'https://api.moonshot.ai/anthropic' : 'https://api.kimi.com/coding',
+        ANTHROPIC_MODEL: modelId,
+      },
+      isAnthropicCompatible: true,
+      apiVersion: 'v1',
+    };
+  }
+
+  translateModelIdForSdk(modelId: string): string {
+    return modelId;
   }
 }
 
@@ -541,6 +573,16 @@ describe('ProviderService', () => {
 
       expect(model).toBe('translated-5-turbo');
     });
+
+    it('should use provider-routed model env for region-aware title generation', async () => {
+      const provider = new RegionAwareTitleMockProvider();
+      provider.setDefaultRegion('global');
+      registry.register(provider);
+
+      const model = await service.getTitleGenerationModel('region-aware-title', 'kimi-for-coding');
+
+      expect(model).toBe('kimi-k2.7-code');
+    });
   });
 
   describe('getTitleGenerationConfig', () => {
@@ -567,6 +609,18 @@ describe('ProviderService', () => {
 
       // Should not throw; should fall back to safe defaults
       expect(config.baseUrl).toBe('https://api.anthropic.com');
+      expect(config.apiVersion).toBe('v1');
+    });
+
+    it('should return provider-routed title model for region-aware providers', async () => {
+      const provider = new RegionAwareTitleMockProvider();
+      provider.setDefaultRegion('global');
+      registry.register(provider);
+
+      const config = await service.getTitleGenerationConfig('region-aware-title' as ProviderId);
+
+      expect(config.modelId).toBe('kimi-k2.7-code');
+      expect(config.baseUrl).toBe('https://api.moonshot.ai/anthropic');
       expect(config.apiVersion).toBe('v1');
     });
   });
