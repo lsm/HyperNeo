@@ -790,6 +790,8 @@ This policy should be implemented once in a small helper rather than repeatedly 
 | `spaceTaskMessages.byTask` | `space.task.thread.messages` subscribed |
 | `spaceTaskMessages.byTask.compact` | `space.task.thread.messages.compact` subscribed |
 | `spaceTaskActiveTurn.byTask` | `space.task.thread.activeTurn` subscribed |
+| `actorMessages.byTask` | `space.task.actorMessages` subscribed |
+| `actorMessages.byWorkflowRun` | `space.workflowRun.actorMessages` subscribed |
 | `spaceSessions.bySpace` | `space.session.list` subscribed |
 | `spaceGoal.list` | `space.goal.list` |
 | `spaceGoal.listEvents` | `space.goal.events` |
@@ -910,6 +912,10 @@ Keep Preact Signals as the store primitive. The main change is ownership, not th
 ### Phase 0: Contracts And Client Kernel
 
 - Add typed fabric client wrappers around existing MessageHub request/event/LiveQuery behavior.
+- Preserve raw `liveQuery.subscribe` and `liveQuery.unsubscribe` requests plus `liveQuery.snapshot` and
+  `liveQuery.delta` events until every production caller moves to the subscribed-query wrapper. This is a
+  migration precondition for cleanup because existing stores still use raw LiveQuery names for session
+  messages, task threads, app MCP servers, skills, global/session snapshots, and related read models.
 - Add shared stale-response and subscription helpers.
 - Do not change components yet.
 

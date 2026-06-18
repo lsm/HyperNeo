@@ -409,6 +409,7 @@ Target queries:
 | --- | --- |
 | `config.effective.preview` | Effective values and source chains for selected config keys. |
 | `extension.effective.preview` | Active contributions, package source, trust, and render targets. |
+| `skill.registry.list` | Application-level installed/disabled skills plus MCP-wrapper linkage. |
 | `skill.effective.list` | Skills active for a Space/session with inherited/overridden source. |
 | `hook.effective.list` | Hook policies active for a runtime/session. |
 | `runtime.behavior.preview` | Final runtime-neutral behavior before adapter rendering. |
@@ -460,6 +461,10 @@ Compatibility mappings:
 - `mcp.enablement.setOverride` and `mcp.enablement.clearOverride` remain compatibility aliases for
   session and Space tool enablement overrides; they write scoped config rows and trigger the same
   effective-preview invalidation as other MCP config changes.
+- `skills.list` and `skill.list` remain compatibility aliases for `skill.registry.list` until Skills
+  settings moves to the target read model. This registry read model is distinct from
+  `skill.effective.list`: it loads installed/disabled skills and MCP-wrapper associations for management
+  UI, while `skill.effective.list` answers what is active for a given Space/session scope.
 - `skill.create`, `skill.update`, `skill.delete`, `skill.setEnabled`, and `skill.installFromGit`
   remain compatibility aliases over the extension/skill package commands until the Skills settings UI
   uses the target package/skill contract directly.

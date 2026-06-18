@@ -801,6 +801,7 @@ Runtime events that should be durable early:
 | `space.workflowGate.opened` | gate open-state changed and must be replayable for runtime projections |
 | `space.workflowGate.pendingApproval` | human approval UI state |
 | `space.gateData.updated` | raw gate-data row update and replayable gate-detail invalidation |
+| `space.hookState.updated` | hook approval, retry, and runtime hook-state invalidation |
 | `space.workflowMessage.queued` | recovery and diagnostics |
 | `space.workflowMessage.delivered` | delivery audit |
 
