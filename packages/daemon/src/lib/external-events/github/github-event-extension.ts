@@ -509,9 +509,8 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
    * Marks the extension as rate-limited until `rateLimit.resetAt` (or the
    * minimum backoff when the reset header was absent / already past).
    *
-   * Idempotent: the latest reset window wins. Callers in `pollWatchedRepo`
-   * invoke this once per endpoint that returns 403/429 or a low `remaining`
-   * counter, then abort the rest of the cycle.
+   * Preserves the longer cooldown when multiple requests observe different
+   * reset windows (e.g., scheduled poll vs RPC pollOnce overlap).
    */
   private applyRateLimit(rateLimit: GitHubRateLimitInfo): void {
     // When resetAt is derived from Retry-After, honor it directly (not floored to min backoff).
@@ -521,7 +520,9 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     const delay = rateLimit.retryAfter
       ? resetDelay
       : Math.max(RATE_LIMIT_MIN_BACKOFF_MS, resetDelay);
-    this.rateLimitedUntil = Date.now() + delay;
+    const newRateLimitedUntil = Date.now() + delay;
+    // Preserve the longer cooldown to avoid shortening an existing backoff.
+    this.rateLimitedUntil = Math.max(this.rateLimitedUntil, newRateLimitedUntil);
     log.warn('GitHub rate limit detected — deferring next poll', {
       remaining: rateLimit.remaining === Infinity ? 'unknown' : rateLimit.remaining,
       resetAt: rateLimit.resetAt ? new Date(rateLimit.resetAt).toISOString() : 'unknown',

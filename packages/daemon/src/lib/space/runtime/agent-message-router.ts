@@ -430,6 +430,16 @@ export class AgentMessageRouter {
           message
         );
       } catch (err) {
+        if (err instanceof ChannelGateBlockedError) {
+          return {
+            success: false,
+            delivered: [],
+            failed: [],
+            reason: err.message,
+            rateLimited: err.rateLimited,
+            retryAfterMs: err.retryAfterMs,
+          };
+        }
         return {
           success: false,
           delivered: [],

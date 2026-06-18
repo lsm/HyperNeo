@@ -327,7 +327,18 @@ async function runReviewThreadsQuery(
 
     const json = result.data;
     if (json.errors) {
-      return { success: false, error: `GraphQL errors: ${JSON.stringify(json.errors)}` };
+      // GraphQL rate-limit errors come as HTTP 200 with an errors payload.
+      // Check if any error message indicates a rate limit and retry accordingly.
+      const errorsText = JSON.stringify(json.errors);
+      if (isRateLimitError(errorsText)) {
+        return {
+          success: false,
+          error: `GraphQL rate limit: ${errorsText}`,
+          rateLimited: true,
+          retryAfterMs: RATE_LIMIT_MIN_BACKOFF_MS,
+        };
+      }
+      return { success: false, error: `GraphQL errors: ${errorsText}` };
     }
     const threads = json.data?.repository?.pullRequest?.reviewThreads;
     if (!threads) {
