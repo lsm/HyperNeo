@@ -297,6 +297,7 @@ Owns tasks and task activity for the selected Space.
 Read models:
 
 - `space.task.list`
+- `space.task.get`
 - `space.task.group`
 - `space.task.activity`
 
@@ -325,6 +326,8 @@ Events:
 - `space.task.archived`
 - `space.workflowMessage.queued`
 - `space.workflowMessage.delivered`
+- `space.pendingMessage.queued`
+- `space.pendingMessage.delivered`
 
 Forge relationship:
 
@@ -333,7 +336,8 @@ Forge relationship:
 
 Notes:
 
-- Existing task RPCs map as follows during migration: `spaceTask.create` -> `space.task.create`, `spaceTask.update` -> `space.task.update`, `spaceTask.publish` -> `space.task.publish`, `spaceTask.recoverWorkflow` -> `space.task.recoverWorkflow`, `spaceTask.submitForReview` -> `space.task.submitForReview`, and `spaceTask.approvePendingCompletion` -> `space.task.approvePendingCompletion`.
+- Existing task RPCs map as follows during migration: `spaceTask.get` -> `space.task.get`, `spaceTask.create` -> `space.task.create`, `spaceTask.update` -> `space.task.update`, `spaceTask.publish` -> `space.task.publish`, `spaceTask.recoverWorkflow` -> `space.task.recoverWorkflow`, `spaceTask.submitForReview` -> `space.task.submitForReview`, and `spaceTask.approvePendingCompletion` -> `space.task.approvePendingCompletion`.
+- Existing pending-message queue events map as follows during migration: `space.pendingMessage.queued` -> `space.workflowMessage.queued` and `space.pendingMessage.delivered` -> `space.workflowMessage.delivered`. Until producers are renamed, the compatibility bridge must fan out both legacy and target event names so task activity and delivery audit projections stay fresh.
 
 ### 7.5 WorkflowRuntimeStore
 
@@ -375,6 +379,7 @@ Commands:
 - `space.workflowGate.approve`
 - `space.workflowHook.approve`
 - `space.workflowHook.retry`
+- `space.workflowGate.data.writeForTest`
 
 Events:
 
@@ -398,7 +403,7 @@ Notes:
 
 - Current per-run `nodeExecutions.byRun` subscriptions should be replaced by a space-scoped runtime read model when available.
 - Workflow-run creation must emit `space.workflowNodeExecution.created` for pending or gated node-execution rows that exist before a start transition. If a transitional path cannot emit per-row create events yet, it must invalidate `space.workflowNodeExecution.list` on run creation and node activation so the runtime canvas can load pending nodes before they become started, idle, blocked, or restarted.
-- Existing raw gate-data RPCs/events map as follows during migration: `spaceWorkflowRun.listGateData` -> `space.workflowGate.data.list`, and `space.gateData.updated` remains the canonical event for raw gate-data row updates. `space.workflowGate.status` may include derived gate state, but it must not replace the raw gate-data records needed by banners and gate detail panes.
+- Existing raw gate-data RPCs/events map as follows during migration: `spaceWorkflowRun.listGateData` -> `space.workflowGate.data.list`, non-production `spaceWorkflowRun.writeGateData` -> `space.workflowGate.data.writeForTest`, and `space.gateData.updated` remains the canonical event for raw gate-data row updates. `space.workflowGate.status` may include derived gate state, but it must not replace the raw gate-data records needed by banners and gate detail panes.
 - Existing artifact RPCs map as follows during migration: `spaceWorkflowRun.getGateArtifacts` -> `space.workflowRun.gateArtifacts`, `spaceWorkflowRun.getFileDiff` -> `space.workflowRun.fileDiff`, `spaceWorkflowRun.getCommits` -> `space.workflowRun.commits`, `spaceWorkflowRun.getCommitFiles` -> `space.workflowRun.commitFiles`, `spaceWorkflowRun.getCommitFileDiff` -> `space.workflowRun.commitFileDiff`, and `spaceWorkflowRun.listArtifacts` -> `space.workflowRun.artifacts`.
 - Existing artifact cache invalidation maps as follows during migration: `space.artifactCache.updated` remains the compatibility event for background gate-artifact and commit-cache writes until producers publish a target `space.workflowRun.artifactCache.updated` invalidation event.
 - Existing hook RPCs map as follows during migration: `spaceWorkflowRun.listHookStates` -> `space.workflowRun.hookStates`, `spaceWorkflowRun.approveHook` -> `space.workflowHook.approve`, and `spaceWorkflowRun.retryHook` -> `space.workflowHook.retry`.

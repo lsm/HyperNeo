@@ -482,7 +482,7 @@ Provider and model settings stay contract-backed during MessageHub cleanup:
 | `provider.auth.login` | command | Preserve `auth.login`. |
 | `provider.auth.logout` | command | Preserve `auth.logout`. |
 | `provider.auth.refresh` | command | Preserve `auth.refresh`. |
-| `provider.changed` | event | Preserve `providers.changed` invalidation for model/auth UI. |
+| `providers.changed` | event | Preserve current plural provider invalidation for model/auth UI until subscribers migrate. |
 
 These contracts may live in a provider/config package rather than under Agent Runtime long term, but M7
 must treat them as required compatibility aliases before provider, model, or auth MessageHub RPC cleanup.
