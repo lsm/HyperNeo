@@ -65,9 +65,10 @@ export type OpenAIResponsesBridgeServer = {
   setSessionThinkingConfig?(sessionId: string, thinking: AnthropicRequest['thinking']): void;
   /**
    * Override the resolved model ID for a specific session.
-   * Used when the SDK sends an aliased Anthropic model ID (e.g.
-   * claude-opus-4-7) and the bridge needs to map it back to the
-   * originally-selected Codex model ID for that session.
+   * Used when the SDK sends a model ID that differs from the upstream
+   * model ID (e.g., aliased Anthropic IDs for Copilot, or any provider
+   * using model ID translation). For providers using real model IDs
+   * directly (Codex, GLM, Kimi), both arguments are typically the same.
    */
   setSessionModelConfig?(sessionId: string, aliasModelId: string, realModelId: string): void;
   stop(): void;
@@ -1158,13 +1159,14 @@ export function createOpenAIResponsesBridgeServer(
   // Per-session thinking config injected by the daemon when the Anthropic SDK client
   // (Claude Code CLI) omits the thinking field from request bodies.
   const sessionThinkingConfigs = new Map<string, SessionThinkingConfigEntry>();
-  // Per-session, per-alias model overrides. When the SDK sends an aliased Anthropic
-  // model ID (e.g. claude-opus-4-7) the bridge maps it to a default Codex ID
-  // via modelAliases. This map lets the daemon override that default per (session,
-  // alias) so the originally-selected Codex model is preserved upstream. Keyed by
-  // (sessionId, aliasModelId) so that different SDK tiers (opus/sonnet/haiku) within
-  // the same session are independently overridden and fallback model registration
-  // does not clobber the primary model's override.
+  // Per-session model overrides. When the SDK sends a model ID that differs from
+  // the upstream model ID (e.g., aliased Anthropic IDs for Copilot, or any
+  // provider using model ID translation), this map lets the daemon override the
+  // default mapping per session. For providers using real model IDs directly
+  // (Codex, GLM, Kimi), the SDK and upstream IDs are typically the same.
+  // Keyed by (sessionId, sdkModelId) so different SDK tiers within the same
+  // session are independently overridden and fallback model registration does
+  // not clobber the primary model's override.
   const sessionModelAliasOverrides = new Map<string, string>();
   let resolvedAuth: ResolvedResponsesAuth | undefined;
   // ChatGPT Codex endpoint rejects max_output_tokens and parallel_tool_calls.

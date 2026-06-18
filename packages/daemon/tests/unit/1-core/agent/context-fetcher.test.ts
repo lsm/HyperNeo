@@ -196,7 +196,7 @@ describe('ContextFetcher.toContextInfo', () => {
       maxTokens: 200000,
       rawMaxTokens: 200000,
       percentage: 68,
-      model: 'claude-opus-4-7',
+      model: 'gpt-5.5',
       autoCompactThreshold: 180000,
       isAutoCompactEnabled: true,
       categories: [{ name: 'Messages', tokens: 136000, color: 'blue' }],
@@ -205,7 +205,7 @@ describe('ContextFetcher.toContextInfo', () => {
     const info = ContextFetcher.toContextInfo(response, {
       id: 'gpt-5.5',
       alias: 'codex-latest',
-      sdkModelIds: ['claude-opus-4-7'],
+      sdkModelIds: ['gpt-5.5'],
       contextWindow: 272000,
       preferContextWindowMetadata: true,
     });
@@ -222,13 +222,13 @@ describe('ContextFetcher.toContextInfo', () => {
       maxTokens: 272000,
       rawMaxTokens: 272000,
       percentage: 4,
-      model: 'claude-opus-4-7',
+      model: 'gpt-5.5',
       categories: [{ name: 'Messages', tokens: 10000, color: 'blue' }],
     });
 
     const info = ContextFetcher.toContextInfo(response, {
       id: 'gpt-5.5',
-      sdkModelIds: ['claude-opus-4-7'],
+      sdkModelIds: ['gpt-5.5'],
       provider: 'anthropic-codex',
       preferContextWindowMetadata: true,
       contextWindow: 272000,
@@ -955,15 +955,14 @@ describe('ContextFetcher.fetch', () => {
     });
 
     it('does not warn for Codex when SDK effective window matches metadata', async () => {
-      // Codex gpt-5.5: SDK alias claude-opus-4-7 has PP=1M (rawMaxTokens),
-      // but CLAUDE_CODE_AUTO_COMPACT_WINDOW=272000 caps the effective window
-      // to 272k (maxTokens). Comparing effective vs metadata → no mismatch.
+      // Codex gpt-5.5: SDK reports real model ID with PP=272k (maxTokens).
+      // Comparing effective vs metadata → no mismatch.
       const getContextUsage = mock(async () =>
         baseResponse({
           totalTokens: 100_000,
           maxTokens: 272_000, // effective
-          rawMaxTokens: 1_000_000, // raw PP capacity — should NOT trigger warning
-          model: 'claude-opus-4-7',
+          rawMaxTokens: 272_000, // raw PP capacity — should NOT trigger warning
+          model: 'gpt-5.5',
         })
       );
       const query = { getContextUsage } as unknown as Query;
