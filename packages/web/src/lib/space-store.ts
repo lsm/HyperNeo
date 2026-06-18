@@ -1150,8 +1150,14 @@ class SpaceStore {
     if (!spaceId) return;
 
     // Snapshot the workflow ids at request time so concurrent updates/deletes
-    // can be detected before assignment.
+    // can be detected before assignment. Also snapshot current detail objects by
+    // reference; if a real-time event replaces an entry while the fan-out is in
+    // flight, its reference changes and we must prefer the event-updated version
+    // over the stale fetch response.
     const requestedIds = new Set(this.workflows.value.map((workflow) => workflow.id));
+    const priorDetails = new Map<string, SpaceWorkflow>(
+      this.workflowDetails.value.map((workflow) => [workflow.id, workflow])
+    );
 
     this.workflowDetailsPromise = (async (): Promise<void> => {
       try {
@@ -1175,7 +1181,9 @@ class SpaceStore {
         // Merge instead of replace so workflows created/imported by other
         // clients during fan-out (handled by spaceWorkflow.created above)
         // are preserved. Only the requested ids are overwritten; any other
-        // entry already in workflowDetails stays untouched.
+        // entry already in workflowDetails stays untouched. If a workflow was
+        // updated by a real-time event during the fan-out, prefer the current
+        // (event-updated) entry over the stale fetch response.
         const fetchedById = new Map<string, SpaceWorkflow>();
         let missing = 0;
         for (const { id, detail } of results) {
@@ -1187,8 +1195,15 @@ class SpaceStore {
         for (const workflow of this.workflowDetails.value) {
           // Drop entries no longer in the summary list (deleted).
           if (!this.workflows.value.some((w) => w.id === workflow.id)) continue;
-          // Prefer fresh fetch when available; otherwise keep the prior entry.
-          merged.push(fetchedById.get(workflow.id) ?? workflow);
+          const fresh = fetchedById.get(workflow.id);
+          const wasUpdatedDuringFetch = workflow !== priorDetails.get(workflow.id);
+          if (wasUpdatedDuringFetch) {
+            merged.push(workflow);
+          } else if (fresh) {
+            merged.push(fresh);
+          } else {
+            merged.push(workflow);
+          }
           seen.add(workflow.id);
         }
         // Append freshly fetched workflows not yet tracked (e.g. created
@@ -1196,7 +1211,9 @@ class SpaceStore {
         // full detail arrives via this batch).
         for (const [id, detail] of fetchedById) {
           if (!seen.has(id) && this.workflows.value.some((w) => w.id === id)) {
-            merged.push(detail);
+            const current = this.workflowDetails.value.find((w) => w.id === id);
+            const wasUpdatedDuringFetch = current && current !== priorDetails.get(id);
+            merged.push(wasUpdatedDuringFetch ? current : detail);
             seen.add(id);
           }
         }
@@ -1785,6 +1802,7 @@ class SpaceStore {
     // Track what was loaded before reconnect so we can re-fetch it
     const hadConfigData = this.configDataLoaded.value;
     const hadNodeExec = this.nodeExecLoaded.value;
+    const hadWorkflowDetails = this.workflowDetailsLoaded.value;
 
     // Reset lazy-load flags so ensureX methods will re-fetch
     this.configDataLoaded.value = false;
@@ -1802,12 +1820,20 @@ class SpaceStore {
     try {
       await this.fetchAndResolveSpace(spaceId);
       await this.startSubscriptions(spaceId);
-      // Re-fetch previously loaded data in background
+      // Re-fetch previously loaded data in background. Only re-fetch workflow
+      // details if they had actually been loaded before reconnect, so summary-
+      // only consumers (task panes, goals, long-horizon agents) don't pay the
+      // per-workflow detail cost on reconnect.
       if (hadConfigData) {
+        this.ensureConfigData().catch((err) => {
+          logger.error('Failed to refresh config data:', err);
+        });
+      }
+      if (hadWorkflowDetails) {
         this.ensureConfigData()
           .then(() => this.ensureWorkflowDetails())
           .catch((err) => {
-            logger.error('Failed to refresh config data:', err);
+            logger.error('Failed to refresh workflow details:', err);
           });
       }
       if (hadNodeExec) {

@@ -692,6 +692,39 @@ describe('SpaceStore — ensureWorkflowDetails', () => {
     expect(ids).toEqual(['wf-new', 'wf1']);
     expect(spaceStore.workflowDetailsLoaded.value).toBe(true);
   });
+
+  it('prefers event-updated workflow details over stale fetch responses', async () => {
+    mockWorkflowSummaries(['wf1']);
+    await spaceStore.selectSpace('space-1');
+    await spaceStore.ensureConfigData();
+
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    mockHub.request.mockImplementation(
+      async (method: string, params?: Record<string, unknown>): Promise<any> => {
+        if (method === 'spaceWorkflow.get') {
+          await gate;
+          return { workflow: makeWorkflow((params?.id as string) ?? 'wf1') };
+        }
+        return {};
+      }
+    );
+
+    const pending = spaceStore.ensureWorkflowDetails();
+    const updatedWorkflow = { ...makeWorkflow('wf1'), name: 'Updated by event' };
+    fireMockEvent('spaceWorkflow.updated', {
+      sessionId: 'session-1',
+      spaceId: 'space-1',
+      workflow: updatedWorkflow,
+    });
+    release();
+    await pending;
+
+    expect(spaceStore.workflowDetails.value).toHaveLength(1);
+    expect(spaceStore.workflowDetails.value[0]?.name).toBe('Updated by event');
+  });
 });
 
 describe('SpaceStore — promise-chain lock', () => {
@@ -2059,6 +2092,29 @@ describe('SpaceStore — refresh', () => {
   });
   afterEach(() => vi.clearAllMocks());
 
+  function mockWorkflowSummaries(ids: string[]) {
+    mockHub.request.mockImplementation(
+      async (method: string, params?: Record<string, unknown>): Promise<any> => {
+        if (method === 'space.overview') {
+          const spaceId = (params?.spaceId as string) ?? 'space-1';
+          return { space: makeSpace(spaceId), tasks: [], workflowRuns: [], sessions: [] };
+        }
+        if (method === 'spaceWorkflow.list') {
+          return { workflows: ids.map((id) => makeWorkflowSummary(id)) };
+        }
+        if (method === 'spaceWorkflow.get') {
+          return { workflow: makeWorkflow((params?.id as string) ?? 'wf1') };
+        }
+        if (method === 'spaceAgent.list') return { agents: [] };
+        if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [] };
+        if (method === 'spaceWorkflow.listBuiltInTemplates') return { workflows: [] };
+        if (method === 'spaceLongHorizonAgent.list') return { agents: [] };
+        if (method === 'spaceLongHorizonAgent.listBuiltInTemplates') return { templates: [] };
+        return {};
+      }
+    );
+  }
+
   it('re-initializes global list on reconnect when previously initialized', async () => {
     await spaceStore.initGlobalList();
     mockHub.request.mockClear();
@@ -2092,6 +2148,34 @@ describe('SpaceStore — refresh', () => {
     await spaceStore.refresh();
 
     expect(mockHub.request).not.toHaveBeenCalledWith('space.overview', expect.anything());
+  });
+
+  it('does not re-fetch workflow details on reconnect when they were never loaded', async () => {
+    mockWorkflowSummaries(['wf1']);
+    await spaceStore.selectSpace('space-1');
+    await spaceStore.ensureConfigData();
+    mockHub.request.mockClear();
+
+    await spaceStore.refresh();
+    // Let the fire-and-forget re-fetch chain settle.
+    await new Promise((r) => setTimeout(r, 0));
+
+    const gets = mockHub.request.mock.calls.filter((c) => (c[0] as string) === 'spaceWorkflow.get');
+    expect(gets).toHaveLength(0);
+  });
+
+  it('re-fetches workflow details on reconnect when they had been loaded', async () => {
+    mockWorkflowSummaries(['wf1']);
+    await spaceStore.selectSpace('space-1');
+    await spaceStore.ensureConfigData();
+    await spaceStore.ensureWorkflowDetails();
+    mockHub.request.mockClear();
+
+    await spaceStore.refresh();
+    await new Promise((r) => setTimeout(r, 0));
+
+    const gets = mockHub.request.mock.calls.filter((c) => (c[0] as string) === 'spaceWorkflow.get');
+    expect(gets).toHaveLength(1);
   });
 });
 

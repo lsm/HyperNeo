@@ -57,9 +57,17 @@ export function SpaceConfigurePage({ space }: SpaceConfigurePageProps) {
     // until the summary list returns. Running them in parallel on a cold
     // direct-URL load snapshots [] and sticks workflowDetailsLoaded=true over
     // empty data.
+    const effectSpaceId = space.id;
     spaceStore
       .ensureConfigData()
-      .then(() => spaceStore.ensureWorkflowDetails())
+      .then(() => {
+        // Guard against a space switch that resolved the old config promise.
+        // Starting the detail loader for the wrong (or not-yet-loaded) space
+        // snapshots an empty workflow list and marks details loaded early.
+        if (spaceStore.spaceId.value === effectSpaceId) {
+          return spaceStore.ensureWorkflowDetails();
+        }
+      })
       .catch(() => {});
     spaceStore.ensureNodeExecutions().catch(() => {});
   }, [space.id]);

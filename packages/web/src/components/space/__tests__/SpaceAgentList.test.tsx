@@ -202,4 +202,94 @@ describe('SpaceAgentList', () => {
     expect(getAllByText('Coding with QA Workflow').length).toBeGreaterThan(0);
     expect(getByText('Qa')).toBeTruthy();
   });
+
+  it('does not merge slots with the same name but different agentId', () => {
+    mockWorkflowDetails.value = [
+      makeWorkflow({
+        id: 'wf-1',
+        name: 'Workflow A',
+        nodes: [
+          {
+            id: 'node-1',
+            name: 'Code',
+            agents: [
+              {
+                agentId: 'coder-agent-a',
+                name: 'coder',
+                customPrompt: { value: 'Coder A' },
+              },
+            ],
+          },
+        ],
+      }),
+      makeWorkflow({
+        id: 'wf-2',
+        name: 'Workflow B',
+        nodes: [
+          {
+            id: 'node-1',
+            name: 'Code',
+            agents: [
+              {
+                agentId: 'coder-agent-b',
+                name: 'coder',
+                customPrompt: { value: 'Coder B' },
+              },
+            ],
+          },
+        ],
+      }),
+    ];
+
+    const { getByText } = render(<SpaceAgentList />);
+
+    expect(getByText('Coder A')).toBeTruthy();
+    expect(getByText('Coder B')).toBeTruthy();
+    expect(getByText('coder-agent-a')).toBeTruthy();
+    expect(getByText('coder-agent-b')).toBeTruthy();
+  });
+
+  it('keeps same-name same-agentId slots in different workflows separate', () => {
+    mockWorkflowDetails.value = [
+      makeWorkflow({
+        id: 'wf-1',
+        name: 'Workflow A',
+        nodes: [
+          {
+            id: 'node-1',
+            name: 'Code',
+            agents: [
+              {
+                agentId: 'coder-agent',
+                name: 'coder',
+                customPrompt: { value: 'Coder A prompt' },
+              },
+            ],
+          },
+        ],
+      }),
+      makeWorkflow({
+        id: 'wf-2',
+        name: 'Workflow B',
+        nodes: [
+          {
+            id: 'node-1',
+            name: 'Code',
+            agents: [
+              {
+                agentId: 'coder-agent',
+                name: 'coder',
+                customPrompt: { value: 'Coder B prompt' },
+              },
+            ],
+          },
+        ],
+      }),
+    ];
+
+    const { getByText } = render(<SpaceAgentList />);
+
+    expect(getByText('Coder A prompt')).toBeTruthy();
+    expect(getByText('Coder B prompt')).toBeTruthy();
+  });
 });

@@ -9,6 +9,8 @@ import type { SpaceWorkflow, WorkflowNodeAgent } from '@neokai/shared';
 import { spaceStore } from '../../lib/space-store';
 
 interface WorkerAgentInfo {
+  workflowId: string;
+  agentId: string;
   name: string;
   description: string;
   toolPermissions: string[];
@@ -59,24 +61,28 @@ function getToolPermissions(slot: WorkflowNodeAgent): string[] {
 }
 
 export function getWorkerAgentsFromWorkflows(workflows: SpaceWorkflow[]): WorkerAgentInfo[] {
-  const agentsByName = new Map<string, WorkerAgentInfo>();
+  const agentsByKey = new Map<string, WorkerAgentInfo>();
 
   for (const workflow of workflows) {
-    const workflowAgentNames = new Set<string>();
+    const workflowAgentKeys = new Set<string>();
     for (const node of workflow.nodes) {
       for (const slot of node.agents ?? []) {
         const name = slot.name?.trim();
         if (!name) continue;
 
-        let agent = agentsByName.get(name);
+        const agentId = slot.agentId?.trim() ?? '';
+        const key = `${workflow.id}:${agentId}:${name}`;
+        let agent = agentsByKey.get(key);
         if (!agent) {
           agent = {
+            workflowId: workflow.id,
+            agentId,
             name,
             description: '',
             toolPermissions: [],
             usedIn: [],
           };
-          agentsByName.set(name, agent);
+          agentsByKey.set(key, agent);
         }
         if (slot.customPrompt?.value?.trim()) {
           agent.description = slot.customPrompt.value.trim();
@@ -87,23 +93,27 @@ export function getWorkerAgentsFromWorkflows(workflows: SpaceWorkflow[]): Worker
         for (const permission of getToolPermissions(slot)) {
           if (!agent.toolPermissions.includes(permission)) agent.toolPermissions.push(permission);
         }
-        workflowAgentNames.add(name);
+        workflowAgentKeys.add(key);
       }
     }
 
-    for (const name of workflowAgentNames) {
-      const agent = agentsByName.get(name);
+    for (const key of workflowAgentKeys) {
+      const agent = agentsByKey.get(key);
       if (agent && !agent.usedIn.includes(workflow.name)) agent.usedIn.push(workflow.name);
     }
   }
 
-  return [...agentsByName.values()]
+  return [...agentsByKey.values()]
     .map((agent) => ({
       ...agent,
       toolPermissions: agent.toolPermissions.sort((a, b) => a.localeCompare(b)),
       usedIn: agent.usedIn.sort((a, b) => a.localeCompare(b)),
     }))
-    .sort((a, b) => a.name.localeCompare(b.name));
+    .sort((a, b) => {
+      const byAgentId = a.agentId.localeCompare(b.agentId);
+      if (byAgentId !== 0) return byAgentId;
+      return a.name.localeCompare(b.name);
+    });
 }
 
 function AgentIcon() {
@@ -126,6 +136,7 @@ function WorkerAgentCard({ agent }: { agent: WorkerAgentInfo }) {
         <div class="min-w-0">
           <h3 class="text-sm font-medium text-gray-100">{titleCaseName(agent.name)}</h3>
           <p class="mt-1 font-mono text-xs text-blue-300">{agent.name}</p>
+          <p class="font-mono text-xs text-gray-600">{agent.agentId}</p>
         </div>
         <span class="rounded border border-white/10 bg-dark-800 px-2 py-1 text-xs text-gray-500">
           Read-only
@@ -224,7 +235,10 @@ export function SpaceAgentList() {
           ) : (
             <div class="grid gap-3 lg:grid-cols-2">
               {workerAgents.map((agent) => (
-                <WorkerAgentCard key={agent.name} agent={agent} />
+                <WorkerAgentCard
+                  key={`${agent.workflowId}:${agent.agentId}:${agent.name}`}
+                  agent={agent}
+                />
               ))}
             </div>
           )}
