@@ -1072,6 +1072,20 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
         data,
       });
 
+      // Fire gate-data-changed callback for ALL non-rate-limited cases (even queued
+      // or failed delivery). Skip ONLY when rate-limited to avoid re-evaluating the
+      // gate script (which would make another GitHub call during active cooldown).
+      if (gateIdToNotify && result.rateLimited !== true) {
+        try {
+          await notifyGateDataChanged(gateIdToNotify);
+        } catch (err) {
+          log.warn(
+            `onGateDataChanged failed for gate "${gateIdToNotify}" in run "${workflowRunId}":`,
+            err instanceof Error ? err.message : String(err)
+          );
+        }
+      }
+
       if (!result.success) {
         // Rate-limited gate block: surface explicit retry guidance so the
         // agent does not re-dispatch on the next tick. The error message is
@@ -1097,20 +1111,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
           rateLimited,
           retryAfterMs,
         });
-      }
-
-      // Gate refresh happens AFTER delivery succeeds. If delivery fails due to
-      // rate limiting, we skip the refresh to avoid re-evaluating the gate script
-      // (which would make another GitHub call during the active cooldown).
-      if (gateIdToNotify) {
-        try {
-          await notifyGateDataChanged(gateIdToNotify);
-        } catch (err) {
-          log.warn(
-            `onGateDataChanged failed for gate "${gateIdToNotify}" in run "${workflowRunId}":`,
-            err instanceof Error ? err.message : String(err)
-          );
-        }
       }
 
       if (result.success === 'partial') {
