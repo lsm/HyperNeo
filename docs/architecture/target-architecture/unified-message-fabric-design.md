@@ -539,6 +539,10 @@ CREATE UNIQUE INDEX idx_message_inbox_dedupe
 
 Inbox can be deferred until the first cross-process durable transport, but the envelope must include enough identity and idempotency metadata from day one. External transports must populate `message_id` and the normalized `dedupe_scope` / `dedupe_key` before handler dispatch so redelivery with a fresh transport envelope cannot repeat side effects.
 
+The fabric bridge must preserve the existing `system.health` request until all clients move to a target
+health/ping contract. The web connection manager uses it during resume and periodic validation; dropping
+the alias before migration can turn a healthy daemon into reconnect loops.
+
 ---
 
 ## 11. Relationship to Existing Systems

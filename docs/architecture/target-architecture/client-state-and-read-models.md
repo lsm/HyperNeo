@@ -198,6 +198,25 @@ Event handlers should be narrow and colocated with the store that owns the affec
 
 ## 7. Store Boundaries
 
+### 7.0 GlobalStore
+
+Owns application-wide system/settings snapshots that are not scoped to a Space or session.
+
+Read models:
+
+- `state.global.snapshot`
+- `state.system`
+- `state.settings`
+
+Events:
+
+- `state.system.updated`
+- `state.settings.updated`
+
+Notes:
+
+- Current `state.global.snapshot`, `state.system`, and `state.settings` surfaces must remain available behind fabric during migration. They hydrate auth, credential-store health, system health, and global settings on startup, and should not be replaced by each feature independently refetching its own settings.
+
 ### 7.1 RouteStore
 
 Owns browser-route-derived state only.
@@ -312,6 +331,10 @@ Forge relationship:
 - `TaskProposal.createdTaskId` should be reflected through `forge.taskProposal.updated`.
 - Tasks created from Forge proposals still arrive as `space.task.created` and include `evolutionScopeId`.
 
+Notes:
+
+- Existing task RPCs map as follows during migration: `spaceTask.create` -> `space.task.create`, `spaceTask.update` -> `space.task.update`, `spaceTask.publish` -> `space.task.publish`, `spaceTask.recoverWorkflow` -> `space.task.recoverWorkflow`, `spaceTask.submitForReview` -> `space.task.submitForReview`, and `spaceTask.approvePendingCompletion` -> `space.task.approvePendingCompletion`.
+
 ### 7.5 WorkflowRuntimeStore
 
 Owns workflow run and node execution read models for the selected Space.
@@ -331,6 +354,7 @@ Read models:
 - `space.workflowRun.commitFiles`
 - `space.workflowRun.commitFileDiff`
 - `space.workflowRun.hookStates`
+- `space.workflowRun.artifactCache`
 
 State:
 
@@ -368,6 +392,7 @@ Events:
 - `space.workflowGate.pendingApproval`
 - `space.gateData.updated`
 - `space.hookState.updated`
+- `space.artifactCache.updated`
 
 Notes:
 
@@ -375,6 +400,7 @@ Notes:
 - Workflow-run creation must emit `space.workflowNodeExecution.created` for pending or gated node-execution rows that exist before a start transition. If a transitional path cannot emit per-row create events yet, it must invalidate `space.workflowNodeExecution.list` on run creation and node activation so the runtime canvas can load pending nodes before they become started, idle, blocked, or restarted.
 - Existing raw gate-data RPCs/events map as follows during migration: `spaceWorkflowRun.listGateData` -> `space.workflowGate.data.list`, and `space.gateData.updated` remains the canonical event for raw gate-data row updates. `space.workflowGate.status` may include derived gate state, but it must not replace the raw gate-data records needed by banners and gate detail panes.
 - Existing artifact RPCs map as follows during migration: `spaceWorkflowRun.getGateArtifacts` -> `space.workflowRun.gateArtifacts`, `spaceWorkflowRun.getFileDiff` -> `space.workflowRun.fileDiff`, `spaceWorkflowRun.getCommits` -> `space.workflowRun.commits`, `spaceWorkflowRun.getCommitFiles` -> `space.workflowRun.commitFiles`, `spaceWorkflowRun.getCommitFileDiff` -> `space.workflowRun.commitFileDiff`, and `spaceWorkflowRun.listArtifacts` -> `space.workflowRun.artifacts`.
+- Existing artifact cache invalidation maps as follows during migration: `space.artifactCache.updated` remains the compatibility event for background gate-artifact and commit-cache writes until producers publish a target `space.workflowRun.artifactCache.updated` invalidation event.
 - Existing hook RPCs map as follows during migration: `spaceWorkflowRun.listHookStates` -> `space.workflowRun.hookStates`, `spaceWorkflowRun.approveHook` -> `space.workflowHook.approve`, and `spaceWorkflowRun.retryHook` -> `space.workflowHook.retry`.
 - Existing hook-state update events map as follows during migration: `space.hookState.updated` remains the compatibility event for hook approval, retry, and runtime hook-state writes until producers publish a target `space.workflowHook.updated` or read-model invalidation event.
 - Existing workflow-run control RPCs map as follows during migration: `spaceWorkflowRun.cancel` -> `space.workflowRun.cancel`, `spaceWorkflowRun.approveGate` -> `space.workflowGate.approve`, and any reject/deny variant must map to the same gate command with an explicit decision payload.
@@ -511,6 +537,10 @@ Forge relationship:
 - Forge rollups update recurring goals. The goal store should update from `space.goal.updated`, not from `SpaceForge` manually calling `spaceStore.upsertGoal`.
 - Goal-linked Forge scopes should be resolved through `forge.scope.list({ spaceGoalId })` or a denormalized read model, not ad hoc component logic.
 
+Notes:
+
+- Existing goal RPCs map as follows during migration: `spaceGoal.list` -> `space.goal.list`, `spaceGoal.get` -> `space.goal.get`, `spaceGoal.create` -> `space.goal.create`, `spaceGoal.update` -> `space.goal.update`, `spaceGoal.pause` -> `space.goal.pause`, `spaceGoal.resume` -> `space.goal.resume`, `spaceGoal.listEvents` -> `space.goal.events`, and `spaceGoal.createImmediateTask` -> `space.goal.createImmediateTask`.
+
 ### 7.8 TaskScheduleStore
 
 Owns task schedules.
@@ -536,6 +566,7 @@ Events:
 
 Notes:
 
+- Existing task schedule RPCs map as follows during migration: `taskSchedule.list` -> `space.taskSchedule.list`, `taskSchedule.create` -> `space.taskSchedule.create`, `taskSchedule.pause` -> `space.taskSchedule.pause`, `taskSchedule.resume` -> `space.taskSchedule.resume`, and `taskSchedule.delete` -> `space.taskSchedule.delete`.
 - The current `space.schedule.updated` event should be normalized under the schedule contract namespace. During migration, schedule producers or the compatibility bridge must fan out `space.schedule.updated` to the target `space.taskSchedule.created`, `space.taskSchedule.updated`, or `space.taskSchedule.deleted` events when the operation is known; otherwise `TaskScheduleStore` must treat the legacy aggregate event as an invalidation for `space.taskSchedule.list`.
 
 ### 7.9 SpaceSessionStore
@@ -747,6 +778,9 @@ This policy should be implemented once in a small helper rather than repeatedly 
 
 | Current surface | Target query |
 | --- | --- |
+| `state.global.snapshot` | `state.global.snapshot` |
+| `state.system` | `state.system` subscribed |
+| `state.settings` | `state.settings` subscribed |
 | `space.listWithTasks` | `space.listWithActivitySummary` |
 | `space.overview` | `space.overview` |
 | `spaceTask.list` | `space.task.group` / `space.task.list` |

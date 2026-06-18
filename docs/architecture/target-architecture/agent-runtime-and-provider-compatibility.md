@@ -338,6 +338,8 @@ The gateway should expose fabric commands and events over time:
 | `agentRuntime.reference.resolve` | query | Resolve a selected reference for hover previews or message context. |
 | `agentRuntime.capabilities.resolve` | query | Validate runtime/provider/model compatibility. |
 | `agentRuntime.event.stream` | event | Normalized output, tool, status, and error events. |
+| `agentRuntime.context.updated` | event | Fast context-window/context-source update for chat indicators. |
+| `agentRuntime.retryAttempt` | event | Runtime retry-attempt state for SDK retry UI. |
 
 The session collection contracts preserve top-level chat lifecycle RPCs while runtime execution moves
 behind Agent Runtime. The compatibility gateway maps `session.create`, `session.list`, `session.get`,
@@ -351,6 +353,12 @@ questions, context, and model/runtime status; `agentRuntime.session.status.get` 
 that full read model. The compatibility gateway maps `state.session`, `state.sessions`,
 `session.thinking.get`, and `session.thinking.set` to the target state/thinking contracts until the chat
 view and session collection stores migrate.
+
+Session-scoped event aliases must also survive cleanup until the chat store migrates. `context.updated`
+maps to `agentRuntime.context.updated` for fast context indicator refreshes, and
+`session.retryAttempt` maps to `agentRuntime.retryAttempt` for SDK retry-attempt UI state. These aliases
+can later collapse into `agentRuntime.event.stream` only after the client has typed reducers for the
+equivalent event payloads.
 
 `agentRuntime.mcpServers.list` preserves the current `session.listRuntimeMcpServers` surface. It returns in-process runtime SDK MCP servers and Space/task tool servers attached to the selected session; it should not be folded into coarse status if tool panels need names, scopes, and capability metadata without polling the full runtime state. `agentRuntime.session.mcp.list` separately preserves `session.mcp.list`, which returns effective configured MCP entries, enablement state, and skill linkage for the selected session.
 
