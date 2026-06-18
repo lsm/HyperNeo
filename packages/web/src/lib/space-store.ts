@@ -618,6 +618,8 @@ class SpaceStore {
     this.longHorizonAgentTemplates.value = [];
     this.workflows.value = [];
     this.workflowDetails.value = [];
+    this.workflowDetailsLoaded.value = false;
+    this.workflowDetailsPromise = null;
     this.workflowTemplates.value = [];
     this.nodeExecutions.value = [];
     this.runtimeState.value = null;
@@ -1098,7 +1100,12 @@ class SpaceStore {
   }
 
   /**
-   * Fetch workflow definitions for the space
+   * Fetch workflow summaries for the space. Summaries back the WorkflowList tab
+   * and anywhere only workflow metadata is needed. Full definitions (nodes,
+   * agents) are loaded separately by {@link ensureWorkflowDetails} to avoid
+   * flooding the hub with one spaceWorkflow.get per workflow on every config
+   * data load (which is also triggered by SpaceTaskPane, TaskAuxiliaryPanel,
+   * SpaceGoals, SpaceLongHorizonAgents, and reconnect refreshes).
    */
   private async fetchWorkflows(
     hub: Awaited<ReturnType<typeof connectionManager.getHub>>,
@@ -1111,34 +1118,72 @@ class SpaceStore {
           spaceId,
         }
       );
-      const workflows = result?.workflows ?? [];
-      // Avoid returning stale cached details on reconnect/refresh: clear the
-      // cache before the bulk fetch so every workflow gets a fresh RPC.
-      for (const workflow of workflows) {
-        this.workflowDetailCache.delete(workflow.id);
-        this.workflowDetailPromises.delete(workflow.id);
-        this.workflowDetailFetchGens.set(
-          workflow.id,
-          (this.workflowDetailFetchGens.get(workflow.id) ?? 0) + 1
-        );
-      }
-      this.workflows.value = workflows;
-      const details = await Promise.all(
-        workflows.map((workflow) => this.fetchWorkflowDetail(workflow.id))
-      );
-      // Guard against races: if the space switched, or workflows were updated
-      // or deleted while this batch was in flight, drop stale entries instead
-      // of overwriting event-applied state.
-      if (this.spaceId.value !== spaceId) return;
-      const currentWorkflowIds = new Set(this.workflows.value.map((workflow) => workflow.id));
-      this.workflowDetails.value = details.filter(
-        (workflow): workflow is SpaceWorkflow =>
-          workflow !== null && currentWorkflowIds.has(workflow.id)
-      );
+      this.workflows.value = result?.workflows ?? [];
     } catch (err) {
       logger.error('Failed to fetch workflows:', err);
-      if (this.spaceId.value === spaceId) this.workflowDetails.value = [];
     }
+  }
+
+  /**
+   * In-flight promise for ensureWorkflowDetails to dedupe concurrent callers.
+   */
+  private workflowDetailsPromise: Promise<void> | null = null;
+
+  /**
+   * Whether full workflow definitions have been loaded for the current space.
+   * Reset on space switch; only the Configure Agents view relies on this.
+   */
+  readonly workflowDetailsLoaded = signal<boolean>(false);
+
+  /**
+   * Bulk-load full workflow definitions (nodes + agent slots) for the Configure
+   * Agents view. Issues one spaceWorkflow.get per workflow — intentionally
+   * separated from ensureConfigData so summary-only consumers don't pay the
+   * cost. Idempotent: returns immediately if already loaded for this space.
+   * Callers: SpaceConfigurePage. Event handlers keep results fresh after load.
+   */
+  async ensureWorkflowDetails(): Promise<void> {
+    if (this.workflowDetailsLoaded.value) return;
+    if (this.workflowDetailsPromise) return this.workflowDetailsPromise;
+
+    const spaceId = this.spaceId.value;
+    if (!spaceId) return;
+
+    // Snapshot the workflow ids at request time so concurrent updates/deletes
+    // can be detected before assignment.
+    const requestedIds = new Set(this.workflows.value.map((workflow) => workflow.id));
+
+    this.workflowDetailsPromise = (async (): Promise<void> => {
+      try {
+        // Clear cache + bump generations so every workflow gets a fresh RPC
+        // (reconnect/refresh path may have populated the cache from a prior
+        // load and we want to reflect server-side changes).
+        for (const id of requestedIds) {
+          this.workflowDetailCache.delete(id);
+          this.workflowDetailPromises.delete(id);
+          this.workflowDetailFetchGens.set(id, (this.workflowDetailFetchGens.get(id) ?? 0) + 1);
+        }
+        const details = await Promise.all(
+          [...requestedIds].map((id) => this.fetchWorkflowDetail(id))
+        );
+        // Drop the batch if the space switched while we were fetching, or if
+        // the workflow set changed (the event handlers have already patched
+        // workflowDetails; don't overwrite them with stale fetches).
+        if (this.spaceId.value !== spaceId) return;
+        const currentIds = new Set(this.workflows.value.map((workflow) => workflow.id));
+        this.workflowDetails.value = details.filter(
+          (workflow): workflow is SpaceWorkflow => workflow !== null && currentIds.has(workflow.id)
+        );
+        this.workflowDetailsLoaded.value = true;
+      } catch (err) {
+        logger.error('Failed to fetch workflow details:', err);
+        if (this.spaceId.value === spaceId) this.workflowDetails.value = [];
+      } finally {
+        this.workflowDetailsPromise = null;
+      }
+    })();
+
+    return this.workflowDetailsPromise;
   }
 
   /**
