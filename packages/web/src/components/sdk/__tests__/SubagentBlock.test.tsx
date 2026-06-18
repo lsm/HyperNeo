@@ -804,11 +804,11 @@ describe('SubagentBlock', () => {
     it('should hide nested system messages in the centralized HIDDEN set', () => {
       const input = createAgentInput('Explore', 'Find files', 'Search for test files');
       const nestedMessages = [
-        createNestedSystemMessage('permission_denied', {
-          reason: 'requires approval',
-        }),
         createNestedSystemMessage('task_started', {
           description: 'nested task',
+        }),
+        createNestedSystemMessage('task_progress', {
+          description: 'progress update',
         }),
       ];
 
@@ -820,8 +820,8 @@ describe('SubagentBlock', () => {
       fireEvent.click(button);
 
       // Hidden subtypes must not surface anywhere in the nested timeline.
-      expect(container.textContent).not.toContain('permission_denied');
       expect(container.textContent).not.toContain('task_started');
+      expect(container.textContent).not.toContain('task_progress');
     });
 
     it('should preserve nested SDK system notices without specialized renderers', () => {

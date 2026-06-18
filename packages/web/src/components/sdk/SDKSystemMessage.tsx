@@ -26,6 +26,7 @@ import type {
   SDKMessage,
   SDKModelRefusalFallbackMessage,
   SDKNotificationMessage,
+  SDKPermissionDeniedMessage,
   SDKFilesPersistedEvent,
   SDKPluginInstallMessage,
   SDKTaskNotificationMessage,
@@ -112,6 +113,11 @@ export function SDKSystemMessage({ message, isLiveTail = false }: Props) {
     return <ModelRefusalFallbackMessage message={message} />;
   }
 
+  // Permission denied
+  if (message.subtype === 'permission_denied') {
+    return <PermissionDeniedMessage message={message as SDKPermissionDeniedMessage} />;
+  }
+
   // Task notification (subagent completion)
   if (message.subtype === 'task_notification') {
     return <TaskNotificationMessage message={message as SDKTaskNotificationMessage} />;
@@ -142,7 +148,9 @@ export function SDKSystemMessage({ message, isLiveTail = false }: Props) {
   // Plugin install - render on failed/completed, hide started
   if (message.subtype === 'plugin_install') {
     const pluginMsg = message as SDKPluginInstallMessage;
-    if (pluginMsg.status === 'started') return null; // Hide started
+    // Hide 'started' (bracket open) and 'installed' (per-plugin success noise in
+    // multi-plugin syncs). Render only 'failed' and the terminal 'completed'.
+    if (pluginMsg.status === 'started' || pluginMsg.status === 'installed') return null;
     return <PluginInstallMessage message={pluginMsg} />;
   }
 
@@ -223,6 +231,23 @@ function ModelRefusalFallbackMessage({ message }: { message: SDKModelRefusalFall
       <div class="mt-2 text-xs text-amber-700 dark:text-amber-300">
         {message.original_model} → {message.fallback_model}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Permission Denied Message - Shows when a tool call is auto-denied by mode, rule, or canUseTool.
+ * The SDK emits this when NeoKai's permissionMode/disallowedTools config blocks a tool call.
+ */
+function PermissionDeniedMessage({ message }: { message: SDKPermissionDeniedMessage }) {
+  return (
+    <div class="my-2 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-900 dark:border-rose-800 dark:bg-rose-950/30 dark:text-rose-100">
+      <div class="mb-1 font-semibold">Permission denied</div>
+      <div class="font-mono text-xs">{message.tool_name}</div>
+      {message.decision_reason && (
+        <div class="mt-1 text-xs text-rose-700 dark:text-rose-300">{message.decision_reason}</div>
+      )}
+      <div class="mt-1 text-xs text-rose-600 dark:text-rose-400">{message.message}</div>
     </div>
   );
 }
