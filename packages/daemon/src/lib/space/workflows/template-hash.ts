@@ -73,6 +73,12 @@ interface WorkflowFingerprint {
    */
   nodeCodexPollIntervals: string[];
   /**
+   * Node-level Codex review bot timeouts (seconds), sorted. Format:
+   * `<nodeName>|<seconds>`. Empty string when absent. Detects changes to
+   * custom per-node codex reaction-check timeouts.
+   */
+  nodeCodexTimeouts: string[];
+  /**
    * Legacy workflow-level post-approval route. Kept in the fingerprint so
    * clearing old template-level routes also triggers a re-stamp.
    */
@@ -202,6 +208,12 @@ export function buildWorkflowFingerprint(workflow: SpaceWorkflow): WorkflowFinge
     .map((n) => `${n.name}|${n.codexPollIntervalMs}`)
     .sort();
 
+  // Serialize node-level Codex review bot timeouts (seconds).
+  const nodeCodexTimeouts = workflow.nodes
+    .filter((n) => n.codexTimeoutSeconds)
+    .map((n) => `${n.name}|${n.codexTimeoutSeconds}`)
+    .sort();
+
   // Serialize legacy workflow-level post-approval route.
   const legacyPostApproval = workflow.postApproval
     ? `${workflow.postApproval.targetAgent}|${workflow.postApproval.instructions ?? ''}`
@@ -219,6 +231,7 @@ export function buildWorkflowFingerprint(workflow: SpaceWorkflow): WorkflowFinge
     nodePostApproval,
     nodeCodexFlags,
     nodeCodexPollIntervals,
+    nodeCodexTimeouts,
     legacyPostApproval,
   };
 }

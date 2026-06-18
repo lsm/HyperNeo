@@ -1150,8 +1150,9 @@ export function NodeConfigPanel({
             <span class="font-medium">Require Codex approval</span>
           </label>
           <p class="mt-2 text-xs leading-5 text-gray-400">
-            When enabled, approval gates on channels from this node also require a codex[bot] +1
-            reaction before opening.
+            When enabled, approval gates on channels from this node also require a Codex bot +1
+            reaction before opening. The matcher accepts any GitHub App bot whose login contains
+            "codex" (e.g. codex[bot] or chatgpt-codex-connector[bot]).
           </p>
           {step.requireCodexApproval && (
             <div class="mt-3 space-y-1.5">

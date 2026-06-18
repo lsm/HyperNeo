@@ -555,8 +555,8 @@ function findInModels(models: ModelInfo[], idOrAlias: string): ModelInfo | undef
 
   // 5. Provider-accepted aliases. These are user/config spellings that should
   // pass validation and resolve metadata. Do NOT use sdkModelIds here: those are
-  // SDK-reported bridge aliases (e.g. Codex's claude-opus-4-7) and must not
-  // become user-selectable/provider-accepted IDs.
+  // model IDs reported by the provider's SDK (may differ from user-selectable IDs)
+  // and must not become user-selectable/provider-accepted IDs.
   if (!found) {
     found = models.find((m) =>
       m.providerAliases?.some((alias) => alias.toLowerCase() === normalized)
