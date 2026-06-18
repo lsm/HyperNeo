@@ -49,6 +49,8 @@ export interface NodeDraft {
   requireCodexApproval?: boolean;
   /** Custom poll interval (ms) for the codex review bot. */
   codexPollIntervalMs?: number;
+  /** Custom timeout (seconds) for the codex review bot reaction check. */
+  codexTimeoutSeconds?: number;
 }
 
 // ============================================================================

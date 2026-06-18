@@ -216,10 +216,19 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     success: boolean;
   } | null = null;
 
+  /**
+   * Cached credential-probe result keyed by the bridge auth cache key so
+   * repeated `providers.test` calls don't re-probe within a short window.
+   */
+  private readonly probeCache = new Map<string, { at: number; result: Promise<void> }>();
+  private static readonly PROBE_TTL_MS = 30_000;
+  private static readonly PROBE_TIMEOUT_MS = 5000;
+
   constructor(
     private readonly env: Record<string, string | undefined> = process.env,
     authDir?: string,
-    codexAuthDir?: string
+    codexAuthDir?: string,
+    private readonly fetchImpl: typeof fetch = fetch
   ) {
     this.authPath = path.join(authDir ?? path.join(os.homedir(), '.neokai'), 'auth.json');
     this.codexAuthPath = path.join(codexAuthDir ?? path.join(os.homedir(), '.codex'), 'auth.json');
@@ -501,12 +510,116 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     return { isAuthenticated: true, method: 'oauth' };
   }
 
+  /**
+   * Verify the resolved Codex credentials actually work against the OpenAI
+   * upstream by sending a minimal `/responses` request. The request URL is
+   * chosen by auth source so both API-key mode (`api.openai.com/v1`) and
+   * ChatGPT OAuth mode (`chatgpt.com/backend-api/codex`) are exercised
+   * through their real upstream paths.
+   *
+   * The request body differs per auth source: API-key mode sends
+   * `max_output_tokens: 1` to keep the probe cheap, but the ChatGPT Codex
+   * backend hard-rejects that field (see
+   * `openai-responses-bridge/server.ts:1170-1176` —
+   * `includeMaxOutputTokens: !isChatgptOAuth`), so the OAuth branch omits
+   * it and relies on the upstream's default.
+   *
+   * @throws {Error} when credentials are rejected, the upstream is
+   *   unreachable, or the request times out.
+   */
+  private async verifyCredentials(auth: OpenAIResponsesBridgeAuth): Promise<void> {
+    const cacheKey = this.bridgeAuthCacheKey(auth);
+    const cached = this.probeCache.get(cacheKey);
+    if (cached && Date.now() - cached.at < AnthropicToCodexBridgeProvider.PROBE_TTL_MS) {
+      await cached.result;
+      return;
+    }
+    const result = this.probeUpstream(auth)
+      .then(() => undefined)
+      .catch((err) => {
+        this.probeCache.delete(cacheKey);
+        throw err;
+      });
+    this.probeCache.set(cacheKey, { at: Date.now(), result });
+    await result;
+  }
+
+  private async probeUpstream(auth: OpenAIResponsesBridgeAuth): Promise<void> {
+    const isChatgptOAuth = auth.source === 'chatgpt_oauth';
+    const baseUrl = isChatgptOAuth
+      ? 'https://chatgpt.com/backend-api/codex'
+      : 'https://api.openai.com/v1';
+    const url = `${baseUrl}/responses`;
+
+    const headers: Record<string, string> = {
+      'content-type': 'application/json',
+      authorization: `Bearer ${auth.apiKey}`,
+    };
+    if (isChatgptOAuth && auth.accountId) {
+      // Match buildOpenAIHeaders in openai-responses-bridge/server.ts:648
+      // (capital `ID`). The gateway is case-sensitive on this header; the
+      // bridge's own traffic uses capital ID, so the probe must too or it
+      // will 4xx and false-mark the provider unhealthy.
+      headers['ChatGPT-Account-ID'] = auth.accountId;
+    }
+
+    // Build request body. ChatGPT Codex backend hard-rejects
+    // `max_output_tokens` and `parallel_tool_calls` (see
+    // openai-responses-bridge/server.ts:1170-1176 — `includeMaxOutputTokens:
+    // !isChatgptOAuth`). Only API-key mode accepts the field.
+    const body: Record<string, unknown> = {
+      model: 'gpt-5.4-mini',
+      input: [
+        {
+          type: 'message',
+          role: 'user',
+          content: [{ type: 'input_text', text: '.' }],
+        },
+      ],
+      stream: false,
+    };
+    if (!isChatgptOAuth) {
+      body.max_output_tokens = 1;
+    }
+
+    let response: Response;
+    try {
+      response = await this.fetchImpl(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(AnthropicToCodexBridgeProvider.PROBE_TIMEOUT_MS),
+      });
+    } catch (err) {
+      if (err instanceof Error && err.name === 'TimeoutError') {
+        throw new Error(
+          `Codex probe timed out after ${AnthropicToCodexBridgeProvider.PROBE_TIMEOUT_MS}ms`
+        );
+      }
+      const detail = err instanceof Error ? err.message : String(err);
+      throw new Error(`Codex probe failed: ${detail}`);
+    }
+
+    if (response.status === 401 || response.status === 403) {
+      throw new Error(`Codex credentials rejected (HTTP ${response.status})`);
+    }
+    if (!response.ok) {
+      throw new Error(`Codex probe failed (HTTP ${response.status})`);
+    }
+  }
+
   async getModels(): Promise<ModelInfo[]> {
     // Use isAvailable() (which includes env-var credentials via getBridgeAuth()) so
     // that the model picker works for all credential sources.  getAuthStatus() is
     // UI-only: it gates the Login/Logout buttons but must not hide models from users
     // who authenticate via OPENAI_API_KEY env vars.
-    if (!(await this.isAvailable())) return [];
+    const auth = await this.getBridgeAuth();
+    if (!auth) return [];
+    // Probe upstream so `providers.test` actually verifies the credentials work.
+    // The model-service layer catches and swallows errors from getModels(), so a
+    // failed probe does not break the model picker — it just hides the Codex
+    // models until the credentials are fixed.
+    await this.verifyCredentials(auth);
     return ANTHROPIC_CODEX_MODELS.map((m) => ({ ...m, thinkingModes: 'granular' as const }));
   }
 

@@ -17,6 +17,7 @@ import type {
   ModelTier,
 } from '@neokai/shared/provider';
 import type { ModelInfo } from '@neokai/shared';
+import { probeAnthropicCompatCredentials } from './shared/credential-probe.js';
 
 /**
  * GLM provider implementation
@@ -142,10 +143,21 @@ export class GlmProvider implements Provider {
 
   private credentials: ProviderCredentials | null = null;
 
-  constructor(private readonly env: NodeJS.ProcessEnv = process.env) {}
+  /**
+   * Cached credential-probe result keyed by `{baseUrl}::{apiKey}` so repeated
+   * `providers.test` calls don't re-probe within a short window.
+   */
+  private readonly probeCache = new Map<string, { at: number; result: Promise<void> }>();
+  private static readonly PROBE_TTL_MS = 30_000;
+
+  constructor(
+    private readonly env: NodeJS.ProcessEnv = process.env,
+    private readonly fetchImpl: typeof fetch = fetch
+  ) {}
 
   setCredentials(credentials: ProviderCredentials): void {
     this.credentials = credentials;
+    this.probeCache.clear();
   }
 
   getCredentials(): ProviderCredentials | null {
@@ -182,12 +194,45 @@ export class GlmProvider implements Provider {
   }
 
   /**
+   * Verify the configured GLM API key actually works against the upstream
+   * Anthropic-compatible endpoint. Sends a minimal `/v1/messages` request
+   * with `max_tokens: 1` so the probe never burns completion tokens.
+   *
+   * @throws {Error} when the key is rejected, the upstream is unreachable,
+   *   or the request times out.
+   */
+  private async verifyCredentials(baseUrl: string, apiKey: string): Promise<void> {
+    const cacheKey = `${baseUrl}::${apiKey}`;
+    const cached = this.probeCache.get(cacheKey);
+    if (cached && Date.now() - cached.at < GlmProvider.PROBE_TTL_MS) {
+      await cached.result;
+      return;
+    }
+    const result = probeAnthropicCompatCredentials({
+      baseUrl,
+      apiKey,
+      model: 'glm-5-turbo',
+      providerName: 'GLM',
+      fetchImpl: this.fetchImpl,
+    })
+      .then(() => undefined)
+      .catch((err) => {
+        this.probeCache.delete(cacheKey);
+        throw err;
+      });
+    this.probeCache.set(cacheKey, { at: Date.now(), result });
+    await result;
+  }
+
+  /**
    * Get available models from GLM
-   * Returns static model list (GLM doesn't have dynamic model listing)
+   * Returns static model list after verifying the API key works upstream.
    */
   async getModels(): Promise<ModelInfo[]> {
-    // Only return models if API key is available
-    return this.isAvailable() ? GlmProvider.MODELS : [];
+    const apiKey = this.getApiKey();
+    if (!apiKey) return [];
+    await this.verifyCredentials(GlmProvider.BASE_URL, apiKey);
+    return GlmProvider.MODELS;
   }
 
   /**

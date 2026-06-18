@@ -281,21 +281,23 @@ const PD_PLANNING_PROMPT =
   'URL must be reasserted after every revision.';
 
 const CODEX_REACTION_APPROVAL_GUIDANCE =
-  'After posting your approval review, verify codex[bot] reaction status before ' +
-  'closing or handing off. Use `gh api repos/{owner}/{repo}/issues/{number}/reactions` ' +
-  'and inspect reactions from `user.login == "codex[bot]"`: content `+1` means ' +
-  'Codex passed, content `eyes` means Codex is still reviewing, and no codex[bot] ' +
-  'reaction means it has not started or has not reported yet. If codex[bot] has not ' +
-  'reacted at all, comment `@codex review` on the PR to trigger its review, then wait ' +
-  'for an `eyes` or `+1` reaction. ' +
+  'After posting your approval review, verify the Codex review bot reaction status ' +
+  'before closing or handing off. Use `gh api repos/{owner}/{repo}/issues/{number}/reactions` ' +
+  'and inspect reactions from any login containing `codex` (case-insensitive — GitHub ' +
+  'ships multiple variants such as `codex[bot]` and `chatgpt-codex-connector[bot]`, and ' +
+  'the matcher accepts any of them): content `+1` means Codex passed, content `eyes` ' +
+  'means Codex is still reviewing, and no such reaction means it has not started or has ' +
+  'not reported yet. If no codex login has reacted at all, comment `@codex review` on ' +
+  'the PR to trigger its review, then wait for an `eyes` or `+1` reaction. ' +
   'Only a +1 newer than the current PR head commit counts — after a revision push, ' +
   'an older +1 from a previous cycle is stale and will not satisfy the hook. If the +1 ' +
   'looks old, retrigger Codex with a fresh `@codex review` comment. ' +
-  'Send the approval handoff to start the Codex timeout (10 minutes). If the hook ' +
-  'blocks because Codex has not yet posted `+1`, poll every 60 seconds and retry the ' +
-  'handoff. If codex[bot] still has not posted `+1` after the timeout, proceed ' +
-  'only with a warning recorded in your result artifact. Do not close the task ' +
-  'before codex[bot] has `+1` unless that timeout has elapsed.';
+  'Send the approval handoff to start the Codex timeout window (2 hours by default; ' +
+  'configurable per workflow node). If the hook blocks because Codex has not yet posted ' +
+  '`+1`, poll every 60 seconds and retry the handoff. If the bot still has not posted ' +
+  '`+1` after the timeout window elapses, proceed only with a warning recorded in your ' +
+  'result artifact. Do not close the task before the Codex bot has `+1` unless that ' +
+  'timeout window has elapsed.';
 
 const PD_PLAN_REVIEW_PROMPT =
   'You are one of four independent Plan Reviewers. Review the plan PR through your lens before ' +
@@ -404,8 +406,9 @@ const FULLSTACK_REVIEW_PROMPT =
   'review quality and severity.\n\n' +
   'Review is not the end node: approve_task/submit_for_approval are unavailable. Your ' +
   'terminal hand-off is sending `data: { approved: true, pr_url: "<url>" }` to QA after an ' +
-  'APPROVE verdict with zero P0-P3 findings. Send the handoff to start the 10-minute ' +
-  'Codex timeout, then wait for codex[bot] `+1` or timeout before proceeding. ' +
+  'APPROVE verdict with zero P0-P3 findings. Send the handoff to start the Codex review ' +
+  'timeout window (2 hours by default), then wait for a Codex bot `+1` reaction or the ' +
+  'timeout before proceeding. ' +
   CODEX_REACTION_APPROVAL_GUIDANCE +
   ' If findings remain, do not send the QA handoff; send actionable feedback to Coding and stop. ' +
   'Never set a PR to auto-merge.';
@@ -1118,7 +1121,7 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
               'Expected outputs: QA handoff or actionable feedback.\n\n' +
               'Steps:\n' +
               '1. Review diff quality, correctness, and test coverage\n' +
-              '2. If approved: send_message to QA with data: { approved: true, pr_url: "<url>" } to start the 10-minute Codex timeout, then wait for codex[bot] +1 or timeout\n' +
+              '2. If approved: send_message to QA with data: { approved: true, pr_url: "<url>" } to start the Codex review timeout window (2 hours by default), then wait for a Codex bot +1 reaction or the timeout\n' +
               '3. If changes needed: send clear feedback to Coding',
           },
         },
@@ -1200,7 +1203,8 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
     {
       id: 'review-approval-gate',
       label: 'Review',
-      description: 'Reviewer approved the PR for QA and codex[bot] review passed or timed out.',
+      description:
+        'Reviewer approved the PR for QA and the Codex review bot reaction check passed or timed out.',
       fields: [
         {
           name: 'approved',
@@ -1354,7 +1358,12 @@ export function mergeNodeStructuralFieldsFromTemplate(
   existingNodes: WorkflowNode[],
   templateNodes: Pick<
     WorkflowNode,
-    'name' | 'agents' | 'postApproval' | 'requireCodexApproval' | 'codexPollIntervalMs'
+    | 'name'
+    | 'agents'
+    | 'postApproval'
+    | 'requireCodexApproval'
+    | 'codexPollIntervalMs'
+    | 'codexTimeoutSeconds'
   >[],
   resolveAgentId: (name: string) => string | undefined
 ): WorkflowNode[] {
@@ -1404,6 +1413,12 @@ export function mergeNodeStructuralFieldsFromTemplate(
       codexPollIntervalMs: templateNode
         ? templateNode.codexPollIntervalMs
         : node.codexPollIntervalMs,
+      // Preserve an existing operator-/RPC-configured codexTimeoutSeconds when
+      // the template does not explicitly set an override. Built-in templates
+      // leave this field undefined, so blindly taking templateNode.codexTimeoutSeconds
+      // would silently delete any non-default timeout on a seeded node during
+      // restamp and revert the Codex hook to the global default window.
+      codexTimeoutSeconds: templateNode?.codexTimeoutSeconds ?? node.codexTimeoutSeconds,
       agents: node.agents.map((agent) => {
         const key = `${node.name}::${agent.name}`;
         const templateAgent = templateAgentsByKey.get(key);
@@ -1599,20 +1614,55 @@ const CURRENT_FULLSTACK_CODING_STEP_PROMPT =
   '`data: { pr_url: "<url>" }`; `save_artifact` alone will not deliver the handoff\n';
 const CURRENT_FULLSTACK_REVIEW_HANDOFF_PROMPT =
   'terminal hand-off is sending `data: { approved: true, pr_url: "<url>" }` to QA after an ' +
-  'APPROVE verdict with zero P0-P3 findings. Send the handoff to start the 10-minute ' +
-  'Codex timeout, then wait for codex[bot] `+1` or timeout before proceeding. ';
+  'APPROVE verdict with zero P0-P3 findings. Send the handoff to start the Codex review ' +
+  'timeout window (2 hours by default), then wait for a Codex bot `+1` reaction or the ' +
+  'timeout before proceeding. ';
 const RETIRED_FULLSTACK_REVIEW_HANDOFF_PROMPT =
   'terminal handoff is to write `review-approval-gate` with approved=true after an APPROVE ' +
   'verdict with zero P0-P3 findings. Wait for codex[bot] `+1` or timeout before proceeding. ';
 const RETIRED_HARDCODED_FULLSTACK_REVIEW_HANDOFF_PROMPT =
   'terminal handoff is `send_message(target="QA", message="<approved>", data: { approved: true })` ' +
   'after an APPROVE verdict with zero P0-P3 findings. Wait for codex[bot] `+1` or timeout before proceeding. ';
+// Pre-fix send_message Fullstack Review handoff (the variant that shipped in
+// production immediately before this PR). Distinguished from
+// RETIRED_FULLSTACK_REVIEW_HANDOFF_PROMPT (older gate-writing handoff) by
+// the send_message phrasing and the "10-minute Codex timeout" + `codex[bot]`
+// wording. Persisted prompts from seeded spaces that use this exact sentence
+// need a dedicated patch variant so restamp can swap them to the current
+// 2-hour / Codex-bot wording.
+const RETIRED_PRE_FIX_FULLSTACK_REVIEW_HANDOFF_PROMPT =
+  'terminal hand-off is sending `data: { approved: true, pr_url: "<url>" }` to QA after an ' +
+  'APPROVE verdict with zero P0-P3 findings. Send the handoff to start the 10-minute ' +
+  'Codex timeout, then wait for codex[bot] `+1` or timeout before proceeding. ';
 const RETIRED_FULLSTACK_CODING_STEP_PROMPT =
   '4. Write code-pr-gate with field pr_url so Review can activate\n';
 const RETIRED_HARDCODED_FULLSTACK_CODING_STEP_PROMPT =
   '4. Hand off to Review by calling ' +
   '`send_message(target="Review", message="<short summary>", data: { pr_url: "<url>" })`; ' +
   '`save_artifact` alone will not open `code-pr-gate`\n';
+
+// Retired shared Codex approval guidance (pre codex-bot-rename + 2h timeout
+// fix). Used by patchKnownBuiltInPromptDrift to recognize persisted Plan
+// Review and Fullstack Review agent prompts that still cite `codex[bot]` and
+// the old "10 minutes" timeout, and swap them to the current guidance during
+// restamp. Without this, existing seeded spaces keep telling reviewers the
+// window is 10 minutes while the migrated gate/hook now blocks for 2 hours.
+const RETIRED_CODEX_REACTION_APPROVAL_GUIDANCE =
+  'After posting your approval review, verify codex[bot] reaction status before ' +
+  'closing or handing off. Use `gh api repos/{owner}/{repo}/issues/{number}/reactions` ' +
+  'and inspect reactions from `user.login == "codex[bot]"`: content `+1` means ' +
+  'Codex passed, content `eyes` means Codex is still reviewing, and no codex[bot] ' +
+  'reaction means it has not started or has not reported yet. If codex[bot] has not ' +
+  'reacted at all, comment `@codex review` on the PR to trigger its review, then wait ' +
+  'for an `eyes` or `+1` reaction. ' +
+  'Only a +1 newer than the current PR head commit counts — after a revision push, ' +
+  'an older +1 from a previous cycle is stale and will not satisfy the hook. If the +1 ' +
+  'looks old, retrigger Codex with a fresh `@codex review` comment. ' +
+  'Send the approval handoff to start the Codex timeout (10 minutes). If the hook ' +
+  'blocks because Codex has not yet posted `+1`, poll every 60 seconds and retry the ' +
+  'handoff. If codex[bot] still has not posted `+1` after the timeout, proceed ' +
+  'only with a warning recorded in your result artifact. Do not close the task ' +
+  'before codex[bot] has `+1` unless that timeout has elapsed.';
 
 const BUILT_IN_PROMPT_PATCH_VARIANTS = [
   [
@@ -1633,6 +1683,31 @@ const BUILT_IN_PROMPT_PATCH_VARIANTS = [
   ],
   [[CURRENT_FULLSTACK_REVIEW_HANDOFF_PROMPT, RETIRED_FULLSTACK_REVIEW_HANDOFF_PROMPT]],
   [[CURRENT_FULLSTACK_REVIEW_HANDOFF_PROMPT, RETIRED_HARDCODED_FULLSTACK_REVIEW_HANDOFF_PROMPT]],
+  // Guidance-only swap: covers PD_PLAN_REVIEW_PROMPT and any other persisted
+  // prompt that embeds the retired shared Codex guidance but none of the
+  // fullstack handoff snippets.
+  [[CODEX_REACTION_APPROVAL_GUIDANCE, RETIRED_CODEX_REACTION_APPROVAL_GUIDANCE]],
+  // Fullstack review handoff + guidance swap: covers FULLSTACK_REVIEW_PROMPT,
+  // which embeds both snippets.
+  [
+    [CURRENT_FULLSTACK_REVIEW_HANDOFF_PROMPT, RETIRED_FULLSTACK_REVIEW_HANDOFF_PROMPT],
+    [CODEX_REACTION_APPROVAL_GUIDANCE, RETIRED_CODEX_REACTION_APPROVAL_GUIDANCE],
+  ],
+  [
+    [CURRENT_FULLSTACK_REVIEW_HANDOFF_PROMPT, RETIRED_HARDCODED_FULLSTACK_REVIEW_HANDOFF_PROMPT],
+    [CODEX_REACTION_APPROVAL_GUIDANCE, RETIRED_CODEX_REACTION_APPROVAL_GUIDANCE],
+  ],
+  // Pre-fix production variant: persisted Fullstack Review prompts seeded
+  // immediately before this PR used the send_message handoff with the old
+  // "10-minute Codex timeout" + codex[bot] wording AND the old shared
+  // guidance. Cover that exact combination so restamp swaps both halves.
+  [
+    [CURRENT_FULLSTACK_REVIEW_HANDOFF_PROMPT, RETIRED_PRE_FIX_FULLSTACK_REVIEW_HANDOFF_PROMPT],
+    [CODEX_REACTION_APPROVAL_GUIDANCE, RETIRED_CODEX_REACTION_APPROVAL_GUIDANCE],
+  ],
+  // Handoff-only swap for the pre-fix variant (covers the rare case where
+  // guidance was already patched but handoff was not).
+  [[CURRENT_FULLSTACK_REVIEW_HANDOFF_PROMPT, RETIRED_PRE_FIX_FULLSTACK_REVIEW_HANDOFF_PROMPT]],
 ] as const;
 
 function patchKnownBuiltInPromptDrift<T extends WorkflowNodeAgentOverride | undefined>(

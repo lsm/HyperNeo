@@ -271,20 +271,27 @@ async function loadModelsFromProviders(): Promise<ModelInfo[]> {
     await waitForOptionalProviderRegistration(registry);
   }
   const providers = getAvailableProviders();
-  const allModels: ModelInfo[] = [];
 
-  for (const provider of providers) {
-    try {
+  // Fan out in parallel so a slow provider probe (Kimi, GLM, MiniMax, Codex,
+  // ACP, Custom Endpoint each do a 5s-bounded network probe in getModels())
+  // does not serialise behind the others. Promise.allSettled preserves the
+  // existing per-provider fault tolerance — one failing probe does not hide
+  // the rest of the list. Order is preserved by mapping back over the
+  // original `providers` array.
+  const results = await Promise.allSettled(
+    providers.map(async (provider) => {
       const available = await provider.isAvailable();
-      if (!available) continue;
+      if (!available) return [];
+      return provider.getModels();
+    })
+  );
 
-      const models = await provider.getModels();
-      allModels.push(...models);
-      /* v8 ignore next 2 */
-    } catch {
-      // Failed to load models from provider
-    }
-  }
+  const allModels: ModelInfo[] = [];
+  results.forEach((result) => {
+    /* v8 ignore next 2 */
+    if (result.status === 'fulfilled') allModels.push(...result.value);
+    // Rejections are swallowed — model picker shows whatever loaded.
+  });
 
   return allModels;
 }

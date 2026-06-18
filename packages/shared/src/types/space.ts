@@ -1990,6 +1990,15 @@ export interface WorkflowNode {
    * `requireCodexApproval` is true. Defaults to 300 000 (5 minutes).
    */
   codexPollIntervalMs?: number;
+  /**
+   * Custom timeout (seconds) for the codex review bot reaction check when
+   * `requireCodexApproval` is true. After this many seconds without a +1
+   * reaction since `cycle_start_at`, the gate is allowed to open with a
+   * `codex_bot_reaction: "timeout"` warning. Defaults to 7200 (2 hours) —
+   * Codex reviews on large PRs routinely take 20–30 minutes, so the previous
+   * 600s default timed out before the bot posted its +1.
+   */
+  codexTimeoutSeconds?: number;
 }
 
 /**
@@ -2015,6 +2024,11 @@ export interface WorkflowNodeInput {
    * `requireCodexApproval` is true. Defaults to 300 000 (5 minutes).
    */
   codexPollIntervalMs?: number;
+  /**
+   * Custom timeout (seconds) for the codex review bot reaction check when
+   * `requireCodexApproval` is true. See {@link WorkflowNode.codexTimeoutSeconds}.
+   */
+  codexTimeoutSeconds?: number;
 }
 
 /**
@@ -2480,6 +2494,11 @@ export interface ExportedWorkflowNode {
    * `requireCodexApproval` is true. Defaults to 300 000 (5 minutes).
    */
   codexPollIntervalMs?: number;
+  /**
+   * Custom timeout (seconds) for the codex review bot reaction check when
+   * `requireCodexApproval` is true. See {@link WorkflowNode.codexTimeoutSeconds}.
+   */
+  codexTimeoutSeconds?: number;
 }
 
 /**

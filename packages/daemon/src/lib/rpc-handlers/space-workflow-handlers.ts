@@ -112,6 +112,7 @@ function buildTemplateUpdateParams(
       ...(node.postApproval ? { postApproval: { ...node.postApproval } } : {}),
       ...(node.requireCodexApproval ? { requireCodexApproval: true } : {}),
       ...(node.codexPollIntervalMs ? { codexPollIntervalMs: node.codexPollIntervalMs } : {}),
+      ...(node.codexTimeoutSeconds ? { codexTimeoutSeconds: node.codexTimeoutSeconds } : {}),
     };
   });
 
