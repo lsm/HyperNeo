@@ -478,6 +478,7 @@ Provider and model settings stay contract-backed during MessageHub cleanup:
 | `provider.customEndpoint.delete` | command | Delete a saved custom endpoint and synchronized provider record. |
 | `provider.customEndpoint.models.list` | query | Probe an arbitrary custom endpoint for model discovery before it is saved. |
 | `provider.auth.list` | query | Preserve `auth.providers`. |
+| `provider.auth.status` | query | Preserve `auth.status` for focused NeoKai/Anthropic auth-state checks. |
 | `provider.auth.login` | command | Preserve `auth.login`. |
 | `provider.auth.logout` | command | Preserve `auth.logout`. |
 | `provider.auth.refresh` | command | Preserve `auth.refresh`. |

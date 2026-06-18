@@ -420,6 +420,9 @@ These contracts are internal first. Some can become public later after auth, sch
 | `space.workflowRun.blocked` | Durable. |
 | `space.workflowRun.reopened` | Durable. |
 | `space.workflowRun.needsAttention` | Durable. |
+| `space.workflowRun.retry` | Notification event for Space agents when a workflow run is scheduled or requested for retry. |
+| `space.agent.crashed` | Notification event for Space agents when a runtime agent crashes before normal failure handling completes. |
+| `space.task.awaitingApproval` | Notification event for Space agents when task or gate progress needs human approval. |
 | `space.workflowNodeExecution.created` | Durable enough to reconstruct pending/gated node execution history. |
 | `space.workflowNodeExecution.started` | Durable. |
 | `space.workflowNodeExecution.idle` | Durable. |

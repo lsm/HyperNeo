@@ -403,7 +403,7 @@ Notes:
 - Existing artifact cache invalidation maps as follows during migration: `space.artifactCache.updated` remains the compatibility event for background gate-artifact and commit-cache writes until producers publish a target `space.workflowRun.artifactCache.updated` invalidation event.
 - Existing hook RPCs map as follows during migration: `spaceWorkflowRun.listHookStates` -> `space.workflowRun.hookStates`, `spaceWorkflowRun.approveHook` -> `space.workflowHook.approve`, and `spaceWorkflowRun.retryHook` -> `space.workflowHook.retry`.
 - Existing hook-state update events map as follows during migration: `space.hookState.updated` remains the compatibility event for hook approval, retry, and runtime hook-state writes until producers publish a target `space.workflowHook.updated` or read-model invalidation event.
-- Existing workflow-run control RPCs map as follows during migration: `spaceWorkflowRun.cancel` -> `space.workflowRun.cancel`, `spaceWorkflowRun.approveGate` -> `space.workflowGate.approve`, and any reject/deny variant must map to the same gate command with an explicit decision payload.
+- Existing workflow-run control RPCs map as follows during migration: `spaceWorkflowRun.start` -> `space.workflowRun.start`, `spaceWorkflowRun.list` -> `space.workflowRun.list`, `spaceWorkflowRun.get` -> `space.workflowRun.get`, `spaceWorkflowRun.resume` -> `space.workflowRun.resumeBlocked`, `spaceWorkflowRun.cancel` -> `space.workflowRun.cancel`, `spaceWorkflowRun.approveGate` -> `space.workflowGate.approve`, and any reject/deny variant must map to the same gate command with an explicit decision payload.
 - Existing failure RPCs map as follows during migration: `spaceWorkflowRun.markFailed` -> `space.workflowRun.markFailed`. This command records unrecoverable runtime failures such as `agentCrash`, `maxIterationsReached`, or `nodeTimeout`; `space.workflowRun.resumeBlocked` is only for recovering an already blocked run and must not replace failure marking.
 - The canvas should depend on this store, not raw `spaceStore.nodeExecutions`.
 
@@ -566,7 +566,7 @@ Events:
 
 Notes:
 
-- Existing task schedule RPCs map as follows during migration: `taskSchedule.list` -> `space.taskSchedule.list`, `taskSchedule.create` -> `space.taskSchedule.create`, `taskSchedule.pause` -> `space.taskSchedule.pause`, `taskSchedule.resume` -> `space.taskSchedule.resume`, and `taskSchedule.delete` -> `space.taskSchedule.delete`.
+- Existing task schedule RPCs map as follows during migration: `taskSchedule.list` -> `space.taskSchedule.list`, `taskSchedule.get` -> `space.taskSchedule.get`, `taskSchedule.create` -> `space.taskSchedule.create`, `taskSchedule.update` -> `space.taskSchedule.update`, `taskSchedule.pause` -> `space.taskSchedule.pause`, `taskSchedule.resume` -> `space.taskSchedule.resume`, and `taskSchedule.delete` -> `space.taskSchedule.delete`.
 - The current `space.schedule.updated` event should be normalized under the schedule contract namespace. During migration, schedule producers or the compatibility bridge must fan out `space.schedule.updated` to the target `space.taskSchedule.created`, `space.taskSchedule.updated`, or `space.taskSchedule.deleted` events when the operation is known; otherwise `TaskScheduleStore` must treat the legacy aggregate event as an invalidation for `space.taskSchedule.list`.
 
 ### 7.9 SpaceSessionStore
