@@ -792,6 +792,7 @@ Runtime events that should be durable early:
 | `space.workflowRun.reopened` | terminal/blocked run reopened for valid follow-up activity |
 | `space.task.created` | task board/read model |
 | `space.task.updated` | task state/read model |
+| `space.workflowNodeExecution.created` | pending/gated node appears in runtime canvas/projection |
 | `space.workflowNodeExecution.started` | runtime canvas/projection |
 | `space.workflowNodeExecution.idle` | runtime canvas/projection |
 | `space.workflowNodeExecution.blocked` | runtime canvas/projection |

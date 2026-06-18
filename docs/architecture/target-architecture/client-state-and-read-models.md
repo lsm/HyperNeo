@@ -433,6 +433,8 @@ Commands:
 - `mcp.imports.refresh`
 - `externalEvents.extensions.setGlobalEnabled`
 - `space.github.config.set`
+- `space.github.enable`
+- `space.github.disable`
 - `space.github.watchedRepos.add`
 - `space.github.watchedRepos.remove`
 - `space.github.webhook.autoConfigure`
@@ -465,6 +467,7 @@ Notes:
 - Existing export/import RPCs map as follows during migration: `spaceExport.agents` -> `space.export.agents`, `spaceExport.bundle` -> `space.export.bundle`, `spaceExport.workflows` -> `space.export.workflows`, `spaceImport.preview` -> `space.import.preview`, and `spaceImport.execute` -> `space.import.execute`.
 - Existing long-horizon-agent RPCs map under the `space.longHorizonAgent.*` namespace: `spaceLongHorizonAgent.list`, `listBuiltInTemplates`, `create`, `update`, `delete`, `listReminders`, `createReminder`, `deleteReminder`, `listSubscriptions`, `createSubscription`, `updateSubscription`, and `deleteSubscription`.
 - Existing MCP settings paths map as follows during migration: `mcpEnablement.bySpace` -> `space.mcp.enablement.list`, `space.mcp.setEnabled` and `space.mcp.clearOverride` keep their command names, and `mcp.imports.refresh` keeps its global import-refresh command name.
+- Existing per-space GitHub source toggles remain explicit commands during migration: `space.github.enable` enables the GitHub external-event source for a Space and `space.github.disable` disables it. If a later implementation folds these into `space.github.config.set`, that command must preserve the same per-space enablement semantics and the compatibility bridge must continue to expose the existing RPC names until callers migrate.
 - Existing GitHub webhook RPCs map as follows during migration: `space.github.autoConfigureWebhook` -> `space.github.webhook.autoConfigure` and `space.github.checkWebhook` -> `space.github.webhook.check`.
 - Existing configure events map as follows during migration: `spaceAgent.created` -> `space.agent.created`, `spaceAgent.updated` -> `space.agent.updated`, `spaceAgent.deleted` -> `space.agent.deleted`, `spaceLongHorizonAgent.created` -> `space.longHorizonAgent.created`, `spaceLongHorizonAgent.updated` -> `space.longHorizonAgent.updated`, `spaceLongHorizonAgent.deleted` -> `space.longHorizonAgent.deleted`, `spaceWorkflow.created` -> `space.workflow.created`, `spaceWorkflow.updated` -> `space.workflow.updated`, and `spaceWorkflow.deleted` -> `space.workflow.deleted`. Until producers publish the target names directly, either the compatibility bridge must fan out both namespaces or `SpaceConfigureStore` must subscribe to the legacy names as compatibility aliases.
 

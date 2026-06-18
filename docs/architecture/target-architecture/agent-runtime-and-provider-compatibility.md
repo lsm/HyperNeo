@@ -305,6 +305,9 @@ The gateway should expose fabric commands and events over time:
 | `agentRuntime.session.rewindPreview.get` | query | Preview a rewind before mutating session state. |
 | `agentRuntime.session.rewind.execute` | command | Execute full-session rewind. |
 | `agentRuntime.session.rewindSelective.execute` | command | Execute selective rewind for chosen messages or checkpoints. |
+| `agentRuntime.messages.list` | query | Page persisted SDK transcript messages for reopened sessions. |
+| `agentRuntime.messages.count` | query | Count persisted SDK transcript messages. |
+| `agentRuntime.message.output.remove` | command | Remove noisy persisted tool output while preserving message history. |
 | `agentRuntime.mcpServers.list` | query | Read runtime-attached MCP servers visible to tool panels. |
 | `agentRuntime.capabilities.resolve` | query | Validate runtime/provider/model compatibility. |
 | `agentRuntime.event.stream` | event | Normalized output, tool, status, and error events. |
@@ -316,6 +319,11 @@ behind Agent Runtime. The compatibility gateway maps `session.messages.byStatus`
 `session.messages.removePending`, `session.messages.promotePending`, `session.messages.deferPending`,
 `rewind.checkpoints`, `rewind.preview`, `rewind.execute`, and `rewind.executeSelective` to these target
 contracts until the UI calls the Agent Runtime namespace directly.
+
+The persisted-message contracts preserve transcript history independently from live event streaming. The
+compatibility gateway maps `message.sdkMessages`, `message.count`, and `message.removeOutput` to
+`agentRuntime.messages.list`, `agentRuntime.messages.count`, and `agentRuntime.message.output.remove`
+until reopened-session pagination and ToolResultCard output deletion move to the Agent Runtime namespace.
 
 ### 7.2 AgentRuntimeAdapter
 

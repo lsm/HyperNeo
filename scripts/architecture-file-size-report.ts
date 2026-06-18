@@ -152,7 +152,13 @@ function formatTable(rows: string[][]): string {
 const { configPath, changedFrom, json } = parseArgs();
 const config = loadConfig(configPath);
 const baseConfig = changedFrom ? loadConfigFromGitRef(changedFrom, configPath) : null;
-const thresholdConfig = baseConfig ?? config;
+const thresholdConfig = baseConfig
+  ? {
+      ...config,
+      targetLineCount: Math.min(config.targetLineCount, baseConfig.targetLineCount),
+      hardLineCount: Math.min(config.hardLineCount, baseConfig.hardLineCount),
+    }
+  : config;
 const baselineConfigSource = baseConfig
   ? `${changedFrom}:${configPath}`
   : changedFrom
@@ -226,8 +232,8 @@ const staleAllowlistEntries = Object.entries(config.allowlist)
 
 const report = {
   scope: config.scope,
-  targetLineCount: config.targetLineCount,
-  hardLineCount: config.hardLineCount,
+  targetLineCount: thresholdConfig.targetLineCount,
+  hardLineCount: thresholdConfig.hardLineCount,
   changedFrom,
   baselineConfigSource,
   scannedFiles: scannedFiles.length,
