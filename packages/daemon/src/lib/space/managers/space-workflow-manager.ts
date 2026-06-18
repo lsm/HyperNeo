@@ -310,6 +310,7 @@ export class SpaceWorkflowManager {
               postApproval: n.postApproval,
               requireCodexApproval: n.requireCodexApproval,
               codexPollIntervalMs: n.codexPollIntervalMs,
+              codexTimeoutSeconds: n.codexTimeoutSeconds,
             })
           )
         : existing.nodes.map(
@@ -320,6 +321,7 @@ export class SpaceWorkflowManager {
               postApproval: n.postApproval,
               requireCodexApproval: n.requireCodexApproval,
               codexPollIntervalMs: n.codexPollIntervalMs,
+              codexTimeoutSeconds: n.codexTimeoutSeconds,
             })
           );
 
@@ -546,6 +548,7 @@ export class SpaceWorkflowManager {
       this.validateNodeAgentRef(spaceId, node, i);
       this.validateEventInterests(node, i);
       this.validateCodexPollInterval(node, i);
+      this.validateCodexTimeout(node, i);
       this.validateCodexApprovalFlag(node, i);
     }
   }
@@ -569,6 +572,28 @@ export class SpaceWorkflowManager {
     }
     if (!Number.isInteger(node.codexPollIntervalMs)) {
       throw new WorkflowValidationError(`node[${index}]: codexPollIntervalMs must be an integer`);
+    }
+  }
+
+  private validateCodexTimeout(node: WorkflowNodeInput, index: number): void {
+    if (node.codexTimeoutSeconds === undefined || node.codexTimeoutSeconds === null) {
+      return;
+    }
+    if (
+      typeof node.codexTimeoutSeconds !== 'number' ||
+      !Number.isFinite(node.codexTimeoutSeconds)
+    ) {
+      throw new WorkflowValidationError(
+        `node[${index}]: codexTimeoutSeconds must be a finite number`
+      );
+    }
+    if (node.codexTimeoutSeconds <= 0) {
+      throw new WorkflowValidationError(
+        `node[${index}]: codexTimeoutSeconds must be a positive number`
+      );
+    }
+    if (!Number.isInteger(node.codexTimeoutSeconds)) {
+      throw new WorkflowValidationError(`node[${index}]: codexTimeoutSeconds must be an integer`);
     }
   }
 
