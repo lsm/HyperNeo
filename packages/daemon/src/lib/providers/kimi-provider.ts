@@ -16,46 +16,23 @@
  * credentials that predate region support. An explicit `sessionConfig.baseUrl`
  * always wins (used by tests and advanced overrides).
  *
- * ## Bridge architecture
- *
- * The Claude Agent SDK has a hardcoded table of known model context windows.
- * It does not recognise `kimi-for-coding` and falls back to a ~200 k default,
- * rejecting requests that fit within Kimi's 262 k window.  To work around
- * this, the provider routes SDK traffic through a lightweight local bridge that
- * intercepts `GET /v1/models` and returns the correct context window metadata.
- * All other requests are proxied verbatim to Kimi's API — no protocol
- * translation is needed.
- *
  * API Documentation: https://www.kimi.com/code/docs/
  */
 
+import type { ModelInfo } from '@neokai/shared';
 import type {
+  ModelTier,
   Provider,
   ProviderAuthStatusInfo,
   ProviderCapabilities,
   ProviderCredentials,
   ProviderSdkConfig,
   ProviderSessionConfig,
-  ModelTier,
 } from '@neokai/shared/provider';
-import type { ModelInfo } from '@neokai/shared';
-import {
-  createAnthropicMessagesBridgeServer,
-  type AnthropicMessagesBridgeServer,
-} from './anthropic-messages-bridge/server.js';
 import { probeAnthropicCompatCredentials } from './shared/credential-probe.js';
-import { Logger } from '../logger.js';
-import * as crypto from 'crypto';
-
-const logger = new Logger('kimi-provider');
 
 function normalizeBaseUrl(url: string): string {
   return url.trim().replace(/\/+$/, '');
-}
-
-/** Return a short non-reversible fingerprint of `value` for log correlation. */
-function keyFingerprint(value: string): string {
-  return crypto.createHash('sha256').update(value).digest('hex').slice(0, 16);
 }
 
 /**
@@ -71,10 +48,9 @@ const VALID_REGIONS: ReadonlySet<KimiRegion> = new Set<KimiRegion>(['china', 'gl
 /**
  * Per-region endpoint table for the Kimi provider.
  *
- * Anthropic-compatible base URLs are used by the bridge (which forwards
- * `/v1/messages` traffic to the upstream Anthropic-compatible API). The
- * OpenAI-compatible endpoints are exposed for direct callers that prefer the
- * OpenAI schema (not currently used by the bridge).
+ * Anthropic-compatible base URLs are passed directly to the Claude Agent SDK.
+ * The OpenAI-compatible endpoints are exposed for direct callers that prefer
+ * the OpenAI schema.
  */
 export const KIMI_REGION_ENDPOINTS: Record<
   KimiRegion,
@@ -192,17 +168,9 @@ export class KimiProvider implements Provider {
   private readonly probeCache = new Map<string, { at: number; result: Promise<void> }>();
   private static readonly PROBE_TTL_MS = 30_000;
 
-  /**
-   * Bridge servers keyed by `{baseUrl}::{apiKey}` so that sessions with
-   * different per-session credentials get isolated bridges that forward
-   * the correct auth upstream.  This avoids a singleton bridge leaking
-   * one session's credentials into another session's requests.
-   */
-  private readonly bridgeServers = new Map<string, AnthropicMessagesBridgeServer>();
-
   constructor(
     env: NodeJS.ProcessEnv = process.env,
-    private readonly bridgeFactory: typeof createAnthropicMessagesBridgeServer = createAnthropicMessagesBridgeServer,
+    _legacyBridgeFactory?: unknown,
     private readonly fetchImpl: typeof fetch = fetch
   ) {
     this.env = env;
@@ -318,7 +286,7 @@ export class KimiProvider implements Provider {
     return KimiProvider.DEFAULT_MODEL;
   }
 
-  buildSdkConfig(modelId: string, sessionConfig?: ProviderSessionConfig): ProviderSdkConfig {
+  buildSdkConfig(_modelId: string, sessionConfig?: ProviderSessionConfig): ProviderSdkConfig {
     const apiKey = sessionConfig?.apiKey || this.getApiKey();
     if (!apiKey) {
       throw new Error('Kimi API key not configured. Set KIMI_API_KEY or MOONSHOT_API_KEY.');
@@ -331,43 +299,13 @@ export class KimiProvider implements Provider {
     const region = resolveKimiRegion(sessionConfig?.region ?? this.defaultRegion);
     const regionBaseUrl = KimiProvider.getBaseUrlForRegion(region);
     const baseUrl = normalizeBaseUrl(sessionConfig?.baseUrl || regionBaseUrl);
-    // All Kimi Code requests use the fixed model ID
+    // All Kimi Code requests use the fixed model ID.
     const routingModelId = KimiProvider.DEFAULT_MODEL;
-
-    // Lazily start a per-credentials bridge.  Keyed by `{baseUrl}::{apiKey}`
-    // so sessions with different API keys or base URLs get isolated bridges
-    // that forward the correct auth upstream.
-    const bridgeKey = `${baseUrl}::${apiKey}`;
-    let bridgeServer = this.bridgeServers.get(bridgeKey);
-    if (!bridgeServer) {
-      bridgeServer = this.bridgeFactory({
-        baseUrl,
-        apiKey,
-        models: [
-          {
-            id: routingModelId,
-            display_name: 'Kimi For Coding',
-            context_window: 262144,
-            max_tokens: 32768,
-          },
-        ],
-      });
-      this.bridgeServers.set(bridgeKey, bridgeServer);
-      // Log a fingerprint, not the raw key — avoids leaking credential prefixes
-      // in daemon logs.
-      const logKey = `${baseUrl}::${keyFingerprint(apiKey)}`;
-      logger.info(`Kimi bridge server started on port ${bridgeServer.port} for key=${logKey}`);
-    }
 
     return {
       envVars: {
-        ANTHROPIC_BASE_URL: `http://127.0.0.1:${bridgeServer.port}`,
-        // Blank ANTHROPIC_API_KEY and ANTHROPIC_AUTH_TOKEN explicitly so
-        // ProviderService clears any inherited Anthropic credentials from
-        // process.env. The bridge handles Kimi auth via its config.apiKey;
-        // the SDK subprocess does not need real Anthropic credentials.
-        ANTHROPIC_API_KEY: '',
-        ANTHROPIC_AUTH_TOKEN: '',
+        ANTHROPIC_BASE_URL: baseUrl,
+        ANTHROPIC_AUTH_TOKEN: apiKey,
         API_TIMEOUT_MS: '3000000',
         // Explicitly clear CLAUDE_CODE_AUTO_COMPACT_WINDOW so a previous
         // provider's value (e.g. GLM's 1M, Codex's 272k) cannot leak into
@@ -391,8 +329,11 @@ export class KimiProvider implements Provider {
     };
   }
 
-  translateModelIdForSdk(_modelId: string): string {
-    return 'default';
+  translateModelIdForSdk(modelId: string): string {
+    // Return actual model ID so user-selected model is used.
+    // Returning 'default' allows ~/.claude/settings.json overrides
+    // (ANTHROPIC_DEFAULT_SONNET_MODEL) to incorrectly redirect to other providers.
+    return modelId === 'kimi' ? KimiProvider.DEFAULT_MODEL : modelId;
   }
 
   getTitleGenerationModel(): string {
@@ -409,12 +350,6 @@ export class KimiProvider implements Provider {
   }
 
   async shutdown(): Promise<void> {
-    for (const [key, server] of this.bridgeServers) {
-      server.stop();
-      const [baseUrl, apiKey] = key.split('::');
-      const logKey = `${baseUrl}::${keyFingerprint(apiKey)}`;
-      logger.info(`Kimi bridge server stopped for key=${logKey}`);
-    }
-    this.bridgeServers.clear();
+    // Kimi uses Moonshot's native Anthropic-compatible endpoint directly.
   }
 }

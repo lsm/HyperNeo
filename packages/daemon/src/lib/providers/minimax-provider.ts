@@ -7,16 +7,16 @@
  * API Documentation: https://platform.minimax.io/docs/guides/text-ai-coding-tools
  */
 
+import type { ModelInfo } from '@neokai/shared';
 import type {
+  ModelTier,
   Provider,
   ProviderAuthStatusInfo,
   ProviderCapabilities,
   ProviderCredentials,
   ProviderSdkConfig,
   ProviderSessionConfig,
-  ModelTier,
 } from '@neokai/shared/provider';
-import type { ModelInfo } from '@neokai/shared';
 import { probeAnthropicCompatCredentials } from './shared/credential-probe.js';
 
 /**
@@ -214,6 +214,7 @@ export class MinimaxProvider implements Provider {
     const envVars: Record<string, string> = {
       ANTHROPIC_BASE_URL: baseUrl,
       ANTHROPIC_AUTH_TOKEN: apiKey,
+      ANTHROPIC_API_KEY: '',
       API_TIMEOUT_MS: '3000000',
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
       ANTHROPIC_DEFAULT_HAIKU_MODEL: routingModelId,

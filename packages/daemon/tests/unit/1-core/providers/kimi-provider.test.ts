@@ -4,34 +4,10 @@
 
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import {
-  KimiProvider,
   KIMI_REGION_ENDPOINTS,
+  KimiProvider,
   resolveKimiRegion,
 } from '../../../../src/lib/providers/kimi-provider';
-import type {
-  AnthropicMessagesBridgeServer,
-  AnthropicMessagesBridgeConfig,
-} from '../../../../src/lib/providers/anthropic-messages-bridge/server';
-
-/**
- * Fake bridge factory that records calls and returns a stub server.
- * Avoids binding real TCP ports in unit tests.
- */
-function createFakeBridgeFactory() {
-  const calls: AnthropicMessagesBridgeConfig[] = [];
-  let portCounter = 42000;
-  const servers: { port: number; stop: () => void }[] = [];
-
-  const factory = (config: AnthropicMessagesBridgeConfig): AnthropicMessagesBridgeServer => {
-    calls.push(config);
-    const port = portCounter++;
-    const server = { port, stop: mock(() => {}) };
-    servers.push(server);
-    return server;
-  };
-
-  return { factory, calls, servers };
-}
 
 describe('KimiProvider', () => {
   let provider: KimiProvider;
@@ -147,7 +123,7 @@ describe('KimiProvider', () => {
       expect(init?.method).toBe('POST');
       const headers = init?.headers as Record<string, string>;
       expect(headers['x-api-key']).toBe('test-key');
-      expect(headers['authorization']).toBe('Bearer test-key');
+      expect(headers.authorization).toBe('Bearer test-key');
     });
 
     it('throws when upstream rejects the API key (401)', async () => {
@@ -218,32 +194,15 @@ describe('KimiProvider', () => {
   });
 
   describe('buildSdkConfig', () => {
-    it('should start bridge and route through it', () => {
-      const { factory, calls } = createFakeBridgeFactory();
+    it('should route directly to the native Anthropic-compatible endpoint', () => {
       process.env.KIMI_API_KEY = 'test-key';
-      provider = new KimiProvider(process.env, factory);
+      provider = new KimiProvider();
 
       const config = provider.buildSdkConfig('kimi-for-coding');
 
-      // Bridge was started with correct config
-      expect(calls).toHaveLength(1);
-      expect(calls[0].baseUrl).toBe('https://api.kimi.com/coding');
-      expect(calls[0].apiKey).toBe('test-key');
-      expect(calls[0].models).toEqual([
-        {
-          id: 'kimi-for-coding',
-          display_name: 'Kimi For Coding',
-          context_window: 262144,
-          max_tokens: 32768,
-        },
-      ]);
-
-      // SDK routes through the bridge
-      expect(config.envVars.ANTHROPIC_BASE_URL).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
-      // Blank both Anthropic auth env vars so ProviderService clears any
-      // inherited Anthropic credentials. The bridge handles Kimi auth.
-      expect(config.envVars.ANTHROPIC_API_KEY).toBe('');
-      expect(config.envVars.ANTHROPIC_AUTH_TOKEN).toBe('');
+      expect(config.envVars.ANTHROPIC_BASE_URL).toBe('https://api.kimi.com/coding');
+      expect(config.envVars.ANTHROPIC_AUTH_TOKEN).toBe('test-key');
+      expect(config.envVars.ANTHROPIC_API_KEY).toBeUndefined();
       expect(config.envVars.API_TIMEOUT_MS).toBe('3000000');
       // CLAUDE_CODE_AUTO_COMPACT_WINDOW is explicitly cleared (empty string)
       // so a previous GLM/Codex query's value cannot leak into Kimi's SDK
@@ -260,101 +219,50 @@ describe('KimiProvider', () => {
       expect(config.apiVersion).toBe('v1');
     });
 
-    it('should reuse the same bridge for identical credentials', () => {
-      const { factory, calls } = createFakeBridgeFactory();
-      process.env.KIMI_API_KEY = 'test-key';
-      provider = new KimiProvider(process.env, factory);
-
-      provider.buildSdkConfig('kimi-for-coding');
-      provider.buildSdkConfig('kimi-for-coding');
-
-      // Only one bridge started
-      expect(calls).toHaveLength(1);
-    });
-
-    it('should create separate bridges for different API keys', () => {
-      const { factory, calls } = createFakeBridgeFactory();
-      provider = new KimiProvider(process.env, factory);
-
-      provider.buildSdkConfig('kimi-for-coding', { apiKey: 'key-a' });
-      provider.buildSdkConfig('kimi-for-coding', { apiKey: 'key-b' });
-
-      expect(calls).toHaveLength(2);
-      expect(calls[0].apiKey).toBe('key-a');
-      expect(calls[1].apiKey).toBe('key-b');
-    });
-
-    it('should create separate bridges for different base URLs', () => {
-      const { factory, calls } = createFakeBridgeFactory();
-      provider = new KimiProvider(process.env, factory);
-
-      provider.buildSdkConfig('kimi-for-coding', {
-        apiKey: 'key',
-        baseUrl: 'https://api.kimi.com/coding',
-      });
-      provider.buildSdkConfig('kimi-for-coding', {
-        apiKey: 'key',
-        baseUrl: 'https://api.moonshot.cn/anthropic',
-      });
-
-      expect(calls).toHaveLength(2);
-      expect(calls[0].baseUrl).toBe('https://api.kimi.com/coding');
-      expect(calls[1].baseUrl).toBe('https://api.moonshot.cn/anthropic');
-    });
-
     it('should normalize aliases to kimi-for-coding', () => {
-      const { factory, calls } = createFakeBridgeFactory();
       process.env.KIMI_API_KEY = 'test-key';
-      provider = new KimiProvider(process.env, factory);
+      provider = new KimiProvider();
 
       const config = provider.buildSdkConfig('kimi');
 
-      expect(calls[0].models![0].id).toBe('kimi-for-coding');
       expect(config.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('kimi-for-coding');
       expect(config.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('kimi-for-coding');
       expect(config.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('kimi-for-coding');
     });
 
     it('should normalize mixed-case aliases to kimi-for-coding', () => {
-      const { factory, calls } = createFakeBridgeFactory();
       process.env.KIMI_API_KEY = 'test-key';
-      provider = new KimiProvider(process.env, factory);
+      provider = new KimiProvider();
 
-      provider.buildSdkConfig('Kimi');
+      const config = provider.buildSdkConfig('Kimi');
 
-      expect(calls[0].models![0].id).toBe('kimi-for-coding');
+      expect(config.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('kimi-for-coding');
     });
 
     it('should normalize moonshot- prefixed model IDs to kimi-for-coding', () => {
-      const { factory, calls } = createFakeBridgeFactory();
       process.env.KIMI_API_KEY = 'test-key';
-      provider = new KimiProvider(process.env, factory);
+      provider = new KimiProvider();
 
-      provider.buildSdkConfig('moonshot-v1-32k');
+      const config = provider.buildSdkConfig('moonshot-v1-32k');
 
-      expect(calls[0].models![0].id).toBe('kimi-for-coding');
+      expect(config.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('kimi-for-coding');
     });
 
     it('should use session config API key and base URL overrides', () => {
-      const { factory, calls } = createFakeBridgeFactory();
       process.env.KIMI_API_KEY = 'env-key';
-      provider = new KimiProvider(process.env, factory);
+      provider = new KimiProvider();
 
       const config = provider.buildSdkConfig('kimi-for-coding', {
         apiKey: 'session-key',
         baseUrl: 'https://api.moonshot.cn/anthropic',
       });
 
-      expect(calls[0].baseUrl).toBe('https://api.moonshot.cn/anthropic');
-      expect(calls[0].apiKey).toBe('session-key');
-      // Both Anthropic auth env vars are blanked so inherited credentials are cleared
-      expect(config.envVars.ANTHROPIC_API_KEY).toBe('');
-      expect(config.envVars.ANTHROPIC_AUTH_TOKEN).toBe('');
+      expect(config.envVars.ANTHROPIC_BASE_URL).toBe('https://api.moonshot.cn/anthropic');
+      expect(config.envVars.ANTHROPIC_AUTH_TOKEN).toBe('session-key');
     });
 
     it('should throw when no API key is configured', () => {
-      const { factory } = createFakeBridgeFactory();
-      provider = new KimiProvider(process.env, factory);
+      provider = new KimiProvider();
 
       expect(() => provider.buildSdkConfig('kimi-for-coding')).toThrow(
         'Kimi API key not configured'
@@ -429,97 +337,92 @@ describe('KimiProvider', () => {
 
   describe('buildSdkConfig region routing', () => {
     it('routes to the China endpoint when no region is configured', () => {
-      const { factory, calls } = createFakeBridgeFactory();
       process.env.KIMI_API_KEY = 'test-key';
-      provider = new KimiProvider(process.env, factory);
+      provider = new KimiProvider();
 
-      provider.buildSdkConfig('kimi-for-coding');
+      const config = provider.buildSdkConfig('kimi-for-coding');
 
-      expect(calls).toHaveLength(1);
-      expect(calls[0].baseUrl).toBe('https://api.kimi.com/coding');
+      expect(config.envVars.ANTHROPIC_BASE_URL).toBe('https://api.kimi.com/coding');
     });
 
     it('routes to the Global endpoint when sessionConfig.region is global', () => {
-      const { factory, calls } = createFakeBridgeFactory();
-      provider = new KimiProvider(process.env, factory);
+      provider = new KimiProvider();
 
-      provider.buildSdkConfig('kimi-for-coding', {
+      const config = provider.buildSdkConfig('kimi-for-coding', {
         apiKey: 'key',
         region: 'global',
       });
 
-      expect(calls).toHaveLength(1);
-      expect(calls[0].baseUrl).toBe('https://api.moonshot.ai/anthropic');
+      expect(config.envVars.ANTHROPIC_BASE_URL).toBe('https://api.moonshot.ai/anthropic');
     });
 
     it('routes to the China endpoint when sessionConfig.region is china', () => {
-      const { factory, calls } = createFakeBridgeFactory();
-      provider = new KimiProvider(process.env, factory);
+      provider = new KimiProvider();
 
-      provider.buildSdkConfig('kimi-for-coding', {
+      const config = provider.buildSdkConfig('kimi-for-coding', {
         apiKey: 'key',
         region: 'china',
       });
 
-      expect(calls[0].baseUrl).toBe('https://api.kimi.com/coding');
+      expect(config.envVars.ANTHROPIC_BASE_URL).toBe('https://api.kimi.com/coding');
     });
 
     it('falls back to provider-level default region when sessionConfig omits region', () => {
-      const { factory, calls } = createFakeBridgeFactory();
-      provider = new KimiProvider(process.env, factory);
+      provider = new KimiProvider();
       // Simulate region loaded from ProviderRecord configJson by provider-sync.
       provider.setDefaultRegion('global');
 
-      provider.buildSdkConfig('kimi-for-coding', { apiKey: 'key' });
+      const config = provider.buildSdkConfig('kimi-for-coding', { apiKey: 'key' });
 
-      expect(calls[0].baseUrl).toBe('https://api.moonshot.ai/anthropic');
+      expect(config.envVars.ANTHROPIC_BASE_URL).toBe('https://api.moonshot.ai/anthropic');
     });
 
     it('per-session region overrides provider-level default region', () => {
-      const { factory, calls } = createFakeBridgeFactory();
-      provider = new KimiProvider(process.env, factory);
+      provider = new KimiProvider();
       provider.setDefaultRegion('global');
 
-      provider.buildSdkConfig('kimi-for-coding', { apiKey: 'key', region: 'china' });
+      const config = provider.buildSdkConfig('kimi-for-coding', { apiKey: 'key', region: 'china' });
 
-      expect(calls[0].baseUrl).toBe('https://api.kimi.com/coding');
+      expect(config.envVars.ANTHROPIC_BASE_URL).toBe('https://api.kimi.com/coding');
     });
 
     it('explicit sessionConfig.baseUrl overrides region selection', () => {
-      const { factory, calls } = createFakeBridgeFactory();
-      provider = new KimiProvider(process.env, factory);
+      provider = new KimiProvider();
       provider.setDefaultRegion('global');
 
-      provider.buildSdkConfig('kimi-for-coding', {
+      const config = provider.buildSdkConfig('kimi-for-coding', {
         apiKey: 'key',
         baseUrl: 'https://custom.example.com/anthropic',
       });
 
-      expect(calls[0].baseUrl).toBe('https://custom.example.com/anthropic');
+      expect(config.envVars.ANTHROPIC_BASE_URL).toBe('https://custom.example.com/anthropic');
     });
 
     it('invalid sessionConfig.region falls back to china (not global)', () => {
-      const { factory, calls } = createFakeBridgeFactory();
-      provider = new KimiProvider(process.env, factory);
+      provider = new KimiProvider();
 
-      provider.buildSdkConfig('kimi-for-coding', {
+      const config = provider.buildSdkConfig('kimi-for-coding', {
         apiKey: 'key',
         region: 'us' as unknown,
       });
 
-      expect(calls[0].baseUrl).toBe('https://api.kimi.com/coding');
+      expect(config.envVars.ANTHROPIC_BASE_URL).toBe('https://api.kimi.com/coding');
     });
 
-    it('creates separate bridges for different regions', () => {
-      const { factory, calls } = createFakeBridgeFactory();
-      provider = new KimiProvider(process.env, factory);
+    it('returns the selected native endpoint for each region', () => {
+      provider = new KimiProvider();
 
-      provider.buildSdkConfig('kimi-for-coding', { apiKey: 'key', region: 'china' });
-      provider.buildSdkConfig('kimi-for-coding', { apiKey: 'key', region: 'global' });
+      const chinaConfig = provider.buildSdkConfig('kimi-for-coding', {
+        apiKey: 'key',
+        region: 'china',
+      });
+      const globalConfig = provider.buildSdkConfig('kimi-for-coding', {
+        apiKey: 'key',
+        region: 'global',
+      });
 
-      expect(calls).toHaveLength(2);
-      expect(calls[0].baseUrl).toBe('https://api.kimi.com/coding');
-      expect(calls[1].baseUrl).toBe('https://api.moonshot.ai/anthropic');
+      expect(chinaConfig.envVars.ANTHROPIC_BASE_URL).toBe('https://api.kimi.com/coding');
+      expect(globalConfig.envVars.ANTHROPIC_BASE_URL).toBe('https://api.moonshot.ai/anthropic');
     });
   });
 
@@ -528,8 +431,11 @@ describe('KimiProvider', () => {
       provider = new KimiProvider();
     });
 
-    it('should translate Kimi models to default', () => {
-      expect(provider.translateModelIdForSdk('kimi-for-coding')).toBe('default');
+    it('should return actual model ID to avoid settings.json overrides', () => {
+      // Returns actual model ID instead of 'default' so ~/.claude/settings.json
+      // ANTHROPIC_DEFAULT_SONNET_MODEL cannot redirect to other providers.
+      expect(provider.translateModelIdForSdk('kimi-for-coding')).toBe('kimi-for-coding');
+      expect(provider.translateModelIdForSdk('kimi')).toBe('kimi-for-coding');
     });
   });
 
@@ -596,20 +502,7 @@ describe('KimiProvider', () => {
   });
 
   describe('shutdown', () => {
-    it('should stop all bridge servers on shutdown', async () => {
-      const { factory, servers } = createFakeBridgeFactory();
-      provider = new KimiProvider(process.env, factory);
-
-      provider.buildSdkConfig('kimi-for-coding', { apiKey: 'key-a' });
-      provider.buildSdkConfig('kimi-for-coding', { apiKey: 'key-b' });
-      expect(servers).toHaveLength(2);
-
-      await provider.shutdown();
-      expect(servers[0].stop).toHaveBeenCalled();
-      expect(servers[1].stop).toHaveBeenCalled();
-    });
-
-    it('should resolve without error when no bridge was started', async () => {
+    it('should resolve without error', async () => {
       provider = new KimiProvider();
       await expect(provider.shutdown()).resolves.toBeUndefined();
     });

@@ -97,7 +97,7 @@ export default defineConfig({
   },
 
   optimizeDeps: {
-    include: ['preact', '@preact/signals', 'clsx', 'date-fns'],
+    include: ['preact', '@preact/signals', 'clsx'],
     exclude: ['@neokai/shared'], // Exclude local packages from pre-bundling
     esbuildOptions: {
       jsx: 'automatic',
