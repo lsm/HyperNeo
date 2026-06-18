@@ -259,10 +259,19 @@ export async function evaluateTerminalGateFeatures(
         prUrl: freshPrUrl || scriptContext.prUrl,
       });
       if (!result.open) {
+        const rateLimited = result.rateLimited ?? false;
+        const retryAfterMs = rateLimited
+          ? (result.retryAfterMs ?? RATE_LIMIT_MIN_BACKOFF_MS)
+          : undefined;
+        const baseReason = result.reason ?? `Gate "${gate.id}" blocked terminal action.`;
         return jsonResult({
           success: false,
-          error: result.reason ?? `Gate "${gate.id}" blocked terminal action.`,
+          error: rateLimited
+            ? `${baseReason} (rate-limited: retry after ${retryAfterMs}ms)`
+            : baseReason,
           gateId: gate.id,
+          rateLimited,
+          retryAfterMs,
         });
       }
     }
@@ -978,54 +987,11 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
                 );
                 gateWriteResult = { gateId, gateOpen: evalResult.open };
 
-                // Audit log + publish the gate data update immediately. Even if the
-                // subsequent gate evaluation is rate-limited, the write itself succeeded
-                // and must be visible to the canvas and recorded.
-                logAudit('send_message', {
-                  target,
-                  gateId: gateWriteResult.gateId,
-                  gateOpen: gateWriteResult.gateOpen,
-                  dataKeys: data ? Object.keys(data) : undefined,
-                });
-                if (internalEventBus) {
-                  void internalEventBus
-                    .publish('space.gateData.updated', {
-                      sessionId: 'global',
-                      spaceId,
-                      runId: workflowRunId,
-                      gateId,
-                      data: updated.data,
-                    })
-                    .catch((err) => {
-                      log.warn(`Failed to emit space.gateData.updated for gate "${gateId}":`, err);
-                    });
-                }
-
-                // If gate evaluation hit a rate limit, surface the retryable error
-                // immediately instead of proceeding to delivery (which would re-evaluate
-                // the same gate script and make another GitHub call during the cooldown).
-                if (evalResult.rateLimited) {
-                  const retryAfterMs = evalResult.retryAfterMs ?? RATE_LIMIT_MIN_BACKOFF_MS;
-                  const reason = evalResult.reason ?? `Gate "${gateId}" rate-limited`;
-                  return jsonResult({
-                    success: false,
-                    error: `${reason} (rate-limited: retry after ${retryAfterMs}ms)`,
-                    gateWrite: gateWriteResult,
-                    rateLimited: true,
-                    retryAfterMs,
-                  });
-                }
-
                 // Multi-round review history: every time the reviewer writes a
                 // `review_url` to this gate, append an append-only artifact row
                 // so we get one record per cycle (cycle 0, 1, 2 …) without any
-                // deduplication. The per-cycle artifactKey makes each write a
-                // distinct row even though the table uses upsert semantics.
-                //
-                // Note: `comment_urls` is not a gate field (so it's stripped from
-                // `authorizedData`), but we still want to persist it alongside the
-                // review for the audit trail — pull it straight from the original
-                // `data` payload the reviewer supplied.
+                // deduplication. Persist this before any rate-limited early return
+                // so the review record is not lost when the gate script is blocked.
                 if (
                   config.artifactRepo &&
                   gateId === 'review-posted-gate' &&
@@ -1063,6 +1029,44 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
                       err instanceof Error ? err.message : String(err)
                     );
                   }
+                }
+
+                // Audit log + publish the gate data update immediately. Even if the
+                // subsequent gate evaluation is rate-limited, the write itself succeeded
+                // and must be visible to the canvas and recorded.
+                logAudit('send_message', {
+                  target,
+                  gateId: gateWriteResult.gateId,
+                  gateOpen: gateWriteResult.gateOpen,
+                  dataKeys: data ? Object.keys(data) : undefined,
+                });
+                if (internalEventBus) {
+                  void internalEventBus
+                    .publish('space.gateData.updated', {
+                      sessionId: 'global',
+                      spaceId,
+                      runId: workflowRunId,
+                      gateId,
+                      data: updated.data,
+                    })
+                    .catch((err) => {
+                      log.warn(`Failed to emit space.gateData.updated for gate "${gateId}":`, err);
+                    });
+                }
+
+                // If gate evaluation hit a rate limit, surface the retryable error
+                // immediately instead of proceeding to delivery (which would re-evaluate
+                // the same gate script and make another GitHub call during the cooldown).
+                if (evalResult.rateLimited) {
+                  const retryAfterMs = evalResult.retryAfterMs ?? RATE_LIMIT_MIN_BACKOFF_MS;
+                  const reason = evalResult.reason ?? `Gate "${gateId}" rate-limited`;
+                  return jsonResult({
+                    success: false,
+                    error: `${reason} (rate-limited: retry after ${retryAfterMs}ms)`,
+                    gateWrite: gateWriteResult,
+                    rateLimited: true,
+                    retryAfterMs,
+                  });
                 }
               }
             }

@@ -849,17 +849,26 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       const rateLimit = parseRateLimitHeaders(response);
       if (rateLimit.limited) {
         this.applyRateLimit(rateLimit);
-        return count;
+        break;
       }
       if (response.status === 304) continue;
       if (!response.ok) {
         // A 403/429 without rate-limit headers can still be a secondary limit
         // if the body contains the right message (e.g. "secondary rate limit").
-        // Read the body once and check; when it matches, apply the cooldown and
-        // stop hitting additional endpoints until the backoff expires.
+        // Read the body once and check; when it matches, apply a Retry-After/minimum
+        // cooldown (not the unrelated primary reset) and stop hitting additional
+        // endpoints until the backoff expires.
         const errorText = await response.text();
         if ((response.status === 403 || response.status === 429) && isRateLimitError(errorText)) {
-          this.applyRateLimit(rateLimit);
+          const secondaryDelayMs = rateLimit.retryAfter
+            ? rateLimit.resetAt - Date.now()
+            : RATE_LIMIT_MIN_BACKOFF_MS;
+          this.applyRateLimit({
+            remaining: rateLimit.remaining,
+            resetAt: Date.now() + secondaryDelayMs,
+            limited: true,
+            retryAfter: true,
+          });
           break;
         }
         continue;

@@ -940,7 +940,10 @@ export class ChannelRouter {
 
     if (openChannels.length > 0) {
       this.cacheGateOpened(runId, gateId, workflow);
-      // Gate opened — any pending rate-limit retry is no longer needed.
+    }
+
+    // Gate opened with no rate-limited channels — any pending retry is no longer needed.
+    if (openChannels.length > 0 && !rateLimitedResult) {
       const retryKey = `${runId}:${gateId}`;
       const existingTimer = this.pendingGateRetries.get(retryKey);
       if (existingTimer) {
@@ -949,9 +952,9 @@ export class ChannelRouter {
       }
     }
 
-    if (openChannels.length === 0 && rateLimitedResult) {
-      // Gate evaluation hit a rate limit; schedule a retry so downstream
-      // activation is not lost until the next manual gate write.
+    if (rateLimitedResult) {
+      // At least one channel evaluation hit a rate limit; schedule a retry so
+      // downstream activation is not lost even if another channel opened.
       const retryKey = `${runId}:${gateId}`;
       if (!this.pendingGateRetries.has(retryKey)) {
         const retryAfterMs = rateLimitedResult.retryAfterMs ?? RATE_LIMIT_MIN_BACKOFF_MS;

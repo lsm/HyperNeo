@@ -226,4 +226,74 @@ describe('ChannelRouter rate-limit deferral', () => {
     const timer = pending.get(retryKey);
     if (timer) clearTimeout(timer);
   });
+
+  test('onGateDataChanged schedules retry even when another channel opens', async () => {
+    // Wildcard channel guarded by an approval gate. One source node has
+    // requireCodexApproval (codex script injected only for that source); the
+    // other source is field-only. The field-only source opens the channel while
+    // the codex source is rate-limited — the retry must still be scheduled.
+    const gate: Gate = {
+      id: 'mixed-rate-limit-gate',
+      fields: [
+        { name: 'approved', type: 'boolean', writers: [], check: { op: '==', value: true } },
+      ],
+      resetOnCycle: false,
+    };
+    const workflow = workflowManager.createWorkflow({
+      spaceId: SPACE_ID,
+      name: `Mixed RL Workflow ${Date.now()}`,
+      description: '',
+      nodes: [
+        {
+          id: NODE_A,
+          name: 'coder',
+          agents: [{ agentId: AGENT_CODER, name: 'coder' }],
+          requireCodexApproval: true,
+        },
+        {
+          id: NODE_B,
+          name: 'planner',
+          agents: [{ agentId: AGENT_PLANNER, name: 'planner' }],
+        },
+      ],
+      transitions: [],
+      startNodeId: NODE_A,
+      rules: [],
+      tags: [],
+      channels: [{ from: '*', to: 'planner', gateId: gate.id }],
+      gates: [gate],
+      completionAutonomyLevel: 3,
+    });
+    const run = createActiveRun(workflow.id);
+    gateDataRepo.set(run.id, gate.id, { approved: true });
+
+    let scriptCalls = 0;
+    const router = makeRouter({
+      scriptExecutor: async () => {
+        scriptCalls++;
+        return {
+          success: false,
+          data: {},
+          error: 'HTTP 403: rate limit exceeded',
+          rateLimited: true,
+          retryAfterMs: 50,
+        };
+      },
+    });
+
+    const result = await router.onGateDataChanged(run.id, gate.id);
+    // The field-only source opens the gate, so planner may be activated.
+    expect(scriptCalls).toBe(1);
+
+    const pending = (
+      router as unknown as {
+        pendingGateRetries: Map<string, ReturnType<typeof setTimeout>>;
+      }
+    ).pendingGateRetries;
+    const retryKey = `${run.id}:${gate.id}`;
+    expect(pending.has(retryKey)).toBe(true);
+
+    const timer = pending.get(retryKey);
+    if (timer) clearTimeout(timer);
+  });
 });

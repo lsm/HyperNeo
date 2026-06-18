@@ -439,6 +439,66 @@ describe('GitHubEventExtension rate-limit-aware polling', () => {
       expect(fetchCalled).toBe(1);
       const until = (extension as unknown as { rateLimitedUntil: number }).rateLimitedUntil;
       expect(until).toBeGreaterThan(Date.now());
+      // Body-detected secondary limit with no Retry-After must use the minimum
+      // backoff, not an unrelated primary reset window.
+      const delayMs = until - Date.now();
+      expect(delayMs).toBeGreaterThan(55_000);
+      expect(delayMs).toBeLessThan(65_000);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('pollWatchedRepo saves cursor after publishing events and then hitting primary rate limit', async () => {
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'token', { pollIntervalMs: 60_000 });
+    await extension.start({
+      publisher: { publish: async () => {} },
+      config: new EnabledConfigStore(),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+
+    let fetchCalled = 0;
+    const row = {
+      id: 101,
+      html_url: 'https://github.com/acme/widgets/pull/7#issuecomment-101',
+      body: 'looks good',
+      user: { login: 'bot', type: 'Bot' },
+      updated_at: '2026-01-01T00:00:00Z',
+      issue: { number: 7, pull_request: { url: 'api' } },
+    };
+    const fetchImpl = (async () => {
+      fetchCalled++;
+      if (fetchCalled === 1) {
+        return makeResponse({
+          status: 200,
+          remaining: '50',
+          reset: String(Math.floor((Date.now() + 90_000) / 1000)),
+          body: [row],
+        });
+      }
+      // Second endpoint returns a primary rate-limit.
+      return rateLimitedResetResponse({
+        status: 403,
+        remaining: 0,
+        resetEpochSeconds: Math.floor((Date.now() + 120_000) / 1000),
+      });
+    }) as typeof fetch;
+
+    try {
+      const repo = extension.repo.listPollingRepos()[0];
+      const count = await extension.pollWatchedRepo(repo, fetchImpl);
+      expect(count).toBe(1);
+      expect(fetchCalled).toBe(2);
+
+      const updated = extension.repo.getWatchedRepoById(repo.id);
+      expect(updated?.pollCursor?.lastSeenAt).toBe(Date.parse(row.updated_at));
     } finally {
       await extension.stop();
     }
