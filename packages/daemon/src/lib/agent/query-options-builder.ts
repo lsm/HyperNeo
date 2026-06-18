@@ -36,9 +36,9 @@ import type {
   ThinkingLevel,
 } from '@neokai/shared';
 import {
-  THINKING_LEVEL_TOKENS,
   normalizeThinkingLevel,
   PROVIDER_THINKING_MODES,
+  THINKING_LEVEL_TOKENS,
 } from '@neokai/shared';
 import type { McpServerConfig } from '@neokai/shared/types/sdk-config';
 import type { PermissionMode } from '@neokai/shared/types/settings';
@@ -47,8 +47,8 @@ import { join } from 'path';
 import type { Database } from '../../storage/database';
 import type { AppMcpServerRepository } from '../../storage/repositories/app-mcp-server-repository';
 import type { McpEnablementRepository } from '../../storage/repositories/mcp-enablement-repository';
-import { getSessionModelInfo } from '../model-service';
 import { resolveMcpServers, scopeChainForSession } from '../mcp/resolve-mcp-servers';
+import { getSessionModelInfo } from '../model-service';
 import {
   getProviderContextManager,
   getProviderRegistry,
@@ -1036,6 +1036,8 @@ CRITICAL RULES:
       )
     );
 
+    // For Anthropic provider (or default), only include auth tokens from process.env
+    // Other provider vars are inherited via process.env by the SDK subprocess
     if (this.ctx.session.config.provider === 'anthropic' || !this.ctx.session.config.provider) {
       const authToken = process.env.ANTHROPIC_AUTH_TOKEN;
       if (authToken?.startsWith('sk-ant-oat')) {
@@ -1044,6 +1046,30 @@ CRITICAL RULES:
       const oauthToken = process.env.CLAUDE_CODE_OAUTH_TOKEN;
       if (oauthToken) {
         mergedEnv.CLAUDE_CODE_OAUTH_TOKEN = oauthToken;
+      }
+    } else {
+      // For non-Anthropic providers (GLM, Kimi, etc.), explicitly include provider
+      // env vars from process.env in options.env so the SDK subprocess environment
+      // has the same provider routing values. Filesystem settings precedence is
+      // handled separately by QueryRunner, which also injects these values into
+      // Options.settings.env (the SDK flag-settings layer).
+      const providerVars = [
+        'ANTHROPIC_BASE_URL',
+        'ANTHROPIC_API_KEY',
+        'ANTHROPIC_AUTH_TOKEN',
+        'ANTHROPIC_MODEL',
+        'ANTHROPIC_DEFAULT_HAIKU_MODEL',
+        'ANTHROPIC_DEFAULT_SONNET_MODEL',
+        'ANTHROPIC_DEFAULT_OPUS_MODEL',
+        'API_TIMEOUT_MS',
+        'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC',
+        'CLAUDE_CODE_AUTO_COMPACT_WINDOW',
+      ];
+      for (const key of providerVars) {
+        const value = process.env[key];
+        if (value !== undefined && value !== '') {
+          mergedEnv[key] = value;
+        }
       }
     }
 

@@ -46,9 +46,9 @@
  */
 
 import type { Provider, ProviderInfo, Session } from '@neokai/shared';
-import type { ProviderSdkConfig, ProviderInfo as NewProviderInfo } from '@neokai/shared/provider';
-import { initializeProviders, waitForOptionalProviderRegistration } from './providers/factory.js';
+import type { ProviderInfo as NewProviderInfo, ProviderSdkConfig } from '@neokai/shared/provider';
 import { Logger } from './logger.js';
+import { initializeProviders, waitForOptionalProviderRegistration } from './providers/factory.js';
 
 /**
  * Convert new ProviderInfo to legacy ProviderInfo
@@ -448,6 +448,7 @@ export class ProviderService {
         ? {
             apiKey: session.config.providerConfig.apiKey,
             baseUrl: session.config.providerConfig.baseUrl,
+            region: session.config.providerConfig.region,
           }
         : {}),
     };
@@ -540,7 +541,7 @@ export class ProviderService {
     }
 
     const sessionConfig = modelId ? { apiKey: undefined } : undefined;
-    let sdkConfig;
+    let sdkConfig: ProviderSdkConfig;
     try {
       sdkConfig = provider.buildSdkConfig(modelId || 'default', sessionConfig);
     } catch {
