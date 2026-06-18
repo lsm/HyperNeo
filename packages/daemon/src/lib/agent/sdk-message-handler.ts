@@ -35,6 +35,7 @@ import {
   isSDKStatusMessage,
   isSDKSystemInit,
   isSDKSystemMessage,
+  isSDKThinkingTokensMessage,
   isSDKUserMessage,
   isToolUseBlock,
 } from '@neokai/shared/sdk/type-guards';
@@ -106,6 +107,9 @@ export class SDKMessageHandler {
 
   // In-flight context refresh (deduped across event/turn-end/compact triggers)
   private pendingContextRefresh: Promise<void> | null = null;
+
+  // Latest thinking tokens estimate for the current turn (stashed for persistence on assistant message)
+  private currentThinkingTokensEstimate: number | null = null;
 
   constructor(private ctx: SDKMessageHandlerContext) {
     const { session } = ctx;
@@ -483,9 +487,9 @@ export class SDKMessageHandler {
       return;
     }
 
-    // Handle API retry messages: emit event for UI to display retry progress, but do not save to DB.
+    // Handle API retry messages: emit event for UI to display retry progress
     // These carry operational metadata (attempt count, delay, error) that is useful for
-    // debugging and user feedback but should not appear in the transcript.
+    // debugging and user feedback.
     if (isSDKAPIRetryMessage(message)) {
       this.logger.warn(
         `API retry: attempt ${message.attempt}/${message.max_retries}, ` +
@@ -501,7 +505,15 @@ export class SDKMessageHandler {
         error_status: message.error_status,
         error: message.error,
       });
-      return;
+      // DO NOT return - let it fall through to persistence and rendering
+    }
+
+    // Handle thinking tokens messages: stash estimate, but do not persist or broadcast
+    // These fire frequently during the redacted thinking phase and would bloat the DB if persisted.
+    // The final estimate is persisted on the assistant message when the thinking block completes.
+    if (isSDKThinkingTokensMessage(message)) {
+      this.currentThinkingTokensEstimate = message.estimated_tokens;
+      return; // Skip persistence and broadcast - this is internal tracking only
     }
 
     // Automatically update phase based on message type
@@ -535,6 +547,20 @@ export class SDKMessageHandler {
         cache_creation_input_tokens: 0,
         cache_read_input_tokens: 0,
       };
+    }
+
+    // Stamp the latest thinking tokens estimate onto assistant messages with thinking blocks
+    // This preserves the estimate across page reloads (unlike the transient live event)
+    if (isSDKAssistantMessage(message) && this.currentThinkingTokensEstimate !== null) {
+      const hasThinkingBlock = message.message.content.some(
+        (block: unknown) => (block as Record<string, unknown>).type === 'thinking'
+      );
+      if (hasThinkingBlock) {
+        (message as Record<string, unknown>).estimated_thinking_tokens =
+          this.currentThinkingTokensEstimate;
+        // Reset after consuming (estimate is per-turn)
+        this.currentThinkingTokensEstimate = null;
+      }
     }
 
     // Save to DB FIRST before broadcasting to clients
@@ -811,6 +837,8 @@ export class SDKMessageHandler {
       this.usesSessionStateChangedTurnEnd = false;
       this.expectsSessionStateIdleAfterResult = false;
       this.lastResultWasSuccess = null;
+      // Reset turn-scoped thinking tokens estimate to prevent stale leak
+      this.currentThinkingTokensEstimate = null;
     }
   }
 

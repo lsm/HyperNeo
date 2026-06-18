@@ -761,7 +761,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
       expect((mapped[0].from as Record<string, unknown>).nodeExecutionId).toBe('actor-sdk-current');
     });
 
-    test('actorMessages.byTask filters operational SDK rows', () => {
+    test('actorMessages.byTask includes operational SDK rows', () => {
       const workflowRunId = 'wr-actor-operational';
       const nodeSessionId = 'node-agent-actor-operational';
       const taskId = insertSpaceTask({
@@ -772,7 +772,30 @@ describe('NAMED_QUERY_REGISTRY', () => {
       insertSession(nodeSessionId, 'worker', '{"status":"processing"}');
       sessionTaskIds.set(nodeSessionId, taskId);
       insertSdkMessageAt('sdk-visible', nodeSessionId, now + 1000);
-      for (const subtype of ['thinking_tokens', 'session_state_changed', 'commands_changed']) {
+      const operationalRows = [
+        {
+          subtype: 'thinking_tokens',
+          payload: {
+            type: 'system',
+            subtype: 'thinking_tokens',
+            estimated_tokens: 1200,
+            estimated_tokens_delta: 50,
+          },
+        },
+        {
+          subtype: 'session_state_changed',
+          payload: { type: 'system', subtype: 'session_state_changed', state: 'running' },
+        },
+        {
+          subtype: 'commands_changed',
+          payload: {
+            type: 'system',
+            subtype: 'commands_changed',
+            commands: [{ name: 'review' }, { name: 'test' }],
+          },
+        },
+      ];
+      for (const { subtype, payload } of operationalRows) {
         insertSdkMessageAt(
           `sdk-operational-${subtype}`,
           nodeSessionId,
@@ -781,7 +804,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
           'consumed',
           'system',
           subtype,
-          { type: 'system', subtype }
+          payload
         );
       }
 
@@ -789,10 +812,140 @@ describe('NAMED_QUERY_REGISTRY', () => {
       const rows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
       const mapped = entry.mapRow ? rows.map(entry.mapRow) : rows;
 
-      expect(mapped.map((row) => row.id)).toEqual(['msg:sdk-visible']);
+      expect(mapped.map((row) => row.id)).toEqual([
+        'msg:sdk-visible',
+        'msg:sdk-operational-commands_changed',
+        'msg:sdk-operational-session_state_changed',
+        'msg:sdk-operational-thinking_tokens',
+      ]);
+      expect(mapped.find((row) => row.id === 'msg:sdk-operational-thinking_tokens')).toMatchObject({
+        title: 'System event',
+        summary: 'system',
+      });
+      expect(
+        mapped.find((row) => row.id === 'msg:sdk-operational-session_state_changed')
+      ).toMatchObject({
+        title: 'Session state',
+        summary: 'running',
+      });
+      expect(mapped.find((row) => row.id === 'msg:sdk-operational-commands_changed')).toMatchObject(
+        {
+          title: 'Commands changed',
+          summary: '2 slash commands available',
+        }
+      );
     });
 
-    test('actorMessages.byTask evicts rows retracted by refusal fallback notices', () => {
+    test('actorMessages.byTask renders api_retry with attempt/delay/status details', () => {
+      const workflowRunId = 'wr-actor-api-retry';
+      const nodeSessionId = 'node-agent-actor-api-retry';
+      const taskId = insertSpaceTask({
+        id: 'actor-api-retry-task',
+        workflowRunId,
+        status: 'in_progress',
+      });
+      insertSession(nodeSessionId, 'worker', '{"status":"processing"}');
+      sessionTaskIds.set(nodeSessionId, taskId);
+      insertSdkMessageAt('sdk-visible', nodeSessionId, now + 1000);
+      insertSdkMessageAt(
+        'sdk-api-retry',
+        nodeSessionId,
+        now + 2000,
+        'system',
+        'consumed',
+        'system',
+        'api_retry',
+        {
+          type: 'system',
+          subtype: 'api_retry',
+          attempt: 2,
+          max_retries: 3,
+          retry_delay_ms: 5000,
+          error_status: 429,
+          error: 'rate_limit',
+        }
+      );
+
+      const entry = NAMED_QUERY_REGISTRY.get('actorMessages.byTask')!;
+      const rows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
+      const mapped = entry.mapRow ? rows.map(entry.mapRow) : rows;
+
+      expect(mapped.map((row) => row.id)).toEqual(['msg:sdk-visible', 'msg:sdk-api-retry']);
+      expect(mapped.find((row) => row.id === 'msg:sdk-api-retry')).toMatchObject({
+        title: 'API retry',
+        summary: expect.stringContaining('delay 5000ms'),
+      });
+    });
+
+    test('actorMessages.byTask filters SDK-only system rows and projects visible notices', () => {
+      const workflowRunId = 'wr-actor-system-visibility';
+      const nodeSessionId = 'node-agent-actor-system-visibility';
+      const taskId = insertSpaceTask({
+        id: 'actor-system-visibility-task',
+        workflowRunId,
+        status: 'in_progress',
+      });
+      insertSession(nodeSessionId, 'worker', '{"status":"processing"}');
+      sessionTaskIds.set(nodeSessionId, taskId);
+      insertSdkMessageAt('sdk-visible', nodeSessionId, now + 1000);
+      insertSdkMessageAt(
+        'sdk-hidden-info',
+        nodeSessionId,
+        now + 2000,
+        'system',
+        'consumed',
+        'system',
+        'informational',
+        {
+          type: 'system',
+          subtype: 'informational',
+          level: 'info',
+          content: 'transcript-only',
+        }
+      );
+      insertSdkMessageAt(
+        'sdk-visible-warning',
+        nodeSessionId,
+        now + 3000,
+        'system',
+        'consumed',
+        'system',
+        'informational',
+        {
+          type: 'system',
+          subtype: 'informational',
+          level: 'warning',
+          content: 'Hook warning shown to the user',
+        }
+      );
+      insertSdkMessageAt(
+        'sdk-stale-shutdown',
+        nodeSessionId,
+        now + 4000,
+        'system',
+        'consumed',
+        'system',
+        'worker_shutting_down',
+        { type: 'system', subtype: 'worker_shutting_down', reason: 'host_exit' }
+      );
+      insertSdkMessageAt('sdk-after-shutdown', nodeSessionId, now + 5000);
+
+      const entry = NAMED_QUERY_REGISTRY.get('actorMessages.byTask')!;
+      const rows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
+      const mapped = entry.mapRow ? rows.map(entry.mapRow) : rows;
+
+      expect(mapped.map((row) => row.id)).toEqual([
+        'msg:sdk-visible',
+        'msg:sdk-visible-warning',
+        'msg:sdk-after-shutdown',
+      ]);
+      expect(mapped.find((row) => row.id === 'msg:sdk-visible-warning')).toMatchObject({
+        title: 'Warning',
+        summary: 'Hook warning shown to the user',
+      });
+    });
+
+    test('actorMessages.byTask includes rows retracted by refusal fallback notices', () => {
       const workflowRunId = 'wr-actor-retracted';
       const nodeSessionId = 'node-agent-actor-retracted';
       const taskId = insertSpaceTask({
@@ -816,6 +969,20 @@ describe('NAMED_QUERY_REGISTRY', () => {
           message: { role: 'assistant', content: [{ type: 'text', text: 'retracted' }] },
         }
       );
+      insertSdkMessageAt(
+        'row-superseded',
+        nodeSessionId,
+        now + 1500,
+        'assistant',
+        'consumed',
+        'system',
+        null,
+        {
+          type: 'assistant',
+          uuid: 'sdk-superseded',
+          message: { role: 'assistant', content: [{ type: 'text', text: 'superseded' }] },
+        }
+      );
       insertSdkMessageAt('sdk-visible-after-retry', nodeSessionId, now + 2000);
       insertSdkMessageAt(
         'sdk-fallback-notice',
@@ -831,15 +998,43 @@ describe('NAMED_QUERY_REGISTRY', () => {
           retracted_message_uuids: ['sdk-retracted'],
         }
       );
+      insertSdkMessageAt(
+        'sdk-superseding-message',
+        nodeSessionId,
+        now + 4000,
+        'assistant',
+        'consumed',
+        'system',
+        null,
+        {
+          type: 'assistant',
+          uuid: 'sdk-superseding-message',
+          supersedes: ['sdk-superseded'],
+          message: { role: 'assistant', content: [{ type: 'text', text: 'replacement' }] },
+        }
+      );
 
       const entry = NAMED_QUERY_REGISTRY.get('actorMessages.byTask')!;
       const rows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
       const mapped = entry.mapRow ? rows.map(entry.mapRow) : rows;
 
       expect(mapped.map((row) => row.id)).toEqual([
+        'msg:row-retracted',
+        'msg:row-superseded',
         'msg:sdk-visible-after-retry',
         'msg:sdk-fallback-notice',
+        'msg:sdk-superseding-message',
       ]);
+      expect(mapped.find((row) => row.id === 'msg:row-retracted')).toMatchObject({
+        title: 'Retracted Answer',
+        details: 'Retracted by a later model fallback.',
+        severity: 'warning',
+      });
+      expect(mapped.find((row) => row.id === 'msg:row-superseded')).toMatchObject({
+        title: 'Superseded Answer',
+        details: 'Superseded by a later SDK message.',
+        severity: 'warning',
+      });
     });
 
     test('actorMessages.byWorkflowRun does not fan out node or artifact rows across tasks', () => {
@@ -1215,7 +1410,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
         expect(rows.map((r) => r.id)).not.toContain('u1');
       });
 
-      test('task feeds evict rows retracted by refusal fallback notices', () => {
+      test('task feeds include rows retracted by refusal fallback notices', () => {
         const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
         insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
         insertSdkMessageAt('row-retracted', sessionId, now + 1000, {
@@ -1248,10 +1443,15 @@ describe('NAMED_QUERY_REGISTRY', () => {
         const fullRows = entry.mapRow ? rawRows.map(entry.mapRow) : rawRows;
 
         expect(compactRows.map((row) => row.id)).toEqual([
+          'row-retracted',
           'visible-after-retry',
           'fallback-notice',
         ]);
-        expect(fullRows.map((row) => row.id)).toEqual(['visible-after-retry', 'fallback-notice']);
+        expect(fullRows.map((row) => row.id)).toEqual([
+          'row-retracted',
+          'visible-after-retry',
+          'fallback-notice',
+        ]);
       });
 
       test('always includes system rows (init / compact_boundary) regardless of tail position', () => {
@@ -1308,6 +1508,91 @@ describe('NAMED_QUERY_REGISTRY', () => {
         expect(resultRow.turnHiddenMessageCount).toBe(2);
       });
 
+      test('filters transcript-only informational rows before task-feed compaction', () => {
+        const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+        insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+
+        insertSdkMessageAt('visible-before', sessionId, now + 1000);
+        insertSdkMessageAt(
+          'hidden-info',
+          sessionId,
+          now + 2000,
+          {
+            type: 'system',
+            subtype: 'informational',
+            level: 'info',
+            content: 'transcript-only',
+          },
+          'system'
+        );
+        insertSdkMessageAt(
+          'visible-warning',
+          sessionId,
+          now + 3000,
+          {
+            type: 'system',
+            subtype: 'informational',
+            level: 'warning',
+            content: 'shown to user',
+          },
+          'system'
+        );
+
+        const compactRows = queryCompact(taskId);
+        const entry = NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask')!;
+        const rawRows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
+        const fullRows = entry.mapRow ? rawRows.map(entry.mapRow) : rawRows;
+
+        expect(compactRows.map((row) => row.id)).toEqual(['visible-before', 'visible-warning']);
+        expect(fullRows.map((row) => row.id)).toEqual(['visible-before', 'visible-warning']);
+      });
+
+      test('keeps worker shutdown task-feed rows only at the session tail', () => {
+        const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+        insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+
+        insertSdkMessageAt('visible-before', sessionId, now + 1000);
+        insertSdkMessageAt(
+          'stale-shutdown',
+          sessionId,
+          now + 2000,
+          {
+            type: 'system',
+            subtype: 'worker_shutting_down',
+            reason: 'host_exit',
+          },
+          'system'
+        );
+        insertSdkMessageAt('visible-after', sessionId, now + 3000);
+        insertSdkMessageAt(
+          'tail-shutdown',
+          sessionId,
+          now + 4000,
+          {
+            type: 'system',
+            subtype: 'worker_shutting_down',
+            reason: 'host_exit',
+          },
+          'system'
+        );
+
+        const compactRows = queryCompact(taskId);
+        const entry = NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask')!;
+        const rawRows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
+        const fullRows = entry.mapRow ? rawRows.map(entry.mapRow) : rawRows;
+
+        expect(compactRows.map((row) => row.id)).toEqual([
+          'visible-before',
+          'visible-after',
+          'tail-shutdown',
+        ]);
+        expect(fullRows.map((row) => row.id)).toEqual([
+          'visible-before',
+          'visible-after',
+          'tail-shutdown',
+        ]);
+      });
+
       test('final ordering is createdAt ASC, id ASC', () => {
         const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
         insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
@@ -1322,7 +1607,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
         expect(createdAts).toEqual(sorted);
       });
 
-      test('task feeds exclude operational system rows', () => {
+      test('task feeds include operational system rows', () => {
         const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
         insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
 
@@ -1352,8 +1637,18 @@ describe('NAMED_QUERY_REGISTRY', () => {
         const rawRows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
         const fullRows = entry.mapRow ? rawRows.map(entry.mapRow) : rawRows;
 
-        expect(compactRows.map((row) => row.id)).toEqual(['visible']);
-        expect(fullRows.map((row) => row.id)).toEqual(['visible']);
+        expect(compactRows.map((row) => row.id)).toEqual([
+          'visible',
+          'operational-commands_changed',
+          'operational-session_state_changed',
+          'operational-thinking_tokens',
+        ]);
+        expect(fullRows.map((row) => row.id)).toEqual([
+          'visible',
+          'operational-commands_changed',
+          'operational-session_state_changed',
+          'operational-thinking_tokens',
+        ]);
       });
 
       test('legacy full query variant is unaffected by compact slicing', () => {
@@ -2197,7 +2492,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
       expect(parsed.uuid).toBe('worker-msg-1');
     });
 
-    test('filters operational sdk rows before building the group timeline', () => {
+    test('includes operational sdk rows when building the group timeline', () => {
       insertTask();
       insertGroup();
       insertSdkMessage(workerSessionId, 'visible-worker-msg', 1000);
@@ -2207,10 +2502,15 @@ describe('NAMED_QUERY_REGISTRY', () => {
 
       const rows = executeSQLAndMap();
 
-      expect(rows.map((row) => row.id)).toEqual(['visible-worker-msg']);
+      expect(rows.map((row) => row.id)).toEqual([
+        'visible-worker-msg',
+        'operational-commands_changed',
+        'operational-session_state_changed',
+        'operational-thinking_tokens',
+      ]);
     });
 
-    test('evicts rows retracted by refusal fallback notices before building the group timeline', () => {
+    test('includes rows retracted by refusal fallback notices when building the group timeline', () => {
       insertTask();
       insertGroup();
       insertSdkMessage(
@@ -2228,7 +2528,11 @@ describe('NAMED_QUERY_REGISTRY', () => {
 
       const rows = executeSQLAndMap();
 
-      expect(rows.map((row) => row.id)).toEqual(['visible-worker-msg', 'fallback-notice']);
+      expect(rows.map((row) => row.id)).toEqual([
+        'row-retracted-worker-msg',
+        'visible-worker-msg',
+        'fallback-notice',
+      ]);
     });
 
     test('event rows keep null sessionId and status text extraction', () => {

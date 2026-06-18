@@ -525,6 +525,46 @@ describe('Auth RPC Handlers', () => {
       expect(credentialManager.removeCredentials).toHaveBeenCalledWith('test-provider');
     });
 
+    it('surfaces keychain guidance when backend is keychain-fallback (round 7 fix)', async () => {
+      // Same scenario as the keychain-unavailable test above, but with the
+      // `keychain-fallback` backend — the round 7 fix extended the guard
+      // at auth-handlers.ts:249 to treat both backends as "Keychain
+      // unreachable". Without the fix this branch would report
+      // env-managed and leave the Keychain credential intact even though
+      // one provider had entered fallback mode.
+      const credentialManager = {
+        getCredentials: mock(async () => null),
+        removeCredentials: mock(async () => {
+          throw new KeychainUnavailableError('keychain locked');
+        }),
+        hasEnvironmentCredentials: mock(() => false),
+        getCredentialStoreStatus: mock(() => ({
+          backend: 'keychain-fallback',
+          keychainAvailable: false,
+          warning: 'Using local encrypted file storage.',
+        })),
+      };
+      setupAuthHandlers(
+        messageHubData.hub,
+        mockAuthManager as unknown as AuthManager,
+        credentialManager as never
+      );
+      const mockProvider = createMockProvider({ logout: undefined });
+      registry.register(mockProvider);
+
+      const handler = messageHubData.handlers.get('auth.logout');
+      expect(handler).toBeDefined();
+
+      const result = (await handler!({ providerId: 'test-provider' }, {})) as {
+        success: boolean;
+        error?: string;
+      };
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('security unlock-keychain');
+      expect(credentialManager.removeCredentials).toHaveBeenCalledWith('test-provider');
+    });
+
     it('returns managed-by-environment error and removes stale row when env overrides storage', async () => {
       const credentialManager = {
         getCredentials: mock(async () => ({ type: 'api_key' as const, apiKey: 'stored-key' })),

@@ -76,11 +76,18 @@ export interface SystemState {
  * Status of the provider credential store.
  *
  * - `keychain`              — macOS Keychain is in use.
- * - `keychain-unavailable`  — macOS Keychain is locked/unavailable; persistent
- *   credential writes cannot proceed until unlocked.
+ * - `keychain-unavailable`  — macOS Keychain is locked/unavailable and no
+ *   fallback credential store is configured; writes cannot proceed.
+ * - `keychain-fallback`     — macOS Keychain locked/unavailable; daemon is
+ *   using the local encrypted `DatabaseCredentialStore` instead. Writes
+ *   succeed but with weaker isolation than the Keychain.
  * - `database`              — non-darwin platform or test env; Keychain not in use.
  */
-export type CredentialStoreBackend = 'keychain' | 'keychain-unavailable' | 'database';
+export type CredentialStoreBackend =
+  | 'keychain'
+  | 'keychain-unavailable'
+  | 'keychain-fallback'
+  | 'database';
 
 export interface CredentialStoreStatus {
   backend: CredentialStoreBackend;

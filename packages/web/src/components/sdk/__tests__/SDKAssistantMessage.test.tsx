@@ -456,6 +456,33 @@ describe('SDKAssistantMessage', () => {
       expect(cards.length).toBe(1);
       expect(container.textContent).toContain('Actual reasoning');
     });
+
+    it('should NOT render estimate-only card when no thinking blocks exist', () => {
+      // When daemon stamps estimated_thinking_tokens but SDK returns no thinking blocks,
+      // we should NOT render a "ghost" thinking card — estimates only augment existing blocks.
+      const message: Extract<SDKMessage, { type: 'assistant' }> = {
+        type: 'assistant',
+        message: {
+          id: 'msg_estimate_only',
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'text', text: 'Response without thinking.' }],
+          model: 'claude-3-5-sonnet-20241022',
+          stop_reason: 'end_turn',
+          stop_sequence: null,
+          usage: { input_tokens: 10, output_tokens: 20 },
+        },
+        parent_tool_use_id: null,
+        uuid: 'estimate-only-uuid',
+        session_id: 'test-session',
+        estimated_thinking_tokens: 5000, // Stamped by daemon
+      } as unknown as Extract<SDKMessage, { type: 'assistant' }>;
+
+      const { container } = render(<SDKAssistantMessage message={message} />);
+
+      // No thinking card should be rendered
+      expect(container.querySelector('[data-testid="thinking-block"]')).toBeNull();
+    });
   });
 
   describe('Error State', () => {

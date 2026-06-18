@@ -14,6 +14,7 @@ import {
   isToolUseBlock,
 } from '@neokai/shared/sdk/type-guards';
 import type { SpaceTaskThreadMessageRow } from '../../../hooks/useSpaceTaskMessages';
+import type { MessageReplacementStatus } from '../../../lib/sdk-message-replacement';
 
 export type SpaceTaskThreadEventKind =
   | 'thinking'
@@ -43,6 +44,7 @@ export interface ParsedThreadRow {
   deliveryState?: 'delivered' | 'failed' | null;
   message: SDKMessage | null;
   fallbackText: string | null;
+  replacementStatus?: MessageReplacementStatus;
 }
 
 export interface TodoItem {

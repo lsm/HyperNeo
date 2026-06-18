@@ -43,6 +43,7 @@ import {
   createAnthropicMessagesBridgeServer,
   type AnthropicMessagesBridgeServer,
 } from './anthropic-messages-bridge/server.js';
+import { probeAnthropicCompatCredentials } from './shared/credential-probe.js';
 import { Logger } from '../logger.js';
 import * as crypto from 'crypto';
 
@@ -184,6 +185,14 @@ export class KimiProvider implements Provider {
   private defaultRegion: KimiRegion = 'china';
 
   /**
+   * Cached credential-probe result keyed by `{baseUrl}::{apiKey}` so that
+   * repeated `providers.test` / model-picker loads don't re-probe the same
+   * upstream within a short window. Cleared on `setCredentials()`.
+   */
+  private readonly probeCache = new Map<string, { at: number; result: Promise<void> }>();
+  private static readonly PROBE_TTL_MS = 30_000;
+
+  /**
    * Bridge servers keyed by `{baseUrl}::{apiKey}` so that sessions with
    * different per-session credentials get isolated bridges that forward
    * the correct auth upstream.  This avoids a singleton bridge leaking
@@ -193,13 +202,15 @@ export class KimiProvider implements Provider {
 
   constructor(
     env: NodeJS.ProcessEnv = process.env,
-    private readonly bridgeFactory: typeof createAnthropicMessagesBridgeServer = createAnthropicMessagesBridgeServer
+    private readonly bridgeFactory: typeof createAnthropicMessagesBridgeServer = createAnthropicMessagesBridgeServer,
+    private readonly fetchImpl: typeof fetch = fetch
   ) {
     this.env = env;
   }
 
   setCredentials(credentials: ProviderCredentials): void {
     this.credentials = credentials;
+    this.probeCache.clear();
   }
 
   getCredentials(): ProviderCredentials | null {
@@ -251,8 +262,51 @@ export class KimiProvider implements Provider {
     );
   }
 
+  /**
+   * Verify the configured Kimi API key actually works against the upstream
+   * Anthropic-compatible endpoint. Sends a minimal `/v1/messages` request
+   * with `max_tokens: 1` so the probe never burns completion tokens.
+   *
+   * Results are cached per `{baseUrl}::{apiKey}` for `PROBE_TTL_MS` so
+   * repeated health checks (e.g. `providers.healthCheck` polling) don't
+   * re-probe within the window. A failed probe is NOT cached so transient
+   * failures self-heal on the next call.
+   *
+   * @throws {Error} when the key is rejected, the upstream is unreachable,
+   *   or the request times out.
+   */
+  private async verifyCredentials(baseUrl: string, apiKey: string): Promise<void> {
+    const cacheKey = `${baseUrl}::${apiKey}`;
+    const cached = this.probeCache.get(cacheKey);
+    if (cached && Date.now() - cached.at < KimiProvider.PROBE_TTL_MS) {
+      // Re-throw the cached failure or resolve the cached success.
+      await cached.result;
+      return;
+    }
+    const result = probeAnthropicCompatCredentials({
+      baseUrl,
+      apiKey,
+      model: KimiProvider.DEFAULT_MODEL,
+      providerName: 'Kimi',
+      fetchImpl: this.fetchImpl,
+    })
+      .then(() => undefined)
+      .catch((err) => {
+        // Don't cache failures — let the next call retry.
+        this.probeCache.delete(cacheKey);
+        throw err;
+      });
+    this.probeCache.set(cacheKey, { at: Date.now(), result });
+    await result;
+  }
+
   async getModels(): Promise<ModelInfo[]> {
-    return this.isAvailable() ? KimiProvider.MODELS : [];
+    const apiKey = this.getApiKey();
+    if (!apiKey) return [];
+    // Use the default Kimi base URL for the probe — session overrides are
+    // applied at request time via buildSdkConfig(), not here.
+    await this.verifyCredentials(KimiProvider.BASE_URL, apiKey);
+    return KimiProvider.MODELS;
   }
 
   ownsModel(modelId: string): boolean {

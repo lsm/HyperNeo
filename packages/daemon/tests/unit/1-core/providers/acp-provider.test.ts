@@ -9,11 +9,18 @@ describe('AcpProvider', () => {
   let provider: AcpProvider;
   let originalEnv: NodeJS.ProcessEnv;
 
+  /**
+   * No-op command probe so unit tests don't actually spawn the configured
+   * binary. Real reachability is exercised via the default spawn-based
+   * probe in acp-provider.ts.
+   */
+  const noopProbe = async (): Promise<void> => {};
+
   beforeEach(() => {
     originalEnv = { ...process.env };
     delete process.env.NEOKAI_ACP_COMMAND;
     delete process.env.NEOKAI_ACP_CONTEXT_WINDOW;
-    provider = new AcpProvider();
+    provider = new AcpProvider(process.env, noopProbe);
   });
 
   afterEach(() => {
@@ -204,6 +211,43 @@ describe('AcpProvider', () => {
       const models = await provider.getModels();
 
       expect(models[0].id).toBe('acp-default');
+    });
+
+    it('probes the agent binary before returning default models', async () => {
+      process.env.NEOKAI_ACP_COMMAND = 'claude --acp';
+      let calls = 0;
+      const probe = async (): Promise<void> => {
+        calls++;
+      };
+      const probed = new AcpProvider(process.env, probe);
+
+      await probed.getModels();
+
+      expect(calls).toBe(1);
+    });
+
+    it('throws when the agent binary is not found', async () => {
+      process.env.NEOKAI_ACP_COMMAND = 'missing-binary';
+      const probe = async (): Promise<void> => {
+        throw new Error("ACP command 'missing-binary' not found in PATH");
+      };
+      const probed = new AcpProvider(process.env, probe);
+
+      expect(probed.getModels()).rejects.toThrow("ACP command 'missing-binary' not found in PATH");
+    });
+
+    it('caches successful probe so repeated calls do not re-spawn', async () => {
+      process.env.NEOKAI_ACP_COMMAND = 'claude --acp';
+      let calls = 0;
+      const probe = async (): Promise<void> => {
+        calls++;
+      };
+      const probed = new AcpProvider(process.env, probe);
+
+      await probed.getModels();
+      await probed.getModels();
+
+      expect(calls).toBe(1);
     });
   });
 

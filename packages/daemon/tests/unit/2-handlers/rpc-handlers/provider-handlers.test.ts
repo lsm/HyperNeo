@@ -226,6 +226,38 @@ describe('Provider RPC handlers', () => {
       expect(creds.storeApiKey).not.toHaveBeenCalled();
     });
 
+    it('rolls back the provider row and surfaces keychain guidance when storeApiKey throws KeychainUnavailableError', async () => {
+      // Built-in providers persist secrets in the macOS Keychain. If the
+      // Keychain is locked, the create must (a) reject with an actionable
+      // message the UI can toast, (b) remove the just-inserted provider row
+      // so retries don't see 'already exists', and (c) skip the
+      // providers.changed broadcast.
+      creds.storeApiKey = mock(async () => {
+        throw new KeychainUnavailableError('User interaction is not allowed.');
+      });
+      const handlers = setup();
+
+      await expect(
+        handlers.get('providers.create')!(
+          {
+            params: {
+              providerId: 'openrouter',
+              displayName: 'OpenRouter',
+              kind: 'built_in',
+              authType: 'api_key',
+            },
+            credentials: { apiKey: 'sk-or-test' },
+          },
+          {}
+        )
+      ).rejects.toThrow('macOS Keychain is locked or unavailable');
+
+      // Compensating delete happened.
+      expect(repo.listProviders()).toEqual([]);
+      // Broadcast skipped because nothing changed from the user's perspective.
+      expect(eventBus.publishAsync).not.toHaveBeenCalled();
+    });
+
     it('re-registers a built-in provider that was previously unregistered', async () => {
       // Simulate deleting and re-adding a built-in provider
       const registry = getProviderRegistry();
@@ -522,6 +554,35 @@ describe('Provider RPC handlers', () => {
         refreshToken: 'new-ref',
         expiresAt: 87654321,
       });
+    });
+
+    it('surfaces keychain guidance and leaves the record untouched when storeApiKey throws KeychainUnavailableError', async () => {
+      // If the credential write fails because the macOS Keychain is locked,
+      // the update must reject with an actionable message and must NOT flip
+      // authType or otherwise advance the DB row — the record should stay in
+      // its pre-update state so the user can retry after unlocking Keychain.
+      const created = repo.createProvider({
+        providerId: 'anthropic',
+        displayName: 'Anthropic',
+        kind: 'built_in',
+        authType: 'none',
+      });
+      creds.storeApiKey = mock(async () => {
+        throw new KeychainUnavailableError('User interaction is not allowed.');
+      });
+      const handlers = setup();
+
+      await expect(
+        handlers.get('providers.update')!(
+          { id: created.id, params: {}, credentials: { apiKey: 'sk-new' } },
+          {}
+        )
+      ).rejects.toThrow('macOS Keychain is locked or unavailable');
+
+      // Record unchanged: authType stays 'none', no providers.changed emitted.
+      const after = repo.getProvider(created.id);
+      expect(after?.authType).toBe('none');
+      expect(eventBus.publishAsync).not.toHaveBeenCalled();
     });
   });
 

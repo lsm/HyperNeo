@@ -2,7 +2,7 @@
  * Unit tests for GLM Provider
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { GlmProvider } from '../../../../src/lib/providers/glm-provider';
 
 describe('GlmProvider', () => {
@@ -68,8 +68,21 @@ describe('GlmProvider', () => {
   });
 
   describe('getModels', () => {
+    /**
+     * Build a provider whose credential probe always succeeds, so existing
+     * tests that just want the static model list don't need to mock every
+     * fetch call individually.
+     */
+    function makeProbeOkProvider(): GlmProvider {
+      const fetchImpl = mock(
+        async () => new Response('{}', { status: 200 })
+      ) as unknown as typeof fetch;
+      return new GlmProvider(process.env, fetchImpl);
+    }
+
     it('should return GLM models when API key is available', async () => {
       process.env.GLM_API_KEY = 'test-key';
+      provider = makeProbeOkProvider();
 
       const models = await provider.getModels();
 
@@ -87,6 +100,7 @@ describe('GlmProvider', () => {
     it('should return empty array when API key is not available', async () => {
       delete process.env.GLM_API_KEY;
       delete process.env.ZHIPU_API_KEY;
+      provider = makeProbeOkProvider();
 
       const models = await provider.getModels();
       expect(models).toEqual([]);
@@ -94,12 +108,64 @@ describe('GlmProvider', () => {
 
     it('should include provider field in models', async () => {
       process.env.GLM_API_KEY = 'test-key';
+      provider = makeProbeOkProvider();
 
       const models = await provider.getModels();
 
       for (const model of models) {
         expect(model.provider).toBe('glm');
       }
+    });
+
+    it('probes the upstream Anthropic-compatible endpoint with the API key', async () => {
+      process.env.GLM_API_KEY = 'test-key';
+      const fetchImpl = mock(
+        async () => new Response('{}', { status: 200 })
+      ) as unknown as typeof fetch;
+      provider = new GlmProvider(process.env, fetchImpl);
+
+      await provider.getModels();
+
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      const [url, init] = (fetchImpl.mock.calls[0] as [string, RequestInit]) ?? [];
+      expect(url).toBe('https://open.bigmodel.cn/api/anthropic/v1/messages');
+      expect(init?.method).toBe('POST');
+      const headers = init?.headers as Record<string, string>;
+      expect(headers['x-api-key']).toBe('test-key');
+      expect(headers['authorization']).toBe('Bearer test-key');
+    });
+
+    it('throws when upstream rejects the API key (401)', async () => {
+      process.env.GLM_API_KEY = 'bad-key';
+      const fetchImpl = mock(
+        async () => new Response('unauthorized', { status: 401 })
+      ) as unknown as typeof fetch;
+      provider = new GlmProvider(process.env, fetchImpl);
+
+      expect(provider.getModels()).rejects.toThrow('GLM API key rejected (HTTP 401)');
+    });
+
+    it('throws when probe fails at the network layer', async () => {
+      process.env.GLM_API_KEY = 'test-key';
+      const fetchImpl = mock(async () => {
+        throw new Error('ENOTFOUND');
+      }) as unknown as typeof fetch;
+      provider = new GlmProvider(process.env, fetchImpl);
+
+      expect(provider.getModels()).rejects.toThrow('GLM probe failed: ENOTFOUND');
+    });
+
+    it('caches successful probe for 30s so repeated calls do not re-probe', async () => {
+      process.env.GLM_API_KEY = 'test-key';
+      const fetchImpl = mock(
+        async () => new Response('{}', { status: 200 })
+      ) as unknown as typeof fetch;
+      provider = new GlmProvider(process.env, fetchImpl);
+
+      await provider.getModels();
+      await provider.getModels();
+
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -218,7 +284,31 @@ describe('GlmProvider', () => {
       expect(upperConfig.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe(
         lowerConfig.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW
       );
-      expect(upperConfig.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('1000000');
+    });
+
+    it('should handle double [1m] suffix by stripping all trailing suffixes', () => {
+      // Regression: glm-5.2[1m][1m] would only strip ONE suffix, leaving glm-5.2[1m],
+      // which then gets another [1m] appended → glm-5.2[1m][1m] again, breaking the
+      // metadata lookup (CONTEXT_WINDOW_BY_MODEL_ID only has glm-5.2[1m]).
+      process.env.GLM_API_KEY = 'test-key';
+
+      const config = provider.buildSdkConfig('glm-5.2[1m][1m]');
+
+      // Should route to single-suffix glm-5.2[1m]
+      expect(config.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('glm-5.2[1m]');
+      // Should use 1M capacity from metadata, not 200K fallback
+      expect(config.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('1000000');
+    });
+
+    it('should handle triple [1m] suffix by stripping all trailing suffixes', () => {
+      process.env.GLM_API_KEY = 'test-key';
+
+      const config = provider.buildSdkConfig('glm-5.2[1m][1m][1m]');
+
+      // Should route to single-suffix glm-5.2[1m]
+      expect(config.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('glm-5.2[1m]');
+      // Should use 1M capacity from metadata
+      expect(config.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('1000000');
     });
 
     it('should ignore [1m] suffix for non-1M GLM models', () => {

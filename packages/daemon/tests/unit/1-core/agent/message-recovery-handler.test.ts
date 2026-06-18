@@ -17,8 +17,9 @@ describe('MessageRecoveryHandler', () => {
   let mockDb: Database;
   let mockLogger: Logger;
 
+  let getConsumedUserMessagesAfterLatestInitSpy: ReturnType<typeof mock>;
   let getMessagesByStatusSpy: ReturnType<typeof mock>;
-  let getSDKMessagesSpy: ReturnType<typeof mock>;
+  let getLatestSystemInitTimestampSpy: ReturnType<typeof mock>;
   let updateMessageStatusSpy: ReturnType<typeof mock>;
 
   beforeEach(() => {
@@ -44,12 +45,14 @@ describe('MessageRecoveryHandler', () => {
       },
     };
 
+    getConsumedUserMessagesAfterLatestInitSpy = mock(() => []);
     getMessagesByStatusSpy = mock(() => []);
-    getSDKMessagesSpy = mock(() => ({ messages: [], hasMore: false }));
+    getLatestSystemInitTimestampSpy = mock(() => 0);
     updateMessageStatusSpy = mock(() => {});
     mockDb = {
+      getConsumedUserMessagesAfterLatestInit: getConsumedUserMessagesAfterLatestInitSpy,
       getMessagesByStatus: getMessagesByStatusSpy,
-      getSDKMessages: getSDKMessagesSpy,
+      getLatestSystemInitTimestamp: getLatestSystemInitTimestampSpy,
       updateMessageStatus: updateMessageStatusSpy,
     } as unknown as Database;
 
@@ -72,20 +75,22 @@ describe('MessageRecoveryHandler', () => {
 
   describe('recoverOrphanedConsumedMessages', () => {
     it('should return early if no stuck messages', () => {
-      getMessagesByStatusSpy.mockReturnValue([]);
+      getConsumedUserMessagesAfterLatestInitSpy.mockReturnValue([]);
 
       handler.recoverOrphanedConsumedMessages();
 
-      expect(getSDKMessagesSpy).not.toHaveBeenCalled();
+      expect(getConsumedUserMessagesAfterLatestInitSpy).toHaveBeenCalledWith('test-session-id');
+      expect(getMessagesByStatusSpy).not.toHaveBeenCalled();
+      expect(getLatestSystemInitTimestampSpy).not.toHaveBeenCalled();
       expect(updateMessageStatusSpy).not.toHaveBeenCalled();
     });
 
     it('should check consumed messages for recovery', () => {
-      getMessagesByStatusSpy.mockReturnValue([]);
+      getConsumedUserMessagesAfterLatestInitSpy.mockReturnValue([]);
 
       handler.recoverOrphanedConsumedMessages();
 
-      expect(getMessagesByStatusSpy).toHaveBeenCalledWith('test-session-id', 'consumed');
+      expect(getConsumedUserMessagesAfterLatestInitSpy).toHaveBeenCalledWith('test-session-id');
     });
 
     it('should find orphaned user messages without system:init response', () => {
@@ -97,60 +102,36 @@ describe('MessageRecoveryHandler', () => {
         timestamp: 2000,
       } as unknown as SDKMessage;
 
-      getMessagesByStatusSpy.mockReturnValue([sentUserMessage]);
+      getConsumedUserMessagesAfterLatestInitSpy.mockReturnValue([sentUserMessage]);
 
-      // All messages including system:init
-      const systemInitMessage: SDKMessage = {
-        dbId: 'db-0',
-        uuid: 'init-uuid',
-        type: 'system',
-        subtype: 'init',
-        timestamp: 1000,
-      } as unknown as SDKMessage;
-
-      getSDKMessagesSpy.mockReturnValue({ messages: [systemInitMessage], hasMore: false });
+      getLatestSystemInitTimestampSpy.mockReturnValue(1000);
 
       handler.recoverOrphanedConsumedMessages();
 
-      // User message timestamp (2000) > system:init timestamp (1000) = orphaned
+      expect(getMessagesByStatusSpy).not.toHaveBeenCalled();
+      expect(getLatestSystemInitTimestampSpy).not.toHaveBeenCalled();
       expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-1'], 'failed');
     });
 
-    it('should not recover consumed messages that have system:init after them', () => {
-      const sentUserMessage: SDKMessage = {
-        dbId: 'db-1',
-        uuid: 'uuid-12345678',
-        type: 'user',
-        message: { role: 'user', content: 'Hello' },
-        timestamp: 1000,
-      } as unknown as SDKMessage;
-
-      getMessagesByStatusSpy.mockReturnValue([sentUserMessage]);
-
-      // System:init came AFTER the user message
-      const systemInitMessage: SDKMessage = {
-        dbId: 'db-0',
-        uuid: 'init-uuid',
-        type: 'system',
-        subtype: 'init',
-        timestamp: 2000,
-      } as unknown as SDKMessage;
-
-      getSDKMessagesSpy.mockReturnValue({ messages: [systemInitMessage], hasMore: false });
+    it('should rely on the repository to filter messages before the latest system:init', () => {
+      getConsumedUserMessagesAfterLatestInitSpy.mockReturnValue([]);
 
       handler.recoverOrphanedConsumedMessages();
 
-      // User message timestamp (1000) < system:init timestamp (2000) = not orphaned
+      expect(getConsumedUserMessagesAfterLatestInitSpy).toHaveBeenCalledWith('test-session-id');
+      expect(getMessagesByStatusSpy).not.toHaveBeenCalled();
+      expect(getLatestSystemInitTimestampSpy).not.toHaveBeenCalled();
       expect(updateMessageStatusSpy).not.toHaveBeenCalled();
     });
 
     it('should not rewrite queued messages during recovery', () => {
-      getMessagesByStatusSpy.mockReturnValue([]);
-      getSDKMessagesSpy.mockReturnValue({ messages: [], hasMore: false });
+      getConsumedUserMessagesAfterLatestInitSpy.mockReturnValue([]);
+      getLatestSystemInitTimestampSpy.mockReturnValue(0);
 
       handler.recoverOrphanedConsumedMessages();
 
-      expect(getMessagesByStatusSpy).not.toHaveBeenCalledWith('test-session-id', 'enqueued');
+      expect(getConsumedUserMessagesAfterLatestInitSpy).toHaveBeenCalledWith('test-session-id');
+      expect(getMessagesByStatusSpy).not.toHaveBeenCalled();
       expect(updateMessageStatusSpy).not.toHaveBeenCalled();
     });
 
@@ -163,12 +144,13 @@ describe('MessageRecoveryHandler', () => {
         timestamp: 2000,
       } as unknown as SDKMessage;
 
-      getMessagesByStatusSpy.mockReturnValue([assistantMessage]);
+      getConsumedUserMessagesAfterLatestInitSpy.mockReturnValue([assistantMessage]);
 
-      getSDKMessagesSpy.mockReturnValue({ messages: [], hasMore: false });
+      getLatestSystemInitTimestampSpy.mockReturnValue(0);
 
       handler.recoverOrphanedConsumedMessages();
 
+      expect(getLatestSystemInitTimestampSpy).not.toHaveBeenCalled();
       expect(updateMessageStatusSpy).not.toHaveBeenCalled();
     });
 
@@ -190,25 +172,18 @@ describe('MessageRecoveryHandler', () => {
         } as unknown as SDKMessage,
       ];
 
-      getMessagesByStatusSpy.mockReturnValue(sentMessages);
+      getConsumedUserMessagesAfterLatestInitSpy.mockReturnValue(sentMessages);
 
-      const systemInitMessage: SDKMessage = {
-        dbId: 'db-0',
-        uuid: 'init-uuid',
-        type: 'system',
-        subtype: 'init',
-        timestamp: 1000,
-      } as unknown as SDKMessage;
-
-      getSDKMessagesSpy.mockReturnValue({ messages: [systemInitMessage], hasMore: false });
+      getLatestSystemInitTimestampSpy.mockReturnValue(1000);
 
       handler.recoverOrphanedConsumedMessages();
 
+      expect(getLatestSystemInitTimestampSpy).not.toHaveBeenCalled();
       expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-1', 'db-2'], 'failed');
     });
 
     it('should handle errors gracefully', () => {
-      getMessagesByStatusSpy.mockImplementation(() => {
+      getConsumedUserMessagesAfterLatestInitSpy.mockImplementation(() => {
         throw new Error('Database error');
       });
 
@@ -230,15 +205,14 @@ describe('MessageRecoveryHandler', () => {
         // No timestamp
       } as unknown as SDKMessage;
 
-      getMessagesByStatusSpy.mockReturnValue([sentUserMessage]);
+      getConsumedUserMessagesAfterLatestInitSpy.mockReturnValue([sentUserMessage]);
 
-      getSDKMessagesSpy.mockReturnValue({ messages: [], hasMore: false });
+      getLatestSystemInitTimestampSpy.mockReturnValue(0);
 
       handler.recoverOrphanedConsumedMessages();
 
-      // With no system:init (latestInitTimestamp = 0) and message timestamp = 0,
-      // the message is NOT orphaned (0 > 0 is false)
-      expect(updateMessageStatusSpy).not.toHaveBeenCalled();
+      expect(getLatestSystemInitTimestampSpy).not.toHaveBeenCalled();
+      expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-1'], 'failed');
     });
 
     it('should handle messages without uuid', () => {
@@ -250,9 +224,9 @@ describe('MessageRecoveryHandler', () => {
         timestamp: 2000,
       } as unknown as SDKMessage;
 
-      getMessagesByStatusSpy.mockReturnValue([sentUserMessage]);
+      getConsumedUserMessagesAfterLatestInitSpy.mockReturnValue([sentUserMessage]);
 
-      getSDKMessagesSpy.mockReturnValue({ messages: [], hasMore: false });
+      getLatestSystemInitTimestampSpy.mockReturnValue(0);
 
       handler.recoverOrphanedConsumedMessages();
 
@@ -272,17 +246,9 @@ describe('MessageRecoveryHandler', () => {
         timestamp: 2000,
       } as unknown as SDKMessage;
 
-      getMessagesByStatusSpy.mockReturnValue([syntheticMessage]);
+      getConsumedUserMessagesAfterLatestInitSpy.mockReturnValue([syntheticMessage]);
 
-      const systemInitMessage: SDKMessage = {
-        dbId: 'db-0',
-        uuid: 'init-uuid',
-        type: 'system',
-        subtype: 'init',
-        timestamp: 1000,
-      } as unknown as SDKMessage;
-
-      getSDKMessagesSpy.mockReturnValue({ messages: [systemInitMessage], hasMore: false });
+      getLatestSystemInitTimestampSpy.mockReturnValue(1000);
 
       handler.recoverOrphanedConsumedMessages();
 
@@ -305,17 +271,9 @@ describe('MessageRecoveryHandler', () => {
         timestamp: 2000,
       } as unknown as SDKMessage;
 
-      getMessagesByStatusSpy.mockReturnValue([toolResultMessage]);
+      getConsumedUserMessagesAfterLatestInitSpy.mockReturnValue([toolResultMessage]);
 
-      const systemInitMessage: SDKMessage = {
-        dbId: 'db-0',
-        uuid: 'init-uuid',
-        type: 'system',
-        subtype: 'init',
-        timestamp: 1000,
-      } as unknown as SDKMessage;
-
-      getSDKMessagesSpy.mockReturnValue({ messages: [systemInitMessage], hasMore: false });
+      getLatestSystemInitTimestampSpy.mockReturnValue(1000);
 
       handler.recoverOrphanedConsumedMessages();
 
@@ -338,17 +296,9 @@ describe('MessageRecoveryHandler', () => {
         timestamp: 2000,
       } as unknown as SDKMessage;
 
-      getMessagesByStatusSpy.mockReturnValue([mixedMessage]);
+      getConsumedUserMessagesAfterLatestInitSpy.mockReturnValue([mixedMessage]);
 
-      const systemInitMessage: SDKMessage = {
-        dbId: 'db-0',
-        uuid: 'init-uuid',
-        type: 'system',
-        subtype: 'init',
-        timestamp: 1000,
-      } as unknown as SDKMessage;
-
-      getSDKMessagesSpy.mockReturnValue({ messages: [systemInitMessage], hasMore: false });
+      getLatestSystemInitTimestampSpy.mockReturnValue(1000);
 
       handler.recoverOrphanedConsumedMessages();
 
@@ -356,7 +306,7 @@ describe('MessageRecoveryHandler', () => {
       expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-1'], 'failed');
     });
 
-    it('should find latest system:init timestamp for consumed messages', () => {
+    it('should not load all consumed messages or compute latest system:init in the handler', () => {
       const sentUserMessage: SDKMessage = {
         dbId: 'db-1',
         uuid: 'uuid-12345678',
@@ -365,39 +315,16 @@ describe('MessageRecoveryHandler', () => {
         timestamp: 2500,
       } as unknown as SDKMessage;
 
-      getMessagesByStatusSpy.mockReturnValue([sentUserMessage]);
+      getConsumedUserMessagesAfterLatestInitSpy.mockReturnValue([sentUserMessage]);
 
-      // Multiple system:init messages
-      const systemInitMessages: SDKMessage[] = [
-        {
-          dbId: 'db-0',
-          uuid: 'init-1',
-          type: 'system',
-          subtype: 'init',
-          timestamp: 1000,
-        } as unknown as SDKMessage,
-        {
-          dbId: 'db-0',
-          uuid: 'init-2',
-          type: 'system',
-          subtype: 'init',
-          timestamp: 3000, // Latest
-        } as unknown as SDKMessage,
-        {
-          dbId: 'db-0',
-          uuid: 'init-3',
-          type: 'system',
-          subtype: 'init',
-          timestamp: 2000,
-        } as unknown as SDKMessage,
-      ];
-
-      getSDKMessagesSpy.mockReturnValue({ messages: systemInitMessages, hasMore: false });
+      getLatestSystemInitTimestampSpy.mockReturnValue(3000);
 
       handler.recoverOrphanedConsumedMessages();
 
-      // User message timestamp (2500) < latest system:init (3000) = not orphaned
-      expect(updateMessageStatusSpy).not.toHaveBeenCalled();
+      expect(getConsumedUserMessagesAfterLatestInitSpy).toHaveBeenCalledWith('test-session-id');
+      expect(getMessagesByStatusSpy).not.toHaveBeenCalled();
+      expect(getLatestSystemInitTimestampSpy).not.toHaveBeenCalled();
+      expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-1'], 'failed');
     });
   });
 });
