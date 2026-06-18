@@ -302,11 +302,19 @@ The gateway should expose fabric commands and events over time:
 | `agentRuntime.message.send` | command | Send input into a runtime session. |
 | `agentRuntime.session.interrupt` | command | Interrupt/cancel active execution. |
 | `agentRuntime.config.update` | command | Change model, tools, permissions, or runtime config. |
+| `agentRuntime.model.switch` | command | Switch a session's active model. |
+| `agentRuntime.coordinator.switch` | command | Switch a session's coordinator mode. |
+| `agentRuntime.sandbox.switch` | command | Switch a session's sandbox mode. |
+| `agentRuntime.worktreeMode.set` | command | Set a session's worktree mode. |
 | `agentRuntime.session.status.get` | query | Read runtime status. |
 | `agentRuntime.session.state.get` | query | Read the unified session state snapshot used by chat views. |
 | `agentRuntime.sessions.state.list` | query | Read unified session state snapshots for collection views. |
 | `agentRuntime.session.thinking.get` | query | Read session thinking-level override. |
 | `agentRuntime.session.thinking.set` | command | Persist session thinking-level override. |
+| `agentRuntime.session.rateLimitRetry.cancel` | command | Cancel a scheduled rate-limit retry. |
+| `agentRuntime.session.rateLimitRetry.retryNow` | command | Retry immediately after a rate-limit cooldown. |
+| `agentRuntime.session.sdkResumeChoice.submit` | command | Submit the user's SDK resume choice after a resume conflict. |
+| `agentRuntime.session.query.reset` | command | Reset runtime query state for manual recovery. |
 | `agentRuntime.session.pendingMessages.list` | query | Read queued, deferred, and pending manual messages. |
 | `agentRuntime.session.pendingMessage.remove` | command | Remove a pending message before execution. |
 | `agentRuntime.session.pendingMessage.promote` | command | Promote a pending message into the active turn. |
@@ -325,6 +333,8 @@ The gateway should expose fabric commands and events over time:
 | `agentRuntime.question.respond` | command | Submit an answer to a pending AskUserQuestion tool call. |
 | `agentRuntime.question.saveDraft` | command | Save draft AskUserQuestion form state before submission. |
 | `agentRuntime.question.cancel` | command | Cancel a pending AskUserQuestion tool call. |
+| `agentRuntime.reference.search` | query | Search referenceable files/entities for chat mentions. |
+| `agentRuntime.reference.resolve` | query | Resolve a selected reference for hover previews or message context. |
 | `agentRuntime.capabilities.resolve` | query | Validate runtime/provider/model compatibility. |
 | `agentRuntime.event.stream` | event | Normalized output, tool, status, and error events. |
 
@@ -342,6 +352,24 @@ that full read model. The compatibility gateway maps `state.session`, `state.ses
 view and session collection stores migrate.
 
 `agentRuntime.mcpServers.list` preserves the current `session.listRuntimeMcpServers` surface. It returns in-process runtime SDK MCP servers and Space/task tool servers attached to the selected session; it should not be folded into coarse status if tool panels need names, scopes, and capability metadata without polling the full runtime state. `agentRuntime.session.mcp.list` separately preserves `session.mcp.list`, which returns effective configured MCP entries, enablement state, and skill linkage for the selected session.
+
+The live runtime compatibility gateway maps existing chat controls to the target runtime contracts until
+callers move to the runtime namespace: `message.send` -> `agentRuntime.message.send`,
+`client.interrupt` -> `agentRuntime.session.interrupt`, `session.model.switch` ->
+`agentRuntime.model.switch`, `session.coordinator.switch` -> `agentRuntime.coordinator.switch`,
+`session.sandbox.switch` -> `agentRuntime.sandbox.switch`, and `session.setWorktreeMode` ->
+`agentRuntime.worktreeMode.set`.
+
+Recovery controls must remain first-class runtime commands, not ad hoc MessageHub leftovers:
+`session.cancelRateLimitRetry` maps to `agentRuntime.session.rateLimitRetry.cancel`,
+`session.retryNowAfterRateLimit` maps to `agentRuntime.session.rateLimitRetry.retryNow`,
+`session.sdkResumeChoice` maps to `agentRuntime.session.sdkResumeChoice.submit`, and
+`session.resetQuery` maps to `agentRuntime.session.query.reset`.
+
+Reference lookup is part of the chat/runtime surface because message composition depends on it. Existing
+`reference.search` and `reference.resolve` RPCs map to `agentRuntime.reference.search` and
+`agentRuntime.reference.resolve`; the cleanup plan must keep these aliases until mention autocomplete and
+hover preview callers migrate.
 
 The pending-message and rewind contracts preserve current chat controls while the session gateway moves
 behind Agent Runtime. The compatibility gateway maps `session.messages.byStatus`,
@@ -428,6 +456,7 @@ Provider and model settings stay contract-backed during MessageHub cleanup:
 | `provider.registry.setDefault` | command | Preserve `providers.setDefault`. |
 | `provider.registry.test` | command | Preserve `providers.test`. |
 | `provider.registry.healthCheck` | query | Preserve `providers.healthCheck`. |
+| `provider.customEndpoint.models.list` | query | Probe an arbitrary custom endpoint for model discovery before it is saved. |
 | `provider.auth.list` | query | Preserve `auth.providers`. |
 | `provider.auth.login` | command | Preserve `auth.login`. |
 | `provider.auth.logout` | command | Preserve `auth.logout`. |
@@ -436,6 +465,9 @@ Provider and model settings stay contract-backed during MessageHub cleanup:
 
 These contracts may live in a provider/config package rather than under Agent Runtime long term, but M7
 must treat them as required compatibility aliases before provider, model, or auth MessageHub RPC cleanup.
+`customEndpoints.listModels` maps to `provider.customEndpoint.models.list`; it accepts the unsaved base
+URL, endpoint type, API key, and headers from the add/edit-provider flow and must not be collapsed into
+`provider.models.list`, which only covers registered provider catalogs.
 
 ### 7.4 ProviderBridge
 

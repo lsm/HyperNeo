@@ -171,7 +171,9 @@ const changedPaths = changedFrom ? getChangedPaths(changedFrom) : null;
 const changedPathInfo = changedFrom
   ? getChangedPathInfo(changedFrom)
   : new Map<string, ChangedPathInfo>();
-const scannedFiles = changedPaths ? files.filter((file) => changedPaths.has(file.path)) : files;
+const ratchetConfigChanged = changedPaths?.has(toPosix(configPath)) ?? false;
+const scannedFiles =
+  changedPaths && !ratchetConfigChanged ? files.filter((file) => changedPaths.has(file.path)) : files;
 const oversized = scannedFiles
   .filter((file) => file.lines > thresholdConfig.hardLineCount)
   .sort((a, b) => b.lines - a.lines || a.path.localeCompare(b.path));

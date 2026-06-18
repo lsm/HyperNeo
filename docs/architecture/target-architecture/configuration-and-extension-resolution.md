@@ -412,6 +412,7 @@ Target queries:
 | `skill.effective.list` | Skills active for a Space/session with inherited/overridden source. |
 | `hook.effective.list` | Hook policies active for a runtime/session. |
 | `runtime.behavior.preview` | Final runtime-neutral behavior before adapter rendering. |
+| `mcp.registry.list` | Application-level MCP server registry entries and enablement state. |
 
 Target commands:
 
@@ -421,6 +422,12 @@ Target commands:
 | `config.value.clear` | Remove this scope's row and fall back to inherited/default value. |
 | `config.value.suppress` | Write an explicit off/suppress value for an inherited contribution. |
 | `config.values.patch` | Transactionally patch multiple scoped values. |
+| `mcp.registry.create` | Create an application-level MCP server registry entry. |
+| `mcp.registry.update` | Update an application-level MCP server registry entry. |
+| `mcp.registry.delete` | Delete an application-level MCP server registry entry. |
+| `mcp.registry.setEnabled` | Enable or disable an application-level MCP server registry entry. |
+| `mcp.enablement.setOverride` | Set a scoped MCP enablement override. |
+| `mcp.enablement.clearOverride` | Clear a scoped MCP enablement override and inherit the parent value. |
 | `extension.package.install` | Install or register an extension/skill package. |
 | `extension.package.update` | Update extension/skill package metadata or manifest. |
 | `extension.package.delete` | Delete an extension/skill package. |
@@ -441,6 +448,11 @@ Compatibility mappings:
   `config.values.patch` for the corresponding key family.
 - `tools.save` maps to `config.values.patch` at session scope.
 - `globalTools.saveConfig` maps to `config.values.patch` at global tools scope.
+- `mcp.registry.list`, `mcp.registry.create`, `mcp.registry.update`, `mcp.registry.delete`, and
+  `mcp.registry.setEnabled` remain compatibility aliases for application-level MCP server settings.
+- `mcp.enablement.setOverride` and `mcp.enablement.clearOverride` remain compatibility aliases for
+  session and Space tool enablement overrides; they write scoped config rows and trigger the same
+  effective-preview invalidation as other MCP config changes.
 - `skill.create`, `skill.update`, `skill.delete`, `skill.setEnabled`, and `skill.installFromGit`
   remain compatibility aliases over the extension/skill package commands until the Skills settings UI
   uses the target package/skill contract directly.
