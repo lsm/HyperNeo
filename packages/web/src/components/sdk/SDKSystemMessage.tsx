@@ -20,6 +20,7 @@
 import type { ComponentChildren } from 'preact';
 import { useState } from 'preact/hooks';
 import type {
+  SDKAPIRetryMessage,
   SDKHookResponseMessage,
   SDKInformationalMessage,
   SDKMessage,
@@ -38,6 +39,7 @@ import {
   isSDKCompactBoundary,
   isSDKStatusMessage,
   isSDKHookResponse,
+  isSDKAPIRetryMessage,
   isSDKModelRefusalFallbackMessage,
 } from '@neokai/shared/sdk/type-guards';
 import { customColors } from '../../lib/design-tokens.ts';
@@ -87,6 +89,11 @@ export function SDKSystemMessage({ message, isLiveTail = false }: Props) {
   if (isSDKHookResponse(message)) {
     const hookMessage = message as SDKHookResponseMessage;
     return <HookResponseCard message={hookMessage} />;
+  }
+
+  // API retry message
+  if (isSDKAPIRetryMessage(message)) {
+    return <ApiRetryMessage message={message as SDKAPIRetryMessage} />;
   }
 
   // Informational message - only render when level is not 'info'
@@ -166,6 +173,36 @@ function InformationalMessage({ message }: { message: SDKInformationalMessage })
       {message.prevent_continuation && (
         <div class="mt-1 text-xs text-slate-500 dark:text-slate-400">Continuation stopped</div>
       )}
+    </OperationalSystemMessage>
+  );
+}
+
+function ApiRetryMessage({ message }: { message: SDKAPIRetryMessage }) {
+  const maxRetries = message.max_retries;
+  const currentAttempt = message.attempt;
+  const delayMs = message.retry_delay_ms;
+  const errorStatus = message.error_status;
+  const errorMessage = message.error;
+
+  return (
+    <OperationalSystemMessage title="API retry">
+      <div class="flex flex-col gap-1">
+        <div class="flex items-center gap-2 text-xs">
+          <span class="font-medium">Attempt {currentAttempt}</span>
+          {maxRetries > 0 && (
+            <span class="text-slate-500 dark:text-slate-400">of {maxRetries}</span>
+          )}
+          {delayMs > 0 && (
+            <span class="text-slate-500 dark:text-slate-400">• delay {delayMs}ms</span>
+          )}
+        </div>
+        {errorStatus && (
+          <div class="text-xs text-slate-600 dark:text-slate-400">Status: {errorStatus}</div>
+        )}
+        <div class="text-xs text-amber-700 dark:text-amber-400 font-mono break-words">
+          {errorMessage}
+        </div>
+      </div>
     </OperationalSystemMessage>
   );
 }

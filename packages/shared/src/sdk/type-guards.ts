@@ -470,10 +470,9 @@ export function isHiddenSystemSubtype(subtype: string): boolean {
  */
 export function isUserVisibleMessage(msg: SDKMessage): boolean {
   // User should see: assistant, user, result, tool_progress, auth_status, user replays,
-  // compact_boundary, and compacting status messages
-  // User should NOT see: stream events or API retry messages
+  // compact_boundary, api_retry, and compacting status messages
+  // User should NOT see: stream events or thinking_tokens deltas (transient only)
   if (isSDKStreamEvent(msg)) return false;
-  if (isSDKAPIRetryMessage(msg)) return false;
   if (isSDKThinkingTokensMessage(msg)) return false;
 
   return true;

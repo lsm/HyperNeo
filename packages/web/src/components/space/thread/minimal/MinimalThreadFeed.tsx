@@ -27,6 +27,7 @@ import type { ActiveTurnSummary, ActivityEntry, ActorMessageDeliveryState } from
 import {
   isSDKAssistantMessage,
   isSDKCompactBoundary,
+  isHiddenSystemSubtype,
   isSDKResultMessage,
   isSDKSystemInit,
   isToolUseBlock,
@@ -720,6 +721,9 @@ function buildOperationalSystemTurn(
   if (!message || message.type !== 'system') return null;
   const subtype = (message as { subtype?: string }).subtype;
   if (!subtype || subtype === 'init') return null;
+  // Honor the centralized hidden-subtype contract so Space task threads
+  // don't surface noisy rows the main transcript already hides.
+  if (isHiddenSystemSubtype(subtype)) return null;
   if (subtype === 'informational' && (message as { level?: string }).level === 'info') {
     return null;
   }
