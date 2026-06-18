@@ -1020,14 +1020,10 @@ export class SDKMessageHandler {
 
         // NeoKai-level compaction fallback.
         //
-        // Scoped to providers in `PROVIDER_NO_SDK_AUTO_COMPACT` (currently
-        // Kimi). For these providers, the SDK's PP() helper hardcodes a 200k
-        // capacity for unknown model IDs and we cannot use the `[1m]` suffix
-        // workaround (Kimi's bridge forwards the model name verbatim, so
-        // `kimi-for-coding[1m]` would be rejected upstream). SDK auto-compact
-        // is disabled via Options.settings; NeoKai is the sole compaction
-        // path and fires at the same threshold the SDK would have used
-        // (window - 13_000, clamped for small windows — see
+        // Scoped to providers in `PROVIDER_NO_SDK_AUTO_COMPACT`. For these
+        // providers, SDK auto-compact is disabled via Options.settings; NeoKai
+        // is the sole compaction path and fires at the same threshold the SDK
+        // would have used (window - 13_000, clamped for small windows — see
         // `reserveBasedThreshold`).
         //
         // For all other providers (Anthropic native, GLM, Codex, OpenRouter,

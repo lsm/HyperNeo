@@ -229,18 +229,11 @@ export const NATIVE_CONTEXT_WINDOW_PROVIDER_IDS = [
 ];
 
 /**
- * Providers that cannot use SDK auto-compaction because the SDK's PP() helper
- * caps unknown model IDs to 200k tokens, mismatching the real provider window.
- * For these providers we disable SDK auto-compact entirely and rely on NeoKai's
- * fallback trigger (sdk-message-handler) which uses the model metadata's real
- * context window.
- *
- * kimi — kimi-for-coding is unknown to PP() (returns 200k). Real window is 262k.
- *        Adding a [1m] suffix would break the upstream Kimi API call (the bridge
- *        forwards the model name verbatim), so we cannot use the SDK workaround
- *        that GLM-5.2[1m] uses.
+ * Providers that cannot use SDK auto-compaction and need NeoKai's fallback
+ * trigger. Keep empty unless a provider cannot expose its real window through
+ * SDK settings/env.
  */
-export const PROVIDER_NO_SDK_AUTO_COMPACT: ReadonlySet<string> = new Set(['kimi']);
+export const PROVIDER_NO_SDK_AUTO_COMPACT: ReadonlySet<string> = new Set();
 
 /**
  * Provider-specific SDK settings overrides.
@@ -248,15 +241,14 @@ export const PROVIDER_NO_SDK_AUTO_COMPACT: ReadonlySet<string> = new Set(['kimi'
  * For native Anthropic providers the SDK already knows the correct context
  * window and auto-compact behaviour — no override needed.
  *
- * For non-native providers (OpenRouter, Ollama, GLM, Codex bridge, etc.) the
+ * For non-native providers (OpenRouter, Ollama, custom endpoints, etc.) the
  * SDK cannot infer the provider model's real context window from its Anthropic
  * model alias. We pass the real window here so SDK auto-compaction fires at the
  * correct threshold without injecting `/compact` as prompt text.
  *
- * Providers in PROVIDER_NO_SDK_AUTO_COMPACT (e.g. Kimi) cannot use SDK
- * auto-compact at all because PP() caps the effective window below the real
- * model capacity. For these, we disable SDK auto-compact and let NeoKai's
- * fallback handle compaction.
+ * Providers in PROVIDER_NO_SDK_AUTO_COMPACT cannot use SDK auto-compact at all.
+ * For these, we disable SDK auto-compact and let NeoKai's fallback handle
+ * compaction.
  */
 export function buildProviderSettings(
   providerId: string,
@@ -1025,6 +1017,8 @@ CRITICAL RULES:
       'ANTHROPIC_DEFAULT_OPUS_MODEL',
       'API_TIMEOUT_MS',
       'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC',
+      'CLAUDE_CODE_SUBAGENT_MODEL',
+      'ENABLE_TOOL_SEARCH',
     ]);
     providerEnvVars.add('CLAUDE_CODE_AUTO_COMPACT_WINDOW');
 
@@ -1063,6 +1057,8 @@ CRITICAL RULES:
         'ANTHROPIC_DEFAULT_OPUS_MODEL',
         'API_TIMEOUT_MS',
         'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC',
+        'CLAUDE_CODE_SUBAGENT_MODEL',
+        'ENABLE_TOOL_SEARCH',
         'CLAUDE_CODE_AUTO_COMPACT_WINDOW',
       ];
       for (const key of providerVars) {

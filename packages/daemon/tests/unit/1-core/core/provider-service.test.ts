@@ -269,6 +269,9 @@ describe('ProviderService', () => {
       ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
       ANTHROPIC_AUTH_TOKEN: process.env.ANTHROPIC_AUTH_TOKEN,
       ANTHROPIC_BASE_URL: process.env.ANTHROPIC_BASE_URL,
+      ANTHROPIC_MODEL: process.env.ANTHROPIC_MODEL,
+      CLAUDE_CODE_SUBAGENT_MODEL: process.env.CLAUDE_CODE_SUBAGENT_MODEL,
+      ENABLE_TOOL_SEARCH: process.env.ENABLE_TOOL_SEARCH,
       CLAUDE_CODE_OAUTH_TOKEN: process.env.CLAUDE_CODE_OAUTH_TOKEN,
       GLM_API_KEY: process.env.GLM_API_KEY,
       ZHIPU_API_KEY: process.env.ZHIPU_API_KEY,
@@ -292,6 +295,9 @@ describe('ProviderService', () => {
     delete process.env.ANTHROPIC_API_KEY;
     delete process.env.ANTHROPIC_AUTH_TOKEN;
     delete process.env.ANTHROPIC_BASE_URL;
+    delete process.env.ANTHROPIC_MODEL;
+    delete process.env.CLAUDE_CODE_SUBAGENT_MODEL;
+    delete process.env.ENABLE_TOOL_SEARCH;
     delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
     delete process.env.GLM_API_KEY;
     delete process.env.ZHIPU_API_KEY;
@@ -947,19 +953,36 @@ describe('ProviderService', () => {
       service.restoreEnvVars(original);
     });
 
-    it('applies CLAUDE_CODE_AUTO_COMPACT_WINDOW and restores it', async () => {
+    it('applies provider-managed model env vars and restores them', async () => {
       registry.clear();
       registry.register(
-        new AnthropicMockProvider(true, { CLAUDE_CODE_AUTO_COMPACT_WINDOW: '262144' })
+        new AnthropicMockProvider(true, {
+          ANTHROPIC_MODEL: 'kimi-k2.7-code',
+          CLAUDE_CODE_SUBAGENT_MODEL: 'kimi-k2.7-code',
+          ENABLE_TOOL_SEARCH: 'false',
+          CLAUDE_CODE_AUTO_COMPACT_WINDOW: '262144',
+        })
       );
+      process.env.ANTHROPIC_MODEL = 'wrong-model';
+      process.env.CLAUDE_CODE_SUBAGENT_MODEL = 'wrong-subagent';
+      process.env.ENABLE_TOOL_SEARCH = 'true';
       process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = '200000';
 
       const original = await service.applyEnvVarsToProcess('claude-3-opus', 'anthropic');
 
+      expect(process.env.ANTHROPIC_MODEL).toBe('kimi-k2.7-code');
+      expect(process.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('kimi-k2.7-code');
+      expect(process.env.ENABLE_TOOL_SEARCH).toBe('false');
       expect(process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('262144');
+      expect(original.ANTHROPIC_MODEL).toBe('wrong-model');
+      expect(original.CLAUDE_CODE_SUBAGENT_MODEL).toBe('wrong-subagent');
+      expect(original.ENABLE_TOOL_SEARCH).toBe('true');
       expect(original.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('200000');
 
       service.restoreEnvVars(original);
+      expect(process.env.ANTHROPIC_MODEL).toBe('wrong-model');
+      expect(process.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('wrong-subagent');
+      expect(process.env.ENABLE_TOOL_SEARCH).toBe('true');
       expect(process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('200000');
     });
 
@@ -1024,15 +1047,27 @@ describe('ProviderService', () => {
       expect(process.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
     });
 
-    it('clears provider-leaked auto compact window before Anthropic query', async () => {
+    it('clears provider-leaked official Kimi env vars before Anthropic query', async () => {
+      process.env.ANTHROPIC_MODEL = 'kimi-k2.7-code';
+      process.env.CLAUDE_CODE_SUBAGENT_MODEL = 'kimi-k2.7-code';
+      process.env.ENABLE_TOOL_SEARCH = 'false';
       process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = '262144';
 
       const original = await service.applyEnvVarsToProcess('claude-3-opus', 'anthropic');
 
+      expect(process.env.ANTHROPIC_MODEL).toBeUndefined();
+      expect(process.env.CLAUDE_CODE_SUBAGENT_MODEL).toBeUndefined();
+      expect(process.env.ENABLE_TOOL_SEARCH).toBeUndefined();
       expect(process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBeUndefined();
+      expect(original.ANTHROPIC_MODEL).toBe('kimi-k2.7-code');
+      expect(original.CLAUDE_CODE_SUBAGENT_MODEL).toBe('kimi-k2.7-code');
+      expect(original.ENABLE_TOOL_SEARCH).toBe('false');
       expect(original.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('262144');
 
       service.restoreEnvVars(original);
+      expect(process.env.ANTHROPIC_MODEL).toBe('kimi-k2.7-code');
+      expect(process.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('kimi-k2.7-code');
+      expect(process.env.ENABLE_TOOL_SEARCH).toBe('false');
       expect(process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('262144');
     });
 

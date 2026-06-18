@@ -25,7 +25,7 @@
  *
  * 2. **Provider-specific env vars** are managed by the provider system:
  *    - ANTHROPIC_BASE_URL, ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN
- *    - ANTHROPIC_DEFAULT_*_MODEL (tier mappings)
+ *    - ANTHROPIC_MODEL, ANTHROPIC_DEFAULT_*_MODEL (tier mappings)
  *    - API_TIMEOUT_MS, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC
  *    - These are filtered out from user settings
  *    - Applied to process.env by applyEnvVarsToProcess()
@@ -75,6 +75,8 @@ export interface ProviderEnvVars {
   ANTHROPIC_API_KEY?: string;
   ANTHROPIC_AUTH_TOKEN?: string;
   ANTHROPIC_MODEL?: string; // Override default model
+  CLAUDE_CODE_SUBAGENT_MODEL?: string; // Override subagent model
+  ENABLE_TOOL_SEARCH?: string; // Provider-specific SDK flag
   ANTHROPIC_DEFAULT_HAIKU_MODEL?: string; // Map haiku tier to provider model
   ANTHROPIC_DEFAULT_SONNET_MODEL?: string; // Map default/sonnet tier to provider model
   ANTHROPIC_DEFAULT_OPUS_MODEL?: string; // Map opus tier to provider model
@@ -95,6 +97,9 @@ export interface OriginalEnvVars {
   ANTHROPIC_API_KEY?: string;
   ANTHROPIC_AUTH_TOKEN?: string;
   ANTHROPIC_BASE_URL?: string;
+  ANTHROPIC_MODEL?: string;
+  CLAUDE_CODE_SUBAGENT_MODEL?: string;
+  ENABLE_TOOL_SEARCH?: string;
   API_TIMEOUT_MS?: string;
   CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC?: string;
   CLAUDE_CODE_AUTO_COMPACT_WINDOW?: string;
@@ -596,6 +601,18 @@ export class ProviderService {
       original.ANTHROPIC_BASE_URL = process.env.ANTHROPIC_BASE_URL;
       process.env.ANTHROPIC_BASE_URL = envVars.ANTHROPIC_BASE_URL;
     }
+    if (envVars.ANTHROPIC_MODEL !== undefined) {
+      original.ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL;
+      process.env.ANTHROPIC_MODEL = envVars.ANTHROPIC_MODEL;
+    }
+    if (envVars.CLAUDE_CODE_SUBAGENT_MODEL !== undefined) {
+      original.CLAUDE_CODE_SUBAGENT_MODEL = process.env.CLAUDE_CODE_SUBAGENT_MODEL;
+      process.env.CLAUDE_CODE_SUBAGENT_MODEL = envVars.CLAUDE_CODE_SUBAGENT_MODEL;
+    }
+    if (envVars.ENABLE_TOOL_SEARCH !== undefined) {
+      original.ENABLE_TOOL_SEARCH = process.env.ENABLE_TOOL_SEARCH;
+      process.env.ENABLE_TOOL_SEARCH = envVars.ENABLE_TOOL_SEARCH;
+    }
     if (envVars.API_TIMEOUT_MS !== undefined) {
       original.API_TIMEOUT_MS = process.env.API_TIMEOUT_MS;
       process.env.API_TIMEOUT_MS = envVars.API_TIMEOUT_MS;
@@ -608,10 +625,8 @@ export class ProviderService {
     }
     if (envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW !== undefined) {
       original.CLAUDE_CODE_AUTO_COMPACT_WINDOW = process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
-      // Empty string means "explicitly clear" — providers whose auto-compact
-      // is disabled (e.g. Kimi, which would otherwise inherit a stale value
-      // from a previous GLM/Codex query) return '' so the SDK subprocess
-      // doesn't pick up the wrong window.
+      // Empty string means "explicitly clear" so providers can prevent stale
+      // auto-compact windows from leaking into the SDK subprocess.
       if (envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW === '') {
         delete process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
       } else {
@@ -657,6 +672,9 @@ export class ProviderService {
     };
 
     clear('ANTHROPIC_AUTH_TOKEN');
+    clear('ANTHROPIC_MODEL');
+    clear('CLAUDE_CODE_SUBAGENT_MODEL');
+    clear('ENABLE_TOOL_SEARCH');
 
     // Preserve user's custom ANTHROPIC_BASE_URL from environment/settings.json
     if (process.env.ANTHROPIC_BASE_URL !== undefined) {
@@ -803,6 +821,27 @@ export class ProviderService {
         process.env.ANTHROPIC_BASE_URL = original.ANTHROPIC_BASE_URL;
       } else {
         delete process.env.ANTHROPIC_BASE_URL;
+      }
+    }
+    if (Object.prototype.hasOwnProperty.call(original, 'ANTHROPIC_MODEL')) {
+      if (original.ANTHROPIC_MODEL !== undefined) {
+        process.env.ANTHROPIC_MODEL = original.ANTHROPIC_MODEL;
+      } else {
+        delete process.env.ANTHROPIC_MODEL;
+      }
+    }
+    if (Object.prototype.hasOwnProperty.call(original, 'CLAUDE_CODE_SUBAGENT_MODEL')) {
+      if (original.CLAUDE_CODE_SUBAGENT_MODEL !== undefined) {
+        process.env.CLAUDE_CODE_SUBAGENT_MODEL = original.CLAUDE_CODE_SUBAGENT_MODEL;
+      } else {
+        delete process.env.CLAUDE_CODE_SUBAGENT_MODEL;
+      }
+    }
+    if (Object.prototype.hasOwnProperty.call(original, 'ENABLE_TOOL_SEARCH')) {
+      if (original.ENABLE_TOOL_SEARCH !== undefined) {
+        process.env.ENABLE_TOOL_SEARCH = original.ENABLE_TOOL_SEARCH;
+      } else {
+        delete process.env.ENABLE_TOOL_SEARCH;
       }
     }
     if (Object.prototype.hasOwnProperty.call(original, 'API_TIMEOUT_MS')) {

@@ -98,10 +98,10 @@ const codexModels: ModelInfo[] = [
 
 const kimiModels: ModelInfo[] = [
   {
-    id: 'kimi-for-coding',
-    name: 'Kimi For Coding',
+    id: 'kimi-k2.7-code',
+    name: 'Kimi K2.7 Code',
     alias: 'kimi',
-    providerAliases: ['KIMI'],
+    providerAliases: ['KIMI', 'kimi-for-coding'],
     providerAliasPrefixes: ['moonshot-'],
     family: 'kimi',
     provider: 'kimi',
@@ -178,11 +178,11 @@ describe('Model Service — provider routing', () => {
       const byMoonshotAlias = await getModelInfo('Moonshot-v1-32k', 'global', 'kimi');
       const byUnlistedMoonshotAlias = await getModelInfo('moonshot-v1-256k', 'global', 'kimi');
 
-      expect(byUpperAlias?.id).toBe('kimi-for-coding');
+      expect(byUpperAlias?.id).toBe('kimi-k2.7-code');
       expect(byUpperAlias?.contextWindow).toBe(262144);
-      expect(byMoonshotAlias?.id).toBe('kimi-for-coding');
+      expect(byMoonshotAlias?.id).toBe('kimi-k2.7-code');
       expect(byMoonshotAlias?.contextWindow).toBe(262144);
-      expect(byUnlistedMoonshotAlias?.id).toBe('kimi-for-coding');
+      expect(byUnlistedMoonshotAlias?.id).toBe('kimi-k2.7-code');
       expect(byUnlistedMoonshotAlias?.contextWindow).toBe(262144);
     });
 
@@ -233,9 +233,9 @@ describe('Model Service — provider routing', () => {
     });
 
     it('resolves Kimi provider aliases to canonical model ID', async () => {
-      expect(await resolveModelAlias('KIMI', 'global', 'kimi')).toBe('kimi-for-coding');
-      expect(await resolveModelAlias('Moonshot-v1-32k', 'global', 'kimi')).toBe('kimi-for-coding');
-      expect(await resolveModelAlias('moonshot-v1-256k', 'global', 'kimi')).toBe('kimi-for-coding');
+      expect(await resolveModelAlias('KIMI', 'global', 'kimi')).toBe('kimi-k2.7-code');
+      expect(await resolveModelAlias('Moonshot-v1-32k', 'global', 'kimi')).toBe('kimi-k2.7-code');
+      expect(await resolveModelAlias('moonshot-v1-256k', 'global', 'kimi')).toBe('kimi-k2.7-code');
     });
 
     it('returns alias as-is when no matching model found for the specified provider', async () => {
