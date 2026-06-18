@@ -68,6 +68,7 @@ interface GitHubTokenStatus {
   source: 'keychain' | 'env' | 'none';
   login?: string;
   error?: string;
+  autoRegisteredHookCount?: number;
 }
 
 const WEBHOOK_PATH = '/webhook/github/space';
@@ -383,10 +384,10 @@ export function SpaceExternalEventsSettings({
       toast.error('Not connected to server');
       return;
     }
-    const autoRegisteredCount = repos.filter((repo) => repo.webhookAutoRegistered).length;
+    const autoRegisteredCount = tokenStatus?.autoRegisteredHookCount ?? 0;
     const message =
       autoRegisteredCount > 0
-        ? `Remove the daemon-wide GitHub token from the keychain? ${autoRegisteredCount} auto-registered webhook(s) in this space may become unmanageable until a token is restored.`
+        ? `Remove the daemon-wide GitHub token from the keychain? ${autoRegisteredCount} auto-registered webhook(s) across all spaces may become unmanageable until a token is restored.`
         : 'Remove the daemon-wide GitHub token from the keychain?';
     if (!window.confirm(message)) {
       return;

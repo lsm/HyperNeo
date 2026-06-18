@@ -236,6 +236,21 @@ export class GitHubEventExtensionRepository {
     return row?.count ?? 0;
   }
 
+  /**
+   * Daemon-wide count of auto-registered webhook rows. Used by token-clear
+   * flows to warn the user when removing the PAT would strand auto-registered
+   * hooks in ANY space (not just the current one) since the cleanup path
+   * needs the token to delete the remote hook.
+   */
+  countAllAutoRegisteredHookRefs(): number {
+    const row = this.db
+      .prepare(
+        'SELECT COUNT(*) AS count FROM space_github_watched_repos WHERE webhook_auto_registered = 1 AND webhook_remote_id IS NOT NULL'
+      )
+      .get() as { count: number } | undefined;
+    return row?.count ?? 0;
+  }
+
   removeWatchedRepo(spaceId: string, owner: string, repo: string): boolean {
     return (
       this.db

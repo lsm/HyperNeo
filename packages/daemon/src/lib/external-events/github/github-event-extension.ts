@@ -57,6 +57,7 @@ interface GitHubTokenStatus {
   source: 'keychain' | 'env' | 'none';
   login?: string;
   error?: string;
+  autoRegisteredHookCount?: number;
 }
 
 interface GitHubHookResponse {
@@ -185,15 +186,28 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         this.repo.clearWebhookRegistration(watchedRepo.id, { clearSecret: disablingAutoWebhook });
         watchedRepo = this.repo.getWatchedRepoById(watchedRepo.id) ?? watchedRepo;
       }
-      await this.persistSpaceConfig(context, watchedRepo.spaceId);
       if (watchedRepo.pollingEnabled) {
+        // Persist the user's intent to use polling in this space whenever a
+        // repo is added/updated with polling enabled. This keeps the connection
+        // card checkbox and the no-secret addRepo default consistent even if
+        // the row is later removed.
+        this.repo.setPollingIntent(params.spaceId, true);
+        await this.persistSpaceConfig(context, watchedRepo.spaceId);
         await this.enablePollingCapability(context);
         this.ensurePollingActive();
       } else {
         // Per-row polling was turned off (or the row was added without
-        // polling). If that was the last polling-configured row in the
-        // daemon, drop the global capability so the UI checkbox and the
-        // "no-secret watch defaults to polling" heuristic reflect reality.
+        // polling). If the user explicitly disabled the last polling-configured
+        // row in this space, clear the per-space intent so the global
+        // capability and UI checkbox reflect reality. Adding a non-polling row
+        // to a space with intent=true does not clear it.
+        if (
+          existing?.pollingEnabled &&
+          this.repo.listAllPollingConfiguredRepos(params.spaceId).length === 0
+        ) {
+          this.repo.setPollingIntent(params.spaceId, false);
+        }
+        await this.persistSpaceConfig(context, watchedRepo.spaceId);
         await this.disablePollingCapabilityIfUnused(context);
         this.maybeStopPolling();
       }
@@ -346,7 +360,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       }
       await this.credentialStore.delete(GITHUB_CREDENTIAL_SERVICE, GITHUB_CREDENTIAL_ACCOUNT);
       log.info('GitHub token removed from credential store');
-      return { success: true };
+      return { success: true, autoRegisteredHookCount: this.repo.countAllAutoRegisteredHookRefs() };
     });
 
     /**
@@ -568,6 +582,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
   private async getTokenStatus(): Promise<GitHubTokenStatus> {
     let source: GitHubTokenStatus['source'] = 'none';
     let token: string | undefined;
+    let keychainError: string | undefined;
     if (this.credentialStore) {
       try {
         const stored = await this.credentialStore.get(
@@ -579,18 +594,21 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
           source = 'keychain';
         }
       } catch (error) {
-        return {
-          configured: false,
-          source: 'none',
-          error: error instanceof Error ? error.message : 'credential store unavailable',
-        };
+        keychainError = error instanceof Error ? error.message : 'credential store unavailable';
+        log.warn('Failed to read GitHub token from credential store', { error: keychainError });
       }
     }
     if (!token && this.githubToken) {
       token = this.githubToken;
       source = 'env';
     }
-    if (!token) return { configured: false, source: 'none' };
+    if (!token)
+      return {
+        configured: false,
+        source: 'none',
+        error: keychainError,
+        autoRegisteredHookCount: this.repo.countAllAutoRegisteredHookRefs(),
+      };
 
     try {
       const fetchImpl = this.options.fetchImpl ?? fetch;
@@ -602,16 +620,23 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
           'X-GitHub-Api-Version': '2022-11-28',
         },
       });
+      const autoRegisteredHookCount = this.repo.countAllAutoRegisteredHookRefs();
       if (response.ok) {
         const user = (await response.json()) as { login?: string };
-        return { configured: true, source, login: user.login };
+        return { configured: true, source, login: user.login, autoRegisteredHookCount };
       }
-      return { configured: true, source, error: `HTTP ${response.status}` };
+      return {
+        configured: true,
+        source,
+        error: `HTTP ${response.status}`,
+        autoRegisteredHookCount,
+      };
     } catch (error) {
       return {
         configured: true,
         source,
         error: error instanceof Error ? error.message : 'validation failed',
+        autoRegisteredHookCount: this.repo.countAllAutoRegisteredHookRefs(),
       };
     }
   }

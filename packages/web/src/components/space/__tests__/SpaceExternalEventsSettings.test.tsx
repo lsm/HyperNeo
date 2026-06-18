@@ -1318,6 +1318,46 @@ describe('SpaceExternalEventsSettings', () => {
     vi.unstubAllGlobals();
   });
 
+  it('warns about auto-registered hooks in other spaces before disconnecting', async () => {
+    const confirmSpy = vi.fn(() => false);
+    vi.stubGlobal('confirm', confirmSpy);
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockImplementation((method) => {
+      if (method === 'externalEvents.extensions.list') return Promise.resolve(extensionResult);
+      if (method === 'space.github.listConfig') {
+        return Promise.resolve({
+          spaceId: 'space-1',
+          source: 'github',
+          enabled: true,
+          settings: {},
+        });
+      }
+      // Current space has no auto-registered hooks; the warning must come from
+      // the daemon-wide count in getTokenStatus, not the local repos array.
+      if (method === 'space.github.listWatchedRepos') return Promise.resolve({ repositories: [] });
+      if (method === 'space.github.getTokenStatus') {
+        return Promise.resolve({
+          configured: true,
+          source: 'keychain',
+          login: 'octocat',
+          autoRegisteredHookCount: 3,
+        });
+      }
+      return Promise.resolve({});
+    });
+
+    const { findByText, getByText } = render(<SpaceExternalEventsSettings spaceId="space-1" />);
+    await findByText('octocat');
+
+    fireEvent.click(getByText('Disconnect'));
+
+    expect(confirmSpy).toHaveBeenCalledWith(
+      'Remove the daemon-wide GitHub token from the keychain? 3 auto-registered webhook(s) across all spaces may become unmanageable until a token is restored.'
+    );
+    expect(mockRequest).not.toHaveBeenCalledWith('space.github.clearToken', {});
+    vi.unstubAllGlobals();
+  });
+
   it('renders an error state when getTokenStatus RPC fails', async () => {
     mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
     mockRequest.mockImplementation((method) => {
