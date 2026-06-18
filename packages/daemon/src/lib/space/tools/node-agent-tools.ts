@@ -978,6 +978,21 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
                 );
                 gateWriteResult = { gateId, gateOpen: evalResult.open };
 
+                // If gate evaluation hit a rate limit, surface the retryable error
+                // immediately instead of proceeding to delivery (which would re-evaluate
+                // the same gate script and make another GitHub call during the cooldown).
+                if (evalResult.rateLimited) {
+                  const retryAfterMs = evalResult.retryAfterMs ?? RATE_LIMIT_MIN_BACKOFF_MS;
+                  const reason = evalResult.reason ?? `Gate "${gateId}" rate-limited`;
+                  return jsonResult({
+                    success: false,
+                    error: `${reason} (rate-limited: retry after ${retryAfterMs}ms)`,
+                    gateWrite: gateWriteResult,
+                    rateLimited: true,
+                    retryAfterMs,
+                  });
+                }
+
                 // Multi-round review history: every time the reviewer writes a
                 // `review_url` to this gate, append an append-only artifact row
                 // so we get one record per cycle (cycle 0, 1, 2 …) without any

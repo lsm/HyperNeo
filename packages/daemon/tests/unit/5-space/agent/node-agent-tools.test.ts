@@ -1873,6 +1873,68 @@ describe('node-agent-tools: send_message (gate-write)', () => {
     expect(calls).toEqual([{ runId: ctx.workflowRunId, gateId: 'gate-failed-callback' }]);
   });
 
+  test('rate-limited gate evaluation short-circuits delivery and returns retryable error', async () => {
+    const gate: Gate = {
+      id: 'gate-rate-limited',
+      fields: [{ name: 'x', type: 'string', writers: ['*'], check: { op: 'exists' } }],
+      script: {
+        interpreter: 'bash',
+        source: 'echo "HTTP 403: rate limit exceeded" >&2; exit 1',
+        timeoutMs: 5000,
+      },
+      resetOnCycle: false,
+    };
+    const workflow = makeWorkflowWithGatedChannel(gate);
+    const gateDataRepo = new GateDataRepository(ctx.db);
+    const channelResolver = makeResolver(workflow.channels ?? []);
+    const calls: Array<{ runId: string; gateId: string }> = [];
+    const config = makeConfig(ctx, {
+      workflow,
+      channelResolver,
+      gateDataRepo,
+      scriptExecutor: async (script, context) => {
+        // Simulate a rate-limited gate script execution
+        return {
+          success: false,
+          data: {},
+          error: 'HTTP 403: rate limit exceeded',
+          rateLimited: true,
+          retryAfterMs: 60_000,
+        };
+      },
+      scriptContext: {
+        workspacePath: '/tmp',
+        runId: ctx.workflowRunId,
+        gateId: 'gate-rate-limited',
+      },
+      onGateDataChanged: async (runId, gateId) => {
+        calls.push({ runId, gateId });
+      },
+    });
+    const handlers = createNodeAgentToolHandlers(config);
+
+    const result = await handlers.send_message({
+      target: 'reviewer',
+      message: 'hi',
+      data: { x: 'val' },
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    // Should return rate-limited error without attempting delivery
+    expect(parsed.success).toBe(false);
+    // Debug: log the actual parsed result to see what fields are present
+    if (!parsed.rateLimited) {
+      console.log('DEBUG: parsed result =', JSON.stringify(parsed, null, 2));
+    }
+    expect(parsed.rateLimited).toBe(true);
+    expect(parsed.retryAfterMs).toBe(60_000);
+    expect(parsed.error).toContain('rate-limited: retry after 60000ms');
+    // Gate write should still be recorded (even though gate is closed)
+    expect(parsed.gateWrite).toEqual({ gateId: 'gate-rate-limited', gateOpen: false });
+    // Should NOT notify gate data changed (prevents re-evaluating rate-limited gate script)
+    expect(calls).toEqual([]);
+  });
+
   test('does not notify gate data changed before the current gated delivery finishes', async () => {
     const gate: Gate = {
       id: 'review-posted-gate',
