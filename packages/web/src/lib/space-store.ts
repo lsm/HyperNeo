@@ -1756,6 +1756,11 @@ class SpaceStore {
     this.configDataPromise = null;
     this.nodeExecLoaded.value = false;
     this.nodeExecPromise = null;
+    // workflowDetails may have drifted while disconnected; event handlers
+    // were torn down with the old hub. Reset so the Configure Agents view
+    // re-fetches on next mount.
+    this.workflowDetailsLoaded.value = false;
+    this.workflowDetailsPromise = null;
     this.sessions.value = [];
     this.disposeSpaceSessionsSubscription();
 
@@ -1764,9 +1769,11 @@ class SpaceStore {
       await this.startSubscriptions(spaceId);
       // Re-fetch previously loaded data in background
       if (hadConfigData) {
-        this.ensureConfigData().catch((err) => {
-          logger.error('Failed to refresh config data:', err);
-        });
+        this.ensureConfigData()
+          .then(() => this.ensureWorkflowDetails())
+          .catch((err) => {
+            logger.error('Failed to refresh config data:', err);
+          });
       }
       if (hadNodeExec) {
         this.ensureNodeExecutions().catch((err) => {

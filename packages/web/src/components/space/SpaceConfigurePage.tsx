@@ -52,11 +52,15 @@ export function SpaceConfigurePage({ space }: SpaceConfigurePageProps) {
   const configLoaded = spaceStore.configDataLoaded.value;
 
   useEffect(() => {
-    spaceStore.ensureConfigData().catch(() => {});
-    // Configure Agents view needs full workflow definitions (nodes + agent
-    // slots) to render worker-agent cards; summaries exclude nodes. Loaded
-    // lazily here so summary-only views don't pay the per-workflow RPC cost.
-    spaceStore.ensureWorkflowDetails().catch(() => {});
+    // Chain ensureWorkflowDetails after ensureConfigData: the bulk detail
+    // fetch snapshots spaceStore.workflows.value synchronously, which is empty
+    // until the summary list returns. Running them in parallel on a cold
+    // direct-URL load snapshots [] and sticks workflowDetailsLoaded=true over
+    // empty data.
+    spaceStore
+      .ensureConfigData()
+      .then(() => spaceStore.ensureWorkflowDetails())
+      .catch(() => {});
     spaceStore.ensureNodeExecutions().catch(() => {});
   }, [space.id]);
   const activeTab = currentSpaceConfigureTabSignal.value;
