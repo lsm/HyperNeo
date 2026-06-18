@@ -475,6 +475,7 @@ Commands:
 - `space.github.watchedRepos.remove`
 - `space.github.webhook.autoConfigure`
 - `space.github.webhook.check`
+- `space.github.pollOnce`
 
 Events:
 
@@ -508,6 +509,7 @@ Notes:
 - Existing per-space GitHub source toggles remain explicit commands during migration: `space.github.enable` enables the GitHub external-event source for a Space and `space.github.disable` disables it. If a later implementation folds these into `space.github.config.set`, that command must preserve the same per-space enablement semantics and the compatibility bridge must continue to expose the existing RPC names until callers migrate.
 - Existing GitHub repository settings RPCs map as follows during migration: `space.github.listConfig` -> `space.github.config.list`, `space.github.listWatchedRepos` -> `space.github.watchedRepos.list`, `space.github.watchRepo` -> `space.github.watchedRepos.add`, and `space.github.unwatchRepo` -> `space.github.watchedRepos.remove`. `space.github.watchedRepos.add` must preserve the current upsert/edit semantics of `space.github.watchRepo` for enabled, webhook-enabled, and polling-enabled toggles, or the bridge must expose a separate `space.github.watchedRepos.update` alias before cleanup.
 - Existing GitHub webhook RPCs map as follows during migration: `space.github.autoConfigureWebhook` -> `space.github.webhook.autoConfigure` and `space.github.checkWebhook` -> `space.github.webhook.check`.
+- Existing GitHub polling RPCs map as follows during migration: `space.github.pollOnce` keeps the same target command name and triggers an immediate poll for polling-enabled watched repositories.
 - Existing configure events map as follows during migration: `spaceAgent.created` -> `space.agent.created`, `spaceAgent.updated` -> `space.agent.updated`, `spaceAgent.deleted` -> `space.agent.deleted`, `spaceLongHorizonAgent.created` -> `space.longHorizonAgent.created`, `spaceLongHorizonAgent.updated` -> `space.longHorizonAgent.updated`, `spaceLongHorizonAgent.deleted` -> `space.longHorizonAgent.deleted`, `spaceWorkflow.created` -> `space.workflow.created`, `spaceWorkflow.updated` -> `space.workflow.updated`, and `spaceWorkflow.deleted` -> `space.workflow.deleted`. Until producers publish the target names directly, either the compatibility bridge must fan out both namespaces or `SpaceConfigureStore` must subscribe to the legacy names as compatibility aliases.
 
 ### 7.7 SpaceGoalStore
