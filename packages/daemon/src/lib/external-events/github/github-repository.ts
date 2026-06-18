@@ -53,6 +53,24 @@ export class GitHubEventExtensionRepository {
         'ALTER TABLE space_github_source_settings ADD COLUMN polling_intent INTEGER NOT NULL DEFAULT 0'
       );
     }
+    // Backfill per-space polling intent from existing polling-enabled rows.
+    // This fixes upgrade: spaces that already had polling_enabled repos before
+    // the polling_intent column existed would otherwise render polling as off
+    // until the user toggled it again.
+    const now = Date.now();
+    this.db
+      .prepare(
+        `INSERT INTO space_github_source_settings (space_id, enabled, polling_intent, created_at, updated_at)
+         SELECT DISTINCT s.space_id, 1, 1, ?, ?
+         FROM space_github_watched_repos s
+         JOIN spaces sp ON sp.id = s.space_id
+         WHERE s.polling_enabled = 1
+         ON CONFLICT(space_id) DO UPDATE SET
+           polling_intent = excluded.polling_intent,
+           updated_at = excluded.updated_at
+         WHERE polling_intent = 0`
+      )
+      .run(now, now);
   }
 
   upsertWatchedRepo(params: {
@@ -221,16 +239,19 @@ export class GitHubEventExtensionRepository {
   }
 
   /**
-   * Count of spaces whose persisted polling-intent flag is on, regardless of
-   * whether they currently host any polling-configured repo. Used to keep
-   * the GLOBAL polling capability on while any space still intends to use
-   * polling — e.g. after the last polling row is removed but before the
-   * user adds the next one.
+   * Count of non-deleted spaces whose persisted polling-intent flag is on,
+   * regardless of whether they currently host any polling-configured repo.
+   * Used to keep the GLOBAL polling capability on while any real space still
+   * intends to use polling — e.g. after the last polling row is removed but
+   * before the user adds the next one. Joins `spaces` so deleted spaces do
+   * not keep the capability alive.
    */
   countSpacesWithPollingIntent(): number {
     const row = this.db
       .prepare(
-        'SELECT COUNT(*) AS count FROM space_github_source_settings WHERE polling_intent = 1'
+        `SELECT COUNT(*) AS count FROM space_github_source_settings s
+         JOIN spaces sp ON sp.id = s.space_id
+         WHERE s.polling_intent = 1`
       )
       .get() as { count: number } | undefined;
     return row?.count ?? 0;

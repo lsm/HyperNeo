@@ -3140,6 +3140,9 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
 
   test('disablePollingCapabilityIfUnused honors persisted polling intent when the last polling row disappears', async () => {
     const db = setupDb();
+    db.prepare(
+      `INSERT INTO spaces (id, slug, name, workspace_path, status, created_at, updated_at) VALUES ('space-1', 'space-1', 'Space', '/tmp', 'active', 1, 1)`
+    ).run();
     const extension = new GitHubEventExtension(db, undefined, { pollIntervalMs: 60_000 });
     const { clientHub, hub, ready } = setupHubPair();
     await ready;
@@ -3184,6 +3187,38 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
     } finally {
       await extension.stop();
     }
+  });
+
+  test('constructor backfills polling intent from existing polling-enabled repos', async () => {
+    const db = setupDb();
+    db.prepare(
+      `INSERT INTO spaces (id, slug, name, workspace_path, status, created_at, updated_at) VALUES ('space-1', 'space-1', 'Space', '/tmp', 'active', 1, 1)`
+    ).run();
+    db.prepare(
+      `INSERT INTO space_github_watched_repos
+       (id, space_id, owner, repo, enabled, webhook_enabled, polling_enabled, webhook_secret,
+        webhook_remote_id, webhook_url, webhook_auto_registered, webhook_active,
+        webhook_last_checked_at, webhook_last_error, webhook_configured_at, created_at, updated_at)
+       VALUES (?, 'space-1', 'acme', 'widgets', 1, 1, 1, NULL, NULL, NULL, 0, NULL, NULL, NULL, NULL, 1, 1)`
+    ).run('repo-1');
+
+    const extension = new GitHubEventExtension(db);
+    expect(extension.repo.getPollingIntent('space-1')).toBe(true);
+    await extension.stop();
+  });
+
+  test('countSpacesWithPollingIntent ignores intent from deleted spaces', async () => {
+    const db = setupDb();
+    db.prepare(
+      `INSERT INTO spaces (id, slug, name, workspace_path, status, created_at, updated_at) VALUES ('space-1', 'space-1', 'Space', '/tmp', 'active', 1, 1)`
+    ).run();
+    const extension = new GitHubEventExtension(db);
+    extension.repo.setPollingIntent('space-1', true);
+    expect(extension.repo.countSpacesWithPollingIntent()).toBe(1);
+
+    db.prepare('DELETE FROM spaces WHERE id = ?').run('space-1');
+    expect(extension.repo.countSpacesWithPollingIntent()).toBe(0);
+    await extension.stop();
   });
 
   test('space.github.watchRepo clears the global polling capability when the last polling row is turned off', async () => {
