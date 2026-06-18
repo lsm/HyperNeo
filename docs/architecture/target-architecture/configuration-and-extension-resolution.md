@@ -413,6 +413,8 @@ Target queries:
 | `hook.effective.list` | Hook policies active for a runtime/session. |
 | `runtime.behavior.preview` | Final runtime-neutral behavior before adapter rendering. |
 | `mcp.registry.list` | Application-level MCP server registry entries and enablement state. |
+| `tools.globalConfig.get` | Global tool configuration read model for settings modals. |
+| `usage.calculate` | Historical usage aggregate for settings analytics. |
 
 Target commands:
 
@@ -447,7 +449,12 @@ Compatibility mappings:
   `config.env.update`, and `config.permissions.update` map to `config.value.set` or
   `config.values.patch` for the corresponding key family.
 - `tools.save` maps to `config.values.patch` at session scope.
+- `globalTools.getConfig` maps to `tools.globalConfig.get` or `config.effective.preview` at global tools
+  scope so ToolsModal can hydrate saved global tool settings before writing changes.
 - `globalTools.saveConfig` maps to `config.values.patch` at global tools scope.
+- `usage.calculate` remains a compatibility query for historical usage analytics; it is not replaced by
+  live runtime usage events because the settings tab needs an on-demand aggregate over persisted sessions,
+  token counts, and costs.
 - `mcp.registry.list`, `mcp.registry.create`, `mcp.registry.update`, `mcp.registry.delete`, and
   `mcp.registry.setEnabled` remain compatibility aliases for application-level MCP server settings.
 - `mcp.enablement.setOverride` and `mcp.enablement.clearOverride` remain compatibility aliases for

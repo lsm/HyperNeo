@@ -789,6 +789,7 @@ Runtime events that should be durable early:
 | `space.workflowRun.updated` | run status/progress changed |
 | `space.workflowRun.completed` | terminal fact, replayable |
 | `space.workflowRun.blocked` | human/operator attention |
+| `space.workflowRun.needsAttention` | retry exhaustion/operator escalation and Space-agent notification |
 | `space.workflowRun.reopened` | terminal/blocked run reopened for valid follow-up activity |
 | `space.task.created` | task board/read model |
 | `space.task.updated` | task state/read model |

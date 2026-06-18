@@ -371,6 +371,13 @@ Reference lookup is part of the chat/runtime surface because message composition
 `agentRuntime.reference.resolve`; the cleanup plan must keep these aliases until mention autocomplete and
 hover preview callers migrate.
 
+Workspace, folder-picking, and Git utility RPCs stay outside the Agent Runtime boundary but must remain
+contract-backed during MessageHub cleanup. `dialog.pickFolder` maps to a platform dialog contract,
+`workspace.history`, `workspace.add`, and `workspace.remove` map to workspace-history queries/commands,
+`session.setWorkspace` remains a session workspace-assignment command, and `git.branches` plus
+`git.sessionStatus` remain Git workspace queries. These aliases must be preserved until sidebar,
+Sessions page, WorkspaceSelector, SpaceCreateDialog, and branch/status UI callers migrate.
+
 The pending-message and rewind contracts preserve current chat controls while the session gateway moves
 behind Agent Runtime. The compatibility gateway maps `session.messages.byStatus`,
 `session.messages.removePending`, `session.messages.promotePending`, `session.messages.deferPending`,
@@ -456,6 +463,10 @@ Provider and model settings stay contract-backed during MessageHub cleanup:
 | `provider.registry.setDefault` | command | Preserve `providers.setDefault`. |
 | `provider.registry.test` | command | Preserve `providers.test`. |
 | `provider.registry.healthCheck` | query | Preserve `providers.healthCheck`. |
+| `provider.customEndpoint.list` | query | List saved custom endpoints. |
+| `provider.customEndpoint.create` | command | Create a saved custom endpoint and synchronized provider record. |
+| `provider.customEndpoint.update` | command | Update a saved custom endpoint and synchronized provider record. |
+| `provider.customEndpoint.delete` | command | Delete a saved custom endpoint and synchronized provider record. |
 | `provider.customEndpoint.models.list` | query | Probe an arbitrary custom endpoint for model discovery before it is saved. |
 | `provider.auth.list` | query | Preserve `auth.providers`. |
 | `provider.auth.login` | command | Preserve `auth.login`. |
@@ -468,6 +479,11 @@ must treat them as required compatibility aliases before provider, model, or aut
 `customEndpoints.listModels` maps to `provider.customEndpoint.models.list`; it accepts the unsaved base
 URL, endpoint type, API key, and headers from the add/edit-provider flow and must not be collapsed into
 `provider.models.list`, which only covers registered provider catalogs.
+Saved custom endpoint settings also need explicit aliases: `customEndpoints.list` ->
+`provider.customEndpoint.list`, `customEndpoints.add` -> `provider.customEndpoint.create`,
+`customEndpoints.update` -> `provider.customEndpoint.update`, and `customEndpoints.remove` ->
+`provider.customEndpoint.delete`. These commands preserve the existing settings JSON/provider-record
+synchronization semantics until CustomEndpointsSettings migrates to the target provider/config surface.
 
 ### 7.4 ProviderBridge
 

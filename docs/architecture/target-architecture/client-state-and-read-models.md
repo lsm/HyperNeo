@@ -661,6 +661,12 @@ Notes:
 - `SpaceForge.tsx` should become mostly view state: active tab, dialogs, forms, and selected evidence checkboxes.
 - Scope list request-version guards move into `ForgeStore`.
 - The store must handle selected-space changes by clearing scope detail immediately, matching existing tests that prevent stale Space A scopes from appearing in Space B.
+- Existing Forge RPCs remain compatibility aliases until the UI migrates: `evolution.scope.get` ->
+  `forge.scope.detail`, `evolution.scope.create` -> `forge.scope.create`,
+  `evolution.evidence.addManualNote` -> `forge.evidence.addManualNote`,
+  `evolution.episode.createFromEvidence` -> `forge.episode.createFromEvidence`,
+  `evolution.lesson.update` -> `forge.lesson.update`, `evolution.taskProposal.createTask` ->
+  `forge.taskProposal.createTask`, and `evolution.rollup.apply` -> `forge.rollup.apply`.
 
 ---
 
