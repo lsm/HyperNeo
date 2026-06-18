@@ -3,6 +3,7 @@ import { homedir } from 'os';
 import type { Config } from './config';
 import type { WebSocketData } from './types/websocket';
 import { Database } from './storage/database';
+import { prefetchAgentMemoryEmbeddingModel } from './storage/repositories/agent-memory-transformers';
 import { SessionManager } from './lib/session-manager';
 import { AuthManager } from './lib/auth-manager';
 import { SettingsManager } from './lib/settings-manager';
@@ -245,6 +246,15 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     // but its spawned agent sessions are independent and must not be blocked.
     delete process.env.CLAUDECODE;
 
+    const logInfo = verbose ? console.log : () => {};
+    const logError = verbose ? console.error : () => {};
+
+    // Background-prefetch the agent-memory embedding model. Non-blocking: the
+    // daemon can serve requests while the download proceeds, and failures are
+    // logged but never propagate to block startup. Lazy runtime loading still
+    // works if this has not completed yet.
+    void prefetchAgentMemoryEmbeddingModel({ logInfo, logError });
+
     // Initialize database
     const db = new Database(config.dbPath);
     // Create reactiveDb before initialize() so GoalRepository can receive it
@@ -269,8 +279,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       unsubscribeEarlyStructuredLogs();
       restoreEarlyConsoleCapture();
     };
-    const logInfo = verbose ? console.log : () => {};
-    const logError = verbose ? console.error : () => {};
 
     // Initialize job queue
     const jobQueue = new JobQueueRepository(db.getDatabase());
