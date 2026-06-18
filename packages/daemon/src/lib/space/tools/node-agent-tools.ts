@@ -978,6 +978,29 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
                 );
                 gateWriteResult = { gateId, gateOpen: evalResult.open };
 
+                // Audit log + publish the gate data update immediately. Even if the
+                // subsequent gate evaluation is rate-limited, the write itself succeeded
+                // and must be visible to the canvas and recorded.
+                logAudit('send_message', {
+                  target,
+                  gateId: gateWriteResult.gateId,
+                  gateOpen: gateWriteResult.gateOpen,
+                  dataKeys: data ? Object.keys(data) : undefined,
+                });
+                if (internalEventBus) {
+                  void internalEventBus
+                    .publish('space.gateData.updated', {
+                      sessionId: 'global',
+                      spaceId,
+                      runId: workflowRunId,
+                      gateId,
+                      data: updated.data,
+                    })
+                    .catch((err) => {
+                      log.warn(`Failed to emit space.gateData.updated for gate "${gateId}":`, err);
+                    });
+                }
+
                 // If gate evaluation hit a rate limit, surface the retryable error
                 // immediately instead of proceeding to delivery (which would re-evaluate
                 // the same gate script and make another GitHub call during the cooldown).
@@ -1041,20 +1064,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
                     );
                   }
                 }
-
-                if (internalEventBus) {
-                  void internalEventBus
-                    .publish('space.gateData.updated', {
-                      sessionId: 'global',
-                      spaceId,
-                      runId: workflowRunId,
-                      gateId,
-                      data: updated.data,
-                    })
-                    .catch((err) => {
-                      log.warn(`Failed to emit space.gateData.updated for gate "${gateId}":`, err);
-                    });
-                }
               }
             }
           }
@@ -1062,16 +1071,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
       }
 
       const gateIdToNotify = gateWriteResult?.gateId;
-
-      // Audit log: gate data writes via send_message
-      if (gateWriteResult) {
-        logAudit('send_message', {
-          target,
-          gateId: gateWriteResult.gateId,
-          gateOpen: gateWriteResult.gateOpen,
-          dataKeys: data ? Object.keys(data) : undefined,
-        });
-      }
 
       const routedTarget =
         translatedTargets.length > 0
