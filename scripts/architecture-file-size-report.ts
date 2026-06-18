@@ -188,8 +188,8 @@ function getBaselineEntry(filePath: string): AllowlistEntry | undefined {
   const baseEntry = baseConfig
     ? getAllowlistEntry(baseConfig, filePath, { usePreviousPath: true })
     : undefined;
+  if (!currentEntry) return undefined;
   if (baseConfig && !baseEntry) return undefined;
-  if (!currentEntry) return baseEntry;
   if (!baseEntry) return currentEntry;
   return currentEntry.maxLines <= baseEntry.maxLines ? currentEntry : baseEntry;
 }

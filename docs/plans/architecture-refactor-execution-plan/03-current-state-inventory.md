@@ -62,10 +62,10 @@ Current root `@neokai/shared` imports dominate package boundaries.
 
 | Import style | Count |
 | --- | ---: |
-| Root `@neokai/shared` literal specs | 941 |
-| Files with at least one root literal | 626 |
-| `@neokai/shared/sdk*` literal specs | 100 |
-| `@neokai/shared/provider*` literal specs | 44 |
+| Root `@neokai/shared` literal specs | 930 |
+| Files with at least one root literal | 625 |
+| `@neokai/shared/sdk*` literal specs | 96 |
+| `@neokai/shared/provider*` literal specs | 45 |
 | `@neokai/shared/types*` import specs | 15 |
 | `@neokai/shared/message-hub*` literal specs | 7 |
 
