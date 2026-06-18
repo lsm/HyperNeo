@@ -420,7 +420,7 @@ These contracts are internal first. Some can become public later after auth, sch
 | `space.workflowRun.blocked` | Durable. |
 | `space.workflowRun.reopened` | Durable. |
 | `space.workflowRun.needsAttention` | Durable. |
-| `space.workflowNode.activated` | Durable enough to reconstruct node execution history. |
+| `space.workflowNodeExecution.created` | Durable enough to reconstruct pending/gated node execution history. |
 | `space.workflowNodeExecution.started` | Durable. |
 | `space.workflowNodeExecution.idle` | Durable. |
 | `space.workflowNodeExecution.blocked` | Durable. |
@@ -430,9 +430,8 @@ These contracts are internal first. Some can become public later after auth, sch
 | `space.workflowGate.pendingApproval` | Durable enough for UI/task state. |
 | `space.workflowMessage.queued` | Durable when backed by pending message repo. |
 | `space.workflowMessage.delivered` | Durable for queued messages; ephemeral for direct successful sends is acceptable. |
-| `space.externalEvent.deliveryQueued` | Durable. |
-| `space.externalEvent.delivered` | Durable. |
-| `space.externalEvent.deliveryFailed` | Durable. |
+| `space.externalEvents.delivery.created` | Durable queued-delivery row creation. |
+| `space.externalEvents.delivery.updated` | Durable delivery status/progress update, including delivered and failed outcomes. |
 
 Runtime events should include `correlationId` from the originating task/run command and `causationId` from the command or event that caused the transition.
 

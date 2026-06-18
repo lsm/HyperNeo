@@ -117,8 +117,6 @@ The target can be implemented as subpath exports inside `@neokai/shared` first.
     "./message-hub/protocol": "./src/message-hub/protocol.ts",
     "./message-hub/types": "./src/message-hub/types.ts",
     "./message-hub/message-hub": "./src/message-hub/message-hub.ts",
-    "./message-hub/unix-socket-transport": "./src/message-hub/unix-socket-transport.ts",
-    "./message-hub/stdio-transport": "./src/message-hub/stdio-transport.ts",
     "./compat/message-hub/*": "./src/message-hub/*.ts",
     "./utils": "./src/utils/index.ts",
     "./logger": "./src/logger.ts"

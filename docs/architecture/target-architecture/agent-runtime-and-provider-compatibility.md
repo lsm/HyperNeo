@@ -307,12 +307,18 @@ The gateway should expose fabric commands and events over time:
 | `agentRuntime.session.rewindSelective.execute` | command | Execute selective rewind for chosen messages or checkpoints. |
 | `agentRuntime.messages.list` | query | Page persisted SDK transcript messages for reopened sessions. |
 | `agentRuntime.messages.count` | query | Count persisted SDK transcript messages. |
+| `agentRuntime.messages.search` | query | Search persisted message history across sessions. |
+| `agentRuntime.session.export` | query | Export a session transcript in supported formats. |
 | `agentRuntime.message.output.remove` | command | Remove noisy persisted tool output while preserving message history. |
 | `agentRuntime.mcpServers.list` | query | Read runtime-attached MCP servers visible to tool panels. |
+| `agentRuntime.session.mcp.list` | query | Read effective configured MCP entries and skill linkage for a session. |
+| `agentRuntime.question.respond` | command | Submit an answer to a pending AskUserQuestion tool call. |
+| `agentRuntime.question.saveDraft` | command | Save draft AskUserQuestion form state before submission. |
+| `agentRuntime.question.cancel` | command | Cancel a pending AskUserQuestion tool call. |
 | `agentRuntime.capabilities.resolve` | query | Validate runtime/provider/model compatibility. |
 | `agentRuntime.event.stream` | event | Normalized output, tool, status, and error events. |
 
-`agentRuntime.mcpServers.list` preserves the current `session.listRuntimeMcpServers` surface. It returns in-process runtime SDK MCP servers and Space/task tool servers attached to the selected session; it should not be folded into coarse status if tool panels need names, scopes, and capability metadata without polling the full runtime state.
+`agentRuntime.mcpServers.list` preserves the current `session.listRuntimeMcpServers` surface. It returns in-process runtime SDK MCP servers and Space/task tool servers attached to the selected session; it should not be folded into coarse status if tool panels need names, scopes, and capability metadata without polling the full runtime state. `agentRuntime.session.mcp.list` separately preserves `session.mcp.list`, which returns effective configured MCP entries, enablement state, and skill linkage for the selected session.
 
 The pending-message and rewind contracts preserve current chat controls while the session gateway moves
 behind Agent Runtime. The compatibility gateway maps `session.messages.byStatus`,
@@ -321,9 +327,16 @@ behind Agent Runtime. The compatibility gateway maps `session.messages.byStatus`
 contracts until the UI calls the Agent Runtime namespace directly.
 
 The persisted-message contracts preserve transcript history independently from live event streaming. The
-compatibility gateway maps `message.sdkMessages`, `message.count`, and `message.removeOutput` to
-`agentRuntime.messages.list`, `agentRuntime.messages.count`, and `agentRuntime.message.output.remove`
-until reopened-session pagination and ToolResultCard output deletion move to the Agent Runtime namespace.
+compatibility gateway maps `message.sdkMessages`, `message.count`, `message.search`, `session.export`,
+and `message.removeOutput` to `agentRuntime.messages.list`, `agentRuntime.messages.count`,
+`agentRuntime.messages.search`, `agentRuntime.session.export`, and
+`agentRuntime.message.output.remove` until reopened-session pagination, command-palette search,
+session export, and ToolResultCard output deletion move to the Agent Runtime namespace.
+
+The AskUserQuestion contracts preserve inline human-input prompts while question handling moves behind
+Agent Runtime. The compatibility gateway maps `question.respond`, `question.saveDraft`, and
+`question.cancel` to `agentRuntime.question.respond`, `agentRuntime.question.saveDraft`, and
+`agentRuntime.question.cancel` until the UI calls the runtime namespace directly.
 
 ### 7.2 AgentRuntimeAdapter
 
