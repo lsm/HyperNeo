@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'bun:test';
+import { describe, expect, it, mock } from 'bun:test';
 import {
   CustomEndpointProvider,
   customProviderIdFor,
@@ -106,7 +106,13 @@ describe('CustomEndpointProvider', () => {
   });
 
   it('lists models with provider id, family, and context window', async () => {
-    const p = new CustomEndpointProvider(baseConfig, { bridgeFactory: makeFakeBridge().factory });
+    const fetchImpl = mock(
+      async () => new Response('[]', { status: 200 })
+    ) as unknown as typeof fetch;
+    const p = new CustomEndpointProvider(baseConfig, {
+      bridgeFactory: makeFakeBridge().factory,
+      bridgeFetchImpl: fetchImpl,
+    });
     const models = await p.getModels();
     expect(models).toHaveLength(2);
     expect(models[0]).toMatchObject({
@@ -115,6 +121,109 @@ describe('CustomEndpointProvider', () => {
       family: 'lmstudio',
       contextWindow: 32000,
     });
+  });
+
+  it('probes the configured endpoint before returning the model list', async () => {
+    const fetchImpl = mock(
+      async () => new Response('[]', { status: 200 })
+    ) as unknown as typeof fetch;
+    const p = new CustomEndpointProvider(baseConfig, {
+      bridgeFactory: makeFakeBridge().factory,
+      bridgeFetchImpl: fetchImpl,
+    });
+    await p.getModels();
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const [url, init] = (fetchImpl.mock.calls[0] as [string, RequestInit]) ?? [];
+    // baseUrl has no trailing slash; openai-chat probe path is /models
+    expect(url).toBe('http://localhost:1234/v1/models');
+    expect(init?.method).toBe('GET');
+  });
+
+  it('throws when endpoint rejects the API key (401)', async () => {
+    const fetchImpl = mock(
+      async () => new Response('unauthorized', { status: 401 })
+    ) as unknown as typeof fetch;
+    const p = new CustomEndpointProvider(
+      { ...baseConfig, apiKey: 'bad-key' },
+      { bridgeFactory: makeFakeBridge().factory, bridgeFetchImpl: fetchImpl }
+    );
+
+    expect(p.getModels()).rejects.toThrow("Custom endpoint 'lmstudio' API key rejected (HTTP 401)");
+  });
+
+  it('throws when probe fails at the network layer', async () => {
+    const fetchImpl = mock(async () => {
+      throw new Error('ECONNREFUSED');
+    }) as unknown as typeof fetch;
+    const p = new CustomEndpointProvider(baseConfig, {
+      bridgeFactory: makeFakeBridge().factory,
+      bridgeFetchImpl: fetchImpl,
+    });
+
+    expect(p.getModels()).rejects.toThrow("Custom endpoint 'lmstudio' probe failed: ECONNREFUSED");
+  });
+
+  it('uses /v1/models probe path for anthropic-messages type', async () => {
+    const fetchImpl = mock(
+      async () => new Response('[]', { status: 200 })
+    ) as unknown as typeof fetch;
+    const p = new CustomEndpointProvider(
+      { ...baseConfig, type: 'anthropic-messages' },
+      { bridgeFactory: makeFakeBridge().factory, bridgeFetchImpl: fetchImpl }
+    );
+    await p.getModels();
+
+    const [url] = (fetchImpl.mock.calls[0] as [string, RequestInit]) ?? [];
+    expect(url).toBe('http://localhost:1234/v1/v1/models');
+  });
+
+  it('sends x-api-key (not just Bearer) for anthropic-messages probes', async () => {
+    const fetchImpl = mock(
+      async () => new Response('[]', { status: 200 })
+    ) as unknown as typeof fetch;
+    const p = new CustomEndpointProvider(
+      { ...baseConfig, type: 'anthropic-messages', apiKey: 'anthropic-key' },
+      { bridgeFactory: makeFakeBridge().factory, bridgeFetchImpl: fetchImpl }
+    );
+    await p.getModels();
+
+    const [, init] = (fetchImpl.mock.calls[0] as [string, RequestInit]) ?? [];
+    const headers = init?.headers as Record<string, string>;
+    // Anthropic-native upstreams enforce x-api-key; bridge sends both
+    // (anthropic-messages-bridge/server.ts:206-211), probe must too.
+    expect(headers['x-api-key']).toBe('anthropic-key');
+    expect(headers['authorization']).toBe('Bearer anthropic-key');
+  });
+
+  it('does not send x-api-key for openai-chat probes', async () => {
+    const fetchImpl = mock(
+      async () => new Response('[]', { status: 200 })
+    ) as unknown as typeof fetch;
+    const p = new CustomEndpointProvider(
+      { ...baseConfig, type: 'openai-chat', apiKey: 'openai-key' },
+      { bridgeFactory: makeFakeBridge().factory, bridgeFetchImpl: fetchImpl }
+    );
+    await p.getModels();
+
+    const [, init] = (fetchImpl.mock.calls[0] as [string, RequestInit]) ?? [];
+    const headers = init?.headers as Record<string, string>;
+    expect(headers['x-api-key']).toBeUndefined();
+    expect(headers['authorization']).toBe('Bearer openai-key');
+  });
+
+  it('uses /api/tags probe path for ollama-native type', async () => {
+    const fetchImpl = mock(
+      async () => new Response('[]', { status: 200 })
+    ) as unknown as typeof fetch;
+    const p = new CustomEndpointProvider(
+      { ...baseConfig, type: 'ollama-native' },
+      { bridgeFactory: makeFakeBridge().factory, bridgeFetchImpl: fetchImpl }
+    );
+    await p.getModels();
+
+    const [url] = (fetchImpl.mock.calls[0] as [string, RequestInit]) ?? [];
+    expect(url).toBe('http://localhost:1234/v1/api/tags');
   });
 
   it('owns its own model ids and nothing else', () => {
@@ -537,6 +646,66 @@ describe('CustomEndpointProvider', () => {
         sessionId: 'sess-1',
         thinking: undefined,
       });
+    });
+  });
+
+  describe('chatTemplateKwargs', () => {
+    it('forwards chatTemplateKwargs into the bridge config when declared on a model', () => {
+      const fake = makeFakeBridge();
+      const p = new CustomEndpointProvider(
+        {
+          ...baseConfig,
+          models: [
+            {
+              id: 'qwen3',
+              capabilities: { toolUse: true, chatTemplateKwargs: { enable_thinking: false } },
+            },
+          ],
+          defaultModelId: 'qwen3',
+        },
+        { bridgeFactory: fake.factory }
+      );
+      p.buildSdkConfig('qwen3');
+      expect(fake.configs[0].chatTemplateKwargs).toEqual({ enable_thinking: false });
+    });
+
+    it('produces distinct bridge instances for models that differ only in chatTemplateKwargs', () => {
+      // Without chatTemplateKwargs in the cache key, the model declaring
+      // `enable_thinking:false` would silently share its bridge with the
+      // sibling model that wants thinking on.
+      const fake = makeFakeBridge();
+      const p = new CustomEndpointProvider(
+        {
+          id: 'qwen3-shop',
+          name: 'Qwen3 Shop',
+          baseUrl: 'http://localhost:1234/v1',
+          models: [
+            {
+              id: 'qwen3-thinking',
+              capabilities: { toolUse: true, chatTemplateKwargs: { enable_thinking: true } },
+            },
+            {
+              id: 'qwen3-fast',
+              capabilities: { toolUse: true, chatTemplateKwargs: { enable_thinking: false } },
+            },
+          ],
+          defaultModelId: 'qwen3-thinking',
+        },
+        { bridgeFactory: fake.factory }
+      );
+      const a = p.buildSdkConfig('qwen3-thinking');
+      const b = p.buildSdkConfig('qwen3-fast');
+      expect(a.envVars.ANTHROPIC_BASE_URL).not.toBe(b.envVars.ANTHROPIC_BASE_URL);
+      expect(fake.configs).toHaveLength(2);
+      expect(fake.configs[0].chatTemplateKwargs).toEqual({ enable_thinking: true });
+      expect(fake.configs[1].chatTemplateKwargs).toEqual({ enable_thinking: false });
+    });
+
+    it('omits chatTemplateKwargs from the bridge config when the model does not declare it', () => {
+      const fake = makeFakeBridge();
+      const p = new CustomEndpointProvider(baseConfig, { bridgeFactory: fake.factory });
+      p.buildSdkConfig('qwen2.5-7b');
+      expect(fake.configs[0].chatTemplateKwargs).toBeUndefined();
     });
   });
 });

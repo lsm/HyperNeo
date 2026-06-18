@@ -218,6 +218,12 @@ export async function migrateProvidersIfNeeded(
       (mapping.altEnvVar ? process.env[mapping.altEnvVar] : undefined);
     if (!apiKey) continue;
 
+    // Kimi supports two regions (china / global). Existing credentials without
+    // an explicit region default to 'china' so legacy users keep hitting the
+    // api.kimi.com endpoint they always have.
+    const configJson =
+      mapping.providerId === 'kimi' ? JSON.stringify({ region: 'china' }) : undefined;
+
     db.providers.createProvider({
       providerId: mapping.providerId,
       displayName: mapping.displayName,
@@ -226,6 +232,7 @@ export async function migrateProvidersIfNeeded(
       isEnabled: true,
       isDefault: mapping.providerId === 'anthropic',
       sortOrder: sortOrder++,
+      configJson,
     });
 
     try {

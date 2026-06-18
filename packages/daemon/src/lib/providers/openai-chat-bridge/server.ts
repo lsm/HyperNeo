@@ -78,6 +78,13 @@ export type OpenAIChatBridgeConfig = {
    * — accuracy degrades but the endpoint remains usable.
    */
   streamUsageSupported?: boolean;
+  /**
+   * Per-model `chat_template_kwargs` forwarded verbatim into every upstream
+   * request body. Used for fields the OpenAI Chat schema does not define but
+   * llama.cpp / vLLM templates read — most notably
+   * `{ enable_thinking: false }` to skip Qwen3 `<think>` blocks.
+   */
+  chatTemplateKwargs?: Record<string, unknown>;
 };
 
 // ---------------------------------------------------------------------------
@@ -129,6 +136,12 @@ type OpenAIChatRequest = {
    * ignore unknown fields silently.
    */
   reasoning_effort?: 'low' | 'medium' | 'high';
+  /**
+   * Jinja template kwargs (e.g. `{ enable_thinking: false }`). Forwarded
+   * verbatim; only llama.cpp / vLLM-style backends interpret it. Other
+   * OpenAI-compatible servers ignore unknown fields silently.
+   */
+  chat_template_kwargs?: Record<string, unknown>;
 };
 
 type OpenAIChatStreamChoice = {
@@ -320,7 +333,8 @@ function buildChatRequest(
   toolUseSupported: boolean,
   visionSupported: boolean,
   thinkingSupported: boolean,
-  streamUsageSupported = false
+  streamUsageSupported = false,
+  chatTemplateKwargs?: Record<string, unknown>
 ): OpenAIChatRequest {
   const request: OpenAIChatRequest = {
     model,
@@ -345,6 +359,13 @@ function buildChatRequest(
   if (thinkingSupported) {
     const effort = thinkingToReasoningEffort(body.thinking);
     if (effort) request.reasoning_effort = effort;
+  }
+  // llama.cpp / vLLM-style Jinja kwargs. Forwarded verbatim; other
+  // OpenAI-compatible servers ignore unknown fields silently. Most
+  // common use: `{ enable_thinking: false }` to skip Qwen3 `<think>`
+  // blocks for simple prompts that don't need reasoning.
+  if (chatTemplateKwargs) {
+    request.chat_template_kwargs = chatTemplateKwargs;
   }
   return request;
 }
@@ -721,8 +742,16 @@ async function streamChatToAnthropic(params: {
       'openai-chat-bridge: streaming failed:',
       error instanceof Error ? error.message : String(error)
     );
-    send(errorSSE('api_error', error instanceof Error ? error.message : 'OpenAI stream failed'));
-    send(messageStopSSE());
+    try {
+      send(errorSSE('api_error', error instanceof Error ? error.message : 'OpenAI stream failed'));
+    } catch {
+      // Controller already closed (client disconnect or upstream tear-down).
+    }
+    try {
+      send(messageStopSSE());
+    } catch {
+      // Controller already closed.
+    }
   } finally {
     try {
       controller.close();
@@ -741,6 +770,7 @@ export function createOpenAIChatBridgeServer(
   const visionSupported = config.visionSupported ?? false;
   const thinkingSupported = config.thinkingSupported ?? false;
   const streamUsageSupported = config.streamUsageSupported ?? false;
+  const chatTemplateKwargs = config.chatTemplateKwargs;
   const modelContextWindow = config.modelContextWindow;
 
   // Per-session thinking config injected by the daemon when the Anthropic SDK client
@@ -824,7 +854,8 @@ export function createOpenAIChatBridgeServer(
         toolUseSupported,
         visionSupported,
         thinkingSupported,
-        streamUsageSupported
+        streamUsageSupported,
+        chatTemplateKwargs
       );
       const inputTokens = estimateAnthropicInputTokens(body);
 

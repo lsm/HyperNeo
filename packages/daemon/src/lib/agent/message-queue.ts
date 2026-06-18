@@ -70,6 +70,12 @@ export class MessageQueue {
    */
   onMessageYielded?: (messageId: string, sentAt: number) => void;
 
+  /**
+   * Callback fired when a message enters the queue.
+   * Used by runners that need to arm startup protection before the generator can yield.
+   */
+  onMessageEnqueued?: (messageId: string, queuedAt: number) => void;
+
   private wakeWaiters(): void {
     this.waiters.forEach((waiter) => waiter());
     this.waiters = [];
@@ -137,6 +143,7 @@ export class MessageQueue {
       }, MESSAGE_QUEUE_TIMEOUT_MS);
 
       this.queue.push(queuedMessage);
+      this.onMessageEnqueued?.(queuedMessage.id, queuedMessage.queuedAt);
 
       // Wake up any waiting message generators
       this.wakeWaiters();

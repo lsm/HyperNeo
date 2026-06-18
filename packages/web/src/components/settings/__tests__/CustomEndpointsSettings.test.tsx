@@ -50,6 +50,7 @@ vi.mock('../../../lib/connection-manager', () => ({
 import { CustomEndpointsSettings } from '../CustomEndpointsSettings.tsx';
 import { __test__, EditorModal } from '../CustomEndpointEditor.tsx';
 import { CUSTOM_ENDPOINT_PRESETS, findPreset } from '../customEndpointPresets.ts';
+import type { CustomEndpointConfig } from '@neokai/shared';
 
 describe('CustomEndpointsSettings — helpers', () => {
   it('resolveCapabilities applies type + global defaults', () => {
@@ -113,6 +114,32 @@ describe('CustomEndpointsSettings — helpers', () => {
     const cfg = __test__.editorToConfig(editor);
     // Only `thinking` should be persisted as a delta since the rest match defaults.
     expect(cfg.models[0]?.capabilities).toEqual({ thinking: true });
+  });
+
+  it('editorToConfig preserves chatTemplateKwargs through existingToEditor round-trip', () => {
+    // A user sets chatTemplateKwargs via JSON/import. When they open the
+    // endpoint in the Providers UI and click Save (even with no edits),
+    // existingToEditor → editorToConfig must NOT drop the field.
+    const original: CustomEndpointConfig = {
+      id: 'qwen3',
+      type: 'openai-chat',
+      name: 'Qwen3',
+      baseUrl: 'http://localhost:1234/v1',
+      models: [
+        {
+          id: 'qwen3:32b',
+          capabilities: {
+            chatTemplateKwargs: { enable_thinking: false },
+          },
+        },
+      ],
+      defaultModelId: 'qwen3:32b',
+    };
+    const editor = __test__.existingToEditor(original);
+    const roundTripped = __test__.editorToConfig(editor);
+    expect(roundTripped.models[0]?.capabilities?.chatTemplateKwargs).toEqual({
+      enable_thinking: false,
+    });
   });
 
   it('editorToConfig persists baseUrl + apiKey + headers when set', () => {

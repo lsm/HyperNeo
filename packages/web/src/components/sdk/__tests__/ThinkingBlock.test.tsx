@@ -66,6 +66,51 @@ describe('ThinkingBlock', () => {
 
       expect(container.textContent).toContain('1,500');
     });
+
+    it('should show estimated tokens when provided', () => {
+      const content = 'Some thinking content';
+      const { container } = render(<ThinkingBlock content={content} estimatedTokens={2000} />);
+
+      expect(container.textContent).toContain('~2,000');
+      expect(container.textContent).toContain('token');
+    });
+
+    it('should show plural "tokens" for multiple tokens', () => {
+      const content = 'Thinking...';
+      const { container } = render(<ThinkingBlock content={content} estimatedTokens={1500} />);
+
+      expect(container.textContent).toContain('1,500 tokens');
+      // Check that it's plural, not singular (should have "tokens" not "token" alone)
+      expect(container.textContent).toMatch(/\btokens\b/);
+      expect(container.textContent).not.toMatch(/\b1,500 token\b/);
+    });
+
+    it('should show singular "token" for 1 token', () => {
+      const content = 'Thinking...';
+      const { container } = render(<ThinkingBlock content={content} estimatedTokens={1} />);
+
+      expect(container.textContent).toContain('1 token');
+      expect(container.textContent).not.toContain('1 tokens');
+    });
+
+    it('should show both tokens and characters when estimate provided', () => {
+      const content = 'Some thinking';
+      const { container } = render(<ThinkingBlock content={content} estimatedTokens={1000} />);
+
+      expect(container.textContent).toContain('~1,000');
+      expect(container.textContent).toContain('token');
+      expect(container.textContent).toContain(`${content.length}`);
+      expect(container.textContent).toContain('character');
+    });
+
+    it('should show character count only when no estimate provided', () => {
+      const content = 'Some thinking';
+      const { container } = render(<ThinkingBlock content={content} />);
+
+      expect(container.textContent).toContain(`${content.length}`);
+      expect(container.textContent).toContain('character');
+      expect(container.textContent).not.toContain('token');
+    });
   });
 
   describe('Truncation and Expansion', () => {

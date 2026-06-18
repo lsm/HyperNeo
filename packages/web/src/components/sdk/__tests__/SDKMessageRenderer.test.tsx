@@ -207,12 +207,109 @@ describe('SDKMessageRenderer', () => {
       expect(container.textContent).toContain('tokens');
     });
 
+    it('should suppress thinking token system messages (not rendered through main renderer)', () => {
+      const message = {
+        type: 'system',
+        subtype: 'thinking_tokens',
+        estimated_tokens: 12345,
+        estimated_tokens_delta: 678,
+        uuid: createUUID(),
+        session_id: 'test-session',
+      } as unknown as SDKMessage;
+
+      const { container } = render(<SDKMessageRenderer message={message} />);
+
+      // thinking_tokens messages should be suppressed (return null from SDKSystemMessage)
+      expect(container.firstChild).toBeNull();
+    });
+
+    it('should render session state system messages through the main renderer', () => {
+      const message = {
+        type: 'system',
+        subtype: 'session_state_changed',
+        state: 'requires_action',
+        uuid: createUUID(),
+        session_id: 'test-session',
+      } as unknown as SDKMessage;
+
+      const { container } = render(<SDKMessageRenderer message={message} />);
+
+      expect(container.textContent).toContain('Session state');
+      expect(container.textContent).toContain('requires_action');
+    });
+
+    it('should render worker shutdown messages only at the live tail', () => {
+      const message = {
+        type: 'system',
+        subtype: 'worker_shutting_down',
+        reason: 'host_exit',
+        uuid: createUUID(),
+        session_id: 'test-session',
+      } as unknown as SDKMessage;
+
+      const stale = render(<SDKMessageRenderer message={message} />);
+      expect(stale.container.textContent).not.toContain('Worker shutting down');
+
+      const liveTail = render(<SDKMessageRenderer message={message} isLiveTail={true} />);
+      expect(liveTail.container.textContent).toContain('Worker shutting down');
+      expect(liveTail.container.textContent).toContain('host_exit');
+    });
+
     it('should render assistant message', () => {
       const message = createAssistantMessage('Hi there!');
       const { container } = render(<SDKMessageRenderer message={message} />);
 
       const assistantMessage = container.querySelector('[data-testid="assistant-message"]');
       expect(assistantMessage).toBeTruthy();
+    });
+
+    it('should visually mark superseded messages without hiding them', () => {
+      const message = createUserMessage('Old message');
+      const { container } = render(
+        <SDKMessageRenderer message={message} replacementStatus="superseded" />
+      );
+
+      expect(container.textContent).toContain('Superseded by replacement');
+      expect(container.textContent).toContain('Old message');
+      expect(
+        container.querySelector('[data-message-replacement-status="superseded"]')
+      ).toBeTruthy();
+    });
+
+    it('should visually mark retracted messages without hiding them', () => {
+      const message = createUserMessage('Retracted message');
+      const { container } = render(
+        <SDKMessageRenderer message={message} replacementStatus="retracted" />
+      );
+
+      expect(container.textContent).toContain('Retracted by fallback');
+      expect(container.textContent).toContain('Retracted message');
+      expect(container.querySelector('[data-message-replacement-status="retracted"]')).toBeTruthy();
+    });
+
+    it('should not wrap hidden tool-result user rows with replacement markers', () => {
+      const message = {
+        type: 'user',
+        uuid: createUUID(),
+        session_id: 'test-session',
+        message: {
+          role: 'user',
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'tool-use-123',
+              content: 'Retracted tool output',
+            },
+          ],
+        },
+      } as unknown as SDKMessage;
+
+      const { container } = render(
+        <SDKMessageRenderer message={message} replacementStatus="retracted" />
+      );
+
+      expect(container.textContent).toBe('');
+      expect(container.querySelector('[data-message-replacement-status="retracted"]')).toBeFalsy();
     });
 
     it('should render result message', () => {
@@ -471,7 +568,7 @@ describe('SDKMessageRenderer', () => {
       expect(container.querySelector('[data-testid="user-message"]')).toBeTruthy();
     });
 
-    it('should not show rewind UI for synthetic messages', () => {
+    it('should show rewind UI for synthetic messages', () => {
       const message = {
         ...createUserMessage('Synthetic message'),
         isSynthetic: true,
@@ -486,8 +583,8 @@ describe('SDKMessageRenderer', () => {
         />
       );
 
-      // Should not have rewind button (synthetic messages use SyntheticMessageBlock component)
-      expect(container.querySelector('button[title="Rewind to here"]')).toBeFalsy();
+      // Synthetic messages use the shared user message toolbar.
+      expect(container.querySelector('button[title="Rewind to here"]')).toBeTruthy();
     });
 
     it('should not show rewind UI for result messages (only user messages have rewind)', () => {

@@ -446,8 +446,9 @@ export function GateEditorPanel({
           <span class="space-y-0.5">
             <span class="block text-xs text-gray-200">Codex Review Bot</span>
             <span class="block text-[11px] text-gray-500 leading-snug">
-              Require codex[bot] +1 before this gate opens. If Codex has not reacted, reviewers
-              should wait or comment @codex review on the PR.
+              Require a Codex bot +1 before this gate opens. The matcher accepts any GitHub App bot
+              whose login contains "codex" (e.g. codex[bot] or chatgpt-codex-connector[bot]). If
+              Codex has not reacted, reviewers should wait or comment @codex review on the PR.
             </span>
             {featureDisabledReason && (
               <span class="block text-[11px] text-yellow-500 leading-snug">

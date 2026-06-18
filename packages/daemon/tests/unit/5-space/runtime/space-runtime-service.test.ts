@@ -701,6 +701,80 @@ describe('SpaceRuntimeService', () => {
       await svc.stop();
     });
 
+    test('long-horizon delivery starts inactive session without worker inbox', async () => {
+      const sessionId = longTermAgentSessionId(mockSpace.id, 'lh-agent-1');
+      const createdSession = {
+        ...makeSession(),
+        getSessionData: mock(() => ({
+          id: sessionId,
+          metadata: {},
+          config: {},
+        })),
+        ensureQueryStarted: mock(async () => {}),
+        messageQueue: { enqueueWithId: mock(async () => {}) },
+      } as unknown as AgentSession;
+      const sessionManager = makeSessionManager(null);
+      (
+        sessionManager.createSession as Mock<typeof sessionManager.createSession>
+      ).mockImplementation(async () => sessionId);
+      (sessionManager.getSessionAsync as Mock<typeof sessionManager.getSessionAsync>)
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(createdSession);
+      const inboxRepo = { enqueue: mock(() => ({ record: { id: 'queued-1' }, deduped: false })) };
+      const longHorizonAgentRepo = {
+        getById: mock(() => ({
+          id: 'lh-agent-1',
+          spaceId: mockSpace.id,
+          handle: 'mcp-agent',
+          displayName: 'MCP Agent',
+          templateKey: null,
+          status: 'active',
+          sessionId: null,
+          instructions: 'Do work.',
+          autonomyLevel: null,
+          model: null,
+          thinkingLevel: null,
+          provider: null,
+          settingSources: null,
+          toolPermissions: {},
+          createdAt: NOW,
+          updatedAt: NOW,
+        })),
+        update: mock(() => {}),
+      } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
+      const svc = new SpaceRuntimeService({
+        ...buildConfigWithSession(sessionManager, createMockSpaceManager(mockSpace)),
+        longHorizonAgentRepo,
+        spaceAgentInboxRepo:
+          inboxRepo as unknown as SpaceRuntimeServiceConfig['spaceAgentInboxRepo'],
+      });
+
+      const delivery = svc.longTermAgentDeliveryCallbacks();
+      const deliveredSessionId = await delivery?.queueForActivation(
+        {
+          actorId: 'agent:lh-agent-1',
+          kind: 'agent',
+          spaceId: mockSpace.id,
+          status: 'inactive',
+        } as ActorRef,
+        {
+          messageId: 'message-1',
+          spaceId: mockSpace.id,
+          senderActorId: 'space:space-1:human:user-1',
+          kind: 'message',
+          body: 'hello',
+          createdAt: Date.now(),
+        } as MessageRecord
+      );
+
+      expect(deliveredSessionId).toBe(sessionId);
+      expect(inboxRepo.enqueue).not.toHaveBeenCalled();
+      expect(createdSession.messageQueue.enqueueWithId).toHaveBeenCalledWith(
+        expect.stringMatching(/^msg_/),
+        'hello'
+      );
+    });
+
     test('long-term Space agent sessions use the agent name as title', async () => {
       const createdSession = {
         ...makeSession(),
@@ -1078,14 +1152,13 @@ describe('SpaceRuntimeService', () => {
       svc.start();
       await svc.stop();
 
-      // Ten InternalEventBus subscriptions are registered: externalEvent.published,
-      // sdk.toolUse.created, sdk.toolUse.consumed, space.created, spaceWorkflow.updated
-      // (mid-run gate poll refresh), session.created, session.deleted (which releases
-      // per-session db-query servers), space.archived, space.deleted (tear down
-      // notification services), and space.updated (refresh autonomy level). Hard-reset
-      // reprovisioning uses SessionManager's awaited in-process subscriber instead of
-      // InternalEventBus.
-      expect(unsubFn).toHaveBeenCalledTimes(10);
+      // Nine InternalEventBus subscriptions are registered: externalEvent.published,
+      // sdk.toolUse.created, sdk.toolUse.consumed, space.created, session.created,
+      // session.deleted (which releases per-session db-query servers), space.archived,
+      // space.deleted (tear down notification services), and space.updated (refresh
+      // autonomy level). Hard-reset reprovisioning uses SessionManager's awaited
+      // in-process subscriber instead of InternalEventBus.
+      expect(unsubFn).toHaveBeenCalledTimes(9);
     });
   });
 

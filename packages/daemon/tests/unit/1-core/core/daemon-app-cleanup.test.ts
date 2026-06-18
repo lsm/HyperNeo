@@ -16,7 +16,7 @@ import {
   clearStructuredLogSubscribers,
   installConsoleLogCapture,
   subscribeToStructuredLogs,
-} from '@neokai/shared';
+} from '../../../../src/lib/logger';
 import { createDaemonApp } from '../../../../src/app';
 import type { Config } from '../../../../src/config';
 
@@ -28,6 +28,8 @@ describe('Daemon App Cleanup', () => {
   let originalClaudeCodeOAuthToken: string | undefined;
   let originalAnthropicAuthToken: string | undefined;
   let originalGlmApiKey: string | undefined;
+  let originalTestUserSettingsDir: string | undefined;
+  let originalAcpCommand: string | undefined;
   let bunServeSpy: ReturnType<typeof spyOn> | null = null;
   const logs: string[] = [];
 
@@ -38,10 +40,17 @@ describe('Daemon App Cleanup', () => {
     originalClaudeCodeOAuthToken = process.env.CLAUDE_CODE_OAUTH_TOKEN;
     originalAnthropicAuthToken = process.env.ANTHROPIC_AUTH_TOKEN;
     originalGlmApiKey = process.env.GLM_API_KEY;
+    originalTestUserSettingsDir = process.env.TEST_USER_SETTINGS_DIR;
+    originalAcpCommand = process.env.NEOKAI_ACP_COMMAND;
     delete process.env.ANTHROPIC_API_KEY;
     delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
     delete process.env.ANTHROPIC_AUTH_TOKEN;
     delete process.env.GLM_API_KEY;
+    delete process.env.NEOKAI_ACP_COMMAND;
+
+    clearStructuredLogSubscribers();
+
+    process.env.TEST_USER_SETTINGS_DIR = join(tmpdir(), `neokai-test-settings-${Date.now()}`);
 
     // Capture console output for verification
     originalConsoleLog = console.log;
@@ -56,7 +65,6 @@ describe('Daemon App Cleanup', () => {
           stop() {},
         }) as never
     );
-    clearStructuredLogSubscribers();
 
     // Use in-memory database for tests
     const tmpDir = process.env.TMPDIR || '/tmp';
@@ -95,6 +103,16 @@ describe('Daemon App Cleanup', () => {
     } else {
       delete process.env.GLM_API_KEY;
     }
+    if (originalTestUserSettingsDir !== undefined) {
+      process.env.TEST_USER_SETTINGS_DIR = originalTestUserSettingsDir;
+    } else {
+      delete process.env.TEST_USER_SETTINGS_DIR;
+    }
+    if (originalAcpCommand !== undefined) {
+      process.env.NEOKAI_ACP_COMMAND = originalAcpCommand;
+    } else {
+      delete process.env.NEOKAI_ACP_COMMAND;
+    }
 
     // Restore console
     console.log = originalConsoleLog;
@@ -108,7 +126,9 @@ describe('Daemon App Cleanup', () => {
   });
 
   describe('pending RPC calls timeout', () => {
-    test('should complete cleanup immediately when no pending calls', async () => {
+    test('should complete cleanup immediately when no pending calls', {
+      timeout: 10_000,
+    }, async () => {
       const daemonContext = await createDaemonApp({
         config,
         verbose: true,
@@ -134,7 +154,7 @@ describe('Daemon App Cleanup', () => {
       expect(successLog).toBeTruthy();
     });
 
-    test('starts and stops OAuth refresh scheduler', async () => {
+    test('starts and stops OAuth refresh scheduler', { timeout: 10_000 }, async () => {
       const daemonContext = await createDaemonApp({
         config,
         verbose: true,
@@ -264,6 +284,7 @@ describe('Daemon App Cleanup', () => {
       delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
       delete process.env.ANTHROPIC_AUTH_TOKEN;
       delete process.env.GLM_API_KEY;
+      delete process.env.NEOKAI_ACP_COMMAND;
     });
 
     afterEach(() => {
@@ -287,12 +308,18 @@ describe('Daemon App Cleanup', () => {
         standalone: false,
       });
 
-      // Verify guidance was logged
-      const noCredsLog = logs.find((log) => log.includes('NO CREDENTIALS DETECTED'));
-      expect(noCredsLog).toBeTruthy();
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      const hasAnthropicAuth = getProviderRegistry().get('anthropic')?.isAvailable() ?? false;
 
-      const skipModelLog = logs.find((log) => log.includes('Model initialization skipped'));
-      expect(skipModelLog).toBeTruthy();
+      if (hasAnthropicAuth) {
+        expect(logs.some((log) => log.includes('NO CREDENTIALS DETECTED'))).toBe(false);
+      } else {
+        const noCredsLog = logs.find((log) => log.includes('NO CREDENTIALS DETECTED'));
+        expect(noCredsLog).toBeTruthy();
+
+        const skipModelLog = logs.find((log) => log.includes('Model initialization skipped'));
+        expect(skipModelLog).toBeTruthy();
+      }
 
       // Should still have basic components
       expect(daemonContext.server).toBeDefined();

@@ -16,7 +16,14 @@
  */
 
 import { signal, computed } from '@preact/signals';
-import type { Session, AuthStatus, HealthStatus, SystemState, SettingsState } from '@neokai/shared';
+import type {
+  Session,
+  AuthStatus,
+  HealthStatus,
+  SystemState,
+  SettingsState,
+  CredentialStoreStatus,
+} from '@neokai/shared';
 import type { LiveQueryDeltaEvent, LiveQuerySnapshotEvent } from '@neokai/shared';
 import { STATE_CHANNELS } from '@neokai/shared';
 import type { GlobalSettings } from '@neokai/shared/types/settings';
@@ -87,6 +94,15 @@ export class GlobalStore {
     () => this.systemState.value?.apiConnection?.status || 'connected'
   );
 
+  /**
+   * Provider credential store status. When macOS Keychain persistence is locked
+   * / inaccessible (SSH, CI, background launch), UI should surface `warning` to
+   * the user. No DB fallback is used for macOS secrets.
+   */
+  readonly credentialStoreStatus = computed<CredentialStoreStatus | null>(
+    () => this.systemState.value?.credentialStore || null
+  );
+
   // ========================================
   // Private State
   // ========================================
@@ -129,6 +145,19 @@ export class GlobalStore {
       this.cleanupFunctions.push(unsubSettings);
 
       this.initialized = true;
+
+      // Fetch initial system + settings snapshot so derived signals
+      // (authStatus, credentialStoreStatus, etc.) populate immediately
+      // instead of waiting for the first post-connect broadcast. Subsequent
+      // updates arrive via the GLOBAL_SYSTEM / GLOBAL_SETTINGS subscriptions.
+      const snapshot = await hub.request<{
+        system: SystemState;
+        settings: SettingsState;
+      }>(STATE_CHANNELS.GLOBAL_SNAPSHOT, {});
+      if (snapshot) {
+        this.systemState.value = snapshot.system || null;
+        this.settings.value = snapshot.settings?.settings || null;
+      }
     } catch {
       // Initialization failed - state will be empty
     }

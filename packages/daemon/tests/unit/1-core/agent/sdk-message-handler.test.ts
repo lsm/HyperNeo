@@ -4,13 +4,16 @@
  * Tests for processing incoming SDK messages.
  */
 
-import { describe, expect, it, beforeEach, mock } from 'bun:test';
+import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
 import {
   SDKMessageHandler,
   type SDKMessageHandlerContext,
 } from '../../../../src/lib/agent/sdk-message-handler';
-import type { Session, MessageHub } from '@neokai/shared';
+import type { Session, MessageHub, ModelInfo } from '@neokai/shared';
+import type { Provider, ProviderSdkConfig } from '@neokai/shared/provider';
 import type { SDKMessage } from '@neokai/shared/sdk';
+import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
+import { resetProviderFactory } from '../../../../src/lib/providers/factory';
 import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { Database } from '../../../../src/storage/database';
@@ -19,6 +22,43 @@ import type { ContextTracker } from '../../../../src/lib/agent/context-tracker';
 import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import type { ErrorManager } from '../../../../src/lib/error-manager';
 import type { QueryLifecycleManager } from '../../../../src/lib/agent/query-lifecycle-manager';
+import { setModelsCache } from '../../../../src/lib/model-service';
+
+class TranslatingMockProvider implements Provider {
+  readonly id = 'anthropic-codex';
+  readonly displayName = 'Anthropic Codex';
+  readonly capabilities = {
+    streaming: true,
+    extendedThinking: false,
+    maxContextWindow: 100000,
+    functionCalling: true,
+    vision: false,
+  };
+
+  isAvailable(): boolean {
+    return true;
+  }
+
+  async getModels(): Promise<ModelInfo[]> {
+    return [];
+  }
+
+  ownsModel(modelId: string): boolean {
+    return modelId.startsWith('gpt-') || modelId.startsWith('claude-');
+  }
+
+  getModelForTier(tier: string): string {
+    return `gpt-${tier}`;
+  }
+
+  buildSdkConfig(): ProviderSdkConfig {
+    return { envVars: {}, isAnthropicCompatible: true };
+  }
+
+  translateModelIdForSdk(modelId: string): string {
+    return modelId === 'gpt-5.4-mini' ? 'claude-sonnet-4-20250514' : modelId;
+  }
+}
 
 describe('SDKMessageHandler', () => {
   let handler: SDKMessageHandler;
@@ -54,6 +94,8 @@ describe('SDKMessageHandler', () => {
   let getStateSpy: ReturnType<typeof mock>;
 
   beforeEach(() => {
+    resetProviderRegistry();
+    resetProviderFactory();
     mockSession = {
       id: 'test-session-id',
       title: 'Test Session',
@@ -132,6 +174,9 @@ describe('SDKMessageHandler', () => {
     mockContextTracker = {
       getContextInfo: getContextInfoSpy,
       updateWithDetailedBreakdown: updateWithDetailedBreakdownSpy,
+      shouldCompact: mock(() => false),
+      shouldCompactAt: mock(() => false),
+      markCompactionTriggered: mock(() => {}),
     } as unknown as ContextTracker;
 
     // MessageQueue spies
@@ -169,10 +214,16 @@ describe('SDKMessageHandler', () => {
       lifecycleManager: mockLifecycleManager,
       queryObject: null,
       queryPromise: null,
-      onInitSlashCommands: async () => {},
+      onInitSlashCommands: mock(async () => {}),
+      onCommandsChanged: mock(async () => {}),
     };
 
     handler = new SDKMessageHandler(mockContext);
+  });
+
+  afterEach(() => {
+    resetProviderRegistry();
+    resetProviderFactory();
   });
 
   describe('constructor', () => {
@@ -495,7 +546,7 @@ describe('SDKMessageHandler', () => {
       expect(mockSession.sdkSessionId).toBe('existing-session-id');
     });
 
-    it('should not set sdkSessionId from api_retry message', async () => {
+    it('should persist and broadcast api_retry message', async () => {
       // api_retry has session_id but should not overwrite sdkSessionId
       // — only system/init messages are the authoritative source
       const message: SDKMessage = {
@@ -513,9 +564,99 @@ describe('SDKMessageHandler', () => {
       await handler.handleMessage(message);
 
       expect(mockSession.sdkSessionId).toBeUndefined();
-      // api_retry is suppressed before DB/broadcast — should not appear in transcript
+      // api_retry is now persisted and broadcast to appear in transcript
+      expect(saveSDKMessageSpy).toHaveBeenCalled();
+      expect(publishSpy).toHaveBeenCalled();
+      // Internal event should still be emitted for existing consumers
+      // Check that the FIRST call to emitSpy is the retryAttempt event
+      const firstEmitCall = emitSpy.mock.calls[0];
+      expect(firstEmitCall).toBeTruthy();
+      expect(firstEmitCall[0]).toBe('session.retryAttempt');
+      expect(firstEmitCall[1]).toMatchObject({
+        sessionId: 'test-session-id',
+        attempt: 1,
+        max_retries: 3,
+      });
+    });
+
+    it('should not persist thinking_tokens but stash estimate', async () => {
+      const message: SDKMessage = {
+        type: 'system',
+        subtype: 'thinking_tokens',
+        uuid: 'thinking-uuid',
+        session_id: 'test-session-id',
+        estimated_tokens: 1500,
+        estimated_tokens_delta: 500,
+      } as unknown as SDKMessage;
+
+      await handler.handleMessage(message);
+
+      // Should NOT be persisted
       expect(saveSDKMessageSpy).not.toHaveBeenCalled();
-      expect(publishSpy).not.toHaveBeenCalled();
+      // Estimate should be stashed for later stamping on assistant message
+      expect(handler['currentThinkingTokensEstimate']).toBe(1500);
+    });
+
+    it('should stamp thinking estimate on assistant message with thinking block', async () => {
+      // First, send a thinking_tokens message to stash the estimate
+      const thinkingMessage: SDKMessage = {
+        type: 'system',
+        subtype: 'thinking_tokens',
+        uuid: 'thinking-uuid',
+        session_id: 'test-session-id',
+        estimated_tokens: 2000,
+        estimated_tokens_delta: 1000,
+      } as unknown as SDKMessage;
+
+      await handler.handleMessage(thinkingMessage);
+
+      // Then send an assistant message with a thinking block
+      const assistantMessage: SDKMessage = {
+        type: 'assistant',
+        uuid: 'assistant-uuid',
+        session_id: 'test-session-id',
+        message: {
+          role: 'assistant',
+          content: [
+            { type: 'thinking', thinking: 'Some thinking content' },
+            { type: 'text', text: 'Response text' },
+          ],
+        },
+        parent_tool_use_id: null,
+      } as unknown as SDKMessage;
+
+      await handler.handleMessage(assistantMessage);
+
+      // Verify the estimate was stamped on the message
+      expect(saveSDKMessageSpy).toHaveBeenCalledWith(
+        'test-session-id',
+        expect.objectContaining({
+          type: 'assistant',
+          estimated_thinking_tokens: 2000,
+        })
+      );
+
+      // Verify the handler reset the estimate after consuming it
+      const secondAssistantMessage: SDKMessage = {
+        type: 'assistant',
+        uuid: 'assistant-uuid-2',
+        session_id: 'test-session-id',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'Another response' }],
+        },
+        parent_tool_use_id: null,
+      } as unknown as SDKMessage;
+
+      await handler.handleMessage(secondAssistantMessage);
+
+      // Second message should NOT have the estimate (it was reset)
+      // Check the last call to saveSDKMessageSpy
+      const lastCall = saveSDKMessageSpy.mock.calls[saveSDKMessageSpy.mock.calls.length - 1];
+      expect(lastCall).toBeTruthy();
+      const savedMessage = lastCall[1] as SDKMessage;
+      expect(savedMessage.type).toBe('assistant');
+      expect(savedMessage).not.toHaveProperty('estimated_thinking_tokens');
     });
   });
 
@@ -697,6 +838,138 @@ describe('SDKMessageHandler', () => {
       await handler.handleMessage(message);
 
       expect(setIdleSpy).toHaveBeenCalled();
+    });
+
+    it('should reset session-state turn mode after idle so later result can finish turn', async () => {
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'session_state_changed',
+        state: 'busy',
+        uuid: 'state-busy',
+      } as unknown as SDKMessage);
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'session_state_changed',
+        state: 'idle',
+        uuid: 'state-idle',
+      } as unknown as SDKMessage);
+      setIdleSpy.mockClear();
+
+      await handler.handleMessage({
+        type: 'result',
+        subtype: 'success',
+        uuid: 'later-result',
+        usage: {
+          input_tokens: 100,
+          output_tokens: 50,
+        },
+        total_cost_usd: 0.001,
+        modelUsage: {},
+      } as unknown as SDKMessage);
+
+      expect(setIdleSpy).toHaveBeenCalled();
+    });
+
+    it('should wait for idle before replaying queued turns after a success result', async () => {
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'session_state_changed',
+        state: 'busy',
+        uuid: 'state-busy-before-success',
+      } as unknown as SDKMessage);
+      emitSpy.mockClear();
+      setIdleSpy.mockClear();
+
+      await handler.handleMessage({
+        type: 'result',
+        subtype: 'success',
+        uuid: 'success-before-idle',
+        usage: {
+          input_tokens: 100,
+          output_tokens: 50,
+        },
+        total_cost_usd: 0.001,
+        modelUsage: {},
+      } as unknown as SDKMessage);
+
+      expect(emitSpy).not.toHaveBeenCalledWith('query.trigger', { sessionId: 'test-session-id' });
+
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'session_state_changed',
+        state: 'idle',
+        uuid: 'state-idle-after-success',
+      } as unknown as SDKMessage);
+
+      expect(setIdleSpy).toHaveBeenCalled();
+      expect(
+        emitSpy.mock.calls.filter(
+          ([event, payload]) =>
+            event === 'query.trigger' && payload?.sessionId === 'test-session-id'
+        )
+      ).toHaveLength(1);
+    });
+
+    it('should not replay queued turns after an error result followed by idle state', async () => {
+      await handler.handleMessage({
+        type: 'result',
+        subtype: 'error_during_execution',
+        uuid: 'error-result',
+        is_error: true,
+        duration_ms: 1,
+        duration_api_ms: 1,
+        num_turns: 1,
+        total_cost_usd: 0,
+      } as unknown as SDKMessage);
+      emitSpy.mockClear();
+      setIdleSpy.mockClear();
+
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'session_state_changed',
+        state: 'idle',
+        uuid: 'state-idle-after-error',
+      } as unknown as SDKMessage);
+
+      expect(setIdleSpy).toHaveBeenCalled();
+      expect(emitSpy).not.toHaveBeenCalledWith('query.trigger', { sessionId: 'test-session-id' });
+    });
+
+    it('should include normalized slash-command aliases from commands_changed messages', async () => {
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'commands_changed',
+        commands: [{ name: '/status', aliases: ['/cost', 'stats'] }],
+      } as unknown as SDKMessage);
+
+      expect(mockContext.onCommandsChanged).toHaveBeenCalledWith(['status', 'cost', 'stats']);
+    });
+
+    it('should persist provider-native fallback model after SDK fallback translation', async () => {
+      getProviderRegistry().register(new TranslatingMockProvider());
+      mockSession.config = {
+        ...mockSession.config,
+        provider: 'anthropic-codex',
+        model: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-mini',
+      };
+
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'model_refusal_fallback',
+        direction: 'retry',
+        original_model: 'claude-opus-4-7',
+        fallback_model: 'claude-sonnet-4-20250514',
+        content: 'Retrying with fallback model',
+      } as unknown as SDKMessage);
+
+      expect(mockSession.config.model).toBe('gpt-5.4-mini');
+      expect(updateSessionSpy).toHaveBeenCalledWith(
+        'test-session-id',
+        expect.objectContaining({
+          config: expect.objectContaining({ model: 'gpt-5.4-mini' }),
+        })
+      );
     });
 
     it('should emit session.errorClear event', async () => {
@@ -1331,6 +1604,385 @@ describe('SDKMessageHandler', () => {
 
       expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
       expect(updateWithDetailedBreakdownSpy).not.toHaveBeenCalled();
+    });
+
+    describe('NeoKai-level compaction trigger', () => {
+      afterEach(() => {
+        setModelsCache(new Map());
+      });
+
+      it('does not enqueue /compact for non-PROVIDER_NO_SDK_AUTO_COMPACT providers (SDK handles)', async () => {
+        // OpenRouter is NOT in PROVIDER_NO_SDK_AUTO_COMPACT — its SDK
+        // auto-compact is enabled via Options.settings.autoCompactWindow.
+        // NeoKai must not preempt the SDK's own trigger, even when context is
+        // near capacity and even when the SDK reports isAutoCompactEnabled=true.
+        setModelsCache(
+          new Map([
+            [
+              'global',
+              [
+                {
+                  id: 'deepseek-v4',
+                  name: 'DeepSeek V4',
+                  provider: 'openrouter',
+                  contextWindow: 1_000_000,
+                  available: true,
+                },
+              ],
+            ],
+          ])
+        );
+
+        const getContextUsageSpy = mock(async () => ({
+          categories: [{ name: 'Messages', tokens: 860_000 }],
+          totalTokens: 860_000,
+          maxTokens: 1_000_000,
+          rawMaxTokens: 1_000_000,
+          percentage: 86,
+          gridRows: [],
+          model: 'deepseek-v4',
+          memoryFiles: [],
+          mcpTools: [],
+          agents: [],
+          isAutoCompactEnabled: true,
+          apiUsage: null,
+        }));
+
+        mockContext.queryObject = { getContextUsage: getContextUsageSpy } as never;
+        mockContext.session.config.provider = 'openrouter';
+        mockContext.session.config.model = 'deepseek-v4';
+        mockContextTracker.shouldCompactAt = mock(() => true);
+
+        const h = new SDKMessageHandler(mockContext);
+
+        const resultMessage: SDKMessage = {
+          type: 'result',
+          subtype: 'success',
+          uuid: 'result-uuid',
+          usage: {
+            input_tokens: 10,
+            output_tokens: 5,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+          },
+          total_cost_usd: 0.001,
+          modelUsage: {},
+        } as unknown as SDKMessage;
+
+        await h.handleMessage(resultMessage);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
+        expect(mockContextTracker.shouldCompactAt).not.toHaveBeenCalled();
+        expect(enqueueMessageSpy).not.toHaveBeenCalledWith('/compact', true);
+      });
+
+      it('does not enqueue /compact for custom-provider sessions (SDK handles via Options.settings)', async () => {
+        // custom-provider is not in PROVIDER_NO_SDK_AUTO_COMPACT either.
+        setModelsCache(
+          new Map([
+            [
+              'global',
+              [
+                {
+                  id: 'fallback-model',
+                  name: 'Fallback Model',
+                  provider: 'custom-provider',
+                  contextWindow: 128_000,
+                  available: true,
+                },
+              ],
+            ],
+          ])
+        );
+
+        const getContextUsageSpy = mock(async () => ({
+          categories: [{ name: 'Messages', tokens: 110_000 }],
+          totalTokens: 110_000,
+          maxTokens: Number.MAX_SAFE_INTEGER,
+          rawMaxTokens: Number.MAX_SAFE_INTEGER,
+          percentage: 0,
+          gridRows: [],
+          model: 'fallback-model',
+          memoryFiles: [],
+          mcpTools: [],
+          agents: [],
+          isAutoCompactEnabled: false,
+          apiUsage: null,
+        }));
+
+        mockContext.queryObject = { getContextUsage: getContextUsageSpy } as never;
+        mockContext.session.config.provider = 'custom-provider';
+        mockContext.session.config.model = 'fallback-model';
+        mockContextTracker.shouldCompactAt = mock(() => true);
+
+        const h = new SDKMessageHandler(mockContext);
+
+        const resultMessage: SDKMessage = {
+          type: 'result',
+          subtype: 'success',
+          uuid: 'result-uuid',
+          usage: {
+            input_tokens: 10,
+            output_tokens: 5,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+          },
+          total_cost_usd: 0.001,
+          modelUsage: {},
+        } as unknown as SDKMessage;
+
+        await h.handleMessage(resultMessage);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(mockContextTracker.shouldCompactAt).not.toHaveBeenCalled();
+        expect(enqueueMessageSpy).not.toHaveBeenCalledWith('/compact', true);
+      });
+
+      it('handles rejected fallback /compact enqueue for Kimi', async () => {
+        // Kimi IS in PROVIDER_NO_SDK_AUTO_COMPACT, so NeoKai fires. Simulate
+        // the message queue rejecting the enqueue and verify the handler
+        // doesn't throw.
+        setModelsCache(
+          new Map([
+            [
+              'global',
+              [
+                {
+                  id: 'kimi-for-coding',
+                  name: 'Kimi For Coding',
+                  provider: 'kimi',
+                  contextWindow: 262_144,
+                  available: true,
+                },
+              ],
+            ],
+          ])
+        );
+
+        const getContextUsageSpy = mock(async () => ({
+          categories: [{ name: 'Messages', tokens: 250_000 }],
+          totalTokens: 250_000,
+          maxTokens: 200_000,
+          rawMaxTokens: 200_000,
+          percentage: 100,
+          gridRows: [],
+          model: 'kimi-for-coding',
+          memoryFiles: [],
+          mcpTools: [],
+          agents: [],
+          isAutoCompactEnabled: false,
+          apiUsage: null,
+        }));
+
+        mockContext.queryObject = { getContextUsage: getContextUsageSpy } as never;
+        mockContext.session.config.provider = 'kimi';
+        mockContext.session.config.model = 'kimi-for-coding';
+        mockContextTracker.shouldCompactAt = mock(() => true);
+        enqueueMessageSpy = mock(async () => {
+          throw new Error('queue stopped');
+        });
+        mockContext.messageQueue.enqueue = enqueueMessageSpy;
+
+        const h = new SDKMessageHandler(mockContext);
+
+        const resultMessage: SDKMessage = {
+          type: 'result',
+          subtype: 'success',
+          uuid: 'result-uuid',
+          usage: {
+            input_tokens: 10,
+            output_tokens: 5,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+          },
+          total_cost_usd: 0.001,
+          modelUsage: {},
+        } as unknown as SDKMessage;
+
+        await h.handleMessage(resultMessage);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(enqueueMessageSpy).toHaveBeenCalledWith('/compact', true);
+      });
+
+      it('does not enqueue /compact for native anthropic provider (SDK handles)', async () => {
+        // Native Anthropic provider: SDK auto-compact works correctly, so
+        // NeoKai fallback is not installed.
+        setModelsCache(
+          new Map([
+            [
+              'global',
+              [
+                {
+                  id: 'sonnet',
+                  name: 'Claude Sonnet',
+                  provider: 'anthropic',
+                  contextWindow: 200_000,
+                  available: true,
+                },
+              ],
+            ],
+          ])
+        );
+
+        const getContextUsageSpy = mock(async () => ({
+          categories: [{ name: 'Messages', tokens: 180_000 }],
+          totalTokens: 180_000,
+          maxTokens: 200_000,
+          rawMaxTokens: 200_000,
+          percentage: 90,
+          gridRows: [],
+          model: 'claude-sonnet-4-6',
+          memoryFiles: [],
+          mcpTools: [],
+          agents: [],
+          isAutoCompactEnabled: true,
+          apiUsage: null,
+        }));
+
+        mockContext.queryObject = { getContextUsage: getContextUsageSpy } as never;
+        mockContext.session.config.provider = 'anthropic';
+        mockContext.session.config.model = 'sonnet';
+
+        const h = new SDKMessageHandler(mockContext);
+
+        const resultMessage: SDKMessage = {
+          type: 'result',
+          subtype: 'success',
+          uuid: 'result-uuid',
+          usage: {
+            input_tokens: 10,
+            output_tokens: 5,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+          },
+          total_cost_usd: 0.001,
+          modelUsage: {},
+        } as unknown as SDKMessage;
+
+        await h.handleMessage(resultMessage);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
+        expect(mockContextTracker.shouldCompactAt).not.toHaveBeenCalled();
+        expect(enqueueMessageSpy).not.toHaveBeenCalledWith('/compact', true);
+      });
+
+      it('does not enqueue /compact when model info is missing', async () => {
+        const getContextUsageSpy = mock(async () => ({
+          categories: [{ name: 'Messages', tokens: 860_000 }],
+          totalTokens: 860_000,
+          maxTokens: Number.MAX_SAFE_INTEGER,
+          rawMaxTokens: Number.MAX_SAFE_INTEGER,
+          percentage: 0,
+          gridRows: [],
+          model: 'unknown',
+          memoryFiles: [],
+          mcpTools: [],
+          agents: [],
+          isAutoCompactEnabled: false,
+          apiUsage: null,
+        }));
+
+        mockContext.queryObject = { getContextUsage: getContextUsageSpy } as never;
+        // kimi is in PROVIDER_NO_SDK_AUTO_COMPACT, but model info lookup
+        // fails so NeoKai cannot compute a threshold.
+        mockContext.session.config.provider = 'kimi';
+        mockContext.session.config.model = 'unknown-model';
+
+        const h = new SDKMessageHandler(mockContext);
+
+        const resultMessage: SDKMessage = {
+          type: 'result',
+          subtype: 'success',
+          uuid: 'result-uuid',
+          usage: {
+            input_tokens: 10,
+            output_tokens: 5,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+          },
+          total_cost_usd: 0.001,
+          modelUsage: {},
+        } as unknown as SDKMessage;
+
+        await h.handleMessage(resultMessage);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
+        expect(enqueueMessageSpy).not.toHaveBeenCalled();
+      });
+
+      it('enqueues /compact for Kimi (SDK auto-compact disabled, NeoKai fallback)', async () => {
+        // Kimi: SDK auto-compact is disabled because PP() caps kimi-for-coding
+        // to 200k while the real window is 262k. NeoKai fallback must fire at
+        // reserveBasedThreshold(262144) = 262144 - 13000 = 249144.
+        setModelsCache(
+          new Map([
+            [
+              'global',
+              [
+                {
+                  id: 'kimi-for-coding',
+                  name: 'Kimi For Coding',
+                  provider: 'kimi',
+                  contextWindow: 262_144,
+                  preferContextWindowMetadata: true,
+                  available: true,
+                },
+              ],
+            ],
+          ])
+        );
+
+        const getContextUsageSpy = mock(async () => ({
+          categories: [{ name: 'Messages', tokens: 250_000 }],
+          totalTokens: 250_000,
+          // SDK reports the 200k PP fallback — display layer should override
+          // to 262k via preferContextWindowMetadata.
+          maxTokens: 200_000,
+          rawMaxTokens: 200_000,
+          percentage: 100,
+          gridRows: [],
+          model: 'kimi-for-coding',
+          memoryFiles: [],
+          mcpTools: [],
+          agents: [],
+          isAutoCompactEnabled: false,
+          apiUsage: null,
+        }));
+
+        mockContext.queryObject = { getContextUsage: getContextUsageSpy } as never;
+        mockContext.session.config.provider = 'kimi';
+        mockContext.session.config.model = 'kimi-for-coding';
+        mockContextTracker.shouldCompactAt = mock(() => true);
+
+        const h = new SDKMessageHandler(mockContext);
+
+        const resultMessage: SDKMessage = {
+          type: 'result',
+          subtype: 'success',
+          uuid: 'result-uuid',
+          usage: {
+            input_tokens: 10,
+            output_tokens: 5,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+          },
+          total_cost_usd: 0.001,
+          modelUsage: {},
+        } as unknown as SDKMessage;
+
+        await h.handleMessage(resultMessage);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
+        // reserveBasedThreshold(262144) = 262144 - 13000 = 249144
+        expect(mockContextTracker.shouldCompactAt).toHaveBeenCalledWith(249_144);
+        expect(mockContextTracker.markCompactionTriggered).toHaveBeenCalled();
+        expect(enqueueMessageSpy).toHaveBeenCalledWith('/compact', true);
+      });
     });
 
     it('never injects /context into the message queue', async () => {

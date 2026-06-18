@@ -12,6 +12,7 @@ export const debuggerAgent: AgentDefinition = {
     'WebFetch',
     'WebSearch',
     'Skill',
+    'Agent',
     'Task',
     'TodoWrite',
     'TaskOutput',

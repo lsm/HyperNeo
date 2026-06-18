@@ -6,6 +6,7 @@
 
 import { describe, test, expect } from 'bun:test';
 import {
+  flattenSDKSlashCommands,
   isSDKAssistantMessage,
   isSDKUserMessage,
   isSDKUserMessageReplay,
@@ -35,6 +36,17 @@ const baseProps = {
   uuid: 'test-uuid',
   session_id: 'test-session',
 };
+
+describe('flattenSDKSlashCommands', () => {
+  test('should normalize command names and aliases', () => {
+    expect(
+      flattenSDKSlashCommands([
+        { name: '/status', aliases: ['/cost', 'stats'] },
+        { name: 'status', aliases: ['/cost'] },
+      ])
+    ).toEqual(['status', 'cost', 'stats']);
+  });
+});
 
 describe('isSDKAssistantMessage', () => {
   test('should return true for assistant message', () => {

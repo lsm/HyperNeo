@@ -10,7 +10,6 @@
  * - Checkpoint retrieval (from user messages in DB)
  */
 
-import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type {
   RewindMode,
   RewindPreview,
@@ -28,6 +27,7 @@ import {
   truncateSessionFileAtMessage,
 } from '../sdk-session-file-manager';
 import type { QueryLifecycleManager } from './query-lifecycle-manager';
+import type { QueryLike } from './query-like';
 
 /**
  * A checkpoint/rewind point derived from a user message
@@ -78,7 +78,7 @@ export interface RewindHandlerContext {
   readonly internalEventBus: InternalEventBus<DaemonInternalEventMap>;
   readonly lifecycleManager: QueryLifecycleManager;
   readonly logger: Logger;
-  readonly queryObject: Query | null;
+  readonly queryObject: QueryLike | null;
   readonly firstMessageReceived: boolean;
   setPendingResumeSessionAt(messageUuid: string): void;
   clearPendingResumeSessionAt(): void;

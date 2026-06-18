@@ -97,6 +97,17 @@ interface AddProviderModalProps {
   onProviderAdded: () => void;
 }
 
+/**
+ * Kimi region options. Region is persisted in the provider record's
+ * `configJson` blob as `{ region: 'china' | 'global' }` and resolved by the
+ * KimiProvider at SDK-config build time to pick the correct base URL
+ * (api.kimi.com vs api.moonshot.ai).
+ */
+const KIMI_REGION_OPTIONS = [
+  { value: 'china', label: 'China (api.kimi.com)' },
+  { value: 'global', label: 'Global (api.moonshot.ai)' },
+] as const;
+
 export function AddProviderModal({
   existingProviderIds,
   onClose,
@@ -110,6 +121,7 @@ export function AddProviderModal({
   const [showPresets, setShowPresets] = useState(false);
   const [savingCustom, setSavingCustom] = useState(false);
   const [testingCustom, setTestingCustom] = useState(false);
+  const [kimiRegion, setKimiRegion] = useState<'china' | 'global'>('china');
   const { fetchingModels, fetchedModels, fetchModelsError, fetchedAt, handleFetchModels } =
     useFetchModels(customEditor);
 
@@ -134,6 +146,11 @@ export function AddProviderModal({
           kind: 'built_in',
           authType: preset.authType,
           isEnabled: true,
+          // Kimi needs an explicit region so the provider knows whether to hit
+          // api.kimi.com (China) or api.moonshot.ai (Global). Other built-ins
+          // don't carry config.
+          configJson:
+            preset.providerId === 'kimi' ? JSON.stringify({ region: kimiRegion }) : undefined,
         },
         preset.authType === 'api_key' && key ? { apiKey: key } : undefined
       );
@@ -261,6 +278,7 @@ export function AddProviderModal({
 
   const renderProviderCard = (preset: BuiltInProviderPreset) => {
     const added = isAdded(preset.providerId);
+    const showRegionPicker = preset.providerId === 'kimi' && !added;
     return (
       <div
         key={preset.providerId}
@@ -287,6 +305,29 @@ export function AddProviderModal({
                 : 'None'}
           </span>
         </div>
+
+        {showRegionPicker && (
+          <div class="flex flex-col gap-1">
+            <label
+              for={`kimi-region-${preset.providerId}`}
+              class="text-[10px] uppercase tracking-wider text-gray-500"
+            >
+              Region
+            </label>
+            <select
+              id={`kimi-region-${preset.providerId}`}
+              value={kimiRegion}
+              onChange={(e) => setKimiRegion(e.currentTarget.value as 'china' | 'global')}
+              class="bg-dark-950 border border-dark-700 rounded px-2 py-1 text-xs text-gray-100 focus:outline-none focus:border-blue-500"
+            >
+              {KIMI_REGION_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
 
         {added ? (
           <div class="text-xs text-gray-500">Already added</div>

@@ -510,6 +510,34 @@ session_node_exec AS (
   JOIN target_task tt ON tt.workflow_run_id = ne.workflow_run_id
   WHERE ne.agent_session_id IS NOT NULL
 ),
+sdk_replacement_status AS (
+  SELECT
+    sm.id,
+    CASE
+      WHEN EXISTS (
+        SELECT 1
+        FROM sdk_messages ref,
+             json_each(ref.sdk_message, '$.retracted_message_uuids') retracted
+        WHERE ref.session_id = sm.session_id
+          AND ref.id != sm.id
+          AND json_valid(ref.sdk_message)
+          AND ref.message_subtype = 'model_refusal_fallback'
+          AND retracted.value = COALESCE(CASE WHEN json_valid(sm.sdk_message) THEN json_extract(sm.sdk_message, '$.uuid') END, sm.id)
+      ) THEN 'retracted'
+      WHEN EXISTS (
+        SELECT 1
+        FROM sdk_messages ref,
+             json_each(ref.sdk_message, '$.supersedes') superseded
+        WHERE ref.session_id = sm.session_id
+          AND ref.id != sm.id
+          AND json_valid(ref.sdk_message)
+          AND superseded.value = COALESCE(CASE WHEN json_valid(sm.sdk_message) THEN json_extract(sm.sdk_message, '$.uuid') END, sm.id)
+      ) THEN 'superseded'
+      ELSE NULL
+    END AS replacementStatus
+  FROM target_task tt
+  JOIN sdk_messages sm ON sm.task_id = tt.id
+),
 sdk_rows AS (
   SELECT
     'msg:' || sm.id AS id,
@@ -550,10 +578,36 @@ sdk_rows AS (
       ELSE NULL
     END AS deliveryState,
     CASE
+      WHEN srs.replacementStatus = 'retracted' THEN 'Retracted ' ||
+        CASE
+          WHEN sm.message_type = 'user' AND sm.origin = 'human' THEN 'Question'
+          WHEN sm.message_type = 'user' THEN 'Handoff'
+          WHEN sm.message_type = 'result' THEN 'Status'
+          WHEN sm.message_type = 'assistant' THEN 'Answer'
+          ELSE 'System event'
+        END
+      WHEN srs.replacementStatus = 'superseded' THEN 'Superseded ' ||
+        CASE
+          WHEN sm.message_type = 'user' AND sm.origin = 'human' THEN 'Question'
+          WHEN sm.message_type = 'user' THEN 'Handoff'
+          WHEN sm.message_type = 'result' THEN 'Status'
+          WHEN sm.message_type = 'assistant' THEN 'Answer'
+          ELSE 'System event'
+        END
       WHEN sm.message_type = 'user' AND sm.origin = 'human' THEN 'Question'
       WHEN sm.message_type = 'user' THEN 'Handoff'
       WHEN sm.message_type = 'result' THEN 'Status'
       WHEN sm.message_type = 'assistant' THEN 'Answer'
+      WHEN sm.message_type = 'system' AND sm.message_subtype = 'api_retry' THEN 'API retry'
+      WHEN sm.message_type = 'system' AND sm.message_subtype = 'session_state_changed' THEN 'Session state'
+      WHEN sm.message_type = 'system' AND sm.message_subtype = 'commands_changed' THEN 'Commands changed'
+      WHEN sm.message_type = 'system' AND sm.message_subtype = 'informational' THEN
+        CASE
+          WHEN (CASE WHEN json_valid(sm.sdk_message) THEN json_extract(sm.sdk_message, '$.level') END) = 'warning' THEN 'Warning'
+          WHEN (CASE WHEN json_valid(sm.sdk_message) THEN json_extract(sm.sdk_message, '$.level') END) = 'suggestion' THEN 'Suggestion'
+          WHEN (CASE WHEN json_valid(sm.sdk_message) THEN json_extract(sm.sdk_message, '$.level') END) = 'notice' THEN 'Notice'
+          ELSE 'Informational'
+        END
       ELSE 'System event'
     END AS title,
     CASE
@@ -563,10 +617,54 @@ sdk_rows AS (
       WHEN sm.message_type = 'user' AND sm.send_status = 'failed' THEN 'Actor message failed'
       WHEN sm.message_type = 'user' AND sm.origin = 'human' THEN 'Human message delivered'
       WHEN sm.message_type = 'user' THEN 'Actor message delivered'
+      WHEN sm.message_type = 'system' AND sm.message_subtype = 'session_state_changed' THEN
+        CASE
+          WHEN json_valid(sm.sdk_message) THEN COALESCE(json_extract(sm.sdk_message, '$.state'), 'changed')
+          ELSE 'Session state changed'
+        END
+      WHEN sm.message_type = 'system' AND sm.message_subtype = 'commands_changed' THEN
+        CASE
+          WHEN json_valid(sm.sdk_message) THEN
+            printf(
+              '%d slash commands available',
+              COALESCE(json_array_length(json_extract(sm.sdk_message, '$.commands')), 0)
+            )
+          ELSE 'Slash commands changed'
+        END
+      WHEN sm.message_type = 'system' AND sm.message_subtype = 'informational' THEN
+        CASE
+          WHEN json_valid(sm.sdk_message) THEN COALESCE(json_extract(sm.sdk_message, '$.content'), 'System notice')
+          ELSE 'System notice'
+        END
+      WHEN sm.message_type = 'system' AND sm.message_subtype = 'api_retry' THEN
+        CASE
+          WHEN json_valid(sm.sdk_message) THEN
+            printf(
+              'Attempt %d/%d, delay %dms, status %s%s',
+              COALESCE(json_extract(sm.sdk_message, '$.attempt'), 1),
+              COALESCE(json_extract(sm.sdk_message, '$.max_retries'), '?'),
+              COALESCE(json_extract(sm.sdk_message, '$.retry_delay_ms'), 0),
+              COALESCE(json_extract(sm.sdk_message, '$.error_status'), 'unknown'),
+              CASE
+                WHEN json_valid(sm.sdk_message) AND json_extract(sm.sdk_message, '$.error') IS NOT NULL THEN
+                  printf(': %s', SUBSTR(json_extract(sm.sdk_message, '$.error'), 1, 50))
+                ELSE ''
+              END
+            )
+          ELSE 'API retry'
+        END
       ELSE sm.message_type
     END AS summary,
-    NULL AS details,
-    CASE WHEN sm.message_type = 'user' AND sm.send_status = 'failed' THEN 'error' ELSE 'info' END AS severity,
+    CASE
+      WHEN srs.replacementStatus = 'retracted' THEN 'Retracted by a later model fallback.'
+      WHEN srs.replacementStatus = 'superseded' THEN 'Superseded by a later SDK message.'
+      ELSE NULL
+    END AS details,
+    CASE
+      WHEN sm.message_type = 'user' AND sm.send_status = 'failed' THEN 'error'
+      WHEN srs.replacementStatus IS NOT NULL THEN 'warning'
+      ELSE 'info'
+    END AS severity,
     CAST((julianday(sm.timestamp) - 2440587.5) * 86400000 AS INTEGER) AS createdAt
   FROM target_task tt
   JOIN sdk_messages sm ON sm.task_id = tt.id
@@ -575,7 +673,35 @@ sdk_rows AS (
    AND ne.agent_session_id = sm.session_id
    AND ne.rn = 1
   LEFT JOIN space_agents sa ON sa.id = ne.agent_id
+  LEFT JOIN sdk_replacement_status srs ON srs.id = sm.id
   WHERE (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
+    AND (
+      sm.message_type != 'system'
+      OR COALESCE(sm.message_subtype, '') != 'informational'
+      OR NOT json_valid(sm.sdk_message)
+      OR COALESCE(
+        CASE
+          WHEN json_valid(sm.sdk_message) THEN json_extract(sm.sdk_message, '$.level')
+        END,
+        ''
+      ) != 'info'
+    )
+    AND (
+      sm.message_type != 'system'
+      OR COALESCE(sm.message_subtype, '') != 'worker_shutting_down'
+      OR NOT EXISTS (
+        SELECT 1
+        FROM sdk_messages newer
+        WHERE newer.session_id = sm.session_id
+          AND newer.task_id = sm.task_id
+          AND newer.parent_tool_use_id IS NULL
+          AND (
+            newer.timestamp > sm.timestamp
+            OR (newer.timestamp = sm.timestamp AND newer.id > sm.id)
+          )
+          AND (newer.message_type != 'user' OR COALESCE(newer.send_status, 'consumed') IN ('consumed', 'failed'))
+      )
+    )
 ),
 pending_rows AS (
   SELECT
@@ -1141,6 +1267,33 @@ sdk_rows_raw AS (
    AND sne.rn = 1
   LEFT JOIN space_agents sa ON sa.id = sne.agent_id
   WHERE (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
+    AND (
+      sm.message_type != 'system'
+      OR COALESCE(sm.message_subtype, '') != 'informational'
+      OR NOT json_valid(sm.sdk_message)
+      OR COALESCE(
+        CASE
+          WHEN json_valid(sm.sdk_message) THEN json_extract(sm.sdk_message, '$.level')
+        END,
+        ''
+      ) != 'info'
+    )
+    AND (
+      sm.message_type != 'system'
+      OR COALESCE(sm.message_subtype, '') != 'worker_shutting_down'
+      OR NOT EXISTS (
+        SELECT 1
+        FROM sdk_messages newer
+        WHERE newer.session_id = sm.session_id
+          AND newer.task_id = sm.task_id
+          AND newer.parent_tool_use_id IS NULL
+          AND (
+            newer.timestamp > sm.timestamp
+            OR (newer.timestamp = sm.timestamp AND newer.id > sm.id)
+          )
+          AND (newer.message_type != 'user' OR COALESCE(newer.send_status, 'consumed') IN ('consumed', 'failed'))
+      )
+    )
 ),
 sdk_rows_numbered AS (
   SELECT
@@ -1926,6 +2079,7 @@ SELECT
   s.worktree_branch as worktree_branch,
   s.git_branch as gitBranch,
   s.sdk_session_id as sdkSessionId,
+  s.acp_session_id as acpSessionId,
   s.available_commands as available_commands,
   s.processing_state as processingState,
   s.archived_at as archivedAt,
@@ -2020,6 +2174,7 @@ function mapSessionRow(row: Record<string, unknown>): Record<string, unknown> {
     worktree,
     gitBranch: (row.gitBranch as string | null) ?? undefined,
     sdkSessionId: (row.sdkSessionId as string | null) ?? undefined,
+    acpSessionId: (row.acpSessionId as string | null) ?? undefined,
     availableCommands,
     processingState: (row.processingState as string | null) ?? undefined,
     archivedAt: (row.archivedAt as string | null) ?? undefined,
@@ -2074,14 +2229,49 @@ WITH top_level AS (
   WHERE session_id = ?1
     AND parent_tool_use_id IS NULL
     AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))
+    AND COALESCE(message_subtype,'') != 'thinking_tokens'
+    AND (
+      message_type != 'system'
+      OR COALESCE(message_subtype, '') != 'informational'
+      OR NOT json_valid(sdk_message)
+      OR COALESCE(
+        CASE
+          WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.level')
+        END,
+        ''
+      ) != 'info'
+    )
+    AND (
+      message_type != 'system'
+      OR COALESCE(message_subtype, '') != 'worker_shutting_down'
+      OR NOT EXISTS (
+        SELECT 1
+        FROM sdk_messages newer
+        WHERE newer.session_id = sdk_messages.session_id
+          AND newer.parent_tool_use_id IS NULL
+          AND (
+            newer.timestamp > sdk_messages.timestamp
+            OR (newer.timestamp = sdk_messages.timestamp AND newer.id > sdk_messages.id)
+          )
+          AND (newer.message_type != 'user' OR COALESCE(newer.send_status, 'consumed') IN ('consumed', 'failed'))
+      )
+    )
   ORDER BY timestamp DESC, id DESC
   LIMIT ?2
 ),
 tool_use_ids AS (
   SELECT DISTINCT json_extract(je.value, '$.id') AS id
   FROM top_level,
-       json_each(json_extract(top_level.sdk_message, '$.message.content')) AS je
-  WHERE json_extract(top_level.sdk_message, '$.type') = 'assistant'
+       json_each(
+         CASE
+           WHEN json_valid(top_level.sdk_message)
+            AND json_extract(top_level.sdk_message, '$.type') = 'assistant'
+           THEN json_extract(top_level.sdk_message, '$.message.content')
+           ELSE '[]'
+         END
+       ) AS je
+  WHERE json_valid(top_level.sdk_message)
+    AND json_extract(top_level.sdk_message, '$.type') = 'assistant'
     AND json_extract(je.value, '$.type') = 'tool_use'
     AND json_extract(je.value, '$.id') IS NOT NULL
 ),
@@ -2095,6 +2285,7 @@ subagent AS (
   FROM sdk_messages sm
   WHERE sm.session_id = ?1
     AND sm.parent_tool_use_id IN (SELECT id FROM tool_use_ids)
+    AND COALESCE(sm.message_subtype,'') != 'thinking_tokens'
     AND (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
 )
 SELECT

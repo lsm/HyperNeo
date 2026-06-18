@@ -37,6 +37,8 @@ export interface WorkflowTemplate {
   channels?: WorkflowChannel[];
   /** Optional first-class workflow gates to seed with the template. */
   gates?: Gate[];
+  /** Optional workflow hooks to seed with the template. */
+  hooks?: import('@neokai/shared').WorkflowHook[];
   /** Optional tags to seed with the template. */
   tags?: string[];
   /** Legacy workflow-level post-approval route; migrated onto the end node when loaded. */
@@ -66,6 +68,8 @@ export interface WorkflowTemplateStep {
   requireCodexApproval?: boolean;
   /** Custom poll interval (ms) for the codex review bot. */
   codexPollIntervalMs?: number;
+  /** Custom timeout (seconds) for the codex review bot reaction check. */
+  codexTimeoutSeconds?: number;
 }
 
 export interface WorkflowTemplateAgentSlot {
@@ -206,6 +210,7 @@ export function workflowToTemplate(workflow: SpaceWorkflow): WorkflowTemplate {
         postApproval: postApproval ? { ...postApproval } : undefined,
         requireCodexApproval: node.requireCodexApproval,
         codexPollIntervalMs: node.codexPollIntervalMs,
+        codexTimeoutSeconds: node.codexTimeoutSeconds,
       };
     }
 
@@ -219,6 +224,7 @@ export function workflowToTemplate(workflow: SpaceWorkflow): WorkflowTemplate {
       postApproval: postApproval ? { ...postApproval } : undefined,
       requireCodexApproval: node.requireCodexApproval,
       codexPollIntervalMs: node.codexPollIntervalMs,
+      codexTimeoutSeconds: node.codexTimeoutSeconds,
     };
   });
 
@@ -289,6 +295,7 @@ export function buildTemplateNodes(template: WorkflowTemplate, agents: SpaceAgen
         postApproval: step.postApproval ? { ...step.postApproval } : undefined,
         requireCodexApproval: step.requireCodexApproval,
         codexPollIntervalMs: step.codexPollIntervalMs,
+        codexTimeoutSeconds: step.codexTimeoutSeconds,
       };
     }
 
@@ -329,6 +336,7 @@ export function buildTemplateNodes(template: WorkflowTemplate, agents: SpaceAgen
       postApproval: step.postApproval ? { ...step.postApproval } : undefined,
       requireCodexApproval: step.requireCodexApproval,
       codexPollIntervalMs: step.codexPollIntervalMs,
+      codexTimeoutSeconds: step.codexTimeoutSeconds,
     };
   });
 }

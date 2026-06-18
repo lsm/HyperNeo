@@ -82,6 +82,8 @@ export { AgentMemoryRepository } from './repositories/agent-memory-repository';
 export { EvolutionRepository } from './repositories/evolution-repository';
 export { GoalAutomationCursorRepository } from './repositories/goal-automation-cursor-repository';
 export { ProviderRepository } from './repositories/provider-repository';
+export { WorkflowHookStateRepository } from './repositories/workflow-hook-state-repository';
+export type { WorkflowHookStatePatch } from './repositories/workflow-hook-state-repository';
 export type { GoalAutomationCursor } from './repositories/goal-automation-cursor-repository';
 export type {
   AgentMemoryEntry,
@@ -251,6 +253,16 @@ export class Database {
     status: SendStatus
   ): Array<SDKMessage & { dbId: string; timestamp: number }> {
     return this.sdkMessageRepo.getMessagesByStatus(sessionId, status);
+  }
+
+  getConsumedUserMessagesAfterLatestInit(
+    sessionId: string
+  ): Array<SDKMessage & { dbId: string; timestamp: number }> {
+    return this.sdkMessageRepo.getConsumedUserMessagesAfterLatestInit(sessionId);
+  }
+
+  getLatestSystemInitTimestamp(sessionId: string): number {
+    return this.sdkMessageRepo.getLatestSystemInitTimestamp(sessionId);
   }
 
   getMessageByStatusAndUuid(

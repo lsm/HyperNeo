@@ -15,6 +15,7 @@ import { runMigration106 as runMigration106External } from './m106-backfill-agen
 import { RESERVED_SPACE_AGENT_HANDLES, slugify, validateSlug } from '../../lib/space/slug';
 import { createEvolutionTables } from './evolution';
 import { createLongHorizonAgentTables } from './long-horizon-agents';
+import { migrateLegacyLongHorizonAgentData } from '../../lib/space/agents/legacy-long-horizon-migration';
 
 /**
  * Run all database migrations
@@ -23,152 +24,161 @@ import { createLongHorizonAgentTables } from './long-horizon-agents';
  * @param createBackup - Function to call before running migrations (creates backup)
  */
 export function runMigrations(db: BunDatabase, createBackup: () => void): void {
-  // Create backup before running any migrations
-  // This ensures we can recover if a migration causes data loss
-  createBackup();
+  ensureMigrationMarkersTable(db);
+  seedHistoricalMigrationMarkers(db);
+
+  let backupCreated = false;
+  const ensureBackup = (): void => {
+    if (backupCreated) return;
+    createBackup();
+    backupCreated = true;
+  };
+  const run = (key: string, migration: () => void): void => {
+    runMarkedMigration(db, key, migration, ensureBackup);
+  };
 
   // Migration 1: Add oauth_token_encrypted column if it doesn't exist
-  runMigration1(db);
+  run(migrationMarkerKey(1), () => runMigration1(db));
 
   // Migration 2: Remove messages and tool_calls tables (replaced by sdk_messages)
-  runMigration2(db);
+  run(migrationMarkerKey(2), () => runMigration2(db));
 
   // Migration 3: Add worktree columns to sessions table
-  runMigration3(db);
+  run(migrationMarkerKey(3), () => runMigration3(db));
 
   // Migration 4: Add git_branch column for non-worktree git sessions
-  runMigration4(db);
+  run(migrationMarkerKey(4), () => runMigration4(db));
 
   // Migration 5: Add sdk_session_id column for session resumption
-  runMigration5(db);
+  run(migrationMarkerKey(5), () => runMigration5(db));
 
   // Migration 6: Add available_commands column for slash commands persistence
-  runMigration6(db);
+  run(migrationMarkerKey(6), () => runMigration6(db));
 
   // Migration 7: Add processing_state column for agent state persistence
-  runMigration7(db);
+  run(migrationMarkerKey(7), () => runMigration7(db));
 
   // Migration 8: Add archived_at column for archive session feature
-  runMigration8(db);
+  run(migrationMarkerKey(8), () => runMigration8(db));
 
   // Migration 9: Update CHECK constraint to include 'archived' status
-  runMigration9(db);
+  run(migrationMarkerKey(9), () => runMigration9(db));
 
   // Migration 10: Add send_status column to sdk_messages for query mode support
-  runMigration10(db);
+  run(migrationMarkerKey(10), () => runMigration10(db));
 
   // Migration 11: Add sub-session columns for parent-child session relationships
-  runMigration11(db);
+  run(migrationMarkerKey(11), () => runMigration11(db));
 
   // Migration 12: Ensure global_settings has autoScroll: true for existing databases
-  runMigration12(db);
+  run(migrationMarkerKey(12), () => runMigration12(db));
 
   // Migration 13: Update CHECK constraint to include 'pending_worktree_choice' status
-  runMigration13(db);
+  run(migrationMarkerKey(13), () => runMigration13(db));
 
   // Room cleanup: drop all room experiment tables and fix sessions schema if outdated
   // (consolidates former migrations 25–36, which covered features never shipped to production)
-  runMigrationRoomCleanup(db);
+  run('migration_room_cleanup', () => runMigrationRoomCleanup(db));
 
   // Migration 14: Drop events table and unused session columns (labels, sub_session_order)
-  runMigration14(db);
+  run(migrationMarkerKey(14), () => runMigration14(db));
 
   // Migration 15: Add 'failed' to send_status CHECK constraint in sdk_messages
-  runMigration15(db);
+  run(migrationMarkerKey(15), () => runMigration15(db));
 
   // Migration 16: Replace 'escalated' with 'review' in tasks, remove 'hibernated' from session_groups,
   // add config column to rooms table
-  runMigration16(db);
+  run(migrationMarkerKey(16), () => runMigration16(db));
 
   // Migration 17: Fix goals table CHECK constraint and add goal_review_attempts column
-  runMigration17(db);
+  run(migrationMarkerKey(17), () => runMigration17(db));
 
   // Migration 18: Add 'cancelled' to tasks status CHECK constraint
-  runMigration18(db);
+  run(migrationMarkerKey(18), () => runMigration18(db));
 
   // Migration 19: Remove legacy mirrored session_group_messages table
-  runMigration19(db);
+  run(migrationMarkerKey(19), () => runMigration19(db));
 
   // Migration 20: Add archived_at column to tasks table
-  runMigration20(db);
+  run(migrationMarkerKey(20), () => runMigration20(db));
 
   // Migration 21: Backfill submittedForReview metadata for active awaiting_human groups
-  runMigration21(db);
+  run(migrationMarkerKey(21), () => runMigration21(db));
 
   // Migration 22: Drop legacy session_groups.state column and index
-  runMigration22(db);
+  run(migrationMarkerKey(22), () => runMigration22(db));
 
   // Migration 23: Add active_session column to tasks table
-  runMigration23(db);
+  run(migrationMarkerKey(23), () => runMigration23(db));
 
   // Migration 24: Rename 'failed' task status to 'needs_attention' for better semantic clarity
-  runMigration24(db);
+  run(migrationMarkerKey(24), () => runMigration24(db));
 
   // Migration 25: Add PR fields to tasks table
-  runMigration25(db);
+  run(migrationMarkerKey(25), () => runMigration25(db));
 
   // Migration 26: Add input_draft column to tasks table for server-side draft persistence
-  runMigration26(db);
+  run(migrationMarkerKey(26), () => runMigration26(db));
 
   // Migration 27: Add updated_at column to tasks table for sorting by most recently updated
-  runMigration27(db);
+  run(migrationMarkerKey(27), () => runMigration27(db));
 
   // Migration 28: Add mission metadata columns to goals table, create mission_metric_history
   // and mission_executions tables for Goal V2 / Mission System
-  runMigration28(db);
+  run(migrationMarkerKey(28), () => runMigration28(db));
 
   // Migration 29: Create all Space system tables (fully consolidated schema).
   // All space tables and columns — including role, provider, inject_workflow_context,
   // start_step_id, current_step_id, and space_workflow_transitions — are created here
   // in a single idempotent migration. (Note: M45 renames step→node columns/tables.)
-  runMigration29(db);
+  run(migrationMarkerKey(29), () => runMigration29(db));
 
   // Migration 30: Add layout column to space_workflows for visual editor node positions.
-  runMigration30(db);
+  run(migrationMarkerKey(30), () => runMigration30(db));
 
   // Migration 31: Add 'space_task_agent' to sessions type CHECK constraint.
-  runMigration31(db);
+  run(migrationMarkerKey(31), () => runMigration31(db));
 
   // Migration 32: Add task_agent_session_id column to space_tasks.
-  runMigration32(db);
+  run(migrationMarkerKey(32), () => runMigration32(db));
 
   // Migration 33: Add autonomy_level column to spaces table.
-  runMigration33(db);
+  run(migrationMarkerKey(33), () => runMigration33(db));
 
   // Migration 34: Add goal_id column to space_tasks for goal/mission association.
-  runMigration34(db);
+  run(migrationMarkerKey(34), () => runMigration34(db));
 
   // Migration 35: Add iteration tracking columns to space_workflow_runs.
-  runMigration35(db);
+  run(migrationMarkerKey(35), () => runMigration35(db));
 
   // Migration 36: Add max_iterations column to space_workflows.
-  runMigration36(db);
+  run(migrationMarkerKey(36), () => runMigration36(db));
 
   // Migration 37: Add goal_id column to space_workflow_runs for goal/mission association.
-  runMigration37(db);
+  run(migrationMarkerKey(37), () => runMigration37(db));
 
   // Migration 38: Add is_cyclic column to space_workflow_transitions.
-  runMigration38(db);
+  run(migrationMarkerKey(38), () => runMigration38(db));
 
   // Migration 39: Add 'archived' to status CHECK constraints on tasks and space_tasks.
-  runMigration39(db);
+  run(migrationMarkerKey(39), () => runMigration39(db));
 
   // Migration 40: Flexible session groups — add task_id + status to space_session_groups,
   // drop role CHECK constraint and add agent_id + status to space_session_group_members.
-  runMigration40(db);
+  run(migrationMarkerKey(40), () => runMigration40(db));
 
   // Migration 41: Historical no-op. Kept for migration-number continuity.
-  runMigration41(db);
+  run(migrationMarkerKey(41), () => runMigration41(db));
 
   // Migration 42: Clean up stale/zombie session groups and add partial unique index
   // on session_groups(ref_id) WHERE completed_at IS NULL to prevent future duplicates.
-  runMigration42(db);
+  run(migrationMarkerKey(42), () => runMigration42(db));
 
   // Migration 43: Drop legacy session_group_messages projection table.
-  runMigration43(db);
+  run(migrationMarkerKey(43), () => runMigration43(db));
 
   // Migration 44: Rename sdk_messages send_status values to deferred/enqueued/consumed.
-  runMigration44(db);
+  run(migrationMarkerKey(44), () => runMigration44(db));
 
   // Migration 45: Rename step-related columns and tables to node
   // - space_workflow_steps -> space_workflow_nodes
@@ -177,138 +187,138 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // - workflow_step_id -> workflow_node_id in space_tasks
   // - current_step_id -> current_node_id in space_workflow_runs
   // - current_step_id -> current_node_id in space_session_groups
-  runMigration45(db);
+  run(migrationMarkerKey(45), () => runMigration45(db));
 
   // Migration 46: Add slot_role column to space_tasks
   // Stores the WorkflowNodeAgent.role of the slot that spawned a task, enabling
   // unambiguous slot lookup when the same agentId appears multiple times in a node.
-  runMigration46(db);
+  run(migrationMarkerKey(46), () => runMigration46(db));
 
   // Migration 47: Add short_id columns to tasks and goals, create short_id_counters table.
   // Enables human-readable scoped short IDs for tasks and goals (e.g. t:04062505:42).
   // New columns are nullable — existing rows get NULL until short IDs are assigned.
-  runMigration47(db);
+  run(migrationMarkerKey(47), () => runMigration47(db));
 
   // Migration 48: Replace global short_id unique indexes with room-scoped composite indexes.
   // Migration 47 accidentally created single-column global indexes (unique across ALL rooms),
   // causing UNIQUE constraint failures when two different rooms each create their first task.
   // Short IDs are scoped to their parent room, so uniqueness must be (room_id, short_id).
-  runMigration48(db);
+  run(migrationMarkerKey(48), () => runMigration48(db));
 
   // Migration 49: Add restrictions column to tasks and expand status CHECK constraint
   // to include 'rate_limited' and 'usage_limited'. These new statuses let the runtime
   // surface API limit state in the UI and enable auto-resume on tick.
-  runMigration49(db);
+  run(migrationMarkerKey(49), () => runMigration49(db));
 
   // Migration 50: Create app_mcp_servers table for application-level MCP server registry.
   // This table stores MCP server configurations that are available globally.
   // Idempotent via CREATE TABLE IF NOT EXISTS.
-  runMigration50(db);
+  run(migrationMarkerKey(50), () => runMigration50(db));
 
   // Migration 51: Rename space_tasks.slot_role -> agent_name and add completion_summary column.
   // Part of the agent-centric refactor: "slot role" is replaced by a plain "agent name" that
   // directly identifies the agent. completion_summary stores a brief human-readable summary
   // written by the agent when a task reaches a terminal state.
-  runMigration51(db);
+  run(migrationMarkerKey(51), () => runMigration51(db));
 
   // Migration 52: Create room_mcp_enablement table for per-room MCP enablement overrides.
-  runMigration52(db);
+  run(migrationMarkerKey(52), () => runMigration52(db));
 
   // Migration 53: Add channels column to space_workflows for unified channel topology storage.
   // Channels move from the config JSON blob to a dedicated TEXT column (JSON-serialized
   // WorkflowChannel[]). Existing rows that have channels embedded in config are migrated
   // in-place so no data is lost.
-  runMigration53(db);
+  run(migrationMarkerKey(53), () => runMigration53(db));
 
   // Migration 54: Add unique partial index on space_tasks (workflow_run_id, workflow_node_id,
   // agent_name) to enforce at-most-one task per agent slot per workflow node per run.
   // Prevents duplicate tasks from concurrent ChannelRouter.activateNode() calls.
-  runMigration54(db);
+  run(migrationMarkerKey(54), () => runMigration54(db));
 
   // Migration 55: Rename slot_role → agent_name on space_tasks.
   // Aligns with "no role" naming convention from the agent-centric refactor.
   // Uses a table rebuild pattern (SQLite does not support DROP COLUMN in all versions).
   // Idempotent: checks for agent_name column before rebuilding.
-  runMigration55(db);
+  run(migrationMarkerKey(55), () => runMigration55(db));
 
   // Migration 56: Expand assigned_agent CHECK constraint to include 'planner'.
   // SQLite cannot ALTER a CHECK constraint directly, so we recreate the table.
-  runMigration56(db);
+  run(migrationMarkerKey(56), () => runMigration56(db));
 
   // Migration 57: Create skills table for application-level Skills registry.
   // Idempotent via CREATE TABLE IF NOT EXISTS.
-  runMigration57(db);
+  run(migrationMarkerKey(57), () => runMigration57(db));
 
   // Migration 58: Create room_skill_overrides table for per-room skill enablement.
   // Mirrors the room_mcp_enablement pattern (migration 52) but references skills(id).
   // Idempotent via CREATE TABLE IF NOT EXISTS.
-  runMigration58(db);
+  run(migrationMarkerKey(58), () => runMigration58(db));
 
   // Migration 59: Drop space_workflow_transitions table (replaced by channels).
   // Idempotent via DROP TABLE IF EXISTS.
-  runMigration59(db);
+  run(migrationMarkerKey(59), () => runMigration59(db));
 
   // Migration 60: Drop space_session_groups and space_session_group_members tables,
   // and drop current_node_id column from space_workflow_runs.
   // Session groups are replaced by direct space_tasks queries.
   // currentNodeId is replaced by the agent-centric model where tasks track state.
-  runMigration60(db);
+  run(migrationMarkerKey(60), () => runMigration60(db));
 
   // Migration 61: Add gate_data table, gates column to space_workflows,
   // and failure_reason column to space_workflow_runs.
   // Part of M1.1 — separated Channel + Gate types.
-  runMigration61(db);
+  run(migrationMarkerKey(61), () => runMigration61(db));
 
   // Migration 62: Add task_number column to space_tasks for human-friendly numeric IDs.
   // Scoped per space via UNIQUE(space_id, task_number). Backfills existing rows.
-  runMigration62(db);
+  run(migrationMarkerKey(62), () => runMigration62(db));
 
   // Migration 63: Add slug column to spaces table for human-readable URL identifiers.
   // Auto-generates slugs from existing space names and adds a UNIQUE index.
-  runMigration63(db);
+  run(migrationMarkerKey(63), () => runMigration63(db));
 
   // Migration 64: Create space_worktrees table for persisting task ↔ git worktree mappings.
   // One row per task; keyed by (space_id, task_id) with a per-space unique slug constraint.
-  runMigration64(db);
+  run(migrationMarkerKey(64), () => runMigration64(db));
 
   // Migration 65: Add completed_at column to space_worktrees for TTL-based reaper.
   // Worktrees are not removed on task completion; instead they are timestamped and
   // removed by the reaper after a configurable TTL (default: 7 days).
-  runMigration65(db);
+  run(migrationMarkerKey(65), () => runMigration65(db));
 
   // Migration 66: Add 'neo' to sessions type CHECK constraint and create neo_activity_log table.
   // Neo is a global AI agent with its own session type and activity log for auditing.
-  runMigration66(db);
+  run(migrationMarkerKey(66), () => runMigration66(db));
 
   // Migration 67: Add 'space_chat' to sessions type CHECK constraint.
-  runMigration67(db);
+  run(migrationMarkerKey(67), () => runMigration67(db));
   // Migration 68: Add 'origin' column to sdk_messages for frontend display of message provenance.
   // NULL (default) is treated as 'human' by the frontend. 'neo' marks Neo-injected messages.
-  runMigration68(db);
+  run(migrationMarkerKey(68), () => runMigration68(db));
   // Migration 69: Per-channel cycle tracking table.
   // Replaces the global iteration_count/max_iterations on space_workflow_runs.
-  runMigration69(db);
+  run(migrationMarkerKey(69), () => runMigration69(db));
   // Migration 70: Backfill default_path for existing rooms where it is NULL.
   // Sets default_path from allowed_paths[0].path, or '__NEEDS_WORKSPACE_PATH__' sentinel
   // when allowed_paths is also empty. Sentinel is replaced at startup with config.workspaceRoot.
-  runMigration70(db);
+  run(migrationMarkerKey(70), () => runMigration70(db));
   // Migration 71: Fix corrupted schedule values in goals table.
   // Some rows may contain raw cron strings (e.g. "@daily") instead of the expected
   // JSON object {"expression":"@daily","timezone":"UTC"}. This wraps bare strings
   // into the proper CronSchedule shape.
-  runMigration71(db);
+  run(migrationMarkerKey(71), () => runMigration71(db));
   // Migration 72: Add missing performance indexes for rooms, sessions, and goals tables.
   // - rooms: index on (status, updated_at) for room.list ORDER BY updated_at DESC WHERE status='active'
   // - sessions: index on (type) for listSessionsByType, findByRoomId
   // - sessions: index on (status, last_active_at) for listSessions ORDER BY last_active_at DESC
-  runMigration72(db);
+  run(migrationMarkerKey(72), () => runMigration72(db));
   // Migration 73: Update space_tasks and space_workflow_runs to use the new status schema.
   //   - space_tasks: new status values ('open'|'in_progress'|'done'|'blocked'|'cancelled'|'archived'),
   //     adds 'labels' column, removes deprecated columns.
   //   - space_workflow_runs: new status values ('pending'|'in_progress'|'done'|'blocked'|'cancelled'),
   //     adds 'started_at', removes deprecated columns.
   //   - Maps old → new status values in existing rows.
-  runMigration73(db);
+  run(migrationMarkerKey(73), () => runMigration73(db));
 
   // Migration 74: Remaining schema cleanup for end-node / workflow completion work.
   //   - node_executions: new table for per-node execution tracking
@@ -316,115 +326,115 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   //   - space_workflow_nodes: drop order_index and agent_id
   //   - space_agents: drop role, config, inject_workflow_context
   //   - node config JSON: wrap string systemPrompt/instructions to {mode, value}
-  runMigration74(db);
+  run(migrationMarkerKey(74), () => runMigration74(db));
 
   // Migration 75: Add UNIQUE constraint on node_executions for idempotent activation.
   //   - Adds UNIQUE INDEX on (workflow_run_id, workflow_node_id, agent_name)
   //   - Deduplicates any existing records before creating the index
-  runMigration75(db);
+  run(migrationMarkerKey(75), () => runMigration75(db));
 
   // Migration 76: Add 'review' status to space_tasks CHECK constraint.
   //   - In supervised mode, completed workflow tasks land in 'review' for human approval.
-  runMigration76(db);
+  run(migrationMarkerKey(76), () => runMigration76(db));
 
   // Migration 77: Make sessions.workspace_path nullable for unbound sessions.
-  runMigration77(db);
+  run(migrationMarkerKey(77), () => runMigration77(db));
 
   // Migration 78: Create workspace_history table for persisting recently-used workspace paths.
-  runMigration78(db);
+  run(migrationMarkerKey(78), () => runMigration78(db));
 
   // Migration 79: Update node_executions for the new agent model.
   //   - Add 'idle' status (replaces 'done') to the CHECK constraint.
   //   - Add 'data TEXT' column for structured agent output.
-  runMigration79(db);
+  run(migrationMarkerKey(79), () => runMigration79(db));
 
   // Migration 80: Consolidate space_agents.system_prompt + instructions → custom_prompt.
   //   - Adds 'custom_prompt TEXT' column.
   //   - Migrates data: combines system_prompt and instructions into a single field.
-  runMigration80(db);
+  run(migrationMarkerKey(80), () => runMigration80(db));
 
   // Migration 81: Add preferred_workflow_id to space_tasks.
   //   - Stores the caller-specified workflow template ID for standalone task attachment.
   //   - When set, the runtime uses this workflow instead of heuristic auto-selection.
-  runMigration81(db);
+  run(migrationMarkerKey(81), () => runMigration81(db));
 
   // Migration 82: Add approval audit trail columns to space_tasks.
   //   - approval_source: who approved (human, neo_agent, space_agent, task_agent, node_agent, semi_auto)
   //   - approval_reason: optional comment/reason for the approval
   //   - approved_at: timestamp when approval occurred
-  runMigration82(db);
+  run(migrationMarkerKey(82), () => runMigration82(db));
 
   // Migration 83: Add block_reason column to space_tasks.
   //   Records *why* a task is blocked (agent_crashed, workflow_invalid, etc.).
-  runMigration83(db);
+  run(migrationMarkerKey(83), () => runMigration83(db));
 
   // Migration 84: Workflow Run Artifacts.
   //   - Creates workflow_run_artifacts table for typed node outputs (PRs, commits, etc.).
   //   - Drops pr_url, pr_number, pr_created_at from space_tasks (replaced by artifacts).
-  runMigration84(db);
+  run(migrationMarkerKey(84), () => runMigration84(db));
 
   // Migration 85: Add paused column to spaces.
   //   Allows users to pause/resume space runtime execution without archiving.
-  runMigration85(db);
+  run(migrationMarkerKey(85), () => runMigration85(db));
 
   // Migration 86: 5-level numeric autonomy.
   //   - Converts spaces.autonomy_level from TEXT to INTEGER (1–5).
   //   - Adds pending_action_index and pending_checkpoint_type to space_tasks.
   //   - Migrates approval_source values to simplified 3-value type.
-  runMigration86(db);
+  run(migrationMarkerKey(86), () => runMigration86(db));
 
   // Migration 87: Add stopped column to spaces.
   //   Allows users to stop/start space runtime execution without archiving.
   //   Stopped spaces have all active work killed and will not auto-start on daemon restart.
-  runMigration87(db);
+  run(migrationMarkerKey(87), () => runMigration87(db));
 
   // Migration 88: Decouple `report_result` from canonical task status.
   //   Adds `reported_status` and `reported_summary` columns to space_tasks
   //   so the agent's report intent is recorded separately from the runtime's
   //   final status decision (which goes through completion-actions review).
-  runMigration88(db);
+  run(migrationMarkerKey(88), () => runMigration88(db));
 
   // Migration 89: Drop reserved writer keywords from persisted gates.
   //   Existing space_workflows.gates rows may contain `writers: ['human']`
   //   or `writers: ['reviewer']` from before the structural-semantics switch.
   //   Rewrite those `approved` fields to `writers: []` so external-approval
   //   gates keep working under the new authorization rules.
-  runMigration89(db);
+  run(migrationMarkerKey(89), () => runMigration89(db));
 
   // Migration 90: Add template_name and template_hash to space_workflows for drift detection.
-  runMigration90(db);
+  run(migrationMarkerKey(90), () => runMigration90(db));
 
   // Migration 91: Add instructions column to space_workflows.
   //   Stores workflow-level instructions injected into every agent session.
-  runMigration91(db);
+  run(migrationMarkerKey(91), () => runMigration91(db));
 
   // Migration 92: Persistent queue for Task Agent → node agent / Space Agent
   //   messages. Enables queue-until-active delivery when a target session is
   //   declared in the workflow but not yet active (e.g. reopen races, daemon
   //   restarts, lazy node activation). The flush-on-activate hook in
   //   TaskAgentManager drains pending rows when a sub-session comes online.
-  runMigration92(db);
+  run(migrationMarkerKey(92), () => runMigration92(db));
 
   // Migration 93: Add sdk_origin_path column to sessions for cross-workspace/worktree resume.
   //   Stores the resolved CWD used when the SDK session was first created, so that
   //   the session file can be found even when the effective CWD changes between daemon
   //   restarts (e.g. when a worktree is added/removed after the session was started).
-  runMigration93(db);
+  run(migrationMarkerKey(93), () => runMigration93(db));
 
   // Migration 94: Backfill workflow template tracking and end-node completion actions
   //   for workflows seeded by earlier code paths that silently dropped these fields.
   //   Also removes orphan duplicate built-in workflow rows that have no active runs.
-  runMigration94(db);
+  run(migrationMarkerKey(94), () => runMigration94(db));
 
   // Migration 95: Add completion_actions_fired_at column to space_workflow_runs.
   //   Used as an idempotency marker so completion actions are not re-fired when
   //   a workflow run is reopened (done → in_progress) and later completes again.
-  runMigration95(db);
+  run(migrationMarkerKey(95), () => runMigration95(db));
 
   // Migration 96: Remove the legacy "Full-Cycle Coding Workflow" built-in template
   //   now that it has been replaced by the Plan & Decompose workflow.
   //   Only deletes rows with no active workflow runs so in-flight work is preserved.
-  runMigration96(db);
+  run(migrationMarkerKey(96), () => runMigration96(db));
 
   // Migration 97: Delete orphan built-in workflow rows — rows whose `name` matches
   //   a known built-in template but whose `template_name` column is NULL. These are
@@ -432,27 +442,27 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   //   row alongside the orphan. Any runs referencing an orphan workflow are deleted
   //   first (M60 rebuilt space_workflow_runs without an ON DELETE CASCADE FK, so
   //   the migration handles the cleanup explicitly).
-  runMigration97(db);
+  run(migrationMarkerKey(97), () => runMigration97(db));
 
   // Migration 98: Create workflow_run_artifact_cache table for background-job-backed
   //   caching of git-derived artifact data (gate artifacts, commits, per-file diffs).
   //   Opening the TaskArtifactsPanel used to run three git subprocesses inline per RPC
   //   call; those are now enqueued to the job queue and the cached result is served
   //   synchronously from this table on subsequent opens.
-  runMigration98(db);
+  run(migrationMarkerKey(98), () => runMigration98(db));
 
   // Migration 99: Tool-contract refactor for Task #39 — adds the
   //   `space_workflows.completion_autonomy_level` column, three pending-completion
   //   columns on `space_tasks`, and the `space_task_report_results` append-only
   //   audit table used by the new `report_result` tool.
-  runMigration99(db);
+  run(migrationMarkerKey(99), () => runMigration99(db));
 
   // Migration 100: MCP registry provenance — adds `source` and `source_path`
   //   columns to `app_mcp_servers`. Backfills existing rows as 'builtin' (for
   //   seeded names) or 'user' (everything else). Adds a partial unique index
   //   on `(source_path, name)` WHERE source='imported' so the M2 import service
   //   can upsert idempotently from `.mcp.json` scans.
-  runMigration100(db);
+  run(migrationMarkerKey(100), () => runMigration100(db));
 
   // Migration 101: MCP M3 — create the unified `mcp_enablement` table used as
   //   the single source of truth for per-scope (space/room/session) MCP server
@@ -460,7 +470,7 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   //   existing `GlobalSettings.disabledMcpServers` and per-session
   //   `config.tools.disabledMcpServers`. Legacy columns/table are left intact
   //   for this milestone — M5 removes them.
-  runMigration101(db);
+  run(migrationMarkerKey(101), () => runMigration101(db));
 
   // Migration 102: MCP M5 of `unify-mcp-config-model` — purge legacy MCP keys
   //   from the `global_settings` JSON blob now that M101 has migrated the data
@@ -470,7 +480,7 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   //   `mcp_enablement` override table. Carries no schema changes — only data
   //   cleanup. Runs strictly *after* M101 so the seed step still has the
   //   legacy data to copy.
-  runMigration102(db);
+  run(migrationMarkerKey(102), () => runMigration102(db));
 
   // Migration 103: PR 1/5 of the task-agent-as-post-approval-executor refactor
   //   (docs/plans/remove-completion-actions-task-agent-as-post-approval-executor.md).
@@ -480,7 +490,7 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   //   Steps 2–4: add three nullable columns on `space_tasks`:
   //     `post_approval_session_id`, `post_approval_started_at`,
   //     `post_approval_blocked_reason`.
-  runMigration103(db);
+  run(migrationMarkerKey(103), () => runMigration103(db));
 
   // Migration 104: PR 5/5 of the task-agent-as-post-approval-executor refactor.
   //   Final cleanup — drops the completion-action schema fields. By this stage
@@ -497,20 +507,20 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   //   Step 9 (deferred per plan §4.4): `space_task_report_results` stays —
   //     dropping it is gated on a writer audit and shipped in a later
   //     cleanup migration.
-  runMigration104(db);
+  run(migrationMarkerKey(104), () => runMigration104(db));
 
   // Migration 105: Add template_name and template_hash to space_agents for
   //   preset-agent drift detection. Mirrors the workflow template-tracking
   //   columns added in M90 so preset-seeded agents can detect when the source
   //   definitions in seed-agents.ts have moved on, and the UI can offer a
   //   one-click "Sync from template" action.
-  runMigration105(db);
+  run(migrationMarkerKey(105), () => runMigration105(db));
 
   // Migration 106: Backfill template_name + template_hash on existing
   //   space_agents rows that match a preset agent by name but predate M105.
   //   Self-contained (frozen preset fingerprints inlined) — same pattern as
   //   M94 for workflow templates.
-  runMigration106(db);
+  run(migrationMarkerKey(106), () => runMigration106(db));
 
   // Migration 107: Drop the legacy `space_task_report_results` audit table.
   //   M104's plan §4.4 step 9 deferred this drop pending a writer audit; the
@@ -518,63 +528,63 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   //   table — the `report_result` end-node tool, repository, and helpers were
   //   all removed). Runs after every previous migration that may still
   //   reference the table.
-  runMigration107(db);
+  run(migrationMarkerKey(107), () => runMigration107(db));
 
   // Migration 108: Remove stale persisted Brave Search MCP rows from older
   //   databases. The built-in registry no longer seeds this MCP server or its
   //   wrapper skill, but users who ran older builds can still have rows in
   //   app_mcp_servers, skills, and enablement override tables. Delete those
   //   legacy rows so settings surfaces no longer display them.
-  runMigration108(db);
+  run(migrationMarkerKey(108), () => runMigration108(db));
 
   // Migration 109: Durable Codex tool continuation recovery. Adds
   //   `waiting_rebind` to node_executions and creates persistent tool_use →
   //   execution mapping plus a per-execution continuation inbox.
-  runMigration109(db);
+  run(migrationMarkerKey(109), () => runMigration109(db));
 
   // Migration 110: Limit pending-agent-message idempotency to live pending rows.
   //   Historical delivered/failed/expired rows must not suppress legitimate resends.
-  runMigration110(db);
+  run(migrationMarkerKey(110), () => runMigration110(db));
 
   // Migration 111: Space-level GitHub watched repositories and normalized PR events.
-  runMigration111(db);
+  run(migrationMarkerKey(111), () => runMigration111(db));
 
   // Migration 112: Normalize Space GitHub dedupe keys after canonical repo casing change.
-  runMigration112(db);
+  run(migrationMarkerKey(112), () => runMigration112(db));
 
   // Migration 113: Add SDK message indexes for large thread windows and replay lookups.
-  runMigration113(db);
+  run(migrationMarkerKey(113), () => runMigration113(db));
 
   // Migration 114: Add 'draft' to space_tasks status CHECK constraint.
-  runMigration114(db);
+  run(migrationMarkerKey(114), () => runMigration114(db));
 
   // Migration 115: Add task_agent_config column to spaces table.
   //   Stores per-space Task Agent overrides (model and custom prompt) as JSON.
-  runMigration115(db);
+  run(migrationMarkerKey(115), () => runMigration115(db));
 
   // Migration 116: Add thinking_level to space_agents for per-agent thinking overrides.
-  runMigration116(db);
+  run(migrationMarkerKey(116), () => runMigration116(db));
 
   // Migration 117: Add disabled column to space_workflows.
   //   When true, the workflow cannot be selected for new tasks.
-  runMigration117(db);
+  run(migrationMarkerKey(117), () => runMigration117(db));
 
   // Migration 118: Add setting_sources column to space_agents.
   //   Stores per-agent setting source overrides as JSON.
-  runMigration118(db);
+  run(migrationMarkerKey(118), () => runMigration118(db));
 
   // Migration 119: Add setting_sources column to spaces.
   //   Stores per-space default setting sources as JSON.
-  runMigration119(db);
+  run(migrationMarkerKey(119), () => runMigration119(db));
 
   // Migration 120: Add created_by and created_by_session columns to space_tasks.
   //   Tracks which agent and session created a task for audit trail.
-  runMigration120(db);
+  run(migrationMarkerKey(120), () => runMigration120(db));
 
   // Migration 121: Create mcp_audit_log table.
   //   General audit trail for MCP write operations (create_task, approve_task,
   //   send_message with gate data, save_artifact, etc.).
-  runMigration121(db);
+  run(migrationMarkerKey(121), () => runMigration121(db));
 
   // Migration 122: Replace task-thread projection with schema fix.
   //   - Add derived columns to sdk_messages: is_renderable, is_terminal, parent_tool_use_id.
@@ -587,111 +597,212 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   //     the live-query thread feeds can JOIN through sdk_messages.task_id directly
   //     without maintaining a parallel lookup table.
   //   - Backfill derived columns + task_id from the existing schema.
-  runMigration122(db);
+  run(migrationMarkerKey(122), () => runMigration122(db));
 
   // Migration 123: Add external-event lifecycle tables for the External Event Bus.
   //   space_external_events — source-level dedup + state machine.
   //   space_external_event_deliveries — per-subscription delivery lifecycle.
-  runMigration123(db);
+  run(migrationMarkerKey(123), () => runMigration123(db));
 
   // Migration 124: Simplify external-event schema.
   //   - Remove pr_number, repo_owner, repo_name, branch, routed_task_id columns
   //     from space_external_events (source-specific metadata now lives in payload_json).
   //   - Simplify state machine: published → delivered | failed | ignored.
   //     Remove 'routed', 'delivery_failed', 'ambiguous' states.
-  runMigration124(db);
+  run(migrationMarkerKey(124), () => runMigration124(db));
 
   // Migration 125: Add task_schedules table for recurring/one-shot scheduled tasks.
   //   task_schedules — stores template + trigger config + scheduling state.
   //   Also adds created_by_task_schedule_id column to space_tasks.
-  runMigration125(db);
+  run(migrationMarkerKey(125), () => runMigration125(db));
 
   // Migration 126: Drop the legacy json_extract function index
   //   idx_sdk_messages_parent_tool. The column-based equivalent
   //   idx_sdk_messages_parent_tool_use_id (added by migration 122) covers all
   //   call sites — keeping both costs write throughput without buying lookup
   //   speed.
-  runMigration126(db);
+  run(migrationMarkerKey(126), () => runMigration126(db));
 
   // Migration 127: Add `handle` column to `space_workflows` for human-readable
   // workflow identifiers (alternative to UUID). Unique per space.
-  runMigration127(db);
+  run(migrationMarkerKey(127), () => runMigration127(db));
 
   // Migration 128: Add external-event extension configuration tables.
-  runMigration128(db);
+  run(migrationMarkerKey(128), () => runMigration128(db));
 
   // Migration 129: Add per-space concurrent task execution limit.
-  runMigration129(db);
+  run(migrationMarkerKey(129), () => runMigration129(db));
 
   // Migration 130: Add gate_open_state table for persisting gate-open cache across daemon restarts.
-  runMigration130(db);
+  run(migrationMarkerKey(130), () => runMigration130(db));
 
   // Migration 131: Add Space-native goals and goal linkage on space_tasks/task_schedules.
-  runMigration131(db);
+  run(migrationMarkerKey(131), () => runMigration131(db));
 
   // Migration 132: Add per-space persistent agent memory with FTS5 search.
-  runMigration132(db);
+  run(migrationMarkerKey(132), () => runMigration132(db));
 
   // Migration 133: Add append-only Space goal event history.
-  runMigration133(db);
+  run(migrationMarkerKey(133), () => runMigration133(db));
 
   // Migration 134: Add FTS5-backed message and Space task search.
-  runMigration134(db);
+  run(migrationMarkerKey(134), () => runMigration134(db));
 
   // Migration 135: Add space-scoped pending message lookup index for actor registry.
-  runMigration135(db);
+  run(migrationMarkerKey(135), () => runMigration135(db));
 
   // Migration 136: Add agent-memory embedding status and vector storage.
-  runMigration136(db);
+  run(migrationMarkerKey(136), () => runMigration136(db));
 
   // Migration 137: Prune message search rows to current search retention policy.
-  runMigration137(db);
+  run(migrationMarkerKey(137), () => runMigration137(db));
 
   // Migration 138: Add durable inbox for long-term Space agents.
-  runMigration138(db);
+  run(migrationMarkerKey(138), () => runMigration138(db));
 
   // Migration 139: Add Forge MVP evolution storage.
-  runMigration139(db);
+  run(migrationMarkerKey(139), () => runMigration139(db));
 
   // Migration 140: Add Space agent core memory table for consolidation.
-  runMigration140(db);
+  run(migrationMarkerKey(140), () => runMigration140(db));
 
   // Migration 141: Rebuild message search FTS with detail=column and external content.
-  runMigration141(db);
+  run(migrationMarkerKey(141), () => runMigration141(db));
 
   // Migration 142: Expand Forge evidence kinds and backfill MVP task evidence.
-  runMigration142(db);
+  run(migrationMarkerKey(142), () => runMigration142(db));
 
   // Migration 143: Expand Forge evidence kinds for trace-derived process evidence.
-  runMigration143(db);
+  run(migrationMarkerKey(143), () => runMigration143(db));
 
   // Migration 144: Add evergreen long-horizon Space agents, Coordinator default,
   // and long-horizon Space agent management tables.
-  runMigration144(db);
+  run(migrationMarkerKey(144), () => runMigration144(db));
 
   // Migration 145: Add per-task workflow model overrides.
-  runMigration145(db);
+  run(migrationMarkerKey(145), () => runMigration145(db));
 
   // Migration 146: Expand Forge evidence kinds for structured daemon log capture.
-  runMigration146(db);
+  run(migrationMarkerKey(146), () => runMigration146(db));
 
   // Migration 147: Add model and thinking_level columns to long-horizon agents.
-  runMigration147(db);
+  run(migrationMarkerKey(147), () => runMigration147(db));
 
   // Migration 148: Add persisted handles to Space agents.
-  runMigration148(db);
+  run(migrationMarkerKey(148), () => runMigration148(db));
 
   // Migration 149: Add encrypted provider credentials fallback table.
-  runMigration149(db);
+  run(migrationMarkerKey(149), () => runMigration149(db));
 
   // Migration 150: Create providers table for unified provider registry.
-  runMigration150(db);
+  run(migrationMarkerKey(150), () => runMigration150(db));
 
   // Migration 151: Consolidate agent event subscriptions into long-horizon table.
-  runMigration151(db);
+  run(migrationMarkerKey(151), () => runMigration151(db));
 
   // Migration 152: Preserve provider and setting sources on long-horizon agents.
-  runMigration152(db);
+  run(migrationMarkerKey(152), () => runMigration152(db));
+
+  // Migration 153: Add workflow hook config and per-run hook state storage.
+  run(migrationMarkerKey(153), () => runMigration153(db));
+
+  // Migration 154: Store GitHub webhook auto-registration state.
+  run(migrationMarkerKey(154), () => runMigration154(db));
+
+  // Migration 155: Copy legacy ownership/automation rows into long-horizon tables.
+  run(migrationMarkerKey(155), () => runMigration155(db));
+
+  // Migration 156: Persist ACP agent session ids.
+  run(migrationMarkerKey(156), () => runMigration156(db));
+
+  // Migration 157: Archive worker sessions for terminal Space tasks.
+  run(migrationMarkerKey(157), () => runMigration157(db));
+
+  // Migration 158: Clean stale active runtime rows for terminal Space work.
+  run(migrationMarkerKey(158), () => runMigration158(db));
+}
+
+function migrationMarkerKey(version: number): string {
+  return `migration_${String(version).padStart(3, '0')}`;
+}
+
+function ensureMigrationMarkersTable(db: BunDatabase): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS migration_markers (
+      key TEXT PRIMARY KEY,
+      applied_at INTEGER NOT NULL
+    )
+  `);
+}
+
+function hasMigrationMarker(db: BunDatabase, key: string): boolean {
+  return !!db.prepare(`SELECT key FROM migration_markers WHERE key = ?`).get(key);
+}
+
+function markMigration(db: BunDatabase, key: string): void {
+  db.prepare(`INSERT OR IGNORE INTO migration_markers (key, applied_at) VALUES (?, ?)`).run(
+    key,
+    Date.now()
+  );
+}
+
+function runMarkedMigration(
+  db: BunDatabase,
+  key: string,
+  migration: () => void,
+  ensureBackup: () => void
+): void {
+  if (hasMigrationMarker(db, key)) return;
+
+  ensureBackup();
+  migration();
+  markMigration(db, key);
+}
+
+function seedHistoricalMigrationMarkers(db: BunDatabase): void {
+  if (hasMigrationMarker(db, migrationMarkerKey(1))) return;
+
+  const alreadyRanMigration155 = hasMigrationMarker(db, 'm154_legacy_long_horizon_agent_data');
+  const alreadyRanMigration157 = hasMigrationMarker(
+    db,
+    'm157_archive_terminal_space_task_worker_sessions'
+  );
+  const hasBaselineSchema = hasCurrentBaselineSchema(db);
+  const currentThrough =
+    alreadyRanMigration157 && hasBaselineSchema ? 157 : hasBaselineSchema ? 156 : 0;
+
+  if (currentThrough === 0) return;
+
+  for (let version = 1; version <= currentThrough; version++) {
+    if (version === 155 && !alreadyRanMigration155) continue;
+    markMigration(db, migrationMarkerKey(version));
+  }
+  markMigration(db, 'migration_room_cleanup');
+}
+
+function hasCurrentBaselineSchema(db: BunDatabase): boolean {
+  return (
+    tableExists(db, 'sessions') &&
+    tableHasColumn(db, 'sessions', 'acp_session_id') &&
+    tableHasColumn(db, 'sessions', 'status') &&
+    tableHasColumn(db, 'sessions', 'type') &&
+    tableHasColumn(db, 'sessions', 'session_context') &&
+    tableHasColumn(db, 'sessions', 'archived_at') &&
+    tableExists(db, 'spaces') &&
+    tableExists(db, 'space_agents') &&
+    tableExists(db, 'space_tasks') &&
+    tableHasColumn(db, 'space_tasks', 'status') &&
+    tableHasColumn(db, 'space_tasks', 'task_agent_session_id') &&
+    tableExists(db, 'space_workflows') &&
+    tableExists(db, 'space_workflow_runs') &&
+    tableHasColumn(db, 'space_workflow_runs', 'status') &&
+    tableExists(db, 'node_executions') &&
+    tableHasColumn(db, 'node_executions', 'workflow_run_id') &&
+    tableHasColumn(db, 'node_executions', 'status') &&
+    tableHasColumn(db, 'node_executions', 'completed_at') &&
+    tableHasColumn(db, 'node_executions', 'updated_at') &&
+    tableHasColumn(db, 'node_executions', 'created_at')
+  );
 }
 
 /**
@@ -2340,7 +2451,7 @@ function runMigration28(db: BunDatabase): void {
  *
  * Creates the following tables in FK-safe order:
  * - spaces: workspace-first multi-agent container
- * - space_agents: custom agents per space (role/provider/inject_workflow_context included, no CHECK on role)
+ * - space_agents: worker agents per space (role/provider/inject_workflow_context included, no CHECK on role)
  * - space_workflows: workflow definitions per space (includes start_step_id)
  * - space_workflow_steps: ordered steps within a workflow
  * - space_workflow_transitions: directed edges between steps (graph navigation)
@@ -10175,6 +10286,48 @@ export function runMigration140(db: BunDatabase): void {
   );
 }
 
+export function runMigration153(db: BunDatabase): void {
+  if (tableExists(db, 'space_workflows') && !tableHasColumn(db, 'space_workflows', 'hooks')) {
+    db.exec(`ALTER TABLE space_workflows ADD COLUMN hooks TEXT`);
+  }
+
+  if (!tableExists(db, 'space_workflow_runs')) return;
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS workflow_hook_state (
+      run_id TEXT NOT NULL,
+      hook_id TEXT NOT NULL,
+      version INTEGER NOT NULL DEFAULT 0,
+      local_state TEXT NOT NULL DEFAULT '{}',
+      last_result TEXT,
+      retry_count INTEGER NOT NULL DEFAULT 0,
+      next_retry_at INTEGER,
+      vote_maps TEXT NOT NULL DEFAULT '{}',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (run_id, hook_id),
+      FOREIGN KEY (run_id) REFERENCES space_workflow_runs(id) ON DELETE CASCADE
+    )
+  `);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_workflow_hook_state_run ON workflow_hook_state(run_id)`);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS workflow_hook_result_artifacts (
+      id TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL,
+      hook_id TEXT NOT NULL,
+      version INTEGER NOT NULL,
+      result TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      FOREIGN KEY (run_id) REFERENCES space_workflow_runs(id) ON DELETE CASCADE
+    )
+  `);
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_workflow_hook_result_artifacts_run_hook ` +
+      `ON workflow_hook_result_artifacts(run_id, hook_id, created_at)`
+  );
+}
+
 export function runMigration144(db: BunDatabase): void {
   createLongHorizonAgentTables(db);
   createSpaceAgentManagementTables(db);
@@ -10522,4 +10675,186 @@ function runMigration152(db: BunDatabase): void {
   if (!tableHasColumn(db, 'space_long_horizon_agents', 'setting_sources')) {
     db.exec(`ALTER TABLE space_long_horizon_agents ADD COLUMN setting_sources TEXT DEFAULT NULL`);
   }
+}
+
+export function runMigration154(db: BunDatabase): void {
+  if (!tableExists(db, 'space_github_watched_repos')) return;
+  const columns: Array<[string, string]> = [
+    ['webhook_remote_id', 'INTEGER'],
+    ['webhook_url', 'TEXT'],
+    ['webhook_auto_registered', 'INTEGER NOT NULL DEFAULT 0'],
+    ['webhook_active', 'INTEGER'],
+    ['webhook_last_checked_at', 'INTEGER'],
+    ['webhook_last_error', 'TEXT'],
+    ['webhook_configured_at', 'INTEGER'],
+  ];
+  for (const [name, definition] of columns) {
+    if (!tableHasColumn(db, 'space_github_watched_repos', name)) {
+      db.exec(`ALTER TABLE space_github_watched_repos ADD COLUMN ${name} ${definition}`);
+    }
+  }
+}
+
+/**
+ * Migration 155 — Copy legacy long-horizon ownership/automation data.
+ */
+export function runMigration155(db: BunDatabase): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS migration_markers (
+      key TEXT PRIMARY KEY,
+      applied_at INTEGER NOT NULL
+    )
+  `);
+  const markerKey = 'm154_legacy_long_horizon_agent_data';
+  const existing = db.prepare(`SELECT key FROM migration_markers WHERE key = ?`).get(markerKey);
+  if (existing) return;
+  if (
+    !tableExists(db, 'space_agent_goal_assignments') ||
+    !tableExists(db, 'space_agent_forge_scope_assignments') ||
+    !tableExists(db, 'space_agent_reminders') ||
+    !tableExists(db, 'space_long_horizon_agents')
+  ) {
+    return;
+  }
+  migrateLegacyLongHorizonAgentData(db);
+  db.prepare(`INSERT INTO migration_markers (key, applied_at) VALUES (?, ?)`).run(
+    markerKey,
+    Date.now()
+  );
+}
+
+export function runMigration156(db: BunDatabase): void {
+  if (!tableExists(db, 'sessions')) return;
+  if (!tableHasColumn(db, 'sessions', 'acp_session_id')) {
+    db.exec(`ALTER TABLE sessions ADD COLUMN acp_session_id TEXT`);
+  }
+}
+
+export function runMigration157(db: BunDatabase): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS migration_markers (
+      key TEXT PRIMARY KEY,
+      applied_at INTEGER NOT NULL
+    )
+  `);
+  const markerKey = 'm157_archive_terminal_space_task_worker_sessions';
+  const existing = db.prepare(`SELECT key FROM migration_markers WHERE key = ?`).get(markerKey);
+  if (existing) return;
+  if (!tableExists(db, 'sessions') || !tableExists(db, 'space_tasks')) return;
+
+  const terminalSessionPredicate = `
+    s.status != 'archived'
+    AND COALESCE(s.type, 'worker') NOT IN ('room_chat', 'space_chat', 'spaces_global')
+    AND EXISTS (
+      SELECT 1
+      FROM space_tasks t
+      WHERE t.status IN ('done', 'cancelled', 'archived')
+        AND (
+          (json_valid(s.session_context) AND json_extract(s.session_context, '$.taskId') = t.id)
+          OR s.id = t.task_agent_session_id
+          OR s.id LIKE ('space:%:task:' || t.id || ':%')
+        )
+    )
+  `;
+
+  if (tableExists(db, 'message_search_content')) {
+    db.exec(`
+      DELETE FROM message_search_content
+      WHERE kind = 'message'
+        AND session_id IN (
+          SELECT s.id
+          FROM sessions s
+          WHERE ${terminalSessionPredicate}
+        )
+    `);
+  }
+
+  db.exec(`
+    UPDATE sessions AS s
+    SET status = 'archived',
+        archived_at = COALESCE(archived_at, datetime('now'))
+    WHERE ${terminalSessionPredicate}
+  `);
+
+  db.prepare(`INSERT INTO migration_markers (key, applied_at) VALUES (?, ?)`).run(
+    markerKey,
+    Date.now()
+  );
+}
+
+export function runMigration158(db: BunDatabase): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS migration_markers (
+      key TEXT PRIMARY KEY,
+      applied_at INTEGER NOT NULL
+    )
+  `);
+  const markerKey = 'm158_cleanup_terminal_space_runtime_state';
+  const existing = db.prepare(`SELECT key FROM migration_markers WHERE key = ?`).get(markerKey);
+  if (existing) return;
+
+  if (tableExists(db, 'sessions') && tableExists(db, 'space_tasks')) {
+    const terminalSessionPredicate = `
+      s.status != 'archived'
+      AND COALESCE(s.type, 'worker') NOT IN ('room_chat', 'space_chat', 'spaces_global')
+      AND EXISTS (
+        SELECT 1
+        FROM space_tasks t
+        WHERE t.status IN ('done', 'cancelled', 'archived')
+          AND (
+            (json_valid(s.session_context) AND json_extract(s.session_context, '$.taskId') = t.id)
+            OR s.id = t.task_agent_session_id
+            OR s.id LIKE ('space:%:task:' || t.id || ':%')
+          )
+      )
+    `;
+
+    if (tableExists(db, 'message_search_content')) {
+      db.exec(`
+        DELETE FROM message_search_content
+        WHERE kind = 'message'
+          AND session_id IN (
+            SELECT s.id
+            FROM sessions s
+            WHERE ${terminalSessionPredicate}
+          )
+      `);
+    }
+
+    db.exec(`
+      UPDATE sessions AS s
+      SET status = 'archived',
+          archived_at = COALESCE(archived_at, datetime('now'))
+      WHERE ${terminalSessionPredicate}
+    `);
+  }
+
+  if (tableExists(db, 'node_executions') && tableExists(db, 'space_workflow_runs')) {
+    db.exec(`
+      UPDATE node_executions
+      SET status = CASE
+            WHEN (
+              SELECT wr.status
+              FROM space_workflow_runs wr
+              WHERE wr.id = node_executions.workflow_run_id
+            ) = 'done'
+              THEN 'done'
+            ELSE 'cancelled'
+          END,
+          completed_at = COALESCE(completed_at, updated_at, created_at, unixepoch() * 1000),
+          updated_at = unixepoch() * 1000
+      WHERE status IN ('in_progress', 'blocked', 'waiting_rebind')
+        AND EXISTS (
+          SELECT 1
+          FROM space_workflow_runs wr
+          WHERE wr.id = node_executions.workflow_run_id
+            AND wr.status IN ('done', 'cancelled')
+        )
+    `);
+  }
+
+  db.prepare(`INSERT INTO migration_markers (key, applied_at) VALUES (?, ?)`).run(
+    markerKey,
+    Date.now()
+  );
 }

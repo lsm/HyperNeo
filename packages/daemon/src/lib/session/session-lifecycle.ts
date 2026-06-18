@@ -36,11 +36,35 @@ import { resolveSDKCliPath, isRunningUnderBun } from '../agent/sdk-cli-resolver.
 export type ArchiveResourcesTrigger = 'ui_session_archive' | 'ui_task_archive';
 export type DeleteResourcesTrigger = 'ui_session_delete';
 
+type SdkQueryFunction = typeof import('@anthropic-ai/claude-agent-sdk').query;
+type TitleGenerationProviderService = Pick<
+  ReturnType<typeof getProviderService>,
+  | 'getDefaultProvider'
+  | 'isProviderAvailable'
+  | 'getTitleGenerationConfig'
+  | 'getTitleGenerationModels'
+  | 'applyEnvVarsToProcessForProvider'
+  | 'getEnvVarsForModel'
+  | 'restoreEnvVars'
+>;
+
+function isAssistantMessageWithContent(
+  message: unknown
+): message is { type: 'assistant'; message: { content: Array<{ type: string; text?: string }> } } {
+  if (!message || typeof message !== 'object') return false;
+  const candidate = message as { type?: unknown; message?: { content?: unknown } };
+  return candidate.type === 'assistant' && Array.isArray(candidate.message?.content);
+}
+
 export interface SessionLifecycleConfig {
   defaultModel: string;
   maxTokens: number;
   temperature: number;
   disableWorktrees?: boolean;
+  /** @internal Test-only SDK query override for title generation. */
+  titleGenerationQueryForTesting?: SdkQueryFunction;
+  /** @internal Test-only provider service override for title generation. */
+  titleGenerationProviderServiceForTesting?: TitleGenerationProviderService;
 }
 
 export interface CreateSessionParams {
@@ -1026,7 +1050,8 @@ export class SessionLifecycle {
     sessionModel?: string,
     sessionProviderId?: string
   ): Promise<{ title: string; isFallback: boolean }> {
-    const providerService = getProviderService();
+    const providerService =
+      this.config.titleGenerationProviderServiceForTesting ?? getProviderService();
 
     // Determine which provider to use for title generation.
     // When the session has an explicit provider ID (e.g. 'anthropic-copilot'), use that
@@ -1042,7 +1067,9 @@ export class SessionLifecycle {
     // available (env vars, stored credentials, or provider-owned auth missing).
     // This delegates to each provider's own isAvailable() implementation so that
     // stored credentials are respected for title generation.
-    const available = await providerService.isProviderAvailable(provider);
+    const available =
+      this.config.titleGenerationQueryForTesting !== undefined ||
+      (await providerService.isProviderAvailable(provider));
     if (!available) {
       this.logger.warn(
         `[SessionLifecycle] Provider ${provider} not available, using fallback title`
@@ -1086,8 +1113,11 @@ export class SessionLifecycle {
     modelId: string,
     messageText: string
   ): Promise<string> {
-    const { query } = await import('@anthropic-ai/claude-agent-sdk');
-    const providerService = getProviderService();
+    const query =
+      this.config.titleGenerationQueryForTesting ??
+      (await import('@anthropic-ai/claude-agent-sdk')).query;
+    const providerService =
+      this.config.titleGenerationProviderServiceForTesting ?? getProviderService();
 
     const titleModels = await providerService.getTitleGenerationModels(provider, modelId);
 
@@ -1148,12 +1178,12 @@ ${messageText.slice(0, 2000)}`;
         },
       });
 
-      // Extract title from the response
-      const { isSDKAssistantMessage } = await import('@neokai/shared/sdk/type-guards');
+      // Extract title from the response. Keep this structural instead of importing
+      // shared SDK type guards so unit tests are isolated from process-wide mock.module state.
       let title = '';
 
       for await (const message of agentQuery) {
-        if (isSDKAssistantMessage(message)) {
+        if (isAssistantMessageWithContent(message)) {
           const textBlocks = message.message.content.filter(
             (b: { type: string }) => b.type === 'text'
           ) as Array<{ text?: string }>;

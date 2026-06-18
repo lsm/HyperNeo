@@ -218,6 +218,46 @@ describe('OpenAI Chat Completions bridge server', () => {
     expect(body.error.type).toBe('authentication_error');
   });
 
+  it('does not crash when controller is already closed before upstream error', async () => {
+    // Regression: catch-block `send()` calls used to throw TypeError when the
+    // ReadableStreamDefaultController was already closed (client disconnect /
+    // upstream tear-down), taking the daemon down with them. The catch block
+    // must now swallow those secondary errors.
+    const upstreamBody = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.error(new Error('upstream blew up mid-stream'));
+      },
+    });
+    const upstreamResponse = new Response(upstreamBody, {
+      status: 200,
+      headers: { 'Content-Type': 'text/event-stream' },
+    });
+
+    // Create a stream that is already closed by the time streamChatToAnthropic
+    // reaches its catch block.
+    let captured: ReadableStreamDefaultController<Uint8Array> | undefined;
+    const closedStream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        captured = controller;
+      },
+    });
+    const reader = closedStream.getReader();
+    // Close the underlying controller and release the reader so the controller
+    // is in the "closed" state.
+    captured!.close();
+    reader.releaseLock();
+
+    // Must NOT throw — this is the regression.
+    await expect(
+      _openAIChatBridgeTesting.streamChatToAnthropic({
+        upstreamResponse,
+        controller: captured!,
+        model: 'm',
+        inputTokens: 1,
+      })
+    ).resolves.toBeUndefined();
+  });
+
   it('serves Anthropic-compatible model listing for SDK initialization', async () => {
     const fetchMock = mock(async () => new Response('', { status: 500 }));
     const server = createOpenAIChatBridgeServer({
@@ -1174,6 +1214,100 @@ describe('OpenAI Chat Completions bridge server', () => {
       });
       expect(response.status).toBe(200);
       expect(capturedRequest.reasoning_effort).toBe('medium');
+    });
+  });
+
+  describe('chat_template_kwargs injection', () => {
+    // Per-model Jinja template kwargs (e.g. `{ enable_thinking: false }`)
+    // forward verbatim into every upstream request body. The field is not
+    // part of the OpenAI Chat schema — only llama.cpp / vLLM-style backends
+    // read it — but other OpenAI-compatible servers ignore unknown fields
+    // silently, so it's safe to inject unconditionally.
+    it('forwards chat_template_kwargs into the upstream request body when configured', async () => {
+      let capturedRequest: Record<string, unknown> = {};
+      const fetchMock = mock(async (_url: string, init?: RequestInit) => {
+        capturedRequest = JSON.parse(String(init?.body));
+        return new Response(
+          sseBody([{ choices: [{ delta: { content: 'ok' }, finish_reason: 'stop' }] }]),
+          { status: 200 }
+        );
+      });
+      const server = createOpenAIChatBridgeServer({
+        baseUrl: 'http://upstream.test/v1',
+        fetchImpl: fetchMock as typeof fetch,
+        chatTemplateKwargs: { enable_thinking: false },
+      });
+      servers.push(server);
+      await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'm',
+          messages: [{ role: 'user', content: 'hi' }],
+          stream: true,
+        }),
+      });
+      expect(capturedRequest.chat_template_kwargs).toEqual({ enable_thinking: false });
+    });
+
+    it('omits chat_template_kwargs when not configured', async () => {
+      let capturedRequest: Record<string, unknown> = {};
+      const fetchMock = mock(async (_url: string, init?: RequestInit) => {
+        capturedRequest = JSON.parse(String(init?.body));
+        return new Response(
+          sseBody([{ choices: [{ delta: { content: 'ok' }, finish_reason: 'stop' }] }]),
+          { status: 200 }
+        );
+      });
+      const server = createOpenAIChatBridgeServer({
+        baseUrl: 'http://upstream.test/v1',
+        fetchImpl: fetchMock as typeof fetch,
+      });
+      servers.push(server);
+      await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'm',
+          messages: [{ role: 'user', content: 'hi' }],
+          stream: true,
+        }),
+      });
+      expect(capturedRequest).not.toHaveProperty('chat_template_kwargs');
+    });
+
+    it('does NOT overwrite model, messages, tools, or stream when injecting kwargs', async () => {
+      let capturedRequest: Record<string, unknown> = {};
+      const fetchMock = mock(async (_url: string, init?: RequestInit) => {
+        capturedRequest = JSON.parse(String(init?.body));
+        return new Response(
+          sseBody([{ choices: [{ delta: { content: 'ok' }, finish_reason: 'stop' }] }]),
+          { status: 200 }
+        );
+      });
+      const server = createOpenAIChatBridgeServer({
+        baseUrl: 'http://upstream.test/v1',
+        fetchImpl: fetchMock as typeof fetch,
+        chatTemplateKwargs: { enable_thinking: false },
+      });
+      servers.push(server);
+      await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'qwen3:32b',
+          messages: [{ role: 'user', content: 'hi' }],
+          stream: true,
+          tools: [{ name: 'lookup', description: '', input_schema: { type: 'object' } }],
+        }),
+      });
+      expect(capturedRequest.model).toBe('qwen3:32b');
+      expect(capturedRequest.messages).toEqual([{ role: 'user', content: 'hi' }]);
+      expect(capturedRequest.stream).toBe(true);
+      const tools = capturedRequest.tools as Array<{ function: { name: string } }>;
+      expect(tools).toHaveLength(1);
+      expect(tools[0].function.name).toBe('lookup');
+      expect(capturedRequest.chat_template_kwargs).toEqual({ enable_thinking: false });
     });
   });
 });

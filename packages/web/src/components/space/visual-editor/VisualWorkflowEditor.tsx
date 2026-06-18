@@ -27,6 +27,7 @@ import type {
   WorkflowChannel,
   Gate,
   SpaceAutonomyLevel,
+  WorkflowHook,
 } from '@neokai/shared';
 import { generateUUID, isChannelCyclic } from '@neokai/shared';
 import { spaceStore } from '../../../lib/space-store';
@@ -63,12 +64,30 @@ import {
 // Constants
 // ============================================================================
 
+function remapHookCallerAgentSlots(
+  slots: string[] | undefined,
+  previousStep: NodeDraft | undefined,
+  nextStep: NodeDraft
+): string[] | undefined {
+  if (!slots || !previousStep?.agents || !nextStep.agents) return slots;
+
+  const nextSlots = slots.flatMap((slot) => {
+    const index = previousStep.agents?.findIndex((agent) => agent.name === slot) ?? -1;
+    if (index === -1) return [slot];
+    const nextName = nextStep.agents?.[index]?.name?.trim();
+    return nextName ? [nextName] : [];
+  });
+
+  return nextSlots.length > 0 ? nextSlots : undefined;
+}
+
 function buildTemplateCanvasSignature(
   nodes: VisualNode[],
   edges: VisualEdge[],
   channels: WorkflowChannel[],
   startNodeId: string,
   gates: Gate[],
+  hooks: WorkflowHook[],
   endNodeId: string | undefined
 ): string {
   const regularNodes = nodes
@@ -127,6 +146,21 @@ function buildTemplateCanvasSignature(
     }))
     .sort((a, b) => a.id.localeCompare(b.id));
 
+  const normalizedHooks = hooks
+    .map((hook) => ({
+      ...hook,
+      targetNode: hook.targetNode ?? null,
+      label: hook.label ?? null,
+      templateData: hook.templateData ?? null,
+      classification: hook.classification ?? null,
+      authorizedCallers: hook.authorizedCallers ?? [],
+      retry: hook.retry ?? null,
+      poll: hook.poll ?? null,
+      order: hook.order ?? null,
+      humanOnly: hook.humanOnly ?? null,
+    }))
+    .sort((a, b) => a.id.localeCompare(b.id));
+
   return JSON.stringify({
     nodes: regularNodes,
     edges: normalizedEdges,
@@ -134,6 +168,7 @@ function buildTemplateCanvasSignature(
     startNodeId,
     endNodeId,
     gates: normalizedGates,
+    hooks: normalizedHooks,
   });
 }
 
@@ -212,6 +247,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
   const [endNodeId, setEndNodeId] = useState<string | undefined>(() => initState?.endNodeId);
   const [channels, setChannels] = useState<WorkflowChannel[]>(() => initState?.channels ?? []);
   const [gates, setGates] = useState<Gate[]>(() => initState?.gates ?? []);
+  const [hooks, setHooks] = useState<WorkflowHook[]>(() => initState?.hooks ?? []);
   const [completionAutonomyLevel, setCompletionAutonomyLevel] = useState<SpaceAutonomyLevel>(
     () =>
       (initState?.completionAutonomyLevel ??
@@ -251,8 +287,9 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
   const nodeExecutionsByNodeId = spaceStore.nodeExecutionsByNodeId.value;
   const regularNodes = nodes;
   const currentTemplateCanvasSignature = useMemo(
-    () => buildTemplateCanvasSignature(nodes, edges, channels, startNodeId, gates, endNodeId),
-    [nodes, edges, channels, startNodeId, gates, endNodeId]
+    () =>
+      buildTemplateCanvasSignature(nodes, edges, channels, startNodeId, gates, hooks, endNodeId),
+    [nodes, edges, channels, startNodeId, gates, hooks, endNodeId]
   );
   const [templateBaselineSignature, setTemplateBaselineSignature] = useState(() =>
     buildTemplateCanvasSignature(
@@ -261,6 +298,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
       initState?.channels ?? [],
       initState?.startNodeId ?? '',
       initState?.gates ?? [],
+      initState?.hooks ?? [],
       initState?.endNodeId
     )
   );
@@ -596,6 +634,19 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
       // Update all state in flat calls — no nested setter inside another updater.
       setNodes(remaining);
       setEdges((prev) => prev.filter((e) => e.fromStepKey !== key && e.toStepKey !== key));
+      const deletedRefs = new Set(
+        [nodeToDelete.step.name, nodeToDelete.step.id, nodeToDelete.step.localId].filter(Boolean)
+      );
+      setHooks((prev) =>
+        prev
+          .filter((hook) => !deletedRefs.has(hook.sourceNode) && !deletedRefs.has(hook.targetNode))
+          .map((hook) => ({
+            ...hook,
+            authorizedCallers: hook.authorizedCallers?.filter(
+              (caller) => !deletedRefs.has(caller.sourceNode)
+            ),
+          }))
+      );
 
       if (wasStart && remaining.length > 0) {
         const next = remaining[0];
@@ -613,9 +664,33 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
     [nodes, startNodeId, endNodeId]
   );
 
-  const handleUpdateNode = useCallback((step: NodeDraft) => {
-    setNodes((prev) => prev.map((n) => (n.step.localId === step.localId ? { ...n, step } : n)));
-  }, []);
+  const handleUpdateNode = useCallback(
+    (step: NodeDraft) => {
+      const previousNode = nodes.find((n) => n.step.localId === step.localId);
+      const previousRefs = new Set(
+        [previousNode?.step.name, previousNode?.step.id, previousNode?.step.localId].filter(Boolean)
+      );
+      const nextRef = step.name || step.localId;
+
+      setNodes((prev) => prev.map((n) => (n.step.localId === step.localId ? { ...n, step } : n)));
+
+      setHooks((prev) =>
+        prev.map((hook) => ({
+          ...hook,
+          sourceNode: previousRefs.has(hook.sourceNode) ? nextRef : hook.sourceNode,
+          targetNode: previousRefs.has(hook.targetNode) ? nextRef : hook.targetNode,
+          authorizedCallers: hook.authorizedCallers?.map((caller) => ({
+            ...caller,
+            sourceNode: previousRefs.has(caller.sourceNode) ? nextRef : caller.sourceNode,
+            agentSlots: previousRefs.has(caller.sourceNode)
+              ? remapHookCallerAgentSlots(caller.agentSlots, previousNode?.step, step)
+              : caller.agentSlots,
+          })),
+        }))
+      );
+    },
+    [nodes]
+  );
 
   /**
    * Set this node as the start node. Stores step.localId so that both the
@@ -925,11 +1000,13 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
       ...gate,
       fields: [...(gate.fields ?? [])],
     }));
+    const nextHooks = (template.hooks ?? []).map((hook) => ({ ...hook }));
 
     setNodes(nextNodes);
     setEdges(newEdges);
     setChannels(nextChannels);
     setGates(nextGates);
+    setHooks(nextHooks);
     if (template.tags) {
       setTags([...template.tags]);
     }
@@ -946,6 +1023,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
         nextChannels,
         resolvedStartLocalId,
         nextGates,
+        nextHooks,
         resolvedEndLocalId
       )
     );
@@ -1026,6 +1104,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
       tags,
       channels,
       gates,
+      hooks,
       completionAutonomyLevel,
       disabled,
     };
@@ -1459,6 +1538,16 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
               setSelectedNodeId(null);
             }}
             onDelete={handleDeleteNode}
+            nodeHooks={hooks.filter(
+              (h) => h.sourceNode === (selectedNode.step.name || selectedNode.step.localId)
+            )}
+            workflowNodeNames={nodes.map((n) => n.step.name || n.step.localId)}
+            onUpdateNodeHooks={(nextHooks) => {
+              // Merge updated node-specific hooks back into the global hooks list
+              const nodeName = selectedNode.step.name || selectedNode.step.localId;
+              const otherHooks = hooks.filter((h) => h.sourceNode !== nodeName);
+              setHooks([...otherHooks, ...nextHooks]);
+            }}
           />
         )}
 

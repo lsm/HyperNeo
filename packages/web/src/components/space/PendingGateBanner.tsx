@@ -246,6 +246,13 @@ export function PendingGateBanner({ runId, spaceId, workflowId }: PendingGateBan
                   testId="pending-gate-row"
                   dataAttrs={{ 'data-gate-id': gate.gateId }}
                 />
+                <p
+                  class="mx-4 -mt-1 mb-2 text-xs text-amber-300/90"
+                  data-testid="pending-gate-legacy-copy"
+                >
+                  Deprecated legacy gate. During migration, this gate maps to a workflow hook
+                  checkpoint.
+                </p>
                 {error && (
                   <p class="mx-4 -mt-1 mb-2 text-xs text-red-400" data-testid="pending-gate-error">
                     {error}

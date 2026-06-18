@@ -413,6 +413,19 @@ describe('GateEditorPanel — Features', () => {
     expect(onChange).toHaveBeenCalledOnce();
     expect(onChange.mock.calls[0][0].features).toEqual({ codex_review_bot: true });
   });
+
+  it('describes the Codex matcher as accepting any login containing "codex"', () => {
+    // Drift guard: the runtime matcher accepts any GitHub App bot whose login
+    // contains "codex" (not just codex[bot]). The user-facing help text must
+    // match so users are not told to expect a specific bot name.
+    const gate = makeGate();
+    const { container } = render(<GateEditorPanel {...makeProps(gate)} />);
+
+    const helpText = container.textContent ?? '';
+    expect(helpText).toContain('any GitHub App');
+    expect(helpText).toContain('contains "codex"');
+    expect(helpText).not.toMatch(/Require codex\[bot\] \+1 before this gate opens/);
+  });
 });
 
 describe('GateEditorPanel — Script Check toggle', () => {

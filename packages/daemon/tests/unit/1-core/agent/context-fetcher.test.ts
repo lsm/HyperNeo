@@ -5,7 +5,7 @@
  * `query.getContextUsage()` response into NeoKai's `ContextInfo` shape.
  */
 
-import { describe, it, expect, mock } from 'bun:test';
+import { describe, it, expect, mock, spyOn } from 'bun:test';
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type { SDKControlGetContextUsageResponse } from '@anthropic-ai/claude-agent-sdk';
 import { ContextFetcher } from '../../../../src/lib/agent/context-fetcher';
@@ -190,6 +190,159 @@ describe('ContextFetcher.toContextInfo', () => {
     expect(info.autoCompactThreshold).toBe(238963);
   });
 
+  it('uses Codex model metadata when SDK reports the Anthropic bridge alias', () => {
+    const response = baseResponse({
+      totalTokens: 136000,
+      maxTokens: 200000,
+      rawMaxTokens: 200000,
+      percentage: 68,
+      model: 'gpt-5.5',
+      autoCompactThreshold: 180000,
+      isAutoCompactEnabled: true,
+      categories: [{ name: 'Messages', tokens: 136000, color: 'blue' }],
+    });
+
+    const info = ContextFetcher.toContextInfo(response, {
+      id: 'gpt-5.5',
+      alias: 'codex-latest',
+      sdkModelIds: ['gpt-5.5'],
+      contextWindow: 272000,
+      preferContextWindowMetadata: true,
+    });
+
+    expect(info.totalCapacity).toBe(272000);
+    expect(info.percentUsed).toBe(50);
+    expect(info.breakdown.Messages).toEqual({ tokens: 136000, percent: 50 });
+    expect(info.autoCompactThreshold).toBe(244800);
+  });
+
+  it('resolves SDK alias model name to canonical Codex model ID via sdkModelIds', () => {
+    const response = baseResponse({
+      totalTokens: 10000,
+      maxTokens: 272000,
+      rawMaxTokens: 272000,
+      percentage: 4,
+      model: 'gpt-5.5',
+      categories: [{ name: 'Messages', tokens: 10000, color: 'blue' }],
+    });
+
+    const info = ContextFetcher.toContextInfo(response, {
+      id: 'gpt-5.5',
+      sdkModelIds: ['gpt-5.5'],
+      provider: 'anthropic-codex',
+      preferContextWindowMetadata: true,
+      contextWindow: 272000,
+    });
+
+    expect(info.model).toBe('gpt-5.5');
+    expect(info.totalCapacity).toBe(272000);
+  });
+
+  it('keeps [1m] suffix in context display when effective capacity is 1M', () => {
+    const response = baseResponse({
+      totalTokens: 10000,
+      maxTokens: 1_000_000,
+      rawMaxTokens: 1_000_000,
+      percentage: 1,
+      model: 'glm-5.2[1m]',
+      categories: [{ name: 'Messages', tokens: 10000, color: 'blue' }],
+    });
+
+    const info = ContextFetcher.toContextInfo(response, {
+      id: 'glm-5.2[1m]',
+      provider: 'glm',
+      preferContextWindowMetadata: true,
+      contextWindow: 1_000_000,
+    });
+
+    expect(info.model).toBe('glm-5.2[1m]');
+    expect(info.totalCapacity).toBe(1_000_000);
+  });
+
+  it('strips stale [1m] suffix from context display when effective capacity is below 1M', () => {
+    const response = baseResponse({
+      totalTokens: 10000,
+      maxTokens: 200000,
+      rawMaxTokens: 200000,
+      percentage: 5,
+      model: 'glm-5.1[1m]',
+      categories: [{ name: 'Messages', tokens: 10000, color: 'blue' }],
+    });
+
+    const info = ContextFetcher.toContextInfo(response, {
+      id: 'glm-5.1',
+      provider: 'glm',
+      preferContextWindowMetadata: true,
+      contextWindow: 200000,
+    });
+
+    expect(info.model).toBe('glm-5.1');
+    expect(info.totalCapacity).toBe(200000);
+  });
+
+  it('strips stale [1m] suffix when raw capacity overreports but effective window is 200k', () => {
+    const response = baseResponse({
+      totalTokens: 10000,
+      maxTokens: 200000,
+      rawMaxTokens: 1_000_000,
+      percentage: 5,
+      model: 'glm-5.1[1m]',
+      categories: [{ name: 'Messages', tokens: 10000, color: 'blue' }],
+    });
+
+    const info = ContextFetcher.toContextInfo(response, {
+      id: 'glm-5.1',
+      provider: 'glm',
+      preferContextWindowMetadata: true,
+      contextWindow: 200000,
+    });
+
+    expect(info.model).toBe('glm-5.1');
+    expect(info.totalCapacity).toBe(200000);
+  });
+
+  it('ignores raw 1M capacity from stale [1m] suffix even without metadata', () => {
+    const response = baseResponse({
+      totalTokens: 10000,
+      maxTokens: 200000,
+      rawMaxTokens: 1_000_000,
+      percentage: 5,
+      model: 'glm-5.1[1m]',
+      categories: [{ name: 'Messages', tokens: 10000, color: 'blue' }],
+    });
+
+    const info = ContextFetcher.toContextInfo(response);
+
+    expect(info.model).toBe('glm-5.1');
+    expect(info.totalCapacity).toBe(200000);
+  });
+
+  it('normalizes double [1m] suffix and uses 1M capacity from metadata', () => {
+    // Regression test for glm-5.2[1m][1m] causing 1M → 200K fallback.
+    // The double suffix is normalized to glm-5.2[1m], which matches metadata
+    // and returns 1M capacity instead of falling back to 200K.
+    const response = baseResponse({
+      totalTokens: 10000,
+      maxTokens: 1_000_000,
+      rawMaxTokens: 1_000_000,
+      percentage: 1,
+      model: 'glm-5.2[1m][1m]', // Double suffix from accumulated routing
+      categories: [{ name: 'Messages', tokens: 10000, color: 'blue' }],
+    });
+
+    const info = ContextFetcher.toContextInfo(response, {
+      id: 'glm-5.2[1m]',
+      provider: 'glm',
+      preferContextWindowMetadata: true,
+      contextWindow: 1_000_000,
+    });
+
+    // Normalized model ID should be glm-5.2[1m] (single suffix)
+    expect(info.model).toBe('glm-5.2[1m]');
+    // Should use 1M capacity from metadata, not 200K fallback
+    expect(info.totalCapacity).toBe(1_000_000);
+  });
+
   it('uses Codex model metadata when SDK reports the generic 200k capacity', () => {
     const response = baseResponse({
       totalTokens: 136000,
@@ -287,7 +440,7 @@ describe('ContextFetcher.toContextInfo', () => {
     expect(info.autoCompactThreshold).toBe(0);
   });
 
-  it('does not use session metadata when SDK capacity is unavailable for a different active model', () => {
+  it('does not use session metadata when SDK capacity is unavailable for a different active model on native providers', () => {
     const response = baseResponse({
       totalTokens: 64000,
       maxTokens: 0,
@@ -302,12 +455,244 @@ describe('ContextFetcher.toContextInfo', () => {
     const info = ContextFetcher.toContextInfo(response, {
       id: 'gpt-5.5',
       contextWindow: 272000,
+      provider: 'anthropic',
     });
 
     expect(info.totalCapacity).toBe(0);
     expect(info.percentUsed).toBe(50);
     expect(info.breakdown.Messages).toEqual({ tokens: 64000, percent: null });
     expect(info.autoCompactThreshold).toBe(0);
+  });
+
+  it('prefers non-native provider metadata even when SDK-reported model name differs', () => {
+    const response = baseResponse({
+      totalTokens: 50000,
+      maxTokens: 1000000,
+      rawMaxTokens: 1000000,
+      percentage: 5,
+      model: 'upstream-mapped-id',
+      categories: [{ name: 'Messages', tokens: 50000, color: 'blue' }],
+    });
+
+    const info = ContextFetcher.toContextInfo(response, {
+      id: 'glm-5',
+      alias: 'glm-5',
+      contextWindow: 200000,
+      provider: 'glm',
+    });
+
+    expect(info.totalCapacity).toBe(200000);
+    expect(info.percentUsed).toBe(25);
+    expect(info.breakdown.Messages).toEqual({ tokens: 50000, percent: 25 });
+  });
+
+  it('prefers metadata capacity for non-native providers when SDK reports a generic value', () => {
+    const response = baseResponse({
+      totalTokens: 50000,
+      maxTokens: 1000000,
+      rawMaxTokens: 1000000,
+      percentage: 5,
+      model: 'glm-5.1',
+      categories: [{ name: 'Messages', tokens: 50000, color: 'blue' }],
+    });
+
+    const info = ContextFetcher.toContextInfo(response, {
+      id: 'glm-5.1',
+      alias: 'glm-5.1',
+      contextWindow: 200000,
+      provider: 'glm',
+    });
+
+    expect(info.totalCapacity).toBe(200000);
+    expect(info.percentUsed).toBe(25);
+    expect(info.breakdown.Messages).toEqual({ tokens: 50000, percent: 25 });
+  });
+
+  it('recalculates free space when metadata capacity differs from SDK capacity', () => {
+    const response = baseResponse({
+      totalTokens: 127300,
+      maxTokens: 1000000,
+      rawMaxTokens: 1000000,
+      percentage: 12.7,
+      model: 'glm-5.1',
+      categories: [
+        { name: 'System prompt', tokens: 3600, color: 'gray' },
+        { name: 'System tools', tokens: 18000, color: 'gray' },
+        { name: 'Messages', tokens: 105700, color: 'blue' },
+        { name: 'Free space', tokens: 872700, color: 'gray-dim' },
+      ],
+    });
+
+    const info = ContextFetcher.toContextInfo(response, {
+      id: 'glm-5.1',
+      alias: 'glm-5.1',
+      contextWindow: 200000,
+      provider: 'glm',
+    });
+
+    expect(info.totalCapacity).toBe(200000);
+    expect(info.breakdown['Free space']).toEqual({ tokens: 72700, percent: 36.4 });
+  });
+
+  it('keeps SDK free space when metadata matches SDK capacity', () => {
+    const response = baseResponse({
+      totalTokens: 127300,
+      maxTokens: 1000000,
+      rawMaxTokens: 1000000,
+      percentage: 12.7,
+      model: 'glm-5.2',
+      categories: [
+        { name: 'System prompt', tokens: 3600, color: 'gray' },
+        { name: 'System tools', tokens: 18000, color: 'gray' },
+        { name: 'Messages', tokens: 105700, color: 'blue' },
+        { name: 'Free space', tokens: 872700, color: 'gray-dim' },
+      ],
+    });
+
+    const info = ContextFetcher.toContextInfo(response, {
+      id: 'glm-5.2',
+      alias: 'glm-5.2',
+      contextWindow: 1000000,
+      provider: 'glm',
+    });
+
+    expect(info.totalCapacity).toBe(1000000);
+    expect(info.breakdown['Free space']).toEqual({ tokens: 872700, percent: 87.3 });
+  });
+
+  it('clamps recalculated free space to zero when usage exceeds metadata capacity', () => {
+    const response = baseResponse({
+      totalTokens: 250000,
+      maxTokens: 1000000,
+      rawMaxTokens: 1000000,
+      percentage: 25,
+      model: 'glm-5.1',
+      categories: [
+        { name: 'System tools', tokens: 50000, color: 'gray' },
+        { name: 'Messages', tokens: 200000, color: 'blue' },
+        { name: 'Free space', tokens: 750000, color: 'gray-dim' },
+      ],
+    });
+
+    const info = ContextFetcher.toContextInfo(response, {
+      id: 'glm-5.1',
+      alias: 'glm-5.1',
+      contextWindow: 200000,
+      provider: 'glm',
+    });
+
+    expect(info.breakdown['Free space']).toEqual({ tokens: 0, percent: 0 });
+  });
+
+  it('uses SDK capacity for native Anthropic providers even when metadata differs', () => {
+    const response = baseResponse({
+      totalTokens: 50000,
+      maxTokens: 200000,
+      rawMaxTokens: 200000,
+      percentage: 25,
+      model: 'claude-sonnet-4-6',
+      categories: [{ name: 'Messages', tokens: 50000, color: 'blue' }],
+    });
+
+    const info = ContextFetcher.toContextInfo(response, {
+      id: 'claude-sonnet-4-6',
+      alias: 'sonnet',
+      contextWindow: 100000,
+      provider: 'anthropic',
+    });
+
+    expect(info.totalCapacity).toBe(200000);
+    expect(info.percentUsed).toBe(25);
+    expect(info.breakdown.Messages).toEqual({ tokens: 50000, percent: 25 });
+  });
+
+  it('allows non-native providers to opt out of metadata via explicit flag', () => {
+    const response = baseResponse({
+      totalTokens: 50000,
+      maxTokens: 1000000,
+      rawMaxTokens: 1000000,
+      percentage: 5,
+      model: 'custom-model',
+      categories: [{ name: 'Messages', tokens: 50000, color: 'blue' }],
+    });
+
+    const info = ContextFetcher.toContextInfo(response, {
+      id: 'custom-model',
+      alias: 'custom-model',
+      contextWindow: 200000,
+      provider: 'custom:test',
+      preferContextWindowMetadata: false,
+    });
+
+    expect(info.totalCapacity).toBe(1000000);
+    expect(info.percentUsed).toBe(5);
+    expect(info.breakdown.Messages).toEqual({ tokens: 50000, percent: 5 });
+  });
+
+  it('uses metadata for non-native providers when SDK reports generic placeholder model', () => {
+    const response = baseResponse({
+      totalTokens: 50000,
+      maxTokens: 1000000,
+      rawMaxTokens: 1000000,
+      percentage: 5,
+      model: 'default',
+      categories: [{ name: 'Messages', tokens: 50000, color: 'blue' }],
+    });
+
+    const info = ContextFetcher.toContextInfo(response, {
+      id: 'glm-5.1',
+      alias: 'glm-5.1',
+      contextWindow: 200000,
+      provider: 'glm',
+    });
+
+    expect(info.totalCapacity).toBe(200000);
+    expect(info.percentUsed).toBe(25);
+    expect(info.breakdown.Messages).toEqual({ tokens: 50000, percent: 25 });
+  });
+
+  it('uses metadata for non-native providers when SDK reports generic tier name', () => {
+    const response = baseResponse({
+      totalTokens: 50000,
+      maxTokens: 1000000,
+      rawMaxTokens: 1000000,
+      percentage: 5,
+      model: 'sonnet',
+      categories: [{ name: 'Messages', tokens: 50000, color: 'blue' }],
+    });
+
+    const info = ContextFetcher.toContextInfo(response, {
+      id: 'kimi-for-coding',
+      alias: 'kimi',
+      contextWindow: 262144,
+      provider: 'kimi',
+    });
+
+    expect(info.totalCapacity).toBe(262144);
+    expect(info.percentUsed).toBe(19);
+    expect(info.breakdown.Messages).toEqual({ tokens: 50000, percent: 19.1 });
+  });
+
+  it('still prefers SDK capacity for native providers when SDK reports generic placeholder', () => {
+    const response = baseResponse({
+      totalTokens: 50000,
+      maxTokens: 200000,
+      rawMaxTokens: 200000,
+      percentage: 25,
+      model: 'default',
+      categories: [{ name: 'Messages', tokens: 50000, color: 'blue' }],
+    });
+
+    const info = ContextFetcher.toContextInfo(response, {
+      id: 'claude-sonnet-4-6',
+      alias: 'sonnet',
+      contextWindow: 100000,
+      provider: 'anthropic',
+    });
+
+    expect(info.totalCapacity).toBe(200000);
+    expect(info.percentUsed).toBe(25);
+    expect(info.breakdown.Messages).toEqual({ tokens: 50000, percent: 25 });
   });
 
   it('caps recomputed percentUsed at 100 when usage exceeds capacity', () => {
@@ -426,5 +811,173 @@ describe('ContextFetcher.fetch', () => {
     const info = await fetcher.fetch(query);
 
     expect(info).toBeNull();
+  });
+
+  describe('capacity mismatch warning', () => {
+    it('warns when SDK effective capacity differs from metadata by >10% for NATIVE providers', async () => {
+      // Simulates a glm-5.2[1m] regression: PP() would return 200k if the
+      // SDK no longer recognises the [1m] suffix. With CLAUDE_CODE_AUTO_COMPACT_WINDOW
+      // env=1M, effective window=min(200k, 1M)=200k. metadata=1M.
+      // Mismatch = (1M - 200k) / 1M = 80% > 10% → warn.
+      const getContextUsage = mock(async () =>
+        baseResponse({
+          totalTokens: 100_000,
+          maxTokens: 200_000,
+          rawMaxTokens: 1_000_000, // raw PP capacity — should NOT be used
+          model: 'glm-5.2[1m]',
+        })
+      );
+      const query = { getContextUsage } as unknown as Query;
+
+      const fetcher = new ContextFetcher('mismatch-session');
+      const warnSpy = spyOn(fetcher.logger, 'warn');
+
+      await fetcher.fetch(query, {
+        id: 'glm-5.2[1m]',
+        contextWindow: 1_000_000,
+        provider: 'glm',
+        preferContextWindowMetadata: true,
+      });
+
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      const [message] = warnSpy.mock.calls[0] as unknown[];
+      expect(String(message)).toContain('Context capacity mismatch');
+      // The warning should reference the effective maxTokens (200k), not raw.
+      expect(String(message)).toContain('reports 200000');
+      expect(String(message)).toContain('1000000');
+    });
+
+    it('does not warn when SDK effective capacity matches metadata within 10%', async () => {
+      const getContextUsage = mock(async () =>
+        baseResponse({
+          totalTokens: 10_000,
+          maxTokens: 210_000,
+          rawMaxTokens: 210_000,
+        })
+      );
+      const query = { getContextUsage } as unknown as Query;
+
+      const fetcher = new ContextFetcher('match-session');
+      const warnSpy = spyOn(fetcher.logger, 'warn');
+
+      await fetcher.fetch(query, {
+        id: 'some-model',
+        contextWindow: 200_000,
+        provider: 'glm',
+      });
+
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not warn when metadata is missing', async () => {
+      const getContextUsage = mock(async () => baseResponse({ maxTokens: 200_000 }));
+      const query = { getContextUsage } as unknown as Query;
+
+      const fetcher = new ContextFetcher('no-metadata-session');
+      const warnSpy = spyOn(fetcher.logger, 'warn');
+
+      await fetcher.fetch(query);
+
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not warn when SDK effective capacity is zero or unavailable', async () => {
+      const getContextUsage = mock(async () =>
+        baseResponse({
+          maxTokens: 0,
+          rawMaxTokens: 1_000_000,
+        })
+      );
+      const query = { getContextUsage } as unknown as Query;
+
+      const fetcher = new ContextFetcher('no-sdk-capacity-session');
+      const warnSpy = spyOn(fetcher.logger, 'warn');
+
+      await fetcher.fetch(query, {
+        id: 'some-model',
+        contextWindow: 1_000_000,
+        provider: 'glm',
+      });
+
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not warn for providers opted out of SDK auto-compact (Kimi)', async () => {
+      // Kimi: PP() caps kimi-for-coding to 200k regardless of metadata.
+      // Mismatch is the expected steady state — skip to avoid log noise.
+      const getContextUsage = mock(async () =>
+        baseResponse({
+          totalTokens: 100_000,
+          maxTokens: 200_000,
+          rawMaxTokens: 200_000,
+          model: 'kimi-for-coding',
+        })
+      );
+      const query = { getContextUsage } as unknown as Query;
+
+      const fetcher = new ContextFetcher('kimi-session');
+      const warnSpy = spyOn(fetcher.logger, 'warn');
+
+      await fetcher.fetch(query, {
+        id: 'kimi-for-coding',
+        contextWindow: 262_144,
+        provider: 'kimi',
+        preferContextWindowMetadata: true,
+      });
+
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not warn for non-NATIVE providers (OpenRouter/Ollama/custom)', async () => {
+      // For these providers, SDK PP() returns 200k for unknown models —
+      // mismatch is the known steady state, not a regression.
+      const getContextUsage = mock(async () =>
+        baseResponse({
+          totalTokens: 100_000,
+          maxTokens: 200_000,
+          rawMaxTokens: 200_000,
+          model: 'deepseek-v4',
+        })
+      );
+      const query = { getContextUsage } as unknown as Query;
+
+      const fetcher = new ContextFetcher('openrouter-session');
+      const warnSpy = spyOn(fetcher.logger, 'warn');
+
+      await fetcher.fetch(query, {
+        id: 'deepseek-v4',
+        contextWindow: 1_000_000,
+        provider: 'openrouter',
+        preferContextWindowMetadata: true,
+      });
+
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not warn for Codex when SDK effective window matches metadata', async () => {
+      // Codex gpt-5.5: SDK reports real model ID with PP=272k (maxTokens).
+      // Comparing effective vs metadata → no mismatch.
+      const getContextUsage = mock(async () =>
+        baseResponse({
+          totalTokens: 100_000,
+          maxTokens: 272_000, // effective
+          rawMaxTokens: 272_000, // raw PP capacity — should NOT trigger warning
+          model: 'gpt-5.5',
+        })
+      );
+      const query = { getContextUsage } as unknown as Query;
+
+      const fetcher = new ContextFetcher('codex-session');
+      const warnSpy = spyOn(fetcher.logger, 'warn');
+
+      await fetcher.fetch(query, {
+        id: 'gpt-5.5',
+        contextWindow: 272_000,
+        provider: 'anthropic-codex',
+        preferContextWindowMetadata: true,
+      });
+
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
   });
 });

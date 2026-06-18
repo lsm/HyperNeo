@@ -12,8 +12,8 @@
  * - State transitions during interrupt
  */
 
-import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type { Session, MessageHub } from '@neokai/shared';
+import type { QueryLike } from './query-like';
 import type { Logger } from '../logger';
 import type { MessageQueue } from './message-queue';
 import type { ProcessingStateManager } from './processing-state-manager';
@@ -29,8 +29,8 @@ export interface InterruptHandlerContext {
   readonly stateManager: ProcessingStateManager;
   readonly logger: Logger;
 
-  // Mutable SDK query state
-  queryObject: Query | null;
+  // Mutable query state
+  queryObject: QueryLike | null;
   queryPromise: Promise<void> | null;
   queryAbortController: AbortController | null;
 }

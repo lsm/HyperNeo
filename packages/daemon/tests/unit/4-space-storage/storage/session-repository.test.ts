@@ -60,6 +60,7 @@ describe('SessionRepository', () => {
 				worktree_branch TEXT,
 				git_branch TEXT,
 				sdk_session_id TEXT,
+				acp_session_id TEXT,
 				sdk_origin_path TEXT,
 				available_commands TEXT,
 				processing_state TEXT,
@@ -136,6 +137,15 @@ describe('SessionRepository', () => {
 
       const retrieved = repository.getSession('session-1');
       expect(retrieved?.sdkSessionId).toBe('sdk-123');
+    });
+
+    it('should create a session with ACP session ID', () => {
+      const session = createDefaultSession({ acpSessionId: 'acp-123' });
+
+      repository.createSession(session);
+
+      const retrieved = repository.getSession('session-1');
+      expect(retrieved?.acpSessionId).toBe('acp-123');
     });
 
     it('should create a session with available commands', () => {
@@ -341,6 +351,77 @@ describe('SessionRepository', () => {
           timestamp: Date.parse('2026-05-20T01:02:03.456Z'),
         },
       ]);
+    });
+
+    it('excludes retracted and superseded messages when rebuilding search rows', () => {
+      db.exec(`
+					CREATE TABLE sdk_messages (
+						id TEXT PRIMARY KEY,
+						session_id TEXT NOT NULL,
+						message_type TEXT NOT NULL,
+						message_subtype TEXT,
+						sdk_message TEXT NOT NULL,
+						timestamp TEXT NOT NULL,
+						send_status TEXT,
+						task_id TEXT
+					);
+					CREATE TABLE message_search_content (kind TEXT, source_id TEXT, message_id TEXT, session_id TEXT, task_id TEXT, space_id TEXT, task_number INTEGER, message_type TEXT, title TEXT, body TEXT, timestamp INTEGER);
+					CREATE VIRTUAL TABLE message_search_fts USING fts5(title, body, content='message_search_content', content_rowid='rowid', detail=column, tokenize = 'unicode61');
+					CREATE TRIGGER message_search_content_ai AFTER INSERT ON message_search_content BEGIN INSERT INTO message_search_fts(rowid, title, body) VALUES (new.rowid, new.title, new.body); END;
+					CREATE TRIGGER message_search_content_ad AFTER DELETE ON message_search_content BEGIN INSERT INTO message_search_fts(message_search_fts, rowid, title, body) VALUES ('delete', old.rowid, old.title, old.body); END;
+					CREATE TRIGGER message_search_content_au AFTER UPDATE OF title, body ON message_search_content BEGIN INSERT INTO message_search_fts(message_search_fts, rowid, title, body) VALUES ('delete', old.rowid, old.title, old.body); INSERT INTO message_search_fts(rowid, title, body) VALUES (new.rowid, new.title, new.body); END
+				`);
+      repository.createSession(createDefaultSession({ status: 'archived' }));
+      const insertMessage = (
+        id: string,
+        messageType: string,
+        messageSubtype: string | null,
+        sdkMessage: Record<string, unknown>
+      ) => {
+        db.prepare(
+          `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status)
+           VALUES (?, 'session-1', ?, ?, ?, '2026-05-20T01:02:03.456Z', 'consumed')`
+        ).run(id, messageType, messageSubtype, JSON.stringify(sdkMessage));
+      };
+      insertMessage('visible', 'user', null, {
+        type: 'user',
+        uuid: 'visible-uuid',
+        message: { role: 'user', content: [{ type: 'text', text: 'visible rebuild marker' }] },
+      });
+      insertMessage('retracted', 'user', null, {
+        type: 'user',
+        uuid: 'retracted-uuid',
+        message: { role: 'user', content: [{ type: 'text', text: 'hidden retracted marker' }] },
+      });
+      insertMessage('fallback', 'system', 'model_refusal_fallback', {
+        type: 'system',
+        subtype: 'model_refusal_fallback',
+        retracted_message_uuids: ['retracted-uuid'],
+      });
+      insertMessage('superseded', 'assistant', null, {
+        type: 'assistant',
+        uuid: 'superseded-uuid',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'hidden superseded marker' }],
+        },
+      });
+      insertMessage('replacement', 'assistant', null, {
+        type: 'assistant',
+        uuid: 'replacement-uuid',
+        supersedes: ['superseded-uuid'],
+        message: { role: 'assistant', content: [{ type: 'text', text: 'replacement marker' }] },
+      });
+
+      repository.updateSession('session-1', { status: 'active' });
+
+      expect(
+        db
+          .prepare(
+            `SELECT msc.source_id FROM message_search_fts JOIN message_search_content msc ON msc.rowid = message_search_fts.rowid WHERE message_search_fts MATCH ? ORDER BY msc.source_id`
+          )
+          .all('marker')
+      ).toEqual([{ source_id: 'replacement' }, { source_id: 'visible' }]);
     });
 
     it('rebuilds message search rows when type or context affects eligibility', () => {
@@ -549,6 +630,24 @@ describe('SessionRepository', () => {
 
       const session = repository.getSession('session-1');
       expect(session?.sdkSessionId).toBeUndefined();
+    });
+
+    it('should update acpSessionId', () => {
+      repository.createSession(createDefaultSession());
+
+      repository.updateSession('session-1', { acpSessionId: 'new-acp-id' });
+
+      const session = repository.getSession('session-1');
+      expect(session?.acpSessionId).toBe('new-acp-id');
+    });
+
+    it('should clear acpSessionId when set to null', () => {
+      repository.createSession(createDefaultSession({ acpSessionId: 'acp-123' }));
+
+      repository.updateSession('session-1', { acpSessionId: null });
+
+      const session = repository.getSession('session-1');
+      expect(session?.acpSessionId).toBeUndefined();
     });
 
     it('should update availableCommands', () => {

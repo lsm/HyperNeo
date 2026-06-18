@@ -62,7 +62,6 @@
  * that continuously yields messages from a queue.
  */
 
-import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type {
   AgentProcessingState,
   MessageContent,
@@ -234,6 +233,8 @@ import {
   type OriginalEnvVars,
   type TrackedAgentProcess,
 } from './query-runner';
+import { AcpQueryRunner } from '../acp/acp-query-runner';
+import type { QueryLike } from './query-like';
 import { InterruptHandler, type InterruptHandlerContext } from './interrupt-handler';
 import { SDKRuntimeConfig, type SDKRuntimeConfigContext } from './sdk-runtime-config';
 import {
@@ -280,7 +281,7 @@ export class AgentSession
   readonly optionsBuilder: QueryOptionsBuilder;
 
   // Extracted handlers (accessible to EventSubscriptionSetupContext)
-  private queryRunner: QueryRunner;
+  private queryRunner: QueryRunner | AcpQueryRunner;
   readonly interruptHandler: InterruptHandler;
   private sdkRuntimeConfig: SDKRuntimeConfig;
   private eventSubscriptionSetup: EventSubscriptionSetup;
@@ -296,8 +297,8 @@ export class AgentSession
   // Rate limit auto-retry watchdog
   private rateLimitWatchdog: RateLimitWatchdog;
 
-  // SDK query state (accessible to handlers via context interfaces)
-  queryObject: Query | null = null;
+  // Query state (accessible to handlers via context interfaces)
+  queryObject: QueryLike | null = null;
   queryPromise: Promise<void> | null = null;
   private _queryGeneration = 0;
   queryAbortController: AbortController | null = null;
@@ -404,8 +405,9 @@ export class AgentSession
     // Initialize QueryOptionsBuilder (handlers take AgentSession context directly)
     this.optionsBuilder = new QueryOptionsBuilder(this);
 
-    // Initialize QueryRunner (handlers take AgentSession context directly)
-    this.queryRunner = new QueryRunner(this);
+    // Initialize query runners (handlers take AgentSession context directly)
+    this.queryRunner =
+      session.config.provider === 'acp' ? new AcpQueryRunner(this) : new QueryRunner(this);
 
     // Initialize InterruptHandler (handlers take AgentSession context directly)
     this.interruptHandler = new InterruptHandler(this);
@@ -689,6 +691,11 @@ export class AgentSession
   // ============================================================================
 
   async startStreamingQuery(): Promise<void> {
+    const wantsAcp = this.session.config.provider === 'acp';
+    const hasAcpRunner = this.queryRunner instanceof AcpQueryRunner;
+    if (wantsAcp !== hasAcpRunner) {
+      this.queryRunner = wantsAcp ? new AcpQueryRunner(this) : new QueryRunner(this);
+    }
     await this.queryRunner.start();
   }
 
@@ -1116,7 +1123,7 @@ export class AgentSession
     return this.contextTracker.getContextInfo();
   }
 
-  getQueryObject(): Query | null {
+  getQueryObject(): QueryLike | null {
     return this.queryObject;
   }
 
@@ -1321,6 +1328,10 @@ export class AgentSession
 
   async onInitSlashCommands(commands: string[]): Promise<void> {
     await this.slashCommandManager.updateFromInit(commands);
+  }
+
+  async onCommandsChanged(commands: string[]): Promise<void> {
+    await this.slashCommandManager.updateFromCommandsChanged(commands);
   }
 
   async onModelsFetched(): Promise<void> {

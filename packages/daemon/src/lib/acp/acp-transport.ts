@@ -1,0 +1,377 @@
+import { spawn } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
+import { kill as processKill } from 'node:process';
+import type {
+  AcpJsonRpcError,
+  AcpJsonRpcNotification,
+  AcpJsonRpcRequest,
+  AcpJsonRpcResponse,
+} from '@neokai/shared';
+import { Logger } from '../logger';
+
+const DEFAULT_REQUEST_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes — long enough for session/prompt turns
+const CLOSE_SIGTERM_TIMEOUT_MS = 5_000;
+
+const logger = new Logger('AcpTransport');
+
+export function buildAcpProcessEnv(env?: Record<string, string | undefined>): NodeJS.ProcessEnv {
+  const mergedEnv: NodeJS.ProcessEnv = { ...process.env };
+  for (const [key, value] of Object.entries(env ?? {})) {
+    if (value === undefined) {
+      delete mergedEnv[key];
+    } else {
+      mergedEnv[key] = value;
+    }
+  }
+  return mergedEnv;
+}
+
+export interface AcpTransportCallbacks {
+  onNotification?: (notification: AcpJsonRpcNotification) => void;
+  onRequest?: (request: AcpJsonRpcRequest) => void;
+  onExit?: (code: number | null, signal: string | null) => void;
+  onStderr?: (data: string) => void;
+  onProcessSpawn?: (process: ChildProcess) => void;
+}
+
+export interface AcpTransportOptions extends AcpTransportCallbacks {
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+  cwd?: string;
+  requestTimeoutMs?: number;
+}
+
+interface PendingRequest {
+  resolve: (response: AcpJsonRpcResponse) => void;
+  reject: (error: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+}
+
+/**
+ * JSON-RPC 2.0 stdio transport for ACP agents.
+ *
+ * Spawns a child process, sends requests/notifications via stdin,
+ * and parses line-delimited JSON-RPC messages from stdout.
+ */
+export class AcpTransport {
+  private process: ChildProcess | null = null;
+  private nextId = 1;
+  private pendingRequests = new Map<number | string, PendingRequest>();
+  private buffer = '';
+  private closed = false;
+  private processExited = false;
+  private closePromise: Promise<void> | null = null;
+  private closeResolve: (() => void) | null = null;
+
+  constructor(private readonly options: AcpTransportOptions) {
+    this.spawnProcess();
+  }
+
+  private spawnProcess(): void {
+    if (this.closed) {
+      return;
+    }
+
+    const { command, args = [], cwd, env } = this.options;
+
+    const proc = spawn(command, args, {
+      cwd,
+      env: buildAcpProcessEnv(env),
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
+      detached: process.platform !== 'win32',
+    });
+
+    this.process = proc;
+    this.options.onProcessSpawn?.(proc);
+
+    proc.stdout?.on('data', (chunk: Buffer) => {
+      this.handleStdoutChunk(chunk);
+    });
+
+    proc.stderr?.on('data', (chunk: Buffer) => {
+      const data = chunk.toString('utf-8');
+      if (this.options.onStderr) {
+        this.options.onStderr(data);
+      } else {
+        logger.warn('ACP agent stderr:', data.trimEnd());
+      }
+    });
+
+    proc.on('exit', (code, signal) => {
+      logger.info(`ACP agent exited (code=${code}, signal=${signal})`);
+      this.process = null;
+      this.processExited = true;
+      if (this.options.onExit) {
+        this.options.onExit(code, signal);
+      }
+    });
+
+    proc.on('close', () => {
+      this.rejectAllPending(new Error('ACP agent process exited'));
+      if (this.closeResolve) {
+        this.closeResolve();
+      }
+    });
+
+    proc.on('error', (err) => {
+      logger.error('ACP agent process error:', err.message);
+      this.process = null;
+      this.processExited = true;
+      this.rejectAllPending(new Error(`ACP agent process error: ${err.message}`));
+      if (this.options.onExit) {
+        this.options.onExit(null, null);
+      }
+      if (this.closeResolve) {
+        this.closeResolve();
+      }
+    });
+  }
+
+  private handleStdoutChunk(chunk: Buffer): void {
+    this.buffer += chunk.toString('utf-8');
+
+    let lineEnd: number;
+    while ((lineEnd = this.buffer.indexOf('\n')) !== -1) {
+      const line = this.buffer.slice(0, lineEnd).trim();
+      this.buffer = this.buffer.slice(lineEnd + 1);
+
+      if (line.length === 0) {
+        continue;
+      }
+
+      try {
+        const message = JSON.parse(line) as AcpJsonRpcResponse | AcpJsonRpcNotification;
+
+        if ('method' in message) {
+          if ('id' in message) {
+            this.handleRequest(message as AcpJsonRpcRequest);
+          } else {
+            this.handleNotification(message as AcpJsonRpcNotification);
+          }
+        } else if ('id' in message) {
+          this.handleResponse(message as AcpJsonRpcResponse);
+        } else {
+          logger.warn('Unrecognized JSON-RPC message:', line);
+        }
+      } catch (err) {
+        logger.warn('Failed to parse JSON-RPC line:', (err as Error).message, line);
+      }
+    }
+  }
+
+  private handleResponse(response: AcpJsonRpcResponse): void {
+    if (response.id == null) {
+      logger.warn('Received response with null id');
+      return;
+    }
+    const pending = this.pendingRequests.get(response.id);
+    if (!pending) {
+      logger.warn('Received response for unknown request ID:', response.id);
+      return;
+    }
+
+    clearTimeout(pending.timer);
+    this.pendingRequests.delete(response.id);
+    pending.resolve(response);
+  }
+
+  private handleNotification(notification: AcpJsonRpcNotification): void {
+    if (this.options.onNotification) {
+      try {
+        this.options.onNotification(notification);
+      } catch (err) {
+        logger.error('Notification handler error:', (err as Error).message);
+      }
+    }
+  }
+
+  private handleRequest(request: AcpJsonRpcRequest): void {
+    if (this.options.onRequest) {
+      try {
+        const result = this.options.onRequest(request) as unknown;
+        if (result && typeof (result as Promise<unknown>).then === 'function') {
+          (result as Promise<unknown>).catch((err) => {
+            logger.error('Inbound request handler error:', (err as Error).message);
+            this.sendErrorResponse(request.id, { code: -32603, message: 'Internal error' });
+          });
+        }
+      } catch (err) {
+        logger.error('Inbound request handler error:', (err as Error).message);
+        this.sendErrorResponse(request.id, { code: -32603, message: 'Internal error' });
+      }
+    } else {
+      logger.warn('Received inbound request but no onRequest handler:', request.method);
+      this.sendErrorResponse(request.id, { code: -32601, message: 'Method not found' });
+    }
+  }
+
+  private rejectAllPending(error: Error): void {
+    for (const pending of this.pendingRequests.values()) {
+      clearTimeout(pending.timer);
+      pending.reject(error);
+    }
+    this.pendingRequests.clear();
+  }
+
+  /**
+   * Send a JSON-RPC request and wait for the response.
+   */
+  sendRequest(method: string, params?: unknown): Promise<AcpJsonRpcResponse> {
+    if (this.closed) {
+      return Promise.reject(new Error('Transport is closed'));
+    }
+
+    if (!this.process || this.process.killed) {
+      return Promise.reject(new Error('ACP agent process is not running'));
+    }
+
+    const id = this.nextId++;
+    const request: AcpJsonRpcRequest = {
+      jsonrpc: '2.0',
+      id,
+      method,
+      params,
+    };
+
+    return new Promise((resolve, reject) => {
+      const timeoutMs = this.options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+      const timer = setTimeout(() => {
+        this.pendingRequests.delete(id);
+        reject(new Error(`Request timed out after ${timeoutMs}ms: ${method}`));
+      }, timeoutMs);
+
+      this.pendingRequests.set(id, { resolve, reject, timer });
+
+      try {
+        this.process!.stdin!.write(JSON.stringify(request) + '\n');
+      } catch (err) {
+        clearTimeout(timer);
+        this.pendingRequests.delete(id);
+        reject(new Error(`Failed to write request: ${(err as Error).message}`));
+      }
+    });
+  }
+
+  /**
+   * Send a JSON-RPC notification (fire-and-forget).
+   */
+  sendNotification(method: string, params?: unknown): void {
+    if (this.closed || !this.process || this.process.killed) {
+      logger.warn('Cannot send notification: transport is closed or process is dead');
+      return;
+    }
+
+    const notification: AcpJsonRpcNotification = {
+      jsonrpc: '2.0',
+      method,
+      params,
+    };
+
+    try {
+      this.process.stdin!.write(JSON.stringify(notification) + '\n');
+    } catch (err) {
+      logger.error('Failed to write notification:', (err as Error).message);
+    }
+  }
+
+  /**
+   * Send a JSON-RPC response for an inbound request.
+   */
+  sendResponse(id: number | string | null, result: unknown): void {
+    if (this.closed || !this.process || this.processExited) {
+      logger.warn('Cannot send response: transport is closed or process has exited');
+      return;
+    }
+
+    const response: AcpJsonRpcResponse = {
+      jsonrpc: '2.0',
+      id,
+      result,
+    };
+
+    try {
+      this.process.stdin!.write(JSON.stringify(response) + '\n');
+    } catch (err) {
+      logger.error('Failed to write response:', (err as Error).message);
+    }
+  }
+
+  /**
+   * Send a JSON-RPC error response for an inbound request.
+   */
+  sendErrorResponse(id: number | string | null, error: AcpJsonRpcError): void {
+    if (this.closed || !this.process || this.processExited) {
+      logger.warn('Cannot send error response: transport is closed or process has exited');
+      return;
+    }
+
+    const response: AcpJsonRpcResponse = {
+      jsonrpc: '2.0',
+      id,
+      error,
+    };
+
+    try {
+      this.process.stdin!.write(JSON.stringify(response) + '\n');
+    } catch (err) {
+      logger.error('Failed to write error response:', (err as Error).message);
+    }
+  }
+
+  private killProcess(signal: NodeJS.Signals): void {
+    const proc = this.process;
+    if (!proc) return;
+
+    if (process.platform !== 'win32' && proc.pid != null) {
+      try {
+        processKill(-proc.pid, signal);
+        return;
+      } catch {
+        // Fall back to single-process kill
+      }
+    }
+    proc.kill(signal);
+  }
+
+  /**
+   * Close the transport.
+   * Sends SIGTERM to the process group, waits 5s, then SIGKILL if still running.
+   */
+  close(): Promise<void> {
+    if (this.closed) {
+      return this.closePromise ?? Promise.resolve();
+    }
+
+    this.closed = true;
+    this.rejectAllPending(new Error('Transport is closing'));
+
+    this.closePromise = new Promise((resolve) => {
+      this.closeResolve = resolve;
+
+      if (!this.process || this.processExited) {
+        resolve();
+        return;
+      }
+
+      // SIGTERM → wait → SIGKILL (process group on POSIX)
+      this.killProcess('SIGTERM');
+
+      const killTimer = setTimeout(() => {
+        if (!this.processExited) {
+          logger.warn('ACP agent did not exit after SIGTERM, sending SIGKILL');
+          this.killProcess('SIGKILL');
+        }
+      }, CLOSE_SIGTERM_TIMEOUT_MS);
+
+      // Exit/error handlers in spawnProcess() already call closeResolve.
+      // Clean up the timer when they fire.
+      const cleanup = () => clearTimeout(killTimer);
+      this.process.once('exit', cleanup);
+      this.process.once('error', cleanup);
+    });
+
+    return this.closePromise;
+  }
+}

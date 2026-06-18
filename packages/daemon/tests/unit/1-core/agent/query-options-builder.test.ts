@@ -107,10 +107,23 @@ describe('QueryOptionsBuilder', () => {
       expect(options.allowDangerouslySkipPermissions).toBe(true);
     });
 
-    it('should include fallbackModel when configured', async () => {
+    it('should include fallbackModel and opt into refusal fallback dialogs when configured', async () => {
       mockSession.config.fallbackModel = 'haiku';
       const options = await builder.build();
       expect(options.fallbackModel).toBe('haiku');
+      expect(options.supportedDialogKinds).toEqual(['refusal_fallback_prompt']);
+      expect(
+        await options.onUserDialog?.(
+          { dialogKind: 'refusal_fallback_prompt', payload: {} },
+          { signal: new AbortController().signal }
+        )
+      ).toEqual({ behavior: 'completed', result: { continue: true } });
+      expect(
+        await options.onUserDialog?.(
+          { dialogKind: 'unknown', payload: {} },
+          { signal: new AbortController().signal }
+        )
+      ).toEqual({ behavior: 'cancelled' });
     });
 
     it('should include agents when configured', async () => {
@@ -149,7 +162,70 @@ describe('QueryOptionsBuilder', () => {
     it('should include env when configured', async () => {
       mockSession.config.env = { MY_VAR: 'value' };
       const options = await builder.build();
-      expect(options.env).toEqual({ MY_VAR: 'value' });
+      expect(options.env).toMatchObject({
+        PATH: process.env.PATH,
+        HOME: process.env.HOME,
+        MY_VAR: 'value',
+      });
+    });
+
+    it('should filter user auto-compact env overrides so provider cleanup owns the SDK env', async () => {
+      mockSettingsManager.getGlobalSettings = mock(() => ({
+        env: { CLAUDE_CODE_AUTO_COMPACT_WINDOW: '200000', KEEP_GLOBAL: 'global' },
+        settingSources: ['user', 'project', 'local'],
+      }));
+      mockSession.config.env = {
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW: '262144',
+        KEEP_SESSION: 'session',
+      };
+
+      const options = await builder.build();
+
+      expect(options.env).toMatchObject({
+        PATH: process.env.PATH,
+        HOME: process.env.HOME,
+        KEEP_GLOBAL: 'global',
+        KEEP_SESSION: 'session',
+      });
+      expect(options.env).not.toHaveProperty('CLAUDE_CODE_AUTO_COMPACT_WINDOW');
+    });
+
+    it('should preserve env-only Anthropic auth tokens for native provider', async () => {
+      const previousAuthToken = process.env.ANTHROPIC_AUTH_TOKEN;
+      process.env.ANTHROPIC_AUTH_TOKEN = 'sk-ant-oat-env-only-token';
+      try {
+        const options = await builder.build();
+        expect(options.env?.ANTHROPIC_AUTH_TOKEN).toBe('sk-ant-oat-env-only-token');
+      } finally {
+        if (previousAuthToken === undefined) {
+          delete process.env.ANTHROPIC_AUTH_TOKEN;
+        } else {
+          process.env.ANTHROPIC_AUTH_TOKEN = previousAuthToken;
+        }
+      }
+    });
+
+    it('should filter provider-managed auto-compact env overrides for bridge providers', async () => {
+      mockSettingsManager.getGlobalSettings = mock(() => ({
+        env: { CLAUDE_CODE_AUTO_COMPACT_WINDOW: '200000', KEEP_GLOBAL: 'global' },
+        settingSources: ['user', 'project', 'local'],
+      }));
+      mockSession.config.provider = 'anthropic-codex';
+      mockSession.config.model = 'gpt-5.3-codex';
+      mockSession.config.env = {
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW: '262144',
+        KEEP_SESSION: 'session',
+      };
+
+      const options = await builder.build();
+
+      expect(options.env).toMatchObject({
+        PATH: process.env.PATH,
+        HOME: process.env.HOME,
+        KEEP_GLOBAL: 'global',
+        KEEP_SESSION: 'session',
+      });
+      expect(options.env).not.toHaveProperty('CLAUDE_CODE_AUTO_COMPACT_WINDOW');
     });
 
     it('should not override SDK auto-compaction settings for native anthropic provider', async () => {
@@ -168,69 +244,68 @@ describe('QueryOptionsBuilder', () => {
   });
 
   describe('provider settings', () => {
-    it('should use the actual context window for full-size Codex models', () => {
-      expect(buildProviderSettings('anthropic-codex', 'gpt-5.5')).toEqual({
-        autoCompactWindow: 272_000,
-      });
-      expect(buildProviderSettings('anthropic-codex', 'gpt-5.4')).toEqual({
-        autoCompactWindow: 272_000,
-      });
-    });
-
-    it('should use the actual context window for mini Codex models', () => {
-      expect(buildProviderSettings('anthropic-codex', 'gpt-5.4-mini')).toEqual({
-        autoCompactWindow: 128_000,
-      });
-      expect(buildProviderSettings('anthropic-codex', 'gpt-5.1-codex-mini')).toEqual({
-        autoCompactWindow: 128_000,
-      });
-    });
-
-    it('should resolve Codex aliases before applying SDK auto-compaction settings', () => {
-      expect(buildProviderSettings('anthropic-codex', 'codex-latest')).toEqual({
-        autoCompactWindow: 272_000,
-      });
-      expect(buildProviderSettings('anthropic-codex', 'codex-mini')).toEqual({
-        autoCompactWindow: 128_000,
-      });
-    });
-
-    it('should fail explicitly when Codex model metadata is unknown', () => {
-      expect(() => buildProviderSettings('anthropic-codex', 'gpt-unknown')).toThrow(
-        'Unknown Codex model auto-compact window: gpt-unknown'
-      );
-    });
-
     it('should not override SDK auto-compaction settings for native anthropic provider', () => {
       expect(buildProviderSettings('anthropic')).toBeUndefined();
     });
 
-    it('should not override SDK auto-compaction settings when no contextWindow is known', () => {
-      expect(buildProviderSettings('glm', 'glm-5')).toBeUndefined();
-      expect(buildProviderSettings('openrouter', 'deepseek-v4')).toBeUndefined();
+    it('should not override SDK auto-compaction for anthropic-codex (handled natively)', () => {
+      // anthropic-codex routes through recognised Anthropic model IDs whose
+      // PP() capacities cover the real Codex windows, so SDK auto-compact is
+      // trusted. Belt-and-suspenders with CLAUDE_CODE_AUTO_COMPACT_WINDOW env.
+      expect(buildProviderSettings('anthropic-codex')).toBeUndefined();
+      expect(buildProviderSettings('anthropic-codex', 272_000)).toBeUndefined();
     });
 
-    it('should set autoCompactWindow for non-native providers when contextWindow is known', () => {
-      expect(buildProviderSettings('openrouter', 'deepseek-v4', 1_000_000)).toEqual({
+    it('should not override SDK auto-compaction for GLM (env var + [1m] suffix configures SDK correctly)', () => {
+      // GLM sets CLAUDE_CODE_AUTO_COMPACT_WINDOW per model in buildSdkConfig,
+      // and the [1m] suffix on glm-5.2[1m] is recognised by PP(). The SDK's
+      // effective window matches metadata, so SDK auto-compact fires at the
+      // correct threshold. If [1m] recognition regresses, the context-fetcher
+      // capacity-mismatch warning surfaces it. We must NOT enable NeoKai
+      // fallback here — it would fire at 850k (reserveBasedThreshold(1M)) and
+      // preempt the SDK's correct ~987k trigger, cutting off 137k of the
+      // advertised 1M context.
+      expect(buildProviderSettings('glm')).toBeUndefined();
+      expect(buildProviderSettings('glm', 1_000_000)).toBeUndefined();
+    });
+
+    it('should enable SDK auto-compaction for non-native providers with context windows', () => {
+      expect(buildProviderSettings('openrouter', 1_000_000)).toEqual({
+        autoCompactEnabled: true,
         autoCompactWindow: 1_000_000,
       });
-      expect(buildProviderSettings('glm', 'glm-5', 128_000)).toEqual({
-        autoCompactWindow: 128_000,
+      expect(buildProviderSettings('ollama', 32_000)).toEqual({
+        autoCompactEnabled: true,
+        autoCompactWindow: 32_000,
       });
-      expect(buildProviderSettings('ollama', 'llama3', 128_000)).toEqual({
-        autoCompactWindow: 128_000,
+    });
+
+    it('should disable SDK auto-compaction when context window is unavailable', () => {
+      expect(buildProviderSettings('openrouter')).toEqual({
+        autoCompactEnabled: false,
+      });
+    });
+
+    it('should disable SDK auto-compaction for Kimi (PP() caps at 200k, NeoKai fallback instead)', () => {
+      // The SDK's PP() returns 200k for 'kimi-for-coding'. Even with the
+      // autoCompactWindow setting, the SDK's effective window would be
+      // min(200k, 262k) = 200k, firing compaction at ~187k instead of ~249k.
+      // We disable SDK auto-compact entirely and let NeoKai's fallback
+      // (sdk-message-handler) trigger compaction at the correct threshold.
+      expect(buildProviderSettings('kimi')).toEqual({
+        autoCompactEnabled: false,
+      });
+      expect(buildProviderSettings('kimi', 262_144)).toEqual({
+        autoCompactEnabled: false,
       });
     });
 
     it('should still return undefined for anthropic-copilot (native Anthropic API)', () => {
-      // anthropic-copilot routes to Anthropic API — SDK knows the context window
-      expect(
-        buildProviderSettings('anthropic-copilot', 'claude-sonnet-4.6', 200_000)
-      ).toBeUndefined();
+      expect(buildProviderSettings('anthropic-copilot')).toBeUndefined();
     });
   });
 
-  describe('auto-compact window via build()', () => {
+  describe('auto-compact settings via build()', () => {
     function registerOpenRouterProvider(): void {
       resetProviderRegistry();
       const registry = getProviderRegistry();
@@ -256,7 +331,7 @@ describe('QueryOptionsBuilder', () => {
       resetProviderRegistry();
     });
 
-    it('should set autoCompactWindow for OpenRouter 1M context model', async () => {
+    it('should enable SDK auto-compaction for OpenRouter models with their context window', async () => {
       registerOpenRouterProvider();
       setModelsCache(
         new Map([
@@ -277,45 +352,26 @@ describe('QueryOptionsBuilder', () => {
       mockSession.config.provider = 'openrouter';
       mockSession.config.model = 'deepseek-v4';
       const options = await builder.build();
-      expect(options.settings).toEqual({ autoCompactWindow: 1_000_000 });
+      expect(options.settings).toEqual({
+        autoCompactEnabled: true,
+        autoCompactWindow: 1_000_000,
+      });
     });
 
-    it('should set autoCompactWindow for OpenRouter model with 128k context window', async () => {
-      registerOpenRouterProvider();
-      setModelsCache(
-        new Map([
-          [
-            'global',
-            [
-              {
-                id: 'qwen-2.5-72b',
-                name: 'Qwen 2.5 72B',
-                provider: 'openrouter',
-                contextWindow: 128_000,
-                available: true,
-              },
-            ],
-          ],
-        ])
-      );
-      mockSession.config.provider = 'openrouter';
-      mockSession.config.model = 'qwen-2.5-72b';
-      const options = await builder.build();
-      expect(options.settings).toEqual({ autoCompactWindow: 128_000 });
-    });
-
-    it('should leave settings undefined for native anthropic provider', async () => {
-      // Default mockSession uses anthropic provider
-      const options = await builder.build();
-      expect(options.settings).toBeUndefined();
-    });
-
-    it('should leave settings undefined when model context window is unknown', async () => {
+    it('should disable SDK auto-compaction for OpenRouter when model is unknown', async () => {
       registerOpenRouterProvider();
       // Empty cache — model not found
       setModelsCache(new Map());
       mockSession.config.provider = 'openrouter';
       mockSession.config.model = 'unknown-model';
+      const options = await builder.build();
+      expect(options.settings).toEqual({
+        autoCompactEnabled: false,
+      });
+    });
+
+    it('should leave settings undefined for native anthropic provider', async () => {
+      // Default mockSession uses anthropic provider
       const options = await builder.build();
       expect(options.settings).toBeUndefined();
     });
@@ -722,6 +778,7 @@ describe('QueryOptionsBuilder', () => {
         'WebSearch',
         'ToolSearch',
         'AskUserQuestion',
+        'Agent',
         'Task',
         'TaskOutput',
         'TaskStop',
@@ -736,6 +793,7 @@ describe('QueryOptionsBuilder', () => {
           'WebSearch',
           'ToolSearch',
           'AskUserQuestion',
+          'Agent',
           'Task',
           'TaskOutput',
           'TaskStop',
@@ -1380,11 +1438,22 @@ describe('QueryOptionsBuilder', () => {
           'general'
         );
         expect(Array.isArray(result)).toBe(true);
+        expect(result).toContain('Agent');
         expect(result).toContain('Task');
         expect(result).toContain('TaskOutput');
         expect(result).toContain('TaskStop');
+        expect(result).toContain('TaskCreate');
+        expect(result).toContain('TaskGet');
+        expect(result).toContain('TaskUpdate');
+        expect(result).toContain('TaskList');
         expect(result).toContain('Read');
         expect(result).toContain('Write');
+        expect(result).toContain('REPL');
+        expect(result).toContain('Workflow');
+        expect(result).toContain('CronCreate');
+        expect(result).toContain('Artifact');
+        expect(result).toContain('Monitor');
+        expect(result).toContain('ShowOnboardingRolePicker');
       });
 
       it('expands undefined to full array for glm provider', () => {
@@ -1395,6 +1464,7 @@ describe('QueryOptionsBuilder', () => {
           'general'
         );
         expect(Array.isArray(result)).toBe(true);
+        expect(result).toContain('Agent');
         expect(result).toContain('Task');
       });
 
@@ -1405,17 +1475,17 @@ describe('QueryOptionsBuilder', () => {
           'anthropic-codex',
           'general'
         );
-        expect(result).toEqual(['Read', 'Write', 'Task', 'TaskOutput', 'TaskStop']);
+        expect(result).toEqual(['Read', 'Write', 'Agent', 'Task', 'TaskOutput', 'TaskStop']);
       });
 
       it('does not duplicate existing agent tools in explicit array for non-native providers', () => {
         const result = ensureAgentTools(
-          ['Read', 'Task', 'TaskOutput', 'TaskStop'],
+          ['Read', 'Agent', 'Task', 'TaskOutput', 'TaskStop'],
           { Coordinator: { description: 'c', prompt: 'p' } },
           'anthropic-codex',
           'general'
         );
-        expect(result).toEqual(['Read', 'Task', 'TaskOutput', 'TaskStop']);
+        expect(result).toEqual(['Read', 'Agent', 'Task', 'TaskOutput', 'TaskStop']);
       });
 
       it('preserves explicit array unchanged for Anthropic provider', () => {
@@ -1527,7 +1597,15 @@ describe('QueryOptionsBuilder', () => {
         const codexBuilder = new QueryOptionsBuilder(mockContext);
         const options = await codexBuilder.build();
 
-        expect(options.tools).toEqual(['Read', 'Write', 'Edit', 'Task', 'TaskOutput', 'TaskStop']);
+        expect(options.tools).toEqual([
+          'Read',
+          'Write',
+          'Edit',
+          'Agent',
+          'Task',
+          'TaskOutput',
+          'TaskStop',
+        ]);
       });
     });
   });

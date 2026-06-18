@@ -52,6 +52,7 @@ import {
   type AnthropicMessagesBridgeConfig,
   type AnthropicMessagesBridgeServer,
 } from './anthropic-messages-bridge/server.js';
+import { DEFAULT_PROBE_TIMEOUT_MS, normalizeBaseUrlForProbe } from './shared/credential-probe.js';
 import {
   createOllamaNativeBridgeServer,
   type OllamaNativeBridgeConfig,
@@ -185,7 +186,74 @@ export class CustomEndpointProvider implements Provider {
     return Boolean(this.config.baseUrl);
   }
 
+  /**
+   * Probe the configured endpoint with a lightweight GET request to verify
+   * reachability and credential validity. Path is chosen by endpoint type to
+   * mirror `testCustomEndpoint()` in the web UI so daemon-side health checks
+   * (`providers.test`, `providers.healthCheck`) and the UI "Test" button
+   * agree on what "healthy" means.
+   *
+   * @throws {Error} when the upstream is unreachable, returns non-2xx, or the
+   *   request times out.
+   */
+  private async probeEndpoint(): Promise<void> {
+    const fetchImpl = this.options.bridgeFetchImpl ?? fetch;
+    const baseUrl = normalizeBaseUrlForProbe(this.config.baseUrl);
+    const probePath =
+      this.type === 'ollama-native'
+        ? '/api/tags'
+        : this.type === 'anthropic-messages'
+          ? '/v1/models'
+          : '/models';
+    const url = `${baseUrl}${probePath}`;
+
+    const headers: Record<string, string> = {};
+    if (this.config.apiKey) {
+      // For anthropic-messages endpoints, also send `x-api-key` so
+      // Anthropic-native upstreams that enforce the x-api-key header
+      // (rather than Bearer) accept the probe. Mirrors
+      // anthropic-messages-bridge/server.ts:206-211 and
+      // shared/credential-probe.ts:85-86. OpenAI Chat and Ollama variants
+      // ignore the extra header.
+      if (this.type === 'anthropic-messages') {
+        headers['x-api-key'] = this.config.apiKey;
+      }
+      headers.authorization = `Bearer ${this.config.apiKey}`;
+    }
+    if (this.config.headers) Object.assign(headers, this.config.headers);
+
+    let response: Response;
+    try {
+      response = await fetchImpl(url, {
+        method: 'GET',
+        headers,
+        signal: AbortSignal.timeout(DEFAULT_PROBE_TIMEOUT_MS),
+      });
+    } catch (err) {
+      if (err instanceof Error && err.name === 'TimeoutError') {
+        throw new Error(
+          `Custom endpoint '${this.config.id}' probe timed out after ${DEFAULT_PROBE_TIMEOUT_MS}ms`
+        );
+      }
+      const detail = err instanceof Error ? err.message : String(err);
+      throw new Error(`Custom endpoint '${this.config.id}' probe failed: ${detail}`);
+    }
+
+    if (response.status === 401 || response.status === 403) {
+      throw new Error(
+        `Custom endpoint '${this.config.id}' API key rejected (HTTP ${response.status})`
+      );
+    }
+    if (!response.ok) {
+      throw new Error(`Custom endpoint '${this.config.id}' probe failed (HTTP ${response.status})`);
+    }
+  }
+
   async getModels(): Promise<ModelInfo[]> {
+    // Verify the endpoint is reachable with the stored credentials before
+    // returning the model list. Aligns daemon-side health checks with the
+    // UI's "Test" button (testCustomEndpoint in CustomEndpointEditor.tsx).
+    await this.probeEndpoint();
     return this.config.models.map((model) => this.toModelInfo(model));
   }
 
@@ -308,6 +376,7 @@ export class CustomEndpointProvider implements Provider {
       params.caps.vision,
       params.caps.thinking,
       params.caps.streamUsage,
+      JSON.stringify(params.caps.chatTemplateKwargs ?? {}),
     ].join(' ');
     const existing = this.bridges.get(key);
     if (existing) return existing;
@@ -366,6 +435,7 @@ export class CustomEndpointProvider implements Provider {
           thinkingSupported: caps.thinking,
           streamUsageSupported: caps.streamUsage,
           modelContextWindow: caps.maxContextTokens,
+          ...(caps.chatTemplateKwargs ? { chatTemplateKwargs: caps.chatTemplateKwargs } : {}),
           ...(fetchImpl ? { fetchImpl } : {}),
         });
       }

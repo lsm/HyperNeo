@@ -390,9 +390,23 @@ describe('preset agent exact definitions', () => {
 
   // --- Exact tool sets ---
 
-  const EXPECTED_CODER_TOOLS = KNOWN_TOOLS.filter(
-    (t) => !['Task', 'TaskOutput', 'TaskStop'].includes(t)
-  ) as unknown as string[];
+  const EXPECTED_CODER_TOOLS = [
+    'Read',
+    'Write',
+    'Edit',
+    'Bash',
+    'Grep',
+    'Glob',
+    'WebFetch',
+    'WebSearch',
+    'NotebookEdit',
+    'TodoWrite',
+    'AskUserQuestion',
+    'EnterPlanMode',
+    'ExitPlanMode',
+    'Skill',
+    'ToolSearch',
+  ];
 
   const EXPECTED_READONLY_TOOLS = [
     'Read',
@@ -562,9 +576,23 @@ describe('preset agent exact definitions', () => {
 // ---------------------------------------------------------------------------
 
 describe('PRESET_AGENT_TOOLS export', () => {
-  const EXPECTED_CODER_TOOLS = KNOWN_TOOLS.filter(
-    (t) => !['Task', 'TaskOutput', 'TaskStop'].includes(t)
-  ) as unknown as string[];
+  const EXPECTED_CODER_TOOLS = [
+    'Read',
+    'Write',
+    'Edit',
+    'Bash',
+    'Grep',
+    'Glob',
+    'WebFetch',
+    'WebSearch',
+    'NotebookEdit',
+    'TodoWrite',
+    'AskUserQuestion',
+    'EnterPlanMode',
+    'ExitPlanMode',
+    'Skill',
+    'ToolSearch',
+  ];
 
   const EXPECTED_READONLY_TOOLS = [
     'Read',

@@ -357,6 +357,19 @@ class SpaceStore {
    *  or deleted in place. */
   readonly workflowVersions = signal<Map<string, number>>(new Map());
 
+  private upsertLongHorizonAgent(agent: SpaceLongHorizonAgent): void {
+    const idx = this.longHorizonAgents.value.findIndex((current) => current.id === agent.id);
+    if (idx >= 0) {
+      this.longHorizonAgents.value = [
+        ...this.longHorizonAgents.value.slice(0, idx),
+        agent,
+        ...this.longHorizonAgents.value.slice(idx + 1),
+      ];
+    } else {
+      this.longHorizonAgents.value = [...this.longHorizonAgents.value, agent];
+    }
+  }
+
   private upsertTaskOnePerRun(tasks: SpaceTask[], task: SpaceTask): SpaceTask[] {
     const withoutSameId = tasks.filter((current) => current.id !== task.id);
     if (!task.workflowRunId) {
@@ -854,6 +867,44 @@ class SpaceStore {
       }
     });
     this.cleanupFunctions.push(unsubAgentDeleted);
+
+    // --- spaceLongHorizonAgent.created ---
+    const unsubLongHorizonAgentCreated = hub.onEvent<{
+      sessionId: string;
+      spaceId: string;
+      agent: SpaceLongHorizonAgent;
+    }>('spaceLongHorizonAgent.created', (event) => {
+      if (event.spaceId === spaceId) {
+        this.upsertLongHorizonAgent(event.agent);
+      }
+    });
+    this.cleanupFunctions.push(unsubLongHorizonAgentCreated);
+
+    // --- spaceLongHorizonAgent.updated ---
+    const unsubLongHorizonAgentUpdated = hub.onEvent<{
+      sessionId: string;
+      spaceId: string;
+      agent: SpaceLongHorizonAgent;
+    }>('spaceLongHorizonAgent.updated', (event) => {
+      if (event.spaceId === spaceId) {
+        this.upsertLongHorizonAgent(event.agent);
+      }
+    });
+    this.cleanupFunctions.push(unsubLongHorizonAgentUpdated);
+
+    // --- spaceLongHorizonAgent.deleted ---
+    const unsubLongHorizonAgentDeleted = hub.onEvent<{
+      sessionId: string;
+      spaceId: string;
+      agentId: string;
+    }>('spaceLongHorizonAgent.deleted', (event) => {
+      if (event.spaceId === spaceId) {
+        this.longHorizonAgents.value = this.longHorizonAgents.value.filter(
+          (agent) => agent.id !== event.agentId
+        );
+      }
+    });
+    this.cleanupFunctions.push(unsubLongHorizonAgentDeleted);
 
     // --- spaceWorkflow.created ---
     const unsubWorkflowCreated = hub.onEvent<{
@@ -2117,6 +2168,82 @@ class SpaceStore {
    * Fetch a paginated snapshot of task-thread messages.
    */
   // ========================================
+  // Hook Methods
+  // ========================================
+
+  /**
+   * List all hook states for a workflow run.
+   */
+  async listHookStates(
+    runId: string
+  ): Promise<import('@neokai/shared').WorkflowHookStateSnapshot[]> {
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) throw new Error('Not connected');
+
+    const result = await hub.request<{
+      hookStates: import('@neokai/shared').WorkflowHookStateSnapshot[];
+      hooks: import('@neokai/shared').WorkflowHook[];
+    }>('spaceWorkflowRun.listHookStates', { runId });
+    return result?.hookStates ?? [];
+  }
+
+  /**
+   * Approve or reject a hook awaiting human sign-off.
+   */
+  async approveHook(
+    runId: string,
+    hookId: string,
+    approved: boolean,
+    reason?: string | null
+  ): Promise<import('@neokai/shared').WorkflowHookStateSnapshot> {
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) throw new Error('Not connected');
+
+    const result = await hub.request<{
+      hookState: import('@neokai/shared').WorkflowHookStateSnapshot;
+    }>('spaceWorkflowRun.approveHook', { runId, hookId, approved, reason: reason ?? null });
+    return (
+      result?.hookState ?? {
+        runId,
+        hookId,
+        version: 0,
+        localState: {},
+        retryCount: 0,
+        createdAt: 0,
+        updatedAt: 0,
+        voteMaps: {},
+      }
+    );
+  }
+
+  /**
+   * Retry a retryable_block hook by clearing its backoff state.
+   */
+  async retryHook(
+    runId: string,
+    hookId: string
+  ): Promise<import('@neokai/shared').WorkflowHookStateSnapshot> {
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) throw new Error('Not connected');
+
+    const result = await hub.request<{
+      hookState: import('@neokai/shared').WorkflowHookStateSnapshot;
+    }>('spaceWorkflowRun.retryHook', { runId, hookId });
+    return (
+      result?.hookState ?? {
+        runId,
+        hookId,
+        version: 0,
+        localState: {},
+        retryCount: 0,
+        createdAt: 0,
+        updatedAt: 0,
+        voteMaps: {},
+      }
+    );
+  }
+
+  // ========================================
   // Agent Methods
   // ========================================
 
@@ -2226,7 +2353,7 @@ class SpaceStore {
       'spaceLongHorizonAgent.create',
       { spaceId, ...params }
     );
-    this.longHorizonAgents.value = [...this.longHorizonAgents.value, agent];
+    this.upsertLongHorizonAgent(agent);
     return agent;
   }
 

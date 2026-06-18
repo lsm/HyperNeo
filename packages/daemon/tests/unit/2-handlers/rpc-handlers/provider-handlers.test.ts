@@ -9,6 +9,7 @@ import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/
 import { resetProviderFactory } from '../../../../src/lib/providers/factory';
 import type { ProviderRepository } from '../../../../src/storage/repositories/provider-repository';
 import type { ProviderCredentialManager } from '../../../../src/lib/credentials/provider-credential-manager';
+import { KeychainUnavailableError } from '../../../../src/lib/credentials/credential-store';
 import type { ProviderRecord, CreateProviderParams } from '@neokai/shared';
 import type { Provider } from '@neokai/shared/provider';
 import type {
@@ -201,6 +202,60 @@ describe('Provider RPC handlers', () => {
       expect(result.success).toBe(true);
       expect(result.provider.providerId).toBe('openrouter');
       expect(creds.storeApiKey).toHaveBeenCalledWith('openrouter', 'sk-or-test');
+    });
+
+    it('does not store custom_endpoint credentials in the credential store', async () => {
+      // Custom endpoints keep auth inline in customEndpointConfigJson. The
+      // credential store must be skipped so a locked macOS Keychain cannot
+      // block creating the endpoint.
+      const handlers = setup();
+      const result = (await handlers.get('providers.create')!(
+        {
+          params: {
+            providerId: 'custom:lm',
+            displayName: 'LM Studio',
+            kind: 'custom_endpoint',
+            authType: 'api_key',
+          },
+          credentials: { apiKey: 'inline-key' },
+        },
+        {}
+      )) as { success: boolean; provider: ProviderRecord };
+
+      expect(result.success).toBe(true);
+      expect(creds.storeApiKey).not.toHaveBeenCalled();
+    });
+
+    it('rolls back the provider row and surfaces keychain guidance when storeApiKey throws KeychainUnavailableError', async () => {
+      // Built-in providers persist secrets in the macOS Keychain. If the
+      // Keychain is locked, the create must (a) reject with an actionable
+      // message the UI can toast, (b) remove the just-inserted provider row
+      // so retries don't see 'already exists', and (c) skip the
+      // providers.changed broadcast.
+      creds.storeApiKey = mock(async () => {
+        throw new KeychainUnavailableError('User interaction is not allowed.');
+      });
+      const handlers = setup();
+
+      await expect(
+        handlers.get('providers.create')!(
+          {
+            params: {
+              providerId: 'openrouter',
+              displayName: 'OpenRouter',
+              kind: 'built_in',
+              authType: 'api_key',
+            },
+            credentials: { apiKey: 'sk-or-test' },
+          },
+          {}
+        )
+      ).rejects.toThrow('macOS Keychain is locked or unavailable');
+
+      // Compensating delete happened.
+      expect(repo.listProviders()).toEqual([]);
+      // Broadcast skipped because nothing changed from the user's perspective.
+      expect(eventBus.publishAsync).not.toHaveBeenCalled();
     });
 
     it('re-registers a built-in provider that was previously unregistered', async () => {
@@ -500,6 +555,35 @@ describe('Provider RPC handlers', () => {
         expiresAt: 87654321,
       });
     });
+
+    it('surfaces keychain guidance and leaves the record untouched when storeApiKey throws KeychainUnavailableError', async () => {
+      // If the credential write fails because the macOS Keychain is locked,
+      // the update must reject with an actionable message and must NOT flip
+      // authType or otherwise advance the DB row — the record should stay in
+      // its pre-update state so the user can retry after unlocking Keychain.
+      const created = repo.createProvider({
+        providerId: 'anthropic',
+        displayName: 'Anthropic',
+        kind: 'built_in',
+        authType: 'none',
+      });
+      creds.storeApiKey = mock(async () => {
+        throw new KeychainUnavailableError('User interaction is not allowed.');
+      });
+      const handlers = setup();
+
+      await expect(
+        handlers.get('providers.update')!(
+          { id: created.id, params: {}, credentials: { apiKey: 'sk-new' } },
+          {}
+        )
+      ).rejects.toThrow('macOS Keychain is locked or unavailable');
+
+      // Record unchanged: authType stays 'none', no providers.changed emitted.
+      const after = repo.getProvider(created.id);
+      expect(after?.authType).toBe('none');
+      expect(eventBus.publishAsync).not.toHaveBeenCalled();
+    });
   });
 
   describe('providers.delete', () => {
@@ -525,6 +609,72 @@ describe('Provider RPC handlers', () => {
       const handlers = setup();
       await expect(handlers.get('providers.delete')!({ id: 'missing' }, {})).rejects.toThrow(
         'not found'
+      );
+    });
+
+    it('blocks delete when removeCredentials throws KeychainUnavailableError for built_in', async () => {
+      // Keychain-only persistence: if the keychain is locked, do not delete the
+      // provider config while a stale credential may remain in Keychain.
+      const created = repo.createProvider({
+        providerId: 'my-provider',
+        displayName: 'My Provider',
+        kind: 'built_in',
+        authType: 'api_key',
+      });
+      creds.removeCredentials = mock(async () => {
+        throw new KeychainUnavailableError('The user name or passphrase is not correct');
+      });
+      const handlers = setup();
+
+      await expect(handlers.get('providers.delete')!({ id: created.id }, {})).rejects.toThrow(
+        'security unlock-keychain'
+      );
+
+      expect(repo.getProvider(created.id)).not.toBeNull();
+      expect(creds.removeCredentials).toHaveBeenCalledWith('my-provider');
+      expect(eventBus.publishAsync).not.toHaveBeenCalled();
+    });
+
+    it('allows custom_endpoint delete even when keychain is locked', async () => {
+      // Custom endpoints store auth inline in config JSON, not the credential
+      // store. A locked keychain must not block removing the endpoint row.
+      const created = repo.createProvider({
+        providerId: 'my-endpoint',
+        displayName: 'My Endpoint',
+        kind: 'custom_endpoint',
+        authType: 'api_key',
+      });
+      creds.removeCredentials = mock(async () => {
+        throw new KeychainUnavailableError('keychain locked');
+      });
+      const handlers = setup();
+
+      const result = (await handlers.get('providers.delete')!({ id: created.id }, {})) as {
+        success: boolean;
+      };
+
+      expect(result.success).toBe(true);
+      expect(repo.getProvider(created.id)).toBeNull();
+      expect(creds.removeCredentials).not.toHaveBeenCalled();
+      expect(eventBus.publishAsync).toHaveBeenCalledWith('providers.changed', {
+        sessionId: 'global',
+      });
+    });
+
+    it('rethrows non-keychain errors from removeCredentials', async () => {
+      const created = repo.createProvider({
+        providerId: 'my-provider',
+        displayName: 'My Provider',
+        kind: 'built_in',
+        authType: 'api_key',
+      });
+      creds.removeCredentials = mock(async () => {
+        throw new Error('database is locked');
+      });
+      const handlers = setup();
+
+      await expect(handlers.get('providers.delete')!({ id: created.id }, {})).rejects.toThrow(
+        'database is locked'
       );
     });
   });

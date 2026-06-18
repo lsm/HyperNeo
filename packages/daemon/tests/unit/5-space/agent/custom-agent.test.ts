@@ -19,6 +19,7 @@ import {
   type CustomAgentConfig,
   type SlotOverrides,
 } from '../../../../src/lib/space/agents/custom-agent';
+import { CODING_WORKFLOW } from '../../../../src/lib/space/workflows/built-in-workflows.ts';
 
 function makeAgent(overrides?: Partial<SpaceAgent>): SpaceAgent {
   return {
@@ -394,6 +395,23 @@ describe('buildCustomAgentTaskMessage', () => {
     expect(message).not.toMatch(/code-pr-gate/);
   });
 
+  it('renders exact send_message handoff for outbound gated channels from workflow graph', () => {
+    const message = buildCustomAgentTaskMessage(
+      makeConfig({
+        workflow: makeWorkflow(),
+        workflowRun: makeWorkflowRun(),
+        nodeId: 'node-1', // "Plan" node
+        agentSlotName: 'Coder',
+      })
+    );
+
+    expect(message).toContain('- Outbound gated handoffs:');
+    expect(message).toContain(
+      'Code (Plan → Code): call `send_message(target="Code", message="<short summary>", data: { "pr_url": "<pr_url>" })`'
+    );
+    expect(message).toContain('`save_artifact` alone does not deliver this gated handoff');
+  });
+
   it('does not contain node UUIDs', () => {
     const workflow = makeWorkflow();
     const message = buildCustomAgentTaskMessage(
@@ -612,6 +630,266 @@ describe('buildCustomAgentTaskMessage', () => {
     expect(message).not.toContain('Channels from this node:');
     expect(message).not.toContain('Gates you can write:');
   });
+
+  it('injects exact Coding workflow send_message handoff into future task messages', () => {
+    const codingNode = CODING_WORKFLOW.nodes.find((node) => node.name === 'Coding')!;
+    const message = buildCustomAgentTaskMessage(
+      makeConfig({
+        workflow: CODING_WORKFLOW,
+        workflowRun: makeWorkflowRun({ workflowId: CODING_WORKFLOW.id }),
+        nodeId: codingNode.id,
+        agentSlotName: 'coder',
+      })
+    );
+
+    expect(message).toContain(
+      'Review (Coding → Review): call `send_message(target="Review", message="<short summary>", data: { "pr_url": "<pr_url>" })`'
+    );
+    expect(message).toContain('`save_artifact` alone does not deliver this gated handoff');
+  });
+
+  it('injects exact handoff even when persisted workflow slot prompt is stale', () => {
+    const workflow = structuredClone(CODING_WORKFLOW);
+    const codingNode = workflow.nodes.find((node) => node.name === 'Coding')!;
+    codingNode.agents[0].customPrompt = {
+      value: 'Legacy wording: write code-pr-gate with field pr_url so Review can activate.',
+    };
+
+    const message = buildCustomAgentTaskMessage(
+      makeConfig({
+        workflow,
+        workflowRun: makeWorkflowRun({ workflowId: workflow.id }),
+        nodeId: codingNode.id,
+        agentSlotName: 'coder',
+      })
+    );
+
+    expect(message).toContain(
+      'Review (Coding → Review): call `send_message(target="Review", message="<short summary>", data: { "pr_url": "<pr_url>" })`'
+    );
+    expect(message).toContain('`save_artifact` alone does not deliver this gated handoff');
+  });
+
+  it('emits scalar send_message examples for multicast gated channels', () => {
+    const workflow = makeWorkflow({
+      channels: [
+        {
+          id: 'ch-plan-to-reviewers',
+          from: 'Plan',
+          to: ['Code', 'QA'],
+          label: 'Plan → Reviewers',
+          gateId: 'plan-ready-gate',
+        },
+      ],
+    });
+    const message = buildCustomAgentTaskMessage(
+      makeConfig({
+        workflow,
+        workflowRun: makeWorkflowRun({ workflowId: workflow.id }),
+        nodeId: 'node-1',
+        agentSlotName: 'Coder',
+      })
+    );
+
+    expect(message).toContain(
+      'Code (Plan → Reviewers): call `send_message(target="Code", message="<short summary>", data: { "pr_url": "<pr_url>" })`'
+    );
+    expect(message).toContain(
+      'QA (Plan → Reviewers): call `send_message(target="QA", message="<short summary>", data: { "pr_url": "<pr_url>" })`'
+    );
+    expect(message).not.toContain('send_message(target=["Code", "QA"]');
+  });
+
+  it('emits scalar send_message examples for broadcast gated channels', () => {
+    const workflow = makeWorkflow({
+      channels: [
+        {
+          id: 'ch-plan-broadcast',
+          from: 'Plan',
+          to: '*',
+          label: 'Plan → All',
+          gateId: 'plan-ready-gate',
+        },
+      ],
+    });
+    const message = buildCustomAgentTaskMessage(
+      makeConfig({
+        workflow,
+        workflowRun: makeWorkflowRun({ workflowId: workflow.id }),
+        nodeId: 'node-1',
+        agentSlotName: 'Coder',
+      })
+    );
+
+    expect(message).toContain(
+      'Code (Plan → All): call `send_message(target="Code", message="<short summary>", data: { "pr_url": "<pr_url>" })`'
+    );
+    expect(message).not.toContain('send_message(target="*"');
+  });
+
+  it('emits peer slot send_message examples for same-node broadcast gated channels', () => {
+    const workflow = makeWorkflow({
+      nodes: [
+        {
+          id: 'node-1',
+          name: 'Plan',
+          agents: [
+            { agentId: 'agent-coder', name: 'coder' },
+            { agentId: 'agent-reviewer', name: 'reviewer' },
+          ],
+        },
+      ],
+      channels: [
+        {
+          id: 'ch-plan-broadcast',
+          from: 'Plan',
+          to: '*',
+          label: 'Plan → All',
+          gateId: 'plan-ready-gate',
+        },
+      ],
+    });
+    const message = buildCustomAgentTaskMessage(
+      makeConfig({
+        workflow,
+        workflowRun: makeWorkflowRun({ workflowId: workflow.id }),
+        nodeId: 'node-1',
+        agentSlotName: 'coder',
+      })
+    );
+
+    expect(message).toContain(
+      'reviewer (Plan → All): call `send_message(target="reviewer", message="<short summary>", data: { "pr_url": "<pr_url>" })`'
+    );
+    expect(message).not.toContain('send_message(target="coder"');
+    expect(message).not.toContain('send_message(target="*"');
+  });
+
+  it('quotes gate field names and emits executable non-string values in handoff data', () => {
+    const workflow = makeWorkflow({
+      channels: [
+        {
+          id: 'ch-plan-to-code',
+          from: 'Plan',
+          to: 'Code',
+          label: 'Plan → Code',
+          gateId: 'plan-ready-gate',
+        },
+      ],
+      gates: [
+        {
+          id: 'plan-ready-gate',
+          label: 'PR Ready',
+          description: 'Planner has opened a plan PR',
+          fields: [
+            {
+              name: 'pr"url',
+              type: 'string',
+              writers: ['Plan'],
+              check: { op: 'exists' },
+            },
+            {
+              name: 'approved',
+              type: 'boolean',
+              writers: ['Plan'],
+              check: { op: '==', value: false },
+            },
+            {
+              name: 'score',
+              type: 'number',
+              writers: ['Plan'],
+              check: { op: '==', value: 5 },
+            },
+            {
+              name: 'scoreNonZero',
+              type: 'number',
+              writers: ['Plan'],
+              check: { op: '!=', value: 0 },
+            },
+            {
+              name: 'status',
+              type: 'string',
+              writers: ['Plan'],
+              check: { op: '!=', value: '<status>' },
+            },
+            {
+              name: 'omitted',
+              type: 'string',
+              writers: ['Plan'],
+              check: { op: '==' },
+            },
+            {
+              name: 'votes',
+              type: 'map',
+              writers: ['Plan'],
+              check: { op: 'count', match: 'approved', min: 2 },
+            },
+          ],
+          resetOnCycle: false,
+        },
+      ],
+    });
+    const message = buildCustomAgentTaskMessage(
+      makeConfig({
+        workflow,
+        workflowRun: makeWorkflowRun({ workflowId: workflow.id }),
+        nodeId: 'node-1',
+        agentSlotName: 'Coder',
+      })
+    );
+
+    expect(message).toContain('"pr\\"url": "<pr\\"url>"');
+    expect(message).toContain('"approved": false');
+    expect(message).toContain('"score": 5');
+    expect(message).toContain('"scoreNonZero": 1');
+    expect(message).toContain('"status": "<status-different>"');
+    expect(message).toContain('"votes": { "<your-key>": "approved" }');
+    expect(message).not.toContain('"omitted"');
+    expect(message).not.toContain('"status": "<status>"');
+    expect(message).not.toContain('data: { pr"url:');
+    expect(message).not.toContain('<boolean>');
+    expect(message).not.toContain('<number>');
+  });
+
+  it('emits only the writer vote for map-count handoff placeholders', () => {
+    const workflow = makeWorkflow({
+      channels: [
+        {
+          id: 'ch-plan-to-code',
+          from: 'Plan',
+          to: 'Code',
+          label: 'Plan → Code',
+          gateId: 'plan-ready-gate',
+        },
+      ],
+      gates: [
+        {
+          id: 'plan-ready-gate',
+          fields: [
+            {
+              name: 'votes',
+              type: 'map',
+              writers: ['Plan'],
+              check: { op: 'count', match: 'approved', min: 25 },
+            },
+          ],
+          resetOnCycle: false,
+        },
+      ],
+    });
+    const message = buildCustomAgentTaskMessage(
+      makeConfig({
+        workflow,
+        workflowRun: makeWorkflowRun({ workflowId: workflow.id }),
+        nodeId: 'node-1',
+        agentSlotName: 'Coder',
+      })
+    );
+
+    expect(message).toContain('"votes": { "<your-key>": "approved" }');
+    expect(message).not.toContain('<key2>');
+    expect(message).not.toContain('add 22 more matching entries');
+  });
 });
 
 describe('createCustomAgentInit', () => {
@@ -636,6 +914,38 @@ describe('createCustomAgentInit', () => {
     );
 
     expect(init.systemPrompt?.append).toBe('Base prompt\n\nSlot expansion');
+  });
+
+  it('injects Coding workflow behavioral handoff guidance into system prompt', () => {
+    const codingNode = CODING_WORKFLOW.nodes.find((node) => node.name === 'Coding')!;
+    const codingSlot = codingNode.agents[0];
+    const init = createCustomAgentInit(
+      makeConfig({
+        customAgent: makeAgent({ id: codingSlot.agentId, name: 'Coder', customPrompt: null }),
+        workflow: CODING_WORKFLOW,
+        workflowRun: makeWorkflowRun({ workflowId: CODING_WORKFLOW.id }),
+        nodeId: codingNode.id,
+        agentSlotName: codingSlot.name,
+        slotOverrides: {
+          customPrompt: codingSlot.customPrompt?.value,
+          resolutionContext: {
+            agentId: codingSlot.agentId,
+            agentName: codingSlot.name,
+            workflowRunId: 'run-1',
+            workflowId: CODING_WORKFLOW.id,
+            nodeId: codingNode.id,
+            nodeName: codingNode.name,
+          },
+        },
+      })
+    );
+
+    const prompt = init.systemPrompt?.append ?? '';
+    expect(prompt).toContain('hand off by calling `send_message` to the review target');
+    expect(prompt).toContain('Use the current target and required data fields');
+    expect(prompt).toContain('`save_artifact` alone is insufficient');
+    expect(prompt).not.toContain('send_message(target="Review"');
+    expect(prompt).not.toContain('code-ready-gate');
   });
 
   it('uses the agent custom prompt when no slot override is defined', () => {

@@ -125,6 +125,8 @@ export { runMigration143 } from './migrations';
 export { runMigration144 } from './migrations';
 // knip-ignore-next-line
 export { runMigration148 } from './migrations';
+// knip-ignore-next-line
+export { runMigration156 } from './migrations';
 
 /**
  * Create all database tables and initialize defaults
@@ -147,6 +149,7 @@ export function createTables(db: BunDatabase): void {
         worktree_branch TEXT,
         git_branch TEXT,
         sdk_session_id TEXT,
+        acp_session_id TEXT,
         sdk_origin_path TEXT,
         available_commands TEXT,
         processing_state TEXT,
@@ -491,6 +494,13 @@ export function createTables(db: BunDatabase): void {
         webhook_enabled INTEGER NOT NULL DEFAULT 1,
         polling_enabled INTEGER NOT NULL DEFAULT 0,
         webhook_secret TEXT,
+        webhook_remote_id INTEGER,
+        webhook_url TEXT,
+        webhook_auto_registered INTEGER NOT NULL DEFAULT 0,
+        webhook_active INTEGER,
+        webhook_last_checked_at INTEGER,
+        webhook_last_error TEXT,
+        webhook_configured_at INTEGER,
         last_webhook_at INTEGER,
         last_poll_at INTEGER,
         poll_cursor TEXT,

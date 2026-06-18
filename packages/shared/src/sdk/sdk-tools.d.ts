@@ -27,10 +27,23 @@ export type ToolInputSchemas =
   | WebFetchInput
   | WebSearchInput
   | AskUserQuestionInput
+  | ProjectsInput
+  | EnterPlanModeInput
   | TaskCreateInput
   | TaskGetInput
   | TaskUpdateInput
   | TaskListInput
+  | REPLInput
+  | WorkflowInput
+  | CronCreateInput
+  | CronDeleteInput
+  | CronListInput
+  | ScheduleWakeupInput
+  | RemoteTriggerInput
+  | ShowOnboardingRolePickerInput
+  | MonitorInput
+  | ArtifactInput
+  | PushNotificationInput
   | EnterWorktreeInput
   | ExitWorktreeInput
   | ToolOutputSchemas;
@@ -57,7 +70,20 @@ export type ToolOutputSchemas =
   | TaskCreateOutput
   | TaskGetOutput
   | TaskUpdateOutput
-  | TaskListOutput;
+  | TaskListOutput
+  | ArtifactOutput
+  | RemoteTriggerOutput
+  | ShowOnboardingRolePickerOutput
+  | ScheduleWakeupOutput
+  | MonitorOutput
+  | EnterPlanModeOutput
+  | REPLOutput
+  | WorkflowOutput
+  | CronCreateOutput
+  | CronDeleteOutput
+  | CronListOutput
+  | PushNotificationOutput
+  | ProjectsOutput;
 export type AgentOutput =
   | {
       agentId: string;
@@ -66,6 +92,7 @@ export type AgentOutput =
         type: "text";
         text: string;
       }[];
+      resolvedModel?: string;
       totalToolUseCount: number;
       totalDurationMs: number;
       totalTokens: number;
@@ -107,6 +134,10 @@ export type AgentOutput =
        */
       description: string;
       /**
+       * Model the spawn resolved (may differ from the requested one)
+       */
+      resolvedModel?: string;
+      /**
        * The prompt for the agent
        */
       prompt: string;
@@ -118,6 +149,29 @@ export type AgentOutput =
        * Whether the calling agent has Read/Bash tools to check progress
        */
       canReadOutputFile?: boolean;
+    }
+  | {
+      status: "remote_launched";
+      /**
+       * The ID of the remote agent task
+       */
+      taskId: string;
+      /**
+       * The URL of the cloud session
+       */
+      sessionUrl: string;
+      /**
+       * The description of the task
+       */
+      description: string;
+      /**
+       * The prompt for the agent
+       */
+      prompt: string;
+      /**
+       * Path to the output file for checking agent progress
+       */
+      outputFile: string;
     };
 export type FileReadOutput =
   | {
@@ -143,6 +197,10 @@ export type FileReadOutput =
          * Total number of lines in the file
          */
         totalLines: number;
+        /**
+         * True when a whole-file read was auto-paginated because it exceeded the token cap (the content is a partial first page). A programmatic signal for internal consumers; survives output reconstruction (unlike the render-time banner).
+         */
+        truncatedByTokenCap?: boolean;
       };
     }
   | {
@@ -277,6 +335,76 @@ export type McpOutput =
   | {
       [k: string]: unknown;
     };
+export type ProjectsOutput =
+  | {
+      method: "project_info";
+      notice?: string;
+      name: string;
+      description: string;
+      instructions: string;
+      docs: {
+        path: string;
+        created_at: string | null;
+      }[];
+      files?: {
+        path: string;
+        file_kind: string;
+        created_at: string | null;
+      }[];
+      sync_sources?: {
+        type: string | null;
+        config: {
+          [k: string]: unknown;
+        };
+      }[];
+      knowledge: {
+        knowledge_size: number;
+        max_knowledge_size: number;
+        search_threshold: number | null;
+        rag_active: boolean;
+        remaining_budget: number | null;
+      };
+    }
+  | {
+      method: "project_read";
+      notice?: string;
+      path: string;
+      file_kind?: string;
+      content?: string;
+      local_file?: string;
+      created_at: string | null;
+    }
+  | {
+      method: "project_search";
+      notice?: string;
+      rag: boolean;
+      hits?: {
+        name?: string;
+        doc_uuid?: string;
+        text?: string;
+      }[];
+      docs?: string[];
+    }
+  | {
+      method: "project_write";
+      notice?: string;
+      path: string;
+      doc_uuid: string;
+      replaced: boolean;
+      knowledge: {
+        knowledge_size: number;
+        max_knowledge_size: number;
+        search_threshold: number | null;
+        rag_active: boolean;
+        remaining_budget: number | null;
+      };
+    }
+  | {
+      method: "project_delete";
+      notice?: string;
+      path: string;
+      deleted: boolean;
+    };
 
 export interface AgentInput {
   /**
@@ -292,9 +420,9 @@ export interface AgentInput {
    */
   subagent_type?: string;
   /**
-   * Optional model override for this agent. Takes precedence over the agent definition's model frontmatter. If omitted, uses the agent definition's model, or inherits from the parent.
+   * Optional model override for this agent. Takes precedence over the agent definition's model frontmatter. If omitted, uses the agent definition's model, or inherits from the parent. Ignored for subagent_type: "fork" — forks always inherit the parent model.
    */
-  model?: "sonnet" | "opus" | "haiku";
+  model?: "sonnet" | "opus" | "haiku" | "fable";
   /**
    * Set to true to run this agent in the background. You will be notified when it completes.
    */
@@ -304,17 +432,17 @@ export interface AgentInput {
    */
   name?: string;
   /**
-   * Team name for spawning. Uses current team context if omitted.
+   * Deprecated; ignored. The session has a single implicit team.
    */
   team_name?: string;
   /**
    * Permission mode for spawned teammate (e.g., "plan" to require plan approval).
    */
-  mode?: "acceptEdits" | "auto" | "bypassPermissions" | "default" | "dontAsk" | "plan";
+  mode?: "acceptEdits" | "auto" | "bypassPermissions" | "default" | "dontAsk" | "plan" | "bubble";
   /**
-   * Isolation mode. "worktree" creates a temporary git worktree so the agent works on an isolated copy of the repo.
+   * Isolation mode. "worktree" creates a temporary git worktree so the agent works on an isolated copy of the repo. "remote" launches the agent in a remote cloud environment (always runs in background; availability is gated).
    */
-  isolation?: "worktree";
+  isolation?: "worktree" | "remote";
 }
 export interface BashInput {
   /**
@@ -2158,6 +2286,34 @@ export interface AskUserQuestionInput {
     source?: string;
   };
 }
+export interface ProjectsInput {
+  method: "project_info" | "project_read" | "project_search" | "project_write" | "project_delete";
+  /**
+   * project_read/project_write/project_delete: doc path. project_write: an existing path is replaced in place; a new bare filename (no "/") is namespaced to "claude/<name>".
+   */
+  path?: string;
+  /**
+   * project_write: inline doc text. Mutually exclusive with local_path. Use local_path for anything you have on disk.
+   */
+  content?: string;
+  /**
+   * project_write: a file inside the working directory to upload. The tool reads, encodes, and uploads directly — contents never enter your context. Mutually exclusive with content.
+   */
+  local_path?: string;
+  /**
+   * project_write: bypass the chat-injection budget guard. Set only when the write is genuinely worth degrading chat to retrieval mode for everyone in the project.
+   */
+  force?: boolean;
+  /**
+   * project_search: knowledge-base query
+   */
+  query?: string;
+  /**
+   * project_search: number of hits (default 5)
+   */
+  n?: number;
+}
+export interface EnterPlanModeInput {}
 export interface TaskCreateInput {
   /**
    * A brief title for the task
@@ -2225,6 +2381,148 @@ export interface TaskUpdateInput {
   };
 }
 export interface TaskListInput {}
+export interface REPLInput {
+  /**
+   * JavaScript code to execute. Supports top-level await. State persists across calls.
+   */
+  code: string;
+  /**
+   * Clear, concise description of what this script does in active voice (5-10 words). E.g. "Trace upgrade message to its GrowthBook flag"
+   */
+  description?: string;
+  /**
+   * Optional timeout in milliseconds (default 30000, max 600000)
+   */
+  timeout?: number;
+}
+export interface WorkflowInput {
+  /**
+   * Self-contained workflow script. Must begin with `export const meta = { name, description, phases }` (pure literal, no computed values) followed by the script body using agent()/parallel()/pipeline()/phase().
+   */
+  script?: string;
+  /**
+   * Name of a predefined workflow (built-in or from .claude/workflows/). Resolves to a self-contained script.
+   */
+  name?: string;
+  /**
+   * Ignored — set the workflow description in the script's `meta` block.
+   */
+  description?: string;
+  /**
+   * Ignored — set the workflow title in the script's `meta` block.
+   */
+  title?: string;
+  /**
+   * Optional input value exposed to the script as the global `args`, verbatim. Pass arrays/objects as actual JSON values, NOT as a JSON-encoded string — a stringified list breaks `args.filter`/`args.map` in the script. Use for parameterized named workflows (e.g. a research question).
+   */
+  args?: {
+    [k: string]: unknown;
+  };
+  /**
+   * Path to a workflow script file on disk. Every Workflow invocation persists its script under the session directory and returns the path in the tool result. To iterate, edit that file with Write/Edit and re-invoke Workflow with the same `scriptPath` instead of re-sending the full script. Takes precedence over `script` and `name`.
+   */
+  scriptPath?: string;
+  /**
+   * Run ID of a prior Workflow invocation to resume from. Completed agent() calls with unchanged (prompt, opts) return their cached results instantly; only edited or new calls re-run. Same-session only. Stop the prior run first (TaskStop) before resuming.
+   */
+  resumeFromRunId?: string;
+}
+export interface CronCreateInput {
+  /**
+   * Standard 5-field cron expression in local time: "M H DoM Mon DoW" (e.g. "* /5 * * * *" = every 5 minutes, "30 14 28 2 *" = Feb 28 at 2:30pm local once).
+   */
+  cron: string;
+  /**
+   * The prompt to enqueue at each fire time.
+   */
+  prompt: string;
+  /**
+   * true (default) = fire on every cron match until deleted or auto-expired after 7 days. false = fire once at the next match, then auto-delete. Use false for "remind me at X" one-shot requests with pinned minute/hour/dom/month.
+   */
+  recurring?: boolean;
+  /**
+   * true = persist to .claude/scheduled_tasks.json and survive restarts. false (default) = in-memory only, dies when this Claude session ends. Use true only when the user asks the task to survive across sessions.
+   */
+  durable?: boolean;
+}
+export interface CronDeleteInput {
+  /**
+   * Job ID returned by CronCreate.
+   */
+  id: string;
+}
+export interface CronListInput {}
+export interface ScheduleWakeupInput {
+  /**
+   * Seconds from now to wake up. Clamped to [60, 3600] by the runtime.
+   */
+  delaySeconds: number;
+  /**
+   * One short sentence explaining the chosen delay. Goes to telemetry and is shown to the user. Be specific.
+   */
+  reason: string;
+  /**
+   * The /loop input to fire on wake-up. Pass the same /loop input verbatim each turn so the next firing re-enters the skill and continues the loop. For autonomous /loop (no user prompt), pass the literal sentinel `<<autonomous-loop-dynamic>>` instead (the dynamic-pacing variant, not the CronCreate-mode `<<autonomous-loop>>`).
+   */
+  prompt: string;
+}
+export interface RemoteTriggerInput {
+  action: "list" | "get" | "create" | "update" | "run";
+  /**
+   * Required for get, update, and run
+   */
+  trigger_id?: string;
+  /**
+   * Required for create and update; optional for run
+   */
+  body?: {
+    [k: string]: unknown;
+  };
+}
+export interface ShowOnboardingRolePickerInput {}
+export interface MonitorInput {
+  /**
+   * Short human-readable description of what you are monitoring (shown in notifications).
+   */
+  description: string;
+  /**
+   * Kill the monitor after this deadline. Default 300000ms, max 3600000ms. Ignored when persistent is true.
+   */
+  timeout_ms: number;
+  /**
+   * Run for the lifetime of the session (no timeout). Use for session-length watches like PR monitoring or log tails. Stop with TaskStop.
+   */
+  persistent: boolean;
+  /**
+   * Shell command or script. Each stdout line is an event; exit ends the watch.
+   */
+  command: string;
+}
+export interface ArtifactInput {
+  /**
+   * Path to an .html or .md file to render. Use a short, distinctive basename — it is the fallback title if the HTML has no <title>.
+   */
+  file_path: string;
+  /**
+   * Browser-tab icon: one or two emoji (e.g. "📊"). No markup. Keep stable across redeploys; change only on a hard topic pivot.
+   */
+  favicon: string;
+  /**
+   * Short human-readable name for this version (e.g. "fixed-background"). Shown in the version picker instead of the raw version id.
+   */
+  label?: string;
+  /**
+   * Existing artifact URL to redeploy to. Pass when the user gives you a URL for an artifact not published in this session; omit for new artifacts or same-session redeploys. Must be an artifact the user owns.
+   */
+  url?: string;
+}
+export interface PushNotificationInput {
+  /**
+   * The notification body. Keep it under 200 characters; mobile OSes truncate.
+   */
+  message: string;
+  status: "proactive";
+}
 export interface EnterWorktreeInput {
   /**
    * Optional name for a new worktree. Each "/"-separated segment may contain only letters, digits, dots, underscores, and dashes; max 64 chars total. A random name is generated if not provided. Mutually exclusive with `path`.
@@ -2310,6 +2608,36 @@ export interface BashOutput {
    * Model-facing system-reminder appended when a gh command reports a GitHub API rate-limit error
    */
   ghRateLimitHint?: string;
+  /**
+   * @internal Structured classification of git/gh operations detected in this command (commit/push/merge/rebase/PR). Client-facing — lets clients render git activity without re-parsing stdout; not surfaced to the model.
+   */
+  gitOperation?: {
+    commit?: {
+      sha: string;
+      kind: "committed" | "amended" | "cherry-picked";
+    };
+    push?: {
+      branch: string;
+    };
+    branch?: {
+      ref: string;
+      action: "merged" | "rebased";
+    };
+    pr?: {
+      number: number;
+      url?: string;
+      action:
+        | "created"
+        | "edited"
+        | "merged"
+        | "commented"
+        | "closed"
+        | "ready"
+        | "draft"
+        | "auto-merge-enabled"
+        | "auto-merge-disabled";
+    };
+  };
 }
 export interface ExitPlanModeOutput {
   /**
@@ -2533,6 +2861,10 @@ export interface ReadMcpResourceOutput {
      */
     blobSavedTo?: string;
   }[];
+  /**
+   * Human-readable error when the server could not read the resource
+   */
+  error?: string;
 }
 export interface TodoWriteOutput {
   /**
@@ -2577,6 +2909,10 @@ export interface WebFetchOutput {
    * The URL that was fetched
    */
   url: string;
+  artifactRead?: {
+    slug: string;
+    ver: string;
+  };
 }
 export interface WebSearchOutput {
   /**
@@ -2781,6 +3117,10 @@ export interface AskUserQuestionOutput {
     [k: string]: string;
   };
   /**
+   * Freeform text the user typed instead of selecting a structured option
+   */
+  response?: string;
+  /**
    * Optional per-question annotations from the user (e.g., notes on preview selections). Keyed by question text.
    */
   annotations?: {
@@ -2845,4 +3185,163 @@ export interface TaskListOutput {
     owner?: string;
     blockedBy: string[];
   }[];
+}
+export interface ArtifactOutput {
+  url: string;
+  path: string;
+  title?: string;
+  version?: string;
+  mcpDropped?: string;
+}
+export interface RemoteTriggerOutput {
+  status: number;
+  json: string;
+  summary?: string;
+}
+export interface ShowOnboardingRolePickerOutput {
+  role?: string;
+  dismissed?: boolean;
+}
+export interface ScheduleWakeupOutput {
+  /**
+   * Epoch ms timestamp when the next wakeup will fire
+   */
+  scheduledFor: number;
+  /**
+   * Actual delay used after clamping to runtime bounds
+   */
+  clampedDelaySeconds: number;
+  /**
+   * True if the requested delaySeconds was outside [60, 3600]
+   */
+  wasClamped: boolean;
+}
+export interface MonitorOutput {
+  /**
+   * ID of the background monitor task.
+   */
+  taskId: string;
+  /**
+   * Timeout deadline in milliseconds (0 when persistent).
+   */
+  timeoutMs: number;
+  /**
+   * No timeout — runs until TaskStop or session end.
+   */
+  persistent?: boolean;
+}
+export interface EnterPlanModeOutput {
+  /**
+   * Confirmation that plan mode was entered
+   */
+  message: string;
+}
+export interface REPLOutput {
+  /**
+   * The code that was executed
+   */
+  code: string;
+  /**
+   * Return value from the code execution
+   */
+  result: {
+    [k: string]: unknown;
+  };
+  /**
+   * Captured console.log output
+   */
+  stdout: string;
+  /**
+   * Captured console.error output
+   */
+  stderr: string;
+  /**
+   * Error message if execution failed
+   */
+  error?: string;
+  /**
+   * Names of tools registered during this execution
+   */
+  registeredTools?: string[];
+  /**
+   * Images returned by inner Read calls — surfaced as image content blocks
+   */
+  images?: {
+    base64: string;
+    mediaType: string;
+  }[];
+  /**
+   * PDFs returned by inner Read calls — surfaced as document content blocks
+   */
+  documents?: {
+    base64: string;
+  }[];
+}
+export interface WorkflowOutput {
+  status: "async_launched" | "remote_launched";
+  taskId: string;
+  /**
+   * TaskType of the registered background task — 'local_workflow' for in-process runs, 'remote_agent' when remote:true dispatches to CCR. Set on all new writes; absent only on transcripts written before this field existed.
+   */
+  taskType?: "local_workflow" | "remote_agent";
+  /**
+   * meta.name from the workflow script — same value as task_started.workflow_name. Set on all new writes; absent only on transcripts written before this field existed.
+   */
+  workflowName?: string;
+  /**
+   * Local workflow run identifier for resumeFromRunId. Absent for remote_launched (the CCR session URL is the resume handle there) and on transcripts written before this field existed.
+   */
+  runId?: string;
+  summary?: string;
+  /**
+   * Directory where subagent transcripts are written during execution
+   */
+  transcriptDir?: string;
+  /**
+   * Path to the persisted workflow script for this invocation. Editable via Write/Edit; pass back as `scriptPath` to re-run without resending the script.
+   */
+  scriptPath?: string;
+  /**
+   * CCR session URL when status is remote_launched
+   */
+  sessionUrl?: string;
+  /**
+   * Non-blocking heads-up (e.g. local git state diverges from the pushed branch the cloud session will clone)
+   */
+  warning?: string;
+  /**
+   * Set if syntax check failed
+   */
+  error?: string;
+}
+export interface CronCreateOutput {
+  id: string;
+  humanSchedule: string;
+  recurring: boolean;
+  durable?: boolean;
+}
+export interface CronDeleteOutput {
+  id: string;
+}
+export interface CronListOutput {
+  jobs: {
+    id: string;
+    cron: string;
+    humanSchedule: string;
+    prompt: string;
+    recurring?: boolean;
+    durable?: boolean;
+  }[];
+}
+export interface PushNotificationOutput {
+  message: string;
+  pushSent?: boolean;
+  localSent?: boolean;
+  disabledReason?: "config_off" | "user_present" | "no_transport";
+  idleSec?: number;
+  hasFocus?: boolean;
+  /**
+   * ISO timestamp captured at tool execution on the emitting process. Optional — resumed sessions replay pre-sentAt outputs verbatim.
+   */
+  sentAt?: string;
 }

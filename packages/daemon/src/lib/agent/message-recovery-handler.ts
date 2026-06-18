@@ -7,9 +7,9 @@
  * - Marking those messages as 'failed' so they appear in the UI as undelivered
  */
 
-import type { Session, ChatMessage } from '@neokai/shared';
+import type { Session } from '@neokai/shared';
 import type { SDKMessage, SDKUserMessage } from '@neokai/shared/sdk';
-import { isSDKUserMessage, isSDKSystemMessage } from '@neokai/shared/sdk/type-guards';
+import { isSDKUserMessage } from '@neokai/shared/sdk/type-guards';
 import { Database } from '../../storage/database';
 import { Logger } from '../logger';
 
@@ -41,32 +41,13 @@ export class MessageRecoveryHandler {
     const { session, db, logger } = this;
 
     try {
-      // Consumed messages may need recovery if they never got a corresponding
-      // system:init/response boundary after being marked consumed.
-      const consumedMessages = db.getMessagesByStatus(session.id, 'consumed');
-      const allStuckMessages = [...consumedMessages];
+      // Only consumed user messages after the latest system:init can be orphaned.
+      // Do the status/type/timestamp filtering in SQL so cold-opening an old,
+      // large session does not parse the whole transcript.
+      const candidateMessages = db.getConsumedUserMessagesAfterLatestInit(session.id);
 
-      if (allStuckMessages.length === 0) {
+      if (candidateMessages.length === 0) {
         return;
-      }
-
-      // Get all SDK messages to check for responses
-      const { messages: allMessages } = db.getSDKMessages(session.id, 10000);
-
-      // Find the latest system:init message timestamp
-      let latestInitTimestamp = 0;
-      for (const msg of allMessages as Array<ChatMessage & { timestamp?: number }>) {
-        // Skip NeoKai-native action messages — they are not SDK messages.
-        if ((msg as ChatMessage).type === 'neokai_action') continue;
-        if (
-          isSDKSystemMessage(msg as SDKMessage) &&
-          (msg as SDKMessage & { subtype?: string }).subtype === 'init'
-        ) {
-          const msgWithTimestamp = msg as SDKMessage & { timestamp?: number };
-          if (msgWithTimestamp.timestamp && msgWithTimestamp.timestamp > latestInitTimestamp) {
-            latestInitTimestamp = msgWithTimestamp.timestamp;
-          }
-        }
       }
 
       // Find orphaned user messages
@@ -76,7 +57,7 @@ export class MessageRecoveryHandler {
         timestamp: number;
       }> = [];
 
-      for (const consumedMsg of allStuckMessages) {
+      for (const consumedMsg of candidateMessages) {
         if (!isSDKUserMessage(consumedMsg)) {
           continue;
         }
@@ -96,17 +77,12 @@ export class MessageRecoveryHandler {
           continue;
         }
 
-        const msgWithTimestamp = consumedMsg as SDKMessage & { timestamp?: number };
-        const msgTimestamp = msgWithTimestamp.timestamp || 0;
-
-        // If no system:init after this message, it's orphaned
-        if (msgTimestamp > latestInitTimestamp) {
-          orphanedMessages.push({
-            dbId: consumedMsg.dbId,
-            uuid: consumedMsg.uuid || 'unknown',
-            timestamp: msgTimestamp,
-          });
-        }
+        const msgTimestamp = (consumedMsg as SDKMessage & { timestamp?: number }).timestamp || 0;
+        orphanedMessages.push({
+          dbId: consumedMsg.dbId,
+          uuid: consumedMsg.uuid || 'unknown',
+          timestamp: msgTimestamp,
+        });
       }
 
       if (orphanedMessages.length === 0) {

@@ -123,6 +123,11 @@ const SPACE_BRIDGE_MAPPINGS: BridgeMapping[] = [
     channel: () => Channels.global(),
   },
   {
+    event: 'space.hookState.updated',
+    clientEvent: 'space.hookState.updated',
+    channel: () => Channels.global(),
+  },
+  {
     event: 'space.artifactCache.updated',
     clientEvent: 'space.artifactCache.updated',
     channel: () => Channels.global(),
@@ -157,6 +162,24 @@ const SPACE_BRIDGE_MAPPINGS: BridgeMapping[] = [
     event: 'spaceAgent.deleted',
     clientEvent: 'spaceAgent.deleted',
     channel: (p) => Channels.space((p as DaemonInternalEventMap['spaceAgent.deleted']).spaceId),
+  },
+  {
+    event: 'spaceLongHorizonAgent.created',
+    clientEvent: 'spaceLongHorizonAgent.created',
+    channel: (p) =>
+      Channels.space((p as DaemonInternalEventMap['spaceLongHorizonAgent.created']).spaceId),
+  },
+  {
+    event: 'spaceLongHorizonAgent.updated',
+    clientEvent: 'spaceLongHorizonAgent.updated',
+    channel: (p) =>
+      Channels.space((p as DaemonInternalEventMap['spaceLongHorizonAgent.updated']).spaceId),
+  },
+  {
+    event: 'spaceLongHorizonAgent.deleted',
+    clientEvent: 'spaceLongHorizonAgent.deleted',
+    channel: (p) =>
+      Channels.space((p as DaemonInternalEventMap['spaceLongHorizonAgent.deleted']).spaceId),
   },
   // Space workflow definition events → global
   {

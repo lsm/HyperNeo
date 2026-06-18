@@ -22,6 +22,10 @@
 import { useMemo } from 'preact/hooks';
 import type { SDKMessage, SDKSystemMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import type { ChatMessage } from '@neokai/shared';
+import {
+  buildMessageReplacementStatusMap,
+  type MessageReplacementStatus,
+} from '../lib/sdk-message-replacement';
 
 export interface ToolResultData {
   content: unknown;
@@ -39,6 +43,8 @@ export interface UseMessageMapsResult {
   sessionInfoMap: Map<string, SDKSystemMessage>;
   /** Map of parent tool use IDs to their sub-agent messages */
   subagentMessagesMap: Map<string, SDKMessage[]>;
+  /** Map of SDK message UUIDs to replacement/retraction status */
+  replacementStatusMap: Map<string, MessageReplacementStatus>;
 }
 
 /**
@@ -53,18 +59,26 @@ export function useMessageMaps(
   // 'user'/'assistant'/'system' checks and will be safely skipped by all maps.
   const sdkMessages = messages as SDKMessage[];
 
+  const replacementStatusMap = useMemo(
+    () => buildMessageReplacementStatusMap(sdkMessages),
+    [sdkMessages]
+  );
+
   // Map of tool use IDs to their results
   const toolResultsMap = useMemo(() => {
     const map = new Map<string, ToolResultData>();
     sdkMessages.forEach((msg) => {
       if (msg.type === 'user' && Array.isArray(msg.message.content)) {
+        const replacementStatus = msg.uuid ? replacementStatusMap.get(msg.uuid) : undefined;
         msg.message.content.forEach((block: unknown) => {
           const blockObj = block as Record<string, unknown>;
           if (blockObj.type === 'tool_result' && blockObj.tool_use_id) {
             const toolUseId = blockObj.tool_use_id as string;
-            const isRemoved = msg.uuid ? removedOutputs.includes(msg.uuid) : false;
+            const isReplacementRemoved = !!replacementStatus;
+            const isRemoved =
+              (msg.uuid ? removedOutputs.includes(msg.uuid) : false) || isReplacementRemoved;
             map.set(toolUseId, {
-              content: block,
+              content: isReplacementRemoved ? undefined : block,
               messageUuid: msg.uuid,
               sessionId,
               isOutputRemoved: isRemoved,
@@ -74,7 +88,7 @@ export function useMessageMaps(
       }
     });
     return map;
-  }, [sdkMessages, removedOutputs, sessionId]);
+  }, [sdkMessages, removedOutputs, replacementStatusMap, sessionId]);
 
   // Map of tool use IDs to their input data
   const toolInputsMap = useMemo(() => {
@@ -145,5 +159,6 @@ export function useMessageMaps(
     toolInputsMap,
     sessionInfoMap,
     subagentMessagesMap,
+    replacementStatusMap,
   };
 }

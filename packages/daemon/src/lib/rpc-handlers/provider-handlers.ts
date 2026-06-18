@@ -9,11 +9,18 @@ import type { MessageHub } from '@neokai/shared';
 import type { CreateProviderParams, UpdateProviderParams } from '@neokai/shared';
 import type { ProviderRepository } from '../../storage/repositories/provider-repository';
 import type { ProviderCredentialManager } from '../credentials/provider-credential-manager';
+import {
+  KEYCHAIN_UNAVAILABLE_MESSAGE,
+  KeychainUnavailableError,
+} from '../credentials/credential-store.js';
 import { syncProviderToRegistry, removeProviderFromRegistry } from '../providers/provider-sync.js';
 import { getProviderRegistry } from '../providers/registry.js';
 import { markBuiltInProviderDisabled } from '../providers/factory.js';
 import { withCustomEndpointsLock } from './custom-endpoint-handlers.js';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
+import { Logger } from '../logger';
+
+const log = new Logger('provider-handlers');
 
 const VALID_PROVIDER_KINDS = new Set(['built_in', 'custom_endpoint']);
 const VALID_AUTH_TYPES = new Set(['api_key', 'oauth', 'none']);
@@ -102,6 +109,21 @@ function withProviderLock<T>(fn: () => Promise<T>): Promise<T> {
   return run;
 }
 
+/**
+ * Normalises a `KeychainUnavailableError` into a plain `Error` carrying
+ * `KEYCHAIN_UNAVAILABLE_MESSAGE` so the RPC layer serialises actionable UX
+ * guidance to the client. Other errors pass through unchanged. `action` and
+ * `providerId` feed the structured warn log so operators can correlate the
+ * failed mutation in daemon logs.
+ */
+function rethrowKeychainError(err: unknown, action: string, providerId: string): never {
+  if (err instanceof KeychainUnavailableError) {
+    log.warn(`Provider ${action} blocked for ${providerId}: ${KEYCHAIN_UNAVAILABLE_MESSAGE}`);
+    throw new Error(KEYCHAIN_UNAVAILABLE_MESSAGE);
+  }
+  throw err;
+}
+
 // ---------------------------------------------------------------------------
 // Handler wiring
 // ---------------------------------------------------------------------------
@@ -170,15 +192,19 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
         const record = providerRepo.createProvider(data.params);
 
         try {
-          // Store credentials if provided.
-          if (data.credentials?.apiKey) {
-            await credentialManager.storeApiKey(record.providerId, data.credentials.apiKey);
-          } else if (data.credentials?.oauthAccessToken) {
-            await credentialManager.storeOAuthTokens(record.providerId, {
-              accessToken: data.credentials.oauthAccessToken,
-              refreshToken: data.credentials.oauthRefreshToken,
-              expiresAt: data.credentials.oauthExpiresAt,
-            });
+          // Store credentials if provided. Custom endpoints keep auth inline in
+          // customEndpointConfigJson, so skip the credential store entirely —
+          // otherwise a locked macOS Keychain would block creating the endpoint.
+          if (record.kind !== 'custom_endpoint') {
+            if (data.credentials?.apiKey) {
+              await credentialManager.storeApiKey(record.providerId, data.credentials.apiKey);
+            } else if (data.credentials?.oauthAccessToken) {
+              await credentialManager.storeOAuthTokens(record.providerId, {
+                accessToken: data.credentials.oauthAccessToken,
+                refreshToken: data.credentials.oauthRefreshToken,
+                expiresAt: data.credentials.oauthExpiresAt,
+              });
+            }
           }
 
           // Sync to registry.
@@ -192,7 +218,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
           // Compensating delete: remove the orphan DB record so retries don't fail
           // with 'already exists'.
           providerRepo.deleteProvider(record.id);
-          throw err;
+          rethrowKeychainError(err, 'create', record.providerId);
         }
 
         await clearCacheAndNotifyProvidersChanged(internalEventBus);
@@ -225,18 +251,23 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
             ? withCustomEndpointsLock
             : (fn: () => Promise<unknown>) => fn();
         return lock(async () => {
-          // Handle credential updates.
-          if (data.credentials) {
-            if (data.credentials.apiKey) {
-              await credentialManager.storeApiKey(existing.providerId, data.credentials.apiKey);
-              updates.authType = 'api_key';
-            } else if (data.credentials.oauthAccessToken) {
-              await credentialManager.storeOAuthTokens(existing.providerId, {
-                accessToken: data.credentials.oauthAccessToken,
-                refreshToken: data.credentials.oauthRefreshToken,
-                expiresAt: data.credentials.oauthExpiresAt,
-              });
-              updates.authType = 'oauth';
+          // Handle credential updates. Custom endpoints keep auth inline, so
+          // skip the credential store for them.
+          if (data.credentials && existing.kind !== 'custom_endpoint') {
+            try {
+              if (data.credentials.apiKey) {
+                await credentialManager.storeApiKey(existing.providerId, data.credentials.apiKey);
+                updates.authType = 'api_key';
+              } else if (data.credentials.oauthAccessToken) {
+                await credentialManager.storeOAuthTokens(existing.providerId, {
+                  accessToken: data.credentials.oauthAccessToken,
+                  refreshToken: data.credentials.oauthRefreshToken,
+                  expiresAt: data.credentials.oauthExpiresAt,
+                });
+                updates.authType = 'oauth';
+              }
+            } catch (err) {
+              rethrowKeychainError(err, 'update', existing.providerId);
             }
           }
 
@@ -279,22 +310,31 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
     if (!record) throw new Error(`Provider ${data.id} not found`);
     const lock = record.kind === 'custom_endpoint' ? withCustomEndpointsLock : withProviderLock;
     return lock(async () => {
+      // Custom endpoints store auth inline in customEndpointConfigJson, not in
+      // the credential store, so skip keychain cleanup for them — otherwise a
+      // locked Keychain would block removing an endpoint that has nothing in
+      // the Keychain to clean up.
+      if (record.kind !== 'custom_endpoint') {
+        try {
+          // Keychain-only persistence: remove credentials before deleting provider
+          // config. If the Keychain is locked, block deletion so we don't leave a
+          // stale credential that can reappear if the provider is re-added.
+          await credentialManager.removeCredentials(record.providerId);
+        } catch (error) {
+          rethrowKeychainError(error, 'delete', record.providerId);
+        }
+      }
+
       if (record.kind === 'built_in') {
         // Built-ins cannot be truly deleted; keep the row disabled so the
         // disabled state persists across daemon restarts.
         providerRepo.updateProvider(data.id, { isEnabled: false });
         markBuiltInProviderDisabled(record.providerId);
       } else {
-        // DB-first: delete the row before touching the registry so a failure in
-        // credential removal doesn't leave a ghost record that resurrects on restart.
         providerRepo.deleteProvider(data.id);
       }
       await removeProviderFromRegistry(record.providerId);
-      try {
-        await credentialManager.removeCredentials(record.providerId);
-      } finally {
-        await clearCacheAndNotifyProvidersChanged(internalEventBus);
-      }
+      await clearCacheAndNotifyProvidersChanged(internalEventBus);
       return { success: true };
     });
   });

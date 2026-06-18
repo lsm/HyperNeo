@@ -42,6 +42,7 @@ interface InsertSdkMessageArgs {
   id: string;
   sessionId: string;
   messageType: string;
+  messageSubtype?: string | null;
   sdkMessage: Record<string, unknown>;
   /** ISO timestamp (stored TEXT). Default is a fixed known value. */
   timestamp?: string;
@@ -56,12 +57,13 @@ function insertSdkMessage(db: BunDatabase, args: InsertSdkMessageArgs): void {
       : null;
   db.prepare(
     `INSERT INTO sdk_messages
-		 (id, session_id, message_type, sdk_message, timestamp, send_status, origin, parent_tool_use_id)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+		 (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin, parent_tool_use_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     args.id,
     args.sessionId,
     args.messageType,
+    args.messageSubtype ?? null,
     JSON.stringify(args.sdkMessage),
     args.timestamp ?? '2024-01-01 00:00:00',
     args.sendStatus ?? 'consumed',
@@ -231,6 +233,237 @@ describe('messages.bySession — SQL behavior', () => {
     // With LIMIT=3, only the 3 most recent top-level rows should be included,
     // and returned in ascending order (t3, t4, t5).
     expect(ids).toEqual(['t3', 't4', 't5']);
+  });
+
+  test('includes retracted messages in the top-level window', () => {
+    insertSdkMessage(db, {
+      id: 'older-real',
+      sessionId: 's1',
+      messageType: 'assistant',
+      sdkMessage: { type: 'assistant', uuid: 'older-real-uuid', message: { content: [] } },
+      timestamp: '2024-01-01 00:00:01',
+    });
+    insertSdkMessage(db, {
+      id: 'row-retracted',
+      sessionId: 's1',
+      messageType: 'assistant',
+      sdkMessage: { type: 'assistant', uuid: 'sdk-retracted', message: { content: [] } },
+      timestamp: '2024-01-01 00:00:02',
+    });
+    insertSdkMessage(db, {
+      id: 'fallback-notice',
+      sessionId: 's1',
+      messageType: 'system',
+      messageSubtype: 'model_refusal_fallback',
+      sdkMessage: {
+        type: 'system',
+        subtype: 'model_refusal_fallback',
+        retracted_message_uuids: ['sdk-retracted'],
+      },
+      timestamp: '2024-01-01 00:00:03',
+    });
+
+    const rows = query(db, 's1', 2);
+    expect(rows.map((r) => r.id)).toEqual(['row-retracted', 'fallback-notice']);
+  });
+
+  test('includes superseded messages in the top-level window', () => {
+    insertSdkMessage(db, {
+      id: 'older-real',
+      sessionId: 's1',
+      messageType: 'assistant',
+      sdkMessage: { type: 'assistant', uuid: 'older-real-uuid', message: { content: [] } },
+      timestamp: '2024-01-01 00:00:01',
+    });
+    insertSdkMessage(db, {
+      id: 'row-superseded',
+      sessionId: 's1',
+      messageType: 'assistant',
+      sdkMessage: { type: 'assistant', uuid: 'sdk-superseded', message: { content: [] } },
+      timestamp: '2024-01-01 00:00:02',
+    });
+    insertSdkMessage(db, {
+      id: 'replacement',
+      sessionId: 's1',
+      messageType: 'assistant',
+      sdkMessage: {
+        type: 'assistant',
+        uuid: 'replacement-uuid',
+        supersedes: ['sdk-superseded'],
+        message: { content: [] },
+      },
+      timestamp: '2024-01-01 00:00:03',
+    });
+
+    const rows = query(db, 's1', 2);
+    expect(rows.map((r) => r.id)).toEqual(['row-superseded', 'replacement']);
+  });
+
+  test('filters info-level informational rows before applying the top-level limit', () => {
+    insertSdkMessage(db, {
+      id: 'older-visible',
+      sessionId: 's1',
+      messageType: 'assistant',
+      sdkMessage: { type: 'assistant', uuid: 'older-visible-uuid', message: { content: [] } },
+      timestamp: '2024-01-01 00:00:01',
+    });
+    insertSdkMessage(db, {
+      id: 'hidden-info',
+      sessionId: 's1',
+      messageType: 'system',
+      messageSubtype: 'informational',
+      sdkMessage: {
+        type: 'system',
+        subtype: 'informational',
+        uuid: 'hidden-info-uuid',
+        session_id: 's1',
+        level: 'info',
+        content: 'transcript-only',
+      },
+      timestamp: '2024-01-01 00:00:02',
+    });
+    insertSdkMessage(db, {
+      id: 'visible-notice',
+      sessionId: 's1',
+      messageType: 'system',
+      messageSubtype: 'informational',
+      sdkMessage: {
+        type: 'system',
+        subtype: 'informational',
+        uuid: 'visible-notice-uuid',
+        session_id: 's1',
+        level: 'notice',
+        content: 'visible notice',
+      },
+      timestamp: '2024-01-01 00:00:03',
+    });
+
+    const rows = query(db, 's1', 2);
+    expect(rows.map((r) => r.id)).toEqual(['older-visible', 'visible-notice']);
+  });
+
+  test('filters stale worker shutdown rows before applying the top-level limit', () => {
+    insertSdkMessage(db, {
+      id: 'older-visible',
+      sessionId: 's1',
+      messageType: 'assistant',
+      sdkMessage: { type: 'assistant', uuid: 'older-visible-uuid', message: { content: [] } },
+      timestamp: '2024-01-01 00:00:01',
+    });
+    insertSdkMessage(db, {
+      id: 'stale-shutdown',
+      sessionId: 's1',
+      messageType: 'system',
+      messageSubtype: 'worker_shutting_down',
+      sdkMessage: {
+        type: 'system',
+        subtype: 'worker_shutting_down',
+        uuid: 'stale-shutdown-uuid',
+        session_id: 's1',
+        reason: 'host_exit',
+      },
+      timestamp: '2024-01-01 00:00:02',
+    });
+    insertSdkMessage(db, {
+      id: 'newer-visible',
+      sessionId: 's1',
+      messageType: 'assistant',
+      sdkMessage: { type: 'assistant', uuid: 'newer-visible-uuid', message: { content: [] } },
+      timestamp: '2024-01-01 00:00:03',
+    });
+
+    const rows = query(db, 's1', 2);
+    expect(rows.map((r) => r.id)).toEqual(['older-visible', 'newer-visible']);
+  });
+
+  test('keeps worker shutdown rows when they are the top-level live tail', () => {
+    insertSdkMessage(db, {
+      id: 'visible',
+      sessionId: 's1',
+      messageType: 'assistant',
+      sdkMessage: { type: 'assistant', uuid: 'visible-uuid', message: { content: [] } },
+      timestamp: '2024-01-01 00:00:01',
+    });
+    insertSdkMessage(db, {
+      id: 'tail-shutdown',
+      sessionId: 's1',
+      messageType: 'system',
+      messageSubtype: 'worker_shutting_down',
+      sdkMessage: {
+        type: 'system',
+        subtype: 'worker_shutting_down',
+        uuid: 'tail-shutdown-uuid',
+        session_id: 's1',
+        reason: 'host_exit',
+      },
+      timestamp: '2024-01-01 00:00:02',
+    });
+
+    const rows = query(db, 's1', 2);
+    expect(rows.map((r) => r.id)).toEqual(['visible', 'tail-shutdown']);
+  });
+
+  test('does not throw when an informational row has malformed JSON', () => {
+    insertSdkMessage(db, {
+      id: 'malformed-info',
+      sessionId: 's1',
+      messageType: 'system',
+      messageSubtype: 'informational',
+      sdkMessage: {
+        type: 'system',
+        subtype: 'informational',
+        uuid: 'malformed-info-uuid',
+        session_id: 's1',
+        level: 'notice',
+        content: 'will be corrupted',
+      },
+      timestamp: '2024-01-01 00:00:01',
+    });
+    db.exec('PRAGMA ignore_check_constraints = ON');
+    db.exec('DROP INDEX IF EXISTS idx_sdk_messages_uuid_status');
+    db.prepare(
+      `UPDATE sdk_messages
+       SET sdk_message = ?
+       WHERE id = ?`
+    ).run('{not-json', 'malformed-info');
+    db.exec('PRAGMA ignore_check_constraints = OFF');
+
+    const rows = query(db, 's1', 10);
+    expect(rows.map((r) => r.id)).toEqual(['malformed-info']);
+    expect(rows[0].type).toBe('unknown');
+  });
+
+  test('ignores malformed JSON rows while scanning retractions and supersedes', () => {
+    insertSdkMessage(db, {
+      id: 'malformed-ref',
+      sessionId: 's1',
+      messageType: 'system',
+      messageSubtype: 'model_refusal_fallback',
+      sdkMessage: {
+        type: 'system',
+        subtype: 'model_refusal_fallback',
+        parent_tool_use_id: 'unreferenced-tool',
+      },
+      timestamp: '2024-01-01 00:00:01',
+    });
+    db.exec('PRAGMA ignore_check_constraints = ON');
+    db.exec('DROP INDEX IF EXISTS idx_sdk_messages_uuid_status');
+    db.prepare(
+      `UPDATE sdk_messages
+       SET sdk_message = ?
+       WHERE id = ?`
+    ).run('{not-json', 'malformed-ref');
+    db.exec('PRAGMA ignore_check_constraints = OFF');
+    insertSdkMessage(db, {
+      id: 'normal',
+      sessionId: 's1',
+      messageType: 'assistant',
+      sdkMessage: { type: 'assistant', uuid: 'normal-uuid', message: { content: [] } },
+      timestamp: '2024-01-01 00:00:02',
+    });
+
+    const rows = query(db, 's1', 10);
+    expect(rows.map((r) => r.id)).toEqual(['normal']);
   });
 
   test('uses the session timestamp index for the top-level window', () => {

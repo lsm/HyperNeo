@@ -48,6 +48,7 @@ import type {
 } from '@neokai/shared';
 import type {
   ProviderAuthResponse,
+  ProviderLogoutResponse,
   ListProviderAuthStatusResponse,
   ProviderRefreshResponse,
 } from '@neokai/shared/provider';
@@ -161,11 +162,9 @@ export async function loginProvider(providerId: string): Promise<ProviderAuthRes
   return await hub.request<ProviderAuthResponse>('auth.login', { providerId });
 }
 
-export async function logoutProvider(
-  providerId: string
-): Promise<{ success: boolean; error?: string }> {
+export async function logoutProvider(providerId: string): Promise<ProviderLogoutResponse> {
   const hub = getHubOrThrow();
-  return await hub.request<{ success: boolean; error?: string }>('auth.logout', { providerId });
+  return await hub.request<ProviderLogoutResponse>('auth.logout', { providerId });
 }
 
 export async function refreshProvider(providerId: string): Promise<ProviderRefreshResponse> {

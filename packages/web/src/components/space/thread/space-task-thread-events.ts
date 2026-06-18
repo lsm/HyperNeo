@@ -3,6 +3,7 @@ import {
   type ContentBlock,
   hasRenderableThinking,
   isSDKAssistantMessage,
+  isSDKCompactBoundary,
   isSDKRateLimitEvent,
   isSDKResultMessage,
   isSDKSystemMessage,
@@ -13,6 +14,7 @@ import {
   isToolUseBlock,
 } from '@neokai/shared/sdk/type-guards';
 import type { SpaceTaskThreadMessageRow } from '../../../hooks/useSpaceTaskMessages';
+import type { MessageReplacementStatus } from '../../../lib/sdk-message-replacement';
 
 export type SpaceTaskThreadEventKind =
   | 'thinking'
@@ -21,6 +23,7 @@ export type SpaceTaskThreadEventKind =
   | 'text'
   | 'user'
   | 'system'
+  | 'compact_boundary'
   | 'result'
   | 'rate_limit'
   | 'progress'
@@ -41,6 +44,7 @@ export interface ParsedThreadRow {
   deliveryState?: 'delivered' | 'failed' | null;
   message: SDKMessage | null;
   fallbackText: string | null;
+  replacementStatus?: MessageReplacementStatus;
 }
 
 export interface TodoItem {
@@ -495,6 +499,26 @@ export function buildThreadEvents(parsedRows: ParsedThreadRow[]): SpaceTaskThrea
     }
 
     if (isSDKSystemMessage(row.message)) {
+      if (isSDKCompactBoundary(row.message)) {
+        const metadata = row.message.compact_metadata;
+        const tokenSummary = `${metadata.pre_tokens} → ${metadata.post_tokens ?? '—'} tokens`;
+        events.push({
+          id: `${String(row.id)}-compact-boundary`,
+          label: row.label,
+          role: row.role,
+          taskId: row.taskId,
+          taskTitle: row.taskTitle,
+          sessionId: row.sessionId,
+          createdAt: row.createdAt,
+          kind: 'compact_boundary',
+          title: 'Compact Boundary',
+          summary: `${metadata.trigger} · ${tokenSummary}`,
+          message: row.message,
+          systemSubtype: row.message.subtype,
+        });
+        continue;
+      }
+
       const subtype = row.message.subtype ?? 'system';
       let summary = subtype.replace(/_/g, ' ');
 

@@ -4,6 +4,7 @@ import type { AgentDefinition } from '@neokai/shared';
 export const COORDINATOR_AGENT: AgentDefinition = {
   description: 'Coordinator agent that delegates all work to specialists',
   tools: [
+    'Agent',
     'Task',
     'TaskOutput',
     'TaskStop',
@@ -16,12 +17,12 @@ export const COORDINATOR_AGENT: AgentDefinition = {
   prompt: `You are a tech lead. You do not write code, read files, or run commands directly. You think, plan, delegate to specialist sub-agents, and hold them accountable for results.
 
 ## Your Tools
-- Task / TaskOutput / TaskStop: Launch, monitor, and cancel specialist sub-agents
+- Agent / Task / TaskOutput / TaskStop: Launch, monitor, and cancel specialist sub-agents
 - TodoWrite: Track progress visibly for the user
 - AskUserQuestion: Clarify requirements with the user
 - EnterPlanMode / ExitPlanMode: Enter a structured planning phase for user approval before execution
 
-## Available Specialists (via Task subagent_type)
+## Available Specialists (via Agent subagent_type or Task subagent_type)
 
 Built-in: Explore, Plan, Bash
 Custom: Coder, Debugger, Tester, Reviewer, VCS, Verifier

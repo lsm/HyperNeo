@@ -15,6 +15,7 @@ import type { AuthManager } from '../../../../src/lib/auth-manager';
 import type { Provider } from '@neokai/shared/provider';
 import { resetProviderRegistry, getProviderRegistry } from '../../../../src/lib/providers/registry';
 import { resetProviderFactory } from '../../../../src/lib/providers/factory';
+import { KeychainUnavailableError } from '../../../../src/lib/credentials/credential-store';
 
 // Type for captured request handlers
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
@@ -486,6 +487,84 @@ describe('Auth RPC Handlers', () => {
       expect(credentialManager.removeCredentials).not.toHaveBeenCalled();
     });
 
+    it('surfaces keychain guidance when locked-read returns null and provider has no logout', async () => {
+      // getCredentials() returns null on locked Keychain even if a credential
+      // exists there. Without explicit handling, logout would claim env-managed
+      // and leave the Keychain credential intact. Attempt remove to surface
+      // unlock guidance.
+      const credentialManager = {
+        getCredentials: mock(async () => null),
+        removeCredentials: mock(async () => {
+          throw new KeychainUnavailableError('keychain locked');
+        }),
+        hasEnvironmentCredentials: mock(() => false),
+        getCredentialStoreStatus: mock(() => ({
+          backend: 'keychain-unavailable',
+          keychainAvailable: false,
+          warning: 'macOS Keychain is locked or unavailable.',
+        })),
+      };
+      setupAuthHandlers(
+        messageHubData.hub,
+        mockAuthManager as unknown as AuthManager,
+        credentialManager as never
+      );
+      const mockProvider = createMockProvider({ logout: undefined });
+      registry.register(mockProvider);
+
+      const handler = messageHubData.handlers.get('auth.logout');
+      expect(handler).toBeDefined();
+
+      const result = (await handler!({ providerId: 'test-provider' }, {})) as {
+        success: boolean;
+        error?: string;
+      };
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('security unlock-keychain');
+      expect(credentialManager.removeCredentials).toHaveBeenCalledWith('test-provider');
+    });
+
+    it('surfaces keychain guidance when backend is keychain-fallback (round 7 fix)', async () => {
+      // Same scenario as the keychain-unavailable test above, but with the
+      // `keychain-fallback` backend — the round 7 fix extended the guard
+      // at auth-handlers.ts:249 to treat both backends as "Keychain
+      // unreachable". Without the fix this branch would report
+      // env-managed and leave the Keychain credential intact even though
+      // one provider had entered fallback mode.
+      const credentialManager = {
+        getCredentials: mock(async () => null),
+        removeCredentials: mock(async () => {
+          throw new KeychainUnavailableError('keychain locked');
+        }),
+        hasEnvironmentCredentials: mock(() => false),
+        getCredentialStoreStatus: mock(() => ({
+          backend: 'keychain-fallback',
+          keychainAvailable: false,
+          warning: 'Using local encrypted file storage.',
+        })),
+      };
+      setupAuthHandlers(
+        messageHubData.hub,
+        mockAuthManager as unknown as AuthManager,
+        credentialManager as never
+      );
+      const mockProvider = createMockProvider({ logout: undefined });
+      registry.register(mockProvider);
+
+      const handler = messageHubData.handlers.get('auth.logout');
+      expect(handler).toBeDefined();
+
+      const result = (await handler!({ providerId: 'test-provider' }, {})) as {
+        success: boolean;
+        error?: string;
+      };
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('security unlock-keychain');
+      expect(credentialManager.removeCredentials).toHaveBeenCalledWith('test-provider');
+    });
+
     it('returns managed-by-environment error and removes stale row when env overrides storage', async () => {
       const credentialManager = {
         getCredentials: mock(async () => ({ type: 'api_key' as const, apiKey: 'stored-key' })),
@@ -623,6 +702,65 @@ describe('Auth RPC Handlers', () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toBe('Logout failed');
+    });
+
+    it('returns failure when removeCredentials throws KeychainUnavailableError', async () => {
+      const credentialManager = {
+        getCredentials: mock(async () => ({ type: 'api_key' as const, apiKey: 'stored-key' })),
+        removeCredentials: mock(async () => {
+          throw new KeychainUnavailableError('The user name or passphrase is not correct');
+        }),
+        hasEnvironmentCredentials: mock(() => false),
+      };
+      setupAuthHandlers(
+        messageHubData.hub,
+        mockAuthManager as unknown as AuthManager,
+        credentialManager as never
+      );
+      const mockProvider = createMockProvider();
+      registry.register(mockProvider);
+
+      const handler = messageHubData.handlers.get('auth.logout');
+      expect(handler).toBeDefined();
+
+      const result = (await handler!({ providerId: 'test-provider' }, {})) as {
+        success: boolean;
+        error?: string;
+      };
+
+      // Keychain-only persistence: if keychain removal fails, do not claim logout succeeded.
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('security unlock-keychain');
+      expect(mockProvider.logout).toHaveBeenCalledTimes(1);
+      expect(credentialManager.removeCredentials).toHaveBeenCalledWith('test-provider');
+    });
+
+    it('returns keychain guidance when env-managed cleanup hits locked keychain', async () => {
+      const credentialManager = {
+        removeCredentials: mock(async () => {
+          throw new KeychainUnavailableError('keychain locked');
+        }),
+        hasEnvironmentCredentials: mock(() => true),
+      };
+      setupAuthHandlers(
+        messageHubData.hub,
+        mockAuthManager as unknown as AuthManager,
+        credentialManager as never
+      );
+      const mockProvider = createMockProvider({ logout: undefined });
+      registry.register(mockProvider);
+
+      const handler = messageHubData.handlers.get('auth.logout');
+      expect(handler).toBeDefined();
+
+      const result = (await handler!({ providerId: 'test-provider' }, {})) as {
+        success: boolean;
+        error?: string;
+      };
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('security unlock-keychain');
+      expect(credentialManager.removeCredentials).toHaveBeenCalledTimes(2);
     });
   });
 
@@ -789,6 +927,41 @@ describe('Auth RPC Handlers', () => {
         type: 'oauth',
         accessToken: 'still-valid',
       });
+    });
+
+    it('returns keychain guidance when refresh cleanup hits locked keychain', async () => {
+      const credentialManager = {
+        removeCredentials: mock(async () => {
+          throw new KeychainUnavailableError('keychain locked');
+        }),
+        storeOAuthTokens: mock(async () => {}),
+      };
+      setupAuthHandlers(
+        messageHubData.hub,
+        mockAuthManager as unknown as AuthManager,
+        credentialManager as never
+      );
+      const mockProvider = createMockProvider({
+        refreshToken: mock(async () => false),
+        getCredentials: mock(async () => ({
+          type: 'oauth' as const,
+          accessToken: 'still-valid',
+        })),
+      });
+      registry.register(mockProvider);
+
+      const handler = messageHubData.handlers.get('auth.refresh');
+      expect(handler).toBeDefined();
+
+      const result = (await handler!({ providerId: 'test-provider' }, {})) as {
+        success: boolean;
+        error?: string;
+      };
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('security unlock-keychain');
+      expect(credentialManager.removeCredentials).toHaveBeenCalledWith('test-provider');
+      expect(credentialManager.storeOAuthTokens).not.toHaveBeenCalled();
     });
 
     it('handles refresh token errors', async () => {

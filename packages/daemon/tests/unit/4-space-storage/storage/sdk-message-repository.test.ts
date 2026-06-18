@@ -222,6 +222,39 @@ describe('SDKMessageRepository', () => {
 
       expect(messages.map((message) => message.text)).toEqual(['Older text', 'Newest text']);
     });
+
+    it('filters retracted and superseded rows before collecting text messages', () => {
+      repository.saveSDKMessage('session-1', createUserMessage('Visible older', 'visible-older'));
+      db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp)
+         VALUES (?, ?, ?, ?, ?)`
+      ).run('malformed-row', 'session-1', 'assistant', '{not-json', new Date().toISOString());
+      repository.saveSDKMessage(
+        'session-1',
+        createUserMessage('Retracted newer', 'retracted-newer')
+      );
+      repository.saveSDKMessage('session-1', {
+        type: 'system',
+        subtype: 'model_refusal_fallback',
+        uuid: 'fallback-notice',
+        retracted_message_uuids: ['retracted-newer'],
+        session_id: 'session-1',
+      } as unknown as SDKMessage);
+      repository.saveSDKMessage(
+        'session-1',
+        createUserMessage('Superseded newer', 'superseded-newer')
+      );
+      repository.saveSDKMessage('session-1', {
+        type: 'assistant',
+        uuid: 'replacement-message',
+        supersedes: ['superseded-newer'],
+        message: { role: 'assistant', content: [{ type: 'text', text: 'Replacement' }] },
+      } as unknown as SDKMessage);
+
+      const messages = repository.getRenderableTextMessages('session-1', 3);
+
+      expect(messages.map((message) => message.text)).toEqual(['Visible older', 'Replacement']);
+    });
     it('caps scanned renderable rows while collecting text messages', () => {
       repository.saveSDKMessage('session-1', createUserMessage('Too old text'));
       for (let i = 0; i < 250; i++) {
@@ -282,6 +315,110 @@ describe('SDKMessageRepository', () => {
       expect(messages.length).toBe(50);
     });
 
+    it('should include operational system rows in session pagination', () => {
+      repository.saveSDKMessage('session-1', createUserMessage('Visible'));
+      for (const subtype of ['session_state_changed', 'commands_changed']) {
+        repository.saveSDKMessage('session-1', {
+          type: 'system',
+          subtype,
+          commands: [],
+          estimated_tokens: 1,
+          estimated_tokens_delta: 1,
+          state: 'idle',
+          uuid: `operational-${subtype}`,
+          session_id: 'session-1',
+        } as unknown as SDKMessage);
+      }
+
+      const { messages } = repository.getSDKMessages('session-1', 3);
+
+      expect(messages.map((message) => (message as { subtype?: string }).subtype).sort()).toEqual(
+        ['commands_changed', 'session_state_changed', undefined].sort()
+      );
+    });
+
+    it('should include retracted rows in session pagination', () => {
+      repository.saveSDKMessage('session-1', createUserMessage('Visible older', 'visible-older'));
+      repository.saveSDKMessage(
+        'session-1',
+        createUserMessage('Retracted newer', 'retracted-newer')
+      );
+      repository.saveSDKMessage('session-1', {
+        type: 'system',
+        subtype: 'model_refusal_fallback',
+        retracted_message_uuids: ['retracted-newer'],
+        uuid: 'fallback-notice',
+        session_id: 'session-1',
+      } as unknown as SDKMessage);
+
+      const { messages } = repository.getSDKMessages('session-1', 3);
+
+      expect(messages.map((message) => (message as { uuid?: string }).uuid).sort()).toEqual([
+        'fallback-notice',
+        'retracted-newer',
+        'visible-older',
+      ]);
+    });
+
+    it('should include superseded rows in session pagination', () => {
+      repository.saveSDKMessage('session-1', createUserMessage('Visible older', 'visible-older'));
+      repository.saveSDKMessage(
+        'session-1',
+        createUserMessage('Superseded newer', 'superseded-newer')
+      );
+      repository.saveSDKMessage('session-1', {
+        type: 'assistant',
+        uuid: 'replacement-message',
+        supersedes: ['superseded-newer'],
+        message: { role: 'assistant', content: [{ type: 'text', text: 'replacement' }] },
+      } as unknown as SDKMessage);
+
+      const { messages } = repository.getSDKMessages('session-1', 3);
+
+      expect(messages.map((message) => (message as { uuid?: string }).uuid).sort()).toEqual([
+        'replacement-message',
+        'superseded-newer',
+        'visible-older',
+      ]);
+    });
+
+    it('applies limit to raw rows instead of replacement-filtered rows', () => {
+      repository.saveSDKMessage('session-1', createUserMessage('Visible oldest', 'visible-oldest'));
+      repository.saveSDKMessage('session-1', createUserMessage('Visible older', 'visible-older'));
+      repository.saveSDKMessage(
+        'session-1',
+        createUserMessage('Retracted newer', 'retracted-newer')
+      );
+      repository.saveSDKMessage(
+        'session-1',
+        createUserMessage('Superseded newest', 'superseded-newest')
+      );
+      repository.saveSDKMessage('session-1', {
+        type: 'system',
+        subtype: 'model_refusal_fallback',
+        retracted_message_uuids: ['retracted-newer'],
+        uuid: 'fallback-notice',
+        session_id: 'session-1',
+      } as unknown as SDKMessage);
+      repository.saveSDKMessage('session-1', {
+        type: 'assistant',
+        uuid: 'replacement-message',
+        supersedes: ['superseded-newest'],
+        message: { role: 'assistant', content: [{ type: 'text', text: 'replacement' }] },
+      } as unknown as SDKMessage);
+
+      const { messages } = repository.getSDKMessages('session-1', 6);
+
+      expect(messages.map((message) => (message as { uuid?: string }).uuid).sort()).toEqual([
+        'fallback-notice',
+        'replacement-message',
+        'retracted-newer',
+        'superseded-newest',
+        'visible-older',
+        'visible-oldest',
+      ]);
+    });
+
     it('should return messages before a timestamp (cursor pagination)', async () => {
       repository.saveSDKMessage('session-1', createUserMessage('First'));
       await new Promise((r) => setTimeout(r, 10));
@@ -340,6 +477,51 @@ describe('SDKMessageRepository', () => {
 
       // Only top-level message should be returned
       expect(messages.length).toBe(1);
+    });
+
+    it('should filter subagent thinking token progress rows', () => {
+      const toolUseId = 'tool-use-123';
+      repository.saveSDKMessage('session-1', createAssistantMessage('Task started', toolUseId));
+      repository.saveSDKMessage('session-1', createSubagentMessage('Subagent work', toolUseId));
+      repository.saveSDKMessage('session-1', {
+        type: 'system',
+        subtype: 'thinking_tokens',
+        parent_tool_use_id: toolUseId,
+        estimated_tokens: 1,
+        estimated_tokens_delta: 1,
+        uuid: 'thinking-subagent',
+        session_id: 'session-1',
+      } as unknown as SDKMessage);
+
+      const { messages } = repository.getSDKMessages('session-1');
+
+      // Only top-level assistant and subagent response should be returned (thinking_tokens filtered)
+      expect(messages.length).toBe(2);
+      expect(
+        messages.some((message) => (message as { subtype?: string }).subtype === 'thinking_tokens')
+      ).toBe(false);
+    });
+
+    it('should not throw when an informational row has malformed JSON', () => {
+      repository.saveSDKMessage('session-1', {
+        type: 'system',
+        subtype: 'informational',
+        level: 'notice',
+        content: 'will be corrupted',
+        uuid: 'malformed-info',
+        session_id: 'session-1',
+      } as unknown as SDKMessage);
+      db.prepare(
+        `UPDATE sdk_messages
+         SET sdk_message = ?
+         WHERE message_subtype = 'informational'`
+      ).run('{not-json');
+
+      const { messages } = repository.getSDKMessages('session-1');
+
+      expect(messages).toHaveLength(1);
+      expect(messages[0].type).toBe('unknown');
+      expect((messages[0] as { rawContent?: string }).rawContent).toBe('{not-json');
     });
 
     it('should inject id and timestamp into returned messages', () => {
@@ -407,6 +589,65 @@ describe('SDKMessageRepository', () => {
     });
   });
 
+  describe('getLastSDKMessage', () => {
+    it('should skip state-only frames when finding the last terminal message', () => {
+      repository.saveSDKMessage('session-1', {
+        type: 'result',
+        subtype: 'success',
+        duration_ms: 100,
+        duration_api_ms: 50,
+        is_error: false,
+        num_turns: 1,
+        result: 'Done',
+        session_id: 'session-1',
+        total_cost_usd: 0,
+        usage: {},
+      } as unknown as SDKMessage);
+      repository.saveSDKMessage('session-1', {
+        type: 'system',
+        subtype: 'session_state_changed',
+        state: 'idle',
+        uuid: 'state-only-idle',
+        session_id: 'session-1',
+      } as unknown as SDKMessage);
+
+      const message = repository.getLastSDKMessage('session-1');
+
+      expect(message?.type).toBe('result');
+    });
+
+    it('should skip model fallback notices when finding the last terminal message', () => {
+      repository.saveSDKMessage('session-1', {
+        type: 'result',
+        subtype: 'success',
+        duration_ms: 100,
+        duration_api_ms: 50,
+        is_error: false,
+        num_turns: 1,
+        result: 'Done after fallback',
+        session_id: 'session-1',
+        total_cost_usd: 0,
+        usage: {},
+      } as unknown as SDKMessage);
+      repository.saveSDKMessage('session-1', {
+        type: 'system',
+        subtype: 'model_refusal_fallback',
+        trigger: 'refusal',
+        direction: 'retry',
+        original_model: 'opus',
+        fallback_model: 'sonnet',
+        request_id: 'req-1',
+        content: 'Retried with fallback model',
+        uuid: 'fallback-notice',
+        session_id: 'session-1',
+      } as unknown as SDKMessage);
+
+      const message = repository.getLastSDKMessage('session-1');
+
+      expect(message?.type).toBe('result');
+    });
+  });
+
   describe('getSDKMessagesByType', () => {
     it('should return only messages of specified type', () => {
       repository.saveSDKMessage('session-1', createUserMessage('User msg'));
@@ -455,6 +696,29 @@ describe('SDKMessageRepository', () => {
       const messages = repository.getSDKMessagesByType('session-1', 'nonexistent');
 
       expect(messages).toEqual([]);
+    });
+  });
+
+  describe('getLatestSystemInitTimestamp', () => {
+    it('returns the latest system init timestamp without loading the full transcript', async () => {
+      repository.saveSDKMessage('session-1', {
+        type: 'system',
+        subtype: 'init',
+        uuid: 'init-1',
+        session_id: 'session-1',
+      } as unknown as SDKMessage);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      const beforeLatest = Date.now();
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      repository.saveSDKMessage('session-1', {
+        type: 'system',
+        subtype: 'init',
+        uuid: 'init-2',
+        session_id: 'session-1',
+      } as unknown as SDKMessage);
+
+      expect(repository.getLatestSystemInitTimestamp('session-1')).toBeGreaterThan(beforeLatest);
+      expect(repository.getLatestSystemInitTimestamp('missing-session')).toBe(0);
     });
   });
 
@@ -1039,6 +1303,82 @@ describe('SDKMessageRepository', () => {
     });
   });
 
+  describe('getConsumedUserMessagesAfterLatestInit', () => {
+    function insertMessage(
+      id: string,
+      sessionId: string,
+      message: SDKMessage,
+      timestamp: string,
+      sendStatus: SendStatus | null = 'consumed'
+    ): void {
+      db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        id,
+        sessionId,
+        message.type,
+        (message as SDKMessage & { subtype?: string }).subtype ?? null,
+        JSON.stringify(message),
+        timestamp,
+        sendStatus
+      );
+    }
+
+    it('returns only consumed user messages after the latest system init', () => {
+      insertMessage(
+        'old-user',
+        'session-1',
+        createUserMessage('before init', 'old-user'),
+        '2026-01-01T00:00:00.000Z'
+      );
+      insertMessage(
+        'init',
+        'session-1',
+        { type: 'system', subtype: 'init', session_id: 'session-1' } as unknown as SDKMessage,
+        '2026-01-01T00:01:00.000Z',
+        null
+      );
+      insertMessage(
+        'assistant-after-init',
+        'session-1',
+        createAssistantMessage('after init'),
+        '2026-01-01T00:02:00.000Z'
+      );
+      insertMessage(
+        'deferred-user-after-init',
+        'session-1',
+        createUserMessage('deferred after init', 'deferred-user-after-init'),
+        '2026-01-01T00:03:00.000Z',
+        'deferred'
+      );
+      insertMessage(
+        'candidate-user',
+        'session-1',
+        createUserMessage('candidate', 'candidate-user'),
+        '2026-01-01T00:04:00.000Z'
+      );
+
+      const messages = repository.getConsumedUserMessagesAfterLatestInit('session-1');
+
+      expect(messages.map((message) => message.dbId)).toEqual(['candidate-user']);
+      expect(messages[0]?.uuid).toBe('candidate-user');
+    });
+
+    it('returns consumed user messages when no system init exists', () => {
+      insertMessage(
+        'candidate-user',
+        'session-1',
+        createUserMessage('candidate', 'candidate-user'),
+        '2026-01-01T00:04:00.000Z'
+      );
+
+      const messages = repository.getConsumedUserMessagesAfterLatestInit('session-1');
+
+      expect(messages.map((message) => message.dbId)).toEqual(['candidate-user']);
+    });
+  });
+
   describe('searchMessages', () => {
     it('returns scoped matches with snippets', () => {
       createSearchIndex();
@@ -1232,6 +1572,65 @@ describe('SDKMessageRepository', () => {
         taskNumber: 12,
         title: 'Orion title',
       });
+    });
+
+    it('removes fallback-retracted messages from search index', () => {
+      createSearchIndex();
+      repository.saveSDKMessage(
+        'session-1',
+        createUserMessage('refused searchable marker', 'refused-uuid')
+      );
+
+      expect(repository.searchMessages({ query: 'refused searchable' }).results).toHaveLength(1);
+      repository.saveSDKMessage('session-1', {
+        type: 'system',
+        subtype: 'model_refusal_fallback',
+        uuid: 'fallback-notice',
+        retracted_message_uuids: ['refused-uuid'],
+        session_id: 'session-1',
+      } as unknown as SDKMessage);
+
+      expect(repository.searchMessages({ query: 'refused searchable' }).results).toEqual([]);
+    });
+
+    it('keeps fallback-retracted messages out during search index rebuild', () => {
+      createSearchIndex();
+      repository.saveSDKMessage(
+        'session-1',
+        createUserMessage('rebuild hidden marker', 'hidden-uuid')
+      );
+      repository.saveSDKMessage('session-1', {
+        type: 'system',
+        subtype: 'model_refusal_fallback',
+        uuid: 'fallback-notice',
+        retracted_message_uuids: ['hidden-uuid'],
+        session_id: 'session-1',
+      } as unknown as SDKMessage);
+
+      const hiddenRow = db
+        .prepare(`SELECT id FROM sdk_messages WHERE json_extract(sdk_message, '$.uuid') = ?`)
+        .get('hidden-uuid') as { id: string };
+      repository.updateMessageTimestamp(hiddenRow.id);
+
+      expect(repository.searchMessages({ query: 'rebuild hidden' }).results).toEqual([]);
+    });
+
+    it('removes superseded messages from search index', () => {
+      createSearchIndex();
+      repository.saveSDKMessage(
+        'session-1',
+        createUserMessage('superseded searchable marker', 'superseded-uuid')
+      );
+
+      expect(repository.searchMessages({ query: 'superseded searchable' }).results).toHaveLength(1);
+      repository.saveSDKMessage('session-1', {
+        type: 'assistant',
+        uuid: 'replacement-uuid',
+        supersedes: ['superseded-uuid'],
+        message: { role: 'assistant', content: [{ type: 'text', text: 'replacement marker' }] },
+      } as unknown as SDKMessage);
+
+      expect(repository.searchMessages({ query: 'superseded searchable' }).results).toEqual([]);
     });
 
     it('removes deleted messages from search index', () => {

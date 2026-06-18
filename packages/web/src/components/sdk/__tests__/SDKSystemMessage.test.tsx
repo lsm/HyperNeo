@@ -98,6 +98,22 @@ function createHookResponseWithError(): Extract<SDKMessage, { type: 'system' }> 
   };
 }
 
+function createModelRefusalFallbackMessage(): Extract<SDKMessage, { type: 'system' }> {
+  return {
+    type: 'system',
+    subtype: 'model_refusal_fallback',
+    trigger: 'refusal',
+    direction: 'retry',
+    original_model: 'claude-opus-4-5',
+    fallback_model: 'claude-sonnet-4-5',
+    request_id: 'req-1',
+    content: 'Retried with fallback model',
+    retracted_message_uuids: ['original-message'],
+    uuid: createUUID(),
+    session_id: 'test-session',
+  };
+}
+
 describe('SDKSystemMessage', () => {
   describe('System Init Message', () => {
     it('should render session started header', () => {
@@ -386,6 +402,121 @@ describe('SDKSystemMessage', () => {
     });
   });
 
+  describe('Operational System Messages', () => {
+    it('should not render thinking token updates (suppressed)', () => {
+      const message = {
+        type: 'system',
+        subtype: 'thinking_tokens',
+        estimated_tokens: 12345,
+        estimated_tokens_delta: 678,
+        uuid: createUUID(),
+        session_id: 'test-session',
+      } as Extract<SDKMessage, { type: 'system' }>;
+
+      const { container } = render(<SDKSystemMessage message={message} />);
+
+      // thinking_tokens messages should not be rendered (return null)
+      expect(container.firstChild).toBeNull();
+    });
+
+    it('should render session state changes', () => {
+      const message = {
+        type: 'system',
+        subtype: 'session_state_changed',
+        state: 'requires_action',
+        uuid: createUUID(),
+        session_id: 'test-session',
+      } as Extract<SDKMessage, { type: 'system' }>;
+
+      const { container } = render(<SDKSystemMessage message={message} />);
+
+      expect(container.textContent).toContain('Session state');
+      expect(container.textContent).toContain('requires_action');
+    });
+
+    it('should render command list changes', () => {
+      const message = {
+        type: 'system',
+        subtype: 'commands_changed',
+        commands: [
+          { name: 'help', description: 'Show help', argumentHint: '' },
+          { name: 'status', description: 'Show status', argumentHint: '' },
+        ],
+        uuid: createUUID(),
+        session_id: 'test-session',
+      } as Extract<SDKMessage, { type: 'system' }>;
+
+      const { container } = render(<SDKSystemMessage message={message} />);
+
+      expect(container.textContent).toContain('Commands changed');
+      expect(container.textContent).toContain('2 slash commands available');
+      expect(container.textContent).toContain('/help');
+      expect(container.textContent).toContain('/status');
+    });
+
+    it('should render model refusal fallback messages', () => {
+      const message = createModelRefusalFallbackMessage();
+      const { container } = render(<SDKSystemMessage message={message} />);
+
+      expect(container.textContent).toContain('Model fallback');
+      expect(container.textContent).toContain('Retried with fallback model');
+      expect(container.textContent).toContain('claude-opus-4-5');
+      expect(container.textContent).toContain('claude-sonnet-4-5');
+    });
+
+    it('should render informational messages', () => {
+      const message = {
+        type: 'system',
+        subtype: 'informational',
+        content: 'Hook blocked continuation',
+        level: 'warning',
+        prevent_continuation: true,
+        uuid: createUUID(),
+        session_id: 'test-session',
+      } as Extract<SDKMessage, { type: 'system' }>;
+
+      const { container } = render(<SDKSystemMessage message={message} />);
+
+      expect(container.textContent).toContain('Info: warning');
+      expect(container.textContent).toContain('Hook blocked continuation');
+      expect(container.textContent).toContain('Continuation stopped');
+    });
+
+    it('should suppress info-level informational messages in normal chat', () => {
+      const message = {
+        type: 'system',
+        subtype: 'informational',
+        content: 'Internal transcript note',
+        level: 'info',
+        uuid: createUUID(),
+        session_id: 'test-session',
+      } as Extract<SDKMessage, { type: 'system' }>;
+
+      const { container } = render(<SDKSystemMessage message={message} />);
+
+      expect(container.textContent).not.toContain('Internal transcript note');
+      expect(container.innerHTML).toBe('');
+    });
+
+    it('should render worker shutdown messages only for live tail rows', () => {
+      const message = {
+        type: 'system',
+        subtype: 'worker_shutting_down',
+        reason: 'host_exit',
+        uuid: createUUID(),
+        session_id: 'test-session',
+      } as Extract<SDKMessage, { type: 'system' }>;
+
+      const stale = render(<SDKSystemMessage message={message} />);
+      expect(stale.container.textContent).not.toContain('Worker shutting down');
+
+      const { container } = render(<SDKSystemMessage message={message} isLiveTail={true} />);
+
+      expect(container.textContent).toContain('Worker shutting down');
+      expect(container.textContent).toContain('host_exit');
+    });
+  });
+
   describe('Unknown System Subtype', () => {
     it('should return null for unknown subtypes', () => {
       const message = {
@@ -458,6 +589,82 @@ describe('SDKSystemMessage', () => {
       expect(rotatedSvg?.className.baseVal || rotatedSvg?.getAttribute('class')).toContain(
         'rotate-180'
       );
+    });
+  });
+
+  describe('API Retry Message', () => {
+    function createAPIRetryMessage(): Extract<SDKMessage, { type: 'system' }> {
+      return {
+        type: 'system',
+        subtype: 'api_retry',
+        attempt: 2,
+        max_retries: 3,
+        retry_delay_ms: 5000,
+        error_status: 429,
+        error: 'rate_limit',
+        uuid: createUUID(),
+        session_id: 'test-session',
+      };
+    }
+
+    it('should render API retry message', () => {
+      const message = createAPIRetryMessage();
+      const { container } = render(<SDKSystemMessage message={message} />);
+
+      expect(container.textContent).toContain('API retry');
+      expect(container.textContent).toContain('Attempt 2');
+      expect(container.textContent).toContain('of 3');
+      expect(container.textContent).toContain('delay 5000ms');
+      expect(container.textContent).toContain('Status: 429');
+      expect(container.textContent).toContain('rate_limit');
+    });
+
+    it('should render API retry without max retries', () => {
+      const message = createAPIRetryMessage();
+      (message as any).max_retries = 0;
+      const { container } = render(<SDKSystemMessage message={message} />);
+
+      expect(container.textContent).toContain('Attempt 2');
+      expect(container.textContent).not.toContain('of');
+    });
+
+    it('should render API retry without delay', () => {
+      const message = createAPIRetryMessage();
+      (message as any).retry_delay_ms = 0;
+      const { container } = render(<SDKSystemMessage message={message} />);
+
+      expect(container.textContent).toContain('Attempt 2');
+      expect(container.textContent).not.toContain('delay');
+    });
+
+    it('should render API retry without error status', () => {
+      const message = createAPIRetryMessage();
+      (message as any).error_status = null;
+      const { container } = render(<SDKSystemMessage message={message} />);
+
+      expect(container.textContent).toContain('Attempt 2');
+      expect(container.textContent).not.toContain('Status:');
+    });
+  });
+
+  describe('Thinking Tokens Message', () => {
+    function createThinkingTokensMessage(): Extract<SDKMessage, { type: 'system' }> {
+      return {
+        type: 'system',
+        subtype: 'thinking_tokens',
+        estimated_tokens: 1500,
+        estimated_tokens_delta: 500,
+        uuid: createUUID(),
+        session_id: 'test-session',
+      };
+    }
+
+    it('should not render thinking tokens message (suppressed)', () => {
+      const message = createThinkingTokensMessage();
+      const { container } = render(<SDKSystemMessage message={message} />);
+
+      // Component should return null for thinking_tokens messages
+      expect(container.firstChild).toBeNull();
     });
   });
 });

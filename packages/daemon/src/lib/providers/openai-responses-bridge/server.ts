@@ -63,6 +63,14 @@ export type OpenAIResponsesBridgeServer = {
   baseUrlForSession?(sessionId: string): string;
   /** Set per-session thinking config so the bridge can include reasoning even when the Anthropic SDK client omits the thinking field. */
   setSessionThinkingConfig?(sessionId: string, thinking: AnthropicRequest['thinking']): void;
+  /**
+   * Override the resolved model ID for a specific session.
+   * Used when the SDK sends a model ID that differs from the upstream
+   * model ID (e.g., aliased Anthropic IDs for Copilot, or any provider
+   * using model ID translation). For providers using real model IDs
+   * directly (Codex, GLM, Kimi), both arguments are typically the same.
+   */
+  setSessionModelConfig?(sessionId: string, aliasModelId: string, realModelId: string): void;
   stop(): void;
 };
 
@@ -580,7 +588,11 @@ function buildResponsesRequest(
   body: AnthropicRequest,
   model: string,
   continuation?: { previousResponseId: string; input: ResponsesInputItem[] },
-  options: { includeMaxOutputTokens?: boolean; includeParallelToolCalls?: boolean } = {},
+  options: {
+    includeMaxOutputTokens?: boolean;
+    includeParallelToolCalls?: boolean;
+    isChatgptOAuth?: boolean;
+  } = {},
   reasoningItems?: ResponsesReasoningItem[]
 ): ResponsesRequest {
   const instructions = extractSystemText(body.system) || undefined;
@@ -603,8 +615,17 @@ function buildResponsesRequest(
     stream: true,
     ...(includeParallelToolCalls ? { parallel_tool_calls: false } : {}),
     ...(reasoning ? { reasoning } : {}),
+    // encrypted_content is required for multi-turn stateless continuation.
+    // summary_text is required for the standard OpenAI API to stream reasoning
+    // summary deltas (response.reasoning_summary_text.delta). The ChatGPT Codex
+    // endpoint rejects summary_text, so keep it off that path.
     ...(reasoning || (reasoningItems && reasoningItems.length > 0)
-      ? { include: ['reasoning.encrypted_content'] }
+      ? {
+          include: [
+            'reasoning.encrypted_content',
+            ...(options.isChatgptOAuth ? [] : ['reasoning.summary_text']),
+          ],
+        }
       : {}),
   };
 }
@@ -1138,12 +1159,22 @@ export function createOpenAIResponsesBridgeServer(
   // Per-session thinking config injected by the daemon when the Anthropic SDK client
   // (Claude Code CLI) omits the thinking field from request bodies.
   const sessionThinkingConfigs = new Map<string, SessionThinkingConfigEntry>();
+  // Per-session model overrides. When the SDK sends a model ID that differs from
+  // the upstream model ID (e.g., aliased Anthropic IDs for Copilot, or any
+  // provider using model ID translation), this map lets the daemon override the
+  // default mapping per session. For providers using real model IDs directly
+  // (Codex, GLM, Kimi), the SDK and upstream IDs are typically the same.
+  // Keyed by (sessionId, sdkModelId) so different SDK tiers within the same
+  // session are independently overridden and fallback model registration does
+  // not clobber the primary model's override.
+  const sessionModelAliasOverrides = new Map<string, string>();
   let resolvedAuth: ResolvedResponsesAuth | undefined;
   // ChatGPT Codex endpoint rejects max_output_tokens and parallel_tool_calls.
   const isChatgptOAuth = config.auth.source === 'chatgpt_oauth' && !config.openAIBaseUrl;
   const buildOpts = {
     includeMaxOutputTokens: !isChatgptOAuth,
     includeParallelToolCalls: !isChatgptOAuth,
+    isChatgptOAuth,
   };
 
   const deleteContinuation = (sessionId: string, callId: string): void => {
@@ -1192,6 +1223,17 @@ export function createOpenAIResponsesBridgeServer(
   ): void => {
     deleteSessionThinkingConfig(sessionId);
     sessionThinkingConfigs.set(sessionId, { thinking });
+  };
+
+  const sessionModelKey = (sessionId: string, aliasModelId: string): string =>
+    `${sessionId}\0${aliasModelId}`;
+
+  const _deleteSessionModelAliasOverrides = (sessionId: string): void => {
+    for (const key of sessionModelAliasOverrides.keys()) {
+      if (key.startsWith(`${sessionId}\0`)) {
+        sessionModelAliasOverrides.delete(key);
+      }
+    }
   };
 
   const consumeContinuation = (
@@ -1257,8 +1299,10 @@ export function createOpenAIResponsesBridgeServer(
       // The Claude Code CLI handles thinking internally and does not include the
       // thinking field in Anthropic Messages API requests. Merge the per-session
       // thinking config injected by the daemon so reasoning is forwarded to OpenAI.
+      // If the SDK sends a non-enabled thinking payload (e.g. {type:'adaptive'}),
+      // override it with the session's explicit enabled config.
       const sessionThinkingEntry = sessionThinkingConfigs.get(route.sessionId);
-      if (sessionThinkingEntry?.thinking && !body.thinking) {
+      if (sessionThinkingEntry?.thinking && (!body.thinking || body.thinking.type !== 'enabled')) {
         body = { ...body, thinking: sessionThinkingEntry.thinking };
       }
 
@@ -1277,8 +1321,18 @@ export function createOpenAIResponsesBridgeServer(
         );
       }
 
-      const model = resolveModelId(body.model, config.modelAliases);
+      let model = resolveModelId(body.model, config.modelAliases);
       const sessionId = route.sessionId;
+      // If the daemon has registered a per-(session, alias) model override, use it
+      // so the originally-selected Codex model is preserved upstream. This only
+      // overrides when the incoming model matches the registered alias, so different
+      // SDK tiers (opus/sonnet/haiku) are independently resolved.
+      const sessionModelOverride = sessionModelAliasOverrides.get(
+        sessionModelKey(sessionId, body.model)
+      );
+      if (sessionModelOverride) {
+        model = sessionModelOverride;
+      }
       const resolvedContinuation = isChatgptOAuth
         ? undefined
         : resolveContinuation(sessionId, body.messages, continuations);
@@ -1424,6 +1478,15 @@ export function createOpenAIResponsesBridgeServer(
     setSessionThinkingConfig: (sessionId: string, thinking: AnthropicRequest['thinking']) => {
       storeSessionThinkingConfig(sessionId, thinking);
     },
+    setSessionModelConfig: (sessionId: string, aliasModelId: string, realModelId: string) => {
+      // Simple overwrite: last registration wins. This correctly handles
+      // model switching within the same alias tier (e.g. gpt-5.3-codex →
+      // gpt-5.4). When a session has a same-tier fallback model, the
+      // fallback registration overwrites the primary. This is an acceptable
+      // trade-off: same-tier fallbacks are rare (both models are similar),
+      // while model switching is common and must work correctly.
+      sessionModelAliasOverrides.set(sessionModelKey(sessionId, aliasModelId), realModelId);
+    },
     stop: () => {
       for (const continuation of continuations.values()) {
         clearTimeout(continuation.cleanupTimer);
@@ -1434,6 +1497,7 @@ export function createOpenAIResponsesBridgeServer(
       }
       sessionReasoningItems.clear();
       sessionThinkingConfigs.clear();
+      sessionModelAliasOverrides.clear();
       server.stop(true);
     },
   };

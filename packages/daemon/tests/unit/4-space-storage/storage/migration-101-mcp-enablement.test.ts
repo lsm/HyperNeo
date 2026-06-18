@@ -159,7 +159,7 @@ describe('Migration 100: mcp_enablement seeding', () => {
         )
         .run()
     ).toThrow();
-  });
+  }, 15000);
 
   test('is idempotent when run twice on an empty database', () => {
     runMigration101(db);

@@ -112,6 +112,7 @@ function buildTemplateUpdateParams(
       ...(node.postApproval ? { postApproval: { ...node.postApproval } } : {}),
       ...(node.requireCodexApproval ? { requireCodexApproval: true } : {}),
       ...(node.codexPollIntervalMs ? { codexPollIntervalMs: node.codexPollIntervalMs } : {}),
+      ...(node.codexTimeoutSeconds ? { codexTimeoutSeconds: node.codexTimeoutSeconds } : {}),
     };
   });
 
@@ -135,6 +136,7 @@ function buildTemplateUpdateParams(
     endNodeId: newEndNodeId ?? null,
     channels: newChannels,
     gates: newGates,
+    hooks: template.hooks ? [...template.hooks] : null,
     tags: [...template.tags],
     completionAutonomyLevel: template.completionAutonomyLevel,
     templateName: template.name,

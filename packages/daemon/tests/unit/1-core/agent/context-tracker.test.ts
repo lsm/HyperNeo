@@ -6,7 +6,7 @@
  */
 
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
-import { ContextTracker } from '../../../../src/lib/agent/context-tracker';
+import { ContextTracker, reserveBasedThreshold } from '../../../../src/lib/agent/context-tracker';
 import type { ContextInfo } from '@neokai/shared';
 import { generateUUID } from '@neokai/shared';
 
@@ -96,6 +96,197 @@ describe('ContextTracker', () => {
   describe('model switching', () => {
     it('should not throw when setModel is called', () => {
       expect(() => tracker.setModel('claude-opus-4-6')).not.toThrow();
+    });
+  });
+
+  describe('shouldCompact', () => {
+    it('returns false when no context info exists', () => {
+      expect(tracker.shouldCompact(200_000)).toBe(false);
+    });
+
+    it('returns false when usage is below 85% threshold', () => {
+      tracker.updateWithDetailedBreakdown({
+        model: 'gpt-4',
+        totalUsed: 100_000,
+        totalCapacity: 128_000,
+        percentUsed: 78,
+        breakdown: {},
+      });
+      expect(tracker.shouldCompact(128_000)).toBe(false);
+    });
+
+    it('returns true when usage is at or above 85% threshold', () => {
+      tracker.updateWithDetailedBreakdown({
+        model: 'gpt-4',
+        totalUsed: 109_000,
+        totalCapacity: 128_000,
+        percentUsed: 85,
+        breakdown: {},
+      });
+      expect(tracker.shouldCompact(128_000)).toBe(true);
+    });
+
+    it('triggers at exactly 85% of the GPT-5.5 272k context window', () => {
+      tracker.updateWithDetailedBreakdown({
+        model: 'gpt-5.5',
+        totalUsed: 231_199,
+        totalCapacity: 272_000,
+        percentUsed: 85,
+        breakdown: {},
+      });
+      expect(tracker.shouldCompact(272_000)).toBe(false);
+
+      tracker.updateWithDetailedBreakdown({
+        model: 'gpt-5.5',
+        totalUsed: 231_200,
+        totalCapacity: 272_000,
+        percentUsed: 85,
+        breakdown: {},
+      });
+      expect(tracker.shouldCompact(272_000)).toBe(true);
+    });
+
+    it('returns false when cooldown has not elapsed', () => {
+      tracker.updateWithDetailedBreakdown({
+        model: 'gpt-4',
+        totalUsed: 109_000,
+        totalCapacity: 128_000,
+        percentUsed: 85,
+        breakdown: {},
+      });
+      tracker.markCompactionTriggered();
+      expect(tracker.shouldCompact(128_000, 60_000)).toBe(false);
+    });
+
+    it('returns true after cooldown elapses', () => {
+      tracker.updateWithDetailedBreakdown({
+        model: 'gpt-4',
+        totalUsed: 109_000,
+        totalCapacity: 128_000,
+        percentUsed: 85,
+        breakdown: {},
+      });
+      tracker.markCompactionTriggered();
+      expect(tracker.shouldCompact(128_000, 0)).toBe(true);
+    });
+
+    it('returns false for invalid context window', () => {
+      tracker.updateWithDetailedBreakdown({
+        model: 'gpt-4',
+        totalUsed: 109_000,
+        totalCapacity: 128_000,
+        percentUsed: 85,
+        breakdown: {},
+      });
+      expect(tracker.shouldCompact(0)).toBe(false);
+      expect(tracker.shouldCompact(-1)).toBe(false);
+    });
+  });
+
+  describe('shouldCompactAt', () => {
+    it('returns false when no context info exists', () => {
+      expect(tracker.shouldCompactAt(100_000)).toBe(false);
+    });
+
+    it('returns false when totalUsed is below threshold', () => {
+      tracker.updateWithDetailedBreakdown({
+        model: 'kimi-for-coding',
+        totalUsed: 200_000,
+        totalCapacity: 262_144,
+        percentUsed: 76,
+        breakdown: {},
+      });
+      // Kimi 262k threshold = 262144 - 13000 = 249144.
+      expect(tracker.shouldCompactAt(249_144)).toBe(false);
+    });
+
+    it('returns true when totalUsed is at or above threshold', () => {
+      tracker.updateWithDetailedBreakdown({
+        model: 'kimi-for-coding',
+        totalUsed: 250_000,
+        totalCapacity: 262_144,
+        percentUsed: 95,
+        breakdown: {},
+      });
+      expect(tracker.shouldCompactAt(249_144)).toBe(true);
+    });
+
+    it('returns false when cooldown has not elapsed', () => {
+      tracker.updateWithDetailedBreakdown({
+        model: 'kimi-for-coding',
+        totalUsed: 250_000,
+        totalCapacity: 262_144,
+        percentUsed: 95,
+        breakdown: {},
+      });
+      tracker.markCompactionTriggered();
+      expect(tracker.shouldCompactAt(249_144, 60_000)).toBe(false);
+    });
+
+    it('returns true after cooldown elapses', () => {
+      tracker.updateWithDetailedBreakdown({
+        model: 'kimi-for-coding',
+        totalUsed: 250_000,
+        totalCapacity: 262_144,
+        percentUsed: 95,
+        breakdown: {},
+      });
+      tracker.markCompactionTriggered();
+      expect(tracker.shouldCompactAt(249_144, 0)).toBe(true);
+    });
+
+    it('returns false for invalid threshold', () => {
+      tracker.updateWithDetailedBreakdown({
+        model: 'kimi-for-coding',
+        totalUsed: 250_000,
+        totalCapacity: 262_144,
+        percentUsed: 95,
+        breakdown: {},
+      });
+      expect(tracker.shouldCompactAt(0)).toBe(false);
+      expect(tracker.shouldCompactAt(-1)).toBe(false);
+      expect(tracker.shouldCompactAt(Number.NaN)).toBe(false);
+    });
+  });
+
+  describe('reserveBasedThreshold', () => {
+    it('returns 0 for invalid context windows', () => {
+      expect(reserveBasedThreshold(0)).toBe(0);
+      expect(reserveBasedThreshold(-1)).toBe(0);
+      expect(reserveBasedThreshold(Number.NaN)).toBe(0);
+    });
+
+    it('uses the SDK 13k reserve for windows where 10% would exceed it', () => {
+      // 200k window: 10% = 20k > 13k. Reserve = min(13k, 20k) = 13k.
+      // Threshold = 200k - 13k = 187k. Matches the SDK's own trigger.
+      expect(reserveBasedThreshold(200_000)).toBe(187_000);
+      // 1M window: 10% = 100k > 13k. Threshold = 1M - 13k = 987k.
+      expect(reserveBasedThreshold(1_000_000)).toBe(987_000);
+    });
+
+    it('uses a proportional 10% reserve for small windows', () => {
+      // 80k window: 10% = 8k < 13k. Reserve = min(13k, 8k) = 8k.
+      // Threshold = 80k - 8k = 72k.
+      expect(reserveBasedThreshold(80_000)).toBe(72_000);
+      // 8k window (custom endpoint): 10% = 800. Threshold = 8k - 800 = 7200.
+      expect(reserveBasedThreshold(8_000)).toBe(7_200);
+    });
+
+    it('clamps the threshold to at least 1 for tiny windows', () => {
+      // Pathological case: very tiny window where reserve > window would
+      // produce 0 or negative. Clamp to 1 so shouldCompactAt still fires.
+      expect(reserveBasedThreshold(100)).toBe(90); // 100 - min(13k, 10) = 100 - 10 = 90
+      expect(reserveBasedThreshold(1)).toBe(1); // 1 - min(13k, 0) = 1 - 0 = 1 (floored)
+    });
+
+    it('matches SDK trigger for Kimi 262k window', () => {
+      // Kimi: SDK auto-compact disabled, NeoKai is sole path. Use the same
+      // reserve the SDK would have used so NeoKai fires at the same point.
+      expect(reserveBasedThreshold(262_144)).toBe(249_144);
+    });
+
+    it('matches SDK trigger for GLM 1M window', () => {
+      expect(reserveBasedThreshold(1_000_000)).toBe(987_000);
     });
   });
 });

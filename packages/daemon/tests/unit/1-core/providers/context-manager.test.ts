@@ -1007,10 +1007,10 @@ describe('ProviderContextManager', () => {
 });
 
 // ---------------------------------------------------------------------------
-// No-Anthropic-model-leak invariant — real provider buildSdkConfig()
+// SDK model ID aliasing invariant — real provider buildSdkConfig()
 //
 // These tests use the actual provider classes (not mocks) to assert that
-// ANTHROPIC_DEFAULT_HAIKU_MODEL never contains a claude-* model name.
+// ANTHROPIC_DEFAULT_*_MODEL env vars are set to SDK-compatible model IDs.
 //
 // Root cause of the original bug: without ANTHROPIC_DEFAULT_*_MODEL being set
 // to bridge-compatible model IDs, the Claude Agent SDK subprocess falls back to
@@ -1018,15 +1018,19 @@ describe('ProviderContextManager', () => {
 // such as summarisation and compaction.
 //
 // The invariant differs per provider:
-//   Codex bridge:   all three tier slots must be gpt-* model IDs — the bridge
-//                   rejects any claude-* name with "model does not exist".
+//   Codex bridge:   all three tier slots use Anthropic model IDs with known
+//                   large context windows (claude-opus-4-7 = 1M,
+//                   claude-sonnet-4-20250514 = 200k). The SDK recognises these
+//                   IDs and uses their real context limits instead of falling
+//                   back to ~200k for unknown Codex IDs. The bridge then maps
+//                   the Anthropic IDs back to real Codex IDs via modelAliases.
 //   Copilot bridge: all three tier slots must be set to the same resolved model ID
 //                   so the SDK's internal haiku/opus calls also go through a real
 //                   Copilot model.  The SDK's default claude-haiku-4-5-20251001
 //                   is an Anthropic API ID that the Copilot bridge cannot serve.
 // ---------------------------------------------------------------------------
 
-describe('no-Anthropic-model-leak invariant — real provider buildSdkConfig()', () => {
+describe('sdk-model-id-aliasing invariant — real provider buildSdkConfig()', () => {
   // Use a shared let so afterEach can clean up even when assertions throw.
   let codexProvider: AnthropicToCodexBridgeProvider | undefined;
 
@@ -1035,22 +1039,24 @@ describe('no-Anthropic-model-leak invariant — real provider buildSdkConfig()',
     codexProvider = undefined;
   });
 
-  it('Codex provider: ANTHROPIC_DEFAULT_HAIKU_MODEL does not start with claude-', () => {
+  it('Codex provider: ANTHROPIC_DEFAULT_HAIKU_MODEL uses real Codex mini model ID', () => {
     codexProvider = new AnthropicToCodexBridgeProvider({ OPENAI_API_KEY: 'sk-test' });
     const cfg = codexProvider.buildSdkConfig('gpt-5.3-codex', {
       workspacePath: '/tmp/ws-codex-leak',
     });
-    expect(cfg.envVars['ANTHROPIC_DEFAULT_HAIKU_MODEL']).not.toMatch(/^claude-/);
+    expect(cfg.envVars['ANTHROPIC_DEFAULT_HAIKU_MODEL']).toBe('gpt-5.4-mini');
   });
 
-  it('Codex provider: all three DEFAULT_*_MODEL slots are non-Anthropic model names', () => {
+  it('Codex provider: all three DEFAULT_*_MODEL slots use real Codex model IDs', () => {
     codexProvider = new AnthropicToCodexBridgeProvider({ OPENAI_API_KEY: 'sk-test' });
     const cfg = codexProvider.buildSdkConfig('gpt-5.3-codex', {
       workspacePath: '/tmp/ws-codex-all',
     });
-    expect(cfg.envVars['ANTHROPIC_DEFAULT_HAIKU_MODEL']).not.toMatch(/^claude-/);
-    expect(cfg.envVars['ANTHROPIC_DEFAULT_SONNET_MODEL']).not.toMatch(/^claude-/);
-    expect(cfg.envVars['ANTHROPIC_DEFAULT_OPUS_MODEL']).not.toMatch(/^claude-/);
+    // Haiku slot uses the Codex mini model ID
+    expect(cfg.envVars['ANTHROPIC_DEFAULT_HAIKU_MODEL']).toBe('gpt-5.4-mini');
+    // Sonnet and Opus slots use the selected Codex model ID
+    expect(cfg.envVars['ANTHROPIC_DEFAULT_SONNET_MODEL']).toBe('gpt-5.3-codex');
+    expect(cfg.envVars['ANTHROPIC_DEFAULT_OPUS_MODEL']).toBe('gpt-5.5');
   });
 
   it('Copilot provider: all three DEFAULT_*_MODEL slots are set to the resolved model ID', () => {

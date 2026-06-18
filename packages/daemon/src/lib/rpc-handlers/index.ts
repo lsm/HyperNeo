@@ -62,6 +62,7 @@ import { GateDataRepository } from '../../storage/repositories/gate-data-reposit
 import { GateOpenStateRepository } from '../../storage/repositories/gate-open-state-repository';
 import { WorkflowRunArtifactRepository } from '../../storage/repositories/workflow-run-artifact-repository';
 import { WorkflowRunArtifactCacheRepository } from '../../storage/repositories/workflow-run-artifact-cache-repository';
+import { WorkflowHookStateRepository } from '../../storage/repositories/workflow-hook-state-repository';
 import { createConversationFrictionEvidenceHandler } from '../job-handlers/conversation-friction-evidence.handler';
 import { handleGoalAutomationExecute } from '../job-handlers/goal-automation-execute.handler';
 import {
@@ -805,6 +806,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       spaceRepo,
       sessionRepo,
       spaceAgentRepo,
+      longHorizonAgentRepo,
       workflowRepo: spaceWorkflowRepo,
       workflowRunRepo: spaceWorkflowRunRepo,
       nodeExecutionRepo,
@@ -885,7 +887,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     deps.messageHub,
     deps.spaceManager,
     longHorizonAgentRepo,
-    spaceRuntimeService
+    deps.spaceAgentManager,
+    spaceRuntimeService,
+    deps.internalEventBus
   );
 
   // Register Space RPC handlers now that spaceRuntimeService exists.
@@ -1046,6 +1050,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       evolutionScopeService
     );
   };
+  const hookStateRepo = new WorkflowHookStateRepository(deps.db.getDatabase());
   setupSpaceWorkflowRunHandlers(
     deps.messageHub,
     deps.spaceManager,
@@ -1059,7 +1064,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     spaceWorktreeManager,
     artifactRepo,
     artifactCacheRepo,
-    deps.jobQueue
+    deps.jobQueue,
+    hookStateRepo
   );
 
   // Register background sync handlers that populate workflow_run_artifact_cache.

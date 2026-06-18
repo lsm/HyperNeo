@@ -69,13 +69,28 @@ export function getModelContextWindow(modelId: string): number | undefined {
   return resolved ? MODEL_CONTEXT_WINDOWS[resolved] : undefined;
 }
 
-export function requireModelContextWindow(modelId: string): number {
-  const contextWindow = getModelContextWindow(modelId);
-  if (!contextWindow) {
-    throw new Error(`Unknown Codex model context window: ${modelId}`);
-  }
-  return contextWindow;
-}
+/**
+ * Codex model IDs for SDK routing.
+ *
+ * Following the GLM/Kimi pattern, we use real Codex model IDs directly instead
+ * of aliasing to Anthropic model IDs. The SDK reads context window from
+ * `/v1/models` metadata (via preferContextWindowMetadata: true) instead of its
+ * hardcoded database, avoiding token counting mismatch.
+ *
+ * This identity mapping is used for:
+ *   - `ANTHROPIC_DEFAULT_*_MODEL` env vars (so SDK sub-agents use real Codex IDs)
+ *   - `buildSdkConfig()` resolution
+ *
+ * The bridge's per-session model overrides ensure the originally-selected Codex
+ * model ID is preserved when the SDK sends requests.
+ */
+export const CODEX_TO_SDK_MODEL: Record<CodexBridgeModelId, string> = {
+  'gpt-5.5': 'gpt-5.5',
+  'gpt-5.3-codex': 'gpt-5.3-codex',
+  'gpt-5.4': 'gpt-5.4',
+  'gpt-5.4-mini': 'gpt-5.4-mini',
+  'gpt-5.1-codex-mini': 'gpt-5.1-codex-mini',
+};
 
 export function getCodexBridgeModelInfos(): ModelInfo[] {
   return (Object.keys(MODEL_CONTEXT_WINDOWS) as CodexBridgeModelId[]).map((id) => {
@@ -84,6 +99,7 @@ export function getCodexBridgeModelInfos(): ModelInfo[] {
       id,
       name: details.name,
       alias: details.alias,
+      sdkModelIds: [CODEX_TO_SDK_MODEL[id]].filter(Boolean),
       family: 'gpt',
       provider: 'anthropic-codex',
       contextWindow: MODEL_CONTEXT_WINDOWS[id],

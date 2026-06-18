@@ -9,6 +9,7 @@ import type {
   SDKMessage,
   SDKAssistantMessage,
   SDKAuthStatusMessage,
+  SDKCommandsChangedMessage,
   SDKCompactBoundaryMessage,
   SDKHookResponseMessage,
   SDKResultError,
@@ -16,9 +17,10 @@ import type {
   SDKResultSuccess,
   SDKStatusMessage,
   SDKSystemMessage,
+  SDKThinkingTokensMessage,
   SDKToolProgressMessage,
 } from "./sdk.d.ts";
-import type { NeokaiActionMessage } from "../types.ts";
+import type { NeokaiActionMessage, SlashCommand } from "../types.ts";
 import type { ChatMessage } from "../state-types.ts";
 
 // ============================================================================
@@ -106,7 +108,16 @@ export function isSDKSystemMessage(
 export function isSDKSystemInit(
   msg: SDKMessage,
 ): msg is SDKSystemMessage {
-  return msg.type === "system" && (msg as SDKSystemMessage).subtype === "init";
+  return msg.type === "system" && (msg as { subtype?: string }).subtype === "init";
+}
+
+/**
+ * Check if message is a commands changed message
+ */
+export function isSDKCommandsChangedMessage(
+  msg: SDKMessage,
+): msg is SDKCommandsChangedMessage {
+  return msg.type === "system" && (msg as { subtype?: string }).subtype === "commands_changed";
 }
 
 /**
@@ -146,6 +157,27 @@ export function isSDKAPIRetryMessage(
 }
 
 /**
+ * Check if message is a thinking token progress message
+ */
+export function isSDKThinkingTokensMessage(
+  msg: SDKMessage,
+): msg is SDKThinkingTokensMessage {
+  return msg.type === "system" && (msg as { subtype?: string }).subtype === "thinking_tokens";
+}
+
+export function isSDKModelRefusalFallbackMessage(
+  msg: SDKMessage,
+): msg is Extract<SDKMessage, { type: "system"; subtype: "model_refusal_fallback" }> {
+  return msg.type === "system" && (msg as { subtype?: string }).subtype === "model_refusal_fallback";
+}
+
+export function isSDKSessionStateChangedMessage(
+  msg: SDKMessage,
+): msg is Extract<SDKMessage, { type: "system"; subtype: "session_state_changed" }> {
+  return msg.type === "system" && (msg as { subtype?: string }).subtype === "session_state_changed";
+}
+
+/**
  * Check if message is a stream event (partial assistant message)
  */
 export function isSDKStreamEvent(
@@ -179,6 +211,27 @@ export function isSDKRateLimitEvent(
   msg: SDKMessage,
 ): msg is Extract<SDKMessage, { type: "rate_limit_event" }> {
   return msg.type === "rate_limit_event";
+}
+
+export type SDKSlashCommand = Pick<SlashCommand, "name" | "aliases">;
+
+function normalizeSlashCommandName(name: string): string {
+  return name.startsWith("/") ? name.slice(1) : name;
+}
+
+export function flattenSDKSlashCommands(commands: SDKSlashCommand[]): string[] {
+  const names = new Set<string>();
+  for (const command of commands) {
+    if (typeof command.name === "string" && command.name.length > 0) {
+      names.add(normalizeSlashCommandName(command.name));
+    }
+    for (const alias of command.aliases ?? []) {
+      if (typeof alias === "string" && alias.length > 0) {
+        names.add(normalizeSlashCommandName(alias));
+      }
+    }
+  }
+  return [...names].filter((name) => name.length > 0);
 }
 
 // ============================================================================
@@ -379,10 +432,11 @@ export function getMessageTypeDescription(msg: SDKMessage): string {
  */
 export function isUserVisibleMessage(msg: SDKMessage): boolean {
   // User should see: assistant, user, result, tool_progress, auth_status, user replays,
-  // compact_boundary, and compacting status messages
-  // User should NOT see: stream events or API retry messages
+  // compact_boundary, api_retry, and compacting status messages
+  // User should NOT see: stream events or thinking_tokens deltas (transient only)
   if (isSDKStreamEvent(msg)) return false;
-  if (isSDKAPIRetryMessage(msg)) return false;
+  if (isSDKThinkingTokensMessage(msg)) return false;
+  if (isSDKSessionStateChangedMessage(msg)) return false;
 
   return true;
 }

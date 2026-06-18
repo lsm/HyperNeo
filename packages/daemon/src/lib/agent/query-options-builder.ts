@@ -36,9 +36,9 @@ import type {
   ThinkingLevel,
 } from '@neokai/shared';
 import {
-  THINKING_LEVEL_TOKENS,
   normalizeThinkingLevel,
   PROVIDER_THINKING_MODES,
+  THINKING_LEVEL_TOKENS,
 } from '@neokai/shared';
 import type { McpServerConfig } from '@neokai/shared/types/sdk-config';
 import type { PermissionMode } from '@neokai/shared/types/settings';
@@ -48,8 +48,7 @@ import type { Database } from '../../storage/database';
 import type { AppMcpServerRepository } from '../../storage/repositories/app-mcp-server-repository';
 import type { McpEnablementRepository } from '../../storage/repositories/mcp-enablement-repository';
 import { resolveMcpServers, scopeChainForSession } from '../mcp/resolve-mcp-servers';
-import { getSessionModelInfo } from '../model-service.js';
-import { requireModelContextWindow } from '../providers/codex-models';
+import { getSessionModelInfo } from '../model-service';
 import {
   getProviderContextManager,
   getProviderRegistry,
@@ -115,9 +114,14 @@ const FULL_BUILTIN_TOOL_LIST = [
   'Glob',
   'WebFetch',
   'WebSearch',
+  'Agent',
   'Task',
   'TaskOutput',
   'TaskStop',
+  'TaskCreate',
+  'TaskGet',
+  'TaskUpdate',
+  'TaskList',
   'NotebookEdit',
   'TodoWrite',
   'AskUserQuestion',
@@ -125,12 +129,26 @@ const FULL_BUILTIN_TOOL_LIST = [
   'ExitPlanMode',
   'Skill',
   'ToolSearch',
+  'Projects',
+  'REPL',
+  'Workflow',
+  'CronCreate',
+  'CronDelete',
+  'CronList',
+  'ScheduleWakeup',
+  'RemoteTrigger',
+  'ShowOnboardingRolePicker',
+  'Monitor',
+  'Artifact',
+  'PushNotification',
+  'EnterWorktree',
+  'ExitWorktree',
 ];
 
 /**
  * Agent invocation tools that must be present when agents are configured.
  */
-const AGENT_INVOCATION_TOOLS = ['Task', 'TaskOutput', 'TaskStop'];
+const AGENT_INVOCATION_TOOLS = ['Agent', 'Task', 'TaskOutput', 'TaskStop'];
 
 /**
  * Providers whose native SDK integration already includes agent tools in the
@@ -190,44 +208,86 @@ export function ensureAgentTools(
  *
  * anthropic        — native Anthropic API, SDK knows all model context windows.
  * anthropic-copilot — Copilot bridge still routes to Anthropic API.
+ * anthropic-codex  — Codex bridge uses real Codex model IDs (gpt-5.5, gpt-5.4-mini,
+ *                   etc.) with preferContextWindowMetadata=true, so SDK reads the
+ *                   correct 272k/128k windows from /v1/models metadata instead of
+ *                   its hardcoded database. CLAUDE_CODE_AUTO_COMPACT_WINDOW is set
+ *                   explicitly so auto-compact fires at the correct threshold.
+ * glm              — Sets CLAUDE_CODE_AUTO_COMPACT_WINDOW per model (1M for
+ *                   glm-5.2[1m], 200k for the rest). The `[1m]` suffix is
+ *                   recognised by PP() so the SDK's effective window matches
+ *                   metadata. NeoKai fallback would otherwise fire at 850k
+ *                   (reserveBasedThreshold(1M)) and preempt the SDK's correct
+ *                   ~987k trigger. If `[1m]` recognition regresses, the
+ *                   context-fetcher capacity-mismatch warning surfaces it.
  */
-const NATIVE_CONTEXT_WINDOW_PROVIDERS = ['anthropic', 'anthropic-copilot'];
+export const NATIVE_CONTEXT_WINDOW_PROVIDER_IDS = [
+  'anthropic',
+  'anthropic-copilot',
+  'anthropic-codex',
+  'glm',
+];
+
+/**
+ * Providers that cannot use SDK auto-compaction because the SDK's PP() helper
+ * caps unknown model IDs to 200k tokens, mismatching the real provider window.
+ * For these providers we disable SDK auto-compact entirely and rely on NeoKai's
+ * fallback trigger (sdk-message-handler) which uses the model metadata's real
+ * context window.
+ *
+ * kimi — kimi-for-coding is unknown to PP() (returns 200k). Real window is 262k.
+ *        Adding a [1m] suffix would break the upstream Kimi API call (the bridge
+ *        forwards the model name verbatim), so we cannot use the SDK workaround
+ *        that GLM-5.2[1m] uses.
+ */
+export const PROVIDER_NO_SDK_AUTO_COMPACT: ReadonlySet<string> = new Set(['kimi']);
 
 /**
  * Provider-specific SDK settings overrides.
  *
- * For the Codex bridge, looks up the model's actual context window so the
- * SDK auto-compacts at the right threshold.
- * For other non-native providers, the caller should supply the model's
- * actual contextWindow so the SDK auto-compacts at the right threshold.
+ * For native Anthropic providers the SDK already knows the correct context
+ * window and auto-compact behaviour — no override needed.
+ *
+ * For non-native providers (OpenRouter, Ollama, GLM, Codex bridge, etc.) the
+ * SDK cannot infer the provider model's real context window from its Anthropic
+ * model alias. We pass the real window here so SDK auto-compaction fires at the
+ * correct threshold without injecting `/compact` as prompt text.
+ *
+ * Providers in PROVIDER_NO_SDK_AUTO_COMPACT (e.g. Kimi) cannot use SDK
+ * auto-compact at all because PP() caps the effective window below the real
+ * model capacity. For these, we disable SDK auto-compact and let NeoKai's
+ * fallback handle compaction.
  */
 export function buildProviderSettings(
   providerId: string,
-  modelId?: string,
-  contextWindow?: number
+  contextWindow?: number | null
 ): Options['settings'] {
-  if (providerId === 'anthropic-codex') {
-    if (!modelId) {
-      throw new Error(`Unknown Codex model auto-compact window: ${modelId ?? 'missing model'}`);
-    }
-    try {
-      const actualContextWindow = requireModelContextWindow(modelId);
-      return {
-        autoCompactWindow: actualContextWindow,
-      };
-    } catch {
-      throw new Error(`Unknown Codex model auto-compact window: ${modelId}`);
-    }
+  if (NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId)) {
+    return undefined;
   }
 
-  // For non-native providers where the SDK can't discover the actual context
-  // window (OpenRouter, Ollama, GLM, etc.), pass the model's contextWindow
-  // so auto-compact triggers at the right percentage of actual capacity.
-  if (!NATIVE_CONTEXT_WINDOW_PROVIDERS.includes(providerId) && contextWindow) {
-    return { autoCompactWindow: contextWindow };
+  if (PROVIDER_NO_SDK_AUTO_COMPACT.has(providerId)) {
+    // SDK auto-compact would fire at the wrong threshold (200k PP fallback
+    // instead of the real model window). Disable it and let NeoKai's
+    // fallback trigger handle compaction at 85% of the metadata context window.
+    return { autoCompactEnabled: false };
   }
 
-  return undefined;
+  const autoCompactWindow = contextWindow;
+  if (!autoCompactWindow) {
+    return {
+      autoCompactEnabled: false,
+    };
+  }
+
+  // Keep SDK auto-compaction enabled for non-native providers only when we can
+  // provide the provider model's real context window. This lets the SDK trigger
+  // compaction through its internal control flow instead of receiving
+  // `/compact` as ordinary prompt text from the streaming input generator.
+  return {
+    autoCompactEnabled: true,
+    autoCompactWindow,
+  };
 }
 
 /**
@@ -331,6 +391,7 @@ export class QueryOptionsBuilder {
     const contextManager = getProviderContextManager();
     const providerContext = contextManager.createContext(this.ctx.session);
     const providerId = providerContext.provider.id;
+    const modelInfo = await getSessionModelInfo(this.ctx.session);
     const sdkModelId = providerContext.getSdkModelId();
     let sdkFallbackModel: string | undefined;
     if (config.fallbackModel) {
@@ -366,12 +427,6 @@ export class QueryOptionsBuilder {
     // upstream via the registry + `mcp_enablement` overrides; whatever enters
     // here is the effective set for this session.
     const mergedMcpServers = this.mergeMcpServers(mcpServers, mcpServersFromSkills);
-
-    // Resolve model metadata so non-native providers get the correct
-    // autoCompactWindow (the SDK defaults to 200k when it can't discover
-    // the real context window, causing premature compaction on 1M models).
-    const modelInfo = await getSessionModelInfo(this.ctx.session);
-    const autoCompactWindow = modelInfo?.contextWindow;
 
     // Build final query options
     const queryOptions: Options = {
@@ -457,7 +512,7 @@ export class QueryOptionsBuilder {
       // output style, CLAUDE.md content, etc.).
       settingSources:
         config.settingSources ?? this.ctx.settingsManager.getGlobalSettings().settingSources,
-      settings: buildProviderSettings(providerId, config.model, autoCompactWindow),
+      settings: buildProviderSettings(providerId, modelInfo?.contextWindow),
 
       // ============ Streaming ============
       includePartialMessages: config.includePartialMessages,
@@ -472,6 +527,13 @@ export class QueryOptionsBuilder {
 
       // ============ Callbacks ============
       canUseTool: this.canUseTool,
+      onUserDialog: async (request) => {
+        if (request.dialogKind === 'refusal_fallback_prompt') {
+          return { behavior: 'completed', result: { continue: true } };
+        }
+        return { behavior: 'cancelled' };
+      },
+      supportedDialogKinds: config.fallbackModel ? ['refusal_fallback_prompt'] : undefined,
     };
 
     // ============ Space Chat Session Restrictions ============
@@ -489,6 +551,7 @@ export class QueryOptionsBuilder {
         'WebSearch',
         'ToolSearch',
         'AskUserQuestion',
+        'Agent',
         'Task',
         'TaskOutput',
         'TaskStop',
@@ -963,8 +1026,52 @@ CRITICAL RULES:
       'API_TIMEOUT_MS',
       'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC',
     ]);
+    providerEnvVars.add('CLAUDE_CODE_AUTO_COMPACT_WINDOW');
 
-    const mergedEnv: Record<string, string> = {};
+    const excludedEnvVars = new Set(['PORT', 'NEOKAI_PORT']);
+    const mergedEnv: Record<string, string> = Object.fromEntries(
+      Object.entries(process.env).filter(
+        (entry): entry is [string, string] =>
+          entry[1] !== undefined && !excludedEnvVars.has(entry[0]) && !providerEnvVars.has(entry[0])
+      )
+    );
+
+    // For Anthropic provider (or default), only include auth tokens from process.env
+    // Other provider vars are inherited via process.env by the SDK subprocess
+    if (this.ctx.session.config.provider === 'anthropic' || !this.ctx.session.config.provider) {
+      const authToken = process.env.ANTHROPIC_AUTH_TOKEN;
+      if (authToken?.startsWith('sk-ant-oat')) {
+        mergedEnv.ANTHROPIC_AUTH_TOKEN = authToken;
+      }
+      const oauthToken = process.env.CLAUDE_CODE_OAUTH_TOKEN;
+      if (oauthToken) {
+        mergedEnv.CLAUDE_CODE_OAUTH_TOKEN = oauthToken;
+      }
+    } else {
+      // For non-Anthropic providers (GLM, Kimi, etc.), explicitly include provider
+      // env vars from process.env in options.env so the SDK subprocess environment
+      // has the same provider routing values. Filesystem settings precedence is
+      // handled separately by QueryRunner, which also injects these values into
+      // Options.settings.env (the SDK flag-settings layer).
+      const providerVars = [
+        'ANTHROPIC_BASE_URL',
+        'ANTHROPIC_API_KEY',
+        'ANTHROPIC_AUTH_TOKEN',
+        'ANTHROPIC_MODEL',
+        'ANTHROPIC_DEFAULT_HAIKU_MODEL',
+        'ANTHROPIC_DEFAULT_SONNET_MODEL',
+        'ANTHROPIC_DEFAULT_OPUS_MODEL',
+        'API_TIMEOUT_MS',
+        'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC',
+        'CLAUDE_CODE_AUTO_COMPACT_WINDOW',
+      ];
+      for (const key of providerVars) {
+        const value = process.env[key];
+        if (value !== undefined && value !== '') {
+          mergedEnv[key] = value;
+        }
+      }
+    }
 
     // 1. Add global settings env vars (filtered)
     if (globalSettings.env) {

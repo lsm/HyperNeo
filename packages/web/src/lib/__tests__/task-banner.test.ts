@@ -3,6 +3,7 @@ import type { SpaceTask } from '@neokai/shared';
 import {
   resolveActiveTaskBanner,
   type GateBannerSummary,
+  type HookBannerSummary,
   type TaskBannerInput,
 } from '../task-banner.ts';
 
@@ -28,6 +29,23 @@ function gate(status: GateBannerSummary['status']): GateBannerSummary {
   return { status };
 }
 
+function hook(status: HookBannerSummary['status']): HookBannerSummary {
+  return {
+    status,
+    hookId: 'h1',
+    state: {
+      runId: 'run-1',
+      hookId: 'h1',
+      version: 0,
+      localState: {},
+      retryCount: 0,
+      createdAt: 0,
+      updatedAt: 0,
+      voteMaps: {},
+    },
+  };
+}
+
 // ── Precedence ────────────────────────────────────────────────────────────
 
 describe('resolveActiveTaskBanner — precedence order', () => {
@@ -37,7 +55,7 @@ describe('resolveActiveTaskBanner — precedence order', () => {
       postApprovalBlockedReason: 'sub-session died',
       pendingCheckpointType: 'task_completion',
     });
-    expect(resolveActiveTaskBanner(task, [gate('waiting_human')])).toEqual({
+    expect(resolveActiveTaskBanner(task, undefined, [gate('waiting_human')])).toEqual({
       kind: 'blocked',
     });
   });
@@ -48,7 +66,7 @@ describe('resolveActiveTaskBanner — precedence order', () => {
       postApprovalBlockedReason: 'merge failed',
       pendingCheckpointType: 'task_completion',
     });
-    expect(resolveActiveTaskBanner(task, [gate('waiting_human')])).toEqual({
+    expect(resolveActiveTaskBanner(task, undefined, [gate('waiting_human')])).toEqual({
       kind: 'post_approval_blocked',
       reason: 'merge failed',
     });
@@ -59,14 +77,24 @@ describe('resolveActiveTaskBanner — precedence order', () => {
       status: 'review',
       pendingCheckpointType: 'task_completion',
     });
-    expect(resolveActiveTaskBanner(task, [gate('waiting_human')])).toEqual({
+    expect(resolveActiveTaskBanner(task, undefined, [gate('waiting_human')])).toEqual({
       kind: 'task_completion_pending',
+    });
+  });
+
+  test('hook_pending beats gate_pending', () => {
+    const task = makeTask({ status: 'in_progress' });
+    expect(
+      resolveActiveTaskBanner(task, [hook('blocked_by_hook')], [gate('waiting_human')])
+    ).toEqual({
+      kind: 'hook_pending',
+      runId: 'run-1',
     });
   });
 
   test('gate_pending is the lowest-priority banner', () => {
     const task = makeTask({ status: 'in_progress' });
-    expect(resolveActiveTaskBanner(task, [gate('waiting_human')])).toEqual({
+    expect(resolveActiveTaskBanner(task, undefined, [gate('waiting_human')])).toEqual({
       kind: 'gate_pending',
       runId: 'run-1',
     });
@@ -74,9 +102,9 @@ describe('resolveActiveTaskBanner — precedence order', () => {
 
   test('returns null when no banner signal is active', () => {
     const task = makeTask({ status: 'in_progress' });
-    expect(resolveActiveTaskBanner(task, [])).toBeNull();
-    expect(resolveActiveTaskBanner(task, [gate('open')])).toBeNull();
-    expect(resolveActiveTaskBanner(task, [gate('blocked')])).toBeNull();
+    expect(resolveActiveTaskBanner(task, [], [])).toBeNull();
+    expect(resolveActiveTaskBanner(task, undefined, [gate('open')])).toBeNull();
+    expect(resolveActiveTaskBanner(task, undefined, [gate('blocked')])).toBeNull();
   });
 });
 
@@ -138,11 +166,53 @@ describe('task_completion_pending branch', () => {
     const task = makeTask({
       pendingCheckpointType: 'legacy_unknown' as unknown as SpaceTask['pendingCheckpointType'],
     });
-    expect(resolveActiveTaskBanner(task, [])).toBeNull();
+    expect(resolveActiveTaskBanner(task, undefined, [])).toBeNull();
   });
 
   test('null / undefined pendingCheckpointType does not trigger', () => {
-    expect(resolveActiveTaskBanner(makeTask({ pendingCheckpointType: null }), [])).toBeNull();
+    expect(
+      resolveActiveTaskBanner(makeTask({ pendingCheckpointType: null }), undefined, [])
+    ).toBeNull();
+  });
+});
+
+// ── Branch: hook_pending ──────────────────────────────────────────────────
+
+describe('hook_pending branch', () => {
+  test('requires a workflowRunId — standalone tasks never show a hook banner', () => {
+    const task = makeTask({ workflowRunId: null });
+    expect(resolveActiveTaskBanner(task, [hook('blocked_by_hook')], [])).toBeNull();
+  });
+
+  test('hooks=undefined is treated as "still loading" — no hook_pending yet', () => {
+    const task = makeTask();
+    expect(resolveActiveTaskBanner(task, undefined, [])).toBeNull();
+    expect(resolveActiveTaskBanner(task)).toBeNull();
+  });
+
+  test('empty hooks array means loaded-but-none-waiting → null', () => {
+    expect(resolveActiveTaskBanner(makeTask(), [], [])).toBeNull();
+  });
+
+  test('only blocked_by_hook / waiting_on_hook_retry count; allowed does not fire', () => {
+    const task = makeTask();
+    expect(resolveActiveTaskBanner(task, [hook('allowed')], [])).toBeNull();
+  });
+
+  test('fires when any hook is blocked_by_hook', () => {
+    const task = makeTask();
+    expect(resolveActiveTaskBanner(task, [hook('blocked_by_hook')], [])).toEqual({
+      kind: 'hook_pending',
+      runId: 'run-1',
+    });
+  });
+
+  test('fires when any hook is waiting_on_hook_retry', () => {
+    const task = makeTask();
+    expect(resolveActiveTaskBanner(task, [hook('waiting_on_hook_retry')], [])).toEqual({
+      kind: 'hook_pending',
+      runId: 'run-1',
+    });
   });
 });
 
@@ -151,28 +221,32 @@ describe('task_completion_pending branch', () => {
 describe('gate_pending branch', () => {
   test('requires a workflowRunId — standalone tasks never show a gate banner', () => {
     const task = makeTask({ workflowRunId: null });
-    expect(resolveActiveTaskBanner(task, [gate('waiting_human')])).toBeNull();
+    expect(resolveActiveTaskBanner(task, undefined, [gate('waiting_human')])).toBeNull();
   });
 
   test('gates=undefined is treated as "still loading" — no gate_pending yet', () => {
     const task = makeTask();
-    expect(resolveActiveTaskBanner(task, undefined)).toBeNull();
+    expect(resolveActiveTaskBanner(task, undefined, undefined)).toBeNull();
     expect(resolveActiveTaskBanner(task)).toBeNull();
   });
 
   test('empty gates array means loaded-but-none-waiting → null', () => {
-    expect(resolveActiveTaskBanner(makeTask(), [])).toBeNull();
+    expect(resolveActiveTaskBanner(makeTask(), undefined, [])).toBeNull();
   });
 
   test('only waiting_human counts; open/blocked do not fire the banner', () => {
     const task = makeTask();
-    expect(resolveActiveTaskBanner(task, [gate('open'), gate('blocked')])).toBeNull();
+    expect(resolveActiveTaskBanner(task, undefined, [gate('open'), gate('blocked')])).toBeNull();
   });
 
   test('fires when any gate is waiting_human (mix of statuses is fine)', () => {
     const task = makeTask();
     expect(
-      resolveActiveTaskBanner(task, [gate('open'), gate('waiting_human'), gate('blocked')])
+      resolveActiveTaskBanner(task, undefined, [
+        gate('open'),
+        gate('waiting_human'),
+        gate('blocked'),
+      ])
     ).toEqual({ kind: 'gate_pending', runId: 'run-1' });
   });
 });

@@ -67,6 +67,16 @@ describe('EvolutionTraceEvidenceService', () => {
     insertToolExchange(task.id, 'session-1', 'tool-2', 'Bash', { command: 'bun test' }, true, {
       text: 'Error: expected 3 to be 4\ndifferent stack should cluster by normalized error',
     });
+    db.exec('DROP INDEX IF EXISTS idx_sdk_messages_uuid_status');
+    db.prepare(`UPDATE sdk_messages SET sdk_message = ? WHERE id = ?`).run(
+      '{not-json',
+      'message-5'
+    );
+    insertMessage(task.id, 'session-1', 'system', {
+      type: 'system',
+      subtype: 'model_refusal_fallback',
+      retracted_message_uuids: ['malformed-unrelated'],
+    });
 
     scopeService.attachTaskEvidence({ taskId: task.id });
 

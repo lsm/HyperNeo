@@ -46,9 +46,9 @@
  */
 
 import type { Provider, ProviderInfo, Session } from '@neokai/shared';
-import type { ProviderSdkConfig, ProviderInfo as NewProviderInfo } from '@neokai/shared/provider';
-import { initializeProviders, waitForOptionalProviderRegistration } from './providers/factory.js';
+import type { ProviderInfo as NewProviderInfo, ProviderSdkConfig } from '@neokai/shared/provider';
 import { Logger } from './logger.js';
+import { initializeProviders, waitForOptionalProviderRegistration } from './providers/factory.js';
 
 /**
  * Convert new ProviderInfo to legacy ProviderInfo
@@ -80,6 +80,7 @@ export interface ProviderEnvVars {
   ANTHROPIC_DEFAULT_OPUS_MODEL?: string; // Map opus tier to provider model
   API_TIMEOUT_MS?: string;
   CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC?: string;
+  CLAUDE_CODE_AUTO_COMPACT_WINDOW?: string;
   CLAUDE_CODE_OAUTH_TOKEN?: string;
   [key: string]: string | undefined; // Index signature for SDK env option compatibility
 }
@@ -96,6 +97,7 @@ export interface OriginalEnvVars {
   ANTHROPIC_BASE_URL?: string;
   API_TIMEOUT_MS?: string;
   CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC?: string;
+  CLAUDE_CODE_AUTO_COMPACT_WINDOW?: string;
   ANTHROPIC_DEFAULT_SONNET_MODEL?: string;
   ANTHROPIC_DEFAULT_HAIKU_MODEL?: string;
   ANTHROPIC_DEFAULT_OPUS_MODEL?: string;
@@ -343,14 +345,15 @@ export class ProviderService {
       };
     }
 
-    const models = await provider.getModels();
-
-    // Use provider override when available; otherwise use haiku tier model for title generation (fast/cheap).
+    // Resolve the title-model override BEFORE calling getModels() so providers
+    // that probe upstream in getModels() (Kimi, GLM, MiniMax, Codex, ACP,
+    // Custom Endpoint) don't fire a network request just to compute a
+    // title-model fallback we won't actually use. The models list is only
+    // fetched when neither override nor tier fallback produced an answer.
+    const titleOverride = provider.getTitleGenerationModel?.();
+    const tierFallback = provider.getModelForTier('haiku');
     const modelId =
-      provider.getTitleGenerationModel?.() ||
-      provider.getModelForTier('haiku') ||
-      models[0]?.id ||
-      'default';
+      titleOverride || tierFallback || (await provider.getModels())[0]?.id || 'default';
 
     // Get base URL from SDK config
     let baseUrl = 'https://api.anthropic.com';
@@ -445,6 +448,7 @@ export class ProviderService {
         ? {
             apiKey: session.config.providerConfig.apiKey,
             baseUrl: session.config.providerConfig.baseUrl,
+            region: session.config.providerConfig.region,
           }
         : {}),
     };
@@ -537,7 +541,7 @@ export class ProviderService {
     }
 
     const sessionConfig = modelId ? { apiKey: undefined } : undefined;
-    let sdkConfig;
+    let sdkConfig: ProviderSdkConfig;
     try {
       sdkConfig = provider.buildSdkConfig(modelId || 'default', sessionConfig);
     } catch {
@@ -601,6 +605,18 @@ export class ProviderService {
         process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC;
       process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC =
         envVars.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC;
+    }
+    if (envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW !== undefined) {
+      original.CLAUDE_CODE_AUTO_COMPACT_WINDOW = process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
+      // Empty string means "explicitly clear" — providers whose auto-compact
+      // is disabled (e.g. Kimi, which would otherwise inherit a stale value
+      // from a previous GLM/Codex query) return '' so the SDK subprocess
+      // doesn't pick up the wrong window.
+      if (envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW === '') {
+        delete process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
+      } else {
+        process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
+      }
     }
     if (envVars.ANTHROPIC_DEFAULT_SONNET_MODEL !== undefined) {
       original.ANTHROPIC_DEFAULT_SONNET_MODEL = process.env.ANTHROPIC_DEFAULT_SONNET_MODEL;
@@ -677,6 +693,18 @@ export class ProviderService {
           userConfiguredDisableNonEssentialTraffic
       ) {
         delete process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC;
+      }
+    }
+
+    // Preserve user's custom auto-compact window while clearing provider leaks.
+    if (process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW !== undefined) {
+      original.CLAUDE_CODE_AUTO_COMPACT_WINDOW = process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
+      changed = true;
+      if (
+        userConfiguredAutoCompactWindow === undefined ||
+        process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW !== userConfiguredAutoCompactWindow
+      ) {
+        delete process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
       }
     }
 
@@ -794,6 +822,13 @@ export class ProviderService {
         delete process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC;
       }
     }
+    if (Object.prototype.hasOwnProperty.call(original, 'CLAUDE_CODE_AUTO_COMPACT_WINDOW')) {
+      if (original.CLAUDE_CODE_AUTO_COMPACT_WINDOW !== undefined) {
+        process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = original.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
+      } else {
+        delete process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
+      }
+    }
     if (Object.prototype.hasOwnProperty.call(original, 'ANTHROPIC_DEFAULT_SONNET_MODEL')) {
       if (original.ANTHROPIC_DEFAULT_SONNET_MODEL !== undefined) {
         process.env.ANTHROPIC_DEFAULT_SONNET_MODEL = original.ANTHROPIC_DEFAULT_SONNET_MODEL;
@@ -879,9 +914,40 @@ const userConfiguredBaseUrl = process.env.ANTHROPIC_BASE_URL;
 const userConfiguredApiTimeout = process.env.API_TIMEOUT_MS;
 const userConfiguredDisableNonEssentialTraffic =
   process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC;
+const userConfiguredAutoCompactWindow = process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
 const userConfiguredDefaultSonnetModel = process.env.ANTHROPIC_DEFAULT_SONNET_MODEL;
 const userConfiguredDefaultHaikuModel = process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL;
 const userConfiguredDefaultOpusModel = process.env.ANTHROPIC_DEFAULT_OPUS_MODEL;
+
+/**
+ * Snapshot of user-configured Anthropic env values captured at daemon startup.
+ *
+ * Excludes provider-leaked routing vars from concurrent bridge turns — those are
+ * set/cleared dynamically by `applyEnvVarsToProcessForSession`, while the values
+ * here are frozen at module load. Use this when a subprocess (e.g. an external
+ * ACP agent) must inherit the user's real endpoint/model/auth overrides without
+ * being contaminated by another provider's in-flight routing state.
+ *
+ * Auth tokens (ANTHROPIC_AUTH_TOKEN / CLAUDE_CODE_OAUTH_TOKEN) are intentionally
+ * read live from `process.env` at call time rather than snapshotted here, because
+ * credential discovery runs after module load and may populate them later.
+ */
+export function getUserConfiguredAnthropicEnv(): Record<string, string> {
+  const snapshot: Record<string, string> = {};
+  const entries: Array<[string, string | undefined]> = [
+    ['ANTHROPIC_BASE_URL', userConfiguredBaseUrl],
+    ['API_TIMEOUT_MS', userConfiguredApiTimeout],
+    ['ANTHROPIC_DEFAULT_SONNET_MODEL', userConfiguredDefaultSonnetModel],
+    ['ANTHROPIC_DEFAULT_HAIKU_MODEL', userConfiguredDefaultHaikuModel],
+    ['ANTHROPIC_DEFAULT_OPUS_MODEL', userConfiguredDefaultOpusModel],
+    ['ANTHROPIC_AUTH_TOKEN', process.env.ANTHROPIC_AUTH_TOKEN],
+    ['CLAUDE_CODE_OAUTH_TOKEN', process.env.CLAUDE_CODE_OAUTH_TOKEN],
+  ];
+  for (const [key, value] of entries) {
+    if (value !== undefined) snapshot[key] = value;
+  }
+  return snapshot;
+}
 
 export function getProviderService(): ProviderService {
   if (!(globalThis as Record<symbol, unknown>)[PROVIDER_SERVICE_KEY]) {

@@ -128,6 +128,7 @@ export interface SessionInfo {
   worktree?: WorktreeMetadata;
   gitBranch?: string; // Current git branch for non-worktree sessions in git repos
   sdkSessionId?: string; // SDK's internal session ID for resuming conversations
+  acpSessionId?: string; // ACP agent session ID for resuming ACP conversations
   /**
    * The workspace path (resolved) that was used as CWD when the SDK session was first
    * created. The SDK stores conversation files under
@@ -186,6 +187,7 @@ export type { RuntimeState } from './types/neo';
  * - 'ollama-cloud': Ollama Cloud through the native /api/chat endpoint
  * - 'anthropic-copilot': GitHub Copilot backend via Anthropic-compatible embedded server
  * - 'anthropic-codex': Anthropic-compatible HTTP bridge backed by OpenAI Responses
+ * - 'acp': ACP-compatible agent runtime over JSON-RPC stdio
  */
 export type Provider =
   | 'anthropic'
@@ -196,7 +198,8 @@ export type Provider =
   | 'ollama'
   | 'ollama-cloud'
   | 'anthropic-copilot'
-  | 'anthropic-codex';
+  | 'anthropic-codex'
+  | 'acp';
 
 /**
  * Provider-specific configuration
@@ -279,6 +282,7 @@ export const PROVIDER_THINKING_MODES: Record<Provider, 'off' | 'on' | 'granular'
   'ollama-cloud': 'off',
   'anthropic-copilot': 'off',
   'anthropic-codex': 'granular',
+  acp: 'granular',
 };
 
 /**
@@ -597,6 +601,7 @@ export interface SessionMetadata {
   // We track lastSdkCost to detect resets and costBaseline to preserve pre-reset totals
   lastSdkCost?: number; // Last SDK-reported total_cost_usd (resets when agent restarts)
   costBaseline?: number; // Accumulated cost from previous runs before last reset
+  acpInstructionsSent?: boolean; // Whether first-turn ACP session instructions were sent
   worktreeChoice?: {
     status: 'pending' | 'completed';
     choice?: 'worktree' | 'direct';

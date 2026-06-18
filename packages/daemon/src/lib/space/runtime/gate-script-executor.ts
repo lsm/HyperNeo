@@ -302,7 +302,8 @@ export function parseJsonStdout(raw: string): Record<string, unknown> | null {
  */
 export async function collectWithMaxBuffer(
   stream: ReadableStream<Uint8Array> | null,
-  maxBytes: number
+  maxBytes: number,
+  signal?: AbortSignal
 ): Promise<{ text: string; truncated: boolean }> {
   if (!stream) {
     return { text: '', truncated: false };
@@ -313,6 +314,11 @@ export async function collectWithMaxBuffer(
   const chunks: string[] = [];
   let totalBytes = 0;
   let truncated = false;
+
+  const onAbort = () => {
+    reader.cancel().catch(() => {});
+  };
+  signal?.addEventListener('abort', onAbort);
 
   try {
     while (true) {
@@ -338,6 +344,7 @@ export async function collectWithMaxBuffer(
       }
     }
   } finally {
+    signal?.removeEventListener('abort', onAbort);
     reader.releaseLock();
   }
 

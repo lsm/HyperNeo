@@ -1,5 +1,6 @@
 import type { Database } from 'bun:sqlite';
 import type { ProviderCredentials } from '@neokai/shared/provider';
+import type { CredentialStoreStatus } from '@neokai/shared/state-types';
 import {
   createCredentialStore,
   credentialService,
@@ -102,6 +103,33 @@ export class ProviderCredentialManager {
          WHERE provider_id = ? OR id = ?`
       )
       .run(healthStatus, Date.now(), Date.now(), providerId, providerId);
+  }
+
+  /**
+   * Snapshot of credential store health — used to surface a UI warning when the
+   * macOS Keychain is locked / inaccessible.
+   */
+  getCredentialStoreStatus(): CredentialStoreStatus {
+    if (typeof this.store.getStatus === 'function') {
+      return this.store.getStatus();
+    }
+    return { backend: 'database', keychainAvailable: false };
+  }
+
+  /**
+   * Register a listener that fires when the credential store's keychain
+   * availability transitions. Wired by `DaemonApp` to
+   * `stateManager.broadcastSystemChange()` so the UI banner appears / clears
+   * immediately instead of waiting for a reconnect.
+   */
+  registerStatusChangeCallback(callback: () => void): void {
+    const store = this.store as CredentialStore & {
+      setStatusChangeCallback?(cb: () => void): void;
+    };
+    if (typeof store.setStatusChangeCallback === 'function') {
+      store.setStatusChangeCallback(callback);
+    }
+    // Non-KeychainStatusCredentialStore implementations have no status to broadcast.
   }
 
   private getEnvValue(keys: string[] | undefined): string | undefined {

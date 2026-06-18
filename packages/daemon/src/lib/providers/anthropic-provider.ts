@@ -5,7 +5,7 @@
  * No special configuration needed - the SDK handles everything.
  */
 
-import type { Query } from '@anthropic-ai/claude-agent-sdk';
+import type { QueryLike } from '../agent/query-like';
 import type {
   Provider,
   ProviderAuthStatusInfo,
@@ -22,7 +22,7 @@ import { resolveSDKCliPath, isRunningUnderBun } from '../agent/sdk-cli-resolver.
  * These are the preferred IDs that should be kept when duplicates exist
  * Note: 'default' is included because SDK still returns it, but it's converted to 'sonnet'
  */
-const CANONICAL_SDK_IDS = new Set(['default', 'sonnet', 'opus', 'haiku', 'sonnet[1m]']);
+const CANONICAL_SDK_IDS = new Set(['default', 'sonnet', 'opus', 'haiku', 'fable', 'sonnet[1m]']);
 
 /**
  * Detect whether an SDK-reported model value belongs to Anthropic.
@@ -36,7 +36,7 @@ const CANONICAL_SDK_IDS = new Set(['default', 'sonnet', 'opus', 'haiku', 'sonnet
  * UI under the Anthropic group, even though they belong to another provider.
  *
  * Accept only:
- *   - canonical SDK short IDs (`sonnet`, `opus`, `haiku`, `default`, `sonnet[1m]`)
+ *   - canonical SDK short IDs (`sonnet`, `opus`, `haiku`, `fable`, `default`, `sonnet[1m]`)
  *   - full Claude IDs (`claude-*`)
  */
 function isAnthropicSdkModelId(modelId: string): boolean {
@@ -51,7 +51,7 @@ function isAnthropicSdkModelId(modelId: string): boolean {
 function isFullVersionId(modelId: string): boolean {
   // Full IDs match pattern: claude-{family}-{version}-{date}
   // e.g., claude-sonnet-4-5-20250929, claude-opus-4-5-20251101
-  return /^claude-(sonnet|opus|haiku)-[\d-]+$/.test(modelId);
+  return /^claude-(sonnet|opus|haiku|fable)-[\d-]+$/.test(modelId);
 }
 
 /**
@@ -63,7 +63,7 @@ function isFullVersionId(modelId: string): boolean {
 function extractVersionFromDescription(description: string): string | null {
   // Match pattern: word + space + version number (e.g., "Opus 4.6")
   // Handles: "Opus 4.6", "Sonnet 4.5", "Haiku 4.5", etc.
-  const match = description.match(/(?:Opus|Sonnet|Haiku)\s+(\d+\.\d+)/i);
+  const match = description.match(/(?:Opus|Sonnet|Haiku|Fable)\s+(\d+\.\d+)/i);
   return match ? match[1] : null;
 }
 
@@ -83,6 +83,7 @@ function parseModelId(
     default: 'sonnet', // Legacy: map 'default' to sonnet
     opus: 'opus',
     haiku: 'haiku',
+    fable: 'fable',
     'sonnet[1m]': 'sonnet',
   };
 
@@ -100,7 +101,7 @@ function parseModelId(
 
   // Full version IDs: claude-{family}-{major}-{minor}-{date}
   // Example: claude-sonnet-4-5-20250929
-  const match = modelId.match(/^claude-(sonnet|opus|haiku)-(\d+)-(\d+)(?:-\d{8})?$/);
+  const match = modelId.match(/^claude-(sonnet|opus|haiku|fable)-(\d+)-(\d+)(?:-\d{8})?$/);
   if (match) {
     const family = match[1];
     const major = match[2];
@@ -328,12 +329,14 @@ export class AnthropicProvider implements Provider {
         }
 
         // Determine family from model ID or display name
-        let family: 'opus' | 'sonnet' | 'haiku' = 'sonnet';
+        let family: 'opus' | 'sonnet' | 'haiku' | 'fable' = 'sonnet';
         const nameLower = displayName.toLowerCase();
         if (nameLower.includes('opus')) {
           family = 'opus';
         } else if (nameLower.includes('haiku')) {
           family = 'haiku';
+        } else if (nameLower.includes('fable')) {
+          family = 'fable';
         }
 
         return {
@@ -363,7 +366,7 @@ export class AnthropicProvider implements Provider {
     const lower = modelId.toLowerCase();
 
     // SDK short IDs
-    if (['sonnet', 'opus', 'haiku'].includes(lower)) {
+    if (['sonnet', 'opus', 'haiku', 'fable'].includes(lower)) {
       return true;
     }
 
@@ -494,7 +497,9 @@ export class AnthropicProvider implements Provider {
  * Helper function to get models from an existing query
  * This is useful for getting models from an active session's query
  */
-export async function getAnthropicModelsFromQuery(queryObject: Query | null): Promise<ModelInfo[]> {
+export async function getAnthropicModelsFromQuery(
+  queryObject: QueryLike | null
+): Promise<ModelInfo[]> {
   if (!queryObject || typeof queryObject.supportedModels !== 'function') {
     return [];
   }

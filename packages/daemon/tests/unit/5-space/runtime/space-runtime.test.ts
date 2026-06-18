@@ -461,7 +461,7 @@ describe('SpaceRuntime', () => {
       await runtime.stop();
     });
 
-    test('reopening a blocked workflow task restarts gate polls from latest workflow config', async () => {
+    test('reopening a blocked workflow task does not start legacy gate polls', async () => {
       runtime.setTaskAgentManager({
         isExecutionSpawning: () => false,
         isSessionAlive: () => true,
@@ -515,8 +515,8 @@ describe('SpaceRuntime', () => {
 
       await runtime.recoverWorkflowBackedTask(SPACE_ID, task.id, 'open');
 
-      expect(runtime.isGatePollActive(run.id, 'recover-gate-2')).toBe(true);
-      expect(runtime.getActiveGatePollCount()).toBe(1);
+      expect(runtime.isGatePollActive(run.id, 'recover-gate-2')).toBe(false);
+      expect(runtime.getActiveGatePollCount()).toBe(0);
       await runtime.stop();
     });
 

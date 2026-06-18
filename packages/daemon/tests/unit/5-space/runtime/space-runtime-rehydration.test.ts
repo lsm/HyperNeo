@@ -22,6 +22,7 @@ import { SpaceAgentRepository } from '../../../../src/storage/repositories/space
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
 import { GateDataRepository } from '../../../../src/storage/repositories/gate-data-repository.ts';
 import { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository.ts';
+import { ToolContinuationRecoveryRepository } from '../../../../src/storage/repositories/tool-continuation-recovery-repository.ts';
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
@@ -186,7 +187,7 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
       expect(freshRuntime.getExecutor(runA.id)).toBeDefined();
     });
 
-    test('fresh runtime restarts gate polls for a rehydrated in_progress run', async () => {
+    test('fresh runtime does not start legacy gate polls for a rehydrated in_progress run', async () => {
       const workflow = workflowManager.createWorkflow({
         spaceId: SPACE_ID,
         name: `Polled Workflow-${Date.now()}-${Math.random()}`,
@@ -244,12 +245,12 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
       await freshRuntime.executeTick();
 
       expect(freshRuntime.getExecutor(run.id)).toBeDefined();
-      expect(freshRuntime.getActiveGatePollCount()).toBe(1);
-      expect(freshRuntime.isGatePollActive(run.id, 'gate-polled')).toBe(true);
+      expect(freshRuntime.getActiveGatePollCount()).toBe(0);
+      expect(freshRuntime.isGatePollActive(run.id, 'gate-polled')).toBe(false);
       await freshRuntime.stop();
     });
 
-    test('fresh runtime restarts gate polls for a review-pending task', async () => {
+    test('fresh runtime does not start legacy gate polls for a review-pending task', async () => {
       const workflow = workflowManager.createWorkflow({
         spaceId: SPACE_ID,
         name: `Review Polled Workflow-${Date.now()}-${Math.random()}`,
@@ -303,7 +304,7 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
       await freshRuntime.executeTick();
 
       expect(freshRuntime.getExecutor(run.id)).toBeDefined();
-      expect(freshRuntime.isGatePollActive(run.id, 'gate-review')).toBe(true);
+      expect(freshRuntime.isGatePollActive(run.id, 'gate-review')).toBe(false);
       await freshRuntime.stop();
     });
 
@@ -355,7 +356,7 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
       expect(runtime.getPollPrUrlForRun(run.id)).toBe('https://github.com/acme/widgets/pull/456');
     });
 
-    test('ensurePollsForRun stops existing polls when workflow lookup fails', async () => {
+    test('legacy gate polls remain disabled when workflow lookup fails', async () => {
       const workflow = workflowManager.createWorkflow({
         spaceId: SPACE_ID,
         name: `Missing Workflow Poll-${Date.now()}-${Math.random()}`,
@@ -407,13 +408,11 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
       } as never);
 
       await runtime.executeTick();
-      expect(runtime.isGatePollActive(run.id, 'gate-missing')).toBe(true);
+      expect(runtime.isGatePollActive(run.id, 'gate-missing')).toBe(false);
 
       workflowManager.deleteWorkflow(workflow.id);
       (runtime as unknown as { executorMeta: Map<string, unknown> }).executorMeta.delete(run.id);
-      await (runtime as unknown as { ensurePollsForRun: (r: typeof run) => Promise<void> })[
-        'ensurePollsForRun'
-      ](run);
+      await runtime.executeTick();
 
       expect(runtime.isGatePollActive(run.id, 'gate-missing')).toBe(false);
       await runtime.stop();
@@ -550,7 +549,7 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
       expect(freshRuntime.getExecutor(pendingRun.id)).toBeDefined();
     });
 
-    test('fresh runtime restarts gate polls for a rehydrated blocked run with a non-terminal task', async () => {
+    test('fresh runtime does not start legacy gate polls for a rehydrated blocked run', async () => {
       const workflow = workflowManager.createWorkflow({
         spaceId: SPACE_ID,
         name: `Blocked Polled Workflow-${Date.now()}-${Math.random()}`,
@@ -605,7 +604,8 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
       await freshRuntime.executeTick();
 
       expect(freshRuntime.getExecutor(blockedRun.id)).toBeDefined();
-      expect(freshRuntime.isGatePollActive(blockedRun.id, 'gate-blocked')).toBe(true);
+      expect(freshRuntime.isGatePollActive(blockedRun.id, 'gate-blocked')).toBe(false);
+      expect(freshRuntime.getActiveGatePollCount()).toBe(0);
       await freshRuntime.stop();
     });
   });
@@ -633,6 +633,64 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
 
       expect(freshRuntime.executorCount).toBe(0);
       expect(freshRuntime.getExecutor(run.id)).toBeUndefined();
+    });
+
+    test('daemon restart with stale hook state does not reactivate done run', async () => {
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Step A', agentId: AGENT },
+      ]);
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Done Run With Stale Hook State',
+      });
+      const inProgress = workflowRunRepo.transitionStatus(run.id, 'in_progress');
+      taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Done Run With Stale Hook State',
+        description: '',
+        workflowRunId: inProgress.id,
+        status: 'done',
+      });
+      const execution = new NodeExecutionRepository(db).create({
+        workflowRunId: inProgress.id,
+        workflowNodeId: STEP_A,
+        agentName: 'agent',
+        agentId: AGENT,
+        agentSessionId: 'stale-session',
+        status: 'done',
+      });
+      workflowRunRepo.transitionStatus(inProgress.id, 'done');
+      const recoveryRepo = new ToolContinuationRecoveryRepository(db);
+      recoveryRepo.ensureSchema();
+      recoveryRepo.recordToolUse({
+        toolUseId: 'stale-tool-use',
+        sessionId: 'stale-session',
+        ttlMs: 60_000,
+        owner: { executionId: execution.id, workflowRunId: inProgress.id },
+      });
+      recoveryRepo.queueContinuation({
+        toolUseId: 'stale-tool-use',
+        sessionId: 'stale-session',
+        requestBody: { messages: [{ role: 'user', content: [] }] },
+        reason: 'late continuation after completion',
+        ttlMs: 60_000,
+      });
+
+      const freshRuntime = makeRuntime({
+        taskAgentManager: {
+          rehydrate: async () => {},
+          isSessionAlive: () => false,
+          getAgentSessionById: () => null,
+          isExecutionSpawning: () => false,
+        } as never,
+      });
+      await freshRuntime.executeTick();
+
+      expect(freshRuntime.executorCount).toBe(0);
+      expect(freshRuntime.getExecutor(inProgress.id)).toBeUndefined();
+      expect(workflowRunRepo.getRun(inProgress.id)?.status).toBe('done');
+      expect(new NodeExecutionRepository(db).getById(execution.id)?.status).toBe('done');
     });
 
     test('cancelled runs are not rehydrated', async () => {

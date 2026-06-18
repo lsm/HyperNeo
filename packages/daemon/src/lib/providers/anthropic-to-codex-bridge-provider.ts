@@ -36,7 +36,7 @@ import {
   type OpenAIResponsesBridgeServer,
   createOpenAIResponsesBridgeServer,
 } from './openai-responses-bridge/server.js';
-import { getCodexBridgeModelInfos } from './codex-models.js';
+import { getCodexBridgeModelInfos, CODEX_TO_SDK_MODEL } from './codex-models.js';
 import { Logger } from '../logger.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
@@ -216,10 +216,19 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     success: boolean;
   } | null = null;
 
+  /**
+   * Cached credential-probe result keyed by the bridge auth cache key so
+   * repeated `providers.test` calls don't re-probe within a short window.
+   */
+  private readonly probeCache = new Map<string, { at: number; result: Promise<void> }>();
+  private static readonly PROBE_TTL_MS = 30_000;
+  private static readonly PROBE_TIMEOUT_MS = 5000;
+
   constructor(
     private readonly env: Record<string, string | undefined> = process.env,
     authDir?: string,
-    codexAuthDir?: string
+    codexAuthDir?: string,
+    private readonly fetchImpl: typeof fetch = fetch
   ) {
     this.authPath = path.join(authDir ?? path.join(os.homedir(), '.neokai'), 'auth.json');
     this.codexAuthPath = path.join(codexAuthDir ?? path.join(os.homedir(), '.codex'), 'auth.json');
@@ -379,15 +388,22 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     };
   }
 
+  /**
+   * Stable identifier for bridge server reuse.
+   *
+   * Must NOT include the raw OAuth access token: the bridge server performs its
+   * own in-request token refresh, so rotating the token must not create a new
+   * bridge (which would kill the old port and leave the SDK subprocess talking
+   * to a dead server). API keys are hashed so switching keys still changes the
+   * key and triggers cleanup of the stale bridge.
+   */
   private bridgeAuthCacheKey(auth: OpenAIResponsesBridgeAuth | undefined): string {
     if (!auth) return 'none';
-    if (auth.source === 'api_key') return `api_key:${auth.apiKey}`;
-    return [
-      'chatgpt',
-      auth.apiKey,
-      auth.accountId,
-      auth.isFedrampAccount ? 'fedramp' : 'standard',
-    ].join(':');
+    if (auth.source === 'api_key') {
+      const hash = crypto.createHash('sha256').update(auth.apiKey).digest('hex').slice(0, 16);
+      return `api_key:${hash}`;
+    }
+    return ['chatgpt', auth.accountId, auth.isFedrampAccount ? 'fedramp' : 'standard'].join(':');
   }
 
   /**
@@ -405,21 +421,24 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   }
 
   private modelAliases(): Record<string, string> {
-    return Object.fromEntries(
+    // User-facing aliases (e.g. 'codex' → 'gpt-5.3-codex')
+    const userAliases = Object.fromEntries(
       ANTHROPIC_CODEX_MODELS.flatMap((model) =>
         model.alias ? [[model.alias, model.id] as const] : []
       )
     );
+    return userAliases;
   }
 
   private responsesBridgeModels() {
-    return ANTHROPIC_CODEX_MODELS.map((model) => ({
+    const codexModels = ANTHROPIC_CODEX_MODELS.map((model) => ({
       id: model.id,
       display_name: model.name,
       created_at: `${model.releaseDate ?? '2026-01-01'}T00:00:00Z`,
       context_window: model.contextWindow,
       max_tokens: 16384,
     }));
+    return codexModels;
   }
 
   private async refreshStoredOauthCredentials(): Promise<StoredCredentials | undefined> {
@@ -491,12 +510,116 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     return { isAuthenticated: true, method: 'oauth' };
   }
 
+  /**
+   * Verify the resolved Codex credentials actually work against the OpenAI
+   * upstream by sending a minimal `/responses` request. The request URL is
+   * chosen by auth source so both API-key mode (`api.openai.com/v1`) and
+   * ChatGPT OAuth mode (`chatgpt.com/backend-api/codex`) are exercised
+   * through their real upstream paths.
+   *
+   * The request body differs per auth source: API-key mode sends
+   * `max_output_tokens: 1` to keep the probe cheap, but the ChatGPT Codex
+   * backend hard-rejects that field (see
+   * `openai-responses-bridge/server.ts:1170-1176` —
+   * `includeMaxOutputTokens: !isChatgptOAuth`), so the OAuth branch omits
+   * it and relies on the upstream's default.
+   *
+   * @throws {Error} when credentials are rejected, the upstream is
+   *   unreachable, or the request times out.
+   */
+  private async verifyCredentials(auth: OpenAIResponsesBridgeAuth): Promise<void> {
+    const cacheKey = this.bridgeAuthCacheKey(auth);
+    const cached = this.probeCache.get(cacheKey);
+    if (cached && Date.now() - cached.at < AnthropicToCodexBridgeProvider.PROBE_TTL_MS) {
+      await cached.result;
+      return;
+    }
+    const result = this.probeUpstream(auth)
+      .then(() => undefined)
+      .catch((err) => {
+        this.probeCache.delete(cacheKey);
+        throw err;
+      });
+    this.probeCache.set(cacheKey, { at: Date.now(), result });
+    await result;
+  }
+
+  private async probeUpstream(auth: OpenAIResponsesBridgeAuth): Promise<void> {
+    const isChatgptOAuth = auth.source === 'chatgpt_oauth';
+    const baseUrl = isChatgptOAuth
+      ? 'https://chatgpt.com/backend-api/codex'
+      : 'https://api.openai.com/v1';
+    const url = `${baseUrl}/responses`;
+
+    const headers: Record<string, string> = {
+      'content-type': 'application/json',
+      authorization: `Bearer ${auth.apiKey}`,
+    };
+    if (isChatgptOAuth && auth.accountId) {
+      // Match buildOpenAIHeaders in openai-responses-bridge/server.ts:648
+      // (capital `ID`). The gateway is case-sensitive on this header; the
+      // bridge's own traffic uses capital ID, so the probe must too or it
+      // will 4xx and false-mark the provider unhealthy.
+      headers['ChatGPT-Account-ID'] = auth.accountId;
+    }
+
+    // Build request body. ChatGPT Codex backend hard-rejects
+    // `max_output_tokens` and `parallel_tool_calls` (see
+    // openai-responses-bridge/server.ts:1170-1176 — `includeMaxOutputTokens:
+    // !isChatgptOAuth`). Only API-key mode accepts the field.
+    const body: Record<string, unknown> = {
+      model: 'gpt-5.4-mini',
+      input: [
+        {
+          type: 'message',
+          role: 'user',
+          content: [{ type: 'input_text', text: '.' }],
+        },
+      ],
+      stream: false,
+    };
+    if (!isChatgptOAuth) {
+      body.max_output_tokens = 1;
+    }
+
+    let response: Response;
+    try {
+      response = await this.fetchImpl(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(AnthropicToCodexBridgeProvider.PROBE_TIMEOUT_MS),
+      });
+    } catch (err) {
+      if (err instanceof Error && err.name === 'TimeoutError') {
+        throw new Error(
+          `Codex probe timed out after ${AnthropicToCodexBridgeProvider.PROBE_TIMEOUT_MS}ms`
+        );
+      }
+      const detail = err instanceof Error ? err.message : String(err);
+      throw new Error(`Codex probe failed: ${detail}`);
+    }
+
+    if (response.status === 401 || response.status === 403) {
+      throw new Error(`Codex credentials rejected (HTTP ${response.status})`);
+    }
+    if (!response.ok) {
+      throw new Error(`Codex probe failed (HTTP ${response.status})`);
+    }
+  }
+
   async getModels(): Promise<ModelInfo[]> {
     // Use isAvailable() (which includes env-var credentials via getBridgeAuth()) so
     // that the model picker works for all credential sources.  getAuthStatus() is
     // UI-only: it gates the Login/Logout buttons but must not hide models from users
     // who authenticate via OPENAI_API_KEY env vars.
-    if (!(await this.isAvailable())) return [];
+    const auth = await this.getBridgeAuth();
+    if (!auth) return [];
+    // Probe upstream so `providers.test` actually verifies the credentials work.
+    // The model-service layer catches and swallows errors from getModels(), so a
+    // failed probe does not break the model picker — it just hides the Codex
+    // models until the credentials are fixed.
+    await this.verifyCredentials(auth);
     return ANTHROPIC_CODEX_MODELS.map((m) => ({ ...m, thinkingModes: 'granular' as const }));
   }
 
@@ -506,10 +629,10 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     return ANTHROPIC_CODEX_MODELS.some((m) => m.id === modelId || m.alias === modelId);
   }
 
-  translateModelIdForSdk(modelId: string): string {
-    return (
-      ANTHROPIC_CODEX_MODELS.find((m) => m.id === modelId || m.alias === modelId)?.id ?? modelId
-    );
+  translateModelIdForSdk(_modelId: string): string {
+    // Following GLM/Kimi pattern: return 'default' and let SDK use ANTHROPIC_DEFAULT_*_MODEL
+    // env vars to route to real Codex model IDs. Context window comes from /v1/models metadata.
+    return 'default';
   }
 
   getModelForTier(tier: ModelTier): string | undefined {
@@ -580,22 +703,28 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     const bridgeBaseUrl =
       bridgeServer.baseUrlForSession?.(sessionId) || `http://127.0.0.1:${bridgeServer.port}`;
 
+    const sdkModelId =
+      CODEX_TO_SDK_MODEL[resolvedId as import('./codex-models.js').CodexBridgeModelId];
+    if (!sdkModelId) {
+      throw new Error(`Unknown Codex model: ${modelId}`);
+    }
+
+    // Register a per-session override so the bridge sends the originally-selected
+    // Codex model ID upstream instead of the default alias target.
+    bridgeServer.setSessionModelConfig?.(sessionId, sdkModelId, resolvedId);
+
     return {
       envVars: {
         ANTHROPIC_BASE_URL: bridgeBaseUrl,
         ANTHROPIC_API_KEY: `codex-bridge-${sessionId}`,
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(entry.contextWindow),
         CLAUDE_CODE_OAUTH_TOKEN: '',
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
-        // Map SDK model tiers to Codex model IDs so the Claude Agent SDK
-        // subprocess never falls back to Anthropic model names (e.g.
-        // 'claude-haiku-4-5-20251001') which the Codex bridge does not recognise.
-        // Routing policy (mirrors getModelForTier):
-        //   Opus   → gpt-5.5           (latest frontier)
-        //   Sonnet → resolvedId         (user-selected model)
-        //   Haiku  → gpt-5.4-mini       (fast/cheap fallback)
-        ANTHROPIC_DEFAULT_OPUS_MODEL: 'gpt-5.5',
-        ANTHROPIC_DEFAULT_SONNET_MODEL: resolvedId,
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: 'gpt-5.4-mini',
+        // Route all tiers to real Codex model IDs. SDK uses these for sub-agent
+        // selection and fallback. Context window comes from /v1/models metadata.
+        ANTHROPIC_DEFAULT_OPUS_MODEL: CODEX_TO_SDK_MODEL['gpt-5.5'],
+        ANTHROPIC_DEFAULT_SONNET_MODEL: sdkModelId,
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: CODEX_TO_SDK_MODEL['gpt-5.4-mini'],
       },
       isAnthropicCompatible: true,
       apiVersion: 'v1',

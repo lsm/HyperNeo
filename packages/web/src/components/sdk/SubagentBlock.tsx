@@ -9,6 +9,7 @@
  * - Output: The sub-agent's final response (markdown rendered)
  */
 
+import type { ComponentChild } from 'preact';
 import { useState, useMemo } from 'preact/hooks';
 import { cn } from '../../lib/utils.ts';
 import { RunningBorder } from './RunningBorder.tsx';
@@ -24,6 +25,11 @@ import {
 } from '@neokai/shared/sdk/type-guards';
 import { ToolResultCard } from './tools/index.ts';
 import { ThinkingBlock } from './ThinkingBlock.tsx';
+import { SDKSystemMessage } from './SDKSystemMessage.tsx';
+import {
+  getMessageUuid,
+  type MessageReplacementStatus,
+} from '../../lib/sdk-message-replacement.ts';
 
 /**
  * Extract text content from a user message for comparison with input prompt
@@ -46,6 +52,33 @@ function getUserMessageText(message: SDKMessage): string | null {
   return null;
 }
 
+function shouldHideNestedSystemMessage(message: SDKMessage, isLiveTail: boolean): boolean {
+  if (message.type !== 'system') return false;
+  const subtype = (message as { subtype?: string }).subtype;
+  if (!subtype) return true;
+  if (subtype === 'init') return true;
+  if (subtype === 'informational' && (message as { level?: string }).level === 'info') return true;
+  if (subtype === 'worker_shutting_down' && !isLiveTail) return true;
+  return false;
+}
+
+function shouldUseSDKSystemRenderer(message: Extract<SDKMessage, { type: 'system' }>): boolean {
+  const subtype = (message as { subtype?: string }).subtype;
+  if (subtype === 'status') {
+    return (message as { status?: string }).status === 'compacting';
+  }
+  return (
+    subtype === 'compact_boundary' ||
+    subtype === 'hook_response' ||
+    subtype === 'api_retry' ||
+    subtype === 'session_state_changed' ||
+    subtype === 'commands_changed' ||
+    subtype === 'informational' ||
+    subtype === 'worker_shutting_down' ||
+    subtype === 'model_refusal_fallback'
+  );
+}
+
 interface SubagentBlockProps {
   /** The Task tool input containing subagent_type, description, prompt */
   input: AgentInput;
@@ -59,6 +92,8 @@ interface SubagentBlockProps {
   nestedMessages?: SDKMessage[];
   /** Map of tool use IDs to their results (for nested tool calls) */
   toolResultsMap?: Map<string, unknown>;
+  /** Map of SDK message UUIDs to replacement/retraction status. */
+  replacementStatusMap?: Map<string, MessageReplacementStatus>;
   /** Additional CSS classes */
   className?: string;
   /** When true, wrap this block in <RunningBorder> so the animated arc traces
@@ -243,6 +278,7 @@ export function SubagentBlock({
   toolId: _toolId,
   nestedMessages = [],
   toolResultsMap,
+  replacementStatusMap,
   className,
   isRunning = false,
 }: SubagentBlockProps) {
@@ -262,6 +298,10 @@ export function SubagentBlock({
     if (nestedMessages.length === 0) return [];
 
     return nestedMessages.filter((msg, idx) => {
+      if (shouldHideNestedSystemMessage(msg, idx === nestedMessages.length - 1)) {
+        return false;
+      }
+
       // Only check the first message
       if (idx !== 0) return true;
 
@@ -364,7 +404,9 @@ export function SubagentBlock({
                   <NestedMessageRenderer
                     key={msg.uuid || `nested-${idx}`}
                     message={msg}
+                    isLiveTail={idx === filteredNestedMessages.length - 1}
                     toolResultsMap={toolResultsMap}
+                    replacementStatusMap={replacementStatusMap}
                   />
                 ))}
               </div>
@@ -406,15 +448,46 @@ export function SubagentBlock({
  */
 function NestedMessageRenderer({
   message,
+  isLiveTail,
   toolResultsMap,
+  replacementStatusMap,
 }: {
   message: SDKMessage;
+  isLiveTail: boolean;
   toolResultsMap?: Map<string, unknown>;
+  replacementStatusMap?: Map<string, MessageReplacementStatus>;
 }) {
+  const replacementStatus = replacementStatusMap?.get(getMessageUuid(message) ?? '');
+  const withReplacementStatus = (content: ComponentChild) => {
+    if (!replacementStatus || content == null || content === false) return content;
+    const isRetracted = replacementStatus === 'retracted';
+    return (
+      <div
+        class={`rounded-lg border px-2 py-1 ${
+          isRetracted ? 'border-rose-500/35 bg-rose-500/5' : 'border-amber-500/35 bg-amber-500/5'
+        }`}
+        data-message-replacement-status={replacementStatus}
+      >
+        <div
+          class={`mb-1 text-[10px] font-semibold uppercase tracking-wide ${
+            isRetracted ? 'text-rose-300' : 'text-amber-300'
+          }`}
+        >
+          {isRetracted ? 'Retracted by fallback' : 'Superseded by replacement'}
+        </div>
+        <div class="opacity-80">{content}</div>
+      </div>
+    );
+  };
+
   // Handle assistant messages
   if (message.type === 'assistant') {
     const apiMessage = message.message;
     const content = apiMessage.content as ContentBlock[];
+
+    // Extract estimated thinking tokens if present (stamped by daemon handler on SDK wrapper)
+    const estimatedThinkingTokens = (message as { estimated_thinking_tokens?: number })
+      .estimated_thinking_tokens;
 
     const textBlocks = content.filter((block) => isTextBlock(block));
     const toolBlocks = content.filter((block) => isToolUseBlock(block));
@@ -427,13 +500,14 @@ function NestedMessageRenderer({
       .filter((block) => isThinkingBlock(block))
       .filter((block) => hasRenderableThinking(block));
 
-    return (
+    return withReplacementStatus(
       <div class="space-y-2">
         {/* Thinking blocks */}
         {thinkingBlocks.map((block, idx) => (
           <ThinkingBlock
             key={`thinking-${idx}`}
             content={(block as { thinking: string }).thinking}
+            estimatedTokens={estimatedThinkingTokens}
           />
         ))}
 
@@ -496,7 +570,7 @@ function NestedMessageRenderer({
       }
 
       // Render non-tool-result content blocks
-      return (
+      return withReplacementStatus(
         <div class="bg-blue-50 dark:bg-blue-900/20 p-3 rounded border border-blue-200 dark:border-blue-800">
           {content.map((block, idx) => {
             const blockObj = block as Record<string, unknown>;
@@ -518,7 +592,7 @@ function NestedMessageRenderer({
 
     // Handle string content
     if (typeof content === 'string') {
-      return (
+      return withReplacementStatus(
         <div class="bg-blue-50 dark:bg-blue-900/20 p-3 rounded border border-blue-200 dark:border-blue-800 text-sm text-blue-900 dark:text-blue-100 whitespace-pre-wrap break-words">
           {content}
         </div>
@@ -537,7 +611,7 @@ function NestedMessageRenderer({
     };
 
     if (resultMessage.result) {
-      return (
+      return withReplacementStatus(
         <div
           class={cn(
             'bg-gray-50 dark:bg-gray-800 p-3 rounded border',
@@ -558,22 +632,21 @@ function NestedMessageRenderer({
 
   // Handle system messages
   if (message.type === 'system') {
-    const systemMessage = message as SDKMessage & { subtype?: string };
-
-    // Skip init messages
-    if (systemMessage.subtype === 'init') {
-      return null;
+    const systemMessage = message as Extract<SDKMessage, { type: 'system' }>;
+    if (shouldUseSDKSystemRenderer(systemMessage)) {
+      return withReplacementStatus(
+        <SDKSystemMessage message={systemMessage} isLiveTail={isLiveTail} />
+      );
     }
-
-    return (
-      <div class="bg-gray-100 dark:bg-gray-800 p-2 rounded text-xs text-gray-600 dark:text-gray-400 italic">
-        System: {systemMessage.subtype || 'message'}
+    return withReplacementStatus(
+      <div class="bg-gray-100 dark:bg-gray-800 p-2 rounded text-xs text-gray-600 dark:text-gray-300">
+        System: {(systemMessage as { subtype?: string }).subtype ?? 'message'}
       </div>
     );
   }
 
   // Fallback for unknown message types - show raw data
-  return (
+  return withReplacementStatus(
     <div class="bg-gray-100 dark:bg-gray-800 p-2 rounded text-xs">
       <details>
         <summary class="cursor-pointer text-gray-500">Unknown message type: {message.type}</summary>

@@ -29,6 +29,7 @@ import type {
 } from '@neokai/shared';
 import type { ChatMessage } from '@neokai/shared';
 import { Logger } from '@neokai/shared';
+import { flattenSDKSlashCommands, type SDKSlashCommand } from '@neokai/shared/sdk';
 import { connectionManager } from './connection-manager';
 import { slashCommandsSignal } from './signals';
 import { toast } from './toast';
@@ -42,6 +43,8 @@ import type { StructuredError } from '../types/error';
 const LIVE_QUERY_MESSAGE_LIMIT = 200;
 
 const logger = new Logger('kai:web:sessionstore');
+
+const NEOKAI_BUILT_IN_COMMANDS = ['merge-session'];
 
 class SessionStore {
   // ========================================
@@ -602,23 +605,48 @@ class SessionStore {
    * daemon fallback broadcast), this restores commands from the SDK message.
    */
   private _syncCommandsFromSDKMessages(messages: ChatMessage[]): void {
-    for (const msg of messages) {
-      const m = msg as unknown as { type?: string; subtype?: string; slash_commands?: string[] };
-      if (
-        m.type === 'system' &&
-        m.subtype === 'init' &&
-        Array.isArray(m.slash_commands) &&
-        m.slash_commands.length > 0
-      ) {
+    for (let index = messages.length - 1; index >= 0; index--) {
+      const msg = messages[index];
+      const m = msg as unknown as {
+        type?: string;
+        subtype?: string;
+        slash_commands?: string[];
+        commands?: SDKSlashCommand[];
+      };
+      const availableCommands = this._commandsFromSDKMessage(m);
+      if (availableCommands.length > 0) {
+        slashCommandsSignal.value = availableCommands;
         if (this.sessionState.value) {
           this.sessionState.value = {
             ...this.sessionState.value,
-            commandsData: { availableCommands: m.slash_commands },
+            commandsData: { availableCommands },
           };
         }
         break;
       }
     }
+  }
+
+  private _commandsFromSDKMessage(message: {
+    type?: string;
+    subtype?: string;
+    slash_commands?: string[];
+    commands?: SDKSlashCommand[];
+  }): string[] {
+    if (message.type !== 'system') return [];
+    if (message.subtype === 'commands_changed' && Array.isArray(message.commands)) {
+      return [
+        ...new Set([...flattenSDKSlashCommands(message.commands), ...NEOKAI_BUILT_IN_COMMANDS]),
+      ];
+    }
+    if (
+      message.subtype === 'init' &&
+      Array.isArray(message.slash_commands) &&
+      message.slash_commands.length > 0
+    ) {
+      return message.slash_commands;
+    }
+    return [];
   }
 
   /**

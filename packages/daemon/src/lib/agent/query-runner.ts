@@ -10,28 +10,31 @@
  * - Provider environment variable management
  */
 
-import { query } from '@anthropic-ai/claude-agent-sdk';
-import type { Options, Query, SpawnOptions, SpawnedProcess } from '@anthropic-ai/claude-agent-sdk';
 import { spawn as nodeSpawn } from 'node:child_process';
-import type { UUID } from 'crypto';
-import type { MessageContent, Session, MessageHub } from '@neokai/shared';
-import type { SDKMessage } from '@neokai/shared/sdk';
+import type { Options, SpawnedProcess, SpawnOptions } from '@anthropic-ai/claude-agent-sdk';
+import { query } from '@anthropic-ai/claude-agent-sdk';
+import type { MessageContent, MessageHub, Session } from '@neokai/shared';
 import { generateUUID } from '@neokai/shared';
+import type { SDKMessage } from '@neokai/shared/sdk';
+import type { UUID } from 'crypto';
 import { Database } from '../../storage/database';
 import { ErrorCategory, ErrorManager } from '../error-manager';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import { Logger } from '../logger';
-import type { MessageQueue } from './message-queue';
-import type { ProcessingStateManager } from './processing-state-manager';
-import type { QueryOptionsBuilder } from './query-options-builder';
-import type { AskUserQuestionHandler } from './ask-user-question-handler';
-import { TRANSIENT_CONNECTION_ERROR_SUBSTRINGS } from './transient-error-patterns';
+import type { OriginalEnvVars, ProviderEnvVars } from '../provider-service';
 import {
   missingMcpServers,
   resolveSpaceMcpSessionPolicy,
   SPACE_COORDINATOR_REQUIRED_MCP_SERVERS,
   SPACE_WORKFLOW_WORKER_REQUIRED_MCP_SERVERS,
 } from '../space/runtime/space-mcp-session-policy';
-import type { OriginalEnvVars } from '../provider-service';
+import type { AskUserQuestionHandler } from './ask-user-question-handler';
+import type { MessageQueue } from './message-queue';
+import type { ProcessingStateManager } from './processing-state-manager';
+import type { QueryLike } from './query-like';
+import type { QueryOptionsBuilder } from './query-options-builder';
+import { TRANSIENT_CONNECTION_ERROR_SUBSTRINGS } from './transient-error-patterns';
+
 // Re-exported for callers that import OriginalEnvVars from this module — canonical definition lives in provider-service.ts.
 export type { OriginalEnvVars } from '../provider-service';
 
@@ -92,6 +95,160 @@ function getStartupTimeoutMs(): number {
 // in user-facing error messages reflect these module-load-time snapshots.
 const STARTUP_TIMEOUT_MS = getStartupTimeoutMs();
 
+export const PROVIDER_MANAGED_ENV_VARS = new Set([
+  'ANTHROPIC_BASE_URL',
+  'ANTHROPIC_API_KEY',
+  'ANTHROPIC_AUTH_TOKEN',
+  'ANTHROPIC_MODEL',
+  'ANTHROPIC_DEFAULT_HAIKU_MODEL',
+  'ANTHROPIC_DEFAULT_SONNET_MODEL',
+  'ANTHROPIC_DEFAULT_OPUS_MODEL',
+  'API_TIMEOUT_MS',
+  'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC',
+  'CLAUDE_CODE_OAUTH_TOKEN',
+]);
+
+function isRealAnthropicAuthToken(token: string | undefined): boolean {
+  return typeof token === 'string' && token.startsWith('sk-ant-oat');
+}
+
+export function refreshQueryEnvFromProcess(
+  queryEnv: Record<string, string | undefined> | undefined,
+  processEnv: NodeJS.ProcessEnv = process.env,
+  options: {
+    refreshAutoCompactWindow?: boolean;
+    clearProviderManaged?: boolean;
+    omitProviderManaged?: boolean;
+    preserveAnthropicAuthToken?: boolean;
+    preserveAnthropicOAuthToken?: boolean;
+    omitProviderManagedPreserveAuth?: boolean;
+    skipAmbientAnthropicApiKey?: boolean;
+  } = {}
+): Record<string, string | undefined> {
+  const refreshedEnv: Record<string, string | undefined> = Object.fromEntries(
+    Object.entries(queryEnv ?? {}).filter(
+      (entry): entry is [string, string] => entry[1] !== undefined
+    )
+  );
+  const providerManagedEnvVars = new Set(PROVIDER_MANAGED_ENV_VARS);
+  if (options.refreshAutoCompactWindow) {
+    providerManagedEnvVars.add('CLAUDE_CODE_AUTO_COMPACT_WINDOW');
+  }
+  if (options.omitProviderManaged) {
+    for (const key of providerManagedEnvVars) {
+      if (
+        options.omitProviderManagedPreserveAuth &&
+        (key === 'ANTHROPIC_API_KEY' ||
+          key === 'ANTHROPIC_AUTH_TOKEN' ||
+          key === 'CLAUDE_CODE_OAUTH_TOKEN')
+      ) {
+        continue;
+      }
+      refreshedEnv[key] = undefined;
+    }
+  }
+  for (const key of providerManagedEnvVars) {
+    if (options.omitProviderManaged) continue;
+    if (
+      key === 'CLAUDE_CODE_OAUTH_TOKEN' &&
+      options.clearProviderManaged &&
+      !options.preserveAnthropicOAuthToken
+    ) {
+      delete refreshedEnv[key];
+      continue;
+    }
+    const value = processEnv[key];
+    if (value === undefined) {
+      if (options.clearProviderManaged) {
+        if (
+          key === 'ANTHROPIC_AUTH_TOKEN' &&
+          options.preserveAnthropicAuthToken &&
+          isRealAnthropicAuthToken(refreshedEnv.ANTHROPIC_AUTH_TOKEN)
+        ) {
+          continue;
+        }
+        if (
+          key === 'CLAUDE_CODE_OAUTH_TOKEN' &&
+          options.preserveAnthropicOAuthToken &&
+          refreshedEnv.CLAUDE_CODE_OAUTH_TOKEN
+        ) {
+          continue;
+        }
+        if (options.omitProviderManaged) {
+          refreshedEnv[key] = undefined;
+        } else {
+          delete refreshedEnv[key];
+        }
+      }
+    } else {
+      if (options.skipAmbientAnthropicApiKey && key === 'ANTHROPIC_API_KEY') {
+        delete refreshedEnv[key];
+      } else {
+        refreshedEnv[key] = value;
+      }
+    }
+  }
+  for (const [key, value] of Object.entries(processEnv)) {
+    if (value === undefined || key === 'PORT' || key === 'NEOKAI_PORT') continue;
+    if (options.omitProviderManaged && providerManagedEnvVars.has(key)) {
+      if (
+        !options.omitProviderManagedPreserveAuth ||
+        (key !== 'ANTHROPIC_API_KEY' &&
+          key !== 'ANTHROPIC_AUTH_TOKEN' &&
+          key !== 'CLAUDE_CODE_OAUTH_TOKEN')
+      ) {
+        continue;
+      }
+    }
+    if (
+      options.clearProviderManaged &&
+      key === 'CLAUDE_CODE_OAUTH_TOKEN' &&
+      !options.preserveAnthropicOAuthToken
+    ) {
+      continue;
+    }
+    if (options.skipAmbientAnthropicApiKey && key === 'ANTHROPIC_API_KEY') {
+      continue;
+    }
+    // Provider-managed vars should always UPDATE from process.env, not skip if present.
+    // This ensures values from ~/.claude/settings.json (read into queryOptions.env by
+    // getMergedEnvironmentVars) are overridden by provider-specific values set in
+    // process.env by applyEnvVarsToProcess(). Without this, a user's
+    // ANTHROPIC_DEFAULT_SONNET_MODEL setting persists across provider switches.
+    if (providerManagedEnvVars.has(key)) {
+      refreshedEnv[key] = value;
+    } else if (!(key in refreshedEnv)) {
+      refreshedEnv[key] = value;
+    }
+  }
+  return refreshedEnv;
+}
+
+function applyProviderEnvToFlagSettings(queryOptions: Options, envVars: ProviderEnvVars): void {
+  const flagEnv: Record<string, string> = {};
+  const providerManagedEnvVars = new Set(PROVIDER_MANAGED_ENV_VARS);
+  providerManagedEnvVars.add('CLAUDE_CODE_AUTO_COMPACT_WINDOW');
+
+  for (const key of providerManagedEnvVars) {
+    if (envVars[key] !== undefined) {
+      flagEnv[key] = envVars[key];
+    }
+  }
+
+  if (Object.keys(flagEnv).length === 0) return;
+
+  const existingSettings =
+    queryOptions.settings && typeof queryOptions.settings === 'object' ? queryOptions.settings : {};
+
+  queryOptions.settings = {
+    ...existingSettings,
+    env: {
+      ...existingSettings.env,
+      ...flagEnv,
+    },
+  };
+}
+
 const REQUIRED_SPACE_CHAT_MCP_SERVERS = SPACE_COORDINATOR_REQUIRED_MCP_SERVERS;
 const REQUIRED_SPACE_CHAT_COORDINATION_TOOLS = [
   'create_standalone_task',
@@ -112,6 +269,7 @@ export interface QueryRunnerContext {
   readonly session: Session;
   readonly db: Database;
   readonly messageHub: MessageHub;
+  readonly internalEventBus: InternalEventBus<DaemonInternalEventMap>;
   readonly messageQueue: MessageQueue;
   readonly stateManager: ProcessingStateManager;
   readonly errorManager: ErrorManager;
@@ -119,8 +277,8 @@ export interface QueryRunnerContext {
   readonly optionsBuilder: QueryOptionsBuilder;
   readonly askUserQuestionHandler: AskUserQuestionHandler;
 
-  // Mutable SDK state (accessed directly)
-  queryObject: Query | null;
+  // Mutable query state (accessed directly)
+  queryObject: QueryLike | null;
   queryPromise: Promise<void> | null;
   queryAbortController: AbortController | null;
   firstMessageReceived: boolean;
@@ -486,24 +644,39 @@ export class QueryRunner {
       queryOptions = await this.ensureMemberSpaceMcpInvariant(queryOptions);
 
       // Apply provider env vars
+      const resolvedProviderId = explicitProviderId ?? provider?.id ?? 'anthropic';
+      const refreshAutoCompactWindow = true;
       {
         const { getProviderService } = await import('../provider-service');
         const providerService = getProviderService();
         // Use the resolved provider ID (falls back to 'anthropic' for legacy sessions)
-        const resolvedProviderId = explicitProviderId ?? provider?.id ?? 'anthropic';
-        const originalEnvVars = providerService.applyEnvVarsToProcessForSession({
+        const providerSession = {
           ...session,
           config: {
             ...session.config,
             model: modelId,
             provider: resolvedProviderId as Session['config']['provider'],
           },
-        });
+        };
+        const providerEnvVars = providerService.getProviderEnvVars(providerSession);
+        applyProviderEnvToFlagSettings(queryOptions, providerEnvVars);
+        const originalEnvVars = providerService.applyEnvVarsToProcessForSession(providerSession);
         this.ctx.originalEnvVars = originalEnvVars;
       }
 
       // Note: PORT and NEOKAI_PORT are cleared inside applyEnvVarsToProcess() above,
-      // so SDK subprocesses cannot inherit the daemon's listening port.
+      // so SDK subprocesses cannot inherit the daemon's listening port. Refresh
+      // the full SDK env snapshot now so provider credentials applied to
+      // process.env are included before SDK 0.3 treats options.env as complete.
+      // Provider-managed context-window overrides are refreshed from process.env for all
+      // providers so stale bridge values are removed after provider cleanup.
+      queryOptions.env = refreshQueryEnvFromProcess(queryOptions.env, process.env, {
+        refreshAutoCompactWindow,
+        clearProviderManaged: true,
+        preserveAnthropicAuthToken: resolvedProviderId === 'anthropic',
+        preserveAnthropicOAuthToken: resolvedProviderId === 'anthropic',
+        skipAmbientAnthropicApiKey: resolvedProviderId !== 'anthropic',
+      }) as Record<string, string>;
 
       // Wrap spawnClaudeCodeProcess to track subprocess exit deterministically.
       // This lets stop() await the actual process exit instead of using arbitrary delays.
@@ -1217,7 +1390,7 @@ export class QueryRunner {
    * Public for testing
    */
   async *createAbortableQuery(
-    queryObj: Query,
+    queryObj: QueryLike,
     signal: AbortSignal
   ): AsyncGenerator<unknown, void, unknown> {
     const iterator = queryObj[Symbol.asyncIterator]();

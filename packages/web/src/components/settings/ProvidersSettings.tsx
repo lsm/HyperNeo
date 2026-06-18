@@ -7,7 +7,8 @@
  */
 
 import { useEffect, useState } from 'preact/hooks';
-import type { ProviderRecord } from '@neokai/shared';
+import { useSignalEffect } from '@preact/signals';
+import type { ProviderRecord, CredentialStoreStatus } from '@neokai/shared';
 import type { ProviderAuthStatus } from '@neokai/shared/provider';
 import {
   listProviders,
@@ -21,6 +22,7 @@ import {
   refreshProvider,
 } from '../../lib/api-helpers.ts';
 import { toast } from '../../lib/toast.ts';
+import { credentialStoreStatus } from '../../lib/state.ts';
 import { SettingsSection } from './SettingsSection.tsx';
 import { Button } from '../ui/Button.tsx';
 import { AddProviderModal } from './AddProviderModal.tsx';
@@ -40,6 +42,25 @@ interface EnrichedProvider extends ProviderRecord {
   authStatus?: ProviderAuthStatus;
 }
 
+/**
+ * Parse the region out of a Kimi provider record's configJson blob.
+ * Returns 'china' for missing/invalid values (backward compatibility).
+ */
+function readKimiRegion(provider: EnrichedProvider): 'china' | 'global' {
+  if (!provider.configJson) return 'china';
+  try {
+    const parsed = JSON.parse(provider.configJson) as { region?: unknown };
+    return parsed.region === 'global' ? 'global' : 'china';
+  } catch {
+    return 'china';
+  }
+}
+
+const KIMI_REGION_LABELS: Record<'china' | 'global', string> = {
+  china: 'China (api.kimi.com)',
+  global: 'Global (api.moonshot.ai)',
+};
+
 export function ProvidersSettings() {
   const [providers, setProviders] = useState<EnrichedProvider[]>([]);
   const [loading, setLoading] = useState(true);
@@ -48,10 +69,17 @@ export function ProvidersSettings() {
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [oauthFlow, setOauthFlow] = useState<OAuthFlowState | null>(null);
   const [apiKeys, setApiKeys] = useState<Record<string, string>>({});
+  const [kimiRegions, setKimiRegions] = useState<Record<string, 'china' | 'global'>>({});
   const [customEditor, setCustomEditor] = useState<EditorState | null>(null);
   const [editingCustomId, setEditingCustomId] = useState<string | null>(null);
   const [savingCustom, setSavingCustom] = useState(false);
   const [testingCustom, setTestingCustom] = useState(false);
+  const [credentialStore, setCredentialStore] = useState<CredentialStoreStatus | null>(
+    credentialStoreStatus.value
+  );
+  useSignalEffect(() => {
+    setCredentialStore(credentialStoreStatus.value);
+  });
   const { fetchingModels, fetchedModels, fetchModelsError, fetchedAt, handleFetchModels } =
     useFetchModels(customEditor);
 
@@ -71,6 +99,14 @@ export function ProvidersSettings() {
         authStatus: authById.get(r.providerId),
       }));
       setProviders(enriched);
+      // Seed region state for any Kimi rows from their persisted configJson.
+      const nextRegions: Record<string, 'china' | 'global'> = {};
+      for (const p of enriched) {
+        if (p.providerId === 'kimi') {
+          nextRegions[p.id] = readKimiRegion(p);
+        }
+      }
+      setKimiRegions((prev) => ({ ...nextRegions, ...prev }));
       // If an OAuth flow is active and the provider was deleted, stop polling.
       if (oauthFlow && !enriched.some((p) => p.providerId === oauthFlow.providerId)) {
         setOauthFlow(null);
@@ -174,6 +210,22 @@ export function ProvidersSettings() {
       await updateProvider(provider.id, {}, { apiKey: key });
       toast.success(`API key updated for ${provider.displayName}`);
       setApiKeys((prev) => ({ ...prev, [provider.id]: '' }));
+      await loadProviders();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Update failed');
+    } finally {
+      setPendingId(null);
+    }
+  };
+
+  const handleUpdateKimiRegion = async (provider: EnrichedProvider) => {
+    const region = kimiRegions[provider.id] ?? 'china';
+    setPendingId(provider.id);
+    try {
+      await updateProvider(provider.id, {
+        configJson: JSON.stringify({ region }),
+      });
+      toast.success(`${provider.displayName} region set to ${KIMI_REGION_LABELS[region]}`);
       await loadProviders();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Update failed');
@@ -337,6 +389,45 @@ export function ProvidersSettings() {
               Add Provider
             </Button>
           </div>
+
+          {(credentialStore?.backend === 'keychain-unavailable' ||
+            credentialStore?.backend === 'keychain-fallback') && (
+            <div
+              class={`rounded-lg border px-4 py-3 ${
+                credentialStore.backend === 'keychain-fallback'
+                  ? 'border-blue-500/30 bg-blue-500/10'
+                  : 'border-yellow-500/30 bg-yellow-500/10'
+              }`}
+            >
+              <p
+                class={`text-sm font-medium ${
+                  credentialStore.backend === 'keychain-fallback'
+                    ? 'text-blue-400'
+                    : 'text-yellow-400'
+                }`}
+              >
+                {credentialStore.backend === 'keychain-fallback'
+                  ? 'Using local encrypted storage (macOS Keychain unavailable)'
+                  : 'macOS Keychain unavailable'}
+              </p>
+              <p
+                class={`text-xs mt-1 ${
+                  credentialStore.backend === 'keychain-fallback'
+                    ? 'text-blue-400/80'
+                    : 'text-yellow-400/80'
+                }`}
+              >
+                {credentialStore.backend === 'keychain-fallback'
+                  ? (credentialStore.warning ??
+                      'macOS Keychain is locked or unavailable; using local encrypted file storage. ' +
+                        'Run `security unlock-keychain` (prompts for your login password) or restart ' +
+                        'NeoKai from a GUI session to restore Keychain persistence.') +
+                    ' Note: file storage is encrypted but weaker than Keychain — any same-user process can read both the encrypted file and its key. Use environment variables for stronger isolation on headless deployments.'
+                  : (credentialStore.warning ??
+                    'Persistent credential storage is unavailable until macOS Keychain is unlocked. Run `security unlock-keychain`, launch NeoKai from a desktop/GUI session, or use environment variables / a secret manager for headless deployments.')}
+              </p>
+            </div>
+          )}
 
           {providers.length === 0 && (
             <div class="rounded-lg border border-dashed border-dark-600 px-4 py-6 text-center">
@@ -557,6 +648,50 @@ export function ProvidersSettings() {
                               Configuration
                             </h5>
                             <div class="text-xs text-gray-500 font-mono">{provider.baseUrl}</div>
+                          </div>
+                        )}
+
+                        {/* Kimi region selector — only for built-in Kimi rows. */}
+                        {provider.providerId === 'kimi' && !isCustom && (
+                          <div>
+                            <label
+                              for={`kimi-region-${provider.id}`}
+                              class="block text-xs font-semibold uppercase tracking-wider text-gray-400 mb-2"
+                            >
+                              Region
+                            </label>
+                            <div class="flex gap-2 items-center">
+                              <select
+                                id={`kimi-region-${provider.id}`}
+                                value={kimiRegions[provider.id] ?? 'china'}
+                                onChange={(e) =>
+                                  setKimiRegions((prev) => ({
+                                    ...prev,
+                                    [provider.id]: e.currentTarget.value as 'china' | 'global',
+                                  }))
+                                }
+                                class="flex-1 min-w-0 bg-dark-950 border border-dark-700 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-blue-500"
+                              >
+                                <option value="china">{KIMI_REGION_LABELS.china}</option>
+                                <option value="global">{KIMI_REGION_LABELS.global}</option>
+                              </select>
+                              <Button
+                                size="sm"
+                                variant="primary"
+                                onClick={() => handleUpdateKimiRegion(provider)}
+                                loading={isPending}
+                                disabled={
+                                  isPending ||
+                                  (kimiRegions[provider.id] ?? 'china') === readKimiRegion(provider)
+                                }
+                              >
+                                Save
+                              </Button>
+                            </div>
+                            <p class="text-[11px] text-gray-500 mt-1">
+                              Switching region changes the upstream base URL — use the endpoint that
+                              matches your Kimi account.
+                            </p>
                           </div>
                         )}
 
