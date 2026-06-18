@@ -131,3 +131,11 @@ process.env.GLM_API_KEY = '';
 process.env.ZHIPU_API_KEY = '';
 process.env.MINIMAX_API_KEY = '';
 process.env.OPENAI_API_KEY = '';
+// Kimi/Moonshot and ACP — cleared so provider credential probes triggered by
+// model-service loadModelsFromProviders() don't hit the real upstream and
+// stall unit tests that exercise the empty-cache fallback path. Providers
+// that expose these keys (KimiProvider, AcpProvider) treat them as
+// isAvailable()=false when unset, which short-circuits the probe.
+process.env.KIMI_API_KEY = '';
+process.env.MOONSHOT_API_KEY = '';
+process.env.NEOKAI_ACP_COMMAND = '';
