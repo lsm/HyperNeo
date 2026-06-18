@@ -1163,18 +1163,53 @@ class SpaceStore {
           this.workflowDetailPromises.delete(id);
           this.workflowDetailFetchGens.set(id, (this.workflowDetailFetchGens.get(id) ?? 0) + 1);
         }
-        const details = await Promise.all(
-          [...requestedIds].map((id) => this.fetchWorkflowDetail(id))
+        const results = await Promise.all(
+          [...requestedIds].map(async (id) => {
+            const detail = await this.fetchWorkflowDetail(id);
+            return { id, detail };
+          })
         );
-        // Drop the batch if the space switched while we were fetching, or if
-        // the workflow set changed (the event handlers have already patched
-        // workflowDetails; don't overwrite them with stale fetches).
+        // Drop the batch if the space switched while we were fetching.
         if (this.spaceId.value !== spaceId) return;
-        const currentIds = new Set(this.workflows.value.map((workflow) => workflow.id));
-        this.workflowDetails.value = details.filter(
-          (workflow): workflow is SpaceWorkflow => workflow !== null && currentIds.has(workflow.id)
-        );
-        this.workflowDetailsLoaded.value = true;
+
+        // Merge instead of replace so workflows created/imported by other
+        // clients during fan-out (handled by spaceWorkflow.created above)
+        // are preserved. Only the requested ids are overwritten; any other
+        // entry already in workflowDetails stays untouched.
+        const fetchedById = new Map<string, SpaceWorkflow>();
+        let missing = 0;
+        for (const { id, detail } of results) {
+          if (detail) fetchedById.set(id, detail);
+          else missing += 1;
+        }
+        const merged: SpaceWorkflow[] = [];
+        const seen = new Set<string>();
+        for (const workflow of this.workflowDetails.value) {
+          // Drop entries no longer in the summary list (deleted).
+          if (!this.workflows.value.some((w) => w.id === workflow.id)) continue;
+          // Prefer fresh fetch when available; otherwise keep the prior entry.
+          merged.push(fetchedById.get(workflow.id) ?? workflow);
+          seen.add(workflow.id);
+        }
+        // Append freshly fetched workflows not yet tracked (e.g. created
+        // concurrently — the created handler added the summary, but the
+        // full detail arrives via this batch).
+        for (const [id, detail] of fetchedById) {
+          if (!seen.has(id) && this.workflows.value.some((w) => w.id === id)) {
+            merged.push(detail);
+            seen.add(id);
+          }
+        }
+        this.workflowDetails.value = merged;
+        // Only mark loaded if every requested workflow resolved. Partial
+        // failures (transient RPC errors) leave the flag false so the next
+        // Configure mount retries the missing ids instead of permanently
+        // hiding their worker agents.
+        if (missing === 0) {
+          this.workflowDetailsLoaded.value = true;
+        } else {
+          logger.error(`ensureWorkflowDetails: ${missing} workflow detail(s) failed to load`);
+        }
       } catch (err) {
         logger.error('Failed to fetch workflow details:', err);
         if (this.spaceId.value === spaceId) this.workflowDetails.value = [];

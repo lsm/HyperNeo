@@ -639,6 +639,59 @@ describe('SpaceStore — ensureWorkflowDetails', () => {
 
     expect(spaceStore.workflowDetails.value.map((w) => w.id)).toEqual(['wf1']);
   });
+
+  it('does not mark loaded when a workflow detail RPC fails', async () => {
+    mockWorkflowSummaries(['wf1', 'wf2']);
+    await spaceStore.selectSpace('space-1');
+    await spaceStore.ensureConfigData();
+
+    const base = mockHub.request.getMockImplementation();
+    mockHub.request.mockImplementation(
+      async (method: string, params?: Record<string, unknown>): Promise<any> => {
+        if (method === 'spaceWorkflow.get' && (params?.id as string) === 'wf2') {
+          throw new Error('transient RPC failure');
+        }
+        return base ? base(method, params) : {};
+      }
+    );
+
+    await spaceStore.ensureWorkflowDetails();
+
+    // wf1 resolved, wf2 failed — loaded stays false so the next mount retries.
+    expect(spaceStore.workflowDetailsLoaded.value).toBe(false);
+    expect(spaceStore.workflowDetails.value.map((w) => w.id)).toEqual(['wf1']);
+  });
+
+  it('preserves workflows created concurrently during fan-out', async () => {
+    mockWorkflowSummaries(['wf1']);
+    await spaceStore.selectSpace('space-1');
+    await spaceStore.ensureConfigData();
+
+    const base = mockHub.request.getMockImplementation();
+    let injected = false;
+    mockHub.request.mockImplementation(
+      async (method: string, params?: Record<string, unknown>): Promise<any> => {
+        const result = base ? await base(method, params) : {};
+        if (!injected && method === 'spaceWorkflow.get') {
+          injected = true;
+          // Simulate another client creating a workflow mid-fetch: the
+          // spaceWorkflow.created event handler would add both summary and
+          // detail for the new workflow.
+          const newSummary = makeWorkflowSummary('wf-new');
+          const newDetail = makeWorkflow('wf-new');
+          spaceStore.workflows.value = [...spaceStore.workflows.value, newSummary];
+          spaceStore.workflowDetails.value = [...spaceStore.workflowDetails.value, newDetail];
+        }
+        return result;
+      }
+    );
+
+    await spaceStore.ensureWorkflowDetails();
+
+    const ids = spaceStore.workflowDetails.value.map((w) => w.id).sort();
+    expect(ids).toEqual(['wf-new', 'wf1']);
+    expect(spaceStore.workflowDetailsLoaded.value).toBe(true);
+  });
 });
 
 describe('SpaceStore — promise-chain lock', () => {
