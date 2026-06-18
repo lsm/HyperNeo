@@ -521,16 +521,36 @@ function buildFrictionDigestParams(
   task: SpaceTask,
   analysis: TraceAnalysis
 ): CreateEvidenceRefParams {
+  const verificationFailureResults = analysis.toolResults.filter(
+    (result) => result.failed && (result.category === 'test' || result.category === 'verification')
+  );
+  const repeatedErrorResults = new Set(
+    analysis.repeatedErrors.flatMap((cluster) => cluster.results)
+  );
+  const retryLoopFailureResults = new Set(
+    analysis.retryLoops.flatMap((loop) => loop.failuresBeforeSuccess)
+  );
+  const toolFailureResults = analysis.toolResults.filter(
+    (result) =>
+      result.failed &&
+      (result.category === 'tool' || result.category === 'edit') &&
+      !repeatedErrorResults.has(result) &&
+      !retryLoopFailureResults.has(result)
+  );
+
   const counts = {
     repeatedError: analysis.repeatedErrors.length,
     retryLoop: analysis.retryLoops.length,
     slowToolCall: analysis.slowToolCalls.length,
-    verificationFailure: analysis.testFailures.length,
+    verificationFailure: verificationFailureResults.length,
     permissionBlock: analysis.permissionBlocks.length,
-    toolFailure: fallbackToolFailureSignalCount(analysis),
+    toolFailure: toolFailureResults.length,
   };
   const totalFrictionSignals = Object.values(counts).reduce((sum, count) => sum + count, 0);
-  const topPattern = resolveTopFrictionPattern(analysis, counts);
+  const topPattern = resolveTopFrictionPattern(analysis, counts, {
+    verificationFailureResults,
+    toolFailureResults,
+  });
   const summary = `Friction digest: ${frictionDigestSummary(counts)}. Dominant pattern: ${topPattern.category}${topPattern.count > 1 ? ` (${topPattern.count})` : ''}.`;
 
   return {
@@ -560,18 +580,13 @@ function frictionDigestSummary(counts: Record<string, number>): string {
     .join(', ');
 }
 
-function fallbackToolFailureSignalCount(analysis: TraceAnalysis): number {
-  const hasFailureEvidence =
-    analysis.repeatedErrors.length > 0 ||
-    analysis.retryLoops.length > 0 ||
-    analysis.testFailures.length > 0 ||
-    analysis.permissionBlocks.length > 0;
-  return analysis.failedToolCallCount > 0 && !hasFailureEvidence ? 1 : 0;
-}
-
 function resolveTopFrictionPattern(
   analysis: TraceAnalysis,
-  counts: Record<string, number>
+  counts: Record<string, number>,
+  context: {
+    verificationFailureResults: ToolResultRecord[];
+    toolFailureResults: ToolResultRecord[];
+  }
 ): FrictionDigestTopPattern {
   const candidates = [
     {
@@ -592,7 +607,7 @@ function resolveTopFrictionPattern(
     {
       category: 'verification_failure',
       count: counts.verificationFailure,
-      example: topVerificationExample(analysis),
+      example: topVerificationExample(context.verificationFailureResults),
     },
     {
       category: 'permission_block',
@@ -602,7 +617,7 @@ function resolveTopFrictionPattern(
     {
       category: 'tool_failure',
       count: counts.toolFailure,
-      example: topToolFailureExample(analysis),
+      example: topToolFailureExample(context.toolFailureResults),
     },
   ].filter((candidate) => candidate.count > 0);
 
@@ -635,9 +650,9 @@ function topSlowToolExample(analysis: TraceAnalysis): string | null {
   return top ? `${top.toolName}:${top.commandKey}` : null;
 }
 
-function topVerificationExample(analysis: TraceAnalysis): string | null {
-  if (analysis.testFailures.length === 0) return null;
-  const byKey = groupBy(analysis.testFailures, (result) => result.commandKey);
+function topVerificationExample(results: ToolResultRecord[]): string | null {
+  if (results.length === 0) return null;
+  const byKey = groupBy(results, (result) => result.commandKey);
   const top = Array.from(byKey.entries()).sort((a, b) => b[1].length - a[1].length)[0];
   return top?.[0] ?? null;
 }
@@ -649,10 +664,9 @@ function topPermissionExample(analysis: TraceAnalysis): string | null {
   return top?.[0] ?? null;
 }
 
-function topToolFailureExample(analysis: TraceAnalysis): string | null {
-  const failed = analysis.toolResults.filter((result) => result.failed);
-  if (failed.length === 0) return null;
-  const byFingerprint = groupBy(failed, (result) => result.fingerprint);
+function topToolFailureExample(results: ToolResultRecord[]): string | null {
+  if (results.length === 0) return null;
+  const byFingerprint = groupBy(results, (result) => result.fingerprint);
   const top = Array.from(byFingerprint.entries()).sort((a, b) => b[1].length - a[1].length)[0];
   return top?.[0] ?? null;
 }

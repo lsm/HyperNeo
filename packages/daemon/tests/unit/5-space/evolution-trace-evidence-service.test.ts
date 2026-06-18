@@ -491,7 +491,7 @@ describe('EvolutionTraceEvidenceService', () => {
       });
     });
 
-    it('identifies retry loops as the dominant pattern when they outnumber other signals', () => {
+    it('identifies retry loops and counts the verification failures inside them', () => {
       const { scope, task } = createScopedTask('Retry loop dominant');
       insertToolExchange(
         task.id,
@@ -533,15 +533,47 @@ describe('EvolutionTraceEvidenceService', () => {
         repeatedError: 0,
         retryLoop: 1,
         slowToolCall: 0,
-        verificationFailure: 0,
+        verificationFailure: 2,
         permissionBlock: 0,
         toolFailure: 0,
       });
+      expect(digest?.metadata.totalFrictionSignals).toBe(3);
       expect(digest?.metadata.topPattern).toMatchObject({
-        category: 'retry_loop',
-        count: 1,
-        example: 'session-1:Bash:bun run check',
+        category: 'verification_failure',
+        count: 2,
+        example: 'bun run check',
       });
+    });
+
+    it('counts generic tool failures alongside specific friction buckets', () => {
+      const { scope, task } = createScopedTask('Mixed friction digest');
+      insertToolExchange(
+        task.id,
+        'session-1',
+        'blocked-1',
+        'Bash',
+        { command: 'rm -rf /tmp/x' },
+        true,
+        {
+          text: 'Permission denied: operation not permitted',
+        }
+      );
+      insertToolExchange(task.id, 'session-1', 'edit-1', 'Edit', { file_path: '/tmp/a.ts' }, true, {
+        text: 'String to replace not found in file',
+      });
+
+      const digest = traceEvidenceService.buildFrictionDigest(scope.id, task.id);
+
+      expect(digest?.metadata.counts).toEqual({
+        repeatedError: 0,
+        retryLoop: 0,
+        slowToolCall: 0,
+        verificationFailure: 0,
+        permissionBlock: 1,
+        toolFailure: 1,
+      });
+      expect(digest?.metadata.totalFrictionSignals).toBe(2);
+      expect(digest?.metadata.topPattern.category).toBe('permission_block');
     });
 
     it('includes slow tool calls in the digest counts', () => {

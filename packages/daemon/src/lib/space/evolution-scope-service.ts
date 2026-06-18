@@ -400,8 +400,15 @@ export class EvolutionScopeService {
     const traceResult = this.captureTraceEvidenceForCompletedTask(scope.id, task.id);
     evidence.push(...traceResult.evidence);
     if (traceResult.evidence.length > 0) {
-      const digest = this.deps.traceEvidenceService?.buildFrictionDigest(scope.id, task.id);
-      if (digest) evidence.push(digest);
+      try {
+        const digest = this.deps.traceEvidenceService?.buildFrictionDigest(scope.id, task.id);
+        if (digest) evidence.push(digest);
+      } catch (err) {
+        log.warn(
+          'Friction digest capture failed; continuing to conversation friction analysis:',
+          err
+        );
+      }
     }
     this.enqueueConversationFrictionAnalysis(scope.id, task.id);
 
