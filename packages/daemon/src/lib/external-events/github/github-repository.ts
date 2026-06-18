@@ -220,6 +220,22 @@ export class GitHubEventExtensionRepository {
     return row ? row.pollingIntent === 1 : false;
   }
 
+  /**
+   * Count of spaces whose persisted polling-intent flag is on, regardless of
+   * whether they currently host any polling-configured repo. Used to keep
+   * the GLOBAL polling capability on while any space still intends to use
+   * polling — e.g. after the last polling row is removed but before the
+   * user adds the next one.
+   */
+  countSpacesWithPollingIntent(): number {
+    const row = this.db
+      .prepare(
+        'SELECT COUNT(*) AS count FROM space_github_source_settings WHERE polling_intent = 1'
+      )
+      .get() as { count: number } | undefined;
+    return row?.count ?? 0;
+  }
+
   removeWatchedRepo(spaceId: string, owner: string, repo: string): boolean {
     return (
       this.db

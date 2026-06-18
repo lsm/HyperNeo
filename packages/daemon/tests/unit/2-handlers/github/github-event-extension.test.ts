@@ -2981,6 +2981,54 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
     }
   });
 
+  test('disablePollingCapabilityIfUnused honors persisted polling intent when the last polling row disappears', async () => {
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, undefined, { pollIntervalMs: 60_000 });
+    const { clientHub, hub, ready } = setupHubPair();
+    await ready;
+    const configStore = new RecordingConfigStore({ globallyEnabled: true, polling: true });
+    const context = {
+      publisher: { publish: async () => {} },
+      config: configStore,
+      onSourceConfigChanged() {},
+    };
+    try {
+      await extension.start(context);
+      extension.registerRpcHandlers(hub, context);
+      // Enable polling intent for the space (no rows yet).
+      await clientHub.request('space.github.setPollingEnabled', {
+        spaceId: 'space-1',
+        enabled: true,
+      });
+      extension.repo.upsertWatchedRepo({
+        spaceId: 'space-1',
+        owner: 'acme',
+        repo: 'widgets',
+        pollingEnabled: true,
+      });
+      // Remove the only polling row. Intent stays on, so capability must
+      // stay on even though listAllPollingConfiguredRepos is now empty.
+      await clientHub.request('space.github.unwatchRepo', {
+        spaceId: 'space-1',
+        owner: 'acme',
+        repo: 'widgets',
+      });
+
+      const global = await configStore.getGlobalConfig('github');
+      expect(global.capabilities.polling).toBe(true);
+
+      // User explicitly disables polling intent — capability now drops.
+      await clientHub.request('space.github.setPollingEnabled', {
+        spaceId: 'space-1',
+        enabled: false,
+      });
+      const after = await configStore.getGlobalConfig('github');
+      expect(after.capabilities.polling).toBe(false);
+    } finally {
+      await extension.stop();
+    }
+  });
+
   test('space.github.watchRepo clears the global polling capability when the last polling row is turned off', async () => {
     const db = setupDb();
     const extension = new GitHubEventExtension(db, undefined, { pollIntervalMs: 60_000 });

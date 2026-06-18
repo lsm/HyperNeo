@@ -394,16 +394,19 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         });
       }
       if (params.enabled) {
+        // Record intent BEFORE enabling capability so the capability helper
+        // sees the new intent when it scans for spaces with polling_intent.
+        this.repo.setPollingIntent(params.spaceId, true);
         await this.enablePollingCapability(context);
         this.ensurePollingActive();
       } else {
+        // Clear intent BEFORE disabling capability so countSpacesWithPollingIntent
+        // reflects the user's revocation; otherwise the helper would keep the
+        // capability on (intent persisted) and the global flag would never drop.
+        this.repo.setPollingIntent(params.spaceId, false);
         await this.disablePollingCapabilityIfUnused(context);
         this.maybeStopPolling();
       }
-      // Record the user's per-space intent so the connection-card checkbox
-      // and the no-secret-addRepo default stay stable even when no
-      // polling-configured row exists in this space yet.
-      this.repo.setPollingIntent(params.spaceId, params.enabled);
       await this.persistSpaceConfig(context, params.spaceId);
       context.onSourceConfigChanged({
         source: this.sourceId,
@@ -628,21 +631,24 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 
   /**
    * Turn the global polling capability off if no watched repo in any space
-   * has `polling_enabled = 1`. Called from setPollingEnabled(false),
-   * unwatchRepo, and watchRepo (when the row ends up without polling) so
-   * the UI checkbox reflects reality after the last polling consumer goes
-   * away.
+   * has `polling_enabled = 1` AND no space has a persisted polling intent.
+   * Called from setPollingEnabled(false), unwatchRepo, and watchRepo when
+   * the row ends up without polling, so the UI checkbox reflects reality
+   * after the last polling consumer goes away.
    *
    * Uses `listAllPollingConfiguredRepos` (NOT `listPollingRepos`) so a
    * disabled space or row that still carries a polling row doesn't strand
-   * the capability in the OFF state — those rows need polling to resume
-   * when they are re-enabled, and `space.github.enable` re-arms the timer
-   * under the assumption that the capability is still ON.
+   * the capability in the OFF state. Includes the per-space polling-intent
+   * count so a space that has signalled intent to use polling (but
+   * temporarily has zero polling rows) doesn't have its intent stranded
+   * either — the capability stays on until the user explicitly turns the
+   * intent off via setPollingEnabled(false).
    */
   private async disablePollingCapabilityIfUnused(
     context: ExternalEventExtensionContext
   ): Promise<void> {
     if (this.repo.listAllPollingConfiguredRepos().length > 0) return;
+    if (this.repo.countSpacesWithPollingIntent() > 0) return;
     const global = await context.config.getGlobalConfig(this.sourceId);
     if (global.capabilities.polling !== true) return;
     await context.config.setGlobalConfig(this.sourceId, {
