@@ -399,6 +399,10 @@ export class EvolutionScopeService {
 
     const traceResult = this.captureTraceEvidenceForCompletedTask(scope.id, task.id);
     evidence.push(...traceResult.evidence);
+    if (traceResult.evidence.length > 0) {
+      const digest = this.deps.traceEvidenceService?.buildFrictionDigest(scope.id, task.id);
+      if (digest) evidence.push(digest);
+    }
     this.enqueueConversationFrictionAnalysis(scope.id, task.id);
 
     return { scope, evidence, traceDiagnostic: traceResult.diagnostic };
