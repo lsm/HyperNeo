@@ -3221,6 +3221,27 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
     await extension.stop();
   });
 
+  test('listAllPollingConfiguredRepos ignores rows from deleted spaces', async () => {
+    const db = setupDb();
+    db.prepare(
+      `INSERT INTO spaces (id, slug, name, workspace_path, status, created_at, updated_at) VALUES ('space-1', 'space-1', 'Space', '/tmp', 'active', 1, 1)`
+    ).run();
+    db.prepare(
+      `INSERT INTO space_github_watched_repos
+       (id, space_id, owner, repo, enabled, webhook_enabled, polling_enabled, webhook_secret,
+        webhook_remote_id, webhook_url, webhook_auto_registered, webhook_active,
+        webhook_last_checked_at, webhook_last_error, webhook_configured_at, created_at, updated_at)
+       VALUES (?, 'space-1', 'acme', 'widgets', 1, 1, 1, NULL, NULL, NULL, 0, NULL, NULL, NULL, NULL, 1, 1)`
+    ).run('repo-1');
+
+    const extension = new GitHubEventExtension(db);
+    expect(extension.repo.listAllPollingConfiguredRepos()).toHaveLength(1);
+
+    db.prepare('DELETE FROM spaces WHERE id = ?').run('space-1');
+    expect(extension.repo.listAllPollingConfiguredRepos()).toHaveLength(0);
+    await extension.stop();
+  });
+
   test('space.github.watchRepo clears the global polling capability when the last polling row is turned off', async () => {
     const db = setupDb();
     const extension = new GitHubEventExtension(db, undefined, { pollIntervalMs: 60_000 });
