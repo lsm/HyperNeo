@@ -8,7 +8,8 @@
  * - Global (`api.moonshot.ai`): `https://api.moonshot.ai/anthropic` — for
  *   users outside China.
  *
- * Official Claude Code integration uses the fixed model ID `kimi-k2.7-code`.
+ * China uses `kimi-for-coding`; Global uses the official Claude Code model ID
+ * `kimi-k2.7-code`.
  *
  * Region is read from `sessionConfig.region` (string `'china' | 'global'`)
  * falling back to `'china'` for backward compatibility with existing
@@ -53,15 +54,17 @@ const VALID_REGIONS: ReadonlySet<KimiRegion> = new Set<KimiRegion>(['china', 'gl
  */
 export const KIMI_REGION_ENDPOINTS: Record<
   KimiRegion,
-  { anthropicBaseUrl: string; openAiBaseUrl: string }
+  { anthropicBaseUrl: string; openAiBaseUrl: string; modelId: string }
 > = {
   china: {
     anthropicBaseUrl: 'https://api.kimi.com/coding',
     openAiBaseUrl: 'https://api.kimi.com/coding/v1',
+    modelId: 'kimi-for-coding',
   },
   global: {
     anthropicBaseUrl: 'https://api.moonshot.ai/anthropic',
     openAiBaseUrl: 'https://api.moonshot.ai/v1',
+    modelId: 'kimi-k2.7-code',
   },
 };
 
@@ -109,21 +112,21 @@ export class KimiProvider implements Provider {
    * backward compatibility — new code should use `getOpenAiBaseUrlForRegion()`.
    */
   static readonly OPENAI_BASE_URL = KIMI_REGION_ENDPOINTS.china.openAiBaseUrl;
-  /** Fixed model ID from Moonshot's official Claude Code integration docs. */
-  static readonly DEFAULT_MODEL = 'kimi-k2.7-code';
+  /** Default region model ID retained for backward compatibility. */
+  static readonly DEFAULT_MODEL = KIMI_REGION_ENDPOINTS.china.modelId;
+  static readonly GLOBAL_MODEL = KIMI_REGION_ENDPOINTS.global.modelId;
 
   static readonly MODELS: ModelInfo[] = [
     {
-      id: 'kimi-k2.7-code',
-      name: 'Kimi K2.7 Code',
+      id: 'kimi-for-coding',
+      name: 'Kimi For Coding',
       alias: 'kimi',
       family: 'kimi',
       provider: 'kimi',
       contextWindow: 262144,
-      // Keep legacy and provider-accepted aliases resolving to the canonical
-      // Kimi entry so saved sessions retain context metadata after the model ID
-      // moved from kimi-for-coding to kimi-k2.7-code.
-      providerAliases: ['KIMI', 'Kimi', 'kimi-for-coding', 'Kimi-For-Coding'],
+      // Keep region-specific and provider-accepted aliases resolving to the
+      // canonical Kimi entry so saved sessions retain context metadata.
+      providerAliases: ['KIMI', 'Kimi', 'kimi-k2.7-code', 'Kimi-K2.7-Code'],
       providerAliasPrefixes: ['moonshot-'],
       preferContextWindowMetadata: true,
       description: 'Kimi Code model from Moonshot Claude Code integration docs.',
@@ -143,7 +146,7 @@ export class KimiProvider implements Provider {
   private defaultRegion: KimiRegion = 'china';
 
   /**
-   * Cached credential-probe result keyed by `{baseUrl}::{apiKey}` so that
+   * Cached credential-probe result keyed by `{baseUrl}::{modelId}::{apiKey}` so
    * repeated `providers.test` / model-picker loads don't re-probe the same
    * upstream within a short window. Cleared on `setCredentials()`.
    */
@@ -200,6 +203,10 @@ export class KimiProvider implements Provider {
     return KIMI_REGION_ENDPOINTS[region].openAiBaseUrl;
   }
 
+  static getModelIdForRegion(region: KimiRegion = 'china'): string {
+    return KIMI_REGION_ENDPOINTS[region].modelId;
+  }
+
   isAvailable(): boolean {
     return !!this.getApiKey();
   }
@@ -225,8 +232,8 @@ export class KimiProvider implements Provider {
    * @throws {Error} when the key is rejected, the upstream is unreachable,
    *   or the request times out.
    */
-  private async verifyCredentials(baseUrl: string, apiKey: string): Promise<void> {
-    const cacheKey = `${baseUrl}::${apiKey}`;
+  private async verifyCredentials(baseUrl: string, apiKey: string, modelId: string): Promise<void> {
+    const cacheKey = `${baseUrl}::${modelId}::${apiKey}`;
     const cached = this.probeCache.get(cacheKey);
     if (cached && Date.now() - cached.at < KimiProvider.PROBE_TTL_MS) {
       // Re-throw the cached failure or resolve the cached success.
@@ -236,7 +243,7 @@ export class KimiProvider implements Provider {
     const result = probeAnthropicCompatCredentials({
       baseUrl,
       apiKey,
-      model: KimiProvider.DEFAULT_MODEL,
+      model: modelId,
       providerName: 'Kimi',
       fetchImpl: this.fetchImpl,
     })
@@ -255,7 +262,7 @@ export class KimiProvider implements Provider {
     if (!apiKey) return [];
     // Use the default Kimi base URL for the probe — session overrides are
     // applied at request time via buildSdkConfig(), not here.
-    await this.verifyCredentials(KimiProvider.BASE_URL, apiKey);
+    await this.verifyCredentials(KimiProvider.BASE_URL, apiKey, KimiProvider.DEFAULT_MODEL);
     return KimiProvider.MODELS;
   }
 
@@ -264,7 +271,7 @@ export class KimiProvider implements Provider {
     return (
       id === 'kimi' ||
       id === KimiProvider.DEFAULT_MODEL ||
-      id === 'kimi-for-coding' ||
+      id === KimiProvider.GLOBAL_MODEL ||
       id.startsWith('moonshot-')
     );
   }
@@ -286,8 +293,7 @@ export class KimiProvider implements Provider {
     const region = resolveKimiRegion(sessionConfig?.region ?? this.defaultRegion);
     const regionBaseUrl = KimiProvider.getBaseUrlForRegion(region);
     const baseUrl = normalizeBaseUrl(sessionConfig?.baseUrl || regionBaseUrl);
-    // All Kimi Code requests use the fixed model ID from the official docs.
-    const routingModelId = KimiProvider.DEFAULT_MODEL;
+    const routingModelId = KimiProvider.getModelIdForRegion(region);
 
     return {
       envVars: {
@@ -313,9 +319,7 @@ export class KimiProvider implements Provider {
     // Returning 'default' allows ~/.claude/settings.json overrides
     // (ANTHROPIC_DEFAULT_SONNET_MODEL) to incorrectly redirect to other providers.
     const id = modelId.toLowerCase();
-    return id === 'kimi' || id === 'kimi-for-coding' || id.startsWith('moonshot-')
-      ? KimiProvider.DEFAULT_MODEL
-      : modelId;
+    return id === 'kimi' || id.startsWith('moonshot-') ? KimiProvider.DEFAULT_MODEL : modelId;
   }
 
   getTitleGenerationModel(): string {

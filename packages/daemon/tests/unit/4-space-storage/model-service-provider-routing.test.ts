@@ -98,10 +98,10 @@ const codexModels: ModelInfo[] = [
 
 const kimiModels: ModelInfo[] = [
   {
-    id: 'kimi-k2.7-code',
-    name: 'Kimi K2.7 Code',
+    id: 'kimi-for-coding',
+    name: 'Kimi For Coding',
     alias: 'kimi',
-    providerAliases: ['KIMI', 'kimi-for-coding'],
+    providerAliases: ['KIMI', 'kimi-k2.7-code'],
     providerAliasPrefixes: ['moonshot-'],
     family: 'kimi',
     provider: 'kimi',
@@ -178,11 +178,11 @@ describe('Model Service — provider routing', () => {
       const byMoonshotAlias = await getModelInfo('Moonshot-v1-32k', 'global', 'kimi');
       const byUnlistedMoonshotAlias = await getModelInfo('moonshot-v1-256k', 'global', 'kimi');
 
-      expect(byUpperAlias?.id).toBe('kimi-k2.7-code');
+      expect(byUpperAlias?.id).toBe('kimi-for-coding');
       expect(byUpperAlias?.contextWindow).toBe(262144);
-      expect(byMoonshotAlias?.id).toBe('kimi-k2.7-code');
+      expect(byMoonshotAlias?.id).toBe('kimi-for-coding');
       expect(byMoonshotAlias?.contextWindow).toBe(262144);
-      expect(byUnlistedMoonshotAlias?.id).toBe('kimi-k2.7-code');
+      expect(byUnlistedMoonshotAlias?.id).toBe('kimi-for-coding');
       expect(byUnlistedMoonshotAlias?.contextWindow).toBe(262144);
     });
 
@@ -233,9 +233,9 @@ describe('Model Service — provider routing', () => {
     });
 
     it('resolves Kimi provider aliases to canonical model ID', async () => {
-      expect(await resolveModelAlias('KIMI', 'global', 'kimi')).toBe('kimi-k2.7-code');
-      expect(await resolveModelAlias('Moonshot-v1-32k', 'global', 'kimi')).toBe('kimi-k2.7-code');
-      expect(await resolveModelAlias('moonshot-v1-256k', 'global', 'kimi')).toBe('kimi-k2.7-code');
+      expect(await resolveModelAlias('KIMI', 'global', 'kimi')).toBe('kimi-for-coding');
+      expect(await resolveModelAlias('Moonshot-v1-32k', 'global', 'kimi')).toBe('kimi-for-coding');
+      expect(await resolveModelAlias('moonshot-v1-256k', 'global', 'kimi')).toBe('kimi-for-coding');
     });
 
     it('returns alias as-is when no matching model found for the specified provider', async () => {
