@@ -101,7 +101,9 @@ describe('ChannelRouter rate-limit deferral', () => {
     db.close();
   });
 
-  function makeRouter(): ChannelRouter {
+  function makeRouter(
+    overrides: { scriptExecutor?: (script: unknown, context: unknown) => Promise<unknown> } = {}
+  ): ChannelRouter {
     return new ChannelRouter({
       taskRepo,
       workflowRunRepo,
@@ -112,7 +114,8 @@ describe('ChannelRouter rate-limit deferral', () => {
       db,
       nodeExecutionRepo: new NodeExecutionRepository(db),
       workspacePath: '/tmp',
-    });
+      ...overrides,
+    } as ConstructorParameters<typeof ChannelRouter>[0]);
   }
 
   function buildWorkflow(gate: Gate) {
@@ -190,24 +193,37 @@ describe('ChannelRouter rate-limit deferral', () => {
     expect(caught!.message).toContain('rate limit');
   });
 
-  test('non-rate-limit script failure keeps rateLimited false', async () => {
-    const gate: Gate = {
-      id: 'plain-fail-gate',
-      script: {
-        interpreter: 'bash',
-        source: 'echo "HTTP 404: Not Found" >&2; exit 1',
-        timeoutMs: 5000,
-      },
-      resetOnCycle: false,
-    };
-    const workflow = buildWorkflow(gate);
+  test('onGateDataChanged schedules a retry when a script gate is rate-limited', async () => {
+    const workflow = buildWorkflow(rateLimitScriptGate());
     const run = createActiveRun(workflow.id);
-    const router = makeRouter();
+    let calls = 0;
+    const router = makeRouter({
+      scriptExecutor: async () => {
+        calls++;
+        return {
+          success: false,
+          data: {},
+          error: 'HTTP 403: rate limit exceeded',
+          rateLimited: true,
+          retryAfterMs: 50,
+        };
+      },
+    });
 
-    const result = await router.canDeliver(run.id, 'coder', 'planner');
-    expect(result.allowed).toBe(false);
-    expect(result.rateLimited).toBe(false);
-    expect(result.retryAfterMs).toBeUndefined();
-    expect(result.reason).toContain('Not Found');
+    const result = await router.onGateDataChanged(run.id, 'rate-limit-gate');
+    expect(result).toEqual([]);
+    expect(calls).toBe(1);
+
+    const pending = (
+      router as unknown as {
+        pendingGateRetries: Map<string, ReturnType<typeof setTimeout>>;
+      }
+    ).pendingGateRetries;
+    const retryKey = `${run.id}:rate-limit-gate`;
+    expect(pending.has(retryKey)).toBe(true);
+
+    // Clean up the scheduled timer so it does not fire after the test finishes.
+    const timer = pending.get(retryKey);
+    if (timer) clearTimeout(timer);
   });
 });

@@ -331,11 +331,18 @@ async function runReviewThreadsQuery(
       // Check if any error message indicates a rate limit and retry accordingly.
       const errorsText = JSON.stringify(json.errors);
       if (isRateLimitError(errorsText)) {
+        const resetEpoch = await fetchRateLimitResetEpoch(
+          cwd,
+          spawnImpl,
+          deadlineMs,
+          meta.host,
+          'graphql'
+        );
         return {
           success: false,
           error: `GraphQL rate limit: ${errorsText}`,
           rateLimited: true,
-          retryAfterMs: RATE_LIMIT_MIN_BACKOFF_MS,
+          retryAfterMs: computeRateLimitRetryMs(resetEpoch),
         };
       }
       return { success: false, error: `GraphQL errors: ${errorsText}` };

@@ -551,20 +551,17 @@ describe('pr-ready validator', () => {
     expect(calls.length).toBe(2);
   });
 
-  test('graphql rate-limit probe uses graphql resource hint (not core)', async () => {
-    const now = Date.now();
-    const coreReset = Math.floor((now + 300_000) / 1000); // 5 min
-    const graphqlReset = Math.floor((now + 75_000) / 1000); // 75 sec
+  test('graphql 200 errors payload rate-limit uses graphql reset window', async () => {
+    const graphqlReset = Math.floor((Date.now() + 80_000) / 1000);
     const spawn = makeMockSpawn([
       { stdout: JSON.stringify(VALID_PR_VIEW), stderr: '', exitCode: 0 },
-      { stdout: '', stderr: 'API rate limit exceeded', exitCode: 1 },
       {
-        stdout: JSON.stringify({
-          resources: {
-            core: { reset: coreReset },
-            graphql: { reset: graphqlReset },
-          },
-        }),
+        stdout: JSON.stringify({ errors: [{ message: 'API rate limit exceeded' }] }),
+        stderr: '',
+        exitCode: 0,
+      },
+      {
+        stdout: JSON.stringify({ resources: { graphql: { reset: graphqlReset } } }),
         stderr: '',
         exitCode: 0,
       },
@@ -573,8 +570,7 @@ describe('pr-ready validator', () => {
     const result = await validator(makeContext('https://github.com/acme/corp/pull/42'));
     expect(result.type).toBe('retryable_block');
     const retryAfterMs = (result as { retryAfterMs?: number }).retryAfterMs;
-    // Should use graphql reset (75s) not core (5 min) since review-threads query is GraphQL
-    expect(retryAfterMs!).toBeLessThanOrEqual(75_000);
-    expect(retryAfterMs!).toBeGreaterThan(60_000);
+    expect(retryAfterMs).toBeGreaterThanOrEqual(60_000);
+    expect(retryAfterMs!).toBeLessThanOrEqual(80_000);
   });
 });

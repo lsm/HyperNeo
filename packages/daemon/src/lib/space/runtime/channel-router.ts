@@ -58,6 +58,7 @@ import type { GateScriptContext } from './gate-script-executor';
 import { executeGateScript } from './gate-script-executor';
 import { getBuiltInGateScript } from '../workflows/built-in-workflows';
 import { getEffectiveGate } from './gate-features';
+import { RATE_LIMIT_MIN_BACKOFF_MS } from './rate-limit-detector';
 import type {
   InternalEventBus,
   DaemonInternalEventMap,
@@ -310,6 +311,18 @@ export interface ChannelRouterConfig {
    * own data does not contain `pr_url`.
    */
   getPrUrlForRun?: (runId: string) => string;
+  /**
+   * Optional override for the script executor used when evaluating script-backed
+   * gates. Defaults to `executeGateScript()`. Intended for tests and contexts
+   * that need to simulate gate script results without spawning processes.
+   */
+  scriptExecutor?: GateScriptExecutorFn;
+  /**
+   * Optional overrides merged into the gate script execution context. Fields
+   * provided here (e.g. `prUrl`) take precedence over the defaults computed
+   * by the router.
+   */
+  scriptContext?: Partial<GateScriptContext>;
 }
 
 // ---------------------------------------------------------------------------
@@ -343,6 +356,14 @@ export class ChannelRouter {
    * persists state across daemon restarts.
    */
   private readonly openedGates = new Map<string, number>();
+
+  /**
+   * Pending rate-limit retry timers for gate-data refresh re-evaluations,
+   * keyed by `"${runId}:${gateId}"`. When a script-backed gate hits a GitHub
+   * rate limit during `onGateDataChanged`, we schedule a retry after the
+   * reported backoff so downstream node activation is not lost.
+   */
+  private readonly pendingGateRetries = new Map<string, ReturnType<typeof setTimeout>>();
 
   constructor(private readonly config: ChannelRouterConfig) {
     this.scriptSemaphore = {
@@ -901,6 +922,7 @@ export class ChannelRouter {
     // gate-data write, wildcard channels only open when the gate is open for
     // every possible source node.
     const openChannels: typeof channels = [];
+    let rateLimitedResult: GateEvalResult | null = null;
     for (const ch of channels) {
       const sourceNames = this.getGateDataChangeSourceNames(workflow, ch);
       const results = await Promise.all(
@@ -908,11 +930,43 @@ export class ChannelRouter {
       );
       if (results.every((result) => result.open)) {
         openChannels.push(ch);
+      } else {
+        const limited = results.find((r) => r.rateLimited);
+        if (limited) {
+          rateLimitedResult = limited;
+        }
       }
     }
 
     if (openChannels.length > 0) {
       this.cacheGateOpened(runId, gateId, workflow);
+      // Gate opened — any pending rate-limit retry is no longer needed.
+      const retryKey = `${runId}:${gateId}`;
+      const existingTimer = this.pendingGateRetries.get(retryKey);
+      if (existingTimer) {
+        clearTimeout(existingTimer);
+        this.pendingGateRetries.delete(retryKey);
+      }
+    }
+
+    if (openChannels.length === 0 && rateLimitedResult) {
+      // Gate evaluation hit a rate limit; schedule a retry so downstream
+      // activation is not lost until the next manual gate write.
+      const retryKey = `${runId}:${gateId}`;
+      if (!this.pendingGateRetries.has(retryKey)) {
+        const retryAfterMs = rateLimitedResult.retryAfterMs ?? RATE_LIMIT_MIN_BACKOFF_MS;
+        const timer = setTimeout(() => {
+          this.pendingGateRetries.delete(retryKey);
+          void this.onGateDataChanged(runId, gateId).catch((err) => {
+            log.warn(
+              `Scheduled gate-data refresh retry failed for gate "${gateId}" in run "${runId}": ` +
+                (err instanceof Error ? err.message : String(err))
+            );
+          });
+        }, retryAfterMs);
+        timer.unref?.();
+        this.pendingGateRetries.set(retryKey, timer);
+      }
     }
 
     if (openChannels.length === 0) {
@@ -1302,7 +1356,7 @@ export class ChannelRouter {
     const run = this.config.workflowRunRepo.getRun(runId);
     const workflowStartIso = run ? new Date(run.createdAt).toISOString() : undefined;
 
-    const scriptExecutor: GateScriptExecutorFn = executeGateScript;
+    const scriptExecutor: GateScriptExecutorFn = this.config.scriptExecutor ?? executeGateScript;
     const scriptContext: GateScriptContext = {
       workspacePath: this.config.workspacePath ?? process.cwd(),
       gateId,
@@ -1311,6 +1365,7 @@ export class ChannelRouter {
       workflowStartIso,
       gateDataUpdatedIso: record ? new Date(record.updatedAt).toISOString() : undefined,
       prUrl: this.config.getPrUrlForRun?.(runId),
+      ...this.config.scriptContext,
     };
 
     return this.withScriptSemaphore(async () => {

@@ -144,7 +144,7 @@ describe('parseRateLimitHeaders', () => {
 });
 
 describe('GitHubEventExtension rate-limit-aware polling', () => {
-  test('pollWatchedRepo returns 0 and defers next cycle when remaining < threshold', async () => {
+  test('pollWatchedRepo processes current endpoint then defers remaining endpoints when remaining < threshold', async () => {
     const db = setupDb();
     const extension = new GitHubEventExtension(db, 'token', { pollIntervalMs: 60_000 });
     await extension.start({
@@ -159,27 +159,38 @@ describe('GitHubEventExtension rate-limit-aware polling', () => {
       pollingEnabled: true,
     });
 
-    // Remaining=5 — below threshold of 10. Should short-circuit without parsing rows.
+    // Remaining=5 — below threshold of 10. The current endpoint's rows should
+    // still be processed and the cursor saved; the remaining endpoints are skipped.
     let fetchCalled = 0;
+    const row = {
+      id: 101,
+      html_url: 'https://github.com/acme/widgets/pull/7#issuecomment-101',
+      body: 'looks good',
+      user: { login: 'bot', type: 'Bot' },
+      updated_at: '2026-01-01T00:00:00Z',
+      issue: { number: 7, pull_request: { url: 'api' } },
+    };
     const fetchImpl = (async () => {
       fetchCalled++;
-      return rateLimitedResetResponse({
+      return makeResponse({
         status: 200,
-        remaining: 5,
-        resetEpochSeconds: Math.floor((Date.now() + 90_000) / 1000),
+        remaining: '5',
+        reset: String(Math.floor((Date.now() + 90_000) / 1000)),
+        body: [row],
       });
     }) as typeof fetch;
 
     try {
-      const count = await extension.pollWatchedRepo(
-        extension.repo.listPollingRepos()[0],
-        fetchImpl
-      );
-      expect(count).toBe(0);
+      const repo = extension.repo.listPollingRepos()[0];
+      const count = await extension.pollWatchedRepo(repo, fetchImpl);
+      expect(count).toBe(1);
       expect(fetchCalled).toBe(1); // stopped after first endpoint
       // Internal rate-limit window was set
       const until = (extension as unknown as { rateLimitedUntil: number }).rateLimitedUntil;
       expect(until).toBeGreaterThan(Date.now());
+      // Cursor was saved so the processed event is not re-fetched
+      const updated = extension.repo.getWatchedRepoById(repo.id);
+      expect(updated?.pollCursor?.lastSeenAt).toBe(Date.parse(row.updated_at));
     } finally {
       await extension.stop();
     }
@@ -389,6 +400,45 @@ describe('GitHubEventExtension rate-limit-aware polling', () => {
       const delayMs = until - Date.now();
       expect(delayMs).toBeLessThan(35_000);
       expect(delayMs).toBeGreaterThan(25_000);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('403 secondary-rate-limit message without headers is treated as rate-limited', async () => {
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'token', { pollIntervalMs: 60_000 });
+    await extension.start({
+      publisher: { publish: async () => {} },
+      config: new EnabledConfigStore(),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+
+    let fetchCalled = 0;
+    const fetchImpl = (async () => {
+      fetchCalled++;
+      // 403 with positive remaining and no Retry-After, but body says secondary rate limit.
+      return new Response(JSON.stringify({ message: 'You have exceeded a secondary rate limit' }), {
+        status: 403,
+        headers: { 'X-RateLimit-Remaining': '100' },
+      });
+    }) as typeof fetch;
+
+    try {
+      const count = await extension.pollWatchedRepo(
+        extension.repo.listPollingRepos()[0],
+        fetchImpl
+      );
+      expect(count).toBe(0);
+      expect(fetchCalled).toBe(1);
+      const until = (extension as unknown as { rateLimitedUntil: number }).rateLimitedUntil;
+      expect(until).toBeGreaterThan(Date.now());
     } finally {
       await extension.stop();
     }

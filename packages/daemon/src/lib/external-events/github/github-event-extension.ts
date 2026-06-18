@@ -1,6 +1,7 @@
 import type { Database as BunDatabase } from 'bun:sqlite';
 import type { MessageHub } from '@neokai/shared';
 import { Logger } from '../../logger';
+import { isRateLimitError } from '../../space/runtime/rate-limit-detector';
 import { verifySignature } from '../../github/webhook-handler';
 import type {
   ExternalEventExtensionContext,
@@ -840,22 +841,29 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       if (this.githubToken) headers.Authorization = `Bearer ${this.githubToken}`;
       if (page === 1 && etags[endpoint.key]) headers['If-None-Match'] = etags[endpoint.key];
       const response = await fetchImpl(url, { headers });
-      // Rate-limit check: a 403/429 response OR a low `remaining` counter
-      // defers this cycle and reschedules the next poll past the reset epoch.
-      // Done before the 304 / !ok guards so we still defer when GitHub returns
-      // 403 with the rate-limit headers attached.
+      // Rate-limit check: a 403/429 response with rate-limit evidence OR a low
+      // `remaining` counter defers this cycle and reschedules the next poll past
+      // the reset epoch. The low-remaining guard is applied *after* processing a
+      // successful response so already-fetched events are published and cursors
+      // are saved; only the remaining endpoints in this cycle are skipped.
       const rateLimit = parseRateLimitHeaders(response);
-      if (rateLimit.limited || rateLimit.remaining < RATE_LIMIT_LOW_REMAINING_THRESHOLD) {
-        // Early return skips the end-of-loop cursor save, so events already
-        // published from earlier endpoints in this cycle will be re-fetched
-        // on the next poll. That is safe: ExternalEventStore dedupes by
-        // (spaceId, source, dedupeKey) via ON CONFLICT DO NOTHING, so
-        // re-publishing is a no-op.
+      if (rateLimit.limited) {
         this.applyRateLimit(rateLimit);
         return count;
       }
       if (response.status === 304) continue;
-      if (!response.ok) continue;
+      if (!response.ok) {
+        // A 403/429 without rate-limit headers can still be a secondary limit
+        // if the body contains the right message (e.g. "secondary rate limit").
+        // Read the body once and check; when it matches, apply the cooldown and
+        // stop hitting additional endpoints until the backoff expires.
+        const errorText = await response.text();
+        if ((response.status === 403 || response.status === 429) && isRateLimitError(errorText)) {
+          this.applyRateLimit(rateLimit);
+          break;
+        }
+        continue;
+      }
       const etag = response.headers.get('ETag');
       if (etag && page === 1) etags[endpoint.key] = etag;
       const rows = (await response.json()) as unknown[];
@@ -868,6 +876,10 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         }
       }
       processedPages[endpoint.key] = rows.length >= 100 ? page + 1 : 1;
+      if (rateLimit.remaining < RATE_LIMIT_LOW_REMAINING_THRESHOLD) {
+        this.applyRateLimit(rateLimit);
+        break;
+      }
     }
     const hasBacklog = Object.values(processedPages).some((page) => page > 1);
     const cursorPayload: PollCursor = {

@@ -36,15 +36,16 @@ describe('isRateLimitError', () => {
     expect(isRateLimitError('')).toBe(false);
   });
 
+  test('bare HTTP 429 is matched as rate-limit evidence', () => {
+    expect(isRateLimitError('HTTP 429')).toBe(true);
+    expect(isRateLimitError('returned error: 429')).toBe(true);
+  });
+
   test('bare HTTP 403 without rate-limit text is NOT matched (permission failures)', () => {
     // GitHub returns 403 for both rate-limit AND permission errors; bare
     // status text must not classify permission errors as rate-limit retries.
     expect(isRateLimitError('HTTP 403: Resource not accessible by integration')).toBe(false);
     expect(isRateLimitError('HTTP 403')).toBe(false);
-  });
-
-  test('bare HTTP 429 without rate-limit text is NOT matched', () => {
-    expect(isRateLimitError('HTTP 429')).toBe(false);
   });
 });
 
