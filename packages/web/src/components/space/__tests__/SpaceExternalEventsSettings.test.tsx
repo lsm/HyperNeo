@@ -597,11 +597,51 @@ describe('SpaceExternalEventsSettings', () => {
           spaceId: 'space-1',
           source: 'github',
           enabled: true,
-          settings: {},
+          settings: { pollingIntent: true },
         });
       }
       if (method === 'space.github.listWatchedRepos') {
         return Promise.resolve(pollingOnlyRepoResult);
+      }
+      return Promise.resolve({});
+    });
+    const { findByText, getByPlaceholderText, getByText } = render(
+      <SpaceExternalEventsSettings spaceId="space-1" />
+    );
+    await findByText('github');
+
+    fireEvent.input(getByPlaceholderText('owner/repository'), { target: { value: 'foo/bar' } });
+    fireEvent.click(getByText('Add watch'));
+
+    await waitFor(() => {
+      expect(mockRequest).toHaveBeenCalledWith('space.github.watchRepo', {
+        spaceId: 'space-1',
+        owner: 'foo',
+        repo: 'bar',
+        webhookSecret: undefined,
+        webhookEnabled: false,
+        pollingEnabled: true,
+      });
+    });
+  });
+
+  it('allows the first polling-only watch after enabling polling in a space with no polling rows', async () => {
+    // No polling-configured repos yet, but the user has toggled the
+    // connection-card polling checkbox so pollingIntent is true. The next
+    // no-secret add must default to polling rather than be rejected.
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockImplementation((method) => {
+      if (method === 'externalEvents.extensions.list') return Promise.resolve(extensionResult);
+      if (method === 'space.github.listConfig') {
+        return Promise.resolve({
+          spaceId: 'space-1',
+          source: 'github',
+          enabled: true,
+          settings: { pollingIntent: true },
+        });
+      }
+      if (method === 'space.github.listWatchedRepos') {
+        return Promise.resolve({ repositories: [] });
       }
       return Promise.resolve({});
     });
@@ -1130,9 +1170,7 @@ describe('SpaceExternalEventsSettings', () => {
     });
 
     const { findByText } = render(<SpaceExternalEventsSettings spaceId="space-1" />);
-    const checkbox = await findByText(
-      'Polling for this space (daemon-wide capability; checks GitHub every 60s)'
-    );
+    const checkbox = await findByText('Polling for this space (daemon-wide capability)');
 
     fireEvent.click(checkbox);
 
@@ -1152,9 +1190,7 @@ describe('SpaceExternalEventsSettings', () => {
   it('reports daemon-wide capability in the polling checkbox label', async () => {
     setupRequests();
     const { findByText } = render(<SpaceExternalEventsSettings spaceId="space-1" />);
-    expect(
-      await findByText('Polling for this space (daemon-wide capability; checks GitHub every 60s)')
-    ).toBeTruthy();
+    expect(await findByText('Polling for this space (daemon-wide capability)')).toBeTruthy();
   });
 
   it('prompts for confirmation before overwriting an existing keychain token', async () => {
@@ -1373,9 +1409,7 @@ describe('SpaceExternalEventsSettings', () => {
   it('disables connection card controls when the panel is disabled', async () => {
     setupRequests();
     const { findByText } = render(<SpaceExternalEventsSettings spaceId="space-1" disabled />);
-    const checkbox = await findByText(
-      'Polling for this space (daemon-wide capability; checks GitHub every 60s)'
-    );
+    const checkbox = await findByText('Polling for this space (daemon-wide capability)');
     const pollingInput = checkbox.closest('label')?.querySelector('input');
     expect(pollingInput).toHaveProperty('disabled', true);
   });

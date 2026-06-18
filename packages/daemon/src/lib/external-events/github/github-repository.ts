@@ -41,6 +41,18 @@ export class GitHubEventExtensionRepository {
 				updated_at INTEGER NOT NULL
 			)
 		`);
+    // Idempotent column add for the per-space polling-intent flag. The intent
+    // is the source of truth for the connection-card polling checkbox: a
+    // space with intent=on can host polling-only repos even when no other
+    // polling row currently exists to derive the state from.
+    const columns = this.db
+      .prepare('PRAGMA table_info(space_github_source_settings)')
+      .all() as Array<{ name: string }>;
+    if (!columns.some((column) => column.name === 'polling_intent')) {
+      this.db.exec(
+        'ALTER TABLE space_github_source_settings ADD COLUMN polling_intent INTEGER NOT NULL DEFAULT 0'
+      );
+    }
   }
 
   upsertWatchedRepo(params: {
@@ -179,6 +191,33 @@ export class GitHubEventExtensionRepository {
         `UPDATE space_github_watched_repos SET enabled = ?, updated_at = ? WHERE space_id = ?`
       )
       .run(enabled ? 1 : 0, now, spaceId).changes;
+  }
+
+  /**
+   * Persist the per-space polling-intent flag. Distinct from the per-row
+   * polling_enabled flag: the intent survives transitions through "no
+   * polling repos yet" so the connection-card checkbox and the addRepo
+   * default don't strand the user in a state where they cannot create the
+   * first polling-only watch.
+   */
+  setPollingIntent(spaceId: string, enabled: boolean): void {
+    const now = Date.now();
+    this.db
+      .prepare(
+        `INSERT INTO space_github_source_settings (space_id, enabled, polling_intent, created_at, updated_at)
+				 VALUES (?, 1, ?, ?, ?)
+				 ON CONFLICT(space_id) DO UPDATE SET polling_intent = excluded.polling_intent, updated_at = excluded.updated_at`
+      )
+      .run(spaceId, enabled ? 1 : 0, now, now);
+  }
+
+  getPollingIntent(spaceId: string): boolean {
+    const row = this.db
+      .prepare(
+        'SELECT polling_intent AS pollingIntent FROM space_github_source_settings WHERE space_id = ?'
+      )
+      .get(spaceId) as { pollingIntent: number } | undefined;
+    return row ? row.pollingIntent === 1 : false;
   }
 
   removeWatchedRepo(spaceId: string, owner: string, repo: string): boolean {

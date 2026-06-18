@@ -2841,6 +2841,44 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
     }
   });
 
+  test('space.github.setPollingEnabled persists per-space intent independent of polling rows', async () => {
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, undefined, { pollIntervalMs: 60_000 });
+    const { clientHub, hub, ready } = setupHubPair();
+    await ready;
+    const configStore = new RecordingConfigStore({ globallyEnabled: true, polling: false });
+    const context = {
+      publisher: { publish: async () => {} },
+      config: configStore,
+      onSourceConfigChanged() {},
+    };
+    try {
+      await extension.start(context);
+      extension.registerRpcHandlers(hub, context);
+      // No watched repos at all — first-time setup. Enabling polling must
+      // still persist intent so the UI checkbox stays checked and the next
+      // no-secret addRepo defaults to polling.
+      expect(extension.repo.getPollingIntent('space-1')).toBe(false);
+
+      await clientHub.request('space.github.setPollingEnabled', {
+        spaceId: 'space-1',
+        enabled: true,
+      });
+
+      expect(extension.repo.getPollingIntent('space-1')).toBe(true);
+      const persisted = await configStore.getSpaceConfig('space-1', 'github');
+      expect((persisted?.settings as { pollingIntent?: boolean }).pollingIntent).toBe(true);
+
+      await clientHub.request('space.github.setPollingEnabled', {
+        spaceId: 'space-1',
+        enabled: false,
+      });
+      expect(extension.repo.getPollingIntent('space-1')).toBe(false);
+    } finally {
+      await extension.stop();
+    }
+  });
+
   test('space.github.setPollingEnabled(true) skips repos with webhook delivery configured (manual or auto)', async () => {
     const db = setupDb();
     const extension = new GitHubEventExtension(db, undefined, { pollIntervalMs: 60_000 });

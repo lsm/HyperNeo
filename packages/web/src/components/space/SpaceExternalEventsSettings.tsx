@@ -144,7 +144,14 @@ export function SpaceExternalEventsSettings({
   const githubWebhooksEnabled = githubExtension?.config.capabilities.webhooks !== false;
   const githubControlsEnabled = githubGloballyEnabled && githubRpcConfigEnabled;
   const githubSpaceEnabled = spaceConfig?.enabled ?? true;
-  const spacePollingActive = githubPollingEnabled && repos.some((repo) => repo.pollingEnabled);
+  // spacePollingIntent reflects the user's express wish to use polling in
+  // this space, persisted server-side independent of the rows that happen
+  // to exist right now. The connection-card checkbox is bound to this so
+  // the first polling-only add is reachable even when no polling row
+  // exists yet to derive the state from.
+  const spacePollingIntent =
+    (spaceConfig?.settings as { pollingIntent?: boolean } | undefined)?.pollingIntent === true;
+  const spacePollingActive = githubPollingEnabled && spacePollingIntent;
   const webhookUrl = useMemo(getWebhookUrl, []);
 
   async function refreshDeliveries(): Promise<void> {
@@ -376,7 +383,12 @@ export function SpaceExternalEventsSettings({
       toast.error('Not connected to server');
       return;
     }
-    if (!window.confirm('Remove the daemon-wide GitHub token from the keychain?')) {
+    const autoRegisteredCount = repos.filter((repo) => repo.webhookAutoRegistered).length;
+    const message =
+      autoRegisteredCount > 0
+        ? `Remove the daemon-wide GitHub token from the keychain? ${autoRegisteredCount} auto-registered webhook(s) in this space may become unmanageable until a token is restored.`
+        : 'Remove the daemon-wide GitHub token from the keychain?';
+    if (!window.confirm(message)) {
       return;
     }
     try {
@@ -1225,7 +1237,10 @@ function GitHubConnectionCard({
   // Block destructive token writes while we don't yet know whether a token
   // is already configured. Without this guard the overwrite/shadow confirm
   // prompts would silently no-op because saveToken sees tokenStatus === null.
-  const controlDisabled = busy || disabled || tokenStatusUnknown;
+  // Polling toggle is intentionally NOT blocked here — it doesn't touch the
+  // token, so it should stay usable while /user validation is in flight.
+  const tokenWriteDisabled = busy || disabled || tokenStatusUnknown;
+  const pollingDisabled = busy || disabled;
   const [replaceMode, setReplaceMode] = useState(false);
   const showInput = !connected || tokenInvalid || replaceMode;
   return (
@@ -1272,20 +1287,24 @@ function GitHubConnectionCard({
             </span>
           )}
           <div class="ml-auto flex flex-wrap items-center gap-2">
-            {(tokenStatus?.source === 'keychain' || tokenInvalid) && !replaceMode && (
+            {(connected || tokenInvalid) && !replaceMode && (
               <button
                 type="button"
                 onClick={() => setReplaceMode(true)}
-                disabled={controlDisabled}
+                disabled={tokenWriteDisabled}
                 class="text-gray-300 hover:text-gray-100 disabled:cursor-not-allowed disabled:text-gray-600"
               >
-                {connected ? 'Replace token' : 'Replace invalid token'}
+                {connected
+                  ? tokenStatus?.source === 'env'
+                    ? 'Replace with keychain token'
+                    : 'Replace token'
+                  : 'Replace invalid token'}
               </button>
             )}
             <button
               type="button"
               onClick={onClearToken}
-              disabled={controlDisabled || tokenStatus?.source === 'env'}
+              disabled={tokenWriteDisabled || tokenStatus?.source === 'env'}
               class="text-red-400 hover:text-red-300 disabled:cursor-not-allowed disabled:text-red-900"
             >
               Disconnect
@@ -1301,7 +1320,7 @@ function GitHubConnectionCard({
             value={tokenInput}
             onInput={(event) => onTokenInputChange((event.target as HTMLInputElement).value)}
             placeholder="ghp_…"
-            disabled={controlDisabled}
+            disabled={tokenWriteDisabled}
             class="w-full rounded-lg border border-white/10 bg-dark-850 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
             aria-label="GitHub personal access token"
           />
@@ -1310,7 +1329,7 @@ function GitHubConnectionCard({
               type="button"
               size="sm"
               onClick={onSaveToken}
-              disabled={controlDisabled || !tokenInput}
+              disabled={tokenWriteDisabled || !tokenInput}
             >
               {connected ? 'Replace token' : 'Save token'}
             </Button>
@@ -1318,7 +1337,7 @@ function GitHubConnectionCard({
               <button
                 type="button"
                 onClick={() => setReplaceMode(false)}
-                disabled={controlDisabled}
+                disabled={tokenWriteDisabled}
                 class="text-xs text-gray-400 hover:text-gray-200"
               >
                 Cancel
@@ -1341,12 +1360,12 @@ function GitHubConnectionCard({
           <input
             type="checkbox"
             checked={pollingEnabled}
-            disabled={controlDisabled}
+            disabled={pollingDisabled}
             onChange={() => onTogglePolling(!pollingEnabled)}
             class="h-4 w-4 rounded border-dark-500 bg-dark-700 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
             aria-label="Enable GitHub polling for this space"
           />
-          Polling for this space (daemon-wide capability; checks GitHub every 60s)
+          Polling for this space (daemon-wide capability)
         </span>
         {pollingCapabilityDisabled && (
           <span class="ml-6 text-gray-500">

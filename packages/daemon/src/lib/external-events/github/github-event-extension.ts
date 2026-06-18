@@ -400,6 +400,10 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         await this.disablePollingCapabilityIfUnused(context);
         this.maybeStopPolling();
       }
+      // Record the user's per-space intent so the connection-card checkbox
+      // and the no-secret-addRepo default stay stable even when no
+      // polling-configured row exists in this space yet.
+      this.repo.setPollingIntent(params.spaceId, params.enabled);
       await this.persistSpaceConfig(context, params.spaceId);
       context.onSourceConfigChanged({
         source: this.sourceId,
@@ -678,6 +682,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       source: this.sourceId,
       enabled: this.repo.isSpaceEnabled(spaceId),
       settings: {
+        pollingIntent: this.repo.getPollingIntent(spaceId),
         watchedRepos: repos.map((repo) => ({
           id: repo.id,
           owner: repo.owner,
