@@ -5649,6 +5649,95 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     expect(mergedReview.codexTimeoutSeconds).toBe(900);
   });
 
+  test('migrateWorkflowGateProgressionToHooks post-pass is idempotent on plan-approval hooks', () => {
+    // Regression: a naive `/-lt (\d+) /` regex matched the FIRST `-lt N` in
+    // the script source. buildApprovalsScript emits TWO:
+    //   `if [ "$COUNT" -lt 4 ]`  (approval-vote count, line 83)
+    //   `if ((NOW_EPOCH - START_EPOCH)) -lt ${timeoutSeconds}`  (timeout, line 107)
+    // The naive regex returned 4, so plan-approval hooks rebuilt on every
+    // migration call (4 !== expectedTimeout, always). The anchored regex
+    // must match the timeout comparison only, so re-running migration on an
+    // already-migrated workflow produces byte-identical hook source.
+    const baseProps = {
+      ...PLAN_AND_DECOMPOSE_WORKFLOW,
+      templateName: PLAN_AND_DECOMPOSE_WORKFLOW.name,
+      templateGates: PLAN_AND_DECOMPOSE_WORKFLOW.gates ?? [],
+    };
+    const first = migrateWorkflowGateProgressionToHooks(baseProps).workflow;
+    const firstHook = first.hooks?.find(
+      (h) => h.sourceNode === 'Plan Review' && h.targetNode === 'Task Dispatcher'
+    );
+    expect(firstHook?.validator.kind).toBe('script');
+    if (firstHook?.validator.kind !== 'script') return;
+
+    // Run migration again on the already-migrated workflow.
+    const second = migrateWorkflowGateProgressionToHooks({
+      ...baseProps,
+      channels: first.channels,
+      gates: first.gates,
+      hooks: first.hooks,
+    }).workflow;
+    const secondHook = second.hooks?.find((h) => h.id === firstHook.id);
+    expect(secondHook?.validator.kind).toBe('script');
+    if (secondHook?.validator.kind === 'script') {
+      expect(secondHook.validator.source).toBe(firstHook.validator.source);
+    }
+  });
+
+  test('migrateWorkflowGateProgressionToHooks leaves custom hooks with unrelated -lt N comparisons alone', () => {
+    // Regression: a naive `/-lt (\d+) /` regex matched any `-lt N` shell
+    // comparison in a custom hook source, misclassifying it as a generated
+    // codex script and replacing it with the built-in approval script. The
+    // anchored regex (`((NOW_EPOCH - START_EPOCH)) -lt N`) must NOT match
+    // unrelated comparisons like `[ "$COUNT" -lt 5 ]`.
+    const baseWorkflow = migrateWorkflowGateProgressionToHooks({
+      ...FULLSTACK_QA_LOOP_WORKFLOW,
+      templateName: FULLSTACK_QA_LOOP_WORKFLOW.name,
+      templateGates: FULLSTACK_QA_LOOP_WORKFLOW.gates ?? [],
+    }).workflow;
+
+    const customSource = [
+      '#!/usr/bin/env bash',
+      'COUNT=$(jq ". | length" <<< "$INPUT")',
+      'if [ "$COUNT" -lt 5 ]; then exit 1; fi',
+      'echo custom approval gate with -lt 5 check',
+    ].join('\n');
+    const customHook: WorkflowHook = {
+      id: 'review-approval:custom-count-check',
+      enabled: true,
+      label: 'Custom Count Check',
+      sourceNode: 'Review',
+      targetNode: 'QA',
+      method: 'send_message',
+      classification: 'validation',
+      order: 0,
+      validator: {
+        kind: 'script',
+        interpreter: 'bash',
+        source: customSource,
+        timeoutMs: 30_000,
+      },
+      authorizedCallers: [{ sourceNode: 'Review' }],
+    };
+
+    const reMigrated = migrateWorkflowGateProgressionToHooks({
+      ...baseWorkflow,
+      nodes: baseWorkflow.nodes.map((n) =>
+        n.name === 'Review' ? { ...n, requireCodexApproval: true, codexTimeoutSeconds: 300 } : n
+      ),
+      hooks: [...(baseWorkflow.hooks ?? []), customHook],
+      templateName: FULLSTACK_QA_LOOP_WORKFLOW.name,
+      templateGates: FULLSTACK_QA_LOOP_WORKFLOW.gates ?? [],
+    }).workflow;
+
+    const preserved = reMigrated.hooks?.find((h) => h.id === 'review-approval:custom-count-check');
+    expect(preserved?.validator.kind).toBe('script');
+    if (preserved?.validator.kind === 'script') {
+      expect(preserved.validator.source).toBe(customSource);
+      expect(preserved.validator.source).toContain('-lt 5');
+    }
+  });
+
   test('FULLSTACK_QA_LOOP_WORKFLOW reviewer prompt instructs waiting for codex reaction', () => {
     const reviewNode = FULLSTACK_QA_LOOP_WORKFLOW.nodes.find((n) => n.name === 'Review')!;
     const prompt = reviewNode.agents[0].customPrompt!.value;

@@ -616,11 +616,16 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
   // on the node but leave the existing hook source baked with the old
   // timeout (typically the 7200s default).
   //
-  // Scope guard: only generated codex scripts contain the `-lt N` marker
-  // emitted by buildApprovalsScript / buildReviewApprovalScript. A custom
-  // user-supplied hook whose id happens to start with `review-approval:`
-  // would not match the regex (`bakedTimeout === null`) and is left alone,
-  // so we never overwrite a user-authored script with the built-in one.
+  // Scope guard: the regex is anchored to the timeout comparison
+  // `((NOW_EPOCH - START_EPOCH)) -lt N`, which is emitted ONLY by
+  // buildApprovalsScript / buildReviewApprovalScript. This uniquely
+  // identifies the timeout check rather than any `-lt N` in the script —
+  // buildApprovalsScript also emits `if [ "$COUNT" -lt 4 ]` for the
+  // approval-vote count, and a naive `/-lt (\d+) /` would match that first
+  // (returning 4) and either always rebuild (when 4 != expectedTimeout) or
+  // silently clobber a custom hook that happens to use `-lt N` for an
+  // unrelated shell comparison.
+  const TIMEOUT_CMP_RE = /\(\(NOW_EPOCH - START_EPOCH\)\) -lt (\d+) /;
   for (const hook of hooksById.values()) {
     if (hook.validator.kind !== 'script') continue;
     const isPlan = hook.id.startsWith('plan-approval:') || hook.id === 'plan-approval';
@@ -628,7 +633,7 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
     if (!isPlan && !isReview) continue;
     const sourceNode = workflow.nodes?.find((node) => node.name === hook.sourceNode);
     if (!sourceNode?.requireCodexApproval) continue;
-    const match = hook.validator.source.match(/-lt (\d+) /);
+    const match = hook.validator.source.match(TIMEOUT_CMP_RE);
     if (!match) continue; // not a generated codex script; leave custom hooks alone
     const bakedTimeout = Number.parseInt(match[1]!, 10);
     // Treat a cleared (`undefined`) override as the global default so a
