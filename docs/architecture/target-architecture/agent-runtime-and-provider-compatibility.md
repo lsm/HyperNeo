@@ -297,11 +297,25 @@ The gateway should expose fabric commands and events over time:
 | `agentRuntime.session.interrupt` | command | Interrupt/cancel active execution. |
 | `agentRuntime.config.update` | command | Change model, tools, permissions, or runtime config. |
 | `agentRuntime.session.status.get` | query | Read runtime status. |
+| `agentRuntime.session.pendingMessages.list` | query | Read queued, deferred, and pending manual messages. |
+| `agentRuntime.session.pendingMessage.remove` | command | Remove a pending message before execution. |
+| `agentRuntime.session.pendingMessage.promote` | command | Promote a pending message into the active turn. |
+| `agentRuntime.session.pendingMessage.defer` | command | Defer a pending message for later execution. |
+| `agentRuntime.session.rewindCheckpoints.list` | query | Read rewind checkpoints for a session. |
+| `agentRuntime.session.rewindPreview.get` | query | Preview a rewind before mutating session state. |
+| `agentRuntime.session.rewind.execute` | command | Execute full-session rewind. |
+| `agentRuntime.session.rewindSelective.execute` | command | Execute selective rewind for chosen messages or checkpoints. |
 | `agentRuntime.mcpServers.list` | query | Read runtime-attached MCP servers visible to tool panels. |
 | `agentRuntime.capabilities.resolve` | query | Validate runtime/provider/model compatibility. |
 | `agentRuntime.event.stream` | event | Normalized output, tool, status, and error events. |
 
 `agentRuntime.mcpServers.list` preserves the current `session.listRuntimeMcpServers` surface. It returns in-process runtime SDK MCP servers and Space/task tool servers attached to the selected session; it should not be folded into coarse status if tool panels need names, scopes, and capability metadata without polling the full runtime state.
+
+The pending-message and rewind contracts preserve current chat controls while the session gateway moves
+behind Agent Runtime. The compatibility gateway maps `session.messages.byStatus`,
+`session.messages.removePending`, `session.messages.promotePending`, `session.messages.deferPending`,
+`rewind.checkpoints`, `rewind.preview`, `rewind.execute`, and `rewind.executeSelective` to these target
+contracts until the UI calls the Agent Runtime namespace directly.
 
 ### 7.2 AgentRuntimeAdapter
 

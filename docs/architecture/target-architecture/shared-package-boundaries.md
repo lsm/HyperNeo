@@ -101,17 +101,32 @@ The target can be implemented as subpath exports inside `@neokai/shared` first.
     "./domain/extensions": "./src/domain/extensions/index.ts",
     "./domain/prompt-policy": "./src/domain/prompt-policy/index.ts",
     "./domain/agent-runtime": "./src/domain/agent-runtime/index.ts",
+    "./types": "./src/types.ts",
+    "./types/*": "./src/types/*.ts",
+    "./state-types": "./src/state-types.ts",
+    "./models": "./src/models.ts",
     "./provider": "./src/provider/index.ts",
+    "./provider/*": "./src/provider/*.ts",
     "./sdk/*": "./src/sdk/*",
     "./messaging/protocol": "./src/messaging/protocol.ts",
     "./messaging/client": "./src/messaging/client.ts",
     "./messaging/testing": "./src/messaging/testing.ts",
+    "./message-hub/protocol": "./src/message-hub/protocol.ts",
+    "./message-hub/types": "./src/message-hub/types.ts",
+    "./message-hub/message-hub": "./src/message-hub/message-hub.ts",
+    "./message-hub/unix-socket-transport": "./src/message-hub/unix-socket-transport.ts",
+    "./message-hub/stdio-transport": "./src/message-hub/stdio-transport.ts",
     "./compat/message-hub/*": "./src/message-hub/*.ts",
     "./utils": "./src/utils/index.ts",
     "./logger": "./src/logger.ts"
   }
 }
 ```
+
+M1 must preserve the existing public subpaths while adding target subpaths. The legacy `./types`,
+`./types/*`, `./state-types`, `./models`, `./provider/*`, and `./message-hub/*` exports stay as
+compatibility aliases until every daemon and web import has moved to the narrower domain,
+contract, read-model, provider, or messaging subpath.
 
 Root import remains during migration but should not be used by new code.
 

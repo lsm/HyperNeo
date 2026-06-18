@@ -358,6 +358,7 @@ Events:
 - `space.workflowRun.completed`
 - `space.workflowRun.blocked`
 - `space.workflowRun.reopened`
+- `space.workflowNodeExecution.created`
 - `space.workflowNodeExecution.started`
 - `space.workflowNodeExecution.idle`
 - `space.workflowNodeExecution.blocked`
@@ -369,6 +370,7 @@ Events:
 Notes:
 
 - Current per-run `nodeExecutions.byRun` subscriptions should be replaced by a space-scoped runtime read model when available.
+- Workflow-run creation must emit `space.workflowNodeExecution.created` for pending or gated node-execution rows that exist before a start transition. If a transitional path cannot emit per-row create events yet, it must invalidate `space.workflowNodeExecution.list` on run creation and node activation so the runtime canvas can load pending nodes before they become started, idle, blocked, or restarted.
 - Existing raw gate-data RPCs/events map as follows during migration: `spaceWorkflowRun.listGateData` -> `space.workflowGate.data.list`, and `space.gateData.updated` remains the canonical event for raw gate-data row updates. `space.workflowGate.status` may include derived gate state, but it must not replace the raw gate-data records needed by banners and gate detail panes.
 - Existing artifact RPCs map as follows during migration: `spaceWorkflowRun.getGateArtifacts` -> `space.workflowRun.gateArtifacts`, `spaceWorkflowRun.getFileDiff` -> `space.workflowRun.fileDiff`, `spaceWorkflowRun.getCommits` -> `space.workflowRun.commits`, `spaceWorkflowRun.getCommitFiles` -> `space.workflowRun.commitFiles`, `spaceWorkflowRun.getCommitFileDiff` -> `space.workflowRun.commitFileDiff`, and `spaceWorkflowRun.listArtifacts` -> `space.workflowRun.artifacts`.
 - Existing hook RPCs map as follows during migration: `spaceWorkflowRun.listHookStates` -> `space.workflowRun.hookStates`, `spaceWorkflowRun.approveHook` -> `space.workflowHook.approve`, and `spaceWorkflowRun.retryHook` -> `space.workflowHook.retry`.
@@ -421,6 +423,7 @@ Commands:
 - `space.workflow.delete`
 - `space.workflow.syncFromTemplate`
 - `space.workflow.resyncDuplicates`
+- `space.export.agents`
 - `space.export.bundle`
 - `space.export.workflows`
 - `space.import.preview`
@@ -459,10 +462,11 @@ Notes:
 - Existing agent/template RPCs map as follows during migration: `spaceAgent.listBuiltInTemplates` -> `space.agentTemplate.builtin.list`, `spaceAgent.syncFromTemplate` -> `space.agent.syncFromTemplate`, `spaceAgent.getPromotionDraft` -> `space.agent.promotionDraft.get`, and `spaceAgent.promoteSession` -> `space.agent.promoteSession`.
 - Existing template drift RPCs map as follows during migration: `spaceAgent.getDriftReport` -> `space.agentTemplate.driftReport`, `spaceWorkflow.detectDrift` -> `space.workflowTemplate.drift`, and `spaceWorkflow.detectDuplicateDrift` -> `space.workflowTemplate.duplicateDrift`.
 - Existing workflow-template RPCs map as follows during migration: `spaceWorkflow.listBuiltInTemplates` -> `space.workflowTemplate.builtin.list`, `spaceWorkflow.syncFromTemplate` -> `space.workflow.syncFromTemplate`, and `spaceWorkflow.resyncDuplicates` -> `space.workflow.resyncDuplicates`.
-- Existing export/import RPCs map as follows during migration: `spaceExport.bundle` -> `space.export.bundle`, `spaceExport.workflows` -> `space.export.workflows`, `spaceImport.preview` -> `space.import.preview`, and `spaceImport.execute` -> `space.import.execute`.
+- Existing export/import RPCs map as follows during migration: `spaceExport.agents` -> `space.export.agents`, `spaceExport.bundle` -> `space.export.bundle`, `spaceExport.workflows` -> `space.export.workflows`, `spaceImport.preview` -> `space.import.preview`, and `spaceImport.execute` -> `space.import.execute`.
 - Existing long-horizon-agent RPCs map under the `space.longHorizonAgent.*` namespace: `spaceLongHorizonAgent.list`, `listBuiltInTemplates`, `create`, `update`, `delete`, `listReminders`, `createReminder`, `deleteReminder`, `listSubscriptions`, `createSubscription`, `updateSubscription`, and `deleteSubscription`.
 - Existing MCP settings paths map as follows during migration: `mcpEnablement.bySpace` -> `space.mcp.enablement.list`, `space.mcp.setEnabled` and `space.mcp.clearOverride` keep their command names, and `mcp.imports.refresh` keeps its global import-refresh command name.
 - Existing GitHub webhook RPCs map as follows during migration: `space.github.autoConfigureWebhook` -> `space.github.webhook.autoConfigure` and `space.github.checkWebhook` -> `space.github.webhook.check`.
+- Existing configure events map as follows during migration: `spaceAgent.created` -> `space.agent.created`, `spaceAgent.updated` -> `space.agent.updated`, `spaceAgent.deleted` -> `space.agent.deleted`, `spaceLongHorizonAgent.created` -> `space.longHorizonAgent.created`, `spaceLongHorizonAgent.updated` -> `space.longHorizonAgent.updated`, `spaceLongHorizonAgent.deleted` -> `space.longHorizonAgent.deleted`, `spaceWorkflow.created` -> `space.workflow.created`, `spaceWorkflow.updated` -> `space.workflow.updated`, and `spaceWorkflow.deleted` -> `space.workflow.deleted`. Until producers publish the target names directly, either the compatibility bridge must fan out both namespaces or `SpaceConfigureStore` must subscribe to the legacy names as compatibility aliases.
 
 ### 7.7 SpaceGoalStore
 
@@ -521,7 +525,7 @@ Events:
 
 Notes:
 
-- The current `space.schedule.updated` event should be normalized under the schedule contract namespace.
+- The current `space.schedule.updated` event should be normalized under the schedule contract namespace. During migration, schedule producers or the compatibility bridge must fan out `space.schedule.updated` to the target `space.taskSchedule.created`, `space.taskSchedule.updated`, or `space.taskSchedule.deleted` events when the operation is known; otherwise `TaskScheduleStore` must treat the legacy aggregate event as an invalidation for `space.taskSchedule.list`.
 
 ### 7.9 SpaceSessionStore
 
