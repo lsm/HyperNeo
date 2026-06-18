@@ -291,12 +291,22 @@ The gateway should expose fabric commands and events over time:
 
 | Contract | Kind | Purpose |
 | --- | --- | --- |
+| `agentRuntime.session.create` | command | Create a chat/session record and initial runtime metadata. |
+| `agentRuntime.session.list` | query | List chat/session records for sidebars and session pages. |
+| `agentRuntime.session.get` | query | Read a single chat/session record. |
+| `agentRuntime.session.update` | command | Update session metadata, config, or draft fields. |
+| `agentRuntime.session.archive` | command | Archive or unarchive a chat/session. |
+| `agentRuntime.session.delete` | command | Delete a chat/session and owned artifacts. |
 | `agentRuntime.session.start` | command | Start a runtime session. |
 | `agentRuntime.session.resume` | command | Resume an existing runtime session. |
 | `agentRuntime.message.send` | command | Send input into a runtime session. |
 | `agentRuntime.session.interrupt` | command | Interrupt/cancel active execution. |
 | `agentRuntime.config.update` | command | Change model, tools, permissions, or runtime config. |
 | `agentRuntime.session.status.get` | query | Read runtime status. |
+| `agentRuntime.session.state.get` | query | Read the unified session state snapshot used by chat views. |
+| `agentRuntime.sessions.state.list` | query | Read unified session state snapshots for collection views. |
+| `agentRuntime.session.thinking.get` | query | Read session thinking-level override. |
+| `agentRuntime.session.thinking.set` | command | Persist session thinking-level override. |
 | `agentRuntime.session.pendingMessages.list` | query | Read queued, deferred, and pending manual messages. |
 | `agentRuntime.session.pendingMessage.remove` | command | Remove a pending message before execution. |
 | `agentRuntime.session.pendingMessage.promote` | command | Promote a pending message into the active turn. |
@@ -317,6 +327,19 @@ The gateway should expose fabric commands and events over time:
 | `agentRuntime.question.cancel` | command | Cancel a pending AskUserQuestion tool call. |
 | `agentRuntime.capabilities.resolve` | query | Validate runtime/provider/model compatibility. |
 | `agentRuntime.event.stream` | event | Normalized output, tool, status, and error events. |
+
+The session collection contracts preserve top-level chat lifecycle RPCs while runtime execution moves
+behind Agent Runtime. The compatibility gateway maps `session.create`, `session.list`, `session.get`,
+`session.update`, `session.archive`, and `session.delete` to the corresponding `agentRuntime.session.*`
+contracts until the Sessions page, sidebar, new-chat flow, and input-draft persistence call the runtime
+namespace directly.
+
+The unified session-state contracts preserve the current `state.session` and `state.sessions` snapshots.
+Those snapshots include session metadata, agent processing state, slash commands, errors, pending
+questions, context, and model/runtime status; `agentRuntime.session.status.get` is not a replacement for
+that full read model. The compatibility gateway maps `state.session`, `state.sessions`,
+`session.thinking.get`, and `session.thinking.set` to the target state/thinking contracts until the chat
+view and session collection stores migrate.
 
 `agentRuntime.mcpServers.list` preserves the current `session.listRuntimeMcpServers` surface. It returns in-process runtime SDK MCP servers and Space/task tool servers attached to the selected session; it should not be folded into coarse status if tool panels need names, scopes, and capability metadata without polling the full runtime state. `agentRuntime.session.mcp.list` separately preserves `session.mcp.list`, which returns effective configured MCP entries, enablement state, and skill linkage for the selected session.
 
@@ -391,6 +414,28 @@ Target responsibilities:
 - declare supported bridge targets
 
 The existing `Provider` interface can evolve rather than be replaced.
+
+Provider and model settings stay contract-backed during MessageHub cleanup:
+
+| Contract | Kind | Purpose |
+| --- | --- | --- |
+| `provider.models.list` | query | Preserve `models.list` for model pickers and workflow editors. |
+| `provider.registry.list` | query | Preserve `providers.list` for provider settings. |
+| `provider.registry.get` | query | Preserve `providers.get` for focused provider editing. |
+| `provider.registry.create` | command | Preserve `providers.create`. |
+| `provider.registry.update` | command | Preserve `providers.update`. |
+| `provider.registry.delete` | command | Preserve `providers.delete`. |
+| `provider.registry.setDefault` | command | Preserve `providers.setDefault`. |
+| `provider.registry.test` | command | Preserve `providers.test`. |
+| `provider.registry.healthCheck` | query | Preserve `providers.healthCheck`. |
+| `provider.auth.list` | query | Preserve `auth.providers`. |
+| `provider.auth.login` | command | Preserve `auth.login`. |
+| `provider.auth.logout` | command | Preserve `auth.logout`. |
+| `provider.auth.refresh` | command | Preserve `auth.refresh`. |
+| `provider.changed` | event | Preserve `providers.changed` invalidation for model/auth UI. |
+
+These contracts may live in a provider/config package rather than under Agent Runtime long term, but M7
+must treat them as required compatibility aliases before provider, model, or auth MessageHub RPC cleanup.
 
 ### 7.4 ProviderBridge
 

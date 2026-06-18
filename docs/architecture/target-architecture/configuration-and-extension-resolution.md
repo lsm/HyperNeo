@@ -413,6 +413,38 @@ Target queries:
 | `hook.effective.list` | Hook policies active for a runtime/session. |
 | `runtime.behavior.preview` | Final runtime-neutral behavior before adapter rendering. |
 
+Target commands:
+
+| Command | Purpose |
+| --- | --- |
+| `config.value.set` | Write or override one scoped config value. |
+| `config.value.clear` | Remove this scope's row and fall back to inherited/default value. |
+| `config.value.suppress` | Write an explicit off/suppress value for an inherited contribution. |
+| `config.values.patch` | Transactionally patch multiple scoped values. |
+| `extension.package.install` | Install or register an extension/skill package. |
+| `extension.package.update` | Update extension/skill package metadata or manifest. |
+| `extension.package.delete` | Delete an extension/skill package. |
+| `extension.package.setEnabled` | Enable or disable an extension/skill package at a scope. |
+| `skill.installFromGit` | Install a skill from a git repository and register its package metadata. |
+| `skill.create` | Compatibility command for creating a user skill. |
+| `skill.update` | Compatibility command for editing a user skill. |
+| `skill.delete` | Compatibility command for removing a user skill. |
+| `skill.setEnabled` | Compatibility command for toggling a user skill. |
+
+Compatibility mappings:
+
+- `settings.global.update` and `settings.global.save` map to `config.values.patch` at global scope.
+- `settings.session.update` maps to `config.values.patch` at session scope.
+- `config.model.update`, `config.systemPrompt.update`, `config.tools.update`, `config.agents.update`,
+  `config.sandbox.update`, `config.mcp.update`, `config.outputFormat.update`, `config.betas.update`,
+  `config.env.update`, and `config.permissions.update` map to `config.value.set` or
+  `config.values.patch` for the corresponding key family.
+- `tools.save` maps to `config.values.patch` at session scope.
+- `globalTools.saveConfig` maps to `config.values.patch` at global tools scope.
+- `skill.create`, `skill.update`, `skill.delete`, `skill.setEnabled`, and `skill.installFromGit`
+  remain compatibility aliases over the extension/skill package commands until the Skills settings UI
+  uses the target package/skill contract directly.
+
 Target events:
 
 | Event | Meaning |

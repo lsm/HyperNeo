@@ -346,6 +346,7 @@ Commands:
 - `space.workflowRun.start`
 - `space.workflowRun.cancel`
 - `space.workflowRun.resumeBlocked`
+- `space.workflowRun.markFailed`
 - `space.workflowNode.activate`
 - `space.workflowGate.approve`
 - `space.workflowHook.approve`
@@ -374,6 +375,7 @@ Notes:
 - Existing raw gate-data RPCs/events map as follows during migration: `spaceWorkflowRun.listGateData` -> `space.workflowGate.data.list`, and `space.gateData.updated` remains the canonical event for raw gate-data row updates. `space.workflowGate.status` may include derived gate state, but it must not replace the raw gate-data records needed by banners and gate detail panes.
 - Existing artifact RPCs map as follows during migration: `spaceWorkflowRun.getGateArtifacts` -> `space.workflowRun.gateArtifacts`, `spaceWorkflowRun.getFileDiff` -> `space.workflowRun.fileDiff`, `spaceWorkflowRun.getCommits` -> `space.workflowRun.commits`, `spaceWorkflowRun.getCommitFiles` -> `space.workflowRun.commitFiles`, `spaceWorkflowRun.getCommitFileDiff` -> `space.workflowRun.commitFileDiff`, and `spaceWorkflowRun.listArtifacts` -> `space.workflowRun.artifacts`.
 - Existing hook RPCs map as follows during migration: `spaceWorkflowRun.listHookStates` -> `space.workflowRun.hookStates`, `spaceWorkflowRun.approveHook` -> `space.workflowHook.approve`, and `spaceWorkflowRun.retryHook` -> `space.workflowHook.retry`.
+- Existing failure RPCs map as follows during migration: `spaceWorkflowRun.markFailed` -> `space.workflowRun.markFailed`. This command records unrecoverable runtime failures such as `agentCrash`, `maxIterationsReached`, or `nodeTimeout`; `space.workflowRun.resumeBlocked` is only for recovering an already blocked run and must not replace failure marking.
 - The canvas should depend on this store, not raw `spaceStore.nodeExecutions`.
 
 ### 7.6 SpaceConfigureStore
