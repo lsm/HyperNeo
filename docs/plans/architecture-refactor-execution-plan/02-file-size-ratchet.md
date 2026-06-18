@@ -40,9 +40,9 @@ The baseline lives in [file-size-ratchet.json](file-size-ratchet.json). The allo
 
 ## Current Baseline
 
-- Production source files scanned: 719.
-- Files over the 300-line target: 269.
-- Files over the temporary 500-line hard ceiling: 144.
+- Production source files scanned: 721.
+- Files over the 300-line target: 271.
+- Files over the temporary 500-line hard ceiling: 146.
 - Largest clusters:
   - storage schema and repositories: M3 UoW/outbox split;
   - Space runtime, task agent, workflow tools, and managers: M9 runtime decomposition;

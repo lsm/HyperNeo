@@ -95,30 +95,53 @@ function walk(dir: string, out: SourceFile[]): void {
   }
 }
 
-function getChangedPaths(ref: string): Set<string> {
-  const output = execFileSync('git', ['diff', '-M', '--name-only', `${ref}...HEAD`], {
+function getGitLines(args: string[]): string[] {
+  const output = execFileSync('git', args, {
     cwd: repoRoot,
     encoding: 'utf8',
   });
-  return new Set(output.split('\n').filter(Boolean).map(toPosix));
+  return output.split('\n').filter(Boolean).map(toPosix);
+}
+
+function addChangedPathInfo(
+  changedPaths: Map<string, ChangedPathInfo>,
+  line: string,
+  fallbackStatus = 'M'
+): void {
+  const [rawStatus, firstPath, secondPath] = line.split('\t');
+  const status = rawStatus || fallbackStatus;
+  const hasPreviousPath = status.startsWith('R') || status.startsWith('C');
+  const path = toPosix(hasPreviousPath ? secondPath : firstPath);
+  changedPaths.set(path, {
+    status,
+    path,
+    previousPath: hasPreviousPath ? toPosix(firstPath) : null,
+  });
+}
+
+function getChangedPaths(ref: string): Set<string> {
+  return new Set([
+    ...getGitLines(['diff', '-M', '--name-only', `${ref}...HEAD`]),
+    ...getGitLines(['diff', '-M', '--name-only', '--cached']),
+    ...getGitLines(['diff', '-M', '--name-only']),
+    ...getGitLines(['ls-files', '--others', '--exclude-standard']),
+  ]);
 }
 
 function getChangedPathInfo(ref: string): Map<string, ChangedPathInfo> {
-  const output = execFileSync('git', ['diff', '-M', '--name-status', `${ref}...HEAD`], {
-    cwd: repoRoot,
-    encoding: 'utf8',
-  });
   const changedPaths = new Map<string, ChangedPathInfo>();
 
-  for (const line of output.split('\n').filter(Boolean)) {
-    const [status, firstPath, secondPath] = line.split('\t');
-    const hasPreviousPath = status.startsWith('R') || status.startsWith('C');
-    const path = toPosix(hasPreviousPath ? secondPath : firstPath);
-    changedPaths.set(path, {
-      status,
-      path,
-      previousPath: hasPreviousPath ? toPosix(firstPath) : null,
-    });
+  for (const line of getGitLines(['diff', '-M', '--name-status', `${ref}...HEAD`])) {
+    addChangedPathInfo(changedPaths, line);
+  }
+  for (const line of getGitLines(['diff', '-M', '--name-status', '--cached'])) {
+    addChangedPathInfo(changedPaths, line);
+  }
+  for (const line of getGitLines(['diff', '-M', '--name-status'])) {
+    addChangedPathInfo(changedPaths, line);
+  }
+  for (const path of getGitLines(['ls-files', '--others', '--exclude-standard'])) {
+    changedPaths.set(path, { status: 'A', path, previousPath: null });
   }
 
   return changedPaths;
