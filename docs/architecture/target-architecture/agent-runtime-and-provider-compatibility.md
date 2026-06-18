@@ -302,6 +302,7 @@ The gateway should expose fabric commands and events over time:
 | `agentRuntime.message.send` | command | Send input into a runtime session. |
 | `agentRuntime.session.interrupt` | command | Interrupt/cancel active execution. |
 | `agentRuntime.config.update` | command | Change model, tools, permissions, or runtime config. |
+| `agentRuntime.model.get` | query | Read a session's active model and provider selection. |
 | `agentRuntime.model.switch` | command | Switch a session's active model. |
 | `agentRuntime.coordinator.switch` | command | Switch a session's coordinator mode. |
 | `agentRuntime.sandbox.switch` | command | Switch a session's sandbox mode. |
@@ -355,10 +356,10 @@ view and session collection stores migrate.
 
 The live runtime compatibility gateway maps existing chat controls to the target runtime contracts until
 callers move to the runtime namespace: `message.send` -> `agentRuntime.message.send`,
-`client.interrupt` -> `agentRuntime.session.interrupt`, `session.model.switch` ->
-`agentRuntime.model.switch`, `session.coordinator.switch` -> `agentRuntime.coordinator.switch`,
-`session.sandbox.switch` -> `agentRuntime.sandbox.switch`, and `session.setWorktreeMode` ->
-`agentRuntime.worktreeMode.set`.
+`client.interrupt` -> `agentRuntime.session.interrupt`, `session.model.get` ->
+`agentRuntime.model.get`, `session.model.switch` -> `agentRuntime.model.switch`,
+`session.coordinator.switch` -> `agentRuntime.coordinator.switch`, `session.sandbox.switch` ->
+`agentRuntime.sandbox.switch`, and `session.setWorktreeMode` -> `agentRuntime.worktreeMode.set`.
 
 Recovery controls must remain first-class runtime commands, not ad hoc MessageHub leftovers:
 `session.cancelRateLimitRetry` maps to `agentRuntime.session.rateLimitRetry.cancel`,
