@@ -416,6 +416,12 @@ Target queries:
 | `mcp.registry.list` | Application-level MCP server registry entries and enablement state. |
 | `tools.globalConfig.get` | Global tool configuration read model for settings modals. |
 | `usage.calculate` | Historical usage aggregate for settings analytics. |
+| `config.model.get` | Compatibility read for current model configuration. |
+| `config.getAll` | Compatibility read for all legacy config key families. |
+| `settings.global.get` | Compatibility read for global settings hydration. |
+| `settings.session.get` | Compatibility read for session-scoped settings hydration. |
+| `settings.fileOnly.read` | Compatibility read for local/file-only settings. |
+| `settings.mcp.listFromSources` | Compatibility read for MCP settings merged from native/source files. |
 
 Target commands:
 
@@ -445,6 +451,12 @@ Compatibility mappings:
 
 - `settings.global.update` and `settings.global.save` map to `config.values.patch` at global scope.
 - `settings.session.update` maps to `config.values.patch` at session scope.
+- `settings.global.get`, `settings.session.get`, `settings.fileOnly.read`, and
+  `settings.mcp.listFromSources` remain compatibility aliases for effective config/settings read models until
+  settings callers migrate to `config.effective.preview` or contribution-specific registry reads.
+- `config.model.get` and `config.getAll` remain compatibility aliases for model and full-config hydration; they
+  read the same effective source chain as the target config resolver and must not be removed before callers
+  migrate.
 - `config.model.update`, `config.systemPrompt.update`, `config.tools.update`, `config.agents.update`,
   `config.sandbox.update`, `config.mcp.update`, `config.outputFormat.update`, `config.betas.update`,
   `config.env.update`, and `config.permissions.update` map to `config.value.set` or

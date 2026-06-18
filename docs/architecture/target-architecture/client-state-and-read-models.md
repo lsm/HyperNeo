@@ -506,7 +506,7 @@ Notes:
 - Existing long-horizon-agent RPCs map as follows during migration: `spaceLongHorizonAgent.list` -> `space.longHorizonAgent.list`, `spaceLongHorizonAgent.create` -> `space.longHorizonAgent.create`, `spaceLongHorizonAgent.update` -> `space.longHorizonAgent.update`, `spaceLongHorizonAgent.delete` -> `space.longHorizonAgent.delete`, `spaceLongHorizonAgent.listBuiltInTemplates` -> `space.longHorizonAgentTemplate.builtin.list`, `spaceLongHorizonAgent.listReminders` -> `space.longHorizonAgent.reminders.list`, `spaceLongHorizonAgent.createReminder` -> `space.longHorizonAgent.reminder.create`, `spaceLongHorizonAgent.deleteReminder` -> `space.longHorizonAgent.reminder.delete`, `spaceLongHorizonAgent.listSubscriptions` -> `space.longHorizonAgent.subscriptions.list`, `spaceLongHorizonAgent.createSubscription` -> `space.longHorizonAgent.subscription.create`, `spaceLongHorizonAgent.updateSubscription` -> `space.longHorizonAgent.subscription.update`, and `spaceLongHorizonAgent.deleteSubscription` -> `space.longHorizonAgent.subscription.delete`.
 - Existing MCP settings paths map as follows during migration: `mcpEnablement.bySpace` -> `space.mcp.enablement.list`, `space.mcp.setEnabled` and `space.mcp.clearOverride` keep their command names, and `mcp.imports.refresh` keeps its global import-refresh command name.
 - Existing per-space GitHub source toggles remain explicit commands during migration: `space.github.enable` enables the GitHub external-event source for a Space and `space.github.disable` disables it. If a later implementation folds these into `space.github.config.set`, that command must preserve the same per-space enablement semantics and the compatibility bridge must continue to expose the existing RPC names until callers migrate.
-- Existing GitHub repository settings RPCs map as follows during migration: `space.github.listConfig` -> `space.github.config.list`, `space.github.listWatchedRepos` -> `space.github.watchedRepos.list`, `space.github.watchRepo` -> `space.github.watchedRepos.add`, and `space.github.unwatchRepo` -> `space.github.watchedRepos.remove`.
+- Existing GitHub repository settings RPCs map as follows during migration: `space.github.listConfig` -> `space.github.config.list`, `space.github.listWatchedRepos` -> `space.github.watchedRepos.list`, `space.github.watchRepo` -> `space.github.watchedRepos.add`, and `space.github.unwatchRepo` -> `space.github.watchedRepos.remove`. `space.github.watchedRepos.add` must preserve the current upsert/edit semantics of `space.github.watchRepo` for enabled, webhook-enabled, and polling-enabled toggles, or the bridge must expose a separate `space.github.watchedRepos.update` alias before cleanup.
 - Existing GitHub webhook RPCs map as follows during migration: `space.github.autoConfigureWebhook` -> `space.github.webhook.autoConfigure` and `space.github.checkWebhook` -> `space.github.webhook.check`.
 - Existing configure events map as follows during migration: `spaceAgent.created` -> `space.agent.created`, `spaceAgent.updated` -> `space.agent.updated`, `spaceAgent.deleted` -> `space.agent.deleted`, `spaceLongHorizonAgent.created` -> `space.longHorizonAgent.created`, `spaceLongHorizonAgent.updated` -> `space.longHorizonAgent.updated`, `spaceLongHorizonAgent.deleted` -> `space.longHorizonAgent.deleted`, `spaceWorkflow.created` -> `space.workflow.created`, `spaceWorkflow.updated` -> `space.workflow.updated`, and `spaceWorkflow.deleted` -> `space.workflow.deleted`. Until producers publish the target names directly, either the compatibility bridge must fan out both namespaces or `SpaceConfigureStore` must subscribe to the legacy names as compatibility aliases.
 
@@ -703,10 +703,17 @@ Notes:
 - Scope list request-version guards move into `ForgeStore`.
 - The store must handle selected-space changes by clearing scope detail immediately, matching existing tests that prevent stale Space A scopes from appearing in Space B.
 - Existing Forge RPCs remain compatibility aliases until the UI migrates: `evolution.scope.get` ->
-  `forge.scope.detail`, `evolution.scope.create` -> `forge.scope.create`,
+  `forge.scope.detail`, `evolution.scope.list` -> `forge.scope.list`,
+  `evolution.scope.create` -> `forge.scope.create`, `evolution.scope.update` ->
+  `forge.scope.update`, `evolution.evidence.list` -> `forge.evidence.list`,
   `evolution.evidence.addManualNote` -> `forge.evidence.addManualNote`,
-  `evolution.episode.createFromEvidence` -> `forge.episode.createFromEvidence`,
-  `evolution.lesson.update` -> `forge.lesson.update`, `evolution.taskProposal.createTask` ->
+  `evolution.metricSnapshot.list` -> `forge.metricSnapshot.list`,
+  `evolution.metricSnapshot.create` -> `forge.metricSnapshot.create`,
+  `evolution.review.get` -> `forge.review.get`, `evolution.episode.update` ->
+  `forge.episode.update`, `evolution.episode.createFromEvidence` ->
+  `forge.episode.createFromEvidence`, `evolution.lesson.list` -> `forge.lesson.list`,
+  `evolution.lesson.update` -> `forge.lesson.update`, `evolution.taskProposal.update` ->
+  `forge.taskProposal.update`, `evolution.taskProposal.createTask` ->
   `forge.taskProposal.createTask`, and `evolution.rollup.apply` -> `forge.rollup.apply`.
 
 ---
@@ -781,7 +788,7 @@ This policy should be implemented once in a small helper rather than repeatedly 
 
 ### Current Queries To Preserve Behind Fabric
 
-| Current surface | Target query |
+| Current surface | Target query/command |
 | --- | --- |
 | `state.global.snapshot` | `state.global.snapshot` |
 | `state.system` | `state.system` subscribed |
@@ -798,6 +805,8 @@ This policy should be implemented once in a small helper rather than repeatedly 
 | `actorMessages.byTask` | `space.task.actorMessages` subscribed |
 | `actorMessages.byWorkflowRun` | `space.workflowRun.actorMessages` subscribed |
 | `spaceSessions.bySpace` | `space.session.list` subscribed |
+| `nodeExecution.create` | `space.workflowNodeExecution.createForTest` non-production command |
+| `nodeExecution.update` | `space.workflowNodeExecution.updateForTest` non-production command |
 | `spaceGoal.list` | `space.goal.list` |
 | `spaceGoal.listEvents` | `space.goal.events` |
 | `taskSchedule.list` | `space.taskSchedule.list` |

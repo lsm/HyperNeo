@@ -805,6 +805,7 @@ Runtime events that should be durable early:
 | `space.artifactCache.updated` | artifact-cache row persisted and replayable artifact-panel invalidation |
 | `space.workflowMessage.queued` | recovery and diagnostics |
 | `space.workflowMessage.delivered` | delivery audit |
+| `space.schedule.updated` | schedule fire/update bookkeeping and replayable task-schedule invalidation until target schedule events fan out |
 
 Runtime events that can remain ephemeral:
 
