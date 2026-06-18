@@ -14,11 +14,12 @@ export const RATE_LIMIT_MIN_BACKOFF_MS = 60_000;
 /**
  * Patterns that indicate a rate-limit error in command stderr.
  *
- * Bare `HTTP 403` / `HTTP 429` status matches are intentionally excluded:
- * GitHub also returns 403 for permission/auth failures (e.g.
- * `Resource not accessible by integration`), and classifying those as
- * rate-limit retries hides a real credential problem behind a backoff.
- * Require explicit textual evidence instead.
+ * Bare `HTTP 403` status matches are intentionally excluded: GitHub also
+ * returns 403 for permission/auth failures (e.g. `Resource not accessible by
+ * integration`), and classifying those as rate-limit retries hides a real
+ * credential problem behind a backoff. Require explicit textual evidence
+ * instead. A bare `HTTP 429` is safe to match because GitHub does not return
+ * 429 for permission/auth failures.
  */
 const RATE_LIMIT_ERROR_PATTERNS = [
   /rate[\s_-]?limit/i,
@@ -35,8 +36,9 @@ const RATE_LIMIT_ERROR_PATTERNS = [
  * Returns true if stderr text matches known rate-limit error patterns.
  *
  * Matches both `gh api` style ("HTTP 403: rate limit exceeded (documentation_url)") and
- * raw `curl` style ("rate limit exceeded"). Bare `HTTP 403` / `HTTP 429` is
- * not sufficient — see {@link RATE_LIMIT_ERROR_PATTERNS}. Empty input never matches.
+ * raw `curl` style ("rate limit exceeded"). Bare `HTTP 403` is not sufficient
+ * because GitHub also returns it for permission/auth failures — see
+ * {@link RATE_LIMIT_ERROR_PATTERNS}. Empty input never matches.
  */
 export function isRateLimitError(stderr: string): boolean {
   if (!stderr) return false;
