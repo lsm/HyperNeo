@@ -208,11 +208,11 @@ export function ensureAgentTools(
  *
  * anthropic        — native Anthropic API, SDK knows all model context windows.
  * anthropic-copilot — Copilot bridge still routes to Anthropic API.
- * anthropic-codex  — Codex bridge routes through recognised Anthropic model IDs
- *                   (claude-opus-4-7, claude-sonnet-4-20250514) whose PP()
- *                   capacities cover the real Codex windows, AND sets
- *                   CLAUDE_CODE_AUTO_COMPACT_WINDOW explicitly. SDK auto-compact
- *                   fires at the correct threshold.
+ * anthropic-codex  — Codex bridge uses real Codex model IDs (gpt-5.5, gpt-5.4-mini,
+ *                   etc.) with preferContextWindowMetadata=true, so SDK reads the
+ *                   correct 272k/128k windows from /v1/models metadata instead of
+ *                   its hardcoded database. CLAUDE_CODE_AUTO_COMPACT_WINDOW is set
+ *                   explicitly so auto-compact fires at the correct threshold.
  * glm              — Sets CLAUDE_CODE_AUTO_COMPACT_WINDOW per model (1M for
  *                   glm-5.2[1m], 200k for the rest). The `[1m]` suffix is
  *                   recognised by PP() so the SDK's effective window matches

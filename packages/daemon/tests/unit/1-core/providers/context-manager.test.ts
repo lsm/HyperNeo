@@ -1039,24 +1039,24 @@ describe('sdk-model-id-aliasing invariant — real provider buildSdkConfig()', (
     codexProvider = undefined;
   });
 
-  it('Codex provider: ANTHROPIC_DEFAULT_HAIKU_MODEL uses the 200 k Anthropic Sonnet ID', () => {
+  it('Codex provider: ANTHROPIC_DEFAULT_HAIKU_MODEL uses real Codex mini model ID', () => {
     codexProvider = new AnthropicToCodexBridgeProvider({ OPENAI_API_KEY: 'sk-test' });
     const cfg = codexProvider.buildSdkConfig('gpt-5.3-codex', {
       workspacePath: '/tmp/ws-codex-leak',
     });
-    expect(cfg.envVars['ANTHROPIC_DEFAULT_HAIKU_MODEL']).toBe('claude-sonnet-4-20250514');
+    expect(cfg.envVars['ANTHROPIC_DEFAULT_HAIKU_MODEL']).toBe('gpt-5.4-mini');
   });
 
-  it('Codex provider: all three DEFAULT_*_MODEL slots use Anthropic IDs with large context', () => {
+  it('Codex provider: all three DEFAULT_*_MODEL slots use real Codex model IDs', () => {
     codexProvider = new AnthropicToCodexBridgeProvider({ OPENAI_API_KEY: 'sk-test' });
     const cfg = codexProvider.buildSdkConfig('gpt-5.3-codex', {
       workspacePath: '/tmp/ws-codex-all',
     });
-    // Haiku slot uses the 200 k Anthropic Sonnet ID
-    expect(cfg.envVars['ANTHROPIC_DEFAULT_HAIKU_MODEL']).toBe('claude-sonnet-4-20250514');
-    // Sonnet and Opus slots use the 1 M Anthropic Opus ID
-    expect(cfg.envVars['ANTHROPIC_DEFAULT_SONNET_MODEL']).toBe('claude-opus-4-7');
-    expect(cfg.envVars['ANTHROPIC_DEFAULT_OPUS_MODEL']).toBe('claude-opus-4-7');
+    // Haiku slot uses the Codex mini model ID
+    expect(cfg.envVars['ANTHROPIC_DEFAULT_HAIKU_MODEL']).toBe('gpt-5.4-mini');
+    // Sonnet and Opus slots use the selected Codex model ID
+    expect(cfg.envVars['ANTHROPIC_DEFAULT_SONNET_MODEL']).toBe('gpt-5.3-codex');
+    expect(cfg.envVars['ANTHROPIC_DEFAULT_OPUS_MODEL']).toBe('gpt-5.5');
   });
 
   it('Copilot provider: all three DEFAULT_*_MODEL slots are set to the resolved model ID', () => {
