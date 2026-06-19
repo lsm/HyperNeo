@@ -249,6 +249,19 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     // but its spawned agent sessions are independent and must not be blocked.
     delete process.env.CLAUDECODE;
 
+    // Background-prefetch the agent-memory embedding model as early as possible
+    // so it shares work with the memory backfill that runs during database init.
+    // Use direct console methods here because console capture is installed later.
+    // Skip under test so unit-test app instances never hit the network.
+    if (process.env.NODE_ENV !== 'test') {
+      const prefetchLogInfo = verbose ? console.log : () => {};
+      const prefetchLogError = verbose ? console.error : () => {};
+      void prefetchAgentMemoryEmbeddingModel({
+        logInfo: prefetchLogInfo,
+        logError: prefetchLogError,
+      });
+    }
+
     // Initialize database
     const db = new Database(config.dbPath);
     // Create reactiveDb before initialize() so GoalRepository can receive it
@@ -278,15 +291,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     // startup/shutdown logs flow through the structured-log subscriber.
     const logInfo = verbose ? console.log : () => {};
     const logError = verbose ? console.error : () => {};
-
-    // Background-prefetch the agent-memory embedding model. Non-blocking: the
-    // daemon can serve requests while the download proceeds, and failures are
-    // logged but never propagate to block startup. Lazy runtime loading still
-    // works if this has not completed yet. Skip under test so unit-test app
-    // instances never hit the network.
-    if (process.env.NODE_ENV !== 'test') {
-      void prefetchAgentMemoryEmbeddingModel({ logInfo, logError });
-    }
 
     // Initialize job queue
     const jobQueue = new JobQueueRepository(db.getDatabase());

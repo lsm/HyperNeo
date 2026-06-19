@@ -96,6 +96,12 @@ export interface PrefetchOptions {
 export async function prefetchAgentMemoryEmbeddingModel(
   options: PrefetchOptions = {}
 ): Promise<InitializedEmbedder | null> {
+  // A previous daemon instance may have aborted its prefetch. Clear that state
+  // so a new daemon start in the same process can attempt a fresh prefetch.
+  if (prefetchAborted) {
+    prefetchAborted = false;
+    prefetchResult = null;
+  }
   if (prefetchResult) return prefetchResult;
 
   const {
