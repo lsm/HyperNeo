@@ -1,6 +1,7 @@
 import type { Database as BunDatabase } from 'bun:sqlite';
 import type { MessageHub } from '@neokai/shared';
 import { Logger } from '../../logger';
+import { type CredentialStore } from '../../credentials/credential-store.js';
 import { verifySignature } from '../../github/webhook-handler';
 import type {
   ExternalEventExtensionContext,
@@ -21,6 +22,15 @@ import {
 const log = new Logger('github-event-extension');
 const DEFAULT_POLL_INTERVAL_MS = 60_000;
 const GITHUB_API_BASE = 'https://api.github.com';
+/**
+ * Distinct credential-store namespace for the GitHub event extension's PAT.
+ * Deliberately separate from `credentialService('github')`
+ * (`neokai.provider.github`) so a user-created provider whose `providerId`
+ * is 'github' cannot collide with the extension's secret (each would
+ * corrupt the other's payload).
+ */
+const GITHUB_CREDENTIAL_SERVICE = 'neokai.external-events.github';
+const GITHUB_CREDENTIAL_ACCOUNT = 'default';
 const WEBHOOK_EVENTS = [
   'push',
   'pull_request',
@@ -34,6 +44,20 @@ const WEBHOOK_PATH = '/webhook/github/space';
 interface GitHubEventExtensionOptions {
   pollIntervalMs?: number;
   fetchImpl?: typeof fetch;
+  /**
+   * Optional credential store used to persist the GitHub PAT outside env vars.
+   * When provided, the extension reads the token from the store first and
+   * falls back to the constructor-supplied env value.
+   */
+  credentialStore?: CredentialStore;
+}
+
+interface GitHubTokenStatus {
+  configured: boolean;
+  source: 'keychain' | 'env' | 'none';
+  login?: string;
+  error?: string;
+  autoRegisteredHookCount?: number;
 }
 
 interface GitHubHookResponse {
@@ -61,6 +85,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
   private pollTimer: ReturnType<typeof setTimeout> | null = null;
   private activePollCycle?: Promise<void>;
   private stopped = true;
+  private readonly credentialStore?: CredentialStore;
 
   constructor(
     db: BunDatabase,
@@ -68,6 +93,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     private readonly options: GitHubEventExtensionOptions = {}
   ) {
     this.repo = new GitHubEventExtensionRepository(db);
+    this.credentialStore = options.credentialStore;
   }
 
   async start(context: ExternalEventExtensionContext): Promise<void> {
@@ -90,6 +116,16 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       const params = data as { spaceId: string };
       if (!params.spaceId) throw new Error('spaceId is required');
       this.repo.setRepoEnabled(params.spaceId, true);
+      // Re-enabling a space can revive polling-configured rows whose
+      // `enabled` flag was just flipped back on. If the global polling
+      // capability was cleared while the space was disabled (see
+      // disablePollingCapabilityIfUnused), the timer would never restart
+      // on its own. Re-arm the capability + timer here when any newly
+      // re-enabled polling row exists.
+      if (this.repo.listPollingRepos(params.spaceId).length > 0) {
+        await this.enablePollingCapability(context);
+        this.ensurePollingActive();
+      }
       await this.persistSpaceConfig(context, params.spaceId);
       context.onSourceConfigChanged({
         source: this.sourceId,
@@ -150,7 +186,31 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         this.repo.clearWebhookRegistration(watchedRepo.id, { clearSecret: disablingAutoWebhook });
         watchedRepo = this.repo.getWatchedRepoById(watchedRepo.id) ?? watchedRepo;
       }
-      await this.persistSpaceConfig(context, watchedRepo.spaceId);
+      if (watchedRepo.pollingEnabled) {
+        // Persist the user's intent to use polling in this space whenever a
+        // repo is added/updated with polling enabled. This keeps the connection
+        // card checkbox and the no-secret addRepo default consistent even if
+        // the row is later removed.
+        this.repo.setPollingIntent(params.spaceId, true);
+        await this.persistSpaceConfig(context, watchedRepo.spaceId);
+        await this.enablePollingCapability(context);
+        this.ensurePollingActive();
+      } else {
+        // Per-row polling was turned off (or the row was added without
+        // polling). If the user explicitly disabled the last polling-configured
+        // row in this space, clear the per-space intent so the global
+        // capability and UI checkbox reflect reality. Adding a non-polling row
+        // to a space with intent=true does not clear it.
+        if (
+          existing?.pollingEnabled &&
+          this.repo.listAllPollingConfiguredRepos(params.spaceId).length === 0
+        ) {
+          this.repo.setPollingIntent(params.spaceId, false);
+        }
+        await this.persistSpaceConfig(context, watchedRepo.spaceId);
+        await this.disablePollingCapabilityIfUnused(context);
+        this.maybeStopPolling();
+      }
       context.onSourceConfigChanged({
         source: this.sourceId,
         spaceId: watchedRepo.spaceId,
@@ -225,6 +285,8 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       }
       const removed = this.repo.removeWatchedRepo(params.spaceId, params.owner, params.repo);
       await this.persistSpaceConfig(context, params.spaceId);
+      await this.disablePollingCapabilityIfUnused(context);
+      this.maybeStopPolling();
       context.onSourceConfigChanged({
         source: this.sourceId,
         spaceId: params.spaceId,
@@ -252,6 +314,120 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
           ? await this.pollSpace(params.spaceId)
           : await this.pollEnabledSpaces(),
       };
+    });
+
+    /**
+     * Store the GitHub PAT in the credential store.
+     *
+     * Scope: DAEMON-WIDE. The token is shared by every space that uses the
+     * GitHub event extension — there is no per-space isolation. Callers MUST
+     * confirm overwrite with the user when `getTokenStatus` reports an
+     * existing token. The UI is responsible for that confirmation; the RPC
+     * intentionally does not refuse overwrites because headless callers
+     * (CLI, migration scripts) also use it.
+     *
+     * Format: accepts classic PATs (`ghp_`), fine-grained PATs
+     * (`github_pat_`), OAuth tokens (`gho_`), and app tokens (`ghs_`).
+     * Rejects empty / malformed values.
+     */
+    hub.onRequest('space.github.setToken', async (data) => {
+      await assertRpcConfigEnabled(context, this.sourceId);
+      if (!this.credentialStore) {
+        throw new Error('Credential store is not available for GitHub tokens');
+      }
+      const params = data as { token?: string };
+      const token = params.token?.trim();
+      if (!token) throw new Error('token is required');
+      validateGitHubTokenFormat(token);
+      await this.credentialStore.set(GITHUB_CREDENTIAL_SERVICE, GITHUB_CREDENTIAL_ACCOUNT, token);
+      log.info('GitHub token updated', { source: 'keychain' });
+      return { success: true };
+    });
+
+    hub.onRequest('space.github.getTokenStatus', async () => {
+      await assertRpcConfigEnabled(context, this.sourceId);
+      return await this.getTokenStatus();
+    });
+
+    /**
+     * Remove the daemon-wide GitHub PAT from the credential store.
+     * Falls back to env-var token on the next resolveToken() call.
+     */
+    hub.onRequest('space.github.clearToken', async () => {
+      await assertRpcConfigEnabled(context, this.sourceId);
+      if (!this.credentialStore) {
+        throw new Error('Credential store is not available for GitHub tokens');
+      }
+      await this.credentialStore.delete(GITHUB_CREDENTIAL_SERVICE, GITHUB_CREDENTIAL_ACCOUNT);
+      log.info('GitHub token removed from credential store');
+      return { success: true, autoRegisteredHookCount: this.repo.countAllAutoRegisteredHookRefs() };
+    });
+
+    /**
+     * Toggle polling for watched repos in a space.
+     *
+     * Scope rules:
+     * - Enabling polling only affects repos that do NOT already have webhook
+     *   delivery configured (webhookEnabled && webhookSecret, manual or
+     *   auto-registered). Polling and webhooks produce independent dedupe
+     *   keys (`action: 'polled'` vs webhook actions), so enabling both on
+     *   the same repo would backfill and re-trigger workflow runs for
+     *   already-delivered events. Repos with webhook delivery stay on
+     *   webhook delivery; the user can still flip the per-row Polling
+     *   checkbox explicitly.
+     * - Disabling polling clears the flag on every repo in the space.
+     *
+     * Side-effect on the GLOBAL polling capability: enabling flips it on
+     * (it gates every poll cycle across the daemon). Disabling flips it
+     * back off only when no polling-configured repos remain in any space —
+     * so the UI checkbox reflects reality after a disable.
+     */
+    hub.onRequest('space.github.setPollingEnabled', async (data) => {
+      await assertRpcConfigEnabled(context, this.sourceId);
+      const params = data as { spaceId?: string; enabled?: boolean };
+      if (!params.spaceId || typeof params.enabled !== 'boolean') {
+        throw new Error('spaceId and enabled are required');
+      }
+      const repos = this.repo.listWatchedRepos(params.spaceId);
+      for (const repo of repos) {
+        if (params.enabled && repo.webhookEnabled && repo.webhookSecret) {
+          // Webhook delivery is configured for this row (manual or
+          // auto-registered). Polling and webhooks emit independent dedupe
+          // keys (`action: 'polled'` vs webhook actions), so enabling both
+          // would backfill events webhooks already delivered. Leave polling
+          // off and let the user opt in via the per-row Polling checkbox.
+          // Inactive/broken webhooks should be fixed at the webhook layer
+          // rather than papered over with duplicate polling delivery.
+          continue;
+        }
+        this.repo.upsertWatchedRepo({
+          spaceId: repo.spaceId,
+          owner: repo.owner,
+          repo: repo.repo,
+          pollingEnabled: params.enabled,
+        });
+      }
+      if (params.enabled) {
+        // Record intent BEFORE enabling capability so the capability helper
+        // sees the new intent when it scans for spaces with polling_intent.
+        this.repo.setPollingIntent(params.spaceId, true);
+        await this.enablePollingCapability(context);
+        this.ensurePollingActive();
+      } else {
+        // Clear intent BEFORE disabling capability so countSpacesWithPollingIntent
+        // reflects the user's revocation; otherwise the helper would keep the
+        // capability on (intent persisted) and the global flag would never drop.
+        this.repo.setPollingIntent(params.spaceId, false);
+        await this.disablePollingCapabilityIfUnused(context);
+        this.maybeStopPolling();
+      }
+      await this.persistSpaceConfig(context, params.spaceId);
+      context.onSourceConfigChanged({
+        source: this.sourceId,
+        spaceId: params.spaceId,
+        kind: 'watched_repo_changed',
+      });
+      return { spaceId: params.spaceId, pollingEnabled: params.enabled };
     });
   }
 
@@ -368,9 +544,155 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       log.warn('GitHub polling cycle failed', {
         error: error instanceof Error ? error.message : String(error),
       });
-    } finally {
-      if (!this.stopped) this.scheduleNextPoll();
     }
+    if (this.stopped) return;
+    if (this.repo.listPollingRepos().length === 0) {
+      // No work left — release the timer. watchRepo/setPollingEnabled will
+      // spin it back up when a polling-enabled repo reappears.
+      if (this.pollTimer) {
+        clearTimeout(this.pollTimer);
+        this.pollTimer = null;
+      }
+      return;
+    }
+    this.scheduleNextPoll();
+  }
+
+  /**
+   * Resolve the GitHub PAT from the credential store when wired, falling back
+   * to the env-supplied token. Returns undefined when neither is available.
+   */
+  private async resolveToken(): Promise<string | undefined> {
+    if (this.credentialStore) {
+      try {
+        const stored = await this.credentialStore.get(
+          GITHUB_CREDENTIAL_SERVICE,
+          GITHUB_CREDENTIAL_ACCOUNT
+        );
+        if (stored) return stored;
+      } catch (error) {
+        log.warn('Failed to read GitHub token from credential store', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    return this.githubToken;
+  }
+
+  private async getTokenStatus(): Promise<GitHubTokenStatus> {
+    let source: GitHubTokenStatus['source'] = 'none';
+    let token: string | undefined;
+    let keychainError: string | undefined;
+    if (this.credentialStore) {
+      try {
+        const stored = await this.credentialStore.get(
+          GITHUB_CREDENTIAL_SERVICE,
+          GITHUB_CREDENTIAL_ACCOUNT
+        );
+        if (stored) {
+          token = stored;
+          source = 'keychain';
+        }
+      } catch (error) {
+        keychainError = error instanceof Error ? error.message : 'credential store unavailable';
+        log.warn('Failed to read GitHub token from credential store', { error: keychainError });
+      }
+    }
+    if (!token && this.githubToken) {
+      token = this.githubToken;
+      source = 'env';
+    }
+    if (!token)
+      return {
+        configured: false,
+        source: 'none',
+        error: keychainError,
+        autoRegisteredHookCount: this.repo.countAllAutoRegisteredHookRefs(),
+      };
+
+    try {
+      const fetchImpl = this.options.fetchImpl ?? fetch;
+      const response = await fetchImpl(`${GITHUB_API_BASE}/user`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/vnd.github+json',
+          'User-Agent': 'NeoKai-Space-GitHub/1.0',
+          'X-GitHub-Api-Version': '2022-11-28',
+        },
+      });
+      const autoRegisteredHookCount = this.repo.countAllAutoRegisteredHookRefs();
+      if (response.ok) {
+        const user = (await response.json()) as { login?: string };
+        return { configured: true, source, login: user.login, autoRegisteredHookCount };
+      }
+      return {
+        configured: true,
+        source,
+        error: `HTTP ${response.status}`,
+        autoRegisteredHookCount,
+      };
+    } catch (error) {
+      return {
+        configured: true,
+        source,
+        error: error instanceof Error ? error.message : 'validation failed',
+        autoRegisteredHookCount: this.repo.countAllAutoRegisteredHookRefs(),
+      };
+    }
+  }
+
+  /**
+   * Flip the global polling capability on. Called when a polling-enabled repo
+   * is added so subsequent poll cycles are not blocked by capability gating.
+   */
+  private async enablePollingCapability(context: ExternalEventExtensionContext): Promise<void> {
+    const global = await context.config.getGlobalConfig(this.sourceId);
+    if (global.capabilities.polling === true) return;
+    await context.config.setGlobalConfig(this.sourceId, {
+      ...global,
+      capabilities: { ...global.capabilities, polling: true },
+    });
+  }
+
+  /**
+   * Turn the global polling capability off if no watched repo in any space
+   * has `polling_enabled = 1` AND no space has a persisted polling intent.
+   * Called from setPollingEnabled(false), unwatchRepo, and watchRepo when
+   * the row ends up without polling, so the UI checkbox reflects reality
+   * after the last polling consumer goes away.
+   *
+   * Uses `listAllPollingConfiguredRepos` (NOT `listPollingRepos`) so a
+   * disabled space or row that still carries a polling row doesn't strand
+   * the capability in the OFF state. Includes the per-space polling-intent
+   * count so a space that has signalled intent to use polling (but
+   * temporarily has zero polling rows) doesn't have its intent stranded
+   * either — the capability stays on until the user explicitly turns the
+   * intent off via setPollingEnabled(false).
+   */
+  private async disablePollingCapabilityIfUnused(
+    context: ExternalEventExtensionContext
+  ): Promise<void> {
+    if (this.repo.listAllPollingConfiguredRepos().length > 0) return;
+    if (this.repo.countSpacesWithPollingIntent() > 0) return;
+    const global = await context.config.getGlobalConfig(this.sourceId);
+    if (global.capabilities.polling !== true) return;
+    await context.config.setGlobalConfig(this.sourceId, {
+      ...global,
+      capabilities: { ...global.capabilities, polling: false },
+    });
+  }
+
+  private ensurePollingActive(): void {
+    if (this.stopped) return;
+    if (this.pollTimer) return;
+    this.scheduleNextPoll();
+  }
+
+  private maybeStopPolling(): void {
+    if (!this.pollTimer) return;
+    if (this.repo.listPollingRepos().length > 0) return;
+    clearTimeout(this.pollTimer);
+    this.pollTimer = null;
   }
 
   private async publishEvent(
@@ -391,6 +713,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       source: this.sourceId,
       enabled: this.repo.isSpaceEnabled(spaceId),
       settings: {
+        pollingIntent: this.repo.getPollingIntent(spaceId),
         watchedRepos: repos.map((repo) => ({
           id: repo.id,
           owner: repo.owner,
@@ -429,7 +752,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     owner: string;
     repo: string;
   }): Promise<GitHubWatchedRepo> {
-    if (!this.githubToken) {
+    if (!(await this.resolveToken())) {
       throw new Error('GITHUB_TOKEN is required to configure GitHub webhooks');
     }
     const webhookUrl = getConfiguredWebhookUrl();
@@ -478,7 +801,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     owner: string,
     repo: string
   ): Promise<GitHubWatchedRepo> {
-    if (!this.githubToken) {
+    if (!(await this.resolveToken())) {
       throw new Error('GITHUB_TOKEN is required to check GitHub webhooks');
     }
     const watched = this.repo.getWatchedRepo(spaceId, owner, repo);
@@ -609,7 +932,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
   }
 
   private async deleteRemoteWebhook(watched: GitHubWatchedRepo): Promise<void> {
-    if (!this.githubToken) {
+    if (!(await this.resolveToken())) {
       throw new Error('GITHUB_TOKEN is required to delete GitHub webhooks');
     }
     const repoPath = gitHubRepoPath(watched.owner, watched.repo);
@@ -624,12 +947,16 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
   }
 
   private async githubFetch(path: string, init: RequestInit = {}): Promise<Response> {
+    const token = await this.resolveToken();
+    if (!token) {
+      throw new Error('GITHUB_TOKEN is required for GitHub API requests');
+    }
     const response = await (this.options.fetchImpl ?? fetch)(`${GITHUB_API_BASE}${path}`, {
       ...init,
       headers: {
         Accept: 'application/vnd.github+json',
         ...(init.body ? { 'Content-Type': 'application/json' } : {}),
-        Authorization: `Bearer ${this.githubToken}`,
+        Authorization: `Bearer ${token}`,
         'User-Agent': 'NeoKai-Space-GitHub/1.0',
         'X-GitHub-Api-Version': '2022-11-28',
         ...init.headers,
@@ -662,6 +989,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       { key: 'pulls', path: '/pulls', extra: 'state=all&sort=updated&direction=desc' },
     ];
 
+    const token = await this.resolveToken();
     for (const endpoint of endpoints) {
       const page = processedPages[endpoint.key] ?? 1;
       const query = new URLSearchParams();
@@ -680,7 +1008,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         'User-Agent': 'NeoKai-Space-GitHub/1.0',
         'X-GitHub-Api-Version': '2022-11-28',
       };
-      if (this.githubToken) headers.Authorization = `Bearer ${this.githubToken}`;
+      if (token) headers.Authorization = `Bearer ${token}`;
       if (page === 1 && etags[endpoint.key]) headers['If-None-Match'] = etags[endpoint.key];
       const response = await fetchImpl(url, { headers });
       if (response.status === 304) continue;
@@ -760,6 +1088,33 @@ function generateWebhookSecret(): string {
   const bytes = new Uint8Array(32);
   crypto.getRandomValues(bytes);
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * Accepted GitHub token prefixes. Limited to user-scoped tokens that the
+ * `/user` validation endpoint will accept: classic PATs (`ghp_`), fine-grained
+ * PATs (`github_pat_`), and OAuth user tokens (`gho_`). App installation
+ * (`ghs_`) and app user-to-server (`ghu_`/`ghr_`) tokens are NOT accepted
+ * because they cannot validate via `/user` and would surface as a false
+ * "Token invalid" state even though repository API calls would succeed.
+ */
+const GITHUB_TOKEN_PREFIXES = ['ghp_', 'github_pat_', 'gho_'] as const;
+const GITHUB_TOKEN_MIN_LENGTH = 16;
+
+/**
+ * Reject tokens that obviously aren't GitHub PATs. Intentionally permissive
+ * about length upper bound to accommodate fine-grained PATs; the floor catches
+ * accidental whitespace/paste truncation. The GitHub API is the source of
+ * truth for actual validity — see `getTokenStatus`.
+ */
+function validateGitHubTokenFormat(token: string): void {
+  if (token.length < GITHUB_TOKEN_MIN_LENGTH) {
+    throw new Error(`GitHub token is too short (minimum ${GITHUB_TOKEN_MIN_LENGTH} characters)`);
+  }
+  const matchesPrefix = GITHUB_TOKEN_PREFIXES.some((prefix) => token.startsWith(prefix));
+  if (!matchesPrefix) {
+    throw new Error(`GitHub token must start with one of: ${GITHUB_TOKEN_PREFIXES.join(', ')}`);
+  }
 }
 
 function gitHubRepoPath(owner: string, repo: string): string {

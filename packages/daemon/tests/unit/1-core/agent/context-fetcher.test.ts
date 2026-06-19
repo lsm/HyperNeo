@@ -662,7 +662,7 @@ describe('ContextFetcher.toContextInfo', () => {
     });
 
     const info = ContextFetcher.toContextInfo(response, {
-      id: 'kimi-for-coding',
+      id: 'kimi-k2.7-code',
       alias: 'kimi',
       contextWindow: 262144,
       provider: 'kimi',
@@ -902,15 +902,13 @@ describe('ContextFetcher.fetch', () => {
       expect(warnSpy).not.toHaveBeenCalled();
     });
 
-    it('does not warn for providers opted out of SDK auto-compact (Kimi)', async () => {
-      // Kimi: PP() caps kimi-for-coding to 200k regardless of metadata.
-      // Mismatch is the expected steady state — skip to avoid log noise.
+    it('does not warn for Kimi because it is not in native mismatch diagnostics', async () => {
       const getContextUsage = mock(async () =>
         baseResponse({
           totalTokens: 100_000,
           maxTokens: 200_000,
           rawMaxTokens: 200_000,
-          model: 'kimi-for-coding',
+          model: 'kimi-k2.7-code',
         })
       );
       const query = { getContextUsage } as unknown as Query;
@@ -919,7 +917,7 @@ describe('ContextFetcher.fetch', () => {
       const warnSpy = spyOn(fetcher.logger, 'warn');
 
       await fetcher.fetch(query, {
-        id: 'kimi-for-coding',
+        id: 'kimi-k2.7-code',
         contextWindow: 262_144,
         provider: 'kimi',
         preferContextWindowMetadata: true,

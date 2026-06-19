@@ -36,6 +36,15 @@ export class ProviderCredentialManager {
     private readonly env: NodeJS.ProcessEnv = process.env
   ) {}
 
+  /**
+   * Expose the underlying credential store for subsystems that persist
+   * non-provider secrets (e.g. the GitHub event extension's PAT) but should
+   * share the same Keychain status tracking as provider credentials.
+   */
+  getCredentialStore(): CredentialStore {
+    return this.store;
+  }
+
   async storeApiKey(providerId: string, apiKey: string): Promise<void> {
     const credentials: ProviderCredentials = { type: 'api_key', apiKey };
     await this.store.set(
