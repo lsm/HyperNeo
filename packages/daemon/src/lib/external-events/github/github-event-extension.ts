@@ -1237,7 +1237,12 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         }
       }
       processedPages[endpoint.key] = rows.length >= 100 ? page + 1 : 1;
-      endpointLastSeenAt[endpoint.key] = watermarks.pending;
+      // Only advance the per-endpoint watermark once the endpoint's backlog is
+      // complete. While pages remain, the next poll must keep using the old
+      // watermark so remaining pages are not filtered out by `since`.
+      if (processedPages[endpoint.key] === 1) {
+        endpointLastSeenAt[endpoint.key] = watermarks.pending;
+      }
       if (rateLimit.remaining < RATE_LIMIT_LOW_REMAINING_THRESHOLD) {
         this.applyRateLimit(rateLimit);
         partialScan = true;
