@@ -579,6 +579,57 @@ describe('SDKMessageHandler', () => {
       });
     });
 
+    it('should reset thinking token tracking on system init (new query start)', async () => {
+      // Stale counters from an interrupted previous turn
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'thinking_tokens',
+        uuid: 'thinking-1',
+        session_id: 'test-session-id',
+        estimated_tokens: 500,
+        estimated_tokens_delta: 500,
+      } as unknown as SDKMessage);
+
+      const assistantA: SDKMessage = {
+        type: 'assistant',
+        uuid: 'assistant-a',
+        session_id: 'test-session-id',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'thinking', thinking: 'Interrupted turn chunk' }],
+        },
+        parent_tool_use_id: null,
+      } as unknown as SDKMessage;
+      await handler.handleMessage(assistantA);
+
+      // New SDK query/session starts with init
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'init',
+        uuid: 'init-uuid',
+        session_id: 'new-sdk-session-id',
+        slash_commands: [],
+      } as unknown as SDKMessage);
+
+      // Next thinking block should not inherit the previous turn's stamp baseline
+      const assistantB: SDKMessage = {
+        type: 'assistant',
+        uuid: 'assistant-b',
+        session_id: 'test-session-id',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'thinking', thinking: 'New query chunk' }],
+        },
+        parent_tool_use_id: null,
+      } as unknown as SDKMessage;
+      await handler.handleMessage(assistantB);
+
+      const savedB = saveSDKMessageSpy.mock.calls.find(
+        (call) => (call[1] as SDKMessage).uuid === 'assistant-b'
+      )?.[1] as SDKMessage;
+      expect(savedB).not.toHaveProperty('estimated_thinking_tokens');
+    });
+
     it('should not persist thinking_tokens but stash estimate', async () => {
       const message: SDKMessage = {
         type: 'system',
@@ -657,6 +708,311 @@ describe('SDKMessageHandler', () => {
       const savedMessage = lastCall[1] as SDKMessage;
       expect(savedMessage.type).toBe('assistant');
       expect(savedMessage).not.toHaveProperty('estimated_thinking_tokens');
+    });
+
+    it('should persist per-block deltas from a cumulative turn-level estimate', async () => {
+      // Simulate a task-agent turn where the SDK emits a cumulative estimate
+      // that increases, and assistant thinking is split across messages.
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'thinking_tokens',
+        uuid: 'thinking-1',
+        session_id: 'test-session-id',
+        estimated_tokens: 500,
+        estimated_tokens_delta: 500,
+      } as unknown as SDKMessage);
+
+      const assistantA: SDKMessage = {
+        type: 'assistant',
+        uuid: 'assistant-a',
+        session_id: 'test-session-id',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'thinking', thinking: 'First chunk' }],
+        },
+        parent_tool_use_id: null,
+      } as unknown as SDKMessage;
+      await handler.handleMessage(assistantA);
+
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'thinking_tokens',
+        uuid: 'thinking-2',
+        session_id: 'test-session-id',
+        estimated_tokens: 1200,
+        estimated_tokens_delta: 700,
+      } as unknown as SDKMessage);
+
+      const assistantB: SDKMessage = {
+        type: 'assistant',
+        uuid: 'assistant-b',
+        session_id: 'test-session-id',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'thinking', thinking: 'Second chunk' }],
+        },
+        parent_tool_use_id: null,
+      } as unknown as SDKMessage;
+      await handler.handleMessage(assistantB);
+
+      const savedA = saveSDKMessageSpy.mock.calls.find(
+        (call) => (call[1] as SDKMessage).uuid === 'assistant-a'
+      )?.[1] as SDKMessage;
+      const savedB = saveSDKMessageSpy.mock.calls.find(
+        (call) => (call[1] as SDKMessage).uuid === 'assistant-b'
+      )?.[1] as SDKMessage;
+
+      expect(savedA).toMatchObject({ estimated_thinking_tokens: 500 });
+      expect(savedB).toMatchObject({ estimated_thinking_tokens: 700 });
+    });
+
+    it('should not repeat the same cumulative count on later thinking blocks', async () => {
+      // Provider keeps emitting the same cumulative estimate while the SDK
+      // streams multiple assistant thinking messages.
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'thinking_tokens',
+        uuid: 'thinking-1',
+        session_id: 'test-session-id',
+        estimated_tokens: 814,
+        estimated_tokens_delta: 814,
+      } as unknown as SDKMessage);
+
+      const assistantA: SDKMessage = {
+        type: 'assistant',
+        uuid: 'assistant-a',
+        session_id: 'test-session-id',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'thinking', thinking: 'First chunk' }],
+        },
+        parent_tool_use_id: null,
+      } as unknown as SDKMessage;
+      await handler.handleMessage(assistantA);
+
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'thinking_tokens',
+        uuid: 'thinking-2',
+        session_id: 'test-session-id',
+        estimated_tokens: 814,
+        estimated_tokens_delta: 0,
+      } as unknown as SDKMessage);
+
+      const assistantB: SDKMessage = {
+        type: 'assistant',
+        uuid: 'assistant-b',
+        session_id: 'test-session-id',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'thinking', thinking: 'Second chunk' }],
+        },
+        parent_tool_use_id: null,
+      } as unknown as SDKMessage;
+      await handler.handleMessage(assistantB);
+
+      const savedA = saveSDKMessageSpy.mock.calls.find(
+        (call) => (call[1] as SDKMessage).uuid === 'assistant-a'
+      )?.[1] as SDKMessage;
+      const savedB = saveSDKMessageSpy.mock.calls.find(
+        (call) => (call[1] as SDKMessage).uuid === 'assistant-b'
+      )?.[1] as SDKMessage;
+
+      expect(savedA).toMatchObject({ estimated_thinking_tokens: 814 });
+      expect(savedB).not.toHaveProperty('estimated_thinking_tokens');
+    });
+
+    it('should reset thinking token tracking at turn end', async () => {
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'thinking_tokens',
+        uuid: 'thinking-1',
+        session_id: 'test-session-id',
+        estimated_tokens: 500,
+        estimated_tokens_delta: 500,
+      } as unknown as SDKMessage);
+
+      const assistantA: SDKMessage = {
+        type: 'assistant',
+        uuid: 'assistant-a',
+        session_id: 'test-session-id',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'thinking', thinking: 'Turn 1 chunk' }],
+        },
+        parent_tool_use_id: null,
+      } as unknown as SDKMessage;
+      await handler.handleMessage(assistantA);
+
+      // End the turn
+      await handler.handleMessage({
+        type: 'result',
+        subtype: 'success',
+        uuid: 'result-1',
+        usage: {
+          input_tokens: 100,
+          output_tokens: 50,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+        },
+        total_cost_usd: 0.001,
+        modelUsage: {},
+      } as unknown as SDKMessage);
+
+      // A later thinking block in a new turn should not inherit stale estimate
+      const assistantB: SDKMessage = {
+        type: 'assistant',
+        uuid: 'assistant-b',
+        session_id: 'test-session-id',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'thinking', thinking: 'Turn 2 chunk without new thinking_tokens' }],
+        },
+        parent_tool_use_id: null,
+      } as unknown as SDKMessage;
+      await handler.handleMessage(assistantB);
+
+      const savedB = saveSDKMessageSpy.mock.calls.find(
+        (call) => (call[1] as SDKMessage).uuid === 'assistant-b'
+      )?.[1] as SDKMessage;
+      expect(savedB).not.toHaveProperty('estimated_thinking_tokens');
+    });
+
+    it('should omit zero and repeated identical deltas', async () => {
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'thinking_tokens',
+        uuid: 'thinking-1',
+        session_id: 'test-session-id',
+        estimated_tokens: 300,
+        estimated_tokens_delta: 300,
+      } as unknown as SDKMessage);
+
+      const assistantA: SDKMessage = {
+        type: 'assistant',
+        uuid: 'assistant-a',
+        session_id: 'test-session-id',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'thinking', thinking: 'Chunk A' }],
+        },
+        parent_tool_use_id: null,
+      } as unknown as SDKMessage;
+      await handler.handleMessage(assistantA);
+
+      // Provider repeats the same cumulative estimate.
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'thinking_tokens',
+        uuid: 'thinking-2',
+        session_id: 'test-session-id',
+        estimated_tokens: 300,
+        estimated_tokens_delta: 0,
+      } as unknown as SDKMessage);
+
+      const assistantB: SDKMessage = {
+        type: 'assistant',
+        uuid: 'assistant-b',
+        session_id: 'test-session-id',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'thinking', thinking: 'Chunk B' }],
+        },
+        parent_tool_use_id: null,
+      } as unknown as SDKMessage;
+      await handler.handleMessage(assistantB);
+
+      const savedA = saveSDKMessageSpy.mock.calls.find(
+        (call) => (call[1] as SDKMessage).uuid === 'assistant-a'
+      )?.[1] as SDKMessage;
+      const savedB = saveSDKMessageSpy.mock.calls.find(
+        (call) => (call[1] as SDKMessage).uuid === 'assistant-b'
+      )?.[1] as SDKMessage;
+
+      expect(savedA).toMatchObject({ estimated_thinking_tokens: 300 });
+      expect(savedB).not.toHaveProperty('estimated_thinking_tokens');
+    });
+
+    it('should treat a decreased cumulative estimate as a new thinking block', async () => {
+      // First thinking block ends with a cumulative estimate of 300.
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'thinking_tokens',
+        uuid: 'thinking-1',
+        session_id: 'test-session-id',
+        estimated_tokens: 300,
+        estimated_tokens_delta: 300,
+      } as unknown as SDKMessage);
+
+      const assistantA: SDKMessage = {
+        type: 'assistant',
+        uuid: 'assistant-a',
+        session_id: 'test-session-id',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'thinking', thinking: 'Chunk A' }],
+        },
+        parent_tool_use_id: null,
+      } as unknown as SDKMessage;
+      await handler.handleMessage(assistantA);
+
+      // Cumulative drops: the SDK has started a new thinking block.
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'thinking_tokens',
+        uuid: 'thinking-2',
+        session_id: 'test-session-id',
+        estimated_tokens: 200,
+        estimated_tokens_delta: -100,
+      } as unknown as SDKMessage);
+
+      const assistantB: SDKMessage = {
+        type: 'assistant',
+        uuid: 'assistant-b',
+        session_id: 'test-session-id',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'thinking', thinking: 'Chunk B' }],
+        },
+        parent_tool_use_id: null,
+      } as unknown as SDKMessage;
+      await handler.handleMessage(assistantB);
+
+      // Same cumulative repeated again for the new block should not re-stamp.
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'thinking_tokens',
+        uuid: 'thinking-3',
+        session_id: 'test-session-id',
+        estimated_tokens: 200,
+        estimated_tokens_delta: 0,
+      } as unknown as SDKMessage);
+
+      const assistantC: SDKMessage = {
+        type: 'assistant',
+        uuid: 'assistant-c',
+        session_id: 'test-session-id',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'thinking', thinking: 'Chunk C' }],
+        },
+        parent_tool_use_id: null,
+      } as unknown as SDKMessage;
+      await handler.handleMessage(assistantC);
+
+      const savedA = saveSDKMessageSpy.mock.calls.find(
+        (call) => (call[1] as SDKMessage).uuid === 'assistant-a'
+      )?.[1] as SDKMessage;
+      const savedB = saveSDKMessageSpy.mock.calls.find(
+        (call) => (call[1] as SDKMessage).uuid === 'assistant-b'
+      )?.[1] as SDKMessage;
+      const savedC = saveSDKMessageSpy.mock.calls.find(
+        (call) => (call[1] as SDKMessage).uuid === 'assistant-c'
+      )?.[1] as SDKMessage;
+
+      expect(savedA).toMatchObject({ estimated_thinking_tokens: 300 });
+      expect(savedB).toMatchObject({ estimated_thinking_tokens: 200 });
+      expect(savedC).not.toHaveProperty('estimated_thinking_tokens');
     });
   });
 
