@@ -232,6 +232,33 @@ describe('RepeatedToolErrorGuardrail', () => {
     expect(deps.routeRecoveryMessage).not.toHaveBeenCalled();
   });
 
+  it('defers recovery when a batched message also contains a successful tool result', async () => {
+    const { guardrail, deps } = makeGuardrail();
+
+    guardrail.recordToolUse('tool-1', 'Read');
+    guardrail.recordToolUse('tool-2', 'Glob');
+    // First message: one error, one success — success should break the streak.
+    await guardrail.observeToolResultErrors({
+      type: 'user',
+      message: {
+        role: 'user',
+        content: [
+          { type: 'tool_result', tool_use_id: 'tool-1', is_error: true, content: 'file not found' },
+          { type: 'tool_result', tool_use_id: 'tool-2', is_error: false, content: 'ok' },
+        ],
+      },
+    } as unknown as ReturnType<typeof makeErrorResult>);
+
+    // Second message: same error as before. Without the success reset this would
+    // trigger at threshold=2; with it, the streak was reset so this is count=1.
+    const triggered = await guardrail.observeToolResultErrors(
+      makeErrorResult('tool-1', 'file not found')
+    );
+
+    expect(triggered).toBe(false);
+    expect(deps.routeRecoveryMessage).not.toHaveBeenCalled();
+  });
+
   it('does not immediately re-trigger for the same tool+error after an intervention', async () => {
     const { guardrail, deps } = makeGuardrail();
 

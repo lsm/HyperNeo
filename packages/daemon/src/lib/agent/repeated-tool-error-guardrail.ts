@@ -109,21 +109,29 @@ export class RepeatedToolErrorGuardrail {
     }
     if (!Array.isArray(content)) return false;
 
-    let triggered = false;
-    let errorBlockCount = 0;
-    const seenInThisMessage = new Set<string>();
+    // First pass: collect error blocks and detect any successful tool_result.
+    // A batched success breaks the streak regardless of error block order.
+    const errors: Array<{ toolName: string; errorText: string }> = [];
+    let hasSuccessToolResult = false;
     for (const block of content) {
       const error = extractToolResultError(block, this.state.toolUseIdToName);
-      if (!error) {
-        // Non-error tool_results break an error streak.
-        if (isToolResultBlock(block)) {
-          this.reset();
-        }
+      if (error) {
+        errors.push(error);
         continue;
       }
+      if (isToolResultBlock(block)) {
+        hasSuccessToolResult = true;
+      }
+    }
 
-      errorBlockCount += 1;
+    if (hasSuccessToolResult || errors.length === 0) {
+      this.reset();
+      return false;
+    }
 
+    let triggered = false;
+    const seenInThisMessage = new Set<string>();
+    for (const error of errors) {
       const keyString = `${error.toolName}:${normalizeError(error.errorText, this.errorFingerprintLength)}`;
       // A single user message may carry multiple tool_result blocks from one
       // parallel assistant turn. Count each distinct tool+error at most once
@@ -138,13 +146,6 @@ export class RepeatedToolErrorGuardrail {
         triggered = true;
         await this.intervene(error.toolName, error.errorText, task);
       }
-    }
-
-    // If this user message carried no error tool_results, the prior turn did not
-    // retry the same failing tool; clear the streak so a later single failure
-    // does not look like a repeat.
-    if (errorBlockCount === 0) {
-      this.reset();
     }
 
     return triggered;
