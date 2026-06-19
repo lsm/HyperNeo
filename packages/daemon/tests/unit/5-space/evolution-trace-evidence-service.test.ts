@@ -510,6 +510,82 @@ describe('EvolutionTraceEvidenceService', () => {
     expect(triage?.metadata.suspectedFix).toContain('src/auth.ts');
   });
 
+  it('extracts file paths from path:line:col compiler output', () => {
+    const { scope, task } = createScopedTask('Compiler path line col');
+    insertToolExchange(
+      task.id,
+      'session-1',
+      'check-1',
+      'Bash',
+      { command: 'bun run check' },
+      true,
+      {
+        text: 'Error at src/auth.ts:42:13',
+      }
+    );
+    insertToolExchange(
+      task.id,
+      'session-1',
+      'check-2',
+      'Bash',
+      { command: 'bun run check' },
+      true,
+      {
+        text: 'at foo (src/auth.ts:43:12)',
+      }
+    );
+
+    scopeService.attachTaskEvidence({ taskId: task.id });
+
+    const triage = listTraceEvidence(scope.id).find((item) => item.kind === 'verification_triage');
+    expect(triage).toBeTruthy();
+    expect(triage?.metadata.suspectedFix).toContain('src/auth.ts');
+  });
+
+  it('does not use edits from other sessions as suspected fix', () => {
+    const { scope, task } = createScopedTask('Session scoped fallback fix');
+    insertToolExchange(
+      task.id,
+      'session-2',
+      'edit-other',
+      'Edit',
+      { file_path: 'src/other.ts' },
+      false,
+      {
+        text: 'ok',
+      }
+    );
+    insertToolExchange(
+      task.id,
+      'session-1',
+      'check-1',
+      'Bash',
+      { command: 'bun run check' },
+      true,
+      {
+        text: 'Checks failed with no file mentioned',
+      }
+    );
+    insertToolExchange(
+      task.id,
+      'session-1',
+      'check-2',
+      'Bash',
+      { command: 'bun run check' },
+      true,
+      {
+        text: 'Checks still failing',
+      }
+    );
+
+    scopeService.attachTaskEvidence({ taskId: task.id });
+
+    const triage = listTraceEvidence(scope.id).find((item) => item.kind === 'verification_triage');
+    expect(triage).toBeTruthy();
+    expect(triage?.metadata.suspectedFix).not.toContain('src/other.ts');
+    expect(triage?.metadata.suspectedFix).toContain('re-run');
+  });
+
   it('retains raw trace span references in metadata without storing transcript dumps', () => {
     const { scope, task } = createScopedTask('Raw refs');
     insertToolExchange(task.id, 'session-1', 'edit-1', 'Edit', { file_path: '/tmp/a.ts' }, true, {

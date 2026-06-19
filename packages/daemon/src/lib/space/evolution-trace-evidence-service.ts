@@ -665,7 +665,7 @@ const SOURCE_FILE_EXTENSIONS = new Set([
 function extractFilePaths(text: string): string[] {
   const paths: string[] = [];
   const seen = new Set<string>();
-  for (const token of text.split(/[\s\n\r,"'`()[\]{}]+/)) {
+  for (const token of text.split(/[\s\n\r,:"'`()[\]{}]+/)) {
     const trimmed = token.trim();
     if (!trimmed) continue;
     const ext = trimmed.split('.').pop()?.toLowerCase() ?? '';
@@ -692,11 +692,14 @@ function suspectedFixForTriage(
     return `Address failures in ${errorPaths.join(', ')}`;
   }
 
-  const firstFailureTime = triage.failures[0]?.timestamp;
-  if (firstFailureTime !== undefined) {
+  const firstFailure = triage.failures[0];
+  const firstFailureTime = firstFailure?.timestamp;
+  const sessionId = firstFailure?.sessionId;
+  if (firstFailureTime !== undefined && sessionId !== undefined) {
     const recentEdit = toolUses
       .filter(
         (use) =>
+          use.sessionId === sessionId &&
           EDIT_TOOL_NAMES.has(use.name) &&
           use.timestamp <= firstFailureTime &&
           readFilePath(use.input)
