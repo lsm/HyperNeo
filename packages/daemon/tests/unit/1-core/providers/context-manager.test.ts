@@ -71,13 +71,20 @@ class MockProvider implements Provider {
 
   buildSdkConfig(
     modelId: string,
-    sessionConfig?: { apiKey?: string; baseUrl?: string }
+    sessionConfig?: { apiKey?: string; baseUrl?: string; region?: unknown }
   ): ProviderSdkConfig {
+    const envVars: Record<string, string> = {
+      ANTHROPIC_BASE_URL: sessionConfig?.baseUrl || 'https://mock.api.com',
+      ANTHROPIC_AUTH_TOKEN: sessionConfig?.apiKey || 'mock-api-key',
+    };
+    if (sessionConfig?.region) {
+      envVars.REGION = String(sessionConfig.region);
+    }
+    if (modelId === 'provider-model') {
+      envVars.ANTHROPIC_MODEL = 'provider-env-model';
+    }
     return {
-      envVars: {
-        ANTHROPIC_BASE_URL: sessionConfig?.baseUrl || 'https://mock.api.com',
-        ANTHROPIC_AUTH_TOKEN: sessionConfig?.apiKey || 'mock-api-key',
-      },
+      envVars,
       isAnthropicCompatible: true,
       apiVersion: 'v1',
     };
@@ -400,6 +407,47 @@ describe('ProviderContextManager', () => {
         workspacePath: '/test',
       });
     });
+
+    it('should include provider region in session config', () => {
+      const session: Session = {
+        id: 'test-session',
+        title: 'Test',
+        workspacePath: '/test',
+        createdAt: new Date().toISOString(),
+        lastActiveAt: new Date().toISOString(),
+        status: 'active',
+        config: {
+          model: 'glm-4',
+          maxTokens: 8192,
+          temperature: 1.0,
+          provider: 'glm',
+          providerConfig: {
+            apiKey: 'custom-key',
+            baseUrl: 'https://custom.api.com',
+            region: 'global',
+          },
+        },
+        metadata: {
+          messageCount: 0,
+          totalTokens: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          totalCost: 0,
+          toolCallCount: 0,
+        },
+      };
+
+      const context = manager.createContext(session);
+
+      expect(context.sessionConfig).toEqual({
+        apiKey: 'custom-key',
+        baseUrl: 'https://custom.api.com',
+        region: 'global',
+        sessionId: 'test-session',
+        workspacePath: '/test',
+      });
+      expect(context.sdkConfig.envVars.REGION).toBe('global');
+    });
   });
 
   describe('context getSdkModelId', () => {
@@ -461,6 +509,36 @@ describe('ProviderContextManager', () => {
       const sdkModelId = context.getSdkModelId();
 
       expect(sdkModelId).toBe('claude-3-opus');
+    });
+
+    it('should prefer provider ANTHROPIC_MODEL over translated model ID', () => {
+      registry.register(new MockProvider('mock', 'Provider Model', true, 'provider-'));
+      const session: Session = {
+        id: 'test-session',
+        title: 'Test',
+        workspacePath: '/test',
+        createdAt: new Date().toISOString(),
+        lastActiveAt: new Date().toISOString(),
+        status: 'active',
+        config: {
+          model: 'provider-model',
+          maxTokens: 8192,
+          temperature: 1.0,
+          provider: 'mock' as ProviderId,
+        },
+        metadata: {
+          messageCount: 0,
+          totalTokens: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          totalCost: 0,
+          toolCallCount: 0,
+        },
+      };
+
+      const context = manager.createContext(session);
+
+      expect(context.getSdkModelId()).toBe('provider-env-model');
     });
   });
 

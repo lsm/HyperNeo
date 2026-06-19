@@ -1007,10 +1007,12 @@ describe('AnthropicToCodexBridgeProvider', () => {
       // No speculative OpenAI-Beta header — the bridge's own traffic does
       // not send it, so the probe must not either.
       expect(headers['OpenAI-Beta']).toBeUndefined();
-      // ChatGPT Codex backend hard-rejects max_output_tokens
-      // (see openai-responses-bridge/server.ts:1170-1176).
+      // ChatGPT Codex backend requires streaming probe shape matching normal bridge traffic.
       const body = JSON.parse(init?.body as string) as Record<string, unknown>;
       expect(body['max_output_tokens']).toBeUndefined();
+      expect(body['instructions']).toBe('You are a concise assistant.');
+      expect(body['store']).toBe(false);
+      expect(body['stream']).toBe(true);
     });
 
     it('throws when OpenAI rejects the API key (401)', async () => {

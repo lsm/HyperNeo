@@ -33,6 +33,10 @@ class ContextImpl implements ProviderContext {
    * Applies translation if provider needs it
    */
   getSdkModelId(): string {
+    const providerModel = this.sdkConfig.envVars.ANTHROPIC_MODEL;
+    if (providerModel) {
+      return providerModel;
+    }
     if (this.provider.translateModelIdForSdk) {
       return this.provider.translateModelIdForSdk(this.modelId);
     }
@@ -103,6 +107,7 @@ export class ProviderContextManager {
         ? {
             apiKey: providerConfig.apiKey,
             baseUrl: providerConfig.baseUrl,
+            region: providerConfig.region,
           }
         : {}),
     };
