@@ -1,7 +1,6 @@
 import { createRequire } from 'node:module';
-import { access, constants, mkdir, rename, stat, unlink } from 'node:fs/promises';
-import { createReadStream, createWriteStream } from 'node:fs';
-import { Readable } from 'node:stream';
+import { access, constants, mkdir, rename, unlink } from 'node:fs/promises';
+import { createWriteStream } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { homedir } from 'node:os';
@@ -301,14 +300,10 @@ class TransformersFileCache {
     }
   }
 
-  async match(request: string): Promise<Response | undefined> {
+  async match(request: string): Promise<string | undefined> {
     try {
-      const filePath = this.filePath(request);
-      const { size } = await stat(filePath);
-      const headers = new Headers();
-      headers.set('content-length', String(size));
-      headers.set('content-type', 'application/octet-stream');
-      return new Response(Readable.toWeb(createReadStream(filePath)), { headers });
+      await access(this.filePath(request), constants.F_OK);
+      return this.filePath(request);
     } catch {
       return undefined;
     }
