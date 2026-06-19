@@ -635,6 +635,9 @@ export class SDKMessageHandler {
 
     if (isSDKResultMessage(message)) {
       this.lastResultWasSuccess = isSDKResultSuccess(message);
+      // Reset turn-level thinking token tracking now, before any turn-end
+      // handler can trigger an immediate queued turn replay.
+      this.resetThinkingTokenTracking();
     }
 
     // Handle specific message types
@@ -675,9 +678,6 @@ export class SDKMessageHandler {
     // triggers a fetch, so short turns still update context once.
     // The 5-event tick below is deduped via pendingContextRefresh.
     if (isSDKResultMessage(message)) {
-      // Reset turn-level thinking token tracking so the next turn starts fresh
-      // and cannot inherit stale cumulative estimates.
-      this.resetThinkingTokenTracking();
       void this.refreshContextUsage('turn-end');
       return;
     }
@@ -868,13 +868,14 @@ export class SDKMessageHandler {
 
     this.usesSessionStateChangedTurnEnd = true;
     if (message.state === 'idle') {
+      // Reset turn-scoped thinking tokens tracking before replaying queued
+      // turns, so the next turn cannot inherit a stale baseline.
+      this.resetThinkingTokenTracking();
       const allowQueueReplay = this.lastResultWasSuccess !== false;
       await this.finishTurn(allowQueueReplay);
       this.usesSessionStateChangedTurnEnd = false;
       this.expectsSessionStateIdleAfterResult = false;
       this.lastResultWasSuccess = null;
-      // Reset turn-scoped thinking tokens tracking to prevent stale leak
-      this.resetThinkingTokenTracking();
     }
   }
 
