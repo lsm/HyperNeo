@@ -36,7 +36,8 @@ type ReportFile = {
 };
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const defaultConfigPath = 'docs/plans/architecture-refactor-execution-plan/file-size-ratchet.json';
+const defaultConfigPath =
+  'docs/architecture/target-architecture/execution-plan/file-size-ratchet.json';
 
 function parseArgs(): { configPath: string; changedFrom: string | null; json: boolean } {
   let configPath = defaultConfigPath;
