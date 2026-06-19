@@ -1,4 +1,8 @@
-export { GitHubEventExtension } from './github-event-extension';
+export {
+  GitHubEventExtension,
+  parseRateLimitHeaders,
+  type GitHubRateLimitInfo,
+} from './github-event-extension';
 export {
   normalizeGitHubWebhook,
   normalizeGitHubPollingRow,
