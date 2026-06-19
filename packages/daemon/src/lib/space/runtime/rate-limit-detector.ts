@@ -26,6 +26,11 @@ const RATE_LIMIT_ERROR_PATTERNS = [
   /too many requests/i,
   /secondary rate/i,
   /API rate limit/i,
+  // Abuse-detection / throttling messages also require a backoff rather than
+  // an immediate retry.
+  /abuse detection/i,
+  /temporarily blocked/i,
+  /throttled/i,
   // A 429 status is itself rate-limit evidence; GitHub does not return 429 for
   // permission/auth failures, so a bare status match is safe.
   /HTTP\s*429/i,

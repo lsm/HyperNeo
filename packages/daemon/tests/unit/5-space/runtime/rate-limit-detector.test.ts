@@ -41,6 +41,14 @@ describe('isRateLimitError', () => {
     expect(isRateLimitError('returned error: 429')).toBe(true);
   });
 
+  test('matches abuse-detection and throttling messages', () => {
+    expect(isRateLimitError('You have triggered an abuse detection mechanism. Please retry.')).toBe(
+      true
+    );
+    expect(isRateLimitError('GitHub API temporarily blocked this request')).toBe(true);
+    expect(isRateLimitError('Request was throttled; try again later')).toBe(true);
+  });
+
   test('bare HTTP 403 without rate-limit text is NOT matched (permission failures)', () => {
     // GitHub returns 403 for both rate-limit AND permission errors; bare
     // status text must not classify permission errors as rate-limit retries.

@@ -51,6 +51,7 @@ import { SpaceRuntime } from './space-runtime';
 import type { SelectWorkflowWithLlm } from './llm-workflow-selector';
 import { selectWorkflowWithLlmDefault } from './llm-workflow-selector';
 import { ChannelRouter } from './channel-router';
+import { GateRetryScheduler } from './gate-retry-scheduler';
 import { SpaceTaskManager } from '../managers/space-task-manager';
 import { createSpaceAgentMcpServer } from '../tools/space-agent-tools';
 import type { ReplyRoutingRegistry } from './reply-routing-registry';
@@ -231,6 +232,12 @@ export class SpaceRuntimeService {
    */
   private readonly spaceAgentNotificationUnsubs = new Map<string, () => void>();
   private readonly longTermAgentFlushes = new Map<string, Promise<void>>();
+  /**
+   * Shared retry scheduler for rate-limited gate-data refresh re-evaluations.
+   * Persisted at the service level so retries survive across the transient
+   * `ChannelRouter` instances built by `notifyGateDataChanged`.
+   */
+  private readonly gateRetryScheduler = new GateRetryScheduler();
   private resumeStalledRecoveryPromise: Promise<void> = Promise.resolve();
   /**
    * Resolves when startup-time session provisioning has completed:
@@ -1848,6 +1855,7 @@ export class SpaceRuntimeService {
       channelCycleRepo: this.config.channelCycleRepo,
       db: this.config.db,
       workspacePath,
+      gateRetryScheduler: this.gateRetryScheduler,
       getSpaceAutonomyLevel: async (spaceId) => {
         const s = await spaceManager.getSpace(spaceId);
         return s?.autonomyLevel ?? 1;
@@ -1911,6 +1919,7 @@ export class SpaceRuntimeService {
       channelCycleRepo: this.config.channelCycleRepo,
       db: this.config.db,
       workspacePath,
+      gateRetryScheduler: this.gateRetryScheduler,
       getSpaceAutonomyLevel: async (spaceId) => {
         const s = await spaceManager.getSpace(spaceId);
         return s?.autonomyLevel ?? 1;

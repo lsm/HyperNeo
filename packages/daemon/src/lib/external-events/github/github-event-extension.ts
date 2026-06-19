@@ -1198,7 +1198,19 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       // are saved; only the remaining endpoints in this cycle are skipped.
       const rateLimit = parseRateLimitHeaders(response);
       if (rateLimit.limited) {
-        this.applyRateLimit(rateLimit);
+        // A 429 that does not exhaust the primary bucket (remaining > 0 and no
+        // Retry-After) is a secondary/abuse limit. Do not use the unrelated
+        // primary reset window; apply the minimum secondary backoff instead.
+        if (response.status === 429 && rateLimit.remaining > 0 && !rateLimit.retryAfter) {
+          this.applyRateLimit({
+            remaining: rateLimit.remaining,
+            resetAt: Date.now() + RATE_LIMIT_MIN_BACKOFF_MS,
+            limited: true,
+            retryAfter: true,
+          });
+        } else {
+          this.applyRateLimit(rateLimit);
+        }
         partialScan = true;
         break;
       }

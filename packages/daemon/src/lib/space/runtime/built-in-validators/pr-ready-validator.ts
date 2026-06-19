@@ -210,12 +210,15 @@ async function resolvePrUrl(
   const templatePrUrl = extractTemplatePrUrl(context);
   if (templatePrUrl) return { success: true, prUrl: templatePrUrl, shouldPatchPrUrl: true };
 
+  // Run gh pr view for current branch. The URL field is resolved via GitHub
+  // CLI's GraphQL PR finder, so a rate-limit probe uses the `graphql` resource
+  // window rather than REST `core`.
   const currentBranchPr = await runCommand<{ url?: string }>(
     ['gh', 'pr', 'view', '--json', 'url'],
     context.workspacePath,
     remainingTimeoutMs(deadlineMs),
     spawnImpl,
-    { resourceHint: 'core' }
+    { resourceHint: 'graphql' }
   );
   if (!currentBranchPr.success) {
     return {

@@ -27,6 +27,7 @@ import {
   ChannelRouter,
   ChannelGateBlockedError,
 } from '../../../../src/lib/space/runtime/channel-router.ts';
+import { GateRetryScheduler } from '../../../../src/lib/space/runtime/gate-retry-scheduler.ts';
 import type { Gate, WorkflowChannel } from '@neokai/shared';
 import { RATE_LIMIT_MIN_BACKOFF_MS } from '../../../../src/lib/space/runtime/rate-limit-detector.ts';
 
@@ -214,17 +215,13 @@ describe('ChannelRouter rate-limit deferral', () => {
     expect(result).toEqual([]);
     expect(calls).toBe(1);
 
-    const pending = (
-      router as unknown as {
-        pendingGateRetries: Map<string, ReturnType<typeof setTimeout>>;
-      }
-    ).pendingGateRetries;
+    const scheduler = (router as unknown as { gateRetryScheduler: GateRetryScheduler })
+      .gateRetryScheduler;
     const retryKey = `${run.id}:rate-limit-gate`;
-    expect(pending.has(retryKey)).toBe(true);
+    expect(scheduler.has(run.id, 'rate-limit-gate')).toBe(true);
 
     // Clean up the scheduled timer so it does not fire after the test finishes.
-    const timer = pending.get(retryKey);
-    if (timer) clearTimeout(timer);
+    scheduler.cancel(run.id, 'rate-limit-gate');
   });
 
   test('onGateDataChanged schedules retry even when another channel opens', async () => {
@@ -285,15 +282,11 @@ describe('ChannelRouter rate-limit deferral', () => {
     // The field-only source opens the gate, so planner may be activated.
     expect(scriptCalls).toBe(1);
 
-    const pending = (
-      router as unknown as {
-        pendingGateRetries: Map<string, ReturnType<typeof setTimeout>>;
-      }
-    ).pendingGateRetries;
+    const scheduler = (router as unknown as { gateRetryScheduler: GateRetryScheduler })
+      .gateRetryScheduler;
     const retryKey = `${run.id}:${gate.id}`;
-    expect(pending.has(retryKey)).toBe(true);
+    expect(scheduler.has(run.id, gate.id)).toBe(true);
 
-    const timer = pending.get(retryKey);
-    if (timer) clearTimeout(timer);
+    scheduler.cancel(run.id, gate.id);
   });
 });

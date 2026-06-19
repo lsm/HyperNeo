@@ -59,6 +59,7 @@ import { executeGateScript } from './gate-script-executor';
 import { getBuiltInGateScript } from '../workflows/built-in-workflows';
 import { getEffectiveGate } from './gate-features';
 import { RATE_LIMIT_MIN_BACKOFF_MS } from './rate-limit-detector';
+import { GateRetryScheduler } from './gate-retry-scheduler';
 import type {
   InternalEventBus,
   DaemonInternalEventMap,
@@ -318,6 +319,11 @@ export interface ChannelRouterConfig {
    */
   scriptExecutor?: GateScriptExecutorFn;
   /**
+   * Optional shared retry scheduler for rate-limited gate-data refresh
+   * re-evaluations. When omitted, the router uses a private scheduler.
+   */
+  gateRetryScheduler?: GateRetryScheduler;
+  /**
    * Optional overrides merged into the gate script execution context. Fields
    * provided here (e.g. `prUrl`) take precedence over the defaults computed
    * by the router.
@@ -358,17 +364,13 @@ export class ChannelRouter {
   private readonly openedGates = new Map<string, number>();
 
   /**
-   * Pending rate-limit retry timers for gate-data refresh re-evaluations,
-   * keyed by `"${runId}:${gateId}"`. When a script-backed gate hits a GitHub
-   * rate limit during `onGateDataChanged`, we schedule a retry after the
-   * reported backoff so downstream node activation is not lost.
+   * Shared scheduler for rate-limit retry timers during `onGateDataChanged`.
+   * When a script-backed gate hits a GitHub rate limit, the scheduler ensures
+   * the gate is re-evaluated after the reported backoff so downstream node
+   * activation is not lost. A shared instance lets retries survive across the
+   * transient `ChannelRouter`s created by `SpaceRuntimeService`.
    */
-  private readonly pendingGateRetries = new Map<string, ReturnType<typeof setTimeout>>();
-  /**
-   * Target fire epoch (ms) for each pending gate retry timer. Used to reschedule
-   * when a newer rate-limited evaluation reports a longer backoff.
-   */
-  private readonly pendingGateRetryFireAt = new Map<string, number>();
+  private readonly gateRetryScheduler: GateRetryScheduler;
 
   constructor(private readonly config: ChannelRouterConfig) {
     this.scriptSemaphore = {
@@ -376,6 +378,7 @@ export class ChannelRouter {
       max: config.maxConcurrentScripts ?? DEFAULT_MAX_CONCURRENT_SCRIPTS,
       waiters: [],
     };
+    this.gateRetryScheduler = config.gateRetryScheduler ?? new GateRetryScheduler();
   }
 
   // -------------------------------------------------------------------------
@@ -927,7 +930,7 @@ export class ChannelRouter {
     // gate-data write, wildcard channels only open when the gate is open for
     // every possible source node.
     const openChannels: typeof channels = [];
-    let rateLimitedResult: GateEvalResult | null = null;
+    const limitedResults: GateEvalResult[] = [];
     for (const ch of channels) {
       const sourceNames = this.getGateDataChangeSourceNames(workflow, ch);
       const results = await Promise.all(
@@ -936,9 +939,8 @@ export class ChannelRouter {
       if (results.every((result) => result.open)) {
         openChannels.push(ch);
       } else {
-        const limited = results.find((r) => r.rateLimited);
-        if (limited) {
-          rateLimitedResult = limited;
+        for (const r of results) {
+          if (r.rateLimited) limitedResults.push(r);
         }
       }
     }
@@ -948,42 +950,26 @@ export class ChannelRouter {
     }
 
     // Gate opened with no rate-limited channels — any pending retry is no longer needed.
-    if (openChannels.length > 0 && !rateLimitedResult) {
-      const retryKey = `${runId}:${gateId}`;
-      const existingTimer = this.pendingGateRetries.get(retryKey);
-      if (existingTimer) {
-        clearTimeout(existingTimer);
-        this.pendingGateRetries.delete(retryKey);
-        this.pendingGateRetryFireAt.delete(retryKey);
-      }
+    if (openChannels.length > 0 && limitedResults.length === 0) {
+      this.gateRetryScheduler.cancel(runId, gateId);
     }
 
-    if (rateLimitedResult) {
+    if (limitedResults.length > 0) {
       // At least one channel evaluation hit a rate limit; schedule a retry so
-      // downstream activation is not lost even if another channel opened.
-      const retryKey = `${runId}:${gateId}`;
-      const retryAfterMs = rateLimitedResult.retryAfterMs ?? RATE_LIMIT_MIN_BACKOFF_MS;
-      const newFireAt = Date.now() + retryAfterMs;
-      const existingFireAt = this.pendingGateRetryFireAt.get(retryKey);
-      if (existingFireAt === undefined || newFireAt > existingFireAt) {
-        const existingTimer = this.pendingGateRetries.get(retryKey);
-        if (existingTimer) {
-          clearTimeout(existingTimer);
-        }
-        const timer = setTimeout(() => {
-          this.pendingGateRetries.delete(retryKey);
-          this.pendingGateRetryFireAt.delete(retryKey);
-          void this.onGateDataChanged(runId, gateId).catch((err) => {
-            log.warn(
-              `Scheduled gate-data refresh retry failed for gate "${gateId}" in run "${runId}": ` +
-                (err instanceof Error ? err.message : String(err))
-            );
-          });
-        }, retryAfterMs);
-        timer.unref?.();
-        this.pendingGateRetries.set(retryKey, timer);
-        this.pendingGateRetryFireAt.set(retryKey, newFireAt);
-      }
+      // downstream activation is not lost even if another channel opened. Use
+      // the longest backoff across all limited evaluations.
+      const maxRetryAfterMs = limitedResults.reduce(
+        (max, r) => Math.max(max, r.retryAfterMs ?? RATE_LIMIT_MIN_BACKOFF_MS),
+        RATE_LIMIT_MIN_BACKOFF_MS
+      );
+      this.gateRetryScheduler.schedule(runId, gateId, maxRetryAfterMs, () => {
+        void this.onGateDataChanged(runId, gateId).catch((err) => {
+          log.warn(
+            `Scheduled gate-data refresh retry failed for gate "${gateId}" in run "${runId}": ` +
+              (err instanceof Error ? err.message : String(err))
+          );
+        });
+      });
     }
 
     if (openChannels.length === 0) {
