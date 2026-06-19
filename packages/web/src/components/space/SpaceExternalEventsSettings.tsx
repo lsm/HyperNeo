@@ -63,6 +63,14 @@ interface GitHubSpaceConfig {
   settings: Record<string, unknown>;
 }
 
+interface GitHubTokenStatus {
+  configured: boolean;
+  source: 'keychain' | 'env' | 'none';
+  login?: string;
+  error?: string;
+  autoRegisteredHookCount?: number;
+}
+
 const WEBHOOK_PATH = '/webhook/github/space';
 const DELIVERY_STATUSES: Array<ExternalEventDeliveryStatus | ''> = [
   '',
@@ -111,6 +119,9 @@ export function SpaceExternalEventsSettings({
   const [extensions, setExtensions] = useState<ExtensionStatus[]>([]);
   const [repos, setRepos] = useState<GitHubWatchedRepo[]>([]);
   const [spaceConfig, setSpaceConfig] = useState<GitHubSpaceConfig | null>(null);
+  const [tokenStatus, setTokenStatus] = useState<GitHubTokenStatus | null>(null);
+  const [tokenStatusError, setTokenStatusError] = useState<string | null>(null);
+  const [tokenInput, setTokenInput] = useState('');
   const [loading, setLoading] = useState(true);
   const [deliveryLoading, setDeliveryLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
@@ -134,6 +145,14 @@ export function SpaceExternalEventsSettings({
   const githubWebhooksEnabled = githubExtension?.config.capabilities.webhooks !== false;
   const githubControlsEnabled = githubGloballyEnabled && githubRpcConfigEnabled;
   const githubSpaceEnabled = spaceConfig?.enabled ?? true;
+  // spacePollingIntent reflects the user's express wish to use polling in
+  // this space, persisted server-side independent of the rows that happen
+  // to exist right now. The connection-card checkbox is bound to this so
+  // the first polling-only add is reachable even when no polling row
+  // exists yet to derive the state from.
+  const spacePollingIntent =
+    (spaceConfig?.settings as { pollingIntent?: boolean } | undefined)?.pollingIntent === true;
+  const spacePollingActive = githubPollingEnabled && spacePollingIntent;
   const webhookUrl = useMemo(getWebhookUrl, []);
 
   async function refreshDeliveries(): Promise<void> {
@@ -184,6 +203,8 @@ export function SpaceExternalEventsSettings({
         setSpaceConfig(null);
         setRepos([]);
         setDeliveries([]);
+        setTokenStatus(null);
+        setTokenStatusError(null);
         toast.error('Not connected to server');
         setLoading(false);
         setDeliveryLoading(false);
@@ -204,6 +225,8 @@ export function SpaceExternalEventsSettings({
       if (!github?.config.globallyEnabled || !github.config.capabilities.rpcConfig) {
         setSpaceConfig(null);
         setRepos([]);
+        setTokenStatus(null);
+        setTokenStatusError(null);
         return;
       }
 
@@ -216,8 +239,29 @@ export function SpaceExternalEventsSettings({
         }),
       ]);
       if (!isCurrentRefresh()) return;
+      // Surface local config/repos first so the panel becomes interactive
+      // even if the auxiliary `/user` token-validation call hangs.
       setSpaceConfig(configResult);
       setRepos(repoResult.repositories);
+      setTokenStatus(null);
+      setTokenStatusError(null);
+      // Fire token-status fetch in the background; setLoading(false) below
+      // does NOT wait on it.
+      void (async () => {
+        try {
+          const tokenResult = await hub.request<GitHubTokenStatus>(
+            'space.github.getTokenStatus',
+            {}
+          );
+          if (!isCurrentRefresh()) return;
+          setTokenStatus(tokenResult);
+          setTokenStatusError(null);
+        } catch (err) {
+          if (!isCurrentRefresh()) return;
+          setTokenStatus(null);
+          setTokenStatusError(err instanceof Error ? err.message : String(err));
+        }
+      })();
     } catch (err) {
       if (!isCurrentRefresh()) return;
       setSpaceConfig(null);
@@ -291,6 +335,105 @@ export function SpaceExternalEventsSettings({
     }
   }
 
+  async function saveToken(): Promise<void> {
+    const actionSpaceId = spaceIdRef.current;
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) {
+      toast.error('Not connected to server');
+      return;
+    }
+    const token = tokenInput.trim();
+    if (!token) return;
+    if (
+      tokenStatus?.configured === true &&
+      tokenStatus.source === 'keychain' &&
+      !window.confirm('Replace the existing daemon-wide GitHub token?')
+    ) {
+      return;
+    }
+    if (
+      tokenStatus?.configured === true &&
+      tokenStatus.source === 'env' &&
+      !window.confirm(
+        'A GITHUB_TOKEN env var is currently in use. Saving a keychain token will shadow it across every space. Continue?'
+      )
+    ) {
+      return;
+    }
+    try {
+      setBusy('github:token');
+      await hub.request('space.github.setToken', { token });
+      if (!isActionCurrent(actionSpaceId)) return;
+      setTokenInput('');
+      toast.success('GitHub token saved to keychain');
+      await refresh();
+    } catch (err) {
+      if (!isActionCurrent(actionSpaceId)) return;
+      toast.error(
+        `Failed to save GitHub token: ${err instanceof Error ? err.message : String(err)}`
+      );
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function clearToken(): Promise<void> {
+    const actionSpaceId = spaceIdRef.current;
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) {
+      toast.error('Not connected to server');
+      return;
+    }
+    const autoRegisteredCount = tokenStatus?.autoRegisteredHookCount ?? 0;
+    const message =
+      autoRegisteredCount > 0
+        ? `Remove the daemon-wide GitHub token from the keychain? ${autoRegisteredCount} auto-registered webhook(s) across all spaces may become unmanageable until a token is restored.`
+        : 'Remove the daemon-wide GitHub token from the keychain?';
+    if (!window.confirm(message)) {
+      return;
+    }
+    try {
+      setBusy('github:token');
+      await hub.request('space.github.clearToken', {});
+      if (!isActionCurrent(actionSpaceId)) return;
+      toast.success('GitHub token removed');
+      await refresh();
+    } catch (err) {
+      if (!isActionCurrent(actionSpaceId)) return;
+      toast.error(
+        `Failed to remove GitHub token: ${err instanceof Error ? err.message : String(err)}`
+      );
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function setPollingCapability(enabled: boolean): Promise<void> {
+    const actionSpaceId = spaceIdRef.current;
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) {
+      toast.error('Not connected to server');
+      return;
+    }
+    try {
+      setBusy('github:polling');
+      await hub.request('space.github.setPollingEnabled', {
+        spaceId: actionSpaceId,
+        enabled,
+      });
+      if (!isActionCurrent(actionSpaceId)) return;
+      toast.success(`GitHub polling ${enabled ? 'enabled' : 'disabled'} (daemon-wide capability)`);
+      await refresh();
+    } catch (err) {
+      if (!isActionCurrent(actionSpaceId)) return;
+      toast.error(
+        `Failed to update GitHub polling: ${err instanceof Error ? err.message : String(err)}`
+      );
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function addRepo(event?: Event, autoConfigure = false): Promise<void> {
     event?.preventDefault();
     const actionSpaceId = spaceIdRef.current;
@@ -308,8 +451,8 @@ export function SpaceExternalEventsSettings({
       setBusy(autoConfigure ? 'repo:add:auto' : 'repo:add');
       setFormError(null);
       const secret = webhookSecret.trim();
-      if (!secret && !githubPollingEnabled && !autoConfigure) {
-        setFormError('Webhook secret is required because polling is disabled for GitHub');
+      if (!secret && !spacePollingActive && !autoConfigure) {
+        setFormError('Webhook secret is required because polling is disabled for this space');
         return;
       }
       await hub.request(
@@ -326,7 +469,10 @@ export function SpaceExternalEventsSettings({
               repo: parsed.repo,
               webhookSecret: secret || undefined,
               webhookEnabled: Boolean(secret),
-              pollingEnabled: !secret,
+              // Default to polling only when this space's polling control is
+              // already active — daemon-wide capability alone is not enough,
+              // since another space may be the one keeping it on.
+              pollingEnabled: !secret && spacePollingActive,
             }
       );
       if (!isActionCurrent(actionSpaceId)) return;
@@ -516,6 +662,23 @@ export function SpaceExternalEventsSettings({
               ))
             )}
           </div>
+
+          {githubControlsEnabled && (
+            <GitHubConnectionCard
+              tokenStatus={tokenStatus}
+              tokenStatusError={tokenStatusError}
+              tokenStatusUnknown={!tokenStatus && !tokenStatusError}
+              tokenInput={tokenInput}
+              onTokenInputChange={setTokenInput}
+              busy={busy === 'github:token' || busy === 'github:polling'}
+              disabled={disabled}
+              pollingEnabled={spacePollingActive}
+              pollingCapabilityDisabled={!githubPollingEnabled}
+              onSaveToken={saveToken}
+              onClearToken={clearToken}
+              onTogglePolling={setPollingCapability}
+            />
+          )}
 
           <div class="rounded-lg border border-dark-700 bg-dark-800 px-3 py-3">
             <div class="flex flex-wrap items-start justify-between gap-3">
@@ -1039,4 +1202,178 @@ function WebhookStatus({ repo }: { repo: GitHubWatchedRepo }) {
     return <span class="text-red-300">webhook inactive</span>;
   }
   return <span>webhook status unknown</span>;
+}
+
+interface GitHubConnectionCardProps {
+  tokenStatus: GitHubTokenStatus | null;
+  tokenStatusError: string | null;
+  tokenStatusUnknown: boolean;
+  tokenInput: string;
+  onTokenInputChange: (value: string) => void;
+  busy: boolean;
+  disabled: boolean;
+  pollingEnabled: boolean;
+  pollingCapabilityDisabled: boolean;
+  onSaveToken: () => Promise<void>;
+  onClearToken: () => Promise<void>;
+  onTogglePolling: (enabled: boolean) => Promise<void>;
+}
+
+function GitHubConnectionCard({
+  tokenStatus,
+  tokenStatusError,
+  tokenStatusUnknown,
+  tokenInput,
+  onTokenInputChange,
+  busy,
+  disabled,
+  pollingEnabled,
+  pollingCapabilityDisabled,
+  onSaveToken,
+  onClearToken,
+  onTogglePolling,
+}: GitHubConnectionCardProps) {
+  const tokenInvalid = tokenStatus?.configured === true && Boolean(tokenStatus.error);
+  const connected = tokenStatus?.configured === true && !tokenInvalid;
+  // Block destructive token writes while we don't yet know whether a token
+  // is already configured. Without this guard the overwrite/shadow confirm
+  // prompts would silently no-op because saveToken sees tokenStatus === null.
+  // Polling toggle is intentionally NOT blocked here — it doesn't touch the
+  // token, so it should stay usable while /user validation is in flight.
+  const tokenWriteDisabled = busy || disabled || tokenStatusUnknown;
+  const pollingDisabled = busy || disabled;
+  const [replaceMode, setReplaceMode] = useState(false);
+  const showInput = !connected || tokenInvalid || replaceMode;
+  return (
+    <div
+      class="rounded-lg border border-dark-700 bg-dark-800 px-3 py-3 space-y-3"
+      data-testid="github-connection-card"
+    >
+      <div>
+        <div class="text-sm font-medium text-gray-200">GitHub connection</div>
+        <p class="mt-0.5 text-xs text-gray-400">
+          Store a daemon-wide personal access token in the keychain for webhook auto-configure and
+          authenticated polling. The token is shared by every space using the GitHub extension.
+          Recommended scopes: <code class="text-gray-300">repo</code>,{' '}
+          <code class="text-gray-300">admin:repo_hook</code>. Supported prefixes:{' '}
+          <code class="text-gray-300">ghp_</code>, <code class="text-gray-300">github_pat_</code>,{' '}
+          <code class="text-gray-300">gho_</code>.
+        </p>
+      </div>
+
+      {(connected || tokenInvalid) && (
+        <div
+          class="flex flex-wrap items-center gap-2 text-xs"
+          data-testid="github-token-status-row"
+        >
+          <span
+            class={cn(
+              'inline-flex items-center gap-1 rounded-full px-2 py-0.5',
+              connected ? 'bg-green-500/10 text-green-300' : 'bg-red-500/10 text-red-300'
+            )}
+          >
+            {connected ? 'Connected' : 'Token invalid'}
+          </span>
+          {tokenStatus?.login && (
+            <span class="text-gray-300">
+              as <span class="font-mono">{tokenStatus.login}</span>
+            </span>
+          )}
+          {tokenStatus?.source === 'env' && (
+            <span class="text-gray-500">(token from GITHUB_TOKEN env var)</span>
+          )}
+          {tokenInvalid && (
+            <span class="text-red-300" data-testid="github-token-invalid-error">
+              {tokenStatus?.error}
+            </span>
+          )}
+          <div class="ml-auto flex flex-wrap items-center gap-2">
+            {(connected || tokenInvalid) && !replaceMode && (
+              <button
+                type="button"
+                onClick={() => setReplaceMode(true)}
+                disabled={tokenWriteDisabled}
+                class="text-gray-300 hover:text-gray-100 disabled:cursor-not-allowed disabled:text-gray-600"
+              >
+                {connected
+                  ? tokenStatus?.source === 'env'
+                    ? 'Replace with keychain token'
+                    : 'Replace token'
+                  : 'Replace invalid token'}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onClearToken}
+              disabled={tokenWriteDisabled || tokenStatus?.source === 'env'}
+              class="text-red-400 hover:text-red-300 disabled:cursor-not-allowed disabled:text-red-900"
+            >
+              Disconnect
+            </button>
+          </div>
+        </div>
+      )}
+
+      {showInput && (
+        <div class="space-y-2">
+          <input
+            type="password"
+            value={tokenInput}
+            onInput={(event) => onTokenInputChange((event.target as HTMLInputElement).value)}
+            placeholder="ghp_…"
+            disabled={tokenWriteDisabled}
+            class="w-full rounded-lg border border-white/10 bg-dark-850 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
+            aria-label="GitHub personal access token"
+          />
+          <div class="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              size="sm"
+              onClick={onSaveToken}
+              disabled={tokenWriteDisabled || !tokenInput}
+            >
+              {connected ? 'Replace token' : 'Save token'}
+            </Button>
+            {(connected || tokenInvalid) && replaceMode && (
+              <button
+                type="button"
+                onClick={() => setReplaceMode(false)}
+                disabled={tokenWriteDisabled}
+                class="text-xs text-gray-400 hover:text-gray-200"
+              >
+                Cancel
+              </button>
+            )}
+          </div>
+          {!tokenStatus && !tokenStatusError && (
+            <p class="text-xs text-gray-500">Checking token status…</p>
+          )}
+          {tokenStatusError && (
+            <p class="text-xs text-red-300" data-testid="github-token-status-error">
+              Could not load token status: {tokenStatusError}
+            </p>
+          )}
+        </div>
+      )}
+
+      <label class="flex flex-col gap-1 text-xs text-gray-300">
+        <span class="flex items-center gap-2">
+          <input
+            type="checkbox"
+            checked={pollingEnabled}
+            disabled={pollingDisabled}
+            onChange={() => onTogglePolling(!pollingEnabled)}
+            class="h-4 w-4 rounded border-dark-500 bg-dark-700 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
+            aria-label="Enable GitHub polling for this space"
+          />
+          Polling for this space (daemon-wide capability)
+        </span>
+        {pollingCapabilityDisabled && (
+          <span class="ml-6 text-gray-500">
+            Polling capability is currently off daemon-wide — toggle to enable it.
+          </span>
+        )}
+      </label>
+    </div>
+  );
 }
