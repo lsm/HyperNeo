@@ -108,8 +108,14 @@ export class SDKMessageHandler {
   // In-flight context refresh (deduped across event/turn-end/compact triggers)
   private pendingContextRefresh: Promise<void> | null = null;
 
-  // Latest thinking tokens estimate for the current turn (stashed for persistence on assistant message)
+  // Latest turn-level thinking tokens estimate from the SDK. For providers that
+  // emit a cumulative running total, this is the cumulative value, NOT a
+  // per-block count.
   private currentThinkingTokensEstimate: number | null = null;
+  // Cumulative amount already attributed to persisted assistant thinking blocks
+  // in the current turn. The delta between current and last stamped is what we
+  // persist on each new thinking block.
+  private lastStampedThinkingTokensEstimate: number = 0;
 
   constructor(private ctx: SDKMessageHandlerContext) {
     const { session } = ctx;
@@ -508,9 +514,11 @@ export class SDKMessageHandler {
       // DO NOT return - let it fall through to persistence and rendering
     }
 
-    // Handle thinking tokens messages: stash estimate, but do not persist or broadcast
-    // These fire frequently during the redacted thinking phase and would bloat the DB if persisted.
-    // The final estimate is persisted on the assistant message when the thinking block completes.
+    // Handle thinking tokens messages: stash the latest cumulative estimate for
+    // the current turn, but do not persist or broadcast the event itself.
+    // These fire frequently during the redacted thinking phase and would bloat
+    // the DB if persisted. The per-block delta is computed and stamped when an
+    // assistant message containing a thinking block arrives.
     if (isSDKThinkingTokensMessage(message)) {
       this.currentThinkingTokensEstimate = message.estimated_tokens;
       return; // Skip persistence and broadcast - this is internal tracking only
@@ -549,17 +557,23 @@ export class SDKMessageHandler {
       };
     }
 
-    // Stamp the latest thinking tokens estimate onto assistant messages with thinking blocks
-    // This preserves the estimate across page reloads (unlike the transient live event)
+    // Stamp the per-block thinking tokens delta onto assistant messages that
+    // contain a thinking block. The SDK emits a cumulative turn-level estimate,
+    // which can be split across many assistant messages in task-agent sessions.
+    // Persisting the delta since the last stamped block avoids repeating the
+    // same cumulative count on every block. If the delta is not positive
+    // (stale/zero/negative), omit the field so the UI falls back to character
+    // counts only.
     if (isSDKAssistantMessage(message) && this.currentThinkingTokensEstimate !== null) {
       const hasThinkingBlock = message.message.content.some(
         (block: unknown) => (block as Record<string, unknown>).type === 'thinking'
       );
       if (hasThinkingBlock) {
-        (message as Record<string, unknown>).estimated_thinking_tokens =
-          this.currentThinkingTokensEstimate;
-        // Reset after consuming (estimate is per-turn)
-        this.currentThinkingTokensEstimate = null;
+        const delta = this.currentThinkingTokensEstimate - this.lastStampedThinkingTokensEstimate;
+        if (delta > 0) {
+          (message as Record<string, unknown>).estimated_thinking_tokens = delta;
+          this.lastStampedThinkingTokensEstimate = this.currentThinkingTokensEstimate;
+        }
       }
     }
 
@@ -649,6 +663,9 @@ export class SDKMessageHandler {
     // triggers a fetch, so short turns still update context once.
     // The 5-event tick below is deduped via pendingContextRefresh.
     if (isSDKResultMessage(message)) {
+      // Reset turn-level thinking token tracking so the next turn starts fresh
+      // and cannot inherit stale cumulative estimates.
+      this.resetThinkingTokenTracking();
       void this.refreshContextUsage('turn-end');
       return;
     }
@@ -837,9 +854,21 @@ export class SDKMessageHandler {
       this.usesSessionStateChangedTurnEnd = false;
       this.expectsSessionStateIdleAfterResult = false;
       this.lastResultWasSuccess = null;
-      // Reset turn-scoped thinking tokens estimate to prevent stale leak
-      this.currentThinkingTokensEstimate = null;
+      // Reset turn-scoped thinking tokens tracking to prevent stale leak
+      this.resetThinkingTokenTracking();
     }
+  }
+
+  /**
+   * Reset turn-level thinking token tracking.
+   *
+   * Called at turn end (result messages and session_state_changed idle) so
+   * cumulative estimates from one turn cannot be attributed to blocks in the
+   * next turn.
+   */
+  private resetThinkingTokenTracking(): void {
+    this.currentThinkingTokensEstimate = null;
+    this.lastStampedThinkingTokensEstimate = 0;
   }
 
   private async handleModelRefusalFallbackMessage(message: SDKMessage): Promise<void> {
