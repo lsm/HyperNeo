@@ -25,9 +25,9 @@ export const COMPACTION_THRESHOLD = 0.85;
  * The SDK's own auto-compact reserve. The SDK fires compaction at
  * `window - 13_000`. NeoKai's fallback uses the same reserve (clamped for
  * small windows) so it fires at the same point the SDK would have — for
- * providers in `PROVIDER_NO_SDK_AUTO_COMPACT` (e.g. Kimi) the SDK never
- * fires, so NeoKai is the sole compaction path and matching the SDK's
- * threshold gives consistent behaviour.
+ * providers in `PROVIDER_NO_SDK_AUTO_COMPACT` the SDK never fires, so NeoKai
+ * is the sole compaction path and matching the SDK's threshold gives
+ * consistent behaviour.
  */
 const SDK_AUTO_COMPACT_RESERVE_TOKENS = 13_000;
 
@@ -45,9 +45,8 @@ const RESERVE_FRACTION_CAP = 0.1;
  * is always at least 1 token.
  *
  * This matches where the SDK's own auto-compact would have fired, so for
- * providers where the SDK is disabled (`PROVIDER_NO_SDK_AUTO_COMPACT`,
- * e.g. Kimi) NeoKai behaves consistently with the SDK's intended trigger
- * point.
+ * providers where the SDK is disabled (`PROVIDER_NO_SDK_AUTO_COMPACT`),
+ * NeoKai behaves consistently with the SDK's intended trigger point.
  */
 export function reserveBasedThreshold(contextWindow: number): number {
   if (!Number.isFinite(contextWindow) || contextWindow <= 0) return 0;

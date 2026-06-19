@@ -8,15 +8,15 @@
  * - Global (`api.moonshot.ai`): `https://api.moonshot.ai/anthropic` — for
  *   users outside China.
  *
- * The API uses a single fixed model ID `kimi-for-coding` that automatically
- * maps to the latest Kimi flagship model.
+ * China uses `kimi-for-coding`; Global uses the official Claude Code model ID
+ * `kimi-k2.7-code`.
  *
  * Region is read from `sessionConfig.region` (string `'china' | 'global'`)
  * falling back to `'china'` for backward compatibility with existing
  * credentials that predate region support. An explicit `sessionConfig.baseUrl`
  * always wins (used by tests and advanced overrides).
  *
- * API Documentation: https://www.kimi.com/code/docs/
+ * API Documentation: https://platform.kimi.ai/docs/guide/agent-support
  */
 
 import type { ModelInfo } from '@neokai/shared';
@@ -54,15 +54,17 @@ const VALID_REGIONS: ReadonlySet<KimiRegion> = new Set<KimiRegion>(['china', 'gl
  */
 export const KIMI_REGION_ENDPOINTS: Record<
   KimiRegion,
-  { anthropicBaseUrl: string; openAiBaseUrl: string }
+  { anthropicBaseUrl: string; openAiBaseUrl: string; modelId: string }
 > = {
   china: {
     anthropicBaseUrl: 'https://api.kimi.com/coding',
     openAiBaseUrl: 'https://api.kimi.com/coding/v1',
+    modelId: 'kimi-for-coding',
   },
   global: {
     anthropicBaseUrl: 'https://api.moonshot.ai/anthropic',
     openAiBaseUrl: 'https://api.moonshot.ai/v1',
+    modelId: 'kimi-k2.7-code',
   },
 };
 
@@ -110,11 +112,9 @@ export class KimiProvider implements Provider {
    * backward compatibility — new code should use `getOpenAiBaseUrlForRegion()`.
    */
   static readonly OPENAI_BASE_URL = KIMI_REGION_ENDPOINTS.china.openAiBaseUrl;
-  /**
-   * Fixed model ID that automatically maps to the latest Kimi flagship model.
-   * See https://www.kimi.com/code/docs/ — "统一使用模型 ID kimi-for-coding"
-   */
-  static readonly DEFAULT_MODEL = 'kimi-for-coding';
+  /** Default region model ID retained for backward compatibility. */
+  static readonly DEFAULT_MODEL = KIMI_REGION_ENDPOINTS.china.modelId;
+  static readonly GLOBAL_MODEL = KIMI_REGION_ENDPOINTS.global.modelId;
 
   static readonly MODELS: ModelInfo[] = [
     {
@@ -124,27 +124,12 @@ export class KimiProvider implements Provider {
       family: 'kimi',
       provider: 'kimi',
       contextWindow: 262144,
-      // Kimi accepts alternate model spellings (including case variants and
-      // moonshot-* IDs) that all normalise to kimi-for-coding at the bridge
-      // layer. List provider-accepted aliases here so model-service lookups
-      // (used by getSessionModelInfo → context bar display and NeoKai fallback
-      // threshold) resolve them to the canonical Kimi entry instead of returning
-      // null. Without this, sessions whose stored model is a moonshot-* ID have
-      // SDK auto-compact disabled (via buildProviderSettings) AND no NeoKai
-      // fallback threshold — they would run into Kimi's real context limit with
-      // no compaction trigger.
-      providerAliases: ['KIMI', 'Kimi'],
+      // Keep region-specific and provider-accepted aliases resolving to the
+      // canonical Kimi entry so saved sessions retain context metadata.
+      providerAliases: ['KIMI', 'Kimi', 'kimi-k2.7-code', 'Kimi-K2.7-Code'],
       providerAliasPrefixes: ['moonshot-'],
-      // Kimi's real context window is 262k but the SDK's PP() helper returns
-      // 200k for unknown model IDs (and there is no [1m] suffix we can use
-      // without breaking the upstream Kimi API call). We must trust this
-      // metadata for the context bar display; compaction is handled by
-      // NeoKai's fallback trigger (sdk-message-handler) rather than the SDK's
-      // native auto-compact, because the SDK would cap the window to 200k
-      // and fire compaction 60k too early.
       preferContextWindowMetadata: true,
-      description:
-        'Kimi Code model (auto-upgrades to latest flagship). Fixed model ID for all requests.',
+      description: 'Kimi Code model from Moonshot Claude Code integration docs.',
       releaseDate: '',
       available: true,
     },
@@ -161,7 +146,7 @@ export class KimiProvider implements Provider {
   private defaultRegion: KimiRegion = 'china';
 
   /**
-   * Cached credential-probe result keyed by `{baseUrl}::{apiKey}` so that
+   * Cached credential-probe result keyed by `{baseUrl}::{modelId}::{apiKey}` so
    * repeated `providers.test` / model-picker loads don't re-probe the same
    * upstream within a short window. Cleared on `setCredentials()`.
    */
@@ -218,6 +203,10 @@ export class KimiProvider implements Provider {
     return KIMI_REGION_ENDPOINTS[region].openAiBaseUrl;
   }
 
+  static getModelIdForRegion(region: KimiRegion = 'china'): string {
+    return KIMI_REGION_ENDPOINTS[region].modelId;
+  }
+
   isAvailable(): boolean {
     return !!this.getApiKey();
   }
@@ -243,8 +232,8 @@ export class KimiProvider implements Provider {
    * @throws {Error} when the key is rejected, the upstream is unreachable,
    *   or the request times out.
    */
-  private async verifyCredentials(baseUrl: string, apiKey: string): Promise<void> {
-    const cacheKey = `${baseUrl}::${apiKey}`;
+  private async verifyCredentials(baseUrl: string, apiKey: string, modelId: string): Promise<void> {
+    const cacheKey = `${baseUrl}::${modelId}::${apiKey}`;
     const cached = this.probeCache.get(cacheKey);
     if (cached && Date.now() - cached.at < KimiProvider.PROBE_TTL_MS) {
       // Re-throw the cached failure or resolve the cached success.
@@ -254,7 +243,7 @@ export class KimiProvider implements Provider {
     const result = probeAnthropicCompatCredentials({
       baseUrl,
       apiKey,
-      model: KimiProvider.DEFAULT_MODEL,
+      model: modelId,
       providerName: 'Kimi',
       fetchImpl: this.fetchImpl,
     })
@@ -271,15 +260,23 @@ export class KimiProvider implements Provider {
   async getModels(): Promise<ModelInfo[]> {
     const apiKey = this.getApiKey();
     if (!apiKey) return [];
-    // Use the default Kimi base URL for the probe — session overrides are
-    // applied at request time via buildSdkConfig(), not here.
-    await this.verifyCredentials(KimiProvider.BASE_URL, apiKey);
+    const region = resolveKimiRegion(this.defaultRegion);
+    await this.verifyCredentials(
+      KimiProvider.getBaseUrlForRegion(region),
+      apiKey,
+      KimiProvider.getModelIdForRegion(region)
+    );
     return KimiProvider.MODELS;
   }
 
   ownsModel(modelId: string): boolean {
     const id = modelId.toLowerCase();
-    return id === 'kimi' || id === 'kimi-for-coding' || id.startsWith('moonshot-');
+    return (
+      id === 'kimi' ||
+      id === KimiProvider.DEFAULT_MODEL ||
+      id === KimiProvider.GLOBAL_MODEL ||
+      id.startsWith('moonshot-')
+    );
   }
 
   getModelForTier(_tier: ModelTier): string | undefined {
@@ -299,30 +296,21 @@ export class KimiProvider implements Provider {
     const region = resolveKimiRegion(sessionConfig?.region ?? this.defaultRegion);
     const regionBaseUrl = KimiProvider.getBaseUrlForRegion(region);
     const baseUrl = normalizeBaseUrl(sessionConfig?.baseUrl || regionBaseUrl);
-    // All Kimi Code requests use the fixed model ID.
-    const routingModelId = KimiProvider.DEFAULT_MODEL;
+    const routingModelId = KimiProvider.getModelIdForRegion(region);
 
     return {
       envVars: {
         ANTHROPIC_BASE_URL: baseUrl,
         ANTHROPIC_AUTH_TOKEN: apiKey,
-        API_TIMEOUT_MS: '3000000',
-        // Explicitly clear CLAUDE_CODE_AUTO_COMPACT_WINDOW so a previous
-        // provider's value (e.g. GLM's 1M, Codex's 272k) cannot leak into
-        // the Kimi subprocess. The SDK's PP() helper returns 200k for the
-        // unknown 'kimi-for-coding' model ID, so even an inherited 262144
-        // value would cap the effective window to min(200k, 262k) = 200k
-        // and make SDK auto-compact fire ~60k too early. SDK auto-compact
-        // is disabled via Options.settings.autoCompactEnabled=false (set
-        // by buildProviderSettings); NeoKai's fallback trigger handles
-        // compaction at the correct 85% of the real 262k window. The empty
-        // string deletes the env var when applied (see applyEnvVars in
-        // provider-service.ts).
-        CLAUDE_CODE_AUTO_COMPACT_WINDOW: '',
-        CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: routingModelId,
-        ANTHROPIC_DEFAULT_SONNET_MODEL: routingModelId,
+        ANTHROPIC_MODEL: routingModelId,
         ANTHROPIC_DEFAULT_OPUS_MODEL: routingModelId,
+        ANTHROPIC_DEFAULT_SONNET_MODEL: routingModelId,
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: routingModelId,
+        CLAUDE_CODE_SUBAGENT_MODEL: routingModelId,
+        ENABLE_TOOL_SEARCH: 'false',
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(KimiProvider.MODELS[0].contextWindow),
+        API_TIMEOUT_MS: '3000000',
+        CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
       },
       isAnthropicCompatible: true,
       apiVersion: 'v1',
@@ -333,7 +321,8 @@ export class KimiProvider implements Provider {
     // Return actual model ID so user-selected model is used.
     // Returning 'default' allows ~/.claude/settings.json overrides
     // (ANTHROPIC_DEFAULT_SONNET_MODEL) to incorrectly redirect to other providers.
-    return modelId === 'kimi' ? KimiProvider.DEFAULT_MODEL : modelId;
+    const id = modelId.toLowerCase();
+    return id === 'kimi' || id.startsWith('moonshot-') ? KimiProvider.DEFAULT_MODEL : modelId;
   }
 
   getTitleGenerationModel(): string {
