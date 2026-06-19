@@ -351,6 +351,13 @@ export interface NodeAgentToolsConfig {
    */
   onGateDataChanged?: (runId: string, gateId: string) => Promise<unknown>;
   /**
+   * Optional shared retry scheduler for deferred gate-data refreshes after
+   * rate-limited gate writes/delivery. When provided, `send_message` schedules
+   * refreshes through this scheduler so retries are coalesced across all
+   * node-agent sessions for the same run/gate.
+   */
+  gateRetryScheduler?: import('../runtime/gate-retry-scheduler').GateRetryScheduler;
+  /**
    * Optional script executor for async gate evaluation.
    * When provided, `read_gate` and the gate-write path in `send_message` run
    * gate scripts before field evaluation.
@@ -562,8 +569,26 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
    * only sees refreshes that actually run; when a `send_message` aborts early
    * because a gate script hit a GitHub rate limit, we must still re-evaluate
    * the gate after the cooldown so downstream activation is not stuck.
+   *
+   * Uses the shared scheduler from config when available so retries are
+   * coalesced across all node-agent sessions for the same run/gate.
    */
   function deferGateDataChanged(gateId: string, retryAfterMs: number): void {
+    const callback = () => {
+      void notifyGateDataChanged(gateId).catch((err) => {
+        log.warn(
+          `Deferred gate-data refresh failed for gate "${gateId}" in run "${workflowRunId}": ` +
+            (err instanceof Error ? err.message : String(err))
+        );
+      });
+    };
+
+    if (config.gateRetryScheduler) {
+      config.gateRetryScheduler.schedule(workflowRunId, gateId, retryAfterMs, callback);
+      return;
+    }
+
+    // Fallback for tests/contexts without a shared scheduler.
     const newFireAt = Date.now() + retryAfterMs;
     const existingFireAt = pendingGateChangeRetryFireAt.get(gateId);
     if (existingFireAt !== undefined && newFireAt <= existingFireAt) {
@@ -576,12 +601,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
     const timer = setTimeout(() => {
       pendingGateChangeRetryTimers.delete(gateId);
       pendingGateChangeRetryFireAt.delete(gateId);
-      void notifyGateDataChanged(gateId).catch((err) => {
-        log.warn(
-          `Deferred gate-data refresh failed for gate "${gateId}" in run "${workflowRunId}": ` +
-            (err instanceof Error ? err.message : String(err))
-        );
-      });
+      callback();
     }, retryAfterMs);
     timer.unref?.();
     pendingGateChangeRetryTimers.set(gateId, timer);

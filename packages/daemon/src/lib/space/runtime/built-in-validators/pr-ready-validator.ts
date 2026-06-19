@@ -212,13 +212,17 @@ async function resolvePrUrl(
 
   // Run gh pr view for current branch. The URL field is resolved via GitHub
   // CLI's GraphQL PR finder, so a rate-limit probe uses the `graphql` resource
-  // window rather than REST `core`.
+  // window rather than REST `core`. When GH_HOST points to an Enterprise host,
+  // forward it so the probe queries the same host.
   const currentBranchPr = await runCommand<{ url?: string }>(
     ['gh', 'pr', 'view', '--json', 'url'],
     context.workspacePath,
     remainingTimeoutMs(deadlineMs),
     spawnImpl,
-    { resourceHint: 'graphql' }
+    {
+      resourceHint: 'graphql',
+      hostHint: process.env.GH_HOST,
+    }
   );
   if (!currentBranchPr.success) {
     return {
@@ -335,6 +339,16 @@ async function runReviewThreadsQuery(
       // GraphQL rate-limit errors come as HTTP 200 with an errors payload.
       // Check if any error message indicates a rate limit and retry accordingly.
       const errorsText = JSON.stringify(json.errors);
+      if (isSecondaryRateLimitError(errorsText)) {
+        // Secondary/abuse throttles do not update /rate_limit; use the minimum
+        // backoff rather than an unrelated primary reset window.
+        return {
+          success: false,
+          error: `GraphQL secondary rate limit: ${errorsText}`,
+          rateLimited: true,
+          retryAfterMs: RATE_LIMIT_MIN_BACKOFF_MS,
+        };
+      }
       if (isRateLimitError(errorsText)) {
         const resetEpoch = await fetchRateLimitResetEpoch(
           cwd,

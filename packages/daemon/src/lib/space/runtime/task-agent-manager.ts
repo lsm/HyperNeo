@@ -97,6 +97,7 @@ import type { DbQueryMcpServer } from '../../db-query/tools';
 import { sanitizeAssistantUsageInSDKSessionFile } from '../../sdk-session-file-manager';
 import { ChannelResolver } from './channel-resolver';
 import { ChannelRouter } from './channel-router';
+import { GateRetryScheduler } from './gate-retry-scheduler';
 import { AgentMessageRouter } from './agent-message-router';
 import type { ReplyRoutingRegistry } from './reply-routing-registry';
 import type { AgentMemoryRepository } from '../../../storage/repositories/agent-memory-repository';
@@ -420,6 +421,8 @@ export class TaskAgentManager {
   private taskDbQueryServers = new Map<string, DbQueryMcpServer>();
   /** Audit log repository for MCP write operations. */
   private readonly auditLogRepo: McpAuditLogRepository;
+  /** Shared scheduler for rate-limited gate refresh retries across all node-agent sessions. */
+  private readonly gateRetryScheduler = new GateRetryScheduler();
 
   /**
    * Eager sub-session index: taskId → (agentName → sessionId).
@@ -1667,6 +1670,7 @@ export class TaskAgentManager {
         // `getTaskWorktreePath`), and fall back to the space root if no
         // worktree exists yet for this task.
         workspacePath: this.getTaskWorktreePath(taskId) ?? space.workspacePath,
+        gateRetryScheduler: this.gateRetryScheduler,
         getSpaceAutonomyLevel: async (spaceId) => {
           const s = await spaceManager.getSpace(spaceId);
           return s?.autonomyLevel ?? 1;
@@ -3595,6 +3599,7 @@ export class TaskAgentManager {
       channelCycleRepo: this.config.channelCycleRepo,
       db: this.config.db.getDatabase(),
       workspacePath,
+      gateRetryScheduler: this.gateRetryScheduler,
       getSpaceAutonomyLevel: async (spaceId) => {
         const s = await spaceManager.getSpace(spaceId);
         return s?.autonomyLevel ?? 1;
@@ -3953,6 +3958,7 @@ export class TaskAgentManager {
       workflow,
       gateDataRepo: this.config.gateDataRepo,
       onGateDataChanged: (runId, gateId) => nodeAgentChannelRouter.onGateDataChanged(runId, gateId),
+      gateRetryScheduler: this.gateRetryScheduler,
       scriptExecutor: executeGateScript,
       // gateId is overridden per-gate by the handler ({ ...scriptContext, gateId }).
       // workflowStartIso is sourced from the run's createdAt so gate scripts can
