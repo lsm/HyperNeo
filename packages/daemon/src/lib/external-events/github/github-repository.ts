@@ -6,6 +6,8 @@ export interface PollCursor {
   pendingLastSeenAt?: number;
   etags?: Record<string, string>;
   processedPages?: Record<string, number>;
+  recentPullRequestNumbers?: number[];
+  seenReactionIds?: Record<string, boolean>;
 }
 
 export interface GitHubWatchedRepo {

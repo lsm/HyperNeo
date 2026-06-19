@@ -145,6 +145,74 @@ function webhookRequest(payload: unknown, event: string, signature?: string): Re
   });
 }
 
+function setupExternalEventService(db: BunDatabase): {
+  service: ExternalEventService;
+  received: ExternalEvent[];
+} {
+  db.prepare(
+    `INSERT OR IGNORE INTO spaces (id, slug, name, workspace_path, status, created_at, updated_at) VALUES ('space-1', 'space-1', 'Space', '/tmp', 'active', 1, 1)`
+  ).run();
+  const bus = createDaemonInternalEventBus();
+  const service = new ExternalEventService(new ExternalEventStore(db), bus);
+  const received: ExternalEvent[] = [];
+  bus.subscribe(
+    'externalEvent.published',
+    (payload) => {
+      received.push({
+        id: payload.eventId,
+        spaceId: payload.spaceId,
+        topic: payload.topic,
+        occurredAt: payload.occurredAt,
+        ingestedAt: payload.ingestedAt,
+        source: payload.source,
+        summary: payload.summary,
+        externalUrl: payload.externalUrl,
+        payload: payload.payload,
+        dedupeKey: payload.dedupeKey,
+      });
+    },
+    { subscriberName: 'github-event-extension-test' }
+  );
+  return { service, received };
+}
+
+function pollingResponse(body: unknown[], remaining = 5_000): Response {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { 'X-RateLimit-Remaining': String(remaining) },
+  });
+}
+
+function createPullRequestRow(number: number): Record<string, unknown> {
+  return {
+    id: number * 10,
+    number,
+    title: `PR ${number}`,
+    body: `Body ${number}`,
+    html_url: `https://github.com/acme/widgets/pull/${number}`,
+    user: { login: 'dev', type: 'User' },
+    created_at: '2026-01-01T00:00:00Z',
+    updated_at: '2026-01-01T00:00:00Z',
+  };
+}
+
+function createReactionRow(
+  overrides: Partial<{
+    id: number;
+    content: string;
+    created_at: string;
+    user: { login: string; type: string };
+  }> = {}
+): Record<string, unknown> {
+  return {
+    id: 9001,
+    content: '+1',
+    created_at: '2026-01-02T00:00:00Z',
+    user: { login: 'codex[bot]', type: 'Bot' },
+    ...overrides,
+  };
+}
+
 describe('GitHubEventExtension', () => {
   test('normalizes webhooks and constructs canonical topics', () => {
     const normalized = normalizeGitHubWebhook(
@@ -173,27 +241,7 @@ describe('GitHubEventExtension', () => {
     db.prepare(
       `INSERT INTO spaces (id, slug, name, workspace_path, status, created_at, updated_at) VALUES ('space-1', 'space-1', 'Space', '/tmp', 'active', 1, 1)`
     ).run();
-    const bus = createDaemonInternalEventBus();
-    const service = new ExternalEventService(new ExternalEventStore(db), bus);
-    const received: ExternalEvent[] = [];
-    bus.subscribe(
-      'externalEvent.published',
-      (payload) => {
-        received.push({
-          id: payload.eventId,
-          spaceId: payload.spaceId,
-          topic: payload.topic,
-          occurredAt: payload.occurredAt,
-          ingestedAt: payload.ingestedAt,
-          source: payload.source,
-          summary: payload.summary,
-          externalUrl: payload.externalUrl,
-          payload: payload.payload,
-          dedupeKey: payload.dedupeKey,
-        });
-      },
-      { subscriberName: 'github-event-extension-test' }
-    );
+    const { service, received } = setupExternalEventService(db);
     const extension = new GitHubEventExtension(db);
     const context = {
       publisher: service,
@@ -2137,6 +2185,178 @@ describe('GitHubEventExtension', () => {
     } finally {
       if (previousPublicUrl === undefined) delete process.env.NEOKAI_PUBLIC_URL;
       else process.env.NEOKAI_PUBLIC_URL = previousPublicUrl;
+    }
+  });
+
+  test('polling publishes positive PR reactions with canonical reaction topic', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    const calls: string[] = [];
+    const fetchImpl = (async (url: string | URL | Request) => {
+      calls.push(String(url));
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls')) return pollingResponse([createPullRequestRow(7)]);
+      if (path.endsWith('/issues/7/reactions')) {
+        return pollingResponse([createReactionRow({ id: 9001, content: '+1' })]);
+      }
+      return pollingResponse([]);
+    }) as typeof fetch;
+
+    try {
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+
+      expect(calls.some((url) => url.includes('/issues/7/reactions?per_page=100'))).toBe(true);
+      const reaction = received.find((event) => event.payload.eventType === 'reaction')!;
+      expect(reaction.topic).toBe('github/acme/widgets/pull_request/7.reaction_added');
+      expect(reaction.dedupeKey).toBe('acme/widgets:reaction:9001');
+      expect(reaction.payload).toMatchObject({
+        type: 'reaction',
+        content: '+1',
+        user: 'codex[bot]',
+        userType: 'Bot',
+        createdAt: '2026-01-02T00:00:00Z',
+        prNumber: 7,
+        repo: 'acme/widgets',
+      });
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('polling dedupes repeated reaction IDs', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls')) return pollingResponse([createPullRequestRow(7)]);
+      if (path.endsWith('/issues/7/reactions')) {
+        return pollingResponse([createReactionRow({ id: 9001, content: '+1' })]);
+      }
+      return pollingResponse([]);
+    }) as typeof fetch;
+
+    try {
+      const repo = extension.repo.listPollingRepos()[0];
+      await extension.pollWatchedRepo(repo, fetchImpl);
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+
+      const storedReactionCount = db
+        .prepare(
+          `SELECT COUNT(*) AS count FROM space_external_events WHERE topic = 'github/acme/widgets/pull_request/7.reaction_added'`
+        )
+        .get() as { count: number };
+      expect(storedReactionCount.count).toBe(1);
+      expect(received.filter((event) => event.payload.eventType === 'reaction')).toHaveLength(1);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('polling filters non-positive reactions', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls')) return pollingResponse([createPullRequestRow(7)]);
+      if (path.endsWith('/issues/7/reactions')) {
+        return pollingResponse([
+          createReactionRow({ id: 1, content: '-1' }),
+          createReactionRow({ id: 2, content: 'hooray' }),
+          createReactionRow({ id: 3, content: 'thumbs_up' }),
+        ]);
+      }
+      return pollingResponse([]);
+    }) as typeof fetch;
+
+    try {
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+
+      const reactions = received.filter((event) => event.payload.eventType === 'reaction');
+      expect(reactions).toHaveLength(1);
+      expect(reactions[0].payload.content).toBe('thumbs_up');
+      expect(reactions[0].dedupeKey).toBe('acme/widgets:reaction:3');
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('polling skips reaction calls when GitHub rate limit remaining is low', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    const calls: string[] = [];
+    const fetchImpl = (async (url: string | URL | Request) => {
+      calls.push(String(url));
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([], 99);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([], 99);
+      if (path.endsWith('/pulls')) return pollingResponse([createPullRequestRow(7)], 99);
+      if (path.endsWith('/issues/7/reactions')) {
+        return pollingResponse([createReactionRow({ id: 9001, content: '+1' })], 99);
+      }
+      return pollingResponse([], 99);
+    }) as typeof fetch;
+
+    try {
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+
+      expect(calls.some((url) => url.includes('/issues/7/reactions'))).toBe(false);
+      expect(received.some((event) => event.payload.eventType === 'reaction')).toBe(false);
+    } finally {
+      await extension.stop();
     }
   });
 

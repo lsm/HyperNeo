@@ -10,6 +10,7 @@ import type {
 } from '../types';
 import {
   normalizeGitHubPollingRow,
+  normalizeGitHubReaction,
   normalizeGitHubWebhook,
   toExternalEvent,
 } from './github-normalizer';
@@ -22,6 +23,8 @@ import {
 const log = new Logger('github-event-extension');
 const DEFAULT_POLL_INTERVAL_MS = 60_000;
 const GITHUB_API_BASE = 'https://api.github.com';
+const REACTION_POLL_PR_LIMIT = 10;
+const REACTION_POLL_RATE_LIMIT_FLOOR = 100;
 /**
  * Distinct credential-store namespace for the GitHub event extension's PAT.
  * Deliberately separate from `credentialService('github')`
@@ -38,6 +41,8 @@ const WEBHOOK_EVENTS = [
   'pull_request_review',
   'pull_request_review_comment',
 ];
+// GitHub does not send issue/PR webhooks for reactions on the PR itself.
+// Codex approval reactions are therefore polling-only via /issues/{number}/reactions.
 const REQUIRED_WEBHOOK_EVENTS = WEBHOOK_EVENTS.filter((event) => event !== 'push');
 const WEBHOOK_PATH = '/webhook/github/space';
 
@@ -977,6 +982,8 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     const cursor = watched.pollCursor ?? {};
     const etags = cursor.etags ?? {};
     const processedPages = cursor.processedPages ?? {};
+    const recentPullRequestNumbers = cursor.recentPullRequestNumbers ?? [];
+    const seenReactionIds = cursor.seenReactionIds ?? {};
     const watermarks = {
       committed: cursor.lastSeenAt ?? watched.lastPollAt ?? 0,
       pending: cursor.pendingLastSeenAt ?? cursor.lastSeenAt ?? watched.lastPollAt ?? 0,
@@ -988,6 +995,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       { key: 'review_comments', path: '/pulls/comments' },
       { key: 'pulls', path: '/pulls', extra: 'state=all&sort=updated&direction=desc' },
     ];
+    let rateLimitRemaining: number | undefined;
 
     const token = await this.resolveToken();
     for (const endpoint of endpoints) {
@@ -1003,19 +1011,21 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       query.set('per_page', '100');
       query.set('page', String(page));
       const url = `${base}${endpoint.path}?${query.toString()}`;
-      const headers: Record<string, string> = {
-        Accept: 'application/vnd.github+json',
-        'User-Agent': 'NeoKai-Space-GitHub/1.0',
-        'X-GitHub-Api-Version': '2022-11-28',
-      };
-      if (token) headers.Authorization = `Bearer ${token}`;
+      const headers = gitHubPollingHeaders(token);
       if (page === 1 && etags[endpoint.key]) headers['If-None-Match'] = etags[endpoint.key];
       const response = await fetchImpl(url, { headers });
+      rateLimitRemaining = rateLimitRemainingFrom(response, rateLimitRemaining);
       if (response.status === 304) continue;
       if (!response.ok) continue;
       const etag = response.headers.get('ETag');
       if (etag && page === 1) etags[endpoint.key] = etag;
       const rows = (await response.json()) as unknown[];
+      if (endpoint.key === 'pulls') {
+        for (const row of rows) {
+          const prNumber = pullRequestNumberFrom(row);
+          if (prNumber) rememberRecentPullRequestNumber(recentPullRequestNumbers, prNumber);
+        }
+      }
       for (const row of rows) {
         const event = normalizeGitHubPollingRow(watched, row, endpoint.key);
         if (event) {
@@ -1026,12 +1036,37 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       }
       processedPages[endpoint.key] = rows.length >= 100 ? page + 1 : 1;
     }
+
+    for (const prNumber of recentPullRequestNumbers.slice(0, REACTION_POLL_PR_LIMIT)) {
+      if (!canPollReactions(rateLimitRemaining)) break;
+      const query = new URLSearchParams({ per_page: '100' });
+      const response = await fetchImpl(`${base}/issues/${prNumber}/reactions?${query.toString()}`, {
+        headers: gitHubPollingHeaders(token),
+      });
+      rateLimitRemaining = rateLimitRemainingFrom(response, rateLimitRemaining);
+      if (!response.ok) continue;
+      const reactions = (await response.json()) as unknown[];
+      for (const reaction of reactions) {
+        if (!isPositiveReaction(reaction)) continue;
+        const reactionId = reactionIdFrom(reaction);
+        if (seenReactionIds[reactionId]) continue;
+        const event = normalizeGitHubReaction(watched, prNumber, reaction);
+        if (event) {
+          await this.publishEvent(watched.spaceId, event, this.context);
+          seenReactionIds[reactionId] = true;
+          count++;
+        }
+      }
+    }
+
     const hasBacklog = Object.values(processedPages).some((page) => page > 1);
     const cursorPayload: PollCursor = {
       lastSeenAt: hasBacklog ? watermarks.committed : watermarks.pending,
       pendingLastSeenAt: hasBacklog ? watermarks.pending : undefined,
       etags,
       processedPages,
+      recentPullRequestNumbers,
+      seenReactionIds,
     };
     this.repo.updatePollCursor(watched.id, cursorPayload);
     return count;
@@ -1119,6 +1154,55 @@ function validateGitHubTokenFormat(token: string): void {
 
 function gitHubRepoPath(owner: string, repo: string): string {
   return `${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+}
+
+function gitHubPollingHeaders(token: string | undefined): Record<string, string> {
+  const headers: Record<string, string> = {
+    Accept: 'application/vnd.github+json',
+    'User-Agent': 'NeoKai-Space-GitHub/1.0',
+    'X-GitHub-Api-Version': '2022-11-28',
+  };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  return headers;
+}
+
+function rateLimitRemainingFrom(
+  response: Response,
+  fallback: number | undefined
+): number | undefined {
+  const raw = response.headers.get('X-RateLimit-Remaining');
+  if (raw === null) return fallback;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function canPollReactions(rateLimitRemaining: number | undefined): boolean {
+  return rateLimitRemaining === undefined || rateLimitRemaining >= REACTION_POLL_RATE_LIMIT_FLOOR;
+}
+
+function pullRequestNumberFrom(row: unknown): number {
+  if (!row || typeof row !== 'object') return 0;
+  const number = (row as { number?: unknown }).number;
+  return typeof number === 'number' ? number : 0;
+}
+
+function rememberRecentPullRequestNumber(numbers: number[], prNumber: number): void {
+  const existingIndex = numbers.indexOf(prNumber);
+  if (existingIndex !== -1) numbers.splice(existingIndex, 1);
+  numbers.unshift(prNumber);
+  numbers.splice(REACTION_POLL_PR_LIMIT);
+}
+
+function isPositiveReaction(row: unknown): boolean {
+  if (!row || typeof row !== 'object') return false;
+  const content = (row as { content?: unknown }).content;
+  return content === '+1' || content === 'thumbs_up';
+}
+
+function reactionIdFrom(row: unknown): string {
+  if (!row || typeof row !== 'object') return '';
+  const id = (row as { id?: unknown }).id;
+  return typeof id === 'number' ? String(id) : '';
 }
 
 function getConfiguredWebhookUrl(): string {
