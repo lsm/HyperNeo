@@ -8,6 +8,18 @@ export interface PollCursor {
   processedPages?: Record<string, number>;
   recentPullRequestNumbers?: number[];
   seenReactionIds?: Record<string, boolean>;
+  /**
+   * Per-endpoint high-water mark for events already published. Used after a
+   * partial scan (e.g. low rate-limit remaining) so processed endpoints can
+   * resume from their own watermark while skipped endpoints still use the
+   * shared `lastSeenAt`.
+   */
+  endpointLastSeenAt?: Record<string, number>;
+  /**
+   * Per-endpoint pending high-water marks while that endpoint is paginating.
+   * Committed into `endpointLastSeenAt` only once the endpoint backlog clears.
+   */
+  endpointPendingLastSeenAt?: Record<string, number>;
 }
 
 export interface GitHubWatchedRepo {

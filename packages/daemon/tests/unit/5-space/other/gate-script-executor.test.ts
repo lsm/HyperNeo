@@ -878,6 +878,34 @@ describe('executeGateScript — integration', () => {
     expect(r.success).toBe(true);
     expect(r.data['cwd']).toBe(realpathSync('/tmp'));
   });
+
+  test('rate-limited script stderr sets rateLimited flag', async () => {
+    const r = await executeGateScript(
+      {
+        interpreter: 'bash',
+        source:
+          'echo "HTTP 403: rate limit exceeded (https://docs.github.com/rest/overview/resources-in-the-rest-api#rate-limiting)" 1>&2; exit 1',
+      } as GateScript,
+      CTX
+    );
+    expect(r.success).toBe(false);
+    expect(r.rateLimited).toBe(true);
+    expect(r.error).toContain('GitHub rate limit');
+    expect(r.error).toContain('rate limit exceeded');
+  });
+
+  test('non-rate-limit script failure does not set rateLimited flag', async () => {
+    const r = await executeGateScript(
+      {
+        interpreter: 'bash',
+        source: 'echo "HTTP 404: Not Found" 1>&2; exit 1',
+      } as GateScript,
+      CTX
+    );
+    expect(r.success).toBe(false);
+    expect(r.rateLimited).toBe(false);
+    expect(r.error).toContain('Not Found');
+  });
 });
 
 // ---------------------------------------------------------------------------
