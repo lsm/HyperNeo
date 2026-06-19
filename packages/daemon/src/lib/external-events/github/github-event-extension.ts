@@ -1172,12 +1172,12 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
           query.set(key, value);
         }
       }
-      // Use the most recent timestamp for this endpoint so a partial scan does
-      // not cause the next poll to miss events on endpoints that were skipped.
-      const endpointWatermark = Math.max(
-        watermarks.committed,
-        endpointLastSeenAt[endpoint.key] ?? 0
-      );
+      // Use this endpoint's own cursor when available. Falling back to the
+      // shared committed watermark only preserves migration/initial-poll
+      // behavior; after endpoint-local cursors exist, later endpoint scans must
+      // not advance this endpoint's `since` and skip events that arrived between
+      // endpoint requests.
+      const endpointWatermark = endpointLastSeenAt[endpoint.key] ?? watermarks.committed;
       const since = endpointWatermark ? new Date(endpointWatermark).toISOString() : undefined;
       if (since) query.set('since', since);
       query.set('per_page', '100');

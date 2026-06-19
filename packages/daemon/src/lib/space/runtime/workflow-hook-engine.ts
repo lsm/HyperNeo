@@ -420,10 +420,15 @@ export class WorkflowHookEngine {
               /rate[\s_-]?limit/i.test(lastResult.reason ?? ''))
         );
         if (shouldEnforceRetryBackoff && nextRetryAt !== undefined && Date.now() < nextRetryAt) {
+          const remainingRetryAfterMs = Math.max(0, nextRetryAt - Date.now());
           const result: WorkflowHookResult =
             lastResult?.type === 'retryable_block'
-              ? lastResult
-              : { type: 'retryable_block', reason: 'Retry backoff pending' };
+              ? { ...lastResult, retryAfterMs: remainingRetryAfterMs }
+              : {
+                  type: 'retryable_block',
+                  reason: 'Retry backoff pending',
+                  retryAfterMs: remainingRetryAfterMs,
+                };
           blockedByValidation = { hookId: hook.id, result, isRetryable: true };
           executionLog.push({
             hookId: hook.id,
