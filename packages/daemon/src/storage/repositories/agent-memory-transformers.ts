@@ -32,6 +32,7 @@ type InitializedEmbedder = {
 let modulePromise: Promise<TransformersModule> | null = null;
 let fetchConfigured = false;
 let prefetchResult: Promise<InitializedEmbedder | null> | null = null;
+let prefetchAbortController: AbortController | null = null;
 
 export class TransformersAgentMemoryEmbedder implements AgentMemoryEmbedder {
   model = MODEL_ID;
@@ -100,6 +101,7 @@ export async function prefetchAgentMemoryEmbeddingModel(
   } = options;
 
   prefetchResult = (async (): Promise<InitializedEmbedder | null> => {
+    prefetchAbortController = new AbortController();
     try {
       // When a cache directory is supplied (tests), avoid loading the heavy
       // transformers bundle if the model is already cached.
@@ -140,8 +142,14 @@ export async function prefetchAgentMemoryEmbeddingModel(
         throw err;
       }
     } catch (err) {
+      if (prefetchAbortController?.signal.aborted) {
+        logInfo('[AgentMemory] Embedding model prefetch aborted during shutdown');
+        return null;
+      }
       logError('[AgentMemory] Embedding model prefetch failed (non-fatal):', err);
       return null;
+    } finally {
+      prefetchAbortController = null;
     }
   })();
 
@@ -155,6 +163,16 @@ export function resetAgentMemoryEmbedderStateForTests(): void {
   modulePromise = null;
   fetchConfigured = false;
   prefetchResult = null;
+  prefetchAbortController = null;
+}
+
+/**
+ * Abort an in-flight background prefetch. Called during graceful shutdown so a
+ * large model download does not outlive the daemon process.
+ */
+export function abortAgentMemoryEmbeddingModelPrefetch(): void {
+  prefetchAbortController?.abort();
+  prefetchAbortController = null;
 }
 
 function loadTransformersWeb(): Promise<TransformersModule> {
@@ -199,7 +217,10 @@ function configureTransformersEnv(env: TransformersModule['env'], cacheDir: stri
     const urlString = url.toString();
     if (urlString.includes('huggingface.co') && urlString.includes('granite-embedding-small')) {
       const filename = urlString.split('/').pop();
-      return defaultFetch(`${GITHUB_RELEASE_BASE}/${filename}`, withoutAuthorization(options));
+      return defaultFetch(`${GITHUB_RELEASE_BASE}/${filename}`, {
+        ...withoutAuthorization(options),
+        signal: prefetchAbortController?.signal,
+      });
     }
     return defaultFetch(url, options);
   };
@@ -209,8 +230,7 @@ async function isModelCached(cacheDir: string): Promise<boolean> {
   const cache = new TransformersFileCache(cacheDir);
   try {
     for (const file of MODEL_FILES) {
-      const cached = await cache.match(buildRemoteUrl(MODEL_ID, file));
-      if (!cached) return false;
+      if (!(await cache.has(buildRemoteUrl(MODEL_ID, file)))) return false;
     }
     return true;
   } catch {
@@ -247,15 +267,31 @@ function selectTransformersDevice(): 'webgpu' | 'cpu' {
  * bundle. The web bundle does not detect Bun's filesystem APIs, so we plug in
  * our own cache to avoid re-downloading the embedding model on every process
  * start.
+ *
+ * Cache keys are full URLs. We map them to filesystem paths by stripping the
+ * scheme so the layout is portable (no `:` characters, which are illegal in
+ * Windows filenames) and deterministic.
  */
 class TransformersFileCache {
   constructor(private readonly cacheDir: string) {}
 
-  async match(request: string): Promise<Response | undefined> {
-    const filePath = join(this.cacheDir, request);
+  private filePath(request: string): string {
+    const url = new URL(request);
+    return join(this.cacheDir, url.hostname, url.pathname);
+  }
+
+  async has(request: string): Promise<boolean> {
     try {
-      await access(filePath, constants.F_OK);
-      const buffer = await readFile(filePath);
+      await access(this.filePath(request), constants.F_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async match(request: string): Promise<Response | undefined> {
+    try {
+      const buffer = await readFile(this.filePath(request));
       const headers = new Headers();
       headers.set('content-length', String(buffer.length));
       headers.set('content-type', 'application/octet-stream');
@@ -270,7 +306,7 @@ class TransformersFileCache {
     response: Response,
     progressCallback?: (data: { progress: number; loaded: number; total: number }) => void
   ): Promise<void> {
-    const filePath = join(this.cacheDir, request);
+    const filePath = this.filePath(request);
     await mkdir(dirname(filePath), { recursive: true });
 
     const id = process.pid;
@@ -322,9 +358,8 @@ class TransformersFileCache {
   }
 
   async delete(request: string): Promise<boolean> {
-    const filePath = join(this.cacheDir, request);
     try {
-      await unlink(filePath);
+      await unlink(this.filePath(request));
       return true;
     } catch {
       return false;

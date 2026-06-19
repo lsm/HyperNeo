@@ -46,7 +46,7 @@ describe('prefetchAgentMemoryEmbeddingModel', () => {
 
   function writeModelCache(cacheDir: string): void {
     for (const file of MODEL_FILES) {
-      const filePath = join(cacheDir, 'https:/huggingface.co', MODEL_ID, 'resolve/main', file);
+      const filePath = join(cacheDir, 'huggingface.co', MODEL_ID, 'resolve/main', file);
       mkdirSync(dirname(filePath), { recursive: true });
       writeFileSync(filePath, 'cached');
     }
