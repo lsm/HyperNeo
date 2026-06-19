@@ -5,8 +5,8 @@ import { dirname, join } from 'node:path';
 import {
   prefetchAgentMemoryEmbeddingModel,
   resetAgentMemoryEmbedderStateForTests,
-  withoutAuthorization,
 } from '../../../src/storage/repositories/agent-memory-transformers.ts';
+import { withoutAuthorization } from '../../../src/storage/repositories/agent-memory-fetch-options.ts';
 
 const MODEL_ID = 'onnx-community/granite-embedding-small-english-r2-ONNX';
 const MODEL_FILES = [

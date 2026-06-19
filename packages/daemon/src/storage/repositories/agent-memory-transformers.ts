@@ -1,13 +1,11 @@
 import { createRequire } from 'node:module';
-import { access, constants, mkdir, rename, unlink } from 'node:fs/promises';
-import { createWriteStream, statSync } from 'node:fs';
+import { access, constants, mkdir, readFile, rename, unlink } from 'node:fs/promises';
+import { createWriteStream } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { homedir } from 'node:os';
 import { withoutAuthorization } from './agent-memory-fetch-options';
 import type { AgentMemoryEmbedder } from './agent-memory-repository';
-
-export { withoutAuthorization } from './agent-memory-fetch-options';
 
 const MODEL_ID = 'onnx-community/granite-embedding-small-english-r2-ONNX';
 const GITHUB_RELEASE_BASE = 'https://github.com/lsm/neokai/releases/download/embedding-models-v1';
@@ -235,6 +233,10 @@ function pathJoin(...parts: string[]): string {
   return normalized.join('/');
 }
 
+// The transformers.js web bundle picks the backend at runtime. Under Bun it
+// resolves to onnxruntime-node, which only supports 'cpu' (and 'webgpu' on
+// supported platforms). The legacy 'wasm' device is unsupported there, so we
+// fall back to 'cpu' when WebGPU is unavailable.
 function selectTransformersDevice(): 'webgpu' | 'cpu' {
   const maybeNavigator = globalThis.navigator as { gpu?: unknown } | undefined;
   return maybeNavigator?.gpu ? 'webgpu' : 'cpu';
@@ -253,11 +255,11 @@ class TransformersFileCache {
     const filePath = join(this.cacheDir, request);
     try {
       await access(filePath, constants.F_OK);
-      const size = statSync(filePath).size;
+      const buffer = await readFile(filePath);
       const headers = new Headers();
-      headers.set('content-length', String(size));
+      headers.set('content-length', String(buffer.length));
       headers.set('content-type', 'application/octet-stream');
-      return new Response(await Bun.file(filePath).arrayBuffer(), { headers });
+      return new Response(buffer, { headers });
     } catch {
       return undefined;
     }
