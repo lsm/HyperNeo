@@ -410,6 +410,106 @@ describe('EvolutionTraceEvidenceService', () => {
     expect(traceEvidence).toEqual([]);
   });
 
+  it('emits verification_triage after repeated verification failures', () => {
+    const { scope, task } = createScopedTask('Repeated verification failures');
+    insertToolExchange(
+      task.id,
+      'session-1',
+      'check-1',
+      'Bash',
+      { command: 'bun run check' },
+      true,
+      {
+        text: 'Typecheck failed in src/auth.ts',
+      }
+    );
+    insertToolExchange(
+      task.id,
+      'session-1',
+      'check-2',
+      'Bash',
+      { command: 'bun run check' },
+      true,
+      {
+        text: 'Lint failed in src/auth.ts',
+      }
+    );
+
+    scopeService.attachTaskEvidence({ taskId: task.id });
+
+    const triage = listTraceEvidence(scope.id).find((item) => item.kind === 'verification_triage');
+    expect(triage).toBeTruthy();
+    expect(triage?.metadata.command).toBe('bun run check');
+    expect(triage?.metadata.category).toBe('verification');
+    expect(triage?.metadata.attemptCount).toBe(2);
+    expect(triage?.metadata.suspectedFix).toContain('src/auth.ts');
+    expect(triage?.metadata.resolutionNote).toBeNull();
+  });
+
+  it('appends a resolution note when verification eventually passes', () => {
+    const { scope, task } = createScopedTask('Verification resolved');
+    insertToolExchange(task.id, 'session-1', 'test-1', 'Bash', { command: 'bun test' }, true, {
+      text: 'Tests failed in src/auth.test.ts',
+    });
+    insertToolExchange(task.id, 'session-1', 'test-2', 'Bash', { command: 'bun test' }, true, {
+      text: 'Tests still failed in src/auth.test.ts',
+    });
+    insertToolExchange(task.id, 'session-1', 'test-3', 'Bash', { command: 'bun test' }, false, {
+      text: 'All tests passed',
+    });
+
+    scopeService.attachTaskEvidence({ taskId: task.id });
+
+    const triage = listTraceEvidence(scope.id).find((item) => item.kind === 'verification_triage');
+    expect(triage).toBeTruthy();
+    expect(triage?.metadata.attemptCount).toBe(2);
+    expect(triage?.metadata.resolutionNote).toContain('passed');
+    expect(triage?.summary).toContain('Resolved on retry');
+  });
+
+  it('suggests a recent edit as suspected fix when error text has no file path', () => {
+    const { scope, task } = createScopedTask('Verification triage fallback fix');
+    insertToolExchange(
+      task.id,
+      'session-1',
+      'edit-1',
+      'Edit',
+      { file_path: 'src/auth.ts' },
+      false,
+      {
+        text: 'ok',
+      }
+    );
+    insertToolExchange(
+      task.id,
+      'session-1',
+      'check-1',
+      'Bash',
+      { command: 'bun run check' },
+      true,
+      {
+        text: 'Checks failed with no file mentioned',
+      }
+    );
+    insertToolExchange(
+      task.id,
+      'session-1',
+      'check-2',
+      'Bash',
+      { command: 'bun run check' },
+      true,
+      {
+        text: 'Checks still failing',
+      }
+    );
+
+    scopeService.attachTaskEvidence({ taskId: task.id });
+
+    const triage = listTraceEvidence(scope.id).find((item) => item.kind === 'verification_triage');
+    expect(triage).toBeTruthy();
+    expect(triage?.metadata.suspectedFix).toContain('src/auth.ts');
+  });
+
   it('retains raw trace span references in metadata without storing transcript dumps', () => {
     const { scope, task } = createScopedTask('Raw refs');
     insertToolExchange(task.id, 'session-1', 'edit-1', 'Edit', { file_path: '/tmp/a.ts' }, true, {
