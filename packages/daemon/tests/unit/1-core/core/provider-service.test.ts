@@ -5,7 +5,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import type { ProviderId } from '@neokai/shared/provider';
+import type { ProviderId, ProviderSessionConfig } from '@neokai/shared/provider';
 import type { Session } from '@neokai/shared';
 import type { ModelInfo } from '@neokai/shared';
 import type { Provider, ProviderSdkConfig } from '@neokai/shared/provider';
@@ -113,6 +113,38 @@ class TitleOverrideMockProvider extends MockProvider {
 
   getTitleGenerationModel(): string {
     return 'title-turbo';
+  }
+}
+
+class RegionAwareTitleMockProvider extends MockProvider {
+  readonly id = 'region-aware-title' as const;
+  readonly displayName = 'Region Aware Title Provider';
+  private defaultRegion: 'china' | 'global' = 'china';
+
+  constructor() {
+    super('region-aware-title', 'Region Aware Title Provider', true, 'kimi-');
+  }
+
+  setDefaultRegion(region: 'china' | 'global'): void {
+    this.defaultRegion = region;
+  }
+
+  buildSdkConfig(_modelId: string, sessionConfig?: ProviderSessionConfig): ProviderSdkConfig {
+    const region = sessionConfig?.region === 'global' ? 'global' : this.defaultRegion;
+    const modelId = region === 'global' ? 'kimi-k2.7-code' : 'kimi-for-coding';
+    return {
+      envVars: {
+        ANTHROPIC_BASE_URL:
+          region === 'global' ? 'https://api.moonshot.ai/anthropic' : 'https://api.kimi.com/coding',
+        ANTHROPIC_MODEL: modelId,
+      },
+      isAnthropicCompatible: true,
+      apiVersion: 'v1',
+    };
+  }
+
+  translateModelIdForSdk(modelId: string): string {
+    return modelId;
   }
 }
 
@@ -269,6 +301,9 @@ describe('ProviderService', () => {
       ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
       ANTHROPIC_AUTH_TOKEN: process.env.ANTHROPIC_AUTH_TOKEN,
       ANTHROPIC_BASE_URL: process.env.ANTHROPIC_BASE_URL,
+      ANTHROPIC_MODEL: process.env.ANTHROPIC_MODEL,
+      CLAUDE_CODE_SUBAGENT_MODEL: process.env.CLAUDE_CODE_SUBAGENT_MODEL,
+      ENABLE_TOOL_SEARCH: process.env.ENABLE_TOOL_SEARCH,
       CLAUDE_CODE_OAUTH_TOKEN: process.env.CLAUDE_CODE_OAUTH_TOKEN,
       GLM_API_KEY: process.env.GLM_API_KEY,
       ZHIPU_API_KEY: process.env.ZHIPU_API_KEY,
@@ -292,6 +327,9 @@ describe('ProviderService', () => {
     delete process.env.ANTHROPIC_API_KEY;
     delete process.env.ANTHROPIC_AUTH_TOKEN;
     delete process.env.ANTHROPIC_BASE_URL;
+    delete process.env.ANTHROPIC_MODEL;
+    delete process.env.CLAUDE_CODE_SUBAGENT_MODEL;
+    delete process.env.ENABLE_TOOL_SEARCH;
     delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
     delete process.env.GLM_API_KEY;
     delete process.env.ZHIPU_API_KEY;
@@ -535,6 +573,16 @@ describe('ProviderService', () => {
 
       expect(model).toBe('translated-5-turbo');
     });
+
+    it('should use provider-routed model env for region-aware title generation', async () => {
+      const provider = new RegionAwareTitleMockProvider();
+      provider.setDefaultRegion('global');
+      registry.register(provider);
+
+      const model = await service.getTitleGenerationModel('region-aware-title', 'kimi-for-coding');
+
+      expect(model).toBe('kimi-k2.7-code');
+    });
   });
 
   describe('getTitleGenerationConfig', () => {
@@ -561,6 +609,18 @@ describe('ProviderService', () => {
 
       // Should not throw; should fall back to safe defaults
       expect(config.baseUrl).toBe('https://api.anthropic.com');
+      expect(config.apiVersion).toBe('v1');
+    });
+
+    it('should return provider-routed title model for region-aware providers', async () => {
+      const provider = new RegionAwareTitleMockProvider();
+      provider.setDefaultRegion('global');
+      registry.register(provider);
+
+      const config = await service.getTitleGenerationConfig('region-aware-title' as ProviderId);
+
+      expect(config.modelId).toBe('kimi-k2.7-code');
+      expect(config.baseUrl).toBe('https://api.moonshot.ai/anthropic');
       expect(config.apiVersion).toBe('v1');
     });
   });
@@ -947,19 +1007,36 @@ describe('ProviderService', () => {
       service.restoreEnvVars(original);
     });
 
-    it('applies CLAUDE_CODE_AUTO_COMPACT_WINDOW and restores it', async () => {
+    it('applies provider-managed model env vars and restores them', async () => {
       registry.clear();
       registry.register(
-        new AnthropicMockProvider(true, { CLAUDE_CODE_AUTO_COMPACT_WINDOW: '262144' })
+        new AnthropicMockProvider(true, {
+          ANTHROPIC_MODEL: 'kimi-k2.7-code',
+          CLAUDE_CODE_SUBAGENT_MODEL: 'kimi-k2.7-code',
+          ENABLE_TOOL_SEARCH: 'false',
+          CLAUDE_CODE_AUTO_COMPACT_WINDOW: '262144',
+        })
       );
+      process.env.ANTHROPIC_MODEL = 'wrong-model';
+      process.env.CLAUDE_CODE_SUBAGENT_MODEL = 'wrong-subagent';
+      process.env.ENABLE_TOOL_SEARCH = 'true';
       process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = '200000';
 
       const original = await service.applyEnvVarsToProcess('claude-3-opus', 'anthropic');
 
+      expect(process.env.ANTHROPIC_MODEL).toBe('kimi-k2.7-code');
+      expect(process.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('kimi-k2.7-code');
+      expect(process.env.ENABLE_TOOL_SEARCH).toBe('false');
       expect(process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('262144');
+      expect(original.ANTHROPIC_MODEL).toBe('wrong-model');
+      expect(original.CLAUDE_CODE_SUBAGENT_MODEL).toBe('wrong-subagent');
+      expect(original.ENABLE_TOOL_SEARCH).toBe('true');
       expect(original.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('200000');
 
       service.restoreEnvVars(original);
+      expect(process.env.ANTHROPIC_MODEL).toBe('wrong-model');
+      expect(process.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('wrong-subagent');
+      expect(process.env.ENABLE_TOOL_SEARCH).toBe('true');
       expect(process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('200000');
     });
 
@@ -1024,16 +1101,41 @@ describe('ProviderService', () => {
       expect(process.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
     });
 
-    it('clears provider-leaked auto compact window before Anthropic query', async () => {
+    it('clears provider-leaked official Kimi env vars before Anthropic query', async () => {
+      process.env.ANTHROPIC_MODEL = 'kimi-k2.7-code';
+      process.env.CLAUDE_CODE_SUBAGENT_MODEL = 'kimi-k2.7-code';
+      process.env.ENABLE_TOOL_SEARCH = 'false';
       process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = '262144';
 
       const original = await service.applyEnvVarsToProcess('claude-3-opus', 'anthropic');
 
+      expect(process.env.ANTHROPIC_MODEL).toBeUndefined();
+      expect(process.env.CLAUDE_CODE_SUBAGENT_MODEL).toBeUndefined();
+      expect(process.env.ENABLE_TOOL_SEARCH).toBeUndefined();
       expect(process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBeUndefined();
+      expect(original.ANTHROPIC_MODEL).toBe('kimi-k2.7-code');
+      expect(original.CLAUDE_CODE_SUBAGENT_MODEL).toBe('kimi-k2.7-code');
+      expect(original.ENABLE_TOOL_SEARCH).toBe('false');
       expect(original.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('262144');
 
       service.restoreEnvVars(original);
+      expect(process.env.ANTHROPIC_MODEL).toBe('kimi-k2.7-code');
+      expect(process.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('kimi-k2.7-code');
+      expect(process.env.ENABLE_TOOL_SEARCH).toBe('false');
       expect(process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('262144');
+    });
+
+    it('clears stale Kimi model env before a provider that does not set ANTHROPIC_MODEL', async () => {
+      process.env.ANTHROPIC_MODEL = 'kimi-k2.7-code';
+
+      const original = await service.applyEnvVarsToProcess('glm-4', 'glm');
+
+      expect(process.env.ANTHROPIC_MODEL).toBeUndefined();
+      expect(process.env.ANTHROPIC_BASE_URL).toBe('https://api.glm.example.com');
+      expect(original.ANTHROPIC_MODEL).toBe('kimi-k2.7-code');
+
+      service.restoreEnvVars(original);
+      expect(process.env.ANTHROPIC_MODEL).toBe('kimi-k2.7-code');
     });
 
     it('should clear provider-leaked GLM base URL after GLM query', async () => {

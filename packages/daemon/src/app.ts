@@ -673,11 +673,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       });
     }
     extensionManager.register(
-      new GitHubEventExtension(
-        db.getDatabase(),
-        process.env.GITHUB_TOKEN,
-        githubPollingEnabled ? { pollIntervalMs: config.githubPollingInterval! * 1000 } : undefined
-      )
+      new GitHubEventExtension(db.getDatabase(), process.env.GITHUB_TOKEN, {
+        ...(githubPollingEnabled ? { pollIntervalMs: config.githubPollingInterval! * 1000 } : {}),
+        credentialStore: credentialManager.getCredentialStore(),
+      })
     );
 
     startupPhase('external event extensions');

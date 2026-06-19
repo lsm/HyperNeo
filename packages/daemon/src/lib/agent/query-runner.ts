@@ -123,6 +123,7 @@ export function refreshQueryEnvFromProcess(
     preserveAnthropicOAuthToken?: boolean;
     omitProviderManagedPreserveAuth?: boolean;
     skipAmbientAnthropicApiKey?: boolean;
+    extraProviderManagedEnvVars?: string[];
   } = {}
 ): Record<string, string | undefined> {
   const refreshedEnv: Record<string, string | undefined> = Object.fromEntries(
@@ -133,6 +134,9 @@ export function refreshQueryEnvFromProcess(
   const providerManagedEnvVars = new Set(PROVIDER_MANAGED_ENV_VARS);
   if (options.refreshAutoCompactWindow) {
     providerManagedEnvVars.add('CLAUDE_CODE_AUTO_COMPACT_WINDOW');
+  }
+  for (const key of options.extraProviderManagedEnvVars ?? []) {
+    providerManagedEnvVars.add(key);
   }
   if (options.omitProviderManaged) {
     for (const key of providerManagedEnvVars) {
@@ -228,6 +232,8 @@ function applyProviderEnvToFlagSettings(queryOptions: Options, envVars: Provider
   const flagEnv: Record<string, string> = {};
   const providerManagedEnvVars = new Set(PROVIDER_MANAGED_ENV_VARS);
   providerManagedEnvVars.add('CLAUDE_CODE_AUTO_COMPACT_WINDOW');
+  providerManagedEnvVars.add('CLAUDE_CODE_SUBAGENT_MODEL');
+  providerManagedEnvVars.add('ENABLE_TOOL_SEARCH');
 
   for (const key of providerManagedEnvVars) {
     if (envVars[key] !== undefined) {
@@ -646,6 +652,7 @@ export class QueryRunner {
       // Apply provider env vars
       const resolvedProviderId = explicitProviderId ?? provider?.id ?? 'anthropic';
       const refreshAutoCompactWindow = true;
+      let extraProviderManagedEnvVars: string[] = [];
       {
         const { getProviderService } = await import('../provider-service');
         const providerService = getProviderService();
@@ -659,6 +666,9 @@ export class QueryRunner {
           },
         };
         const providerEnvVars = providerService.getProviderEnvVars(providerSession);
+        extraProviderManagedEnvVars = ['CLAUDE_CODE_SUBAGENT_MODEL', 'ENABLE_TOOL_SEARCH'].filter(
+          (key) => providerEnvVars[key] !== undefined
+        );
         applyProviderEnvToFlagSettings(queryOptions, providerEnvVars);
         const originalEnvVars = providerService.applyEnvVarsToProcessForSession(providerSession);
         this.ctx.originalEnvVars = originalEnvVars;
@@ -676,6 +686,7 @@ export class QueryRunner {
         preserveAnthropicAuthToken: resolvedProviderId === 'anthropic',
         preserveAnthropicOAuthToken: resolvedProviderId === 'anthropic',
         skipAmbientAnthropicApiKey: resolvedProviderId !== 'anthropic',
+        extraProviderManagedEnvVars,
       }) as Record<string, string>;
 
       // Wrap spawnClaudeCodeProcess to track subprocess exit deterministically.
