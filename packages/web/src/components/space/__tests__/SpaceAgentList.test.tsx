@@ -1,4 +1,4 @@
-import { cleanup, render } from '@testing-library/preact';
+import { cleanup, render, waitFor } from '@testing-library/preact';
 import { signal } from '@preact/signals';
 import type {
   SpaceAgent,
@@ -373,5 +373,40 @@ describe('SpaceAgentList', () => {
     expect(getByText('Bash')).toBeTruthy();
     expect(getByText('Edit')).toBeTruthy();
     expect(queryByText('Default workflow permissions')).toBeNull();
+  });
+
+  it('updates tool permissions when base agent tools change', async () => {
+    mockWorkflowDetails.value = [
+      makeWorkflow({
+        nodes: [
+          {
+            id: 'node-1',
+            name: 'Code',
+            agents: [{ agentId: 'coder-agent', name: 'coder' }],
+          },
+        ],
+      }),
+    ];
+
+    const { getByText, queryByText } = render(<SpaceAgentList />);
+    expect(getByText('Default workflow permissions')).toBeTruthy();
+
+    mockAgents.value = [
+      {
+        id: 'coder-agent',
+        spaceId: 'space-1',
+        name: 'Coder',
+        handle: 'coder',
+        customPrompt: null,
+        tools: ['Edit'],
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      },
+    ];
+
+    await waitFor(() => {
+      expect(getByText('Edit')).toBeTruthy();
+      expect(queryByText('Default workflow permissions')).toBeNull();
+    });
   });
 });

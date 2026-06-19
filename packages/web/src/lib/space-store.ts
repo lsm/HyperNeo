@@ -1186,8 +1186,14 @@ class SpaceStore {
             return { id, detail };
           })
         );
-        // Drop the batch if the space switched while we were fetching.
-        if (this.spaceId.value !== spaceId) return;
+        // Drop the batch if the space switched or reconnect invalidated this
+        // bulk-load generation while we were fetching.
+        if (
+          this.spaceId.value !== spaceId ||
+          this.workflowDetailsLoadGeneration !== loadGeneration
+        ) {
+          return;
+        }
 
         // Merge instead of replace so workflows created/imported by other
         // clients during fan-out (handled by spaceWorkflow.created above)

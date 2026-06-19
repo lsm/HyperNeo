@@ -61,18 +61,23 @@ export function SpaceConfigurePage({ space }: SpaceConfigurePageProps) {
     // empty data.
     // Only pay the per-workflow detail cost when the Agents tab is active.
     const effectSpaceId = space.id;
+    let cancelled = false;
     spaceStore
       .ensureConfigData()
       .then(() => {
-        // Guard against a space switch that resolved the old config promise.
-        // Starting the detail loader for the wrong (or not-yet-loaded) space
-        // snapshots an empty workflow list and marks details loaded early.
-        if (spaceStore.spaceId.value === effectSpaceId && activeTab === 'agents') {
+        // Guard against a space switch, stale tab switch, or unmounted effect
+        // that resolved the old config promise. Starting the detail loader for
+        // the wrong (or not-yet-loaded) space snapshots an empty workflow list
+        // and marks details loaded early.
+        if (!cancelled && spaceStore.spaceId.value === effectSpaceId && activeTab === 'agents') {
           return spaceStore.ensureWorkflowDetails();
         }
       })
       .catch(() => {});
     spaceStore.ensureNodeExecutions().catch(() => {});
+    return () => {
+      cancelled = true;
+    };
   }, [space.id, activeTab]);
   const spaceId = currentSpaceIdSignal.value ?? '';
   /** null = list view; 'new' = create editor; <id> = edit editor */

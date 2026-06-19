@@ -25,6 +25,7 @@ let mockSpace = signal<Space | null>(null);
 let mockWorkflows = signal<SpaceWorkflow[]>([]);
 let mockAgents = signal<SpaceAgent[]>([]);
 let mockStoreSpaceId = signal<string | null>('space-1');
+const mockEnsureConfigData = vi.fn().mockResolvedValue(undefined);
 const mockEnsureWorkflowDetails = vi.fn().mockResolvedValue(undefined);
 
 const mockSelectSpace = vi.fn().mockResolvedValue(undefined);
@@ -250,7 +251,7 @@ vi.mock('../../lib/space-store', () => ({
       schedules: { value: [] },
       listSchedules: vi.fn().mockResolvedValue(undefined),
       configDataLoaded: { value: true },
-      ensureConfigData: vi.fn().mockResolvedValue(undefined),
+      ensureConfigData: mockEnsureConfigData,
       ensureWorkflowDetails: mockEnsureWorkflowDetails,
       ensureNodeExecutions: vi.fn().mockResolvedValue(undefined),
       selectSpace: mockSelectSpace,
@@ -344,6 +345,8 @@ beforeEach(() => {
   mockNavigateToSpaceTask.mockClear();
   mockCreateSession.mockClear();
   mockToastError.mockClear();
+  mockEnsureConfigData.mockClear();
+  mockEnsureConfigData.mockResolvedValue(undefined);
   mockEnsureWorkflowDetails.mockClear();
 });
 
@@ -442,6 +445,24 @@ describe('SpaceIsland — configure workflow editor', () => {
     await waitFor(() => {
       expect(mockEnsureWorkflowDetails).toHaveBeenCalledTimes(1);
     });
+  });
+
+  it('cancels stale Agents-tab detail loads after tab switches', async () => {
+    let resolveConfig: () => void = () => {};
+    mockEnsureConfigData.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveConfig = resolve;
+        })
+    );
+    configureTabBridge.signal.value = 'agents';
+    const result = await renderConfigure();
+
+    fireEvent.click(result.getByTestId('space-configure-tab-workflows'));
+    resolveConfig();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(mockEnsureWorkflowDetails).not.toHaveBeenCalled();
   });
 
   it('opens the visual editor when creating a workflow', async () => {

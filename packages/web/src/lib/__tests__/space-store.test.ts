@@ -769,6 +769,36 @@ describe('SpaceStore — ensureWorkflowDetails', () => {
     expect(spaceStore.workflowDetails.value).toHaveLength(1);
     expect(spaceStore.workflowDetails.value[0]?.name).toBe('Updated by event');
   });
+
+  it('drops stale workflow detail batches when load generation changes mid-fetch', async () => {
+    mockWorkflowSummaries(['wf1']);
+    await spaceStore.selectSpace('space-1');
+    await spaceStore.ensureConfigData();
+
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    mockHub.request.mockImplementation(
+      async (method: string, params?: Record<string, unknown>): Promise<any> => {
+        if (method === 'spaceWorkflow.get') {
+          await gate;
+          return { workflow: makeWorkflow((params?.id as string) ?? 'wf1') };
+        }
+        return {};
+      }
+    );
+
+    const pending = spaceStore.ensureWorkflowDetails();
+    (
+      spaceStore as unknown as { workflowDetailsLoadGeneration: number }
+    ).workflowDetailsLoadGeneration += 1;
+    release();
+    await pending;
+
+    expect(spaceStore.workflowDetails.value).toEqual([]);
+    expect(spaceStore.workflowDetailsLoaded.value).toBe(false);
+  });
 });
 
 describe('SpaceStore — promise-chain lock', () => {

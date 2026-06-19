@@ -201,10 +201,11 @@ function WorkerAgentCard({ agent }: { agent: WorkerAgentInfo }) {
 export function SpaceAgentList() {
   const loading = spaceStore.loading.value;
   const workflowDetails = spaceStore.workflowDetails.value;
+  const agents = spaceStore.agents.value;
   const workflowDetailsLoaded = spaceStore.workflowDetailsLoaded.value;
   const workerAgents = useMemo(
     () => getWorkerAgentsFromWorkflows(workflowDetails),
-    [workflowDetails]
+    [workflowDetails, agents]
   );
 
   if (loading || !workflowDetailsLoaded) {
