@@ -29,6 +29,7 @@ import type { WorkflowRunArtifactRepository } from '../../../storage/repositorie
 import type { WorkflowHookStateRepository } from '../../../storage/repositories/workflow-hook-state-repository';
 import type { HookExecutor, HookExecutorContext } from './hook-executor';
 import { ChannelResolver } from './channel-resolver';
+import { isRateLimitError } from './rate-limit-detector';
 import { Logger } from '../../logger';
 import { parseAddress } from '../../../../../messaging/src/address';
 import {
@@ -417,7 +418,7 @@ export class WorkflowHookEngine {
           hook.retry ||
             (lastResult?.type === 'retryable_block' &&
               typeof lastResult.retryAfterMs === 'number' &&
-              /rate[\s_-]?limit/i.test(lastResult.reason ?? ''))
+              isRateLimitError(lastResult.reason ?? ''))
         );
         if (shouldEnforceRetryBackoff && nextRetryAt !== undefined && Date.now() < nextRetryAt) {
           const remainingRetryAfterMs = Math.max(0, nextRetryAt - Date.now());

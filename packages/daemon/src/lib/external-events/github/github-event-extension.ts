@@ -1149,6 +1149,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     const etags = cursor.etags ?? {};
     const processedPages = cursor.processedPages ?? {};
     const endpointLastSeenAt = cursor.endpointLastSeenAt ?? {};
+    const endpointPendingLastSeenAt = cursor.endpointPendingLastSeenAt ?? {};
     const watermarks = {
       committed: cursor.lastSeenAt ?? watched.lastPollAt ?? 0,
       pending: cursor.pendingLastSeenAt ?? cursor.lastSeenAt ?? watched.lastPollAt ?? 0,
@@ -1240,7 +1241,10 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       const etag = response.headers.get('ETag');
       if (etag && page === 1) etags[endpoint.key] = etag;
       const rows = (await response.json()) as unknown[];
-      let endpointPending = endpointWatermark;
+      let endpointPending = Math.max(
+        endpointWatermark,
+        endpointPendingLastSeenAt[endpoint.key] ?? 0
+      );
       for (const row of rows) {
         const event = normalizeGitHubPollingRow(watched, row, endpoint.key);
         if (event) {
@@ -1256,6 +1260,9 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       // watermark so remaining pages are not filtered out by `since`.
       if (processedPages[endpoint.key] === 1) {
         endpointLastSeenAt[endpoint.key] = endpointPending;
+        delete endpointPendingLastSeenAt[endpoint.key];
+      } else {
+        endpointPendingLastSeenAt[endpoint.key] = endpointPending;
       }
       if (rateLimit.remaining < RATE_LIMIT_LOW_REMAINING_THRESHOLD) {
         this.applyRateLimit(rateLimit);
@@ -1273,6 +1280,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       etags,
       processedPages,
       endpointLastSeenAt,
+      endpointPendingLastSeenAt,
     };
     this.repo.updatePollCursor(watched.id, cursorPayload);
     return count;

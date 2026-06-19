@@ -91,9 +91,10 @@ describe('isSecondaryRateLimitError', () => {
     expect(isSecondaryRateLimitError('Request was throttled; try again later')).toBe(true);
   });
 
-  test('matches bare 429 command errors as secondary limits', () => {
+  test('matches 429 / too-many-requests command errors as secondary limits', () => {
     expect(isSecondaryRateLimitError('HTTP 429')).toBe(true);
     expect(isSecondaryRateLimitError('returned error: 429')).toBe(true);
+    expect(isSecondaryRateLimitError('Too Many Requests')).toBe(true);
   });
 
   test('matches secondary rate limit with different casing', () => {
@@ -104,7 +105,7 @@ describe('isSecondaryRateLimitError', () => {
   test('does not match primary rate-limit messages', () => {
     expect(isSecondaryRateLimitError('rate limit exceeded')).toBe(false);
     expect(isSecondaryRateLimitError('API rate limit')).toBe(false);
-    expect(isSecondaryRateLimitError('too many requests')).toBe(false);
+    expect(isSecondaryRateLimitError('primary rate limit exceeded')).toBe(false);
   });
 
   test('does not match non-rate-limit errors', () => {

@@ -13,6 +13,11 @@ export interface PollCursor {
    * shared `lastSeenAt`.
    */
   endpointLastSeenAt?: Record<string, number>;
+  /**
+   * Per-endpoint pending high-water marks while that endpoint is paginating.
+   * Committed into `endpointLastSeenAt` only once the endpoint backlog clears.
+   */
+  endpointPendingLastSeenAt?: Record<string, number>;
 }
 
 export interface GitHubWatchedRepo {
