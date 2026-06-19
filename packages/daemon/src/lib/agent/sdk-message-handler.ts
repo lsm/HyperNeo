@@ -49,6 +49,7 @@ import { ContextFetcher } from './context-fetcher';
 import { ApiErrorCircuitBreaker } from './api-error-circuit-breaker';
 import type { MessageQueue } from './message-queue';
 import type { QueryLifecycleManager } from './query-lifecycle-manager';
+import { RepeatedToolErrorGuardrail } from './repeated-tool-error-guardrail';
 import { getSessionModelInfo } from '../model-service';
 import { PROVIDER_NO_SDK_AUTO_COMPACT } from './query-options-builder.js';
 import { reserveBasedThreshold } from './context-tracker.js';
@@ -111,6 +112,9 @@ export class SDKMessageHandler {
   // Latest thinking tokens estimate for the current turn (stashed for persistence on assistant message)
   private currentThinkingTokensEstimate: number | null = null;
 
+  /** Guardrail that breaks repeated identical tool-use errors in Forge task sessions. */
+  private repeatedToolErrorGuardrail: RepeatedToolErrorGuardrail;
+
   constructor(private ctx: SDKMessageHandlerContext) {
     const { session } = ctx;
     this.logger = new Logger(`SDKMessageHandler ${session.id}`);
@@ -129,6 +133,34 @@ export class SDKMessageHandler {
     ctx.messageQueue.onMessageYielded = (messageId: string, consumedAt: number) => {
       this.handleMessageYielded(messageId, consumedAt);
     };
+
+    this.repeatedToolErrorGuardrail = new RepeatedToolErrorGuardrail({
+      getTaskForSession: () => {
+        try {
+          return this.ctx.db?.getSpaceTaskRepo().getTaskBySessionId(this.ctx.session.id) ?? null;
+        } catch (err) {
+          this.logger.warn('Failed to resolve task for repeated-tool-error guardrail:', err);
+          return null;
+        }
+      },
+      emitEvidence: (params) => {
+        try {
+          const task = this.ctx.db?.getSpaceTaskRepo().getTaskBySessionId(this.ctx.session.id);
+          if (!task) return undefined;
+          return this.ctx.db?.evolution.createEvidence({
+            scopeId: params.scopeId,
+            kind: 'conversation_friction',
+            sourceId: task.id,
+            summary: params.summary,
+            metadata: params.metadata,
+          });
+        } catch (err) {
+          this.logger.warn('Failed to create conversation_friction evidence:', err);
+          return undefined;
+        }
+      },
+      displayRecoveryMessage: (text) => this.displayErrorAsAssistantMessage(text),
+    });
   }
 
   /**
@@ -879,6 +911,7 @@ export class SDKMessageHandler {
 
   private async handleUserMessage(message: SDKMessage): Promise<void> {
     await this.publishToolResultConsumedEvents(message);
+    await this.repeatedToolErrorGuardrail.observeToolResultErrors(message as unknown);
   }
 
   private async publishToolResultConsumedEvents(message: SDKMessage): Promise<void> {
@@ -915,6 +948,7 @@ export class SDKMessageHandler {
         toolName: toolCall.name,
         timestamp: Date.now(),
       });
+      this.repeatedToolErrorGuardrail.recordToolUse(toolCall.id, toolCall.name);
     }
     if (toolCalls.length > 0) {
       session.metadata = {
