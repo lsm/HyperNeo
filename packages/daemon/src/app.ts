@@ -1183,6 +1183,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     };
   } catch (error) {
     startupLogCaptureCleanup?.();
+    // A startup failure returns no cleanup function, so stop any in-flight
+    // embedding-model prefetch here so it cannot outlive the failed process.
+    abortAgentMemoryEmbeddingModelPrefetch();
     throw error;
   }
 }

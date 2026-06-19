@@ -33,6 +33,7 @@ let modulePromise: Promise<TransformersModule> | null = null;
 let fetchConfigured = false;
 let prefetchResult: Promise<InitializedEmbedder | null> | null = null;
 let prefetchAbortController: AbortController | null = null;
+let prefetchAborted = false;
 
 export class TransformersAgentMemoryEmbedder implements AgentMemoryEmbedder {
   model = MODEL_ID;
@@ -56,6 +57,9 @@ export class TransformersAgentMemoryEmbedder implements AgentMemoryEmbedder {
       this.initPromise = (async () => {
         const prefetched = prefetchResult ? await prefetchResult : null;
         if (prefetched) return prefetched;
+        if (prefetchAborted) {
+          throw new Error('Agent memory embedding model load aborted');
+        }
 
         const { AutoModel, AutoTokenizer } = await loadTransformersWeb();
         const [model, tokenizer] = await Promise.all([
@@ -143,6 +147,7 @@ export async function prefetchAgentMemoryEmbeddingModel(
       }
     } catch (err) {
       if (prefetchAbortController?.signal.aborted) {
+        prefetchAborted = true;
         logInfo('[AgentMemory] Embedding model prefetch aborted during shutdown');
         return null;
       }
@@ -164,6 +169,7 @@ export function resetAgentMemoryEmbedderStateForTests(): void {
   fetchConfigured = false;
   prefetchResult = null;
   prefetchAbortController = null;
+  prefetchAborted = false;
 }
 
 /**
