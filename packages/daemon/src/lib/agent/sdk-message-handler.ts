@@ -521,9 +521,11 @@ export class SDKMessageHandler {
     // assistant message containing a thinking block arrives.
     if (isSDKThinkingTokensMessage(message)) {
       const estimate = message.estimated_tokens;
-      // Some SDK/provider paths reset the running total when a new thinking
-      // block starts. If the cumulative estimate drops below what we already
-      // stamped, treat it as a new block boundary instead of a negative delta.
+      // Heuristic: treat a drop in the cumulative estimate as a new thinking-block
+      // boundary. Non-decreasing values are treated as the same stream so the
+      // delta since the last stamped block is attributed correctly. This handles
+      // both the stuck-cumulative task-agent case (e.g. #614) and per-block resets
+      // where the next block starts lower than the previous block's final total.
       if (
         this.lastStampedThinkingTokensEstimate > 0 &&
         estimate < this.lastStampedThinkingTokensEstimate
