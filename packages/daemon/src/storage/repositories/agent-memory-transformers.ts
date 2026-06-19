@@ -1,6 +1,7 @@
 import { createRequire } from 'node:module';
-import { access, constants, mkdir, readFile, rename, unlink } from 'node:fs/promises';
-import { createWriteStream } from 'node:fs';
+import { access, constants, mkdir, rename, stat, unlink } from 'node:fs/promises';
+import { createReadStream, createWriteStream } from 'node:fs';
+import { Readable } from 'node:stream';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { homedir } from 'node:os';
@@ -296,11 +297,12 @@ class TransformersFileCache {
 
   async match(request: string): Promise<Response | undefined> {
     try {
-      const buffer = await readFile(this.filePath(request));
+      const filePath = this.filePath(request);
+      const { size } = await stat(filePath);
       const headers = new Headers();
-      headers.set('content-length', String(buffer.length));
+      headers.set('content-length', String(size));
       headers.set('content-type', 'application/octet-stream');
-      return new Response(buffer, { headers });
+      return new Response(Readable.toWeb(createReadStream(filePath)), { headers });
     } catch {
       return undefined;
     }
@@ -317,13 +319,14 @@ class TransformersFileCache {
     const id = process.pid;
     const randomSuffix = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const tmpPath = `${filePath}.tmp.${id}.${randomSuffix}`;
+    let stream: ReturnType<typeof createWriteStream> | null = null;
 
     try {
       const contentLength = response.headers.get('content-length');
       const total = contentLength ? parseInt(contentLength, 10) : 0;
       let loaded = 0;
 
-      const stream = createWriteStream(tmpPath);
+      stream = createWriteStream(tmpPath);
       const reader = response.body?.getReader();
       if (!reader) {
         stream.end();
@@ -334,7 +337,7 @@ class TransformersFileCache {
         const { done, value } = await reader.read();
         if (done) break;
         await new Promise<void>((resolve, reject) => {
-          stream.write(value, (err) => {
+          stream!.write(value, (err) => {
             if (err) reject(err);
             else resolve();
           });
@@ -347,12 +350,16 @@ class TransformersFileCache {
 
       stream.end();
       await new Promise<void>((resolve, reject) => {
-        stream.on('finish', resolve);
-        stream.on('error', reject);
+        stream!.on('finish', resolve);
+        stream!.on('error', reject);
       });
 
       await rename(tmpPath, filePath);
     } catch (error) {
+      if (stream && !stream.destroyed) {
+        stream.destroy();
+        await new Promise<void>((resolve) => stream!.once('close', resolve));
+      }
       try {
         await unlink(tmpPath);
       } catch {
