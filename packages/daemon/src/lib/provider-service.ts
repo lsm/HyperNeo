@@ -25,7 +25,7 @@
  *
  * 2. **Provider-specific env vars** are managed by the provider system:
  *    - ANTHROPIC_BASE_URL, ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN
- *    - ANTHROPIC_DEFAULT_*_MODEL (tier mappings)
+ *    - ANTHROPIC_MODEL, ANTHROPIC_DEFAULT_*_MODEL (tier mappings)
  *    - API_TIMEOUT_MS, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC
  *    - These are filtered out from user settings
  *    - Applied to process.env by applyEnvVarsToProcess()
@@ -75,6 +75,8 @@ export interface ProviderEnvVars {
   ANTHROPIC_API_KEY?: string;
   ANTHROPIC_AUTH_TOKEN?: string;
   ANTHROPIC_MODEL?: string; // Override default model
+  CLAUDE_CODE_SUBAGENT_MODEL?: string; // Override subagent model
+  ENABLE_TOOL_SEARCH?: string; // Provider-specific SDK flag
   ANTHROPIC_DEFAULT_HAIKU_MODEL?: string; // Map haiku tier to provider model
   ANTHROPIC_DEFAULT_SONNET_MODEL?: string; // Map default/sonnet tier to provider model
   ANTHROPIC_DEFAULT_OPUS_MODEL?: string; // Map opus tier to provider model
@@ -95,6 +97,9 @@ export interface OriginalEnvVars {
   ANTHROPIC_API_KEY?: string;
   ANTHROPIC_AUTH_TOKEN?: string;
   ANTHROPIC_BASE_URL?: string;
+  ANTHROPIC_MODEL?: string;
+  CLAUDE_CODE_SUBAGENT_MODEL?: string;
+  ENABLE_TOOL_SEARCH?: string;
   API_TIMEOUT_MS?: string;
   CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC?: string;
   CLAUDE_CODE_AUTO_COMPACT_WINDOW?: string;
@@ -107,6 +112,18 @@ export interface OriginalEnvVars {
   PORT?: string;
   /** Daemon's NEOKAI_PORT — also cleared to prevent subprocess env leakage */
   NEOKAI_PORT?: string;
+}
+
+function mergeOriginalEnvVars(...originals: OriginalEnvVars[]): OriginalEnvVars {
+  const merged: OriginalEnvVars = {};
+  for (const original of originals) {
+    for (const [key, value] of Object.entries(original)) {
+      if (!Object.prototype.hasOwnProperty.call(merged, key)) {
+        Reflect.set(merged, key, value);
+      }
+    }
+  }
+  return merged;
 }
 
 /**
@@ -313,9 +330,16 @@ export class ProviderService {
     const registry = await this.getReadyRegistry();
     const provider = registry.get(providerId);
     const providerModelId = provider?.getTitleGenerationModel?.() ?? sessionModelId;
+    let sdkModelId = provider?.translateModelIdForSdk?.(providerModelId) ?? providerModelId;
+    try {
+      const sdkConfig = provider?.buildSdkConfig(providerModelId);
+      sdkModelId = sdkConfig?.envVars.ANTHROPIC_MODEL ?? sdkModelId;
+    } catch {
+      // Provider not initialised yet; keep translated fallback.
+    }
     return {
       providerModelId,
-      sdkModelId: provider?.translateModelIdForSdk?.(providerModelId) ?? providerModelId,
+      sdkModelId,
     };
   }
 
@@ -352,14 +376,14 @@ export class ProviderService {
     // fetched when neither override nor tier fallback produced an answer.
     const titleOverride = provider.getTitleGenerationModel?.();
     const tierFallback = provider.getModelForTier('haiku');
-    const modelId =
-      titleOverride || tierFallback || (await provider.getModels())[0]?.id || 'default';
+    let modelId = titleOverride || tierFallback || (await provider.getModels())[0]?.id || 'default';
 
     // Get base URL from SDK config
     let baseUrl = 'https://api.anthropic.com';
     let apiVersion = 'v1';
     try {
       const sdkConfig = provider.buildSdkConfig(modelId);
+      modelId = sdkConfig.envVars.ANTHROPIC_MODEL ?? modelId;
       baseUrl = (sdkConfig.envVars.ANTHROPIC_BASE_URL as string | undefined) || baseUrl;
       apiVersion = sdkConfig.apiVersion || apiVersion;
     } catch (err) {
@@ -478,12 +502,18 @@ export class ProviderService {
    */
   applyEnvVarsToProcessForSession(session: Session): OriginalEnvVars {
     const envVars = this.getProviderEnvVars(session);
+    const cleared = this.clearProviderRoutingEnvVars({
+      preserveUserSettings: session.config.provider === 'anthropic',
+    });
 
     if (Object.keys(envVars).length === 0) {
-      return this.clearProviderRoutingEnvVars();
+      return cleared;
     }
 
-    return this.applyEnvVars(envVars, { preserveApiKey: session.config.provider === 'anthropic' });
+    return mergeOriginalEnvVars(
+      cleared,
+      this.applyEnvVars(envVars, { preserveApiKey: session.config.provider === 'anthropic' })
+    );
   }
 
   /**
@@ -500,14 +530,18 @@ export class ProviderService {
    */
   async applyEnvVarsToProcess(modelId: string, providerId: string): Promise<OriginalEnvVars> {
     const envVars = await this.getEnvVarsForModel(modelId, providerId);
+    const cleared = this.clearProviderRoutingEnvVars({
+      preserveUserSettings: providerId === 'anthropic',
+    });
 
-    // For Anthropic (or any non-overriding provider), explicitly clear routing
-    // overrides that may have leaked from a previous GLM query.
     if (Object.keys(envVars).length === 0) {
-      return this.clearProviderRoutingEnvVars();
+      return cleared;
     }
 
-    return this.applyEnvVars(envVars, { preserveApiKey: providerId === 'anthropic' });
+    return mergeOriginalEnvVars(
+      cleared,
+      this.applyEnvVars(envVars, { preserveApiKey: providerId === 'anthropic' })
+    );
   }
 
   /**
@@ -533,11 +567,11 @@ export class ProviderService {
     }
     if (providerId === 'anthropic') {
       const envVars = sdkConfigToEnvVars(provider.buildSdkConfig(modelId || 'default'));
-      const cleared = this.clearProviderRoutingEnvVars();
+      const cleared = this.clearProviderRoutingEnvVars({ preserveUserSettings: true });
       if (Object.keys(envVars).length === 0) {
         return cleared;
       }
-      return { ...cleared, ...this.applyEnvVars(envVars, { preserveApiKey: true }) };
+      return mergeOriginalEnvVars(cleared, this.applyEnvVars(envVars, { preserveApiKey: true }));
     }
 
     const sessionConfig = modelId ? { apiKey: undefined } : undefined;
@@ -549,8 +583,16 @@ export class ProviderService {
       return {};
     }
     const envVars = sdkConfigToEnvVars(sdkConfig);
+    const cleared = this.clearProviderRoutingEnvVars({ preserveUserSettings: false });
 
-    return this.applyEnvVars(envVars, { preserveApiKey: providerId === 'anthropic' });
+    if (Object.keys(envVars).length === 0) {
+      return cleared;
+    }
+
+    return mergeOriginalEnvVars(
+      cleared,
+      this.applyEnvVars(envVars, { preserveApiKey: providerId === 'anthropic' })
+    );
   }
 
   /**
@@ -596,6 +638,18 @@ export class ProviderService {
       original.ANTHROPIC_BASE_URL = process.env.ANTHROPIC_BASE_URL;
       process.env.ANTHROPIC_BASE_URL = envVars.ANTHROPIC_BASE_URL;
     }
+    if (envVars.ANTHROPIC_MODEL !== undefined) {
+      original.ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL;
+      process.env.ANTHROPIC_MODEL = envVars.ANTHROPIC_MODEL;
+    }
+    if (envVars.CLAUDE_CODE_SUBAGENT_MODEL !== undefined) {
+      original.CLAUDE_CODE_SUBAGENT_MODEL = process.env.CLAUDE_CODE_SUBAGENT_MODEL;
+      process.env.CLAUDE_CODE_SUBAGENT_MODEL = envVars.CLAUDE_CODE_SUBAGENT_MODEL;
+    }
+    if (envVars.ENABLE_TOOL_SEARCH !== undefined) {
+      original.ENABLE_TOOL_SEARCH = process.env.ENABLE_TOOL_SEARCH;
+      process.env.ENABLE_TOOL_SEARCH = envVars.ENABLE_TOOL_SEARCH;
+    }
     if (envVars.API_TIMEOUT_MS !== undefined) {
       original.API_TIMEOUT_MS = process.env.API_TIMEOUT_MS;
       process.env.API_TIMEOUT_MS = envVars.API_TIMEOUT_MS;
@@ -608,10 +662,8 @@ export class ProviderService {
     }
     if (envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW !== undefined) {
       original.CLAUDE_CODE_AUTO_COMPACT_WINDOW = process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
-      // Empty string means "explicitly clear" — providers whose auto-compact
-      // is disabled (e.g. Kimi, which would otherwise inherit a stale value
-      // from a previous GLM/Codex query) return '' so the SDK subprocess
-      // doesn't pick up the wrong window.
+      // Empty string means "explicitly clear" so providers can prevent stale
+      // auto-compact windows from leaking into the SDK subprocess.
       if (envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW === '') {
         delete process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
       } else {
@@ -644,7 +696,9 @@ export class ProviderService {
    * These vars force Anthropic-compatible traffic to a non-default provider.
    * If they leak across queries, model selection can appear "stuck" (e.g., glm-5).
    */
-  private clearProviderRoutingEnvVars(): OriginalEnvVars {
+  private clearProviderRoutingEnvVars(
+    options: { preserveUserSettings?: boolean } = {}
+  ): OriginalEnvVars {
     const original: OriginalEnvVars = {};
     let changed = false;
 
@@ -658,11 +712,49 @@ export class ProviderService {
 
     clear('ANTHROPIC_AUTH_TOKEN');
 
+    // Preserve user's custom ANTHROPIC_MODEL while clearing provider leaks.
+    if (process.env.ANTHROPIC_MODEL !== undefined) {
+      original.ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL;
+      changed = true;
+      if (
+        !options.preserveUserSettings ||
+        userConfiguredAnthropicModel === undefined ||
+        process.env.ANTHROPIC_MODEL !== userConfiguredAnthropicModel
+      ) {
+        delete process.env.ANTHROPIC_MODEL;
+      }
+    }
+
+    // Preserve user's Claude Code subagent/tool-search settings while clearing provider leaks.
+    if (process.env.CLAUDE_CODE_SUBAGENT_MODEL !== undefined) {
+      original.CLAUDE_CODE_SUBAGENT_MODEL = process.env.CLAUDE_CODE_SUBAGENT_MODEL;
+      changed = true;
+      if (
+        !options.preserveUserSettings ||
+        userConfiguredSubagentModel === undefined ||
+        process.env.CLAUDE_CODE_SUBAGENT_MODEL !== userConfiguredSubagentModel
+      ) {
+        delete process.env.CLAUDE_CODE_SUBAGENT_MODEL;
+      }
+    }
+    if (process.env.ENABLE_TOOL_SEARCH !== undefined) {
+      original.ENABLE_TOOL_SEARCH = process.env.ENABLE_TOOL_SEARCH;
+      changed = true;
+      if (
+        !options.preserveUserSettings ||
+        userConfiguredToolSearch === undefined ||
+        process.env.ENABLE_TOOL_SEARCH !== userConfiguredToolSearch
+      ) {
+        delete process.env.ENABLE_TOOL_SEARCH;
+      }
+    }
+
     // Preserve user's custom ANTHROPIC_BASE_URL from environment/settings.json
     if (process.env.ANTHROPIC_BASE_URL !== undefined) {
       original.ANTHROPIC_BASE_URL = process.env.ANTHROPIC_BASE_URL;
       changed = true;
       if (
+        !options.preserveUserSettings ||
         userConfiguredBaseUrl === undefined ||
         process.env.ANTHROPIC_BASE_URL !== userConfiguredBaseUrl
       ) {
@@ -675,6 +767,7 @@ export class ProviderService {
       original.API_TIMEOUT_MS = process.env.API_TIMEOUT_MS;
       changed = true;
       if (
+        !options.preserveUserSettings ||
         userConfiguredApiTimeout === undefined ||
         process.env.API_TIMEOUT_MS !== userConfiguredApiTimeout
       ) {
@@ -688,6 +781,7 @@ export class ProviderService {
         process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC;
       changed = true;
       if (
+        !options.preserveUserSettings ||
         userConfiguredDisableNonEssentialTraffic === undefined ||
         process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC !==
           userConfiguredDisableNonEssentialTraffic
@@ -701,6 +795,7 @@ export class ProviderService {
       original.CLAUDE_CODE_AUTO_COMPACT_WINDOW = process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
       changed = true;
       if (
+        !options.preserveUserSettings ||
         userConfiguredAutoCompactWindow === undefined ||
         process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW !== userConfiguredAutoCompactWindow
       ) {
@@ -713,6 +808,7 @@ export class ProviderService {
       original.ANTHROPIC_DEFAULT_SONNET_MODEL = process.env.ANTHROPIC_DEFAULT_SONNET_MODEL;
       changed = true;
       if (
+        !options.preserveUserSettings ||
         userConfiguredDefaultSonnetModel === undefined ||
         process.env.ANTHROPIC_DEFAULT_SONNET_MODEL !== userConfiguredDefaultSonnetModel
       ) {
@@ -725,6 +821,7 @@ export class ProviderService {
       original.ANTHROPIC_DEFAULT_HAIKU_MODEL = process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL;
       changed = true;
       if (
+        !options.preserveUserSettings ||
         userConfiguredDefaultHaikuModel === undefined ||
         process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL !== userConfiguredDefaultHaikuModel
       ) {
@@ -737,6 +834,7 @@ export class ProviderService {
       original.ANTHROPIC_DEFAULT_OPUS_MODEL = process.env.ANTHROPIC_DEFAULT_OPUS_MODEL;
       changed = true;
       if (
+        !options.preserveUserSettings ||
         userConfiguredDefaultOpusModel === undefined ||
         process.env.ANTHROPIC_DEFAULT_OPUS_MODEL !== userConfiguredDefaultOpusModel
       ) {
@@ -803,6 +901,27 @@ export class ProviderService {
         process.env.ANTHROPIC_BASE_URL = original.ANTHROPIC_BASE_URL;
       } else {
         delete process.env.ANTHROPIC_BASE_URL;
+      }
+    }
+    if (Object.prototype.hasOwnProperty.call(original, 'ANTHROPIC_MODEL')) {
+      if (original.ANTHROPIC_MODEL !== undefined) {
+        process.env.ANTHROPIC_MODEL = original.ANTHROPIC_MODEL;
+      } else {
+        delete process.env.ANTHROPIC_MODEL;
+      }
+    }
+    if (Object.prototype.hasOwnProperty.call(original, 'CLAUDE_CODE_SUBAGENT_MODEL')) {
+      if (original.CLAUDE_CODE_SUBAGENT_MODEL !== undefined) {
+        process.env.CLAUDE_CODE_SUBAGENT_MODEL = original.CLAUDE_CODE_SUBAGENT_MODEL;
+      } else {
+        delete process.env.CLAUDE_CODE_SUBAGENT_MODEL;
+      }
+    }
+    if (Object.prototype.hasOwnProperty.call(original, 'ENABLE_TOOL_SEARCH')) {
+      if (original.ENABLE_TOOL_SEARCH !== undefined) {
+        process.env.ENABLE_TOOL_SEARCH = original.ENABLE_TOOL_SEARCH;
+      } else {
+        delete process.env.ENABLE_TOOL_SEARCH;
       }
     }
     if (Object.prototype.hasOwnProperty.call(original, 'API_TIMEOUT_MS')) {
@@ -915,6 +1034,9 @@ const userConfiguredApiTimeout = process.env.API_TIMEOUT_MS;
 const userConfiguredDisableNonEssentialTraffic =
   process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC;
 const userConfiguredAutoCompactWindow = process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
+const userConfiguredAnthropicModel = process.env.ANTHROPIC_MODEL;
+const userConfiguredSubagentModel = process.env.CLAUDE_CODE_SUBAGENT_MODEL;
+const userConfiguredToolSearch = process.env.ENABLE_TOOL_SEARCH;
 const userConfiguredDefaultSonnetModel = process.env.ANTHROPIC_DEFAULT_SONNET_MODEL;
 const userConfiguredDefaultHaikuModel = process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL;
 const userConfiguredDefaultOpusModel = process.env.ANTHROPIC_DEFAULT_OPUS_MODEL;
@@ -936,6 +1058,9 @@ export function getUserConfiguredAnthropicEnv(): Record<string, string> {
   const snapshot: Record<string, string> = {};
   const entries: Array<[string, string | undefined]> = [
     ['ANTHROPIC_BASE_URL', userConfiguredBaseUrl],
+    ['ANTHROPIC_MODEL', userConfiguredAnthropicModel],
+    ['CLAUDE_CODE_SUBAGENT_MODEL', userConfiguredSubagentModel],
+    ['ENABLE_TOOL_SEARCH', userConfiguredToolSearch],
     ['API_TIMEOUT_MS', userConfiguredApiTimeout],
     ['ANTHROPIC_DEFAULT_SONNET_MODEL', userConfiguredDefaultSonnetModel],
     ['ANTHROPIC_DEFAULT_HAIKU_MODEL', userConfiguredDefaultHaikuModel],
