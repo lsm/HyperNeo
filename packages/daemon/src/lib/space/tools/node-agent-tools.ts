@@ -526,6 +526,9 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
   );
 
   const pendingGateChangeNotifications = new Map<string, Promise<unknown>>();
+  /** Deferred onGateDataChanged retry timers for rate-limited gate writes. */
+  const pendingGateChangeRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const pendingGateChangeRetryFireAt = new Map<string, number>();
 
   async function notifyGateDataChanged(gateId: string): Promise<void> {
     if (!config.onGateDataChanged) return;
@@ -550,6 +553,39 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
         pendingGateChangeNotifications.delete(gateId);
       }
     }
+  }
+
+  /**
+   * Schedules a deferred gate-data refresh after a rate-limited evaluation.
+   *
+   * The shared `GateRetryScheduler` inside `ChannelRouter.onGateDataChanged`
+   * only sees refreshes that actually run; when a `send_message` aborts early
+   * because a gate script hit a GitHub rate limit, we must still re-evaluate
+   * the gate after the cooldown so downstream activation is not stuck.
+   */
+  function deferGateDataChanged(gateId: string, retryAfterMs: number): void {
+    const newFireAt = Date.now() + retryAfterMs;
+    const existingFireAt = pendingGateChangeRetryFireAt.get(gateId);
+    if (existingFireAt !== undefined && newFireAt <= existingFireAt) {
+      return;
+    }
+    const existingTimer = pendingGateChangeRetryTimers.get(gateId);
+    if (existingTimer) {
+      clearTimeout(existingTimer);
+    }
+    const timer = setTimeout(() => {
+      pendingGateChangeRetryTimers.delete(gateId);
+      pendingGateChangeRetryFireAt.delete(gateId);
+      void notifyGateDataChanged(gateId).catch((err) => {
+        log.warn(
+          `Deferred gate-data refresh failed for gate "${gateId}" in run "${workflowRunId}": ` +
+            (err instanceof Error ? err.message : String(err))
+        );
+      });
+    }, retryAfterMs);
+    timer.unref?.();
+    pendingGateChangeRetryTimers.set(gateId, timer);
+    pendingGateChangeRetryFireAt.set(gateId, newFireAt);
   }
 
   /** Helper to log MCP write operations to the audit log. */
@@ -1057,8 +1093,11 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
                 // If gate evaluation hit a rate limit, surface the retryable error
                 // immediately instead of proceeding to delivery (which would re-evaluate
                 // the same gate script and make another GitHub call during the cooldown).
+                // Schedule a deferred gate-data refresh so the shared retry scheduler
+                // inside ChannelRouter can re-evaluate after the cooldown.
                 if (evalResult.rateLimited) {
                   const retryAfterMs = evalResult.retryAfterMs ?? RATE_LIMIT_MIN_BACKOFF_MS;
+                  deferGateDataChanged(gateId, retryAfterMs);
                   const reason = evalResult.reason ?? `Gate "${gateId}" rate-limited`;
                   return jsonResult({
                     success: false,
@@ -1090,17 +1129,22 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
         data,
       });
 
-      // Fire gate-data-changed callback for ALL non-rate-limited cases (even queued
-      // or failed delivery). Skip ONLY when rate-limited to avoid re-evaluating the
-      // gate script (which would make another GitHub call during active cooldown).
-      if (gateIdToNotify && result.rateLimited !== true) {
-        try {
-          await notifyGateDataChanged(gateIdToNotify);
-        } catch (err) {
-          log.warn(
-            `onGateDataChanged failed for gate "${gateIdToNotify}" in run "${workflowRunId}":`,
-            err instanceof Error ? err.message : String(err)
-          );
+      // Fire gate-data-changed callback for non-rate-limited cases (even queued
+      // or failed delivery). When rate-limited, defer the refresh instead of
+      // running it immediately, so the shared retry scheduler re-evaluates after
+      // the cooldown without burning another GitHub call.
+      if (gateIdToNotify) {
+        if (result.rateLimited === true) {
+          deferGateDataChanged(gateIdToNotify, result.retryAfterMs ?? RATE_LIMIT_MIN_BACKOFF_MS);
+        } else {
+          try {
+            await notifyGateDataChanged(gateIdToNotify);
+          } catch (err) {
+            log.warn(
+              `onGateDataChanged failed for gate "${gateIdToNotify}" in run "${workflowRunId}":`,
+              err instanceof Error ? err.message : String(err)
+            );
+          }
         }
       }
 

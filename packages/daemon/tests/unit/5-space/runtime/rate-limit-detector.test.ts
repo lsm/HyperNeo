@@ -83,6 +83,14 @@ describe('isSecondaryRateLimitError', () => {
     );
   });
 
+  test('matches abuse-detection and throttling messages as secondary limits', () => {
+    expect(
+      isSecondaryRateLimitError('You have triggered an abuse detection mechanism. Please retry.')
+    ).toBe(true);
+    expect(isSecondaryRateLimitError('GitHub API temporarily blocked this request')).toBe(true);
+    expect(isSecondaryRateLimitError('Request was throttled; try again later')).toBe(true);
+  });
+
   test('matches secondary rate limit with different casing', () => {
     expect(isSecondaryRateLimitError('SECONDARY RATE LIMIT EXCEEDED')).toBe(true);
     expect(isSecondaryRateLimitError('Secondary Rate-Limit detected')).toBe(true);
