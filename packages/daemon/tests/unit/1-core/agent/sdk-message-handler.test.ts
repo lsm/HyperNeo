@@ -579,6 +579,57 @@ describe('SDKMessageHandler', () => {
       });
     });
 
+    it('should reset thinking token tracking on system init (new query start)', async () => {
+      // Stale counters from an interrupted previous turn
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'thinking_tokens',
+        uuid: 'thinking-1',
+        session_id: 'test-session-id',
+        estimated_tokens: 500,
+        estimated_tokens_delta: 500,
+      } as unknown as SDKMessage);
+
+      const assistantA: SDKMessage = {
+        type: 'assistant',
+        uuid: 'assistant-a',
+        session_id: 'test-session-id',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'thinking', thinking: 'Interrupted turn chunk' }],
+        },
+        parent_tool_use_id: null,
+      } as unknown as SDKMessage;
+      await handler.handleMessage(assistantA);
+
+      // New SDK query/session starts with init
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'init',
+        uuid: 'init-uuid',
+        session_id: 'new-sdk-session-id',
+        slash_commands: [],
+      } as unknown as SDKMessage);
+
+      // Next thinking block should not inherit the previous turn's stamp baseline
+      const assistantB: SDKMessage = {
+        type: 'assistant',
+        uuid: 'assistant-b',
+        session_id: 'test-session-id',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'thinking', thinking: 'New query chunk' }],
+        },
+        parent_tool_use_id: null,
+      } as unknown as SDKMessage;
+      await handler.handleMessage(assistantB);
+
+      const savedB = saveSDKMessageSpy.mock.calls.find(
+        (call) => (call[1] as SDKMessage).uuid === 'assistant-b'
+      )?.[1] as SDKMessage;
+      expect(savedB).not.toHaveProperty('estimated_thinking_tokens');
+    });
+
     it('should not persist thinking_tokens but stash estimate', async () => {
       const message: SDKMessage = {
         type: 'system',

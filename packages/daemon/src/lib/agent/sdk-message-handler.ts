@@ -693,6 +693,13 @@ export class SDKMessageHandler {
 
     if (!isSDKSystemMessage(message)) return;
 
+    // A new SDK query/session starts with an init message. Reset any stale
+    // turn-level thinking counters left over from a previously interrupted or
+    // stopped turn so they cannot undercount the new query's first block.
+    if (isSDKSystemInit(message)) {
+      this.resetThinkingTokenTracking();
+    }
+
     // Capture SDK's internal session ID if we don't have it yet
     // This enables session resumption after daemon restart
     // Guard on isSDKSystemInit so that other system subtypes (api_retry, status, etc.)
