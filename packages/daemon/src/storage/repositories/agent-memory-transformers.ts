@@ -172,7 +172,6 @@ export function resetAgentMemoryEmbedderStateForTests(): void {
  */
 export function abortAgentMemoryEmbeddingModelPrefetch(): void {
   prefetchAbortController?.abort();
-  prefetchAbortController = null;
 }
 
 function loadTransformersWeb(): Promise<TransformersModule> {
