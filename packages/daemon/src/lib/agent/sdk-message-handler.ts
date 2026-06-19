@@ -137,7 +137,18 @@ export class SDKMessageHandler {
     this.repeatedToolErrorGuardrail = new RepeatedToolErrorGuardrail({
       getTaskForSession: () => {
         try {
-          return this.ctx.db?.getSpaceTaskRepo().getTaskBySessionId(this.ctx.session.id) ?? null;
+          const repo = this.ctx.db?.getSpaceTaskRepo();
+          if (!repo) return null;
+
+          // Legacy task-agent sessions store the task directly on the session row.
+          const task = repo.getTaskBySessionId(this.ctx.session.id);
+          if (task) return task;
+
+          // Worker/node-agent sessions carry the task id in session context.
+          const taskId = this.ctx.session.context?.taskId;
+          if (taskId) return repo.getTask(taskId);
+
+          return null;
         } catch (err) {
           this.logger.warn('Failed to resolve task for repeated-tool-error guardrail:', err);
           return null;
@@ -145,8 +156,16 @@ export class SDKMessageHandler {
       },
       emitEvidence: (params) => {
         try {
-          const task = this.ctx.db?.getSpaceTaskRepo().getTaskBySessionId(this.ctx.session.id);
+          const repo = this.ctx.db?.getSpaceTaskRepo();
+          if (!repo) return undefined;
+
+          const task =
+            repo.getTaskBySessionId(this.ctx.session.id) ??
+            (this.ctx.session.context?.taskId
+              ? repo.getTask(this.ctx.session.context.taskId)
+              : null);
           if (!task) return undefined;
+
           return this.ctx.db?.evolution.createEvidence({
             scopeId: params.scopeId,
             kind: 'conversation_friction',
@@ -159,7 +178,14 @@ export class SDKMessageHandler {
           return undefined;
         }
       },
-      displayRecoveryMessage: (text) => this.displayErrorAsAssistantMessage(text),
+      routeRecoveryMessage: (text) => {
+        // Route the recovery through the active message queue so the running SDK
+        // turn actually receives the instruction, instead of only displaying a
+        // synthetic assistant frame in the UI.
+        void this.ctx.messageQueue.enqueue(text).catch((err) => {
+          this.logger.warn('Failed to enqueue repeated tool error recovery message:', err);
+        });
+      },
     });
   }
 

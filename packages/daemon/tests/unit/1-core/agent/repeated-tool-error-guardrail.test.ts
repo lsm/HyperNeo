@@ -24,7 +24,7 @@ function makeGuardrail(
   const deps = {
     getTaskForSession: mock(() => task),
     emitEvidence: mock(() => ({ id: 'evidence-1' })),
-    displayRecoveryMessage: mock(async () => {}),
+    routeRecoveryMessage: mock(async () => {}),
     threshold: 2,
     errorFingerprintLength: 80,
     ...overrides,
@@ -71,7 +71,7 @@ describe('RepeatedToolErrorGuardrail', () => {
     );
 
     expect(triggered).toBe(false);
-    expect(deps.displayRecoveryMessage).not.toHaveBeenCalled();
+    expect(deps.routeRecoveryMessage).not.toHaveBeenCalled();
     expect(deps.emitEvidence).not.toHaveBeenCalled();
   });
 
@@ -85,7 +85,7 @@ describe('RepeatedToolErrorGuardrail', () => {
     );
 
     expect(triggered).toBe(true);
-    expect(deps.displayRecoveryMessage).toHaveBeenCalledTimes(1);
+    expect(deps.routeRecoveryMessage).toHaveBeenCalledTimes(1);
     expect(deps.emitEvidence).toHaveBeenCalledTimes(1);
   });
 
@@ -100,7 +100,7 @@ describe('RepeatedToolErrorGuardrail', () => {
     );
 
     expect(triggered).toBe(false);
-    expect(deps.displayRecoveryMessage).not.toHaveBeenCalled();
+    expect(deps.routeRecoveryMessage).not.toHaveBeenCalled();
   });
 
   it('resets the streak when the error message changes', async () => {
@@ -112,7 +112,7 @@ describe('RepeatedToolErrorGuardrail', () => {
     const triggered = await guardrail.observeToolResultErrors(makeErrorResult('tool-1', 'timeout'));
 
     expect(triggered).toBe(false);
-    expect(deps.displayRecoveryMessage).not.toHaveBeenCalled();
+    expect(deps.routeRecoveryMessage).not.toHaveBeenCalled();
   });
 
   it('resets the streak after a successful tool result', async () => {
@@ -132,7 +132,7 @@ describe('RepeatedToolErrorGuardrail', () => {
     );
 
     expect(triggered).toBe(false);
-    expect(deps.displayRecoveryMessage).not.toHaveBeenCalled();
+    expect(deps.routeRecoveryMessage).not.toHaveBeenCalled();
   });
 
   it('emits conversation_friction evidence with the expected metadata', async () => {
@@ -165,7 +165,7 @@ describe('RepeatedToolErrorGuardrail', () => {
     );
 
     expect(triggered).toBe(false);
-    expect(deps.displayRecoveryMessage).not.toHaveBeenCalled();
+    expect(deps.routeRecoveryMessage).not.toHaveBeenCalled();
     expect(deps.emitEvidence).not.toHaveBeenCalled();
   });
 
@@ -193,7 +193,7 @@ describe('RepeatedToolErrorGuardrail', () => {
     );
 
     expect(triggered).toBe(false);
-    expect(deps.displayRecoveryMessage).not.toHaveBeenCalled();
+    expect(deps.routeRecoveryMessage).not.toHaveBeenCalled();
     expect(deps.emitEvidence).not.toHaveBeenCalled();
   });
 
@@ -212,6 +212,44 @@ describe('RepeatedToolErrorGuardrail', () => {
     expect(triggered).toBe(false);
   });
 
+  it('counts batched identical errors only once per user message', async () => {
+    const { guardrail, deps } = makeGuardrail();
+
+    guardrail.recordToolUse('tool-1', 'Read');
+    guardrail.recordToolUse('tool-2', 'Read');
+    const triggered = await guardrail.observeToolResultErrors({
+      type: 'user',
+      message: {
+        role: 'user',
+        content: [
+          { type: 'tool_result', tool_use_id: 'tool-1', is_error: true, content: 'file not found' },
+          { type: 'tool_result', tool_use_id: 'tool-2', is_error: true, content: 'file not found' },
+        ],
+      },
+    } as unknown as ReturnType<typeof makeErrorResult>);
+
+    expect(triggered).toBe(false);
+    expect(deps.routeRecoveryMessage).not.toHaveBeenCalled();
+  });
+
+  it('does not immediately re-trigger for the same tool+error after an intervention', async () => {
+    const { guardrail, deps } = makeGuardrail();
+
+    guardrail.recordToolUse('tool-1', 'Read');
+    await guardrail.observeToolResultErrors(makeErrorResult('tool-1', 'file not found'));
+    await guardrail.observeToolResultErrors(makeErrorResult('tool-1', 'file not found'));
+
+    expect(deps.routeRecoveryMessage).toHaveBeenCalledTimes(1);
+    deps.routeRecoveryMessage.mockClear();
+
+    const retriggered = await guardrail.observeToolResultErrors(
+      makeErrorResult('tool-1', 'file not found')
+    );
+
+    expect(retriggered).toBe(false);
+    expect(deps.routeRecoveryMessage).not.toHaveBeenCalled();
+  });
+
   it('does not trigger when the threshold is configured higher', async () => {
     const { guardrail, deps } = makeGuardrail({ threshold: 3 });
 
@@ -219,7 +257,7 @@ describe('RepeatedToolErrorGuardrail', () => {
     await guardrail.observeToolResultErrors(makeErrorResult('tool-1', 'file not found'));
     await guardrail.observeToolResultErrors(makeErrorResult('tool-1', 'file not found'));
 
-    expect(deps.displayRecoveryMessage).not.toHaveBeenCalled();
+    expect(deps.routeRecoveryMessage).not.toHaveBeenCalled();
     expect(deps.emitEvidence).not.toHaveBeenCalled();
   });
 });

@@ -18,8 +18,8 @@ export interface RepeatedToolErrorGuardrailDeps {
     summary: string;
     metadata: Record<string, unknown>;
   }) => { id: string } | undefined | void;
-  /** Broadcast a synthetic assistant recovery message into the session. */
-  displayRecoveryMessage: (text: string) => Promise<void> | void;
+  /** Deliver a recovery message to the running agent (e.g. via the message queue). */
+  routeRecoveryMessage: (text: string) => Promise<void> | void;
   /** Threshold for consecutive identical errors before intervening. */
   threshold?: number;
   /** Length of the normalized error substring used for identity. */
@@ -103,6 +103,7 @@ export class RepeatedToolErrorGuardrail {
     if (!Array.isArray(content)) return false;
 
     let triggered = false;
+    const seenInThisMessage = new Set<string>();
     for (const block of content) {
       const error = extractToolResultError(block, this.state.toolUseIdToName);
       if (!error) {
@@ -112,6 +113,15 @@ export class RepeatedToolErrorGuardrail {
         }
         continue;
       }
+
+      const keyString = `${error.toolName}:${normalizeError(error.errorText, this.errorFingerprintLength)}`;
+      // A single user message may carry multiple tool_result blocks from one
+      // parallel assistant turn. Count each distinct tool+error at most once
+      // per message so a batched failure is not mistaken for a retry loop.
+      if (seenInThisMessage.has(keyString)) {
+        continue;
+      }
+      seenInThisMessage.add(keyString);
 
       const didTrigger = this.observeError(error.toolName, error.errorText);
       if (didTrigger) {
@@ -182,9 +192,9 @@ export class RepeatedToolErrorGuardrail {
 
     const message = buildRecoveryMessage(toolName, errorText, count);
     try {
-      await this.deps.displayRecoveryMessage(message);
+      await this.deps.routeRecoveryMessage(message);
     } catch (err) {
-      this.logger.warn('Failed to display repeated tool error recovery message:', err);
+      this.logger.warn('Failed to deliver repeated tool error recovery message:', err);
     }
   }
 }
