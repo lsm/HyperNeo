@@ -355,6 +355,15 @@ class SpaceStore {
    *  against the current one and skip caching when they no longer match. */
   private workflowDetailFetchGens = new Map<string, number>();
 
+  /** Retry counter for partial workflow-detail fan-out failures. Reset when
+   *  details load successfully or the space changes. */
+  private workflowDetailsRetryCount = 0;
+
+  /** Generation for the bulk workflow-detail load. Incremented when reconnect
+   *  invalidates an in-flight fan-out so old promise cleanup cannot clobber the
+   *  replacement load. */
+  private workflowDetailsLoadGeneration = 0;
+
   /** Monotonic counter bumped on every spaceWorkflow.updated/deleted event so
    *  hooks keyed by workflowId can re-fetch when the same workflow is edited
    *  or deleted in place. */
@@ -1159,6 +1168,8 @@ class SpaceStore {
       this.workflowDetails.value.map((workflow) => [workflow.id, workflow])
     );
 
+    const loadGeneration = this.workflowDetailsLoadGeneration;
+
     this.workflowDetailsPromise = (async (): Promise<void> => {
       try {
         // Clear cache + bump generations so every workflow gets a fresh RPC
@@ -1187,8 +1198,14 @@ class SpaceStore {
         const fetchedById = new Map<string, SpaceWorkflow>();
         let missing = 0;
         for (const { id, detail } of results) {
-          if (detail) fetchedById.set(id, detail);
-          else missing += 1;
+          if (detail) {
+            fetchedById.set(id, detail);
+          } else if (this.workflows.value.some((w) => w.id === id)) {
+            // Only count missing for workflows that are still present.
+            // Workflows deleted during the fan-out are dropped by the merge
+            // below and should not keep the loaded flag false.
+            missing += 1;
+          }
         }
         const merged: SpaceWorkflow[] = [];
         const seen = new Set<string>();
@@ -1218,20 +1235,37 @@ class SpaceStore {
           }
         }
         this.workflowDetails.value = merged;
-        // Only mark loaded if every requested workflow resolved. Partial
-        // failures (transient RPC errors) leave the flag false so the next
-        // Configure mount retries the missing ids instead of permanently
-        // hiding their worker agents.
         if (missing === 0) {
           this.workflowDetailsLoaded.value = true;
+          this.workflowDetailsRetryCount = 0;
         } else {
           logger.error(`ensureWorkflowDetails: ${missing} workflow detail(s) failed to load`);
+          // Schedule a retry so transient RPC errors don't leave the Configure
+          // Agents tab stuck on the loading spinner forever. Cap retries to
+          // avoid hammering a permanently broken workflow.
+          const MAX_RETRIES = 5;
+          if (this.workflowDetailsRetryCount < MAX_RETRIES) {
+            const delay = 2 ** this.workflowDetailsRetryCount * 3000;
+            this.workflowDetailsRetryCount += 1;
+            setTimeout(() => {
+              if (this.spaceId.value === spaceId && !this.workflowDetailsLoaded.value) {
+                this.ensureWorkflowDetails().catch(() => {});
+              }
+            }, delay);
+          } else {
+            // Exhausted retries: mark loaded so the UI shows what we have
+            // rather than spinning indefinitely.
+            this.workflowDetailsLoaded.value = true;
+            this.workflowDetailsRetryCount = 0;
+          }
         }
       } catch (err) {
         logger.error('Failed to fetch workflow details:', err);
         if (this.spaceId.value === spaceId) this.workflowDetails.value = [];
       } finally {
-        this.workflowDetailsPromise = null;
+        if (this.workflowDetailsLoadGeneration === loadGeneration) {
+          this.workflowDetailsPromise = null;
+        }
       }
     })();
 
@@ -1321,6 +1355,8 @@ class SpaceStore {
     this.workflowDetailCache.clear();
     this.workflowDetailPromises.clear();
     this.workflowDetailFetchGens.clear();
+    this.workflowDetailsRetryCount = 0;
+    this.workflowDetailsLoadGeneration += 1;
   }
 
   /**
@@ -1803,6 +1839,7 @@ class SpaceStore {
     const hadConfigData = this.configDataLoaded.value;
     const hadNodeExec = this.nodeExecLoaded.value;
     const hadWorkflowDetails = this.workflowDetailsLoaded.value;
+    const hadWorkflowDetailsPending = this.workflowDetailsPromise !== null;
 
     // Reset lazy-load flags so ensureX methods will re-fetch
     this.configDataLoaded.value = false;
@@ -1814,6 +1851,7 @@ class SpaceStore {
     // re-fetches on next mount.
     this.workflowDetailsLoaded.value = false;
     this.workflowDetailsPromise = null;
+    this.workflowDetailsLoadGeneration += 1;
     this.sessions.value = [];
     this.disposeSpaceSessionsSubscription();
 
@@ -1829,7 +1867,7 @@ class SpaceStore {
           logger.error('Failed to refresh config data:', err);
         });
       }
-      if (hadWorkflowDetails) {
+      if (hadWorkflowDetails || hadWorkflowDetailsPending) {
         this.ensureConfigData()
           .then(() => this.ensureWorkflowDetails())
           .catch((err) => {

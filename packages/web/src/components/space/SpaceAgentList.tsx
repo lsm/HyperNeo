@@ -10,6 +10,7 @@ import { spaceStore } from '../../lib/space-store';
 
 interface WorkerAgentInfo {
   workflowId: string;
+  nodeId: string;
   agentId: string;
   name: string;
   description: string;
@@ -62,6 +63,7 @@ function getToolPermissions(slot: WorkflowNodeAgent): string[] {
 
 export function getWorkerAgentsFromWorkflows(workflows: SpaceWorkflow[]): WorkerAgentInfo[] {
   const agentsByKey = new Map<string, WorkerAgentInfo>();
+  const baseAgents = new Map(spaceStore.agents.value.map((agent) => [agent.id, agent]));
 
   for (const workflow of workflows) {
     const workflowAgentKeys = new Set<string>();
@@ -71,11 +73,13 @@ export function getWorkerAgentsFromWorkflows(workflows: SpaceWorkflow[]): Worker
         if (!name) continue;
 
         const agentId = slot.agentId?.trim() ?? '';
-        const key = `${workflow.id}:${agentId}:${name}`;
+        const nodeId = node.id?.trim() ?? '';
+        const key = `${workflow.id}:${nodeId}:${agentId}:${name}`;
         let agent = agentsByKey.get(key);
         if (!agent) {
           agent = {
             workflowId: workflow.id,
+            nodeId,
             agentId,
             name,
             description: '',
@@ -93,6 +97,12 @@ export function getWorkerAgentsFromWorkflows(workflows: SpaceWorkflow[]): Worker
         for (const permission of getToolPermissions(slot)) {
           if (!agent.toolPermissions.includes(permission)) agent.toolPermissions.push(permission);
         }
+
+        const baseAgent = baseAgents.get(agentId);
+        for (const tool of baseAgent?.tools ?? []) {
+          if (!agent.toolPermissions.includes(tool)) agent.toolPermissions.push(tool);
+        }
+
         workflowAgentKeys.add(key);
       }
     }
@@ -110,6 +120,10 @@ export function getWorkerAgentsFromWorkflows(workflows: SpaceWorkflow[]): Worker
       usedIn: agent.usedIn.sort((a, b) => a.localeCompare(b)),
     }))
     .sort((a, b) => {
+      const byWorkflow = a.workflowId.localeCompare(b.workflowId);
+      if (byWorkflow !== 0) return byWorkflow;
+      const byNode = a.nodeId.localeCompare(b.nodeId);
+      if (byNode !== 0) return byNode;
       const byAgentId = a.agentId.localeCompare(b.agentId);
       if (byAgentId !== 0) return byAgentId;
       return a.name.localeCompare(b.name);
@@ -237,7 +251,7 @@ export function SpaceAgentList() {
             <div class="grid gap-3 lg:grid-cols-2">
               {workerAgents.map((agent) => (
                 <WorkerAgentCard
-                  key={`${agent.workflowId}:${agent.agentId}:${agent.name}`}
+                  key={`${agent.workflowId}:${agent.nodeId}:${agent.agentId}:${agent.name}`}
                   agent={agent}
                 />
               ))}

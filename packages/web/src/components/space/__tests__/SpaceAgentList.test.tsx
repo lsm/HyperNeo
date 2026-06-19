@@ -306,4 +306,72 @@ describe('SpaceAgentList', () => {
     expect(getByText('Coder A prompt')).toBeTruthy();
     expect(getByText('Coder B prompt')).toBeTruthy();
   });
+
+  it('keeps same-name same-agentId slots in different nodes separate', () => {
+    mockWorkflowDetails.value = [
+      makeWorkflow({
+        nodes: [
+          {
+            id: 'node-1',
+            name: 'Code A',
+            agents: [
+              {
+                agentId: 'coder-agent',
+                name: 'coder',
+                customPrompt: { value: 'Node A prompt' },
+              },
+            ],
+          },
+          {
+            id: 'node-2',
+            name: 'Code B',
+            agents: [
+              {
+                agentId: 'coder-agent',
+                name: 'coder',
+                customPrompt: { value: 'Node B prompt' },
+              },
+            ],
+          },
+        ],
+      }),
+    ];
+
+    const { getByText } = render(<SpaceAgentList />);
+
+    expect(getByText('Node A prompt')).toBeTruthy();
+    expect(getByText('Node B prompt')).toBeTruthy();
+  });
+
+  it('includes base agent tools in tool permissions', () => {
+    mockAgents.value = [
+      {
+        id: 'coder-agent',
+        spaceId: 'space-1',
+        name: 'Coder',
+        handle: 'coder',
+        customPrompt: null,
+        tools: ['Edit', 'Bash'],
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      },
+    ];
+    mockWorkflowDetails.value = [
+      makeWorkflow({
+        nodes: [
+          {
+            id: 'node-1',
+            name: 'Code',
+            agents: [{ agentId: 'coder-agent', name: 'coder' }],
+          },
+        ],
+      }),
+    ];
+
+    const { getByText, queryByText } = render(<SpaceAgentList />);
+
+    expect(getByText('Bash')).toBeTruthy();
+    expect(getByText('Edit')).toBeTruthy();
+    expect(queryByText('Default workflow permissions')).toBeNull();
+  });
 });

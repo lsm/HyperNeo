@@ -657,9 +657,53 @@ describe('SpaceStore — ensureWorkflowDetails', () => {
 
     await spaceStore.ensureWorkflowDetails();
 
-    // wf1 resolved, wf2 failed — loaded stays false so the next mount retries.
+    // wf1 resolved, wf2 failed — loaded stays false while scheduled retry is pending.
     expect(spaceStore.workflowDetailsLoaded.value).toBe(false);
     expect(spaceStore.workflowDetails.value.map((w) => w.id)).toEqual(['wf1']);
+  });
+
+  it('marks loaded when the only missing workflow was deleted during fan-out', async () => {
+    mockWorkflowSummaries(['wf1', 'wf2']);
+    await spaceStore.selectSpace('space-1');
+    await spaceStore.ensureConfigData();
+
+    const base = mockHub.request.getMockImplementation();
+    mockHub.request.mockImplementation(
+      async (method: string, params?: Record<string, unknown>): Promise<any> => {
+        if (method === 'spaceWorkflow.get' && (params?.id as string) === 'wf2') {
+          spaceStore.workflows.value = spaceStore.workflows.value.filter((w) => w.id !== 'wf2');
+          return null;
+        }
+        return base ? base(method, params) : {};
+      }
+    );
+
+    await spaceStore.ensureWorkflowDetails();
+
+    expect(spaceStore.workflowDetails.value.map((w) => w.id)).toEqual(['wf1']);
+    expect(spaceStore.workflowDetailsLoaded.value).toBe(true);
+  });
+
+  it('marks loaded after retry exhaustion so the Agents tab does not spin forever', async () => {
+    vi.useFakeTimers();
+    try {
+      mockWorkflowSummaries(['wf1']);
+      await spaceStore.selectSpace('space-1');
+      await spaceStore.ensureConfigData();
+      mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+        if (method === 'spaceWorkflow.get') return null;
+        return {};
+      });
+
+      await spaceStore.ensureWorkflowDetails();
+      for (let i = 0; i < 5; i += 1) {
+        await vi.runOnlyPendingTimersAsync();
+      }
+
+      expect(spaceStore.workflowDetailsLoaded.value).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('preserves workflows created concurrently during fan-out', async () => {

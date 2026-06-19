@@ -51,12 +51,15 @@ export function SpaceConfigurePage({ space }: SpaceConfigurePageProps) {
   const workerAgentCount = getWorkerAgentsFromWorkflows(workflowDetails).length;
   const configLoaded = spaceStore.configDataLoaded.value;
 
+  const activeTab = currentSpaceConfigureTabSignal.value;
+
   useEffect(() => {
     // Chain ensureWorkflowDetails after ensureConfigData: the bulk detail
     // fetch snapshots spaceStore.workflows.value synchronously, which is empty
     // until the summary list returns. Running them in parallel on a cold
     // direct-URL load snapshots [] and sticks workflowDetailsLoaded=true over
     // empty data.
+    // Only pay the per-workflow detail cost when the Agents tab is active.
     const effectSpaceId = space.id;
     spaceStore
       .ensureConfigData()
@@ -64,14 +67,13 @@ export function SpaceConfigurePage({ space }: SpaceConfigurePageProps) {
         // Guard against a space switch that resolved the old config promise.
         // Starting the detail loader for the wrong (or not-yet-loaded) space
         // snapshots an empty workflow list and marks details loaded early.
-        if (spaceStore.spaceId.value === effectSpaceId) {
+        if (spaceStore.spaceId.value === effectSpaceId && activeTab === 'agents') {
           return spaceStore.ensureWorkflowDetails();
         }
       })
       .catch(() => {});
     spaceStore.ensureNodeExecutions().catch(() => {});
-  }, [space.id]);
-  const activeTab = currentSpaceConfigureTabSignal.value;
+  }, [space.id, activeTab]);
   const spaceId = currentSpaceIdSignal.value ?? '';
   /** null = list view; 'new' = create editor; <id> = edit editor */
   const [workflowEditId, setWorkflowEditId] = useState<string | null>(null);
