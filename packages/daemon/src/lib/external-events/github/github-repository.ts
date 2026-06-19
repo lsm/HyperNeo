@@ -48,6 +48,36 @@ export class GitHubEventExtensionRepository {
 				updated_at INTEGER NOT NULL
 			)
 		`);
+    // Idempotent column add for the per-space polling-intent flag. The intent
+    // is the source of truth for the connection-card polling checkbox: a
+    // space with intent=on can host polling-only repos even when no other
+    // polling row currently exists to derive the state from.
+    const columns = this.db
+      .prepare('PRAGMA table_info(space_github_source_settings)')
+      .all() as Array<{ name: string }>;
+    if (!columns.some((column) => column.name === 'polling_intent')) {
+      this.db.exec(
+        'ALTER TABLE space_github_source_settings ADD COLUMN polling_intent INTEGER NOT NULL DEFAULT 0'
+      );
+    }
+    // Backfill per-space polling intent from existing polling-enabled rows.
+    // This fixes upgrade: spaces that already had polling_enabled repos before
+    // the polling_intent column existed would otherwise render polling as off
+    // until the user toggled it again.
+    const now = Date.now();
+    this.db
+      .prepare(
+        `INSERT INTO space_github_source_settings (space_id, enabled, polling_intent, created_at, updated_at)
+         SELECT DISTINCT s.space_id, 1, 1, ?, ?
+         FROM space_github_watched_repos s
+         JOIN spaces sp ON sp.id = s.space_id
+         WHERE s.polling_enabled = 1
+         ON CONFLICT(space_id) DO UPDATE SET
+           polling_intent = excluded.polling_intent,
+           updated_at = excluded.updated_at
+         WHERE polling_intent = 0`
+      )
+      .run(now, now);
   }
 
   upsertWatchedRepo(params: {
@@ -188,6 +218,67 @@ export class GitHubEventExtensionRepository {
       .run(enabled ? 1 : 0, now, spaceId).changes;
   }
 
+  /**
+   * Persist the per-space polling-intent flag. Distinct from the per-row
+   * polling_enabled flag: the intent survives transitions through "no
+   * polling repos yet" so the connection-card checkbox and the addRepo
+   * default don't strand the user in a state where they cannot create the
+   * first polling-only watch.
+   */
+  setPollingIntent(spaceId: string, enabled: boolean): void {
+    const now = Date.now();
+    this.db
+      .prepare(
+        `INSERT INTO space_github_source_settings (space_id, enabled, polling_intent, created_at, updated_at)
+				 VALUES (?, 1, ?, ?, ?)
+				 ON CONFLICT(space_id) DO UPDATE SET polling_intent = excluded.polling_intent, updated_at = excluded.updated_at`
+      )
+      .run(spaceId, enabled ? 1 : 0, now, now);
+  }
+
+  getPollingIntent(spaceId: string): boolean {
+    const row = this.db
+      .prepare(
+        'SELECT polling_intent AS pollingIntent FROM space_github_source_settings WHERE space_id = ?'
+      )
+      .get(spaceId) as { pollingIntent: number } | undefined;
+    return row ? row.pollingIntent === 1 : false;
+  }
+
+  /**
+   * Count of non-deleted spaces whose persisted polling-intent flag is on,
+   * regardless of whether they currently host any polling-configured repo.
+   * Used to keep the GLOBAL polling capability on while any real space still
+   * intends to use polling — e.g. after the last polling row is removed but
+   * before the user adds the next one. Joins `spaces` so deleted spaces do
+   * not keep the capability alive.
+   */
+  countSpacesWithPollingIntent(): number {
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS count FROM space_github_source_settings s
+         JOIN spaces sp ON sp.id = s.space_id
+         WHERE s.polling_intent = 1`
+      )
+      .get() as { count: number } | undefined;
+    return row?.count ?? 0;
+  }
+
+  /**
+   * Daemon-wide count of auto-registered webhook rows. Used by token-clear
+   * flows to warn the user when removing the PAT would strand auto-registered
+   * hooks in ANY space (not just the current one) since the cleanup path
+   * needs the token to delete the remote hook.
+   */
+  countAllAutoRegisteredHookRefs(): number {
+    const row = this.db
+      .prepare(
+        'SELECT COUNT(*) AS count FROM space_github_watched_repos WHERE webhook_auto_registered = 1 AND webhook_remote_id IS NOT NULL'
+      )
+      .get() as { count: number } | undefined;
+    return row?.count ?? 0;
+  }
+
   removeWatchedRepo(spaceId: string, owner: string, repo: string): boolean {
     return (
       this.db
@@ -238,6 +329,35 @@ export class GitHubEventExtensionRepository {
       : (this.db
           .prepare(
             `SELECT * FROM space_github_watched_repos WHERE enabled = 1 AND polling_enabled = 1 ORDER BY space_id, owner, repo`
+          )
+          .all() as Record<string, unknown>[]);
+    return rows.map((r) => this.rowToRepo(r));
+  }
+
+  /**
+   * Every watched row with `polling_enabled = 1`, regardless of the
+   * row-level `enabled` flag. Used to decide whether the GLOBAL polling
+   * capability should stay on: a disabled space may still hold
+   * polling-configured rows that need polling to resume when the space
+   * (or row) is re-enabled, so capability gating must NOT use the
+   * enabled-and-polling filter that `listPollingRepos` uses.
+   */
+  listAllPollingConfiguredRepos(spaceId?: string): GitHubWatchedRepo[] {
+    const rows = spaceId
+      ? (this.db
+          .prepare(
+            `SELECT r.* FROM space_github_watched_repos r
+             JOIN spaces sp ON sp.id = r.space_id
+             WHERE r.space_id = ? AND r.polling_enabled = 1
+             ORDER BY r.owner, r.repo`
+          )
+          .all(spaceId) as Record<string, unknown>[])
+      : (this.db
+          .prepare(
+            `SELECT r.* FROM space_github_watched_repos r
+             JOIN spaces sp ON sp.id = r.space_id
+             WHERE r.polling_enabled = 1
+             ORDER BY r.space_id, r.owner, r.repo`
           )
           .all() as Record<string, unknown>[]);
     return rows.map((r) => this.rowToRepo(r));

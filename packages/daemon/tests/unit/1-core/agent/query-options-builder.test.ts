@@ -169,13 +169,20 @@ describe('QueryOptionsBuilder', () => {
       });
     });
 
-    it('should filter user auto-compact env overrides so provider cleanup owns the SDK env', async () => {
+    it('should filter provider env overrides so provider cleanup owns the SDK env', async () => {
       mockSettingsManager.getGlobalSettings = mock(() => ({
-        env: { CLAUDE_CODE_AUTO_COMPACT_WINDOW: '200000', KEEP_GLOBAL: 'global' },
+        env: {
+          CLAUDE_CODE_AUTO_COMPACT_WINDOW: '200000',
+          CLAUDE_CODE_SUBAGENT_MODEL: 'wrong-subagent',
+          ENABLE_TOOL_SEARCH: 'true',
+          KEEP_GLOBAL: 'global',
+        },
         settingSources: ['user', 'project', 'local'],
       }));
       mockSession.config.env = {
         CLAUDE_CODE_AUTO_COMPACT_WINDOW: '262144',
+        CLAUDE_CODE_SUBAGENT_MODEL: 'session-subagent',
+        ENABLE_TOOL_SEARCH: 'false',
         KEEP_SESSION: 'session',
       };
 
@@ -188,6 +195,8 @@ describe('QueryOptionsBuilder', () => {
         KEEP_SESSION: 'session',
       });
       expect(options.env).not.toHaveProperty('CLAUDE_CODE_AUTO_COMPACT_WINDOW');
+      expect(options.env?.CLAUDE_CODE_SUBAGENT_MODEL).toBe('session-subagent');
+      expect(options.env?.ENABLE_TOOL_SEARCH).toBe('false');
     });
 
     it('should preserve env-only Anthropic auth tokens for native provider', async () => {
@@ -225,6 +234,7 @@ describe('QueryOptionsBuilder', () => {
         KEEP_GLOBAL: 'global',
         KEEP_SESSION: 'session',
       });
+      // Provider cleanup owns this value later; user overrides must not win here.
       expect(options.env).not.toHaveProperty('CLAUDE_CODE_AUTO_COMPACT_WINDOW');
     });
 
@@ -286,17 +296,18 @@ describe('QueryOptionsBuilder', () => {
       });
     });
 
-    it('should disable SDK auto-compaction for Kimi (PP() caps at 200k, NeoKai fallback instead)', () => {
-      // The SDK's PP() returns 200k for 'kimi-for-coding'. Even with the
-      // autoCompactWindow setting, the SDK's effective window would be
-      // min(200k, 262k) = 200k, firing compaction at ~187k instead of ~249k.
-      // We disable SDK auto-compact entirely and let NeoKai's fallback
-      // (sdk-message-handler) trigger compaction at the correct threshold.
+    it('should use NeoKai fallback for China Kimi and SDK auto-compact for Global Kimi', () => {
+      // China routes kimi-for-coding, which SDK PP() still treats as 200k.
+      // Global routes kimi-k2.7-code, which follows Moonshot's Claude Code docs.
       expect(buildProviderSettings('kimi')).toEqual({
         autoCompactEnabled: false,
       });
-      expect(buildProviderSettings('kimi', 262_144)).toEqual({
+      expect(buildProviderSettings('kimi', 262_144, 'kimi-for-coding')).toEqual({
         autoCompactEnabled: false,
+      });
+      expect(buildProviderSettings('kimi', 262_144, 'kimi-k2.7-code')).toEqual({
+        autoCompactEnabled: true,
+        autoCompactWindow: 262_144,
       });
     });
 
