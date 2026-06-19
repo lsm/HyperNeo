@@ -520,7 +520,17 @@ export class SDKMessageHandler {
     // the DB if persisted. The per-block delta is computed and stamped when an
     // assistant message containing a thinking block arrives.
     if (isSDKThinkingTokensMessage(message)) {
-      this.currentThinkingTokensEstimate = message.estimated_tokens;
+      const estimate = message.estimated_tokens;
+      // Some SDK/provider paths reset the running total when a new thinking
+      // block starts. If the cumulative estimate drops below what we already
+      // stamped, treat it as a new block boundary instead of a negative delta.
+      if (
+        this.lastStampedThinkingTokensEstimate > 0 &&
+        estimate < this.lastStampedThinkingTokensEstimate
+      ) {
+        this.lastStampedThinkingTokensEstimate = 0;
+      }
+      this.currentThinkingTokensEstimate = estimate;
       return; // Skip persistence and broadcast - this is internal tracking only
     }
 

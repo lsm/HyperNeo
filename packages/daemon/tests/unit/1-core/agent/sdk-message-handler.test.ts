@@ -827,7 +827,7 @@ describe('SDKMessageHandler', () => {
       expect(savedB).not.toHaveProperty('estimated_thinking_tokens');
     });
 
-    it('should omit stale, zero, or negative deltas', async () => {
+    it('should omit zero and repeated identical deltas', async () => {
       await handler.handleMessage({
         type: 'system',
         subtype: 'thinking_tokens',
@@ -849,14 +849,14 @@ describe('SDKMessageHandler', () => {
       } as unknown as SDKMessage;
       await handler.handleMessage(assistantA);
 
-      // Provider reports a lower cumulative estimate (should not stamp)
+      // Provider repeats the same cumulative estimate.
       await handler.handleMessage({
         type: 'system',
         subtype: 'thinking_tokens',
         uuid: 'thinking-2',
         session_id: 'test-session-id',
-        estimated_tokens: 200,
-        estimated_tokens_delta: -100,
+        estimated_tokens: 300,
+        estimated_tokens_delta: 0,
       } as unknown as SDKMessage);
 
       const assistantB: SDKMessage = {
@@ -880,6 +880,88 @@ describe('SDKMessageHandler', () => {
 
       expect(savedA).toMatchObject({ estimated_thinking_tokens: 300 });
       expect(savedB).not.toHaveProperty('estimated_thinking_tokens');
+    });
+
+    it('should treat a decreased cumulative estimate as a new thinking block', async () => {
+      // First thinking block ends with a cumulative estimate of 300.
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'thinking_tokens',
+        uuid: 'thinking-1',
+        session_id: 'test-session-id',
+        estimated_tokens: 300,
+        estimated_tokens_delta: 300,
+      } as unknown as SDKMessage);
+
+      const assistantA: SDKMessage = {
+        type: 'assistant',
+        uuid: 'assistant-a',
+        session_id: 'test-session-id',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'thinking', thinking: 'Chunk A' }],
+        },
+        parent_tool_use_id: null,
+      } as unknown as SDKMessage;
+      await handler.handleMessage(assistantA);
+
+      // Cumulative drops: the SDK has started a new thinking block.
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'thinking_tokens',
+        uuid: 'thinking-2',
+        session_id: 'test-session-id',
+        estimated_tokens: 200,
+        estimated_tokens_delta: -100,
+      } as unknown as SDKMessage);
+
+      const assistantB: SDKMessage = {
+        type: 'assistant',
+        uuid: 'assistant-b',
+        session_id: 'test-session-id',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'thinking', thinking: 'Chunk B' }],
+        },
+        parent_tool_use_id: null,
+      } as unknown as SDKMessage;
+      await handler.handleMessage(assistantB);
+
+      // Same cumulative repeated again for the new block should not re-stamp.
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'thinking_tokens',
+        uuid: 'thinking-3',
+        session_id: 'test-session-id',
+        estimated_tokens: 200,
+        estimated_tokens_delta: 0,
+      } as unknown as SDKMessage);
+
+      const assistantC: SDKMessage = {
+        type: 'assistant',
+        uuid: 'assistant-c',
+        session_id: 'test-session-id',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'thinking', thinking: 'Chunk C' }],
+        },
+        parent_tool_use_id: null,
+      } as unknown as SDKMessage;
+      await handler.handleMessage(assistantC);
+
+      const savedA = saveSDKMessageSpy.mock.calls.find(
+        (call) => (call[1] as SDKMessage).uuid === 'assistant-a'
+      )?.[1] as SDKMessage;
+      const savedB = saveSDKMessageSpy.mock.calls.find(
+        (call) => (call[1] as SDKMessage).uuid === 'assistant-b'
+      )?.[1] as SDKMessage;
+      const savedC = saveSDKMessageSpy.mock.calls.find(
+        (call) => (call[1] as SDKMessage).uuid === 'assistant-c'
+      )?.[1] as SDKMessage;
+
+      expect(savedA).toMatchObject({ estimated_thinking_tokens: 300 });
+      expect(savedB).toMatchObject({ estimated_thinking_tokens: 200 });
+      expect(savedC).not.toHaveProperty('estimated_thinking_tokens');
     });
   });
 
