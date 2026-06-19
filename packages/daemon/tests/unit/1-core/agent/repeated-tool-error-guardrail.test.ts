@@ -109,9 +109,7 @@ describe('RepeatedToolErrorGuardrail', () => {
     guardrail.recordToolUse('tool-1', 'Read');
     await guardrail.observeToolResultErrors(makeErrorResult('tool-1', 'file not found'));
     await guardrail.observeToolResultErrors(makeErrorResult('tool-1', 'permission denied'));
-    const triggered = await guardrail.observeToolResultErrors(
-      makeErrorResult('tool-1', 'permission denied')
-    );
+    const triggered = await guardrail.observeToolResultErrors(makeErrorResult('tool-1', 'timeout'));
 
     expect(triggered).toBe(false);
     expect(deps.displayRecoveryMessage).not.toHaveBeenCalled();
@@ -155,7 +153,23 @@ describe('RepeatedToolErrorGuardrail', () => {
     });
   });
 
-  it('does not emit evidence when the session is not linked to a Forge scope', async () => {
+  it('does not trigger when the session has no Forge task', async () => {
+    const { guardrail, deps } = makeGuardrail({
+      getTaskForSession: mock(() => null),
+    });
+
+    guardrail.recordToolUse('tool-1', 'Read');
+    await guardrail.observeToolResultErrors(makeErrorResult('tool-1', 'file not found'));
+    const triggered = await guardrail.observeToolResultErrors(
+      makeErrorResult('tool-1', 'file not found')
+    );
+
+    expect(triggered).toBe(false);
+    expect(deps.displayRecoveryMessage).not.toHaveBeenCalled();
+    expect(deps.emitEvidence).not.toHaveBeenCalled();
+  });
+
+  it('does not trigger when the task has no evolution scope', async () => {
     const taskWithoutScope = {
       id: 'task-2',
       spaceId: 'space-1',
@@ -178,9 +192,24 @@ describe('RepeatedToolErrorGuardrail', () => {
       makeErrorResult('tool-1', 'file not found')
     );
 
-    expect(triggered).toBe(true);
-    expect(deps.displayRecoveryMessage).toHaveBeenCalledTimes(1);
+    expect(triggered).toBe(false);
+    expect(deps.displayRecoveryMessage).not.toHaveBeenCalled();
     expect(deps.emitEvidence).not.toHaveBeenCalled();
+  });
+
+  it('caps the tool-use lookup map to avoid unbounded growth', async () => {
+    const { guardrail } = makeGuardrail({ maxTrackedToolUseIds: 3 });
+
+    guardrail.recordToolUse('t1', 'Read');
+    guardrail.recordToolUse('t2', 'Glob');
+    guardrail.recordToolUse('t3', 'Write');
+    guardrail.recordToolUse('t4', 'Edit');
+
+    // t1 should have been evicted when t4 was inserted.
+    const triggered = await guardrail.observeToolResultErrors(
+      makeErrorResult('t1', 'file not found')
+    );
+    expect(triggered).toBe(false);
   });
 
   it('does not trigger when the threshold is configured higher', async () => {

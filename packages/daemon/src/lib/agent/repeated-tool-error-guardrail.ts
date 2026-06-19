@@ -24,6 +24,10 @@ export interface RepeatedToolErrorGuardrailDeps {
   threshold?: number;
   /** Length of the normalized error substring used for identity. */
   errorFingerprintLength?: number;
+  /** Maximum tool_use_id -> tool_name mappings to retain. */
+  maxTrackedToolUseIds?: number;
+  /** Cooldown (ms) before the same tool+error can trigger another intervention. */
+  interventionCooldownMs?: number;
 }
 
 interface ErrorKey {
@@ -35,25 +39,33 @@ interface State {
   toolUseIdToName: Map<string, string>;
   lastError: ErrorKey | null;
   consecutiveCount: number;
+  lastInterventionByKey: Map<string, number>;
 }
 
 const DEFAULT_THRESHOLD = 2;
 const DEFAULT_ERROR_FINGERPRINT_LENGTH = 160;
+const DEFAULT_MAX_TRACKED_TOOL_USE_IDS = 200;
+const DEFAULT_INTERVENTION_COOLDOWN_MS = 60_000;
 
 export class RepeatedToolErrorGuardrail {
   private logger: Logger;
   private state: State;
   private threshold: number;
   private errorFingerprintLength: number;
+  private maxTrackedToolUseIds: number;
+  private interventionCooldownMs: number;
 
   constructor(private deps: RepeatedToolErrorGuardrailDeps) {
     this.logger = new Logger('RepeatedToolErrorGuardrail');
     this.threshold = deps.threshold ?? DEFAULT_THRESHOLD;
     this.errorFingerprintLength = deps.errorFingerprintLength ?? DEFAULT_ERROR_FINGERPRINT_LENGTH;
+    this.maxTrackedToolUseIds = deps.maxTrackedToolUseIds ?? DEFAULT_MAX_TRACKED_TOOL_USE_IDS;
+    this.interventionCooldownMs = deps.interventionCooldownMs ?? DEFAULT_INTERVENTION_COOLDOWN_MS;
     this.state = {
       toolUseIdToName: new Map(),
       lastError: null,
       consecutiveCount: 0,
+      lastInterventionByKey: new Map(),
     };
   }
 
@@ -63,6 +75,15 @@ export class RepeatedToolErrorGuardrail {
    */
   recordToolUse(toolUseId: string, toolName: string): void {
     if (!toolUseId) return;
+
+    // Cap the lookup map so long-lived sessions cannot grow it without bound.
+    if (this.state.toolUseIdToName.size >= this.maxTrackedToolUseIds) {
+      const oldestKey = this.state.toolUseIdToName.keys().next().value;
+      if (oldestKey !== undefined) {
+        this.state.toolUseIdToName.delete(oldestKey);
+      }
+    }
+
     this.state.toolUseIdToName.set(toolUseId, toolName || 'unknown');
   }
 
@@ -73,6 +94,11 @@ export class RepeatedToolErrorGuardrail {
    * Returns true if an intervention was triggered on this message.
    */
   async observeToolResultErrors(message: unknown): Promise<boolean> {
+    // Scoped to Forge task execution: nothing to do if this session is not
+    // attached to an evolution scope.
+    const task = this.deps.getTaskForSession();
+    if (!task?.evolutionScopeId) return false;
+
     const content = (message as { message?: { content?: unknown } }).message?.content;
     if (!Array.isArray(content)) return false;
 
@@ -90,7 +116,7 @@ export class RepeatedToolErrorGuardrail {
       const didTrigger = this.observeError(error.toolName, error.errorText);
       if (didTrigger) {
         triggered = true;
-        await this.intervene(error.toolName, error.errorText);
+        await this.intervene(error.toolName, error.errorText, task);
       }
     }
 
@@ -100,6 +126,18 @@ export class RepeatedToolErrorGuardrail {
   private observeError(toolName: string, errorText: string): boolean {
     const fingerprint = normalizeError(errorText, this.errorFingerprintLength);
     const key: ErrorKey = { toolName, error: fingerprint };
+    const keyString = `${toolName}:${fingerprint}`;
+
+    // If we recently intervened for this exact tool+error, swallow repeats
+    // until the cooldown elapses to avoid evidence/message spam.
+    const lastIntervention = this.state.lastInterventionByKey.get(keyString);
+    if (
+      lastIntervention !== undefined &&
+      Date.now() - lastIntervention < this.interventionCooldownMs
+    ) {
+      this.reset();
+      return false;
+    }
 
     const sameAsLast =
       this.state.lastError !== null &&
@@ -121,25 +159,25 @@ export class RepeatedToolErrorGuardrail {
     this.state.consecutiveCount = 0;
   }
 
-  private async intervene(toolName: string, errorText: string): Promise<void> {
+  private async intervene(toolName: string, errorText: string, task: SpaceTask): Promise<void> {
     const count = this.state.consecutiveCount;
+    const fingerprint = normalizeError(errorText, this.errorFingerprintLength);
+    const keyString = `${toolName}:${fingerprint}`;
+    this.state.lastInterventionByKey.set(keyString, Date.now());
     this.reset();
 
-    const task = this.deps.getTaskForSession();
-    if (task?.evolutionScopeId) {
-      try {
-        this.deps.emitEvidence({
-          scopeId: task.evolutionScopeId,
-          summary: `Repeated tool error: ${toolName} failed ${count} consecutive times with the same error`,
-          metadata: {
-            tool: toolName,
-            error: normalizeError(errorText, this.errorFingerprintLength),
-            count,
-          },
-        });
-      } catch (err) {
-        this.logger.warn('Failed to emit repeated_tool_error evidence:', err);
-      }
+    try {
+      this.deps.emitEvidence({
+        scopeId: task.evolutionScopeId as string,
+        summary: `Repeated tool error: ${toolName} failed ${count} consecutive times with the same error`,
+        metadata: {
+          tool: toolName,
+          error: fingerprint,
+          count,
+        },
+      });
+    } catch (err) {
+      this.logger.warn('Failed to emit repeated_tool_error evidence:', err);
     }
 
     const message = buildRecoveryMessage(toolName, errorText, count);
