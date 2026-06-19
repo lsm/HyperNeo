@@ -221,7 +221,7 @@ async function resolvePrUrl(
     spawnImpl,
     {
       resourceHint: 'graphql',
-      hostHint: process.env.GH_HOST,
+      hostHint: await inferGitHubHost(context.workspacePath, spawnImpl, deadlineMs),
     }
   );
   if (!currentBranchPr.success) {
@@ -244,6 +244,74 @@ async function resolvePrUrl(
 function extractDataRecord(context: HookExecutorContext): Record<string, unknown> {
   const data = context.rawParams?.data ?? context.params.data;
   return typeof data === 'object' && data !== null && !Array.isArray(data) ? { ...data } : {};
+}
+
+async function inferGitHubHost(
+  cwd: string,
+  spawnImpl: typeof Bun.spawn,
+  deadlineMs: number
+): Promise<string | undefined> {
+  if (process.env.GH_HOST) return process.env.GH_HOST;
+  if (process.env.GH_REPO) {
+    const parts = process.env.GH_REPO.split('/');
+    if (parts.length >= 3 && parts[0]) return parts[0];
+  }
+  const originUrl = await runTextCommand(
+    ['git', 'config', '--get', 'remote.origin.url'],
+    cwd,
+    Math.min(remainingTimeoutMs(deadlineMs), 2_000),
+    spawnImpl
+  );
+  if (!originUrl) return undefined;
+  return parseGitRemoteHost(originUrl);
+}
+
+function parseGitRemoteHost(remoteUrl: string): string | undefined {
+  const trimmed = remoteUrl.trim();
+  if (!trimmed) return undefined;
+  try {
+    const url = new URL(trimmed);
+    return url.hostname || undefined;
+  } catch {
+    // scp-like SSH remote: git@github.example.com:owner/repo.git
+    const match = trimmed.match(/^[^@]+@([^:]+):/);
+    return match?.[1];
+  }
+}
+
+async function runTextCommand(
+  args: string[],
+  cwd: string,
+  timeoutMs: number,
+  spawnImpl: typeof Bun.spawn
+): Promise<string | undefined> {
+  let proc;
+  try {
+    proc = spawnImpl(args, {
+      cwd,
+      env: buildGitHubLookupEnv(),
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+  } catch {
+    return undefined;
+  }
+
+  const killTimer = setTimeout(() => {
+    try {
+      proc.kill('SIGKILL');
+    } catch {
+      // ignore
+    }
+  }, timeoutMs);
+
+  const [stdoutResult, exitCode] = await Promise.all([
+    collectWithMaxBuffer(proc.stdout, MAX_BUFFER_BYTES),
+    proc.exited,
+  ]);
+  clearTimeout(killTimer);
+  if (exitCode !== 0) return undefined;
+  return stdoutResult.text.trim() || undefined;
 }
 
 function extractTemplatePrUrl(context: HookExecutorContext): string | undefined {

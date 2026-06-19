@@ -91,6 +91,11 @@ describe('isSecondaryRateLimitError', () => {
     expect(isSecondaryRateLimitError('Request was throttled; try again later')).toBe(true);
   });
 
+  test('matches bare 429 command errors as secondary limits', () => {
+    expect(isSecondaryRateLimitError('HTTP 429')).toBe(true);
+    expect(isSecondaryRateLimitError('returned error: 429')).toBe(true);
+  });
+
   test('matches secondary rate limit with different casing', () => {
     expect(isSecondaryRateLimitError('SECONDARY RATE LIMIT EXCEEDED')).toBe(true);
     expect(isSecondaryRateLimitError('Secondary Rate-Limit detected')).toBe(true);

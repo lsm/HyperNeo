@@ -1240,10 +1240,12 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       const etag = response.headers.get('ETag');
       if (etag && page === 1) etags[endpoint.key] = etag;
       const rows = (await response.json()) as unknown[];
+      let endpointPending = endpointWatermark;
       for (const row of rows) {
         const event = normalizeGitHubPollingRow(watched, row, endpoint.key);
         if (event) {
           await this.publishEvent(watched.spaceId, event, this.context);
+          endpointPending = Math.max(endpointPending, event.occurredAt);
           watermarks.pending = Math.max(watermarks.pending, event.occurredAt);
           count++;
         }
@@ -1253,7 +1255,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       // complete. While pages remain, the next poll must keep using the old
       // watermark so remaining pages are not filtered out by `since`.
       if (processedPages[endpoint.key] === 1) {
-        endpointLastSeenAt[endpoint.key] = watermarks.pending;
+        endpointLastSeenAt[endpoint.key] = endpointPending;
       }
       if (rateLimit.remaining < RATE_LIMIT_LOW_REMAINING_THRESHOLD) {
         this.applyRateLimit(rateLimit);

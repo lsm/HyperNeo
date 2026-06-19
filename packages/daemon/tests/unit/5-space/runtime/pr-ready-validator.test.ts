@@ -35,6 +35,15 @@ function makeMockSpawn(
   let callIndex = 0;
   return ((cmd: string[], options?: unknown) => {
     calls?.push({ cmd, options });
+    if (cmd[0] === 'git' && cmd[1] === 'config') {
+      return {
+        stdout: streamFromString('git@github.com:acme/corp.git\n'),
+        stderr: streamFromString(''),
+        exited: Promise.resolve(0),
+        pid: 12345,
+        kill() {},
+      } as unknown as ReturnType<typeof Bun.spawn>;
+    }
     const result = results[callIndex++] ?? { stdout: '', stderr: '', exitCode: 1 };
     return {
       stdout: streamFromString(result.stdout),

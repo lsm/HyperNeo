@@ -66,7 +66,9 @@ export function isSecondaryRateLimitError(stderr: string): boolean {
     /secondary rate/i.test(stderr) ||
     /abuse detection/i.test(stderr) ||
     /temporarily blocked/i.test(stderr) ||
-    /throttled/i.test(stderr)
+    /throttled/i.test(stderr) ||
+    /HTTP\s*429/i.test(stderr) ||
+    /returned error:\s*429/i.test(stderr)
   );
 }
 
