@@ -1125,6 +1125,19 @@ describe('ProviderService', () => {
       expect(process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('262144');
     });
 
+    it('clears stale Kimi model env before a provider that does not set ANTHROPIC_MODEL', async () => {
+      process.env.ANTHROPIC_MODEL = 'kimi-k2.7-code';
+
+      const original = await service.applyEnvVarsToProcess('glm-4', 'glm');
+
+      expect(process.env.ANTHROPIC_MODEL).toBeUndefined();
+      expect(process.env.ANTHROPIC_BASE_URL).toBe('https://api.glm.example.com');
+      expect(original.ANTHROPIC_MODEL).toBe('kimi-k2.7-code');
+
+      service.restoreEnvVars(original);
+      expect(process.env.ANTHROPIC_MODEL).toBe('kimi-k2.7-code');
+    });
+
     it('should clear provider-leaked GLM base URL after GLM query', async () => {
       // First simulate GLM was used (leaving its base URL)
       process.env.ANTHROPIC_BASE_URL = 'https://api.glm.example.com';

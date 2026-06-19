@@ -114,6 +114,18 @@ export interface OriginalEnvVars {
   NEOKAI_PORT?: string;
 }
 
+function mergeOriginalEnvVars(...originals: OriginalEnvVars[]): OriginalEnvVars {
+  const merged: OriginalEnvVars = {};
+  for (const original of originals) {
+    for (const [key, value] of Object.entries(original)) {
+      if (!Object.prototype.hasOwnProperty.call(merged, key)) {
+        Reflect.set(merged, key, value);
+      }
+    }
+  }
+  return merged;
+}
+
 /**
  * Convert ProviderSdkConfig to ProviderEnvVars
  *
@@ -490,12 +502,18 @@ export class ProviderService {
    */
   applyEnvVarsToProcessForSession(session: Session): OriginalEnvVars {
     const envVars = this.getProviderEnvVars(session);
+    const cleared = this.clearProviderRoutingEnvVars({
+      preserveUserSettings: session.config.provider === 'anthropic',
+    });
 
     if (Object.keys(envVars).length === 0) {
-      return this.clearProviderRoutingEnvVars();
+      return cleared;
     }
 
-    return this.applyEnvVars(envVars, { preserveApiKey: session.config.provider === 'anthropic' });
+    return mergeOriginalEnvVars(
+      cleared,
+      this.applyEnvVars(envVars, { preserveApiKey: session.config.provider === 'anthropic' })
+    );
   }
 
   /**
@@ -512,14 +530,18 @@ export class ProviderService {
    */
   async applyEnvVarsToProcess(modelId: string, providerId: string): Promise<OriginalEnvVars> {
     const envVars = await this.getEnvVarsForModel(modelId, providerId);
+    const cleared = this.clearProviderRoutingEnvVars({
+      preserveUserSettings: providerId === 'anthropic',
+    });
 
-    // For Anthropic (or any non-overriding provider), explicitly clear routing
-    // overrides that may have leaked from a previous GLM query.
     if (Object.keys(envVars).length === 0) {
-      return this.clearProviderRoutingEnvVars();
+      return cleared;
     }
 
-    return this.applyEnvVars(envVars, { preserveApiKey: providerId === 'anthropic' });
+    return mergeOriginalEnvVars(
+      cleared,
+      this.applyEnvVars(envVars, { preserveApiKey: providerId === 'anthropic' })
+    );
   }
 
   /**
@@ -545,11 +567,11 @@ export class ProviderService {
     }
     if (providerId === 'anthropic') {
       const envVars = sdkConfigToEnvVars(provider.buildSdkConfig(modelId || 'default'));
-      const cleared = this.clearProviderRoutingEnvVars();
+      const cleared = this.clearProviderRoutingEnvVars({ preserveUserSettings: true });
       if (Object.keys(envVars).length === 0) {
         return cleared;
       }
-      return { ...cleared, ...this.applyEnvVars(envVars, { preserveApiKey: true }) };
+      return mergeOriginalEnvVars(cleared, this.applyEnvVars(envVars, { preserveApiKey: true }));
     }
 
     const sessionConfig = modelId ? { apiKey: undefined } : undefined;
@@ -561,8 +583,16 @@ export class ProviderService {
       return {};
     }
     const envVars = sdkConfigToEnvVars(sdkConfig);
+    const cleared = this.clearProviderRoutingEnvVars({ preserveUserSettings: false });
 
-    return this.applyEnvVars(envVars, { preserveApiKey: providerId === 'anthropic' });
+    if (Object.keys(envVars).length === 0) {
+      return cleared;
+    }
+
+    return mergeOriginalEnvVars(
+      cleared,
+      this.applyEnvVars(envVars, { preserveApiKey: providerId === 'anthropic' })
+    );
   }
 
   /**
@@ -666,7 +696,9 @@ export class ProviderService {
    * These vars force Anthropic-compatible traffic to a non-default provider.
    * If they leak across queries, model selection can appear "stuck" (e.g., glm-5).
    */
-  private clearProviderRoutingEnvVars(): OriginalEnvVars {
+  private clearProviderRoutingEnvVars(
+    options: { preserveUserSettings?: boolean } = {}
+  ): OriginalEnvVars {
     const original: OriginalEnvVars = {};
     let changed = false;
 
@@ -685,6 +717,7 @@ export class ProviderService {
       original.ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL;
       changed = true;
       if (
+        !options.preserveUserSettings ||
         userConfiguredAnthropicModel === undefined ||
         process.env.ANTHROPIC_MODEL !== userConfiguredAnthropicModel
       ) {
@@ -697,6 +730,7 @@ export class ProviderService {
       original.CLAUDE_CODE_SUBAGENT_MODEL = process.env.CLAUDE_CODE_SUBAGENT_MODEL;
       changed = true;
       if (
+        !options.preserveUserSettings ||
         userConfiguredSubagentModel === undefined ||
         process.env.CLAUDE_CODE_SUBAGENT_MODEL !== userConfiguredSubagentModel
       ) {
@@ -707,6 +741,7 @@ export class ProviderService {
       original.ENABLE_TOOL_SEARCH = process.env.ENABLE_TOOL_SEARCH;
       changed = true;
       if (
+        !options.preserveUserSettings ||
         userConfiguredToolSearch === undefined ||
         process.env.ENABLE_TOOL_SEARCH !== userConfiguredToolSearch
       ) {
@@ -719,6 +754,7 @@ export class ProviderService {
       original.ANTHROPIC_BASE_URL = process.env.ANTHROPIC_BASE_URL;
       changed = true;
       if (
+        !options.preserveUserSettings ||
         userConfiguredBaseUrl === undefined ||
         process.env.ANTHROPIC_BASE_URL !== userConfiguredBaseUrl
       ) {
@@ -731,6 +767,7 @@ export class ProviderService {
       original.API_TIMEOUT_MS = process.env.API_TIMEOUT_MS;
       changed = true;
       if (
+        !options.preserveUserSettings ||
         userConfiguredApiTimeout === undefined ||
         process.env.API_TIMEOUT_MS !== userConfiguredApiTimeout
       ) {
@@ -744,6 +781,7 @@ export class ProviderService {
         process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC;
       changed = true;
       if (
+        !options.preserveUserSettings ||
         userConfiguredDisableNonEssentialTraffic === undefined ||
         process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC !==
           userConfiguredDisableNonEssentialTraffic
@@ -757,6 +795,7 @@ export class ProviderService {
       original.CLAUDE_CODE_AUTO_COMPACT_WINDOW = process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
       changed = true;
       if (
+        !options.preserveUserSettings ||
         userConfiguredAutoCompactWindow === undefined ||
         process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW !== userConfiguredAutoCompactWindow
       ) {
@@ -769,6 +808,7 @@ export class ProviderService {
       original.ANTHROPIC_DEFAULT_SONNET_MODEL = process.env.ANTHROPIC_DEFAULT_SONNET_MODEL;
       changed = true;
       if (
+        !options.preserveUserSettings ||
         userConfiguredDefaultSonnetModel === undefined ||
         process.env.ANTHROPIC_DEFAULT_SONNET_MODEL !== userConfiguredDefaultSonnetModel
       ) {
@@ -781,6 +821,7 @@ export class ProviderService {
       original.ANTHROPIC_DEFAULT_HAIKU_MODEL = process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL;
       changed = true;
       if (
+        !options.preserveUserSettings ||
         userConfiguredDefaultHaikuModel === undefined ||
         process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL !== userConfiguredDefaultHaikuModel
       ) {
@@ -793,6 +834,7 @@ export class ProviderService {
       original.ANTHROPIC_DEFAULT_OPUS_MODEL = process.env.ANTHROPIC_DEFAULT_OPUS_MODEL;
       changed = true;
       if (
+        !options.preserveUserSettings ||
         userConfiguredDefaultOpusModel === undefined ||
         process.env.ANTHROPIC_DEFAULT_OPUS_MODEL !== userConfiguredDefaultOpusModel
       ) {
