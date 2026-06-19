@@ -1873,6 +1873,68 @@ describe('node-agent-tools: send_message (gate-write)', () => {
     expect(calls).toEqual([{ runId: ctx.workflowRunId, gateId: 'gate-failed-callback' }]);
   });
 
+  test('rate-limited gate evaluation short-circuits delivery and returns retryable error', async () => {
+    const gate: Gate = {
+      id: 'gate-rate-limited',
+      fields: [{ name: 'x', type: 'string', writers: ['*'], check: { op: 'exists' } }],
+      script: {
+        interpreter: 'bash',
+        source: 'echo "HTTP 403: rate limit exceeded" >&2; exit 1',
+        timeoutMs: 5000,
+      },
+      resetOnCycle: false,
+    };
+    const workflow = makeWorkflowWithGatedChannel(gate);
+    const gateDataRepo = new GateDataRepository(ctx.db);
+    const channelResolver = makeResolver(workflow.channels ?? []);
+    const calls: Array<{ runId: string; gateId: string }> = [];
+    const config = makeConfig(ctx, {
+      workflow,
+      channelResolver,
+      gateDataRepo,
+      scriptExecutor: async (script, context) => {
+        // Simulate a rate-limited gate script execution
+        return {
+          success: false,
+          data: {},
+          error: 'HTTP 403: rate limit exceeded',
+          rateLimited: true,
+          retryAfterMs: 60_000,
+        };
+      },
+      scriptContext: {
+        workspacePath: '/tmp',
+        runId: ctx.workflowRunId,
+        gateId: 'gate-rate-limited',
+      },
+      onGateDataChanged: async (runId, gateId) => {
+        calls.push({ runId, gateId });
+      },
+    });
+    const handlers = createNodeAgentToolHandlers(config);
+
+    const result = await handlers.send_message({
+      target: 'reviewer',
+      message: 'hi',
+      data: { x: 'val' },
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    // Should return rate-limited error without attempting delivery
+    expect(parsed.success).toBe(false);
+    // Debug: log the actual parsed result to see what fields are present
+    if (!parsed.rateLimited) {
+      console.log('DEBUG: parsed result =', JSON.stringify(parsed, null, 2));
+    }
+    expect(parsed.rateLimited).toBe(true);
+    expect(parsed.retryAfterMs).toBe(60_000);
+    expect(parsed.error).toContain('rate-limited: retry after 60000ms');
+    // Gate write should still be recorded (even though gate is closed)
+    expect(parsed.gateWrite).toEqual({ gateId: 'gate-rate-limited', gateOpen: false });
+    // Should NOT notify gate data changed (prevents re-evaluating rate-limited gate script)
+    expect(calls).toEqual([]);
+  });
+
   test('does not notify gate data changed before the current gated delivery finishes', async () => {
     const gate: Gate = {
       id: 'review-posted-gate',
@@ -2954,6 +3016,63 @@ describe('node-agent-tools: async gate evaluation', () => {
     expect(data.error).toContain('Codex still pending');
   });
 
+  test('terminal gate feature surfaces rateLimited + retryAfterMs on rate-limited script gate', async () => {
+    const gate: Gate = {
+      id: 'terminal-rate-limit-gate',
+      fields: [
+        { name: 'approved', type: 'boolean', writers: [], check: { op: '==', value: true } },
+      ],
+      resetOnCycle: false,
+    };
+    const workflow = makeWorkflowWithGate(gate, ctx.spaceId, {
+      nodes: [
+        {
+          id: 'node-coder',
+          name: 'Coding',
+          agents: [{ agentId: 'agent-coder', name: 'coder' }],
+          requireCodexApproval: true,
+        },
+        {
+          id: 'node-reviewer',
+          name: 'Review',
+          agents: [{ agentId: 'agent-reviewer', name: 'reviewer' }],
+        },
+      ],
+      channels: [{ id: 'ch-wildcard-reviewer', from: '*', to: 'reviewer', gateId: gate.id }],
+    });
+
+    const gateDataRepo = new GateDataRepository(ctx.db);
+    gateDataRepo.set(ctx.workflowRunId, gate.id, { approved: true });
+    const mockExecutor = async () => ({
+      success: false,
+      data: {},
+      error: 'HTTP 429: too many requests',
+      rateLimited: true,
+      retryAfterMs: 90_000,
+    });
+
+    const result = await evaluateTerminalGateFeatures(
+      workflow,
+      gateDataRepo,
+      ctx.workflowRunId,
+      mockExecutor,
+      {
+        workspacePath: '/tmp',
+        runId: ctx.workflowRunId,
+        gateId: gate.id,
+      },
+      'node-coder',
+      ctx.artifactRepo
+    );
+    const data = JSON.parse(result!.content[0].text);
+
+    expect(data.success).toBe(false);
+    expect(data.rateLimited).toBe(true);
+    expect(data.retryAfterMs).toBe(90_000);
+    expect(data.error).toContain('rate-limited: retry after 90000ms');
+    expect(data.gateId).toBe('terminal-rate-limit-gate');
+  });
+
   test('send_message gate-write without scriptExecutor skips script check and opens gate on field pass', async () => {
     const gate: Gate = {
       id: 'gate-write-no-exec',
@@ -3433,6 +3552,83 @@ describe('node-agent-tools: review-posted-gate multi-round artifact history', ()
 
     const artifacts = artifactRepo.listByRun(ctx.workflowRunId, { artifactType: 'review' });
     expect(artifacts).toHaveLength(0);
+  });
+
+  test('appends review artifact even when gate script is rate-limited', async () => {
+    const { WorkflowRunArtifactRepository } = await import(
+      '../../../../src/storage/repositories/workflow-run-artifact-repository.ts'
+    );
+    const artifactRepo = new WorkflowRunArtifactRepository(ctx.db);
+
+    const gate: Gate = {
+      id: 'review-posted-gate',
+      fields: [
+        { name: 'review_url', type: 'string', writers: ['reviewer'], check: { op: 'exists' } },
+      ],
+      script: {
+        interpreter: 'bash',
+        source: 'echo "HTTP 403: rate limit exceeded" >&2; exit 1',
+      },
+      resetOnCycle: true,
+    };
+    const workflow: SpaceWorkflow = {
+      id: 'wf-rl-artifact',
+      spaceId: ctx.spaceId,
+      name: 'Test',
+      description: '',
+      nodes: [],
+      startNodeId: '',
+      rules: [],
+      tags: [],
+      channels: [
+        { id: 'ch-review-coder', from: 'reviewer', to: 'coder', gateId: 'review-posted-gate' },
+      ],
+      gates: [gate],
+    };
+
+    const config = makeConfig(ctx, {
+      workflow,
+      myAgentName: 'reviewer',
+      mySessionId: ctx.reviewerSessionId,
+      artifactRepo,
+      scriptExecutor: async () => ({
+        success: false,
+        data: {},
+        error: 'HTTP 403: rate limit exceeded',
+        rateLimited: true,
+        retryAfterMs: 60_000,
+      }),
+      scriptContext: {
+        workspacePath: '/tmp',
+        runId: ctx.workflowRunId,
+        gateId: 'review-posted-gate',
+      },
+    });
+    const handlers = createNodeAgentToolHandlers(config);
+
+    const result = await handlers.send_message({
+      target: 'coder',
+      message: 'Review posted while rate-limited',
+      data: {
+        review_url: 'https://github.com/acme/app/pull/42#pullrequestreview-rl',
+        comment_urls: ['https://github.com/acme/app/pull/42#discussion_rl'],
+      },
+    });
+
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.success).toBe(false);
+    expect(parsed.rateLimited).toBe(true);
+    expect(parsed.error).toContain('rate-limited: retry after 60000ms');
+
+    // The review artifact must be persisted even though delivery was aborted.
+    const artifacts = artifactRepo.listByRun(ctx.workflowRunId, { artifactType: 'review' });
+    expect(artifacts).toHaveLength(1);
+    expect(artifacts[0].data.review_url).toBe(
+      'https://github.com/acme/app/pull/42#pullrequestreview-rl'
+    );
+    expect(artifacts[0].data.comment_urls).toEqual([
+      'https://github.com/acme/app/pull/42#discussion_rl',
+    ]);
   });
 
   test('send_message gate-write evaluates effective gate (feature script)', async () => {
