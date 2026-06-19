@@ -187,12 +187,13 @@ function WorkerAgentCard({ agent }: { agent: WorkerAgentInfo }) {
 export function SpaceAgentList() {
   const loading = spaceStore.loading.value;
   const workflowDetails = spaceStore.workflowDetails.value;
+  const workflowDetailsLoaded = spaceStore.workflowDetailsLoaded.value;
   const workerAgents = useMemo(
     () => getWorkerAgentsFromWorkflows(workflowDetails),
     [workflowDetails]
   );
 
-  if (loading) {
+  if (loading || !workflowDetailsLoaded) {
     return (
       <div class="h-full overflow-y-auto">
         <div class="min-h-[calc(100%+1px)] flex items-center justify-center">

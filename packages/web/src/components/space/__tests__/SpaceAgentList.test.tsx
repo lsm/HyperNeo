@@ -12,6 +12,7 @@ let mockAgents: ReturnType<typeof signal<SpaceAgent[]>>;
 let mockLongHorizonAgents: ReturnType<typeof signal<SpaceLongHorizonAgent[]>>;
 let mockWorkflows: ReturnType<typeof signal<unknown[]>>;
 let mockWorkflowDetails: ReturnType<typeof signal<SpaceWorkflow[]>>;
+let mockWorkflowDetailsLoaded: ReturnType<typeof signal<boolean>>;
 let mockLoading: ReturnType<typeof signal<boolean>>;
 
 vi.mock('../../../lib/space-store', () => ({
@@ -21,6 +22,7 @@ vi.mock('../../../lib/space-store', () => ({
       longHorizonAgents: mockLongHorizonAgents,
       workflows: mockWorkflows,
       workflowDetails: mockWorkflowDetails,
+      workflowDetailsLoaded: mockWorkflowDetailsLoaded,
       loading: mockLoading,
     };
   },
@@ -30,6 +32,7 @@ mockAgents = signal<SpaceAgent[]>([]);
 mockLongHorizonAgents = signal<SpaceLongHorizonAgent[]>([]);
 mockWorkflows = signal<unknown[]>([]);
 mockWorkflowDetails = signal<SpaceWorkflow[]>([]);
+mockWorkflowDetailsLoaded = signal(false);
 mockLoading = signal(false);
 
 import { SpaceAgentList } from '../SpaceAgentList';
@@ -107,6 +110,7 @@ describe('SpaceAgentList', () => {
     mockLongHorizonAgents.value = [];
     mockWorkflows.value = [];
     mockWorkflowDetails.value = [];
+    mockWorkflowDetailsLoaded.value = true;
     mockLoading.value = false;
   });
 
@@ -120,6 +124,16 @@ describe('SpaceAgentList', () => {
     const { getByText } = render(<SpaceAgentList />);
 
     expect(getByText('Loading agents...')).toBeTruthy();
+  });
+
+  it('renders loading state while workflow details are still pending', () => {
+    mockWorkflowDetails.value = [makeWorkflow()];
+    mockWorkflowDetailsLoaded.value = false;
+
+    const { getByText, queryByText } = render(<SpaceAgentList />);
+
+    expect(getByText('Loading agents...')).toBeTruthy();
+    expect(queryByText('Worker Agents · 2 configured')).toBeNull();
   });
 
   it('shows Worker Agents title and description', () => {
