@@ -518,11 +518,9 @@ export class AnthropicToCodexBridgeProvider implements Provider {
    * through their real upstream paths.
    *
    * The request body differs per auth source: API-key mode sends
-   * `max_output_tokens: 1` to keep the probe cheap, but the ChatGPT Codex
-   * backend hard-rejects that field (see
-   * `openai-responses-bridge/server.ts:1170-1176` —
-   * `includeMaxOutputTokens: !isChatgptOAuth`), so the OAuth branch omits
-   * it and relies on the upstream's default.
+   * `max_output_tokens: 1` to keep the probe cheap. ChatGPT Codex OAuth
+   * hard-rejects that field and requires the same shape as normal bridge
+   * traffic: instructions, `store: false`, and streaming enabled.
    *
    * @throws {Error} when credentials are rejected, the upstream is
    *   unreachable, or the request times out.
@@ -563,10 +561,8 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       headers['ChatGPT-Account-ID'] = auth.accountId;
     }
 
-    // Build request body. ChatGPT Codex backend hard-rejects
-    // `max_output_tokens` and `parallel_tool_calls` (see
-    // openai-responses-bridge/server.ts:1170-1176 — `includeMaxOutputTokens:
-    // !isChatgptOAuth`). Only API-key mode accepts the field.
+    // Build request body. API-key mode accepts max_output_tokens; ChatGPT
+    // Codex OAuth requires the same streaming shape as regular bridge traffic.
     const body: Record<string, unknown> = {
       model: 'gpt-5.4-mini',
       input: [
@@ -576,9 +572,12 @@ export class AnthropicToCodexBridgeProvider implements Provider {
           content: [{ type: 'input_text', text: '.' }],
         },
       ],
-      stream: false,
+      stream: isChatgptOAuth,
     };
-    if (!isChatgptOAuth) {
+    if (isChatgptOAuth) {
+      body.instructions = 'You are a concise assistant.';
+      body.store = false;
+    } else {
       body.max_output_tokens = 1;
     }
 
@@ -606,6 +605,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     if (!response.ok) {
       throw new Error(`Codex probe failed (HTTP ${response.status})`);
     }
+    await response.body?.cancel().catch(() => undefined);
   }
 
   async getModels(): Promise<ModelInfo[]> {

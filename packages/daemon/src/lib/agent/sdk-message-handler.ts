@@ -51,7 +51,7 @@ import type { MessageQueue } from './message-queue';
 import type { QueryLifecycleManager } from './query-lifecycle-manager';
 import { RepeatedToolErrorGuardrail } from './repeated-tool-error-guardrail';
 import { getSessionModelInfo } from '../model-service';
-import { PROVIDER_NO_SDK_AUTO_COMPACT } from './query-options-builder.js';
+import { shouldUseNeoKaiCompactFallback } from './query-options-builder.js';
 import { reserveBasedThreshold } from './context-tracker.js';
 
 /**
@@ -1054,15 +1054,11 @@ export class SDKMessageHandler {
 
         // NeoKai-level compaction fallback.
         //
-        // Scoped to providers in `PROVIDER_NO_SDK_AUTO_COMPACT` (currently
-        // Kimi). For these providers, the SDK's PP() helper hardcodes a 200k
-        // capacity for unknown model IDs and we cannot use the `[1m]` suffix
-        // workaround (Kimi's bridge forwards the model name verbatim, so
-        // `kimi-for-coding[1m]` would be rejected upstream). SDK auto-compact
-        // is disabled via Options.settings; NeoKai is the sole compaction
-        // path and fires at the same threshold the SDK would have used
-        // (window - 13_000, clamped for small windows — see
-        // `reserveBasedThreshold`).
+        // Scoped to providers/model routes where SDK auto-compact uses the
+        // wrong capacity. For these routes, SDK auto-compact is disabled via
+        // Options.settings; NeoKai is the sole compaction path and fires at
+        // the same threshold the SDK would have used (window - 13_000, clamped
+        // for small windows — see `reserveBasedThreshold`).
         //
         // For all other providers (Anthropic native, GLM, Codex, OpenRouter,
         // Ollama, custom endpoints) we trust the SDK's own auto-compact.
@@ -1077,9 +1073,10 @@ export class SDKMessageHandler {
         if (!providerId) {
           return;
         }
-        const sdkAutoCompactDisabled = PROVIDER_NO_SDK_AUTO_COMPACT.has(providerId);
+        const sdkModelId = contextInfo.model ?? session.config.model;
+        const shouldUseFallback = shouldUseNeoKaiCompactFallback(providerId, sdkModelId);
         const actualContextWindow = modelInfo?.contextWindow;
-        if (sdkAutoCompactDisabled && actualContextWindow && actualContextWindow > 0) {
+        if (shouldUseFallback && actualContextWindow && actualContextWindow > 0) {
           const neoKaiCompactThreshold = reserveBasedThreshold(actualContextWindow);
           if (
             contextInfo.totalUsed >= neoKaiCompactThreshold &&

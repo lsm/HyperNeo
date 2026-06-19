@@ -101,7 +101,7 @@ const kimiModels: ModelInfo[] = [
     id: 'kimi-for-coding',
     name: 'Kimi For Coding',
     alias: 'kimi',
-    providerAliases: ['KIMI'],
+    providerAliases: ['KIMI', 'kimi-k2.7-code'],
     providerAliasPrefixes: ['moonshot-'],
     family: 'kimi',
     provider: 'kimi',

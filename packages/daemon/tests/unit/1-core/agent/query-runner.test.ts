@@ -2407,23 +2407,36 @@ describe('QueryRunner environment variable handling', () => {
     expect(Object.keys(originalEnvVars).length).toBe(0);
   });
 
-  it('should refresh provider-managed auto-compact env from post-apply process env', () => {
+  it('should refresh provider-managed Kimi env from post-apply process env', () => {
     const env = refreshQueryEnvFromProcess(
       {
+        ANTHROPIC_MODEL: 'wrong-model',
+        CLAUDE_CODE_SUBAGENT_MODEL: 'wrong-subagent',
+        ENABLE_TOOL_SEARCH: 'true',
         CLAUDE_CODE_AUTO_COMPACT_WINDOW: '200000',
         KEEP_SESSION: 'session',
       },
       {
+        ANTHROPIC_MODEL: 'kimi-k2.7-code',
+        CLAUDE_CODE_SUBAGENT_MODEL: 'kimi-k2.7-code',
+        ENABLE_TOOL_SEARCH: 'false',
         CLAUDE_CODE_AUTO_COMPACT_WINDOW: '262144',
         KEEP_SESSION: 'ambient',
         KEEP_PROCESS: 'process',
         PORT: '8484',
         NEOKAI_PORT: '8484',
       },
-      { refreshAutoCompactWindow: true, clearProviderManaged: true }
+      {
+        refreshAutoCompactWindow: true,
+        clearProviderManaged: true,
+        extraProviderManagedEnvVars: ['CLAUDE_CODE_SUBAGENT_MODEL', 'ENABLE_TOOL_SEARCH'],
+      }
     );
 
     expect(env).toMatchObject({
+      ANTHROPIC_MODEL: 'kimi-k2.7-code',
+      CLAUDE_CODE_SUBAGENT_MODEL: 'kimi-k2.7-code',
+      ENABLE_TOOL_SEARCH: 'false',
       CLAUDE_CODE_AUTO_COMPACT_WINDOW: '262144',
       KEEP_SESSION: 'session',
       KEEP_PROCESS: 'process',
