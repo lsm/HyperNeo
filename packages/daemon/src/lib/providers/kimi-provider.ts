@@ -260,9 +260,12 @@ export class KimiProvider implements Provider {
   async getModels(): Promise<ModelInfo[]> {
     const apiKey = this.getApiKey();
     if (!apiKey) return [];
-    // Use the default Kimi base URL for the probe — session overrides are
-    // applied at request time via buildSdkConfig(), not here.
-    await this.verifyCredentials(KimiProvider.BASE_URL, apiKey, KimiProvider.DEFAULT_MODEL);
+    const region = resolveKimiRegion(this.defaultRegion);
+    await this.verifyCredentials(
+      KimiProvider.getBaseUrlForRegion(region),
+      apiKey,
+      KimiProvider.getModelIdForRegion(region)
+    );
     return KimiProvider.MODELS;
   }
 

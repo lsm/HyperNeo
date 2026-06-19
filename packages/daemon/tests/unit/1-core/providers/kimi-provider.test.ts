@@ -126,6 +126,23 @@ describe('KimiProvider', () => {
       expect(headers.authorization).toBe('Bearer test-key');
     });
 
+    it('probes the provider-level global endpoint and model when configured', async () => {
+      process.env.KIMI_API_KEY = 'test-key';
+      const fetchImpl = mock(
+        async () => new Response('{}', { status: 200 })
+      ) as unknown as typeof fetch;
+      provider = new KimiProvider(process.env, undefined, fetchImpl);
+      provider.setDefaultRegion('global');
+
+      await provider.getModels();
+
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      const [url, init] = (fetchImpl.mock.calls[0] as [string, RequestInit]) ?? [];
+      expect(url).toBe('https://api.moonshot.ai/anthropic/v1/messages');
+      const body = JSON.parse(String(init?.body));
+      expect(body.model).toBe('kimi-k2.7-code');
+    });
+
     it('throws when upstream rejects the API key (401)', async () => {
       process.env.KIMI_API_KEY = 'bad-key';
       const fetchImpl = mock(
