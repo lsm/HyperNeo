@@ -428,6 +428,15 @@ describe('Content Block Type Guards', () => {
       expect(isToolUseBlock(block)).toBe(true);
     });
 
+    test('should return true for legacy tool_use block without input', () => {
+      const block = {
+        type: 'tool_use',
+        id: '1',
+        name: 'Read',
+      } as ContentBlock;
+      expect(isToolUseBlock(block)).toBe(true);
+    });
+
     test('should return false for text block', () => {
       const block: ContentBlock = { type: 'text', text: 'Hello' };
       expect(isToolUseBlock(block)).toBe(false);

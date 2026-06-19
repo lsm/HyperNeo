@@ -702,7 +702,7 @@ describe('QueryRunner', () => {
           type: 'assistant',
           message: expect.objectContaining({
             role: 'assistant',
-            content: [{ type: 'text', text: 'Test error message' }],
+            content: [{ type: 'text', text: 'Test error message', citations: null }],
           }),
         })
       );

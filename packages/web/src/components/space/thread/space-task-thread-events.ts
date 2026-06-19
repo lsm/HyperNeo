@@ -129,7 +129,7 @@ function extractUserText(message: Extract<SDKMessage, { type: 'user' }>): string
 
   const textParts: string[] = [];
   for (const block of content) {
-    const blockObj = block as Record<string, unknown>;
+    const blockObj = block as unknown as Record<string, unknown>;
     if (blockObj.type === 'text' && typeof blockObj.text === 'string') {
       textParts.push(blockObj.text);
     }
@@ -197,9 +197,9 @@ function extractAssistantEvents(
             ...message,
             message: {
               ...message.message,
-              content: [{ type: 'text', text: body }],
+              content: [{ type: 'text', text: body, citations: null }],
             },
-          } as SDKMessage;
+          } as unknown as SDKMessage;
           events.push({
             id: eventId,
             label: row.label,
@@ -301,9 +301,9 @@ function extractAssistantEvents(
         ...message,
         message: {
           ...message.message,
-          content: [{ type: 'text', text: block.text }],
+          content: [{ type: 'text', text: block.text, citations: null }],
         },
-      } as SDKMessage;
+      } as unknown as SDKMessage;
       events.push({
         id: eventId,
         label: row.label,
@@ -450,7 +450,8 @@ export function buildThreadEvents(parsedRows: ParsedThreadRow[]): SpaceTaskThrea
     }
 
     if (isSDKResultMessage(row.message)) {
-      const usage = (row.message as { usage?: Record<string, number | undefined> }).usage;
+      const usage = (row.message as unknown as { usage?: Record<string, number | undefined> })
+        .usage;
       const tokenSummary = usage
         ? `${usage.input_tokens ?? 0}→${usage.output_tokens ?? 0} tokens`
         : '— tokens';

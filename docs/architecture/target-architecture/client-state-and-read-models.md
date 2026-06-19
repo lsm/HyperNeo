@@ -264,6 +264,7 @@ Owns the selected Space shell.
 
 Read models:
 
+- `space.detail.get`
 - `space.overview`
 - `space.runtimeState`
 
@@ -289,6 +290,13 @@ Commands:
 - `space.start`
 - `space.archive`
 - `space.delete`
+
+Notes:
+
+- `space.get` remains a compatibility alias for `space.detail.get` and preserves the current id-or-slug
+  lookup shape used by Space detail hydration and online Space chat assertions. `space.overview` is a
+  selected-shell aggregate and must not replace that direct detail lookup unless it explicitly supports the
+  same request/response contract.
 
 ### 7.4 SpaceTaskStore
 
@@ -505,11 +513,11 @@ Notes:
 - Existing workflow-template RPCs map as follows during migration: `spaceWorkflow.listBuiltInTemplates` -> `space.workflowTemplate.builtin.list`, `spaceWorkflow.syncFromTemplate` -> `space.workflow.syncFromTemplate`, and `spaceWorkflow.resyncDuplicates` -> `space.workflow.resyncDuplicates`.
 - Existing export/import RPCs map as follows during migration: `spaceExport.agents` -> `space.export.agents`, `spaceExport.bundle` -> `space.export.bundle`, `spaceExport.workflows` -> `space.export.workflows`, `spaceImport.preview` -> `space.import.preview`, and `spaceImport.execute` -> `space.import.execute`.
 - Existing long-horizon-agent RPCs map as follows during migration: `spaceLongHorizonAgent.list` -> `space.longHorizonAgent.list`, `spaceLongHorizonAgent.create` -> `space.longHorizonAgent.create`, `spaceLongHorizonAgent.update` -> `space.longHorizonAgent.update`, `spaceLongHorizonAgent.delete` -> `space.longHorizonAgent.delete`, `spaceLongHorizonAgent.listBuiltInTemplates` -> `space.longHorizonAgentTemplate.builtin.list`, `spaceLongHorizonAgent.listReminders` -> `space.longHorizonAgent.reminders.list`, `spaceLongHorizonAgent.createReminder` -> `space.longHorizonAgent.reminder.create`, `spaceLongHorizonAgent.deleteReminder` -> `space.longHorizonAgent.reminder.delete`, `spaceLongHorizonAgent.listSubscriptions` -> `space.longHorizonAgent.subscriptions.list`, `spaceLongHorizonAgent.createSubscription` -> `space.longHorizonAgent.subscription.create`, `spaceLongHorizonAgent.updateSubscription` -> `space.longHorizonAgent.subscription.update`, and `spaceLongHorizonAgent.deleteSubscription` -> `space.longHorizonAgent.subscription.delete`.
-- Existing MCP settings paths map as follows during migration: `mcpEnablement.bySpace` -> `space.mcp.enablement.list`, `space.mcp.setEnabled` and `space.mcp.clearOverride` keep their command names, and `mcp.imports.refresh` keeps its global import-refresh command name.
+- Existing MCP settings paths map as follows during migration: `mcpEnablement.bySpace` -> `space.mcp.enablement.list`, `space.mcp.setEnabled` and `space.mcp.clearOverride` keep their command names, `mcp.imports.refresh` keeps its global import-refresh command name, and `settings.mcp.refreshImports` maps to the same import-refresh target until legacy settings callers migrate.
 - Existing per-space GitHub source toggles remain explicit commands during migration: `space.github.enable` enables the GitHub external-event source for a Space and `space.github.disable` disables it. If a later implementation folds these into `space.github.config.set`, that command must preserve the same per-space enablement semantics and the compatibility bridge must continue to expose the existing RPC names until callers migrate.
 - Existing GitHub repository settings RPCs map as follows during migration: `space.github.listConfig` -> `space.github.config.list`, `space.github.listWatchedRepos` -> `space.github.watchedRepos.list`, `space.github.watchRepo` -> `space.github.watchedRepos.add`, and `space.github.unwatchRepo` -> `space.github.watchedRepos.remove`. `space.github.watchedRepos.add` must preserve the current upsert/edit semantics of `space.github.watchRepo` for enabled, webhook-enabled, and polling-enabled toggles, or the bridge must expose a separate `space.github.watchedRepos.update` alias before cleanup.
 - Existing GitHub webhook RPCs map as follows during migration: `space.github.autoConfigureWebhook` -> `space.github.webhook.autoConfigure` and `space.github.checkWebhook` -> `space.github.webhook.check`.
-- Existing GitHub polling RPCs map as follows during migration: `space.github.pollOnce` keeps the same target command name and triggers an immediate poll for polling-enabled watched repositories.
+- Existing GitHub token and polling RPCs map as follows during migration: `space.github.getTokenStatus` -> `space.github.token.status`, `space.github.setToken` -> `space.github.token.set`, `space.github.clearToken` -> `space.github.token.clear`, `space.github.setPollingEnabled` -> `space.github.polling.setEnabled`, and `space.github.pollOnce` keeps the same target command name and triggers an immediate poll for polling-enabled watched repositories.
 - Existing configure events map as follows during migration: `spaceAgent.created` -> `space.agent.created`, `spaceAgent.updated` -> `space.agent.updated`, `spaceAgent.deleted` -> `space.agent.deleted`, `spaceLongHorizonAgent.created` -> `space.longHorizonAgent.created`, `spaceLongHorizonAgent.updated` -> `space.longHorizonAgent.updated`, `spaceLongHorizonAgent.deleted` -> `space.longHorizonAgent.deleted`, `spaceWorkflow.created` -> `space.workflow.created`, `spaceWorkflow.updated` -> `space.workflow.updated`, and `spaceWorkflow.deleted` -> `space.workflow.deleted`. Until producers publish the target names directly, either the compatibility bridge must fan out both namespaces or `SpaceConfigureStore` must subscribe to the legacy names as compatibility aliases.
 
 ### 7.7 SpaceGoalStore

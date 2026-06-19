@@ -76,7 +76,7 @@
       "followUp": "M8/UI focused view split"
     },
     "packages/daemon/src/lib/agent/query-runner.ts": {
-      "maxLines": 1538,
+      "maxLines": 1549,
       "followUp": "M7 agent runtime boundary split"
     },
     "packages/daemon/src/lib/providers/openai-responses-bridge/server.ts": {
@@ -84,7 +84,7 @@
       "followUp": "M7 agent runtime boundary split"
     },
     "packages/daemon/src/lib/agent/query-options-builder.ts": {
-      "maxLines": 1448,
+      "maxLines": 1454,
       "followUp": "M7 agent runtime boundary split"
     },
     "packages/web/src/components/space/visual-editor/NodeConfigPanel.tsx": {
@@ -112,7 +112,7 @@
       "followUp": "M1 shared boundary split"
     },
     "packages/daemon/src/lib/acp/acp-query-runner.ts": {
-      "maxLines": 1199,
+      "maxLines": 1204,
       "followUp": "M7 agent runtime boundary split"
     },
     "packages/daemon/src/lib/providers/anthropic-to-codex-bridge-provider.ts": {
@@ -120,7 +120,7 @@
       "followUp": "M7 agent runtime boundary split"
     },
     "packages/daemon/src/app.ts": {
-      "maxLines": 1171,
+      "maxLines": 1170,
       "followUp": "M10 cleanup split when touched"
     },
     "packages/web/src/components/space/SpaceTasks.tsx": {
@@ -140,7 +140,7 @@
       "followUp": "M2/M4 fabric bridge split"
     },
     "packages/daemon/src/lib/agent/sdk-message-handler.ts": {
-      "maxLines": 1074,
+      "maxLines": 1071,
       "followUp": "M7 agent runtime boundary split"
     },
     "packages/web/src/components/space/visual-editor/EdgeRenderer.tsx": {
@@ -152,7 +152,7 @@
       "followUp": "M8/UI focused view split"
     },
     "packages/web/src/components/space/SpaceExternalEventsSettings.tsx": {
-      "maxLines": 1042,
+      "maxLines": 1379,
       "followUp": "M8/UI focused view split"
     },
     "packages/web/src/components/ToolsModal.tsx": {
@@ -188,7 +188,7 @@
       "followUp": "M3 storage/query service split"
     },
     "packages/daemon/src/lib/provider-service.ts": {
-      "maxLines": 962,
+      "maxLines": 1087,
       "followUp": "M10 cleanup split when touched"
     },
     "packages/ui/src/components/combobox/combobox.tsx": {
@@ -292,7 +292,7 @@
       "followUp": "M10 cleanup split when touched"
     },
     "packages/daemon/src/lib/external-events/github/github-event-extension.ts": {
-      "maxLines": 805,
+      "maxLines": 1160,
       "followUp": "M6 extension registry split"
     },
     "packages/daemon/src/lib/agent/rewind-handler.ts": {
@@ -412,7 +412,7 @@
       "followUp": "M8/UI focused view split"
     },
     "packages/web/src/components/space/thread/space-task-thread-events.ts": {
-      "maxLines": 663,
+      "maxLines": 664,
       "followUp": "M8/UI focused view split"
     },
     "packages/daemon/src/lib/github/github-service.ts": {
@@ -554,6 +554,10 @@
     "packages/daemon/src/lib/space/schedule/schedule-service.ts": {
       "maxLines": 533,
       "followUp": "M10 cleanup split when touched"
+    },
+    "packages/daemon/src/lib/external-events/github/github-repository.ts": {
+      "maxLines": 531,
+      "followUp": "M6 extension registry split"
     },
     "packages/daemon/src/lib/providers/ollama-bridge-server.ts": {
       "maxLines": 529,

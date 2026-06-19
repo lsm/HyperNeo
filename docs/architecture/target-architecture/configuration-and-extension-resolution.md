@@ -414,9 +414,12 @@ Target queries:
 | `hook.effective.list` | Hook policies active for a runtime/session. |
 | `runtime.behavior.preview` | Final runtime-neutral behavior before adapter rendering. |
 | `mcp.registry.list` | Application-level MCP server registry entries and enablement state. |
+| `mcp.registry.get` | Application-level MCP server registry detail by id. |
+| `mcp.registry.errors.list` | Application-level MCP registry validation errors for warning badges. |
 | `tools.globalConfig.get` | Global tool configuration read model for settings modals. |
 | `usage.calculate` | Historical usage aggregate for settings analytics. |
 | `config.model.get` | Compatibility read for current model configuration. |
+| `config.keyFamily.get` | Compatibility read for one legacy config key family. |
 | `config.getAll` | Compatibility read for all legacy config key families. |
 | `settings.global.get` | Compatibility read for global settings hydration. |
 | `settings.session.get` | Compatibility read for session-scoped settings hydration. |
@@ -454,13 +457,18 @@ Compatibility mappings:
 - `settings.global.get`, `settings.session.get`, `settings.fileOnly.read`, and
   `settings.mcp.listFromSources` remain compatibility aliases for effective config/settings read models until
   settings callers migrate to `config.effective.preview` or contribution-specific registry reads.
-- `config.model.get` and `config.getAll` remain compatibility aliases for model and full-config hydration; they
-  read the same effective source chain as the target config resolver and must not be removed before callers
-  migrate.
+- `config.model.get`, `config.getAll`, and the per-key family reads remain compatibility aliases for model,
+  full-config, and settings-panel hydration; they read the same effective source chain as the target config
+  resolver and must not be removed before callers migrate. The per-key reads include
+  `config.systemPrompt.get`, `config.tools.get`, `config.permissions.get`, `config.agents.get`,
+  `config.sandbox.get`, `config.betas.get`, `config.outputFormat.get`, `config.mcp.get`, and
+  `config.env.get`.
 - `config.model.update`, `config.systemPrompt.update`, `config.tools.update`, `config.agents.update`,
   `config.sandbox.update`, `config.mcp.update`, `config.outputFormat.update`, `config.betas.update`,
   `config.env.update`, and `config.permissions.update` map to `config.value.set` or
   `config.values.patch` for the corresponding key family.
+- `config.updateBulk` remains a compatibility alias for `config.values.patch`; it must preserve the
+  current bulk settings save semantics until callers move to scoped patch requests.
 - `tools.save` maps to `config.values.patch` at session scope.
 - `globalTools.getConfig` maps to `tools.globalConfig.get` or `config.effective.preview` at global tools
   scope so ToolsModal can hydrate saved global tool settings before writing changes.
@@ -468,8 +476,14 @@ Compatibility mappings:
 - `usage.calculate` remains a compatibility query for historical usage analytics; it is not replaced by
   live runtime usage events because the settings tab needs an on-demand aggregate over persisted sessions,
   token counts, and costs.
-- `mcp.registry.list`, `mcp.registry.create`, `mcp.registry.update`, `mcp.registry.delete`, and
-  `mcp.registry.setEnabled` remain compatibility aliases for application-level MCP server settings.
+- `mcp.registry.list`, `mcp.registry.get`, `mcp.registry.create`, `mcp.registry.update`,
+  `mcp.registry.delete`, and `mcp.registry.setEnabled` remain compatibility aliases for application-level
+  MCP server settings.
+- `mcp.registry.listErrors` remains a compatibility alias for `mcp.registry.errors.list` so settings
+  warning badges and the MCP registry RPC suite can keep surfacing invalid entries during cleanup.
+- `config.mcp.addServer` and `config.mcp.removeServer` remain compatibility aliases over the MCP
+  registry create/delete commands; the bridge must keep these shortcut mutations until the online config
+  RPC suite and settings callers use `mcp.registry.*` directly.
 - `mcp.enablement.setOverride` and `mcp.enablement.clearOverride` remain compatibility aliases for
   session and Space tool enablement overrides; they write scoped config rows and trigger the same
   effective-preview invalidation as other MCP config changes.

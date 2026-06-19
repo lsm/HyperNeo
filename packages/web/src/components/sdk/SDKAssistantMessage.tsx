@@ -72,11 +72,12 @@ export function SDKAssistantMessage({
   flattenSubagentTools = false,
 }: Props) {
   const { message: apiMessage } = message;
+  const contentBlocks = apiMessage.content as ContentBlock[];
   const hasError = 'error' in message && message.error !== undefined;
 
   // Extract text content for copy functionality
   const getTextContent = (): string => {
-    return apiMessage.content
+    return contentBlocks
       .map((block: ContentBlock) => {
         if (isTextBlock(block)) {
           return block.text;
@@ -132,9 +133,9 @@ export function SDKAssistantMessage({
   // Thinking blocks with empty/whitespace payloads (emitted by Opus 4.7 and
   // other models running with `thinking.display = 'omitted'`) are filtered
   // out here so the UI doesn't show an empty "Thinking · 0 characters" card.
-  const textBlocks = apiMessage.content.filter((block: ContentBlock) => isTextBlock(block));
-  const toolBlocks = apiMessage.content.filter((block: ContentBlock) => isToolUseBlock(block));
-  const thinkingBlocks = apiMessage.content.filter(isThinkingBlock).filter(hasRenderableThinking);
+  const textBlocks = contentBlocks.filter(isTextBlock);
+  const toolBlocks = contentBlocks.filter(isToolUseBlock);
+  const thinkingBlocks = contentBlocks.filter(isThinkingBlock).filter(hasRenderableThinking);
 
   // Extract the estimated thinking tokens if present (stashed by daemon during thinking phase)
   const estimatedThinkingTokens = (message as Record<string, unknown>).estimated_thinking_tokens as

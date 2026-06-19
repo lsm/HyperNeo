@@ -210,16 +210,16 @@ export class SDKMessageHandler {
   private async displayErrorAsAssistantMessage(text: string): Promise<void> {
     const { session, db, messageHub } = this.ctx;
 
-    const assistantMessage: SDKMessage = {
+    const assistantMessage = {
       type: 'assistant' as const,
       uuid: generateUUID() as UUID,
       session_id: session.id,
       parent_tool_use_id: null,
       message: {
         role: 'assistant' as const,
-        content: [{ type: 'text' as const, text }],
+        content: [{ type: 'text' as const, text, citations: null }],
       },
-    };
+    } as unknown as SDKMessage;
 
     db.saveSDKMessage(session.id, assistantMessage);
 
@@ -539,9 +539,9 @@ export class SDKMessageHandler {
     if (
       'message' in message &&
       message.message &&
-      !(message.message as Record<string, unknown>).usage
+      !(message.message as unknown as Record<string, unknown>).usage
     ) {
-      (message.message as Record<string, unknown>).usage = {
+      (message.message as unknown as Record<string, unknown>).usage = {
         input_tokens: 0,
         output_tokens: 0,
         cache_creation_input_tokens: 0,
@@ -907,7 +907,7 @@ export class SDKMessageHandler {
 
     if (!isSDKAssistantMessage(message)) return;
 
-    const toolCalls = message.message.content.filter(isToolUseBlock);
+    const toolCalls = (message.message.content as unknown[]).filter(isToolUseBlock);
     for (const toolCall of toolCalls) {
       await internalEventBus.publish('sdk.toolUse.created', {
         sessionId: session.id,

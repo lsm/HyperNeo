@@ -31,16 +31,40 @@ import type {
 const TOKEN_CHARS = 4;
 
 function zeroUsage(): {
+  cache_creation: {
+    ephemeral_1h_input_tokens: number;
+    ephemeral_5m_input_tokens: number;
+  };
   input_tokens: number;
   output_tokens: number;
   cache_creation_input_tokens: number;
   cache_read_input_tokens: number;
+  inference_geo: string;
+  iterations: [];
+  server_tool_use: {
+    web_fetch_requests: number;
+    web_search_requests: number;
+  };
+  service_tier: 'standard';
+  speed: 'standard';
 } {
   return {
+    cache_creation: {
+      ephemeral_1h_input_tokens: 0,
+      ephemeral_5m_input_tokens: 0,
+    },
     input_tokens: 0,
     output_tokens: 0,
     cache_creation_input_tokens: 0,
     cache_read_input_tokens: 0,
+    inference_geo: '',
+    iterations: [],
+    server_tool_use: {
+      web_fetch_requests: 0,
+      web_search_requests: 0,
+    },
+    service_tier: 'standard',
+    speed: 'standard',
   };
 }
 
@@ -236,14 +260,14 @@ export class AcpMessageTranslator {
         ...base,
         subtype: 'error_during_execution' as const,
         errors: [stopReason],
-      } as SDKResultMessage;
+      } as unknown as SDKResultMessage;
     }
 
     return {
       ...base,
       subtype: 'success' as const,
       result: '',
-    } as SDKResultMessage;
+    } as unknown as SDKResultMessage;
   }
 
   getContextUsage(): { used: number; size: number } | null {

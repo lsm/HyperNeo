@@ -63,6 +63,10 @@ function toPosix(path: string): string {
   return path.split(sep).join('/');
 }
 
+function toRepoPath(path: string): string {
+  return toPosix(relative(repoRoot, resolve(repoRoot, path)));
+}
+
 function countLines(path: string): number {
   const text = readFileSync(path, 'utf8');
   if (text.length === 0) return 0;
@@ -173,8 +177,9 @@ function formatTable(rows: string[][]): string {
 }
 
 const { configPath, changedFrom, json } = parseArgs();
+const configRepoPath = toRepoPath(configPath);
 const config = loadConfig(configPath);
-const baseConfig = changedFrom ? loadConfigFromGitRef(changedFrom, configPath) : null;
+const baseConfig = changedFrom ? loadConfigFromGitRef(changedFrom, configRepoPath) : null;
 const thresholdConfig = baseConfig
   ? {
       ...config,
@@ -183,10 +188,10 @@ const thresholdConfig = baseConfig
     }
   : config;
 const baselineConfigSource = baseConfig
-  ? `${changedFrom}:${configPath}`
+  ? `${changedFrom}:${configRepoPath}`
   : changedFrom
-    ? `${configPath} (base ref has no baseline yet)`
-    : configPath;
+    ? `${configRepoPath} (base ref has no baseline yet)`
+    : configRepoPath;
 const files: SourceFile[] = [];
 walk(resolve(repoRoot, 'packages'), files);
 
@@ -194,7 +199,13 @@ const changedPaths = changedFrom ? getChangedPaths(changedFrom) : null;
 const changedPathInfo = changedFrom
   ? getChangedPathInfo(changedFrom)
   : new Map<string, ChangedPathInfo>();
-const ratchetConfigChanged = changedPaths?.has(toPosix(configPath)) ?? false;
+const ratchetConfigChanged = changedPaths?.has(configRepoPath) ?? false;
+const scanReason =
+  changedPaths && ratchetConfigChanged
+    ? `ratchet config changed; scanning all production source files`
+    : changedPaths
+      ? `changed production source files only`
+      : `all production source files`;
 const scannedFiles =
   changedPaths && !ratchetConfigChanged
     ? files.filter((file) => changedPaths.has(file.path))
@@ -263,6 +274,8 @@ const report = {
   hardLineCount: thresholdConfig.hardLineCount,
   changedFrom,
   baselineConfigSource,
+  ratchetConfigChanged,
+  scanReason,
   scannedFiles: scannedFiles.length,
   overTarget: overTarget.length,
   oversized: oversized.length,
@@ -281,6 +294,7 @@ if (json) {
   console.log(`Temporary hard ceiling: ${report.hardLineCount} lines`);
   if (changedFrom) console.log(`Changed-from ref: ${changedFrom}`);
   console.log(`Baseline config: ${report.baselineConfigSource}`);
+  console.log(`Scan reason: ${report.scanReason}`);
   console.log('');
   console.log(`Files scanned: ${report.scannedFiles}`);
   console.log(`Files over target: ${report.overTarget}`);

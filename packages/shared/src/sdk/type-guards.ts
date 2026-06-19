@@ -23,6 +23,27 @@ import type {
 import type { NeokaiActionMessage, SlashCommand } from "../types.ts";
 import type { ChatMessage } from "../state-types.ts";
 
+type SDKAssistantContentBlock = SDKAssistantMessage["message"]["content"][number];
+
+export type TextContentBlock = {
+  type: "text";
+  text: string;
+  citations?: unknown;
+};
+
+export type ToolUseContentBlock = {
+  type: "tool_use";
+  id: string;
+  name: string;
+  input?: Record<string, unknown>;
+};
+
+export type ThinkingContentBlock = {
+  type: "thinking";
+  thinking: string;
+  signature?: string;
+};
+
 // ============================================================================
 // Message Type Guards
 // ============================================================================
@@ -254,14 +275,10 @@ export function flattenSDKSlashCommands(commands: SDKSlashCommand[]): string[] {
  * exhaustive and renderers can skip them safely if they ever appear.
  */
 export type ContentBlock =
-  | { type: "text"; text: string }
-  | {
-      type: "tool_use";
-      id: string;
-      name: string;
-      input: Record<string, unknown>;
-    }
-  | { type: "thinking"; thinking: string; signature?: string }
+  | SDKAssistantContentBlock
+  | TextContentBlock
+  | ToolUseContentBlock
+  | ThinkingContentBlock
   | { type: "redacted_thinking"; data: string };
 
 /**
@@ -287,9 +304,18 @@ export function isAskUserQuestionToolUse(block: ContentBlock): block is Extract<
   ContentBlock,
   { type: "tool_use" }
 > & {
+  id: string;
   name: "AskUserQuestion";
+  input: Record<string, unknown>;
 } {
-  return block.type === "tool_use" && block.name === "AskUserQuestion";
+  return (
+    block.type === "tool_use" &&
+    typeof block.id === "string" &&
+    block.name === "AskUserQuestion" &&
+    typeof block.input === "object" &&
+    block.input !== null &&
+    !Array.isArray(block.input)
+  );
 }
 
 /**
@@ -328,17 +354,30 @@ export function hasAskUserQuestion(msg: SDKMessage): boolean {
  */
 export function isTextBlock(
   block: ContentBlock,
-): block is Extract<ContentBlock, { type: "text" }> {
-  return block.type === "text";
+): block is TextContentBlock {
+  return block.type === "text" && typeof block.text === "string";
 }
 
 /**
  * Check if content block is a tool use block
  */
 export function isToolUseBlock(
-  block: ContentBlock,
-): block is Extract<ContentBlock, { type: "tool_use" }> {
-  return block.type === "tool_use";
+  block: unknown,
+): block is ToolUseContentBlock {
+  if (typeof block !== "object" || block === null || Array.isArray(block)) {
+    return false;
+  }
+
+  const value = block as Record<string, unknown>;
+  return (
+    value.type === "tool_use" &&
+    typeof value.id === "string" &&
+    typeof value.name === "string" &&
+    (value.input === undefined ||
+      (typeof value.input === "object" &&
+        value.input !== null &&
+        !Array.isArray(value.input)))
+  );
 }
 
 /**
@@ -354,8 +393,8 @@ export function isToolUseBlock(
  */
 export function isThinkingBlock(
   block: ContentBlock,
-): block is Extract<ContentBlock, { type: "thinking" }> {
-  return block.type === "thinking";
+): block is ThinkingContentBlock {
+  return block.type === "thinking" && typeof block.thinking === "string";
 }
 
 /**
@@ -366,7 +405,7 @@ export function isThinkingBlock(
  * showing an empty "Thinking · 0 characters" card.
  */
 export function hasRenderableThinking(
-  block: Extract<ContentBlock, { type: "thinking" }>,
+  block: ThinkingContentBlock,
 ): boolean {
   return typeof block.thinking === "string" && block.thinking.trim().length > 0;
 }

@@ -316,13 +316,16 @@ The gateway should expose fabric commands and events over time:
 | `agentRuntime.session.rateLimitRetry.retryNow` | command | Retry immediately after a rate-limit cooldown. |
 | `agentRuntime.session.sdkResumeChoice.submit` | command | Submit the user's SDK resume choice after a resume conflict. |
 | `agentRuntime.session.query.reset` | command | Reset runtime query state for manual recovery. |
+| `agentRuntime.session.agentState.get` | query | Read the focused processing-state snapshot for a session. |
 | `agentRuntime.session.pendingMessages.list` | query | Read queued, deferred, and pending manual messages. |
+| `agentRuntime.session.pendingMessages.countByStatus` | query | Count queued, deferred, and pending manual messages by status. |
 | `agentRuntime.session.pendingMessage.remove` | command | Remove a pending message before execution. |
 | `agentRuntime.session.pendingMessage.promote` | command | Promote a pending message into the active turn. |
 | `agentRuntime.session.pendingMessage.defer` | command | Defer a pending message for later execution. |
 | `agentRuntime.session.rewindCheckpoints.list` | query | Read rewind checkpoints for a session. |
 | `agentRuntime.session.rewindPreview.get` | query | Preview a rewind before mutating session state. |
 | `agentRuntime.session.rewind.execute` | command | Execute full-session rewind. |
+| `agentRuntime.session.rewindSelective.preview` | query | Preview selective rewind before deleting chosen messages or files. |
 | `agentRuntime.session.rewindSelective.execute` | command | Execute selective rewind for chosen messages or checkpoints. |
 | `agentRuntime.messages.list` | query | Page persisted SDK transcript messages for reopened sessions. |
 | `agentRuntime.messages.count` | query | Count persisted SDK transcript messages. |
@@ -351,8 +354,10 @@ The unified session-state contracts preserve the current `state.session` and `st
 Those snapshots include session metadata, agent processing state, slash commands, errors, pending
 questions, context, and model/runtime status; `agentRuntime.session.status.get` is not a replacement for
 that full read model. The compatibility gateway maps `state.session`, `state.sessions`,
-`session.thinking.get`, and `session.thinking.set` to the target state/thinking contracts until the chat
-view and session collection stores migrate.
+`agent.getState`, `session.thinking.get`, and `session.thinking.set` to the target state/thinking
+contracts until the chat view and session collection stores migrate. `agent.getState` remains a focused
+alias for `agentRuntime.session.agentState.get` so callers that subscribe to `agent.state` can still
+hydrate the initial processing snapshot before moving to the unified state contract.
 
 Session-scoped event aliases must also survive cleanup until the chat store migrates. `context.updated`
 maps to `agentRuntime.context.updated` for fast context indicator refreshes, and
@@ -360,7 +365,7 @@ maps to `agentRuntime.context.updated` for fast context indicator refreshes, and
 can later collapse into `agentRuntime.event.stream` only after the client has typed reducers for the
 equivalent event payloads.
 
-`agentRuntime.mcpServers.list` preserves the current `session.listRuntimeMcpServers` surface. It returns in-process runtime SDK MCP servers and Space/task tool servers attached to the selected session; it should not be folded into coarse status if tool panels need names, scopes, and capability metadata without polling the full runtime state. `agentRuntime.session.mcp.list` separately preserves `session.mcp.list`, which returns effective configured MCP entries, enablement state, and skill linkage for the selected session.
+`agentRuntime.mcpServers.list` preserves the current `session.listRuntimeMcpServers` surface. It returns in-process runtime SDK MCP servers and Space/task tool servers attached to the selected session; it should not be folded into coarse status if tool panels need names, scopes, and capability metadata without polling the full runtime state. `agentRuntime.session.mcp.list` separately preserves `session.mcp.list`, which returns effective configured MCP entries, enablement state, and skill linkage for the selected session. `agentRuntime.session.skillMcpServers.list` preserves `session.getSkillMcpServers` for diagnostics and online MCP verification that need the raw SDK server configs injected by enabled skill-backed AppMcpServers.
 
 The live runtime compatibility gateway maps existing chat controls to the target runtime contracts until
 callers move to the runtime namespace: `message.send` -> `agentRuntime.message.send`,
@@ -384,14 +389,23 @@ Workspace, folder-picking, and Git utility RPCs stay outside the Agent Runtime b
 contract-backed during MessageHub cleanup. `dialog.pickFolder` maps to a platform dialog contract,
 `workspace.history`, `workspace.add`, and `workspace.remove` map to workspace-history queries/commands,
 `session.setWorkspace` remains a session workspace-assignment command, and `git.branches` plus
-`git.sessionStatus` remain Git workspace queries. These aliases must be preserved until sidebar,
-Sessions page, WorkspaceSelector, SpaceCreateDialog, and branch/status UI callers migrate.
+`git.sessionStatus` remain Git workspace queries. `worktree.cleanup` remains an operational cleanup
+command for removing orphaned worktrees until that maintenance surface moves to the target utility
+namespace. These aliases must be preserved until sidebar, Sessions page, WorkspaceSelector,
+SpaceCreateDialog, and branch/status UI callers migrate.
+
+Workspace file RPCs are also part of the compatibility surface while file browsing and direct file reads
+remain MessageHub-backed. `file.read`, `file.list`, and `file.tree` map to workspace file read/list/tree
+contracts and must stay registered until the online file-handler suite and any file clients migrate to the
+target namespace.
 
 The pending-message and rewind contracts preserve current chat controls while the session gateway moves
 behind Agent Runtime. The compatibility gateway maps `session.messages.byStatus`,
-`session.messages.removePending`, `session.messages.promotePending`, `session.messages.deferPending`,
-`rewind.checkpoints`, `rewind.preview`, `rewind.execute`, and `rewind.executeSelective` to these target
-contracts until the UI calls the Agent Runtime namespace directly.
+`session.messages.countByStatus`, `session.messages.removePending`, `session.messages.promotePending`,
+`session.messages.deferPending`, `rewind.checkpoints`, `rewind.preview`, `rewind.execute`,
+`rewind.previewSelective`, and `rewind.executeSelective` to these target contracts until the UI calls the
+Agent Runtime namespace directly. Selective rewind must keep a dry-run query so callers can inspect
+affected messages and files before executing the destructive mutation.
 
 The persisted-message contracts preserve transcript history independently from live event streaming. The
 compatibility gateway maps `message.sdkMessages`, `message.count`, `message.search`, `session.export`,
@@ -464,6 +478,7 @@ Provider and model settings stay contract-backed during MessageHub cleanup:
 | Contract | Kind | Purpose |
 | --- | --- | --- |
 | `provider.models.list` | query | Preserve `models.list` for model pickers and workflow editors. |
+| `provider.models.clearCache` | command | Preserve `models.clearCache` for explicit catalog invalidation. |
 | `provider.registry.list` | query | Preserve `providers.list` for provider settings. |
 | `provider.registry.get` | query | Preserve `providers.get` for focused provider editing. |
 | `provider.registry.create` | command | Preserve `providers.create`. |

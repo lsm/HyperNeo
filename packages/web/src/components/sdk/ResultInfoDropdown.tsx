@@ -42,7 +42,7 @@ function formatCost(usd: number | undefined | null): string {
 
 export function ResultInfoDropdown({ result }: Props) {
   const isError = result.subtype !== 'success';
-  const usage = (result as { usage?: Record<string, number | undefined> }).usage ?? {};
+  const usage = (result as unknown as { usage?: Record<string, number | undefined> }).usage ?? {};
   const inputTokens = usage.input_tokens ?? 0;
   const outputTokens = usage.output_tokens ?? 0;
   const cacheRead = usage.cache_read_input_tokens ?? 0;

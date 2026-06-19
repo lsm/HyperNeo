@@ -174,7 +174,7 @@ export function SDKUserMessage({
     return apiMessage.content.filter((block: unknown) => {
       const b = block as Record<string, unknown>;
       return b.type === 'image';
-    }) as Array<Record<string, unknown>>;
+    }) as unknown as Array<Record<string, unknown>>;
   };
 
   const textContent = getTextContent();
@@ -191,7 +191,7 @@ export function SDKUserMessage({
     if (Array.isArray(apiMessage.content)) {
       return apiMessage.content.map((block: unknown) => {
         if (typeof block === 'object' && block !== null) {
-          return block as Record<string, unknown>;
+          return block as unknown as Record<string, unknown>;
         }
         return { type: 'unknown', content: block };
       });

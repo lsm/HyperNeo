@@ -1377,7 +1377,7 @@ export class QueryRunner {
         // the user's request is silently dropped.
         this._lastConsumedUserMessage = {
           uuid: message.uuid ?? '',
-          content: message.message?.content ?? '',
+          content: (message.message?.content ?? '') as unknown as string | MessageContent[],
         };
       }
 
@@ -1526,7 +1526,7 @@ export class QueryRunner {
   ): Promise<void> {
     const { session, db, messageHub } = this.ctx;
 
-    const assistantMessage: SDKMessage = {
+    const assistantMessage = {
       type: 'assistant' as const,
       uuid: generateUUID() as UUID,
       session_id: session.id,
@@ -1534,9 +1534,9 @@ export class QueryRunner {
       ...(options?.markAsError ? { error: 'invalid_request' as const } : {}),
       message: {
         role: 'assistant' as const,
-        content: [{ type: 'text' as const, text }],
+        content: [{ type: 'text' as const, text, citations: null }],
       },
-    };
+    } as unknown as SDKMessage;
 
     db.saveSDKMessage(session.id, assistantMessage);
 
