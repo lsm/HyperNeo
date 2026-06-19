@@ -139,11 +139,11 @@ export class ContextFetcher {
     const providerId = modelMetadata?.provider;
     // Only fire for providers where we expect SDK auto-compact to work
     // correctly. This is the set in NATIVE_CONTEXT_WINDOW_PROVIDER_IDS
-    // (anthropic, anthropic-copilot, anthropic-codex, glm). For everyone
-    // else — Kimi (SDK disabled), OpenRouter/Ollama/custom (PP() returns
-    // 200k for unknown models so the SDK's effective window is always the
-    // wrong 200k) — the mismatch is the known steady state, not a regression,
-    // and logging it on every context refresh is pure noise.
+    // (anthropic, anthropic-copilot, anthropic-codex, glm). For everyone else
+    // — OpenRouter/Ollama/custom (PP() returns 200k for unknown models so the
+    // SDK's effective window is often wrong) — the mismatch is the known steady
+    // state, not a regression, and logging it on every context refresh is pure
+    // noise.
     if (!providerId || !NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId)) return;
     if (PROVIDER_NO_SDK_AUTO_COMPACT.has(providerId)) return;
     const metadataCapacity = positiveInteger(modelMetadata?.contextWindow);
