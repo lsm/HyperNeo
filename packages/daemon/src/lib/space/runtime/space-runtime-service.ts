@@ -1833,6 +1833,10 @@ export class SpaceRuntimeService {
    *
    * No-op when gateDataRepo was not provided at construction time.
    */
+  getGateRetryScheduler(): GateRetryScheduler {
+    return this.gateRetryScheduler;
+  }
+
   async notifyGateDataChanged(runId: string, gateId: string): Promise<SpaceTask[]> {
     if (!this.config.gateDataRepo) return [];
     // Resolve workspacePath from run → space for script gate evaluation.
