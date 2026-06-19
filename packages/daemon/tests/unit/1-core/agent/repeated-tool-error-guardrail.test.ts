@@ -250,6 +250,40 @@ describe('RepeatedToolErrorGuardrail', () => {
     expect(deps.routeRecoveryMessage).not.toHaveBeenCalled();
   });
 
+  it('resets the streak on a plain-text user message', async () => {
+    const { guardrail, deps } = makeGuardrail();
+
+    guardrail.recordToolUse('tool-1', 'Read');
+    await guardrail.observeToolResultErrors(makeErrorResult('tool-1', 'file not found'));
+    await guardrail.observeToolResultErrors({
+      type: 'user',
+      message: { role: 'user', content: 'Let me try something else.' },
+    } as unknown as ReturnType<typeof makeErrorResult>);
+    const triggered = await guardrail.observeToolResultErrors(
+      makeErrorResult('tool-1', 'file not found')
+    );
+
+    expect(triggered).toBe(false);
+    expect(deps.routeRecoveryMessage).not.toHaveBeenCalled();
+  });
+
+  it('resets the streak when a later user message has no error tool results', async () => {
+    const { guardrail, deps } = makeGuardrail();
+
+    guardrail.recordToolUse('tool-1', 'Read');
+    await guardrail.observeToolResultErrors(makeErrorResult('tool-1', 'file not found'));
+    await guardrail.observeToolResultErrors({
+      type: 'user',
+      message: { role: 'user', content: [] },
+    } as unknown as ReturnType<typeof makeErrorResult>);
+    const triggered = await guardrail.observeToolResultErrors(
+      makeErrorResult('tool-1', 'file not found')
+    );
+
+    expect(triggered).toBe(false);
+    expect(deps.routeRecoveryMessage).not.toHaveBeenCalled();
+  });
+
   it('does not trigger when the threshold is configured higher', async () => {
     const { guardrail, deps } = makeGuardrail({ threshold: 3 });
 

@@ -100,9 +100,17 @@ export class RepeatedToolErrorGuardrail {
     if (!task?.evolutionScopeId) return false;
 
     const content = (message as { message?: { content?: unknown } }).message?.content;
+
+    // Plain-text or non-array user messages do not contain error tool results,
+    // so any in-progress error streak is stale and should be cleared.
+    if (typeof content === 'string') {
+      this.reset();
+      return false;
+    }
     if (!Array.isArray(content)) return false;
 
     let triggered = false;
+    let errorBlockCount = 0;
     const seenInThisMessage = new Set<string>();
     for (const block of content) {
       const error = extractToolResultError(block, this.state.toolUseIdToName);
@@ -113,6 +121,8 @@ export class RepeatedToolErrorGuardrail {
         }
         continue;
       }
+
+      errorBlockCount += 1;
 
       const keyString = `${error.toolName}:${normalizeError(error.errorText, this.errorFingerprintLength)}`;
       // A single user message may carry multiple tool_result blocks from one
@@ -128,6 +138,13 @@ export class RepeatedToolErrorGuardrail {
         triggered = true;
         await this.intervene(error.toolName, error.errorText, task);
       }
+    }
+
+    // If this user message carried no error tool_results, the prior turn did not
+    // retry the same failing tool; clear the streak so a later single failure
+    // does not look like a repeat.
+    if (errorBlockCount === 0) {
+      this.reset();
     }
 
     return triggered;
