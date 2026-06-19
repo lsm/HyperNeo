@@ -351,8 +351,8 @@ describe('pr-ready validator', () => {
         exitCode: 1,
       },
       {
-        // Follow-up probe: gh api /rate_limit succeeds and reports reset
-        stdout: JSON.stringify({ resources: { core: { reset: resetEpochSeconds } } }),
+        // Follow-up probe: gh api /rate_limit succeeds and reports graphql reset
+        stdout: JSON.stringify({ resources: { graphql: { reset: resetEpochSeconds } } }),
         stderr: '',
         exitCode: 0,
       },
@@ -395,7 +395,7 @@ describe('pr-ready validator', () => {
         exitCode: 1,
       },
       {
-        // /rate_limit probe
+        // /rate_limit probe (current branch view only asks for url, so core is appropriate)
         stdout: JSON.stringify({ resources: { core: { reset: resetEpochSeconds } } }),
         stderr: '',
         exitCode: 0,

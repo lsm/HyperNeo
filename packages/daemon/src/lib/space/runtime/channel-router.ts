@@ -364,6 +364,11 @@ export class ChannelRouter {
    * reported backoff so downstream node activation is not lost.
    */
   private readonly pendingGateRetries = new Map<string, ReturnType<typeof setTimeout>>();
+  /**
+   * Target fire epoch (ms) for each pending gate retry timer. Used to reschedule
+   * when a newer rate-limited evaluation reports a longer backoff.
+   */
+  private readonly pendingGateRetryFireAt = new Map<string, number>();
 
   constructor(private readonly config: ChannelRouterConfig) {
     this.scriptSemaphore = {
@@ -949,6 +954,7 @@ export class ChannelRouter {
       if (existingTimer) {
         clearTimeout(existingTimer);
         this.pendingGateRetries.delete(retryKey);
+        this.pendingGateRetryFireAt.delete(retryKey);
       }
     }
 
@@ -956,10 +962,17 @@ export class ChannelRouter {
       // At least one channel evaluation hit a rate limit; schedule a retry so
       // downstream activation is not lost even if another channel opened.
       const retryKey = `${runId}:${gateId}`;
-      if (!this.pendingGateRetries.has(retryKey)) {
-        const retryAfterMs = rateLimitedResult.retryAfterMs ?? RATE_LIMIT_MIN_BACKOFF_MS;
+      const retryAfterMs = rateLimitedResult.retryAfterMs ?? RATE_LIMIT_MIN_BACKOFF_MS;
+      const newFireAt = Date.now() + retryAfterMs;
+      const existingFireAt = this.pendingGateRetryFireAt.get(retryKey);
+      if (existingFireAt === undefined || newFireAt > existingFireAt) {
+        const existingTimer = this.pendingGateRetries.get(retryKey);
+        if (existingTimer) {
+          clearTimeout(existingTimer);
+        }
         const timer = setTimeout(() => {
           this.pendingGateRetries.delete(retryKey);
+          this.pendingGateRetryFireAt.delete(retryKey);
           void this.onGateDataChanged(runId, gateId).catch((err) => {
             log.warn(
               `Scheduled gate-data refresh retry failed for gate "${gateId}" in run "${runId}": ` +
@@ -969,6 +982,7 @@ export class ChannelRouter {
         }, retryAfterMs);
         timer.unref?.();
         this.pendingGateRetries.set(retryKey, timer);
+        this.pendingGateRetryFireAt.set(retryKey, newFireAt);
       }
     }
 

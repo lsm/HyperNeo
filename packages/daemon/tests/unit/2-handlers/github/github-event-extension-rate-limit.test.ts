@@ -188,9 +188,14 @@ describe('GitHubEventExtension rate-limit-aware polling', () => {
       // Internal rate-limit window was set
       const until = (extension as unknown as { rateLimitedUntil: number }).rateLimitedUntil;
       expect(until).toBeGreaterThan(Date.now());
-      // Cursor was saved so the processed event is not re-fetched
+      // Cursor was saved so the processed event is not re-fetched. After a
+      // partial scan the shared watermark must not advance; the per-endpoint
+      // watermark records the processed event.
       const updated = extension.repo.getWatchedRepoById(repo.id);
-      expect(updated?.pollCursor?.lastSeenAt).toBe(Date.parse(row.updated_at));
+      expect(updated?.pollCursor?.lastSeenAt).toBe(0);
+      expect(updated?.pollCursor?.endpointLastSeenAt?.issue_comments).toBe(
+        Date.parse(row.updated_at)
+      );
     } finally {
       await extension.stop();
     }
@@ -498,7 +503,12 @@ describe('GitHubEventExtension rate-limit-aware polling', () => {
       expect(fetchCalled).toBe(2);
 
       const updated = extension.repo.getWatchedRepoById(repo.id);
-      expect(updated?.pollCursor?.lastSeenAt).toBe(Date.parse(row.updated_at));
+      // Partial scan: shared watermark must not advance so skipped endpoints
+      // are not permanently truncated.
+      expect(updated?.pollCursor?.lastSeenAt).toBe(0);
+      expect(updated?.pollCursor?.endpointLastSeenAt?.issue_comments).toBe(
+        Date.parse(row.updated_at)
+      );
     } finally {
       await extension.stop();
     }

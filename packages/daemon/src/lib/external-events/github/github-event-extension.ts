@@ -145,6 +145,12 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
    * `runPollCycle()` so the next poll is scheduled after the reset window.
    */
   private rateLimitedUntil = 0;
+  /**
+   * True when the active cooldown was derived from a `Retry-After` header.
+   * Retry-After values may be shorter than the minimum backoff and should be
+   * honored exactly rather than floored to `RATE_LIMIT_MIN_BACKOFF_MS`.
+   */
+  private rateLimitedFromRetryAfter = false;
 
   constructor(
     db: BunDatabase,
@@ -497,10 +503,16 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     } finally {
       if (!this.stopped) {
         const now = Date.now();
-        const delay =
-          now < this.rateLimitedUntil
-            ? Math.max(RATE_LIMIT_MIN_BACKOFF_MS, this.rateLimitedUntil - now)
-            : (this.options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS);
+        let delay: number;
+        if (now < this.rateLimitedUntil) {
+          // Retry-After-based cooldowns may be shorter than the minimum backoff;
+          // honor them exactly. Primary reset windows are floored to the minimum.
+          delay = this.rateLimitedFromRetryAfter
+            ? Math.max(0, this.rateLimitedUntil - now)
+            : Math.max(RATE_LIMIT_MIN_BACKOFF_MS, this.rateLimitedUntil - now);
+        } else {
+          delay = this.options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
+        }
         this.scheduleNextPollAfter(delay);
       }
     }
@@ -523,7 +535,10 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       : Math.max(RATE_LIMIT_MIN_BACKOFF_MS, resetDelay);
     const newRateLimitedUntil = Date.now() + delay;
     // Preserve the longer cooldown to avoid shortening an existing backoff.
-    this.rateLimitedUntil = Math.max(this.rateLimitedUntil, newRateLimitedUntil);
+    if (newRateLimitedUntil > this.rateLimitedUntil) {
+      this.rateLimitedUntil = newRateLimitedUntil;
+      this.rateLimitedFromRetryAfter = rateLimit.retryAfter;
+    }
     log.warn('GitHub rate limit detected — deferring next poll', {
       remaining: rateLimit.remaining === Infinity ? 'unknown' : rateLimit.remaining,
       resetAt: rateLimit.resetAt ? new Date(rateLimit.resetAt).toISOString() : 'unknown',
@@ -808,17 +823,19 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     const cursor = watched.pollCursor ?? {};
     const etags = cursor.etags ?? {};
     const processedPages = cursor.processedPages ?? {};
+    const endpointLastSeenAt = cursor.endpointLastSeenAt ?? {};
     const watermarks = {
       committed: cursor.lastSeenAt ?? watched.lastPollAt ?? 0,
       pending: cursor.pendingLastSeenAt ?? cursor.lastSeenAt ?? watched.lastPollAt ?? 0,
     };
-    const since = watermarks.committed ? new Date(watermarks.committed).toISOString() : undefined;
     const base = `https://api.github.com/repos/${gitHubRepoPath(watched.owner, watched.repo)}`;
     const endpoints = [
       { key: 'issue_comments', path: '/issues/comments' },
       { key: 'review_comments', path: '/pulls/comments' },
       { key: 'pulls', path: '/pulls', extra: 'state=all&sort=updated&direction=desc' },
     ];
+
+    let partialScan = false;
 
     for (const endpoint of endpoints) {
       const page = processedPages[endpoint.key] ?? 1;
@@ -829,6 +846,13 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
           query.set(key, value);
         }
       }
+      // Use the most recent timestamp for this endpoint so a partial scan does
+      // not cause the next poll to miss events on endpoints that were skipped.
+      const endpointWatermark = Math.max(
+        watermarks.committed,
+        endpointLastSeenAt[endpoint.key] ?? 0
+      );
+      const since = endpointWatermark ? new Date(endpointWatermark).toISOString() : undefined;
       if (since) query.set('since', since);
       query.set('per_page', '100');
       query.set('page', String(page));
@@ -849,6 +873,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       const rateLimit = parseRateLimitHeaders(response);
       if (rateLimit.limited) {
         this.applyRateLimit(rateLimit);
+        partialScan = true;
         break;
       }
       if (response.status === 304) continue;
@@ -869,6 +894,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
             limited: true,
             retryAfter: true,
           });
+          partialScan = true;
           break;
         }
         continue;
@@ -885,17 +911,23 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         }
       }
       processedPages[endpoint.key] = rows.length >= 100 ? page + 1 : 1;
+      endpointLastSeenAt[endpoint.key] = watermarks.pending;
       if (rateLimit.remaining < RATE_LIMIT_LOW_REMAINING_THRESHOLD) {
         this.applyRateLimit(rateLimit);
+        partialScan = true;
         break;
       }
     }
     const hasBacklog = Object.values(processedPages).some((page) => page > 1);
+    // After a partial scan, do not advance the shared watermark; skipped
+    // endpoints would miss events between the old watermark and the new one.
+    // The processed endpoint's own watermark is recorded separately.
     const cursorPayload: PollCursor = {
-      lastSeenAt: hasBacklog ? watermarks.committed : watermarks.pending,
-      pendingLastSeenAt: hasBacklog ? watermarks.pending : undefined,
+      lastSeenAt: partialScan || hasBacklog ? watermarks.committed : watermarks.pending,
+      pendingLastSeenAt: partialScan || hasBacklog ? watermarks.pending : undefined,
       etags,
       processedPages,
+      endpointLastSeenAt,
     };
     this.repo.updatePollCursor(watched.id, cursorPayload);
     return count;

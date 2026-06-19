@@ -100,13 +100,15 @@ export function createPrReadyValidator(
       };
     }
 
-    // Run gh pr view
+    // Run gh pr view. The requested fields (mergeable/mergeStateStatus) are
+    // GraphQL PullRequest fields in the GitHub CLI, so a rate-limit probe uses
+    // the `graphql` resource window rather than REST `core`.
     const prView = await runCommand<PrViewResult>(
       ['gh', 'pr', 'view', prUrl, '--json', 'url,state,mergeable,mergeStateStatus'],
       context.workspacePath,
       remainingTimeoutMs(deadlineMs),
       spawnImpl,
-      { hostHint: prMeta.host, resourceHint: 'core' }
+      { hostHint: prMeta.host, resourceHint: 'graphql' }
     );
     if (!prView.success) {
       return commandFailureToHookResult(prView, 'PR is not ready for Review');
