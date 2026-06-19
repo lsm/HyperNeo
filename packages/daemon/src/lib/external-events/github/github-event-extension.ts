@@ -1178,7 +1178,9 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       // behavior; after endpoint-local cursors exist, later endpoint scans must
       // not advance this endpoint's `since` and skip events that arrived between
       // endpoint requests.
-      const endpointWatermark = endpointLastSeenAt[endpoint.key] ?? watermarks.committed;
+      const savedEndpointWatermark = endpointLastSeenAt[endpoint.key] ?? 0;
+      const endpointWatermark =
+        savedEndpointWatermark > 0 ? savedEndpointWatermark : watermarks.committed;
       const since = endpointWatermark ? new Date(endpointWatermark).toISOString() : undefined;
       if (since) query.set('since', since);
       query.set('per_page', '100');
@@ -1259,7 +1261,11 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       // complete. While pages remain, the next poll must keep using the old
       // watermark so remaining pages are not filtered out by `since`.
       if (processedPages[endpoint.key] === 1) {
-        endpointLastSeenAt[endpoint.key] = endpointPending;
+        if (endpointPending > 0) {
+          endpointLastSeenAt[endpoint.key] = endpointPending;
+        } else {
+          delete endpointLastSeenAt[endpoint.key];
+        }
         delete endpointPendingLastSeenAt[endpoint.key];
       } else {
         endpointPendingLastSeenAt[endpoint.key] = endpointPending;
