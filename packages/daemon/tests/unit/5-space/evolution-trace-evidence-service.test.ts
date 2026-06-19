@@ -434,6 +434,37 @@ describe('EvolutionTraceEvidenceService', () => {
     );
   });
 
+  it('creates friction digest evidence when manually attaching task evidence', () => {
+    const { scope, task } = createScopedTask('Manual attach digest');
+    insertToolExchange(
+      task.id,
+      'session-1',
+      'check-1',
+      'Bash',
+      { command: 'bun run check' },
+      true,
+      {
+        text: 'Typecheck failed in foo.ts',
+      }
+    );
+
+    scopeService.attachTaskEvidence({ taskId: task.id });
+
+    const digest = evolutionRepo
+      .listEvidence(scope.id)
+      .find((item) => item.kind === 'friction_digest');
+    expect(digest).toBeTruthy();
+    expect(digest?.metadata.counts).toMatchObject({
+      verificationFailure: 1,
+      toolFailure: 0,
+    });
+    expect(digest?.metadata.topPattern).toMatchObject({
+      category: 'verification_failure',
+      count: 1,
+      example: 'bun run check',
+    });
+  });
+
   describe('buildFrictionDigest', () => {
     it('returns null when there are no trace rows', () => {
       const { scope, task } = createScopedTask('No trace');

@@ -299,6 +299,7 @@ export class EvolutionScopeService {
       if (traceResult) {
         if (traceResult.evidence.length > 0) {
           this.clearTraceDiagnosticEvidence(scope.id, task.id, traceResult.diagnostic);
+          this.captureFrictionDigestEvidence(scope.id, task.id);
         } else {
           this.createTraceDiagnosticEvidence(scope.id, task.id, traceResult.diagnostic);
         }
@@ -400,15 +401,8 @@ export class EvolutionScopeService {
     const traceResult = this.captureTraceEvidenceForCompletedTask(scope.id, task.id);
     evidence.push(...traceResult.evidence);
     if (traceResult.evidence.length > 0) {
-      try {
-        const digest = this.deps.traceEvidenceService?.buildFrictionDigest(scope.id, task.id);
-        if (digest) evidence.push(digest);
-      } catch (err) {
-        log.warn(
-          'Friction digest capture failed; continuing to conversation friction analysis:',
-          err
-        );
-      }
+      const digest = this.captureFrictionDigestEvidence(scope.id, task.id);
+      if (digest) evidence.push(digest);
     }
     this.enqueueConversationFrictionAnalysis(scope.id, task.id);
 
@@ -464,7 +458,9 @@ export class EvolutionScopeService {
     evidence: EvidenceRef[]
   ): NonNullable<EvolutionEvidenceListResponse['preflightContext']> {
     const tasks = evidence.flatMap((item) => {
-      if (item.kind !== 'task' && item.kind !== 'task_result') return [];
+      if (item.kind !== 'task' && item.kind !== 'task_result' && item.kind !== 'friction_digest') {
+        return [];
+      }
       if (!item.sourceId) return [];
       const task = this.deps.taskRepo.getTask(item.sourceId);
       if (!task || task.spaceId !== scope.spaceId) return [];
@@ -573,6 +569,15 @@ export class EvolutionScopeService {
       matchPayload: { scopeId, taskId },
       maxRetries: 3,
     });
+  }
+
+  private captureFrictionDigestEvidence(scopeId: string, taskId: string): EvidenceRef | null {
+    try {
+      return this.deps.traceEvidenceService?.buildFrictionDigest(scopeId, taskId) ?? null;
+    } catch (err) {
+      log.warn('Friction digest capture failed; continuing without digest evidence:', err);
+      return null;
+    }
   }
 
   private createProposalOriginEvidence(
