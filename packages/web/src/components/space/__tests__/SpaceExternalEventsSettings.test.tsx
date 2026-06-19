@@ -588,8 +588,23 @@ describe('SpaceExternalEventsSettings', () => {
     });
   });
 
-  it('adds repository watches with polling when no webhook secret is provided', async () => {
-    setupRequests();
+  it('adds repository watches with polling when no webhook secret is provided and the space already has polling active', async () => {
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockImplementation((method) => {
+      if (method === 'externalEvents.extensions.list') return Promise.resolve(extensionResult);
+      if (method === 'space.github.listConfig') {
+        return Promise.resolve({
+          spaceId: 'space-1',
+          source: 'github',
+          enabled: true,
+          settings: { pollingIntent: true },
+        });
+      }
+      if (method === 'space.github.listWatchedRepos') {
+        return Promise.resolve(pollingOnlyRepoResult);
+      }
+      return Promise.resolve({});
+    });
     const { findByText, getByPlaceholderText, getByText } = render(
       <SpaceExternalEventsSettings spaceId="space-1" />
     );
@@ -608,6 +623,66 @@ describe('SpaceExternalEventsSettings', () => {
         pollingEnabled: true,
       });
     });
+  });
+
+  it('allows the first polling-only watch after enabling polling in a space with no polling rows', async () => {
+    // No polling-configured repos yet, but the user has toggled the
+    // connection-card polling checkbox so pollingIntent is true. The next
+    // no-secret add must default to polling rather than be rejected.
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockImplementation((method) => {
+      if (method === 'externalEvents.extensions.list') return Promise.resolve(extensionResult);
+      if (method === 'space.github.listConfig') {
+        return Promise.resolve({
+          spaceId: 'space-1',
+          source: 'github',
+          enabled: true,
+          settings: { pollingIntent: true },
+        });
+      }
+      if (method === 'space.github.listWatchedRepos') {
+        return Promise.resolve({ repositories: [] });
+      }
+      return Promise.resolve({});
+    });
+    const { findByText, getByPlaceholderText, getByText } = render(
+      <SpaceExternalEventsSettings spaceId="space-1" />
+    );
+    await findByText('github');
+
+    fireEvent.input(getByPlaceholderText('owner/repository'), { target: { value: 'foo/bar' } });
+    fireEvent.click(getByText('Add watch'));
+
+    await waitFor(() => {
+      expect(mockRequest).toHaveBeenCalledWith('space.github.watchRepo', {
+        spaceId: 'space-1',
+        owner: 'foo',
+        repo: 'bar',
+        webhookSecret: undefined,
+        webhookEnabled: false,
+        pollingEnabled: true,
+      });
+    });
+  });
+
+  it('requires a webhook secret when space polling is off even if daemon-wide capability is on', async () => {
+    // Daemon-wide polling capability is on (extensionResult default), but
+    // this space has no polling-enabled repos, so spacePollingActive is false.
+    // Adding a repo with no webhook secret must be rejected rather than
+    // silently defaulting the new repo to polling.
+    setupRequests();
+    const { findByText, getByPlaceholderText, getByText } = render(
+      <SpaceExternalEventsSettings spaceId="space-1" />
+    );
+    await findByText('github');
+
+    fireEvent.input(getByPlaceholderText('owner/repository'), { target: { value: 'foo/bar' } });
+    fireEvent.click(getByText('Add watch'));
+
+    expect(
+      await findByText('Webhook secret is required because polling is disabled for this space')
+    ).toBeTruthy();
+    expect(mockRequest).not.toHaveBeenCalledWith('space.github.watchRepo', expect.anything());
   });
 
   it('requires a webhook secret when polling capability is disabled', async () => {
@@ -636,7 +711,7 @@ describe('SpaceExternalEventsSettings', () => {
     fireEvent.click(getByText('Add watch'));
 
     expect(
-      await findByText('Webhook secret is required because polling is disabled for GitHub')
+      await findByText('Webhook secret is required because polling is disabled for this space')
     ).toBeTruthy();
     expect(mockRequest).not.toHaveBeenCalledWith('space.github.watchRepo', expect.anything());
   });
@@ -937,5 +1012,486 @@ describe('SpaceExternalEventsSettings', () => {
         repo: 'widgets',
       });
     });
+  });
+
+  it('shows the GitHub connection card when RPC config is enabled', async () => {
+    setupRequests();
+    const { findByTestId } = render(<SpaceExternalEventsSettings spaceId="space-1" />);
+    expect(await findByTestId('github-connection-card')).toBeTruthy();
+  });
+
+  it('hides the GitHub connection card when RPC config is disabled', async () => {
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockImplementation((method) => {
+      if (method === 'externalEvents.extensions.list')
+        return Promise.resolve(rpcDisabledExtensionResult);
+      return Promise.resolve({});
+    });
+    const { queryByTestId } = render(<SpaceExternalEventsSettings spaceId="space-1" />);
+    await waitFor(() => {
+      expect(queryByTestId('github-connection-card')).toBeNull();
+    });
+  });
+
+  it('saves a token through the keychain RPC and refreshes status', async () => {
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    let statusCalls = 0;
+    mockRequest.mockImplementation((method) => {
+      if (method === 'externalEvents.extensions.list') return Promise.resolve(extensionResult);
+      if (method === 'space.github.listConfig') {
+        return Promise.resolve({
+          spaceId: 'space-1',
+          source: 'github',
+          enabled: true,
+          settings: {},
+        });
+      }
+      if (method === 'space.github.listWatchedRepos') return Promise.resolve(repoResult);
+      if (method === 'space.github.getTokenStatus') {
+        statusCalls++;
+        if (statusCalls === 1) return Promise.resolve({ configured: false, source: 'none' });
+        return Promise.resolve({
+          configured: true,
+          source: 'keychain',
+          login: 'octocat',
+        });
+      }
+      if (method === 'space.github.setToken') return Promise.resolve({ success: true });
+      return Promise.resolve({});
+    });
+
+    const { findByPlaceholderText, getByText, findByText } = render(
+      <SpaceExternalEventsSettings spaceId="space-1" />
+    );
+    await findByText('github');
+
+    const input = await findByPlaceholderText('ghp_…');
+    fireEvent.input(input, { target: { value: 'ghp_saved_token_value' } });
+    fireEvent.click(getByText('Save token'));
+
+    await waitFor(() => {
+      expect(mockRequest).toHaveBeenCalledWith('space.github.setToken', {
+        token: 'ghp_saved_token_value',
+      });
+    });
+    await waitFor(() => {
+      expect(mockToastSuccess).toHaveBeenCalledWith('GitHub token saved to keychain');
+    });
+    expect(await findByText('octocat')).toBeTruthy();
+  });
+
+  it('disconnects a configured token', async () => {
+    vi.stubGlobal(
+      'confirm',
+      vi.fn(() => true)
+    );
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    let cleared = false;
+    mockRequest.mockImplementation((method) => {
+      if (method === 'externalEvents.extensions.list') return Promise.resolve(extensionResult);
+      if (method === 'space.github.listConfig') {
+        return Promise.resolve({
+          spaceId: 'space-1',
+          source: 'github',
+          enabled: true,
+          settings: {},
+        });
+      }
+      if (method === 'space.github.listWatchedRepos') return Promise.resolve(repoResult);
+      if (method === 'space.github.getTokenStatus') {
+        if (cleared) return Promise.resolve({ configured: false, source: 'none' });
+        return Promise.resolve({
+          configured: true,
+          source: 'keychain',
+          login: 'octocat',
+        });
+      }
+      if (method === 'space.github.clearToken') {
+        cleared = true;
+        return Promise.resolve({ success: true });
+      }
+      return Promise.resolve({});
+    });
+
+    const { findByText } = render(<SpaceExternalEventsSettings spaceId="space-1" />);
+    await findByText('octocat');
+
+    fireEvent.click(await findByText('Disconnect'));
+
+    await waitFor(() => {
+      expect(mockRequest).toHaveBeenCalledWith('space.github.clearToken', {});
+    });
+    await waitFor(() => {
+      expect(mockToastSuccess).toHaveBeenCalledWith('GitHub token removed');
+    });
+    vi.unstubAllGlobals();
+  });
+
+  it('toggles space-level polling capability through RPC', async () => {
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    let pollingEnabled = false;
+    mockRequest.mockImplementation((method) => {
+      if (method === 'externalEvents.extensions.list') {
+        return Promise.resolve({
+          extensions: [
+            {
+              source: 'github',
+              status: 'started',
+              config: {
+                source: 'github',
+                globallyEnabled: true,
+                capabilities: {
+                  webhooks: true,
+                  polling: pollingEnabled,
+                  rpcConfig: true,
+                },
+              },
+            },
+          ],
+        });
+      }
+      if (method === 'space.github.listConfig') {
+        return Promise.resolve({
+          spaceId: 'space-1',
+          source: 'github',
+          enabled: true,
+          settings: {},
+        });
+      }
+      if (method === 'space.github.listWatchedRepos') return Promise.resolve(repoResult);
+      if (method === 'space.github.getTokenStatus') {
+        return Promise.resolve({ configured: false, source: 'none' });
+      }
+      if (method === 'space.github.setPollingEnabled') {
+        pollingEnabled = true;
+        return Promise.resolve({ spaceId: 'space-1', pollingEnabled: true });
+      }
+      return Promise.resolve({});
+    });
+
+    const { findByText } = render(<SpaceExternalEventsSettings spaceId="space-1" />);
+    const checkbox = await findByText('Polling for this space (daemon-wide capability)');
+
+    fireEvent.click(checkbox);
+
+    await waitFor(() => {
+      expect(mockRequest).toHaveBeenCalledWith('space.github.setPollingEnabled', {
+        spaceId: 'space-1',
+        enabled: true,
+      });
+    });
+    await waitFor(() => {
+      expect(mockToastSuccess).toHaveBeenCalledWith(
+        'GitHub polling enabled (daemon-wide capability)'
+      );
+    });
+  });
+
+  it('reports daemon-wide capability in the polling checkbox label', async () => {
+    setupRequests();
+    const { findByText } = render(<SpaceExternalEventsSettings spaceId="space-1" />);
+    expect(await findByText('Polling for this space (daemon-wide capability)')).toBeTruthy();
+  });
+
+  it('prompts for confirmation before overwriting an existing keychain token', async () => {
+    const confirmSpy = vi.fn(() => false);
+    vi.stubGlobal('confirm', confirmSpy);
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockImplementation((method) => {
+      if (method === 'externalEvents.extensions.list') return Promise.resolve(extensionResult);
+      if (method === 'space.github.listConfig') {
+        return Promise.resolve({
+          spaceId: 'space-1',
+          source: 'github',
+          enabled: true,
+          settings: {},
+        });
+      }
+      if (method === 'space.github.listWatchedRepos') return Promise.resolve(repoResult);
+      if (method === 'space.github.getTokenStatus') {
+        return Promise.resolve({
+          configured: true,
+          source: 'keychain',
+          login: 'octocat',
+        });
+      }
+      return Promise.resolve({});
+    });
+
+    const { findByText, getByText, getByPlaceholderText } = render(
+      <SpaceExternalEventsSettings spaceId="space-1" />
+    );
+    await findByText('octocat');
+
+    fireEvent.click(getByText('Replace token'));
+    const input = getByPlaceholderText('ghp_…');
+    fireEvent.input(input, { target: { value: 'ghp_replacement_token_value' } });
+    fireEvent.click(getByText('Replace token'));
+
+    // confirm() returned false → setToken must not fire.
+    expect(confirmSpy).toHaveBeenCalledWith('Replace the existing daemon-wide GitHub token?');
+    expect(mockRequest).not.toHaveBeenCalledWith('space.github.setToken', {
+      token: 'ghp_replacement_token_value',
+    });
+    vi.unstubAllGlobals();
+  });
+
+  it('overwrites the keychain token after user confirms', async () => {
+    const confirmSpy = vi.fn(() => true);
+    vi.stubGlobal('confirm', confirmSpy);
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockImplementation((method) => {
+      if (method === 'externalEvents.extensions.list') return Promise.resolve(extensionResult);
+      if (method === 'space.github.listConfig') {
+        return Promise.resolve({
+          spaceId: 'space-1',
+          source: 'github',
+          enabled: true,
+          settings: {},
+        });
+      }
+      if (method === 'space.github.listWatchedRepos') return Promise.resolve(repoResult);
+      if (method === 'space.github.getTokenStatus') {
+        return Promise.resolve({
+          configured: true,
+          source: 'keychain',
+          login: 'octocat',
+        });
+      }
+      if (method === 'space.github.setToken') return Promise.resolve({ success: true });
+      return Promise.resolve({});
+    });
+
+    const { findByText, getByText, getByPlaceholderText } = render(
+      <SpaceExternalEventsSettings spaceId="space-1" />
+    );
+    await findByText('octocat');
+
+    fireEvent.click(getByText('Replace token'));
+    fireEvent.input(getByPlaceholderText('ghp_…'), {
+      target: { value: 'ghp_replacement_token_value' },
+    });
+    fireEvent.click(getByText('Replace token'));
+
+    await waitFor(() => {
+      expect(mockRequest).toHaveBeenCalledWith('space.github.setToken', {
+        token: 'ghp_replacement_token_value',
+      });
+    });
+    vi.unstubAllGlobals();
+  });
+
+  it('confirms before disconnecting an existing keychain token', async () => {
+    const confirmSpy = vi.fn(() => false);
+    vi.stubGlobal('confirm', confirmSpy);
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockImplementation((method) => {
+      if (method === 'externalEvents.extensions.list') return Promise.resolve(extensionResult);
+      if (method === 'space.github.listConfig') {
+        return Promise.resolve({
+          spaceId: 'space-1',
+          source: 'github',
+          enabled: true,
+          settings: {},
+        });
+      }
+      if (method === 'space.github.listWatchedRepos') return Promise.resolve(repoResult);
+      if (method === 'space.github.getTokenStatus') {
+        return Promise.resolve({
+          configured: true,
+          source: 'keychain',
+          login: 'octocat',
+        });
+      }
+      return Promise.resolve({});
+    });
+
+    const { findByText, getByText } = render(<SpaceExternalEventsSettings spaceId="space-1" />);
+    await findByText('octocat');
+
+    fireEvent.click(getByText('Disconnect'));
+
+    expect(confirmSpy).toHaveBeenCalledWith(
+      'Remove the daemon-wide GitHub token from the keychain?'
+    );
+    expect(mockRequest).not.toHaveBeenCalledWith('space.github.clearToken', {});
+    vi.unstubAllGlobals();
+  });
+
+  it('warns about auto-registered hooks in other spaces before disconnecting', async () => {
+    const confirmSpy = vi.fn(() => false);
+    vi.stubGlobal('confirm', confirmSpy);
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockImplementation((method) => {
+      if (method === 'externalEvents.extensions.list') return Promise.resolve(extensionResult);
+      if (method === 'space.github.listConfig') {
+        return Promise.resolve({
+          spaceId: 'space-1',
+          source: 'github',
+          enabled: true,
+          settings: {},
+        });
+      }
+      // Current space has no auto-registered hooks; the warning must come from
+      // the daemon-wide count in getTokenStatus, not the local repos array.
+      if (method === 'space.github.listWatchedRepos') return Promise.resolve({ repositories: [] });
+      if (method === 'space.github.getTokenStatus') {
+        return Promise.resolve({
+          configured: true,
+          source: 'keychain',
+          login: 'octocat',
+          autoRegisteredHookCount: 3,
+        });
+      }
+      return Promise.resolve({});
+    });
+
+    const { findByText, getByText } = render(<SpaceExternalEventsSettings spaceId="space-1" />);
+    await findByText('octocat');
+
+    fireEvent.click(getByText('Disconnect'));
+
+    expect(confirmSpy).toHaveBeenCalledWith(
+      'Remove the daemon-wide GitHub token from the keychain? 3 auto-registered webhook(s) across all spaces may become unmanageable until a token is restored.'
+    );
+    expect(mockRequest).not.toHaveBeenCalledWith('space.github.clearToken', {});
+    vi.unstubAllGlobals();
+  });
+
+  it('renders an error state when getTokenStatus RPC fails', async () => {
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockImplementation((method) => {
+      if (method === 'externalEvents.extensions.list') return Promise.resolve(extensionResult);
+      if (method === 'space.github.listConfig') {
+        return Promise.resolve({
+          spaceId: 'space-1',
+          source: 'github',
+          enabled: true,
+          settings: {},
+        });
+      }
+      if (method === 'space.github.listWatchedRepos') return Promise.resolve(repoResult);
+      if (method === 'space.github.getTokenStatus') {
+        return Promise.reject(new Error('credential store offline'));
+      }
+      return Promise.resolve({});
+    });
+
+    const { findByTestId, queryByText } = render(<SpaceExternalEventsSettings spaceId="space-1" />);
+    expect(await findByTestId('github-token-status-error')).toBeTruthy();
+    expect(queryByText('Checking token status…')).toBeNull();
+  });
+
+  it('does not block the panel while token status loads', async () => {
+    let resolveTokenStatus!: (value: { configured: boolean; source: string }) => void;
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockImplementation((method) => {
+      if (method === 'externalEvents.extensions.list') return Promise.resolve(extensionResult);
+      if (method === 'space.github.listConfig') {
+        return Promise.resolve({
+          spaceId: 'space-1',
+          source: 'github',
+          enabled: true,
+          settings: {},
+        });
+      }
+      if (method === 'space.github.listWatchedRepos') return Promise.resolve(repoResult);
+      if (method === 'space.github.getTokenStatus') {
+        return new Promise((resolve) => {
+          resolveTokenStatus = resolve;
+        });
+      }
+      return Promise.resolve({});
+    });
+
+    const { findByText, queryByText } = render(<SpaceExternalEventsSettings spaceId="space-1" />);
+    // Panel is interactive (shows watched repo) while token status is still
+    // pending — proves refresh() did not await getTokenStatus before
+    // setLoading(false).
+    expect(await findByText('acme/widgets')).toBeTruthy();
+    expect(queryByText('Loading external event sources…')).toBeNull();
+    resolveTokenStatus({ configured: false, source: 'none' });
+  });
+
+  it('renders an invalid-token state when getTokenStatus returns an error', async () => {
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockImplementation((method) => {
+      if (method === 'externalEvents.extensions.list') return Promise.resolve(extensionResult);
+      if (method === 'space.github.listConfig') {
+        return Promise.resolve({
+          spaceId: 'space-1',
+          source: 'github',
+          enabled: true,
+          settings: {},
+        });
+      }
+      if (method === 'space.github.listWatchedRepos') return Promise.resolve(repoResult);
+      if (method === 'space.github.getTokenStatus') {
+        return Promise.resolve({
+          configured: true,
+          source: 'keychain',
+          login: 'octocat',
+          error: 'HTTP 401',
+        });
+      }
+      return Promise.resolve({});
+    });
+
+    const { findByText, findByTestId, queryByText } = render(
+      <SpaceExternalEventsSettings spaceId="space-1" />
+    );
+    expect(await findByText('Token invalid')).toBeTruthy();
+    expect(await findByTestId('github-token-invalid-error')).toBeTruthy();
+    expect(await findByText('Replace invalid token')).toBeTruthy();
+    expect(queryByText('Connected')).toBeNull();
+  });
+
+  it('disables connection card controls when the panel is disabled', async () => {
+    setupRequests();
+    const { findByText } = render(<SpaceExternalEventsSettings spaceId="space-1" disabled />);
+    const checkbox = await findByText('Polling for this space (daemon-wide capability)');
+    const pollingInput = checkbox.closest('label')?.querySelector('input');
+    expect(pollingInput).toHaveProperty('disabled', true);
+  });
+
+  it('confirms before shadowing an env-sourced token with a keychain token', async () => {
+    const confirmSpy = vi.fn(() => false);
+    vi.stubGlobal('confirm', confirmSpy);
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockImplementation((method) => {
+      if (method === 'externalEvents.extensions.list') return Promise.resolve(extensionResult);
+      if (method === 'space.github.listConfig') {
+        return Promise.resolve({
+          spaceId: 'space-1',
+          source: 'github',
+          enabled: true,
+          settings: {},
+        });
+      }
+      if (method === 'space.github.listWatchedRepos') return Promise.resolve(repoResult);
+      if (method === 'space.github.getTokenStatus') {
+        return Promise.resolve({
+          configured: true,
+          source: 'env',
+          login: 'env-user',
+          error: 'HTTP 401',
+        });
+      }
+      return Promise.resolve({});
+    });
+
+    const { findByPlaceholderText, getByText } = render(
+      <SpaceExternalEventsSettings spaceId="space-1" />
+    );
+    // Status has env + error → tokenInvalid true → input visible.
+    const input = await findByPlaceholderText('ghp_…');
+    fireEvent.input(input, { target: { value: 'ghp_replacement_token_value' } });
+    fireEvent.click(getByText('Save token'));
+
+    expect(confirmSpy).toHaveBeenCalledWith(expect.stringMatching(/GITHUB_TOKEN env var/));
+    expect(mockRequest).not.toHaveBeenCalledWith('space.github.setToken', {
+      token: 'ghp_replacement_token_value',
+    });
+    vi.unstubAllGlobals();
   });
 });
