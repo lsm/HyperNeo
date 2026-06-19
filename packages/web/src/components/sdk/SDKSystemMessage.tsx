@@ -248,6 +248,11 @@ function PermissionDeniedMessage({ message }: { message: SDKPermissionDeniedMess
         <div class="mt-1 text-xs text-rose-700 dark:text-rose-300">{message.decision_reason}</div>
       )}
       <div class="mt-1 text-xs text-rose-600 dark:text-rose-400">{message.message}</div>
+      {message.agent_id && (
+        <div class="mt-1 text-xs text-rose-500 dark:text-rose-400">
+          Subagent: {message.agent_id.slice(0, 8)}...
+        </div>
+      )}
     </div>
   );
 }

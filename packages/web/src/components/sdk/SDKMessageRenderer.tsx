@@ -118,14 +118,21 @@ function ReplacementStatusFrame({
 }
 
 /**
- * Check if message is a sub-agent message (has parent_tool_use_id)
- * Sub-agent messages are shown inside SubagentBlock, not as separate messages
+ * Check if message is a sub-agent message (has parent_tool_use_id) or carries an
+ * agent_id that matches a known Task/Agent tool_use id. Sub-agent messages are
+ * shown inside SubagentBlock, not as separate messages.
  */
-function isSubagentMessage(message: SDKMessage): boolean {
+function isSubagentMessage(
+  message: SDKMessage,
+  subagentMessagesMap?: Map<string, SDKMessage[]>
+): boolean {
   const msgWithParent = message as SDKMessage & {
     parent_tool_use_id?: string | null;
   };
-  return !!msgWithParent.parent_tool_use_id;
+  if (msgWithParent.parent_tool_use_id) return true;
+  const agentId = (message as { agent_id?: string | null }).agent_id;
+  if (agentId && subagentMessagesMap?.has(agentId)) return true;
+  return false;
 }
 
 function isRenderableSystemMessage(message: SDKMessage): boolean {
@@ -278,7 +285,7 @@ function SDKMessageRendererImpl({
   }
 
   // Skip sub-agent messages - they're now shown inside SubagentBlock
-  if (!showSubagentMessages && isSubagentMessage(sdkMessage)) {
+  if (!showSubagentMessages && isSubagentMessage(sdkMessage, subagentMessagesMap)) {
     return null;
   }
 

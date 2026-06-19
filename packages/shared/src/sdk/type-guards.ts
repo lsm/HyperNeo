@@ -428,8 +428,13 @@ export function getMessageTypeDescription(msg: SDKMessage): string {
 }
 
 /**
- * System message subtypes that should never render in the chat transcript.
- * These are persisted to DB for audit/debug but hidden from UI to reduce noise.
+ * Exported hidden-subtype set for server-side SQL filters.
+ *
+ * Consumers that paginate chat rows (e.g. `sdk-message-repository.ts` and the
+ * `messages.bySession` live query) should exclude these subtypes before applying
+ * `LIMIT` so invisible rows don't consume the pagination budget. The messages are
+ * still persisted to the database for audit/debug; they are only omitted from
+ * paginated reads.
  *
  * Hidden for these reasons:
  * - session_state_changed: Internal state machine; handler uses for turn-end detection
@@ -442,7 +447,7 @@ export function getMessageTypeDescription(msg: SDKMessage): string {
  * - mirror_error: Internal group/session-mirror plumbing
  * - elicitation_complete: Niche MCP elicitation
  */
-const HIDDEN_SYSTEM_SUBTYPES = new Set([
+export const HIDDEN_SYSTEM_SUBTYPES = new Set([
   'session_state_changed',
   'commands_changed',
   'hook_started',
@@ -459,6 +464,27 @@ const HIDDEN_SYSTEM_SUBTYPES = new Set([
  */
 export function isHiddenSystemSubtype(subtype: string): boolean {
   return HIDDEN_SYSTEM_SUBTYPES.has(subtype);
+}
+
+/**
+ * Check if a system message should be hidden based on payload conditions.
+ *
+ * These subtypes are not universally hidden; they render only for specific
+ * payload states. This helper centralises the conditional logic so the chat
+ * transcript and nested subagent timelines stay consistent.
+ */
+export function isConditionallyHiddenSystemMessage(msg: SDKMessage): boolean {
+  if (msg.type !== 'system') return false;
+  const subtype = (msg as { subtype?: string }).subtype;
+  if (subtype === 'files_persisted') {
+    const failed = (msg as { failed?: unknown[] }).failed;
+    return !Array.isArray(failed) || failed.length === 0;
+  }
+  if (subtype === 'plugin_install') {
+    const status = (msg as { status?: string }).status;
+    return status === 'started' || status === 'installed';
+  }
+  return false;
 }
 
 /**

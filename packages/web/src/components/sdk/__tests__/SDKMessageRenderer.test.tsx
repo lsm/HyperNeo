@@ -373,6 +373,26 @@ describe('SDKMessageRenderer', () => {
       // Subagent messages should be filtered out
       expect(container.innerHTML).toBe('');
     });
+
+    it('should skip agent_id-scoped permission_denied messages nested under a Task', () => {
+      const message = {
+        type: 'system',
+        subtype: 'permission_denied',
+        tool_name: 'Bash',
+        agent_id: 'toolu_parent123',
+        message: 'Auto-denied by mode',
+        uuid: createUUID(),
+        session_id: 'test-session',
+      } as unknown as SDKMessage;
+
+      const subagentMessagesMap = new Map<string, SDKMessage[]>([['toolu_parent123', [message]]]);
+
+      const { container } = render(
+        <SDKMessageRenderer message={message} subagentMessagesMap={subagentMessagesMap} />
+      );
+
+      expect(container.innerHTML).toBe('');
+    });
   });
 
   describe('Props Passing', () => {

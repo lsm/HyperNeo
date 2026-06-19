@@ -28,6 +28,7 @@ import {
   getMessageTypeDescription,
   isUserVisibleMessage,
   isHiddenSystemSubtype,
+  isConditionallyHiddenSystemMessage,
   type ContentBlock,
 } from '../src/sdk/type-guards';
 import type { SDKMessage } from '../src/sdk/sdk';
@@ -802,5 +803,71 @@ describe('isHiddenSystemSubtype', () => {
     expect(isHiddenSystemSubtype('notification')).toBe(false);
     expect(isHiddenSystemSubtype('files_persisted')).toBe(false);
     expect(isHiddenSystemSubtype('plugin_install')).toBe(false);
+  });
+});
+
+describe('isConditionallyHiddenSystemMessage', () => {
+  test('hides files_persisted when no failures', () => {
+    expect(
+      isConditionallyHiddenSystemMessage({
+        type: 'system',
+        subtype: 'files_persisted',
+        failed: [],
+      } as unknown as SDKMessage)
+    ).toBe(true);
+    expect(
+      isConditionallyHiddenSystemMessage({
+        type: 'system',
+        subtype: 'files_persisted',
+        failed: [{ path: 'a.txt' }],
+      } as unknown as SDKMessage)
+    ).toBe(false);
+  });
+
+  test('hides plugin_install started/installed statuses', () => {
+    expect(
+      isConditionallyHiddenSystemMessage({
+        type: 'system',
+        subtype: 'plugin_install',
+        status: 'started',
+      } as unknown as SDKMessage)
+    ).toBe(true);
+    expect(
+      isConditionallyHiddenSystemMessage({
+        type: 'system',
+        subtype: 'plugin_install',
+        status: 'installed',
+      } as unknown as SDKMessage)
+    ).toBe(true);
+    expect(
+      isConditionallyHiddenSystemMessage({
+        type: 'system',
+        subtype: 'plugin_install',
+        status: 'failed',
+      } as unknown as SDKMessage)
+    ).toBe(false);
+    expect(
+      isConditionallyHiddenSystemMessage({
+        type: 'system',
+        subtype: 'plugin_install',
+        status: 'completed',
+      } as unknown as SDKMessage)
+    ).toBe(false);
+  });
+
+  test('ignores non-system and unrelated subtypes', () => {
+    expect(
+      isConditionallyHiddenSystemMessage({
+        type: 'assistant',
+        subtype: 'files_persisted',
+        failed: [],
+      } as unknown as SDKMessage)
+    ).toBe(false);
+    expect(
+      isConditionallyHiddenSystemMessage({
+        type: 'system',
+        subtype: 'permission_denied',
+      } as unknown as SDKMessage)
+    ).toBe(false);
   });
 });

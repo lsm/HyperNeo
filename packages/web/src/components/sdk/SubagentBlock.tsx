@@ -19,6 +19,7 @@ import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import {
   hasRenderableThinking,
   isHiddenSystemSubtype,
+  isConditionallyHiddenSystemMessage,
   isTextBlock,
   isToolUseBlock,
   isThinkingBlock,
@@ -60,6 +61,8 @@ function shouldHideNestedSystemMessage(message: SDKMessage, isLiveTail: boolean)
   // Honor the centralized hidden-subtype contract so nested timelines
   // don't leak noise rows the main transcript already hides.
   if (isHiddenSystemSubtype(subtype)) return true;
+  // Honor conditional hides so success-noise rows don't leak either.
+  if (isConditionallyHiddenSystemMessage(message)) return true;
   if (subtype === 'init') return true;
   if (subtype === 'informational' && (message as { level?: string }).level === 'info') return true;
   if (subtype === 'worker_shutting_down' && !isLiveTail) return true;
@@ -79,7 +82,14 @@ function shouldUseSDKSystemRenderer(message: Extract<SDKMessage, { type: 'system
     subtype === 'commands_changed' ||
     subtype === 'informational' ||
     subtype === 'worker_shutting_down' ||
-    subtype === 'model_refusal_fallback'
+    subtype === 'model_refusal_fallback' ||
+    subtype === 'permission_denied' ||
+    subtype === 'task_notification' ||
+    subtype === 'memory_recall' ||
+    subtype === 'local_command_output' ||
+    subtype === 'notification' ||
+    subtype === 'files_persisted' ||
+    subtype === 'plugin_install'
   );
 }
 

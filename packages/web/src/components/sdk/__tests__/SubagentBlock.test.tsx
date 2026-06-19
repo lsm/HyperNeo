@@ -824,6 +824,61 @@ describe('SubagentBlock', () => {
       expect(container.textContent).not.toContain('task_progress');
     });
 
+    it('should apply conditional hides to nested system messages', async () => {
+      const input = createAgentInput('Explore', 'Find files', 'Search for test files');
+      const nestedMessages = [
+        createNestedSystemMessage('files_persisted', {
+          failed: [],
+          succeeded: ['file.txt'],
+        }),
+        createNestedSystemMessage('plugin_install', {
+          status: 'installed',
+          plugin: 'test-plugin',
+        }),
+        createNestedSystemMessage('plugin_install', {
+          status: 'started',
+          plugin: 'test-plugin',
+        }),
+        createNestedAssistantMessage('visible work'),
+      ];
+
+      const { container } = render(
+        <SubagentBlock input={input} toolId="toolu_task123" nestedMessages={nestedMessages} />
+      );
+
+      const button = container.querySelector('button')!;
+      fireEvent.click(button);
+
+      expect(container.textContent).not.toContain('files_persisted');
+      expect(container.textContent).not.toContain('plugin_install');
+      await waitFor(() => {
+        expect(container.textContent).toContain('visible work');
+      });
+    });
+
+    it('should render nested permission_denied with the SDK system renderer', () => {
+      const input = createAgentInput('Explore', 'Find files', 'Search for test files');
+      const nestedMessages = [
+        createNestedSystemMessage('permission_denied', {
+          tool_name: 'Bash',
+          decision_reason: 'Auto-denied by mode',
+          message: 'Tool use was not allowed',
+          agent_id: 'toolu_task123',
+        }),
+      ];
+
+      const { container } = render(
+        <SubagentBlock input={input} toolId="toolu_task123" nestedMessages={nestedMessages} />
+      );
+
+      const button = container.querySelector('button')!;
+      fireEvent.click(button);
+
+      expect(container.textContent).toContain('Permission denied');
+      expect(container.textContent).toContain('Bash');
+      expect(container.textContent).toContain('Auto-denied by mode');
+    });
+
     it('should preserve nested SDK system notices without specialized renderers', () => {
       const input = createAgentInput('Explore', 'Find files', 'Search for test files');
       const nestedMessages = [

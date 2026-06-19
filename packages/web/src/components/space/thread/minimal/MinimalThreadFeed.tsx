@@ -28,6 +28,7 @@ import {
   isSDKAssistantMessage,
   isSDKCompactBoundary,
   isHiddenSystemSubtype,
+  isConditionallyHiddenSystemMessage,
   isSDKResultMessage,
   isSDKSystemInit,
   isToolUseBlock,
@@ -726,14 +727,7 @@ function buildOperationalSystemTurn(
   if (isHiddenSystemSubtype(subtype)) return null;
   // Apply the same conditional hides as SDKSystemMessage so Space task
   // threads don't render success-noise rows the main transcript suppresses.
-  if (subtype === 'files_persisted') {
-    const failed = (message as { failed?: unknown[] }).failed;
-    if (!Array.isArray(failed) || failed.length === 0) return null;
-  }
-  if (subtype === 'plugin_install') {
-    const status = (message as { status?: string }).status;
-    if (status === 'started' || status === 'installed') return null;
-  }
+  if (isConditionallyHiddenSystemMessage(message)) return null;
   if (subtype === 'informational' && (message as { level?: string }).level === 'info') {
     return null;
   }
