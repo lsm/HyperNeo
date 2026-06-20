@@ -44,7 +44,6 @@ function toSqlStringList(subtypes: Iterable<string>): string {
 /** Render-hidden rows excluded before applying chat pagination limits. */
 const EXCLUDED_FROM_PAGINATION_SQL_LIST = toSqlStringList([
   ...HIDDEN_SYSTEM_SUBTYPES,
-  'task_notification',
   'thinking_tokens',
 ]);
 

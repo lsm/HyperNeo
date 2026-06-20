@@ -347,11 +347,12 @@ describe('SDKMessageRepository', () => {
       }
       repository.saveSDKMessage('session-1', createUserMessage('Visible'));
 
-      const { messages, hasMore } = repository.getSDKMessages('session-1', 1);
+      const { messages, hasMore } = repository.getSDKMessages('session-1', 2);
       const metadataMessages = repository.getBackgroundTaskMessages('session-1');
 
       expect(messages.map((message) => (message as { subtype?: string }).subtype)).toEqual([
         undefined,
+        'task_notification',
       ]);
       expect(metadataMessages.map((message) => (message as { subtype?: string }).subtype)).toEqual([
         'task_started',

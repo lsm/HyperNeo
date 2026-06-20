@@ -526,11 +526,11 @@ describe('messages.bySession — SQL behavior', () => {
       timestamp: '2024-01-01 00:00:03',
     });
 
-    const snapshot = subscribeMessagesBySession(db, 's1', 1);
+    const snapshot = subscribeMessagesBySession(db, 's1', 2);
     const rows = snapshot?.rows as Array<{ id: string }>;
     const metadata = snapshot?.metadata as { backgroundTaskMessages: Array<{ id: string }> };
 
-    expect(rows.map((r) => r.id)).toEqual(['visible']);
+    expect(rows.map((r) => r.id)).toEqual(['metadata-task_notification', 'visible']);
     expect(metadata.backgroundTaskMessages.map((r) => r.id).sort()).toEqual(
       ['metadata-task_notification', 'metadata-task_started', 'metadata-task_updated'].sort()
     );
