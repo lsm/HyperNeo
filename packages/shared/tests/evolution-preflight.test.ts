@@ -3,6 +3,16 @@ import { scoreEvolutionEvidenceQuality } from '../src/evolution-preflight.ts';
 import type { EvidenceKind, EvidenceRef } from '../src/types/evolution.ts';
 
 describe('scoreEvolutionEvidenceQuality', () => {
+  test('scores friction digest evidence as task context', () => {
+    const result = scoreEvolutionEvidenceQuality({
+      evidence: [createEvidence('friction_digest')],
+    });
+
+    expect(result.counts.taskResults).toBe(1);
+    expect(result.reasons).toContain('Selected evidence includes task context.');
+    expect(result.warnings).not.toContain('No task evidence selected.');
+  });
+
   for (const kind of ['daemon_error', 'runtime_crash', 'runtime_warning', 'uncaught_exception']) {
     test(`scores ${kind} evidence as workflow artifact and error outcome`, () => {
       const result = scoreEvolutionEvidenceQuality({
