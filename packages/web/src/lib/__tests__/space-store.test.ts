@@ -752,27 +752,112 @@ describe('SpaceStore — ensureWorkflowDetails', () => {
     }
   });
 
-  it('does not mark workflow details loaded when workflow summary fetch failed', async () => {
-    mockWorkflowSummaries(['wf1']);
-    await spaceStore.selectSpace('space-1');
-    mockHub.request.mockImplementation(async (method: string): Promise<any> => {
-      if (method === 'spaceWorkflow.list') throw new Error('summary fetch failed');
-      if (method === 'space.overview') {
-        return { space: makeSpace('space-1'), tasks: [], workflowRuns: [], sessions: [] };
+  it('retries workflow summary fetch when it fails during ensureConfigData', async () => {
+    vi.useFakeTimers();
+    try {
+      await spaceStore.selectSpace('space-1');
+      let summaryAttempts = 0;
+      mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+        if (method === 'space.overview') {
+          return { space: makeSpace('space-1'), tasks: [], workflowRuns: [], sessions: [] };
+        }
+        if (method === 'spaceWorkflow.list') {
+          summaryAttempts += 1;
+          if (summaryAttempts < 3) throw new Error('summary fetch failed');
+          return { workflows: [makeWorkflowSummary('wf1')] };
+        }
+        if (method === 'spaceWorkflow.get') return { workflow: makeWorkflow('wf1') };
+        if (method === 'spaceAgent.list') return { agents: [] };
+        if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [] };
+        if (method === 'spaceWorkflow.listBuiltInTemplates') return { workflows: [] };
+        if (method === 'spaceLongHorizonAgent.list') return { agents: [] };
+        if (method === 'spaceLongHorizonAgent.listBuiltInTemplates') return { templates: [] };
+        return {};
+      });
+
+      await spaceStore.ensureConfigData();
+      await spaceStore.ensureWorkflowDetails();
+      // Immediate return after scheduling retry; not loaded yet.
+      expect(spaceStore.workflowDetailsLoaded.value).toBe(false);
+
+      for (let i = 0; i < 10 && !spaceStore.workflowDetailsLoaded.value; i += 1) {
+        await vi.runOnlyPendingTimersAsync();
       }
-      if (method === 'spaceAgent.list') return { agents: [] };
-      if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [] };
-      if (method === 'spaceWorkflow.listBuiltInTemplates') return { workflows: [] };
-      if (method === 'spaceLongHorizonAgent.list') return { agents: [] };
-      if (method === 'spaceLongHorizonAgent.listBuiltInTemplates') return { templates: [] };
-      return {};
-    });
 
-    await spaceStore.ensureConfigData();
-    await spaceStore.ensureWorkflowDetails();
+      expect(summaryAttempts).toBeGreaterThanOrEqual(3);
+      expect(spaceStore.workflowDetailsLoaded.value).toBe(true);
+      expect(spaceStore.workflowDetails.value.map((w) => w.id)).toEqual(['wf1']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 
-    expect(spaceStore.workflowDetailsLoaded.value).toBe(false);
-    expect(spaceStore.workflowDetails.value).toEqual([]);
+  it('marks workflow details loaded after summary retry exhaustion', async () => {
+    vi.useFakeTimers();
+    try {
+      await spaceStore.selectSpace('space-1');
+      mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+        if (method === 'space.overview') {
+          return { space: makeSpace('space-1'), tasks: [], workflowRuns: [], sessions: [] };
+        }
+        if (method === 'spaceWorkflow.list') throw new Error('summary fetch failed');
+        if (method === 'spaceAgent.list') return { agents: [] };
+        if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [] };
+        if (method === 'spaceWorkflow.listBuiltInTemplates') return { workflows: [] };
+        if (method === 'spaceLongHorizonAgent.list') return { agents: [] };
+        if (method === 'spaceLongHorizonAgent.listBuiltInTemplates') return { templates: [] };
+        return {};
+      });
+
+      await spaceStore.ensureConfigData();
+      await spaceStore.ensureWorkflowDetails();
+      for (let i = 0; i < 10; i += 1) {
+        await vi.runOnlyPendingTimersAsync();
+      }
+
+      expect(spaceStore.workflowDetailsLoaded.value).toBe(true);
+      expect(spaceStore.workflowDetails.value).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not let a stale retry timer clear the current retry-pending flag', async () => {
+    vi.useFakeTimers();
+    try {
+      mockWorkflowSummaries(['wf1']);
+      await spaceStore.selectSpace('space-1');
+      await spaceStore.ensureConfigData();
+      mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+        if (method === 'spaceWorkflow.get') return null;
+        return {};
+      });
+
+      await spaceStore.ensureWorkflowDetails();
+      expect(
+        (spaceStore as unknown as { workflowDetailsRetryPending: boolean })
+          .workflowDetailsRetryPending
+      ).toBe(true);
+
+      // Simulate a space/generation switch invalidating the queued timer, then
+      // a fresh retry being scheduled for the new space.
+      (
+        spaceStore as unknown as { workflowDetailsLoadGeneration: number }
+      ).workflowDetailsLoadGeneration += 1;
+      (
+        spaceStore as unknown as { workflowDetailsRetryPending: boolean }
+      ).workflowDetailsRetryPending = true;
+
+      await vi.runOnlyPendingTimersAsync();
+
+      // Stale timer fired but must not have cleared the current pending flag.
+      expect(
+        (spaceStore as unknown as { workflowDetailsRetryPending: boolean })
+          .workflowDetailsRetryPending
+      ).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('restarts pending workflow-detail retry on reconnect', async () => {

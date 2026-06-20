@@ -1165,7 +1165,17 @@ class SpaceStore {
     if (this.workflowDetailsPromise) return this.workflowDetailsPromise;
 
     const spaceId = this.spaceId.value;
-    if (!spaceId || !this.workflowSummariesLoaded) return;
+    if (!spaceId) return;
+
+    // Summary fetch failed inside ensureConfigData (other sub-fetches
+    // succeeded, so configDataLoaded still flipped to true). Don't leave the
+    // Agents tab on the loading spinner forever: retry the summary fetch with
+    // the same bounded backoff used for detail failures. If retries exhaust,
+    // mark details loaded so the empty state renders instead of spinning.
+    if (!this.workflowSummariesLoaded) {
+      this.retryWorkflowSummaries(spaceId);
+      return;
+    }
 
     // Snapshot the workflow ids at request time so concurrent updates/deletes
     // can be detected before assignment. Also snapshot current detail objects by
@@ -1269,13 +1279,18 @@ class SpaceStore {
             this.workflowDetailsRetryCount += 1;
             this.workflowDetailsRetryPending = true;
             setTimeout(() => {
-              this.workflowDetailsRetryPending = false;
+              // Only act if this timer still belongs to the current load. A
+              // stale timer from a prior space/generation must not clear the
+              // current pending flag — otherwise reconnect sees no pending
+              // work and skips refetching details for the active space.
               if (
                 this.spaceId.value === spaceId &&
-                this.workflowDetailsLoadGeneration === loadGeneration &&
-                !this.workflowDetailsLoaded.value
+                this.workflowDetailsLoadGeneration === loadGeneration
               ) {
-                this.ensureWorkflowDetails().catch(() => {});
+                this.workflowDetailsRetryPending = false;
+                if (!this.workflowDetailsLoaded.value) {
+                  this.ensureWorkflowDetails().catch(() => {});
+                }
               }
             }, delay);
           } else {
@@ -1297,6 +1312,57 @@ class SpaceStore {
     })();
 
     return this.workflowDetailsPromise;
+  }
+
+  /**
+   * Bounded retry of the workflow summary fetch when it failed inside
+   * ensureConfigData. The summary fetch is the precondition for the detail
+   * fan-out — without it the Agents tab would spin forever. Reuses the same
+   * retry budget as {@link ensureWorkflowDetails} so exhaustion semantics are
+   * consistent: once retries run out, mark details loaded so the empty state
+   * renders rather than the loading spinner.
+   */
+  private retryWorkflowSummaries(spaceId: string): void {
+    const loadGeneration = this.workflowDetailsLoadGeneration;
+    const MAX_RETRIES = 5;
+    if (this.workflowDetailsRetryCount >= MAX_RETRIES) {
+      this.workflowDetailsLoaded.value = true;
+      this.workflowDetailsRetryCount = 0;
+      this.workflowDetailsRetryPending = false;
+      return;
+    }
+    const delay = 2 ** this.workflowDetailsRetryCount * 3000;
+    this.workflowDetailsRetryCount += 1;
+    this.workflowDetailsRetryPending = true;
+    setTimeout(() => {
+      if (this.spaceId.value !== spaceId || this.workflowDetailsLoadGeneration !== loadGeneration) {
+        return;
+      }
+      this.workflowDetailsRetryPending = false;
+      // Reset config flags so ensureConfigData re-fetches instead of
+      // short-circuiting on the prior (partially-failed) load.
+      this.configDataLoaded.value = false;
+      this.configDataPromise = null;
+      this.ensureConfigData()
+        .then(() => {
+          if (
+            this.spaceId.value !== spaceId ||
+            this.workflowDetailsLoadGeneration !== loadGeneration
+          ) {
+            return;
+          }
+          if (this.workflowSummariesLoaded) {
+            if (!this.workflowDetailsLoaded.value) {
+              this.workflowDetailsRetryCount = 0;
+              this.ensureWorkflowDetails().catch(() => {});
+            }
+          } else {
+            // Summary fetch failed again; schedule another bounded retry.
+            this.retryWorkflowSummaries(spaceId);
+          }
+        })
+        .catch(() => {});
+    }, delay);
   }
 
   /**
