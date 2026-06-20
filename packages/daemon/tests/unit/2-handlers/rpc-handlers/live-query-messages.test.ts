@@ -403,7 +403,7 @@ describe('messages.bySession — SQL behavior', () => {
     expect(rows.map((r) => r.id)).toEqual(['visible', 'tail-shutdown']);
   });
 
-  test('filters hidden system subtypes before applying the top-level limit', () => {
+  test('filters render-only hidden system subtypes before applying the top-level limit', () => {
     insertSdkMessage(db, {
       id: 'visible',
       sessionId: 's1',
@@ -411,7 +411,7 @@ describe('messages.bySession — SQL behavior', () => {
       sdkMessage: { type: 'assistant', uuid: 'visible-uuid', message: { content: [] } },
       timestamp: '2024-01-01 00:00:01',
     });
-    for (const subtype of ['session_state_changed', 'commands_changed', 'task_started']) {
+    for (const subtype of ['session_state_changed', 'commands_changed', 'task_progress']) {
       insertSdkMessage(db, {
         id: `hidden-${subtype}`,
         sessionId: 's1',
@@ -429,6 +429,37 @@ describe('messages.bySession — SQL behavior', () => {
 
     const rows = query(db, 's1', 2);
     expect(rows.map((r) => r.id)).toEqual(['visible']);
+  });
+
+  test('includes background task metadata rows for SessionInfoPanel', () => {
+    insertSdkMessage(db, {
+      id: 'visible',
+      sessionId: 's1',
+      messageType: 'assistant',
+      sdkMessage: { type: 'assistant', uuid: 'visible-uuid', message: { content: [] } },
+      timestamp: '2024-01-01 00:00:01',
+    });
+    for (const subtype of ['task_started', 'task_updated']) {
+      insertSdkMessage(db, {
+        id: `metadata-${subtype}`,
+        sessionId: 's1',
+        messageType: 'system',
+        messageSubtype: subtype,
+        sdkMessage: {
+          type: 'system',
+          subtype,
+          uuid: `${subtype}-uuid`,
+          session_id: 's1',
+          task_id: 'task-1',
+        },
+        timestamp: '2024-01-01 00:00:02',
+      });
+    }
+
+    const rows = query(db, 's1', 3);
+    expect(rows.map((r) => r.id).sort()).toEqual(
+      ['metadata-task_started', 'metadata-task_updated', 'visible'].sort()
+    );
   });
 
   test('does not throw when an informational row has malformed JSON', () => {

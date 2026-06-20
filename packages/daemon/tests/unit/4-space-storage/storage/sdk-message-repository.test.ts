@@ -315,14 +315,9 @@ describe('SDKMessageRepository', () => {
       expect(messages.length).toBe(50);
     });
 
-    it('should exclude hidden system subtypes from pagination', () => {
+    it('should exclude render-only hidden system subtypes from pagination', () => {
       repository.saveSDKMessage('session-1', createUserMessage('Visible'));
-      for (const subtype of [
-        'session_state_changed',
-        'commands_changed',
-        'task_started',
-        'task_progress',
-      ]) {
+      for (const subtype of ['session_state_changed', 'commands_changed', 'task_progress']) {
         repository.saveSDKMessage('session-1', {
           type: 'system',
           subtype,
@@ -337,6 +332,25 @@ describe('SDKMessageRepository', () => {
         undefined,
       ]);
       expect(hasMore).toBe(false);
+    });
+
+    it('should include background task metadata rows in pagination', () => {
+      repository.saveSDKMessage('session-1', createUserMessage('Visible'));
+      for (const subtype of ['task_started', 'task_updated']) {
+        repository.saveSDKMessage('session-1', {
+          type: 'system',
+          subtype,
+          uuid: `metadata-${subtype}`,
+          session_id: 'session-1',
+          task_id: 'task-1',
+        } as unknown as SDKMessage);
+      }
+
+      const { messages } = repository.getSDKMessages('session-1', 3);
+
+      expect(messages.map((message) => (message as { subtype?: string }).subtype).sort()).toEqual(
+        ['task_started', 'task_updated', undefined].sort()
+      );
     });
 
     it('should include visible system rows in session pagination', () => {
@@ -610,7 +624,7 @@ describe('SDKMessageRepository', () => {
   });
 
   describe('getLastSDKMessage', () => {
-    it('should skip state-only frames when finding the last terminal message', () => {
+    it('should return task progress rows for idle detection', () => {
       repository.saveSDKMessage('session-1', {
         type: 'result',
         subtype: 'success',
@@ -625,15 +639,33 @@ describe('SDKMessageRepository', () => {
       } as unknown as SDKMessage);
       repository.saveSDKMessage('session-1', {
         type: 'system',
-        subtype: 'session_state_changed',
-        state: 'idle',
-        uuid: 'state-only-idle',
+        subtype: 'task_progress',
+        uuid: 'task-progress',
         session_id: 'session-1',
+        task_id: 'task-1',
       } as unknown as SDKMessage);
 
       const message = repository.getLastSDKMessage('session-1');
 
-      expect(message?.type).toBe('result');
+      expect(message?.type).toBe('system');
+      expect((message as { subtype?: string } | null)?.subtype).toBe('task_progress');
+    });
+
+    it('should return task updated rows for idle detection', () => {
+      repository.saveSDKMessage('session-1', createAssistantMessage('Done'));
+      repository.saveSDKMessage('session-1', {
+        type: 'system',
+        subtype: 'task_updated',
+        uuid: 'task-updated',
+        session_id: 'session-1',
+        task_id: 'task-1',
+        patch: { status: 'running' },
+      } as unknown as SDKMessage);
+
+      const message = repository.getLastSDKMessage('session-1');
+
+      expect(message?.type).toBe('system');
+      expect((message as { subtype?: string } | null)?.subtype).toBe('task_updated');
     });
 
     it('should skip model fallback notices when finding the last terminal message', () => {

@@ -2218,15 +2218,24 @@ ORDER BY s.last_active_at DESC, s.id DESC
  * inflates the JSON and merges the extras to produce a ChatMessage-shaped
  * object.
  */
+const BACKGROUND_TASK_METADATA_SUBTYPES = new Set(['task_started', 'task_updated']);
+
+function toSqlStringList(subtypes: Iterable<string>): string {
+  return [...subtypes].map((subtype) => `'${subtype.replace(/'/g, "''")}'`).join(', ');
+}
+
 /**
- * Comma-separated, single-quoted list of system subtypes excluded from the
- * `messages.bySession` live query. Includes the UI-hidden set plus
- * `thinking_tokens`, which is also not rendered but kept out of the hidden
- * contract for legacy UI gating.
+ * System subtypes excluded from `messages.bySession`. This is narrower than the
+ * render-hidden set because `task_started` and `task_updated` feed the
+ * SessionInfoPanel background-task metadata even though transcript rendering
+ * still hides them.
  */
-const EXCLUDED_FROM_PAGINATION_SQL_LIST = [...HIDDEN_SYSTEM_SUBTYPES, 'thinking_tokens']
-  .map((subtype) => `'${subtype.replace(/'/g, "''")}'`)
-  .join(', ');
+const EXCLUDED_FROM_PAGINATION_SQL_LIST = toSqlStringList([
+  ...[...HIDDEN_SYSTEM_SUBTYPES].filter(
+    (subtype) => !BACKGROUND_TASK_METADATA_SUBTYPES.has(subtype)
+  ),
+  'thinking_tokens',
+]);
 
 const MESSAGES_BY_SESSION_SQL = `
 WITH top_level AS (

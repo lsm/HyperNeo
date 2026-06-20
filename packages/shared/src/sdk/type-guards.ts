@@ -428,13 +428,12 @@ export function getMessageTypeDescription(msg: SDKMessage): string {
 }
 
 /**
- * Exported hidden-subtype set for server-side SQL filters.
+ * System subtypes hidden by transcript rendering.
  *
- * Consumers that paginate chat rows (e.g. `sdk-message-repository.ts` and the
- * `messages.bySession` live query) should exclude these subtypes before applying
- * `LIMIT` so invisible rows don't consume the pagination budget. The messages are
- * still persisted to the database for audit/debug; they are only omitted from
- * paginated reads.
+ * Do not use this set as a universal SQL exclusion list. Some render-hidden rows
+ * still carry metadata consumed outside the transcript (for example
+ * `task_started` / `task_updated` for SessionInfoPanel background-task state,
+ * and task progress rows for runtime idle detection).
  *
  * Hidden for these reasons:
  * - session_state_changed: Internal state machine; handler uses for turn-end detection

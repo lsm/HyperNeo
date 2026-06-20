@@ -33,14 +33,30 @@ const SEARCHABLE_MESSAGE_TYPES = new Set(['system', 'user', 'assistant']);
 const RENDERABLE_TEXT_MESSAGE_BATCH_SIZE = 50;
 const RENDERABLE_TEXT_MESSAGE_MAX_SCAN = 250;
 
+const BACKGROUND_TASK_METADATA_SUBTYPES = new Set(['task_started', 'task_updated']);
+
+function toSqlStringList(subtypes: Iterable<string>): string {
+  return [...subtypes].map((subtype) => `'${subtype.replace(/'/g, "''")}'`).join(', ');
+}
+
 /**
- * Comma-separated, single-quoted list of system subtypes excluded from paginated
- * chat reads. Includes the UI-hidden set plus `thinking_tokens`, which is also
- * not rendered but kept out of the hidden-subtype contract for legacy UI gating.
+ * System subtypes excluded from paginated chat reads. This is narrower than the
+ * render-hidden set because `task_started` and `task_updated` feed the
+ * SessionInfoPanel background-task metadata even though transcript rendering
+ * still hides them.
  */
-const EXCLUDED_FROM_PAGINATION_SQL_LIST = [...HIDDEN_SYSTEM_SUBTYPES, 'thinking_tokens']
-  .map((subtype) => `'${subtype.replace(/'/g, "''")}'`)
-  .join(', ');
+const EXCLUDED_FROM_PAGINATION_SQL_LIST = toSqlStringList([
+  ...[...HIDDEN_SYSTEM_SUBTYPES].filter(
+    (subtype) => !BACKGROUND_TASK_METADATA_SUBTYPES.has(subtype)
+  ),
+  'thinking_tokens',
+]);
+
+/** Last-message idle checks only drop rows that carry no progress signal. */
+const EXCLUDED_FROM_LAST_MESSAGE_SQL_LIST = toSqlStringList([
+  'thinking_tokens',
+  'model_refusal_fallback',
+]);
 
 function isOlderThanMessageSearchTtl(value: string | number | null | undefined): boolean {
   if (value === null || value === undefined) return false;
@@ -825,7 +841,7 @@ export class SDKMessageRepository {
       `SELECT id, sdk_message, timestamp FROM sdk_messages
 	       WHERE session_id = ?
 		       AND parent_tool_use_id IS NULL
-		       AND COALESCE(message_subtype, '') NOT IN (${EXCLUDED_FROM_PAGINATION_SQL_LIST}, 'model_refusal_fallback')
+		       AND COALESCE(message_subtype, '') NOT IN (${EXCLUDED_FROM_LAST_MESSAGE_SQL_LIST})
 		       AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))
 	       ORDER BY timestamp DESC, rowid DESC
 	       LIMIT 1`
