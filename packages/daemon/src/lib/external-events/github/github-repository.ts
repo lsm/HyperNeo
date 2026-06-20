@@ -9,6 +9,13 @@ export interface PollCursor {
   recentPullRequestNumbers?: number[];
   seenReactionIds?: Record<string, boolean>;
   /**
+   * Per-PR reaction-list ETags. Sent as `If-None-Match` on the
+   * `/issues/{n}/reactions` request so unchanged reaction lists short-circuit
+   * with a 304 and cost nothing against the rate-limit budget. Cleared for a
+   * PR when it falls out of `recentPullRequestNumbers`.
+   */
+  reactionEtags?: Record<number, string>;
+  /**
    * Per-endpoint high-water mark for events already published. Used after a
    * partial scan (e.g. low rate-limit remaining) so processed endpoints can
    * resume from their own watermark while skipped endpoints still use the

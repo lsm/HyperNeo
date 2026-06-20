@@ -2405,6 +2405,60 @@ describe('GitHubEventExtension', () => {
     }
   });
 
+  test('reaction polling caches ETags per PR and skips on 304', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    const reactionRequests: Array<{ url: string; ifNoneMatch?: string | null }> = [];
+    const fetchImpl = (async (url: string | URL | Request, init?: RequestInit) => {
+      const u = new URL(String(url));
+      const path = u.pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls')) return pollingResponse([createPullRequestRow(7)]);
+      const match = path.match(/\/issues\/(\d+)\/reactions$/);
+      if (match) {
+        const headers = init?.headers as Record<string, string> | undefined;
+        reactionRequests.push({ url: String(url), ifNoneMatch: headers?.['If-None-Match'] });
+        // Second poll for PR 7 sends the ETag from cycle 0 → return 304.
+        if (headers?.['If-None-Match'] === 'W/"abc-reaction-7"') {
+          return new Response(null, { status: 304 });
+        }
+        return new Response(JSON.stringify([createReactionRow({ id: 9001, content: '+1' })]), {
+          status: 200,
+          headers: { ETag: 'W/"abc-reaction-7"', 'X-RateLimit-Remaining': '5000' },
+        });
+      }
+      return pollingResponse([]);
+    }) as typeof fetch;
+
+    try {
+      const repo = extension.repo.listPollingRepos()[0];
+      // Cycle 0: no ETag yet → full fetch, captures ETag, publishes the +1.
+      await extension.pollWatchedRepo(repo, fetchImpl);
+      expect(reactionRequests[0].ifNoneMatch).toBeUndefined();
+
+      // Cycle 1: cursor carries the ETag → If-None-Match sent → 304 short-circuits,
+      // no new reaction event published.
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      expect(reactionRequests[1].ifNoneMatch).toBe('W/"abc-reaction-7"');
+      expect(received.filter((event) => event.payload.eventType === 'reaction')).toHaveLength(1);
+    } finally {
+      await extension.stop();
+    }
+  });
+
   test('reaction targets merge deltas without dropping tracked active PRs', async () => {
     const db = setupDb();
     const { service } = setupExternalEventService(db);

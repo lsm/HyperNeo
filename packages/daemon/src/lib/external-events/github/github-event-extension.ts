@@ -1155,6 +1155,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     const processedPages = cursor.processedPages ?? {};
     const recentPullRequestNumbers = cursor.recentPullRequestNumbers ?? [];
     const seenReactionIds = cursor.seenReactionIds ?? {};
+    const reactionEtags = cursor.reactionEtags ?? {};
     const endpointLastSeenAt = cursor.endpointLastSeenAt ?? {};
     const endpointPendingLastSeenAt = cursor.endpointPendingLastSeenAt ?? {};
     const watermarks = {
@@ -1323,11 +1324,18 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       if (partialScan) break;
       if (!canPollReactions(latestRateLimit?.remaining)) break;
       const query = new URLSearchParams({ per_page: '100' });
+      const reactionHeaders = gitHubPollingHeaders(token);
+      if (reactionEtags[prNumber]) reactionHeaders['If-None-Match'] = reactionEtags[prNumber];
       const response = await fetchImpl(`${base}/issues/${prNumber}/reactions?${query.toString()}`, {
-        headers: gitHubPollingHeaders(token),
+        headers: reactionHeaders,
       });
       const reactionRateLimit = parseRateLimitHeaders(response);
       latestRateLimit = mergeRateLimitInfo(latestRateLimit, reactionRateLimit);
+      if (response.status === 304) {
+        // Reaction list unchanged since the last poll — keep the ETag and
+        // skip the PR. 304s do not count against the rate-limit budget.
+        continue;
+      }
       if (reactionRateLimit.limited) {
         // Mirror the primary-endpoint branch: a 429 that does not exhaust the
         // primary bucket (remaining > 0 and no Retry-After) is a secondary /
@@ -1370,6 +1378,8 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         continue;
       }
       const reactions = (await response.json()) as unknown[];
+      const reactionEtag = response.headers.get('ETag');
+      if (reactionEtag) reactionEtags[prNumber] = reactionEtag;
       for (const reaction of reactions) {
         if (!isPositiveReaction(reaction)) continue;
         const reactionId = reactionIdFrom(reaction);
@@ -1396,6 +1406,12 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     }
 
     const hasBacklog = Object.values(processedPages).some((page) => page > 1);
+    // Prune reaction ETags for PRs that are no longer reaction-poll targets
+    // so the cursor does not grow unbounded across a repo's lifetime.
+    const trackedPrSet = new Set(recentPullRequestNumbers);
+    for (const key of Object.keys(reactionEtags)) {
+      if (!trackedPrSet.has(Number(key))) delete reactionEtags[Number(key)];
+    }
     // After a partial scan, do not advance the shared watermark; skipped
     // endpoints would miss events between the old watermark and the new one.
     // The processed endpoint's own watermark is recorded separately.
@@ -1406,6 +1422,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       processedPages,
       recentPullRequestNumbers,
       seenReactionIds,
+      reactionEtags,
       endpointLastSeenAt,
       endpointPendingLastSeenAt,
     };
