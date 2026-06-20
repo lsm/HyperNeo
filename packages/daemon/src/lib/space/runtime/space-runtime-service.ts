@@ -310,15 +310,8 @@ export class SpaceRuntimeService {
       onRunBlocked: (runId) => {
         // Run just transitioned to blocked via tick-loop recovery, markFailed
         // RPC, or gate rejection. Ensure the PR-event auto-subscription is
-        // registered so subsequent GitHub events match a target. Passes an
-        // empty activatedTasks array to force the subscribe branch (the gate
-        // is, by definition, not open at the moment we block).
-        void this.syncBlockedRunPrEventSubscription(runId, []).catch((err) => {
-          log.warn(
-            `SpaceRuntimeService: onRunBlocked sync failed for run ${runId}: ` +
-              `${err instanceof Error ? err.message : String(err)}`
-          );
-        });
+        // registered so subsequent GitHub events match a target.
+        void this.notifyRunBlocked(runId);
       },
     });
   }
@@ -1894,9 +1887,14 @@ export class SpaceRuntimeService {
       // typed `space.workflowRun.reopened` events for bus subscribers.
       internalEventBus: this.config.internalEventBus,
       onGatePendingApproval: (runId, gateId) => this.handleGatePendingApproval(runId, gateId),
+      onGateDataChangedComplete: (runId, _gateId, activatedTasks) =>
+        this.syncBlockedRunPrEventSubscription(runId, activatedTasks),
       getPrUrlForRun: (rid) => this.resolvePrUrlForRun(rid),
     });
     const activated = await router.onGateDataChanged(runId, gateId);
+    // Also fire the sync inline; the router's complete-hook covers the
+    // deferred retry path but the immediate path is re-entrantly invoked
+    // here so the result is reflected before the caller observes it.
     await this.syncBlockedRunPrEventSubscription(runId, activated);
     return activated;
   }
@@ -1929,6 +1927,29 @@ export class SpaceRuntimeService {
       log.warn(
         `SpaceRuntimeService: auto-subscribe for blocked run ${runId} skipped: ` +
           `${result.error ?? 'unknown reason'}`
+      );
+    }
+  }
+
+  /**
+   * Public entry point for code paths that transition a workflow run to
+   * `blocked` via direct `workflowRunRepo.transitionStatus(...)` calls
+   * (markFailed RPC, gate rejection, space-agent-tools block). Ensures the
+   * PR-event auto-subscription is registered for the run regardless of which
+   * code path performed the transition.
+   *
+   * Delegates to {@link SpaceRuntime.notifyRunBlocked} which performs the
+   * actual prUrl resolution and topic-trie registration. Idempotent.
+   */
+  async notifyRunBlocked(runId: string): Promise<void> {
+    try {
+      const result = this.runtime.notifyRunBlocked(runId);
+      if (!result.subscribed && result.reason && result.reason !== 'no resolvable PR URL') {
+        log.warn(`SpaceRuntimeService: notifyRunBlocked for run ${runId}: ${result.reason}`);
+      }
+    } catch (err) {
+      log.warn(
+        `SpaceRuntimeService: notifyRunBlocked failed for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
       );
     }
   }
@@ -2213,6 +2234,8 @@ export class SpaceRuntimeService {
       // Forward the InternalEventBus so activation-driven reopens also publish
       // typed `space.workflowRun.reopened` events for bus subscribers.
       internalEventBus: this.config.internalEventBus,
+      onGateDataChangedComplete: (runId, _gateId, activatedTasks) =>
+        this.syncBlockedRunPrEventSubscription(runId, activatedTasks),
       getPrUrlForRun: (rid) => this.resolvePrUrlForRun(rid),
     });
     return router.activateNode(runId, nodeId, {

@@ -306,6 +306,22 @@ export interface ChannelRouterConfig {
    */
   onGatePendingApproval?: (runId: string, gateId: string) => Promise<void>;
   /**
+   * Optional callback invoked after every `onGateDataChanged` completion —
+   * including the deferred retry path scheduled by `gateRetryScheduler`
+   * when a rate-limited evaluation reschedules itself. Wired by
+   * `SpaceRuntimeService` to ensure the PR-event auto-subscription sync
+   * (and any other post-eval side effects) runs even when the retry fires
+   * from inside the router and bypasses the service-level wrapper.
+   *
+   * Passed the activated-task list (empty when the gate stayed blocked) so
+   * the callback can branch on the outcome.
+   */
+  onGateDataChangedComplete?: (
+    runId: string,
+    gateId: string,
+    activatedTasks: SpaceTask[]
+  ) => Promise<void> | void;
+  /**
    * Optional callback that resolves the current PR URL for a workflow run.
    * Injected into gate script environments as `PR_URL` so feature scripts
    * (e.g. codex reaction checks) can access the PR even when the gate's
@@ -989,6 +1005,7 @@ export class ChannelRouter {
           });
         }
       }
+      this.fireGateDataChangedComplete(runId, gateId, []);
       return [];
     }
 
@@ -1075,7 +1092,40 @@ export class ChannelRouter {
       );
     }
 
+    this.fireGateDataChangedComplete(runId, gateId, activatedTasks);
     return activatedTasks;
+  }
+
+  /**
+   * Fire-and-forget wrapper for the `onGateDataChangedComplete` config hook.
+   * Invoked at every exit point of {@link onGateDataChanged} — including the
+   * deferred retry path scheduled by `gateRetryScheduler` — so service-level
+   * post-eval side effects (PR auto-subscription sync, etc.) run even when
+   * the retry bypasses the service wrapper.
+   */
+  private fireGateDataChangedComplete(
+    runId: string,
+    gateId: string,
+    activatedTasks: SpaceTask[]
+  ): void {
+    const hook = this.config.onGateDataChangedComplete;
+    if (!hook) return;
+    try {
+      const result = hook(runId, gateId, activatedTasks);
+      if (result && typeof (result as Promise<void>).catch === 'function') {
+        (result as Promise<void>).catch((err) => {
+          log.warn(
+            `onGateDataChangedComplete failed for gate "${gateId}" in run "${runId}": ` +
+              `${err instanceof Error ? err.message : String(err)}`
+          );
+        });
+      }
+    } catch (err) {
+      log.warn(
+        `onGateDataChangedComplete threw for gate "${gateId}" in run "${runId}": ` +
+          `${err instanceof Error ? err.message : String(err)}`
+      );
+    }
   }
 
   // -------------------------------------------------------------------------

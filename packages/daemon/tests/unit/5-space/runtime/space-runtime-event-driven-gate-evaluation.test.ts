@@ -614,9 +614,11 @@ describe('SpaceRuntimeService event-driven gate evaluation', () => {
     // Simulate the tick-loop stall path: cancel the only execution so
     // recoverStalledRunsForSpace has no driveable work and transitions the
     // run to blocked. The onRunBlocked hook should fire
-    // syncBlockedRunPrEventSubscription automatically during the run→blocked
-    // transition; the fallback slot lookup reuses the cancelled execution's
-    // nodeId / agentName.
+    // notifyRunBlocked automatically during the run→blocked transition;
+    // the fallback slot lookup reuses the cancelled execution's
+    // nodeId / agentName. NO manual re-activation of the execution — the
+    // test must reflect production behavior where the agent session is gone
+    // at the moment of stall-recovery.
     const execution = ctx.nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
     ctx.nodeExecutionRepo.update(execution.id, {
       status: 'cancelled',
@@ -627,17 +629,14 @@ describe('SpaceRuntimeService event-driven gate evaluation', () => {
     // Run is now blocked via the recovery path (not via gate write).
     expect(ctx.workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
 
-    // Re-mark execution active so delivery is not short-circuited.
-    ctx.nodeExecutionRepo.update(execution.id, {
-      status: 'in_progress',
-      agentSessionId: 'session-recover-blocked',
-      startedAt: Date.now(),
-      completedAt: null,
-    });
-    ctx.tam.alive.add('session-recover-blocked');
+    // Pre-satisfy the approval gate so the next re-evaluation opens it.
+    ctx.gateDataRepo.merge(run.id, 'approval', { approved: true, approvedAt: Date.now() });
 
-    // Publishing a PR event must deliver — proving onRunBlocked registered
-    // the auto-subscription during the run→blocked transition.
+    // Publishing a PR event triggers fireBlockedRunExternalEventHook BEFORE
+    // the delivery filter — so even with no live execution to deliver to,
+    // the hook fires handleBlockedRunExternalEvent, the gate opens, and the
+    // run transitions blocked → in_progress. This is the production behavior
+    // asserted by this test (no manual session activation).
     const event: ExternalEvent = {
       id: `evt-recover-blocked-${Math.random().toString(36).slice(2)}`,
       spaceId: SPACE_ID,
@@ -650,7 +649,12 @@ describe('SpaceRuntimeService event-driven gate evaluation', () => {
       payload: {},
     };
     await ctx.eventService.publish(event);
-    expect(ctx.injected.length).toBeGreaterThanOrEqual(1);
+    // The hook chain is fire-and-forget; let the microtask queue drain so
+    // transitionBlockedRunToInProgress completes before assertion.
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // Hook fired → gate re-evaluated → opened → transitionBlockedRunToInProgress.
+    expect(ctx.workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
   });
 
   test('rehydrateBlockedRunPrEventSubscriptionsForSpace rebuilds subscriptions for a paused-then-resumed space', async () => {
@@ -690,6 +694,51 @@ describe('SpaceRuntimeService event-driven gate evaluation', () => {
       occurredAt: Date.now(),
       ingestedAt: Date.now(),
       dedupeKey: `dedupe-resume-space-${Math.random().toString(36).slice(2)}`,
+      summary: 'Codex approved',
+      payload: {},
+    };
+    await ctx.eventService.publish(event);
+    expect(ctx.injected.length).toBeGreaterThanOrEqual(1);
+  });
+
+  test('notifyRunBlocked registers auto-subscription for runs blocked via direct transitionStatus (markFailed / gate rejection paths)', async () => {
+    const ctx = await setup({
+      gates: [
+        {
+          id: 'approval',
+          fields: [approvedField, prUrlField],
+        },
+      ],
+    });
+    const workflow = ctx.workflowManager.listWorkflows(SPACE_ID)[0]!;
+    const runtime = await ctx.service.createOrGetRuntime(SPACE_ID);
+    const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+
+    // Seed gate data with PR URL.
+    ctx.gateDataRepo.merge(run.id, 'approval', { pr_url: PR_URL });
+    // Mark execution in_progress so the slot fallback resolves.
+    const execution = ctx.nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    const sessionId = `session-markfailed-${run.id}`;
+    ctx.nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: sessionId,
+      startedAt: Date.now(),
+    });
+    ctx.tam.alive.add(sessionId);
+
+    // Simulate markFailed RPC: direct transitionStatus + notifyRunBlocked.
+    ctx.workflowRunRepo.transitionStatus(run.id, 'blocked');
+    await ctx.service.notifyRunBlocked(run.id);
+
+    // Publishing a PR event must now match and deliver.
+    const event: ExternalEvent = {
+      id: `evt-markfailed-${Math.random().toString(36).slice(2)}`,
+      spaceId: SPACE_ID,
+      source: 'github',
+      topic: PR_EVENT_TOPIC,
+      occurredAt: Date.now(),
+      ingestedAt: Date.now(),
+      dedupeKey: `dedupe-markfailed-${Math.random().toString(36).slice(2)}`,
       summary: 'Codex approved',
       payload: {},
     };

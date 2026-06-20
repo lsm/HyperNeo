@@ -289,4 +289,69 @@ describe('ChannelRouter rate-limit deferral', () => {
 
     scheduler.cancel(run.id, gate.id);
   });
+
+  test('onGateDataChangedComplete fires on both immediate and deferred-retry paths', async () => {
+    const workflow = buildWorkflow(rateLimitScriptGate());
+    const run = createActiveRun(workflow.id);
+    const completeCalls: Array<{ runId: string; gateId: string; activated: number }> = [];
+    let calls = 0;
+    const scheduledCallbacks: Array<() => void> = [];
+    // Stub scheduler: capture the callback so the test can fire it manually
+    // instead of waiting 60s for the production backoff floor.
+    const scheduler = {
+      schedule: (_runId: string, _gateId: string, _retryAfterMs: number, callback: () => void) => {
+        scheduledCallbacks.push(callback);
+      },
+      cancel: () => {},
+      has: () => scheduledCallbacks.length > 0,
+      getFireAt: () => undefined,
+    } as unknown as GateRetryScheduler;
+    const router = makeRouter({
+      scriptExecutor: async () => {
+        calls++;
+        // First eval: rate-limited. Retry eval (calls===2): succeed.
+        if (calls === 1) {
+          return {
+            success: false,
+            data: {},
+            error: 'HTTP 403: rate limit exceeded',
+            rateLimited: true,
+            retryAfterMs: 30,
+          };
+        }
+        return { success: true, data: {}, error: null };
+      },
+      gateRetryScheduler: scheduler,
+      onGateDataChangedComplete: (runId: string, gateId: string, activated: unknown[]) => {
+        completeCalls.push({
+          runId,
+          gateId,
+          activated: Array.isArray(activated) ? activated.length : 0,
+        });
+      },
+    } as ConstructorParameters<typeof ChannelRouter>[0]);
+
+    // Immediate path: rate-limited → schedules retry, complete-hook fires
+    // synchronously with activated=[].
+    await router.onGateDataChanged(run.id, 'rate-limit-gate');
+    expect(calls).toBe(1);
+    expect(completeCalls).toEqual([{ runId: run.id, gateId: 'rate-limit-gate', activated: 0 }]);
+    expect(scheduledCallbacks).toHaveLength(1);
+
+    // Manually fire the scheduled retry callback (mirrors what the production
+    // GateRetryScheduler timer does after the backoff elapses). The callback
+    // wraps the async router call in `void`, so drain the microtask queue.
+    scheduledCallbacks[0]!();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(calls).toBe(2);
+
+    // Retry path: complete-hook fired again without going through any
+    // service-level wrapper — this is the gap that previously bypassed the
+    // PR auto-subscription sync.
+    expect(completeCalls.length).toBe(2);
+    expect(completeCalls[1]).toMatchObject({
+      runId: run.id,
+      gateId: 'rate-limit-gate',
+    });
+  });
 });

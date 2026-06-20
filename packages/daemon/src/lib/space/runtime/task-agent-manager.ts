@@ -1677,6 +1677,13 @@ export class TaskAgentManager {
         internalEventBus: this.config.internalEventBus,
         onGatePendingApproval: (runId, gateId) =>
           this.config.spaceRuntimeService.handleGatePendingApproval(runId, gateId),
+        onGateDataChangedComplete: (runId, _gateId, activatedTasks) => {
+          // Same deferred-retry coverage as the nodeAgentChannelRouter wiring.
+          void this.config.spaceRuntimeService.syncBlockedRunPrEventSubscription(
+            runId,
+            activatedTasks
+          );
+        },
         getPrUrlForRun: (runId) => this.resolvePrUrlForRun(runId),
       });
 
@@ -3609,6 +3616,18 @@ export class TaskAgentManager {
       internalEventBus: this.config.internalEventBus,
       onGatePendingApproval: (runId, gateId) =>
         this.config.spaceRuntimeService.handleGatePendingApproval(runId, gateId),
+      onGateDataChangedComplete: (runId, _gateId, activatedTasks) => {
+        // Catches the deferred retry path: when a rate-limited gate eval
+        // schedules a refresh via gateRetryScheduler, the retry fires
+        // router.onGateDataChanged directly and bypasses the service-level
+        // post-hook wired in onGateDataChanged above. Route those retry
+        // completions through the same sync so PR auto-subscriptions are
+        // created/cleared consistently.
+        void this.config.spaceRuntimeService.syncBlockedRunPrEventSubscription(
+          runId,
+          activatedTasks
+        );
+      },
       getPrUrlForRun: (runId) => this.resolvePrUrlForRun(runId),
     });
     const agentMessageRouter = new AgentMessageRouter({

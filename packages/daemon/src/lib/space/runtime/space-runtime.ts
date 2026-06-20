@@ -1393,6 +1393,32 @@ export class SpaceRuntime {
   }
 
   /**
+   * Sync the PR-event auto-subscription for a run that just transitioned to
+   * `blocked` via direct `workflowRunRepo.transitionStatus(...)` paths that
+   * bypass {@link transitionRunStatusAndEmit} (markFailed RPC, gate rejection
+   * in space-agent-tools, etc.).
+   *
+   * Resolves the PR URL from gate data / artifacts (same resolver used at
+   * runtime) and calls {@link registerPrEventSubscriptionForRun}. No-op when
+   * the run is not actually blocked or no PR URL can be resolved. Idempotent.
+   */
+  notifyRunBlocked(workflowRunId: string): { subscribed: boolean; reason?: string } {
+    const run = this.config.workflowRunRepo.getRun(workflowRunId);
+    if (!run || run.status !== 'blocked') {
+      return { subscribed: false, reason: `run status is ${run?.status ?? 'unknown'}` };
+    }
+    const prUrl = this.resolvePrUrlForRun(workflowRunId);
+    if (!prUrl) {
+      return { subscribed: false, reason: 'no resolvable PR URL' };
+    }
+    const result = this.registerPrEventSubscriptionForRun(workflowRunId, prUrl);
+    if (!result.success) {
+      return { subscribed: false, reason: result.error };
+    }
+    return { subscribed: true };
+  }
+
+  /**
    * Remove auto-subscribed GitHub PR event subscriptions for a workflow run.
    *
    * Only removes subscriptions whose `subscriptionKind === 'auto'` — i.e.
@@ -1440,7 +1466,16 @@ export class SpaceRuntime {
   private async handleExternalEvent(payload: ExternalEventPublishedPayload): Promise<void> {
     const store = this.config.externalEventStore;
     if (!store) return;
-    const matches = this.lookupSubscriptionTargets(payload.topic).filter((target) => {
+    const allMatches = this.lookupSubscriptionTargets(payload.topic);
+    // Trigger event-driven gate re-evaluation for blocked runs BEFORE the
+    // delivery filter: a recovery-blocked run may have no live execution to
+    // deliver to, but the gate re-eval hook only needs the PR event itself
+    // to re-open the gate and unblock the workflow. Filtering on
+    // `hasActiveExecutionForRun` here would leave such runs dark until the
+    // 5-min poll cycle.
+    this.fireBlockedRunExternalEventHook(payload, allMatches);
+
+    const matches = allMatches.filter((target) => {
       if (isLongHorizonSubscriptionTarget(target)) return target.spaceId === payload.spaceId;
       const run = this.config.workflowRunRepo.getRun(target.workflowRunId);
       if (!run || run.spaceId !== payload.spaceId) return false;
@@ -1535,12 +1570,6 @@ export class SpaceRuntime {
         );
       }
     }
-
-    // Event-driven gate evaluation: when an external event was delivered (or
-    // queued) for a workflow run currently in `blocked` status, notify the
-    // service so it can re-evaluate gates immediately instead of waiting for
-    // the next poll cycle. Triggered once per (runId, event) pair.
-    this.fireBlockedRunExternalEventHook(payload, matches);
   }
 
   private fireBlockedRunExternalEventHook(
