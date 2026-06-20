@@ -350,9 +350,12 @@ describe('SDKMessageRepository', () => {
       const { messages, hasMore } = repository.getSDKMessages('session-1', 2);
       const metadataMessages = repository.getBackgroundTaskMessages('session-1');
 
-      expect(messages.map((message) => (message as { subtype?: string }).subtype)).toEqual([
-        undefined,
+      // Order-independent: back-to-back saves can share a millisecond, which
+      // makes `getSDKMessages`' timestamp-DESC ordering nondeterministic
+      // between the user row and the task_notification row.
+      expect(messages.map((message) => (message as { subtype?: string }).subtype).sort()).toEqual([
         'task_notification',
+        undefined,
       ]);
       expect(metadataMessages.map((message) => (message as { subtype?: string }).subtype)).toEqual([
         'task_started',
@@ -492,7 +495,10 @@ describe('SDKMessageRepository', () => {
       const { messages } = repository.getSDKMessages('session-1', 2);
 
       expect(messages).toHaveLength(2);
-      expect(messages.map((message) => message.type)).toEqual(['user', 'assistant']);
+      // Order-independent: back-to-back saves can share a millisecond, which
+      // makes `getSDKMessages`' timestamp-DESC ordering nondeterministic
+      // between the user and assistant rows.
+      expect(messages.map((message) => message.type).sort()).toEqual(['assistant', 'user']);
     });
 
     it('should include visible system rows in session pagination', () => {
