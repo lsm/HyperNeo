@@ -280,6 +280,18 @@ export interface SpaceRuntimeConfig {
    * Fire-and-forget; errors are logged and swallowed by the runtime.
    */
   onRunBlocked?: (runId: string) => Promise<void> | void;
+  /**
+   * Optional hook invoked inside `executeTick` after recovery completes and
+   * BEFORE `redispatchPublishedEventsWithoutDeliveries` runs. Wired by
+   * `SpaceRuntimeService` to rebuild PR-event auto-subscriptions for blocked
+   * runs before the redispatch sweep re-processes crash-pending PR events —
+   * without this, those events hit an empty topic trie and get marked
+   * `ignored`, blocking the event-driven gate-eval path on the first
+   * post-restart tick.
+   *
+   * Awaited by the runtime so the trie is fully populated before redispatch.
+   */
+  onBeforeRedispatch?: () => Promise<void> | void;
 }
 
 interface StartWorkflowRunOptions {
@@ -1584,7 +1596,10 @@ export class SpaceRuntime {
       const runId = target.workflowRunId;
       if (visitedRunIds.has(runId)) continue;
       const run = this.config.workflowRunRepo.getRun(runId);
-      if (!run || run.status !== 'blocked') continue;
+      // Match the delivery filter's spaceId guard: a PR event published for
+      // space A must not trigger gate re-eval for a blocked run in space B
+      // even when both runs auto-subscribed to the same GitHub PR.
+      if (!run || run.status !== 'blocked' || run.spaceId !== payload.spaceId) continue;
       visitedRunIds.add(runId);
       try {
         const result = hook({ runId, event: payload });
@@ -3343,6 +3358,20 @@ export class SpaceRuntime {
         await this.recoverStalledRuns();
         this.rehydrated = true;
         this.acceptingExternalEvents = true;
+        // Give the service a chance to rebuild in-memory subscriptions
+        // (e.g. PR-event auto-subs for blocked runs) BEFORE the redispatch
+        // sweep re-processes crash-pending events. Without this, the first
+        // post-restart redispatch sees an empty topic trie and marks PR
+        // events as ignored, breaking the event-driven gate-eval path.
+        if (this.config.onBeforeRedispatch) {
+          try {
+            await this.config.onBeforeRedispatch();
+          } catch (err) {
+            log.warn(
+              `SpaceRuntime: onBeforeRedispatch failed: ${err instanceof Error ? err.message : String(err)}`
+            );
+          }
+        }
         this.redispatchPublishedEventsWithoutDeliveries();
       }
 

@@ -23,6 +23,7 @@ import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agen
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager';
 import { SpaceRuntimeService } from '../../../../src/lib/space/runtime/space-runtime-service';
+import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime';
 import type { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager';
 import { GateDataRepository } from '../../../../src/storage/repositories/gate-data-repository';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
@@ -744,5 +745,126 @@ describe('SpaceRuntimeService event-driven gate evaluation', () => {
     };
     await ctx.eventService.publish(event);
     expect(ctx.injected.length).toBeGreaterThanOrEqual(1);
+  });
+
+  test('onBlockedRunExternalEvent respects spaceId — cross-space PR events do not fire gate re-eval', async () => {
+    const ctx = await setup({
+      gates: [
+        {
+          id: 'approval',
+          fields: [approvedField, prUrlField],
+        },
+      ],
+      channels: [{ id: 'ch-code-to-review', from: 'coder', to: 'reviewer', gateId: 'approval' }],
+    });
+    const workflow = ctx.workflowManager.listWorkflows(SPACE_ID)[0]!;
+    const { runId } = await seedBlockedRunWithPr(ctx, workflow.id);
+
+    // Pre-satisfy the gate so any re-eval would open it.
+    ctx.gateDataRepo.merge(runId, 'approval', { approved: true, approvedAt: Date.now() });
+
+    // Publish the PR event under a DIFFERENT space id via the bus directly
+    // (bypassing ExternalEventStore which has an FK on spaceId). The
+    // auto-subscription matches by topic, but the hook must reject the run
+    // because its spaceId does not match the event's spaceId.
+    await (
+      ctx.service.runtime as unknown as {
+        internalEventBus: {
+          publish: (event: string, payload: unknown) => Promise<unknown>;
+        };
+      }
+    ).internalEventBus.publish('externalEvent.published', {
+      namespaceId: 'space-other',
+      spaceId: 'space-other',
+      eventId: `evt-x-space-${Math.random().toString(36).slice(2)}`,
+      source: 'github',
+      topic: PR_EVENT_TOPIC,
+      dedupeKey: `dedupe-x-space-${Math.random().toString(36).slice(2)}`,
+      summary: 'cross-space',
+      payload: {},
+      occurredAt: Date.now(),
+      ingestedAt: Date.now(),
+    });
+    // Let the fire-and-forget hook chain drain.
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // Hook skipped at the runtime guard (run.spaceId !== payload.spaceId)
+    // so the run stays blocked and no notification fires.
+    expect(ctx.workflowRunRepo.getRun(runId)?.status).toBe('blocked');
+    expect(ctx.runtimeNotifications).toHaveLength(0);
+  });
+
+  test('transitionBlockedRunToInProgress clears stale failureReason on resume', async () => {
+    const ctx = await setup({
+      gates: [
+        {
+          id: 'approval',
+          fields: [approvedField, prUrlField],
+        },
+      ],
+      channels: [{ id: 'ch-code-to-review', from: 'coder', to: 'reviewer', gateId: 'approval' }],
+    });
+    const workflow = ctx.workflowManager.listWorkflows(SPACE_ID)[0]!;
+    const { runId } = await seedBlockedRunWithPr(ctx, workflow.id);
+    // Confirm the seeded failureReason is what we expect to clear.
+    expect(ctx.workflowRunRepo.getRun(runId)?.failureReason).toBe('agentCrash');
+
+    // Pre-satisfy the gate so the event-driven re-eval opens it.
+    ctx.gateDataRepo.merge(runId, 'approval', { approved: true, approvedAt: Date.now() });
+
+    await ctx.service.handleBlockedRunExternalEvent({
+      runId,
+      event: {
+        namespaceId: SPACE_ID,
+        spaceId: SPACE_ID,
+        eventId: `evt-clear-reason-${Math.random().toString(36).slice(2)}`,
+        source: 'github',
+        topic: PR_EVENT_TOPIC,
+        dedupeKey: `dedupe-clear-reason-${Math.random().toString(36).slice(2)}`,
+        summary: 'Codex approved',
+        payload: {},
+        occurredAt: Date.now(),
+        ingestedAt: Date.now(),
+      },
+    });
+    // Let the fire-and-forget hook chain drain.
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    const updated = ctx.workflowRunRepo.getRun(runId);
+    expect(updated?.status).toBe('in_progress');
+    // failureReason must be cleared (repo maps NULL → undefined on read).
+    expect(updated?.failureReason ?? null).toBeNull();
+  });
+
+  test('onBeforeRedispatch hook fires inside the first executeTick before redispatch sweep', async () => {
+    const calls: number[] = [];
+    // Construct a runtime directly so we can inject the hook before start().
+    const db = makeDb();
+    const workflowRunRepo = new SpaceWorkflowRunRepository(db);
+    const taskRepo = new SpaceTaskRepository(db);
+    const nodeExecutionRepo = new NodeExecutionRepository(db);
+    const workflowManager = new SpaceWorkflowManager(new SpaceWorkflowRepository(db));
+    const bus = new InternalEventBus<DaemonInternalEventMap>();
+    const commandBus = createInternalCommandBus();
+    const runtime = new SpaceRuntime({
+      db,
+      spaceManager: new SpaceManager(db),
+      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+      spaceWorkflowManager: workflowManager,
+      workflowRunRepo,
+      taskRepo,
+      nodeExecutionRepo,
+      internalEventBus: bus,
+      commandBus,
+      externalEventStore: new ExternalEventStore(db),
+      tickIntervalMs: 60_000,
+      onBeforeRedispatch: async () => {
+        calls.push(Date.now());
+      },
+    });
+    // Bypass the normal start() path (which would also schedule ticks) and
+    // drive executeTick directly so the recovery branch runs once.
+    await runtime.executeTick();
+    expect(calls.length).toBeGreaterThanOrEqual(1);
   });
 });

@@ -313,6 +313,13 @@ export class SpaceRuntimeService {
         // registered so subsequent GitHub events match a target.
         void this.notifyRunBlocked(runId);
       },
+      onBeforeRedispatch: async () => {
+        // Rebuild PR auto-subs for blocked runs before the first redispatch
+        // sweep so crash-pending PR events find a matching target instead of
+        // being marked ignored. Runs after recovery completes inside the
+        // first executeTick().
+        await this.rehydrateBlockedRunPrEventSubscriptions();
+      },
     });
   }
 
@@ -982,11 +989,9 @@ export class SpaceRuntimeService {
       await this.provisionExistingSpaces();
       await this.recoverLongTermAgentInbox();
       await this.recoverStalledWorkflowRuns();
-      // Re-register auto-subscriptions for blocked runs that had a PR URL
-      // persisted before the daemon restarted. Without this, the in-memory
-      // topic trie is empty after restart and PR events for blocked runs
-      // have no matching target until some other gate write happens.
-      await this.rehydrateBlockedRunPrEventSubscriptions();
+      // PR auto-subscription rehydration is wired via the runtime's
+      // onBeforeRedispatch hook so it runs inside the first executeTick,
+      // before the redispatch sweep re-processes crash-pending events.
     })().catch((err) => {
       log.error('Failed to provision existing spaces during startup:', err);
     });
@@ -2015,14 +2020,21 @@ export class SpaceRuntimeService {
     if (!run || run.status !== 'blocked') return;
     const updated = this.config.workflowRunRepo.transitionStatus(runId, 'in_progress');
     if (updated) {
+      // Clear any stale failureReason left by the prior block path
+      // (agentCrash / humanRejected / execution_failed). Without this the
+      // resumed run — and later its terminal record — would still report
+      // the old failure reason, mismatching its in_progress / done status.
+      const cleanedRun = run.failureReason
+        ? (this.config.workflowRunRepo.updateRun(runId, { failureReason: null }) ?? updated)
+        : updated;
       this.promoteCanonicalTaskAfterRunResume(runId);
       if (this.config.internalEventBus) {
         this.config.internalEventBus
           .publish('space.workflowRun.updated', {
             sessionId: 'global',
-            spaceId: updated.spaceId,
-            runId: updated.id,
-            run: updated,
+            spaceId: cleanedRun.spaceId,
+            runId: cleanedRun.id,
+            run: cleanedRun,
           })
           .catch((err) => {
             log.warn(
