@@ -187,6 +187,7 @@ function createPullRequestRow(number: number): Record<string, unknown> {
   return {
     id: number * 10,
     number,
+    state: 'open',
     title: `PR ${number}`,
     body: `Body ${number}`,
     html_url: `https://github.com/acme/widgets/pull/${number}`,
@@ -2448,6 +2449,52 @@ describe('GitHubEventExtension', () => {
       const published = received.filter((event) => event.payload.eventType === 'reaction');
       expect(published).toHaveLength(1);
       expect(published[0].dedupeKey).toBe('acme/widgets:reaction:2');
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('closed PRs do not occupy reaction-poll target slots', async () => {
+    const db = setupDb();
+    const { service } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    const calledReactions: number[] = [];
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls')) {
+        // Newest-first; first 5 are closed, next 5 are open.
+        const closed = Array.from({ length: 5 }, (_, i) => ({
+          ...createPullRequestRow(100 - i),
+          state: 'closed',
+        }));
+        const open = Array.from({ length: 5 }, (_, i) => createPullRequestRow(90 - i));
+        return pollingResponse([...closed, ...open]);
+      }
+      const match = path.match(/\/issues\/(\d+)\/reactions$/);
+      if (match) {
+        calledReactions.push(Number(match[1]));
+        return pollingResponse([]);
+      }
+      return pollingResponse([]);
+    }) as typeof fetch;
+
+    try {
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      // Closed PRs (100..96) must be filtered out; only open PRs (90..86) polled.
+      expect(calledReactions).toEqual([90, 89, 88, 87, 86]);
     } finally {
       await extension.stop();
     }

@@ -1190,18 +1190,18 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       const endpointWatermark =
         savedEndpointWatermark > 0 ? savedEndpointWatermark : watermarks.committed;
       const since = endpointWatermark ? new Date(endpointWatermark).toISOString() : undefined;
-      if (since) query.set('since', since);
+      // Seed reaction-poll targets on upgrade: a cursor from before reaction
+      // polling shipped may have an `etags.pulls` entry but no
+      // `recentPullRequestNumbers`. Suppress both `If-None-Match` and `since`
+      // for that one pulls fetch so GitHub returns the full newest list (an
+      // empty delta under `since` would leave reaction targets unseeded until
+      // unrelated PR metadata changes).
+      const pullsNeedsSeed = endpoint.key === 'pulls' && recentPullRequestNumbers.length === 0;
+      if (since && !pullsNeedsSeed) query.set('since', since);
       query.set('per_page', '100');
       query.set('page', String(page));
       const url = `${base}${endpoint.path}?${query.toString()}`;
       const headers = gitHubPollingHeaders(token);
-      // Seed reaction-poll targets on upgrade: a cursor from before reaction
-      // polling shipped may have an `etags.pulls` entry but no
-      // `recentPullRequestNumbers`. A 304 on the pulls endpoint would then
-      // leave the reaction loop with no PRs to poll until unrelated PR
-      // metadata changes. Skip the If-None-Match for the pulls endpoint until
-      // at least one PR number is tracked so the first cycle populates the list.
-      const pullsNeedsSeed = endpoint.key === 'pulls' && recentPullRequestNumbers.length === 0;
       if (page === 1 && etags[endpoint.key] && !pullsNeedsSeed) {
         headers['If-None-Match'] = etags[endpoint.key];
       }
@@ -1272,6 +1272,10 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         // contains older PRs and must not displace the newest ones.
         const freshNumbers: number[] = [];
         for (const row of rows) {
+          // Reaction approvals are only meaningful on open PRs under review;
+          // a +1 on a closed/merged PR is irrelevant and would occupy a slot
+          // that an active open PR needs. Filter to open state.
+          if (!isPullRequestOpen(row)) continue;
           const prNumber = pullRequestNumberFrom(row);
           if (prNumber && !freshNumbers.includes(prNumber)) freshNumbers.push(prNumber);
         }
@@ -1322,7 +1326,14 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     // rate-limit budget is tight so comments/reviews/PR metadata keep flowing.
     for (const prNumber of recentPullRequestNumbers.slice(0, REACTION_POLL_PR_LIMIT)) {
       if (partialScan) break;
-      if (!canPollReactions(latestRateLimit?.remaining)) break;
+      if (!canPollReactions(latestRateLimit?.remaining)) {
+        // Budget too low to poll the remaining PRs: do NOT advance the shared
+        // watermark this cycle. Otherwise the stale-reaction guard would mark
+        // skipped +1s as seen next cycle and never publish them. ETags make the
+        // next cycle's primary-endpoint re-poll cheap (304s are free).
+        partialScan = true;
+        break;
+      }
       const query = new URLSearchParams({ per_page: '100' });
       const reactionHeaders = gitHubPollingHeaders(token);
       if (reactionEtags[prNumber]) reactionHeaders['If-None-Match'] = reactionEtags[prNumber];
@@ -1355,6 +1366,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         } else {
           this.applyRateLimit(reactionRateLimit);
         }
+        partialScan = true;
         break;
       }
       if (!response.ok) {
@@ -1373,6 +1385,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
             limited: true,
             retryAfter: true,
           });
+          partialScan = true;
           break;
         }
         continue;
@@ -1561,6 +1574,12 @@ function pullRequestNumberFrom(row: unknown): number {
   if (!row || typeof row !== 'object') return 0;
   const number = (row as { number?: unknown }).number;
   return typeof number === 'number' ? number : 0;
+}
+
+function isPullRequestOpen(row: unknown): boolean {
+  if (!row || typeof row !== 'object') return false;
+  const state = (row as { state?: unknown }).state;
+  return state === 'open';
 }
 
 function isPositiveReaction(row: unknown): boolean {
