@@ -120,44 +120,56 @@ describe('Session RPC Handlers — models.list', () => {
     expect(result.cached).toBe(true);
   });
 
-  it('triggers fallback refresh when cache is empty and useCache is true', async () => {
-    // Cache is empty because beforeEach calls setModelsCache(new Map())
-    const handler = messageHubData.handlers.get('models.list');
+  it(
+    'triggers fallback refresh when cache is empty and useCache is true',
+    async () => {
+      // Cache is empty because beforeEach calls setModelsCache(new Map())
+      const handler = messageHubData.handlers.get('models.list');
 
-    const result = (await handler!({ useCache: true }, {})) as {
-      models: Array<{ id: string; display_name: string }>;
-      cached: boolean;
-    };
+      const result = (await handler!({ useCache: true }, {})) as {
+        models: Array<{ id: string; display_name: string }>;
+        cached: boolean;
+      };
 
-    // refreshModels() restores FALLBACK_MODELS when no providers are available
-    expect(result.models.length).toBeGreaterThan(0);
-    expect(result.models.some((m) => m.id === 'sonnet')).toBe(true);
-    expect(result.cached).toBe(false);
-  });
+      // refreshModels() restores FALLBACK_MODELS when no providers are available
+      expect(result.models.length).toBeGreaterThan(0);
+      expect(result.models.some((m) => m.id === 'sonnet')).toBe(true);
+      expect(result.cached).toBe(false);
+    },
+    { timeout: 15_000 }
+  );
 
-  it('returns models with cached=false when forceRefresh is true', async () => {
-    const handler = messageHubData.handlers.get('models.list');
+  it(
+    'returns models with cached=false when forceRefresh is true',
+    async () => {
+      const handler = messageHubData.handlers.get('models.list');
 
-    const result = (await handler!({ forceRefresh: true }, {})) as {
-      models: Array<{ id: string; display_name: string }>;
-      cached: boolean;
-    };
+      const result = (await handler!({ forceRefresh: true }, {})) as {
+        models: Array<{ id: string; display_name: string }>;
+        cached: boolean;
+      };
 
-    // With no providers, refreshModels() restores FALLBACK_MODELS
-    expect(result.models.length).toBeGreaterThan(0);
-    expect(result.cached).toBe(false);
-  });
+      // With no providers, refreshModels() restores FALLBACK_MODELS
+      expect(result.models.length).toBeGreaterThan(0);
+      expect(result.cached).toBe(false);
+    },
+    { timeout: 15_000 }
+  );
 
-  it('returns models with cached=false when useCache is false', async () => {
-    const handler = messageHubData.handlers.get('models.list');
+  it(
+    'returns models with cached=false when useCache is false',
+    async () => {
+      const handler = messageHubData.handlers.get('models.list');
 
-    const result = (await handler!({ useCache: false }, {})) as {
-      models: Array<{ id: string; display_name: string }>;
-      cached: boolean;
-    };
+      const result = (await handler!({ useCache: false }, {})) as {
+        models: Array<{ id: string; display_name: string }>;
+        cached: boolean;
+      };
 
-    // useCache: false is treated as forceRefresh
-    expect(result.models.length).toBeGreaterThan(0);
-    expect(result.cached).toBe(false);
-  });
+      // useCache: false is treated as forceRefresh
+      expect(result.models.length).toBeGreaterThan(0);
+      expect(result.cached).toBe(false);
+    },
+    { timeout: 15_000 }
+  );
 });

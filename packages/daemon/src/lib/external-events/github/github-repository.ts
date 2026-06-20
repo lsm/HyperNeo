@@ -6,6 +6,27 @@ export interface PollCursor {
   pendingLastSeenAt?: number;
   etags?: Record<string, string>;
   processedPages?: Record<string, number>;
+  recentPullRequestNumbers?: number[];
+  seenReactionIds?: Record<string, boolean>;
+  /**
+   * Per-PR reaction-list ETags. Sent as `If-None-Match` on the
+   * `/issues/{n}/reactions` request so unchanged reaction lists short-circuit
+   * with a 304 and cost nothing against the rate-limit budget. Cleared for a
+   * PR when it falls out of `recentPullRequestNumbers`.
+   */
+  reactionEtags?: Record<number, string>;
+  /**
+   * Per-endpoint high-water mark for events already published. Used after a
+   * partial scan (e.g. low rate-limit remaining) so processed endpoints can
+   * resume from their own watermark while skipped endpoints still use the
+   * shared `lastSeenAt`.
+   */
+  endpointLastSeenAt?: Record<string, number>;
+  /**
+   * Per-endpoint pending high-water marks while that endpoint is paginating.
+   * Committed into `endpointLastSeenAt` only once the endpoint backlog clears.
+   */
+  endpointPendingLastSeenAt?: Record<string, number>;
 }
 
 export interface GitHubWatchedRepo {

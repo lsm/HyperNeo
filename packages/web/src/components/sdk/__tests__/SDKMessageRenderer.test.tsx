@@ -207,7 +207,7 @@ describe('SDKMessageRenderer', () => {
       expect(container.textContent).toContain('tokens');
     });
 
-    it('should suppress thinking token system messages (not rendered through main renderer)', () => {
+    it('should render hidden subtypes as null (thinking_tokens)', () => {
       const message = {
         type: 'system',
         subtype: 'thinking_tokens',
@@ -219,23 +219,34 @@ describe('SDKMessageRenderer', () => {
 
       const { container } = render(<SDKMessageRenderer message={message} />);
 
-      // thinking_tokens messages should be suppressed (return null from SDKSystemMessage)
-      expect(container.firstChild).toBeNull();
+      // thinking_tokens is now hidden - should render nothing
+      expect(container.innerHTML).toBe('');
     });
 
-    it('should render session state system messages through the main renderer', () => {
-      const message = {
-        type: 'system',
-        subtype: 'session_state_changed',
-        state: 'requires_action',
-        uuid: createUUID(),
-        session_id: 'test-session',
-      } as unknown as SDKMessage;
+    it('should render all hidden system subtypes as null', () => {
+      for (const subtype of [
+        'session_state_changed',
+        'commands_changed',
+        'hook_started',
+        'hook_progress',
+        'task_started',
+        'task_progress',
+        'task_updated',
+        'mirror_error',
+        'elicitation_complete',
+      ]) {
+        const message = {
+          type: 'system',
+          subtype,
+          state: 'requires_action',
+          uuid: createUUID(),
+          session_id: 'test-session',
+        } as unknown as SDKMessage;
 
-      const { container } = render(<SDKMessageRenderer message={message} />);
+        const { container } = render(<SDKMessageRenderer message={message} />);
 
-      expect(container.textContent).toContain('Session state');
-      expect(container.textContent).toContain('requires_action');
+        expect(container.innerHTML).toBe('');
+      }
     });
 
     it('should render worker shutdown messages only at the live tail', () => {
@@ -371,6 +382,26 @@ describe('SDKMessageRenderer', () => {
       const { container } = render(<SDKMessageRenderer message={message} />);
 
       // Subagent messages should be filtered out
+      expect(container.innerHTML).toBe('');
+    });
+
+    it('should skip agent_id-scoped permission_denied messages nested under a Task', () => {
+      const message = {
+        type: 'system',
+        subtype: 'permission_denied',
+        tool_name: 'Bash',
+        agent_id: 'toolu_parent123',
+        message: 'Auto-denied by mode',
+        uuid: createUUID(),
+        session_id: 'test-session',
+      } as unknown as SDKMessage;
+
+      const subagentMessagesMap = new Map<string, SDKMessage[]>([['toolu_parent123', [message]]]);
+
+      const { container } = render(
+        <SDKMessageRenderer message={message} subagentMessagesMap={subagentMessagesMap} />
+      );
+
       expect(container.innerHTML).toBe('');
     });
   });

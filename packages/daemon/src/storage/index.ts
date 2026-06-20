@@ -218,6 +218,10 @@ export class Database {
     return this.sdkMessageRepo.getSDKMessages(sessionId, limit, before, since);
   }
 
+  getBackgroundTaskMessages(sessionId: string): Array<ChatMessage & { timestamp: number }> {
+    return this.sdkMessageRepo.getBackgroundTaskMessages(sessionId);
+  }
+
   getSDKMessagesByType(
     sessionId: string,
     messageType: string,

@@ -48,6 +48,7 @@ import {
   type GateScriptExecutorFn,
   type GateScriptExecutorContext,
 } from '../runtime/gate-evaluator';
+import { RATE_LIMIT_MIN_BACKOFF_MS } from '../runtime/rate-limit-detector';
 import type { AgentMessageRouter } from '../runtime/agent-message-router';
 import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
@@ -258,10 +259,19 @@ export async function evaluateTerminalGateFeatures(
         prUrl: freshPrUrl || scriptContext.prUrl,
       });
       if (!result.open) {
+        const rateLimited = result.rateLimited ?? false;
+        const retryAfterMs = rateLimited
+          ? (result.retryAfterMs ?? RATE_LIMIT_MIN_BACKOFF_MS)
+          : undefined;
+        const baseReason = result.reason ?? `Gate "${gate.id}" blocked terminal action.`;
         return jsonResult({
           success: false,
-          error: result.reason ?? `Gate "${gate.id}" blocked terminal action.`,
+          error: rateLimited
+            ? `${baseReason} (rate-limited: retry after ${retryAfterMs}ms)`
+            : baseReason,
           gateId: gate.id,
+          rateLimited,
+          retryAfterMs,
         });
       }
     }
@@ -340,6 +350,13 @@ export interface NodeAgentToolsConfig {
    * When absent, nodes are activated at the next `deliverMessage` call instead.
    */
   onGateDataChanged?: (runId: string, gateId: string) => Promise<unknown>;
+  /**
+   * Optional shared retry scheduler for deferred gate-data refreshes after
+   * rate-limited gate writes/delivery. When provided, `send_message` schedules
+   * refreshes through this scheduler so retries are coalesced across all
+   * node-agent sessions for the same run/gate.
+   */
+  gateRetryScheduler?: import('../runtime/gate-retry-scheduler').GateRetryScheduler;
   /**
    * Optional script executor for async gate evaluation.
    * When provided, `read_gate` and the gate-write path in `send_message` run
@@ -516,6 +533,9 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
   );
 
   const pendingGateChangeNotifications = new Map<string, Promise<unknown>>();
+  /** Deferred onGateDataChanged retry timers for rate-limited gate writes. */
+  const pendingGateChangeRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const pendingGateChangeRetryFireAt = new Map<string, number>();
 
   async function notifyGateDataChanged(gateId: string): Promise<void> {
     if (!config.onGateDataChanged) return;
@@ -540,6 +560,52 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
         pendingGateChangeNotifications.delete(gateId);
       }
     }
+  }
+
+  /**
+   * Schedules a deferred gate-data refresh after a rate-limited evaluation.
+   *
+   * The shared `GateRetryScheduler` inside `ChannelRouter.onGateDataChanged`
+   * only sees refreshes that actually run; when a `send_message` aborts early
+   * because a gate script hit a GitHub rate limit, we must still re-evaluate
+   * the gate after the cooldown so downstream activation is not stuck.
+   *
+   * Uses the shared scheduler from config when available so retries are
+   * coalesced across all node-agent sessions for the same run/gate.
+   */
+  function deferGateDataChanged(gateId: string, retryAfterMs: number): void {
+    const callback = () => {
+      void notifyGateDataChanged(gateId).catch((err) => {
+        log.warn(
+          `Deferred gate-data refresh failed for gate "${gateId}" in run "${workflowRunId}": ` +
+            (err instanceof Error ? err.message : String(err))
+        );
+      });
+    };
+
+    if (config.gateRetryScheduler) {
+      config.gateRetryScheduler.schedule(workflowRunId, gateId, retryAfterMs, callback);
+      return;
+    }
+
+    // Fallback for tests/contexts without a shared scheduler.
+    const newFireAt = Date.now() + retryAfterMs;
+    const existingFireAt = pendingGateChangeRetryFireAt.get(gateId);
+    if (existingFireAt !== undefined && newFireAt <= existingFireAt) {
+      return;
+    }
+    const existingTimer = pendingGateChangeRetryTimers.get(gateId);
+    if (existingTimer) {
+      clearTimeout(existingTimer);
+    }
+    const timer = setTimeout(() => {
+      pendingGateChangeRetryTimers.delete(gateId);
+      pendingGateChangeRetryFireAt.delete(gateId);
+      callback();
+    }, retryAfterMs);
+    timer.unref?.();
+    pendingGateChangeRetryTimers.set(gateId, timer);
+    pendingGateChangeRetryFireAt.set(gateId, newFireAt);
   }
 
   /** Helper to log MCP write operations to the audit log. */
@@ -980,13 +1046,8 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
                 // Multi-round review history: every time the reviewer writes a
                 // `review_url` to this gate, append an append-only artifact row
                 // so we get one record per cycle (cycle 0, 1, 2 …) without any
-                // deduplication. The per-cycle artifactKey makes each write a
-                // distinct row even though the table uses upsert semantics.
-                //
-                // Note: `comment_urls` is not a gate field (so it's stripped from
-                // `authorizedData`), but we still want to persist it alongside the
-                // review for the audit trail — pull it straight from the original
-                // `data` payload the reviewer supplied.
+                // deduplication. Persist this before any rate-limited early return
+                // so the review record is not lost when the gate script is blocked.
                 if (
                   config.artifactRepo &&
                   gateId === 'review-posted-gate' &&
@@ -1026,6 +1087,15 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
                   }
                 }
 
+                // Audit log + publish the gate data update immediately. Even if the
+                // subsequent gate evaluation is rate-limited, the write itself succeeded
+                // and must be visible to the canvas and recorded.
+                logAudit('send_message', {
+                  target,
+                  gateId: gateWriteResult.gateId,
+                  gateOpen: gateWriteResult.gateOpen,
+                  dataKeys: data ? Object.keys(data) : undefined,
+                });
                 if (internalEventBus) {
                   void internalEventBus
                     .publish('space.gateData.updated', {
@@ -1039,6 +1109,24 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
                       log.warn(`Failed to emit space.gateData.updated for gate "${gateId}":`, err);
                     });
                 }
+
+                // If gate evaluation hit a rate limit, surface the retryable error
+                // immediately instead of proceeding to delivery (which would re-evaluate
+                // the same gate script and make another GitHub call during the cooldown).
+                // Schedule a deferred gate-data refresh so the shared retry scheduler
+                // inside ChannelRouter can re-evaluate after the cooldown.
+                if (evalResult.rateLimited) {
+                  const retryAfterMs = evalResult.retryAfterMs ?? RATE_LIMIT_MIN_BACKOFF_MS;
+                  deferGateDataChanged(gateId, retryAfterMs);
+                  const reason = evalResult.reason ?? `Gate "${gateId}" rate-limited`;
+                  return jsonResult({
+                    success: false,
+                    error: `${reason} (rate-limited: retry after ${retryAfterMs}ms)`,
+                    gateWrite: gateWriteResult,
+                    rateLimited: true,
+                    retryAfterMs,
+                  });
+                }
               }
             }
           }
@@ -1046,16 +1134,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
       }
 
       const gateIdToNotify = gateWriteResult?.gateId;
-
-      // Audit log: gate data writes via send_message
-      if (gateWriteResult) {
-        logAudit('send_message', {
-          target,
-          gateId: gateWriteResult.gateId,
-          gateOpen: gateWriteResult.gateOpen,
-          dataKeys: data ? Object.keys(data) : undefined,
-        });
-      }
 
       const routedTarget =
         translatedTargets.length > 0
@@ -1071,21 +1149,40 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
         data,
       });
 
+      // Fire gate-data-changed callback for non-rate-limited cases (even queued
+      // or failed delivery). When rate-limited, defer the refresh instead of
+      // running it immediately, so the shared retry scheduler re-evaluates after
+      // the cooldown without burning another GitHub call.
       if (gateIdToNotify) {
-        try {
-          await notifyGateDataChanged(gateIdToNotify);
-        } catch (err) {
-          log.warn(
-            `onGateDataChanged failed for gate "${gateIdToNotify}" in run "${workflowRunId}":`,
-            err instanceof Error ? err.message : String(err)
-          );
+        if (result.rateLimited === true) {
+          deferGateDataChanged(gateIdToNotify, result.retryAfterMs ?? RATE_LIMIT_MIN_BACKOFF_MS);
+        } else {
+          try {
+            await notifyGateDataChanged(gateIdToNotify);
+          } catch (err) {
+            log.warn(
+              `onGateDataChanged failed for gate "${gateIdToNotify}" in run "${workflowRunId}":`,
+              err instanceof Error ? err.message : String(err)
+            );
+          }
         }
       }
 
       if (!result.success) {
+        // Rate-limited gate block: surface explicit retry guidance so the
+        // agent does not re-dispatch on the next tick. The error message is
+        // prefixed so callers parsing reason text still see a clear signal.
+        const rateLimited = result.rateLimited === true;
+        const retryAfterMs = rateLimited
+          ? (result.retryAfterMs ?? RATE_LIMIT_MIN_BACKOFF_MS)
+          : undefined;
+        const reason = result.reason ?? 'Message delivery failed.';
+        const error = rateLimited
+          ? `${reason} (rate-limited: retry after ${retryAfterMs}ms)`
+          : reason;
         return jsonResult({
           success: false,
-          error: result.reason ?? 'Message delivery failed.',
+          error,
           delivered: result.delivered.length > 0 ? result.delivered : undefined,
           failed: result.failed.length > 0 ? result.failed : undefined,
           queued: result.queued,
@@ -1093,6 +1190,8 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
           permittedTargets: result.permittedTargets,
           notFoundAgentNames: result.notFoundAgentNames,
           gateWrite: gateWriteResult ?? undefined,
+          rateLimited,
+          retryAfterMs,
         });
       }
 

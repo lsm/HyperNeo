@@ -323,6 +323,7 @@ export default function ChatContainer({
   // Reactive State from sessionStore (via useSignalEffect for re-renders)
   // Moved here before callbacks that depend on it
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [backgroundTaskMessages, setBackgroundTaskMessages] = useState<ChatMessage[]>([]);
   const [session, setSession] = useState(sessionStore.sessionInfo.value);
 
   // ========================================
@@ -401,6 +402,10 @@ export default function ChatContainer({
       }
     }
     setMessages(nextMessages);
+  });
+
+  useSignalEffect(() => {
+    setBackgroundTaskMessages(sessionStore.backgroundTaskMessages.value);
   });
 
   // Sync session info from sessionStore
@@ -1266,6 +1271,7 @@ export default function ChatContainer({
         onBack={onBack}
         titleOverride={titleOverride}
         messages={messages}
+        backgroundTaskMessages={backgroundTaskMessages}
         toolInputsMap={maps.toolInputsMap}
       />
 

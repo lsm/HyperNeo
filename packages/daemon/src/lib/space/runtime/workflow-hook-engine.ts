@@ -29,6 +29,7 @@ import type { WorkflowRunArtifactRepository } from '../../../storage/repositorie
 import type { WorkflowHookStateRepository } from '../../../storage/repositories/workflow-hook-state-repository';
 import type { HookExecutor, HookExecutorContext } from './hook-executor';
 import { ChannelResolver } from './channel-resolver';
+import { isRateLimitError } from './rate-limit-detector';
 import { Logger } from '../../logger';
 import { parseAddress } from '../../../../../messaging/src/address';
 import {
@@ -386,10 +387,12 @@ export class WorkflowHookEngine {
       }
 
       // Pre-check retry backoff / limit for validation hooks so we don't waste
-      // executor runs while a retryable_block cooldown is active.
-      if ((hook.classification ?? 'validation') === 'validation' && hook.retry) {
+      // executor runs while a retryable_block cooldown is active. Dynamic
+      // retryAfterMs results also persist nextRetryAt even when hook.retry is
+      // not configured, so repeated manual attempts respect the same cooldown.
+      if ((hook.classification ?? 'validation') === 'validation') {
         const hookState = this.config.hookStateRepo.get(this.config.workflowRunId, hook.id);
-        const maxAttempts = hook.retry.maxAttempts ?? 0;
+        const maxAttempts = hook.retry?.maxAttempts ?? 0;
         const currentRetryCount = hookState?.retryCount ?? 0;
         const lastResult = hookState?.lastResult;
 
@@ -411,11 +414,22 @@ export class WorkflowHookEngine {
         }
 
         const nextRetryAt = hookState?.nextRetryAt;
-        if (nextRetryAt !== undefined && Date.now() < nextRetryAt) {
+        const shouldEnforceRetryBackoff = Boolean(
+          hook.retry ||
+            (lastResult?.type === 'retryable_block' &&
+              typeof lastResult.retryAfterMs === 'number' &&
+              isRateLimitError(lastResult.reason ?? ''))
+        );
+        if (shouldEnforceRetryBackoff && nextRetryAt !== undefined && Date.now() < nextRetryAt) {
+          const remainingRetryAfterMs = Math.max(0, nextRetryAt - Date.now());
           const result: WorkflowHookResult =
             lastResult?.type === 'retryable_block'
-              ? lastResult
-              : { type: 'retryable_block', reason: 'Retry backoff pending' };
+              ? { ...lastResult, retryAfterMs: remainingRetryAfterMs }
+              : {
+                  type: 'retryable_block',
+                  reason: 'Retry backoff pending',
+                  retryAfterMs: remainingRetryAfterMs,
+                };
           blockedByValidation = { hookId: hook.id, result, isRetryable: true };
           executionLog.push({
             hookId: hook.id,
@@ -486,8 +500,10 @@ export class WorkflowHookEngine {
                 blockedByValidation = { hookId: hook.id, result, isRetryable: true };
               } else {
                 blockedByValidation = { hookId: hook.id, result, isRetryable: true };
-                const delayMs = retryConfig?.delayMs ?? 0;
-                const backoffMultiplier = retryConfig?.backoffMultiplier ?? 1;
+                const delayMs = result.retryAfterMs ?? retryConfig?.delayMs ?? 0;
+                const backoffMultiplier = result.retryAfterMs
+                  ? 1
+                  : (retryConfig?.backoffMultiplier ?? 1);
                 let updateOk = false;
                 for (let attempt = 0; attempt < 3; attempt++) {
                   const currentState = this.config.hookStateRepo.get(
@@ -579,7 +595,7 @@ export class WorkflowHookEngine {
 
       // Reset retry metadata when the hook does not return a retryable_block,
       // so later unrelated actions start with a fresh attempt budget.
-      if (hook.retry && result.type !== 'retryable_block') {
+      if (result.type !== 'retryable_block') {
         let updateOk = false;
         for (let attempt = 0; attempt < 3; attempt++) {
           const currentState = this.config.hookStateRepo.get(this.config.workflowRunId, hook.id);

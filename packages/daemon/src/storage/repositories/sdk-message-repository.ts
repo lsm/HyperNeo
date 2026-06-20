@@ -11,6 +11,7 @@ import type { Database as BunDatabase } from 'bun:sqlite';
 import { generateUUID } from '@neokai/shared';
 import type { MessageOrigin, NeokaiActionMessage, ChatMessage } from '@neokai/shared';
 import type { SDKMessage } from '@neokai/shared/sdk';
+import { HIDDEN_SYSTEM_SUBTYPES } from '@neokai/shared/sdk/type-guards';
 import { Logger } from '../../lib/logger';
 import {
   buildFtsQuery,
@@ -31,6 +32,29 @@ const TERMINAL_SPACE_TASK_STATUSES = new Set(['done', 'cancelled', 'completed'])
 const SEARCHABLE_MESSAGE_TYPES = new Set(['system', 'user', 'assistant']);
 const RENDERABLE_TEXT_MESSAGE_BATCH_SIZE = 50;
 const RENDERABLE_TEXT_MESSAGE_MAX_SCAN = 250;
+
+const LAST_MESSAGE_PROGRESS_SUBTYPES = new Set(['task_started', 'task_progress', 'task_updated']);
+const BACKGROUND_TASK_METADATA_SUBTYPES = ['task_started', 'task_updated', 'task_notification'];
+const BACKGROUND_TASK_METADATA_BATCH_SIZE = 300;
+
+function toSqlStringList(subtypes: Iterable<string>): string {
+  return [...subtypes].map((subtype) => `'${subtype.replace(/'/g, "''")}'`).join(', ');
+}
+
+/** Render-hidden rows excluded before applying chat pagination limits. */
+const EXCLUDED_FROM_PAGINATION_SQL_LIST = toSqlStringList([
+  ...HIDDEN_SYSTEM_SUBTYPES,
+  'thinking_tokens',
+]);
+
+const BACKGROUND_TASK_METADATA_SQL_LIST = toSqlStringList(BACKGROUND_TASK_METADATA_SUBTYPES);
+
+/** Last-message idle checks only drop rows that carry no progress signal. */
+const EXCLUDED_FROM_LAST_MESSAGE_SQL_LIST = toSqlStringList([
+  ...[...HIDDEN_SYSTEM_SUBTYPES].filter((subtype) => !LAST_MESSAGE_PROGRESS_SUBTYPES.has(subtype)),
+  'thinking_tokens',
+  'model_refusal_fallback',
+]);
 
 function isOlderThanMessageSearchTtl(value: string | number | null | undefined): boolean {
   if (value === null || value === undefined) return false;
@@ -582,7 +606,7 @@ export class SDKMessageRepository {
       WHERE session_id = ?
         AND parent_tool_use_id IS NULL
         AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))
-        AND COALESCE(message_subtype,'') != 'thinking_tokens'
+        AND COALESCE(message_subtype, '') NOT IN (${EXCLUDED_FROM_PAGINATION_SQL_LIST})
         AND (
           message_type != 'system'
           OR COALESCE(message_subtype, '') != 'informational'
@@ -687,7 +711,7 @@ export class SDKMessageRepository {
       const subagentQuery = `SELECT id, sdk_message, timestamp FROM sdk_messages
        WHERE session_id = ?
          AND parent_tool_use_id IN (${placeholders})
-         AND COALESCE(message_subtype,'') != 'thinking_tokens'
+         AND COALESCE(message_subtype, '') NOT IN (${EXCLUDED_FROM_PAGINATION_SQL_LIST})
          AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))
         ORDER BY timestamp ASC`;
       const subagentParams: SQLiteValue[] = [sessionId, ...Array.from(toolUseIds)];
@@ -729,6 +753,86 @@ export class SDKMessageRepository {
       >,
       hasMore,
     };
+  }
+
+  getBackgroundTaskMessages(sessionId: string): Array<ChatMessage & { timestamp: number }> {
+    const rows = this.db
+      .prepare(
+        `WITH recent_metadata AS (
+           SELECT
+             id,
+             sdk_message,
+             timestamp,
+             origin,
+             rowid,
+             COALESCE(
+               CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.task_id') END,
+               task_id
+             ) AS task_id
+           FROM sdk_messages
+           WHERE session_id = ?
+             AND parent_tool_use_id IS NULL
+             AND COALESCE(message_subtype, '') IN (${BACKGROUND_TASK_METADATA_SQL_LIST})
+           ORDER BY timestamp DESC, rowid DESC
+           LIMIT ?
+         ),
+         recent_task_ids AS (
+           SELECT DISTINCT task_id
+           FROM recent_metadata
+           WHERE task_id IS NOT NULL AND task_id != ''
+         ),
+         task_starts AS (
+           SELECT
+             id,
+             sdk_message,
+             timestamp,
+             origin,
+             rowid,
+             COALESCE(
+               CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.task_id') END,
+               task_id
+             ) AS task_id
+           FROM sdk_messages
+           WHERE session_id = ?
+             AND parent_tool_use_id IS NULL
+             AND COALESCE(message_subtype, '') = 'task_started'
+             AND COALESCE(
+               CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.task_id') END,
+               task_id
+             ) IN (SELECT task_id FROM recent_task_ids)
+             AND id NOT IN (SELECT id FROM recent_metadata)
+         )
+         SELECT id, sdk_message, timestamp, origin
+         FROM (
+           SELECT * FROM recent_metadata
+           UNION ALL
+           SELECT * FROM task_starts
+         )
+         ORDER BY timestamp DESC, rowid DESC`
+      )
+      .all(sessionId, BACKGROUND_TASK_METADATA_BATCH_SIZE, sessionId) as Array<{
+      id: string;
+      sdk_message: string;
+      timestamp: string;
+      origin: MessageOrigin | null;
+    }>;
+
+    return rows
+      .map((row) => {
+        let sdkMessage: SDKMessage;
+        try {
+          sdkMessage = JSON.parse(row.sdk_message) as SDKMessage;
+        } catch {
+          sdkMessage = { type: 'unknown', rawContent: row.sdk_message } as unknown as SDKMessage;
+        }
+        return {
+          ...sdkMessage,
+          id: row.id,
+          timestamp: new Date(row.timestamp).getTime(),
+          origin: row.origin ?? undefined,
+        } as unknown as ChatMessage & { timestamp: number };
+      })
+      .reverse();
   }
 
   /**
@@ -815,7 +919,7 @@ export class SDKMessageRepository {
       `SELECT id, sdk_message, timestamp FROM sdk_messages
 	       WHERE session_id = ?
 		       AND parent_tool_use_id IS NULL
-		       AND COALESCE(message_subtype, '') NOT IN ('thinking_tokens', 'session_state_changed', 'commands_changed', 'model_refusal_fallback')
+		       AND COALESCE(message_subtype, '') NOT IN (${EXCLUDED_FROM_LAST_MESSAGE_SQL_LIST})
 		       AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))
 	       ORDER BY timestamp DESC, rowid DESC
 	       LIMIT 1`
@@ -839,6 +943,7 @@ export class SDKMessageRepository {
       `SELECT COUNT(*) as count FROM sdk_messages
        WHERE session_id = ?
          AND parent_tool_use_id IS NULL
+         AND COALESCE(message_subtype, '') NOT IN (${EXCLUDED_FROM_PAGINATION_SQL_LIST})
          AND (message_type != 'user' OR COALESCE(send_status, 'consumed') = 'consumed')`
     );
     const result = stmt.get(sessionId) as { count: number };
@@ -959,8 +1064,17 @@ export class SDKMessageRepository {
     sdk_message: string;
     timestamp: string;
   }): SDKMessage & { dbId: string; timestamp: number } {
+    let message: SDKMessage;
+    try {
+      message = JSON.parse(row.sdk_message) as SDKMessage;
+    } catch {
+      // Malformed persisted JSON (rare, but possible for legacy/corrupted rows).
+      // Return an unknown sentinel so callers like `getLastSDKMessage` and the
+      // Space runtime idle/liveness checks degrade gracefully instead of throwing.
+      message = { type: 'unknown', rawContent: row.sdk_message } as unknown as SDKMessage;
+    }
     return {
-      ...(JSON.parse(row.sdk_message) as SDKMessage),
+      ...message,
       dbId: row.id,
       // DB timestamp (epoch ms) overrides the SDK's ISO string timestamp for persisted messages
       timestamp: new Date(row.timestamp).getTime(),

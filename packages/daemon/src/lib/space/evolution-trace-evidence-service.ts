@@ -11,6 +11,7 @@ const TRACE_EVIDENCE_KINDS: EvidenceKind[] = [
   'test_failure',
   'permission_block',
   'slow_tool_call',
+  'verification_triage',
 ];
 const EDIT_TOOL_NAMES = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit']);
 const VERIFICATION_PATTERN =
@@ -46,6 +47,12 @@ export interface TraceEvidenceDiagnostic {
 export interface CaptureTraceEvidenceForTaskResult {
   evidence: EvidenceRef[];
   diagnostic: TraceEvidenceDiagnostic;
+}
+
+interface FrictionDigestTopPattern {
+  category: string;
+  count: number;
+  example: string | null;
 }
 
 interface TraceRow {
@@ -93,6 +100,15 @@ interface SlowToolCallRecord {
   sessionId: string;
 }
 
+interface VerificationTriageRecord {
+  key: string;
+  command: string;
+  category: ToolResultRecord['category'];
+  failures: ToolResultRecord[];
+  resolvedBy: ToolResultRecord | null;
+  suspectedFix: string;
+}
+
 interface TraceAnalysis {
   rows: TraceRow[];
   toolUses: ToolUseRecord[];
@@ -111,6 +127,7 @@ interface TraceAnalysis {
   }>;
   fileChurn: Array<{ filePath: string; editCount: number }>;
   firstPassingVerification: ToolResultRecord | null;
+  verificationTriages: VerificationTriageRecord[];
 }
 
 export class EvolutionTraceEvidenceService {
@@ -168,6 +185,32 @@ export class EvolutionTraceEvidenceService {
       evidence,
       diagnostic: buildTraceDiagnostic('generated', rows.length, analysis, evidence.length),
     };
+  }
+
+  buildFrictionDigest(scopeId: string, taskId: string): EvidenceRef | null {
+    const task = this.deps.taskRepo.getTask(taskId);
+    if (!task) throw new Error(`Task not found: ${taskId}`);
+    const rows = this.loadTraceRows(task.id);
+    if (rows.length === 0) return null;
+    const analysis = analyzeTrace(rows);
+    if (!hasProcessFriction(analysis)) return null;
+
+    const params = buildFrictionDigestParams(scopeId, task, analysis);
+    const existing = this.deps.evolutionRepo
+      .listEvidence(scopeId)
+      .find(
+        (item) =>
+          item.kind === 'friction_digest' &&
+          item.sourceId === task.id &&
+          item.metadata.frictionDigestFingerprint === params.metadata?.frictionDigestFingerprint
+      );
+    if (existing) {
+      return this.deps.evolutionRepo.updateEvidence(existing.id, {
+        summary: params.summary,
+        metadata: params.metadata,
+      });
+    }
+    return this.deps.evolutionRepo.createEvidence(params);
   }
 
   private loadTraceRows(taskId: string): TraceRow[] {
@@ -320,6 +363,13 @@ function analyzeTrace(rows: TraceRow[]): TraceAnalysis {
     ];
   });
 
+  const verificationTriages = Array.from(
+    groupBy(
+      toolResults.filter((result) => result.hasToolUse && isVerificationCategory(result.category)),
+      retryKey
+    ).entries()
+  ).flatMap(([key, results]) => detectVerificationTriages(key, results, toolUses));
+
   const verificationSuccesses = toolResults.filter(
     (result) => !result.failed && (result.category === 'test' || result.category === 'verification')
   );
@@ -341,6 +391,7 @@ function analyzeTrace(rows: TraceRow[]): TraceAnalysis {
       .filter(([, editCount]) => editCount > 1)
       .map(([filePath, editCount]) => ({ filePath, editCount })),
     firstPassingVerification,
+    verificationTriages,
   };
 }
 
@@ -383,6 +434,29 @@ function buildEvidenceParams(
         messageCountBeforeFirstPassingVerification:
           messageCountBeforeFirstPassingVerification(analysis),
         rawTraceRefs: rawRefs([...loop.failuresBeforeSuccess, loop.success], analysis),
+      },
+    });
+  }
+
+  for (const triage of analysis.verificationTriages) {
+    const refs = triage.resolvedBy ? [...triage.failures, triage.resolvedBy] : triage.failures;
+    const resolutionNote = triage.resolvedBy
+      ? `Resolved on retry: ${triage.command} passed after ${triage.failures.length} failed attempt${plural(triage.failures.length)}.`
+      : null;
+    params.push({
+      scopeId,
+      kind: 'verification_triage',
+      sourceId: task.id,
+      summary: `Verification triage: '${triage.command}' failed ${triage.failures.length} time${plural(triage.failures.length)} (${triage.category}). Suspected fix: ${triage.suspectedFix}${resolutionNote ? ` [${resolutionNote}]` : ''}`,
+      metadata: {
+        ...base,
+        traceFingerprint: `verification_triage:${triage.key}:${triage.failures[0].toolUseId ?? triage.failures[0].rowId}`,
+        command: triage.command,
+        category: triage.category,
+        attemptCount: triage.failures.length,
+        suspectedFix: triage.suspectedFix,
+        resolutionNote,
+        rawTraceRefs: rawRefs(refs, analysis),
       },
     });
   }
@@ -466,8 +540,204 @@ function buildBaseMetadata(task: SpaceTask, analysis: TraceAnalysis): Record<str
     testFailureCycles: analysis.testFailures.length,
     permissionBlockCount: analysis.permissionBlocks.length,
     slowToolCallCount: analysis.slowToolCalls.length,
+    verificationTriageCount: analysis.verificationTriages.length,
     fileChurn: analysis.fileChurn,
     messageCount: analysis.rows.length,
+    traceSpan: {
+      startMessageId: analysis.rows[0]?.id ?? null,
+      endMessageId: analysis.rows.at(-1)?.id ?? null,
+    },
+  };
+}
+
+const FRICTION_DIGEST_CATEGORY_LABELS: Record<string, string> = {
+  repeatedError: 'repeated_error',
+  retryLoop: 'retry_loop',
+  slowToolCall: 'slow_tool_call',
+  verificationFailure: 'verification_failure',
+  permissionBlock: 'permission_block',
+  toolFailure: 'tool_failure',
+};
+
+function buildFrictionDigestParams(
+  scopeId: string,
+  task: SpaceTask,
+  analysis: TraceAnalysis
+): CreateEvidenceRefParams {
+  const verificationFailureResults = analysis.toolResults.filter(
+    (result) => result.failed && (result.category === 'test' || result.category === 'verification')
+  );
+  const repeatedErrorResults = new Set(
+    analysis.repeatedErrors.flatMap((cluster) => cluster.results)
+  );
+  const retryLoopFailureResults = new Set(
+    analysis.retryLoops.flatMap((loop) => loop.failuresBeforeSuccess)
+  );
+  const toolFailureResults = analysis.toolResults.filter(
+    (result) =>
+      result.failed &&
+      (result.category === 'tool' || result.category === 'edit') &&
+      !repeatedErrorResults.has(result) &&
+      !retryLoopFailureResults.has(result)
+  );
+
+  const counts = {
+    repeatedError: analysis.repeatedErrors.length,
+    retryLoop: analysis.retryLoops.length,
+    slowToolCall: analysis.slowToolCalls.length,
+    verificationFailure: verificationFailureResults.length,
+    permissionBlock: analysis.permissionBlocks.length,
+    toolFailure: toolFailureResults.length,
+  };
+  const totalFrictionSignals = Object.values(counts).reduce((sum, count) => sum + count, 0);
+  const topPattern = resolveTopFrictionPattern(analysis, counts, {
+    verificationFailureResults,
+    toolFailureResults,
+  });
+  const summary = `Friction digest: ${frictionDigestSummary(counts)}. Dominant pattern: ${topPattern.category}${topPattern.count > 1 ? ` (${topPattern.count})` : ''}.`;
+
+  return {
+    scopeId,
+    kind: 'friction_digest',
+    sourceId: task.id,
+    summary,
+    metadata: {
+      autoCaptured: true,
+      frictionDigest: true,
+      traceCaptureVersion: TRACE_CAPTURE_VERSION,
+      frictionDigestFingerprint: `friction_digest:${task.id}`,
+      taskId: task.id,
+      workflowRunId: task.workflowRunId ?? null,
+      counts,
+      totalFrictionSignals,
+      topPattern,
+      rawTraceRefs: frictionDigestRawRefs(analysis),
+    },
+  };
+}
+
+function frictionDigestSummary(counts: Record<string, number>): string {
+  return Object.entries(counts)
+    .filter(([, count]) => count > 0)
+    .map(([key, count]) => `${FRICTION_DIGEST_CATEGORY_LABELS[key] ?? key} ${count}`)
+    .join(', ');
+}
+
+function resolveTopFrictionPattern(
+  analysis: TraceAnalysis,
+  counts: Record<string, number>,
+  context: {
+    verificationFailureResults: ToolResultRecord[];
+    toolFailureResults: ToolResultRecord[];
+  }
+): FrictionDigestTopPattern {
+  const candidates = [
+    {
+      category: 'repeated_error',
+      count: counts.repeatedError,
+      example: topRepeatedErrorExample(analysis),
+    },
+    {
+      category: 'retry_loop',
+      count: counts.retryLoop,
+      example: topRetryLoopExample(analysis),
+    },
+    {
+      category: 'slow_tool_call',
+      count: counts.slowToolCall,
+      example: topSlowToolExample(analysis),
+    },
+    {
+      category: 'verification_failure',
+      count: counts.verificationFailure,
+      example: topVerificationExample(context.verificationFailureResults),
+    },
+    {
+      category: 'permission_block',
+      count: counts.permissionBlock,
+      example: topPermissionExample(analysis),
+    },
+    {
+      category: 'tool_failure',
+      count: counts.toolFailure,
+      example: topToolFailureExample(context.toolFailureResults),
+    },
+  ].filter((candidate) => candidate.count > 0);
+
+  if (candidates.length === 0) {
+    return { category: 'tool_failure', count: 0, example: null };
+  }
+
+  candidates.sort((a, b) => b.count - a.count);
+  const top = candidates[0] as FrictionDigestTopPattern;
+  return top;
+}
+
+function topRepeatedErrorExample(analysis: TraceAnalysis): string | null {
+  if (analysis.repeatedErrors.length === 0) return null;
+  const top = analysis.repeatedErrors.slice().sort((a, b) => b.count - a.count)[0];
+  return top?.fingerprint ?? null;
+}
+
+function topRetryLoopExample(analysis: TraceAnalysis): string | null {
+  if (analysis.retryLoops.length === 0) return null;
+  const top = analysis.retryLoops
+    .slice()
+    .sort((a, b) => b.failuresBeforeSuccess.length - a.failuresBeforeSuccess.length)[0];
+  return top?.key ?? null;
+}
+
+function topSlowToolExample(analysis: TraceAnalysis): string | null {
+  if (analysis.slowToolCalls.length === 0) return null;
+  const top = analysis.slowToolCalls.slice().sort((a, b) => b.durationMs - a.durationMs)[0];
+  return top ? `${top.toolName}:${top.commandKey}` : null;
+}
+
+function topVerificationExample(results: ToolResultRecord[]): string | null {
+  if (results.length === 0) return null;
+  const byKey = groupBy(results, (result) => result.commandKey);
+  const top = Array.from(byKey.entries()).sort((a, b) => b[1].length - a[1].length)[0];
+  return top?.[0] ?? null;
+}
+
+function topPermissionExample(analysis: TraceAnalysis): string | null {
+  if (analysis.permissionBlocks.length === 0) return null;
+  const byTool = groupBy(analysis.permissionBlocks, (result) => result.toolName);
+  const top = Array.from(byTool.entries()).sort((a, b) => b[1].length - a[1].length)[0];
+  return top?.[0] ?? null;
+}
+
+function topToolFailureExample(results: ToolResultRecord[]): string | null {
+  if (results.length === 0) return null;
+  const byFingerprint = groupBy(results, (result) => result.fingerprint);
+  const top = Array.from(byFingerprint.entries()).sort((a, b) => b[1].length - a[1].length)[0];
+  return top?.[0] ?? null;
+}
+
+function frictionDigestRawRefs(analysis: TraceAnalysis): Record<string, unknown> {
+  const failed = analysis.toolResults.filter((result) => result.failed);
+  const slow = analysis.slowToolCalls;
+  const rowIds = unique([
+    ...failed.map((result) => result.rowId),
+    ...slow.map((call) => call.rowId),
+  ]);
+  const sessionIds = unique([
+    ...failed.map((result) => result.sessionId),
+    ...slow.map((call) => call.sessionId),
+  ]);
+  const toolUseIds = unique([
+    ...failed.flatMap((result) => (result.toolUseId ? [result.toolUseId] : [])),
+    ...slow.map((call) => call.toolUseId),
+  ]);
+  const indices = failed
+    .map((result) => result.messageIndex)
+    .filter((index) => Number.isFinite(index));
+  return {
+    sessionIds,
+    messageIds: rowIds,
+    toolUseIds,
+    messageIndexRange:
+      indices.length > 0 ? { start: Math.min(...indices), end: Math.max(...indices) } : null,
     traceSpan: {
       startMessageId: analysis.rows[0]?.id ?? null,
       endMessageId: analysis.rows.at(-1)?.id ?? null,
@@ -481,7 +751,8 @@ function hasProcessFriction(analysis: TraceAnalysis): boolean {
     analysis.repeatedErrors.length > 0 ||
     analysis.retryLoops.length > 0 ||
     analysis.permissionBlocks.length > 0 ||
-    analysis.slowToolCalls.length > 0
+    analysis.slowToolCalls.length > 0 ||
+    analysis.verificationTriages.length > 0
   );
 }
 
@@ -589,6 +860,117 @@ function detectRetryLoops(
     pendingFailures = [];
   }
   return loops;
+}
+
+function isVerificationCategory(category: ToolResultRecord['category']): boolean {
+  return category === 'test' || category === 'verification';
+}
+
+const SOURCE_FILE_EXTENSIONS = new Set([
+  'ts',
+  'tsx',
+  'js',
+  'jsx',
+  'py',
+  'go',
+  'rs',
+  'java',
+  'kt',
+  'swift',
+  'cpp',
+  'c',
+  'h',
+  'md',
+  'json',
+  'yml',
+  'yaml',
+  'toml',
+  'css',
+  'html',
+]);
+
+function extractFilePaths(text: string): string[] {
+  const paths: string[] = [];
+  const seen = new Set<string>();
+  for (const token of text.split(/[\s\n\r,:"'`()[\]{}]+/)) {
+    const trimmed = token.trim();
+    if (!trimmed) continue;
+    const ext = trimmed.split('.').pop()?.toLowerCase() ?? '';
+    if (!SOURCE_FILE_EXTENSIONS.has(ext)) continue;
+    const looksLikeFile =
+      trimmed.includes('/') || trimmed.includes('\\') || /^[\w.-]+\.[a-zA-Z0-9]+$/.test(trimmed);
+    if (!looksLikeFile) continue;
+    const short = trimmed.slice(0, 120);
+    if (seen.has(short)) continue;
+    seen.add(short);
+    paths.push(short);
+  }
+  return paths;
+}
+
+function suspectedFixForTriage(
+  triage: Pick<VerificationTriageRecord, 'failures' | 'command'>,
+  toolUses: ToolUseRecord[]
+): string {
+  const errorPaths = unique(
+    triage.failures.flatMap((failure) => extractFilePaths(failure.text))
+  ).slice(0, 3);
+  if (errorPaths.length > 0) {
+    return `Address failures in ${errorPaths.join(', ')}`;
+  }
+
+  const firstFailure = triage.failures[0];
+  const firstFailureTime = firstFailure?.timestamp;
+  const sessionId = firstFailure?.sessionId;
+  if (firstFailureTime !== undefined && sessionId !== undefined) {
+    const recentEdit = toolUses
+      .filter(
+        (use) =>
+          use.sessionId === sessionId &&
+          EDIT_TOOL_NAMES.has(use.name) &&
+          use.timestamp <= firstFailureTime &&
+          readFilePath(use.input)
+      )
+      .sort((a, b) => b.timestamp - a.timestamp)[0];
+    const recentPath = recentEdit ? readFilePath(recentEdit.input) : null;
+    if (recentPath) {
+      return `Review recent edit to ${recentPath}`;
+    }
+  }
+
+  return `Review recent changes and re-run ${triage.command}`;
+}
+
+function detectVerificationTriages(
+  key: string,
+  results: ToolResultRecord[],
+  toolUses: ToolUseRecord[]
+): VerificationTriageRecord[] {
+  const triages: VerificationTriageRecord[] = [];
+  let pending: ToolResultRecord[] = [];
+
+  const flush = (resolvedBy: ToolResultRecord | null) => {
+    if (pending.length < 2) {
+      pending = [];
+      return;
+    }
+    const command = pending[0].commandKey;
+    const category = pending[0].category;
+    const suspectedFix = suspectedFixForTriage({ failures: pending, command }, toolUses);
+    triages.push({ key, command, category, failures: pending, resolvedBy, suspectedFix });
+    pending = [];
+  };
+
+  for (const result of results) {
+    if (result.failed && isVerificationCategory(result.category)) {
+      pending.push(result);
+      continue;
+    }
+    flush(result);
+  }
+  flush(null);
+
+  return triages;
 }
 
 function normalizeCommand(command: string): string {

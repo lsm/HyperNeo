@@ -17,6 +17,7 @@ describe('EvolutionTraceEvidenceService', () => {
   let goalRepo: SpaceGoalRepository;
   let taskRepo: SpaceTaskRepository;
   let scopeService: EvolutionScopeService;
+  let traceEvidenceService: EvolutionTraceEvidenceService;
   let spaceId: string;
   let sequence: number;
 
@@ -31,7 +32,7 @@ describe('EvolutionTraceEvidenceService', () => {
       db as never,
       new GateOpenStateRepository(db as never)
     );
-    const traceEvidenceService = new EvolutionTraceEvidenceService({
+    traceEvidenceService = new EvolutionTraceEvidenceService({
       db: db as never,
       evolutionRepo,
       taskRepo,
@@ -410,6 +411,182 @@ describe('EvolutionTraceEvidenceService', () => {
     expect(traceEvidence).toEqual([]);
   });
 
+  it('emits verification_triage after repeated verification failures', () => {
+    const { scope, task } = createScopedTask('Repeated verification failures');
+    insertToolExchange(
+      task.id,
+      'session-1',
+      'check-1',
+      'Bash',
+      { command: 'bun run check' },
+      true,
+      {
+        text: 'Typecheck failed in src/auth.ts',
+      }
+    );
+    insertToolExchange(
+      task.id,
+      'session-1',
+      'check-2',
+      'Bash',
+      { command: 'bun run check' },
+      true,
+      {
+        text: 'Lint failed in src/auth.ts',
+      }
+    );
+
+    scopeService.attachTaskEvidence({ taskId: task.id });
+
+    const triage = listTraceEvidence(scope.id).find((item) => item.kind === 'verification_triage');
+    expect(triage).toBeTruthy();
+    expect(triage?.metadata.command).toBe('bun run check');
+    expect(triage?.metadata.category).toBe('verification');
+    expect(triage?.metadata.attemptCount).toBe(2);
+    expect(triage?.metadata.suspectedFix).toContain('src/auth.ts');
+    expect(triage?.metadata.resolutionNote).toBeNull();
+  });
+
+  it('appends a resolution note when verification eventually passes', () => {
+    const { scope, task } = createScopedTask('Verification resolved');
+    insertToolExchange(task.id, 'session-1', 'test-1', 'Bash', { command: 'bun test' }, true, {
+      text: 'Tests failed in src/auth.test.ts',
+    });
+    insertToolExchange(task.id, 'session-1', 'test-2', 'Bash', { command: 'bun test' }, true, {
+      text: 'Tests still failed in src/auth.test.ts',
+    });
+    insertToolExchange(task.id, 'session-1', 'test-3', 'Bash', { command: 'bun test' }, false, {
+      text: 'All tests passed',
+    });
+
+    scopeService.attachTaskEvidence({ taskId: task.id });
+
+    const triage = listTraceEvidence(scope.id).find((item) => item.kind === 'verification_triage');
+    expect(triage).toBeTruthy();
+    expect(triage?.metadata.attemptCount).toBe(2);
+    expect(triage?.metadata.resolutionNote).toContain('passed');
+    expect(triage?.summary).toContain('Resolved on retry');
+  });
+
+  it('suggests a recent edit as suspected fix when error text has no file path', () => {
+    const { scope, task } = createScopedTask('Verification triage fallback fix');
+    insertToolExchange(
+      task.id,
+      'session-1',
+      'edit-1',
+      'Edit',
+      { file_path: 'src/auth.ts' },
+      false,
+      {
+        text: 'ok',
+      }
+    );
+    insertToolExchange(
+      task.id,
+      'session-1',
+      'check-1',
+      'Bash',
+      { command: 'bun run check' },
+      true,
+      {
+        text: 'Checks failed with no file mentioned',
+      }
+    );
+    insertToolExchange(
+      task.id,
+      'session-1',
+      'check-2',
+      'Bash',
+      { command: 'bun run check' },
+      true,
+      {
+        text: 'Checks still failing',
+      }
+    );
+
+    scopeService.attachTaskEvidence({ taskId: task.id });
+
+    const triage = listTraceEvidence(scope.id).find((item) => item.kind === 'verification_triage');
+    expect(triage).toBeTruthy();
+    expect(triage?.metadata.suspectedFix).toContain('src/auth.ts');
+  });
+
+  it('extracts file paths from path:line:col compiler output', () => {
+    const { scope, task } = createScopedTask('Compiler path line col');
+    insertToolExchange(
+      task.id,
+      'session-1',
+      'check-1',
+      'Bash',
+      { command: 'bun run check' },
+      true,
+      {
+        text: 'Error at src/auth.ts:42:13',
+      }
+    );
+    insertToolExchange(
+      task.id,
+      'session-1',
+      'check-2',
+      'Bash',
+      { command: 'bun run check' },
+      true,
+      {
+        text: 'at foo (src/auth.ts:43:12)',
+      }
+    );
+
+    scopeService.attachTaskEvidence({ taskId: task.id });
+
+    const triage = listTraceEvidence(scope.id).find((item) => item.kind === 'verification_triage');
+    expect(triage).toBeTruthy();
+    expect(triage?.metadata.suspectedFix).toContain('src/auth.ts');
+  });
+
+  it('does not use edits from other sessions as suspected fix', () => {
+    const { scope, task } = createScopedTask('Session scoped fallback fix');
+    insertToolExchange(
+      task.id,
+      'session-2',
+      'edit-other',
+      'Edit',
+      { file_path: 'src/other.ts' },
+      false,
+      {
+        text: 'ok',
+      }
+    );
+    insertToolExchange(
+      task.id,
+      'session-1',
+      'check-1',
+      'Bash',
+      { command: 'bun run check' },
+      true,
+      {
+        text: 'Checks failed with no file mentioned',
+      }
+    );
+    insertToolExchange(
+      task.id,
+      'session-1',
+      'check-2',
+      'Bash',
+      { command: 'bun run check' },
+      true,
+      {
+        text: 'Checks still failing',
+      }
+    );
+
+    scopeService.attachTaskEvidence({ taskId: task.id });
+
+    const triage = listTraceEvidence(scope.id).find((item) => item.kind === 'verification_triage');
+    expect(triage).toBeTruthy();
+    expect(triage?.metadata.suspectedFix).not.toContain('src/other.ts');
+    expect(triage?.metadata.suspectedFix).toContain('re-run');
+  });
+
   it('retains raw trace span references in metadata without storing transcript dumps', () => {
     const { scope, task } = createScopedTask('Raw refs');
     insertToolExchange(task.id, 'session-1', 'edit-1', 'Edit', { file_path: '/tmp/a.ts' }, true, {
@@ -431,6 +608,257 @@ describe('EvolutionTraceEvidenceService', () => {
     expect(JSON.stringify(toolFailure?.metadata)).not.toContain(
       'Full transcript text should not be copied'
     );
+  });
+
+  it('creates friction digest evidence when manually attaching task evidence', () => {
+    const { scope, task } = createScopedTask('Manual attach digest');
+    insertToolExchange(
+      task.id,
+      'session-1',
+      'check-1',
+      'Bash',
+      { command: 'bun run check' },
+      true,
+      {
+        text: 'Typecheck failed in foo.ts',
+      }
+    );
+
+    scopeService.attachTaskEvidence({ taskId: task.id });
+
+    const digest = evolutionRepo
+      .listEvidence(scope.id)
+      .find((item) => item.kind === 'friction_digest');
+    expect(digest).toBeTruthy();
+    expect(digest?.metadata.counts).toMatchObject({
+      verificationFailure: 1,
+      toolFailure: 0,
+    });
+    expect(digest?.metadata.topPattern).toMatchObject({
+      category: 'verification_failure',
+      count: 1,
+      example: 'bun run check',
+    });
+  });
+
+  describe('buildFrictionDigest', () => {
+    it('returns null when there are no trace rows', () => {
+      const { scope, task } = createScopedTask('No trace');
+      const digest = traceEvidenceService.buildFrictionDigest(scope.id, task.id);
+      expect(digest).toBeNull();
+    });
+
+    it('returns null when the trace has no friction', () => {
+      const { scope, task } = createScopedTask('Clean trace');
+      insertToolExchange(
+        task.id,
+        'session-1',
+        'tool-clean',
+        'Bash',
+        { command: 'bun test' },
+        false,
+        {
+          text: '1 pass',
+        }
+      );
+      const digest = traceEvidenceService.buildFrictionDigest(scope.id, task.id);
+      expect(digest).toBeNull();
+    });
+
+    it('creates a friction_digest evidence row summarizing repeated errors', () => {
+      const { scope, task } = createScopedTask('Repeated error digest');
+      insertToolExchange(task.id, 'session-1', 'tool-1', 'Bash', { command: 'bun test' }, true, {
+        text: 'Error: expected 1 to be 2',
+      });
+      insertToolExchange(task.id, 'session-1', 'tool-2', 'Bash', { command: 'bun test' }, true, {
+        text: 'Error: expected 3 to be 4',
+      });
+
+      const digest = traceEvidenceService.buildFrictionDigest(scope.id, task.id);
+
+      expect(digest).toBeTruthy();
+      expect(digest?.kind).toBe('friction_digest');
+      expect(digest?.metadata.counts).toEqual({
+        repeatedError: 1,
+        retryLoop: 0,
+        slowToolCall: 0,
+        verificationFailure: 2,
+        permissionBlock: 0,
+        toolFailure: 0,
+      });
+      expect(digest?.metadata.totalFrictionSignals).toBe(3);
+      expect(digest?.metadata.topPattern).toMatchObject({
+        category: 'verification_failure',
+        count: 2,
+      });
+      expect(digest?.summary).toContain('Dominant pattern:');
+      expect(digest?.metadata.rawTraceRefs).toMatchObject({
+        sessionIds: ['session-1'],
+        toolUseIds: ['tool-1', 'tool-2'],
+      });
+    });
+
+    it('identifies retry loops and counts the verification failures inside them', () => {
+      const { scope, task } = createScopedTask('Retry loop dominant');
+      insertToolExchange(
+        task.id,
+        'session-1',
+        'check-1',
+        'Bash',
+        { command: 'bun run check' },
+        true,
+        {
+          text: 'Typecheck failed',
+        }
+      );
+      insertToolExchange(
+        task.id,
+        'session-1',
+        'check-2',
+        'Bash',
+        { command: 'bun run check' },
+        true,
+        {
+          text: 'Lint failed',
+        }
+      );
+      insertToolExchange(
+        task.id,
+        'session-1',
+        'check-3',
+        'Bash',
+        { command: 'bun run check' },
+        false,
+        {
+          text: 'All checks passed',
+        }
+      );
+
+      const digest = traceEvidenceService.buildFrictionDigest(scope.id, task.id);
+
+      expect(digest?.metadata.counts).toEqual({
+        repeatedError: 0,
+        retryLoop: 1,
+        slowToolCall: 0,
+        verificationFailure: 2,
+        permissionBlock: 0,
+        toolFailure: 0,
+      });
+      expect(digest?.metadata.totalFrictionSignals).toBe(3);
+      expect(digest?.metadata.topPattern).toMatchObject({
+        category: 'verification_failure',
+        count: 2,
+        example: 'bun run check',
+      });
+    });
+
+    it('counts generic tool failures alongside specific friction buckets', () => {
+      const { scope, task } = createScopedTask('Mixed friction digest');
+      insertToolExchange(
+        task.id,
+        'session-1',
+        'blocked-1',
+        'Bash',
+        { command: 'rm -rf /tmp/x' },
+        true,
+        {
+          text: 'Permission denied: operation not permitted',
+        }
+      );
+      insertToolExchange(task.id, 'session-1', 'edit-1', 'Edit', { file_path: '/tmp/a.ts' }, true, {
+        text: 'String to replace not found in file',
+      });
+
+      const digest = traceEvidenceService.buildFrictionDigest(scope.id, task.id);
+
+      expect(digest?.metadata.counts).toEqual({
+        repeatedError: 0,
+        retryLoop: 0,
+        slowToolCall: 0,
+        verificationFailure: 0,
+        permissionBlock: 1,
+        toolFailure: 1,
+      });
+      expect(digest?.metadata.totalFrictionSignals).toBe(2);
+      expect(digest?.metadata.topPattern.category).toBe('permission_block');
+    });
+
+    it('includes slow tool calls in the digest counts', () => {
+      const { scope, task } = createScopedTask('Slow call digest');
+      insertMessage(task.id, 'session-1', 'assistant', {
+        type: 'assistant',
+        uuid: 'slow-assistant',
+        session_id: 'session-1',
+        message: {
+          role: 'assistant',
+          content: [
+            { type: 'tool_use', id: 'tool-slow', name: 'Bash', input: { command: 'curl x' } },
+          ],
+        },
+      });
+      insertMessage(task.id, 'session-1', 'user', {
+        type: 'user',
+        uuid: 'slow-result',
+        session_id: 'session-1',
+        message: {
+          role: 'user',
+          content: [
+            { type: 'tool_result', tool_use_id: 'tool-slow', is_error: false, content: 'ok' },
+          ],
+        },
+      });
+      db.prepare(`UPDATE sdk_messages SET timestamp = ? WHERE id = ?`).run(
+        new Date(1_700_000_060_000).toISOString(),
+        'message-2'
+      );
+
+      const digest = traceEvidenceService.buildFrictionDigest(scope.id, task.id);
+
+      expect(digest?.metadata.counts.slowToolCall).toBe(1);
+      expect(digest?.metadata.topPattern).toMatchObject({
+        category: 'slow_tool_call',
+        count: 1,
+      });
+    });
+
+    it('updates the same friction_digest evidence row when called repeatedly', () => {
+      const { scope, task } = createScopedTask('Digest refresh');
+      insertToolExchange(task.id, 'session-1', 'tool-1', 'Bash', { command: 'bun test' }, true, {
+        text: 'Error: first failure',
+      });
+      const first = traceEvidenceService.buildFrictionDigest(scope.id, task.id) as EvidenceRef;
+      insertToolExchange(task.id, 'session-1', 'tool-2', 'Bash', { command: 'bun test' }, true, {
+        text: 'Error: second failure',
+      });
+      const second = traceEvidenceService.buildFrictionDigest(scope.id, task.id) as EvidenceRef;
+
+      expect(second.id).toBe(first.id);
+      expect(second.metadata.totalFrictionSignals).toBeGreaterThan(
+        first.metadata.totalFrictionSignals
+      );
+      expect(
+        evolutionRepo.listEvidence(scope.id).filter((item) => item.kind === 'friction_digest')
+      ).toHaveLength(1);
+    });
+
+    it('creates a generic tool_failure signal when no more specific friction evidence is emitted', () => {
+      const { scope, task } = createScopedTask('Generic tool failure digest');
+      insertToolExchange(task.id, 'session-1', 'edit-1', 'Edit', { file_path: '/tmp/a.ts' }, true, {
+        text: 'String to replace not found in file',
+      });
+
+      const digest = traceEvidenceService.buildFrictionDigest(scope.id, task.id);
+
+      expect(digest?.metadata.counts).toEqual({
+        repeatedError: 0,
+        retryLoop: 0,
+        slowToolCall: 0,
+        verificationFailure: 0,
+        permissionBlock: 0,
+        toolFailure: 1,
+      });
+      expect(digest?.metadata.topPattern.category).toBe('tool_failure');
+    });
   });
 
   function createScopedTask(title: string) {
