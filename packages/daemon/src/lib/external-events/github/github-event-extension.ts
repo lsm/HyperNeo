@@ -1329,7 +1329,24 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       const reactionRateLimit = parseRateLimitHeaders(response);
       latestRateLimit = mergeRateLimitInfo(latestRateLimit, reactionRateLimit);
       if (reactionRateLimit.limited) {
-        this.applyRateLimit(reactionRateLimit);
+        // Mirror the primary-endpoint branch: a 429 that does not exhaust the
+        // primary bucket (remaining > 0 and no Retry-After) is a secondary /
+        // abuse limit. Applying the primary reset window here would stall all
+        // polling for up to an hour; use the minimum secondary backoff instead.
+        if (
+          response.status === 429 &&
+          reactionRateLimit.remaining > 0 &&
+          !reactionRateLimit.retryAfter
+        ) {
+          this.applyRateLimit({
+            remaining: reactionRateLimit.remaining,
+            resetAt: Date.now() + RATE_LIMIT_MIN_BACKOFF_MS,
+            limited: true,
+            retryAfter: true,
+          });
+        } else {
+          this.applyRateLimit(reactionRateLimit);
+        }
         break;
       }
       if (!response.ok) {
