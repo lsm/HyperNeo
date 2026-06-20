@@ -722,6 +722,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   run(migrationMarkerKey(158), () => runMigration158(db));
   // Migration 159: Add friction_digest and verification_triage evidence kinds.
   run(migrationMarkerKey(159), () => runMigration159(db));
+
+  // Migration 160: Backfill friction_digest evidence kind for databases that already ran migration 159.
+  run(migrationMarkerKey(160), () => runMigration160(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -10870,5 +10873,9 @@ export function runMigration158(db: BunDatabase): void {
  * widens the CHECK constraint for existing databases without re-running 146.
  */
 export function runMigration159(db: BunDatabase): void {
+  widenEvolutionEvidenceKinds(db);
+}
+
+export function runMigration160(db: BunDatabase): void {
   widenEvolutionEvidenceKinds(db);
 }
