@@ -1,6 +1,8 @@
 import { createRequire } from 'node:module';
 import { access, constants, mkdir, readFile, rename, unlink } from 'node:fs/promises';
 import { createWriteStream } from 'node:fs';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { homedir } from 'node:os';
@@ -351,46 +353,48 @@ class TransformersFileCache {
     const id = process.pid;
     const randomSuffix = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const tmpPath = `${filePath}.tmp.${id}.${randomSuffix}`;
-    let stream: ReturnType<typeof createWriteStream> | null = null;
+    const stream = createWriteStream(tmpPath);
 
     try {
       const contentLength = response.headers.get('content-length');
       const total = contentLength ? parseInt(contentLength, 10) : 0;
       let loaded = 0;
 
-      stream = createWriteStream(tmpPath);
       const reader = response.body?.getReader();
       if (!reader) {
-        stream.end();
         throw new Error('Response body is not readable');
       }
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        await new Promise<void>((resolve, reject) => {
-          stream!.write(value, (err) => {
-            if (err) reject(err);
-            else resolve();
-          });
-        });
-        loaded += value.length;
-        if (total) {
-          progressCallback?.({ progress: (loaded / total) * 100, loaded, total });
-        }
-      }
-
-      stream.end();
-      await new Promise<void>((resolve, reject) => {
-        stream!.on('finish', resolve);
-        stream!.on('error', reject);
+      const progressStream = new Readable({
+        read() {
+          reader
+            .read()
+            .then(({ done, value }) => {
+              if (done) {
+                this.push(null);
+                return;
+              }
+              if (value) {
+                loaded += value.length;
+                if (total) {
+                  progressCallback?.({ progress: (loaded / total) * 100, loaded, total });
+                }
+              }
+              this.push(value);
+            })
+            .catch((err) => this.destroy(err));
+        },
       });
+
+      // pipeline attaches error listeners for the full write lifetime and
+      // rejects on any write/stream error (disk full, permissions, etc.).
+      await pipeline(progressStream, stream);
 
       await rename(tmpPath, filePath);
     } catch (error) {
-      if (stream && !stream.destroyed) {
+      if (!stream.destroyed) {
         stream.destroy();
-        await new Promise<void>((resolve) => stream!.once('close', resolve));
+        await new Promise<void>((resolve) => stream.once('close', resolve));
       }
       try {
         await unlink(tmpPath);
