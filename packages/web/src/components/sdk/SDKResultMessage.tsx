@@ -28,7 +28,7 @@ export function SDKResultMessage({ message }: Props) {
 
   // Defense in depth: bridge providers (Copilot / Codex) may omit usage at runtime
   // despite TypeScript declaring it as NonNullableUsage. Guard all accesses.
-  const usage = (message as { usage?: Record<string, number | undefined> }).usage ?? {};
+  const usage = (message as unknown as { usage?: Record<string, number | undefined> }).usage ?? {};
   const inputTokens = (usage.input_tokens as number | undefined) ?? 0;
   const outputTokens = (usage.output_tokens as number | undefined) ?? 0;
   const cacheReadTokens = (usage.cache_read_input_tokens as number | undefined) ?? 0;

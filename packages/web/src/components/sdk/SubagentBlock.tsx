@@ -575,7 +575,7 @@ function NestedMessageRenderer({
     // as they are already shown with the tool use block
     if (Array.isArray(content)) {
       const hasNonToolResultContent = content.some((block) => {
-        const blockObj = block as Record<string, unknown>;
+        const blockObj = block as unknown as Record<string, unknown>;
         return blockObj.type !== 'tool_result';
       });
 
@@ -587,7 +587,7 @@ function NestedMessageRenderer({
       return withReplacementStatus(
         <div class="bg-blue-50 dark:bg-blue-900/20 p-3 rounded border border-blue-200 dark:border-blue-800">
           {content.map((block, idx) => {
-            const blockObj = block as Record<string, unknown>;
+            const blockObj = block as unknown as Record<string, unknown>;
             if (blockObj.type === 'text' && typeof blockObj.text === 'string') {
               return (
                 <div

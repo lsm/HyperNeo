@@ -122,7 +122,7 @@ check_split_module() {
   while IFS= read -r file; do
     local name
     name=$(basename "$file")
-    if ! echo "$expected_list" | grep -qxF "$name"; then
+    if ! grep -qxF "$name" <<< "$expected_list"; then
       echo "ERROR: $file is not in any CI matrix shard for '$module_name'"
       echo "  -> Add it to the appropriate matrix in $workflow"
       ERRORS=$((ERRORS + 1))
@@ -163,10 +163,10 @@ for dir in "$ONLINE_DIR"/*/; do
   [ -d "$dir" ] || continue
   dirname=$(basename "$dir")
   # Skip explicitly exempted directories
-  if echo "$EXEMPT_DIRS" | grep -qw "$dirname"; then
+  if [[ " $EXEMPT_DIRS " == *" $dirname "* ]]; then
     continue
   fi
-  if ! echo "$KNOWN_DIRS" | grep -qw "$dirname"; then
+  if [[ " $KNOWN_DIRS " != *" $dirname "* ]]; then
     echo "ERROR: New module directory '$dirname' is not in the CI matrix"
     echo "  → Add it to the test-daemon-online matrix in .github/workflows/main.yml"
     ERRORS=$((ERRORS + 1))

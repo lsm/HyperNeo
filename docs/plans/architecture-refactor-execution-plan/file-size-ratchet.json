@@ -1,0 +1,599 @@
+{
+  "targetLineCount": 300,
+  "hardLineCount": 500,
+  "scope": "Production source files under packages/*/src; excludes tests, __tests__, specs, generated declarations, demos, scripts, and e2e files for the initial architecture ratchet.",
+  "allowlist": {
+    "packages/daemon/src/storage/schema/migrations.ts": {
+      "maxLines": 10860,
+      "followUp": "M3 schema migration split"
+    },
+    "packages/daemon/src/lib/space/runtime/space-runtime.ts": {
+      "maxLines": 6599,
+      "followUp": "M9 runtime component extraction"
+    },
+    "packages/daemon/src/lib/space/tools/space-agent-tools.ts": {
+      "maxLines": 4687,
+      "followUp": "M9 tool-handler split"
+    },
+    "packages/daemon/src/lib/space/runtime/task-agent-manager.ts": {
+      "maxLines": 4185,
+      "followUp": "M9 runtime component extraction"
+    },
+    "packages/daemon/src/lib/rpc-handlers/live-query-handlers.ts": {
+      "maxLines": 3092,
+      "followUp": "M2/M4 fabric bridge split"
+    },
+    "packages/web/src/lib/space-store.ts": {
+      "maxLines": 2805,
+      "followUp": "M8 focused read-model stores"
+    },
+    "packages/shared/src/types/space.ts": {
+      "maxLines": 2700,
+      "followUp": "M1 shared boundary split"
+    },
+    "packages/daemon/src/lib/space/workflows/built-in-workflows.ts": {
+      "maxLines": 2272,
+      "followUp": "M9 space service extraction"
+    },
+    "packages/daemon/src/lib/space/runtime/space-runtime-service.ts": {
+      "maxLines": 2067,
+      "followUp": "M9 runtime component extraction"
+    },
+    "packages/daemon/src/lib/space/tools/node-agent-tools.ts": {
+      "maxLines": 2055,
+      "followUp": "M9 tool-handler split"
+    },
+    "packages/web/src/components/space/SpaceForge.tsx": {
+      "maxLines": 2049,
+      "followUp": "M8/UI focused view split"
+    },
+    "packages/web/src/components/space/thread/minimal/MinimalThreadFeed.tsx": {
+      "maxLines": 1817,
+      "followUp": "M8/UI focused view split"
+    },
+    "packages/daemon/src/lib/space/runtime/workflow-hook-engine.ts": {
+      "maxLines": 1687,
+      "followUp": "M9 runtime component extraction"
+    },
+    "packages/daemon/src/storage/repositories/sdk-message-repository.ts": {
+      "maxLines": 1616,
+      "followUp": "M3 repository split"
+    },
+    "packages/web/src/components/space/visual-editor/VisualWorkflowEditor.tsx": {
+      "maxLines": 1607,
+      "followUp": "M8/UI focused view split"
+    },
+    "packages/daemon/src/lib/space/runtime/channel-router.ts": {
+      "maxLines": 1582,
+      "followUp": "M9 runtime component extraction"
+    },
+    "packages/daemon/src/lib/agent/agent-session.ts": {
+      "maxLines": 1562,
+      "followUp": "M7 agent runtime boundary split"
+    },
+    "packages/web/src/islands/ChatContainer.tsx": {
+      "maxLines": 1542,
+      "followUp": "M8/UI focused view split"
+    },
+    "packages/daemon/src/lib/agent/query-runner.ts": {
+      "maxLines": 1549,
+      "followUp": "M7 agent runtime boundary split"
+    },
+    "packages/daemon/src/lib/providers/openai-responses-bridge/server.ts": {
+      "maxLines": 1504,
+      "followUp": "M7 agent runtime boundary split"
+    },
+    "packages/daemon/src/lib/agent/query-options-builder.ts": {
+      "maxLines": 1454,
+      "followUp": "M7 agent runtime boundary split"
+    },
+    "packages/web/src/components/space/visual-editor/NodeConfigPanel.tsx": {
+      "maxLines": 1379,
+      "followUp": "M8/UI focused view split"
+    },
+    "packages/daemon/src/lib/worktree-manager.ts": {
+      "maxLines": 1326,
+      "followUp": "M10 cleanup split when touched"
+    },
+    "packages/daemon/src/lib/sdk-session-file-manager.ts": {
+      "maxLines": 1325,
+      "followUp": "M10 cleanup split when touched"
+    },
+    "packages/daemon/src/lib/session/session-lifecycle.ts": {
+      "maxLines": 1313,
+      "followUp": "M7 agent runtime boundary split"
+    },
+    "packages/daemon/src/lib/rpc-handlers/session-handlers.ts": {
+      "maxLines": 1262,
+      "followUp": "M2/M4 fabric bridge split"
+    },
+    "packages/shared/src/api.ts": {
+      "maxLines": 1242,
+      "followUp": "M1 shared boundary split"
+    },
+    "packages/daemon/src/lib/acp/acp-query-runner.ts": {
+      "maxLines": 1204,
+      "followUp": "M7 agent runtime boundary split"
+    },
+    "packages/daemon/src/lib/providers/anthropic-to-codex-bridge-provider.ts": {
+      "maxLines": 1185,
+      "followUp": "M7 agent runtime boundary split"
+    },
+    "packages/daemon/src/app.ts": {
+      "maxLines": 1170,
+      "followUp": "M10 cleanup split when touched"
+    },
+    "packages/web/src/components/space/SpaceTasks.tsx": {
+      "maxLines": 1165,
+      "followUp": "M8/UI focused view split"
+    },
+    "packages/daemon/src/lib/rpc-handlers/space-workflow-run-handlers.ts": {
+      "maxLines": 1150,
+      "followUp": "M2/M4 fabric bridge split"
+    },
+    "packages/web/src/components/space/SpaceTaskPane.tsx": {
+      "maxLines": 1142,
+      "followUp": "M8/UI focused view split"
+    },
+    "packages/daemon/src/lib/rpc-handlers/index.ts": {
+      "maxLines": 1106,
+      "followUp": "M2/M4 fabric bridge split"
+    },
+    "packages/daemon/src/lib/agent/sdk-message-handler.ts": {
+      "maxLines": 1071,
+      "followUp": "M7 agent runtime boundary split"
+    },
+    "packages/web/src/components/space/visual-editor/EdgeRenderer.tsx": {
+      "maxLines": 1058,
+      "followUp": "M8/UI focused view split"
+    },
+    "packages/web/src/components/space/visual-editor/GateEditorPanel.tsx": {
+      "maxLines": 1049,
+      "followUp": "M8/UI focused view split"
+    },
+    "packages/web/src/components/space/SpaceExternalEventsSettings.tsx": {
+      "maxLines": 1379,
+      "followUp": "M8/UI focused view split"
+    },
+    "packages/web/src/components/ToolsModal.tsx": {
+      "maxLines": 1041,
+      "followUp": "M10 cleanup split when touched"
+    },
+    "packages/daemon/src/storage/schema/index.ts": {
+      "maxLines": 1020,
+      "followUp": "M3 schema migration split"
+    },
+    "packages/ui/src/components/menu/menu.tsx": {
+      "maxLines": 1019,
+      "followUp": "UI design-system primitive split"
+    },
+    "packages/daemon/src/lib/space/runtime/agent-message-router.ts": {
+      "maxLines": 1013,
+      "followUp": "M9 runtime component extraction"
+    },
+    "packages/daemon/src/lib/providers/anthropic-copilot/provider.ts": {
+      "maxLines": 1007,
+      "followUp": "M7 agent runtime boundary split"
+    },
+    "packages/web/src/components/chat/MarkdownRenderer.tsx": {
+      "maxLines": 1003,
+      "followUp": "M10 cleanup split when touched"
+    },
+    "packages/shared/src/types.ts": {
+      "maxLines": 982,
+      "followUp": "M1 shared boundary split"
+    },
+    "packages/daemon/src/lib/db-query/tools.ts": {
+      "maxLines": 976,
+      "followUp": "M3 storage/query service split"
+    },
+    "packages/daemon/src/lib/provider-service.ts": {
+      "maxLines": 1087,
+      "followUp": "M10 cleanup split when touched"
+    },
+    "packages/ui/src/components/combobox/combobox.tsx": {
+      "maxLines": 943,
+      "followUp": "UI design-system primitive split"
+    },
+    "packages/daemon/src/lib/space/evolution-scope-service.ts": {
+      "maxLines": 939,
+      "followUp": "M10 cleanup split when touched"
+    },
+    "packages/daemon/src/lib/providers/openai-chat-bridge/server.ts": {
+      "maxLines": 938,
+      "followUp": "M7 agent runtime boundary split"
+    },
+    "packages/web/src/lib/router.ts": {
+      "maxLines": 931,
+      "followUp": "M10 cleanup split when touched"
+    },
+    "packages/daemon/src/lib/rpc-handlers/space-export-import-handlers.ts": {
+      "maxLines": 904,
+      "followUp": "M2/M4 fabric bridge split"
+    },
+    "packages/ui/src/components/listbox/listbox.tsx": {
+      "maxLines": 891,
+      "followUp": "UI design-system primitive split"
+    },
+    "packages/web/src/components/space/WorkflowNodeCard.tsx": {
+      "maxLines": 886,
+      "followUp": "M8/UI focused view split"
+    },
+    "packages/web/src/components/space/SpaceAgentList.tsx": {
+      "maxLines": 882,
+      "followUp": "M8/UI focused view split"
+    },
+    "packages/daemon/src/storage/repositories/agent-memory-repository.ts": {
+      "maxLines": 871,
+      "followUp": "M3 repository split"
+    },
+    "packages/ui/src/components/transition/transition.tsx": {
+      "maxLines": 869,
+      "followUp": "UI design-system primitive split"
+    },
+    "packages/web/src/components/settings/ModelsSettings.tsx": {
+      "maxLines": 861,
+      "followUp": "M10 cleanup split when touched"
+    },
+    "packages/shared/src/message-hub/message-hub.ts": {
+      "maxLines": 856,
+      "followUp": "M1 shared boundary split"
+    },
+    "packages/daemon/src/lib/session/session-manager.ts": {
+      "maxLines": 855,
+      "followUp": "M7 agent runtime boundary split"
+    },
+    "packages/daemon/src/lib/rpc-handlers/space-task-handlers.ts": {
+      "maxLines": 853,
+      "followUp": "M2/M4 fabric bridge split"
+    },
+    "packages/daemon/src/lib/space/managers/space-task-manager.ts": {
+      "maxLines": 847,
+      "followUp": "M9 space service extraction"
+    },
+    "packages/daemon/src/lib/space/evolution-episode-service.ts": {
+      "maxLines": 846,
+      "followUp": "M10 cleanup split when touched"
+    },
+    "packages/daemon/src/lib/space/managers/space-workflow-manager.ts": {
+      "maxLines": 845,
+      "followUp": "M9 space service extraction"
+    },
+    "packages/daemon/src/lib/space/messaging-adapter.ts": {
+      "maxLines": 837,
+      "followUp": "M10 cleanup split when touched"
+    },
+    "packages/daemon/src/lib/agent/query-lifecycle-manager.ts": {
+      "maxLines": 833,
+      "followUp": "M7 agent runtime boundary split"
+    },
+    "packages/daemon/src/lib/rpc-handlers/config-handlers.ts": {
+      "maxLines": 823,
+      "followUp": "M2/M4 fabric bridge split"
+    },
+    "packages/daemon/src/lib/space/agents/custom-agent.ts": {
+      "maxLines": 820,
+      "followUp": "M10 cleanup split when touched"
+    },
+    "packages/web/src/lib/session-store.ts": {
+      "maxLines": 816,
+      "followUp": "M8 focused read-model stores"
+    },
+    "packages/daemon/src/lib/rpc-handlers/space-workflow-handlers.ts": {
+      "maxLines": 811,
+      "followUp": "M2/M4 fabric bridge split"
+    },
+    "packages/daemon/src/storage/repositories/space-task-repository.ts": {
+      "maxLines": 809,
+      "followUp": "M3 repository split"
+    },
+    "packages/web/src/components/settings/ProvidersSettings.tsx": {
+      "maxLines": 806,
+      "followUp": "M10 cleanup split when touched"
+    },
+    "packages/daemon/src/lib/external-events/github/github-event-extension.ts": {
+      "maxLines": 1160,
+      "followUp": "M6 extension registry split"
+    },
+    "packages/daemon/src/lib/agent/rewind-handler.ts": {
+      "maxLines": 801,
+      "followUp": "M7 agent runtime boundary split"
+    },
+    "packages/web/src/components/space/TaskArtifactsPanel.tsx": {
+      "maxLines": 795,
+      "followUp": "M8/UI focused view split"
+    },
+    "packages/web/src/components/MessageInput.tsx": {
+      "maxLines": 770,
+      "followUp": "M10 cleanup split when touched"
+    },
+    "packages/web/src/components/space/visual-editor/HookEditorPanel.tsx": {
+      "maxLines": 768,
+      "followUp": "M8/UI focused view split"
+    },
+    "packages/daemon/src/lib/agent/sdk-cli-resolver.ts": {
+      "maxLines": 767,
+      "followUp": "M7 agent runtime boundary split"
+    },
+    "packages/web/src/components/space/TaskAuxiliaryPanel.tsx": {
+      "maxLines": 763,
+      "followUp": "M8/UI focused view split"
+    },
+    "packages/web/src/components/space/WorkflowList.tsx": {
+      "maxLines": 763,
+      "followUp": "M8/UI focused view split"
+    },
+    "packages/web/src/components/settings/CustomEndpointEditor.tsx": {
+      "maxLines": 756,
+      "followUp": "M10 cleanup split when touched"
+    },
+    "packages/daemon/src/lib/internal-event-bus.ts": {
+      "maxLines": 750,
+      "followUp": "M10 cleanup split when touched"
+    },
+    "packages/daemon/src/storage/repositories/goal-repository.ts": {
+      "maxLines": 748,
+      "followUp": "M3 repository split"
+    },
+    "packages/daemon/src/storage/repositories/space-workflow-repository.ts": {
+      "maxLines": 745,
+      "followUp": "M3 repository split"
+    },
+    "packages/daemon/src/lib/model-service.ts": {
+      "maxLines": 735,
+      "followUp": "M10 cleanup split when touched"
+    },
+    "packages/ui/src/components/popover/popover.tsx": {
+      "maxLines": 733,
+      "followUp": "UI design-system primitive split"
+    },
+    "packages/daemon/src/lib/external-events/external-event-store.ts": {
+      "maxLines": 706,
+      "followUp": "M10 cleanup split when touched"
+    },
+    "packages/daemon/src/lib/providers/anthropic-copilot/server.ts": {
+      "maxLines": 705,
+      "followUp": "M7 agent runtime boundary split"
+    },
+    "packages/daemon/src/lib/skills-manager.ts": {
+      "maxLines": 704,
+      "followUp": "M10 cleanup split when touched"
+    },
+    "packages/web/src/components/space/SpaceLongHorizonAgents.tsx": {
+      "maxLines": 702,
+      "followUp": "M8/UI focused view split"
+    },
+    "packages/web/src/components/SessionStatusBar.tsx": {
+      "maxLines": 697,
+      "followUp": "M10 cleanup split when touched"
+    },
+    "packages/web/src/lib/connection-manager.ts": {
+      "maxLines": 696,
+      "followUp": "M10 cleanup split when touched"
+    },
+    "packages/shared/src/acp/acp-types.ts": {
+      "maxLines": 692,
+      "followUp": "M7 agent runtime boundary split"
+    },
+    "packages/daemon/src/lib/rpc-handlers/space-task-message-handlers.ts": {
+      "maxLines": 683,
+      "followUp": "M2/M4 fabric bridge split"
+    },
+    "packages/daemon/src/lib/space/evolution-trace-evidence-service.ts": {
+      "maxLines": 683,
+      "followUp": "M10 cleanup split when touched"
+    },
+    "packages/daemon/src/lib/db-query/scope-config.ts": {
+      "maxLines": 681,
+      "followUp": "M3 storage/query service split"
+    },
+    "packages/daemon/src/lib/agent/loop-detector-hook.ts": {
+      "maxLines": 676,
+      "followUp": "M7 agent runtime boundary split"
+    },
+    "packages/daemon/src/lib/space/workflows/workflow-migration.ts": {
+      "maxLines": 672,
+      "followUp": "M9 space service extraction"
+    },
+    "packages/web/src/components/settings/AppMcpServersSettings.tsx": {
+      "maxLines": 671,
+      "followUp": "M10 cleanup split when touched"
+    },
+    "packages/web/src/lib/state-channel.ts": {
+      "maxLines": 671,
+      "followUp": "M8 focused read-model stores"
+    },
+    "packages/daemon/src/lib/credentials/credential-store.ts": {
+      "maxLines": 668,
+      "followUp": "M10 cleanup split when touched"
+    },
+    "packages/web/src/islands/CommandPalette.tsx": {
+      "maxLines": 664,
+      "followUp": "M8/UI focused view split"
+    },
+    "packages/web/src/components/space/thread/space-task-thread-events.ts": {
+      "maxLines": 664,
+      "followUp": "M8/UI focused view split"
+    },
+    "packages/daemon/src/lib/github/github-service.ts": {
+      "maxLines": 659,
+      "followUp": "M10 cleanup split when touched"
+    },
+    "packages/web/src/components/sdk/SubagentBlock.tsx": {
+      "maxLines": 657,
+      "followUp": "M10 cleanup split when touched"
+    },
+    "packages/daemon/src/lib/state-projection-service.ts": {
+      "maxLines": 653,
+      "followUp": "M8 focused read-model stores"
+    },
+    "packages/daemon/src/lib/space/export-format.ts": {
+      "maxLines": 647,
+      "followUp": "M10 cleanup split when touched"
+    },
+    "packages/daemon/src/storage/index.ts": {
+      "maxLines": 640,
+      "followUp": "M10 cleanup split when touched"
+    },
+    "packages/daemon/src/lib/rpc-handlers/space-long-horizon-agent-handlers.ts": {
+      "maxLines": 633,
+      "followUp": "M2/M4 fabric bridge split"
+    },
+    "packages/daemon/src/lib/space/runtime/gate-features.ts": {
+      "maxLines": 628,
+      "followUp": "M9 runtime component extraction"
+    },
+    "packages/daemon/src/lib/config-validators.ts": {
+      "maxLines": 622,
+      "followUp": "M10 cleanup split when touched"
+    },
+    "packages/web/src/components/GitPanel.tsx": {
+      "maxLines": 610,
+      "followUp": "M10 cleanup split when touched"
+    },
+    "packages/daemon/src/lib/space/runtime/gate-evaluator.ts": {
+      "maxLines": 602,
+      "followUp": "M9 runtime component extraction"
+    },
+    "packages/web/src/components/sdk/tools/ToolResultCard.tsx": {
+      "maxLines": 600,
+      "followUp": "UI protected SDK renderer island split"
+    },
+    "packages/web/src/components/space/SpaceOverview.tsx": {
+      "maxLines": 600,
+      "followUp": "M8/UI focused view split"
+    },
+    "packages/daemon/src/lib/agent/ask-user-question-handler.ts": {
+      "maxLines": 599,
+      "followUp": "M7 agent runtime boundary split"
+    },
+    "packages/web/src/components/QuestionPrompt.tsx": {
+      "maxLines": 598,
+      "followUp": "M10 cleanup split when touched"
+    },
+    "packages/web/src/components/space/SpaceAgentEditor.tsx": {
+      "maxLines": 594,
+      "followUp": "M8/UI focused view split"
+    },
+    "packages/web/src/components/space/SpaceSettings.tsx": {
+      "maxLines": 587,
+      "followUp": "M8/UI focused view split"
+    },
+    "packages/web/src/components/SessionInfoPanel.tsx": {
+      "maxLines": 585,
+      "followUp": "M10 cleanup split when touched"
+    },
+    "packages/daemon/src/storage/repositories/space-long-horizon-agent-repository.ts": {
+      "maxLines": 580,
+      "followUp": "M3 repository split"
+    },
+    "packages/shared/src/logger.ts": {
+      "maxLines": 579,
+      "followUp": "M1 shared boundary split"
+    },
+    "packages/daemon/src/lib/error-manager.ts": {
+      "maxLines": 578,
+      "followUp": "M10 cleanup split when touched"
+    },
+    "packages/daemon/src/lib/space/goals/goal-service.ts": {
+      "maxLines": 572,
+      "followUp": "M9 space service extraction"
+    },
+    "packages/ui/src/internal/floating-provider.tsx": {
+      "maxLines": 565,
+      "followUp": "UI design-system primitive split"
+    },
+    "packages/shared/src/message-hub/typed-hub.ts": {
+      "maxLines": 564,
+      "followUp": "M1 shared boundary split"
+    },
+    "packages/web/src/components/sdk/SDKSystemMessage.tsx": {
+      "maxLines": 562,
+      "followUp": "M8/UI focused view split"
+    },
+    "packages/daemon/src/lib/job-handlers/goal-automation-execute.handler.ts": {
+      "maxLines": 560,
+      "followUp": "M10 cleanup split when touched"
+    },
+    "packages/daemon/src/lib/space/evolution-conversation-analysis-service.ts": {
+      "maxLines": 560,
+      "followUp": "M10 cleanup split when touched"
+    },
+    "packages/daemon/src/lib/rpc-handlers/space-handlers.ts": {
+      "maxLines": 551,
+      "followUp": "M2/M4 fabric bridge split"
+    },
+    "packages/web/src/islands/SpaceDetailPanel.tsx": {
+      "maxLines": 547,
+      "followUp": "M8/UI focused view split"
+    },
+    "packages/web/src/components/space/SpaceGoals.tsx": {
+      "maxLines": 544,
+      "followUp": "M8/UI focused view split"
+    },
+    "packages/daemon/src/storage/repositories/evolution-repository.ts": {
+      "maxLines": 543,
+      "followUp": "M3 repository split"
+    },
+    "packages/web/src/islands/ContextPanel.tsx": {
+      "maxLines": 543,
+      "followUp": "M8/UI focused view split"
+    },
+    "packages/web/src/hooks/useTurnBlocks.ts": {
+      "maxLines": 541,
+      "followUp": "M10 cleanup split when touched"
+    },
+    "packages/daemon/src/lib/rpc-handlers/reference-handlers.ts": {
+      "maxLines": 540,
+      "followUp": "M2/M4 fabric bridge split"
+    },
+    "packages/daemon/src/lib/agent/reference-resolver.ts": {
+      "maxLines": 536,
+      "followUp": "M7 agent runtime boundary split"
+    },
+    "packages/daemon/src/lib/space/schedule/schedule-service.ts": {
+      "maxLines": 533,
+      "followUp": "M10 cleanup split when touched"
+    },
+    "packages/daemon/src/lib/external-events/github/github-repository.ts": {
+      "maxLines": 531,
+      "followUp": "M6 extension registry split"
+    },
+    "packages/daemon/src/lib/providers/ollama-bridge-server.ts": {
+      "maxLines": 529,
+      "followUp": "M7 agent runtime boundary split"
+    },
+    "packages/shared/src/types/neo.ts": {
+      "maxLines": 529,
+      "followUp": "M1 shared boundary split"
+    },
+    "packages/shared/src/message-hub/websocket-client-transport.ts": {
+      "maxLines": 524,
+      "followUp": "M1 shared boundary split"
+    },
+    "packages/daemon/src/storage/repositories/session-repository.ts": {
+      "maxLines": 516,
+      "followUp": "M3 repository split"
+    },
+    "packages/web/src/islands/SpaceIsland.tsx": {
+      "maxLines": 516,
+      "followUp": "M8/UI focused view split"
+    },
+    "packages/daemon/src/lib/providers/anthropic-provider.ts": {
+      "maxLines": 514,
+      "followUp": "M7 agent runtime boundary split"
+    },
+    "packages/daemon/src/lib/rpc-handlers/custom-endpoint-handlers.ts": {
+      "maxLines": 507,
+      "followUp": "M2/M4 fabric bridge split"
+    },
+    "packages/daemon/src/storage/live-query.ts": {
+      "maxLines": 504,
+      "followUp": "M10 cleanup split when touched"
+    },
+    "packages/web/src/components/settings/AddProviderModal.tsx": {
+      "maxLines": 501,
+      "followUp": "M8/UI focused view split"
+    }
+  }
+}

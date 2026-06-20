@@ -156,12 +156,17 @@ export function parseAcpCommand(commandLine: string): { command: string; args: s
 }
 
 function toAcpPromptContent(message: SDKUserMessage): AcpContentBlock[] {
-  return message.message.content.flatMap((block: MessageContent): AcpContentBlock[] => {
+  const content = message.message.content;
+  if (typeof content === 'string') {
+    return [{ type: 'text', text: content }];
+  }
+
+  return (content as MessageContent[]).flatMap((block: MessageContent): AcpContentBlock[] => {
     if (block.type === 'text') {
       return [{ type: 'text', text: block.text }];
     }
 
-    if (block.type === 'image') {
+    if (block.type === 'image' && block.source.type === 'base64') {
       return [
         {
           type: 'image',
@@ -655,7 +660,7 @@ export class AcpQueryRunner {
           await stateManager.setProcessing(message.uuid ?? 'unknown', 'initializing');
           this._lastConsumedUserMessage = {
             uuid: message.uuid ?? '',
-            content: message.message?.content ?? '',
+            content: (message.message?.content ?? '') as unknown as string | MessageContent[],
           };
         }
 
@@ -1172,16 +1177,16 @@ export class AcpQueryRunner {
   async displayErrorAsAssistantMessage(text: string): Promise<void> {
     const { session, db, messageHub, logger } = this.ctx;
 
-    const assistantMessage: SDKMessage = {
+    const assistantMessage = {
       type: 'assistant' as const,
       uuid: generateUUID() as UUID,
       session_id: session.id,
       parent_tool_use_id: null,
       message: {
         role: 'assistant' as const,
-        content: [{ type: 'text' as const, text }],
+        content: [{ type: 'text' as const, text, citations: null }],
       },
-    };
+    } as unknown as SDKMessage;
 
     try {
       db.saveSDKMessage(session.id, assistantMessage);

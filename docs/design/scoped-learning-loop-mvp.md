@@ -904,7 +904,7 @@ Run the first dogfood loop manually:
 Current MVP limitations:
 
 - Episode judging drafts only; users still accept lessons, proposals, and rollups manually.
-- Lesson reuse is prompt injection for scoped tasks, capped at three active lessons.
+- Lesson reuse adds prompt policy context for scoped tasks, capped at three active lessons.
 - Metrics are manual snapshots; no automatic metric integrations yet.
 - Proposal conversion creates SpaceTasks but does not auto-start or auto-merge work.
 - Local research artifacts stay outside git; `research-papers/` is ignored.
