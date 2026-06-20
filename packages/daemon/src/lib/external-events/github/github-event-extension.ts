@@ -1259,19 +1259,27 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       const etag = response.headers.get('ETag');
       if (etag && page === 1) etags[endpoint.key] = etag;
       const rows = (await response.json()) as unknown[];
-      if (endpoint.key === 'pulls') {
-        // `/pulls?sort=updated&direction=desc` returns PRs newest-first. A
-        // fresh (non-304) page is the authoritative newest list, so reset the
-        // reaction-poll targets to the first LIMIT numbers observed. Taking
-        // the first rows (not unshift+truncate) preserves the newest PRs —
-        // pushing older rows would displace the most recently active ones.
+      if (endpoint.key === 'pulls' && page === 1) {
+        // `/pulls?sort=updated&direction=desc` returns PRs newest-first. The
+        // `since` watermark turns ordinary polls into deltas (only PRs updated
+        // since the last poll arrive), so the response is not a full newest
+        // list — replacing the saved targets would drop active PRs that did
+        // not change this cycle. Merge instead: PRs observed this cycle
+        // (newest-first) move to the front, previously tracked PRs that were
+        // absent from the delta stay after them, and the list is capped to
+        // LIMIT. Only page 1 is merged; page 2+ during backlog catch-up
+        // contains older PRs and must not displace the newest ones.
         const freshNumbers: number[] = [];
         for (const row of rows) {
           const prNumber = pullRequestNumberFrom(row);
           if (prNumber && !freshNumbers.includes(prNumber)) freshNumbers.push(prNumber);
         }
+        const next = [
+          ...freshNumbers,
+          ...recentPullRequestNumbers.filter((n) => !freshNumbers.includes(n)),
+        ];
         recentPullRequestNumbers.length = 0;
-        recentPullRequestNumbers.push(...freshNumbers.slice(0, REACTION_POLL_PR_LIMIT));
+        recentPullRequestNumbers.push(...next.slice(0, REACTION_POLL_PR_LIMIT));
       }
       let endpointPending = Math.max(
         endpointWatermark,
@@ -1355,6 +1363,18 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
           seenReactionIds[reactionId] = true;
           count++;
         }
+      }
+      // Mirror the primary-endpoint low-budget guard: a successful reaction
+      // response with `remaining` below the safety threshold must apply the
+      // shared deferral so `pollEnabledSpaces()` stops hitting the next repo
+      // and the next cycle is rescheduled past the reset window.
+      if (
+        Number.isFinite(reactionRateLimit.remaining) &&
+        reactionRateLimit.remaining < RATE_LIMIT_LOW_REMAINING_THRESHOLD
+      ) {
+        this.applyRateLimit(reactionRateLimit);
+        partialScan = true;
+        break;
       }
     }
 

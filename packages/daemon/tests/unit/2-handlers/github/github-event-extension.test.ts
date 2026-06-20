@@ -2405,6 +2405,59 @@ describe('GitHubEventExtension', () => {
     }
   });
 
+  test('reaction targets merge deltas without dropping tracked active PRs', async () => {
+    const db = setupDb();
+    const { service } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    const pullsPages = [
+      // Cycle 0 (first poll, full newest-first list): 15 PRs.
+      Array.from({ length: 15 }, (_, i) => 100 - i),
+    ];
+    const calledReactions: number[] = [];
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls')) {
+        const page = pullsPages.shift() ?? [];
+        return pollingResponse(page.map((n) => createPullRequestRow(n)));
+      }
+      const match = path.match(/\/issues\/(\d+)\/reactions$/);
+      if (match) {
+        calledReactions.push(Number(match[1]));
+        return pollingResponse([]);
+      }
+      return pollingResponse([]);
+    }) as typeof fetch;
+
+    try {
+      const repo = extension.repo.listPollingRepos()[0];
+      // Cycle 0: seed with newest 15 → targets capped to newest 10 ([100..91]).
+      await extension.pollWatchedRepo(repo, fetchImpl);
+      expect(calledReactions.slice()).toEqual([100, 99, 98, 97, 96, 95, 94, 93, 92, 91]);
+      calledReactions.length = 0;
+
+      // Cycle 1: delta poll — only PR 50 updated. Merge must surface 50 to the
+      // front while retaining previously tracked active PRs (no replace-wipe).
+      pullsPages.push([50]);
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      expect(calledReactions.slice()).toEqual([50, 100, 99, 98, 97, 96, 95, 94, 93, 92]);
+    } finally {
+      await extension.stop();
+    }
+  });
+
   test('stop waits for an active polling cycle before returning', async () => {
     const db = setupDb();
     const extension = new GitHubEventExtension(db, undefined, { pollIntervalMs: 1 });
