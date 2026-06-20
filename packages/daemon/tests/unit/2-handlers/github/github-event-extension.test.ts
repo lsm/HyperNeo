@@ -2405,6 +2405,54 @@ describe('GitHubEventExtension', () => {
     }
   });
 
+  test('reaction polling suppresses stale reactions older than the poll watermark', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    // Seed a cursor with a committed watermark of 2026-06-01 so reactions
+    // older than that are treated as historical backfill.
+    const seeded = extension.repo.listPollingRepos()[0];
+    extension.repo.updatePollCursor(seeded.id, {
+      lastSeenAt: Date.parse('2026-06-01T00:00:00Z'),
+      etags: {},
+      processedPages: {},
+    });
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls')) return pollingResponse([createPullRequestRow(7)]);
+      if (path.endsWith('/issues/7/reactions')) {
+        return pollingResponse([
+          createReactionRow({ id: 1, content: '+1', created_at: '2026-05-01T00:00:00Z' }),
+          createReactionRow({ id: 2, content: '+1', created_at: '2026-06-15T00:00:00Z' }),
+        ]);
+      }
+      return pollingResponse([]);
+    }) as typeof fetch;
+
+    try {
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+
+      const published = received.filter((event) => event.payload.eventType === 'reaction');
+      expect(published).toHaveLength(1);
+      expect(published[0].dedupeKey).toBe('acme/widgets:reaction:2');
+    } finally {
+      await extension.stop();
+    }
+  });
+
   test('reaction polling caches ETags per PR and skips on 304', async () => {
     const db = setupDb();
     const { service, received } = setupExternalEventService(db);

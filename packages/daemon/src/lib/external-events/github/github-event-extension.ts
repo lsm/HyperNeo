@@ -1385,11 +1385,20 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         const reactionId = reactionIdFrom(reaction);
         if (seenReactionIds[reactionId]) continue;
         const event = normalizeGitHubReaction(watched, prNumber, reaction);
-        if (event) {
-          await this.publishEvent(watched.spaceId, event, this.context);
+        if (!event) continue;
+        // Suppress historical backfill: on an upgraded repo the first reaction
+        // sync would otherwise publish every prior +1 as a fresh
+        // `reaction_added`. Only publish reactions at least as new as the
+        // committed poll watermark; older ones are marked seen so they never
+        // fire on a later cycle either. A brand-new repo (committed == 0) still
+        // backfills its first observation, which is the intended bootstrap.
+        if (watermarks.committed > 0 && event.occurredAt < watermarks.committed) {
           seenReactionIds[reactionId] = true;
-          count++;
+          continue;
         }
+        await this.publishEvent(watched.spaceId, event, this.context);
+        seenReactionIds[reactionId] = true;
+        count++;
       }
       // Mirror the primary-endpoint low-budget guard: a successful reaction
       // response with `remaining` below the safety threshold must apply the
