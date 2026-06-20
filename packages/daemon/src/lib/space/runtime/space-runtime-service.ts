@@ -976,6 +976,11 @@ export class SpaceRuntimeService {
       await this.provisionExistingSpaces();
       await this.recoverLongTermAgentInbox();
       await this.recoverStalledWorkflowRuns();
+      // Re-register auto-subscriptions for blocked runs that had a PR URL
+      // persisted before the daemon restarted. Without this, the in-memory
+      // topic trie is empty after restart and PR events for blocked runs
+      // have no matching target until some other gate write happens.
+      await this.rehydrateBlockedRunPrEventSubscriptions();
     })().catch((err) => {
       log.error('Failed to provision existing spaces during startup:', err);
     });
@@ -1965,22 +1970,110 @@ export class SpaceRuntimeService {
    * event-driven gate opening. Mirrors the resume RPC semantics: only fires
    * when the run is actually `blocked`, and publishes the canonical
    * `space.workflowRun.updated` event so UI subscribers stay in sync.
+   *
+   * Also promotes the canonical task out of `blocked` → `in_progress` so the
+   * UI does not keep showing a blocked task after the underlying run resumed.
+   * Only terminal-ish `blocked`/`review` tasks are touched; `open` tasks
+   * stay `open` so the normal tick-loop promotion path still runs.
    */
   private transitionBlockedRunToInProgress(runId: string): void {
     const run = this.config.workflowRunRepo.getRun(runId);
     if (!run || run.status !== 'blocked') return;
     const updated = this.config.workflowRunRepo.transitionStatus(runId, 'in_progress');
-    if (!this.config.internalEventBus || !updated) return;
+    if (updated) {
+      this.promoteCanonicalTaskAfterRunResume(runId);
+      if (this.config.internalEventBus) {
+        this.config.internalEventBus
+          .publish('space.workflowRun.updated', {
+            sessionId: 'global',
+            spaceId: updated.spaceId,
+            runId: updated.id,
+            run: updated,
+          })
+          .catch((err) => {
+            log.warn(
+              `SpaceRuntimeService: failed to emit space.workflowRun.updated after blocked→in_progress: ${err instanceof Error ? err.message : String(err)}`
+            );
+          });
+      }
+    }
+  }
+
+  /**
+   * Re-register PR event auto-subscriptions for blocked workflow runs after a
+   * daemon restart.
+   *
+   * Auto-subscriptions live in the SpaceRuntime's in-memory topic trie and are
+   * lost when the process restarts. This pass walks every space's blocked
+   * runs, resolves the PR URL from gate data / artifacts (same resolver used
+   * at runtime), and re-invokes {@link SpaceRuntime.registerPrEventSubscriptionForRun}
+   * so subsequent GitHub PR events match a target and trigger event-driven
+   * gate re-evaluation.
+   *
+   * Idempotent and best-effort: failures for individual runs are logged and
+   * swallowed so one bad run cannot block startup.
+   */
+  async rehydrateBlockedRunPrEventSubscriptions(): Promise<void> {
+    try {
+      const spaces = await this.config.spaceManager.listSpaces(false);
+      let rehydrated = 0;
+      for (const space of spaces) {
+        if (space.paused || space.stopped) continue;
+        const blockedRuns = this.config.workflowRunRepo
+          .listBySpace(space.id)
+          .filter((run) => run.status === 'blocked');
+        for (const run of blockedRuns) {
+          const prUrl = this.resolvePrUrlForRun(run.id);
+          if (!prUrl) continue;
+          const result = this.runtime.registerPrEventSubscriptionForRun(run.id, prUrl);
+          if (result.success) rehydrated++;
+        }
+      }
+      if (rehydrated > 0) {
+        log.info(
+          `SpaceRuntimeService: rehydrated ${rehydrated} PR event auto-subscription(s) for blocked runs`
+        );
+      }
+    } catch (err) {
+      log.error(
+        `SpaceRuntimeService: rehydrateBlockedRunPrEventSubscriptions failed: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  }
+  private promoteCanonicalTaskAfterRunResume(runId: string): void {
+    const tasks = this.config.taskRepo.listByWorkflowRun(runId);
+    if (tasks.length === 0) return;
+    // Mirror SpaceRuntime.pickCanonicalTaskForRun ordering without taking a
+    // cross-class dependency on the private helper: prefer title-matched tasks
+    // then lowest taskNumber, then earliest createdAt.
+    const run = this.config.workflowRunRepo.getRun(runId);
+    const runTitle = run?.title?.trim().toLowerCase() ?? '';
+    const titleMatches = runTitle
+      ? tasks.filter((task) => (task.title ?? '').trim().toLowerCase() === runTitle)
+      : [];
+    const pool = titleMatches.length > 0 ? titleMatches : tasks;
+    const sorted = [...pool].sort((a, b) => {
+      if (a.taskNumber !== b.taskNumber) return a.taskNumber - b.taskNumber;
+      if (a.createdAt !== b.createdAt) return a.createdAt - b.createdAt;
+      return a.id.localeCompare(b.id);
+    });
+    const target = sorted.find((task) => task.status === 'blocked' || task.status === 'review');
+    if (!target) return;
+    const updatedTask = this.config.taskRepo.updateTask(target.id, {
+      status: 'in_progress',
+      pendingCheckpointType: null,
+    });
+    if (!updatedTask || !this.config.internalEventBus) return;
     this.config.internalEventBus
-      .publish('space.workflowRun.updated', {
+      .publish('space.task.updated', {
         sessionId: 'global',
-        spaceId: updated.spaceId,
-        runId: updated.id,
-        run: updated,
+        spaceId: updatedTask.spaceId,
+        taskId: updatedTask.id,
+        task: updatedTask,
       })
       .catch((err) => {
         log.warn(
-          `SpaceRuntimeService: failed to emit space.workflowRun.updated after blocked→in_progress: ${err instanceof Error ? err.message : String(err)}`
+          `SpaceRuntimeService: failed to emit space.task.updated after task resume: ${err instanceof Error ? err.message : String(err)}`
         );
       });
   }

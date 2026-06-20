@@ -459,4 +459,130 @@ describe('SpaceRuntimeService event-driven gate evaluation', () => {
     // Session still got the courtesy notification.
     expect(ctx.runtimeNotifications.length).toBeGreaterThanOrEqual(1);
   });
+
+  test('handleBlockedRunExternalEvent promotes the canonical task out of blocked when the run resumes', async () => {
+    const ctx = await setup({
+      gates: [
+        {
+          id: 'approval',
+          fields: [approvedField, prUrlField],
+        },
+      ],
+      channels: [
+        {
+          id: 'ch-code-to-review',
+          from: 'coder',
+          to: 'reviewer',
+          gateId: 'approval',
+        },
+      ],
+    });
+    const workflow = ctx.workflowManager.listWorkflows(SPACE_ID)[0]!;
+    const { runId } = await seedBlockedRunWithPr(ctx, workflow.id);
+
+    // Mark the canonical task as blocked (mirrors what markFailed RPC does).
+    const tasks = ctx.taskRepo.listByWorkflowRun(runId);
+    const canonical = tasks[0]!;
+    ctx.taskRepo.updateTask(canonical.id, {
+      status: 'blocked',
+      pendingCheckpointType: 'gate',
+    });
+
+    ctx.gateDataRepo.merge(runId, 'approval', { approved: true, approvedAt: Date.now() });
+
+    await ctx.service.handleBlockedRunExternalEvent({
+      runId,
+      event: {
+        namespaceId: SPACE_ID,
+        spaceId: SPACE_ID,
+        eventId: `evt-task-resume-${Math.random().toString(36).slice(2)}`,
+        source: 'github',
+        topic: PR_EVENT_TOPIC,
+        dedupeKey: `dedupe-task-resume-${Math.random().toString(36).slice(2)}`,
+        summary: 'Codex approved',
+        payload: {},
+        occurredAt: Date.now(),
+        ingestedAt: Date.now(),
+      },
+    });
+
+    const updatedTask = ctx.taskRepo.getTask(canonical.id);
+    expect(updatedTask?.status).toBe('in_progress');
+    expect(updatedTask?.pendingCheckpointType).toBeNull();
+  });
+
+  test('rehydrateBlockedRunPrEventSubscriptions rebuilds auto-subscriptions for blocked runs after a restart', async () => {
+    const ctx = await setup({
+      gates: [
+        {
+          id: 'approval',
+          fields: [approvedField, prUrlField],
+        },
+      ],
+      channels: [
+        {
+          id: 'ch-code-to-review',
+          from: 'coder',
+          to: 'reviewer',
+          gateId: 'approval',
+        },
+      ],
+    });
+    const workflow = ctx.workflowManager.listWorkflows(SPACE_ID)[0]!;
+    const { runId } = await seedBlockedRunWithPr(ctx, workflow.id);
+
+    // Simulate restart: the topic trie is in-memory, so manually clear it.
+    ctx.service.runtime.clearPrEventSubscriptionsForRun(runId);
+    ctx.service.runtime.clearRunInterests(runId);
+
+    // Rehydrate — should rebuild the auto-subscription from persisted gate data.
+    await ctx.service.rehydrateBlockedRunPrEventSubscriptions();
+
+    // Publishing a PR event must now match and deliver.
+    const event: ExternalEvent = {
+      id: `evt-rehydrate-${Math.random().toString(36).slice(2)}`,
+      spaceId: SPACE_ID,
+      source: 'github',
+      topic: PR_EVENT_TOPIC,
+      occurredAt: Date.now(),
+      ingestedAt: Date.now(),
+      dedupeKey: `dedupe-rehydrate-${Math.random().toString(36).slice(2)}`,
+      summary: 'Codex approved',
+      payload: { action: 'review_submitted' },
+    };
+    await ctx.eventService.publish(event);
+    expect(ctx.injected.length).toBeGreaterThanOrEqual(1);
+  });
+
+  test('rehydrateBlockedRunPrEventSubscriptions skips runs without a resolvable PR URL', async () => {
+    const ctx = await setup({
+      gates: [
+        {
+          id: 'approval',
+          fields: [approvedField],
+        },
+      ],
+    });
+    const workflow = ctx.workflowManager.listWorkflows(SPACE_ID)[0]!;
+    const runtime = await ctx.service.createOrGetRuntime(SPACE_ID);
+    const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+    ctx.workflowRunRepo.updateRun(run.id, { status: 'blocked', failureReason: 'agentCrash' });
+
+    // No pr_url in gate data — rehydrate must skip silently.
+    await ctx.service.rehydrateBlockedRunPrEventSubscriptions();
+
+    const event: ExternalEvent = {
+      id: `evt-no-prurl-rehydrate-${Math.random().toString(36).slice(2)}`,
+      spaceId: SPACE_ID,
+      source: 'github',
+      topic: PR_EVENT_TOPIC,
+      occurredAt: Date.now(),
+      ingestedAt: Date.now(),
+      dedupeKey: `dedupe-no-prurl-rehydrate-${Math.random().toString(36).slice(2)}`,
+      summary: 'noop',
+      payload: {},
+    };
+    await ctx.eventService.publish(event);
+    expect(ctx.injected).toHaveLength(0);
+  });
 });
