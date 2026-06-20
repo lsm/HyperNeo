@@ -311,6 +311,12 @@ describe('EvolutionEpisodeService', () => {
       sourceId: task.id,
       summary: 'Task linked to completed work',
     });
+    const digestEvidence = evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'friction_digest',
+      sourceId: task.id,
+      summary: 'Friction digest linked to completed work',
+    });
     const workflowTask = taskRepo.createTask({
       spaceId,
       title: 'Supervised completion gate',
@@ -345,7 +351,12 @@ describe('EvolutionEpisodeService', () => {
     expect(listedWithoutContext.preflightContext).toBeUndefined();
 
     const listed = scopeService.listEvidence(scope.id, true);
-    const taskContext = listed.preflightContext?.tasks[0]?.task;
+    const taskContext = listed.preflightContext?.tasks.find(
+      (item) => item.evidenceId === taskEvidence.id
+    )?.task;
+    const digestTaskContext = listed.preflightContext?.tasks.find(
+      (item) => item.evidenceId === digestEvidence.id
+    )?.task;
     const runContext = listed.preflightContext?.workflowRuns[0];
     expect(taskContext).toEqual({
       title: 'Ship Forge preflight',
@@ -354,6 +365,7 @@ describe('EvolutionEpisodeService', () => {
       reportedSummary: 'Completed with artifact-backed validation',
       result: 'PR merged after CI and QA passed',
     });
+    expect(digestTaskContext).toEqual(taskContext);
     expect('description' in (taskContext ?? {})).toBe(false);
     expect('metadata' in (taskContext ?? {})).toBe(false);
     const largePayload = 'x'.repeat(1000);
@@ -594,6 +606,12 @@ describe('EvolutionEpisodeService', () => {
       sourceId: task.id,
       summary: 'Conversation friction evidence',
     });
+    const digestEvidence = evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'friction_digest',
+      sourceId: task.id,
+      summary: 'Friction digest evidence',
+    });
     const service = new EvolutionEpisodeService({
       evolutionRepo,
       taskRepo,
@@ -603,12 +621,21 @@ describe('EvolutionEpisodeService', () => {
 
     const input = service.buildEpisodeInput({
       scopeId: scope.id,
-      evidenceIds: [taskEvidence.id, retryEvidence.id, conversationEvidence.id],
+      evidenceIds: [taskEvidence.id, retryEvidence.id, conversationEvidence.id, digestEvidence.id],
     });
 
-    expect(input.evidence).toHaveLength(3);
+    expect(input.evidence).toHaveLength(4);
     expect(input.tasks).toHaveLength(1);
     expect(input.tasks[0]?.task.id).toBe(task.id);
+
+    const digestOnlyInput = service.buildEpisodeInput({
+      scopeId: scope.id,
+      evidenceIds: [digestEvidence.id],
+    });
+    expect(digestOnlyInput.tasks).toHaveLength(1);
+    expect(digestOnlyInput.tasks[0]?.task.id).toBe(task.id);
+    expect(digestOnlyInput.preflight.counts.taskResults).toBe(1);
+    expect(digestOnlyInput.preflight.warnings).not.toContain('No task evidence selected.');
   });
 
   it('resolves judge model from scope policy before Space default', async () => {
