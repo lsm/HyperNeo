@@ -394,6 +394,7 @@ export class EvolutionEpisodeService {
         item.kind !== 'permission_block' &&
         item.kind !== 'slow_tool_call' &&
         item.kind !== 'conversation_friction' &&
+        item.kind !== 'friction_digest' &&
         item.kind !== 'verification_triage'
       )
         return [];
