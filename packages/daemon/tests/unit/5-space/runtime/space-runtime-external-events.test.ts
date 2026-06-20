@@ -3937,4 +3937,63 @@ describe('SpaceRuntime event-driven gate evaluation', () => {
 
     expect(blockedRunHooks).toEqual([{ runId: run.id, topic: PR_TOPIC }]);
   });
+
+  test('clearPrEventSubscriptionsForRun preserves agent-registered dynamic subscriptions on the same PR topic', async () => {
+    const { run, task } = await startRun();
+    // Agent explicitly subscribes to the PR topic via subscribe_external_event (dynamic).
+    runtime.registerSubscription(
+      run.id,
+      task.id,
+      'code',
+      'coder',
+      'github/lsm/neokai/pull_request/42.*',
+      { subscriptionKind: 'dynamic' }
+    );
+    // Runtime also auto-subscribes (kind 'auto') on the same pattern.
+    const auto = runtime.registerPrEventSubscriptionForRun(run.id, PR_URL);
+    expect(auto.success).toBe(true);
+
+    // Gate-driven cleanup must only sweep the auto subscription.
+    runtime.clearPrEventSubscriptionsForRun(run.id);
+
+    const event = makePrEvent();
+    await eventService.publish(event);
+    // Agent-owned dynamic subscription still matches.
+    expect(injected).toHaveLength(1);
+  });
+
+  test('registerPrEventSubscriptionForRun drops the prior auto-subscription when the PR URL changes', async () => {
+    const { run } = await startRun();
+    const first = runtime.registerPrEventSubscriptionForRun(
+      run.id,
+      'https://github.com/lsm/neokai/pull/42'
+    );
+    expect(first.success).toBe(true);
+    expect(first.topicPattern).toBe('github/lsm/neokai/pull_request/42.*');
+
+    // Swap to a different PR — the old auto-subscription for PR #42 must be
+    // removed so obsolete events stop matching.
+    const second = runtime.registerPrEventSubscriptionForRun(
+      run.id,
+      'https://github.com/lsm/neokai/pull/99'
+    );
+    expect(second.success).toBe(true);
+    expect(second.topicPattern).toBe('github/lsm/neokai/pull_request/99.*');
+
+    // Event for the old PR — should NOT deliver.
+    const staleEvent = makePrEvent({
+      topic: 'github/lsm/neokai/pull_request/42.review_submitted',
+      dedupeKey: 'dedupe-stale-42',
+    });
+    await eventService.publish(staleEvent);
+    expect(injected).toHaveLength(0);
+
+    // Event for the new PR — SHOULD deliver.
+    const freshEvent = makePrEvent({
+      topic: 'github/lsm/neokai/pull_request/99.review_submitted',
+      dedupeKey: 'dedupe-fresh-99',
+    });
+    await eventService.publish(freshEvent);
+    expect(injected).toHaveLength(1);
+  });
 });

@@ -1889,10 +1889,12 @@ export class SpaceRuntimeService {
    * once any gate for the run opens.
    *
    * Called from {@link notifyGateDataChanged} and from the event-driven
-   * re-evaluation path. Idempotent: re-subscribing with the same PR URL is a
-   * no-op (the prior identical topic pattern is replaced in-place).
+   * re-evaluation path. Also invoked directly by the `write_gate` MCP tool
+   * path in `TaskAgentManager` so agent-driven gate writes trigger the same
+   * sync as RPC-driven ones. Idempotent: re-subscribing with the same PR URL
+   * is a no-op (the prior identical topic pattern is replaced in-place).
    */
-  private async syncBlockedRunPrEventSubscription(
+  async syncBlockedRunPrEventSubscription(
     runId: string,
     activatedTasks: SpaceTask[]
   ): Promise<void> {
@@ -1948,8 +1950,39 @@ export class SpaceRuntimeService {
 
     if (anyOpened) {
       this.runtime.clearPrEventSubscriptionsForRun(runId);
+      // A gate opened via event-driven re-evaluation: transition the run back
+      // to `in_progress` so the next tick spawns the newly-activated target
+      // node. Without this, the run stays `blocked` even though the channel
+      // router created a pending execution for the target, and the workflow
+      // would only progress on the next poll cycle.
+      this.transitionBlockedRunToInProgress(runId);
       await this.notifyBlockedRunSessionGateResolved(runId, event);
     }
+  }
+
+  /**
+   * Transition a `blocked` workflow run back to `in_progress` after an
+   * event-driven gate opening. Mirrors the resume RPC semantics: only fires
+   * when the run is actually `blocked`, and publishes the canonical
+   * `space.workflowRun.updated` event so UI subscribers stay in sync.
+   */
+  private transitionBlockedRunToInProgress(runId: string): void {
+    const run = this.config.workflowRunRepo.getRun(runId);
+    if (!run || run.status !== 'blocked') return;
+    const updated = this.config.workflowRunRepo.transitionStatus(runId, 'in_progress');
+    if (!this.config.internalEventBus || !updated) return;
+    this.config.internalEventBus
+      .publish('space.workflowRun.updated', {
+        sessionId: 'global',
+        spaceId: updated.spaceId,
+        runId: updated.id,
+        run: updated,
+      })
+      .catch((err) => {
+        log.warn(
+          `SpaceRuntimeService: failed to emit space.workflowRun.updated after blocked→in_progress: ${err instanceof Error ? err.message : String(err)}`
+        );
+      });
   }
 
   /**

@@ -300,7 +300,16 @@ interface WorkflowSubscriptionTarget {
   nodeId: string;
   agentName: string;
   topic?: string;
-  subscriptionKind?: 'static' | 'dynamic';
+  /**
+   * Origin of the subscription:
+   * - `static`  — declared in the workflow template's `eventInterests`
+   * - `dynamic` — registered at runtime via MCP tooling (`subscribe_external_event`)
+   * - `auto`    — registered by the runtime itself (e.g. gate-blocked PR
+   *              auto-subscription). Distinct from `dynamic` so cleanup can
+   *              target only runtime-managed subscriptions without touching
+   *              agent-registered interests on the same topic.
+   */
+  subscriptionKind?: 'static' | 'dynamic' | 'auto';
   sessionId?: string;
 }
 
@@ -386,12 +395,6 @@ const EXTERNAL_EVENT_RATE_LIMIT_PER_MIN = parsePositiveIntegerEnv(
   10
 );
 const EXTERNAL_EVENT_QUEUE_TTL_MS = parsePositiveIntegerEnv('EXTERNAL_EVENT_QUEUE_TTL_MS', 300_000);
-/**
- * Matches topic patterns produced by {@link buildPrEventTopicPattern}:
- * `github/<owner>/<repo>/pull_request/<number>.*`. Used to selectively prune
- * auto-subscribed PR event interests without touching agent-registered ones.
- */
-const PR_EVENT_TOPIC_PATTERN_TEST = /^github\/[^/]+\/[^/]+\/pull_request\/[0-9]+\.[*]$/;
 
 export function parsePositiveIntegerEnv(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -1062,7 +1065,7 @@ export class SpaceRuntime {
     nodeId: string,
     agentName: string,
     topic: string,
-    options: { subscriptionKind?: 'static' | 'dynamic' } = {}
+    options: { subscriptionKind?: 'static' | 'dynamic' | 'auto' } = {}
   ): { success: boolean; error?: string } {
     const trimmed = topic?.trim();
     if (!trimmed) return { success: false, error: 'Topic pattern is required.' };
@@ -1316,7 +1319,9 @@ export class SpaceRuntime {
    * - the underlying `registerSubscription` call rejects (capacity / invalid)
    *
    * Idempotent: re-invoking with the same `prUrl` no-ops because
-   * `registerSubscription` removes the prior identical pattern first.
+   * `registerSubscription` removes the prior identical pattern first. When
+   * the PR URL changes (A → B) the prior auto-subscription for A is dropped
+   * before the new one is registered so obsolete PR events stop matching.
    */
   registerPrEventSubscriptionForRun(
     workflowRunId: string,
@@ -1330,6 +1335,10 @@ export class SpaceRuntime {
     if (!slot) {
       return { success: false, error: 'No active agent slot for workflow run' };
     }
+    // Drop any prior auto-subscriptions for this run before registering the
+    // new pattern. This handles PR-URL changes (A → B) and also makes the
+    // 'auto' kind a single-entry-per-run invariant.
+    this.clearPrEventSubscriptionsForRun(workflowRunId);
     const topicPattern = buildPrEventTopicPattern(parsed);
     try {
       const result = this.registerSubscription(
@@ -1338,7 +1347,7 @@ export class SpaceRuntime {
         slot.nodeId,
         slot.agentName,
         topicPattern,
-        { subscriptionKind: 'dynamic' }
+        { subscriptionKind: 'auto' }
       );
       if (!result.success) return { success: false, error: result.error, topicPattern };
       return { success: true, topicPattern };
@@ -1354,18 +1363,20 @@ export class SpaceRuntime {
   /**
    * Remove auto-subscribed GitHub PR event subscriptions for a workflow run.
    *
-   * Only removes dynamic subscriptions whose topic matches the GitHub PR
-   * pattern shape (`github/.../pull_request/<id>.*`); agent-registered
-   * interests on other topics are preserved. Called when a gate opens or the
-   * run transitions out of `blocked`.
+   * Only removes subscriptions whose `subscriptionKind === 'auto'` — i.e.
+   * those created by {@link registerPrEventSubscriptionForRun}. Agent-registered
+   * `dynamic` interests (e.g. via `subscribe_external_event`) on the same or
+   * overlapping topics are preserved so an agent that explicitly subscribed
+   * keeps receiving events after the gate opens.
+   *
+   * Called when a gate opens or the run transitions out of `blocked`.
    */
   clearPrEventSubscriptionsForRun(workflowRunId: string): void {
     this.topicTrie.remove(
       (target) =>
         isWorkflowSubscriptionTarget(target) &&
         target.workflowRunId === workflowRunId &&
-        target.subscriptionKind === 'dynamic' &&
-        PR_EVENT_TOPIC_PATTERN_TEST.test(target.topic ?? '')
+        target.subscriptionKind === 'auto'
     );
   }
 

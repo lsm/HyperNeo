@@ -411,4 +411,52 @@ describe('SpaceRuntimeService event-driven gate evaluation', () => {
 
     expect(ctx.runtimeNotifications).toHaveLength(0);
   });
+
+  test('handleBlockedRunExternalEvent transitions the run back to in_progress when a gate opens', async () => {
+    const ctx = await setup({
+      gates: [
+        {
+          id: 'approval',
+          fields: [approvedField, prUrlField],
+        },
+      ],
+      channels: [
+        {
+          id: 'ch-code-to-review',
+          from: 'coder',
+          to: 'reviewer',
+          gateId: 'approval',
+        },
+      ],
+    });
+    const workflow = ctx.workflowManager.listWorkflows(SPACE_ID)[0]!;
+    const { runId } = await seedBlockedRunWithPr(ctx, workflow.id);
+
+    // Satisfy the approval gate, then drive event-driven re-evaluation.
+    ctx.gateDataRepo.merge(runId, 'approval', { approved: true, approvedAt: Date.now() });
+
+    await ctx.service.handleBlockedRunExternalEvent({
+      runId,
+      event: {
+        namespaceId: SPACE_ID,
+        spaceId: SPACE_ID,
+        eventId: `evt-resume-${Math.random().toString(36).slice(2)}`,
+        source: 'github',
+        topic: PR_EVENT_TOPIC,
+        dedupeKey: `dedupe-resume-${Math.random().toString(36).slice(2)}`,
+        summary: 'Codex approved',
+        payload: {},
+        occurredAt: Date.now(),
+        ingestedAt: Date.now(),
+      },
+    });
+
+    // Run must transition blocked → in_progress so the tick loop spawns the
+    // newly-activated review node. Otherwise the gate is open but the workflow
+    // is stuck in blocked status.
+    const updatedRun = ctx.workflowRunRepo.getRun(runId);
+    expect(updatedRun?.status).toBe('in_progress');
+    // Session still got the courtesy notification.
+    expect(ctx.runtimeNotifications.length).toBeGreaterThanOrEqual(1);
+  });
 });
