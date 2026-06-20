@@ -1152,6 +1152,10 @@ export class AgentSession
     return this.db.getSDKMessages(this.session.id, limit, before, since);
   }
 
+  getBackgroundTaskMessages(): Array<ChatMessage & { timestamp: number }> {
+    return this.db.getBackgroundTaskMessages(this.session.id);
+  }
+
   getSDKMessageCount(): number {
     return this.db.getSDKMessageCount(this.session.id);
   }

@@ -7,6 +7,7 @@ import { IconButton } from './ui/IconButton.tsx';
 interface SessionInfoPanelButtonProps {
   session: Session | null;
   messages: ChatMessage[];
+  backgroundTaskMessages?: ChatMessage[];
   toolInputsMap: Map<string, unknown>;
 }
 
@@ -429,14 +430,15 @@ function SourceRows({ sources }: { sources: SourceItem[] }) {
 export function SessionInfoPanelButton({
   session,
   messages,
+  backgroundTaskMessages = [],
   toolInputsMap,
 }: SessionInfoPanelButtonProps) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const todos = useMemo(() => extractLatestTodos(messages), [messages]);
   const tasks = useMemo(
-    () => extractBackgroundTasks(messages, toolInputsMap),
-    [messages, toolInputsMap]
+    () => extractBackgroundTasks(backgroundTaskMessages, toolInputsMap),
+    [backgroundTaskMessages, toolInputsMap]
   );
   const sources = useMemo(() => extractSources(messages), [messages]);
 

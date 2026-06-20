@@ -334,24 +334,52 @@ describe('SDKMessageRepository', () => {
       expect(hasMore).toBe(false);
     });
 
-    it('should include background task metadata rows outside the pagination budget', () => {
-      repository.saveSDKMessage('session-1', createUserMessage('Visible'));
-      for (const subtype of ['task_started', 'task_updated']) {
+    it('should expose background task metadata separately from pagination', () => {
+      for (const subtype of ['task_started', 'task_updated', 'task_notification']) {
         repository.saveSDKMessage('session-1', {
           type: 'system',
           subtype,
           uuid: `metadata-${subtype}`,
           session_id: 'session-1',
           task_id: 'task-1',
+          status: subtype === 'task_notification' ? 'completed' : undefined,
         } as unknown as SDKMessage);
       }
+      repository.saveSDKMessage('session-1', createUserMessage('Visible'));
 
       const { messages, hasMore } = repository.getSDKMessages('session-1', 1);
+      const metadataMessages = repository.getBackgroundTaskMessages('session-1');
 
-      expect(messages.map((message) => (message as { subtype?: string }).subtype).sort()).toEqual(
-        ['task_started', 'task_updated', undefined].sort()
-      );
+      expect(messages.map((message) => (message as { subtype?: string }).subtype)).toEqual([
+        undefined,
+      ]);
+      expect(metadataMessages.map((message) => (message as { subtype?: string }).subtype)).toEqual([
+        'task_started',
+        'task_updated',
+        'task_notification',
+      ]);
       expect(hasMore).toBe(true);
+    });
+
+    it('should tolerate malformed background task metadata rows', () => {
+      repository.saveSDKMessage('session-1', createUserMessage('Visible'));
+      repository.saveSDKMessage('session-1', {
+        type: 'system',
+        subtype: 'task_started',
+        uuid: 'metadata-task-started',
+        session_id: 'session-1',
+        task_id: 'task-1',
+      } as unknown as SDKMessage);
+      db.prepare(
+        `UPDATE sdk_messages
+         SET sdk_message = ?
+         WHERE message_subtype = 'task_started'`
+      ).run('{not-json');
+
+      const metadataMessages = repository.getBackgroundTaskMessages('session-1');
+
+      expect(metadataMessages).toHaveLength(1);
+      expect(metadataMessages[0].type).toBe('unknown');
     });
 
     it('should not let background task metadata rows displace visible rows', () => {
@@ -368,14 +396,9 @@ describe('SDKMessageRepository', () => {
       repository.saveSDKMessage('session-1', createAssistantMessage('Newer visible'));
 
       const { messages } = repository.getSDKMessages('session-1', 2);
-      const visibleMessages = messages.filter(
-        (message) =>
-          !['task_started', 'task_updated'].includes(
-            (message as { subtype?: string }).subtype ?? ''
-          )
-      );
 
-      expect(visibleMessages).toHaveLength(2);
+      expect(messages).toHaveLength(2);
+      expect(messages.map((message) => message.type)).toEqual(['user', 'assistant']);
     });
 
     it('should include visible system rows in session pagination', () => {

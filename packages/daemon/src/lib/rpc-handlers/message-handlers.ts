@@ -153,13 +153,21 @@ export function setupMessageHandlers(
           before,
           since
         );
-        return { sdkMessages, hasMore };
+        return {
+          sdkMessages,
+          hasMore,
+          backgroundTaskMessages: sdkMessageRepo.getBackgroundTaskMessages(targetSessionId),
+        };
       }
       throw new Error('Session not found');
     }
 
     const { messages: sdkMessages, hasMore } = agentSession.getSDKMessages(limit, before, since);
-    return { sdkMessages, hasMore };
+    return {
+      sdkMessages,
+      hasMore,
+      backgroundTaskMessages: agentSession.getBackgroundTaskMessages(),
+    };
   });
 
   // Get total message count for a session (useful for pagination UI)

@@ -60,6 +60,9 @@ class SessionStore {
   /** SDK messages from state.sdkMessages channel */
   readonly sdkMessages = signal<ChatMessage[]>([]);
 
+  /** Background task metadata rows kept separate from transcript pagination. */
+  readonly backgroundTaskMessages = signal<ChatMessage[]>([]);
+
   /**
    * Whether the initial messages snapshot has arrived for the current session.
    *
@@ -223,6 +226,7 @@ class SessionStore {
     // 2. Clear state
     this.sessionState.value = null;
     this.sdkMessages.value = [];
+    this.backgroundTaskMessages.value = [];
     this.retryAttempts.value = []; // Clear retry attempts on session switch
     this._initialMessageCount.value = 0;
     this._hasMoreMessages.value = false;
@@ -379,7 +383,7 @@ class SessionStore {
     const unsubSnapshot = hub.onEvent<LiveQuerySnapshotEvent>('liveQuery.snapshot', (event) => {
       if (event.subscriptionId !== subscriptionId) return;
       if (this.activeMessagesSubscriptionId !== subscriptionId) return;
-      this._applyMessagesSnapshot(event.rows as ChatMessage[]);
+      this._applyMessagesSnapshot(event.rows as ChatMessage[], event.metadata);
     });
     this.cleanupFunctions.push(unsubSnapshot);
 
@@ -447,7 +451,7 @@ class SessionStore {
    * client-side optimistic echo is required to show a freshly-sent message
    * — it appears on the next delta.
    */
-  private _applyMessagesSnapshot(rows: ChatMessage[]): void {
+  private _applyMessagesSnapshot(rows: ChatMessage[], metadata?: Record<string, unknown>): void {
     const sorted = rows
       .slice()
       .sort(
@@ -457,6 +461,7 @@ class SessionStore {
       );
 
     this.sdkMessages.value = sorted;
+    this.backgroundTaskMessages.value = this.extractBackgroundTaskMessages(metadata);
     this._hasMoreMessages.value = rows.length >= LIVE_QUERY_MESSAGE_LIMIT;
     this._initialMessageCount.value = rows.length;
     // Mark the messages as loaded so the UI can transition from the loading
@@ -475,7 +480,24 @@ class SessionStore {
    * Messages keyed by `id` (the DB row id we surfaced in `messages.bySession`)
    * give stable diffing even when the SDK message itself lacks a uuid.
    */
+  private extractBackgroundTaskMessages(metadata?: Record<string, unknown>): ChatMessage[] {
+    const raw = metadata?.backgroundTaskMessages;
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .filter((message): message is ChatMessage => typeof message === 'object' && message !== null)
+      .slice()
+      .sort(
+        (a, b) =>
+          ((a as ChatMessage & { timestamp?: number }).timestamp || 0) -
+          ((b as ChatMessage & { timestamp?: number }).timestamp || 0)
+      );
+  }
+
   private _applyMessagesDelta(event: LiveQueryDeltaEvent): void {
+    if (event.metadata && 'backgroundTaskMessages' in event.metadata) {
+      this.backgroundTaskMessages.value = this.extractBackgroundTaskMessages(event.metadata);
+    }
+
     let next = this.sdkMessages.value.slice();
     let changed = false;
 
@@ -785,14 +807,22 @@ class SessionStore {
 
     try {
       const hub = await connectionManager.getHub();
-      const result = await hub.request<{ sdkMessages: ChatMessage[]; hasMore: boolean }>(
-        'message.sdkMessages',
-        {
-          sessionId,
-          before: beforeTimestamp,
-          limit,
-        }
-      );
+      const result = await hub.request<{
+        sdkMessages: ChatMessage[];
+        hasMore: boolean;
+        backgroundTaskMessages?: ChatMessage[];
+      }>('message.sdkMessages', {
+        sessionId,
+        before: beforeTimestamp,
+        limit,
+      });
+
+      if (
+        result?.backgroundTaskMessages &&
+        (!sessionIdOverride || sessionId === this.activeSessionId.value)
+      ) {
+        this.backgroundTaskMessages.value = result.backgroundTaskMessages;
+      }
 
       const messages = result?.sdkMessages ?? [];
       const hasMore = result?.hasMore ?? false;

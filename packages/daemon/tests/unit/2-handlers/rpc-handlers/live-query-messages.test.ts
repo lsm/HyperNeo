@@ -11,10 +11,16 @@
  *    and forwards `sendStatus` only when the DB row is 'failed'.
  */
 
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
 import { Database as BunDatabase } from 'bun:sqlite';
+import type { MessageHub } from '@neokai/shared';
 import { createTables } from '../../../../src/storage/schema';
-import { NAMED_QUERY_REGISTRY } from '../../../../src/lib/rpc-handlers/live-query-handlers';
+import { createReactiveDatabase } from '../../../../src/storage/reactive-database';
+import { LiveQueryEngine } from '../../../../src/storage/live-query';
+import {
+  NAMED_QUERY_REGISTRY,
+  setupLiveQueryHandlers,
+} from '../../../../src/lib/rpc-handlers/live-query-handlers';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -23,6 +29,16 @@ import { NAMED_QUERY_REGISTRY } from '../../../../src/lib/rpc-handlers/live-quer
 function makeDb(): BunDatabase {
   const db = new BunDatabase(':memory:');
   createTables(db);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS spaces (
+      id TEXT PRIMARY KEY,
+      slug TEXT,
+      workspace_path TEXT NOT NULL,
+      name TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )
+  `);
   return db;
 }
 
@@ -84,6 +100,59 @@ function queryPlan(db: BunDatabase, sessionId: string, limit: number): string {
     detail: string;
   }>;
   return planRows.map((row) => row.detail).join('\n');
+}
+
+type RequestHandler = (data: unknown, context: { clientId?: string; sessionId: string }) => unknown;
+
+function createMockHub() {
+  const handlers = new Map<string, RequestHandler>();
+  const sentMessages: Array<{
+    message: { method: string; data: Record<string, unknown> };
+  }> = [];
+
+  const hub = {
+    onRequest: mock((method: string, handler: RequestHandler) => {
+      handlers.set(method, handler);
+      return () => handlers.delete(method);
+    }),
+    getRouter: mock(() => ({
+      sendToClient: mock((_clientId: string, message: unknown) => {
+        sentMessages.push({
+          message: message as { method: string; data: Record<string, unknown> },
+        });
+        return true;
+      }),
+    })),
+    onClientDisconnect: mock(() => () => {}),
+  } as unknown as MessageHub;
+
+  return {
+    hub,
+    sentMessages,
+    subscribe: (sessionId: string, limit = 100) => {
+      const handler = handlers.get('liveQuery.subscribe');
+      if (!handler) throw new Error('liveQuery.subscribe handler not registered');
+      return handler(
+        { queryName: 'messages.bySession', params: [sessionId, limit], subscriptionId: 'sub-1' },
+        { clientId: 'client-1', sessionId: 'global' }
+      );
+    },
+  };
+}
+
+function subscribeMessagesBySession(db: BunDatabase, sessionId: string, limit = 100) {
+  const reactiveDb = createReactiveDatabase({ getDatabase: () => db } as never);
+  const engine = new LiveQueryEngine(db, reactiveDb);
+  const setup = createMockHub();
+  const cleanup = setupLiveQueryHandlers(setup.hub, engine, db);
+
+  setup.subscribe(sessionId, limit);
+  const snapshot = setup.sentMessages[0]?.message.data;
+
+  cleanup();
+  engine.dispose();
+
+  return snapshot;
 }
 
 // ---------------------------------------------------------------------------
@@ -431,15 +500,8 @@ describe('messages.bySession — SQL behavior', () => {
     expect(rows.map((r) => r.id)).toEqual(['visible']);
   });
 
-  test('includes background task metadata rows outside the transcript limit', () => {
-    insertSdkMessage(db, {
-      id: 'visible',
-      sessionId: 's1',
-      messageType: 'assistant',
-      sdkMessage: { type: 'assistant', uuid: 'visible-uuid', message: { content: [] } },
-      timestamp: '2024-01-01 00:00:01',
-    });
-    for (const subtype of ['task_started', 'task_updated']) {
+  test('includes background task metadata in LiveQuery metadata outside the transcript rows', () => {
+    for (const subtype of ['task_started', 'task_updated', 'task_notification']) {
       insertSdkMessage(db, {
         id: `metadata-${subtype}`,
         sessionId: 's1',
@@ -451,14 +513,26 @@ describe('messages.bySession — SQL behavior', () => {
           uuid: `${subtype}-uuid`,
           session_id: 's1',
           task_id: 'task-1',
+          status: subtype === 'task_notification' ? 'completed' : undefined,
         },
         timestamp: '2024-01-01 00:00:02',
       });
     }
+    insertSdkMessage(db, {
+      id: 'visible',
+      sessionId: 's1',
+      messageType: 'assistant',
+      sdkMessage: { type: 'assistant', uuid: 'visible-uuid', message: { content: [] } },
+      timestamp: '2024-01-01 00:00:03',
+    });
 
-    const rows = query(db, 's1', 1);
-    expect(rows.map((r) => r.id).sort()).toEqual(
-      ['metadata-task_started', 'metadata-task_updated', 'visible'].sort()
+    const snapshot = subscribeMessagesBySession(db, 's1', 1);
+    const rows = snapshot?.rows as Array<{ id: string }>;
+    const metadata = snapshot?.metadata as { backgroundTaskMessages: Array<{ id: string }> };
+
+    expect(rows.map((r) => r.id)).toEqual(['visible']);
+    expect(metadata.backgroundTaskMessages.map((r) => r.id).sort()).toEqual(
+      ['metadata-task_notification', 'metadata-task_started', 'metadata-task_updated'].sort()
     );
   });
 
@@ -496,11 +570,8 @@ describe('messages.bySession — SQL behavior', () => {
     });
 
     const rows = query(db, 's1', 2);
-    const visibleRows = rows.filter(
-      (row) => !['task_started', 'task_updated'].includes((row.subtype as string | undefined) ?? '')
-    );
 
-    expect(visibleRows.map((row) => row.id)).toEqual(['older-visible', 'newer-visible']);
+    expect(rows.map((row) => row.id)).toEqual(['older-visible', 'newer-visible']);
   });
 
   test('does not throw when an informational row has malformed JSON', () => {
