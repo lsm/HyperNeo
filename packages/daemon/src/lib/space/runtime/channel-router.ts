@@ -58,6 +58,8 @@ import type { GateScriptContext } from './gate-script-executor';
 import { executeGateScript } from './gate-script-executor';
 import { getBuiltInGateScript } from '../workflows/built-in-workflows';
 import { getEffectiveGate } from './gate-features';
+import { RATE_LIMIT_MIN_BACKOFF_MS } from './rate-limit-detector';
+import { GateRetryScheduler } from './gate-retry-scheduler';
 import type {
   InternalEventBus,
   DaemonInternalEventMap,
@@ -79,6 +81,13 @@ const log = new Logger('channel-router');
 export interface GateResult {
   allowed: boolean;
   reason?: string;
+  /**
+   * True when the gate closed because an upstream API returned a rate-limit
+   * response. UI / callers can use this to defer retry past `retryAfterMs`.
+   */
+  rateLimited?: boolean;
+  /** Suggested backoff in milliseconds when `rateLimited` is true. */
+  retryAfterMs?: number;
 }
 
 /**
@@ -101,12 +110,27 @@ interface WorkflowRunReopenedEvent {
  * Callers can inspect `gateIdentifier` to identify the blocking gate.
  */
 export class ChannelGateBlockedError extends Error {
+  /**
+   * True when the block was caused by a rate-limit response from an upstream
+   * API (e.g. a gate script's stderr matched GitHub rate-limit patterns).
+   * Consumers should defer retry past `retryAfterMs` rather than re-running
+   * the gate on the next dispatch.
+   */
+  public readonly rateLimited: boolean;
+  /**
+   * Suggested backoff in milliseconds when `rateLimited` is true. Defaults to
+   * the shared minimum backoff when the gate script did not provide one.
+   */
+  public readonly retryAfterMs?: number;
   constructor(
     message: string,
-    public readonly gateIdentifier: string
+    public readonly gateIdentifier: string,
+    options?: { rateLimited?: boolean; retryAfterMs?: number }
   ) {
     super(message);
     this.name = 'ChannelGateBlockedError';
+    this.rateLimited = options?.rateLimited ?? false;
+    this.retryAfterMs = options?.retryAfterMs;
   }
 }
 
@@ -288,6 +312,23 @@ export interface ChannelRouterConfig {
    * own data does not contain `pr_url`.
    */
   getPrUrlForRun?: (runId: string) => string;
+  /**
+   * Optional override for the script executor used when evaluating script-backed
+   * gates. Defaults to `executeGateScript()`. Intended for tests and contexts
+   * that need to simulate gate script results without spawning processes.
+   */
+  scriptExecutor?: GateScriptExecutorFn;
+  /**
+   * Optional shared retry scheduler for rate-limited gate-data refresh
+   * re-evaluations. When omitted, the router uses a private scheduler.
+   */
+  gateRetryScheduler?: GateRetryScheduler;
+  /**
+   * Optional overrides merged into the gate script execution context. Fields
+   * provided here (e.g. `prUrl`) take precedence over the defaults computed
+   * by the router.
+   */
+  scriptContext?: Partial<GateScriptContext>;
 }
 
 // ---------------------------------------------------------------------------
@@ -322,12 +363,22 @@ export class ChannelRouter {
    */
   private readonly openedGates = new Map<string, number>();
 
+  /**
+   * Shared scheduler for rate-limit retry timers during `onGateDataChanged`.
+   * When a script-backed gate hits a GitHub rate limit, the scheduler ensures
+   * the gate is re-evaluated after the reported backoff so downstream node
+   * activation is not lost. A shared instance lets retries survive across the
+   * transient `ChannelRouter`s created by `SpaceRuntimeService`.
+   */
+  private readonly gateRetryScheduler: GateRetryScheduler;
+
   constructor(private readonly config: ChannelRouterConfig) {
     this.scriptSemaphore = {
       acquired: 0,
       max: config.maxConcurrentScripts ?? DEFAULT_MAX_CONCURRENT_SCRIPTS,
       waiters: [],
     };
+    this.gateRetryScheduler = config.gateRetryScheduler ?? new GateRetryScheduler();
   }
 
   // -------------------------------------------------------------------------
@@ -558,7 +609,12 @@ export class ChannelRouter {
         workflow,
         gateSourceName
       );
-      return { allowed: gateResult.open, reason: gateResult.reason };
+      return {
+        allowed: gateResult.open,
+        reason: gateResult.reason,
+        rateLimited: gateResult.rateLimited,
+        retryAfterMs: gateResult.retryAfterMs,
+      };
     }
 
     return { allowed: true };
@@ -720,7 +776,11 @@ export class ChannelRouter {
           throw new ChannelGateBlockedError(
             gateResult.reason ??
               `Gate "${channel.gateId}" blocked delivery from "${fromRole}" to "${toTarget}"`,
-            channel.gateId
+            channel.gateId,
+            {
+              rateLimited: gateResult.rateLimited,
+              retryAfterMs: gateResult.retryAfterMs,
+            }
           );
         }
       }
@@ -770,7 +830,11 @@ export class ChannelRouter {
           throw new ChannelGateBlockedError(
             postActivationGate.reason ??
               `Gate "${channel.gateId}" closed during activation; blocking delivery from "${fromRole}" to "${toTarget}"`,
-            channel.gateId
+            channel.gateId,
+            {
+              rateLimited: postActivationGate.rateLimited,
+              retryAfterMs: postActivationGate.retryAfterMs,
+            }
           );
         }
       }
@@ -866,6 +930,7 @@ export class ChannelRouter {
     // gate-data write, wildcard channels only open when the gate is open for
     // every possible source node.
     const openChannels: typeof channels = [];
+    const limitedResults: GateEvalResult[] = [];
     for (const ch of channels) {
       const sourceNames = this.getGateDataChangeSourceNames(workflow, ch);
       const results = await Promise.all(
@@ -873,11 +938,38 @@ export class ChannelRouter {
       );
       if (results.every((result) => result.open)) {
         openChannels.push(ch);
+      } else {
+        for (const r of results) {
+          if (r.rateLimited) limitedResults.push(r);
+        }
       }
     }
 
     if (openChannels.length > 0) {
       this.cacheGateOpened(runId, gateId, workflow);
+    }
+
+    // Gate opened with no rate-limited channels — any pending retry is no longer needed.
+    if (openChannels.length > 0 && limitedResults.length === 0) {
+      this.gateRetryScheduler.cancel(runId, gateId);
+    }
+
+    if (limitedResults.length > 0) {
+      // At least one channel evaluation hit a rate limit; schedule a retry so
+      // downstream activation is not lost even if another channel opened. Use
+      // the longest backoff across all limited evaluations.
+      const maxRetryAfterMs = limitedResults.reduce(
+        (max, r) => Math.max(max, r.retryAfterMs ?? RATE_LIMIT_MIN_BACKOFF_MS),
+        RATE_LIMIT_MIN_BACKOFF_MS
+      );
+      this.gateRetryScheduler.schedule(runId, gateId, maxRetryAfterMs, () => {
+        void this.onGateDataChanged(runId, gateId).catch((err) => {
+          log.warn(
+            `Scheduled gate-data refresh retry failed for gate "${gateId}" in run "${runId}": ` +
+              (err instanceof Error ? err.message : String(err))
+          );
+        });
+      });
     }
 
     if (openChannels.length === 0) {
@@ -1267,7 +1359,7 @@ export class ChannelRouter {
     const run = this.config.workflowRunRepo.getRun(runId);
     const workflowStartIso = run ? new Date(run.createdAt).toISOString() : undefined;
 
-    const scriptExecutor: GateScriptExecutorFn = executeGateScript;
+    const scriptExecutor: GateScriptExecutorFn = this.config.scriptExecutor ?? executeGateScript;
     const scriptContext: GateScriptContext = {
       workspacePath: this.config.workspacePath ?? process.cwd(),
       gateId,
@@ -1276,6 +1368,7 @@ export class ChannelRouter {
       workflowStartIso,
       gateDataUpdatedIso: record ? new Date(record.updatedAt).toISOString() : undefined,
       prUrl: this.config.getPrUrlForRun?.(runId),
+      ...this.config.scriptContext,
     };
 
     return this.withScriptSemaphore(async () => {

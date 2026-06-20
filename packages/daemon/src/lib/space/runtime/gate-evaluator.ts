@@ -33,6 +33,7 @@ import {
   type GateScriptContext,
   type GateScriptResult,
 } from './gate-script-executor';
+import { RATE_LIMIT_MIN_BACKOFF_MS } from './rate-limit-detector';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -51,6 +52,19 @@ export interface GateEvalResult {
    * selected keys back to storage without re-running the script.
    */
   data?: Record<string, unknown>;
+  /**
+   * True when the gate's script failed because GitHub returned a rate-limit
+   * error. Surfaced so workflow engines can defer re-evaluation rather than
+   * re-run the script on every gate write. The gate is still closed
+   * (`open: false`); this flag is informational.
+   */
+  rateLimited?: boolean;
+  /**
+   * Suggested backoff in milliseconds when `rateLimited` is true. Consumers
+   * use this to schedule a re-evaluation instead of re-running the script on
+   * every gate write.
+   */
+  retryAfterMs?: number;
 }
 
 // Re-export executor types from gate-script-executor for consumer convenience.
@@ -491,6 +505,10 @@ export async function evaluateGate(
       return {
         open: false,
         reason: `Script check failed: ${scriptResult.error ?? 'unknown error'}`,
+        rateLimited: scriptResult.rateLimited,
+        retryAfterMs: scriptResult.rateLimited
+          ? (scriptResult.retryAfterMs ?? RATE_LIMIT_MIN_BACKOFF_MS)
+          : undefined,
       };
     }
 
