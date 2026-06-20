@@ -313,13 +313,18 @@ export interface ChannelRouterConfig {
    * (and any other post-eval side effects) runs even when the retry fires
    * from inside the router and bypasses the service-level wrapper.
    *
-   * Passed the activated-task list (empty when the gate stayed blocked) so
-   * the callback can branch on the outcome.
+   * Passed the activated-task list (empty when the gate stayed blocked OR
+   * when every target node already had an active task) plus a `gateOpened`
+   * flag that is true whenever at least one channel's gate evaluation
+   * returned open — even if no new task was activated. Callers that need to
+   * react to "the gate is open" must branch on `gateOpened`, not on
+   * `activatedTasks.length`.
    */
   onGateDataChangedComplete?: (
     runId: string,
     gateId: string,
-    activatedTasks: SpaceTask[]
+    activatedTasks: SpaceTask[],
+    gateOpened: boolean
   ) => Promise<void> | void;
   /**
    * Optional callback that resolves the current PR URL for a workflow run.
@@ -1005,7 +1010,7 @@ export class ChannelRouter {
           });
         }
       }
-      this.fireGateDataChangedComplete(runId, gateId, []);
+      this.fireGateDataChangedComplete(runId, gateId, [], false);
       return [];
     }
 
@@ -1092,7 +1097,7 @@ export class ChannelRouter {
       );
     }
 
-    this.fireGateDataChangedComplete(runId, gateId, activatedTasks);
+    this.fireGateDataChangedComplete(runId, gateId, activatedTasks, true);
     return activatedTasks;
   }
 
@@ -1102,16 +1107,21 @@ export class ChannelRouter {
    * deferred retry path scheduled by `gateRetryScheduler` — so service-level
    * post-eval side effects (PR auto-subscription sync, etc.) run even when
    * the retry bypasses the service wrapper.
+   *
+   * `gateOpened` is true whenever at least one channel's gate evaluation
+   * returned open, even if no new task was activated (e.g. all target nodes
+   * already had active tasks).
    */
   private fireGateDataChangedComplete(
     runId: string,
     gateId: string,
-    activatedTasks: SpaceTask[]
+    activatedTasks: SpaceTask[],
+    gateOpened: boolean
   ): void {
     const hook = this.config.onGateDataChangedComplete;
     if (!hook) return;
     try {
-      const result = hook(runId, gateId, activatedTasks);
+      const result = hook(runId, gateId, activatedTasks, gateOpened);
       if (result && typeof (result as Promise<void>).catch === 'function') {
         (result as Promise<void>).catch((err) => {
           log.warn(

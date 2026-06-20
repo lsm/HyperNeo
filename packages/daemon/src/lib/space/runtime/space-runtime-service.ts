@@ -1893,8 +1893,8 @@ export class SpaceRuntimeService {
       // typed `space.workflowRun.reopened` events for bus subscribers.
       internalEventBus: this.config.internalEventBus,
       onGatePendingApproval: (runId, gateId) => this.handleGatePendingApproval(runId, gateId),
-      onGateDataChangedComplete: (runId, _gateId, activatedTasks) =>
-        this.handleGateDataChangedComplete(runId, activatedTasks),
+      onGateDataChangedComplete: (runId, _gateId, activatedTasks, gateOpened) =>
+        this.handleGateDataChangedComplete(runId, activatedTasks, gateOpened),
       getPrUrlForRun: (rid) => this.resolvePrUrlForRun(rid),
     });
     const activated = await router.onGateDataChanged(runId, gateId);
@@ -1952,9 +1952,20 @@ export class SpaceRuntimeService {
    * retries through the same chain — otherwise the retry fires
    * `router.onGateDataChanged` directly and only hits this hook.
    */
-  async handleGateDataChangedComplete(runId: string, activatedTasks: SpaceTask[]): Promise<void> {
-    await this.syncBlockedRunPrEventSubscription(runId, activatedTasks);
-    if (activatedTasks.length > 0) {
+  async handleGateDataChangedComplete(
+    runId: string,
+    activatedTasks: SpaceTask[],
+    gateOpened = activatedTasks.length > 0
+  ): Promise<void> {
+    // Pass a non-empty activatedTasks to syncBlockedRunPrEventSubscription
+    // whenever the gate opened so it clears the auto-subscription, even if
+    // no new task was activated.
+    await this.syncBlockedRunPrEventSubscription(runId, gateOpened ? activatedTasks : []);
+    // Resume the run when the gate actually opened — even if no new task was
+    // activated (e.g. all target nodes already had active tasks). Branching
+    // on activatedTasks.length misses the "gate open, nothing to activate"
+    // case and leaves the run stuck in `blocked` despite the open gate.
+    if (gateOpened) {
       const run = this.config.workflowRunRepo.getRun(runId);
       if (run?.status === 'blocked') {
         this.transitionBlockedRunToInProgress(runId);
@@ -2019,18 +2030,29 @@ export class SpaceRuntimeService {
   async handleBlockedRunExternalEvent(payload: {
     runId: string;
     event: ExternalEventPublishedPayload;
-  }): Promise<void> {
+  }): Promise<boolean> {
     const { runId, event } = payload;
     const run = this.config.workflowRunRepo.getRun(runId);
-    if (!run || run.status !== 'blocked') return;
+    if (!run || run.status !== 'blocked') return false;
     const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
-    if (!workflow) return;
+    if (!workflow) return false;
 
     let anyOpened = false;
     for (const gate of workflow.gates ?? []) {
       try {
         const activated = await this.notifyGateDataChanged(runId, gate.id);
-        if (activated.length > 0) anyOpened = true;
+        // A gate can open with zero activated tasks when every target node
+        // already has an active task; treat any non-empty activated list as
+        // a strong signal, but fall back to checking if the gate now reports
+        // open via gateOpenStateRepo. For simplicity (and because the router
+        // path fires onGateDataChangedComplete with the authoritative flag
+        // synchronously), we treat activated>0 OR the gate being marked
+        // open in the open-state cache as "opened".
+        if (activated.length > 0) {
+          anyOpened = true;
+        } else if (this.config.gateOpenStateRepo?.isOpen(runId, gate.id).open) {
+          anyOpened = true;
+        }
       } catch (err) {
         log.warn(
           `SpaceRuntimeService: event-driven gate re-evaluation for gate "${gate.id}" ` +
@@ -2049,6 +2071,7 @@ export class SpaceRuntimeService {
       this.transitionBlockedRunToInProgress(runId);
       await this.notifyBlockedRunSessionGateResolved(runId, event);
     }
+    return anyOpened;
   }
 
   /**
@@ -2074,6 +2097,11 @@ export class SpaceRuntimeService {
       const cleanedRun = run.failureReason
         ? (this.config.workflowRunRepo.updateRun(runId, { failureReason: null }) ?? updated)
         : updated;
+      // Reset any blocked node executions back to pending so the next tick
+      // re-drives them instead of short-circuiting through the existing
+      // blocked-execution guard (which would re-block the run before the
+      // newly-activated target can make progress).
+      this.resetBlockedExecutionsForRun(runId);
       this.promoteCanonicalTaskAfterRunResume(runId);
       if (this.config.internalEventBus) {
         this.config.internalEventBus
@@ -2161,6 +2189,32 @@ export class SpaceRuntimeService {
     }
     return rehydrated;
   }
+  /**
+   * Reset any `blocked` node executions for a run back to `pending` so the
+   * tick loop's executor will re-drive them. Called by
+   * {@link transitionBlockedRunToInProgress} so a run resumed via event-driven
+   * gate open does not get immediately re-blocked by the existing
+   * blocked-execution guard before the newly-activated target can progress.
+   *
+   * Best-effort — errors are logged and swallowed.
+   */
+  private resetBlockedExecutionsForRun(runId: string): void {
+    try {
+      const executions = this.nodeExecutionRepo.listByWorkflowRun(runId);
+      for (const execution of executions) {
+        if (execution.status !== 'blocked') continue;
+        this.nodeExecutionRepo.update(execution.id, {
+          status: 'pending',
+          completedAt: null,
+        });
+      }
+    } catch (err) {
+      log.warn(
+        `SpaceRuntimeService: resetBlockedExecutionsForRun failed for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  }
+
   private promoteCanonicalTaskAfterRunResume(runId: string): void {
     const tasks = this.config.taskRepo.listByWorkflowRun(runId);
     if (tasks.length === 0) return;

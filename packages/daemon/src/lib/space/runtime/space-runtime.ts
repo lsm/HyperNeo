@@ -263,13 +263,17 @@ export interface SpaceRuntimeConfig {
    * (rather than waiting for the next poll cycle) and notify the blocked
    * agent session when a gate opens as a result.
    *
-   * Fire-and-forget from the runtime's perspective — the service swallows
-   * errors and logs them so a failing re-evaluation cannot break delivery.
+   * Resolves to `true` when at least one gate opened as a result of the
+   * re-evaluation, `false` otherwise. The runtime uses the resolved value
+   * to decide whether to terminally mark the event `failed` when no delivery
+   * was produced — leaving the event `published` forever would cause the
+   * redispatch sweep to replay it on every restart and rerun gate scripts
+   * for an event that already failed to unblock anything.
    */
   onBlockedRunExternalEvent?: (payload: {
     runId: string;
     event: ExternalEventPublishedPayload;
-  }) => Promise<void> | void;
+  }) => Promise<boolean> | boolean | void;
   /**
    * Optional hook invoked immediately after a workflow run transitions into
    * `blocked` status — covers tick-loop recovery (`recoverStalledRuns`),
@@ -1113,18 +1117,26 @@ export class SpaceRuntime {
         target.subscriptionKind === subscriptionKind &&
         target.topic?.toLowerCase() === normalized
     );
-    const existingInterests = this.topicTrie.count(
-      (target) =>
-        isWorkflowSubscriptionTarget(target) &&
-        target.workflowRunId === workflowRunId &&
-        target.nodeId === nodeId &&
-        target.agentName === agentName
-    );
-    if (existingInterests >= MAX_AGENT_SLOT_EVENT_INTERESTS) {
-      throw new Error(
-        `Agent slot ${workflowRunId}/${nodeId}/${agentName} cannot register more than ` +
-          `${MAX_AGENT_SLOT_EVENT_INTERESTS} event interests`
+    // The per-slot cap protects against agents registering excessive
+    // user/static/dynamic interests. Auto subscriptions (registered by the
+    // runtime itself for blocked-run PR wake-up) bypass the cap so a slot
+    // already at the user-interest limit still gets its single gate-wake
+    // subscription.
+    if (subscriptionKind !== 'auto') {
+      const existingInterests = this.topicTrie.count(
+        (target) =>
+          isWorkflowSubscriptionTarget(target) &&
+          target.workflowRunId === workflowRunId &&
+          target.nodeId === nodeId &&
+          target.agentName === agentName &&
+          target.subscriptionKind !== 'auto'
       );
+      if (existingInterests >= MAX_AGENT_SLOT_EVENT_INTERESTS) {
+        throw new Error(
+          `Agent slot ${workflowRunId}/${nodeId}/${agentName} cannot register more than ` +
+            `${MAX_AGENT_SLOT_EVENT_INTERESTS} event interests`
+        );
+      }
     }
     this.topicTrie.insert(trimmed, {
       workflowRunId,
@@ -1492,7 +1504,7 @@ export class SpaceRuntime {
     // delivery filter below finds zero deliverable targets — without this,
     // a daemon crash between the fire-and-forget dispatch and gate
     // re-evaluation would lose the only wake-up event for a blocked run.
-    const blockedHookRunIds = await this.fireBlockedRunExternalEventHook(payload, allMatches);
+    const blockedHookOutcome = await this.fireBlockedRunExternalEventHook(payload, allMatches);
 
     const matches = allMatches.filter((target) => {
       if (isLongHorizonSubscriptionTarget(target)) return target.spaceId === payload.spaceId;
@@ -1503,13 +1515,23 @@ export class SpaceRuntime {
     });
 
     if (matches.length === 0) {
-      // If the blocked-run hook fired for any target, leave the event
-      // published rather than marking it ignored — the hook may still
-      // open a gate and trigger delivery of follow-up state. Marking
-      // ignored here would dedupe-and-drop the only wake-up event.
-      if (this.acceptingExternalEvents && blockedHookRunIds.size === 0) {
-        store.markEventIgnored(payload.eventId, 'no_matching_subscriptions');
+      if (blockedHookOutcome.firedRunIds.size === 0) {
+        // No blocked-run hook fired — safe to terminally mark ignored.
+        if (this.acceptingExternalEvents) {
+          store.markEventIgnored(payload.eventId, 'no_matching_subscriptions');
+        }
+      } else if (!blockedHookOutcome.anyGateOpened) {
+        // Hook fired but no gate opened — the event successfully triggered
+        // re-evaluation but did not unblock anything. Mark it terminal so
+        // the redispatch sweep does not replay it on every restart and
+        // rerun gate scripts for an event that already failed to unblock.
+        if (this.acceptingExternalEvents) {
+          store.markEventFailedIfAllDeliveriesTerminal(payload.eventId);
+        }
       }
+      // If anyGateOpened is true, leave the event published — the gate
+      // opening may produce downstream deliveries via a different path
+      // (e.g. follow-up state changes) that this flow does not observe.
       return;
     }
 
@@ -1597,19 +1619,22 @@ export class SpaceRuntime {
 
   /**
    * Returns the set of runIds the hook was actually fired for (after all
-   * guards). Caller uses this to decide whether to terminally mark the event
-   * `ignored` — if a hook is in flight, the event must stay `published` so the
-   * deduper can retry it should the hook fail before re-evaluation completes.
+   * guards) and whether any of those runs reported a gate opening. Caller
+   * uses this to decide whether to terminally mark the event `ignored` —
+   * if a hook is in flight, the event must stay `published` so the deduper
+   * can retry it should the hook fail before re-evaluation completes. When
+   * the hook completed but no gate opened, the event is terminally marked
+   * `failed` so the redispatch sweep does not replay it forever.
    */
   private async fireBlockedRunExternalEventHook(
     payload: ExternalEventPublishedPayload,
     matches: SubscriptionTarget[]
-  ): Promise<Set<string>> {
+  ): Promise<{ firedRunIds: Set<string>; anyGateOpened: boolean }> {
     const hook = this.config.onBlockedRunExternalEvent;
     const firedRunIds = new Set<string>();
-    if (!hook) return firedRunIds;
+    if (!hook) return { firedRunIds, anyGateOpened: false };
     const visitedRunIds = new Set<string>();
-    const inflight: Array<Promise<void>> = [];
+    const inflight: Array<Promise<unknown>> = [];
     for (const target of matches) {
       if (isLongHorizonSubscriptionTarget(target)) continue;
       const runId = target.workflowRunId;
@@ -1623,13 +1648,14 @@ export class SpaceRuntime {
       firedRunIds.add(runId);
       try {
         const result = hook({ runId, event: payload });
-        if (result && typeof (result as Promise<void>).then === 'function') {
+        if (result && typeof (result as Promise<unknown>).then === 'function') {
           inflight.push(
-            (result as Promise<void>).catch((err) => {
+            (result as Promise<unknown>).catch((err) => {
               log.warn(
                 `SpaceRuntime: onBlockedRunExternalEvent failed for run ${runId}: ` +
                   `${err instanceof Error ? err.message : String(err)}`
               );
+              return false;
             })
           );
         }
@@ -1640,10 +1666,12 @@ export class SpaceRuntime {
         );
       }
     }
+    let anyGateOpened = false;
     if (inflight.length > 0) {
-      await Promise.all(inflight);
+      const results = await Promise.all(inflight);
+      anyGateOpened = results.some((value) => value === true);
     }
-    return firedRunIds;
+    return { firedRunIds, anyGateOpened };
   }
 
   private async deliverToLongHorizonAgent(

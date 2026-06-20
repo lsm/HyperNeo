@@ -293,7 +293,12 @@ describe('ChannelRouter rate-limit deferral', () => {
   test('onGateDataChangedComplete fires on both immediate and deferred-retry paths', async () => {
     const workflow = buildWorkflow(rateLimitScriptGate());
     const run = createActiveRun(workflow.id);
-    const completeCalls: Array<{ runId: string; gateId: string; activated: number }> = [];
+    const completeCalls: Array<{
+      runId: string;
+      gateId: string;
+      activated: number;
+      gateOpened?: boolean;
+    }> = [];
     let calls = 0;
     const scheduledCallbacks: Array<() => void> = [];
     // Stub scheduler: capture the callback so the test can fire it manually
@@ -322,11 +327,17 @@ describe('ChannelRouter rate-limit deferral', () => {
         return { success: true, data: {}, error: null };
       },
       gateRetryScheduler: scheduler,
-      onGateDataChangedComplete: (runId: string, gateId: string, activated: unknown[]) => {
+      onGateDataChangedComplete: (
+        runId: string,
+        gateId: string,
+        activated: unknown[],
+        gateOpened: boolean
+      ) => {
         completeCalls.push({
           runId,
           gateId,
           activated: Array.isArray(activated) ? activated.length : 0,
+          gateOpened,
         });
       },
     } as ConstructorParameters<typeof ChannelRouter>[0]);
@@ -335,7 +346,14 @@ describe('ChannelRouter rate-limit deferral', () => {
     // synchronously with activated=[].
     await router.onGateDataChanged(run.id, 'rate-limit-gate');
     expect(calls).toBe(1);
-    expect(completeCalls).toEqual([{ runId: run.id, gateId: 'rate-limit-gate', activated: 0 }]);
+    expect(completeCalls).toEqual([
+      {
+        runId: run.id,
+        gateId: 'rate-limit-gate',
+        activated: 0,
+        gateOpened: false,
+      },
+    ]);
     expect(scheduledCallbacks).toHaveLength(1);
 
     // Manually fire the scheduled retry callback (mirrors what the production

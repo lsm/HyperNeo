@@ -1677,11 +1677,15 @@ export class TaskAgentManager {
         internalEventBus: this.config.internalEventBus,
         onGatePendingApproval: (runId, gateId) =>
           this.config.spaceRuntimeService.handleGatePendingApproval(runId, gateId),
-        onGateDataChangedComplete: (runId, _gateId, activatedTasks) => {
+        onGateDataChangedComplete: (runId, _gateId, activatedTasks, gateOpened) => {
           // Same full post-eval chain as the service-level notifyGateDataChanged
-          // (sync + resume when activated) so the deferred-retry path picks up
-          // gate openings the same way as immediate invocations.
-          void this.config.spaceRuntimeService.handleGateDataChangedComplete(runId, activatedTasks);
+          // (sync + resume when gate opened) so the deferred-retry path picks
+          // up gate openings the same way as immediate invocations.
+          void this.config.spaceRuntimeService.handleGateDataChangedComplete(
+            runId,
+            activatedTasks,
+            gateOpened
+          );
         },
         getPrUrlForRun: (runId) => this.resolvePrUrlForRun(runId),
       });
@@ -3615,15 +3619,19 @@ export class TaskAgentManager {
       internalEventBus: this.config.internalEventBus,
       onGatePendingApproval: (runId, gateId) =>
         this.config.spaceRuntimeService.handleGatePendingApproval(runId, gateId),
-      onGateDataChangedComplete: (runId, _gateId, activatedTasks) => {
+      onGateDataChangedComplete: (runId, _gateId, activatedTasks, gateOpened) => {
         // Catches the deferred retry path: when a rate-limited gate eval
         // schedules a refresh via gateRetryScheduler, the retry fires
         // router.onGateDataChanged directly and bypasses the service-level
         // post-hook wired in onGateDataChanged above. Route those retry
         // completions through the same full post-eval chain (sync + resume
-        // when activated) so a deferred gate opening does not leave the
+        // when gate opened) so a deferred gate opening does not leave the
         // workflow stuck in `blocked`.
-        void this.config.spaceRuntimeService.handleGateDataChangedComplete(runId, activatedTasks);
+        void this.config.spaceRuntimeService.handleGateDataChangedComplete(
+          runId,
+          activatedTasks,
+          gateOpened
+        );
       },
       getPrUrlForRun: (runId) => this.resolvePrUrlForRun(runId),
     });
