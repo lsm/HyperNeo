@@ -867,6 +867,37 @@ describe('SDKMessageRepository', () => {
 
       expect(message?.type).toBe('result');
     });
+
+    it('should tolerate malformed task progress rows when finding the last SDK message', () => {
+      repository.saveSDKMessage('session-1', {
+        type: 'result',
+        subtype: 'success',
+        duration_ms: 100,
+        duration_api_ms: 50,
+        is_error: false,
+        num_turns: 1,
+        result: 'Done',
+        session_id: 'session-1',
+        total_cost_usd: 0,
+        usage: {},
+      } as unknown as SDKMessage);
+      repository.saveSDKMessage('session-1', {
+        type: 'system',
+        subtype: 'task_progress',
+        uuid: 'task-progress',
+        session_id: 'session-1',
+        task_id: 'task-1',
+      } as unknown as SDKMessage);
+      db.prepare(
+        `UPDATE sdk_messages
+         SET sdk_message = ?
+         WHERE message_subtype = 'task_progress'`
+      ).run('{not-json');
+
+      const message = repository.getLastSDKMessage('session-1');
+
+      expect(message?.type).toBe('unknown');
+    });
   });
 
   describe('getSDKMessagesByType', () => {

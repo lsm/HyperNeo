@@ -1064,8 +1064,17 @@ export class SDKMessageRepository {
     sdk_message: string;
     timestamp: string;
   }): SDKMessage & { dbId: string; timestamp: number } {
+    let message: SDKMessage;
+    try {
+      message = JSON.parse(row.sdk_message) as SDKMessage;
+    } catch {
+      // Malformed persisted JSON (rare, but possible for legacy/corrupted rows).
+      // Return an unknown sentinel so callers like `getLastSDKMessage` and the
+      // Space runtime idle/liveness checks degrade gracefully instead of throwing.
+      message = { type: 'unknown', rawContent: row.sdk_message } as unknown as SDKMessage;
+    }
     return {
-      ...(JSON.parse(row.sdk_message) as SDKMessage),
+      ...message,
       dbId: row.id,
       // DB timestamp (epoch ms) overrides the SDK's ISO string timestamp for persisted messages
       timestamp: new Date(row.timestamp).getTime(),
