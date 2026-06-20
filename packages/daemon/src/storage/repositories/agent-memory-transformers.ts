@@ -1,5 +1,5 @@
 import { createRequire } from 'node:module';
-import { access, constants, mkdir, rename, unlink } from 'node:fs/promises';
+import { access, constants, mkdir, readFile, rename, unlink } from 'node:fs/promises';
 import { createWriteStream } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -300,10 +300,23 @@ class TransformersFileCache {
     }
   }
 
-  async match(request: string): Promise<string | undefined> {
+  async match(request: string): Promise<string | Response | undefined> {
     try {
-      await access(this.filePath(request), constants.F_OK);
-      return this.filePath(request);
+      const filePath = this.filePath(request);
+      await access(filePath, constants.F_OK);
+
+      // JSON/tokenizer files are loaded with return_path=false and must be
+      // returned as bytes. ONNX/model files can be returned as paths to avoid
+      // buffering the large weights into JS memory.
+      const filename = new URL(request).pathname.split('/').pop() ?? '';
+      if (filename.endsWith('.json')) {
+        const buffer = await readFile(filePath);
+        const headers = new Headers();
+        headers.set('content-length', String(buffer.length));
+        headers.set('content-type', 'application/json');
+        return new Response(buffer, { headers });
+      }
+      return filePath;
     } catch {
       return undefined;
     }
