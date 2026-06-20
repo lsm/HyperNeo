@@ -1893,7 +1893,7 @@ export class SpaceRuntimeService {
       internalEventBus: this.config.internalEventBus,
       onGatePendingApproval: (runId, gateId) => this.handleGatePendingApproval(runId, gateId),
       onGateDataChangedComplete: (runId, _gateId, activatedTasks) =>
-        this.syncBlockedRunPrEventSubscription(runId, activatedTasks),
+        this.handleGateDataChangedComplete(runId, activatedTasks),
       getPrUrlForRun: (rid) => this.resolvePrUrlForRun(rid),
     });
     const activated = await router.onGateDataChanged(runId, gateId);
@@ -1933,6 +1933,30 @@ export class SpaceRuntimeService {
         `SpaceRuntimeService: auto-subscribe for blocked run ${runId} skipped: ` +
           `${result.error ?? 'unknown reason'}`
       );
+    }
+  }
+
+  /**
+   * Post-eval hook shared by both the immediate and deferred-retry
+   * `onGateDataChanged` paths. Triggered via the router's
+   * `onGateDataChangedComplete` config callback.
+   *
+   * When the gate stays blocked, registers/refreshes the PR auto-subscription
+   * via {@link syncBlockedRunPrEventSubscription}. When the gate opens and
+   * the run is currently `blocked`, also fires the full resume chain
+   * (transitionBlockedRunToInProgress + notify session) so the deferred retry
+   * path does not silently leave the workflow stuck despite the open gate.
+   */
+  private async handleGateDataChangedComplete(
+    runId: string,
+    activatedTasks: SpaceTask[]
+  ): Promise<void> {
+    await this.syncBlockedRunPrEventSubscription(runId, activatedTasks);
+    if (activatedTasks.length > 0) {
+      const run = this.config.workflowRunRepo.getRun(runId);
+      if (run?.status === 'blocked') {
+        this.transitionBlockedRunToInProgress(runId);
+      }
     }
   }
 
@@ -2133,9 +2157,15 @@ export class SpaceRuntimeService {
     });
     const target = sorted.find((task) => task.status === 'blocked' || task.status === 'review');
     if (!target) return;
+    // Clear stale block metadata so the resumed task does not surface the old
+    // "Gate rejected" / crash result in the UI and API after the gate has
+    // been resolved. Mirrors the SpaceTaskManager.setTaskStatus recovery path
+    // which clears these fields when transitioning out of blocked.
     const updatedTask = this.config.taskRepo.updateTask(target.id, {
       status: 'in_progress',
       pendingCheckpointType: null,
+      blockReason: null,
+      result: null,
     });
     if (!updatedTask || !this.config.internalEventBus) return;
     this.config.internalEventBus
@@ -2247,7 +2277,7 @@ export class SpaceRuntimeService {
       // typed `space.workflowRun.reopened` events for bus subscribers.
       internalEventBus: this.config.internalEventBus,
       onGateDataChangedComplete: (runId, _gateId, activatedTasks) =>
-        this.syncBlockedRunPrEventSubscription(runId, activatedTasks),
+        this.handleGateDataChangedComplete(runId, activatedTasks),
       getPrUrlForRun: (rid) => this.resolvePrUrlForRun(rid),
     });
     return router.activateNode(runId, nodeId, {
