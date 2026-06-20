@@ -11,6 +11,7 @@ import type { Database as BunDatabase } from 'bun:sqlite';
 import { generateUUID } from '@neokai/shared';
 import type { MessageOrigin, NeokaiActionMessage, ChatMessage } from '@neokai/shared';
 import type { SDKMessage } from '@neokai/shared/sdk';
+import { HIDDEN_SYSTEM_SUBTYPES } from '@neokai/shared/sdk/type-guards';
 import { Logger } from '../../lib/logger';
 import {
   buildFtsQuery,
@@ -31,6 +32,15 @@ const TERMINAL_SPACE_TASK_STATUSES = new Set(['done', 'cancelled', 'completed'])
 const SEARCHABLE_MESSAGE_TYPES = new Set(['system', 'user', 'assistant']);
 const RENDERABLE_TEXT_MESSAGE_BATCH_SIZE = 50;
 const RENDERABLE_TEXT_MESSAGE_MAX_SCAN = 250;
+
+/**
+ * Comma-separated, single-quoted list of system subtypes excluded from paginated
+ * chat reads. Includes the UI-hidden set plus `thinking_tokens`, which is also
+ * not rendered but kept out of the hidden-subtype contract for legacy UI gating.
+ */
+const EXCLUDED_FROM_PAGINATION_SQL_LIST = [...HIDDEN_SYSTEM_SUBTYPES, 'thinking_tokens']
+  .map((subtype) => `'${subtype.replace(/'/g, "''")}'`)
+  .join(', ');
 
 function isOlderThanMessageSearchTtl(value: string | number | null | undefined): boolean {
   if (value === null || value === undefined) return false;
@@ -582,7 +592,7 @@ export class SDKMessageRepository {
       WHERE session_id = ?
         AND parent_tool_use_id IS NULL
         AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))
-        AND COALESCE(message_subtype,'') != 'thinking_tokens'
+        AND COALESCE(message_subtype, '') NOT IN (${EXCLUDED_FROM_PAGINATION_SQL_LIST})
         AND (
           message_type != 'system'
           OR COALESCE(message_subtype, '') != 'informational'
@@ -687,7 +697,7 @@ export class SDKMessageRepository {
       const subagentQuery = `SELECT id, sdk_message, timestamp FROM sdk_messages
        WHERE session_id = ?
          AND parent_tool_use_id IN (${placeholders})
-         AND COALESCE(message_subtype,'') != 'thinking_tokens'
+         AND COALESCE(message_subtype, '') NOT IN (${EXCLUDED_FROM_PAGINATION_SQL_LIST})
          AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))
         ORDER BY timestamp ASC`;
       const subagentParams: SQLiteValue[] = [sessionId, ...Array.from(toolUseIds)];
@@ -815,7 +825,7 @@ export class SDKMessageRepository {
       `SELECT id, sdk_message, timestamp FROM sdk_messages
 	       WHERE session_id = ?
 		       AND parent_tool_use_id IS NULL
-		       AND COALESCE(message_subtype, '') NOT IN ('thinking_tokens', 'session_state_changed', 'commands_changed', 'model_refusal_fallback')
+		       AND COALESCE(message_subtype, '') NOT IN (${EXCLUDED_FROM_PAGINATION_SQL_LIST}, 'model_refusal_fallback')
 		       AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))
 	       ORDER BY timestamp DESC, rowid DESC
 	       LIMIT 1`
@@ -839,6 +849,7 @@ export class SDKMessageRepository {
       `SELECT COUNT(*) as count FROM sdk_messages
        WHERE session_id = ?
          AND parent_tool_use_id IS NULL
+         AND COALESCE(message_subtype, '') NOT IN (${EXCLUDED_FROM_PAGINATION_SQL_LIST})
          AND (message_type != 'user' OR COALESCE(send_status, 'consumed') = 'consumed')`
     );
     const result = stmt.get(sessionId) as { count: number };

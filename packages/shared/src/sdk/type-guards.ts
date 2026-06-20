@@ -428,6 +428,66 @@ export function getMessageTypeDescription(msg: SDKMessage): string {
 }
 
 /**
+ * Exported hidden-subtype set for server-side SQL filters.
+ *
+ * Consumers that paginate chat rows (e.g. `sdk-message-repository.ts` and the
+ * `messages.bySession` live query) should exclude these subtypes before applying
+ * `LIMIT` so invisible rows don't consume the pagination budget. The messages are
+ * still persisted to the database for audit/debug; they are only omitted from
+ * paginated reads.
+ *
+ * Hidden for these reasons:
+ * - session_state_changed: Internal state machine; handler uses for turn-end detection
+ * - commands_changed: Palette already updated via onCommandsChanged; chat row = noise
+ * - hook_started: Redundant - hook_response carries the result
+ * - hook_progress: Streaming stdout/stderr; hook_response is persisted result
+ * - task_started: Task tool_use card already fires on subagent spawn
+ * - task_progress: Periodic usage stats; task_notification carries final usage
+ * - task_updated: Status patch; child messages + result already reflect status
+ * - mirror_error: Internal group/session-mirror plumbing
+ * - elicitation_complete: Niche MCP elicitation
+ */
+export const HIDDEN_SYSTEM_SUBTYPES = new Set([
+  'session_state_changed',
+  'commands_changed',
+  'hook_started',
+  'hook_progress',
+  'task_started',
+  'task_progress',
+  'task_updated',
+  'mirror_error',
+  'elicitation_complete',
+]);
+
+/**
+ * Check if a system message subtype is in the explicit hidden set.
+ */
+export function isHiddenSystemSubtype(subtype: string): boolean {
+  return HIDDEN_SYSTEM_SUBTYPES.has(subtype);
+}
+
+/**
+ * Check if a system message should be hidden based on payload conditions.
+ *
+ * These subtypes are not universally hidden; they render only for specific
+ * payload states. This helper centralises the conditional logic so the chat
+ * transcript and nested subagent timelines stay consistent.
+ */
+export function isConditionallyHiddenSystemMessage(msg: SDKMessage): boolean {
+  if (msg.type !== 'system') return false;
+  const subtype = (msg as { subtype?: string }).subtype;
+  if (subtype === 'files_persisted') {
+    const failed = (msg as { failed?: unknown[] }).failed;
+    return !Array.isArray(failed) || failed.length === 0;
+  }
+  if (subtype === 'plugin_install') {
+    const status = (msg as { status?: string }).status;
+    return status === 'started' || status === 'installed';
+  }
+  return false;
+}
+
+/**
  * Check if a message should be displayed to the user (vs internal system messages)
  */
 export function isUserVisibleMessage(msg: SDKMessage): boolean {
@@ -436,7 +496,6 @@ export function isUserVisibleMessage(msg: SDKMessage): boolean {
   // User should NOT see: stream events or thinking_tokens deltas (transient only)
   if (isSDKStreamEvent(msg)) return false;
   if (isSDKThinkingTokensMessage(msg)) return false;
-  if (isSDKSessionStateChangedMessage(msg)) return false;
 
   return true;
 }

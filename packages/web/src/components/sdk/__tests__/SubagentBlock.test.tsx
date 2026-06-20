@@ -732,12 +732,13 @@ describe('SubagentBlock', () => {
       expect(container.textContent).not.toContain('System: init');
     });
 
-    it('should suppress thinking token system messages (not rendered through SDK system renderer)', () => {
+    it('should render visible system messages through the SDK system renderer', () => {
       const input = createAgentInput('Explore', 'Find files', 'Search for test files');
       const nestedMessages = [
-        createNestedSystemMessage('thinking_tokens', {
-          estimated_tokens: 1200,
-          estimated_tokens_delta: 50,
+        createNestedSystemMessage('informational', {
+          level: 'warning',
+          content: 'Task running longer than expected',
+          prevent_continuation: false,
         }),
       ];
 
@@ -748,9 +749,8 @@ describe('SubagentBlock', () => {
       const button = container.querySelector('button')!;
       fireEvent.click(button);
 
-      // thinking_tokens messages should be suppressed (not rendered)
-      expect(container.textContent).not.toContain('Thinking tokens');
-      expect(container.textContent).not.toContain('1,200 estimated tokens');
+      expect(container.textContent).toContain('Info: warning');
+      expect(container.textContent).toContain('Task running longer than expected');
     });
 
     it('should suppress nested transcript-only info and stale worker shutdown rows', async () => {
@@ -801,11 +801,89 @@ describe('SubagentBlock', () => {
       expect(container.textContent).toContain('host_exit');
     });
 
-    it('should preserve nested SDK system notices without specialized renderers', () => {
+    it('should hide nested system messages in the centralized HIDDEN set', () => {
+      const input = createAgentInput('Explore', 'Find files', 'Search for test files');
+      const nestedMessages = [
+        createNestedSystemMessage('task_started', {
+          description: 'nested task',
+        }),
+        createNestedSystemMessage('task_progress', {
+          description: 'progress update',
+        }),
+      ];
+
+      const { container } = render(
+        <SubagentBlock input={input} toolId="toolu_task123" nestedMessages={nestedMessages} />
+      );
+
+      const button = container.querySelector('button')!;
+      fireEvent.click(button);
+
+      // Hidden subtypes must not surface anywhere in the nested timeline.
+      expect(container.textContent).not.toContain('task_started');
+      expect(container.textContent).not.toContain('task_progress');
+    });
+
+    it('should apply conditional hides to nested system messages', async () => {
+      const input = createAgentInput('Explore', 'Find files', 'Search for test files');
+      const nestedMessages = [
+        createNestedSystemMessage('files_persisted', {
+          failed: [],
+          succeeded: ['file.txt'],
+        }),
+        createNestedSystemMessage('plugin_install', {
+          status: 'installed',
+          plugin: 'test-plugin',
+        }),
+        createNestedSystemMessage('plugin_install', {
+          status: 'started',
+          plugin: 'test-plugin',
+        }),
+        createNestedAssistantMessage('visible work'),
+      ];
+
+      const { container } = render(
+        <SubagentBlock input={input} toolId="toolu_task123" nestedMessages={nestedMessages} />
+      );
+
+      const button = container.querySelector('button')!;
+      fireEvent.click(button);
+
+      expect(container.textContent).not.toContain('files_persisted');
+      expect(container.textContent).not.toContain('plugin_install');
+      await waitFor(() => {
+        expect(container.textContent).toContain('visible work');
+      });
+    });
+
+    it('should render nested permission_denied with the SDK system renderer', () => {
       const input = createAgentInput('Explore', 'Find files', 'Search for test files');
       const nestedMessages = [
         createNestedSystemMessage('permission_denied', {
-          reason: 'requires approval',
+          tool_name: 'Bash',
+          decision_reason: 'Auto-denied by mode',
+          message: 'Tool use was not allowed',
+          agent_id: 'toolu_task123',
+        }),
+      ];
+
+      const { container } = render(
+        <SubagentBlock input={input} toolId="toolu_task123" nestedMessages={nestedMessages} />
+      );
+
+      const button = container.querySelector('button')!;
+      fireEvent.click(button);
+
+      expect(container.textContent).toContain('Permission denied');
+      expect(container.textContent).toContain('Bash');
+      expect(container.textContent).toContain('Auto-denied by mode');
+    });
+
+    it('should preserve nested SDK system notices without specialized renderers', () => {
+      const input = createAgentInput('Explore', 'Find files', 'Search for test files');
+      const nestedMessages = [
+        createNestedSystemMessage('generic_system_event', {
+          detail: 'unrecognized event',
         }),
       ];
 
@@ -817,7 +895,7 @@ describe('SubagentBlock', () => {
       fireEvent.click(button);
 
       expect(container.textContent).toContain('Messages (1)');
-      expect(container.textContent).toContain('System: permission_denied');
+      expect(container.textContent).toContain('System: generic_system_event');
     });
 
     it('should skip user messages with only tool results', () => {
