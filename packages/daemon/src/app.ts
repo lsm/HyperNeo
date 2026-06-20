@@ -3,6 +3,10 @@ import { homedir } from 'os';
 import type { Config } from './config';
 import type { WebSocketData } from './types/websocket';
 import { Database } from './storage/database';
+import {
+  prefetchAgentMemoryEmbeddingModel,
+  abortAgentMemoryEmbeddingModelPrefetch,
+} from './storage/repositories/agent-memory-transformers';
 import { SessionManager } from './lib/session-manager';
 import { AuthManager } from './lib/auth-manager';
 import { SettingsManager } from './lib/settings-manager';
@@ -245,6 +249,19 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     // but its spawned agent sessions are independent and must not be blocked.
     delete process.env.CLAUDECODE;
 
+    // Background-prefetch the agent-memory embedding model as early as possible
+    // so it shares work with the memory backfill that runs during database init.
+    // Use direct console methods here because console capture is installed later.
+    // Skip under test so unit-test app instances never hit the network.
+    if (process.env.NODE_ENV !== 'test') {
+      const prefetchLogInfo = verbose ? console.log : () => {};
+      const prefetchLogError = verbose ? console.error : () => {};
+      void prefetchAgentMemoryEmbeddingModel({
+        logInfo: prefetchLogInfo,
+        logError: prefetchLogError,
+      });
+    }
+
     // Initialize database
     const db = new Database(config.dbPath);
     // Create reactiveDb before initialize() so GoalRepository can receive it
@@ -269,6 +286,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       unsubscribeEarlyStructuredLogs();
       restoreEarlyConsoleCapture();
     };
+
+    // Bind shared loggers after console capture is installed so all subsequent
+    // startup/shutdown logs flow through the structured-log subscriber.
     const logInfo = verbose ? console.log : () => {};
     const logError = verbose ? console.error : () => {};
 
@@ -1014,6 +1034,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       isCleanedUp = true;
       startupLogCaptureCleanup = null;
 
+      // Abort any in-flight embedding-model prefetch so shutdown is not delayed
+      // by a background download.
+      abortAgentMemoryEmbeddingModelPrefetch();
+
       // Stop the hourly worktree TTL reaper before shutting down other resources.
       if (reaperTimer !== null) {
         clearInterval(reaperTimer);
@@ -1165,6 +1189,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     };
   } catch (error) {
     startupLogCaptureCleanup?.();
+    // A startup failure returns no cleanup function, so stop any in-flight
+    // embedding-model prefetch here so it cannot outlive the failed process.
+    abortAgentMemoryEmbeddingModelPrefetch();
     throw error;
   }
 }
