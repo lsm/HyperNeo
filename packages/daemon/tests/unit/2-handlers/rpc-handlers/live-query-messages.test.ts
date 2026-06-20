@@ -64,6 +64,7 @@ interface InsertSdkMessageArgs {
   timestamp?: string;
   sendStatus?: 'deferred' | 'enqueued' | 'consumed' | 'failed';
   origin?: 'human' | 'system' | null;
+  taskId?: string | null;
 }
 
 function insertSdkMessage(db: BunDatabase, args: InsertSdkMessageArgs): void {
@@ -73,8 +74,8 @@ function insertSdkMessage(db: BunDatabase, args: InsertSdkMessageArgs): void {
       : null;
   db.prepare(
     `INSERT INTO sdk_messages
-		 (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin, parent_tool_use_id)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		 (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin, parent_tool_use_id, task_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     args.id,
     args.sessionId,
@@ -84,7 +85,8 @@ function insertSdkMessage(db: BunDatabase, args: InsertSdkMessageArgs): void {
     args.timestamp ?? '2024-01-01 00:00:00',
     args.sendStatus ?? 'consumed',
     args.origin ?? null,
-    parentToolUseId
+    parentToolUseId,
+    args.taskId ?? null
   );
 }
 
@@ -576,6 +578,64 @@ describe('messages.bySession — SQL behavior', () => {
       true
     );
     expect(metadata.backgroundTaskMessages.at(-1)?.id).toBe('task-updated-300');
+  });
+
+  test('matches LiveQuery task starts by SDK task id before session task id', () => {
+    insertSdkMessage(db, {
+      id: 'old-task-started',
+      sessionId: 's1',
+      messageType: 'system',
+      messageSubtype: 'task_started',
+      taskId: 'space-task-1',
+      sdkMessage: {
+        type: 'system',
+        subtype: 'task_started',
+        uuid: 'old-task-started-uuid',
+        session_id: 's1',
+        task_id: 'old-sdk-task',
+      },
+      timestamp: '2024-01-01 00:00:00',
+    });
+    insertSdkMessage(db, {
+      id: 'current-task-started',
+      sessionId: 's1',
+      messageType: 'system',
+      messageSubtype: 'task_started',
+      taskId: 'space-task-1',
+      sdkMessage: {
+        type: 'system',
+        subtype: 'task_started',
+        uuid: 'current-task-started-uuid',
+        session_id: 's1',
+        task_id: 'current-sdk-task',
+      },
+      timestamp: '2024-01-01 00:00:01',
+    });
+    for (let i = 0; i < 301; i++) {
+      insertSdkMessage(db, {
+        id: `current-task-updated-${i}`,
+        sessionId: 's1',
+        messageType: 'system',
+        messageSubtype: 'task_updated',
+        taskId: 'space-task-1',
+        sdkMessage: {
+          type: 'system',
+          subtype: 'task_updated',
+          uuid: `current-task-updated-${i}-uuid`,
+          session_id: 's1',
+          task_id: 'current-sdk-task',
+          patch: { is_backgrounded: true, status: 'running' },
+        },
+        timestamp: new Date(Date.UTC(2024, 0, 1, 0, 0, i + 1)).toISOString(),
+      });
+    }
+
+    const snapshot = subscribeMessagesBySession(db, 's1', 1);
+    const metadata = snapshot?.metadata as { backgroundTaskMessages: Array<{ task_id: string }> };
+    const sdkTaskIds = metadata.backgroundTaskMessages.map((message) => message.task_id);
+
+    expect(sdkTaskIds).not.toContain('old-sdk-task');
+    expect(sdkTaskIds).toContain('current-sdk-task');
   });
 
   test('preserves LiveQuery background task metadata order on timestamp ties', () => {

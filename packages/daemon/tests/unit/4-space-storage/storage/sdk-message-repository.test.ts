@@ -393,6 +393,42 @@ describe('SDKMessageRepository', () => {
       expect(metadataMessages.at(-1)).toMatchObject({ subtype: 'task_updated' });
     });
 
+    it('should match background task starts by SDK task id before session task id', () => {
+      repository.saveSDKMessage('session-1', {
+        type: 'system',
+        subtype: 'task_started',
+        uuid: 'old-task-started',
+        session_id: 'session-1',
+        task_id: 'old-sdk-task',
+      } as unknown as SDKMessage);
+      repository.saveSDKMessage('session-1', {
+        type: 'system',
+        subtype: 'task_started',
+        uuid: 'current-task-started',
+        session_id: 'session-1',
+        task_id: 'current-sdk-task',
+      } as unknown as SDKMessage);
+      for (let i = 0; i < 301; i++) {
+        repository.saveSDKMessage('session-1', {
+          type: 'system',
+          subtype: 'task_updated',
+          uuid: `current-task-updated-${i}`,
+          session_id: 'session-1',
+          task_id: 'current-sdk-task',
+          patch: { is_backgrounded: true, status: 'running' },
+        } as unknown as SDKMessage);
+      }
+      db.prepare(`UPDATE sdk_messages SET task_id = 'space-task-1'`).run();
+
+      const metadataMessages = repository.getBackgroundTaskMessages('session-1');
+      const sdkTaskIds = metadataMessages.map(
+        (message) => (message as { task_id?: string }).task_id
+      );
+
+      expect(sdkTaskIds).not.toContain('old-sdk-task');
+      expect(sdkTaskIds).toContain('current-sdk-task');
+    });
+
     it('should preserve background task metadata order on timestamp ties', () => {
       repository.saveSDKMessage('session-1', {
         type: 'system',

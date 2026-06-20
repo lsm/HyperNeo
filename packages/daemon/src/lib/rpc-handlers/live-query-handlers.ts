@@ -2237,8 +2237,8 @@ WITH recent_metadata AS (
     origin,
     rowid,
     COALESCE(
-      task_id,
-      CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.task_id') END
+      CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.task_id') END,
+      task_id
     ) AS task_id
   FROM sdk_messages
   WHERE session_id = ?
@@ -2261,16 +2261,16 @@ task_starts AS (
     origin,
     rowid,
     COALESCE(
-      task_id,
-      CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.task_id') END
+      CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.task_id') END,
+      task_id
     ) AS task_id
   FROM sdk_messages
   WHERE session_id = ?
     AND parent_tool_use_id IS NULL
     AND COALESCE(message_subtype, '') = 'task_started'
     AND COALESCE(
-      task_id,
-      CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.task_id') END
+      CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.task_id') END,
+      task_id
     ) IN (SELECT task_id FROM recent_task_ids)
     AND id NOT IN (SELECT id FROM recent_metadata)
 )
