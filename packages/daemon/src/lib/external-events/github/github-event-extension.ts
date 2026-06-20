@@ -1271,17 +1271,24 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         // LIMIT. Only page 1 is merged; page 2+ during backlog catch-up
         // contains older PRs and must not displace the newest ones.
         const freshNumbers: number[] = [];
+        const closedNumbers = new Set<number>();
         for (const row of rows) {
-          // Reaction approvals are only meaningful on open PRs under review;
-          // a +1 on a closed/merged PR is irrelevant and would occupy a slot
-          // that an active open PR needs. Filter to open state.
-          if (!isPullRequestOpen(row)) continue;
           const prNumber = pullRequestNumberFrom(row);
-          if (prNumber && !freshNumbers.includes(prNumber)) freshNumbers.push(prNumber);
+          if (!prNumber) continue;
+          // Reaction approvals are only meaningful on open PRs under review.
+          // A previously-tracked PR that the delta now reports as closed/
+          // merged must be dropped so it stops occupying a reaction slot.
+          if (isPullRequestOpen(row)) {
+            if (!freshNumbers.includes(prNumber)) freshNumbers.push(prNumber);
+          } else {
+            closedNumbers.add(prNumber);
+          }
         }
         const next = [
           ...freshNumbers,
-          ...recentPullRequestNumbers.filter((n) => !freshNumbers.includes(n)),
+          ...recentPullRequestNumbers.filter(
+            (n) => !freshNumbers.includes(n) && !closedNumbers.has(n)
+          ),
         ];
         recentPullRequestNumbers.length = 0;
         recentPullRequestNumbers.push(...next.slice(0, REACTION_POLL_PR_LIMIT));

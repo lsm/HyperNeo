@@ -2500,6 +2500,61 @@ describe('GitHubEventExtension', () => {
     }
   });
 
+  test('previously tracked PRs that close are dropped from reaction targets', async () => {
+    const db = setupDb();
+    const { service } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    const pullsPages: Array<Record<string, unknown>[]> = [];
+    const calledReactions: number[] = [];
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls')) {
+        const page = pullsPages.shift() ?? [];
+        return pollingResponse(page);
+      }
+      const match = path.match(/\/issues\/(\d+)\/reactions$/);
+      if (match) {
+        calledReactions.push(Number(match[1]));
+        return pollingResponse([]);
+      }
+      return pollingResponse([]);
+    }) as typeof fetch;
+
+    try {
+      const repo = extension.repo.listPollingRepos()[0];
+      // Cycle 0: PRs 5, 4, 3 all open → all tracked.
+      pullsPages.push([createPullRequestRow(5), createPullRequestRow(4), createPullRequestRow(3)]);
+      await extension.pollWatchedRepo(repo, fetchImpl);
+      expect(calledReactions.slice()).toEqual([5, 4, 3]);
+      calledReactions.length = 0;
+
+      // Cycle 1: PR 4 closes. Delta reports it closed → must be dropped,
+      // leaving only 5 and 3 as reaction targets.
+      pullsPages.push([
+        createPullRequestRow(5),
+        { ...createPullRequestRow(4), state: 'closed' },
+        createPullRequestRow(3),
+      ]);
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      expect(calledReactions.slice()).toEqual([5, 3]);
+    } finally {
+      await extension.stop();
+    }
+  });
+
   test('reaction polling caches ETags per PR and skips on 304', async () => {
     const db = setupDb();
     const { service, received } = setupExternalEventService(db);
