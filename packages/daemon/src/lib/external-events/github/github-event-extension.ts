@@ -1395,6 +1395,11 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
           partialScan = true;
           break;
         }
+        // Transient non-rate-limit failure (500/502/503/404/etc.). Mark a
+        // partial scan so the shared watermark does not advance past this PR's
+        // un-observed +1; otherwise the stale-reaction guard would mark it
+        // seen next cycle and never publish the approval. Try the next PR.
+        partialScan = true;
         continue;
       }
       const reactions = (await response.json()) as unknown[];

@@ -2555,6 +2555,57 @@ describe('GitHubEventExtension', () => {
     }
   });
 
+  test('transient reaction fetch failure preserves the watermark so the +1 is not later stale', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    // PR updated Jun 15; the +1 landed Jun 10 (before the PR metadata update).
+    // A naive cursor would commit Jun 15 after a failed reaction fetch and
+    // then treat the Jun 10 +1 as stale on the next cycle.
+    const prRow = { ...createPullRequestRow(7), updated_at: '2026-06-15T00:00:00Z' };
+    let reactionCalls = 0;
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls')) return pollingResponse([prRow]);
+      if (path.endsWith('/issues/7/reactions')) {
+        reactionCalls++;
+        // Cycle 0: transient 500. Cycle 1: return the +1.
+        if (reactionCalls === 1)
+          return new Response(JSON.stringify({ message: 'server error' }), { status: 500 });
+        return pollingResponse([
+          createReactionRow({ id: 9001, content: '+1', created_at: '2026-06-10T00:00:00Z' }),
+        ]);
+      }
+      return pollingResponse([]);
+    }) as typeof fetch;
+
+    try {
+      const repo = extension.repo.listPollingRepos()[0];
+      await extension.pollWatchedRepo(repo, fetchImpl);
+      expect(received.filter((event) => event.payload.eventType === 'reaction')).toHaveLength(0);
+
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      const published = received.filter((event) => event.payload.eventType === 'reaction');
+      expect(published).toHaveLength(1);
+      expect(published[0].dedupeKey).toBe('acme/widgets:reaction:9001');
+    } finally {
+      await extension.stop();
+    }
+  });
+
   test('reaction polling caches ETags per PR and skips on 304', async () => {
     const db = setupDb();
     const { service, received } = setupExternalEventService(db);
