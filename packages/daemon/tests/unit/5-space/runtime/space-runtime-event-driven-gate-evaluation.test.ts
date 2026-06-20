@@ -1006,4 +1006,128 @@ describe('SpaceRuntimeService event-driven gate evaluation', () => {
     await ctx.eventService.publish(followUp);
     expect(ctx.injected).toHaveLength(0);
   });
+
+  test('handleBlockedRunExternalEvent does not treat a previously-open unrelated gate as newly opened', async () => {
+    // Multi-gate workflow: gate A was already open before the run blocked.
+    // gate B is the still-closed blocking gate a PR event should re-evaluate.
+    // The PR event does NOT open B; only A remains open. The handler must
+    // NOT treat A's pre-existing open state as a new gate-open signal that
+    // triggers resume + auto-sub clear.
+    const db = makeDb();
+    const workflowRunRepo = new SpaceWorkflowRunRepository(db);
+    const taskRepo = new SpaceTaskRepository(db);
+    const nodeExecutionRepo = new NodeExecutionRepository(db);
+    const gateDataRepo = new GateDataRepository(db);
+    const gateOpenStateRepo = new GateOpenStateRepository(db);
+    const channelCycleRepo = new ChannelCycleRepository(db);
+    const workflowManager = new SpaceWorkflowManager(new SpaceWorkflowRepository(db));
+    const bus = new InternalEventBus<DaemonInternalEventMap>();
+    const commandBus = createInternalCommandBus();
+    const eventStore = new ExternalEventStore(db);
+    const eventService = new ExternalEventService(eventStore, bus);
+    const injected: Array<{ sessionId: string; message: string }> = [];
+    commandBus.register('agent.message.inject', async (command) => {
+      injected.push({ sessionId: command.sessionId, message: command.message });
+      return { ok: true };
+    });
+    const tam = new TaskAgentManagerStub();
+    const runtimeNotifications: string[] = [];
+    tam.injectRuntimeRecoveryMessage = async (_sid, msg) => {
+      runtimeNotifications.push(msg);
+      return 'ok';
+    };
+
+    const service = new SpaceRuntimeService({
+      db,
+      spaceManager: new SpaceManager(db),
+      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+      spaceWorkflowManager: workflowManager,
+      workflowRunRepo,
+      taskRepo,
+      nodeExecutionRepo,
+      tickIntervalMs: 60_000,
+      gateDataRepo,
+      gateOpenStateRepo,
+      channelCycleRepo,
+      internalEventBus: bus,
+      commandBus,
+      externalEventStore: eventStore,
+    });
+    service.setTaskAgentManager(tam as unknown as TaskAgentManager);
+
+    // Two gates: gate A (already-open) and gate B (the blocking one).
+    const workflow = workflowManager.createWorkflow({
+      spaceId: SPACE_ID,
+      name: `Multi-Gate ${Math.random()}`,
+      description: '',
+      nodes: [
+        { id: 'code', name: 'Code', agents: [{ agentId: AGENT_ID, name: 'coder' }] },
+        { id: 'review', name: 'Review', agents: [{ agentId: AGENT_ID, name: 'reviewer' }] },
+      ],
+      transitions: [],
+      startNodeId: 'code',
+      rules: [],
+      tags: [],
+      gates: [
+        {
+          id: 'gate-a',
+          fields: [
+            { name: 'approved', type: 'boolean', writers: [], check: { op: '==', value: true } },
+          ],
+        },
+        {
+          id: 'gate-b',
+          fields: [
+            { name: 'approved', type: 'boolean', writers: [], check: { op: '==', value: true } },
+            prUrlField,
+          ],
+        },
+      ],
+      channels: [
+        { id: 'ch-a', from: 'coder', to: 'reviewer', gateId: 'gate-a' },
+        { id: 'ch-b', from: 'coder', to: 'reviewer', gateId: 'gate-b' },
+      ],
+    });
+
+    const runtime = await service.createOrGetRuntime(SPACE_ID);
+    const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: `session-${run.id}`,
+      startedAt: Date.now(),
+    });
+    tam.alive.add(`session-${run.id}`);
+
+    // Pre-open gate A (the unrelated gate). Gate B stays closed.
+    gateDataRepo.merge(run.id, 'gate-a', { approved: true, approvedAt: Date.now() });
+    await service.notifyGateDataChanged(run.id, 'gate-a');
+    expect(gateOpenStateRepo.isOpen(run.id, 'gate-a').open).toBe(true);
+
+    // Block the run + persist pr_url for the auto-subscribe.
+    gateDataRepo.merge(run.id, 'gate-b', { pr_url: PR_URL });
+    workflowRunRepo.transitionStatus(run.id, 'blocked');
+
+    // Publish a PR event. Re-evaluates both gates. gate A is still open
+    // (unchanged), gate B is still closed. anyOpened must stay false.
+    const event: ExternalEvent = {
+      id: `evt-multi-${Math.random().toString(36).slice(2)}`,
+      spaceId: SPACE_ID,
+      source: 'github',
+      topic: PR_EVENT_TOPIC,
+      occurredAt: Date.now(),
+      ingestedAt: Date.now(),
+      dedupeKey: `dedupe-multi-${Math.random().toString(36).slice(2)}`,
+      summary: 'irrelevant PR event',
+      payload: {},
+    };
+    await eventService.publish(event);
+    // Let the awaited hook chain drain.
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // Run stays blocked — gate B did not open.
+    expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
+    // No courtesy notification fired.
+    expect(runtimeNotifications).toHaveLength(0);
+  });
 });

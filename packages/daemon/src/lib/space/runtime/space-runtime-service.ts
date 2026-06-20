@@ -2040,17 +2040,19 @@ export class SpaceRuntimeService {
     let anyOpened = false;
     for (const gate of workflow.gates ?? []) {
       try {
+        // Snapshot the open-state cache BEFORE re-evaluation so we only
+        // count this gate as "opened" if it transitioned closed→open during
+        // this evaluation. Without the snapshot, a different gate that was
+        // already open before the run blocked would falsely set anyOpened
+        // even though the current event did not unblock anything.
+        const wasOpenBefore = this.config.gateOpenStateRepo?.isOpen(runId, gate.id).open ?? false;
         const activated = await this.notifyGateDataChanged(runId, gate.id);
-        // A gate can open with zero activated tasks when every target node
-        // already has an active task; treat any non-empty activated list as
-        // a strong signal, but fall back to checking if the gate now reports
-        // open via gateOpenStateRepo. For simplicity (and because the router
-        // path fires onGateDataChangedComplete with the authoritative flag
-        // synchronously), we treat activated>0 OR the gate being marked
-        // open in the open-state cache as "opened".
         if (activated.length > 0) {
+          // New task activated — gate must have opened during this call.
           anyOpened = true;
-        } else if (this.config.gateOpenStateRepo?.isOpen(runId, gate.id).open) {
+        } else if (!wasOpenBefore && this.config.gateOpenStateRepo?.isOpen(runId, gate.id).open) {
+          // Opened with zero activations (every target already active) —
+          // only counts if the gate was NOT open before this evaluation.
           anyOpened = true;
         }
       } catch (err) {
