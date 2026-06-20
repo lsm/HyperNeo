@@ -131,6 +131,11 @@ export async function prefetchAgentMemoryEmbeddingModel(
         return null;
       }
 
+      if (abortedPrefetchGenerations.has(generation)) {
+        logInfo('[AgentMemory] Embedding model prefetch aborted during shutdown');
+        return null;
+      }
+
       logInfo('[AgentMemory] Embedding model not cached, starting background prefetch');
       try {
         const [model, tokenizer] = await Promise.all([
@@ -192,10 +197,10 @@ export function resetAgentMemoryEmbedderStateForTests(): void {
  * large model download does not outlive the daemon process.
  */
 export function abortAgentMemoryEmbeddingModelPrefetch(): void {
-  if (!prefetchAbortController) return;
+  const abortController = prefetchAbortController;
+  if (!abortController) return;
   abortedPrefetchGenerations.add(prefetchGeneration);
-  prefetchAbortController.abort();
-  prefetchAbortController = null;
+  abortController.abort();
   prefetchResult = null;
 }
 
