@@ -2360,6 +2360,51 @@ describe('GitHubEventExtension', () => {
     }
   });
 
+  test('reaction polling targets the newest PRs when more than the limit are returned', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    const calledReactions: number[] = [];
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls')) {
+        // Newest first (sort=updated&direction=desc). Return more than the
+        // REACTION_POLL_PR_LIMIT (10) so the selection order is observable.
+        const numbers = Array.from({ length: 15 }, (_, i) => 100 - i);
+        return pollingResponse(numbers.map((n) => createPullRequestRow(n)));
+      }
+      const match = path.match(/\/issues\/(\d+)\/reactions$/);
+      if (match) {
+        calledReactions.push(Number(match[1]));
+        return pollingResponse([createReactionRow({ id: Number(match[1]) * 100, content: '+1' })]);
+      }
+      return pollingResponse([]);
+    }) as typeof fetch;
+
+    try {
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+
+      // Only the newest 10 PRs (100..91) should be polled for reactions.
+      expect(calledReactions).toEqual([100, 99, 98, 97, 96, 95, 94, 93, 92, 91]);
+      expect(received.filter((event) => event.payload.eventType === 'reaction')).toHaveLength(10);
+    } finally {
+      await extension.stop();
+    }
+  });
+
   test('stop waits for an active polling cycle before returning', async () => {
     const db = setupDb();
     const extension = new GitHubEventExtension(db, undefined, { pollIntervalMs: 1 });

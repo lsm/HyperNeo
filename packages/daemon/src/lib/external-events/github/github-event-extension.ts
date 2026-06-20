@@ -1194,7 +1194,16 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       query.set('page', String(page));
       const url = `${base}${endpoint.path}?${query.toString()}`;
       const headers = gitHubPollingHeaders(token);
-      if (page === 1 && etags[endpoint.key]) headers['If-None-Match'] = etags[endpoint.key];
+      // Seed reaction-poll targets on upgrade: a cursor from before reaction
+      // polling shipped may have an `etags.pulls` entry but no
+      // `recentPullRequestNumbers`. A 304 on the pulls endpoint would then
+      // leave the reaction loop with no PRs to poll until unrelated PR
+      // metadata changes. Skip the If-None-Match for the pulls endpoint until
+      // at least one PR number is tracked so the first cycle populates the list.
+      const pullsNeedsSeed = endpoint.key === 'pulls' && recentPullRequestNumbers.length === 0;
+      if (page === 1 && etags[endpoint.key] && !pullsNeedsSeed) {
+        headers['If-None-Match'] = etags[endpoint.key];
+      }
       const response = await fetchImpl(url, { headers });
       // Rate-limit check: a 403/429 response with rate-limit evidence OR a low
       // `remaining` counter defers this cycle and reschedules the next poll past
@@ -1202,7 +1211,11 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       // successful response so already-fetched events are published and cursors
       // are saved; only the remaining endpoints in this cycle are skipped.
       const rateLimit = parseRateLimitHeaders(response);
-      latestRateLimit = rateLimit;
+      // Preserve a finite remaining budget across 304s: cached responses lack
+      // rate-limit headers and parse as `remaining: Infinity`. Overwriting a
+      // real low budget with Infinity would let the reaction loop bypass its
+      // `< 100` guard and overspend the quota.
+      latestRateLimit = mergeRateLimitInfo(latestRateLimit, rateLimit);
       if (rateLimit.limited) {
         // A 429 that does not exhaust the primary bucket (remaining > 0 and no
         // Retry-After) is a secondary/abuse limit. Do not use the unrelated
@@ -1247,10 +1260,18 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       if (etag && page === 1) etags[endpoint.key] = etag;
       const rows = (await response.json()) as unknown[];
       if (endpoint.key === 'pulls') {
+        // `/pulls?sort=updated&direction=desc` returns PRs newest-first. A
+        // fresh (non-304) page is the authoritative newest list, so reset the
+        // reaction-poll targets to the first LIMIT numbers observed. Taking
+        // the first rows (not unshift+truncate) preserves the newest PRs —
+        // pushing older rows would displace the most recently active ones.
+        const freshNumbers: number[] = [];
         for (const row of rows) {
           const prNumber = pullRequestNumberFrom(row);
-          if (prNumber) rememberRecentPullRequestNumber(recentPullRequestNumbers, prNumber);
+          if (prNumber && !freshNumbers.includes(prNumber)) freshNumbers.push(prNumber);
         }
+        recentPullRequestNumbers.length = 0;
+        recentPullRequestNumbers.push(...freshNumbers.slice(0, REACTION_POLL_PR_LIMIT));
       }
       let endpointPending = Math.max(
         endpointWatermark,
@@ -1298,12 +1319,31 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         headers: gitHubPollingHeaders(token),
       });
       const reactionRateLimit = parseRateLimitHeaders(response);
-      latestRateLimit = reactionRateLimit;
+      latestRateLimit = mergeRateLimitInfo(latestRateLimit, reactionRateLimit);
       if (reactionRateLimit.limited) {
         this.applyRateLimit(reactionRateLimit);
         break;
       }
-      if (!response.ok) continue;
+      if (!response.ok) {
+        // Mirror the primary-endpoint secondary-limit handling: a 403/429
+        // without rate-limit headers can still be a secondary limit when the
+        // body says so. Apply the short secondary backoff instead of burning
+        // requests on the remaining PRs.
+        const errorText = await response.text();
+        if ((response.status === 403 || response.status === 429) && isRateLimitError(errorText)) {
+          const secondaryDelayMs = reactionRateLimit.retryAfter
+            ? reactionRateLimit.resetAt - Date.now()
+            : RATE_LIMIT_MIN_BACKOFF_MS;
+          this.applyRateLimit({
+            remaining: reactionRateLimit.remaining,
+            resetAt: Date.now() + secondaryDelayMs,
+            limited: true,
+            retryAfter: true,
+          });
+          break;
+        }
+        continue;
+      }
       const reactions = (await response.json()) as unknown[];
       for (const reaction of reactions) {
         if (!isPositiveReaction(reaction)) continue;
@@ -1434,17 +1474,30 @@ function canPollReactions(rateLimitRemaining: number | undefined): boolean {
   return rateLimitRemaining === undefined || rateLimitRemaining >= REACTION_POLL_RATE_LIMIT_FLOOR;
 }
 
+/**
+ * Merge two rate-limit snapshots, preferring a finite remaining budget.
+ *
+ * GitHub 304 (ETag hit) responses do not carry rate-limit headers, so
+ * `parseRateLimitHeaders` reports `remaining: Infinity`. Naively overwriting
+ * a real low budget with such a snapshot would let downstream gates (e.g. the
+ * reaction-poll `< 100` guard) treat a cached 304 as "unlimited" and
+ * overspend. When the next snapshot is non-finite, keep the previous finite
+ * value; otherwise take the new value.
+ */
+function mergeRateLimitInfo(
+  prev: GitHubRateLimitInfo | undefined,
+  next: GitHubRateLimitInfo
+): GitHubRateLimitInfo {
+  if (prev && Number.isFinite(prev.remaining) && !Number.isFinite(next.remaining)) {
+    return prev;
+  }
+  return next;
+}
+
 function pullRequestNumberFrom(row: unknown): number {
   if (!row || typeof row !== 'object') return 0;
   const number = (row as { number?: unknown }).number;
   return typeof number === 'number' ? number : 0;
-}
-
-function rememberRecentPullRequestNumber(numbers: number[], prNumber: number): void {
-  const existingIndex = numbers.indexOf(prNumber);
-  if (existingIndex !== -1) numbers.splice(existingIndex, 1);
-  numbers.unshift(prNumber);
-  numbers.splice(REACTION_POLL_PR_LIMIT);
 }
 
 function isPositiveReaction(row: unknown): boolean {
