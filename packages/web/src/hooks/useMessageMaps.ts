@@ -138,8 +138,23 @@ export function useMessageMaps(
   }, [sdkMessages]);
 
   // Map of parent tool use IDs to their sub-agent messages
-  // Sub-agent messages have parent_tool_use_id set to the Task tool's ID
+  // Sub-agent messages have parent_tool_use_id set to the Task tool's ID.
+  // Some SDK rows (e.g. subagent-scoped permission_denied) carry agent_id
+  // instead of parent_tool_use_id; when that agent_id matches a Task tool_use
+  // id we group them into the same nested timeline.
   const subagentMessagesMap = useMemo(() => {
+    const toolUseIds = new Set<string>();
+    sdkMessages.forEach((msg) => {
+      if (msg.type === 'assistant' && Array.isArray(msg.message.content)) {
+        msg.message.content.forEach((block: unknown) => {
+          const blockObj = block as Record<string, unknown>;
+          if (blockObj.type === 'tool_use' && typeof blockObj.id === 'string') {
+            toolUseIds.add(blockObj.id as string);
+          }
+        });
+      }
+    });
+
     const map = new Map<string, SDKMessage[]>();
     sdkMessages.forEach((msg) => {
       const msgWithParent = msg as SDKMessage & {
@@ -149,6 +164,13 @@ export function useMessageMaps(
         const existing = map.get(msgWithParent.parent_tool_use_id) || [];
         existing.push(msg);
         map.set(msgWithParent.parent_tool_use_id, existing);
+        return;
+      }
+      const agentId = (msg as { agent_id?: string | null }).agent_id;
+      if (agentId && toolUseIds.has(agentId)) {
+        const existing = map.get(agentId) || [];
+        existing.push(msg);
+        map.set(agentId, existing);
       }
     });
     return map;

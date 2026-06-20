@@ -315,16 +315,36 @@ describe('SDKMessageRepository', () => {
       expect(messages.length).toBe(50);
     });
 
-    it('should include operational system rows in session pagination', () => {
+    it('should exclude hidden system subtypes from pagination', () => {
       repository.saveSDKMessage('session-1', createUserMessage('Visible'));
-      for (const subtype of ['session_state_changed', 'commands_changed']) {
+      for (const subtype of [
+        'session_state_changed',
+        'commands_changed',
+        'task_started',
+        'task_progress',
+      ]) {
         repository.saveSDKMessage('session-1', {
           type: 'system',
           subtype,
-          commands: [],
-          estimated_tokens: 1,
-          estimated_tokens_delta: 1,
-          state: 'idle',
+          uuid: `hidden-${subtype}`,
+          session_id: 'session-1',
+        } as unknown as SDKMessage);
+      }
+
+      const { messages, hasMore } = repository.getSDKMessages('session-1', 2);
+
+      expect(messages.map((message) => (message as { subtype?: string }).subtype)).toEqual([
+        undefined,
+      ]);
+      expect(hasMore).toBe(false);
+    });
+
+    it('should include visible system rows in session pagination', () => {
+      repository.saveSDKMessage('session-1', createUserMessage('Visible'));
+      for (const subtype of ['permission_denied', 'api_retry']) {
+        repository.saveSDKMessage('session-1', {
+          type: 'system',
+          subtype,
           uuid: `operational-${subtype}`,
           session_id: 'session-1',
         } as unknown as SDKMessage);
@@ -333,7 +353,7 @@ describe('SDKMessageRepository', () => {
       const { messages } = repository.getSDKMessages('session-1', 3);
 
       expect(messages.map((message) => (message as { subtype?: string }).subtype).sort()).toEqual(
-        ['commands_changed', 'session_state_changed', undefined].sort()
+        ['api_retry', 'permission_denied', undefined].sort()
       );
     });
 
@@ -736,6 +756,20 @@ describe('SDKMessageRepository', () => {
     it('should exclude subagent messages from count', () => {
       repository.saveSDKMessage('session-1', createAssistantMessage('Top level', 'tool-1'));
       repository.saveSDKMessage('session-1', createSubagentMessage('Subagent', 'tool-1'));
+
+      const count = repository.getSDKMessageCount('session-1');
+
+      expect(count).toBe(1);
+    });
+
+    it('should exclude hidden system subtypes from count', () => {
+      repository.saveSDKMessage('session-1', createUserMessage('Visible'));
+      repository.saveSDKMessage('session-1', {
+        type: 'system',
+        subtype: 'session_state_changed',
+        uuid: 'hidden-system',
+        session_id: 'session-1',
+      } as unknown as SDKMessage);
 
       const count = repository.getSDKMessageCount('session-1');
 

@@ -1667,6 +1667,7 @@ export class TaskAgentManager {
         // `getTaskWorktreePath`), and fall back to the space root if no
         // worktree exists yet for this task.
         workspacePath: this.getTaskWorktreePath(taskId) ?? space.workspacePath,
+        gateRetryScheduler: this.config.spaceRuntimeService.getGateRetryScheduler(),
         getSpaceAutonomyLevel: async (spaceId) => {
           const s = await spaceManager.getSpace(spaceId);
           return s?.autonomyLevel ?? 1;
@@ -3595,6 +3596,7 @@ export class TaskAgentManager {
       channelCycleRepo: this.config.channelCycleRepo,
       db: this.config.db.getDatabase(),
       workspacePath,
+      gateRetryScheduler: this.config.spaceRuntimeService.getGateRetryScheduler(),
       getSpaceAutonomyLevel: async (spaceId) => {
         const s = await spaceManager.getSpace(spaceId);
         return s?.autonomyLevel ?? 1;
@@ -3953,6 +3955,7 @@ export class TaskAgentManager {
       workflow,
       gateDataRepo: this.config.gateDataRepo,
       onGateDataChanged: (runId, gateId) => nodeAgentChannelRouter.onGateDataChanged(runId, gateId),
+      gateRetryScheduler: this.config.spaceRuntimeService.getGateRetryScheduler(),
       scriptExecutor: executeGateScript,
       // gateId is overridden per-gate by the handler ({ ...scriptContext, gateId }).
       // workflowStartIso is sourced from the run's createdAt so gate scripts can

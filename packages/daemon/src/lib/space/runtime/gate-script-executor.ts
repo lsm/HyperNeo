@@ -11,6 +11,7 @@
  */
 
 import type { GateScript } from '@neokai/shared';
+import { isRateLimitError, RATE_LIMIT_MIN_BACKOFF_MS } from './rate-limit-detector';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -24,6 +25,25 @@ export interface GateScriptResult {
   data: Record<string, unknown>;
   /** Human-readable error string on failure (stderr or timeout message). */
   error?: string;
+  /**
+   * True when the script's stderr matched a GitHub rate-limit signature.
+   *
+   * Surfaced so callers (gate evaluator, workflow engine) can defer re-evaluation
+   * instead of re-running the failing script on every gate write. The script
+   * still counts as a failure (`success: false`); this flag is informational
+   * and does not change the pass/fail verdict on its own.
+   */
+  rateLimited?: boolean;
+  /**
+   * Suggested backoff in milliseconds when `rateLimited` is true.
+   *
+   * Bash gate scripts cannot read the `X-RateLimit-Reset` header directly, so
+   * this defaults to `RATE_LIMIT_MIN_BACKOFF_MS` whenever rate-limiting is
+   * detected. Consumers may override with a more precise value when they have
+   * reset-window context (e.g. the pr-ready validator probes
+   * `gh api /rate_limit`).
+   */
+  retryAfterMs?: number;
 }
 
 /** Context provided to the script executor. */
@@ -445,10 +465,17 @@ export async function executeGateScript(
 
   if (exitCode.code !== 0) {
     const stderrText = stderrResult.text.trim();
+    const rateLimited = isRateLimitError(stderrText);
     return {
       success: false,
       data: {},
-      error: stderrText || `Script exited with code ${exitCode.code}`,
+      error: rateLimited
+        ? `GitHub rate limit: ${stderrText}`
+        : stderrText || `Script exited with code ${exitCode.code}`,
+      rateLimited,
+      // Bash scripts cannot read X-RateLimit-Reset directly; fall back to the
+      // minimum backoff. Consumers with reset-window context can override.
+      retryAfterMs: rateLimited ? RATE_LIMIT_MIN_BACKOFF_MS : undefined,
     };
   }
 
