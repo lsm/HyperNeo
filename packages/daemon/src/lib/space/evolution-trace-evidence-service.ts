@@ -11,6 +11,7 @@ const TRACE_EVIDENCE_KINDS: EvidenceKind[] = [
   'test_failure',
   'permission_block',
   'slow_tool_call',
+  'verification_triage',
 ];
 const EDIT_TOOL_NAMES = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit']);
 const VERIFICATION_PATTERN =
@@ -93,6 +94,15 @@ interface SlowToolCallRecord {
   sessionId: string;
 }
 
+interface VerificationTriageRecord {
+  key: string;
+  command: string;
+  category: ToolResultRecord['category'];
+  failures: ToolResultRecord[];
+  resolvedBy: ToolResultRecord | null;
+  suspectedFix: string;
+}
+
 interface TraceAnalysis {
   rows: TraceRow[];
   toolUses: ToolUseRecord[];
@@ -111,6 +121,7 @@ interface TraceAnalysis {
   }>;
   fileChurn: Array<{ filePath: string; editCount: number }>;
   firstPassingVerification: ToolResultRecord | null;
+  verificationTriages: VerificationTriageRecord[];
 }
 
 export class EvolutionTraceEvidenceService {
@@ -320,6 +331,13 @@ function analyzeTrace(rows: TraceRow[]): TraceAnalysis {
     ];
   });
 
+  const verificationTriages = Array.from(
+    groupBy(
+      toolResults.filter((result) => result.hasToolUse && isVerificationCategory(result.category)),
+      retryKey
+    ).entries()
+  ).flatMap(([key, results]) => detectVerificationTriages(key, results, toolUses));
+
   const verificationSuccesses = toolResults.filter(
     (result) => !result.failed && (result.category === 'test' || result.category === 'verification')
   );
@@ -341,6 +359,7 @@ function analyzeTrace(rows: TraceRow[]): TraceAnalysis {
       .filter(([, editCount]) => editCount > 1)
       .map(([filePath, editCount]) => ({ filePath, editCount })),
     firstPassingVerification,
+    verificationTriages,
   };
 }
 
@@ -383,6 +402,29 @@ function buildEvidenceParams(
         messageCountBeforeFirstPassingVerification:
           messageCountBeforeFirstPassingVerification(analysis),
         rawTraceRefs: rawRefs([...loop.failuresBeforeSuccess, loop.success], analysis),
+      },
+    });
+  }
+
+  for (const triage of analysis.verificationTriages) {
+    const refs = triage.resolvedBy ? [...triage.failures, triage.resolvedBy] : triage.failures;
+    const resolutionNote = triage.resolvedBy
+      ? `Resolved on retry: ${triage.command} passed after ${triage.failures.length} failed attempt${plural(triage.failures.length)}.`
+      : null;
+    params.push({
+      scopeId,
+      kind: 'verification_triage',
+      sourceId: task.id,
+      summary: `Verification triage: '${triage.command}' failed ${triage.failures.length} time${plural(triage.failures.length)} (${triage.category}). Suspected fix: ${triage.suspectedFix}${resolutionNote ? ` [${resolutionNote}]` : ''}`,
+      metadata: {
+        ...base,
+        traceFingerprint: `verification_triage:${triage.key}:${triage.failures[0].toolUseId ?? triage.failures[0].rowId}`,
+        command: triage.command,
+        category: triage.category,
+        attemptCount: triage.failures.length,
+        suspectedFix: triage.suspectedFix,
+        resolutionNote,
+        rawTraceRefs: rawRefs(refs, analysis),
       },
     });
   }
@@ -466,6 +508,7 @@ function buildBaseMetadata(task: SpaceTask, analysis: TraceAnalysis): Record<str
     testFailureCycles: analysis.testFailures.length,
     permissionBlockCount: analysis.permissionBlocks.length,
     slowToolCallCount: analysis.slowToolCalls.length,
+    verificationTriageCount: analysis.verificationTriages.length,
     fileChurn: analysis.fileChurn,
     messageCount: analysis.rows.length,
     traceSpan: {
@@ -481,7 +524,8 @@ function hasProcessFriction(analysis: TraceAnalysis): boolean {
     analysis.repeatedErrors.length > 0 ||
     analysis.retryLoops.length > 0 ||
     analysis.permissionBlocks.length > 0 ||
-    analysis.slowToolCalls.length > 0
+    analysis.slowToolCalls.length > 0 ||
+    analysis.verificationTriages.length > 0
   );
 }
 
@@ -589,6 +633,117 @@ function detectRetryLoops(
     pendingFailures = [];
   }
   return loops;
+}
+
+function isVerificationCategory(category: ToolResultRecord['category']): boolean {
+  return category === 'test' || category === 'verification';
+}
+
+const SOURCE_FILE_EXTENSIONS = new Set([
+  'ts',
+  'tsx',
+  'js',
+  'jsx',
+  'py',
+  'go',
+  'rs',
+  'java',
+  'kt',
+  'swift',
+  'cpp',
+  'c',
+  'h',
+  'md',
+  'json',
+  'yml',
+  'yaml',
+  'toml',
+  'css',
+  'html',
+]);
+
+function extractFilePaths(text: string): string[] {
+  const paths: string[] = [];
+  const seen = new Set<string>();
+  for (const token of text.split(/[\s\n\r,:"'`()[\]{}]+/)) {
+    const trimmed = token.trim();
+    if (!trimmed) continue;
+    const ext = trimmed.split('.').pop()?.toLowerCase() ?? '';
+    if (!SOURCE_FILE_EXTENSIONS.has(ext)) continue;
+    const looksLikeFile =
+      trimmed.includes('/') || trimmed.includes('\\') || /^[\w.-]+\.[a-zA-Z0-9]+$/.test(trimmed);
+    if (!looksLikeFile) continue;
+    const short = trimmed.slice(0, 120);
+    if (seen.has(short)) continue;
+    seen.add(short);
+    paths.push(short);
+  }
+  return paths;
+}
+
+function suspectedFixForTriage(
+  triage: Pick<VerificationTriageRecord, 'failures' | 'command'>,
+  toolUses: ToolUseRecord[]
+): string {
+  const errorPaths = unique(
+    triage.failures.flatMap((failure) => extractFilePaths(failure.text))
+  ).slice(0, 3);
+  if (errorPaths.length > 0) {
+    return `Address failures in ${errorPaths.join(', ')}`;
+  }
+
+  const firstFailure = triage.failures[0];
+  const firstFailureTime = firstFailure?.timestamp;
+  const sessionId = firstFailure?.sessionId;
+  if (firstFailureTime !== undefined && sessionId !== undefined) {
+    const recentEdit = toolUses
+      .filter(
+        (use) =>
+          use.sessionId === sessionId &&
+          EDIT_TOOL_NAMES.has(use.name) &&
+          use.timestamp <= firstFailureTime &&
+          readFilePath(use.input)
+      )
+      .sort((a, b) => b.timestamp - a.timestamp)[0];
+    const recentPath = recentEdit ? readFilePath(recentEdit.input) : null;
+    if (recentPath) {
+      return `Review recent edit to ${recentPath}`;
+    }
+  }
+
+  return `Review recent changes and re-run ${triage.command}`;
+}
+
+function detectVerificationTriages(
+  key: string,
+  results: ToolResultRecord[],
+  toolUses: ToolUseRecord[]
+): VerificationTriageRecord[] {
+  const triages: VerificationTriageRecord[] = [];
+  let pending: ToolResultRecord[] = [];
+
+  const flush = (resolvedBy: ToolResultRecord | null) => {
+    if (pending.length < 2) {
+      pending = [];
+      return;
+    }
+    const command = pending[0].commandKey;
+    const category = pending[0].category;
+    const suspectedFix = suspectedFixForTriage({ failures: pending, command }, toolUses);
+    triages.push({ key, command, category, failures: pending, resolvedBy, suspectedFix });
+    pending = [];
+  };
+
+  for (const result of results) {
+    if (result.failed && isVerificationCategory(result.category)) {
+      pending.push(result);
+      continue;
+    }
+    flush(result);
+  }
+  flush(null);
+
+  return triages;
 }
 
 function normalizeCommand(command: string): string {
