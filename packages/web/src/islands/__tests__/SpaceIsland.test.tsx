@@ -25,6 +25,7 @@ let mockSpace = signal<Space | null>(null);
 let mockWorkflows = signal<SpaceWorkflow[]>([]);
 let mockAgents = signal<SpaceAgent[]>([]);
 let mockStoreSpaceId = signal<string | null>('space-1');
+let mockConfigDataLoaded = signal(true);
 const mockEnsureConfigData = vi.fn().mockResolvedValue(undefined);
 const mockEnsureWorkflowDetails = vi.fn().mockResolvedValue(undefined);
 
@@ -250,7 +251,7 @@ vi.mock('../../lib/space-store', () => ({
       tasks: { value: [] },
       schedules: { value: [] },
       listSchedules: vi.fn().mockResolvedValue(undefined),
-      configDataLoaded: { value: true },
+      configDataLoaded: mockConfigDataLoaded,
       ensureConfigData: mockEnsureConfigData,
       ensureWorkflowDetails: mockEnsureWorkflowDetails,
       ensureNodeExecutions: vi.fn().mockResolvedValue(undefined),
@@ -335,6 +336,7 @@ beforeEach(() => {
   mockWorkflows = signal([makeWorkflow()]);
   mockAgents = signal([]);
   mockStoreSpaceId = signal('space-1');
+  mockConfigDataLoaded = signal(true);
   capturedVisualEditorProps = {};
   configureTabBridge.signal.value = 'agents';
   idBridge.signal.value = null;
@@ -459,6 +461,24 @@ describe('SpaceIsland — configure workflow editor', () => {
     const result = await renderConfigure();
 
     fireEvent.click(result.getByTestId('space-configure-tab-workflows'));
+    resolveConfig();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(mockEnsureWorkflowDetails).not.toHaveBeenCalled();
+  });
+
+  it('does not load workflow details when config data failed to load', async () => {
+    let resolveConfig: () => void = () => {};
+    mockEnsureConfigData.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveConfig = resolve;
+        })
+    );
+    configureTabBridge.signal.value = 'agents';
+    await renderConfigure();
+
+    mockConfigDataLoaded.value = false;
     resolveConfig();
     await new Promise((resolve) => setTimeout(resolve, 0));
 

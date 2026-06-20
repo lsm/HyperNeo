@@ -69,7 +69,12 @@ export function SpaceConfigurePage({ space }: SpaceConfigurePageProps) {
         // that resolved the old config promise. Starting the detail loader for
         // the wrong (or not-yet-loaded) space snapshots an empty workflow list
         // and marks details loaded early.
-        if (!cancelled && spaceStore.spaceId.value === effectSpaceId && activeTab === 'agents') {
+        if (
+          !cancelled &&
+          spaceStore.spaceId.value === effectSpaceId &&
+          spaceStore.configDataLoaded.value &&
+          activeTab === 'agents'
+        ) {
           return spaceStore.ensureWorkflowDetails();
         }
       })

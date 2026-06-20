@@ -1206,10 +1206,14 @@ class SpaceStore {
         for (const { id, detail } of results) {
           if (detail) {
             fetchedById.set(id, detail);
-          } else if (this.workflows.value.some((w) => w.id === id)) {
-            // Only count missing for workflows that are still present.
-            // Workflows deleted during the fan-out are dropped by the merge
-            // below and should not keep the loaded flag false.
+          } else if (
+            this.workflows.value.some((w) => w.id === id) &&
+            !this.workflowDetails.value.some((w) => w.id === id)
+          ) {
+            // Only count missing for workflows that are still present and have
+            // no usable prior detail. Workflows deleted during fan-out are
+            // dropped by the merge below; workflows already present from an
+            // earlier attempt can still render while retry continues.
             missing += 1;
           }
         }
@@ -1254,7 +1258,11 @@ class SpaceStore {
             const delay = 2 ** this.workflowDetailsRetryCount * 3000;
             this.workflowDetailsRetryCount += 1;
             setTimeout(() => {
-              if (this.spaceId.value === spaceId && !this.workflowDetailsLoaded.value) {
+              if (
+                this.spaceId.value === spaceId &&
+                this.workflowDetailsLoadGeneration === loadGeneration &&
+                !this.workflowDetailsLoaded.value
+              ) {
                 this.ensureWorkflowDetails().catch(() => {});
               }
             }, delay);

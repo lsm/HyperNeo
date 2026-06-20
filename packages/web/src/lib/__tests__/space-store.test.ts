@@ -684,6 +684,23 @@ describe('SpaceStore — ensureWorkflowDetails', () => {
     expect(spaceStore.workflowDetailsLoaded.value).toBe(true);
   });
 
+  it('marks loaded when a failed retry already has prior workflow details', async () => {
+    mockWorkflowSummaries(['wf1']);
+    await spaceStore.selectSpace('space-1');
+    await spaceStore.ensureConfigData();
+    spaceStore.workflowDetails.value = [makeWorkflow('wf1')];
+
+    mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+      if (method === 'spaceWorkflow.get') return null;
+      return {};
+    });
+
+    await spaceStore.ensureWorkflowDetails();
+
+    expect(spaceStore.workflowDetails.value.map((w) => w.id)).toEqual(['wf1']);
+    expect(spaceStore.workflowDetailsLoaded.value).toBe(true);
+  });
+
   it('marks loaded after retry exhaustion so the Agents tab does not spin forever', async () => {
     vi.useFakeTimers();
     try {
@@ -701,6 +718,35 @@ describe('SpaceStore — ensureWorkflowDetails', () => {
       }
 
       expect(spaceStore.workflowDetailsLoaded.value).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not run queued workflow-detail retries after load generation changes', async () => {
+    vi.useFakeTimers();
+    try {
+      mockWorkflowSummaries(['wf1']);
+      await spaceStore.selectSpace('space-1');
+      await spaceStore.ensureConfigData();
+      mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+        if (method === 'spaceWorkflow.get') return null;
+        return {};
+      });
+
+      await spaceStore.ensureWorkflowDetails();
+      const getCount = mockHub.request.mock.calls.filter(
+        (c) => (c[0] as string) === 'spaceWorkflow.get'
+      ).length;
+      (
+        spaceStore as unknown as { workflowDetailsLoadGeneration: number }
+      ).workflowDetailsLoadGeneration += 1;
+      await vi.runOnlyPendingTimersAsync();
+
+      const nextGetCount = mockHub.request.mock.calls.filter(
+        (c) => (c[0] as string) === 'spaceWorkflow.get'
+      ).length;
+      expect(nextGetCount).toBe(getCount);
     } finally {
       vi.useRealTimers();
     }
