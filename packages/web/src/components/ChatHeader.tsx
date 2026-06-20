@@ -32,6 +32,7 @@ export interface ChatHeaderProps {
   resettingAgent?: boolean;
   readonly?: boolean;
   messages?: ChatMessage[];
+  backgroundTaskMessages?: ChatMessage[];
   toolInputsMap?: Map<string, unknown>;
   titleOverride?: string;
   /**
@@ -58,6 +59,7 @@ export function ChatHeader({
   resettingAgent = false,
   readonly = false,
   messages = [],
+  backgroundTaskMessages = [],
   toolInputsMap = new Map(),
   titleOverride,
   onBack,
@@ -250,6 +252,7 @@ export function ChatHeader({
           <SessionInfoPanelButton
             session={session}
             messages={messages}
+            backgroundTaskMessages={backgroundTaskMessages}
             toolInputsMap={toolInputsMap}
           />
         )}

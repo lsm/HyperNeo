@@ -11,10 +11,16 @@
  *    and forwards `sendStatus` only when the DB row is 'failed'.
  */
 
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
 import { Database as BunDatabase } from 'bun:sqlite';
+import type { MessageHub } from '@neokai/shared';
 import { createTables } from '../../../../src/storage/schema';
-import { NAMED_QUERY_REGISTRY } from '../../../../src/lib/rpc-handlers/live-query-handlers';
+import { createReactiveDatabase } from '../../../../src/storage/reactive-database';
+import { LiveQueryEngine } from '../../../../src/storage/live-query';
+import {
+  NAMED_QUERY_REGISTRY,
+  setupLiveQueryHandlers,
+} from '../../../../src/lib/rpc-handlers/live-query-handlers';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -23,6 +29,16 @@ import { NAMED_QUERY_REGISTRY } from '../../../../src/lib/rpc-handlers/live-quer
 function makeDb(): BunDatabase {
   const db = new BunDatabase(':memory:');
   createTables(db);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS spaces (
+      id TEXT PRIMARY KEY,
+      slug TEXT,
+      workspace_path TEXT NOT NULL,
+      name TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )
+  `);
   return db;
 }
 
@@ -48,6 +64,7 @@ interface InsertSdkMessageArgs {
   timestamp?: string;
   sendStatus?: 'deferred' | 'enqueued' | 'consumed' | 'failed';
   origin?: 'human' | 'system' | null;
+  taskId?: string | null;
 }
 
 function insertSdkMessage(db: BunDatabase, args: InsertSdkMessageArgs): void {
@@ -57,8 +74,8 @@ function insertSdkMessage(db: BunDatabase, args: InsertSdkMessageArgs): void {
       : null;
   db.prepare(
     `INSERT INTO sdk_messages
-		 (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin, parent_tool_use_id)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		 (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin, parent_tool_use_id, task_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     args.id,
     args.sessionId,
@@ -68,7 +85,8 @@ function insertSdkMessage(db: BunDatabase, args: InsertSdkMessageArgs): void {
     args.timestamp ?? '2024-01-01 00:00:00',
     args.sendStatus ?? 'consumed',
     args.origin ?? null,
-    parentToolUseId
+    parentToolUseId,
+    args.taskId ?? null
   );
 }
 
@@ -84,6 +102,59 @@ function queryPlan(db: BunDatabase, sessionId: string, limit: number): string {
     detail: string;
   }>;
   return planRows.map((row) => row.detail).join('\n');
+}
+
+type RequestHandler = (data: unknown, context: { clientId?: string; sessionId: string }) => unknown;
+
+function createMockHub() {
+  const handlers = new Map<string, RequestHandler>();
+  const sentMessages: Array<{
+    message: { method: string; data: Record<string, unknown> };
+  }> = [];
+
+  const hub = {
+    onRequest: mock((method: string, handler: RequestHandler) => {
+      handlers.set(method, handler);
+      return () => handlers.delete(method);
+    }),
+    getRouter: mock(() => ({
+      sendToClient: mock((_clientId: string, message: unknown) => {
+        sentMessages.push({
+          message: message as { method: string; data: Record<string, unknown> },
+        });
+        return true;
+      }),
+    })),
+    onClientDisconnect: mock(() => () => {}),
+  } as unknown as MessageHub;
+
+  return {
+    hub,
+    sentMessages,
+    subscribe: (sessionId: string, limit = 100) => {
+      const handler = handlers.get('liveQuery.subscribe');
+      if (!handler) throw new Error('liveQuery.subscribe handler not registered');
+      return handler(
+        { queryName: 'messages.bySession', params: [sessionId, limit], subscriptionId: 'sub-1' },
+        { clientId: 'client-1', sessionId: 'global' }
+      );
+    },
+  };
+}
+
+function subscribeMessagesBySession(db: BunDatabase, sessionId: string, limit = 100) {
+  const reactiveDb = createReactiveDatabase({ getDatabase: () => db } as never);
+  const engine = new LiveQueryEngine(db, reactiveDb);
+  const setup = createMockHub();
+  const cleanup = setupLiveQueryHandlers(setup.hub, engine, db);
+
+  setup.subscribe(sessionId, limit);
+  const snapshot = setup.sentMessages[0]?.message.data;
+
+  cleanup();
+  engine.dispose();
+
+  return snapshot;
 }
 
 // ---------------------------------------------------------------------------
@@ -403,7 +474,7 @@ describe('messages.bySession — SQL behavior', () => {
     expect(rows.map((r) => r.id)).toEqual(['visible', 'tail-shutdown']);
   });
 
-  test('filters hidden system subtypes before applying the top-level limit', () => {
+  test('filters render-only hidden system subtypes before applying the top-level limit', () => {
     insertSdkMessage(db, {
       id: 'visible',
       sessionId: 's1',
@@ -411,7 +482,7 @@ describe('messages.bySession — SQL behavior', () => {
       sdkMessage: { type: 'assistant', uuid: 'visible-uuid', message: { content: [] } },
       timestamp: '2024-01-01 00:00:01',
     });
-    for (const subtype of ['session_state_changed', 'commands_changed', 'task_started']) {
+    for (const subtype of ['session_state_changed', 'commands_changed', 'task_progress']) {
       insertSdkMessage(db, {
         id: `hidden-${subtype}`,
         sessionId: 's1',
@@ -429,6 +500,220 @@ describe('messages.bySession — SQL behavior', () => {
 
     const rows = query(db, 's1', 2);
     expect(rows.map((r) => r.id)).toEqual(['visible']);
+  });
+
+  test('includes background task metadata in LiveQuery metadata outside the transcript rows', () => {
+    for (const subtype of ['task_started', 'task_updated', 'task_notification']) {
+      insertSdkMessage(db, {
+        id: `metadata-${subtype}`,
+        sessionId: 's1',
+        messageType: 'system',
+        messageSubtype: subtype,
+        sdkMessage: {
+          type: 'system',
+          subtype,
+          uuid: `${subtype}-uuid`,
+          session_id: 's1',
+          task_id: 'task-1',
+          status: subtype === 'task_notification' ? 'completed' : undefined,
+        },
+        timestamp: '2024-01-01 00:00:02',
+      });
+    }
+    insertSdkMessage(db, {
+      id: 'visible',
+      sessionId: 's1',
+      messageType: 'assistant',
+      sdkMessage: { type: 'assistant', uuid: 'visible-uuid', message: { content: [] } },
+      timestamp: '2024-01-01 00:00:03',
+    });
+
+    const snapshot = subscribeMessagesBySession(db, 's1', 2);
+    const rows = snapshot?.rows as Array<{ id: string }>;
+    const metadata = snapshot?.metadata as { backgroundTaskMessages: Array<{ id: string }> };
+
+    expect(rows.map((r) => r.id)).toEqual(['metadata-task_notification', 'visible']);
+    expect(metadata.backgroundTaskMessages.map((r) => r.id).sort()).toEqual(
+      ['metadata-task_notification', 'metadata-task_started', 'metadata-task_updated'].sort()
+    );
+  });
+
+  test('includes task start rows when LiveQuery background task metadata is capped', () => {
+    insertSdkMessage(db, {
+      id: 'task-started',
+      sessionId: 's1',
+      messageType: 'system',
+      messageSubtype: 'task_started',
+      sdkMessage: {
+        type: 'system',
+        subtype: 'task_started',
+        uuid: 'task-started-uuid',
+        session_id: 's1',
+        task_id: 'task-1',
+      },
+      timestamp: '2024-01-01 00:00:01',
+    });
+    for (let i = 0; i < 301; i++) {
+      insertSdkMessage(db, {
+        id: `task-updated-${i}`,
+        sessionId: 's1',
+        messageType: 'system',
+        messageSubtype: 'task_updated',
+        sdkMessage: {
+          type: 'system',
+          subtype: 'task_updated',
+          uuid: `task-updated-${i}-uuid`,
+          session_id: 's1',
+          task_id: 'task-1',
+          patch: { is_backgrounded: true, status: 'running' },
+        },
+        timestamp: new Date(Date.UTC(2024, 0, 1, 0, 0, i + 1)).toISOString(),
+      });
+    }
+
+    const snapshot = subscribeMessagesBySession(db, 's1', 1);
+    const metadata = snapshot?.metadata as { backgroundTaskMessages: Array<{ id: string }> };
+
+    expect(metadata.backgroundTaskMessages.some((message) => message.id === 'task-started')).toBe(
+      true
+    );
+    expect(metadata.backgroundTaskMessages.at(-1)?.id).toBe('task-updated-300');
+  });
+
+  test('matches LiveQuery task starts by SDK task id before session task id', () => {
+    insertSdkMessage(db, {
+      id: 'old-task-started',
+      sessionId: 's1',
+      messageType: 'system',
+      messageSubtype: 'task_started',
+      taskId: 'space-task-1',
+      sdkMessage: {
+        type: 'system',
+        subtype: 'task_started',
+        uuid: 'old-task-started-uuid',
+        session_id: 's1',
+        task_id: 'old-sdk-task',
+      },
+      timestamp: '2024-01-01 00:00:00',
+    });
+    insertSdkMessage(db, {
+      id: 'current-task-started',
+      sessionId: 's1',
+      messageType: 'system',
+      messageSubtype: 'task_started',
+      taskId: 'space-task-1',
+      sdkMessage: {
+        type: 'system',
+        subtype: 'task_started',
+        uuid: 'current-task-started-uuid',
+        session_id: 's1',
+        task_id: 'current-sdk-task',
+      },
+      timestamp: '2024-01-01 00:00:01',
+    });
+    for (let i = 0; i < 301; i++) {
+      insertSdkMessage(db, {
+        id: `current-task-updated-${i}`,
+        sessionId: 's1',
+        messageType: 'system',
+        messageSubtype: 'task_updated',
+        taskId: 'space-task-1',
+        sdkMessage: {
+          type: 'system',
+          subtype: 'task_updated',
+          uuid: `current-task-updated-${i}-uuid`,
+          session_id: 's1',
+          task_id: 'current-sdk-task',
+          patch: { is_backgrounded: true, status: 'running' },
+        },
+        timestamp: new Date(Date.UTC(2024, 0, 1, 0, 0, i + 1)).toISOString(),
+      });
+    }
+
+    const snapshot = subscribeMessagesBySession(db, 's1', 1);
+    const metadata = snapshot?.metadata as { backgroundTaskMessages: Array<{ task_id: string }> };
+    const sdkTaskIds = metadata.backgroundTaskMessages.map((message) => message.task_id);
+
+    expect(sdkTaskIds).not.toContain('old-sdk-task');
+    expect(sdkTaskIds).toContain('current-sdk-task');
+  });
+
+  test('preserves LiveQuery background task metadata order on timestamp ties', () => {
+    insertSdkMessage(db, {
+      id: 'b-started',
+      sessionId: 's1',
+      messageType: 'system',
+      messageSubtype: 'task_started',
+      sdkMessage: {
+        type: 'system',
+        subtype: 'task_started',
+        uuid: 'b-started-uuid',
+        session_id: 's1',
+        task_id: 'task-1',
+      },
+      timestamp: '2024-01-01 00:00:00',
+    });
+    insertSdkMessage(db, {
+      id: 'a-updated',
+      sessionId: 's1',
+      messageType: 'system',
+      messageSubtype: 'task_updated',
+      sdkMessage: {
+        type: 'system',
+        subtype: 'task_updated',
+        uuid: 'a-updated-uuid',
+        session_id: 's1',
+        task_id: 'task-1',
+        patch: { is_backgrounded: true, status: 'running' },
+      },
+      timestamp: '2024-01-01 00:00:00',
+    });
+
+    const snapshot = subscribeMessagesBySession(db, 's1', 1);
+    const metadata = snapshot?.metadata as { backgroundTaskMessages: Array<{ id: string }> };
+
+    expect(metadata.backgroundTaskMessages.map((message) => message.id)).toEqual([
+      'b-started',
+      'a-updated',
+    ]);
+  });
+
+  test('does not let background task metadata rows displace visible rows', () => {
+    insertSdkMessage(db, {
+      id: 'older-visible',
+      sessionId: 's1',
+      messageType: 'assistant',
+      sdkMessage: { type: 'assistant', uuid: 'older-visible-uuid', message: { content: [] } },
+      timestamp: '2024-01-01 00:00:01',
+    });
+    for (let i = 0; i < 20; i++) {
+      const subtype = i === 0 ? 'task_started' : 'task_updated';
+      insertSdkMessage(db, {
+        id: `metadata-${i}`,
+        sessionId: 's1',
+        messageType: 'system',
+        messageSubtype: subtype,
+        sdkMessage: {
+          type: 'system',
+          subtype,
+          uuid: `metadata-${i}-uuid`,
+          session_id: 's1',
+          task_id: 'task-1',
+        },
+        timestamp: `2024-01-01 00:00:${String(i + 2).padStart(2, '0')}`,
+      });
+    }
+    insertSdkMessage(db, {
+      id: 'newer-visible',
+      sessionId: 's1',
+      messageType: 'assistant',
+      sdkMessage: { type: 'assistant', uuid: 'newer-visible-uuid', message: { content: [] } },
+      timestamp: '2024-01-01 00:01:00',
+    });
+
+    const rows = query(db, 's1', 2);
+
+    expect(rows.map((row) => row.id)).toEqual(['older-visible', 'newer-visible']);
   });
 
   test('does not throw when an informational row has malformed JSON', () => {

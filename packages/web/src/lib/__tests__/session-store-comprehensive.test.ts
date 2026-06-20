@@ -466,6 +466,43 @@ describe('SessionStore - Comprehensive Coverage', () => {
       expect(sessionStore.sdkMessages.value.map((m) => m.uuid)).toEqual(['msg-1', 'msg-2']);
     });
 
+    it('keeps LiveQuery background task metadata out of sdkMessages', async () => {
+      const hub = installLiveQueryHub();
+      await sessionStore.select('session-1');
+      const subId = hub.subscriptionId!;
+
+      hub.fire('liveQuery.snapshot', {
+        subscriptionId: subId,
+        rows: [
+          {
+            id: 'visible-1',
+            uuid: 'visible-1',
+            type: 'assistant',
+            timestamp: 200,
+            message: { content: [] },
+          },
+        ],
+        metadata: {
+          backgroundTaskMessages: [
+            {
+              id: 'task-started-1',
+              type: 'system',
+              subtype: 'task_started',
+              task_id: 'task-1',
+              timestamp: 100,
+            },
+          ],
+        },
+      });
+
+      expect(sessionStore.sdkMessages.value.map((m) => (m as { id?: string }).id)).toEqual([
+        'visible-1',
+      ]);
+      expect(
+        sessionStore.backgroundTaskMessages.value.map((m) => (m as { subtype?: string }).subtype)
+      ).toEqual(['task_started']);
+    });
+
     it('applies LiveQuery delta added rows to sdkMessages', async () => {
       const hub = installLiveQueryHub();
       await sessionStore.select('session-1');
@@ -904,6 +941,41 @@ describe('SessionStore - Comprehensive Coverage', () => {
       const result = await sessionStore.loadOlderMessages(Date.now(), 100);
 
       expect(result.hasMore).toBe(true);
+    });
+
+    it('updates background task metadata from older-message responses without prepending it', async () => {
+      const olderMessages: SDKMessage[] = [
+        {
+          uuid: 'visible-old',
+          type: 'text',
+          role: 'user',
+          content: [{ type: 'text', text: 'Old' }],
+        },
+      ];
+      const backgroundTaskMessages = [
+        {
+          id: 'task-notification-1',
+          type: 'system',
+          subtype: 'task_notification',
+          task_id: 'task-1',
+          status: 'completed',
+          timestamp: 100,
+        },
+      ];
+
+      mockHub.request.mockResolvedValue({
+        sdkMessages: olderMessages,
+        hasMore: false,
+        backgroundTaskMessages,
+      });
+
+      await sessionStore.select('session-1');
+
+      const result = await sessionStore.loadOlderMessages(Date.now(), 100);
+
+      expect(result.messages).toEqual(olderMessages);
+      expect(sessionStore.backgroundTaskMessages.value).toEqual(backgroundTaskMessages);
+      expect(sessionStore.sdkMessages.value).not.toContain(backgroundTaskMessages[0]);
     });
 
     it('should return empty array when no active session', async () => {

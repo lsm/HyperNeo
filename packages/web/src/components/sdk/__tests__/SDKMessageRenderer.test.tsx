@@ -223,19 +223,30 @@ describe('SDKMessageRenderer', () => {
       expect(container.innerHTML).toBe('');
     });
 
-    it('should render hidden subtypes as null (session_state_changed)', () => {
-      const message = {
-        type: 'system',
-        subtype: 'session_state_changed',
-        state: 'requires_action',
-        uuid: createUUID(),
-        session_id: 'test-session',
-      } as unknown as SDKMessage;
+    it('should render all hidden system subtypes as null', () => {
+      for (const subtype of [
+        'session_state_changed',
+        'commands_changed',
+        'hook_started',
+        'hook_progress',
+        'task_started',
+        'task_progress',
+        'task_updated',
+        'mirror_error',
+        'elicitation_complete',
+      ]) {
+        const message = {
+          type: 'system',
+          subtype,
+          state: 'requires_action',
+          uuid: createUUID(),
+          session_id: 'test-session',
+        } as unknown as SDKMessage;
 
-      const { container } = render(<SDKMessageRenderer message={message} />);
+        const { container } = render(<SDKMessageRenderer message={message} />);
 
-      // session_state_changed is now hidden - should render nothing
-      expect(container.innerHTML).toBe('');
+        expect(container.innerHTML).toBe('');
+      }
     });
 
     it('should render worker shutdown messages only at the live tail', () => {

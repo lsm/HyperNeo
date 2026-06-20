@@ -64,6 +64,7 @@ function createMockAgentSession(): {
     getSessionData: ReturnType<typeof mock>;
     getSDKSessionId: ReturnType<typeof mock>;
     getSDKMessages: ReturnType<typeof mock>;
+    getBackgroundTaskMessages: ReturnType<typeof mock>;
     getSDKMessageCount: ReturnType<typeof mock>;
   };
 } {
@@ -80,6 +81,7 @@ function createMockAgentSession(): {
     getSessionData: mock(() => sessionData),
     getSDKSessionId: mock(() => 'sdk-session-123'),
     getSDKMessages: mock(() => ({ messages: [], hasMore: false })),
+    getBackgroundTaskMessages: mock(() => []),
     getSDKMessageCount: mock(() => 0),
   };
 
@@ -714,6 +716,7 @@ describe('Message RPC Handlers', () => {
       const result = await handler!({ sessionId: 'session-123' }, {});
 
       expect(result).toHaveProperty('sdkMessages');
+      expect(result).toHaveProperty('backgroundTaskMessages');
     });
 
     test('accepts limit parameter', async () => {

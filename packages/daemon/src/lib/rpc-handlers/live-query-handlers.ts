@@ -2203,7 +2203,7 @@ ORDER BY s.last_active_at DESC, s.id DESC
  * Returns SDK messages for a session in the same shape that
  * `SDKMessageRepository.getSDKMessages()` produces:
  *   - Top-level messages (no `parent_tool_use_id`), limited to the most recent
- *     N rows (by timestamp DESC).
+ *     N visible transcript rows (by timestamp DESC).
  *   - Plus subagent messages (rows whose `parent_tool_use_id` is a tool_use id
  *     emitted by one of those top-level assistant rows).
  *   - User messages with `send_status = 'deferred'` or `'enqueued'` are
@@ -2218,15 +2218,81 @@ ORDER BY s.last_active_at DESC, s.id DESC
  * inflates the JSON and merges the extras to produce a ChatMessage-shaped
  * object.
  */
-/**
- * Comma-separated, single-quoted list of system subtypes excluded from the
- * `messages.bySession` live query. Includes the UI-hidden set plus
- * `thinking_tokens`, which is also not rendered but kept out of the hidden
- * contract for legacy UI gating.
- */
-const EXCLUDED_FROM_PAGINATION_SQL_LIST = [...HIDDEN_SYSTEM_SUBTYPES, 'thinking_tokens']
-  .map((subtype) => `'${subtype.replace(/'/g, "''")}'`)
-  .join(', ');
+const BACKGROUND_TASK_METADATA_SUBTYPES = ['task_started', 'task_updated', 'task_notification'];
+const BACKGROUND_TASK_METADATA_BATCH_SIZE = 300;
+
+function toSqlStringList(subtypes: Iterable<string>): string {
+  return [...subtypes].map((subtype) => `'${subtype.replace(/'/g, "''")}'`).join(', ');
+}
+
+const BACKGROUND_TASK_METADATA_SQL_LIST = toSqlStringList(BACKGROUND_TASK_METADATA_SUBTYPES);
+
+const BACKGROUND_TASK_METADATA_SQL = `
+WITH recent_metadata AS (
+  SELECT
+    id,
+    sdk_message,
+    timestamp,
+    send_status,
+    origin,
+    rowid,
+    COALESCE(
+      CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.task_id') END,
+      task_id
+    ) AS task_id
+  FROM sdk_messages
+  WHERE session_id = ?
+    AND parent_tool_use_id IS NULL
+    AND COALESCE(message_subtype, '') IN (${BACKGROUND_TASK_METADATA_SQL_LIST})
+  ORDER BY timestamp DESC, rowid DESC
+  LIMIT ${BACKGROUND_TASK_METADATA_BATCH_SIZE}
+),
+recent_task_ids AS (
+  SELECT DISTINCT task_id
+  FROM recent_metadata
+  WHERE task_id IS NOT NULL AND task_id != ''
+),
+task_starts AS (
+  SELECT
+    id,
+    sdk_message,
+    timestamp,
+    send_status,
+    origin,
+    rowid,
+    COALESCE(
+      CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.task_id') END,
+      task_id
+    ) AS task_id
+  FROM sdk_messages
+  WHERE session_id = ?
+    AND parent_tool_use_id IS NULL
+    AND COALESCE(message_subtype, '') = 'task_started'
+    AND COALESCE(
+      CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.task_id') END,
+      task_id
+    ) IN (SELECT task_id FROM recent_task_ids)
+    AND id NOT IN (SELECT id FROM recent_metadata)
+)
+SELECT
+  id,
+  sdk_message                                                     AS content,
+  CAST((julianday(timestamp) - 2440587.5) * 86400000 AS INTEGER)  AS timestamp,
+  send_status                                                     AS sendStatus,
+  origin                                                          AS origin
+FROM (
+  SELECT * FROM recent_metadata
+  UNION ALL
+  SELECT * FROM task_starts
+)
+ORDER BY timestamp DESC, rowid DESC
+`.trim();
+
+/** Render-hidden rows excluded before applying transcript pagination limits. */
+const EXCLUDED_FROM_PAGINATION_SQL_LIST = toSqlStringList([
+  ...HIDDEN_SYSTEM_SUBTYPES,
+  'thinking_tokens',
+]);
 
 const MESSAGES_BY_SESSION_SQL = `
 WITH top_level AS (
@@ -2763,6 +2829,23 @@ export function setupLiveQueryHandlers(
 
   const sessionsListBase = NAMED_QUERY_REGISTRY.get('sessions.list')!;
   const activeRegistry = new Map(NAMED_QUERY_REGISTRY);
+
+  const messagesBySessionBase = NAMED_QUERY_REGISTRY.get('messages.bySession')!;
+  const stmtBackgroundTaskMetadata = db.prepare(BACKGROUND_TASK_METADATA_SQL);
+  activeRegistry.set('messages.bySession', {
+    ...messagesBySessionBase,
+    mapResult: (_rawRows, params) => {
+      const sessionId = params[0];
+      if (typeof sessionId !== 'string' || sessionId.length === 0) return undefined;
+      const rows = stmtBackgroundTaskMetadata.all(sessionId, sessionId) as Record<
+        string,
+        unknown
+      >[];
+      return {
+        backgroundTaskMessages: rows.map(mapMessageRow).reverse(),
+      };
+    },
+  });
 
   activeRegistry.set('sessions.list', {
     ...sessionsListBase,
