@@ -4,7 +4,8 @@ export type GitHubEventKind =
   | 'issue_comment'
   | 'pull_request_review'
   | 'pull_request_review_comment'
-  | 'pull_request';
+  | 'pull_request'
+  | 'reaction';
 
 export interface NormalizedGitHubEvent {
   deliveryId: string;
@@ -25,6 +26,7 @@ export interface NormalizedGitHubEvent {
   externalId: string;
   occurredAt: number;
   rawPayload: unknown;
+  payload?: Record<string, unknown>;
 }
 
 export interface GitHubPollingRepo {
@@ -226,6 +228,52 @@ export function normalizeGitHubPollingRow(
   };
 }
 
+export function normalizeGitHubReaction(
+  watched: GitHubPollingRepo,
+  prNumber: number,
+  reaction: unknown
+): NormalizedGitHubEvent | null {
+  const obj = asObject(reaction);
+  const id = getNumber(obj.id);
+  if (!id || !prNumber) return null;
+  const user = userFrom(obj.user);
+  const createdAt = getString(obj.created_at);
+  const occurredAt = parseTs(createdAt);
+  const canonicalOwner = watched.owner.toLowerCase();
+  const canonicalRepo = watched.repo.toLowerCase();
+  const repoFullName = `${watched.owner}/${watched.repo}`;
+  const content = getString(obj.content);
+  return {
+    deliveryId: `poll:reaction:${id}`,
+    dedupeKey: `${canonicalOwner}/${canonicalRepo}:reaction:${id}`,
+    source: 'polling',
+    eventType: 'reaction',
+    action: 'added',
+    repoOwner: watched.owner,
+    repoName: watched.repo,
+    entityId: String(prNumber),
+    prNumber,
+    prUrl: prUrl(watched.owner, watched.repo, prNumber),
+    actor: user.login,
+    actorType: user.type,
+    body: content,
+    summary: `PR #${prNumber} reaction ${content} by ${user.login}`,
+    externalUrl: prUrl(watched.owner, watched.repo, prNumber),
+    externalId: `reaction:${id}`,
+    occurredAt,
+    rawPayload: reaction,
+    payload: {
+      type: 'reaction',
+      content,
+      user: user.login,
+      userType: user.type,
+      createdAt,
+      prNumber,
+      repo: repoFullName,
+    },
+  };
+}
+
 export interface GitHubTopicParts {
   resource: string;
   entityId: string;
@@ -244,6 +292,8 @@ export function mapEventType(
       return { resource: 'pull_request', entityId, action: `review_${action}` };
     case 'pull_request_review_comment':
       return { resource: 'pull_request', entityId, action: `review_comment_${action}` };
+    case 'reaction':
+      return { resource: 'pull_request', entityId, action: `reaction_${action}` };
     case 'pull_request':
       return { resource: 'pull_request', entityId, action };
   }
@@ -283,6 +333,7 @@ export function toExternalEvent(spaceId: string, event: NormalizedGitHubEvent): 
       actorType: event.actorType,
       body: event.body,
       rawPayload: event.rawPayload,
+      ...event.payload,
     },
     dedupeKey: event.dedupeKey,
   };
