@@ -33,27 +33,26 @@ const SEARCHABLE_MESSAGE_TYPES = new Set(['system', 'user', 'assistant']);
 const RENDERABLE_TEXT_MESSAGE_BATCH_SIZE = 50;
 const RENDERABLE_TEXT_MESSAGE_MAX_SCAN = 250;
 
-const BACKGROUND_TASK_METADATA_SUBTYPES = new Set(['task_started', 'task_updated']);
+const BACKGROUND_TASK_METADATA_SUBTYPES = ['task_started', 'task_updated'];
+const LAST_MESSAGE_PROGRESS_SUBTYPES = new Set(['task_started', 'task_progress', 'task_updated']);
+const BACKGROUND_TASK_METADATA_BATCH_SIZE = 200;
 
 function toSqlStringList(subtypes: Iterable<string>): string {
   return [...subtypes].map((subtype) => `'${subtype.replace(/'/g, "''")}'`).join(', ');
 }
 
-/**
- * System subtypes excluded from paginated chat reads. This is narrower than the
- * render-hidden set because `task_started` and `task_updated` feed the
- * SessionInfoPanel background-task metadata even though transcript rendering
- * still hides them.
- */
+/** Render-hidden rows excluded before applying chat pagination limits. */
 const EXCLUDED_FROM_PAGINATION_SQL_LIST = toSqlStringList([
-  ...[...HIDDEN_SYSTEM_SUBTYPES].filter(
-    (subtype) => !BACKGROUND_TASK_METADATA_SUBTYPES.has(subtype)
-  ),
+  ...HIDDEN_SYSTEM_SUBTYPES,
   'thinking_tokens',
 ]);
 
+/** Background task metadata is fetched outside the transcript pagination budget. */
+const BACKGROUND_TASK_METADATA_SQL_LIST = toSqlStringList(BACKGROUND_TASK_METADATA_SUBTYPES);
+
 /** Last-message idle checks only drop rows that carry no progress signal. */
 const EXCLUDED_FROM_LAST_MESSAGE_SQL_LIST = toSqlStringList([
+  ...[...HIDDEN_SYSTEM_SUBTYPES].filter((subtype) => !LAST_MESSAGE_PROGRESS_SUBTYPES.has(subtype)),
   'thinking_tokens',
   'model_refusal_fallback',
 ]);
@@ -690,6 +689,12 @@ export class SDKMessageRepository {
     // Determine hasMore: if we got exactly `limit` top-level messages, there might be more
     const hasMore = topLevelMessages.length === limit;
 
+    const backgroundTaskMetadataMessages = this.getBackgroundTaskMetadataMessages(
+      sessionId,
+      before,
+      since
+    );
+
     // Step 2: Get all subagent messages for the returned top-level messages
     // Extract tool use IDs from Task blocks in the top-level messages
     const toolUseIds = new Set<string>();
@@ -749,12 +754,59 @@ export class SDKMessageRepository {
     // Note: cast required because the new SDK added `origin?: SDKMessageOrigin` to SDKUserMessage,
     // which conflicts with our augmented `origin?: MessageOrigin` field (a different type used for
     // tracking message provenance in NeoKai). The runtime values are always correct.
+    const topLevelAndMetadata = [...topLevelMessages, ...backgroundTaskMetadataMessages].sort(
+      (a, b) => a.timestamp - b.timestamp
+    );
+
     return {
-      messages: [...topLevelMessages, ...subagentMessages] as Array<
+      messages: [...topLevelAndMetadata, ...subagentMessages] as Array<
         SDKMessage & { timestamp: number; origin?: MessageOrigin; sendStatus?: string }
       >,
       hasMore,
     };
+  }
+
+  private getBackgroundTaskMetadataMessages(
+    sessionId: string,
+    before?: number,
+    since?: number
+  ): Array<SDKMessage & { timestamp: number; origin?: MessageOrigin }> {
+    let query = `SELECT id, sdk_message, timestamp, origin FROM sdk_messages
+      WHERE session_id = ?
+        AND parent_tool_use_id IS NULL
+        AND COALESCE(message_subtype, '') IN (${BACKGROUND_TASK_METADATA_SQL_LIST})`;
+    const params: SQLiteValue[] = [sessionId];
+
+    if (before !== undefined && before > 0) {
+      query += ` AND timestamp < ?`;
+      params.push(new Date(before).toISOString());
+    }
+
+    if (since !== undefined && since > 0) {
+      query += ` AND timestamp > ?`;
+      params.push(new Date(since).toISOString());
+    }
+
+    query += ` ORDER BY timestamp DESC, rowid DESC LIMIT ?`;
+    params.push(BACKGROUND_TASK_METADATA_BATCH_SIZE);
+
+    const rows = this.db.prepare(query).all(...params) as Array<{
+      id: string;
+      sdk_message: string;
+      timestamp: string;
+      origin: MessageOrigin | null;
+    }>;
+
+    return rows
+      .map((row) => {
+        const message = this.inflatePersistedMessage(row);
+        return {
+          ...message,
+          id: row.id,
+          origin: row.origin ?? undefined,
+        } as unknown as SDKMessage & { timestamp: number; origin?: MessageOrigin };
+      })
+      .reverse();
   }
 
   /**

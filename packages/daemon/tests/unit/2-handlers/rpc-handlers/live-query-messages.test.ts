@@ -431,7 +431,7 @@ describe('messages.bySession — SQL behavior', () => {
     expect(rows.map((r) => r.id)).toEqual(['visible']);
   });
 
-  test('includes background task metadata rows for SessionInfoPanel', () => {
+  test('includes background task metadata rows outside the transcript limit', () => {
     insertSdkMessage(db, {
       id: 'visible',
       sessionId: 's1',
@@ -456,10 +456,51 @@ describe('messages.bySession — SQL behavior', () => {
       });
     }
 
-    const rows = query(db, 's1', 3);
+    const rows = query(db, 's1', 1);
     expect(rows.map((r) => r.id).sort()).toEqual(
       ['metadata-task_started', 'metadata-task_updated', 'visible'].sort()
     );
+  });
+
+  test('does not let background task metadata rows displace visible rows', () => {
+    insertSdkMessage(db, {
+      id: 'older-visible',
+      sessionId: 's1',
+      messageType: 'assistant',
+      sdkMessage: { type: 'assistant', uuid: 'older-visible-uuid', message: { content: [] } },
+      timestamp: '2024-01-01 00:00:01',
+    });
+    for (let i = 0; i < 20; i++) {
+      const subtype = i === 0 ? 'task_started' : 'task_updated';
+      insertSdkMessage(db, {
+        id: `metadata-${i}`,
+        sessionId: 's1',
+        messageType: 'system',
+        messageSubtype: subtype,
+        sdkMessage: {
+          type: 'system',
+          subtype,
+          uuid: `metadata-${i}-uuid`,
+          session_id: 's1',
+          task_id: 'task-1',
+        },
+        timestamp: `2024-01-01 00:00:${String(i + 2).padStart(2, '0')}`,
+      });
+    }
+    insertSdkMessage(db, {
+      id: 'newer-visible',
+      sessionId: 's1',
+      messageType: 'assistant',
+      sdkMessage: { type: 'assistant', uuid: 'newer-visible-uuid', message: { content: [] } },
+      timestamp: '2024-01-01 00:01:00',
+    });
+
+    const rows = query(db, 's1', 2);
+    const visibleRows = rows.filter(
+      (row) => !['task_started', 'task_updated'].includes((row.subtype as string | undefined) ?? '')
+    );
+
+    expect(visibleRows.map((row) => row.id)).toEqual(['older-visible', 'newer-visible']);
   });
 
   test('does not throw when an informational row has malformed JSON', () => {

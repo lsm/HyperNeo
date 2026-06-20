@@ -334,7 +334,7 @@ describe('SDKMessageRepository', () => {
       expect(hasMore).toBe(false);
     });
 
-    it('should include background task metadata rows in pagination', () => {
+    it('should include background task metadata rows outside the pagination budget', () => {
       repository.saveSDKMessage('session-1', createUserMessage('Visible'));
       for (const subtype of ['task_started', 'task_updated']) {
         repository.saveSDKMessage('session-1', {
@@ -346,11 +346,36 @@ describe('SDKMessageRepository', () => {
         } as unknown as SDKMessage);
       }
 
-      const { messages } = repository.getSDKMessages('session-1', 3);
+      const { messages, hasMore } = repository.getSDKMessages('session-1', 1);
 
       expect(messages.map((message) => (message as { subtype?: string }).subtype).sort()).toEqual(
         ['task_started', 'task_updated', undefined].sort()
       );
+      expect(hasMore).toBe(true);
+    });
+
+    it('should not let background task metadata rows displace visible rows', () => {
+      repository.saveSDKMessage('session-1', createUserMessage('Older visible'));
+      for (let i = 0; i < 20; i++) {
+        repository.saveSDKMessage('session-1', {
+          type: 'system',
+          subtype: i === 0 ? 'task_started' : 'task_updated',
+          uuid: `metadata-${i}`,
+          session_id: 'session-1',
+          task_id: 'task-1',
+        } as unknown as SDKMessage);
+      }
+      repository.saveSDKMessage('session-1', createAssistantMessage('Newer visible'));
+
+      const { messages } = repository.getSDKMessages('session-1', 2);
+      const visibleMessages = messages.filter(
+        (message) =>
+          !['task_started', 'task_updated'].includes(
+            (message as { subtype?: string }).subtype ?? ''
+          )
+      );
+
+      expect(visibleMessages).toHaveLength(2);
     });
 
     it('should include visible system rows in session pagination', () => {
@@ -666,6 +691,33 @@ describe('SDKMessageRepository', () => {
 
       expect(message?.type).toBe('system');
       expect((message as { subtype?: string } | null)?.subtype).toBe('task_updated');
+    });
+
+    it('should skip hidden state-only rows when finding the last SDK message', () => {
+      repository.saveSDKMessage('session-1', {
+        type: 'result',
+        subtype: 'success',
+        duration_ms: 100,
+        duration_api_ms: 50,
+        is_error: false,
+        num_turns: 1,
+        result: 'Done',
+        session_id: 'session-1',
+        total_cost_usd: 0,
+        usage: {},
+      } as unknown as SDKMessage);
+      for (const subtype of ['session_state_changed', 'commands_changed', 'hook_progress']) {
+        repository.saveSDKMessage('session-1', {
+          type: 'system',
+          subtype,
+          uuid: `state-only-${subtype}`,
+          session_id: 'session-1',
+        } as unknown as SDKMessage);
+      }
+
+      const message = repository.getLastSDKMessage('session-1');
+
+      expect(message?.type).toBe('result');
     });
 
     it('should skip model fallback notices when finding the last terminal message', () => {

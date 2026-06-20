@@ -2202,8 +2202,10 @@ ORDER BY s.last_active_at DESC, s.id DESC
  *
  * Returns SDK messages for a session in the same shape that
  * `SDKMessageRepository.getSDKMessages()` produces:
- *   - Top-level messages (no `parent_tool_use_id`), limited to the most recent
- *     N rows (by timestamp DESC).
+ *   - Visible top-level messages (no `parent_tool_use_id`), limited to the most
+ *     recent N rows (by timestamp DESC).
+ *   - Plus background-task metadata rows used by SessionInfoPanel, fetched
+ *     outside the visible transcript pagination budget.
  *   - Plus subagent messages (rows whose `parent_tool_use_id` is a tool_use id
  *     emitted by one of those top-level assistant rows).
  *   - User messages with `send_status = 'deferred'` or `'enqueued'` are
@@ -2218,24 +2220,21 @@ ORDER BY s.last_active_at DESC, s.id DESC
  * inflates the JSON and merges the extras to produce a ChatMessage-shaped
  * object.
  */
-const BACKGROUND_TASK_METADATA_SUBTYPES = new Set(['task_started', 'task_updated']);
+const BACKGROUND_TASK_METADATA_SUBTYPES = ['task_started', 'task_updated'];
+const BACKGROUND_TASK_METADATA_BATCH_SIZE = 200;
 
 function toSqlStringList(subtypes: Iterable<string>): string {
   return [...subtypes].map((subtype) => `'${subtype.replace(/'/g, "''")}'`).join(', ');
 }
 
-/**
- * System subtypes excluded from `messages.bySession`. This is narrower than the
- * render-hidden set because `task_started` and `task_updated` feed the
- * SessionInfoPanel background-task metadata even though transcript rendering
- * still hides them.
- */
+/** Render-hidden rows excluded before applying transcript pagination limits. */
 const EXCLUDED_FROM_PAGINATION_SQL_LIST = toSqlStringList([
-  ...[...HIDDEN_SYSTEM_SUBTYPES].filter(
-    (subtype) => !BACKGROUND_TASK_METADATA_SUBTYPES.has(subtype)
-  ),
+  ...HIDDEN_SYSTEM_SUBTYPES,
   'thinking_tokens',
 ]);
+
+/** Background task metadata is fetched outside the transcript pagination budget. */
+const BACKGROUND_TASK_METADATA_SQL_LIST = toSqlStringList(BACKGROUND_TASK_METADATA_SUBTYPES);
 
 const MESSAGES_BY_SESSION_SQL = `
 WITH top_level AS (
@@ -2279,6 +2278,20 @@ WITH top_level AS (
   ORDER BY timestamp DESC, id DESC
   LIMIT ?2
 ),
+background_task_metadata AS (
+  SELECT
+    id,
+    sdk_message,
+    timestamp,
+    send_status,
+    origin
+  FROM sdk_messages
+  WHERE session_id = ?1
+    AND parent_tool_use_id IS NULL
+    AND COALESCE(message_subtype, '') IN (${BACKGROUND_TASK_METADATA_SQL_LIST})
+  ORDER BY timestamp DESC, id DESC
+  LIMIT ${BACKGROUND_TASK_METADATA_BATCH_SIZE}
+),
 tool_use_ids AS (
   SELECT DISTINCT json_extract(je.value, '$.id') AS id
   FROM top_level,
@@ -2315,6 +2328,14 @@ SELECT
   send_status                                                       AS sendStatus,
   origin                                                            AS origin
 FROM top_level
+UNION ALL
+SELECT
+  id,
+  sdk_message                                                       AS content,
+  CAST((julianday(timestamp) - 2440587.5) * 86400000 AS INTEGER)    AS timestamp,
+  send_status                                                       AS sendStatus,
+  origin                                                            AS origin
+FROM background_task_metadata
 UNION ALL
 SELECT
   id,
