@@ -2228,18 +2228,64 @@ function toSqlStringList(subtypes: Iterable<string>): string {
 const BACKGROUND_TASK_METADATA_SQL_LIST = toSqlStringList(BACKGROUND_TASK_METADATA_SUBTYPES);
 
 const BACKGROUND_TASK_METADATA_SQL = `
+WITH recent_metadata AS (
+  SELECT
+    id,
+    sdk_message,
+    timestamp,
+    send_status,
+    origin,
+    rowid,
+    COALESCE(
+      task_id,
+      CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.task_id') END
+    ) AS task_id
+  FROM sdk_messages
+  WHERE session_id = ?
+    AND parent_tool_use_id IS NULL
+    AND COALESCE(message_subtype, '') IN (${BACKGROUND_TASK_METADATA_SQL_LIST})
+  ORDER BY timestamp DESC, rowid DESC
+  LIMIT ${BACKGROUND_TASK_METADATA_BATCH_SIZE}
+),
+recent_task_ids AS (
+  SELECT DISTINCT task_id
+  FROM recent_metadata
+  WHERE task_id IS NOT NULL AND task_id != ''
+),
+task_starts AS (
+  SELECT
+    id,
+    sdk_message,
+    timestamp,
+    send_status,
+    origin,
+    rowid,
+    COALESCE(
+      task_id,
+      CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.task_id') END
+    ) AS task_id
+  FROM sdk_messages
+  WHERE session_id = ?
+    AND parent_tool_use_id IS NULL
+    AND COALESCE(message_subtype, '') = 'task_started'
+    AND COALESCE(
+      task_id,
+      CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.task_id') END
+    ) IN (SELECT task_id FROM recent_task_ids)
+    AND id NOT IN (SELECT id FROM recent_metadata)
+)
 SELECT
   id,
   sdk_message                                                     AS content,
   CAST((julianday(timestamp) - 2440587.5) * 86400000 AS INTEGER)  AS timestamp,
   send_status                                                     AS sendStatus,
   origin                                                          AS origin
-FROM sdk_messages
-WHERE session_id = ?
-  AND parent_tool_use_id IS NULL
-  AND COALESCE(message_subtype, '') IN (${BACKGROUND_TASK_METADATA_SQL_LIST})
-ORDER BY timestamp DESC, id DESC
-LIMIT ${BACKGROUND_TASK_METADATA_BATCH_SIZE}
+FROM (
+  SELECT * FROM recent_metadata
+  UNION ALL
+  SELECT * FROM task_starts
+)
+ORDER BY timestamp DESC, rowid DESC
 `.trim();
 
 /** Render-hidden rows excluded before applying transcript pagination limits. */
@@ -2791,7 +2837,10 @@ export function setupLiveQueryHandlers(
     mapResult: (_rawRows, params) => {
       const sessionId = params[0];
       if (typeof sessionId !== 'string' || sessionId.length === 0) return undefined;
-      const rows = stmtBackgroundTaskMetadata.all(sessionId) as Record<string, unknown>[];
+      const rows = stmtBackgroundTaskMetadata.all(sessionId, sessionId) as Record<
+        string,
+        unknown
+      >[];
       return {
         backgroundTaskMessages: rows.map(mapMessageRow).reverse(),
       };

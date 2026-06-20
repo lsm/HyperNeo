@@ -362,6 +362,63 @@ describe('SDKMessageRepository', () => {
       expect(hasMore).toBe(true);
     });
 
+    it('should retain task start rows when background task metadata is capped', () => {
+      repository.saveSDKMessage('session-1', {
+        type: 'system',
+        subtype: 'task_started',
+        uuid: 'metadata-task-started',
+        session_id: 'session-1',
+        task_id: 'task-1',
+        description: 'Long task',
+      } as unknown as SDKMessage);
+
+      for (let i = 0; i < 301; i++) {
+        repository.saveSDKMessage('session-1', {
+          type: 'system',
+          subtype: 'task_updated',
+          uuid: `metadata-task-updated-${i}`,
+          session_id: 'session-1',
+          task_id: 'task-1',
+          patch: { is_backgrounded: true, status: 'running' },
+        } as unknown as SDKMessage);
+      }
+
+      const metadataMessages = repository.getBackgroundTaskMessages('session-1');
+
+      expect(
+        metadataMessages.some(
+          (message) => (message as { subtype?: string }).subtype === 'task_started'
+        )
+      ).toBe(true);
+      expect(metadataMessages.at(-1)).toMatchObject({ subtype: 'task_updated' });
+    });
+
+    it('should preserve background task metadata order on timestamp ties', () => {
+      repository.saveSDKMessage('session-1', {
+        type: 'system',
+        subtype: 'task_started',
+        uuid: 'metadata-task-started',
+        session_id: 'session-1',
+        task_id: 'task-1',
+      } as unknown as SDKMessage);
+      repository.saveSDKMessage('session-1', {
+        type: 'system',
+        subtype: 'task_updated',
+        uuid: 'metadata-task-updated',
+        session_id: 'session-1',
+        task_id: 'task-1',
+        patch: { is_backgrounded: true, status: 'running' },
+      } as unknown as SDKMessage);
+      db.prepare(`UPDATE sdk_messages SET timestamp = '2024-01-01T00:00:00.000Z'`).run();
+
+      const metadataMessages = repository.getBackgroundTaskMessages('session-1');
+
+      expect(metadataMessages.map((message) => (message as { subtype?: string }).subtype)).toEqual([
+        'task_started',
+        'task_updated',
+      ]);
+    });
+
     it('should tolerate malformed background task metadata rows', () => {
       repository.saveSDKMessage('session-1', createUserMessage('Visible'));
       repository.saveSDKMessage('session-1', {

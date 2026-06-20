@@ -536,6 +536,88 @@ describe('messages.bySession — SQL behavior', () => {
     );
   });
 
+  test('includes task start rows when LiveQuery background task metadata is capped', () => {
+    insertSdkMessage(db, {
+      id: 'task-started',
+      sessionId: 's1',
+      messageType: 'system',
+      messageSubtype: 'task_started',
+      sdkMessage: {
+        type: 'system',
+        subtype: 'task_started',
+        uuid: 'task-started-uuid',
+        session_id: 's1',
+        task_id: 'task-1',
+      },
+      timestamp: '2024-01-01 00:00:01',
+    });
+    for (let i = 0; i < 301; i++) {
+      insertSdkMessage(db, {
+        id: `task-updated-${i}`,
+        sessionId: 's1',
+        messageType: 'system',
+        messageSubtype: 'task_updated',
+        sdkMessage: {
+          type: 'system',
+          subtype: 'task_updated',
+          uuid: `task-updated-${i}-uuid`,
+          session_id: 's1',
+          task_id: 'task-1',
+          patch: { is_backgrounded: true, status: 'running' },
+        },
+        timestamp: new Date(Date.UTC(2024, 0, 1, 0, 0, i + 1)).toISOString(),
+      });
+    }
+
+    const snapshot = subscribeMessagesBySession(db, 's1', 1);
+    const metadata = snapshot?.metadata as { backgroundTaskMessages: Array<{ id: string }> };
+
+    expect(metadata.backgroundTaskMessages.some((message) => message.id === 'task-started')).toBe(
+      true
+    );
+    expect(metadata.backgroundTaskMessages.at(-1)?.id).toBe('task-updated-300');
+  });
+
+  test('preserves LiveQuery background task metadata order on timestamp ties', () => {
+    insertSdkMessage(db, {
+      id: 'b-started',
+      sessionId: 's1',
+      messageType: 'system',
+      messageSubtype: 'task_started',
+      sdkMessage: {
+        type: 'system',
+        subtype: 'task_started',
+        uuid: 'b-started-uuid',
+        session_id: 's1',
+        task_id: 'task-1',
+      },
+      timestamp: '2024-01-01 00:00:00',
+    });
+    insertSdkMessage(db, {
+      id: 'a-updated',
+      sessionId: 's1',
+      messageType: 'system',
+      messageSubtype: 'task_updated',
+      sdkMessage: {
+        type: 'system',
+        subtype: 'task_updated',
+        uuid: 'a-updated-uuid',
+        session_id: 's1',
+        task_id: 'task-1',
+        patch: { is_backgrounded: true, status: 'running' },
+      },
+      timestamp: '2024-01-01 00:00:00',
+    });
+
+    const snapshot = subscribeMessagesBySession(db, 's1', 1);
+    const metadata = snapshot?.metadata as { backgroundTaskMessages: Array<{ id: string }> };
+
+    expect(metadata.backgroundTaskMessages.map((message) => message.id)).toEqual([
+      'b-started',
+      'a-updated',
+    ]);
+  });
+
   test('does not let background task metadata rows displace visible rows', () => {
     insertSdkMessage(db, {
       id: 'older-visible',

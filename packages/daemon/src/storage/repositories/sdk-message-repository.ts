@@ -758,14 +758,59 @@ export class SDKMessageRepository {
   getBackgroundTaskMessages(sessionId: string): Array<ChatMessage & { timestamp: number }> {
     const rows = this.db
       .prepare(
-        `SELECT id, sdk_message, timestamp, origin FROM sdk_messages
-         WHERE session_id = ?
-           AND parent_tool_use_id IS NULL
-           AND COALESCE(message_subtype, '') IN (${BACKGROUND_TASK_METADATA_SQL_LIST})
-         ORDER BY timestamp DESC, rowid DESC
-         LIMIT ?`
+        `WITH recent_metadata AS (
+           SELECT
+             id,
+             sdk_message,
+             timestamp,
+             origin,
+             rowid,
+             COALESCE(
+               task_id,
+               CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.task_id') END
+             ) AS task_id
+           FROM sdk_messages
+           WHERE session_id = ?
+             AND parent_tool_use_id IS NULL
+             AND COALESCE(message_subtype, '') IN (${BACKGROUND_TASK_METADATA_SQL_LIST})
+           ORDER BY timestamp DESC, rowid DESC
+           LIMIT ?
+         ),
+         recent_task_ids AS (
+           SELECT DISTINCT task_id
+           FROM recent_metadata
+           WHERE task_id IS NOT NULL AND task_id != ''
+         ),
+         task_starts AS (
+           SELECT
+             id,
+             sdk_message,
+             timestamp,
+             origin,
+             rowid,
+             COALESCE(
+               task_id,
+               CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.task_id') END
+             ) AS task_id
+           FROM sdk_messages
+           WHERE session_id = ?
+             AND parent_tool_use_id IS NULL
+             AND COALESCE(message_subtype, '') = 'task_started'
+             AND COALESCE(
+               task_id,
+               CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.task_id') END
+             ) IN (SELECT task_id FROM recent_task_ids)
+             AND id NOT IN (SELECT id FROM recent_metadata)
+         )
+         SELECT id, sdk_message, timestamp, origin
+         FROM (
+           SELECT * FROM recent_metadata
+           UNION ALL
+           SELECT * FROM task_starts
+         )
+         ORDER BY timestamp DESC, rowid DESC`
       )
-      .all(sessionId, BACKGROUND_TASK_METADATA_BATCH_SIZE) as Array<{
+      .all(sessionId, BACKGROUND_TASK_METADATA_BATCH_SIZE, sessionId) as Array<{
       id: string;
       sdk_message: string;
       timestamp: string;
