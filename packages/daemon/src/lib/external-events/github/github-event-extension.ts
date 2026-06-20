@@ -11,6 +11,7 @@ import type {
 } from '../types';
 import {
   normalizeGitHubPollingRow,
+  normalizeGitHubReaction,
   normalizeGitHubWebhook,
   toExternalEvent,
 } from './github-normalizer';
@@ -23,6 +24,8 @@ import {
 const log = new Logger('github-event-extension');
 const DEFAULT_POLL_INTERVAL_MS = 60_000;
 const GITHUB_API_BASE = 'https://api.github.com';
+const REACTION_POLL_PR_LIMIT = 10;
+const REACTION_POLL_RATE_LIMIT_FLOOR = 100;
 /**
  * When the rate-limit `remaining` counter drops to or below this threshold,
  * polling is deferred until the reset epoch. Keeps a safety margin so the
@@ -114,6 +117,8 @@ const WEBHOOK_EVENTS = [
   'pull_request_review',
   'pull_request_review_comment',
 ];
+// GitHub does not send issue/PR webhooks for reactions on the PR itself.
+// Codex approval reactions are therefore polling-only via /issues/{number}/reactions.
 const REQUIRED_WEBHOOK_EVENTS = WEBHOOK_EVENTS.filter((event) => event !== 'push');
 const WEBHOOK_PATH = '/webhook/github/space';
 
@@ -1148,6 +1153,9 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     const cursor = watched.pollCursor ?? {};
     const etags = cursor.etags ?? {};
     const processedPages = cursor.processedPages ?? {};
+    const recentPullRequestNumbers = cursor.recentPullRequestNumbers ?? [];
+    const seenReactionIds = cursor.seenReactionIds ?? {};
+    const reactionEtags = cursor.reactionEtags ?? {};
     const endpointLastSeenAt = cursor.endpointLastSeenAt ?? {};
     const endpointPendingLastSeenAt = cursor.endpointPendingLastSeenAt ?? {};
     const watermarks = {
@@ -1160,8 +1168,8 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       { key: 'review_comments', path: '/pulls/comments' },
       { key: 'pulls', path: '/pulls', extra: 'state=all&sort=updated&direction=desc' },
     ];
-
     let partialScan = false;
+    let latestRateLimit: GitHubRateLimitInfo | undefined;
 
     const token = await this.resolveToken();
     for (const endpoint of endpoints) {
@@ -1182,17 +1190,21 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       const endpointWatermark =
         savedEndpointWatermark > 0 ? savedEndpointWatermark : watermarks.committed;
       const since = endpointWatermark ? new Date(endpointWatermark).toISOString() : undefined;
-      if (since) query.set('since', since);
+      // Seed reaction-poll targets on upgrade: a cursor from before reaction
+      // polling shipped may have an `etags.pulls` entry but no
+      // `recentPullRequestNumbers`. Suppress both `If-None-Match` and `since`
+      // for that one pulls fetch so GitHub returns the full newest list (an
+      // empty delta under `since` would leave reaction targets unseeded until
+      // unrelated PR metadata changes).
+      const pullsNeedsSeed = endpoint.key === 'pulls' && recentPullRequestNumbers.length === 0;
+      if (since && !pullsNeedsSeed) query.set('since', since);
       query.set('per_page', '100');
       query.set('page', String(page));
       const url = `${base}${endpoint.path}?${query.toString()}`;
-      const headers: Record<string, string> = {
-        Accept: 'application/vnd.github+json',
-        'User-Agent': 'NeoKai-Space-GitHub/1.0',
-        'X-GitHub-Api-Version': '2022-11-28',
-      };
-      if (token) headers.Authorization = `Bearer ${token}`;
-      if (page === 1 && etags[endpoint.key]) headers['If-None-Match'] = etags[endpoint.key];
+      const headers = gitHubPollingHeaders(token);
+      if (page === 1 && etags[endpoint.key] && !pullsNeedsSeed) {
+        headers['If-None-Match'] = etags[endpoint.key];
+      }
       const response = await fetchImpl(url, { headers });
       // Rate-limit check: a 403/429 response with rate-limit evidence OR a low
       // `remaining` counter defers this cycle and reschedules the next poll past
@@ -1200,6 +1212,11 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       // successful response so already-fetched events are published and cursors
       // are saved; only the remaining endpoints in this cycle are skipped.
       const rateLimit = parseRateLimitHeaders(response);
+      // Preserve a finite remaining budget across 304s: cached responses lack
+      // rate-limit headers and parse as `remaining: Infinity`. Overwriting a
+      // real low budget with Infinity would let the reaction loop bypass its
+      // `< 100` guard and overspend the quota.
+      latestRateLimit = mergeRateLimitInfo(latestRateLimit, rateLimit);
       if (rateLimit.limited) {
         // A 429 that does not exhaust the primary bucket (remaining > 0 and no
         // Retry-After) is a secondary/abuse limit. Do not use the unrelated
@@ -1243,6 +1260,39 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       const etag = response.headers.get('ETag');
       if (etag && page === 1) etags[endpoint.key] = etag;
       const rows = (await response.json()) as unknown[];
+      if (endpoint.key === 'pulls' && page === 1) {
+        // `/pulls?sort=updated&direction=desc` returns PRs newest-first. The
+        // `since` watermark turns ordinary polls into deltas (only PRs updated
+        // since the last poll arrive), so the response is not a full newest
+        // list — replacing the saved targets would drop active PRs that did
+        // not change this cycle. Merge instead: PRs observed this cycle
+        // (newest-first) move to the front, previously tracked PRs that were
+        // absent from the delta stay after them, and the list is capped to
+        // LIMIT. Only page 1 is merged; page 2+ during backlog catch-up
+        // contains older PRs and must not displace the newest ones.
+        const freshNumbers: number[] = [];
+        const closedNumbers = new Set<number>();
+        for (const row of rows) {
+          const prNumber = pullRequestNumberFrom(row);
+          if (!prNumber) continue;
+          // Reaction approvals are only meaningful on open PRs under review.
+          // A previously-tracked PR that the delta now reports as closed/
+          // merged must be dropped so it stops occupying a reaction slot.
+          if (isPullRequestOpen(row)) {
+            if (!freshNumbers.includes(prNumber)) freshNumbers.push(prNumber);
+          } else {
+            closedNumbers.add(prNumber);
+          }
+        }
+        const next = [
+          ...freshNumbers,
+          ...recentPullRequestNumbers.filter(
+            (n) => !freshNumbers.includes(n) && !closedNumbers.has(n)
+          ),
+        ];
+        recentPullRequestNumbers.length = 0;
+        recentPullRequestNumbers.push(...next.slice(0, REACTION_POLL_PR_LIMIT));
+      }
       let endpointPending = Math.max(
         endpointWatermark,
         endpointPendingLastSeenAt[endpoint.key] ?? 0
@@ -1276,7 +1326,126 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         break;
       }
     }
+
+    // Reaction polling: skip entirely if the primary scan was rate-limited,
+    // and stop as soon as the remaining budget drops near the floor. Reactions
+    // are review-approval signals, not primary content — defer them when the
+    // rate-limit budget is tight so comments/reviews/PR metadata keep flowing.
+    for (const prNumber of recentPullRequestNumbers.slice(0, REACTION_POLL_PR_LIMIT)) {
+      if (partialScan) break;
+      if (!canPollReactions(latestRateLimit?.remaining)) {
+        // Budget too low to poll the remaining PRs: do NOT advance the shared
+        // watermark this cycle. Otherwise the stale-reaction guard would mark
+        // skipped +1s as seen next cycle and never publish them. ETags make the
+        // next cycle's primary-endpoint re-poll cheap (304s are free).
+        partialScan = true;
+        break;
+      }
+      const query = new URLSearchParams({ per_page: '100' });
+      const reactionHeaders = gitHubPollingHeaders(token);
+      if (reactionEtags[prNumber]) reactionHeaders['If-None-Match'] = reactionEtags[prNumber];
+      const response = await fetchImpl(`${base}/issues/${prNumber}/reactions?${query.toString()}`, {
+        headers: reactionHeaders,
+      });
+      const reactionRateLimit = parseRateLimitHeaders(response);
+      latestRateLimit = mergeRateLimitInfo(latestRateLimit, reactionRateLimit);
+      if (response.status === 304) {
+        // Reaction list unchanged since the last poll — keep the ETag and
+        // skip the PR. 304s do not count against the rate-limit budget.
+        continue;
+      }
+      if (reactionRateLimit.limited) {
+        // Mirror the primary-endpoint branch: a 429 that does not exhaust the
+        // primary bucket (remaining > 0 and no Retry-After) is a secondary /
+        // abuse limit. Applying the primary reset window here would stall all
+        // polling for up to an hour; use the minimum secondary backoff instead.
+        if (
+          response.status === 429 &&
+          reactionRateLimit.remaining > 0 &&
+          !reactionRateLimit.retryAfter
+        ) {
+          this.applyRateLimit({
+            remaining: reactionRateLimit.remaining,
+            resetAt: Date.now() + RATE_LIMIT_MIN_BACKOFF_MS,
+            limited: true,
+            retryAfter: true,
+          });
+        } else {
+          this.applyRateLimit(reactionRateLimit);
+        }
+        partialScan = true;
+        break;
+      }
+      if (!response.ok) {
+        // Mirror the primary-endpoint secondary-limit handling: a 403/429
+        // without rate-limit headers can still be a secondary limit when the
+        // body says so. Apply the short secondary backoff instead of burning
+        // requests on the remaining PRs.
+        const errorText = await response.text();
+        if ((response.status === 403 || response.status === 429) && isRateLimitError(errorText)) {
+          const secondaryDelayMs = reactionRateLimit.retryAfter
+            ? reactionRateLimit.resetAt - Date.now()
+            : RATE_LIMIT_MIN_BACKOFF_MS;
+          this.applyRateLimit({
+            remaining: reactionRateLimit.remaining,
+            resetAt: Date.now() + secondaryDelayMs,
+            limited: true,
+            retryAfter: true,
+          });
+          partialScan = true;
+          break;
+        }
+        // Transient non-rate-limit failure (500/502/503/404/etc.). Mark a
+        // partial scan so the shared watermark does not advance past this PR's
+        // un-observed +1; otherwise the stale-reaction guard would mark it
+        // seen next cycle and never publish the approval. Try the next PR.
+        partialScan = true;
+        continue;
+      }
+      const reactions = (await response.json()) as unknown[];
+      const reactionEtag = response.headers.get('ETag');
+      if (reactionEtag) reactionEtags[prNumber] = reactionEtag;
+      for (const reaction of reactions) {
+        if (!isPositiveReaction(reaction)) continue;
+        const reactionId = reactionIdFrom(reaction);
+        if (seenReactionIds[reactionId]) continue;
+        const event = normalizeGitHubReaction(watched, prNumber, reaction);
+        if (!event) continue;
+        // Suppress historical backfill: on an upgraded repo the first reaction
+        // sync would otherwise publish every prior +1 as a fresh
+        // `reaction_added`. Only publish reactions at least as new as the
+        // committed poll watermark; older ones are marked seen so they never
+        // fire on a later cycle either. A brand-new repo (committed == 0) still
+        // backfills its first observation, which is the intended bootstrap.
+        if (watermarks.committed > 0 && event.occurredAt < watermarks.committed) {
+          seenReactionIds[reactionId] = true;
+          continue;
+        }
+        await this.publishEvent(watched.spaceId, event, this.context);
+        seenReactionIds[reactionId] = true;
+        count++;
+      }
+      // Mirror the primary-endpoint low-budget guard: a successful reaction
+      // response with `remaining` below the safety threshold must apply the
+      // shared deferral so `pollEnabledSpaces()` stops hitting the next repo
+      // and the next cycle is rescheduled past the reset window.
+      if (
+        Number.isFinite(reactionRateLimit.remaining) &&
+        reactionRateLimit.remaining < RATE_LIMIT_LOW_REMAINING_THRESHOLD
+      ) {
+        this.applyRateLimit(reactionRateLimit);
+        partialScan = true;
+        break;
+      }
+    }
+
     const hasBacklog = Object.values(processedPages).some((page) => page > 1);
+    // Prune reaction ETags for PRs that are no longer reaction-poll targets
+    // so the cursor does not grow unbounded across a repo's lifetime.
+    const trackedPrSet = new Set(recentPullRequestNumbers);
+    for (const key of Object.keys(reactionEtags)) {
+      if (!trackedPrSet.has(Number(key))) delete reactionEtags[Number(key)];
+    }
     // After a partial scan, do not advance the shared watermark; skipped
     // endpoints would miss events between the old watermark and the new one.
     // The processed endpoint's own watermark is recorded separately.
@@ -1285,6 +1454,9 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       pendingLastSeenAt: partialScan || hasBacklog ? watermarks.pending : undefined,
       etags,
       processedPages,
+      recentPullRequestNumbers,
+      seenReactionIds,
+      reactionEtags,
       endpointLastSeenAt,
       endpointPendingLastSeenAt,
     };
@@ -1374,6 +1546,64 @@ function validateGitHubTokenFormat(token: string): void {
 
 function gitHubRepoPath(owner: string, repo: string): string {
   return `${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+}
+
+function gitHubPollingHeaders(token: string | undefined): Record<string, string> {
+  const headers: Record<string, string> = {
+    Accept: 'application/vnd.github+json',
+    'User-Agent': 'NeoKai-Space-GitHub/1.0',
+    'X-GitHub-Api-Version': '2022-11-28',
+  };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  return headers;
+}
+
+function canPollReactions(rateLimitRemaining: number | undefined): boolean {
+  return rateLimitRemaining === undefined || rateLimitRemaining >= REACTION_POLL_RATE_LIMIT_FLOOR;
+}
+
+/**
+ * Merge two rate-limit snapshots, preferring a finite remaining budget.
+ *
+ * GitHub 304 (ETag hit) responses do not carry rate-limit headers, so
+ * `parseRateLimitHeaders` reports `remaining: Infinity`. Naively overwriting
+ * a real low budget with such a snapshot would let downstream gates (e.g. the
+ * reaction-poll `< 100` guard) treat a cached 304 as "unlimited" and
+ * overspend. When the next snapshot is non-finite, keep the previous finite
+ * value; otherwise take the new value.
+ */
+function mergeRateLimitInfo(
+  prev: GitHubRateLimitInfo | undefined,
+  next: GitHubRateLimitInfo
+): GitHubRateLimitInfo {
+  if (prev && Number.isFinite(prev.remaining) && !Number.isFinite(next.remaining)) {
+    return prev;
+  }
+  return next;
+}
+
+function pullRequestNumberFrom(row: unknown): number {
+  if (!row || typeof row !== 'object') return 0;
+  const number = (row as { number?: unknown }).number;
+  return typeof number === 'number' ? number : 0;
+}
+
+function isPullRequestOpen(row: unknown): boolean {
+  if (!row || typeof row !== 'object') return false;
+  const state = (row as { state?: unknown }).state;
+  return state === 'open';
+}
+
+function isPositiveReaction(row: unknown): boolean {
+  if (!row || typeof row !== 'object') return false;
+  const content = (row as { content?: unknown }).content;
+  return content === '+1' || content === 'thumbs_up';
+}
+
+function reactionIdFrom(row: unknown): string {
+  if (!row || typeof row !== 'object') return '';
+  const id = (row as { id?: unknown }).id;
+  return typeof id === 'number' ? String(id) : '';
 }
 
 function getConfiguredWebhookUrl(): string {
