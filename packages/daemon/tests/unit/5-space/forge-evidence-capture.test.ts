@@ -247,6 +247,9 @@ describe('Forge evidence capture on task completion', () => {
     expect(slowFailureEvidence.some((item) => item.kind === 'task_result')).toBe(true);
     expect(slowFailureEvidence.some((item) => item.kind === 'slow_tool_call')).toBe(true);
     expect(slowFailureEvidence.some((item) => item.kind === 'tool_failure')).toBe(true);
+    expect(slowFailureEvidence.some((item) => item.kind === 'friction_digest')).toBe(true);
+    const slowDigest = slowFailureEvidence.find((item) => item.kind === 'friction_digest');
+    expect(slowDigest?.metadata.counts).toMatchObject({ slowToolCall: 1, toolFailure: 1 });
     expect(
       slowFailureEvidence.some(
         (item) => item.kind === 'session' && item.metadata.traceDiagnostic === true
@@ -311,6 +314,7 @@ describe('Forge evidence capture on task completion', () => {
 
     const retryLoopEvidence = evolutionRepo.listEvidence(retryLoopScope.id);
     expect(retryLoopEvidence.some((item) => item.kind === 'task_result')).toBe(true);
+    expect(retryLoopEvidence.some((item) => item.kind === 'friction_digest')).toBe(true);
     const retryLoop = retryLoopEvidence.find((item) => item.kind === 'retry_loop');
     expect(retryLoop?.metadata.retriesBeforeSuccess).toBe(2);
     expect(
