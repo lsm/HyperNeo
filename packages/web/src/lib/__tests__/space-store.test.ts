@@ -752,6 +752,48 @@ describe('SpaceStore — ensureWorkflowDetails', () => {
     }
   });
 
+  it('does not mark workflow details loaded when workflow summary fetch failed', async () => {
+    mockWorkflowSummaries(['wf1']);
+    await spaceStore.selectSpace('space-1');
+    mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+      if (method === 'spaceWorkflow.list') throw new Error('summary fetch failed');
+      if (method === 'space.overview') {
+        return { space: makeSpace('space-1'), tasks: [], workflowRuns: [], sessions: [] };
+      }
+      if (method === 'spaceAgent.list') return { agents: [] };
+      if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [] };
+      if (method === 'spaceWorkflow.listBuiltInTemplates') return { workflows: [] };
+      if (method === 'spaceLongHorizonAgent.list') return { agents: [] };
+      if (method === 'spaceLongHorizonAgent.listBuiltInTemplates') return { templates: [] };
+      return {};
+    });
+
+    await spaceStore.ensureConfigData();
+    await spaceStore.ensureWorkflowDetails();
+
+    expect(spaceStore.workflowDetailsLoaded.value).toBe(false);
+    expect(spaceStore.workflowDetails.value).toEqual([]);
+  });
+
+  it('restarts pending workflow-detail retry on reconnect', async () => {
+    mockWorkflowSummaries(['wf1']);
+    await spaceStore.selectSpace('space-1');
+    await spaceStore.ensureConfigData();
+    mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+      if (method === 'spaceWorkflow.get') return null;
+      return {};
+    });
+    await spaceStore.ensureWorkflowDetails();
+    expect(spaceStore.workflowDetailsLoaded.value).toBe(false);
+
+    mockWorkflowSummaries(['wf1']);
+    await spaceStore.refresh();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(spaceStore.workflowDetailsLoaded.value).toBe(true);
+    expect(spaceStore.workflowDetails.value.map((w) => w.id)).toEqual(['wf1']);
+  });
+
   it('preserves workflows created concurrently during fan-out', async () => {
     mockWorkflowSummaries(['wf1']);
     await spaceStore.selectSpace('space-1');

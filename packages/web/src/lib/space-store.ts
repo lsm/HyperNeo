@@ -355,9 +355,15 @@ class SpaceStore {
    *  against the current one and skip caching when they no longer match. */
   private workflowDetailFetchGens = new Map<string, number>();
 
+  /** Whether workflow summaries loaded successfully for the current space. */
+  private workflowSummariesLoaded = false;
+
   /** Retry counter for partial workflow-detail fan-out failures. Reset when
    *  details load successfully or the space changes. */
   private workflowDetailsRetryCount = 0;
+
+  /** Whether a workflow-detail retry timeout is queued. */
+  private workflowDetailsRetryPending = false;
 
   /** Generation for the bulk workflow-detail load. Incremented when reconnect
    *  invalidates an in-flight fan-out so old promise cleanup cannot clobber the
@@ -626,6 +632,7 @@ class SpaceStore {
     this.longHorizonAgents.value = [];
     this.longHorizonAgentTemplates.value = [];
     this.workflows.value = [];
+    this.workflowSummariesLoaded = false;
     this.workflowDetails.value = [];
     this.workflowDetailsLoaded.value = false;
     this.workflowDetailsPromise = null;
@@ -1128,8 +1135,10 @@ class SpaceStore {
         }
       );
       this.workflows.value = result?.workflows ?? [];
+      this.workflowSummariesLoaded = true;
     } catch (err) {
       logger.error('Failed to fetch workflows:', err);
+      this.workflowSummariesLoaded = false;
     }
   }
 
@@ -1156,7 +1165,7 @@ class SpaceStore {
     if (this.workflowDetailsPromise) return this.workflowDetailsPromise;
 
     const spaceId = this.spaceId.value;
-    if (!spaceId) return;
+    if (!spaceId || !this.workflowSummariesLoaded) return;
 
     // Snapshot the workflow ids at request time so concurrent updates/deletes
     // can be detected before assignment. Also snapshot current detail objects by
@@ -1248,6 +1257,7 @@ class SpaceStore {
         if (missing === 0) {
           this.workflowDetailsLoaded.value = true;
           this.workflowDetailsRetryCount = 0;
+          this.workflowDetailsRetryPending = false;
         } else {
           logger.error(`ensureWorkflowDetails: ${missing} workflow detail(s) failed to load`);
           // Schedule a retry so transient RPC errors don't leave the Configure
@@ -1257,7 +1267,9 @@ class SpaceStore {
           if (this.workflowDetailsRetryCount < MAX_RETRIES) {
             const delay = 2 ** this.workflowDetailsRetryCount * 3000;
             this.workflowDetailsRetryCount += 1;
+            this.workflowDetailsRetryPending = true;
             setTimeout(() => {
+              this.workflowDetailsRetryPending = false;
               if (
                 this.spaceId.value === spaceId &&
                 this.workflowDetailsLoadGeneration === loadGeneration &&
@@ -1271,6 +1283,7 @@ class SpaceStore {
             // rather than spinning indefinitely.
             this.workflowDetailsLoaded.value = true;
             this.workflowDetailsRetryCount = 0;
+            this.workflowDetailsRetryPending = false;
           }
         }
       } catch (err) {
@@ -1370,6 +1383,7 @@ class SpaceStore {
     this.workflowDetailPromises.clear();
     this.workflowDetailFetchGens.clear();
     this.workflowDetailsRetryCount = 0;
+    this.workflowDetailsRetryPending = false;
     this.workflowDetailsLoadGeneration += 1;
   }
 
@@ -1853,7 +1867,8 @@ class SpaceStore {
     const hadConfigData = this.configDataLoaded.value;
     const hadNodeExec = this.nodeExecLoaded.value;
     const hadWorkflowDetails = this.workflowDetailsLoaded.value;
-    const hadWorkflowDetailsPending = this.workflowDetailsPromise !== null;
+    const hadWorkflowDetailsPending =
+      this.workflowDetailsPromise !== null || this.workflowDetailsRetryPending;
 
     // Reset lazy-load flags so ensureX methods will re-fetch
     this.configDataLoaded.value = false;
@@ -1865,6 +1880,7 @@ class SpaceStore {
     // re-fetches on next mount.
     this.workflowDetailsLoaded.value = false;
     this.workflowDetailsPromise = null;
+    this.workflowDetailsRetryPending = false;
     this.workflowDetailsLoadGeneration += 1;
     this.sessions.value = [];
     this.disposeSpaceSessionsSubscription();
@@ -1883,7 +1899,9 @@ class SpaceStore {
       }
       if (hadWorkflowDetails || hadWorkflowDetailsPending) {
         this.ensureConfigData()
-          .then(() => this.ensureWorkflowDetails())
+          .then(() => {
+            if (this.configDataLoaded.value) return this.ensureWorkflowDetails();
+          })
           .catch((err) => {
             logger.error('Failed to refresh workflow details:', err);
           });
