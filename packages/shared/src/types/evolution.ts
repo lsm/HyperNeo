@@ -21,7 +21,8 @@ export type EvidenceKind =
   | 'permission_block'
   | 'slow_tool_call'
   | 'conversation_friction'
-  | 'friction_digest';
+  | 'friction_digest'
+  | 'verification_triage';
 export type EvolutionEpisodeStatus = 'draft' | 'accepted' | 'dismissed';
 export type EvolutionLessonStatus = 'candidate' | 'active' | 'dismissed';
 export type TaskProposalStatus = 'proposed' | 'accepted' | 'dismissed' | 'created';

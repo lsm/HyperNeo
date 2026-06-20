@@ -30,6 +30,7 @@ import {
   isSDKUserMessageReplay,
   isUserVisibleMessage,
   isNeokaiActionMessage,
+  isHiddenSystemSubtype,
 } from '@neokai/shared/sdk/type-guards';
 
 // Component imports
@@ -117,27 +118,28 @@ function ReplacementStatusFrame({
 }
 
 /**
- * Check if message is a sub-agent message (has parent_tool_use_id)
- * Sub-agent messages are shown inside SubagentBlock, not as separate messages
+ * Check if message is a sub-agent message (has parent_tool_use_id) or carries an
+ * agent_id that matches a known Task/Agent tool_use id. Sub-agent messages are
+ * shown inside SubagentBlock, not as separate messages.
  */
-function isSubagentMessage(message: SDKMessage): boolean {
+function isSubagentMessage(
+  message: SDKMessage,
+  subagentMessagesMap?: Map<string, SDKMessage[]>
+): boolean {
   const msgWithParent = message as SDKMessage & {
     parent_tool_use_id?: string | null;
   };
-  return !!msgWithParent.parent_tool_use_id;
+  if (msgWithParent.parent_tool_use_id) return true;
+  const agentId = (message as { agent_id?: string | null }).agent_id;
+  if (agentId && subagentMessagesMap?.has(agentId)) return true;
+  return false;
 }
 
 function isRenderableSystemMessage(message: SDKMessage): boolean {
   if (!isSDKSystemMessage(message)) return false;
-  const subtype = (message as { subtype?: unknown }).subtype;
-  return (
-    subtype === 'session_state_changed' ||
-    subtype === 'commands_changed' ||
-    subtype === 'api_retry' ||
-    subtype === 'informational' ||
-    subtype === 'worker_shutting_down' ||
-    subtype === 'model_refusal_fallback'
-  );
+  const subtype = (message as { subtype?: unknown }).subtype as string;
+  // Render system messages unless they're in the explicit hidden set
+  return !isHiddenSystemSubtype(subtype);
 }
 
 function isToolResultUserMessage(message: SDKMessage): boolean {
@@ -283,7 +285,7 @@ function SDKMessageRendererImpl({
   }
 
   // Skip sub-agent messages - they're now shown inside SubagentBlock
-  if (!showSubagentMessages && isSubagentMessage(sdkMessage)) {
+  if (!showSubagentMessages && isSubagentMessage(sdkMessage, subagentMessagesMap)) {
     return null;
   }
 

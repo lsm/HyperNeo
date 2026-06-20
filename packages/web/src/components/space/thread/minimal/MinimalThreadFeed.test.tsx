@@ -300,19 +300,18 @@ describe('MinimalThreadFeed', () => {
 
     render(<MinimalThreadFeed parsedRows={rows} />);
 
+    // Hidden subtypes (session_state_changed, commands_changed) are suppressed
+    // via isHiddenSystemSubtype; only thinking_tokens, model_fallback, and the
+    // warning notice render.
     const systemRows = screen.getAllByTestId('minimal-thread-system');
-    expect(systemRows).toHaveLength(5);
+    expect(systemRows).toHaveLength(3);
     expect(systemRows[0].textContent).toContain('Thinking tokens');
     expect(systemRows[0].textContent).toContain('1,250 estimated tokens (+25)');
-    expect(systemRows[1].textContent).toContain('Session state');
-    expect(systemRows[1].textContent).toContain('running');
-    expect(systemRows[2].textContent).toContain('Commands changed');
-    expect(systemRows[2].textContent).toContain('2 slash commands available');
-    expect(systemRows[3].textContent).toContain('Model fallback');
-    expect(systemRows[3].textContent).toContain('Retried with fallback model');
-    expect(systemRows[3].textContent).toContain('claude-opus-4-5 -> claude-sonnet-4-5');
-    expect(systemRows[4].textContent).toContain('Warning');
-    expect(systemRows[4].textContent).toContain('Hook warning shown to the user');
+    expect(systemRows[1].textContent).toContain('Model fallback');
+    expect(systemRows[1].textContent).toContain('Retried with fallback model');
+    expect(systemRows[1].textContent).toContain('claude-opus-4-5 -> claude-sonnet-4-5');
+    expect(systemRows[2].textContent).toContain('Warning');
+    expect(systemRows[2].textContent).toContain('Hook warning shown to the user');
   });
 
   it('renders worker shutdown rows only at the session tail', () => {

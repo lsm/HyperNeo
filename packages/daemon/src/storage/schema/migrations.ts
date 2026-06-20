@@ -720,8 +720,7 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
   // Migration 158: Clean stale active runtime rows for terminal Space work.
   run(migrationMarkerKey(158), () => runMigration158(db));
-
-  // Migration 159: Add friction_digest evidence kind.
+  // Migration 159: Add friction_digest and verification_triage evidence kinds.
   run(migrationMarkerKey(159), () => runMigration159(db));
 }
 
@@ -9752,7 +9751,8 @@ function widenEvolutionEvidenceKinds(db: BunDatabase): void {
     sql.includes("'permission_block'") &&
     sql.includes("'slow_tool_call'") &&
     sql.includes("'conversation_friction'") &&
-    sql.includes("'friction_digest'")
+    sql.includes("'friction_digest'") &&
+    sql.includes("'verification_triage'")
   ) {
     return;
   }
@@ -9765,7 +9765,7 @@ function widenEvolutionEvidenceKinds(db: BunDatabase): void {
 				id TEXT PRIMARY KEY,
 				scope_id TEXT NOT NULL,
 				kind TEXT NOT NULL
-					CHECK(kind IN ('task', 'workflow_run', 'session', 'manual_note', 'metric_snapshot', 'task_result', 'artifact', 'error', 'daemon_error', 'runtime_crash', 'runtime_warning', 'uncaught_exception', 'error_cluster', 'retry_loop', 'tool_failure', 'test_failure', 'permission_block', 'slow_tool_call', 'conversation_friction', 'friction_digest')),
+					CHECK(kind IN ('task', 'workflow_run', 'session', 'manual_note', 'metric_snapshot', 'task_result', 'artifact', 'error', 'daemon_error', 'runtime_crash', 'runtime_warning', 'uncaught_exception', 'error_cluster', 'retry_loop', 'tool_failure', 'test_failure', 'permission_block', 'slow_tool_call', 'conversation_friction', 'friction_digest', 'verification_triage')),
 				summary TEXT NOT NULL,
 				source_id TEXT,
 				metadata_json TEXT NOT NULL DEFAULT '{}',
@@ -10863,6 +10863,12 @@ export function runMigration158(db: BunDatabase): void {
   );
 }
 
+/**
+ * Migration 159: Widen evolution_evidence.kind CHECK to include friction_digest and verification_triage.
+ *
+ * Introduced after migration 146 was already shipped; this migration safely
+ * widens the CHECK constraint for existing databases without re-running 146.
+ */
 export function runMigration159(db: BunDatabase): void {
   widenEvolutionEvidenceKinds(db);
 }
