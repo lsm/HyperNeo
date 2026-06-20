@@ -33,7 +33,8 @@ let modulePromise: Promise<TransformersModule> | null = null;
 let fetchConfigured = false;
 let prefetchResult: Promise<InitializedEmbedder | null> | null = null;
 let prefetchAbortController: AbortController | null = null;
-let prefetchAborted = false;
+let prefetchGeneration = 0;
+let abortedPrefetchGenerations = new Set<number>();
 
 export class TransformersAgentMemoryEmbedder implements AgentMemoryEmbedder {
   model = MODEL_ID;
@@ -55,9 +56,10 @@ export class TransformersAgentMemoryEmbedder implements AgentMemoryEmbedder {
   private getInit(): Promise<InitializedEmbedder> {
     if (!this.initPromise) {
       this.initPromise = (async () => {
+        const generation = prefetchGeneration;
         const prefetched = prefetchResult ? await prefetchResult : null;
         if (prefetched) return prefetched;
-        if (prefetchAborted) {
+        if (abortedPrefetchGenerations.has(generation)) {
           throw new Error('Agent memory embedding model load aborted');
         }
 
@@ -95,12 +97,6 @@ export interface PrefetchOptions {
 export async function prefetchAgentMemoryEmbeddingModel(
   options: PrefetchOptions = {}
 ): Promise<InitializedEmbedder | null> {
-  // A previous daemon instance may have aborted its prefetch. Clear that state
-  // so a new daemon start in the same process can attempt a fresh prefetch.
-  if (prefetchAborted) {
-    prefetchAborted = false;
-    prefetchResult = null;
-  }
   if (prefetchResult) return prefetchResult;
 
   const {
@@ -110,8 +106,13 @@ export async function prefetchAgentMemoryEmbeddingModel(
     logError = () => {},
   } = options;
 
+  const generation = prefetchGeneration + 1;
+  prefetchGeneration = generation;
+  abortedPrefetchGenerations.delete(generation);
+  const abortController = new AbortController();
+
+  prefetchAbortController = abortController;
   prefetchResult = (async (): Promise<InitializedEmbedder | null> => {
-    prefetchAbortController = new AbortController();
     try {
       // When a cache directory is supplied (tests), avoid loading the heavy
       // transformers bundle if the model is already cached.
@@ -149,18 +150,25 @@ export async function prefetchAgentMemoryEmbeddingModel(
           logInfo('[AgentMemory] Embedding model prefetch completed (assets cached)');
           return null;
         }
+        // Promise.all does not cancel sibling work. If one load fails while the
+        // other is still downloading, abort the shared fetch signal so the large
+        // model transfer does not continue untracked.
+        if (!abortController.signal.aborted) {
+          abortController.abort();
+        }
         throw err;
       }
     } catch (err) {
-      if (prefetchAbortController?.signal.aborted) {
-        prefetchAborted = true;
+      if (abortController.signal.aborted && abortedPrefetchGenerations.has(generation)) {
         logInfo('[AgentMemory] Embedding model prefetch aborted during shutdown');
         return null;
       }
       logError('[AgentMemory] Embedding model prefetch failed (non-fatal):', err);
       return null;
     } finally {
-      prefetchAbortController = null;
+      if (prefetchAbortController === abortController) {
+        prefetchAbortController = null;
+      }
     }
   })();
 
@@ -175,7 +183,8 @@ export function resetAgentMemoryEmbedderStateForTests(): void {
   fetchConfigured = false;
   prefetchResult = null;
   prefetchAbortController = null;
-  prefetchAborted = false;
+  prefetchGeneration = 0;
+  abortedPrefetchGenerations = new Set<number>();
 }
 
 /**
@@ -183,7 +192,11 @@ export function resetAgentMemoryEmbedderStateForTests(): void {
  * large model download does not outlive the daemon process.
  */
 export function abortAgentMemoryEmbeddingModelPrefetch(): void {
-  prefetchAbortController?.abort();
+  if (!prefetchAbortController) return;
+  abortedPrefetchGenerations.add(prefetchGeneration);
+  prefetchAbortController.abort();
+  prefetchAbortController = null;
+  prefetchResult = null;
 }
 
 function loadTransformersWeb(): Promise<TransformersModule> {
