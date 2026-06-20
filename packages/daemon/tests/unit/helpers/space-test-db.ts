@@ -200,6 +200,20 @@ export function createSpaceTables(db: BunDatabase): void {
 	`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_gate_data_run ON gate_data(run_id)`);
 
+  // Persisted gate-open cache (migration 130). Mirrors production schema so
+  // service-level integration tests can exercise the full ChannelRouter path.
+  db.exec(`
+		CREATE TABLE IF NOT EXISTS gate_open_state (
+			run_id TEXT NOT NULL,
+			gate_id TEXT NOT NULL,
+			opened_workflow_updated_at INTEGER NOT NULL,
+			opened_at INTEGER NOT NULL,
+			PRIMARY KEY (run_id, gate_id),
+			FOREIGN KEY (run_id) REFERENCES space_workflow_runs(id) ON DELETE CASCADE
+		)
+	`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_gate_open_state_run ON gate_open_state(run_id)`);
+
   // Per-channel cycle counters (migration 69). Tracks how many times each
   // backward (cyclic) channel has been traversed in a workflow run.
   db.exec(`

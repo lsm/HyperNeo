@@ -3664,3 +3664,277 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(eventStore.getById(event.id)?.state).toBe('delivered');
   });
 });
+
+describe('SpaceRuntime event-driven gate evaluation', () => {
+  let db: Database;
+  let workflowRunRepo: SpaceWorkflowRunRepository;
+  let taskRepo: SpaceTaskRepository;
+  let nodeExecutionRepo: NodeExecutionRepository;
+  let workflowManager: SpaceWorkflowManager;
+  let runtime: SpaceRuntime;
+  let eventStore: ExternalEventStore;
+  let eventService: ExternalEventService;
+  let injected: Array<{ sessionId: string; message: string; deliveryMode?: string }>;
+  let blockedRunHooks: Array<{ runId: string; topic: string }>;
+  let tam: MockTaskAgentManager;
+  let bus: ReturnType<typeof createDaemonInternalEventBus>;
+
+  const PR_URL = 'https://github.com/lsm/neokai/pull/42';
+  const PR_TOPIC = 'github/lsm/neokai/pull_request/42.review_submitted';
+
+  function makePrEvent(overrides: Partial<ExternalEvent> = {}): ExternalEvent {
+    return {
+      id: `evt-pr-${Math.random().toString(36).slice(2)}`,
+      spaceId: SPACE_ID,
+      source: 'github',
+      topic: PR_TOPIC,
+      occurredAt: 1_700_000_000_000,
+      ingestedAt: 1_700_000_001_000,
+      dedupeKey: `dedupe-pr-${Math.random().toString(36).slice(2)}`,
+      summary: 'Codex approved PR',
+      payload: { action: 'review_submitted', user: 'codex', content: '+1' },
+      ...overrides,
+    };
+  }
+
+  beforeEach(() => {
+    db = makeDb();
+    workflowRunRepo = new SpaceWorkflowRunRepository(db);
+    taskRepo = new SpaceTaskRepository(db);
+    nodeExecutionRepo = new NodeExecutionRepository(db);
+    workflowManager = new SpaceWorkflowManager(new SpaceWorkflowRepository(db));
+    bus = createDaemonInternalEventBus();
+    const commandBus = createInternalCommandBus();
+    eventStore = new ExternalEventStore(db);
+    eventService = new ExternalEventService(eventStore, bus);
+    injected = [];
+    blockedRunHooks = [];
+    commandBus.register('agent.message.inject', async (command) => {
+      injected.push({
+        sessionId: command.sessionId,
+        message: command.message,
+        deliveryMode: command.deliveryMode,
+      });
+      return { ok: true };
+    });
+    tam = new MockTaskAgentManager();
+    runtime = new SpaceRuntime({
+      db,
+      spaceManager: new SpaceManager(db),
+      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+      spaceWorkflowManager: workflowManager,
+      workflowRunRepo,
+      taskRepo,
+      nodeExecutionRepo,
+      internalEventBus: bus,
+      commandBus,
+      externalEventStore: eventStore,
+      taskAgentManager: tam as never,
+      onBlockedRunExternalEvent: ({ runId, event }) => {
+        blockedRunHooks.push({ runId, topic: event.topic });
+      },
+    });
+  });
+
+  async function startRun(): Promise<{
+    workflow: SpaceWorkflow;
+    run: Awaited<ReturnType<typeof runtime.startWorkflowRun>>['run'];
+    task: SpaceTask;
+    executionId: string;
+    sessionId: string;
+  }> {
+    const workflow = workflowManager.createWorkflow({
+      spaceId: SPACE_ID,
+      name: `Workflow ${Math.random()}`,
+      description: '',
+      nodes: [
+        {
+          id: 'code',
+          name: 'Code',
+          agents: [{ agentId: AGENT_ID, name: 'coder' }],
+        },
+      ],
+      transitions: [],
+      startNodeId: 'code',
+      rules: [],
+      tags: [],
+    });
+    const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+    const task = tasks[0]!;
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    const sessionId = `session-${execution.id}`;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: sessionId,
+      startedAt: Date.now(),
+    });
+    tam.alive.add(sessionId);
+    return { workflow, run, task, executionId: execution.id, sessionId };
+  }
+
+  test('registerPrEventSubscriptionForRun builds the canonical GitHub PR topic pattern', async () => {
+    const { run } = await startRun();
+    const result = runtime.registerPrEventSubscriptionForRun(run.id, PR_URL);
+    expect(result.success).toBe(true);
+    expect(result.topicPattern).toBe('github/lsm/neokai/pull_request/42.*');
+  });
+
+  test('registerPrEventSubscriptionForRun matches published PR events for the same PR', async () => {
+    const { run, sessionId } = await startRun();
+    const result = runtime.registerPrEventSubscriptionForRun(run.id, PR_URL);
+    expect(result.success).toBe(true);
+
+    const event = makePrEvent();
+    await eventService.publish(event);
+
+    expect(injected).toHaveLength(1);
+    expect(injected[0]!.sessionId).toBe(sessionId);
+    expect(eventStore.getById(event.id)?.state).toBe('delivered');
+  });
+
+  test('registerPrEventSubscriptionForRun rejects unparseable PR URLs', async () => {
+    const { run } = await startRun();
+    const result = runtime.registerPrEventSubscriptionForRun(
+      run.id,
+      'https://example.com/not/a/pr'
+    );
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/unable to parse github pr url/i);
+  });
+
+  test('registerPrEventSubscriptionForRun returns false when no active execution slot exists', async () => {
+    const workflow = workflowManager.createWorkflow({
+      spaceId: SPACE_ID,
+      name: `Workflow ${Math.random()}`,
+      description: '',
+      nodes: [{ id: 'code', name: 'Code', agents: [{ agentId: AGENT_ID, name: 'coder' }] }],
+      transitions: [],
+      startNodeId: 'code',
+      rules: [],
+      tags: [],
+    });
+    const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    // Mark execution terminal — no live agent session attached.
+    nodeExecutionRepo.update(execution.id, {
+      status: 'idle',
+      completedAt: Date.now(),
+      agentSessionId: null,
+    });
+    // Acceptance gate: acceptingExternalEvents flips on only after the runtime
+    // has rehydrated, mirroring production startup.
+    await runtime.executeTick();
+
+    const result = runtime.registerPrEventSubscriptionForRun(run.id, PR_URL);
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/no active agent slot/i);
+  });
+
+  test('registerPrEventSubscriptionForRun is idempotent for the same PR URL', async () => {
+    const { run, sessionId } = await startRun();
+    const first = runtime.registerPrEventSubscriptionForRun(run.id, PR_URL);
+    const second = runtime.registerPrEventSubscriptionForRun(run.id, PR_URL);
+    expect(first.success).toBe(true);
+    expect(second.success).toBe(true);
+
+    const event = makePrEvent();
+    await eventService.publish(event);
+
+    // Second registration must not duplicate delivery.
+    expect(injected).toHaveLength(1);
+    expect(injected[0]!.sessionId).toBe(sessionId);
+  });
+
+  test('clearPrEventSubscriptionsForRun removes only PR-pattern interests', async () => {
+    const { run } = await startRun();
+    const subscription = runtime.registerPrEventSubscriptionForRun(run.id, PR_URL);
+    expect(subscription.success).toBe(true);
+
+    runtime.clearPrEventSubscriptionsForRun(run.id);
+
+    const event = makePrEvent();
+    await eventService.publish(event);
+    expect(injected).toHaveLength(0);
+  });
+
+  test('clearPrEventSubscriptionsForRun preserves agent-registered interests on other topics', async () => {
+    const { run, task } = await startRun();
+    runtime.registerPrEventSubscriptionForRun(run.id, PR_URL);
+    runtime.registerSubscription(
+      run.id,
+      task.id,
+      'code',
+      'coder',
+      'github/lsm/neokai/pull_request/42.review_submitted'
+    );
+    runtime.clearPrEventSubscriptionsForRun(run.id);
+
+    // The literal (non-glob) agent-registered topic must still match.
+    const event = makePrEvent();
+    await eventService.publish(event);
+    expect(injected).toHaveLength(1);
+  });
+
+  test('clearRunInterests sweeps PR event subscriptions alongside other interests', async () => {
+    const { run } = await startRun();
+    runtime.registerPrEventSubscriptionForRun(run.id, PR_URL);
+    runtime.clearRunInterests(run.id);
+
+    const event = makePrEvent();
+    await eventService.publish(event);
+    expect(injected).toHaveLength(0);
+  });
+
+  test('onBlockedRunExternalEvent fires once per matching blocked run when event delivered', async () => {
+    const { run, sessionId } = await startRun();
+    workflowRunRepo.updateRun(run.id, { status: 'blocked', failureReason: 'agentCrash' });
+    // Re-mark execution active so the blocked run is still considered deliverable.
+    nodeExecutionRepo.update(nodeExecutionRepo.listByNode(run.id, 'code')[0]!.id, {
+      status: 'in_progress',
+      agentSessionId: sessionId,
+      startedAt: Date.now(),
+    });
+    runtime.registerPrEventSubscriptionForRun(run.id, PR_URL);
+
+    const event = makePrEvent();
+    await eventService.publish(event);
+
+    expect(blockedRunHooks).toEqual([{ runId: run.id, topic: PR_TOPIC }]);
+  });
+
+  test('onBlockedRunExternalEvent does not fire for non-blocked runs', async () => {
+    const { run } = await startRun();
+    // Run stays in_progress — no hook should fire even when an event matches.
+    runtime.registerPrEventSubscriptionForRun(run.id, PR_URL);
+
+    const event = makePrEvent();
+    await eventService.publish(event);
+
+    expect(blockedRunHooks).toHaveLength(0);
+  });
+
+  test('onBlockedRunExternalEvent fires once even when multiple subscriptions match for the same run', async () => {
+    const { run, task, sessionId } = await startRun();
+    workflowRunRepo.updateRun(run.id, { status: 'blocked', failureReason: 'agentCrash' });
+    nodeExecutionRepo.update(nodeExecutionRepo.listByNode(run.id, 'code')[0]!.id, {
+      status: 'in_progress',
+      agentSessionId: sessionId,
+      startedAt: Date.now(),
+    });
+    runtime.registerPrEventSubscriptionForRun(run.id, PR_URL);
+    // Second matching subscription (literal this time) on the same slot — both
+    // should match but the hook fires only once per (run, event) pair.
+    runtime.registerSubscription(
+      run.id,
+      task.id,
+      'code',
+      'coder',
+      'github/lsm/neokai/pull_request/42.review_submitted'
+    );
+
+    const event = makePrEvent();
+    await eventService.publish(event);
+
+    expect(blockedRunHooks).toEqual([{ runId: run.id, topic: PR_TOPIC }]);
+  });
+});

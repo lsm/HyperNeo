@@ -24,6 +24,7 @@ import type {
 import { KNOWN_TOOLS } from '@neokai/shared';
 import type { MessageRecord, ActorRef } from '../../../../../messaging/src/types';
 import { canonicalAgentHandle, SpaceActorRegistryAdapter } from '../actor-registry';
+import type { ExternalEventPublishedPayload } from '../../external-events/external-event-service';
 import { SpaceMessageResolver } from '../messaging-adapter';
 import type { SpaceManager } from '../managers/space-manager';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
@@ -305,6 +306,7 @@ export class SpaceRuntimeService {
         });
       },
       deliverLongHorizonExternalEvent: (args) => this.deliverLongHorizonExternalEvent(args),
+      onBlockedRunExternalEvent: (payload) => this.handleBlockedRunExternalEvent(payload),
     });
   }
 
@@ -1876,7 +1878,113 @@ export class SpaceRuntimeService {
       onGatePendingApproval: (runId, gateId) => this.handleGatePendingApproval(runId, gateId),
       getPrUrlForRun: (rid) => this.resolvePrUrlForRun(rid),
     });
-    return router.onGateDataChanged(runId, gateId);
+    const activated = await router.onGateDataChanged(runId, gateId);
+    await this.syncBlockedRunPrEventSubscription(runId, activated);
+    return activated;
+  }
+
+  /**
+   * Auto-subscribe a blocked workflow run to GitHub PR events when a gate
+   * remains blocked after a re-evaluation, and clean up the auto-subscription
+   * once any gate for the run opens.
+   *
+   * Called from {@link notifyGateDataChanged} and from the event-driven
+   * re-evaluation path. Idempotent: re-subscribing with the same PR URL is a
+   * no-op (the prior identical topic pattern is replaced in-place).
+   */
+  private async syncBlockedRunPrEventSubscription(
+    runId: string,
+    activatedTasks: SpaceTask[]
+  ): Promise<void> {
+    if (activatedTasks.length > 0) {
+      this.runtime.clearPrEventSubscriptionsForRun(runId);
+      return;
+    }
+    const run = this.config.workflowRunRepo.getRun(runId);
+    if (!run || run.status !== 'blocked') return;
+    const prUrl = this.resolvePrUrlForRun(runId);
+    if (!prUrl) return;
+    const result = this.runtime.registerPrEventSubscriptionForRun(runId, prUrl);
+    if (!result.success) {
+      log.warn(
+        `SpaceRuntimeService: auto-subscribe for blocked run ${runId} skipped: ` +
+          `${result.error ?? 'unknown reason'}`
+      );
+    }
+  }
+
+  /**
+   * Event-driven gate re-evaluation entry point.
+   *
+   * Wired to `SpaceRuntimeConfig.onBlockedRunExternalEvent` so that whenever an
+   * external event is delivered to a workflow run currently in `blocked`
+   * status, every gate of the run's workflow is re-evaluated immediately. If
+   * any gate opens as a result, the active agent session for the run is
+   * notified with a human-readable summary so the workflow can continue
+   * without waiting for the next tick.
+   */
+  async handleBlockedRunExternalEvent(payload: {
+    runId: string;
+    event: ExternalEventPublishedPayload;
+  }): Promise<void> {
+    const { runId, event } = payload;
+    const run = this.config.workflowRunRepo.getRun(runId);
+    if (!run || run.status !== 'blocked') return;
+    const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+    if (!workflow) return;
+
+    let anyOpened = false;
+    for (const gate of workflow.gates ?? []) {
+      try {
+        const activated = await this.notifyGateDataChanged(runId, gate.id);
+        if (activated.length > 0) anyOpened = true;
+      } catch (err) {
+        log.warn(
+          `SpaceRuntimeService: event-driven gate re-evaluation for gate "${gate.id}" ` +
+            `on blocked run ${runId} failed: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+    }
+
+    if (anyOpened) {
+      this.runtime.clearPrEventSubscriptionsForRun(runId);
+      await this.notifyBlockedRunSessionGateResolved(runId, event);
+    }
+  }
+
+  /**
+   * Inject a courtesy notification into the active agent session for a blocked
+   * run whose gate just opened as a result of an external event. Best-effort:
+   * dispatch failures are logged and swallowed so they cannot destabilize the
+   * re-evaluation flow.
+   */
+  private async notifyBlockedRunSessionGateResolved(
+    runId: string,
+    event: ExternalEventPublishedPayload
+  ): Promise<void> {
+    const session = this.findActiveSessionForRun(runId);
+    if (!session?.sessionId || !this.taskAgentManager) return;
+    const actor = `[github:${event.topic}]`;
+    const summary = event.summary?.trim() || event.topic;
+    const message =
+      `[runtime] Gate re-evaluation triggered by external event ${actor} resolved ` +
+      `a blocking gate on this run. Summary: ${summary}`;
+    try {
+      await this.taskAgentManager.injectRuntimeRecoveryMessage(session.sessionId, message);
+    } catch (err) {
+      log.warn(
+        `SpaceRuntimeService: failed to notify blocked session ${session.sessionId} ` +
+          `for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  }
+
+  private findActiveSessionForRun(runId: string): { sessionId: string } | null {
+    const executions = this.nodeExecutionRepo.listByWorkflowRun(runId);
+    const active = executions
+      .filter((execution) => execution.status === 'in_progress' && execution.agentSessionId)
+      .sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0))[0];
+    return active?.agentSessionId ? { sessionId: active.agentSessionId } : null;
   }
 
   private async replayPendingMessagesAfterRuntimeProvisioning(session: {

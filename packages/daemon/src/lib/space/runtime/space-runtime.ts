@@ -67,6 +67,7 @@ import {
 import { MAX_AGENT_SLOT_EVENT_INTERESTS } from '../export-format';
 import { getBuiltInGateScript } from '../workflows/built-in-workflows';
 import { getEffectiveGate } from './gate-features';
+import { buildPrEventTopicPattern, parsePrUrl } from './parse-pr-url';
 import { CompletionDetector } from './completion-detector';
 import {
   DEFAULT_AGENT_NO_PROGRESS_THRESHOLD_MS,
@@ -253,6 +254,21 @@ export interface SpaceRuntimeConfig {
     message: string;
     idempotencyKey: string;
   }) => Promise<{ delivered: boolean }>;
+  /**
+   * Optional hook invoked once after an external event is delivered to any
+   * subscription target whose workflow run is currently in `blocked` status.
+   *
+   * Wired by `SpaceRuntimeService` to trigger immediate gate re-evaluation
+   * (rather than waiting for the next poll cycle) and notify the blocked
+   * agent session when a gate opens as a result.
+   *
+   * Fire-and-forget from the runtime's perspective — the service swallows
+   * errors and logs them so a failing re-evaluation cannot break delivery.
+   */
+  onBlockedRunExternalEvent?: (payload: {
+    runId: string;
+    event: ExternalEventPublishedPayload;
+  }) => Promise<void> | void;
 }
 
 interface StartWorkflowRunOptions {
@@ -370,6 +386,12 @@ const EXTERNAL_EVENT_RATE_LIMIT_PER_MIN = parsePositiveIntegerEnv(
   10
 );
 const EXTERNAL_EVENT_QUEUE_TTL_MS = parsePositiveIntegerEnv('EXTERNAL_EVENT_QUEUE_TTL_MS', 300_000);
+/**
+ * Matches topic patterns produced by {@link buildPrEventTopicPattern}:
+ * `github/<owner>/<repo>/pull_request/<number>.*`. Used to selectively prune
+ * auto-subscribed PR event interests without touching agent-registered ones.
+ */
+const PR_EVENT_TOPIC_PATTERN_TEST = /^github\/[^/]+\/[^/]+\/pull_request\/[0-9]+\.[*]$/;
 
 export function parsePositiveIntegerEnv(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -1246,6 +1268,107 @@ export class SpaceRuntime {
     this.clearQueuedDeliveriesForRun(workflowRunId, 'run_terminal_cleanup');
   }
 
+  /**
+   * Resolve the agent slot (task / node / agent name) currently active for a
+   * workflow run — the most recent non-terminal node execution. Used by
+   * auto-subscription helpers to attach GitHub PR event subscriptions on
+   * behalf of the agent that posted the PR.
+   *
+   * Returns `null` when no active execution exists (run completed, cancelled,
+   * or fully idle). Caller is expected to skip auto-subscription in that case.
+   */
+  resolveActiveExecutionSlotForRun(
+    workflowRunId: string
+  ): { taskId: string; nodeId: string; agentName: string } | null {
+    const executions = this.config.nodeExecutionRepo.listByWorkflowRun(workflowRunId);
+    const active = executions
+      .filter((execution) => execution.agentSessionId && !execution.completedAt)
+      .sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0));
+    const execution = active[0];
+    if (!execution) return null;
+    const taskId = this.resolveExecutionTaskId(workflowRunId);
+    if (!taskId) return null;
+    return {
+      taskId,
+      nodeId: execution.workflowNodeId,
+      agentName: execution.agentName,
+    };
+  }
+
+  private resolveExecutionTaskId(workflowRunId: string): string | null {
+    const tasks = this.config.taskRepo.listByWorkflowRun(workflowRunId);
+    if (tasks.length === 0) return null;
+    const run = this.config.workflowRunRepo.getRun(workflowRunId);
+    if (!run) return tasks[0]!.id;
+    return this.pickCanonicalTaskForRun(run, tasks)?.id ?? tasks[0]!.id;
+  }
+
+  /**
+   * Auto-subscribe a blocked workflow run to GitHub PR events for a specific
+   * pull request. Builds the topic pattern `github/owner/repo/pull_request/N.*`
+   * and registers it on the run's currently-active agent slot via
+   * {@link registerSubscription} (kind `dynamic`), so it is automatically
+   * swept when the run terminates or the slot is unregistered.
+   *
+   * Returns `{ success: false }` when:
+   * - `prUrl` cannot be parsed as a GitHub PR URL
+   * - no active agent slot exists for the run
+   * - the underlying `registerSubscription` call rejects (capacity / invalid)
+   *
+   * Idempotent: re-invoking with the same `prUrl` no-ops because
+   * `registerSubscription` removes the prior identical pattern first.
+   */
+  registerPrEventSubscriptionForRun(
+    workflowRunId: string,
+    prUrl: string
+  ): { success: boolean; error?: string; topicPattern?: string } {
+    const parsed = parsePrUrl(prUrl);
+    if (!parsed) {
+      return { success: false, error: `Unable to parse GitHub PR URL: ${prUrl}` };
+    }
+    const slot = this.resolveActiveExecutionSlotForRun(workflowRunId);
+    if (!slot) {
+      return { success: false, error: 'No active agent slot for workflow run' };
+    }
+    const topicPattern = buildPrEventTopicPattern(parsed);
+    try {
+      const result = this.registerSubscription(
+        workflowRunId,
+        slot.taskId,
+        slot.nodeId,
+        slot.agentName,
+        topicPattern,
+        { subscriptionKind: 'dynamic' }
+      );
+      if (!result.success) return { success: false, error: result.error, topicPattern };
+      return { success: true, topicPattern };
+    } catch (err) {
+      return {
+        success: false,
+        error: err instanceof Error ? err.message : String(err),
+        topicPattern,
+      };
+    }
+  }
+
+  /**
+   * Remove auto-subscribed GitHub PR event subscriptions for a workflow run.
+   *
+   * Only removes dynamic subscriptions whose topic matches the GitHub PR
+   * pattern shape (`github/.../pull_request/<id>.*`); agent-registered
+   * interests on other topics are preserved. Called when a gate opens or the
+   * run transitions out of `blocked`.
+   */
+  clearPrEventSubscriptionsForRun(workflowRunId: string): void {
+    this.topicTrie.remove(
+      (target) =>
+        isWorkflowSubscriptionTarget(target) &&
+        target.workflowRunId === workflowRunId &&
+        target.subscriptionKind === 'dynamic' &&
+        PR_EVENT_TOPIC_PATTERN_TEST.test(target.topic ?? '')
+    );
+  }
+
   flushPendingNodeQueue(target: WorkflowSubscriptionTarget): void {
     if (!target.sessionId) return;
     const targetWithExecution = this.resolveSubscriptionTarget(target);
@@ -1366,6 +1489,45 @@ export class SpaceRuntime {
         log.warn(
           `SpaceRuntime: failed to process external event ${payload.eventId} for ` +
             `${target.workflowRunId}/${target.nodeId}/${target.agentName}: ${formatCommandError(err)}`
+        );
+      }
+    }
+
+    // Event-driven gate evaluation: when an external event was delivered (or
+    // queued) for a workflow run currently in `blocked` status, notify the
+    // service so it can re-evaluate gates immediately instead of waiting for
+    // the next poll cycle. Triggered once per (runId, event) pair.
+    this.fireBlockedRunExternalEventHook(payload, matches);
+  }
+
+  private fireBlockedRunExternalEventHook(
+    payload: ExternalEventPublishedPayload,
+    matches: SubscriptionTarget[]
+  ): void {
+    const hook = this.config.onBlockedRunExternalEvent;
+    if (!hook) return;
+    const visitedRunIds = new Set<string>();
+    for (const target of matches) {
+      if (isLongHorizonSubscriptionTarget(target)) continue;
+      const runId = target.workflowRunId;
+      if (visitedRunIds.has(runId)) continue;
+      const run = this.config.workflowRunRepo.getRun(runId);
+      if (!run || run.status !== 'blocked') continue;
+      visitedRunIds.add(runId);
+      try {
+        const result = hook({ runId, event: payload });
+        if (result && typeof (result as Promise<void>).catch === 'function') {
+          (result as Promise<void>).catch((err) => {
+            log.warn(
+              `SpaceRuntime: onBlockedRunExternalEvent failed for run ${runId}: ` +
+                `${err instanceof Error ? err.message : String(err)}`
+            );
+          });
+        }
+      } catch (err) {
+        log.warn(
+          `SpaceRuntime: onBlockedRunExternalEvent threw for run ${runId}: ` +
+            `${err instanceof Error ? err.message : String(err)}`
         );
       }
     }
