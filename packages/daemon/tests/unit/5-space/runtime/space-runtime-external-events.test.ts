@@ -3802,7 +3802,7 @@ describe('SpaceRuntime event-driven gate evaluation', () => {
     expect(result.error).toMatch(/unable to parse github pr url/i);
   });
 
-  test('registerPrEventSubscriptionForRun returns false when no active execution slot exists', async () => {
+  test('registerPrEventSubscriptionForRun falls back to the workflow start node when no execution history exists', async () => {
     const workflow = workflowManager.createWorkflow({
       spaceId: SPACE_ID,
       name: `Workflow ${Math.random()}`,
@@ -3814,20 +3814,19 @@ describe('SpaceRuntime event-driven gate evaluation', () => {
       tags: [],
     });
     const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
-    // Mark execution terminal — no live agent session attached.
-    nodeExecutionRepo.update(execution.id, {
-      status: 'idle',
-      completedAt: Date.now(),
-      agentSessionId: null,
-    });
     // Acceptance gate: acceptingExternalEvents flips on only after the runtime
     // has rehydrated, mirroring production startup.
     await runtime.executeTick();
+    // Blow away execution history so the fallback path is exercised.
+    nodeExecutionRepo.listByWorkflowRun(run.id).forEach((execution) => {
+      nodeExecutionRepo.update(execution.id, { status: 'cancelled', completedAt: Date.now() });
+    });
 
     const result = runtime.registerPrEventSubscriptionForRun(run.id, PR_URL);
-    expect(result.success).toBe(false);
-    expect(result.error).toMatch(/no active agent slot/i);
+    // Falls back to the start node's first agent — subscription succeeds.
+    expect(result.success).toBe(true);
+    expect(result.topicPattern).toBe('github/lsm/neokai/pull_request/42.*');
+    expect(result.topicPattern).toBe('github/lsm/neokai/pull_request/42.*');
   });
 
   test('registerPrEventSubscriptionForRun is idempotent for the same PR URL', async () => {

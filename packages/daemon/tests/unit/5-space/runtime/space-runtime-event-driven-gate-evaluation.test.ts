@@ -585,4 +585,115 @@ describe('SpaceRuntimeService event-driven gate evaluation', () => {
     await ctx.eventService.publish(event);
     expect(ctx.injected).toHaveLength(0);
   });
+
+  test('onRunBlocked fires sync when recoverStalledRuns transitions a run to blocked (no explicit gate write)', async () => {
+    const ctx = await setup({
+      gates: [
+        {
+          id: 'approval',
+          fields: [approvedField, prUrlField],
+        },
+      ],
+      channels: [
+        {
+          id: 'ch-code-to-review',
+          from: 'coder',
+          to: 'reviewer',
+          gateId: 'approval',
+        },
+      ],
+    });
+    const workflow = ctx.workflowManager.listWorkflows(SPACE_ID)[0]!;
+    const runtime = await ctx.service.createOrGetRuntime(SPACE_ID);
+    const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+
+    // Seed gate data with a PR URL — but DO NOT call notifyGateDataChanged
+    // so the auto-subscription is NOT registered via the write_gate path.
+    ctx.gateDataRepo.merge(run.id, 'approval', { pr_url: PR_URL });
+
+    // Simulate the tick-loop stall path: cancel the only execution so
+    // recoverStalledRunsForSpace has no driveable work and transitions the
+    // run to blocked. The onRunBlocked hook should fire
+    // syncBlockedRunPrEventSubscription automatically during the run→blocked
+    // transition; the fallback slot lookup reuses the cancelled execution's
+    // nodeId / agentName.
+    const execution = ctx.nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    ctx.nodeExecutionRepo.update(execution.id, {
+      status: 'cancelled',
+      completedAt: Date.now(),
+    });
+    await runtime.recoverStalledRunsForSpace(SPACE_ID);
+
+    // Run is now blocked via the recovery path (not via gate write).
+    expect(ctx.workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
+
+    // Re-mark execution active so delivery is not short-circuited.
+    ctx.nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-recover-blocked',
+      startedAt: Date.now(),
+      completedAt: null,
+    });
+    ctx.tam.alive.add('session-recover-blocked');
+
+    // Publishing a PR event must deliver — proving onRunBlocked registered
+    // the auto-subscription during the run→blocked transition.
+    const event: ExternalEvent = {
+      id: `evt-recover-blocked-${Math.random().toString(36).slice(2)}`,
+      spaceId: SPACE_ID,
+      source: 'github',
+      topic: PR_EVENT_TOPIC,
+      occurredAt: Date.now(),
+      ingestedAt: Date.now(),
+      dedupeKey: `dedupe-recover-blocked-${Math.random().toString(36).slice(2)}`,
+      summary: 'Codex approved',
+      payload: {},
+    };
+    await ctx.eventService.publish(event);
+    expect(ctx.injected.length).toBeGreaterThanOrEqual(1);
+  });
+
+  test('rehydrateBlockedRunPrEventSubscriptionsForSpace rebuilds subscriptions for a paused-then-resumed space', async () => {
+    const ctx = await setup({
+      gates: [
+        {
+          id: 'approval',
+          fields: [approvedField, prUrlField],
+        },
+      ],
+      channels: [
+        {
+          id: 'ch-code-to-review',
+          from: 'coder',
+          to: 'reviewer',
+          gateId: 'approval',
+        },
+      ],
+    });
+    const workflow = ctx.workflowManager.listWorkflows(SPACE_ID)[0]!;
+    const { runId } = await seedBlockedRunWithPr(ctx, workflow.id);
+
+    // Simulate restart wiping the in-memory topic trie.
+    ctx.service.runtime.clearPrEventSubscriptionsForRun(runId);
+    ctx.service.runtime.clearRunInterests(runId);
+
+    // Startup rehydrate happens once but skips paused spaces; verify the
+    // scoped variant works when called manually (mirrors the resume RPC).
+    const count = ctx.service.rehydrateBlockedRunPrEventSubscriptionsForSpace(SPACE_ID);
+    expect(count).toBe(1);
+
+    const event: ExternalEvent = {
+      id: `evt-resume-space-${Math.random().toString(36).slice(2)}`,
+      spaceId: SPACE_ID,
+      source: 'github',
+      topic: PR_EVENT_TOPIC,
+      occurredAt: Date.now(),
+      ingestedAt: Date.now(),
+      dedupeKey: `dedupe-resume-space-${Math.random().toString(36).slice(2)}`,
+      summary: 'Codex approved',
+      payload: {},
+    };
+    await ctx.eventService.publish(event);
+    expect(ctx.injected.length).toBeGreaterThanOrEqual(1);
+  });
 });

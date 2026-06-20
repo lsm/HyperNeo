@@ -269,6 +269,17 @@ export interface SpaceRuntimeConfig {
     runId: string;
     event: ExternalEventPublishedPayload;
   }) => Promise<void> | void;
+  /**
+   * Optional hook invoked immediately after a workflow run transitions into
+   * `blocked` status — covers tick-loop recovery (`recoverStalledRuns`),
+   * `markFailed` RPC, and gate-rejection paths that bypass the gate-write
+   * sync. Wired by `SpaceRuntimeService` to ensure the PR-event
+   * auto-subscription is created when the run becomes blocked regardless
+   * of which code path performed the transition.
+   *
+   * Fire-and-forget; errors are logged and swallowed by the runtime.
+   */
+  onRunBlocked?: (runId: string) => Promise<void> | void;
 }
 
 interface StartWorkflowRunOptions {
@@ -1277,25 +1288,46 @@ export class SpaceRuntime {
    * auto-subscription helpers to attach GitHub PR event subscriptions on
    * behalf of the agent that posted the PR.
    *
-   * Returns `null` when no active execution exists (run completed, cancelled,
-   * or fully idle). Caller is expected to skip auto-subscription in that case.
+   * Falls back to the most recent execution of any status (preserving its
+   * nodeId / agentName) when no live execution exists — e.g. immediately
+   * after a stall-recovery transition where the agent session is gone but
+   * the next spawn will reuse the same slot. When no execution exists at
+   * all, falls back to the workflow's start node + first agent so the
+   * subscription attaches somewhere the next agent will inhabit.
+   *
+   * Returns `null` only when the run has no canonical task AND no workflow
+   * definition is available.
    */
   resolveActiveExecutionSlotForRun(
     workflowRunId: string
   ): { taskId: string; nodeId: string; agentName: string } | null {
-    const executions = this.config.nodeExecutionRepo.listByWorkflowRun(workflowRunId);
-    const active = executions
-      .filter((execution) => execution.agentSessionId && !execution.completedAt)
-      .sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0));
-    const execution = active[0];
-    if (!execution) return null;
     const taskId = this.resolveExecutionTaskId(workflowRunId);
     if (!taskId) return null;
-    return {
-      taskId,
-      nodeId: execution.workflowNodeId,
-      agentName: execution.agentName,
-    };
+    const executions = this.config.nodeExecutionRepo.listByWorkflowRun(workflowRunId);
+    const live = executions
+      .filter((execution) => execution.agentSessionId && !execution.completedAt)
+      .sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0))[0];
+    if (live) {
+      return { taskId, nodeId: live.workflowNodeId, agentName: live.agentName };
+    }
+    // No live execution — fall back to the most recent execution of any
+    // status so the subscription attaches to the slot the next spawn will
+    // reuse (same nodeId / agentName).
+    const mostRecent = executions
+      .filter((execution) => execution.agentName)
+      .sort((a, b) => (b.startedAt ?? b.createdAt ?? 0) - (a.startedAt ?? a.createdAt ?? 0))[0];
+    if (mostRecent) {
+      return { taskId, nodeId: mostRecent.workflowNodeId, agentName: mostRecent.agentName };
+    }
+    // No execution history at all — use the workflow's start node + first
+    // agent as the canonical fallback slot.
+    const run = this.config.workflowRunRepo.getRun(workflowRunId);
+    if (!run) return null;
+    const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+    const startNode = workflow?.nodes.find((node) => node.id === workflow.startNodeId);
+    const firstAgent = startNode?.agents[0];
+    if (!startNode || !firstAgent) return null;
+    return { taskId, nodeId: startNode.id, agentName: firstAgent.name };
   }
 
   private resolveExecutionTaskId(workflowRunId: string): string | null {
@@ -2937,8 +2969,32 @@ export class SpaceRuntime {
     if (nextStatus === 'done' || nextStatus === 'cancelled') {
       this.clearRunInterests(runId);
     }
+    if (nextStatus === 'blocked') {
+      this.fireRunBlockedHook(runId);
+    }
     await this.safeOnWorkflowRunUpdated(updated.spaceId, updated);
     return updated;
+  }
+
+  private fireRunBlockedHook(runId: string): void {
+    const hook = this.config.onRunBlocked;
+    if (!hook) return;
+    try {
+      const result = hook(runId);
+      if (result && typeof (result as Promise<void>).catch === 'function') {
+        (result as Promise<void>).catch((err) => {
+          log.warn(
+            `SpaceRuntime: onRunBlocked failed for run ${runId}: ` +
+              `${err instanceof Error ? err.message : String(err)}`
+          );
+        });
+      }
+    } catch (err) {
+      log.warn(
+        `SpaceRuntime: onRunBlocked threw for run ${runId}: ` +
+          `${err instanceof Error ? err.message : String(err)}`
+      );
+    }
   }
 
   /**

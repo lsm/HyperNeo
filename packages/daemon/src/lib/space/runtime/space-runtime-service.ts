@@ -307,6 +307,19 @@ export class SpaceRuntimeService {
       },
       deliverLongHorizonExternalEvent: (args) => this.deliverLongHorizonExternalEvent(args),
       onBlockedRunExternalEvent: (payload) => this.handleBlockedRunExternalEvent(payload),
+      onRunBlocked: (runId) => {
+        // Run just transitioned to blocked via tick-loop recovery, markFailed
+        // RPC, or gate rejection. Ensure the PR-event auto-subscription is
+        // registered so subsequent GitHub events match a target. Passes an
+        // empty activatedTasks array to force the subscribe branch (the gate
+        // is, by definition, not open at the moment we block).
+        void this.syncBlockedRunPrEventSubscription(runId, []).catch((err) => {
+          log.warn(
+            `SpaceRuntimeService: onRunBlocked sync failed for run ${runId}: ` +
+              `${err instanceof Error ? err.message : String(err)}`
+          );
+        });
+      },
     });
   }
 
@@ -2011,7 +2024,9 @@ export class SpaceRuntimeService {
    * gate re-evaluation.
    *
    * Idempotent and best-effort: failures for individual runs are logged and
-   * swallowed so one bad run cannot block startup.
+   * swallowed so one bad run cannot block startup. Skips paused / stopped
+   * spaces — those are recovered by {@link rehydrateBlockedRunPrEventSubscriptionsForSpace}
+   * when the space is resumed.
    */
   async rehydrateBlockedRunPrEventSubscriptions(): Promise<void> {
     try {
@@ -2019,15 +2034,7 @@ export class SpaceRuntimeService {
       let rehydrated = 0;
       for (const space of spaces) {
         if (space.paused || space.stopped) continue;
-        const blockedRuns = this.config.workflowRunRepo
-          .listBySpace(space.id)
-          .filter((run) => run.status === 'blocked');
-        for (const run of blockedRuns) {
-          const prUrl = this.resolvePrUrlForRun(run.id);
-          if (!prUrl) continue;
-          const result = this.runtime.registerPrEventSubscriptionForRun(run.id, prUrl);
-          if (result.success) rehydrated++;
-        }
+        rehydrated += this.rehydrateBlockedRunPrEventSubscriptionsForSpace(space.id);
       }
       if (rehydrated > 0) {
         log.info(
@@ -2039,6 +2046,40 @@ export class SpaceRuntimeService {
         `SpaceRuntimeService: rehydrateBlockedRunPrEventSubscriptions failed: ${err instanceof Error ? err.message : String(err)}`
       );
     }
+  }
+
+  /**
+   * Space-scoped variant of {@link rehydrateBlockedRunPrEventSubscriptions}.
+   * Re-registers PR auto-subscriptions for the blocked runs of a single
+   * space — used by the space-resume path (`resumeSpace` RPC) to rebuild
+   * subscriptions for previously-paused spaces that were skipped at startup.
+   *
+   * Returns the count of successfully re-registered subscriptions. Errors
+   * for individual runs are logged and swallowed.
+   */
+  rehydrateBlockedRunPrEventSubscriptionsForSpace(spaceId: string): number {
+    let rehydrated = 0;
+    try {
+      const blockedRuns = this.config.workflowRunRepo
+        .listBySpace(spaceId)
+        .filter((run) => run.status === 'blocked');
+      for (const run of blockedRuns) {
+        const prUrl = this.resolvePrUrlForRun(run.id);
+        if (!prUrl) continue;
+        const result = this.runtime.registerPrEventSubscriptionForRun(run.id, prUrl);
+        if (result.success) rehydrated++;
+      }
+      if (rehydrated > 0) {
+        log.info(
+          `SpaceRuntimeService: rehydrated ${rehydrated} PR event auto-subscription(s) for blocked runs in space ${spaceId}`
+        );
+      }
+    } catch (err) {
+      log.error(
+        `SpaceRuntimeService: rehydrateBlockedRunPrEventSubscriptionsForSpace(${spaceId}) failed: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+    return rehydrated;
   }
   private promoteCanonicalTaskAfterRunResume(runId: string): void {
     const tasks = this.config.taskRepo.listByWorkflowRun(runId);
