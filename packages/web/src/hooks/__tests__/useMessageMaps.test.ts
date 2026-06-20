@@ -733,6 +733,55 @@ describe('useMessageMaps', () => {
       expect(agent1Messages?.[1].uuid).toBe(uuid3);
       expect(agent2Messages?.[0].uuid).toBe(uuid2);
     });
+
+    it('should group agent_id-scoped messages under the matching Task tool_use id', () => {
+      const messages = [
+        {
+          type: 'assistant',
+          uuid: uuid1,
+          session_id: 'session-1',
+          parent_tool_use_id: null,
+          message: {
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool_use',
+                id: 'tool-1',
+                name: 'Task',
+                input: { subagent_type: 'explore', description: 'Test', prompt: 'Do it' },
+              },
+            ],
+          },
+        },
+        {
+          type: 'assistant',
+          uuid: uuid2,
+          session_id: 'session-1',
+          parent_tool_use_id: 'tool-1',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'Subagent work' }],
+          },
+        },
+        {
+          type: 'system',
+          subtype: 'permission_denied',
+          uuid: uuid3,
+          session_id: 'session-1',
+          agent_id: 'tool-1',
+          tool_name: 'Bash',
+          message: 'Denied',
+        },
+      ] as unknown as SDKMessage[];
+
+      const { result } = renderHook(() => useMessageMaps(messages, 'session-1'));
+
+      const subagentMessages = result.current.subagentMessagesMap.get('tool-1');
+      expect(subagentMessages).toBeDefined();
+      expect(subagentMessages?.length).toBe(2);
+      expect(subagentMessages?.[0].uuid).toBe(uuid2);
+      expect(subagentMessages?.[1].uuid).toBe(uuid3);
+    });
   });
 
   describe('performance characteristics', () => {

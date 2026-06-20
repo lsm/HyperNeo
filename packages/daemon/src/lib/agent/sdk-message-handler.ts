@@ -49,6 +49,7 @@ import { ContextFetcher } from './context-fetcher';
 import { ApiErrorCircuitBreaker } from './api-error-circuit-breaker';
 import type { MessageQueue } from './message-queue';
 import type { QueryLifecycleManager } from './query-lifecycle-manager';
+import { RepeatedToolErrorGuardrail } from './repeated-tool-error-guardrail';
 import { getSessionModelInfo } from '../model-service';
 import { shouldUseNeoKaiCompactFallback } from './query-options-builder.js';
 import { reserveBasedThreshold } from './context-tracker.js';
@@ -117,6 +118,9 @@ export class SDKMessageHandler {
   // persist on each new thinking block.
   private lastStampedThinkingTokensEstimate: number = 0;
 
+  /** Guardrail that breaks repeated identical tool-use errors in Forge task sessions. */
+  private repeatedToolErrorGuardrail: RepeatedToolErrorGuardrail;
+
   constructor(private ctx: SDKMessageHandlerContext) {
     const { session } = ctx;
     this.logger = new Logger(`SDKMessageHandler ${session.id}`);
@@ -135,6 +139,60 @@ export class SDKMessageHandler {
     ctx.messageQueue.onMessageYielded = (messageId: string, consumedAt: number) => {
       this.handleMessageYielded(messageId, consumedAt);
     };
+
+    this.repeatedToolErrorGuardrail = new RepeatedToolErrorGuardrail({
+      getTaskForSession: () => {
+        try {
+          const repo = this.ctx.db?.getSpaceTaskRepo();
+          if (!repo) return null;
+
+          // Legacy task-agent sessions store the task directly on the session row.
+          const task = repo.getTaskBySessionId(this.ctx.session.id);
+          if (task) return task;
+
+          // Worker/node-agent sessions carry the task id in session context.
+          const taskId = this.ctx.session.context?.taskId;
+          if (taskId) return repo.getTask(taskId);
+
+          return null;
+        } catch (err) {
+          this.logger.warn('Failed to resolve task for repeated-tool-error guardrail:', err);
+          return null;
+        }
+      },
+      emitEvidence: (params) => {
+        try {
+          const repo = this.ctx.db?.getSpaceTaskRepo();
+          if (!repo) return undefined;
+
+          const task =
+            repo.getTaskBySessionId(this.ctx.session.id) ??
+            (this.ctx.session.context?.taskId
+              ? repo.getTask(this.ctx.session.context.taskId)
+              : null);
+          if (!task) return undefined;
+
+          return this.ctx.db?.evolution.createEvidence({
+            scopeId: params.scopeId,
+            kind: 'conversation_friction',
+            sourceId: task.id,
+            summary: params.summary,
+            metadata: params.metadata,
+          });
+        } catch (err) {
+          this.logger.warn('Failed to create conversation_friction evidence:', err);
+          return undefined;
+        }
+      },
+      routeRecoveryMessage: (text) => {
+        // Route the recovery through the active message queue so the running SDK
+        // turn actually receives the instruction, instead of only displaying a
+        // synthetic assistant frame in the UI.
+        void this.ctx.messageQueue.enqueue(text).catch((err) => {
+          this.logger.warn('Failed to enqueue repeated tool error recovery message:', err);
+        });
+      },
+    });
   }
 
   /**
@@ -928,6 +986,7 @@ export class SDKMessageHandler {
 
   private async handleUserMessage(message: SDKMessage): Promise<void> {
     await this.publishToolResultConsumedEvents(message);
+    await this.repeatedToolErrorGuardrail.observeToolResultErrors(message as unknown);
   }
 
   private async publishToolResultConsumedEvents(message: SDKMessage): Promise<void> {
@@ -964,6 +1023,7 @@ export class SDKMessageHandler {
         toolName: toolCall.name,
         timestamp: Date.now(),
       });
+      this.repeatedToolErrorGuardrail.recordToolUse(toolCall.id, toolCall.name);
     }
     if (toolCalls.length > 0) {
       session.metadata = {

@@ -10,6 +10,7 @@
 import { Database as BunDatabase } from 'bun:sqlite';
 import type { MessageHub } from '@neokai/shared';
 import { createEventMessage, parseJson, parseJsonOptional } from '@neokai/shared';
+import { HIDDEN_SYSTEM_SUBTYPES } from '@neokai/shared/sdk/type-guards';
 import type {
   LiveQuerySubscribeRequest,
   LiveQuerySubscribeResponse,
@@ -2217,6 +2218,16 @@ ORDER BY s.last_active_at DESC, s.id DESC
  * inflates the JSON and merges the extras to produce a ChatMessage-shaped
  * object.
  */
+/**
+ * Comma-separated, single-quoted list of system subtypes excluded from the
+ * `messages.bySession` live query. Includes the UI-hidden set plus
+ * `thinking_tokens`, which is also not rendered but kept out of the hidden
+ * contract for legacy UI gating.
+ */
+const EXCLUDED_FROM_PAGINATION_SQL_LIST = [...HIDDEN_SYSTEM_SUBTYPES, 'thinking_tokens']
+  .map((subtype) => `'${subtype.replace(/'/g, "''")}'`)
+  .join(', ');
+
 const MESSAGES_BY_SESSION_SQL = `
 WITH top_level AS (
   SELECT
@@ -2229,7 +2240,7 @@ WITH top_level AS (
   WHERE session_id = ?1
     AND parent_tool_use_id IS NULL
     AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))
-    AND COALESCE(message_subtype,'') != 'thinking_tokens'
+    AND COALESCE(message_subtype, '') NOT IN (${EXCLUDED_FROM_PAGINATION_SQL_LIST})
     AND (
       message_type != 'system'
       OR COALESCE(message_subtype, '') != 'informational'
