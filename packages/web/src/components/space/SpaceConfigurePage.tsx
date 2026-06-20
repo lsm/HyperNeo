@@ -4,6 +4,7 @@ import type { Space, SpaceWorkflow } from '@neokai/shared';
 import { Tab, TabGroup, TabList, TabPanel, TabPanels } from '@neokai/ui';
 import { spaceStore } from '../../lib/space-store';
 import { currentSpaceConfigureTabSignal, currentSpaceIdSignal } from '../../lib/signals';
+import { getWorkerAgentsFromWorkflows } from './SpaceAgentList';
 import { navigateToSpaceConfigure } from '../../lib/router';
 import { cn } from '../../lib/utils';
 
@@ -45,15 +46,44 @@ interface SpaceConfigurePageProps {
 }
 
 export function SpaceConfigurePage({ space }: SpaceConfigurePageProps) {
-  const agents = spaceStore.agents.value;
   const workflows = spaceStore.workflows.value;
+  const workflowDetails = spaceStore.workflowDetails.value;
+  const workerAgentCount = getWorkerAgentsFromWorkflows(workflowDetails).length;
   const configLoaded = spaceStore.configDataLoaded.value;
 
-  useEffect(() => {
-    spaceStore.ensureConfigData().catch(() => {});
-    spaceStore.ensureNodeExecutions().catch(() => {});
-  }, [space.id]);
   const activeTab = currentSpaceConfigureTabSignal.value;
+
+  useEffect(() => {
+    // Chain ensureWorkflowDetails after ensureConfigData: the bulk detail
+    // fetch snapshots spaceStore.workflows.value synchronously, which is empty
+    // until the summary list returns. Running them in parallel on a cold
+    // direct-URL load snapshots [] and sticks workflowDetailsLoaded=true over
+    // empty data.
+    // Only pay the per-workflow detail cost when the Agents tab is active.
+    const effectSpaceId = space.id;
+    let cancelled = false;
+    spaceStore
+      .ensureConfigData()
+      .then(() => {
+        // Guard against a space switch, stale tab switch, or unmounted effect
+        // that resolved the old config promise. Starting the detail loader for
+        // the wrong (or not-yet-loaded) space snapshots an empty workflow list
+        // and marks details loaded early.
+        if (
+          !cancelled &&
+          spaceStore.spaceId.value === effectSpaceId &&
+          spaceStore.configDataLoaded.value &&
+          activeTab === 'agents'
+        ) {
+          return spaceStore.ensureWorkflowDetails();
+        }
+      })
+      .catch(() => {});
+    spaceStore.ensureNodeExecutions().catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [space.id, activeTab]);
   const spaceId = currentSpaceIdSignal.value ?? '';
   /** null = list view; 'new' = create editor; <id> = edit editor */
   const [workflowEditId, setWorkflowEditId] = useState<string | null>(null);
@@ -151,7 +181,7 @@ export function SpaceConfigurePage({ space }: SpaceConfigurePageProps) {
                   <span>{tab.label}</span>
                   <span class="rounded-full bg-white/5 px-1.5 py-px text-xs text-gray-400">
                     {tab.count({
-                      agentCount: agents.length,
+                      agentCount: workerAgentCount,
                       workflowCount: workflows.length,
                     })}
                   </span>

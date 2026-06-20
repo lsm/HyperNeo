@@ -497,6 +497,483 @@ describe('SpaceStore — space selection', () => {
   });
 });
 
+describe('SpaceStore — ensureWorkflowDetails', () => {
+  beforeEach(resetStore);
+  afterEach(() => vi.clearAllMocks());
+
+  function mockWorkflowSummaries(ids: string[]) {
+    mockHub.request.mockImplementation(
+      async (method: string, params?: Record<string, unknown>): Promise<any> => {
+        if (method === 'space.overview') {
+          const spaceId = (params?.spaceId as string) ?? 'space-1';
+          return { space: makeSpace(spaceId), tasks: [], workflowRuns: [], sessions: [] };
+        }
+        if (method === 'spaceWorkflow.list') {
+          return { workflows: ids.map((id) => makeWorkflowSummary(id)) };
+        }
+        if (method === 'spaceWorkflow.get') {
+          return { workflow: makeWorkflow((params?.id as string) ?? 'wf1') };
+        }
+        if (method === 'spaceAgent.list') return { agents: [] };
+        if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [] };
+        if (method === 'spaceWorkflow.listBuiltInTemplates') return { workflows: [] };
+        if (method === 'spaceLongHorizonAgent.list') return { agents: [] };
+        if (method === 'spaceLongHorizonAgent.listBuiltInTemplates') return { templates: [] };
+        return {};
+      }
+    );
+  }
+
+  it('bulk-fetches workflow details via spaceWorkflow.get per workflow', async () => {
+    mockWorkflowSummaries(['wf1', 'wf2']);
+    await spaceStore.selectSpace('space-1');
+    await spaceStore.ensureConfigData();
+    mockHub.request.mockClear();
+
+    await spaceStore.ensureWorkflowDetails();
+
+    const calls = mockHub.request.mock.calls.filter(
+      (c) => (c[0] as string) === 'spaceWorkflow.get'
+    );
+    expect(calls).toHaveLength(2);
+    expect(spaceStore.workflowDetails.value.map((w) => w.id).sort()).toEqual(['wf1', 'wf2']);
+    expect(spaceStore.workflowDetailsLoaded.value).toBe(true);
+  });
+
+  it('is idempotent — second call is a no-op', async () => {
+    mockWorkflowSummaries(['wf1']);
+    await spaceStore.selectSpace('space-1');
+    await spaceStore.ensureConfigData();
+    await spaceStore.ensureWorkflowDetails();
+    mockHub.request.mockClear();
+
+    await spaceStore.ensureWorkflowDetails();
+    const gets = mockHub.request.mock.calls.filter((c) => (c[0] as string) === 'spaceWorkflow.get');
+    expect(gets).toHaveLength(0);
+  });
+
+  it('dedupes concurrent callers via the in-flight promise', async () => {
+    mockWorkflowSummaries(['wf1', 'wf2', 'wf3']);
+    await spaceStore.selectSpace('space-1');
+    await spaceStore.ensureConfigData();
+    mockHub.request.mockClear();
+
+    await Promise.all([
+      spaceStore.ensureWorkflowDetails(),
+      spaceStore.ensureWorkflowDetails(),
+      spaceStore.ensureWorkflowDetails(),
+    ]);
+
+    const gets = mockHub.request.mock.calls.filter((c) => (c[0] as string) === 'spaceWorkflow.get');
+    expect(gets).toHaveLength(3);
+  });
+
+  it('resets workflowDetailsLoaded on space switch', async () => {
+    mockWorkflowSummaries(['wf1']);
+    await spaceStore.selectSpace('space-1');
+    await spaceStore.ensureConfigData();
+    await spaceStore.ensureWorkflowDetails();
+    expect(spaceStore.workflowDetailsLoaded.value).toBe(true);
+
+    await spaceStore.selectSpace('space-2');
+
+    expect(spaceStore.workflowDetailsLoaded.value).toBe(false);
+    expect(spaceStore.workflowDetails.value).toEqual([]);
+  });
+
+  it('discards the batch when the space switches mid-fetch', async () => {
+    mockWorkflowSummaries(['wf1', 'wf2']);
+    await spaceStore.selectSpace('space-1');
+    await spaceStore.ensureConfigData();
+
+    // Hold spaceWorkflow.get responses until we flip the spaceId.
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    mockHub.request.mockImplementation(
+      async (method: string, params?: Record<string, unknown>): Promise<any> => {
+        if (method === 'spaceWorkflow.get') await gate;
+        if (method === 'spaceWorkflow.get') {
+          return { workflow: makeWorkflow((params?.id as string) ?? 'wf1') };
+        }
+        return {};
+      }
+    );
+
+    const pending = spaceStore.ensureWorkflowDetails();
+    // Simulate space switch while the batch is still in flight.
+    spaceStore.spaceId.value = 'space-2';
+    release();
+    await pending;
+
+    // Batch was discarded — workflowDetails stays empty and not marked loaded.
+    expect(spaceStore.workflowDetailsLoaded.value).toBe(false);
+    expect(spaceStore.workflowDetails.value).toEqual([]);
+  });
+
+  it('drops entries for workflows deleted during fan-out', async () => {
+    mockWorkflowSummaries(['wf1', 'wf2']);
+    await spaceStore.selectSpace('space-1');
+    await spaceStore.ensureConfigData();
+
+    // Simulate wf2 being deleted between the snapshot and the batch assign
+    // by shrinking workflows.value to just wf1 before the awaits resolve.
+    let triggeredDeletion = false;
+    const realRequest = mockHub.request.getMockImplementation();
+    mockHub.request.mockImplementation(
+      async (method: string, params?: Record<string, unknown>): Promise<any> => {
+        const result = realRequest
+          ? await realRequest(method, params)
+          : ({} as Record<string, unknown>);
+        if (!triggeredDeletion && method === 'spaceWorkflow.get') {
+          triggeredDeletion = true;
+          // Mimic a concurrent spaceWorkflow.deleted event handler.
+          spaceStore.workflows.value = spaceStore.workflows.value.filter((w) => w.id !== 'wf2');
+        }
+        return result;
+      }
+    );
+
+    await spaceStore.ensureWorkflowDetails();
+
+    expect(spaceStore.workflowDetails.value.map((w) => w.id)).toEqual(['wf1']);
+  });
+
+  it('does not mark loaded when a workflow detail RPC fails', async () => {
+    mockWorkflowSummaries(['wf1', 'wf2']);
+    await spaceStore.selectSpace('space-1');
+    await spaceStore.ensureConfigData();
+
+    const base = mockHub.request.getMockImplementation();
+    mockHub.request.mockImplementation(
+      async (method: string, params?: Record<string, unknown>): Promise<any> => {
+        if (method === 'spaceWorkflow.get' && (params?.id as string) === 'wf2') {
+          throw new Error('transient RPC failure');
+        }
+        return base ? base(method, params) : {};
+      }
+    );
+
+    await spaceStore.ensureWorkflowDetails();
+
+    // wf1 resolved, wf2 failed — loaded stays false while scheduled retry is pending.
+    expect(spaceStore.workflowDetailsLoaded.value).toBe(false);
+    expect(spaceStore.workflowDetails.value.map((w) => w.id)).toEqual(['wf1']);
+  });
+
+  it('marks loaded when the only missing workflow was deleted during fan-out', async () => {
+    mockWorkflowSummaries(['wf1', 'wf2']);
+    await spaceStore.selectSpace('space-1');
+    await spaceStore.ensureConfigData();
+
+    const base = mockHub.request.getMockImplementation();
+    mockHub.request.mockImplementation(
+      async (method: string, params?: Record<string, unknown>): Promise<any> => {
+        if (method === 'spaceWorkflow.get' && (params?.id as string) === 'wf2') {
+          spaceStore.workflows.value = spaceStore.workflows.value.filter((w) => w.id !== 'wf2');
+          return null;
+        }
+        return base ? base(method, params) : {};
+      }
+    );
+
+    await spaceStore.ensureWorkflowDetails();
+
+    expect(spaceStore.workflowDetails.value.map((w) => w.id)).toEqual(['wf1']);
+    expect(spaceStore.workflowDetailsLoaded.value).toBe(true);
+  });
+
+  it('marks loaded when a failed retry already has prior workflow details', async () => {
+    mockWorkflowSummaries(['wf1']);
+    await spaceStore.selectSpace('space-1');
+    await spaceStore.ensureConfigData();
+    spaceStore.workflowDetails.value = [makeWorkflow('wf1')];
+
+    mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+      if (method === 'spaceWorkflow.get') return null;
+      return {};
+    });
+
+    await spaceStore.ensureWorkflowDetails();
+
+    expect(spaceStore.workflowDetails.value.map((w) => w.id)).toEqual(['wf1']);
+    expect(spaceStore.workflowDetailsLoaded.value).toBe(true);
+  });
+
+  it('marks loaded after retry exhaustion so the Agents tab does not spin forever', async () => {
+    vi.useFakeTimers();
+    try {
+      mockWorkflowSummaries(['wf1']);
+      await spaceStore.selectSpace('space-1');
+      await spaceStore.ensureConfigData();
+      mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+        if (method === 'spaceWorkflow.get') return null;
+        return {};
+      });
+
+      await spaceStore.ensureWorkflowDetails();
+      for (let i = 0; i < 5; i += 1) {
+        await vi.runOnlyPendingTimersAsync();
+      }
+
+      expect(spaceStore.workflowDetailsLoaded.value).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not run queued workflow-detail retries after load generation changes', async () => {
+    vi.useFakeTimers();
+    try {
+      mockWorkflowSummaries(['wf1']);
+      await spaceStore.selectSpace('space-1');
+      await spaceStore.ensureConfigData();
+      mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+        if (method === 'spaceWorkflow.get') return null;
+        return {};
+      });
+
+      await spaceStore.ensureWorkflowDetails();
+      const getCount = mockHub.request.mock.calls.filter(
+        (c) => (c[0] as string) === 'spaceWorkflow.get'
+      ).length;
+      (
+        spaceStore as unknown as { workflowDetailsLoadGeneration: number }
+      ).workflowDetailsLoadGeneration += 1;
+      await vi.runOnlyPendingTimersAsync();
+
+      const nextGetCount = mockHub.request.mock.calls.filter(
+        (c) => (c[0] as string) === 'spaceWorkflow.get'
+      ).length;
+      expect(nextGetCount).toBe(getCount);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('retries workflow summary fetch when it fails during ensureConfigData', async () => {
+    vi.useFakeTimers();
+    try {
+      await spaceStore.selectSpace('space-1');
+      let summaryAttempts = 0;
+      mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+        if (method === 'space.overview') {
+          return { space: makeSpace('space-1'), tasks: [], workflowRuns: [], sessions: [] };
+        }
+        if (method === 'spaceWorkflow.list') {
+          summaryAttempts += 1;
+          if (summaryAttempts < 3) throw new Error('summary fetch failed');
+          return { workflows: [makeWorkflowSummary('wf1')] };
+        }
+        if (method === 'spaceWorkflow.get') return { workflow: makeWorkflow('wf1') };
+        if (method === 'spaceAgent.list') return { agents: [] };
+        if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [] };
+        if (method === 'spaceWorkflow.listBuiltInTemplates') return { workflows: [] };
+        if (method === 'spaceLongHorizonAgent.list') return { agents: [] };
+        if (method === 'spaceLongHorizonAgent.listBuiltInTemplates') return { templates: [] };
+        return {};
+      });
+
+      await spaceStore.ensureConfigData();
+      await spaceStore.ensureWorkflowDetails();
+      // Immediate return after scheduling retry; not loaded yet.
+      expect(spaceStore.workflowDetailsLoaded.value).toBe(false);
+
+      for (let i = 0; i < 10 && !spaceStore.workflowDetailsLoaded.value; i += 1) {
+        await vi.runOnlyPendingTimersAsync();
+      }
+
+      expect(summaryAttempts).toBeGreaterThanOrEqual(3);
+      expect(spaceStore.workflowDetailsLoaded.value).toBe(true);
+      expect(spaceStore.workflowDetails.value.map((w) => w.id)).toEqual(['wf1']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('marks workflow details loaded after summary retry exhaustion', async () => {
+    vi.useFakeTimers();
+    try {
+      await spaceStore.selectSpace('space-1');
+      mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+        if (method === 'space.overview') {
+          return { space: makeSpace('space-1'), tasks: [], workflowRuns: [], sessions: [] };
+        }
+        if (method === 'spaceWorkflow.list') throw new Error('summary fetch failed');
+        if (method === 'spaceAgent.list') return { agents: [] };
+        if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [] };
+        if (method === 'spaceWorkflow.listBuiltInTemplates') return { workflows: [] };
+        if (method === 'spaceLongHorizonAgent.list') return { agents: [] };
+        if (method === 'spaceLongHorizonAgent.listBuiltInTemplates') return { templates: [] };
+        return {};
+      });
+
+      await spaceStore.ensureConfigData();
+      await spaceStore.ensureWorkflowDetails();
+      for (let i = 0; i < 10; i += 1) {
+        await vi.runOnlyPendingTimersAsync();
+      }
+
+      expect(spaceStore.workflowDetailsLoaded.value).toBe(true);
+      expect(spaceStore.workflowDetails.value).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not let a stale retry timer clear the current retry-pending flag', async () => {
+    vi.useFakeTimers();
+    try {
+      mockWorkflowSummaries(['wf1']);
+      await spaceStore.selectSpace('space-1');
+      await spaceStore.ensureConfigData();
+      mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+        if (method === 'spaceWorkflow.get') return null;
+        return {};
+      });
+
+      await spaceStore.ensureWorkflowDetails();
+      expect(
+        (spaceStore as unknown as { workflowDetailsRetryPending: boolean })
+          .workflowDetailsRetryPending
+      ).toBe(true);
+
+      // Simulate a space/generation switch invalidating the queued timer, then
+      // a fresh retry being scheduled for the new space.
+      (
+        spaceStore as unknown as { workflowDetailsLoadGeneration: number }
+      ).workflowDetailsLoadGeneration += 1;
+      (
+        spaceStore as unknown as { workflowDetailsRetryPending: boolean }
+      ).workflowDetailsRetryPending = true;
+
+      await vi.runOnlyPendingTimersAsync();
+
+      // Stale timer fired but must not have cleared the current pending flag.
+      expect(
+        (spaceStore as unknown as { workflowDetailsRetryPending: boolean })
+          .workflowDetailsRetryPending
+      ).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('restarts pending workflow-detail retry on reconnect', async () => {
+    mockWorkflowSummaries(['wf1']);
+    await spaceStore.selectSpace('space-1');
+    await spaceStore.ensureConfigData();
+    mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+      if (method === 'spaceWorkflow.get') return null;
+      return {};
+    });
+    await spaceStore.ensureWorkflowDetails();
+    expect(spaceStore.workflowDetailsLoaded.value).toBe(false);
+
+    mockWorkflowSummaries(['wf1']);
+    await spaceStore.refresh();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(spaceStore.workflowDetailsLoaded.value).toBe(true);
+    expect(spaceStore.workflowDetails.value.map((w) => w.id)).toEqual(['wf1']);
+  });
+
+  it('preserves workflows created concurrently during fan-out', async () => {
+    mockWorkflowSummaries(['wf1']);
+    await spaceStore.selectSpace('space-1');
+    await spaceStore.ensureConfigData();
+
+    const base = mockHub.request.getMockImplementation();
+    let injected = false;
+    mockHub.request.mockImplementation(
+      async (method: string, params?: Record<string, unknown>): Promise<any> => {
+        const result = base ? await base(method, params) : {};
+        if (!injected && method === 'spaceWorkflow.get') {
+          injected = true;
+          // Simulate another client creating a workflow mid-fetch: the
+          // spaceWorkflow.created event handler would add both summary and
+          // detail for the new workflow.
+          const newSummary = makeWorkflowSummary('wf-new');
+          const newDetail = makeWorkflow('wf-new');
+          spaceStore.workflows.value = [...spaceStore.workflows.value, newSummary];
+          spaceStore.workflowDetails.value = [...spaceStore.workflowDetails.value, newDetail];
+        }
+        return result;
+      }
+    );
+
+    await spaceStore.ensureWorkflowDetails();
+
+    const ids = spaceStore.workflowDetails.value.map((w) => w.id).sort();
+    expect(ids).toEqual(['wf-new', 'wf1']);
+    expect(spaceStore.workflowDetailsLoaded.value).toBe(true);
+  });
+
+  it('prefers event-updated workflow details over stale fetch responses', async () => {
+    mockWorkflowSummaries(['wf1']);
+    await spaceStore.selectSpace('space-1');
+    await spaceStore.ensureConfigData();
+
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    mockHub.request.mockImplementation(
+      async (method: string, params?: Record<string, unknown>): Promise<any> => {
+        if (method === 'spaceWorkflow.get') {
+          await gate;
+          return { workflow: makeWorkflow((params?.id as string) ?? 'wf1') };
+        }
+        return {};
+      }
+    );
+
+    const pending = spaceStore.ensureWorkflowDetails();
+    const updatedWorkflow = { ...makeWorkflow('wf1'), name: 'Updated by event' };
+    fireMockEvent('spaceWorkflow.updated', {
+      sessionId: 'session-1',
+      spaceId: 'space-1',
+      workflow: updatedWorkflow,
+    });
+    release();
+    await pending;
+
+    expect(spaceStore.workflowDetails.value).toHaveLength(1);
+    expect(spaceStore.workflowDetails.value[0]?.name).toBe('Updated by event');
+  });
+
+  it('drops stale workflow detail batches when load generation changes mid-fetch', async () => {
+    mockWorkflowSummaries(['wf1']);
+    await spaceStore.selectSpace('space-1');
+    await spaceStore.ensureConfigData();
+
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    mockHub.request.mockImplementation(
+      async (method: string, params?: Record<string, unknown>): Promise<any> => {
+        if (method === 'spaceWorkflow.get') {
+          await gate;
+          return { workflow: makeWorkflow((params?.id as string) ?? 'wf1') };
+        }
+        return {};
+      }
+    );
+
+    const pending = spaceStore.ensureWorkflowDetails();
+    (
+      spaceStore as unknown as { workflowDetailsLoadGeneration: number }
+    ).workflowDetailsLoadGeneration += 1;
+    release();
+    await pending;
+
+    expect(spaceStore.workflowDetails.value).toEqual([]);
+    expect(spaceStore.workflowDetailsLoaded.value).toBe(false);
+  });
+});
+
 describe('SpaceStore — promise-chain lock', () => {
   beforeEach(resetStore);
   afterEach(() => vi.clearAllMocks());
@@ -1862,6 +2339,29 @@ describe('SpaceStore — refresh', () => {
   });
   afterEach(() => vi.clearAllMocks());
 
+  function mockWorkflowSummaries(ids: string[]) {
+    mockHub.request.mockImplementation(
+      async (method: string, params?: Record<string, unknown>): Promise<any> => {
+        if (method === 'space.overview') {
+          const spaceId = (params?.spaceId as string) ?? 'space-1';
+          return { space: makeSpace(spaceId), tasks: [], workflowRuns: [], sessions: [] };
+        }
+        if (method === 'spaceWorkflow.list') {
+          return { workflows: ids.map((id) => makeWorkflowSummary(id)) };
+        }
+        if (method === 'spaceWorkflow.get') {
+          return { workflow: makeWorkflow((params?.id as string) ?? 'wf1') };
+        }
+        if (method === 'spaceAgent.list') return { agents: [] };
+        if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [] };
+        if (method === 'spaceWorkflow.listBuiltInTemplates') return { workflows: [] };
+        if (method === 'spaceLongHorizonAgent.list') return { agents: [] };
+        if (method === 'spaceLongHorizonAgent.listBuiltInTemplates') return { templates: [] };
+        return {};
+      }
+    );
+  }
+
   it('re-initializes global list on reconnect when previously initialized', async () => {
     await spaceStore.initGlobalList();
     mockHub.request.mockClear();
@@ -1895,6 +2395,34 @@ describe('SpaceStore — refresh', () => {
     await spaceStore.refresh();
 
     expect(mockHub.request).not.toHaveBeenCalledWith('space.overview', expect.anything());
+  });
+
+  it('does not re-fetch workflow details on reconnect when they were never loaded', async () => {
+    mockWorkflowSummaries(['wf1']);
+    await spaceStore.selectSpace('space-1');
+    await spaceStore.ensureConfigData();
+    mockHub.request.mockClear();
+
+    await spaceStore.refresh();
+    // Let the fire-and-forget re-fetch chain settle.
+    await new Promise((r) => setTimeout(r, 0));
+
+    const gets = mockHub.request.mock.calls.filter((c) => (c[0] as string) === 'spaceWorkflow.get');
+    expect(gets).toHaveLength(0);
+  });
+
+  it('re-fetches workflow details on reconnect when they had been loaded', async () => {
+    mockWorkflowSummaries(['wf1']);
+    await spaceStore.selectSpace('space-1');
+    await spaceStore.ensureConfigData();
+    await spaceStore.ensureWorkflowDetails();
+    mockHub.request.mockClear();
+
+    await spaceStore.refresh();
+    await new Promise((r) => setTimeout(r, 0));
+
+    const gets = mockHub.request.mock.calls.filter((c) => (c[0] as string) === 'spaceWorkflow.get');
+    expect(gets).toHaveLength(1);
   });
 });
 

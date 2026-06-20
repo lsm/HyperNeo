@@ -24,6 +24,10 @@ let mockError = signal<string | null>(null);
 let mockSpace = signal<Space | null>(null);
 let mockWorkflows = signal<SpaceWorkflow[]>([]);
 let mockAgents = signal<SpaceAgent[]>([]);
+let mockStoreSpaceId = signal<string | null>('space-1');
+let mockConfigDataLoaded = signal(true);
+const mockEnsureConfigData = vi.fn().mockResolvedValue(undefined);
+const mockEnsureWorkflowDetails = vi.fn().mockResolvedValue(undefined);
 
 const mockSelectSpace = vi.fn().mockResolvedValue(undefined);
 
@@ -200,6 +204,7 @@ vi.mock('../../components/space/SpaceSessionsPage', () => ({
 
 vi.mock('../../components/space/SpaceAgentList', () => ({
   SpaceAgentList: () => <div data-testid="space-agent-list" />,
+  getWorkerAgentsFromWorkflows: () => [],
 }));
 
 vi.mock('../../components/space/SpaceLongHorizonAgents', () => ({
@@ -236,15 +241,19 @@ vi.mock('../../lib/space-store', () => ({
     return {
       loading: mockLoading,
       error: mockError,
+      spaceId: mockStoreSpaceId,
       space: mockSpace,
       workflows: mockWorkflows,
+      workflowDetails: mockWorkflows,
+      workflowDetailsLoaded: { value: true },
       agents: mockAgents,
       sessions: { value: [] },
       tasks: { value: [] },
       schedules: { value: [] },
       listSchedules: vi.fn().mockResolvedValue(undefined),
-      configDataLoaded: { value: true },
-      ensureConfigData: vi.fn().mockResolvedValue(undefined),
+      configDataLoaded: mockConfigDataLoaded,
+      ensureConfigData: mockEnsureConfigData,
+      ensureWorkflowDetails: mockEnsureWorkflowDetails,
       ensureNodeExecutions: vi.fn().mockResolvedValue(undefined),
       selectSpace: mockSelectSpace,
       workflowVersions: signal(new Map()),
@@ -326,6 +335,8 @@ beforeEach(() => {
   mockSpace = signal(makeSpace());
   mockWorkflows = signal([makeWorkflow()]);
   mockAgents = signal([]);
+  mockStoreSpaceId = signal('space-1');
+  mockConfigDataLoaded = signal(true);
   capturedVisualEditorProps = {};
   configureTabBridge.signal.value = 'agents';
   idBridge.signal.value = null;
@@ -336,6 +347,9 @@ beforeEach(() => {
   mockNavigateToSpaceTask.mockClear();
   mockCreateSession.mockClear();
   mockToastError.mockClear();
+  mockEnsureConfigData.mockClear();
+  mockEnsureConfigData.mockResolvedValue(undefined);
+  mockEnsureWorkflowDetails.mockClear();
 });
 
 afterEach(() => {
@@ -419,6 +433,56 @@ describe('SpaceIsland — configure workflow editor', () => {
     expect(getByTestId('space-configure-tab-agents')).toBeTruthy();
     expect(getByTestId('space-configure-tab-workflows')).toBeTruthy();
     expect(getByTestId('space-configure-tab-settings')).toBeTruthy();
+  });
+
+  it('loads workflow details only for the Agents configure tab', async () => {
+    configureTabBridge.signal.value = 'workflows';
+    await renderConfigure();
+    expect(mockEnsureWorkflowDetails).not.toHaveBeenCalled();
+
+    cleanup();
+    mockEnsureWorkflowDetails.mockClear();
+    configureTabBridge.signal.value = 'agents';
+    await renderConfigure();
+    await waitFor(() => {
+      expect(mockEnsureWorkflowDetails).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('cancels stale Agents-tab detail loads after tab switches', async () => {
+    let resolveConfig: () => void = () => {};
+    mockEnsureConfigData.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveConfig = resolve;
+        })
+    );
+    configureTabBridge.signal.value = 'agents';
+    const result = await renderConfigure();
+
+    fireEvent.click(result.getByTestId('space-configure-tab-workflows'));
+    resolveConfig();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(mockEnsureWorkflowDetails).not.toHaveBeenCalled();
+  });
+
+  it('does not load workflow details when config data failed to load', async () => {
+    let resolveConfig: () => void = () => {};
+    mockEnsureConfigData.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveConfig = resolve;
+        })
+    );
+    configureTabBridge.signal.value = 'agents';
+    await renderConfigure();
+
+    mockConfigDataLoaded.value = false;
+    resolveConfig();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(mockEnsureWorkflowDetails).not.toHaveBeenCalled();
   });
 
   it('opens the visual editor when creating a workflow', async () => {

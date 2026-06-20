@@ -183,8 +183,11 @@ class SpaceStore {
   /** Built-in long-horizon agent templates */
   readonly longHorizonAgentTemplates = signal<SpaceLongHorizonAgentTemplate[]>([]);
 
-  /** Workflow definitions for this space */
+  /** Workflow summaries for this space */
   readonly workflows = signal<SpaceWorkflowSummary[]>([]);
+
+  /** Full workflow definitions for configure views that need nodes */
+  readonly workflowDetails = signal<SpaceWorkflow[]>([]);
 
   /** Built-in workflow templates sourced from daemon seeding definitions */
   readonly workflowTemplates = signal<SpaceWorkflow[]>([]);
@@ -351,6 +354,21 @@ class SpaceStore {
    *  on invalidation events. Stale responses compare their captured generation
    *  against the current one and skip caching when they no longer match. */
   private workflowDetailFetchGens = new Map<string, number>();
+
+  /** Whether workflow summaries loaded successfully for the current space. */
+  private workflowSummariesLoaded = false;
+
+  /** Retry counter for partial workflow-detail fan-out failures. Reset when
+   *  details load successfully or the space changes. */
+  private workflowDetailsRetryCount = 0;
+
+  /** Whether a workflow-detail retry timeout is queued. */
+  private workflowDetailsRetryPending = false;
+
+  /** Generation for the bulk workflow-detail load. Incremented when reconnect
+   *  invalidates an in-flight fan-out so old promise cleanup cannot clobber the
+   *  replacement load. */
+  private workflowDetailsLoadGeneration = 0;
 
   /** Monotonic counter bumped on every spaceWorkflow.updated/deleted event so
    *  hooks keyed by workflowId can re-fetch when the same workflow is edited
@@ -614,6 +632,10 @@ class SpaceStore {
     this.longHorizonAgents.value = [];
     this.longHorizonAgentTemplates.value = [];
     this.workflows.value = [];
+    this.workflowSummariesLoaded = false;
+    this.workflowDetails.value = [];
+    this.workflowDetailsLoaded.value = false;
+    this.workflowDetailsPromise = null;
     this.workflowTemplates.value = [];
     this.nodeExecutions.value = [];
     this.runtimeState.value = null;
@@ -917,6 +939,7 @@ class SpaceStore {
         if (!exists) {
           this.workflows.value = [...this.workflows.value, workflowToSummary(event.workflow)];
         }
+        this.workflowDetails.value = [...this.workflowDetails.value, event.workflow];
       }
     });
     this.cleanupFunctions.push(unsubWorkflowCreated);
@@ -938,6 +961,16 @@ class SpaceStore {
           ];
         } else {
           this.workflows.value = [...this.workflows.value, summary];
+        }
+        const detailIdx = this.workflowDetails.value.findIndex((w) => w.id === event.workflow.id);
+        if (detailIdx >= 0) {
+          this.workflowDetails.value = [
+            ...this.workflowDetails.value.slice(0, detailIdx),
+            event.workflow,
+            ...this.workflowDetails.value.slice(detailIdx + 1),
+          ];
+        } else {
+          this.workflowDetails.value = [...this.workflowDetails.value, event.workflow];
         }
         // Evict cached detail, cancel any in-flight request, bump the fetch
         // generation so stale responses skip caching, and advance the version
@@ -964,6 +997,9 @@ class SpaceStore {
     }>('spaceWorkflow.deleted', (event) => {
       if (event.spaceId === spaceId) {
         this.workflows.value = this.workflows.value.filter((w) => w.id !== event.workflowId);
+        this.workflowDetails.value = this.workflowDetails.value.filter(
+          (w) => w.id !== event.workflowId
+        );
         this.workflowDetailCache.delete(event.workflowId);
         this.workflowDetailPromises.delete(event.workflowId);
         this.workflowDetailFetchGens.set(
@@ -1080,7 +1116,12 @@ class SpaceStore {
   }
 
   /**
-   * Fetch workflow definitions for the space
+   * Fetch workflow summaries for the space. Summaries back the WorkflowList tab
+   * and anywhere only workflow metadata is needed. Full definitions (nodes,
+   * agents) are loaded separately by {@link ensureWorkflowDetails} to avoid
+   * flooding the hub with one spaceWorkflow.get per workflow on every config
+   * data load (which is also triggered by SpaceTaskPane, TaskAuxiliaryPanel,
+   * SpaceGoals, SpaceLongHorizonAgents, and reconnect refreshes).
    */
   private async fetchWorkflows(
     hub: Awaited<ReturnType<typeof connectionManager.getHub>>,
@@ -1094,9 +1135,234 @@ class SpaceStore {
         }
       );
       this.workflows.value = result?.workflows ?? [];
+      this.workflowSummariesLoaded = true;
     } catch (err) {
       logger.error('Failed to fetch workflows:', err);
+      this.workflowSummariesLoaded = false;
     }
+  }
+
+  /**
+   * In-flight promise for ensureWorkflowDetails to dedupe concurrent callers.
+   */
+  private workflowDetailsPromise: Promise<void> | null = null;
+
+  /**
+   * Whether full workflow definitions have been loaded for the current space.
+   * Reset on space switch; only the Configure Agents view relies on this.
+   */
+  readonly workflowDetailsLoaded = signal<boolean>(false);
+
+  /**
+   * Bulk-load full workflow definitions (nodes + agent slots) for the Configure
+   * Agents view. Issues one spaceWorkflow.get per workflow — intentionally
+   * separated from ensureConfigData so summary-only consumers don't pay the
+   * cost. Idempotent: returns immediately if already loaded for this space.
+   * Callers: SpaceConfigurePage. Event handlers keep results fresh after load.
+   */
+  async ensureWorkflowDetails(): Promise<void> {
+    if (this.workflowDetailsLoaded.value) return;
+    if (this.workflowDetailsPromise) return this.workflowDetailsPromise;
+
+    const spaceId = this.spaceId.value;
+    if (!spaceId) return;
+
+    // Summary fetch failed inside ensureConfigData (other sub-fetches
+    // succeeded, so configDataLoaded still flipped to true). Don't leave the
+    // Agents tab on the loading spinner forever: retry the summary fetch with
+    // the same bounded backoff used for detail failures. If retries exhaust,
+    // mark details loaded so the empty state renders instead of spinning.
+    if (!this.workflowSummariesLoaded) {
+      this.retryWorkflowSummaries(spaceId);
+      return;
+    }
+
+    // Snapshot the workflow ids at request time so concurrent updates/deletes
+    // can be detected before assignment. Also snapshot current detail objects by
+    // reference; if a real-time event replaces an entry while the fan-out is in
+    // flight, its reference changes and we must prefer the event-updated version
+    // over the stale fetch response.
+    const requestedIds = new Set(this.workflows.value.map((workflow) => workflow.id));
+    const priorDetails = new Map<string, SpaceWorkflow>(
+      this.workflowDetails.value.map((workflow) => [workflow.id, workflow])
+    );
+
+    const loadGeneration = this.workflowDetailsLoadGeneration;
+
+    this.workflowDetailsPromise = (async (): Promise<void> => {
+      try {
+        // Clear cache + bump generations so every workflow gets a fresh RPC
+        // (reconnect/refresh path may have populated the cache from a prior
+        // load and we want to reflect server-side changes).
+        for (const id of requestedIds) {
+          this.workflowDetailCache.delete(id);
+          this.workflowDetailPromises.delete(id);
+          this.workflowDetailFetchGens.set(id, (this.workflowDetailFetchGens.get(id) ?? 0) + 1);
+        }
+        const results = await Promise.all(
+          [...requestedIds].map(async (id) => {
+            const detail = await this.fetchWorkflowDetail(id);
+            return { id, detail };
+          })
+        );
+        // Drop the batch if the space switched or reconnect invalidated this
+        // bulk-load generation while we were fetching.
+        if (
+          this.spaceId.value !== spaceId ||
+          this.workflowDetailsLoadGeneration !== loadGeneration
+        ) {
+          return;
+        }
+
+        // Merge instead of replace so workflows created/imported by other
+        // clients during fan-out (handled by spaceWorkflow.created above)
+        // are preserved. Only the requested ids are overwritten; any other
+        // entry already in workflowDetails stays untouched. If a workflow was
+        // updated by a real-time event during the fan-out, prefer the current
+        // (event-updated) entry over the stale fetch response.
+        const fetchedById = new Map<string, SpaceWorkflow>();
+        let missing = 0;
+        for (const { id, detail } of results) {
+          if (detail) {
+            fetchedById.set(id, detail);
+          } else if (
+            this.workflows.value.some((w) => w.id === id) &&
+            !this.workflowDetails.value.some((w) => w.id === id)
+          ) {
+            // Only count missing for workflows that are still present and have
+            // no usable prior detail. Workflows deleted during fan-out are
+            // dropped by the merge below; workflows already present from an
+            // earlier attempt can still render while retry continues.
+            missing += 1;
+          }
+        }
+        const merged: SpaceWorkflow[] = [];
+        const seen = new Set<string>();
+        for (const workflow of this.workflowDetails.value) {
+          // Drop entries no longer in the summary list (deleted).
+          if (!this.workflows.value.some((w) => w.id === workflow.id)) continue;
+          const fresh = fetchedById.get(workflow.id);
+          const wasUpdatedDuringFetch = workflow !== priorDetails.get(workflow.id);
+          if (wasUpdatedDuringFetch) {
+            merged.push(workflow);
+          } else if (fresh) {
+            merged.push(fresh);
+          } else {
+            merged.push(workflow);
+          }
+          seen.add(workflow.id);
+        }
+        // Append freshly fetched workflows not yet tracked (e.g. created
+        // concurrently — the created handler added the summary, but the
+        // full detail arrives via this batch).
+        for (const [id, detail] of fetchedById) {
+          if (!seen.has(id) && this.workflows.value.some((w) => w.id === id)) {
+            const current = this.workflowDetails.value.find((w) => w.id === id);
+            const wasUpdatedDuringFetch = current && current !== priorDetails.get(id);
+            merged.push(wasUpdatedDuringFetch ? current : detail);
+            seen.add(id);
+          }
+        }
+        this.workflowDetails.value = merged;
+        if (missing === 0) {
+          this.workflowDetailsLoaded.value = true;
+          this.workflowDetailsRetryCount = 0;
+          this.workflowDetailsRetryPending = false;
+        } else {
+          logger.error(`ensureWorkflowDetails: ${missing} workflow detail(s) failed to load`);
+          // Schedule a retry so transient RPC errors don't leave the Configure
+          // Agents tab stuck on the loading spinner forever. Cap retries to
+          // avoid hammering a permanently broken workflow.
+          const MAX_RETRIES = 5;
+          if (this.workflowDetailsRetryCount < MAX_RETRIES) {
+            const delay = 2 ** this.workflowDetailsRetryCount * 3000;
+            this.workflowDetailsRetryCount += 1;
+            this.workflowDetailsRetryPending = true;
+            setTimeout(() => {
+              // Only act if this timer still belongs to the current load. A
+              // stale timer from a prior space/generation must not clear the
+              // current pending flag — otherwise reconnect sees no pending
+              // work and skips refetching details for the active space.
+              if (
+                this.spaceId.value === spaceId &&
+                this.workflowDetailsLoadGeneration === loadGeneration
+              ) {
+                this.workflowDetailsRetryPending = false;
+                if (!this.workflowDetailsLoaded.value) {
+                  this.ensureWorkflowDetails().catch(() => {});
+                }
+              }
+            }, delay);
+          } else {
+            // Exhausted retries: mark loaded so the UI shows what we have
+            // rather than spinning indefinitely.
+            this.workflowDetailsLoaded.value = true;
+            this.workflowDetailsRetryCount = 0;
+            this.workflowDetailsRetryPending = false;
+          }
+        }
+      } catch (err) {
+        logger.error('Failed to fetch workflow details:', err);
+        if (this.spaceId.value === spaceId) this.workflowDetails.value = [];
+      } finally {
+        if (this.workflowDetailsLoadGeneration === loadGeneration) {
+          this.workflowDetailsPromise = null;
+        }
+      }
+    })();
+
+    return this.workflowDetailsPromise;
+  }
+
+  /**
+   * Bounded retry of the workflow summary fetch when it failed inside
+   * ensureConfigData. The summary fetch is the precondition for the detail
+   * fan-out — without it the Agents tab would spin forever. Reuses the same
+   * retry budget as {@link ensureWorkflowDetails} so exhaustion semantics are
+   * consistent: once retries run out, mark details loaded so the empty state
+   * renders rather than the loading spinner.
+   */
+  private retryWorkflowSummaries(spaceId: string): void {
+    const loadGeneration = this.workflowDetailsLoadGeneration;
+    const MAX_RETRIES = 5;
+    if (this.workflowDetailsRetryCount >= MAX_RETRIES) {
+      this.workflowDetailsLoaded.value = true;
+      this.workflowDetailsRetryCount = 0;
+      this.workflowDetailsRetryPending = false;
+      return;
+    }
+    const delay = 2 ** this.workflowDetailsRetryCount * 3000;
+    this.workflowDetailsRetryCount += 1;
+    this.workflowDetailsRetryPending = true;
+    setTimeout(() => {
+      if (this.spaceId.value !== spaceId || this.workflowDetailsLoadGeneration !== loadGeneration) {
+        return;
+      }
+      this.workflowDetailsRetryPending = false;
+      // Reset config flags so ensureConfigData re-fetches instead of
+      // short-circuiting on the prior (partially-failed) load.
+      this.configDataLoaded.value = false;
+      this.configDataPromise = null;
+      this.ensureConfigData()
+        .then(() => {
+          if (
+            this.spaceId.value !== spaceId ||
+            this.workflowDetailsLoadGeneration !== loadGeneration
+          ) {
+            return;
+          }
+          if (this.workflowSummariesLoaded) {
+            if (!this.workflowDetailsLoaded.value) {
+              this.workflowDetailsRetryCount = 0;
+              this.ensureWorkflowDetails().catch(() => {});
+            }
+          } else {
+            // Summary fetch failed again; schedule another bounded retry.
+            this.retryWorkflowSummaries(spaceId);
+          }
+        })
+        .catch(() => {});
+    }, delay);
   }
 
   /**
@@ -1182,6 +1448,9 @@ class SpaceStore {
     this.workflowDetailCache.clear();
     this.workflowDetailPromises.clear();
     this.workflowDetailFetchGens.clear();
+    this.workflowDetailsRetryCount = 0;
+    this.workflowDetailsRetryPending = false;
+    this.workflowDetailsLoadGeneration += 1;
   }
 
   /**
@@ -1663,23 +1932,45 @@ class SpaceStore {
     // Track what was loaded before reconnect so we can re-fetch it
     const hadConfigData = this.configDataLoaded.value;
     const hadNodeExec = this.nodeExecLoaded.value;
+    const hadWorkflowDetails = this.workflowDetailsLoaded.value;
+    const hadWorkflowDetailsPending =
+      this.workflowDetailsPromise !== null || this.workflowDetailsRetryPending;
 
     // Reset lazy-load flags so ensureX methods will re-fetch
     this.configDataLoaded.value = false;
     this.configDataPromise = null;
     this.nodeExecLoaded.value = false;
     this.nodeExecPromise = null;
+    // workflowDetails may have drifted while disconnected; event handlers
+    // were torn down with the old hub. Reset so the Configure Agents view
+    // re-fetches on next mount.
+    this.workflowDetailsLoaded.value = false;
+    this.workflowDetailsPromise = null;
+    this.workflowDetailsRetryPending = false;
+    this.workflowDetailsLoadGeneration += 1;
     this.sessions.value = [];
     this.disposeSpaceSessionsSubscription();
 
     try {
       await this.fetchAndResolveSpace(spaceId);
       await this.startSubscriptions(spaceId);
-      // Re-fetch previously loaded data in background
+      // Re-fetch previously loaded data in background. Only re-fetch workflow
+      // details if they had actually been loaded before reconnect, so summary-
+      // only consumers (task panes, goals, long-horizon agents) don't pay the
+      // per-workflow detail cost on reconnect.
       if (hadConfigData) {
         this.ensureConfigData().catch((err) => {
           logger.error('Failed to refresh config data:', err);
         });
+      }
+      if (hadWorkflowDetails || hadWorkflowDetailsPending) {
+        this.ensureConfigData()
+          .then(() => {
+            if (this.configDataLoaded.value) return this.ensureWorkflowDetails();
+          })
+          .catch((err) => {
+            logger.error('Failed to refresh workflow details:', err);
+          });
       }
       if (hadNodeExec) {
         this.ensureNodeExecutions().catch((err) => {
