@@ -36,8 +36,15 @@ function titleCaseName(name: string): string {
     .join(' ');
 }
 
-function describeAgent(name: string, slot: WorkflowNodeAgent): string {
-  const prompt = slot.customPrompt?.value?.trim();
+function expandPrompt(basePrompt?: string | null, slotPrompt?: string | null): string {
+  const base = basePrompt?.trim();
+  const slot = slotPrompt?.trim();
+  if (base && slot) return `${base}\n\n${slot}`;
+  return base || slot || '';
+}
+
+function describeAgent(name: string, slot: WorkflowNodeAgent, basePrompt?: string | null): string {
+  const prompt = expandPrompt(basePrompt, slot.customPrompt?.value);
   if (prompt) return prompt;
   return DEFAULT_WORKER_DESCRIPTIONS[name.toLowerCase()] ?? `${titleCaseName(name)} worker agent.`;
 }
@@ -88,17 +95,16 @@ export function getWorkerAgentsFromWorkflows(workflows: SpaceWorkflow[]): Worker
           };
           agentsByKey.set(key, agent);
         }
-        if (slot.customPrompt?.value?.trim()) {
-          agent.description = slot.customPrompt.value.trim();
-        } else if (!agent.description) {
-          agent.description = describeAgent(name, slot);
+        const baseAgent = baseAgents.get(agentId);
+        const description = describeAgent(name, slot, baseAgent?.customPrompt);
+        if (description) {
+          agent.description = description;
         }
 
         for (const permission of getToolPermissions(slot)) {
           if (!agent.toolPermissions.includes(permission)) agent.toolPermissions.push(permission);
         }
 
-        const baseAgent = baseAgents.get(agentId);
         for (const tool of baseAgent?.tools ?? []) {
           if (!agent.toolPermissions.includes(tool)) agent.toolPermissions.push(tool);
         }

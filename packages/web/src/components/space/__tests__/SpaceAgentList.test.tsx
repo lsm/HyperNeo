@@ -343,6 +343,78 @@ describe('SpaceAgentList', () => {
     expect(getByText('Node B prompt')).toBeTruthy();
   });
 
+  it('uses base agent prompt when slot does not override it', () => {
+    mockAgents.value = [
+      {
+        id: 'coder-agent',
+        spaceId: 'space-1',
+        name: 'Coder',
+        handle: 'coder',
+        customPrompt: 'Base coder behavior.',
+        tools: [],
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      },
+    ];
+    mockWorkflowDetails.value = [
+      makeWorkflow({
+        nodes: [
+          {
+            id: 'node-1',
+            name: 'Code',
+            agents: [{ agentId: 'coder-agent', name: 'coder' }],
+          },
+        ],
+      }),
+    ];
+
+    const { getByText, queryByText } = render(<SpaceAgentList />);
+
+    expect(getByText('Base coder behavior.')).toBeTruthy();
+    expect(queryByText('Coder worker agent.')).toBeNull();
+  });
+
+  it('combines base and slot prompts for worker description', () => {
+    mockAgents.value = [
+      {
+        id: 'coder-agent',
+        spaceId: 'space-1',
+        name: 'Coder',
+        handle: 'coder',
+        customPrompt: 'Base coder behavior.',
+        tools: [],
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      },
+    ];
+    mockWorkflowDetails.value = [
+      makeWorkflow({
+        nodes: [
+          {
+            id: 'node-1',
+            name: 'Code',
+            agents: [
+              {
+                agentId: 'coder-agent',
+                name: 'coder',
+                customPrompt: { value: 'Slot-specific override.' },
+              },
+            ],
+          },
+        ],
+      }),
+    ];
+
+    const { getByText, queryByText } = render(<SpaceAgentList />);
+
+    expect(
+      getByText(
+        (_, element) => element?.textContent === 'Base coder behavior.\n\nSlot-specific override.'
+      )
+    ).toBeTruthy();
+    expect(queryByText('Slot-specific override.')).toBeNull();
+  });
+
   it('includes base agent tools in tool permissions', () => {
     mockAgents.value = [
       {
