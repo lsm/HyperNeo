@@ -39,7 +39,7 @@ export interface EvidenceQualityScoreInput {
   availableScopeEvidence?: EvidenceRef[];
 }
 
-const TASK_EVIDENCE_KINDS = new Set(['task', 'task_result']);
+const TASK_EVIDENCE_KINDS = new Set(['task', 'task_result', 'friction_digest']);
 const RUNTIME_ERROR_EVIDENCE_KINDS = new Set([
   'error',
   'daemon_error',
