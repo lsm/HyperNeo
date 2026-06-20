@@ -215,6 +215,7 @@ function createMockRuntimeService(): SpaceRuntimeService {
     })),
     notifyGateDataChanged: mock(async () => {}),
     notifyRunBlocked: mock(async () => {}),
+    notifyRunResumed: mock(() => {}),
     start: mock(() => {}),
     stop: mock(() => {}),
   } as unknown as SpaceRuntimeService;

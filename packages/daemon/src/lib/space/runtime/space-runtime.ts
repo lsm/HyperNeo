@@ -48,6 +48,7 @@ import { KNOWN_SOURCES, validateGlobPattern } from '../../external-events/topic-
 import { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
 import { normalizeMeaningfulTaskResult } from '../task-result-utils';
 import { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
+import { WorkflowHookStateRepository } from '../../../storage/repositories/workflow-hook-state-repository';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository';
 import { SDKMessageRepository } from '../../../storage/repositories/sdk-message-repository';
@@ -1485,7 +1486,13 @@ export class SpaceRuntime {
     // to re-open the gate and unblock the workflow. Filtering on
     // `hasActiveExecutionForRun` here would leave such runs dark until the
     // 5-min poll cycle.
-    this.fireBlockedRunExternalEventHook(payload, allMatches);
+    //
+    // Awaiting the hook here also prevents the deduper from terminally
+    // marking the event `ignored` if the hook is still in flight when the
+    // delivery filter below finds zero deliverable targets — without this,
+    // a daemon crash between the fire-and-forget dispatch and gate
+    // re-evaluation would lose the only wake-up event for a blocked run.
+    const blockedHookRunIds = await this.fireBlockedRunExternalEventHook(payload, allMatches);
 
     const matches = allMatches.filter((target) => {
       if (isLongHorizonSubscriptionTarget(target)) return target.spaceId === payload.spaceId;
@@ -1496,7 +1503,11 @@ export class SpaceRuntime {
     });
 
     if (matches.length === 0) {
-      if (this.acceptingExternalEvents) {
+      // If the blocked-run hook fired for any target, leave the event
+      // published rather than marking it ignored — the hook may still
+      // open a gate and trigger delivery of follow-up state. Marking
+      // ignored here would dedupe-and-drop the only wake-up event.
+      if (this.acceptingExternalEvents && blockedHookRunIds.size === 0) {
         store.markEventIgnored(payload.eventId, 'no_matching_subscriptions');
       }
       return;
@@ -1584,13 +1595,21 @@ export class SpaceRuntime {
     }
   }
 
-  private fireBlockedRunExternalEventHook(
+  /**
+   * Returns the set of runIds the hook was actually fired for (after all
+   * guards). Caller uses this to decide whether to terminally mark the event
+   * `ignored` — if a hook is in flight, the event must stay `published` so the
+   * deduper can retry it should the hook fail before re-evaluation completes.
+   */
+  private async fireBlockedRunExternalEventHook(
     payload: ExternalEventPublishedPayload,
     matches: SubscriptionTarget[]
-  ): void {
+  ): Promise<Set<string>> {
     const hook = this.config.onBlockedRunExternalEvent;
-    if (!hook) return;
+    const firedRunIds = new Set<string>();
+    if (!hook) return firedRunIds;
     const visitedRunIds = new Set<string>();
+    const inflight: Array<Promise<void>> = [];
     for (const target of matches) {
       if (isLongHorizonSubscriptionTarget(target)) continue;
       const runId = target.workflowRunId;
@@ -1601,15 +1620,18 @@ export class SpaceRuntime {
       // even when both runs auto-subscribed to the same GitHub PR.
       if (!run || run.status !== 'blocked' || run.spaceId !== payload.spaceId) continue;
       visitedRunIds.add(runId);
+      firedRunIds.add(runId);
       try {
         const result = hook({ runId, event: payload });
-        if (result && typeof (result as Promise<void>).catch === 'function') {
-          (result as Promise<void>).catch((err) => {
-            log.warn(
-              `SpaceRuntime: onBlockedRunExternalEvent failed for run ${runId}: ` +
-                `${err instanceof Error ? err.message : String(err)}`
-            );
-          });
+        if (result && typeof (result as Promise<void>).then === 'function') {
+          inflight.push(
+            (result as Promise<void>).catch((err) => {
+              log.warn(
+                `SpaceRuntime: onBlockedRunExternalEvent failed for run ${runId}: ` +
+                  `${err instanceof Error ? err.message : String(err)}`
+              );
+            })
+          );
         }
       } catch (err) {
         log.warn(
@@ -1618,6 +1640,10 @@ export class SpaceRuntime {
         );
       }
     }
+    if (inflight.length > 0) {
+      await Promise.all(inflight);
+    }
+    return firedRunIds;
   }
 
   private async deliverToLongHorizonAgent(
@@ -3366,12 +3392,13 @@ export class SpaceRuntime {
         // fires first wins, the other becomes a no-op.
         await this.recoverStalledRuns();
         this.rehydrated = true;
-        this.acceptingExternalEvents = true;
         // Give the service a chance to rebuild in-memory subscriptions
-        // (e.g. PR-event auto-subs for blocked runs) BEFORE the redispatch
-        // sweep re-processes crash-pending events. Without this, the first
-        // post-restart redispatch sees an empty topic trie and marks PR
-        // events as ignored, breaking the event-driven gate-eval path.
+        // (e.g. PR-event auto-subs for blocked runs) BEFORE both:
+        //   - flipping `acceptingExternalEvents` to true
+        //   - running the redispatch sweep
+        // Otherwise a PR event landing during the rebuild window sees an
+        // empty topic trie and is terminally marked `ignored`, breaking
+        // the event-driven gate-eval path on the first post-restart tick.
         if (this.config.onBeforeRedispatch) {
           try {
             await this.config.onBeforeRedispatch();
@@ -3381,6 +3408,7 @@ export class SpaceRuntime {
             );
           }
         }
+        this.acceptingExternalEvents = true;
         this.redispatchPublishedEventsWithoutDeliveries();
       }
 
@@ -6327,6 +6355,24 @@ export class SpaceRuntime {
     } catch (err) {
       log.warn(
         `SpaceRuntime.resolvePrUrlForRun: failed to read gate data for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+
+    // Scan workflow hook state next so `pr_ready` hook state (which persists
+    // `pr_url` after a successful send_message) is picked up even when the
+    // gate schema does not declare `pr_url` (e.g. Review→QA approval gate).
+    try {
+      const hookStateRepo = new WorkflowHookStateRepository(this.config.db);
+      const hookStates = hookStateRepo
+        .listByRun(runId)
+        .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+      for (const snapshot of hookStates) {
+        const candidate = fromData(snapshot.localState);
+        if (candidate) return candidate;
+      }
+    } catch (err) {
+      log.warn(
+        `SpaceRuntime.resolvePrUrlForRun: failed to read hook state for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
       );
     }
 

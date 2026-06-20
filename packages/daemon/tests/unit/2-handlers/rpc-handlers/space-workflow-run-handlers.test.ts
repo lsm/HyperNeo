@@ -202,6 +202,8 @@ function createMockRuntimeService(
       return runtime;
     }),
     cancelWorkflowRun: mock(async () => ({ ...mockRun, status: 'cancelled' as const })),
+    notifyRunBlocked: mock(async () => {}),
+    notifyRunResumed: mock(() => {}),
     start: mock(() => {}),
     stop: mock(() => {}),
     stopRuntime: mock(() => {}),

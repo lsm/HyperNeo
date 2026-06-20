@@ -39,6 +39,7 @@ import type { SpaceWorkflowRepository } from '../../../storage/repositories/spac
 import type { SpaceAgentInboxRepository } from '../../../storage/repositories/space-agent-inbox-repository';
 import { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
+import { WorkflowHookStateRepository } from '../../../storage/repositories/workflow-hook-state-repository';
 import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
 import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository';
@@ -1946,11 +1947,12 @@ export class SpaceRuntimeService {
    * the run is currently `blocked`, also fires the full resume chain
    * (transitionBlockedRunToInProgress + notify session) so the deferred retry
    * path does not silently leave the workflow stuck despite the open gate.
+   *
+   * Public so TaskAgentManager's nodeAgentChannelRouter can route deferred
+   * retries through the same chain — otherwise the retry fires
+   * `router.onGateDataChanged` directly and only hits this hook.
    */
-  private async handleGateDataChangedComplete(
-    runId: string,
-    activatedTasks: SpaceTask[]
-  ): Promise<void> {
+  async handleGateDataChangedComplete(runId: string, activatedTasks: SpaceTask[]): Promise<void> {
     await this.syncBlockedRunPrEventSubscription(runId, activatedTasks);
     if (activatedTasks.length > 0) {
       const run = this.config.workflowRunRepo.getRun(runId);
@@ -1970,6 +1972,27 @@ export class SpaceRuntimeService {
    * Delegates to {@link SpaceRuntime.notifyRunBlocked} which performs the
    * actual prUrl resolution and topic-trie registration. Idempotent.
    */
+  /**
+   * Public entry point for code paths that transition a workflow run out of
+   * `blocked` via direct `workflowRunRepo.transitionStatus(...)` calls
+   * (resume RPC, approval-after-rejection). Sweeps any persisted PR-event
+   * auto-subscription so subsequent PR events do not keep re-evaluating gates
+   * for an active run that only needed the subscription while it was blocked.
+   *
+   * Delegates to {@link SpaceRuntime.clearPrEventSubscriptionsForRun} which is
+   * safe to call regardless of whether a subscription was actually
+   * registered. Idempotent.
+   */
+  notifyRunResumed(runId: string): void {
+    try {
+      this.runtime.clearPrEventSubscriptionsForRun(runId);
+    } catch (err) {
+      log.warn(
+        `SpaceRuntimeService: notifyRunResumed failed for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  }
+
   async notifyRunBlocked(runId: string): Promise<void> {
     try {
       const result = this.runtime.notifyRunBlocked(runId);
@@ -2309,6 +2332,26 @@ export class SpaceRuntimeService {
     } catch (err) {
       log.warn(
         `SpaceRuntimeService.resolvePrUrlForRun: failed to read gate data for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+
+    // Scan workflow hook state next. `pr_ready` hooks persist `pr_url` in
+    // localState after a successful send_message handoff (see
+    // workflow-hook-engine.ts); without this scan the resolver cannot find
+    // PR URLs for review-approval-gate when that gate's schema does not
+    // declare `pr_url` (the typical Review→QA handoff case).
+    try {
+      const hookStateRepo = new WorkflowHookStateRepository(this.config.db);
+      const hookStates = hookStateRepo
+        .listByRun(runId)
+        .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+      for (const snapshot of hookStates) {
+        const candidate = fromData(snapshot.localState);
+        if (candidate) return candidate;
+      }
+    } catch (err) {
+      log.warn(
+        `SpaceRuntimeService.resolvePrUrlForRun: failed to read hook state for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
       );
     }
 

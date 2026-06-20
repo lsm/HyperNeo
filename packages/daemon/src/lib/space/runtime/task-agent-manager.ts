@@ -1678,11 +1678,10 @@ export class TaskAgentManager {
         onGatePendingApproval: (runId, gateId) =>
           this.config.spaceRuntimeService.handleGatePendingApproval(runId, gateId),
         onGateDataChangedComplete: (runId, _gateId, activatedTasks) => {
-          // Same deferred-retry coverage as the nodeAgentChannelRouter wiring.
-          void this.config.spaceRuntimeService.syncBlockedRunPrEventSubscription(
-            runId,
-            activatedTasks
-          );
+          // Same full post-eval chain as the service-level notifyGateDataChanged
+          // (sync + resume when activated) so the deferred-retry path picks up
+          // gate openings the same way as immediate invocations.
+          void this.config.spaceRuntimeService.handleGateDataChangedComplete(runId, activatedTasks);
         },
         getPrUrlForRun: (runId) => this.resolvePrUrlForRun(runId),
       });
@@ -3621,12 +3620,10 @@ export class TaskAgentManager {
         // schedules a refresh via gateRetryScheduler, the retry fires
         // router.onGateDataChanged directly and bypasses the service-level
         // post-hook wired in onGateDataChanged above. Route those retry
-        // completions through the same sync so PR auto-subscriptions are
-        // created/cleared consistently.
-        void this.config.spaceRuntimeService.syncBlockedRunPrEventSubscription(
-          runId,
-          activatedTasks
-        );
+        // completions through the same full post-eval chain (sync + resume
+        // when activated) so a deferred gate opening does not leave the
+        // workflow stuck in `blocked`.
+        void this.config.spaceRuntimeService.handleGateDataChangedComplete(runId, activatedTasks);
       },
       getPrUrlForRun: (runId) => this.resolvePrUrlForRun(runId),
     });
