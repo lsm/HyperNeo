@@ -835,6 +835,11 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       log.error('schedule recovery after space resume failed (non-fatal)', err);
     }
     spaceRuntimeService.recoverStalledWorkflowRunsAfterSpaceResume(spaceId);
+    // Rebuild PR auto-subscriptions for any blocked runs in the resumed space.
+    // The startup rehydrate skips paused spaces, so without this call the
+    // resumed space's blocked runs would have no PR-event subscription until
+    // some other gate write happens.
+    spaceRuntimeService.rehydrateBlockedRunPrEventSubscriptionsForSpace(spaceId);
   });
 
   setupSpaceAgentHandlers(

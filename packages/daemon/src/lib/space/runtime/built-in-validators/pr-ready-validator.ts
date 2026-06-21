@@ -9,6 +9,7 @@
 import type { WorkflowHookResult } from '@neokai/shared';
 import type { HookExecutorContext } from '../hook-executor';
 import { collectWithMaxBuffer, parseJsonStdout } from '../gate-script-executor';
+import { parsePrUrl } from '../parse-pr-url';
 import {
   computeRateLimitRetryMs,
   isRateLimitError,
@@ -336,14 +337,6 @@ function extractPrUrlFromParams(params: Record<string, unknown>): string | undef
     return (data as Record<string, unknown>).pr_url as string;
   }
   return undefined;
-}
-
-function parsePrUrl(
-  url: string
-): { host: string; owner: string; repo: string; number: string } | null {
-  const match = url.match(/^https?:\/\/([^/]+)\/([^/]+)\/([^/]+)\/pull\/([0-9]+)/);
-  if (!match) return null;
-  return { host: match[1], owner: match[2], repo: match[3], number: match[4] };
 }
 
 async function runReviewThreadsQuery(

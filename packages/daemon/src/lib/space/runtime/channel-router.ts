@@ -306,6 +306,27 @@ export interface ChannelRouterConfig {
    */
   onGatePendingApproval?: (runId: string, gateId: string) => Promise<void>;
   /**
+   * Optional callback invoked after every `onGateDataChanged` completion —
+   * including the deferred retry path scheduled by `gateRetryScheduler`
+   * when a rate-limited evaluation reschedules itself. Wired by
+   * `SpaceRuntimeService` to ensure the PR-event auto-subscription sync
+   * (and any other post-eval side effects) runs even when the retry fires
+   * from inside the router and bypasses the service-level wrapper.
+   *
+   * Passed the activated-task list (empty when the gate stayed blocked OR
+   * when every target node already had an active task) plus a `gateOpened`
+   * flag that is true whenever at least one channel's gate evaluation
+   * returned open — even if no new task was activated. Callers that need to
+   * react to "the gate is open" must branch on `gateOpened`, not on
+   * `activatedTasks.length`.
+   */
+  onGateDataChangedComplete?: (
+    runId: string,
+    gateId: string,
+    activatedTasks: SpaceTask[],
+    gateOpened: boolean
+  ) => Promise<void> | void;
+  /**
    * Optional callback that resolves the current PR URL for a workflow run.
    * Injected into gate script environments as `PR_URL` so feature scripts
    * (e.g. codex reaction checks) can access the PR even when the gate's
@@ -881,6 +902,15 @@ export class ChannelRouter {
     const run = this.config.workflowRunRepo.getRun(runId);
     if (!run) return [];
 
+    // Snapshot the pre-evaluation open-cache state so fireGateDataChangedComplete
+    // can distinguish "gate stayed open" from "gate transitioned closed→open".
+    // Without this, an unrelated gate that was already open before the run
+    // blocked would falsely report gateOpened=true during re-evaluation and
+    // trigger the resume chain in multi-gate workflows.
+    const workflowForSnapshot = this.config.workflowManager.getWorkflow(run.workflowId);
+    const wasOpenBefore =
+      workflowForSnapshot && this.isGateCachedOpen(runId, gateId, workflowForSnapshot);
+
     // Archived tasks and terminal runs are tombstones for passive gate refresh.
     // Only explicit activation paths opt into terminal reopen.
     if (this.isParentTaskArchived(runId)) {
@@ -989,6 +1019,7 @@ export class ChannelRouter {
           });
         }
       }
+      this.fireGateDataChangedComplete(runId, gateId, [], false);
       return [];
     }
 
@@ -1040,7 +1071,16 @@ export class ChannelRouter {
       }
     }
 
-    if (nodeIdsToActivate.size === 0) return [];
+    if (nodeIdsToActivate.size === 0) {
+      // Gate opened but every target node is already active — fire the
+      // completion hook with gateOpened=true (when this is a real
+      // closed→open transition) so the service-level resume chain still
+      // runs (e.g. clear PR auto-sub, transition blocked→in_progress).
+      // Without this, the early return skips the hook and leaves blocked
+      // runs stuck despite the open gate.
+      this.fireGateDataChangedComplete(runId, gateId, [], !wasOpenBefore);
+      return [];
+    }
 
     // Activate all target nodes in parallel. When a shared gate controls multiple
     // independent nodes (e.g., code-pr-gate → reviewer1, reviewer2, reviewer3),
@@ -1075,7 +1115,50 @@ export class ChannelRouter {
       );
     }
 
+    this.fireGateDataChangedComplete(
+      runId,
+      gateId,
+      activatedTasks,
+      activatedTasks.length > 0 || !wasOpenBefore
+    );
     return activatedTasks;
+  }
+
+  /**
+   * Fire-and-forget wrapper for the `onGateDataChangedComplete` config hook.
+   * Invoked at every exit point of {@link onGateDataChanged} — including the
+   * deferred retry path scheduled by `gateRetryScheduler` — so service-level
+   * post-eval side effects (PR auto-subscription sync, etc.) run even when
+   * the retry bypasses the service wrapper.
+   *
+   * `gateOpened` is true whenever at least one channel's gate evaluation
+   * returned open, even if no new task was activated (e.g. all target nodes
+   * already had active tasks).
+   */
+  private fireGateDataChangedComplete(
+    runId: string,
+    gateId: string,
+    activatedTasks: SpaceTask[],
+    gateOpened: boolean
+  ): void {
+    const hook = this.config.onGateDataChangedComplete;
+    if (!hook) return;
+    try {
+      const result = hook(runId, gateId, activatedTasks, gateOpened);
+      if (result && typeof (result as Promise<void>).catch === 'function') {
+        (result as Promise<void>).catch((err) => {
+          log.warn(
+            `onGateDataChangedComplete failed for gate "${gateId}" in run "${runId}": ` +
+              `${err instanceof Error ? err.message : String(err)}`
+          );
+        });
+      }
+    } catch (err) {
+      log.warn(
+        `onGateDataChangedComplete threw for gate "${gateId}" in run "${runId}": ` +
+          `${err instanceof Error ? err.message : String(err)}`
+      );
+    }
   }
 
   // -------------------------------------------------------------------------

@@ -48,6 +48,7 @@ import { KNOWN_SOURCES, validateGlobPattern } from '../../external-events/topic-
 import { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
 import { normalizeMeaningfulTaskResult } from '../task-result-utils';
 import { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
+import { WorkflowHookStateRepository } from '../../../storage/repositories/workflow-hook-state-repository';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository';
 import { SDKMessageRepository } from '../../../storage/repositories/sdk-message-repository';
@@ -67,6 +68,7 @@ import {
 import { MAX_AGENT_SLOT_EVENT_INTERESTS } from '../export-format';
 import { getBuiltInGateScript } from '../workflows/built-in-workflows';
 import { getEffectiveGate } from './gate-features';
+import { buildPrEventTopicPattern, parsePrUrl } from './parse-pr-url';
 import { CompletionDetector } from './completion-detector';
 import {
   DEFAULT_AGENT_NO_PROGRESS_THRESHOLD_MS,
@@ -253,6 +255,52 @@ export interface SpaceRuntimeConfig {
     message: string;
     idempotencyKey: string;
   }) => Promise<{ delivered: boolean }>;
+  /**
+   * Optional hook invoked once after an external event is delivered to any
+   * subscription target whose workflow run is currently in `blocked` status.
+   *
+   * Wired by `SpaceRuntimeService` to trigger immediate gate re-evaluation
+   * (rather than waiting for the next poll cycle) and notify the blocked
+   * agent session when a gate opens as a result.
+   *
+   * Resolves to `true` when at least one gate opened as a result of the
+   * re-evaluation, `'retry'` when a deferred gate-evaluation retry was
+   * scheduled (the event must stay published so the retry can wake the
+   * gate later), and `false`/`undefined` when no gate opened and no retry
+   * is scheduled. The runtime uses the resolved value to decide whether
+   * to terminally mark the event `failed` when no delivery was produced —
+   * leaving the event `published` forever would cause the redispatch sweep
+   * to replay it on every restart and rerun gate scripts for an event that
+   * already failed to unblock anything, but marking it terminal when a
+   * retry is scheduled would lose the only wake-up event.
+   */
+  onBlockedRunExternalEvent?: (payload: {
+    runId: string;
+    event: ExternalEventPublishedPayload;
+  }) => Promise<boolean | 'retry'> | boolean | 'retry' | void;
+  /**
+   * Optional hook invoked immediately after a workflow run transitions into
+   * `blocked` status — covers tick-loop recovery (`recoverStalledRuns`),
+   * `markFailed` RPC, and gate-rejection paths that bypass the gate-write
+   * sync. Wired by `SpaceRuntimeService` to ensure the PR-event
+   * auto-subscription is created when the run becomes blocked regardless
+   * of which code path performed the transition.
+   *
+   * Fire-and-forget; errors are logged and swallowed by the runtime.
+   */
+  onRunBlocked?: (runId: string) => Promise<void> | void;
+  /**
+   * Optional hook invoked inside `executeTick` after recovery completes and
+   * BEFORE `redispatchPublishedEventsWithoutDeliveries` runs. Wired by
+   * `SpaceRuntimeService` to rebuild PR-event auto-subscriptions for blocked
+   * runs before the redispatch sweep re-processes crash-pending PR events —
+   * without this, those events hit an empty topic trie and get marked
+   * `ignored`, blocking the event-driven gate-eval path on the first
+   * post-restart tick.
+   *
+   * Awaited by the runtime so the trie is fully populated before redispatch.
+   */
+  onBeforeRedispatch?: () => Promise<void> | void;
 }
 
 interface StartWorkflowRunOptions {
@@ -284,7 +332,16 @@ interface WorkflowSubscriptionTarget {
   nodeId: string;
   agentName: string;
   topic?: string;
-  subscriptionKind?: 'static' | 'dynamic';
+  /**
+   * Origin of the subscription:
+   * - `static`  — declared in the workflow template's `eventInterests`
+   * - `dynamic` — registered at runtime via MCP tooling (`subscribe_external_event`)
+   * - `auto`    — registered by the runtime itself (e.g. gate-blocked PR
+   *              auto-subscription). Distinct from `dynamic` so cleanup can
+   *              target only runtime-managed subscriptions without touching
+   *              agent-registered interests on the same topic.
+   */
+  subscriptionKind?: 'static' | 'dynamic' | 'auto';
   sessionId?: string;
 }
 
@@ -1040,7 +1097,7 @@ export class SpaceRuntime {
     nodeId: string,
     agentName: string,
     topic: string,
-    options: { subscriptionKind?: 'static' | 'dynamic' } = {}
+    options: { subscriptionKind?: 'static' | 'dynamic' | 'auto' } = {}
   ): { success: boolean; error?: string } {
     const trimmed = topic?.trim();
     if (!trimmed) return { success: false, error: 'Topic pattern is required.' };
@@ -1064,18 +1121,26 @@ export class SpaceRuntime {
         target.subscriptionKind === subscriptionKind &&
         target.topic?.toLowerCase() === normalized
     );
-    const existingInterests = this.topicTrie.count(
-      (target) =>
-        isWorkflowSubscriptionTarget(target) &&
-        target.workflowRunId === workflowRunId &&
-        target.nodeId === nodeId &&
-        target.agentName === agentName
-    );
-    if (existingInterests >= MAX_AGENT_SLOT_EVENT_INTERESTS) {
-      throw new Error(
-        `Agent slot ${workflowRunId}/${nodeId}/${agentName} cannot register more than ` +
-          `${MAX_AGENT_SLOT_EVENT_INTERESTS} event interests`
+    // The per-slot cap protects against agents registering excessive
+    // user/static/dynamic interests. Auto subscriptions (registered by the
+    // runtime itself for blocked-run PR wake-up) bypass the cap so a slot
+    // already at the user-interest limit still gets its single gate-wake
+    // subscription.
+    if (subscriptionKind !== 'auto') {
+      const existingInterests = this.topicTrie.count(
+        (target) =>
+          isWorkflowSubscriptionTarget(target) &&
+          target.workflowRunId === workflowRunId &&
+          target.nodeId === nodeId &&
+          target.agentName === agentName &&
+          target.subscriptionKind !== 'auto'
       );
+      if (existingInterests >= MAX_AGENT_SLOT_EVENT_INTERESTS) {
+        throw new Error(
+          `Agent slot ${workflowRunId}/${nodeId}/${agentName} cannot register more than ` +
+            `${MAX_AGENT_SLOT_EVENT_INTERESTS} event interests`
+        );
+      }
     }
     this.topicTrie.insert(trimmed, {
       workflowRunId,
@@ -1246,6 +1311,232 @@ export class SpaceRuntime {
     this.clearQueuedDeliveriesForRun(workflowRunId, 'run_terminal_cleanup');
   }
 
+  /**
+   * Resolve the agent slot (task / node / agent name) currently active for a
+   * workflow run — the most recent non-terminal node execution. Used by
+   * auto-subscription helpers to attach GitHub PR event subscriptions on
+   * behalf of the agent that posted the PR.
+   *
+   * Falls back to the most recent execution of any status (preserving its
+   * nodeId / agentName) when no live execution exists — e.g. immediately
+   * after a stall-recovery transition where the agent session is gone but
+   * the next spawn will reuse the same slot. When no execution exists at
+   * all, falls back to the workflow's start node + first agent so the
+   * subscription attaches somewhere the next agent will inhabit.
+   *
+   * Returns `null` only when the run has no canonical task AND no workflow
+   * definition is available.
+   */
+  resolveActiveExecutionSlotForRun(
+    workflowRunId: string
+  ): { taskId: string; nodeId: string; agentName: string } | null {
+    const taskId = this.resolveExecutionTaskId(workflowRunId);
+    if (!taskId) return null;
+    const executions = this.config.nodeExecutionRepo.listByWorkflowRun(workflowRunId);
+    const live = executions
+      .filter((execution) => execution.agentSessionId && !execution.completedAt)
+      .sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0))[0];
+    if (live) {
+      return { taskId, nodeId: live.workflowNodeId, agentName: live.agentName };
+    }
+    // No live execution — fall back to the most recent execution of any
+    // status so the subscription attaches to the slot the next spawn will
+    // reuse (same nodeId / agentName).
+    const mostRecent = executions
+      .filter((execution) => execution.agentName)
+      .sort((a, b) => (b.startedAt ?? b.createdAt ?? 0) - (a.startedAt ?? a.createdAt ?? 0))[0];
+    if (mostRecent) {
+      return { taskId, nodeId: mostRecent.workflowNodeId, agentName: mostRecent.agentName };
+    }
+    // No execution history at all — use the workflow's start node + first
+    // agent as the canonical fallback slot.
+    const run = this.config.workflowRunRepo.getRun(workflowRunId);
+    if (!run) return null;
+    const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+    const startNode = workflow?.nodes.find((node) => node.id === workflow.startNodeId);
+    const firstAgent = startNode?.agents[0];
+    if (!startNode || !firstAgent) return null;
+    return { taskId, nodeId: startNode.id, agentName: firstAgent.name };
+  }
+
+  private resolveExecutionTaskId(workflowRunId: string): string | null {
+    const tasks = this.config.taskRepo.listByWorkflowRun(workflowRunId);
+    if (tasks.length === 0) return null;
+    const run = this.config.workflowRunRepo.getRun(workflowRunId);
+    if (!run) return tasks[0]!.id;
+    return this.pickCanonicalTaskForRun(run, tasks)?.id ?? tasks[0]!.id;
+  }
+
+  /**
+   * Auto-subscribe a blocked workflow run to GitHub PR events for a specific
+   * pull request. Builds the topic pattern `github/owner/repo/pull_request/N.*`
+   * and registers it on the run's currently-active agent slot via
+   * {@link registerSubscription} (kind `dynamic`), so it is automatically
+   * swept when the run terminates or the slot is unregistered.
+   *
+   * Returns `{ success: false }` when:
+   * - `prUrl` cannot be parsed as a GitHub PR URL
+   * - no active agent slot exists for the run
+   * - the underlying `registerSubscription` call rejects (capacity / invalid)
+   *
+   * Idempotent: re-invoking with the same `prUrl` no-ops because
+   * `registerSubscription` removes the prior identical pattern first. When
+   * the PR URL changes (A → B) the prior auto-subscription for A is dropped
+   * before the new one is registered so obsolete PR events stop matching.
+   */
+  registerPrEventSubscriptionForRun(
+    workflowRunId: string,
+    prUrl: string
+  ): { success: boolean; error?: string; topicPattern?: string } {
+    const parsed = parsePrUrl(prUrl);
+    if (!parsed) {
+      return { success: false, error: `Unable to parse GitHub PR URL: ${prUrl}` };
+    }
+    const slot = this.resolveActiveExecutionSlotForRun(workflowRunId);
+    if (!slot) {
+      return { success: false, error: 'No active agent slot for workflow run' };
+    }
+    // Drop any prior auto-subscriptions for this run before registering the
+    // new pattern. This handles PR-URL changes (A → B) and also makes the
+    // 'auto' kind a single-entry-per-run invariant.
+    this.clearPrEventSubscriptionsForRun(workflowRunId);
+    const topicPattern = buildPrEventTopicPattern(parsed);
+    try {
+      const result = this.registerSubscription(
+        workflowRunId,
+        slot.taskId,
+        slot.nodeId,
+        slot.agentName,
+        topicPattern,
+        { subscriptionKind: 'auto' }
+      );
+      if (!result.success) return { success: false, error: result.error, topicPattern };
+      return { success: true, topicPattern };
+    } catch (err) {
+      return {
+        success: false,
+        error: err instanceof Error ? err.message : String(err),
+        topicPattern,
+      };
+    }
+  }
+
+  /**
+   * Sync the PR-event auto-subscription for a run that just transitioned to
+   * `blocked` via direct `workflowRunRepo.transitionStatus(...)` paths that
+   * bypass {@link transitionRunStatusAndEmit} (markFailed RPC, gate rejection
+   * in space-agent-tools, etc.).
+   *
+   * Resolves the PR URL from gate data / artifacts (same resolver used at
+   * runtime) and calls {@link registerPrEventSubscriptionForRun}. No-op when
+   * the run is not actually blocked or no PR URL can be resolved. Idempotent.
+   */
+  notifyRunBlocked(workflowRunId: string): { subscribed: boolean; reason?: string } {
+    const run = this.config.workflowRunRepo.getRun(workflowRunId);
+    if (!run || run.status !== 'blocked') {
+      return { subscribed: false, reason: `run status is ${run?.status ?? 'unknown'}` };
+    }
+    const prUrl = this.resolvePrUrlForRun(workflowRunId);
+    if (!prUrl) {
+      return { subscribed: false, reason: 'no resolvable PR URL' };
+    }
+    const result = this.registerPrEventSubscriptionForRun(workflowRunId, prUrl);
+    if (!result.success) {
+      return { subscribed: false, reason: result.error };
+    }
+    return { subscribed: true };
+  }
+
+  /**
+   * Remove auto-subscribed GitHub PR event subscriptions for a workflow run.
+   *
+   * Only removes subscriptions whose `subscriptionKind === 'auto'` — i.e.
+   * those created by {@link registerPrEventSubscriptionForRun}. Agent-registered
+   * `dynamic` interests (e.g. via `subscribe_external_event`) on the same or
+   * overlapping topics are preserved so an agent that explicitly subscribed
+   * keeps receiving events after the gate opens.
+   *
+   * Called when a gate opens or the run transitions out of `blocked`.
+   */
+  clearPrEventSubscriptionsForRun(workflowRunId: string): void {
+    // Collect the auto-kind targets before removing them so we can also
+    // purge any queued / in-flight deliveries that were registered against
+    // them. Without this, an auto-delivery queued while the run was blocked
+    // can flush later and deliver a PR event to an agent that is no longer
+    // waiting on a gate.
+    const removedTargets: WorkflowSubscriptionTarget[] = [];
+    this.topicTrie.remove((target) => {
+      if (
+        isWorkflowSubscriptionTarget(target) &&
+        target.workflowRunId === workflowRunId &&
+        target.subscriptionKind === 'auto'
+      ) {
+        removedTargets.push(target);
+        return true;
+      }
+      return false;
+    });
+    for (const target of removedTargets) {
+      this.failQueuedDeliveriesForTarget(target, 'auto_pr_subscription_cleared');
+      // Cancel any in-flight retries for the removed target.
+      for (const deliveryKey of Array.from(this.externalEventRetryTimers.keys())) {
+        if (this.deliveryKeyMatchesTarget(deliveryKey, target)) {
+          this.clearExternalEventRetry(deliveryKey);
+        }
+      }
+    }
+    // Purge buffered rate-limit digests whose target was just removed —
+    // otherwise a deferred digest timer can flush and deliver PR events to
+    // an agent that is no longer waiting on a gate.
+    this.purgeAutoPrDigestItemsForRun(workflowRunId);
+  }
+
+  /**
+   * Remove every rate-limit digest item whose target is an auto-kind PR
+   * subscription for the given run. Cleans digest timers when the resulting
+   * per-target pending list is empty.
+   */
+  private purgeAutoPrDigestItemsForRun(workflowRunId: string): void {
+    const store = this.config.externalEventStore;
+    for (const [, state] of this.externalEventRateLimits) {
+      const remaining = state.pendingDigest.filter((item) => {
+        const isAutoForRun =
+          item.target.workflowRunId === workflowRunId && item.target.subscriptionKind === 'auto';
+        if (!isAutoForRun) return true;
+        if (store) {
+          store.markDeliveryFailed(item.event.eventId, item.deliveryKey, {
+            terminal: true,
+            reason: 'auto_pr_subscription_cleared',
+          });
+          store.markEventFailedIfAllDeliveriesTerminal(item.event.eventId);
+        }
+        return false;
+      });
+      state.pendingDigest = remaining;
+      if (state.pendingDigest.length === 0 && state.digestTimer) {
+        clearTimeout(state.digestTimer);
+        state.digestTimer = null;
+      }
+    }
+  }
+
+  /**
+   * Best-effort check whether a retry-timer delivery key corresponds to a
+   * workflow subscription target. Delivery keys are opaque idempotency
+   * tokens built from the event id + target identity, so we cannot parse
+   * them directly — instead, we scan the in-flight delivery set and the
+   * pending queue for a matching delivery key and check the stored target.
+   */
+  private deliveryKeyMatchesTarget(
+    deliveryKey: string,
+    target: WorkflowSubscriptionTarget
+  ): boolean {
+    const queueKey = this.buildQueueKey(target);
+    const queued = this.pendingExternalEventQueue.get(queueKey);
+    if (queued?.some((item) => item.deliveryKey === deliveryKey)) return true;
+    return false;
+  }
+
   flushPendingNodeQueue(target: WorkflowSubscriptionTarget): void {
     if (!target.sessionId) return;
     const targetWithExecution = this.resolveSubscriptionTarget(target);
@@ -1274,6 +1565,27 @@ export class SpaceRuntime {
   private async handleExternalEvent(payload: ExternalEventPublishedPayload): Promise<void> {
     const store = this.config.externalEventStore;
     if (!store) return;
+    const allMatches = this.lookupSubscriptionTargets(payload.topic);
+    // Trigger event-driven gate re-evaluation for blocked runs BEFORE the
+    // delivery filter: a recovery-blocked run may have no live execution to
+    // deliver to, but the gate re-eval hook only needs the PR event itself
+    // to re-open the gate and unblock the workflow. Filtering on
+    // `hasActiveExecutionForRun` here would leave such runs dark until the
+    // 5-min poll cycle.
+    //
+    // Awaiting the hook here also prevents the deduper from terminally
+    // marking the event `ignored` if the hook is still in flight when the
+    // delivery filter below finds zero deliverable targets — without this,
+    // a daemon crash between the fire-and-forget dispatch and gate
+    // re-evaluation would lose the only wake-up event for a blocked run.
+    const blockedHookOutcome = await this.fireBlockedRunExternalEventHook(payload, allMatches);
+
+    // Re-lookup the trie after the hook — handleBlockedRunExternalEvent may
+    // have opened a gate, transitioned the run to in_progress, and called
+    // clearPrEventSubscriptionsForRun which removes the auto target. Using
+    // the pre-hook allMatches snapshot here would still deliver to the
+    // cleared target because the post-hook run.status === 'in_progress'
+    // satisfies isExternallyDeliverableRun.
     const matches = this.lookupSubscriptionTargets(payload.topic).filter((target) => {
       if (isLongHorizonSubscriptionTarget(target)) return target.spaceId === payload.spaceId;
       const run = this.config.workflowRunRepo.getRun(target.workflowRunId);
@@ -1283,9 +1595,36 @@ export class SpaceRuntime {
     });
 
     if (matches.length === 0) {
-      if (this.acceptingExternalEvents) {
-        store.markEventIgnored(payload.eventId, 'no_matching_subscriptions');
+      if (blockedHookOutcome.firedRunIds.size === 0) {
+        // No blocked-run hook fired — safe to terminally mark ignored.
+        if (this.acceptingExternalEvents) {
+          store.markEventIgnored(payload.eventId, 'no_matching_subscriptions');
+        }
+      } else if (!blockedHookOutcome.anyGateOpened && !blockedHookOutcome.anyRetryScheduled) {
+        // Hook fired but no gate opened and no retry scheduled — the event
+        // successfully triggered re-evaluation but did not unblock anything.
+        // Mark it terminal so the redispatch sweep does not replay it on
+        // every restart and rerun gate scripts for an event that already
+        // failed to unblock. markEventFailed (not
+        // markEventFailedIfAllDeliveriesTerminal) is required here because
+        // the no-deliverable-target path has zero delivery rows, and the
+        // latter is a no-op without deliveries.
+        if (this.acceptingExternalEvents) {
+          try {
+            store.markEventFailed(payload.eventId, {
+              terminal: true,
+              reason: 'blocked_run_gate_not_opened',
+            });
+          } catch (err) {
+            log.warn(
+              `SpaceRuntime: markEventFailed for ${payload.eventId} failed: ${err instanceof Error ? err.message : String(err)}`
+            );
+          }
+        }
       }
+      // If anyGateOpened is true, leave the event published — the gate
+      // opening may produce downstream deliveries via a different path
+      // (e.g. follow-up state changes) that this flow does not observe.
       return;
     }
 
@@ -1369,6 +1708,70 @@ export class SpaceRuntime {
         );
       }
     }
+  }
+
+  /**
+   * Returns the set of runIds the hook was actually fired for (after all
+   * guards) and whether any of those runs reported a gate opening. Caller
+   * uses this to decide whether to terminally mark the event `ignored` —
+   * if a hook is in flight, the event must stay `published` so the deduper
+   * can retry it should the hook fail before re-evaluation completes. When
+   * the hook completed but no gate opened, the event is terminally marked
+   * `failed` so the redispatch sweep does not replay it forever.
+   */
+  private async fireBlockedRunExternalEventHook(
+    payload: ExternalEventPublishedPayload,
+    matches: SubscriptionTarget[]
+  ): Promise<{ firedRunIds: Set<string>; anyGateOpened: boolean; anyRetryScheduled: boolean }> {
+    const hook = this.config.onBlockedRunExternalEvent;
+    const firedRunIds = new Set<string>();
+    if (!hook) return { firedRunIds, anyGateOpened: false, anyRetryScheduled: false };
+    const visitedRunIds = new Set<string>();
+    const inflight: Array<Promise<unknown>> = [];
+    let syncGateOpened = false;
+    let syncRetryScheduled = false;
+    for (const target of matches) {
+      if (isLongHorizonSubscriptionTarget(target)) continue;
+      const runId = target.workflowRunId;
+      if (visitedRunIds.has(runId)) continue;
+      const run = this.config.workflowRunRepo.getRun(runId);
+      if (!run || run.status !== 'blocked' || run.spaceId !== payload.spaceId) continue;
+      const space = await this.config.spaceManager.getSpace(run.spaceId);
+      if (!space || space.paused || space.stopped) continue;
+      visitedRunIds.add(runId);
+      firedRunIds.add(runId);
+      try {
+        const result = hook({ runId, event: payload });
+        if (result && typeof (result as Promise<unknown>).then === 'function') {
+          inflight.push(
+            (result as Promise<unknown>).catch((err) => {
+              log.warn(
+                `SpaceRuntime: onBlockedRunExternalEvent failed for run ${runId}: ` +
+                  `${err instanceof Error ? err.message : String(err)}`
+              );
+              return false;
+            })
+          );
+        } else if (result === true) {
+          syncGateOpened = true;
+        } else if (result === 'retry') {
+          syncRetryScheduled = true;
+        }
+      } catch (err) {
+        log.warn(
+          `SpaceRuntime: onBlockedRunExternalEvent threw for run ${runId}: ` +
+            `${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+    }
+    let anyGateOpened = syncGateOpened;
+    let anyRetryScheduled = syncRetryScheduled;
+    if (inflight.length > 0) {
+      const results = await Promise.all(inflight);
+      anyGateOpened = anyGateOpened || results.some((value) => value === true);
+      anyRetryScheduled = anyRetryScheduled || results.some((value) => value === 'retry');
+    }
+    return { firedRunIds, anyGateOpened, anyRetryScheduled };
   }
 
   private async deliverToLongHorizonAgent(
@@ -2760,12 +3163,45 @@ export class SpaceRuntime {
     runId: string,
     nextStatus: SpaceWorkflowRun['status']
   ): Promise<SpaceWorkflowRun> {
+    const previousStatus = this.config.workflowRunRepo.getRun(runId)?.status;
     const updated = this.config.workflowRunRepo.transitionStatus(runId, nextStatus);
     if (nextStatus === 'done' || nextStatus === 'cancelled') {
       this.clearRunInterests(runId);
     }
+    if (nextStatus === 'blocked') {
+      this.fireRunBlockedHook(runId);
+    }
+    // When a run leaves `blocked` (via resume / recovery / RPC), drop the
+    // auto-registered PR event subscription so subsequent PR events are not
+    // delivered to an agent that is no longer waiting on a gate. The
+    // gate-open path already clears via syncBlockedRunPrEventSubscription,
+    // but manual resume paths bypass it — this sweep covers them.
+    if (previousStatus === 'blocked' && nextStatus !== 'blocked') {
+      this.clearPrEventSubscriptionsForRun(runId);
+    }
     await this.safeOnWorkflowRunUpdated(updated.spaceId, updated);
     return updated;
+  }
+
+  private fireRunBlockedHook(runId: string): void {
+    const hook = this.config.onRunBlocked;
+    if (!hook) return;
+    try {
+      const result = hook(runId);
+      if (result && typeof (result as Promise<void>).catch === 'function') {
+        (result as Promise<void>).catch((err) => {
+          log.warn(
+            `SpaceRuntime: onRunBlocked failed for run ${runId}: ` +
+              `${err instanceof Error ? err.message : String(err)}`
+          );
+        });
+      }
+    } catch (err) {
+      log.warn(
+        `SpaceRuntime: onRunBlocked threw for run ${runId}: ` +
+          `${err instanceof Error ? err.message : String(err)}`
+      );
+    }
   }
 
   /**
@@ -3074,6 +3510,23 @@ export class SpaceRuntime {
       }
 
       if (!this.rehydrated) {
+        // Give the service a chance to rebuild in-memory subscriptions
+        // (e.g. PR-event auto-subs for blocked runs) BEFORE rehydrateExecutors
+        // runs its persisted-delivery replay, before the redispatch sweep,
+        // and before acceptingExternalEvents flips to true. Without this
+        // ordering, persisted delivery rows for the auto target are marked
+        // `subscription_no_longer_active` during requeue (because the trie
+        // is still empty) and crash-pending PR events are terminally
+        // ignored by the first redispatch.
+        if (this.config.onBeforeRedispatch) {
+          try {
+            await this.config.onBeforeRedispatch();
+          } catch (err) {
+            log.warn(
+              `SpaceRuntime: onBeforeRedispatch failed: ${err instanceof Error ? err.message : String(err)}`
+            );
+          }
+        }
         await this.rehydrateExecutors();
         // Run a stalled-run recovery pass right after rehydrate so the
         // first tick that processes runs already sees a clean slate
@@ -6031,6 +6484,24 @@ export class SpaceRuntime {
     } catch (err) {
       log.warn(
         `SpaceRuntime.resolvePrUrlForRun: failed to read gate data for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+
+    // Scan workflow hook state next so `pr_ready` hook state (which persists
+    // `pr_url` after a successful send_message) is picked up even when the
+    // gate schema does not declare `pr_url` (e.g. Review→QA approval gate).
+    try {
+      const hookStateRepo = new WorkflowHookStateRepository(this.config.db);
+      const hookStates = hookStateRepo
+        .listByRun(runId)
+        .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+      for (const snapshot of hookStates) {
+        const candidate = fromData(snapshot.localState);
+        if (candidate) return candidate;
+      }
+    } catch (err) {
+      log.warn(
+        `SpaceRuntime.resolvePrUrlForRun: failed to read hook state for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
       );
     }
 

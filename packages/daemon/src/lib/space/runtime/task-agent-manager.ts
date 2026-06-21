@@ -1677,6 +1677,16 @@ export class TaskAgentManager {
         internalEventBus: this.config.internalEventBus,
         onGatePendingApproval: (runId, gateId) =>
           this.config.spaceRuntimeService.handleGatePendingApproval(runId, gateId),
+        onGateDataChangedComplete: (runId, _gateId, activatedTasks, gateOpened) => {
+          // Same full post-eval chain as the service-level notifyGateDataChanged
+          // (sync + resume when gate opened) so the deferred-retry path picks
+          // up gate openings the same way as immediate invocations.
+          void this.config.spaceRuntimeService.handleGateDataChangedComplete(
+            runId,
+            activatedTasks,
+            gateOpened
+          );
+        },
         getPrUrlForRun: (runId) => this.resolvePrUrlForRun(runId),
       });
 
@@ -3609,6 +3619,20 @@ export class TaskAgentManager {
       internalEventBus: this.config.internalEventBus,
       onGatePendingApproval: (runId, gateId) =>
         this.config.spaceRuntimeService.handleGatePendingApproval(runId, gateId),
+      onGateDataChangedComplete: (runId, _gateId, activatedTasks, gateOpened) => {
+        // Catches the deferred retry path: when a rate-limited gate eval
+        // schedules a refresh via gateRetryScheduler, the retry fires
+        // router.onGateDataChanged directly and bypasses the service-level
+        // post-hook wired in onGateDataChanged above. Route those retry
+        // completions through the same full post-eval chain (sync + resume
+        // when gate opened) so a deferred gate opening does not leave the
+        // workflow stuck in `blocked`.
+        void this.config.spaceRuntimeService.handleGateDataChangedComplete(
+          runId,
+          activatedTasks,
+          gateOpened
+        );
+      },
       getPrUrlForRun: (runId) => this.resolvePrUrlForRun(runId),
     });
     const agentMessageRouter = new AgentMessageRouter({
@@ -3954,7 +3978,21 @@ export class TaskAgentManager {
       internalEventBus: this.config.internalEventBus,
       workflow,
       gateDataRepo: this.config.gateDataRepo,
-      onGateDataChanged: (runId, gateId) => nodeAgentChannelRouter.onGateDataChanged(runId, gateId),
+      onGateDataChanged: async (runId, gateId) => {
+        const activated = await nodeAgentChannelRouter.onGateDataChanged(runId, gateId);
+        // Mirror the service-level notifyGateDataChanged post-hook so agent-driven
+        // gate writes (write_gate MCP tool) trigger the same PR-event
+        // auto-subscription / cleanup as RPC-driven gate writes.
+        try {
+          await this.config.spaceRuntimeService.syncBlockedRunPrEventSubscription(runId, activated);
+        } catch (err) {
+          log.warn(
+            `TaskAgentManager: syncBlockedRunPrEventSubscription failed for run ${runId}: ` +
+              `${err instanceof Error ? err.message : String(err)}`
+          );
+        }
+        return activated;
+      },
       gateRetryScheduler: this.config.spaceRuntimeService.getGateRetryScheduler(),
       scriptExecutor: executeGateScript,
       // gateId is overridden per-gate by the handler ({ ...scriptContext, gateId }).
