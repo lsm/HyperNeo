@@ -204,9 +204,13 @@ export class SpaceWorkflowRunRepository {
     assertValidTransition(run.status, to, id);
     const updated = this.updateRun(id, { status: to })!;
 
-    // Clear persisted gate-open state when transitioning to terminal status
-    // This prevents stale entries from accumulating for historical runs
-    if (this.gateOpenStateRepo && (to === 'done' || to === 'cancelled' || to === 'blocked')) {
+    // Clear persisted gate-open state when transitioning to terminal status.
+    // `blocked` is intentionally NOT terminal here — runs resume from blocked,
+    // and clearing the cache would make the wasOpenBefore snapshot in
+    // handleBlockedRunExternalEvent unable to distinguish "already satisfied
+    // before blocked" from "newly opened during re-eval", causing unrelated
+    // gates to falsely trigger run resume in multi-gate workflows.
+    if (this.gateOpenStateRepo && (to === 'done' || to === 'cancelled')) {
       this.gateOpenStateRepo.clearOpenedByRun(id);
     }
 

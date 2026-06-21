@@ -1957,10 +1957,15 @@ export class SpaceRuntimeService {
     activatedTasks: SpaceTask[],
     gateOpened = activatedTasks.length > 0
   ): Promise<void> {
-    // Pass a non-empty activatedTasks to syncBlockedRunPrEventSubscription
-    // whenever the gate opened so it clears the auto-subscription, even if
-    // no new task was activated.
-    await this.syncBlockedRunPrEventSubscription(runId, gateOpened ? activatedTasks : []);
+    if (gateOpened) {
+      // Gate opened (with or without new activations) — clear the
+      // auto-subscription directly. syncBlockedRunPrEventSubscription only
+      // clears on activatedTasks.length > 0, which misses the zero-activation
+      // open case (e.g. all target nodes already active).
+      this.runtime.clearPrEventSubscriptionsForRun(runId);
+    } else {
+      await this.syncBlockedRunPrEventSubscription(runId, activatedTasks);
+    }
     if (gateOpened) {
       const run = this.config.workflowRunRepo.getRun(runId);
       if (run?.status === 'blocked') {

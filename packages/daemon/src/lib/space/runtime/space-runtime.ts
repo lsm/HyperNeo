@@ -1455,12 +1455,49 @@ export class SpaceRuntime {
    * Called when a gate opens or the run transitions out of `blocked`.
    */
   clearPrEventSubscriptionsForRun(workflowRunId: string): void {
-    this.topicTrie.remove(
-      (target) =>
+    // Collect the auto-kind targets before removing them so we can also
+    // purge any queued / in-flight deliveries that were registered against
+    // them. Without this, an auto-delivery queued while the run was blocked
+    // can flush later and deliver a PR event to an agent that is no longer
+    // waiting on a gate.
+    const removedTargets: WorkflowSubscriptionTarget[] = [];
+    this.topicTrie.remove((target) => {
+      if (
         isWorkflowSubscriptionTarget(target) &&
         target.workflowRunId === workflowRunId &&
         target.subscriptionKind === 'auto'
-    );
+      ) {
+        removedTargets.push(target);
+        return true;
+      }
+      return false;
+    });
+    for (const target of removedTargets) {
+      this.failQueuedDeliveriesForTarget(target, 'auto_pr_subscription_cleared');
+      // Cancel any in-flight retries for the removed target.
+      for (const deliveryKey of Array.from(this.externalEventRetryTimers.keys())) {
+        if (this.deliveryKeyMatchesTarget(deliveryKey, target)) {
+          this.clearExternalEventRetry(deliveryKey);
+        }
+      }
+    }
+  }
+
+  /**
+   * Best-effort check whether a retry-timer delivery key corresponds to a
+   * workflow subscription target. Delivery keys are opaque idempotency
+   * tokens built from the event id + target identity, so we cannot parse
+   * them directly — instead, we scan the in-flight delivery set and the
+   * pending queue for a matching delivery key and check the stored target.
+   */
+  private deliveryKeyMatchesTarget(
+    deliveryKey: string,
+    target: WorkflowSubscriptionTarget
+  ): boolean {
+    const queueKey = this.buildQueueKey(target);
+    const queued = this.pendingExternalEventQueue.get(queueKey);
+    if (queued?.some((item) => item.deliveryKey === deliveryKey)) return true;
+    return false;
   }
 
   flushPendingNodeQueue(target: WorkflowSubscriptionTarget): void {

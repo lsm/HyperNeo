@@ -1130,4 +1130,66 @@ describe('SpaceRuntimeService event-driven gate evaluation', () => {
     // No courtesy notification fired.
     expect(runtimeNotifications).toHaveLength(0);
   });
+
+  test('clearPrEventSubscriptionsForRun purges queued deliveries for the auto target', async () => {
+    const ctx = await setup({
+      gates: [
+        {
+          id: 'approval',
+          fields: [approvedField, prUrlField],
+        },
+      ],
+      channels: [{ id: 'ch-code-to-review', from: 'coder', to: 'reviewer', gateId: 'approval' }],
+    });
+    const workflow = ctx.workflowManager.listWorkflows(SPACE_ID)[0]!;
+    const { runId } = await seedBlockedRunWithPr(ctx, workflow.id);
+
+    // Make the execution target queueable but not yet deliverable so a PR
+    // event gets queued rather than delivered immediately.
+    const execution = ctx.nodeExecutionRepo.listByNode(runId, 'code')[0]!;
+    ctx.nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: null,
+      completedAt: null,
+    });
+    // Re-mark active session id AFTER cleared, so the slot exists but has no
+    // live session yet — exercise the queueing path.
+    ctx.nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: `session-queued-${runId}`,
+      completedAt: null,
+    });
+    ctx.tam.alive.delete(`session-queued-${runId}`); // ensure not "live"
+
+    const event: ExternalEvent = {
+      id: `evt-queued-${Math.random().toString(36).slice(2)}`,
+      spaceId: SPACE_ID,
+      source: 'github',
+      topic: PR_EVENT_TOPIC,
+      occurredAt: Date.now(),
+      ingestedAt: Date.now(),
+      dedupeKey: `dedupe-queued-${Math.random().toString(36).slice(2)}`,
+      summary: 'Queued delivery',
+      payload: {},
+    };
+    await ctx.eventService.publish(event);
+
+    // Now clear the auto subscription. Queued deliveries for the auto target
+    // must be purged so a later session spawn does not flush a stale
+    // delivery for a subscription that no longer exists.
+    ctx.service.runtime.clearPrEventSubscriptionsForRun(runId);
+
+    // Re-attach a live session — no delivery should fire because the auto
+    // subscription (and its queued deliveries) were purged.
+    ctx.tam.alive.add(`session-queued-${runId}`);
+    ctx.service.runtime.flushPendingNodeQueue({
+      workflowRunId: runId,
+      taskId: ctx.taskRepo.listByWorkflowRun(runId)[0]!.id,
+      nodeId: 'code',
+      agentName: 'coder',
+      sessionId: `session-queued-${runId}`,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(ctx.injected).toHaveLength(0);
+  });
 });
