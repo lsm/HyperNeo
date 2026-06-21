@@ -371,6 +371,105 @@ describe('SubagentBlock', () => {
       expect(container.textContent).toContain('Check in the src folder');
     });
 
+    it('folds a nested tool_use task_notification onto the nested ToolResultCard', async () => {
+      const input = createAgentInput('Explore', 'Find files', 'Search for test files');
+      const nestedMessages = [createNestedToolUseMessage()];
+      const toolResultsMap = new Map([['toolu_nested123', { content: 'File content here' }]]);
+      const taskNotificationsMap = new Map([
+        [
+          'toolu_nested123',
+          {
+            type: 'system',
+            subtype: 'task_notification',
+            task_id: 't',
+            tool_use_id: 'toolu_nested123',
+            status: 'completed',
+            output_file: '/tmp/o',
+            summary: 'read ok',
+          } as never,
+        ],
+      ]);
+
+      const { container } = render(
+        <SubagentBlock
+          input={input}
+          toolId="toolu_task123"
+          nestedMessages={nestedMessages}
+          toolResultsMap={toolResultsMap}
+          taskNotificationsMap={taskNotificationsMap}
+        />
+      );
+
+      // Expand the subagent, then the nested ToolResultCard.
+      fireEvent.click(container.querySelector('button')!);
+      await waitFor(() => expect(container.textContent).toContain('Read'));
+      const cardButtons = container.querySelectorAll('button');
+      const nestedCardButton = Array.from(cardButtons).find((b) =>
+        b.textContent?.includes('Read')
+      )!;
+      fireEvent.click(nestedCardButton);
+
+      // Folded notification surfaces in the expanded card body + green check glyph.
+      await waitFor(() => {
+        expect(container.textContent).toContain('read ok');
+        expect(container.querySelector('[aria-label="task completed"]')).toBeTruthy();
+      });
+    });
+
+    it('suppresses the standalone nested task_notification row when it is folded', async () => {
+      const input = createAgentInput('Explore', 'Find files', 'Search for test files');
+      // Nested timeline holds both the tool_use AND its task_notification row.
+      const nestedMessages = [
+        createNestedToolUseMessage(),
+        createNestedSystemMessage('task_notification', {
+          task_id: 't',
+          tool_use_id: 'toolu_nested123',
+          status: 'completed',
+          output_file: '/tmp/o',
+          summary: 'read ok',
+        }),
+      ];
+      const toolResultsMap = new Map([['toolu_nested123', { content: 'File content here' }]]);
+      const taskNotificationsMap = new Map([
+        [
+          'toolu_nested123',
+          {
+            type: 'system',
+            subtype: 'task_notification',
+            task_id: 't',
+            tool_use_id: 'toolu_nested123',
+            status: 'completed',
+            output_file: '/tmp/o',
+            summary: 'read ok',
+          } as never,
+        ],
+      ]);
+
+      const { container } = render(
+        <SubagentBlock
+          input={input}
+          toolId="toolu_task123"
+          nestedMessages={nestedMessages}
+          toolResultsMap={toolResultsMap}
+          taskNotificationsMap={taskNotificationsMap}
+        />
+      );
+
+      fireEvent.click(container.querySelector('button')!);
+      await waitFor(() => expect(container.textContent).toContain('Read'));
+
+      // The folded card shows the status exactly once (green check)…
+      const checks = container.querySelectorAll('[aria-label="task completed"]');
+      expect(checks).toHaveLength(1);
+      // …and the standalone TaskNotificationMessage row is suppressed (no
+      // duplicate "Task completed" heading from SDKSystemMessage).
+      const headings = container.querySelectorAll('div.font-semibold');
+      const dupTaskCompleted = Array.from(headings).filter((h) =>
+        h.textContent?.includes('Task completed')
+      );
+      expect(dupTaskCompleted).toHaveLength(0);
+    });
+
     it('should render nested tool use blocks', () => {
       const input = createAgentInput('Explore', 'Find files', 'Search for test files');
       const nestedMessages = [createNestedToolUseMessage()];

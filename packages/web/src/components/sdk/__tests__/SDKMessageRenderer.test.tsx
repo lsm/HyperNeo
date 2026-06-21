@@ -446,6 +446,71 @@ describe('SDKMessageRenderer', () => {
     });
   });
 
+  describe('task_notification folding', () => {
+    const baseNotification = {
+      type: 'system',
+      subtype: 'task_notification',
+      task_id: 'task-1',
+      tool_use_id: 'tu-fold',
+      status: 'completed' as const,
+      output_file: '/tmp/out.txt',
+      summary: 'Bash exited 0',
+      uuid: createUUID(),
+      session_id: 'test-session',
+    };
+
+    it('suppresses the row when its tool_use card is rendered in the slice', () => {
+      const message = { ...baseNotification } as unknown as SDKMessage;
+
+      const { container } = render(
+        <SDKMessageRenderer message={message} foldableToolUseIds={new Set(['tu-fold'])} />
+      );
+
+      // Folded onto the tool card — no standalone row.
+      expect(container.innerHTML).toBe('');
+    });
+
+    it('renders the fallback row when the tool_use is paginated out of the slice', () => {
+      const message = { ...baseNotification } as unknown as SDKMessage;
+
+      const { container } = render(
+        // foldableToolUseIds omits 'tu-fold' — the originating card isn't rendered.
+        <SDKMessageRenderer message={message} foldableToolUseIds={new Set()} />
+      );
+
+      expect(container.textContent).toContain('Task completed');
+      expect(container.textContent).toContain('Bash exited 0');
+    });
+
+    it('renders the fallback row for a nested tool_use whose parent card is paginated out', () => {
+      const message = { ...baseNotification } as unknown as SDKMessage;
+      // 'tu-fold' is indexed (nested tool_use exists) but its parent Task card
+      // is absent → not foldable → must fall back to a row.
+      const { container } = render(
+        <SDKMessageRenderer
+          message={message}
+          toolInputsMap={new Map([['tu-fold', { command: 'echo hi' }]])}
+          foldableToolUseIds={new Set()}
+        />
+      );
+
+      expect(container.textContent).toContain('Task completed');
+      expect(container.textContent).toContain('Bash exited 0');
+    });
+
+    it('renders the fallback row for true orphans (no tool_use_id)', () => {
+      const message = {
+        ...baseNotification,
+        tool_use_id: undefined,
+        summary: 'standalone notice',
+      } as unknown as SDKMessage;
+
+      const { container } = render(<SDKMessageRenderer message={message} />);
+
+      expect(container.textContent).toContain('standalone notice');
+    });
+  });
+
   describe('Unknown Message Types', () => {
     it('should render fallback for unknown message types', () => {
       const unknownMessage = {

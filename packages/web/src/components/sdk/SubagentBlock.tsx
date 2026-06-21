@@ -15,7 +15,7 @@ import { cn } from '../../lib/utils.ts';
 import { RunningBorder } from './RunningBorder.tsx';
 import MarkdownRenderer from '../chat/MarkdownRenderer.tsx';
 import type { AgentInput } from '@neokai/shared/sdk/sdk-tools.d.ts';
-import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
+import type { SDKMessage, SDKTaskNotificationMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import {
   hasRenderableThinking,
   isHiddenSystemSubtype,
@@ -115,6 +115,11 @@ interface SubagentBlockProps {
     summary?: string;
     usage?: { total_tokens: number; tool_uses: number; duration_ms: number };
   };
+  /** Full tool_use_id → task_notification map, so nested tool_use blocks inside
+   * this subagent can fold their own terminal status onto their ToolResultCard
+   * (the top-level suppression relies on toolInputsMap having the nested id, so
+   * the nested card must actually receive the notification). */
+  taskNotificationsMap?: Map<string, SDKTaskNotificationMessage>;
   /** Additional CSS classes */
   className?: string;
   /** When true, wrap this block in <RunningBorder> so the animated arc traces
@@ -301,6 +306,7 @@ export function SubagentBlock({
   toolResultsMap,
   replacementStatusMap,
   taskNotification,
+  taskNotificationsMap,
   className,
   isRunning = false,
 }: SubagentBlockProps) {
@@ -324,9 +330,30 @@ export function SubagentBlock({
   const filteredNestedMessages = useMemo(() => {
     if (nestedMessages.length === 0) return [];
 
+    // Nested tool_use ids — their task_notification is folded onto the nested
+    // ToolResultCard (via taskNotificationsMap), so a standalone
+    // task_notification row for one of these would duplicate the folded status
+    // on expand. Suppress those; orphan notifications (no tool_use_id, or a
+    // tool_use not present in this timeline) are still rendered.
+    const nestedToolUseIds = new Set<string>();
+    for (const msg of nestedMessages) {
+      if (msg.type !== 'assistant' || !Array.isArray(msg.message.content)) continue;
+      for (const block of msg.message.content) {
+        const b = block as Record<string, unknown>;
+        if (b.type === 'tool_use' && typeof b.id === 'string') nestedToolUseIds.add(b.id);
+      }
+    }
+
     return nestedMessages.filter((msg, idx) => {
       if (shouldHideNestedSystemMessage(msg, idx === nestedMessages.length - 1)) {
         return false;
+      }
+
+      // Suppress a folded nested task_notification: its tool_use card already
+      // shows the status, so a standalone row would duplicate it.
+      if (msg.type === 'system' && (msg as { subtype?: string }).subtype === 'task_notification') {
+        const toolUseId = (msg as { tool_use_id?: string }).tool_use_id;
+        if (toolUseId && nestedToolUseIds.has(toolUseId)) return false;
       }
 
       // Only check the first message
@@ -475,6 +502,7 @@ export function SubagentBlock({
                     isLiveTail={idx === filteredNestedMessages.length - 1}
                     toolResultsMap={toolResultsMap}
                     replacementStatusMap={replacementStatusMap}
+                    taskNotificationsMap={taskNotificationsMap}
                   />
                 ))}
               </div>
@@ -519,11 +547,13 @@ function NestedMessageRenderer({
   isLiveTail,
   toolResultsMap,
   replacementStatusMap,
+  taskNotificationsMap,
 }: {
   message: SDKMessage;
   isLiveTail: boolean;
   toolResultsMap?: Map<string, unknown>;
   replacementStatusMap?: Map<string, MessageReplacementStatus>;
+  taskNotificationsMap?: Map<string, SDKTaskNotificationMessage>;
 }) {
   const replacementStatus = replacementStatusMap?.get(getMessageUuid(message) ?? '');
   const withReplacementStatus = (content: ComponentChild) => {
@@ -602,6 +632,7 @@ function NestedMessageRenderer({
               }
               variant="default"
               isOutputRemoved={resultData?.isOutputRemoved || false}
+              taskNotification={taskNotificationsMap?.get(toolBlock.id)}
             />
           );
         })}

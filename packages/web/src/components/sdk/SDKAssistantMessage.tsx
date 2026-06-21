@@ -269,6 +269,7 @@ export function SDKAssistantMessage({
             toolResultsMap={toolResultsMap}
             replacementStatusMap={replacementStatusMap}
             taskNotification={taskNotification}
+            taskNotificationsMap={taskNotificationsMap}
             sessionId={sessionId}
             resolvedQuestions={resolvedQuestions}
             pendingQuestion={pendingQuestion}
@@ -314,6 +315,7 @@ function ToolUseBlock({
   toolResultsMap,
   replacementStatusMap,
   taskNotification,
+  taskNotificationsMap,
   sessionId: propSessionId,
   resolvedQuestions,
   pendingQuestion,
@@ -327,6 +329,7 @@ function ToolUseBlock({
   toolResultsMap?: Map<string, unknown>;
   replacementStatusMap?: Map<string, MessageReplacementStatus>;
   taskNotification?: SDKTaskNotificationMessage;
+  taskNotificationsMap?: Map<string, SDKTaskNotificationMessage>;
   sessionId?: string;
   resolvedQuestions?: Map<string, ResolvedQuestion>;
   pendingQuestion?: PendingUserQuestion | null;
@@ -368,6 +371,7 @@ function ToolUseBlock({
         toolResultsMap={toolResultsMap}
         replacementStatusMap={replacementStatusMap}
         taskNotification={taskNotification}
+        taskNotificationsMap={taskNotificationsMap}
         isRunning={isRunning}
       />
     );

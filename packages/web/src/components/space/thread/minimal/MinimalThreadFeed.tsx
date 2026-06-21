@@ -625,6 +625,32 @@ function indexTaskNotifications(rows: ParsedThreadRow[]): Map<string, TaskNotifi
   return byToolUseId;
 }
 
+/**
+ * Collect the tool_use_ids that have a rendered active-roster target — i.e.
+ * tool_use entries that survive the ROSTER_MAX_ENTRIES cap in a summary whose
+ * session actually renders an active roster. A summary only renders an active
+ * roster when its session's trailing block is non-terminal AND that block's
+ * agent is active; a stale summary left over after the compact rows advanced
+ * to a terminal result must NOT suppress a task_notification (it has nowhere
+ * to fold). A task_notification is only suppressed when its tool_use_id is in
+ * this set; otherwise its status must render as a fallback row.
+ */
+function collectRosteredToolUseIds(
+  summaries: ActiveTurnSummary[],
+  renderedTurnKeys: Set<string>
+): Set<string> {
+  const ids = new Set<string>();
+  for (const summary of summaries) {
+    // Match on (sessionId, turnIndex): a stale summary whose turn no longer
+    // matches the compact feed's active turn must not contribute tool IDs.
+    if (!renderedTurnKeys.has(`${summary.sessionId}:${summary.turnIndex}`)) continue;
+    for (const entry of rosterEntriesFromSummary(summary, ROSTER_MAX_ENTRIES)) {
+      if (entry.kind === 'tool' && entry.toolUseId) ids.add(entry.toolUseId);
+    }
+  }
+  return ids;
+}
+
 function buildActiveTurn(
   block: AgentTurnBlock,
   rows: ParsedThreadRow[],
@@ -765,18 +791,23 @@ function buildCompactBoundaryTurn(row: ParsedThreadRow): CompactBoundaryFeedTurn
 
 function buildOperationalSystemTurn(
   row: ParsedThreadRow,
-  isSessionTail: boolean
+  isSessionTail: boolean,
+  rosteredToolUseIds: Set<string>
 ): SystemFeedTurn | null {
   const message = row.message;
   if (!message || message.type !== 'system') return null;
   const subtype = (message as { subtype?: string }).subtype;
   if (!subtype || subtype === 'init') return null;
-  // task_notification is folded onto its originating tool_use card / roster
-  // entry. Suppress the standalone row whenever it carries a tool_use_id (it
-  // belongs to a tool in this task). True orphans (no tool_use_id) fall
-  // through to a system turn so the user still sees the terminal status.
-  if (subtype === 'task_notification' && (message as { tool_use_id?: string }).tool_use_id) {
-    return null;
+  // task_notification is folded onto its originating tool_use roster entry
+  // (active turn only). Suppress the standalone row ONLY when that target
+  // exists — i.e. the tool_use is in an active summary's rendered roster. When
+  // there is no target (completed turn, missing summary, or the tool was
+  // capped out of the last ROSTER_MAX_ENTRIES entries), fall through to a
+  // system turn so the terminal summary/usage/failure is not silently lost.
+  // True orphans (no tool_use_id) also fall through.
+  if (subtype === 'task_notification') {
+    const toolUseId = (message as { tool_use_id?: string }).tool_use_id;
+    if (toolUseId && rosteredToolUseIds.has(toolUseId)) return null;
   }
   // Honor the centralized hidden-subtype contract so Space task threads
   // don't surface noisy rows the main transcript already hides.
@@ -810,6 +841,53 @@ function buildOperationalSystemTurn(
       createdAt: row.createdAt,
       title: 'Thinking tokens',
       body: `${tokenText} estimated tokens${deltaText}`,
+      sessionId: row.sessionId,
+      highlightMessageUuid: highlightUuid,
+      replacementStatus: row.replacementStatus,
+    };
+  }
+
+  // task_notification fallback: only reached when there is no roster target
+  // (completed turn / missing/stale summary / capped-out tool). Surface the
+  // terminal status + summary + usage so failures aren't silently lost — this
+  // row is the only remaining place to show the terminal metadata, matching
+  // what the roster and the full chat notification renderer display.
+  if (subtype === 'task_notification') {
+    const status = (message as { status?: string }).status;
+    const summary = (message as { summary?: unknown }).summary;
+    const usage = (
+      message as {
+        usage?: { total_tokens?: number; tool_uses?: number; duration_ms?: number };
+      }
+    ).usage;
+    const title =
+      status === 'completed'
+        ? 'Task completed'
+        : status === 'failed' || status === 'stopped'
+          ? 'Task failed'
+          : 'Task notification';
+    const parts: string[] = [];
+    if (typeof summary === 'string' && summary.trim()) parts.push(summary.trim());
+    else if (typeof status === 'string') parts.push(status);
+    if (usage) {
+      const segs: string[] = [];
+      if (typeof usage.total_tokens === 'number')
+        segs.push(`${usage.total_tokens.toLocaleString()} tokens`);
+      if (typeof usage.tool_uses === 'number') segs.push(`${usage.tool_uses} tool uses`);
+      if (typeof usage.duration_ms === 'number')
+        segs.push(`${(usage.duration_ms / 1000).toFixed(1)}s`);
+      if (segs.length > 0) parts.push(segs.join(' · '));
+    }
+    return {
+      state: 'system',
+      id: `system-${String(row.id)}`,
+      agent: row.label,
+      agentKind: row.kind,
+      agentRole: row.role,
+      agentNodeExecutionId: row.nodeExecutionId ?? null,
+      createdAt: row.createdAt,
+      title,
+      body: parts.join('\n'),
       sessionId: row.sessionId,
       highlightMessageUuid: highlightUuid,
       replacementStatus: row.replacementStatus,
@@ -1030,9 +1108,38 @@ function buildFeedTurns(
   if (blocks.length === 0) return [];
 
   // task_notifications keyed by tool_use_id — used to fold status onto the
-  // active-turn roster tool entry. Standalone task_notification rows are
-  // suppressed in buildOperationalSystemTurn whenever they carry a tool_use_id.
+  // active-turn roster tool entry.
   const taskNotificationsByToolUseId = indexTaskNotifications(rowsWithReplacementStatus);
+
+  // Turns that will actually render an active roster: the trailing block for
+  // an active agent is non-terminal. Only a summary whose (sessionId, turnIndex)
+  // matches one of these rendered turns can fold a task_notification onto a
+  // roster entry. Matching turnIndex (not just sessionId) matters because the
+  // compact-message and active-turn LiveQueries update independently: if the
+  // compact rows advance a session into a new turn before the active-turn delta
+  // lands, the previous turn's tool IDs must not be collected (they'd suppress
+  // or mis-attach a just-finished turn's notification).
+  const normalisedActive = new Set<string>();
+  for (const label of activeAgentLabels) normalisedActive.add(normalizeAgentKey(label));
+  const trailingBlockByAgent = new Map<string, AgentTurnBlock>();
+  for (const block of blocks) trailingBlockByAgent.set(normalizeAgentKey(block.agentLabel), block);
+  const renderedTurnKeys = new Set<string>();
+  for (const [key, block] of trailingBlockByAgent) {
+    if (!normalisedActive.has(key)) continue;
+    if (block.isTerminal) continue;
+    const sid = latestSessionId(block.rows);
+    const turnIndex = latestTurnIndex(block.rows);
+    if (sid && turnIndex !== undefined) renderedTurnKeys.add(`${sid}:${turnIndex}`);
+  }
+
+  // tool_use_ids whose status is actually rendered on an active-roster entry
+  // (i.e. the tool is in a rendered turn's summary AND within the last
+  // ROSTER_MAX_ENTRIES entries). A task_notification is suppressed ONLY when
+  // its tool_use_id is in this set — otherwise there is no inline target
+  // (completed turn, missing/stale summary, turn mismatch, or capped out of the
+  // roster) and the notification must fall back to a standalone system row so
+  // the terminal summary/usage/failure is not lost.
+  const rosteredToolUseIds = collectRosteredToolUseIds(activeTurnSummaries, renderedTurnKeys);
 
   const latestRowIdBySession = new Map<string, string>();
   for (const row of rowsWithReplacementStatus) {
@@ -1102,7 +1209,8 @@ function buildFeedTurns(
       }
       const operationalSystemTurn = buildOperationalSystemTurn(
         row,
-        row.sessionId ? latestRowIdBySession.get(row.sessionId) === String(row.id) : false
+        row.sessionId ? latestRowIdBySession.get(row.sessionId) === String(row.id) : false,
+        rosteredToolUseIds
       );
       if (operationalSystemTurn) {
         flushAgent();
@@ -1139,7 +1247,20 @@ function buildFeedTurns(
       if (trailing.block.isTerminal) continue;
       const completed = turns[trailing.turnIdx] as CompletedFeedTurn;
       const sessionId = latestSessionId(trailing.rows);
-      const summary = sessionId ? summariesBySession.get(sessionId) : undefined;
+      // Only fold when the summary matches the trailing rows' turn (when the
+      // turn is known). The compact and active-turn LiveQueries race: if the
+      // compact rows advanced to a new non-terminal turn before the active-turn
+      // delta landed, a session-keyed summary is stale and would attach the
+      // previous turn's tool IDs/status to the new active rail. Drop the summary
+      // on a known turn mismatch → buildActiveTurn renders no roster until the
+      // summary catches up. When the trailing turn is unknown, fall through
+      // (no gate) so summaries still apply.
+      const candidateSummary = sessionId ? summariesBySession.get(sessionId) : undefined;
+      const trailingTurn = latestTurnIndex(trailing.rows);
+      const summary =
+        trailingTurn === undefined || candidateSummary?.turnIndex === trailingTurn
+          ? candidateSummary
+          : undefined;
       turns[trailing.turnIdx] = buildActiveTurn(
         trailing.block,
         trailing.rows,
