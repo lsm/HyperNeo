@@ -38,6 +38,8 @@ bun run architecture:file-size-report -- --json
 
 The baseline lives in [file-size-ratchet.json](file-size-ratchet.json). The allowlist is not approval to grow those files; it is a maximum current-state baseline with a named split follow-up.
 
+The move from `docs/plans/architecture-refactor-execution-plan/` preserves the prior baseline values. Existing full-repo drift against that baseline should be fixed or refreshed in a dedicated source-split/baseline PR, not hidden in the documentation move.
+
 ## Current Baseline
 
 - Production source files scanned: 721.

@@ -188,6 +188,10 @@ function loadConfigFromGitRef(
   return null;
 }
 
+function stableConfigJson(configSource: RatchetConfig): string {
+  return JSON.stringify(configSource);
+}
+
 function formatTable(rows: string[][]): string {
   if (rows.length === 0) return '';
   const header = rows[0];
@@ -219,10 +223,13 @@ const changedPaths = changedFrom ? getChangedPaths(changedFrom) : null;
 const changedPathInfo = changedFrom
   ? getChangedPathInfo(changedFrom)
   : new Map<string, ChangedPathInfo>();
-const ratchetConfigChanged =
+const ratchetConfigPathChanged =
   changedPaths?.has(configRepoPath) ||
   legacyConfigPaths.some((legacyConfigPath) => changedPaths?.has(legacyConfigPath)) ||
   false;
+const ratchetConfigChanged =
+  ratchetConfigPathChanged &&
+  (!baseConfig || stableConfigJson(config) !== stableConfigJson(baseConfig));
 const scanReason =
   changedPaths && ratchetConfigChanged
     ? `ratchet config changed; scanning all production source files`
@@ -283,7 +290,14 @@ const violations = oversized.filter((file) => {
   return !allowlistEntry || file.lines > allowlistEntry.maxLines;
 });
 
-const staleAllowlistEntries = Object.entries(config.allowlist)
+const staleAllowlistCandidates =
+  changedPaths && !ratchetConfigChanged
+    ? scannedFiles
+        .map((file) => [file.path, config.allowlist[file.path]] as const)
+        .filter((entry): entry is readonly [string, AllowlistEntry] => Boolean(entry[1]))
+    : Object.entries(config.allowlist);
+
+const staleAllowlistEntries = staleAllowlistCandidates
   .filter(([path, entry]) => {
     const absolutePath = resolve(repoRoot, path);
     return !existsSync(absolutePath) || countLines(absolutePath) !== entry.maxLines;
