@@ -292,9 +292,15 @@ const violations = oversized.filter((file) => {
 
 const staleAllowlistCandidates =
   changedPaths && !ratchetConfigChanged
-    ? scannedFiles
-        .map((file) => [file.path, config.allowlist[file.path]] as const)
-        .filter((entry): entry is readonly [string, AllowlistEntry] => Boolean(entry[1]))
+    ? [
+        ...scannedFiles
+          .map((file) => [file.path, config.allowlist[file.path]] as const)
+          .filter((entry): entry is readonly [string, AllowlistEntry] => Boolean(entry[1])),
+        ...Array.from(changedPathInfo.values())
+          .filter((changedInfo) => changedInfo.status === 'D')
+          .map((changedInfo) => [changedInfo.path, config.allowlist[changedInfo.path]] as const)
+          .filter((entry): entry is readonly [string, AllowlistEntry] => Boolean(entry[1])),
+      ]
     : Object.entries(config.allowlist);
 
 const staleAllowlistEntries = staleAllowlistCandidates
