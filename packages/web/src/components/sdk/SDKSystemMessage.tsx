@@ -21,7 +21,9 @@ import type { ComponentChildren } from 'preact';
 import { useState } from 'preact/hooks';
 import type {
   SDKAPIRetryMessage,
+  SDKHookProgressMessage,
   SDKHookResponseMessage,
+  SDKHookStartedMessage,
   SDKInformationalMessage,
   SDKMessage,
   SDKModelRefusalFallbackMessage,
@@ -84,6 +86,14 @@ export function SDKSystemMessage({ message, isLiveTail = false }: Props) {
       );
     }
     return null; // Don't show null status
+  }
+
+  // Hook started / progress — compact "running" card (hook_response has its own card below)
+  if (message.subtype === 'hook_started') {
+    return <HookRunningCard message={message as SDKHookStartedMessage} progress={undefined} />;
+  }
+  if (message.subtype === 'hook_progress') {
+    return <HookRunningCard message={undefined} progress={message as SDKHookProgressMessage} />;
   }
 
   // Hook response
@@ -584,6 +594,49 @@ function SystemInitMessage({ message }: { message: Extract<SystemMessage, { subt
  * Matches the visual pattern of ToolResultCard (header button + chevron + expand/collapse).
  * Default collapsed since hooks are noise, not signal.
  */
+/**
+ * Hook Running Card — compact indicator for hook_started / hook_progress.
+ * Spinner + hook_name + hook_event + the latest stdout snippet. The terminal
+ * hook_response renders via HookResponseCard instead.
+ */
+function HookRunningCard({
+  message,
+  progress,
+}: {
+  message: SDKHookStartedMessage | undefined;
+  progress: SDKHookProgressMessage | undefined;
+}) {
+  const hookName = (message ?? progress)?.hook_name ?? 'hook';
+  const hookEvent = (message ?? progress)?.hook_event ?? '';
+  const stdout = progress?.stdout?.trim() ?? '';
+  const summary = stdout ? stdout.split('\n')[0].slice(0, 80) : undefined;
+
+  return (
+    <div class="my-2 flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 p-2 text-sm dark:border-slate-700 dark:bg-slate-900/30">
+      <svg
+        class="h-4 w-4 flex-shrink-0 animate-spin text-slate-500 dark:text-slate-400"
+        fill="none"
+        viewBox="0 0 24 24"
+        aria-label="hook running"
+      >
+        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+        <path
+          class="opacity-75"
+          fill="currentColor"
+          d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+        />
+      </svg>
+      <span class="font-semibold text-slate-900 dark:text-slate-100">{hookName}</span>
+      <span class="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs text-slate-600 dark:bg-slate-800 dark:text-slate-400">
+        {hookEvent}
+      </span>
+      {summary && (
+        <span class="truncate font-mono text-xs text-slate-600 dark:text-slate-400">{summary}</span>
+      )}
+    </div>
+  );
+}
+
 function HookResponseCard({ message }: { message: SDKHookResponseMessage }) {
   const [isExpanded, setIsExpanded] = useState(false);
 

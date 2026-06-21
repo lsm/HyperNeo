@@ -477,19 +477,20 @@ export function getMessageTypeDescription(msg: SDKMessage): string {
  * Hidden for these reasons:
  * - session_state_changed: Internal state machine; handler uses for turn-end detection
  * - commands_changed: Palette already updated via onCommandsChanged; chat row = noise
- * - hook_started: Redundant - hook_response carries the result
- * - hook_progress: Streaming stdout/stderr; hook_response is persisted result
  * - task_started: Task tool_use card already fires on subagent spawn
  * - task_progress: Periodic usage stats; task_notification carries final usage
  * - task_updated: Status patch; child messages + result already reflect status
  * - mirror_error: Internal group/session-mirror plumbing
  * - elicitation_complete: Niche MCP elicitation
+ *
+ * Note: hook_started / hook_progress / hook_response are NOT hidden here — the
+ * chat transcript renders them (HookRunningCard / HookResponseCard). The Space
+ * task thread minimal feed hides all hook_* system rows itself (hooks surface
+ * only as roster entries there); see MinimalThreadFeed.buildOperationalSystemTurn.
  */
 export const HIDDEN_SYSTEM_SUBTYPES = new Set([
   'session_state_changed',
   'commands_changed',
-  'hook_started',
-  'hook_progress',
   'task_started',
   'task_progress',
   'task_updated',

@@ -2680,7 +2680,17 @@ export type ActivityEntry =
   /** Real human user input (`type: 'user'`, `isReplay` falsy). */
   | { kind: 'user_message'; text: string; ts: number; uuid: string }
   /** Synthetic agent→agent / system handoff (`type: 'user'`, `isReplay: true`). */
-  | { kind: 'agent_handoff'; text: string; ts: number; uuid: string };
+  | { kind: 'agent_handoff'; text: string; ts: number; uuid: string }
+  /** A configured hook run within the turn (hook_started/progress/response collapsed to the latest per hook_id). Surfaces hook name + event + terminal status so the roster can render a spinner then a check/X without a standalone system row. */
+  | {
+      kind: 'hook';
+      hookName: string;
+      hookEvent: string;
+      status: 'running' | 'completed' | 'failed';
+      summary?: string;
+      ts: number;
+      uuid: string;
+    };
 
 /**
  * Per-(session, turn) summary of activity entries within an active (incomplete)

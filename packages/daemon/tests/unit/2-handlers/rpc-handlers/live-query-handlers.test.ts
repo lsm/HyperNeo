@@ -1838,6 +1838,92 @@ describe('NAMED_QUERY_REGISTRY', () => {
         expect(entries[2].preview).toBe('ls');
       });
 
+      test('collapses hook_started→progress→response into one roster entry per hook_id', async () => {
+        const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+        insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+
+        // Anchor the active turn with a tool_use so active-turn detection fires.
+        insertSdkMessageAt('a1', sessionId, now + 1000, {
+          type: 'assistant',
+          uuid: 'a1',
+          message: {
+            content: [{ type: 'tool_use', id: 'tu-1', name: 'Bash', input: { command: 'ls' } }],
+          },
+        });
+        // A completed hook run (3 messages, same hook_id).
+        insertSdkMessageAt(
+          'h1s',
+          sessionId,
+          now + 2000,
+          {
+            type: 'system',
+            subtype: 'hook_started',
+            hook_id: 'hook-A',
+            hook_name: 'pre-commit',
+            hook_event: 'PreToolUse',
+            uuid: 'h1s',
+          },
+          'system'
+        );
+        insertSdkMessageAt(
+          'h1p',
+          sessionId,
+          now + 3000,
+          {
+            type: 'system',
+            subtype: 'hook_progress',
+            hook_id: 'hook-A',
+            hook_name: 'pre-commit',
+            hook_event: 'PreToolUse',
+            stdout: 'running checks',
+            uuid: 'h1p',
+          },
+          'system'
+        );
+        insertSdkMessageAt(
+          'h1r',
+          sessionId,
+          now + 4000,
+          {
+            type: 'system',
+            subtype: 'hook_response',
+            hook_id: 'hook-A',
+            hook_name: 'pre-commit',
+            hook_event: 'PreToolUse',
+            outcome: 'success',
+            stdout: 'all good',
+            uuid: 'h1r',
+          },
+          'system'
+        );
+        // A still-running hook (only started).
+        insertSdkMessageAt(
+          'h2s',
+          sessionId,
+          now + 5000,
+          {
+            type: 'system',
+            subtype: 'hook_started',
+            hook_id: 'hook-B',
+            hook_name: 'lint',
+            hook_event: 'PostToolUse',
+            uuid: 'h2s',
+          },
+          'system'
+        );
+
+        const summaries = await buildSummaries(taskId);
+        const entries = summaries[0].entries as Array<Record<string, unknown>>;
+        const hooks = entries.filter((e) => e.kind === 'hook');
+        // One entry per hook_id, despite hook-A having 3 messages.
+        expect(hooks).toHaveLength(2);
+        const hookA = hooks.find((h) => h.hookName === 'pre-commit');
+        const hookB = hooks.find((h) => h.hookName === 'lint');
+        expect(hookA?.status).toBe('completed');
+        expect(hookA?.hookEvent).toBe('PreToolUse');
+        expect(hookB?.status).toBe('running');
+      });
+
       test('distinguishes real human input from synthetic agent handoffs via isReplay', async () => {
         const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
         insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');

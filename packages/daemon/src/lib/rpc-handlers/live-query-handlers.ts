@@ -1726,6 +1726,58 @@ user_entries AS (
           AND TRIM(COALESCE(json_extract(je.value, '$.text'), '')) != ''
       )
     )
+),
+-- One row per hook run in the active turn. A hook emits hook_started →
+-- hook_progress → hook_response; collapse to the LATEST message per hook_id
+-- so the roster shows a single entry whose status reflects the final phase
+-- (running while started/progress, completed/failed once response arrives).
+hook_runs AS (
+  SELECT
+    ar.sessionId AS sessionId,
+    ar.turnIndex AS turnIndex,
+    ar.createdAt AS ts,
+    ar.id AS rowId,
+    json_extract(ar.content, '$.uuid') AS uuid,
+    json_extract(ar.content, '$.hook_id') AS hookId,
+    json_extract(ar.content, '$.hook_name') AS hookName,
+    json_extract(ar.content, '$.hook_event') AS hookEvent,
+    json_extract(ar.content, '$.subtype') AS hookSubtype,
+    json_extract(ar.content, '$.outcome') AS outcome,
+    json_extract(ar.content, '$.stdout') AS stdout,
+    ROW_NUMBER() OVER (
+      PARTITION BY json_extract(ar.content, '$.hook_id')
+      ORDER BY ar.createdAt DESC, ar.id DESC
+    ) AS rn
+  FROM active_rows ar
+  WHERE ar.messageType = 'system'
+    AND json_extract(ar.content, '$.subtype') IN ('hook_started', 'hook_progress', 'hook_response')
+    AND json_extract(ar.content, '$.hook_id') IS NOT NULL
+),
+hook_entries AS (
+  SELECT
+    sessionId,
+    turnIndex,
+    ts,
+    rowId,
+    -2 AS blockIdx,
+    uuid,
+    '__hook' AS blockType,
+    hookName AS toolName,
+    NULL AS toolInput,
+    CASE
+      WHEN stdout IS NOT NULL AND TRIM(stdout) != ''
+        THEN SUBSTR(TRIM(stdout), 1, 120)
+      ELSE NULL
+    END AS textValue,
+    NULL AS thinkingValue,
+    hookEvent AS hookEvent,
+    CASE
+      WHEN hookSubtype = 'hook_response' AND outcome = 'success' THEN 'completed'
+      WHEN hookSubtype = 'hook_response' THEN 'failed'
+      ELSE 'running'
+    END AS hookStatus
+  FROM hook_runs
+  WHERE rn = 1
 )
 SELECT
   sessionId || ':' || turnIndex || ':' || rowId || ':' || blockIdx AS id,
@@ -1739,7 +1791,9 @@ SELECT
   toolName,
   toolInput,
   textValue,
-  thinkingValue
+  thinkingValue,
+  NULL AS hookEvent,
+  NULL AS hookStatus
 FROM assistant_entries
 UNION ALL
 SELECT
@@ -1754,8 +1808,27 @@ SELECT
   toolName,
   toolInput,
   textValue,
-  thinkingValue
+  thinkingValue,
+  NULL AS hookEvent,
+  NULL AS hookStatus
 FROM user_entries
+UNION ALL
+SELECT
+  sessionId || ':' || turnIndex || ':' || rowId || ':' || blockIdx AS id,
+  sessionId,
+  turnIndex,
+  ts,
+  rowId,
+  blockIdx,
+  uuid,
+  blockType,
+  toolName,
+  toolInput,
+  textValue,
+  thinkingValue,
+  hookEvent,
+  hookStatus
+FROM hook_entries
 ORDER BY sessionId ASC, ts ASC, rowId ASC, blockIdx ASC, id ASC
 `.trim();
 
@@ -1970,6 +2043,22 @@ export function buildActiveTurnSummariesFromRows(
     } else if (blockType === '__user_replay') {
       const text = typeof row.textValue === 'string' ? row.textValue : '';
       entry = { kind: 'agent_handoff', text: activityOneLine(text), ts, uuid };
+    } else if (blockType === '__hook') {
+      const hookName = typeof row.toolName === 'string' ? row.toolName : '';
+      const hookEvent = typeof row.hookEvent === 'string' ? row.hookEvent : '';
+      const rawStatus = typeof row.hookStatus === 'string' ? row.hookStatus : 'running';
+      const status: 'running' | 'completed' | 'failed' =
+        rawStatus === 'completed' || rawStatus === 'failed' ? rawStatus : 'running';
+      const stdoutSummary = typeof row.textValue === 'string' ? row.textValue.trim() : '';
+      entry = {
+        kind: 'hook',
+        hookName,
+        hookEvent,
+        status,
+        ts,
+        uuid,
+        ...(stdoutSummary ? { summary: activityOneLine(stdoutSummary) } : {}),
+      };
     }
     if (!entry) continue;
 
@@ -2031,6 +2120,22 @@ function mapActiveTurnEntryRow(row: Record<string, unknown>): Record<string, unk
   } else if (blockType === '__user_replay') {
     const text = typeof row.textValue === 'string' ? row.textValue : '';
     entry = { kind: 'agent_handoff', text: activityOneLine(text), ts, uuid };
+  } else if (blockType === '__hook') {
+    const hookName = typeof row.toolName === 'string' ? row.toolName : '';
+    const hookEvent = typeof row.hookEvent === 'string' ? row.hookEvent : '';
+    const rawStatus = typeof row.hookStatus === 'string' ? row.hookStatus : 'running';
+    const status: 'running' | 'completed' | 'failed' =
+      rawStatus === 'completed' || rawStatus === 'failed' ? rawStatus : 'running';
+    const stdoutSummary = typeof row.textValue === 'string' ? row.textValue.trim() : '';
+    entry = {
+      kind: 'hook',
+      hookName,
+      hookEvent,
+      status,
+      ts,
+      uuid,
+      ...(stdoutSummary ? { summary: activityOneLine(stdoutSummary) } : {}),
+    };
   }
 
   return {

@@ -224,11 +224,11 @@ describe('SDKMessageRenderer', () => {
     });
 
     it('should render all hidden system subtypes as null', () => {
+      // hook_started / hook_progress are intentionally NOT hidden — the chat
+      // transcript renders them via HookRunningCard. They're covered separately.
       for (const subtype of [
         'session_state_changed',
         'commands_changed',
-        'hook_started',
-        'hook_progress',
         'task_started',
         'task_progress',
         'task_updated',
