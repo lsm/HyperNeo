@@ -1961,10 +1961,6 @@ export class SpaceRuntimeService {
     // whenever the gate opened so it clears the auto-subscription, even if
     // no new task was activated.
     await this.syncBlockedRunPrEventSubscription(runId, gateOpened ? activatedTasks : []);
-    // Resume the run when the gate actually opened — even if no new task was
-    // activated (e.g. all target nodes already had active tasks). Branching
-    // on activatedTasks.length misses the "gate open, nothing to activate"
-    // case and leaves the run stuck in `blocked` despite the open gate.
     if (gateOpened) {
       const run = this.config.workflowRunRepo.getRun(runId);
       if (run?.status === 'blocked') {

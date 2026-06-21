@@ -1525,8 +1525,20 @@ export class SpaceRuntime {
         // re-evaluation but did not unblock anything. Mark it terminal so
         // the redispatch sweep does not replay it on every restart and
         // rerun gate scripts for an event that already failed to unblock.
+        // markEventFailed (not markEventFailedIfAllDeliveriesTerminal) is
+        // required here because the no-deliverable-target path has zero
+        // delivery rows, and the latter is a no-op without deliveries.
         if (this.acceptingExternalEvents) {
-          store.markEventFailedIfAllDeliveriesTerminal(payload.eventId);
+          try {
+            store.markEventFailed(payload.eventId, {
+              terminal: true,
+              reason: 'blocked_run_gate_not_opened',
+            });
+          } catch (err) {
+            log.warn(
+              `SpaceRuntime: markEventFailed for ${payload.eventId} failed: ${err instanceof Error ? err.message : String(err)}`
+            );
+          }
         }
       }
       // If anyGateOpened is true, leave the event published — the gate
