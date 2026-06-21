@@ -133,11 +133,11 @@ async function setup(options: {
   channels?: SpaceWorkflow['channels'];
 }): Promise<TestContext> {
   const db = makeDb();
-  const workflowRunRepo = new SpaceWorkflowRunRepository(db);
   const taskRepo = new SpaceTaskRepository(db);
   const nodeExecutionRepo = new NodeExecutionRepository(db);
   const gateDataRepo = new GateDataRepository(db);
   const gateOpenStateRepo = new GateOpenStateRepository(db);
+  const workflowRunRepo = new SpaceWorkflowRunRepository(db, gateOpenStateRepo);
   const channelCycleRepo = new ChannelCycleRepository(db);
   const workflowManager = new SpaceWorkflowManager(new SpaceWorkflowRepository(db));
   const bus = new InternalEventBus<DaemonInternalEventMap>();
@@ -1190,6 +1190,121 @@ describe('SpaceRuntimeService event-driven gate evaluation', () => {
       sessionId: `session-queued-${runId}`,
     });
     await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(ctx.injected).toHaveLength(0);
+  });
+
+  test('P1 regression: approve gate then reject clears the gate-open cache so deliverMessage does not bypass', async () => {
+    const ctx = await setup({
+      gates: [
+        {
+          id: 'approval',
+          fields: [approvedField],
+        },
+      ],
+      channels: [{ id: 'ch-code-to-review', from: 'coder', to: 'reviewer', gateId: 'approval' }],
+    });
+    const workflow = ctx.workflowManager.listWorkflows(SPACE_ID)[0]!;
+    const runtime = await ctx.service.createOrGetRuntime(SPACE_ID);
+    const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+    const execution = ctx.nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    ctx.nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: `session-p1-${run.id}`,
+      startedAt: Date.now(),
+    });
+    ctx.tam.alive.add(`session-p1-${run.id}`);
+
+    // Approve the gate — caches open=true.
+    ctx.gateDataRepo.merge(run.id, 'approval', { approved: true, approvedAt: Date.now() });
+    await ctx.service.notifyGateDataChanged(run.id, 'approval');
+    expect(new GateOpenStateRepository(ctx.db).isOpen(run.id, 'approval').open).toBe(true);
+
+    // Reject via the same gate-data write path that approveGate RPC uses.
+    ctx.gateDataRepo.merge(run.id, 'approval', {
+      approved: false,
+      rejectedAt: Date.now(),
+      reason: 'tester rejected',
+      approvalSource: 'human',
+    });
+    // Mirror the rejection-path side effects: transition to blocked clears
+    // the gate-open cache via workflowRunRepo.transitionStatus.
+    ctx.workflowRunRepo.transitionStatus(run.id, 'blocked');
+
+    // Cache must now report closed — a subsequent deliverMessage must not
+    // bypass the rejected gate.
+    expect(new GateOpenStateRepository(ctx.db).isOpen(run.id, 'approval').open).toBe(false);
+  });
+
+  test('P2-1: fireBlockedRunExternalEventHook skips paused spaces', async () => {
+    const ctx = await setup({
+      gates: [
+        {
+          id: 'approval',
+          fields: [approvedField, prUrlField],
+        },
+      ],
+      channels: [{ id: 'ch-code-to-review', from: 'coder', to: 'reviewer', gateId: 'approval' }],
+    });
+    const workflow = ctx.workflowManager.listWorkflows(SPACE_ID)[0]!;
+    const { runId } = await seedBlockedRunWithPr(ctx, workflow.id);
+
+    // Pre-satisfy the gate so any re-eval would open it.
+    ctx.gateDataRepo.merge(runId, 'approval', { approved: true, approvedAt: Date.now() });
+
+    // Pause the space directly via DB.
+    ctx.db.prepare(`UPDATE spaces SET paused = 1 WHERE id = ?`).run(SPACE_ID);
+
+    const event: ExternalEvent = {
+      id: `evt-paused-${Math.random().toString(36).slice(2)}`,
+      spaceId: SPACE_ID,
+      source: 'github',
+      topic: PR_EVENT_TOPIC,
+      occurredAt: Date.now(),
+      ingestedAt: Date.now(),
+      dedupeKey: `dedupe-paused-${Math.random().toString(36).slice(2)}`,
+      summary: 'during pause',
+      payload: {},
+    };
+    await ctx.eventService.publish(event);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // Run stays blocked — paused space skipped the resume chain.
+    expect(ctx.workflowRunRepo.getRun(runId)?.status).toBe('blocked');
+    expect(ctx.runtimeNotifications).toHaveLength(0);
+  });
+
+  test('P2-2: PR event delivered during blocked hook does not re-deliver after auto-sub clear', async () => {
+    const ctx = await setup({
+      gates: [
+        {
+          id: 'approval',
+          fields: [approvedField, prUrlField],
+        },
+      ],
+      channels: [{ id: 'ch-code-to-review', from: 'coder', to: 'reviewer', gateId: 'approval' }],
+    });
+    const workflow = ctx.workflowManager.listWorkflows(SPACE_ID)[0]!;
+    const { runId } = await seedBlockedRunWithPr(ctx, workflow.id);
+    // Pre-satisfy the gate so the hook opens it during event processing.
+    ctx.gateDataRepo.merge(runId, 'approval', { approved: true, approvedAt: Date.now() });
+
+    const event: ExternalEvent = {
+      id: `evt-stale-${Math.random().toString(36).slice(2)}`,
+      spaceId: SPACE_ID,
+      source: 'github',
+      topic: PR_EVENT_TOPIC,
+      occurredAt: Date.now(),
+      ingestedAt: Date.now(),
+      dedupeKey: `dedupe-stale-${Math.random().toString(36).slice(2)}`,
+      summary: 'wake-up event',
+      payload: {},
+    };
+    await ctx.eventService.publish(event);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // The hook cleared the auto-sub and transitioned the run to in_progress.
+    // The stale allMatches snapshot would have delivered to the now-removed
+    // auto target — assert no delivery happened for this event.
     expect(ctx.injected).toHaveLength(0);
   });
 });

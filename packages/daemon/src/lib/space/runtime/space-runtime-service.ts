@@ -2039,21 +2039,11 @@ export class SpaceRuntimeService {
     if (!workflow) return false;
 
     let anyOpened = false;
-    for (const gate of workflow.gates ?? []) {
+    const gates = workflow.gates ?? [];
+    for (const gate of gates) {
       try {
-        // Snapshot the open-state cache BEFORE re-evaluation so we only
-        // count this gate as "opened" if it transitioned closed→open during
-        // this evaluation. Without the snapshot, a different gate that was
-        // already open before the run blocked would falsely set anyOpened
-        // even though the current event did not unblock anything.
-        const wasOpenBefore = this.config.gateOpenStateRepo?.isOpen(runId, gate.id).open ?? false;
         const activated = await this.notifyGateDataChanged(runId, gate.id);
         if (activated.length > 0) {
-          // New task activated — gate must have opened during this call.
-          anyOpened = true;
-        } else if (!wasOpenBefore && this.config.gateOpenStateRepo?.isOpen(runId, gate.id).open) {
-          // Opened with zero activations (every target already active) —
-          // only counts if the gate was NOT open before this evaluation.
           anyOpened = true;
         }
       } catch (err) {
@@ -2064,7 +2054,17 @@ export class SpaceRuntimeService {
       }
     }
 
-    if (anyOpened) {
+    // Only resume when EVERY gate is now open. Resuming on a partial opening
+    // (e.g. an unrelated gate A was already satisfied while blocking gate B
+    // is still closed) leaves the run stuck — the tick loop immediately
+    // re-blocks it because B's channel still cannot deliver. The
+    // gateOpenStateRepo cache was cleared on the blocked transition, so
+    // isOpen() reflects the post-re-eval state directly.
+    const allGatesOpen =
+      gates.length > 0 &&
+      gates.every((gate) => this.config.gateOpenStateRepo?.isOpen(runId, gate.id).open === true);
+
+    if (anyOpened && allGatesOpen) {
       this.runtime.clearPrEventSubscriptionsForRun(runId);
       // A gate opened via event-driven re-evaluation: transition the run back
       // to `in_progress` so the next tick spawns the newly-activated target
@@ -2074,7 +2074,7 @@ export class SpaceRuntimeService {
       this.transitionBlockedRunToInProgress(runId);
       await this.notifyBlockedRunSessionGateResolved(runId, event);
     }
-    return anyOpened;
+    return anyOpened && allGatesOpen;
   }
 
   /**

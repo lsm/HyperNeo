@@ -1543,7 +1543,13 @@ export class SpaceRuntime {
     // re-evaluation would lose the only wake-up event for a blocked run.
     const blockedHookOutcome = await this.fireBlockedRunExternalEventHook(payload, allMatches);
 
-    const matches = allMatches.filter((target) => {
+    // Re-lookup the trie after the hook — handleBlockedRunExternalEvent may
+    // have opened a gate, transitioned the run to in_progress, and called
+    // clearPrEventSubscriptionsForRun which removes the auto target. Using
+    // the pre-hook allMatches snapshot here would still deliver to the
+    // cleared target because the post-hook run.status === 'in_progress'
+    // satisfies isExternallyDeliverableRun.
+    const matches = this.lookupSubscriptionTargets(payload.topic).filter((target) => {
       if (isLongHorizonSubscriptionTarget(target)) return target.spaceId === payload.spaceId;
       const run = this.config.workflowRunRepo.getRun(target.workflowRunId);
       if (!run || run.spaceId !== payload.spaceId) return false;
@@ -1693,6 +1699,12 @@ export class SpaceRuntime {
       // space A must not trigger gate re-eval for a blocked run in space B
       // even when both runs auto-subscribed to the same GitHub PR.
       if (!run || run.status !== 'blocked' || run.spaceId !== payload.spaceId) continue;
+      // Skip paused / stopped spaces — the tick loop already ignores them,
+      // and re-evaluating gates during pause can transition run/task back to
+      // in_progress and clear the wake-up subscription before the space is
+      // resumed.
+      const space = await this.config.spaceManager.getSpace(run.spaceId);
+      if (!space || space.paused || space.stopped) continue;
       visitedRunIds.add(runId);
       firedRunIds.add(runId);
       try {
