@@ -302,6 +302,10 @@ export function setupSpaceWorkflowRunHandlers(
 
     // blocked → in_progress (human resolved the blocking issue)
     const updated = workflowRunRepo.transitionStatus(params.id, 'in_progress');
+    // Sweep the PR-event auto-subscription so subsequent PR events do not
+    // keep re-evaluating gates for an active run that only needed the
+    // subscription while it was blocked.
+    spaceRuntimeService.notifyRunResumed(params.id);
 
     internalEventBus
       .publish('space.workflowRun.updated', {
@@ -374,6 +378,9 @@ export function setupSpaceWorkflowRunHandlers(
       .catch((err) => {
         log.warn('Failed to emit space.workflowRun.updated:', err);
       });
+
+    // Register PR event auto-subscription for the newly-blocked run.
+    void spaceRuntimeService.notifyRunBlocked(params.id);
 
     return { run: updated };
   });
@@ -451,6 +458,8 @@ export function setupSpaceWorkflowRunHandlers(
       let updatedRun = run;
       if (run.status === 'blocked' && run.failureReason === 'humanRejected') {
         workflowRunRepo.transitionStatus(params.runId, 'in_progress');
+        // Sweep any persisted PR-event auto-subscription on the resume.
+        spaceRuntimeService.notifyRunResumed(params.runId);
         updatedRun = workflowRunRepo.updateRun(params.runId, { failureReason: null }) ?? run;
       }
 
@@ -500,6 +509,8 @@ export function setupSpaceWorkflowRunHandlers(
       // is always persisted regardless of whether the status changed.
       if (run.status !== 'blocked') {
         workflowRunRepo.transitionStatus(params.runId, 'blocked');
+        // Register PR event auto-subscription for the rejected run.
+        void spaceRuntimeService.notifyRunBlocked(params.runId);
       }
       const updated =
         workflowRunRepo.updateRun(params.runId, { failureReason: 'humanRejected' }) ?? run;

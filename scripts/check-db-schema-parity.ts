@@ -52,6 +52,7 @@ export const HELPER_SCHEMA_TABLES = [
   'evolution_scopes',
   'evolution_task_proposals',
   'gate_data',
+  'gate_open_state',
   'goal_automation_cursors',
   'mcp_audit_log',
   'node_executions',

@@ -2510,6 +2510,10 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           currentRun = workflowRunRepo.transitionStatus(args.run_id, 'in_progress');
           currentRun =
             workflowRunRepo.updateRun(args.run_id, { failureReason: null }) ?? currentRun;
+          // Sweep any persisted PR-event auto-subscription on the resume so
+          // subsequent PR events do not keep re-evaluating gates for an
+          // active run that only needed the subscription while it was blocked.
+          runtime.clearPrEventSubscriptionsForRun(args.run_id);
         }
 
         if (internalEventBus) {
@@ -2559,6 +2563,8 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 
         if (run.status !== 'blocked') {
           workflowRunRepo.transitionStatus(args.run_id, 'blocked');
+          // Register PR event auto-subscription for the rejected run.
+          runtime.notifyRunBlocked(args.run_id);
         }
         const updatedRun =
           workflowRunRepo.updateRun(args.run_id, { failureReason: 'humanRejected' }) ?? run;

@@ -22,7 +22,10 @@ import {
 } from './github-repository';
 
 const log = new Logger('github-event-extension');
-const DEFAULT_POLL_INTERVAL_MS = 60_000;
+// 120s baseline: halves sustained GitHub API request rate vs 60s to stay
+// safely below the undocumented secondary rate-limit ceiling. ETag 304s avoid
+// primary quota but still count toward secondary rate limits.
+const DEFAULT_POLL_INTERVAL_MS = 120_000;
 const GITHUB_API_BASE = 'https://api.github.com';
 const REACTION_POLL_PR_LIMIT = 10;
 const REACTION_POLL_RATE_LIMIT_FLOOR = 100;
