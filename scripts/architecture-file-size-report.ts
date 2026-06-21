@@ -38,6 +38,9 @@ type ReportFile = {
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const defaultConfigPath =
   'docs/architecture/target-architecture/execution-plan/file-size-ratchet.json';
+const legacyConfigPaths = [
+  'docs/plans/architecture-refactor-execution-plan/file-size-ratchet.json',
+];
 
 function parseArgs(): { configPath: string; changedFrom: string | null; json: boolean } {
   let configPath = defaultConfigPath;
@@ -157,17 +160,32 @@ function loadConfig(configPath: string): RatchetConfig {
   return JSON.parse(readFileSync(absolutePath, 'utf8')) as RatchetConfig;
 }
 
-function loadConfigFromGitRef(ref: string, configPath: string): RatchetConfig | null {
+function tryLoadConfigFromGitRef(
+  ref: string,
+  configPath: string
+): { config: RatchetConfig; path: string } | null {
   try {
     const output = execFileSync('git', ['show', `${ref}:${configPath}`], {
       cwd: repoRoot,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
     });
-    return JSON.parse(output) as RatchetConfig;
+    return { config: JSON.parse(output) as RatchetConfig, path: configPath };
   } catch {
     return null;
   }
+}
+
+function loadConfigFromGitRef(
+  ref: string,
+  configPath: string
+): { config: RatchetConfig; path: string } | null {
+  const paths = [configPath, ...legacyConfigPaths.filter((path) => path !== configPath)];
+  for (const path of paths) {
+    const loaded = tryLoadConfigFromGitRef(ref, path);
+    if (loaded) return loaded;
+  }
+  return null;
 }
 
 function formatTable(rows: string[][]): string {
@@ -180,7 +198,8 @@ function formatTable(rows: string[][]): string {
 const { configPath, changedFrom, json } = parseArgs();
 const configRepoPath = toRepoPath(configPath);
 const config = loadConfig(configPath);
-const baseConfig = changedFrom ? loadConfigFromGitRef(changedFrom, configRepoPath) : null;
+const baseConfigResult = changedFrom ? loadConfigFromGitRef(changedFrom, configRepoPath) : null;
+const baseConfig = baseConfigResult?.config ?? null;
 const thresholdConfig = baseConfig
   ? {
       ...config,
@@ -189,7 +208,7 @@ const thresholdConfig = baseConfig
     }
   : config;
 const baselineConfigSource = baseConfig
-  ? `${changedFrom}:${configRepoPath}`
+  ? `${changedFrom}:${baseConfigResult?.path ?? configRepoPath}`
   : changedFrom
     ? `${configRepoPath} (base ref has no baseline yet)`
     : configRepoPath;
@@ -200,7 +219,10 @@ const changedPaths = changedFrom ? getChangedPaths(changedFrom) : null;
 const changedPathInfo = changedFrom
   ? getChangedPathInfo(changedFrom)
   : new Map<string, ChangedPathInfo>();
-const ratchetConfigChanged = changedPaths?.has(configRepoPath) ?? false;
+const ratchetConfigChanged =
+  changedPaths?.has(configRepoPath) ||
+  legacyConfigPaths.some((legacyConfigPath) => changedPaths?.has(legacyConfigPath)) ||
+  false;
 const scanReason =
   changedPaths && ratchetConfigChanged
     ? `ratchet config changed; scanning all production source files`
