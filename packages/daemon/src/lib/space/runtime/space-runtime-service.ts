@@ -1966,12 +1966,36 @@ export class SpaceRuntimeService {
     } else {
       await this.syncBlockedRunPrEventSubscription(runId, activatedTasks);
     }
-    if (gateOpened) {
+    // Resume the run only when EVERY gate is now open. Resuming on a partial
+    // opening (e.g. an unrelated gate A is already satisfied while blocking
+    // gate B is still closed) lets the tick loop immediately re-block the
+    // run because B's channel still cannot deliver. Without this check, the
+    // per-gate completion hook in handleBlockedRunExternalEvent's loop would
+    // resume the run as soon as gate A's re-eval reports open, before the
+    // post-loop allGatesOpen check can prevent it.
+    if (gateOpened && this.allWorkflowGatesOpen(runId)) {
       const run = this.config.workflowRunRepo.getRun(runId);
       if (run?.status === 'blocked') {
         this.transitionBlockedRunToInProgress(runId);
       }
     }
+  }
+
+  /**
+   * Returns true when every gate declared on the run's workflow is currently
+   * cached open in the gate-open state repository. Used by the event-driven
+   * resume paths to decide whether the run can actually progress after a
+   * re-evaluation pass.
+   */
+  private allWorkflowGatesOpen(runId: string): boolean {
+    const run = this.config.workflowRunRepo.getRun(runId);
+    if (!run) return false;
+    const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+    const gates = workflow?.gates ?? [];
+    if (gates.length === 0) return true;
+    return gates.every(
+      (gate) => this.config.gateOpenStateRepo?.isOpen(runId, gate.id).open === true
+    );
   }
 
   /**
@@ -2031,7 +2055,7 @@ export class SpaceRuntimeService {
   async handleBlockedRunExternalEvent(payload: {
     runId: string;
     event: ExternalEventPublishedPayload;
-  }): Promise<boolean> {
+  }): Promise<boolean | 'retry'> {
     const { runId, event } = payload;
     const run = this.config.workflowRunRepo.getRun(runId);
     if (!run || run.status !== 'blocked') return false;
@@ -2042,8 +2066,10 @@ export class SpaceRuntimeService {
     const gates = workflow.gates ?? [];
     for (const gate of gates) {
       try {
-        const activated = await this.notifyGateDataChanged(runId, gate.id);
-        if (activated.length > 0) {
+        const wasOpenBefore = this.config.gateOpenStateRepo?.isOpen(runId, gate.id).open ?? false;
+        await this.notifyGateDataChanged(runId, gate.id);
+        const isOpenNow = this.config.gateOpenStateRepo?.isOpen(runId, gate.id).open ?? false;
+        if (!wasOpenBefore && isOpenNow) {
           anyOpened = true;
         }
       } catch (err) {
@@ -2054,27 +2080,22 @@ export class SpaceRuntimeService {
       }
     }
 
-    // Only resume when EVERY gate is now open. Resuming on a partial opening
-    // (e.g. an unrelated gate A was already satisfied while blocking gate B
-    // is still closed) leaves the run stuck — the tick loop immediately
-    // re-blocks it because B's channel still cannot deliver. The
-    // gateOpenStateRepo cache was cleared on the blocked transition, so
-    // isOpen() reflects the post-re-eval state directly.
-    const allGatesOpen =
-      gates.length > 0 &&
-      gates.every((gate) => this.config.gateOpenStateRepo?.isOpen(runId, gate.id).open === true);
+    const allGatesOpen = gates.length > 0 && this.allWorkflowGatesOpen(runId);
 
     if (anyOpened && allGatesOpen) {
       this.runtime.clearPrEventSubscriptionsForRun(runId);
-      // A gate opened via event-driven re-evaluation: transition the run back
-      // to `in_progress` so the next tick spawns the newly-activated target
-      // node. Without this, the run stays `blocked` even though the channel
-      // router created a pending execution for the target, and the workflow
-      // would only progress on the next poll cycle.
       this.transitionBlockedRunToInProgress(runId);
       await this.notifyBlockedRunSessionGateResolved(runId, event);
+      return true;
     }
-    return anyOpened && allGatesOpen;
+
+    // Check whether any deferred retry was scheduled during the loop — if so,
+    // signal 'retry' so the runtime keeps the event published instead of
+    // terminally marking it failed.
+    const scheduler = this.gateRetryScheduler;
+    const anyRetryScheduled = scheduler && gates.some((gate) => scheduler.has(runId, gate.id));
+    if (anyRetryScheduled) return 'retry';
+    return false;
   }
 
   /**

@@ -264,16 +264,20 @@ export interface SpaceRuntimeConfig {
    * agent session when a gate opens as a result.
    *
    * Resolves to `true` when at least one gate opened as a result of the
-   * re-evaluation, `false` otherwise. The runtime uses the resolved value
-   * to decide whether to terminally mark the event `failed` when no delivery
-   * was produced — leaving the event `published` forever would cause the
-   * redispatch sweep to replay it on every restart and rerun gate scripts
-   * for an event that already failed to unblock anything.
+   * re-evaluation, `'retry'` when a deferred gate-evaluation retry was
+   * scheduled (the event must stay published so the retry can wake the
+   * gate later), and `false`/`undefined` when no gate opened and no retry
+   * is scheduled. The runtime uses the resolved value to decide whether
+   * to terminally mark the event `failed` when no delivery was produced —
+   * leaving the event `published` forever would cause the redispatch sweep
+   * to replay it on every restart and rerun gate scripts for an event that
+   * already failed to unblock anything, but marking it terminal when a
+   * retry is scheduled would lose the only wake-up event.
    */
   onBlockedRunExternalEvent?: (payload: {
     runId: string;
     event: ExternalEventPublishedPayload;
-  }) => Promise<boolean> | boolean | void;
+  }) => Promise<boolean | 'retry'> | boolean | 'retry' | void;
   /**
    * Optional hook invoked immediately after a workflow run transitions into
    * `blocked` status — covers tick-loop recovery (`recoverStalledRuns`),
@@ -1481,6 +1485,39 @@ export class SpaceRuntime {
         }
       }
     }
+    // Purge buffered rate-limit digests whose target was just removed —
+    // otherwise a deferred digest timer can flush and deliver PR events to
+    // an agent that is no longer waiting on a gate.
+    this.purgeAutoPrDigestItemsForRun(workflowRunId);
+  }
+
+  /**
+   * Remove every rate-limit digest item whose target is an auto-kind PR
+   * subscription for the given run. Cleans digest timers when the resulting
+   * per-target pending list is empty.
+   */
+  private purgeAutoPrDigestItemsForRun(workflowRunId: string): void {
+    const store = this.config.externalEventStore;
+    for (const [, state] of this.externalEventRateLimits) {
+      const remaining = state.pendingDigest.filter((item) => {
+        const isAutoForRun =
+          item.target.workflowRunId === workflowRunId && item.target.subscriptionKind === 'auto';
+        if (!isAutoForRun) return true;
+        if (store) {
+          store.markDeliveryFailed(item.event.eventId, item.deliveryKey, {
+            terminal: true,
+            reason: 'auto_pr_subscription_cleared',
+          });
+          store.markEventFailedIfAllDeliveriesTerminal(item.event.eventId);
+        }
+        return false;
+      });
+      state.pendingDigest = remaining;
+      if (state.pendingDigest.length === 0 && state.digestTimer) {
+        clearTimeout(state.digestTimer);
+        state.digestTimer = null;
+      }
+    }
   }
 
   /**
@@ -1563,14 +1600,15 @@ export class SpaceRuntime {
         if (this.acceptingExternalEvents) {
           store.markEventIgnored(payload.eventId, 'no_matching_subscriptions');
         }
-      } else if (!blockedHookOutcome.anyGateOpened) {
-        // Hook fired but no gate opened — the event successfully triggered
-        // re-evaluation but did not unblock anything. Mark it terminal so
-        // the redispatch sweep does not replay it on every restart and
-        // rerun gate scripts for an event that already failed to unblock.
-        // markEventFailed (not markEventFailedIfAllDeliveriesTerminal) is
-        // required here because the no-deliverable-target path has zero
-        // delivery rows, and the latter is a no-op without deliveries.
+      } else if (!blockedHookOutcome.anyGateOpened && !blockedHookOutcome.anyRetryScheduled) {
+        // Hook fired but no gate opened and no retry scheduled — the event
+        // successfully triggered re-evaluation but did not unblock anything.
+        // Mark it terminal so the redispatch sweep does not replay it on
+        // every restart and rerun gate scripts for an event that already
+        // failed to unblock. markEventFailed (not
+        // markEventFailedIfAllDeliveriesTerminal) is required here because
+        // the no-deliverable-target path has zero delivery rows, and the
+        // latter is a no-op without deliveries.
         if (this.acceptingExternalEvents) {
           try {
             store.markEventFailed(payload.eventId, {
@@ -1684,25 +1722,20 @@ export class SpaceRuntime {
   private async fireBlockedRunExternalEventHook(
     payload: ExternalEventPublishedPayload,
     matches: SubscriptionTarget[]
-  ): Promise<{ firedRunIds: Set<string>; anyGateOpened: boolean }> {
+  ): Promise<{ firedRunIds: Set<string>; anyGateOpened: boolean; anyRetryScheduled: boolean }> {
     const hook = this.config.onBlockedRunExternalEvent;
     const firedRunIds = new Set<string>();
-    if (!hook) return { firedRunIds, anyGateOpened: false };
+    if (!hook) return { firedRunIds, anyGateOpened: false, anyRetryScheduled: false };
     const visitedRunIds = new Set<string>();
     const inflight: Array<Promise<unknown>> = [];
+    let syncGateOpened = false;
+    let syncRetryScheduled = false;
     for (const target of matches) {
       if (isLongHorizonSubscriptionTarget(target)) continue;
       const runId = target.workflowRunId;
       if (visitedRunIds.has(runId)) continue;
       const run = this.config.workflowRunRepo.getRun(runId);
-      // Match the delivery filter's spaceId guard: a PR event published for
-      // space A must not trigger gate re-eval for a blocked run in space B
-      // even when both runs auto-subscribed to the same GitHub PR.
       if (!run || run.status !== 'blocked' || run.spaceId !== payload.spaceId) continue;
-      // Skip paused / stopped spaces — the tick loop already ignores them,
-      // and re-evaluating gates during pause can transition run/task back to
-      // in_progress and clear the wake-up subscription before the space is
-      // resumed.
       const space = await this.config.spaceManager.getSpace(run.spaceId);
       if (!space || space.paused || space.stopped) continue;
       visitedRunIds.add(runId);
@@ -1719,6 +1752,10 @@ export class SpaceRuntime {
               return false;
             })
           );
+        } else if (result === true) {
+          syncGateOpened = true;
+        } else if (result === 'retry') {
+          syncRetryScheduled = true;
         }
       } catch (err) {
         log.warn(
@@ -1727,12 +1764,14 @@ export class SpaceRuntime {
         );
       }
     }
-    let anyGateOpened = false;
+    let anyGateOpened = syncGateOpened;
+    let anyRetryScheduled = syncRetryScheduled;
     if (inflight.length > 0) {
       const results = await Promise.all(inflight);
-      anyGateOpened = results.some((value) => value === true);
+      anyGateOpened = anyGateOpened || results.some((value) => value === true);
+      anyRetryScheduled = anyRetryScheduled || results.some((value) => value === 'retry');
     }
-    return { firedRunIds, anyGateOpened };
+    return { firedRunIds, anyGateOpened, anyRetryScheduled };
   }
 
   private async deliverToLongHorizonAgent(
@@ -3471,6 +3510,23 @@ export class SpaceRuntime {
       }
 
       if (!this.rehydrated) {
+        // Give the service a chance to rebuild in-memory subscriptions
+        // (e.g. PR-event auto-subs for blocked runs) BEFORE rehydrateExecutors
+        // runs its persisted-delivery replay, before the redispatch sweep,
+        // and before acceptingExternalEvents flips to true. Without this
+        // ordering, persisted delivery rows for the auto target are marked
+        // `subscription_no_longer_active` during requeue (because the trie
+        // is still empty) and crash-pending PR events are terminally
+        // ignored by the first redispatch.
+        if (this.config.onBeforeRedispatch) {
+          try {
+            await this.config.onBeforeRedispatch();
+          } catch (err) {
+            log.warn(
+              `SpaceRuntime: onBeforeRedispatch failed: ${err instanceof Error ? err.message : String(err)}`
+            );
+          }
+        }
         await this.rehydrateExecutors();
         // Run a stalled-run recovery pass right after rehydrate so the
         // first tick that processes runs already sees a clean slate
@@ -3481,22 +3537,6 @@ export class SpaceRuntime {
         // fires first wins, the other becomes a no-op.
         await this.recoverStalledRuns();
         this.rehydrated = true;
-        // Give the service a chance to rebuild in-memory subscriptions
-        // (e.g. PR-event auto-subs for blocked runs) BEFORE both:
-        //   - flipping `acceptingExternalEvents` to true
-        //   - running the redispatch sweep
-        // Otherwise a PR event landing during the rebuild window sees an
-        // empty topic trie and is terminally marked `ignored`, breaking
-        // the event-driven gate-eval path on the first post-restart tick.
-        if (this.config.onBeforeRedispatch) {
-          try {
-            await this.config.onBeforeRedispatch();
-          } catch (err) {
-            log.warn(
-              `SpaceRuntime: onBeforeRedispatch failed: ${err instanceof Error ? err.message : String(err)}`
-            );
-          }
-        }
         this.acceptingExternalEvents = true;
         this.redispatchPublishedEventsWithoutDeliveries();
       }
