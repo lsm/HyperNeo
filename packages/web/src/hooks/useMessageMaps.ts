@@ -20,7 +20,11 @@
  */
 
 import { useMemo } from 'preact/hooks';
-import type { SDKMessage, SDKSystemMessage } from '@neokai/shared/sdk/sdk.d.ts';
+import type {
+  SDKMessage,
+  SDKSystemMessage,
+  SDKTaskNotificationMessage,
+} from '@neokai/shared/sdk/sdk.d.ts';
 import type { ChatMessage } from '@neokai/shared';
 import {
   buildMessageReplacementStatusMap,
@@ -43,6 +47,8 @@ export interface UseMessageMapsResult {
   sessionInfoMap: Map<string, SDKSystemMessage>;
   /** Map of parent tool use IDs to their sub-agent messages */
   subagentMessagesMap: Map<string, SDKMessage[]>;
+  /** Map of tool use IDs to their terminal task_notification (status/summary/usage) */
+  taskNotificationsMap: Map<string, SDKTaskNotificationMessage>;
   /** Map of SDK message UUIDs to replacement/retraction status */
   replacementStatusMap: Map<string, MessageReplacementStatus>;
 }
@@ -101,6 +107,22 @@ export function useMessageMaps(
             map.set(blockObj.id as string, blockObj.input);
           }
         });
+      }
+    });
+    return map;
+  }, [sdkMessages]);
+
+  // Map of tool use IDs to their terminal task_notification. task_notification
+  // (system, subtype task_notification) carries status/summary/usage and links
+  // back to its originating tool_use via tool_use_id. Folded onto the tool card
+  // instead of rendered as a standalone system row.
+  const taskNotificationsMap = useMemo(() => {
+    const map = new Map<string, SDKTaskNotificationMessage>();
+    sdkMessages.forEach((msg) => {
+      if (msg.type !== 'system' || msg.subtype !== 'task_notification') return;
+      const notification = msg as SDKTaskNotificationMessage;
+      if (notification.tool_use_id) {
+        map.set(notification.tool_use_id, notification);
       }
     });
     return map;
@@ -181,6 +203,7 @@ export function useMessageMaps(
     toolInputsMap,
     sessionInfoMap,
     subagentMessagesMap,
+    taskNotificationsMap,
     replacementStatusMap,
   };
 }

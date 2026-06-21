@@ -120,6 +120,12 @@ interface RosterToolEntry {
   tool: string;
   preview: string;
   ts: number;
+  /** Links to a task_notification (by tool_use_id) so the roster can show the
+   * task's terminal status inline. Resolved at turn-build time. */
+  toolUseId?: string;
+  taskStatus?: 'completed' | 'failed' | 'stopped';
+  taskSummary?: string;
+  taskUsage?: { total_tokens: number; tool_uses: number; duration_ms: number };
 }
 interface RosterMessageEntry {
   kind: 'message';
@@ -367,6 +373,7 @@ function mapActivityEntry(entry: ActivityEntry): ActiveRosterEntry | null {
         tool: typeof entry.toolName === 'string' ? entry.toolName : '',
         preview: typeof entry.preview === 'string' ? entry.preview : '',
         ts: entry.ts,
+        ...(typeof entry.toolUseId === 'string' ? { toolUseId: entry.toolUseId } : {}),
       };
     case 'text': {
       const text = asTrimmedString(entry.text);
@@ -588,13 +595,55 @@ function buildCompletedTurn(
   };
 }
 
+type TaskNotificationLite = {
+  status: 'completed' | 'failed' | 'stopped';
+  summary?: string;
+  usage?: { total_tokens: number; tool_uses: number; duration_ms: number };
+};
+
+/**
+ * Scan parsedRows for terminal task_notification system rows, keyed by
+ * tool_use_id. Used to fold status onto the active-turn roster tool entry.
+ */
+function indexTaskNotifications(rows: ParsedThreadRow[]): Map<string, TaskNotificationLite> {
+  const byToolUseId = new Map<string, TaskNotificationLite>();
+  for (const row of rows) {
+    const msg = row.message;
+    if (!msg) continue;
+    if (msg.type === 'system' && (msg as { subtype?: string }).subtype === 'task_notification') {
+      const n = msg as {
+        tool_use_id?: string;
+        status?: 'completed' | 'failed' | 'stopped';
+        summary?: string;
+        usage?: { total_tokens: number; tool_uses: number; duration_ms: number };
+      };
+      if (n.tool_use_id && n.status) {
+        byToolUseId.set(n.tool_use_id, { status: n.status, summary: n.summary, usage: n.usage });
+      }
+    }
+  }
+  return byToolUseId;
+}
+
 function buildActiveTurn(
   block: AgentTurnBlock,
   rows: ParsedThreadRow[],
   turnId: string,
   summary: ActiveTurnSummary | undefined,
-  sessionId: string | null
+  sessionId: string | null,
+  taskNotificationsByToolUseId: Map<string, TaskNotificationLite>
 ): ActiveFeedTurn {
+  const roster = rosterEntriesFromSummary(summary, ROSTER_MAX_ENTRIES).map((entry) => {
+    if (entry.kind !== 'tool' || !entry.toolUseId) return entry;
+    const n = taskNotificationsByToolUseId.get(entry.toolUseId);
+    if (!n) return entry;
+    return {
+      ...entry,
+      taskStatus: n.status,
+      ...(n.summary ? { taskSummary: n.summary } : {}),
+      ...(n.usage ? { taskUsage: n.usage } : {}),
+    };
+  });
   return {
     state: 'active',
     id: turnId,
@@ -610,7 +659,7 @@ function buildActiveTurn(
     messageEntries: countSummaryEntries(summary, 'text'),
     toolEntries: countSummaryEntries(summary, 'tool_use'),
     lastEventAt: latestActivityTimestamp(summary, rows),
-    roster: rosterEntriesFromSummary(summary, ROSTER_MAX_ENTRIES),
+    roster,
     sessionId,
   };
 }
@@ -722,6 +771,13 @@ function buildOperationalSystemTurn(
   if (!message || message.type !== 'system') return null;
   const subtype = (message as { subtype?: string }).subtype;
   if (!subtype || subtype === 'init') return null;
+  // task_notification is folded onto its originating tool_use card / roster
+  // entry. Suppress the standalone row whenever it carries a tool_use_id (it
+  // belongs to a tool in this task). True orphans (no tool_use_id) fall
+  // through to a system turn so the user still sees the terminal status.
+  if (subtype === 'task_notification' && (message as { tool_use_id?: string }).tool_use_id) {
+    return null;
+  }
   // Honor the centralized hidden-subtype contract so Space task threads
   // don't surface noisy rows the main transcript already hides.
   if (isHiddenSystemSubtype(subtype)) return null;
@@ -973,6 +1029,11 @@ function buildFeedTurns(
   const blocks = buildAgentTurns(rowsWithReplacementStatus);
   if (blocks.length === 0) return [];
 
+  // task_notifications keyed by tool_use_id — used to fold status onto the
+  // active-turn roster tool entry. Standalone task_notification rows are
+  // suppressed in buildOperationalSystemTurn whenever they carry a tool_use_id.
+  const taskNotificationsByToolUseId = indexTaskNotifications(rowsWithReplacementStatus);
+
   const latestRowIdBySession = new Map<string, string>();
   for (const row of rowsWithReplacementStatus) {
     if (row.sessionId) latestRowIdBySession.set(row.sessionId, String(row.id));
@@ -1084,7 +1145,8 @@ function buildFeedTurns(
         trailing.rows,
         completed.id,
         summary,
-        sessionId
+        sessionId,
+        taskNotificationsByToolUseId
       );
     }
   }
@@ -1153,11 +1215,14 @@ function RosterEntry({ entry, isLatest }: { entry: ActiveRosterEntry; isLatest: 
     const toolColor = getToolColors(entry.tool).iconColor;
     const toolLabel = rosterToolLabel(entry.tool);
     const preview = entry.preview.trim();
+    const isSuccess = entry.taskStatus === 'completed';
+    const isError = entry.taskStatus === 'failed' || entry.taskStatus === 'stopped';
     return (
       <div
         class={`flex items-start gap-2 font-mono text-xs leading-5 ${fadeClass}`}
         data-testid="minimal-thread-roster-entry"
         data-roster-kind="tool"
+        data-task-status={entry.taskStatus ?? undefined}
       >
         <span class="mt-1 shrink-0" aria-hidden="true">
           <ToolIcon toolName={entry.tool} size="xs" />
@@ -1170,7 +1235,33 @@ function RosterEntry({ entry, isLatest }: { entry: ActiveRosterEntry; isLatest: 
               <span class={bodyClass}>{preview}</span>
             </>
           ) : null}
+          {entry.taskSummary ? (
+            <>
+              <span class="text-gray-400"> — </span>
+              <span class={isSuccess ? 'text-green-400' : isError ? 'text-red-400' : bodyClass}>
+                {entry.taskSummary}
+              </span>
+            </>
+          ) : null}
+          {entry.taskUsage ? (
+            <span class="text-gray-500">
+              {' '}
+              · {entry.taskUsage.total_tokens.toLocaleString()} tok · {entry.taskUsage.tool_uses}{' '}
+              tool{entry.taskUsage.tool_uses === 1 ? '' : 's'} ·{' '}
+              {(entry.taskUsage.duration_ms / 1000).toFixed(1)}s
+            </span>
+          ) : null}
         </span>
+        {isSuccess && (
+          <span class="mt-0.5 shrink-0 text-green-400" aria-label="task completed">
+            ✓
+          </span>
+        )}
+        {isError && (
+          <span class="mt-0.5 shrink-0 text-red-400" aria-label="task failed">
+            ✗
+          </span>
+        )}
       </div>
     );
   }

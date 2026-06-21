@@ -136,6 +136,13 @@ export interface ToolResultCardProps {
   /** When true, wrap this card in <RunningBorder> so the animated arc traces
    * this card's outer rounded-rectangle border. */
   isRunning?: boolean;
+  /** Terminal task_notification for this tool_use (status/summary/usage).
+   * Folded onto the card instead of rendered as a standalone system row. */
+  taskNotification?: {
+    status: 'completed' | 'failed' | 'stopped';
+    summary?: string;
+    usage?: { total_tokens: number; tool_uses: number; duration_ms: number };
+  };
 }
 
 /**

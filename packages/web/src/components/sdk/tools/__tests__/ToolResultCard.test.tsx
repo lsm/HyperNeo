@@ -254,6 +254,71 @@ describe('ToolResultCard Component', () => {
     });
   });
 
+  describe('task_notification folding', () => {
+    it('shows a green check on completed and folds summary + usage', () => {
+      render(
+        <ToolResultCard
+          toolName="Bash"
+          toolId="bash-ok"
+          input={{ command: 'bun test' }}
+          output="all pass"
+          taskNotification={{
+            status: 'completed',
+            summary: '42 tests passed',
+            usage: { total_tokens: 9999, tool_uses: 42, duration_ms: 30000 },
+          }}
+          defaultExpanded={true}
+        />
+      );
+
+      // Green success glyph (aria-label).
+      expect(screen.getByLabelText('task completed')).toBeTruthy();
+      // Folded summary + usage in the expanded body.
+      expect(screen.getByText('42 tests passed')).toBeTruthy();
+      expect(screen.getByText('9,999 tokens')).toBeTruthy();
+    });
+
+    it('shows a red X on failed and does not double-render the error icon', () => {
+      render(
+        <ToolResultCard
+          toolName="Bash"
+          toolId="bash-fail"
+          input={{ command: 'false' }}
+          output="error"
+          isError={true}
+          taskNotification={{
+            status: 'failed',
+            summary: 'Bash exited 1',
+            usage: { total_tokens: 333, tool_uses: 1, duration_ms: 120 },
+          }}
+          defaultExpanded={true}
+        />
+      );
+
+      // Exactly one error X glyph (the notification-driven one; isError is gated).
+      const errorIcons = screen.getAllByLabelText('task failed');
+      expect(errorIcons).toHaveLength(1);
+      expect(screen.getByText('Bash exited 1')).toBeTruthy();
+    });
+
+    it('falls back to isError X when no task_notification is present', () => {
+      render(
+        <ToolResultCard
+          toolName="Bash"
+          toolId="bash-legacy"
+          input={{ command: 'bad' }}
+          output="fail"
+          isError={true}
+        />
+      );
+
+      // The header error X still renders via the legacy isError path.
+      const header = document.querySelector('button')!;
+      const xSvg = header.querySelector('svg.text-red-600');
+      expect(xSvg).toBeTruthy();
+    });
+  });
+
   describe('detailed variant', () => {
     it('should show tool ID in detailed variant', () => {
       render(

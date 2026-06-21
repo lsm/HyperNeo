@@ -784,6 +784,76 @@ describe('useMessageMaps', () => {
     });
   });
 
+  describe('taskNotificationsMap', () => {
+    it('maps tool_use_id to its terminal task_notification', () => {
+      const messages = [
+        {
+          type: 'assistant',
+          uuid: uuid1,
+          session_id: 'session-1',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'tool_use', id: 'tu-1', name: 'Bash', input: { command: 'ls' } }],
+          },
+        },
+        {
+          type: 'system',
+          uuid: uuid2,
+          session_id: 'session-1',
+          subtype: 'task_notification',
+          task_id: 'task-1',
+          tool_use_id: 'tu-1',
+          status: 'completed',
+          summary: 'ok',
+          usage: { total_tokens: 10, tool_uses: 1, duration_ms: 5 },
+        },
+      ] as unknown as SDKMessage[];
+
+      const { result } = renderHook(() => useMessageMaps(messages, 'session-1'));
+      expect(result.current.taskNotificationsMap.size).toBe(1);
+      const n = result.current.taskNotificationsMap.get('tu-1');
+      expect(n?.status).toBe('completed');
+      expect(n?.summary).toBe('ok');
+    });
+
+    it('skips task_notifications without a tool_use_id (orphans)', () => {
+      const messages = [
+        {
+          type: 'system',
+          uuid: uuid1,
+          session_id: 'session-1',
+          subtype: 'task_notification',
+          task_id: 'task-1',
+          status: 'completed',
+          summary: 'orphan',
+        },
+      ] as unknown as SDKMessage[];
+
+      const { result } = renderHook(() => useMessageMaps(messages, 'session-1'));
+      expect(result.current.taskNotificationsMap.size).toBe(0);
+    });
+
+    it('ignores non-task_notification system messages', () => {
+      const messages = [
+        {
+          type: 'system',
+          uuid: uuid1,
+          session_id: 'session-1',
+          subtype: 'init',
+        },
+        {
+          type: 'system',
+          uuid: uuid2,
+          session_id: 'session-1',
+          subtype: 'session_state_changed',
+        },
+      ] as unknown as SDKMessage[];
+
+      const { result } = renderHook(() => useMessageMaps(messages, 'session-1'));
+      expect(result.current.taskNotificationsMap.size).toBe(0);
+    });
+  });
+
   describe('performance characteristics', () => {
     it('keeps session init mapping linear for large tool-heavy threads', () => {
       const messages: SDKMessage[] = [];

@@ -9,6 +9,7 @@ import type {
   SDKAuthStatusMessage,
   SDKMessage,
   SDKRateLimitEvent as SDKRateLimitEventType,
+  SDKTaskNotificationMessage,
   SDKToolProgressMessage as SDKToolProgressMessageType,
 } from '@neokai/shared/sdk/sdk.d.ts';
 import type {
@@ -51,6 +52,8 @@ interface Props {
   toolResultsMap?: Map<string, unknown>;
   toolInputsMap?: Map<string, unknown>;
   subagentMessagesMap?: Map<string, SDKMessage[]>;
+  /** tool_use_id → terminal task_notification (folded onto the tool card). */
+  taskNotificationsMap?: Map<string, SDKTaskNotificationMessage>;
   replacementStatusMap?: Map<string, MessageReplacementStatus>;
   sessionInfo?: SystemInitMessage; // Optional session init info to attach to user messages
   // Question handling props for inline QuestionPrompt rendering
@@ -239,6 +242,7 @@ function SDKMessageRendererImpl({
   toolResultsMap,
   toolInputsMap,
   subagentMessagesMap,
+  taskNotificationsMap,
   replacementStatusMap,
   sessionInfo,
   sessionId,
@@ -293,6 +297,19 @@ function SDKMessageRendererImpl({
     return null;
   }
 
+  // task_notification is folded onto its originating tool_use card (green
+  // check / red X + summary + usage). Suppress the standalone system row
+  // whenever it carries a tool_use_id (it belongs to a rendered tool card or
+  // subagent block). True orphans (no tool_use_id) fall through to
+  // SDKSystemMessage as a minimal fallback row.
+  if (
+    isSDKSystemMessage(sdkMessage) &&
+    (sdkMessage as { subtype?: string }).subtype === 'task_notification' &&
+    (sdkMessage as { tool_use_id?: string }).tool_use_id
+  ) {
+    return null;
+  }
+
   // Compute the rendered message component
   let renderedMessage: JSX.Element | null = null;
 
@@ -326,6 +343,7 @@ function SDKMessageRendererImpl({
         message={sdkMessage}
         toolResultsMap={toolResultsMap}
         subagentMessagesMap={subagentMessagesMap}
+        taskNotificationsMap={taskNotificationsMap}
         replacementStatusMap={replacementStatusMap}
         sessionId={sessionId}
         resolvedQuestions={resolvedQuestions}

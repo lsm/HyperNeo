@@ -75,7 +75,16 @@ export function ToolResultCard({
   disableExpand = false,
   className,
   isRunning = false,
+  taskNotification,
 }: ToolResultCardProps) {
+  // Terminal task_notification status. When present it is the authoritative
+  // signal (green check on completed, red X on failed/stopped). When absent we
+  // fall back to the legacy `isError` flag so existing tool_result errors still
+  // render the red X.
+  const taskStatus = taskNotification?.status;
+  const notificationIsError = taskStatus === 'failed' || taskStatus === 'stopped';
+  const notificationIsSuccess = taskStatus === 'completed';
+  const showErrorIcon = notificationIsError || (!taskNotification && isError);
   // Type-safe access to input/output properties
   const inputRecord = input as Record<string, unknown>;
   const outputRecord = (output || {}) as Record<string, unknown>;
@@ -270,12 +279,29 @@ export function ToolResultCard({
 
         <div class="flex items-center gap-2 flex-shrink-0">
           {lineCountDisplay}
-          {isError && (
+          {notificationIsSuccess && (
+            <svg
+              class="w-4 h-4 text-green-600 dark:text-green-400"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+              aria-label="task completed"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M5 13l4 4L19 7"
+              />
+            </svg>
+          )}
+          {showErrorIcon && (
             <svg
               class="w-4 h-4 text-red-600 dark:text-red-400"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
+              aria-label={taskNotification ? 'task failed' : undefined}
             >
               <path
                 strokeLinecap="round"
@@ -310,6 +336,32 @@ export function ToolResultCard({
       {/* Expanded content - input and output details */}
       {isExpanded && (
         <div class={cn('p-3 border-t bg-white dark:bg-gray-900 space-y-3', colors.border)}>
+          {/* Folded task_notification: terminal status summary + usage. */}
+          {taskNotification && (taskNotification.summary || taskNotification.usage) && (
+            <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+              {taskNotification.summary && (
+                <span
+                  class={cn(
+                    'font-medium',
+                    notificationIsSuccess
+                      ? 'text-green-700 dark:text-green-300'
+                      : notificationIsError
+                        ? 'text-red-700 dark:text-red-300'
+                        : 'text-gray-600 dark:text-gray-300'
+                  )}
+                >
+                  {taskNotification.summary}
+                </span>
+              )}
+              {taskNotification.usage && (
+                <span class="flex flex-wrap gap-x-4 gap-y-1 font-mono text-gray-500 dark:text-gray-400">
+                  <span>{taskNotification.usage.total_tokens.toLocaleString()} tokens</span>
+                  <span>{taskNotification.usage.tool_uses} tool uses</span>
+                  <span>{(taskNotification.usage.duration_ms / 1000).toFixed(1)}s</span>
+                </span>
+              )}
+            </div>
+          )}
           {/* Error display takes priority when tool failed */}
           {isError && output !== undefined && output !== null && (
             <div>
