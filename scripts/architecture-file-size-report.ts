@@ -297,8 +297,15 @@ const staleAllowlistCandidates =
           .map((file) => [file.path, config.allowlist[file.path]] as const)
           .filter((entry): entry is readonly [string, AllowlistEntry] => Boolean(entry[1])),
         ...Array.from(changedPathInfo.values())
-          .filter((changedInfo) => changedInfo.status === 'D')
-          .map((changedInfo) => [changedInfo.path, config.allowlist[changedInfo.path]] as const)
+          .map((changedInfo) =>
+            changedInfo.status.startsWith('R')
+              ? changedInfo.previousPath
+              : changedInfo.status === 'D'
+                ? changedInfo.path
+                : null
+          )
+          .filter((path): path is string => Boolean(path))
+          .map((path) => [path, config.allowlist[path]] as const)
           .filter((entry): entry is readonly [string, AllowlistEntry] => Boolean(entry[1])),
       ]
     : Object.entries(config.allowlist);
