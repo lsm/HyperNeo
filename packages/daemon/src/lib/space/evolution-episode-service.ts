@@ -127,6 +127,8 @@ export interface EpisodeJudgePromptInput {
   workflowRuns: EpisodeWorkflowRunContext[];
   timeWindow: CreateEvolutionEpisodeParams['timeWindow'];
   preflight: EvidenceQualityPreflight;
+  existingLessons: EvolutionLesson[];
+  existingProposals: TaskProposal[];
 }
 
 export interface EpisodeTaskContext {
@@ -202,12 +204,18 @@ export class EvolutionEpisodeService {
     const tasks = this.collectTasks(scope, evidence);
     const workflowRuns = this.collectWorkflowRuns(scope, evidence);
     const metricSnapshots = this.deps.evolutionRepo.listMetricSnapshots(scope.id);
+    const existingLessons = this.deps.evolutionRepo.listLessons(scope.id, 'active').slice(0, 10);
+    const existingProposals = this.deps.evolutionRepo
+      .listTaskProposals(scope.id, 'proposed')
+      .slice(0, 10);
     return {
       scope,
       evidence,
       metricSnapshots,
       tasks,
       workflowRuns,
+      existingLessons,
+      existingProposals,
       timeWindow: params.timeWindow ?? deriveTimeWindow(evidence),
       preflight: scoreEvolutionEvidenceQuality({
         evidence,
@@ -563,7 +571,31 @@ ${JSON.stringify(
 )}
 
 Metric snapshots and manual notes:
-${JSON.stringify({ metricSnapshots: input.metricSnapshots, manualNotes: input.evidence.filter((item) => item.kind === 'manual_note').map((item) => ({ id: item.id, summary: item.summary, metadata: truncate(JSON.stringify(item.metadata), MAX_TEXT), createdAt: item.createdAt })) }, null, 2)}`;
+${JSON.stringify({ metricSnapshots: input.metricSnapshots, manualNotes: input.evidence.filter((item) => item.kind === 'manual_note').map((item) => ({ id: item.id, summary: item.summary, metadata: truncate(JSON.stringify(item.metadata), MAX_TEXT), createdAt: item.createdAt })) }, null, 2)}
+
+Existing accepted lessons in this scope (avoid re-deriving these):
+${JSON.stringify(
+  input.existingLessons.map((lesson) => ({
+    appliesTo: lesson.appliesTo,
+    rule: truncate(lesson.rule, MAX_TEXT),
+    confidence: lesson.confidence,
+  })),
+  null,
+  2
+)}
+
+Open proposals in this scope (avoid duplicating these):
+${JSON.stringify(
+  input.existingProposals.map((proposal) => ({
+    title: truncate(proposal.title, MAX_TEXT),
+    status: proposal.status,
+    priority: proposal.priority,
+  })),
+  null,
+  2
+)}
+
+When generating candidate lessons and proposals, skip any that duplicate or substantially overlap with the items above. Instead, refine or extend them with new evidence.`;
 }
 
 export function parseEpisodeJudgeJson(raw: string): EpisodeJudgeOutput {

@@ -758,6 +758,71 @@ describe('EvolutionEpisodeService', () => {
     expect(prompt).not.toContain('x'.repeat(1300));
   });
 
+  it('includes existing active lessons and open proposals in the judge prompt', () => {
+    const scope = evolutionRepo.createScope({
+      spaceId,
+      kind: 'custom',
+      name: 'Dedup context',
+      objective: 'Avoid duplicate lessons and proposals',
+    });
+    const task = taskRepo.createTask({
+      spaceId,
+      title: 'Scoped Forge task',
+      description: 'Completed work with evidence',
+      evolutionScopeId: scope.id,
+    });
+    taskRepo.updateTask(task.id, {
+      status: 'done',
+      result: 'PR merged with tests',
+      reportedSummary: 'Completed',
+    });
+    const evidence = evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'task_result',
+      sourceId: task.id,
+      summary: 'Task completed with PR merge',
+    });
+    evolutionRepo.createLesson({
+      scopeId: scope.id,
+      status: 'active',
+      appliesTo: ['workflow'],
+      rule: 'Always run evidence-quality preflight before judging an episode',
+      why: 'Manual notes alone produce generic findings',
+      confidence: 0.85,
+    });
+    evolutionRepo.createTaskProposal({
+      scopeId: scope.id,
+      title: 'Add conversation friction dashboard',
+      description: 'Surface friction patterns in the Forge UI',
+      reason: 'Friction evidence is captured but not visible to operators',
+      priority: 'normal',
+      status: 'proposed',
+    });
+    const service = new EvolutionEpisodeService({
+      evolutionRepo,
+      taskRepo,
+      workflowRunRepo,
+      artifactRepo,
+    });
+
+    const input = service.buildEpisodeInput({ scopeId: scope.id, evidenceIds: [evidence.id] });
+    const prompt = buildEpisodeJudgePrompt(input);
+
+    expect(input.existingLessons).toHaveLength(1);
+    expect(input.existingLessons[0]?.rule).toBe(
+      'Always run evidence-quality preflight before judging an episode'
+    );
+    expect(input.existingProposals).toHaveLength(1);
+    expect(input.existingProposals[0]?.title).toBe('Add conversation friction dashboard');
+    expect(prompt).toContain('Existing accepted lessons in this scope');
+    expect(prompt).toContain('Always run evidence-quality preflight before judging an episode');
+    expect(prompt).toContain('Open proposals in this scope');
+    expect(prompt).toContain('Add conversation friction dashboard');
+    expect(prompt).toContain(
+      'skip any that duplicate or substantially overlap with the items above'
+    );
+  });
+
   it('parses fenced judge JSON and clamps confidence', () => {
     const output = parseEpisodeJudgeJson(`\n\`\`\`json\n{
 			"title": "Review churn reduced",
