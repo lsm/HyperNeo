@@ -491,6 +491,8 @@ Compatibility mappings:
   settings moves to the target read model. This registry read model is distinct from
   `skill.effective.list`: it loads installed/disabled skills and MCP-wrapper associations for management
   UI, while `skill.effective.list` answers what is active for a given Space/session scope.
+- `skill.get` remains a compatibility alias for `skill.registry.get` until callers and the skill RPC tests
+  migrate from the current installed-skill detail read.
 - `skill.create`, `skill.update`, `skill.delete`, `skill.setEnabled`, and `skill.installFromGit`
   remain compatibility aliases over the extension/skill package commands until the Skills settings UI
   uses the target package/skill contract directly.

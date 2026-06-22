@@ -8,7 +8,7 @@ This milestone is mostly `foundation` phase work. It should not change runtime b
 
 ## Inputs
 
-- [Shared Package Boundaries Design](../../architecture/target-architecture/shared-package-boundaries.md)
+- [Shared Package Boundaries Design](../shared-package-boundaries.md)
 - [M0 Current-State Inventory](03-current-state-inventory.md)
 - [Source File Size Ratchet](02-file-size-ratchet.md)
 

@@ -334,6 +334,11 @@ The gateway should expose fabric commands and events over time:
 | `agentRuntime.message.output.remove` | command | Remove noisy persisted tool output while preserving message history. |
 | `agentRuntime.mcpServers.list` | query | Read runtime-attached MCP servers visible to tool panels. |
 | `agentRuntime.session.mcp.list` | query | Read effective configured MCP entries and skill linkage for a session. |
+| `agentRuntime.agentMemory.write` | command | Store an agent-memory item for memory management/debug callers. |
+| `agentRuntime.agentMemory.search` | query | Search agent memory entries by query/scope. |
+| `agentRuntime.agentMemory.read` | query | Read a single agent-memory item. |
+| `agentRuntime.agentMemory.delete` | command | Delete an agent-memory item. |
+| `agentRuntime.agentMemory.list` | query | List agent-memory entries for management and diagnostics. |
 | `agentRuntime.question.respond` | command | Submit an answer to a pending AskUserQuestion tool call. |
 | `agentRuntime.question.saveDraft` | command | Save draft AskUserQuestion form state before submission. |
 | `agentRuntime.question.cancel` | command | Cancel a pending AskUserQuestion tool call. |
@@ -366,6 +371,11 @@ can later collapse into `agentRuntime.event.stream` only after the client has ty
 equivalent event payloads.
 
 `agentRuntime.mcpServers.list` preserves the current `session.listRuntimeMcpServers` surface. It returns in-process runtime SDK MCP servers and Space/task tool servers attached to the selected session; it should not be folded into coarse status if tool panels need names, scopes, and capability metadata without polling the full runtime state. `agentRuntime.session.mcp.list` separately preserves `session.mcp.list`, which returns effective configured MCP entries, enablement state, and skill linkage for the selected session. `agentRuntime.session.skillMcpServers.list` preserves `session.getSkillMcpServers` for diagnostics and online MCP verification that need the raw SDK server configs injected by enabled skill-backed AppMcpServers.
+
+Agent memory remains a supported management and diagnostics surface while memory/context sources move into
+`AgentBehaviorResolver`. The compatibility gateway maps `agentMemory.write`, `agentMemory.search`,
+`agentMemory.read`, `agentMemory.delete`, and `agentMemory.list` to `agentRuntime.agentMemory.*` contracts
+until callers migrate or an explicit memory-service namespace replaces these aliases.
 
 The live runtime compatibility gateway maps existing chat controls to the target runtime contracts until
 callers move to the runtime namespace: `message.send` -> `agentRuntime.message.send`,

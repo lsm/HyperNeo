@@ -6,16 +6,16 @@ Execute the accepted target architecture refactor through NeoKai's own Goal and 
 
 The target architecture is already defined in:
 
-- [Target Architecture Overview](../../architecture/target-architecture/README.md)
-- [Unified Message Fabric Architecture Design](../../architecture/target-architecture/unified-message-fabric-design.md)
-- [Storage Unit Of Work And Outbox Design](../../architecture/target-architecture/storage-unit-of-work-and-outbox.md)
-- [Space Runtime Decomposition Design](../../architecture/target-architecture/space-runtime-decomposition.md)
-- [Client State And Read Models Design](../../architecture/target-architecture/client-state-and-read-models.md)
-- [Shared Package Boundaries Design](../../architecture/target-architecture/shared-package-boundaries.md)
-- [Agent Runtime And Provider Compatibility Design](../../architecture/target-architecture/agent-runtime-and-provider-compatibility.md)
-- [Configuration And Extension Resolution Design](../../architecture/target-architecture/configuration-and-extension-resolution.md)
-- [UI Design System Architecture Design](../../architecture/target-architecture/ui-design-system-architecture.md)
-- [Prompt Policy Registry Spec](../../research/token-efficiency/prompt-policy-registry-spec.md)
+- [Target Architecture Overview](../README.md)
+- [Unified Message Fabric Architecture Design](../unified-message-fabric-design.md)
+- [Storage Unit Of Work And Outbox Design](../storage-unit-of-work-and-outbox.md)
+- [Space Runtime Decomposition Design](../space-runtime-decomposition.md)
+- [Client State And Read Models Design](../client-state-and-read-models.md)
+- [Shared Package Boundaries Design](../shared-package-boundaries.md)
+- [Agent Runtime And Provider Compatibility Design](../agent-runtime-and-provider-compatibility.md)
+- [Configuration And Extension Resolution Design](../configuration-and-extension-resolution.md)
+- [UI Design System Architecture Design](../ui-design-system-architecture.md)
+- [Prompt Policy Registry Spec](../../../research/token-efficiency/prompt-policy-registry-spec.md)
 
 This plan is the execution layer over those specs. It defines the Goal/Forge operating model, PR sequence, release invariants, and acceptance gates.
 
@@ -387,7 +387,7 @@ Before cutting a release from `dev`, verify:
 
 The parent Goal is complete when:
 
-- the [Target Architecture Overview](../../architecture/target-architecture/README.md) exit criteria pass;
+- the [Target Architecture Overview](../README.md) exit criteria pass;
 - at least one durable vertical slice uses `fabric command -> auth/policy -> UoW -> DB/job/receipt/outbox -> dispatcher -> event/projector -> client store`;
 - effective configuration and extension previews can explain active settings, skills, plugins, MCP servers, hooks, native SDK settings, and prompt-affecting contributions;
 - Prompt Policy Registry is the source of scoped prompt behavior;
