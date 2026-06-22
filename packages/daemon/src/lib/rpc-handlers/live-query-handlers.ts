@@ -1491,7 +1491,14 @@ ranked AS (
   -- rows out of the task thread.
   WHERE NOT (
     st.messageType = 'system'
-    AND COALESCE(json_extract(st.content, '$.subtype'), '') IN ('hook_started', 'hook_progress', 'hook_response')
+    -- Guard json_extract on valid JSON only: a malformed sdk_message blob
+    -- would otherwise raise SQLite's 'malformed JSON' and break the whole
+    -- compact subscription. Malformed system rows fall through (treated as
+    -- non-hook) to the parser's raw-row fallback.
+    AND COALESCE(
+      CASE WHEN json_valid(st.content) THEN json_extract(st.content, '$.subtype') END,
+      ''
+    ) IN ('hook_started', 'hook_progress', 'hook_response')
   )
 ),
 scored AS (
@@ -1792,6 +1799,10 @@ hook_runs AS (
   FROM active_rows ar
   JOIN sdk_messages base ON base.id = ar.id
   WHERE ar.messageType = 'system'
+    -- Guard the hook json_extract calls on valid JSON so a single malformed
+    -- sdk_message blob can't raise 'malformed JSON' and break the active-turn
+    -- subscription. Malformed rows simply don't qualify as hook runs.
+    AND json_valid(ar.content)
     AND json_extract(ar.content, '$.subtype') IN ('hook_started', 'hook_progress', 'hook_response')
     AND json_extract(ar.content, '$.hook_id') IS NOT NULL
 ),

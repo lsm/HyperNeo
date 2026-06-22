@@ -2442,6 +2442,38 @@ describe('NAMED_QUERY_REGISTRY', () => {
         for (let i = 0; i < 6; i += 1) expect(ids).not.toContain(`hp${i}`);
       });
 
+      test('malformed system sdk_message does not break the compact feed', () => {
+        const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+        insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+        insertSdkMessageAt('a-good', sessionId, now + 1000, {
+          type: 'assistant',
+          uuid: 'a-good',
+          message: { content: [{ type: 'text', text: 'ok' }] },
+        });
+        // A malformed system row must not raise 'malformed JSON' from the
+        // hook-subtype json_extract and kill the whole subscription; the
+        // json_valid guard lets it fall through and the good row still ships.
+        insertSdkMessageAt(
+          'bad-sys',
+          sessionId,
+          now + 2000,
+          { type: 'system', subtype: 'informational', uuid: 'bad-sys' },
+          'system'
+        );
+        db.exec('PRAGMA ignore_check_constraints = ON');
+        // Drop the json_extract expression index so the UPDATE doesn't try to
+        // re-index the malformed blob (mirrors live-query-messages malformed-JSON test).
+        db.exec('DROP INDEX IF EXISTS idx_sdk_messages_uuid_status');
+        db.prepare(`UPDATE sdk_messages SET sdk_message = ? WHERE id = ?`).run(
+          '{not-json',
+          'bad-sys'
+        );
+        db.exec('PRAGMA ignore_check_constraints = OFF');
+
+        const ids = queryCompact(taskId).map((r) => String(r.id));
+        expect(ids).toContain('a-good');
+      });
+
       test('long active turn: compact feed ≤5 non-terminal rows AND summary carries every entry', async () => {
         const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
         insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
