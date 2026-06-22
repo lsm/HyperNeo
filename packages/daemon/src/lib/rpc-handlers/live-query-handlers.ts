@@ -1514,17 +1514,29 @@ selected AS (
     s.*
   FROM scored s
   WHERE
-    s.isTerminalLocal = 1
-    -- Always include system rows (init / compact_boundary). Without this they
-    -- would be dropped on any non-trivial turn (the system:init row sits at
-    -- position 1 of every session, far outside the tail of 5). System rows
-    -- are inherently rare so passing them through here is cheap and keeps the
-    -- per-exec metadata dropdowns working consistently.
-    OR s.messageType = 'system'
-    OR (
-      s.isTerminalLocal = 0
-      AND s.isRenderableLocal = 1
-      AND (s.isTailVisible = 1 OR s.isInitialUserVisible = 1)
+    -- hook_* rows are roster-only: the active-turn summary already collapses
+    -- each hook run to one entry. They are no longer globally hidden (the chat
+    -- transcript renders them), so without this guard they'd match the system
+    -- row OR — and, being renderable non-terminal rows, the tail OR too — and
+    -- ship in the compact payload only to be client-suppressed in
+    -- MinimalThreadFeed.buildOperationalSystemTurn. Drop them server-side.
+    NOT (
+      s.messageType = 'system'
+      AND COALESCE(json_extract(s.content, '$.subtype'), '') IN ('hook_started', 'hook_progress', 'hook_response')
+    )
+    AND (
+      s.isTerminalLocal = 1
+      -- Always include system rows (init / compact_boundary). Without this they
+      -- would be dropped on any non-trivial turn (the system:init row sits at
+      -- position 1 of every session, far outside the tail of 5). System rows
+      -- are inherently rare so passing them through here is cheap and keeps the
+      -- per-exec metadata dropdowns working consistently.
+      OR s.messageType = 'system'
+      OR (
+        s.isTerminalLocal = 0
+        AND s.isRenderableLocal = 1
+        AND (s.isTailVisible = 1 OR s.isInitialUserVisible = 1)
+      )
     )
 )
 SELECT

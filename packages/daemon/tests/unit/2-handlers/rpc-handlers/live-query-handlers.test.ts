@@ -2366,6 +2366,47 @@ describe('NAMED_QUERY_REGISTRY', () => {
         return mod.buildActiveTurnSummariesFromRows(rows);
       }
 
+      test('compact feed excludes hook_* system rows (roster-only via active-turn summary)', () => {
+        const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+        insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+        insertSdkMessageAt('a1', sessionId, now + 1000, {
+          type: 'assistant',
+          uuid: 'a1',
+          message: { content: [{ type: 'text', text: 'hi' }] },
+        });
+        // hook_started/progress/response are no longer globally hidden, but in
+        // the task thread they surface only as roster entries (the active-turn
+        // summary collapses them). The compact payload must filter them
+        // server-side instead of shipping + client-suppressing each phase.
+        for (const [sub, id] of [
+          ['hook_started', 'hs'],
+          ['hook_progress', 'hp'],
+          ['hook_response', 'hr'],
+        ] as const) {
+          insertSdkMessageAt(
+            id,
+            sessionId,
+            now + 2000,
+            {
+              type: 'system',
+              subtype: sub,
+              uuid: id,
+              hook_id: 'h1',
+              hook_name: 'lint',
+              hook_event: 'PreToolUse',
+              ...(sub === 'hook_response' ? { outcome: 'success' } : {}),
+            },
+            'system'
+          );
+        }
+
+        const ids = queryCompact(taskId).map((r) => String(r.id));
+        expect(ids).toContain('a1');
+        expect(ids).not.toContain('hs');
+        expect(ids).not.toContain('hp');
+        expect(ids).not.toContain('hr');
+      });
+
       test('long active turn: compact feed ≤5 non-terminal rows AND summary carries every entry', async () => {
         const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
         insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
