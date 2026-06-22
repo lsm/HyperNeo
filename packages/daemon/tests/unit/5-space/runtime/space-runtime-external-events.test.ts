@@ -854,6 +854,77 @@ describe('SpaceRuntime external event subscriptions', () => {
       expect(r.success).toBe(false);
       expect(r.error).toMatch(/Unable to parse/i);
     });
+
+    test("drops the prior auto_pr subscription when the node's PR changes", async () => {
+      const workflow = createWorkflow('code');
+      const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const task = tasks[0]!;
+      const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: 'session-pr-change',
+        startedAt: Date.now(),
+      });
+      tam.alive.add('session-pr-change');
+
+      // Node announces PR 41, then replaces it with PR 42.
+      runtime.ensurePrSubscriptionForNode(
+        run.id,
+        task.id,
+        'code',
+        'coder',
+        'https://github.com/lsm/neokai/pull/41'
+      );
+      const r = runtime.ensurePrSubscriptionForNode(
+        run.id,
+        task.id,
+        'code',
+        'coder',
+        'https://github.com/lsm/neokai/pull/42'
+      );
+      expect(r.success).toBe(true);
+      expect(r.subscribed).toBe(true);
+      expect(r.topicPattern).toBe('github/lsm/neokai/pull_request/42.*');
+
+      // Event for the OLD PR (41) is not delivered — stale subscription dropped.
+      await eventService.publish(
+        makeEvent({
+          topic: 'github/lsm/neokai/pull_request/41.review_submitted',
+          dedupeKey: 'pr-41-event',
+        })
+      );
+      expect(injected).toHaveLength(0);
+
+      // Event for the NEW PR (42) is delivered.
+      await eventService.publish(makeEvent({ dedupeKey: 'pr-42-event' }));
+      expect(injected).toHaveLength(1);
+    });
+
+    test('auto_pr subscription survives the blocked-gate wake-up cleanup', async () => {
+      const workflow = createWorkflow('code');
+      const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const task = tasks[0]!;
+      const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: 'session-pr-survive',
+        startedAt: Date.now(),
+      });
+      tam.alive.add('session-pr-survive');
+
+      runtime.ensurePrSubscriptionForNode(
+        run.id,
+        task.id,
+        'code',
+        'coder',
+        'https://github.com/lsm/neokai/pull/42'
+      );
+      // Simulate the blocked-gate wake-up path that clears `auto` subscriptions.
+      runtime.clearPrEventSubscriptionsForRun(run.id);
+
+      await eventService.publish(makeEvent());
+      expect(injected).toHaveLength(1); // auto_pr survived
+    });
   });
 
   test('queues matching events for pending nodes and flushes after session creation', async () => {

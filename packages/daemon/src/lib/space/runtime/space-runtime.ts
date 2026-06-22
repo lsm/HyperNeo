@@ -341,7 +341,7 @@ interface WorkflowSubscriptionTarget {
    *              target only runtime-managed subscriptions without touching
    *              agent-registered interests on the same topic.
    */
-  subscriptionKind?: 'static' | 'dynamic' | 'auto';
+  subscriptionKind?: 'static' | 'dynamic' | 'auto' | 'auto_pr';
   sessionId?: string;
 }
 
@@ -1049,7 +1049,8 @@ export class SpaceRuntime {
       (target) =>
         isWorkflowSubscriptionTarget(target) &&
         target.workflowRunId === workflowRunId &&
-        target.subscriptionKind !== 'dynamic'
+        target.subscriptionKind !== 'dynamic' &&
+        target.subscriptionKind !== 'auto_pr'
     );
     if (options.clearQueuedDeliveries) {
       this.clearQueuedDeliveriesForRun(workflowRunId, 'run_interests_rebuilt');
@@ -1097,7 +1098,7 @@ export class SpaceRuntime {
     nodeId: string,
     agentName: string,
     topic: string,
-    options: { subscriptionKind?: 'static' | 'dynamic' | 'auto' } = {}
+    options: { subscriptionKind?: 'static' | 'dynamic' | 'auto' | 'auto_pr' } = {}
   ): { success: boolean; error?: string } {
     const trimmed = topic?.trim();
     if (!trimmed) return { success: false, error: 'Topic pattern is required.' };
@@ -1126,14 +1127,15 @@ export class SpaceRuntime {
     // runtime itself for blocked-run PR wake-up) bypass the cap so a slot
     // already at the user-interest limit still gets its single gate-wake
     // subscription.
-    if (subscriptionKind !== 'auto') {
+    if (subscriptionKind !== 'auto' && subscriptionKind !== 'auto_pr') {
       const existingInterests = this.topicTrie.count(
         (target) =>
           isWorkflowSubscriptionTarget(target) &&
           target.workflowRunId === workflowRunId &&
           target.nodeId === nodeId &&
           target.agentName === agentName &&
-          target.subscriptionKind !== 'auto'
+          target.subscriptionKind !== 'auto' &&
+          target.subscriptionKind !== 'auto_pr'
       );
       if (existingInterests >= MAX_AGENT_SLOT_EVENT_INTERESTS) {
         throw new Error(
@@ -1429,10 +1431,16 @@ export class SpaceRuntime {
    * automatically receives its review/comment/reaction events without having to
    * call `subscribe_pr_events` manually.
    *
+   * Uses a distinct `auto_pr` kind so it is NOT cleared by the blocked-gate
+   * wake-up cleanup (`clearPrEventSubscriptionsForRun` only removes `auto`),
+   * and does not count against the per-slot interest cap.
+   *
    * Idempotent: no-ops when the node already has any subscription for this PR's
-   * exact topic (any kind — covers prior `auto`, `dynamic`, or manual tool
+   * exact topic (any kind — covers prior `auto_pr`, `dynamic`, or manual tool
    * registrations) so re-saves and re-sends never create duplicate deliveries.
-   * Registers as `auto` so it does not count against the per-slot interest cap.
+   * When the node's PR changes, the prior `auto_pr` topic for that slot is
+   * dropped before registering the new one so events for an obsolete PR stop
+   * matching (the per-slot `auto_pr` subscription is single-entry).
    */
   ensurePrSubscriptionForNode(
     workflowRunId: string,
@@ -1446,16 +1454,20 @@ export class SpaceRuntime {
       return { success: false, error: `Unable to parse GitHub PR URL: ${prUrl}` };
     }
     const topicPattern = buildPrEventTopicPattern(parsed);
-    const already = this.topicTrie.count(
-      (target) =>
-        isWorkflowSubscriptionTarget(target) &&
-        target.workflowRunId === workflowRunId &&
-        target.taskId === taskId &&
-        target.nodeId === nodeId &&
-        target.agentName === agentName &&
-        target.topic === topicPattern
-    );
+    const owns = (target: SubscriptionTarget): target is WorkflowSubscriptionTarget =>
+      isWorkflowSubscriptionTarget(target) &&
+      target.workflowRunId === workflowRunId &&
+      target.taskId === taskId &&
+      target.nodeId === nodeId &&
+      target.agentName === agentName;
+    // Idempotent: no-op if this node already receives this PR's events under
+    // any subscription kind.
+    const already = this.topicTrie.count((target) => owns(target) && target.topic === topicPattern);
     if (already > 0) return { success: true, subscribed: false, topicPattern };
+    // PR change: drop any prior auto_pr subscription for this slot (runtime-
+    // managed) before registering the new PR. User-registered dynamic/static
+    // subscriptions are intentionally left untouched.
+    this.topicTrie.remove((target) => owns(target) && target.subscriptionKind === 'auto_pr');
     try {
       const result = this.registerSubscription(
         workflowRunId,
@@ -1463,7 +1475,7 @@ export class SpaceRuntime {
         nodeId,
         agentName,
         topicPattern,
-        { subscriptionKind: 'auto' }
+        { subscriptionKind: 'auto_pr' }
       );
       if (!result.success) return { success: false, error: result.error, topicPattern };
       return { success: true, subscribed: true, topicPattern };
