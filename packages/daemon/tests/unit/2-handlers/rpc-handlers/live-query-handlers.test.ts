@@ -2407,6 +2407,41 @@ describe('NAMED_QUERY_REGISTRY', () => {
         expect(ids).not.toContain('hr');
       });
 
+      test('hook burst does not consume the compact tail (excluded before ranking)', () => {
+        const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+        insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+        // Oldest assistant row, then 6 newer hook rows. Without excluding hooks
+        // before nonTerminalRankDesc is assigned, the 6 newer hook rows would
+        // occupy ranks 1-5 (tail limit) and rank this assistant row OUT of the
+        // compact feed. The upstream filter in `ranked` must keep the assistant.
+        insertSdkMessageAt('a-old', sessionId, now + 1000, {
+          type: 'assistant',
+          uuid: 'a-old',
+          message: { content: [{ type: 'text', text: 'real work' }] },
+        });
+        for (let i = 0; i < 6; i += 1) {
+          insertSdkMessageAt(
+            `hp${i}`,
+            sessionId,
+            now + 2000 + i,
+            {
+              type: 'system',
+              subtype: 'hook_progress',
+              uuid: `hp${i}`,
+              hook_id: 'h1',
+              hook_name: 'lint',
+              hook_event: 'PreToolUse',
+              stdout: `phase ${i}`,
+            },
+            'system'
+          );
+        }
+
+        const ids = queryCompact(taskId).map((r) => String(r.id));
+        expect(ids).toContain('a-old');
+        for (let i = 0; i < 6; i += 1) expect(ids).not.toContain(`hp${i}`);
+      });
+
       test('long active turn: compact feed ≤5 non-terminal rows AND summary carries every entry', async () => {
         const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
         insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
