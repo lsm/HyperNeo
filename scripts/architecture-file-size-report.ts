@@ -180,7 +180,10 @@ function loadConfigFromGitRef(
   ref: string,
   configPath: string
 ): { config: RatchetConfig; path: string } | null {
-  const paths = [configPath, ...legacyConfigPaths.filter((path) => path !== configPath)];
+  const paths =
+    configPath === defaultConfigPath
+      ? [configPath, ...legacyConfigPaths.filter((path) => path !== configPath)]
+      : [configPath];
   for (const path of paths) {
     const loaded = tryLoadConfigFromGitRef(ref, path);
     if (loaded) return loaded;
