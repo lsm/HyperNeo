@@ -2259,6 +2259,43 @@ describe('NAMED_QUERY_REGISTRY', () => {
           .map((m) => m.subtype);
         expect(subtypes).toEqual(['hook_started', 'hook_progress', 'hook_response']);
       });
+
+      test('orders same-millisecond tool_use and hook by insertion order, not UUID id', async () => {
+        const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+        insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+        const same = now + 1000;
+        // Assistant tool_use row inserted FIRST (lower rowid) but its sdk_messages
+        // id ('tzzz-a') sorts AFTER the hook's id ('haaa'), so a UUID-based
+        // tiebreak would render the hook before the tool that triggered it.
+        insertSdkMessageAt('tzzz-a', sessionId, same, {
+          type: 'assistant',
+          uuid: 'tzzz-a',
+          message: {
+            content: [
+              { type: 'tool_use', id: 'tu-trigger', name: 'Bash', input: { command: 'ls' } },
+            ],
+          },
+        });
+        insertSdkMessageAt(
+          'haaa',
+          sessionId,
+          same,
+          {
+            type: 'system',
+            subtype: 'hook_started',
+            uuid: 'haaa',
+            hook_id: 'h1',
+            hook_name: 'lint',
+            hook_event: 'PreToolUse',
+          },
+          'system'
+        );
+
+        const summaries = await buildSummaries(taskId);
+        const kinds = (summaries[0].entries as Array<Record<string, unknown>>).map((e) => e.kind);
+        // The tool_use (inserted first) must precede the hook it triggered.
+        expect(kinds).toEqual(['tool_use', 'hook']);
+      });
     });
 
     // ---------------------------------------------------------------------

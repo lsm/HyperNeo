@@ -59,6 +59,12 @@ export interface UseMessageMapsResult {
   foldableToolUseIds: Set<string>;
   /** Map of SDK message UUIDs to replacement/retraction status */
   replacementStatusMap: Map<string, MessageReplacementStatus>;
+  /**
+   * hook_ids that already have a terminal `hook_response` in the slice. A
+   * hook_started/hook_progress row whose hook_id is in this set is historical
+   * (the hook finished) and must not render a running spinner.
+   */
+  completedHookIds: Set<string>;
 }
 
 /**
@@ -236,6 +242,19 @@ export function useMessageMaps(
     return foldable;
   }, [sdkMessages]);
 
+  // hook_ids whose terminal hook_response is present in the slice. A
+  // hook_started/hook_progress row for a completed hook is history and must
+  // not animate as if still running.
+  const completedHookIds = useMemo(() => {
+    const set = new Set<string>();
+    sdkMessages.forEach((msg) => {
+      if (msg.type !== 'system' || msg.subtype !== 'hook_response') return;
+      const hookId = (msg as { hook_id?: string }).hook_id;
+      if (hookId) set.add(hookId);
+    });
+    return set;
+  }, [sdkMessages]);
+
   return {
     toolResultsMap,
     toolInputsMap,
@@ -244,5 +263,6 @@ export function useMessageMaps(
     taskNotificationsMap,
     foldableToolUseIds,
     replacementStatusMap,
+    completedHookIds,
   };
 }

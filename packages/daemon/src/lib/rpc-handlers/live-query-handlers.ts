@@ -1646,7 +1646,11 @@ assistant_entries AS (
     ar.sessionId AS sessionId,
     ar.turnIndex AS turnIndex,
     ar.createdAt AS ts,
-    ar.id AS rowId,
+    -- rowId is insertion order (sdk_messages.rowid), NOT the random UUID id,
+    -- so the entry id + final ORDER BY keep same-millisecond rows (e.g. a
+    -- tool_use and the hook it triggers) in emission order instead of shuffling
+    -- by UUID.
+    base.rowid AS rowId,
     CAST(je.key AS INTEGER) AS blockIdx,
     json_extract(ar.content, '$.uuid') AS uuid,
     json_extract(je.value, '$.type') AS blockType,
@@ -1657,7 +1661,8 @@ assistant_entries AS (
     json_extract(je.value, '$.id') AS toolUseId,
     json_extract(je.value, '$.text') AS textValue,
     json_extract(je.value, '$.thinking') AS thinkingValue
-  FROM active_rows ar,
+  FROM active_rows ar
+  JOIN sdk_messages base ON base.id = ar.id,
        json_each(json_extract(ar.content, '$.message.content')) je
   WHERE ar.messageType = 'assistant'
     AND json_type(ar.content, '$.message.content') = 'array'
@@ -1679,7 +1684,7 @@ user_entries AS (
     ar.sessionId AS sessionId,
     ar.turnIndex AS turnIndex,
     ar.createdAt AS ts,
-    ar.id AS rowId,
+    base.rowid AS rowId,
     -1 AS blockIdx,
     json_extract(ar.content, '$.uuid') AS uuid,
     CASE
@@ -1707,6 +1712,7 @@ user_entries AS (
     END AS textValue,
     NULL AS thinkingValue
   FROM active_rows ar
+  JOIN sdk_messages base ON base.id = ar.id
   WHERE ar.messageType = 'user'
     -- Skip user rows whose content is exclusively tool_result blocks (or
     -- mixes tool_result with empty/whitespace-only text blocks). Such rows
@@ -1740,7 +1746,7 @@ hook_runs AS (
     ar.sessionId AS sessionId,
     ar.turnIndex AS turnIndex,
     ar.createdAt AS ts,
-    ar.id AS rowId,
+    base.rowid AS rowId,
     json_extract(ar.content, '$.uuid') AS uuid,
     json_extract(ar.content, '$.hook_id') AS hookId,
     json_extract(ar.content, '$.hook_name') AS hookName,

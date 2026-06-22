@@ -374,6 +374,20 @@ export function SubagentBlock({
     });
   }, [nestedMessages, input.prompt]);
 
+  // hook_ids in this subagent's slice that already have a terminal hook_response
+  // — gates the nested hook running spinner so completed hooks don't spin.
+  const nestedCompletedHookIds = useMemo(() => {
+    const set = new Set<string>();
+    for (const msg of nestedMessages) {
+      if (msg.type !== 'system' || (msg as { subtype?: string }).subtype !== 'hook_response') {
+        continue;
+      }
+      const hookId = (msg as { hook_id?: string }).hook_id;
+      if (hookId) set.add(hookId);
+    }
+    return set;
+  }, [nestedMessages]);
+
   // The running-state arc is rendered by <RunningBorder> as an absolutely
   // positioned SVG sibling (applied via a wrapper below). It cannot live on
   // this div because overflow:hidden would clip the SVG that extends slightly
@@ -505,6 +519,7 @@ export function SubagentBlock({
                     toolResultsMap={toolResultsMap}
                     replacementStatusMap={replacementStatusMap}
                     taskNotificationsMap={taskNotificationsMap}
+                    completedHookIds={nestedCompletedHookIds}
                   />
                 ))}
               </div>
@@ -550,12 +565,14 @@ function NestedMessageRenderer({
   toolResultsMap,
   replacementStatusMap,
   taskNotificationsMap,
+  completedHookIds,
 }: {
   message: SDKMessage;
   isLiveTail: boolean;
   toolResultsMap?: Map<string, unknown>;
   replacementStatusMap?: Map<string, MessageReplacementStatus>;
   taskNotificationsMap?: Map<string, SDKTaskNotificationMessage>;
+  completedHookIds?: Set<string>;
 }) {
   const replacementStatus = replacementStatusMap?.get(getMessageUuid(message) ?? '');
   const withReplacementStatus = (content: ComponentChild) => {
@@ -736,7 +753,11 @@ function NestedMessageRenderer({
     const systemMessage = message as Extract<SDKMessage, { type: 'system' }>;
     if (shouldUseSDKSystemRenderer(systemMessage)) {
       return withReplacementStatus(
-        <SDKSystemMessage message={systemMessage} isLiveTail={isLiveTail} />
+        <SDKSystemMessage
+          message={systemMessage}
+          isLiveTail={isLiveTail}
+          completedHookIds={completedHookIds}
+        />
       );
     }
     return withReplacementStatus(

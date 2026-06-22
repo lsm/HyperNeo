@@ -57,6 +57,9 @@ interface Props {
   /** tool_use_ids whose card is rendered in this slice — gates task_notification
    * suppression (a nested tool_use whose parent is paginated out has no target). */
   foldableToolUseIds?: Set<string>;
+  /** hook_ids with a terminal hook_response in the slice — gates the hook
+   * running spinner so completed hooks don't look still-running. */
+  completedHookIds?: Set<string>;
   replacementStatusMap?: Map<string, MessageReplacementStatus>;
   sessionInfo?: SystemInitMessage; // Optional session init info to attach to user messages
   // Question handling props for inline QuestionPrompt rendering
@@ -247,6 +250,7 @@ function SDKMessageRendererImpl({
   subagentMessagesMap,
   taskNotificationsMap,
   foldableToolUseIds,
+  completedHookIds,
   replacementStatusMap,
   sessionInfo,
   sessionId,
@@ -376,7 +380,13 @@ function SDKMessageRendererImpl({
   } else if (isSDKResultMessage(sdkMessage)) {
     renderedMessage = <SDKResultMessage message={sdkMessage} />;
   } else if (isSDKSystemMessage(sdkMessage)) {
-    renderedMessage = <SDKSystemMessage message={sdkMessage} isLiveTail={isLiveTail} />;
+    renderedMessage = (
+      <SDKSystemMessage
+        message={sdkMessage}
+        isLiveTail={isLiveTail}
+        completedHookIds={completedHookIds}
+      />
+    );
   } else if (isSDKToolProgressMessage(sdkMessage)) {
     const toolInput = toolInputsMap?.get((sdkMessage as SDKToolProgressMessageType).tool_use_id);
     renderedMessage = <SDKToolProgressMessage message={sdkMessage} toolInput={toolInput} />;
@@ -424,6 +434,7 @@ function areMessageRendererPropsEqual(prev: Props, next: Props): boolean {
     prev.subagentMessagesMap === next.subagentMessagesMap &&
     prev.taskNotificationsMap === next.taskNotificationsMap &&
     prev.foldableToolUseIds === next.foldableToolUseIds &&
+    prev.completedHookIds === next.completedHookIds &&
     prev.replacementStatusMap === next.replacementStatusMap &&
     prev.sessionInfo === next.sessionInfo &&
     prev.sessionId === next.sessionId &&

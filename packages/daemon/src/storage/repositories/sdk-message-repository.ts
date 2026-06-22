@@ -647,8 +647,10 @@ export class SDKMessageRepository {
       params.push(new Date(since).toISOString());
     }
 
-    // Order DESC to get newest messages first, then reverse for chronological display
-    query += ` ORDER BY timestamp DESC LIMIT ?`;
+    // Order DESC to get newest messages first, then reverse for chronological display.
+    // rowid tiebreak (insertion order) keeps same-millisecond hook phases deterministically
+    // ordered instead of shuffled by random UUID id.
+    query += ` ORDER BY timestamp DESC, rowid DESC LIMIT ?`;
     params.push(limit);
 
     const stmt = this.db.prepare(query);
@@ -713,7 +715,7 @@ export class SDKMessageRepository {
          AND parent_tool_use_id IN (${placeholders})
          AND COALESCE(message_subtype, '') NOT IN (${EXCLUDED_FROM_PAGINATION_SQL_LIST})
          AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))
-        ORDER BY timestamp ASC`;
+        ORDER BY timestamp ASC, rowid ASC`;
       const subagentParams: SQLiteValue[] = [sessionId, ...Array.from(toolUseIds)];
 
       const subagentStmt = this.db.prepare(subagentQuery);
