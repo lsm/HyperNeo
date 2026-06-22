@@ -829,7 +829,11 @@ describe('SDKMessageRepository', () => {
         total_cost_usd: 0,
         usage: {},
       } as unknown as SDKMessage);
-      for (const subtype of ['session_state_changed', 'commands_changed', 'hook_progress']) {
+      // hook_started/hook_progress are no longer globally hidden (chat-visible
+      // hook events now); task_* are hidden but kept as progress signals via
+      // LAST_MESSAGE_PROGRESS_SUBTYPES, so they're not skipped here. Sample the
+      // remaining hidden non-progress subtypes.
+      for (const subtype of ['session_state_changed', 'commands_changed', 'elicitation_complete']) {
         repository.saveSDKMessage('session-1', {
           type: 'system',
           subtype,
