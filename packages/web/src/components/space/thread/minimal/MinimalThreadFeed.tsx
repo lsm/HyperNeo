@@ -863,9 +863,11 @@ function buildOperationalSystemTurn(
     const title =
       status === 'completed'
         ? 'Task completed'
-        : status === 'failed' || status === 'stopped'
+        : status === 'failed'
           ? 'Task failed'
-          : 'Task notification';
+          : status === 'stopped'
+            ? 'Task stopped'
+            : 'Task notification';
     const parts: string[] = [];
     if (typeof summary === 'string' && summary.trim()) parts.push(summary.trim());
     else if (typeof status === 'string') parts.push(status);

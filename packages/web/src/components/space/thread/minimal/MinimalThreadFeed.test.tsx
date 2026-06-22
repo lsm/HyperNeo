@@ -750,6 +750,40 @@ describe('MinimalThreadFeed', () => {
     expect(screen.queryAllByTestId('minimal-thread-roster-entry')).toHaveLength(0);
   });
 
+  it('labels a stopped task_notification as Task stopped, not Task failed', () => {
+    const t = Date.now();
+    const rows = [
+      makeRow({
+        id: 'a1',
+        label: 'Coder Agent',
+        createdAt: t,
+        message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'ls' } }]),
+      }),
+      makeRow({ id: 'r1', label: 'Coder Agent', createdAt: t + 100, message: resultMessage('r1') }),
+      makeRow({
+        id: 'n1',
+        label: 'Coder Agent',
+        createdAt: t + 200,
+        messageType: 'system',
+        message: {
+          type: 'system',
+          subtype: 'task_notification',
+          task_id: 't',
+          tool_use_id: 'tu-a1-0',
+          status: 'stopped',
+          summary: 'killed by user',
+          output_file: '/tmp/o',
+        },
+      }),
+    ];
+
+    render(<MinimalThreadFeed parsedRows={rows} />);
+
+    const feed = screen.getByTestId('space-task-event-feed-minimal');
+    expect(feed.textContent).toContain('Task stopped');
+    expect(feed.textContent).not.toContain('Task failed');
+  });
+
   it('falls back to a system row for task_notification with no roster target (completed turn)', () => {
     const t = Date.now();
     // Tool_use + result → completed turn (no active roster). The notification
