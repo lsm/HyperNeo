@@ -60,11 +60,13 @@ export interface UseMessageMapsResult {
   /** Map of SDK message UUIDs to replacement/retraction status */
   replacementStatusMap: Map<string, MessageReplacementStatus>;
   /**
-   * hook_ids that already have a terminal `hook_response` in the slice. A
-   * hook_started/hook_progress row whose hook_id is in this set is historical
-   * (the hook finished) and must not render a running spinner.
+   * UUIDs of hook_started/hook_progress messages whose run has a terminal
+   * hook_response IN THE SAME TURN. Turn-scoped because hook_id is only unique
+   * within a turn — a completed run in one turn must not mark a reused
+   * hook_id's still-running phase in another turn as finished. Used to render
+   * historical phases without a spinner.
    */
-  completedHookIds: Set<string>;
+  completedHookUuids: Set<string>;
 }
 
 /**
@@ -242,17 +244,38 @@ export function useMessageMaps(
     return foldable;
   }, [sdkMessages]);
 
-  // hook_ids whose terminal hook_response is present in the slice. A
-  // hook_started/hook_progress row for a completed hook is history and must
-  // not animate as if still running.
-  const completedHookIds = useMemo(() => {
-    const set = new Set<string>();
-    sdkMessages.forEach((msg) => {
-      if (msg.type !== 'system' || msg.subtype !== 'hook_response') return;
+  // UUIDs of hook_started/hook_progress phases whose run has reached
+  // hook_response in the SAME turn. hook_id is only unique within a turn, so we
+  // track pending phases per turn (a `result` message ends the turn and clears
+  // them) and mark a phase completed only when a response for its hook_id
+  // arrives before the turn closes. This prevents a completed run in one turn
+  // from hiding the spinner on a reused hook_id's still-running phase elsewhere.
+  const completedHookUuids = useMemo(() => {
+    const completed = new Set<string>();
+    const pendingByHook = new Map<string, string[]>();
+    const flushTurn = () => pendingByHook.clear();
+    for (const msg of sdkMessages) {
+      if (msg.type === 'result') {
+        flushTurn();
+        continue;
+      }
+      if (msg.type !== 'system') continue;
+      const sub = (msg as { subtype?: string }).subtype;
       const hookId = (msg as { hook_id?: string }).hook_id;
-      if (hookId) set.add(hookId);
-    });
-    return set;
+      if (!hookId) continue;
+      if (sub === 'hook_started' || sub === 'hook_progress') {
+        const uuid = (msg as { uuid?: string }).uuid;
+        if (uuid) {
+          const list = pendingByHook.get(hookId);
+          if (list) list.push(uuid);
+          else pendingByHook.set(hookId, [uuid]);
+        }
+      } else if (sub === 'hook_response') {
+        for (const uuid of pendingByHook.get(hookId) ?? []) completed.add(uuid);
+        pendingByHook.delete(hookId);
+      }
+    }
+    return completed;
   }, [sdkMessages]);
 
   return {
@@ -263,6 +286,6 @@ export function useMessageMaps(
     taskNotificationsMap,
     foldableToolUseIds,
     replacementStatusMap,
-    completedHookIds,
+    completedHookUuids,
   };
 }

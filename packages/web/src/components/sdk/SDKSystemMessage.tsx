@@ -52,12 +52,13 @@ type SystemMessage = Extract<SDKMessage, { type: 'system' }>;
 interface Props {
   message: SystemMessage;
   isLiveTail?: boolean;
-  /** hook_ids with a terminal hook_response in the slice; gates the running
-   * spinner so historical hook_started/hook_progress rows don't look live. */
-  completedHookIds?: Set<string>;
+  /** UUIDs of hook_started/hook_progress phases whose run reached
+   * hook_response in the same turn; gates the running spinner so historical
+   * phases don't look live. */
+  completedHookUuids?: Set<string>;
 }
 
-export function SDKSystemMessage({ message, isLiveTail = false, completedHookIds }: Props) {
+export function SDKSystemMessage({ message, isLiveTail = false, completedHookUuids }: Props) {
   // Init message - session started
   if (isSDKSystemInit(message)) {
     return <SystemInitMessage message={message} />;
@@ -99,7 +100,7 @@ export function SDKSystemMessage({ message, isLiveTail = false, completedHookIds
       <HookRunningCard
         message={message as SDKHookStartedMessage}
         progress={undefined}
-        completed={isHookCompleted(message as { hook_id?: string }, completedHookIds)}
+        completed={isHookPhaseCompleted(message as { uuid?: string }, completedHookUuids)}
       />
     );
   }
@@ -108,7 +109,7 @@ export function SDKSystemMessage({ message, isLiveTail = false, completedHookIds
       <HookRunningCard
         message={undefined}
         progress={message as SDKHookProgressMessage}
-        completed={isHookCompleted(message as { hook_id?: string }, completedHookIds)}
+        completed={isHookPhaseCompleted(message as { uuid?: string }, completedHookUuids)}
       />
     );
   }
@@ -675,12 +676,16 @@ function HookRunningCard({
 }
 
 /**
- * A hook_started/hook_progress row is "completed" when a terminal hook_response
- * for the same hook_id is present in the rendered slice.
+ * A hook_started/hook_progress row is "completed" when its UUID is in the
+ * turn-scoped completed set — its run reached hook_response in the same turn.
+ * See useMessageMaps.completedHookUuids.
  */
-function isHookCompleted(message: { hook_id?: string }, completedHookIds?: Set<string>): boolean {
-  if (!message.hook_id || !completedHookIds) return false;
-  return completedHookIds.has(message.hook_id);
+function isHookPhaseCompleted(
+  message: { uuid?: string },
+  completedHookUuids?: Set<string>
+): boolean {
+  if (!message.uuid || !completedHookUuids) return false;
+  return completedHookUuids.has(message.uuid);
 }
 
 function HookResponseCard({ message }: { message: SDKHookResponseMessage }) {

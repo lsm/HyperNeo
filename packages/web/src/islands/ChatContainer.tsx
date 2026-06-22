@@ -1370,7 +1370,7 @@ export default function ChatContainer({
                     subagentMessagesMap={maps.subagentMessagesMap}
                     taskNotificationsMap={maps.taskNotificationsMap}
                     foldableToolUseIds={maps.foldableToolUseIds}
-                    completedHookIds={maps.completedHookIds}
+                    completedHookUuids={maps.completedHookUuids}
                     replacementStatusMap={maps.replacementStatusMap}
                     sessionInfo={
                       msg.uuid

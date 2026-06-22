@@ -374,18 +374,35 @@ export function SubagentBlock({
     });
   }, [nestedMessages, input.prompt]);
 
-  // hook_ids in this subagent's slice that already have a terminal hook_response
-  // — gates the nested hook running spinner so completed hooks don't spin.
-  const nestedCompletedHookIds = useMemo(() => {
-    const set = new Set<string>();
+  // UUIDs of hook_started/hook_progress phases in this subagent's slice whose
+  // run reached hook_response in the SAME turn (a result message closes the
+  // turn). Turn-scoped because hook_id is only unique within a turn — matches
+  // the top-level useMessageMaps.completedHookUuids contract.
+  const nestedCompletedHookUuids = useMemo(() => {
+    const completed = new Set<string>();
+    const pendingByHook = new Map<string, string[]>();
     for (const msg of nestedMessages) {
-      if (msg.type !== 'system' || (msg as { subtype?: string }).subtype !== 'hook_response') {
+      if (msg.type === 'result') {
+        pendingByHook.clear();
         continue;
       }
+      if (msg.type !== 'system') continue;
+      const sub = (msg as { subtype?: string }).subtype;
       const hookId = (msg as { hook_id?: string }).hook_id;
-      if (hookId) set.add(hookId);
+      if (!hookId) continue;
+      if (sub === 'hook_started' || sub === 'hook_progress') {
+        const uuid = (msg as { uuid?: string }).uuid;
+        if (uuid) {
+          const list = pendingByHook.get(hookId);
+          if (list) list.push(uuid);
+          else pendingByHook.set(hookId, [uuid]);
+        }
+      } else if (sub === 'hook_response') {
+        for (const uuid of pendingByHook.get(hookId) ?? []) completed.add(uuid);
+        pendingByHook.delete(hookId);
+      }
     }
-    return set;
+    return completed;
   }, [nestedMessages]);
 
   // The running-state arc is rendered by <RunningBorder> as an absolutely
@@ -519,7 +536,7 @@ export function SubagentBlock({
                     toolResultsMap={toolResultsMap}
                     replacementStatusMap={replacementStatusMap}
                     taskNotificationsMap={taskNotificationsMap}
-                    completedHookIds={nestedCompletedHookIds}
+                    completedHookUuids={nestedCompletedHookUuids}
                   />
                 ))}
               </div>
@@ -565,14 +582,14 @@ function NestedMessageRenderer({
   toolResultsMap,
   replacementStatusMap,
   taskNotificationsMap,
-  completedHookIds,
+  completedHookUuids,
 }: {
   message: SDKMessage;
   isLiveTail: boolean;
   toolResultsMap?: Map<string, unknown>;
   replacementStatusMap?: Map<string, MessageReplacementStatus>;
   taskNotificationsMap?: Map<string, SDKTaskNotificationMessage>;
-  completedHookIds?: Set<string>;
+  completedHookUuids?: Set<string>;
 }) {
   const replacementStatus = replacementStatusMap?.get(getMessageUuid(message) ?? '');
   const withReplacementStatus = (content: ComponentChild) => {
@@ -756,7 +773,7 @@ function NestedMessageRenderer({
         <SDKSystemMessage
           message={systemMessage}
           isLiveTail={isLiveTail}
-          completedHookIds={completedHookIds}
+          completedHookUuids={completedHookUuids}
         />
       );
     }

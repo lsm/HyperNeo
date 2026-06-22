@@ -1194,7 +1194,8 @@ github_events AS (
     NULL AS parentToolUseId,
     1 AS isRenderable,
     0 AS isTerminal,
-    NULL AS turnUserMessageId
+    NULL AS turnUserMessageId,
+    NULL AS insOrder
   FROM target_task tt
   JOIN space_github_events ge ON ge.task_id = tt.id
   WHERE ge.state IN ('routed', 'delivered')
@@ -1258,7 +1259,12 @@ sdk_rows_raw AS (
     CAST((julianday(sm.timestamp) - 2440587.5) * 86400000 AS INTEGER) AS createdAt,
     sm.parent_tool_use_id AS parentToolUseId,
     sm.is_renderable AS isRenderable,
-    sm.is_terminal AS isTerminal
+    sm.is_terminal AS isTerminal,
+    -- Insertion order (implicit rowid) appended last for positional UNION
+    -- alignment with github_events. Used as the same-millisecond tiebreak in
+    -- turn-boundary computation so a hook_response and the result closing the
+    -- same turn don't split across a turn boundary by random UUID id.
+    sm.rowid AS insOrder
   FROM target_task tt
   JOIN sdk_messages sm ON sm.task_id = tt.id
   LEFT JOIN sessions s_kind ON s_kind.id = sm.session_id
@@ -1357,7 +1363,8 @@ sdk_rows AS (
     t.parentToolUseId,
     t.isRenderable,
     t.isTerminal,
-    urs.userMessageId AS turnUserMessageId
+    urs.userMessageId AS turnUserMessageId,
+    t.insOrder AS insOrder
   FROM sdk_rows_with_turn t
   LEFT JOIN user_row_starts urs
     ON urs.sessionId = t.sessionId
@@ -1383,7 +1390,8 @@ joined AS (
     parentToolUseId,
     isRenderable,
     isTerminal,
-    turnUserMessageId
+    turnUserMessageId,
+    insOrder
   FROM sdk_rows
 )
 `.trim();
@@ -1449,7 +1457,10 @@ session_turns AS (
     COALESCE(
       SUM(j.isTerminal) OVER (
         PARTITION BY j.sessionId
-        ORDER BY j.createdAt ASC, j.id ASC
+        -- Order by insertion order (insOrder = sdk_messages.rowid) so a
+        -- same-millisecond hook_response and the result that closes the turn
+        -- stay in the same turn instead of splitting by random UUID id.
+        ORDER BY j.createdAt ASC, j.insOrder ASC
         ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
       ),
       0
@@ -1619,7 +1630,10 @@ session_turns AS (
     COALESCE(
       SUM(j.isTerminal) OVER (
         PARTITION BY j.sessionId
-        ORDER BY j.createdAt ASC, j.id ASC
+        -- Order by insertion order (insOrder = sdk_messages.rowid) so a
+        -- same-millisecond hook_response and the result that closes the turn
+        -- stay in the same turn instead of splitting by random UUID id.
+        ORDER BY j.createdAt ASC, j.insOrder ASC
         ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
       ),
       0
@@ -2477,11 +2491,13 @@ WITH top_level AS (
           AND (newer.message_type != 'user' OR COALESCE(newer.send_status, 'consumed') IN ('consumed', 'failed'))
       )
     )
-  -- Cap window orders by the composite-indexed (timestamp, id) so the planner
-  -- walks idx_sdk_messages_session_timestamp_id in reverse without a temp sort.
-  -- The final UNION re-sorts its bounded output by rowid (insertion order) for
-  -- display, so same-millisecond hook phases still render in emission order.
-  ORDER BY timestamp DESC, id DESC
+  -- Cap window orders by (timestamp, rowid) so a LiveQuery limit that cuts
+  -- through same-millisecond hook_started/progress/response rows keeps the
+  -- later phases (insertion order) instead of dropping the terminal response
+  -- by random UUID. The planner falls back to idx_sdk_messages_session + a
+  -- bounded temp sort (rowid isn't in the composite index) — acceptable for a
+  -- capped window, and correctness beats the micro-optimisation here.
+  ORDER BY timestamp DESC, rowid DESC
   LIMIT ?2
 ),
 tool_use_ids AS (
