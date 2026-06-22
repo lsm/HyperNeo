@@ -2454,12 +2454,16 @@ WITH top_level AS (
           AND newer.parent_tool_use_id IS NULL
           AND (
             newer.timestamp > sdk_messages.timestamp
-            OR (newer.timestamp = sdk_messages.timestamp AND newer.rowid > sdk_messages.rowid)
+            OR (newer.timestamp = sdk_messages.timestamp AND newer.id > sdk_messages.id)
           )
           AND (newer.message_type != 'user' OR COALESCE(newer.send_status, 'consumed') IN ('consumed', 'failed'))
       )
     )
-  ORDER BY timestamp DESC, rowid DESC
+  -- Cap window orders by the composite-indexed (timestamp, id) so the planner
+  -- walks idx_sdk_messages_session_timestamp_id in reverse without a temp sort.
+  -- The final UNION re-sorts its bounded output by rowid (insertion order) for
+  -- display, so same-millisecond hook phases still render in emission order.
+  ORDER BY timestamp DESC, id DESC
   LIMIT ?2
 ),
 tool_use_ids AS (
