@@ -2145,6 +2145,120 @@ describe('NAMED_QUERY_REGISTRY', () => {
         expect(orchEntries.map((e) => e.text)).toContain('orch active');
         expect(nodeEntries.map((e) => e.text)).toContain('node active');
       });
+
+      test('partitions hook runs per session — a shared hook_id cannot collapse two sessions', async () => {
+        const orchestrationSessionId = 'space:test:task:hp-orch';
+        const nodeSessionId = 'space:test:task:hp-node';
+        const workflowRunId = 'wr-hook-partition';
+        const workflowNodeId = 'node-hook-part';
+        const taskId = insertSpaceTask({
+          taskAgentSessionId: orchestrationSessionId,
+          workflowRunId,
+        });
+        insertSession(orchestrationSessionId, 'space_task_agent', '{"status":"processing"}');
+        insertSession(nodeSessionId, 'worker', '{"status":"processing"}');
+        insertNodeExecution({
+          id: 'ne-hook-part',
+          workflowRunId,
+          workflowNodeId,
+          agentName: 'coder',
+          agentSessionId: nodeSessionId,
+          status: 'in_progress',
+        });
+
+        // Both sessions emit the SAME hook_id at the same millisecond. The
+        // ROW_NUMBER window must partition per (session, turn, hook_id); a
+        // hook_id-only partition would keep just the globally-newest rn=1 and
+        // drop the other session's hook before summaries are grouped by sessionId.
+        const shared = { hook_id: 'h-shared', hook_name: 'lint', hook_event: 'PreToolUse' };
+        for (const [sid, prefix] of [
+          [orchestrationSessionId, 'o'],
+          [nodeSessionId, 'n'],
+        ] as const) {
+          insertSdkMessageAt(`${prefix}-a`, sid, now + 500, {
+            type: 'assistant',
+            uuid: `${prefix}-a`,
+            message: { content: [{ type: 'text', text: `${prefix} active` }] },
+          });
+          insertSdkMessageAt(
+            `${prefix}-hs`,
+            sid,
+            now + 1000,
+            { type: 'system', subtype: 'hook_started', uuid: `${prefix}-hs`, ...shared },
+            'system'
+          );
+          insertSdkMessageAt(
+            `${prefix}-hr`,
+            sid,
+            now + 1000,
+            {
+              type: 'system',
+              subtype: 'hook_response',
+              uuid: `${prefix}-hr`,
+              outcome: 'success',
+              ...shared,
+            },
+            'system'
+          );
+        }
+
+        const summaries = await buildSummaries(taskId);
+        const bySession = new Map(summaries.map((s) => [s.sessionId, s]));
+        for (const sid of [orchestrationSessionId, nodeSessionId]) {
+          const hooks = (bySession.get(sid)!.entries as Array<Record<string, unknown>>).filter(
+            (e) => e.kind === 'hook'
+          );
+          expect(hooks, `${sid} hook was dropped by a cross-session partition`).toHaveLength(1);
+          expect(hooks[0].hookName).toBe('lint');
+          expect(hooks[0].status).toBe('completed');
+        }
+      });
+
+      test('messages.bySession orders same-millisecond hook phases by insertion order (rowid)', async () => {
+        insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+        const same = now + 1000;
+        // Insertion order is started -> progress -> response, but the
+        // sdk_messages ids are reverse-alphabetical (hz, hy, hx). An `id`
+        // tiebreak would emit them backwards (response, progress, started);
+        // the rowid tiebreak preserves emission order so the chat transcript
+        // never renders a later hook phase before an earlier one.
+        const base = { hook_id: 'h-fast', hook_name: 'fast', hook_event: 'PreToolUse' };
+        insertSdkMessageAt(
+          'hz',
+          sessionId,
+          same,
+          { type: 'system', subtype: 'hook_started', uuid: 'hz', ...base },
+          'system'
+        );
+        insertSdkMessageAt(
+          'hy',
+          sessionId,
+          same,
+          { type: 'system', subtype: 'hook_progress', uuid: 'hy', stdout: 'mid', ...base },
+          'system'
+        );
+        insertSdkMessageAt(
+          'hx',
+          sessionId,
+          same,
+          {
+            type: 'system',
+            subtype: 'hook_response',
+            uuid: 'hx',
+            outcome: 'success',
+            ...base,
+          },
+          'system'
+        );
+
+        const entry = NAMED_QUERY_REGISTRY.get('messages.bySession')!;
+        const rows = db.prepare(entry.sql).all(sessionId, 100) as Array<{ content: string }>;
+        const subtypes = rows
+          .map((r) => JSON.parse(r.content) as { subtype?: string })
+          .filter((m) => typeof m.subtype === 'string' && m.subtype.startsWith('hook_'))
+          .map((m) => m.subtype);
+        expect(subtypes).toEqual(['hook_started', 'hook_progress', 'hook_response']);
+      });
     });
 
     // ---------------------------------------------------------------------
@@ -2864,7 +2978,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
       }
     });
 
-    test('all ORDER BY clauses include a deterministic tiebreaker (id column)', () => {
+    test('all ORDER BY clauses include a deterministic tiebreaker (id or rowid column)', () => {
       for (const [name, entry] of NAMED_QUERY_REGISTRY) {
         const upperSql = entry.sql.toUpperCase();
         expect(upperSql).toContain('ORDER BY');
@@ -2874,9 +2988,15 @@ describe('NAMED_QUERY_REGISTRY', () => {
           .replace(/\s+LIMIT\s+\?(\s+OFFSET\s+\?)?/, '')
           .replace(/\s+/g, ' ')
           .trim();
-        // Must end with either `id ASC` or `id DESC` (tiebreaker)
-        const hasIdTiebreaker = /\bID\s+(ASC|DESC)\s*$/.test(sqlForCheck);
-        expect(hasIdTiebreaker).toBe(true, `${name} ORDER BY lacks deterministic id tiebreaker`);
+        // Must end with `<col> ASC|DESC` where col is a unique per-row key: the
+        // explicit `id` (UUID) or the implicit `rowid` (monotonic insertion
+        // order). `rowid` is the preferred tiebreak for tables whose `id` is a
+        // random UUID, since it preserves emission order for same-ms rows.
+        const hasTiebreaker = /\b(ID|ROWID)\s+(ASC|DESC)\s*$/.test(sqlForCheck);
+        expect(hasTiebreaker).toBe(
+          true,
+          `${name} ORDER BY lacks deterministic id/rowid tiebreaker`
+        );
       }
     });
   });

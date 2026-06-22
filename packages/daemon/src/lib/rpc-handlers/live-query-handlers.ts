@@ -1749,7 +1749,11 @@ hook_runs AS (
     json_extract(ar.content, '$.outcome') AS outcome,
     json_extract(ar.content, '$.stdout') AS stdout,
     ROW_NUMBER() OVER (
-      PARTITION BY json_extract(ar.content, '$.hook_id')
+      -- Partition per (session, turn, hook_id): hook_id is only unique within a
+      -- single agent's turn, so two active sessions emitting the same hook_id
+      -- must not collapse into one window (one would be dropped before grouping
+      -- by sessionId).
+      PARTITION BY ar.sessionId, ar.turnIndex, json_extract(ar.content, '$.hook_id')
       -- createdAt ties (same-millisecond hook_started/progress/response) are
       -- broken by insertion order: sdk_messages.id is a random UUID, so join
       -- back to the base table for its implicit rowid, which is monotonic.
@@ -2422,7 +2426,8 @@ WITH top_level AS (
     sdk_message,
     timestamp,
     send_status,
-    origin
+    origin,
+    rowid
   FROM sdk_messages
   WHERE session_id = ?1
     AND parent_tool_use_id IS NULL
@@ -2449,12 +2454,12 @@ WITH top_level AS (
           AND newer.parent_tool_use_id IS NULL
           AND (
             newer.timestamp > sdk_messages.timestamp
-            OR (newer.timestamp = sdk_messages.timestamp AND newer.id > sdk_messages.id)
+            OR (newer.timestamp = sdk_messages.timestamp AND newer.rowid > sdk_messages.rowid)
           )
           AND (newer.message_type != 'user' OR COALESCE(newer.send_status, 'consumed') IN ('consumed', 'failed'))
       )
     )
-  ORDER BY timestamp DESC, id DESC
+  ORDER BY timestamp DESC, rowid DESC
   LIMIT ?2
 ),
 tool_use_ids AS (
@@ -2479,7 +2484,8 @@ subagent AS (
     sm.sdk_message AS sdk_message,
     sm.timestamp AS timestamp,
     sm.send_status AS send_status,
-    sm.origin AS origin
+    sm.origin AS origin,
+    sm.rowid AS rowid
   FROM sdk_messages sm
   WHERE sm.session_id = ?1
     AND sm.parent_tool_use_id IN (SELECT id FROM tool_use_ids)
@@ -2491,7 +2497,8 @@ SELECT
   sdk_message                                                       AS content,
   CAST((julianday(timestamp) - 2440587.5) * 86400000 AS INTEGER)    AS timestamp,
   send_status                                                       AS sendStatus,
-  origin                                                            AS origin
+  origin                                                            AS origin,
+  rowid                                                             AS rowid
 FROM top_level
 UNION ALL
 SELECT
@@ -2499,9 +2506,10 @@ SELECT
   sdk_message                                                       AS content,
   CAST((julianday(timestamp) - 2440587.5) * 86400000 AS INTEGER)    AS timestamp,
   send_status                                                       AS sendStatus,
-  origin                                                            AS origin
+  origin                                                            AS origin,
+  rowid                                                             AS rowid
 FROM subagent
-ORDER BY timestamp ASC, id ASC
+ORDER BY timestamp ASC, rowid ASC
 `.trim();
 
 /**
