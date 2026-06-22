@@ -2589,6 +2589,10 @@ function mapMessageRow(row: Record<string, unknown>): Record<string, unknown> {
   const extras: Record<string, unknown> = {
     id: row.id,
     timestamp: typeof row.timestamp === 'number' ? row.timestamp : Number(row.timestamp ?? 0),
+    // Insertion-order rowid — exposed so ChatContainer can seed the
+    // (timestamp, rowid) pagination cursor from the initial LiveQuery
+    // snapshot, not just from the RPC page fetches.
+    rowid: typeof row.rowid === 'number' ? row.rowid : Number(row.rowid ?? 0),
     origin: row.origin != null ? row.origin : undefined,
   };
   if (row.sendStatus === 'failed') {

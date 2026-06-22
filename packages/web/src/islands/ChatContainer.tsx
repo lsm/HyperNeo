@@ -847,12 +847,21 @@ export default function ChatContainer({
           timestamp?: number;
           rowid?: number;
         };
-        if (!oldestMessage.timestamp || oldestMessage.timestamp >= before) {
+        // Progress on the composite (timestamp, rowid) cursor: with a rowid
+        // cursor the new page can share the cursor's timestamp but carry older
+        // rowids — that still counts as forward progress. Only reset when
+        // neither axis advanced.
+        const ts = oldestMessage.timestamp;
+        const rid = oldestMessage.rowid;
+        const advanced =
+          (ts !== undefined && ts < before) ||
+          (ts === before && rid !== undefined && beforeRowid !== undefined && rid < beforeRowid);
+        if (!ts || !advanced) {
           resetSearchTarget();
           return;
         }
-        before = oldestMessage.timestamp;
-        beforeRowid = oldestMessage.rowid;
+        before = ts;
+        beforeRowid = rid;
       }
     };
     applyTargetWindow()
