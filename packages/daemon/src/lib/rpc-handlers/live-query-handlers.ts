@@ -1746,9 +1746,13 @@ hook_runs AS (
     json_extract(ar.content, '$.stdout') AS stdout,
     ROW_NUMBER() OVER (
       PARTITION BY json_extract(ar.content, '$.hook_id')
-      ORDER BY ar.createdAt DESC, ar.id DESC
+      -- createdAt ties (same-millisecond hook_started/progress/response) are
+      -- broken by insertion order: sdk_messages.id is a random UUID, so join
+      -- back to the base table for its implicit rowid, which is monotonic.
+      ORDER BY ar.createdAt DESC, base.rowid DESC
     ) AS rn
   FROM active_rows ar
+  JOIN sdk_messages base ON base.id = ar.id
   WHERE ar.messageType = 'system'
     AND json_extract(ar.content, '$.subtype') IN ('hook_started', 'hook_progress', 'hook_response')
     AND json_extract(ar.content, '$.hook_id') IS NOT NULL

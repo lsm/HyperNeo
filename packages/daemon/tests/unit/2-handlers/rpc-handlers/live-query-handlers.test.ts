@@ -1924,6 +1924,76 @@ describe('NAMED_QUERY_REGISTRY', () => {
         expect(hookB?.status).toBe('running');
       });
 
+      test('breaks same-millisecond hook phase ties by insertion order (rowid)', async () => {
+        const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+        insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+
+        insertSdkMessageAt('a1', sessionId, now + 1000, {
+          type: 'assistant',
+          uuid: 'a1',
+          message: {
+            content: [{ type: 'tool_use', id: 'tu-1', name: 'Bash', input: { command: 'ls' } }],
+          },
+        });
+        // All three hook phases share the same millisecond. sdk_messages ids
+        // are random UUIDs, so the tiebreak must be insertion order (rowid):
+        // inserted started → progress → response, so response is newest.
+        const same = now + 2000;
+        insertSdkMessageAt(
+          'hs',
+          sessionId,
+          same,
+          {
+            type: 'system',
+            subtype: 'hook_started',
+            hook_id: 'h-tie',
+            hook_name: 'fast',
+            hook_event: 'PreToolUse',
+            uuid: 'hs',
+          },
+          'system'
+        );
+        insertSdkMessageAt(
+          'hp',
+          sessionId,
+          same,
+          {
+            type: 'system',
+            subtype: 'hook_progress',
+            hook_id: 'h-tie',
+            hook_name: 'fast',
+            hook_event: 'PreToolUse',
+            stdout: 'mid',
+            uuid: 'hp',
+          },
+          'system'
+        );
+        insertSdkMessageAt(
+          'hr',
+          sessionId,
+          same,
+          {
+            type: 'system',
+            subtype: 'hook_response',
+            hook_id: 'h-tie',
+            hook_name: 'fast',
+            hook_event: 'PreToolUse',
+            outcome: 'success',
+            stdout: 'done',
+            uuid: 'hr',
+          },
+          'system'
+        );
+
+        const summaries = await buildSummaries(taskId);
+        const hooks = (summaries[0].entries as Array<Record<string, unknown>>).filter(
+          (e) => e.kind === 'hook'
+        );
+        expect(hooks).toHaveLength(1);
+        // Response (last inserted) wins despite the shared timestamp.
+        expect(hooks[0].status).toBe('completed');
+      });
+
       test('distinguishes real human input from synthetic agent handoffs via isReplay', async () => {
         const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
         insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
