@@ -778,6 +778,84 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(deliveries[0]!.taskId).toBe(task.id);
   });
 
+  describe('ensurePrSubscriptionForNode', () => {
+    test('auto-subscribes a node to its PR, delivers, and dedupes on repeat', async () => {
+      const workflow = createWorkflow('code');
+      const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const task = tasks[0]!;
+      const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: 'session-pr',
+        startedAt: Date.now(),
+      });
+      tam.alive.add('session-pr');
+
+      const r1 = runtime.ensurePrSubscriptionForNode(
+        run.id,
+        task.id,
+        'code',
+        'coder',
+        'https://github.com/lsm/neokai/pull/42'
+      );
+      expect(r1.success).toBe(true);
+      expect(r1.subscribed).toBe(true);
+      expect(r1.topicPattern).toBe('github/lsm/neokai/pull_request/42.*');
+
+      await eventService.publish(makeEvent());
+      expect(injected).toHaveLength(1);
+      expect(injected[0]!.sessionId).toBe('session-pr');
+
+      // Re-ensure no-ops (dedup) — no duplicate registration.
+      const r2 = runtime.ensurePrSubscriptionForNode(
+        run.id,
+        task.id,
+        'code',
+        'coder',
+        'https://github.com/lsm/neokai/pull/42'
+      );
+      expect(r2.success).toBe(true);
+      expect(r2.subscribed).toBe(false);
+    });
+
+    test('dedupes against a prior manual subscription for the same PR', async () => {
+      const workflow = createWorkflow('code');
+      const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const task = tasks[0]!;
+      runtime.registerSubscription(
+        run.id,
+        task.id,
+        'code',
+        'coder',
+        'github/lsm/neokai/pull_request/42.*'
+      );
+      const r = runtime.ensurePrSubscriptionForNode(
+        run.id,
+        task.id,
+        'code',
+        'coder',
+        'https://github.com/lsm/neokai/pull/42'
+      );
+      expect(r.success).toBe(true);
+      expect(r.subscribed).toBe(false);
+    });
+
+    test('returns failure for an unparseable PR URL', async () => {
+      const workflow = createWorkflow('code');
+      const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const task = tasks[0]!;
+      const r = runtime.ensurePrSubscriptionForNode(
+        run.id,
+        task.id,
+        'code',
+        'coder',
+        'not-a-pr-url'
+      );
+      expect(r.success).toBe(false);
+      expect(r.error).toMatch(/Unable to parse/i);
+    });
+  });
+
   test('queues matching events for pending nodes and flushes after session creation', async () => {
     const { workflow, run, task } = await startRunWithSubscription();
     const event = makeEvent();

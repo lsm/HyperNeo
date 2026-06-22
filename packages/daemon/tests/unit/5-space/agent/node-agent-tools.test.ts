@@ -5008,3 +5008,79 @@ describe('node-agent-tools: subscribe_pr_events', () => {
     expect(data.error).toMatch(/not available/i);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Tests: auto pr subscription hook (save_artifact / send_message → pr_url)
+// ---------------------------------------------------------------------------
+
+describe('node-agent-tools: auto pr subscription hook', () => {
+  let ctx: TestCtx;
+
+  beforeEach(() => {
+    ctx = makeCtx();
+  });
+  afterEach(() => {
+    ctx.db.close();
+  });
+
+  test('save_artifact with pr_url auto-subscribes via onEnsurePrSubscription', async () => {
+    const calls: string[] = [];
+    const onEnsurePrSubscription = async (prUrl: string) => {
+      calls.push(prUrl);
+    };
+    const handlers = createNodeAgentToolHandlers(makeConfig(ctx, { onEnsurePrSubscription }));
+    const result = await handlers.save_artifact({
+      type: 'result',
+      data: { pr_url: 'https://github.com/acme/widgets/pull/123' },
+    });
+    const data = JSON.parse(result.content[0].text);
+
+    expect(data.success).toBe(true);
+    expect(calls).toEqual(['https://github.com/acme/widgets/pull/123']);
+  });
+
+  test('save_artifact accepts prUrl (camelCase key)', async () => {
+    const calls: string[] = [];
+    const onEnsurePrSubscription = async (prUrl: string) => {
+      calls.push(prUrl);
+    };
+    const handlers = createNodeAgentToolHandlers(makeConfig(ctx, { onEnsurePrSubscription }));
+    await handlers.save_artifact({
+      type: 'result',
+      data: { prUrl: 'https://github.com/acme/widgets/pull/9' },
+    });
+    expect(calls).toEqual(['https://github.com/acme/widgets/pull/9']);
+  });
+
+  test('save_artifact without pr_url does not invoke the hook', async () => {
+    const calls: string[] = [];
+    const onEnsurePrSubscription = async (prUrl: string) => {
+      calls.push(prUrl);
+    };
+    const handlers = createNodeAgentToolHandlers(makeConfig(ctx, { onEnsurePrSubscription }));
+    await handlers.save_artifact({ type: 'progress', summary: 'working' });
+    expect(calls).toHaveLength(0);
+  });
+
+  test('send_message with pr_url on a successful send auto-subscribes', async () => {
+    const calls: string[] = [];
+    const onEnsurePrSubscription = async (prUrl: string) => {
+      calls.push(prUrl);
+    };
+    const config = makeConfig(ctx, {
+      channelResolver: makeResolver([makeResolvedChannel('coder', 'reviewer')]),
+      messageInjector: async () => {},
+      onEnsurePrSubscription,
+    });
+    const handlers = createNodeAgentToolHandlers(config);
+    const result = await handlers.send_message({
+      target: 'reviewer',
+      message: 'PR up for review',
+      data: { pr_url: 'https://github.com/acme/widgets/pull/55' },
+    });
+    const data = JSON.parse(result.content[0].text);
+
+    expect(data.success).toBe(true);
+    expect(calls).toEqual(['https://github.com/acme/widgets/pull/55']);
+  });
+});

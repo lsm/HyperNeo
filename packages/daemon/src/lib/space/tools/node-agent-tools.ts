@@ -151,6 +151,28 @@ function resolvePrUrlForRun(
 }
 
 /**
+ * Best-effort auto-subscription: when a `pr_url` is present in a save_artifact /
+ * send_message data payload, ensure the calling node is subscribed to that PR's
+ * events. Never throws into the caller — subscription failures are logged and
+ * swallowed so they cannot fail the enclosing save/send.
+ */
+async function maybeEnsurePrSubscription(
+  config: NodeAgentToolsConfig,
+  data: Record<string, unknown> | undefined
+): Promise<void> {
+  const callback = config.onEnsurePrSubscription;
+  if (!callback) return;
+  const raw = data?.pr_url ?? data?.prUrl;
+  const prUrl = typeof raw === 'string' && raw ? raw : null;
+  if (!prUrl) return;
+  try {
+    await callback(prUrl);
+  } catch {
+    // Best-effort: never fail the save/send over a subscription error.
+  }
+}
+
+/**
  * Decode the JSON payload from a ToolResult created by jsonResult().
  * Returns the parsed object or null if parsing fails.
  */
@@ -405,6 +427,13 @@ export interface NodeAgentToolsConfig {
   onSubscribeExternalEvent?: (args: SubscribeExternalEventInput) => Promise<ToolResult>;
   /** Optional callback for dynamic external-event unsubscription requests. */
   onUnsubscribeExternalEvent?: (args: UnsubscribeExternalEventInput) => Promise<ToolResult>;
+  /**
+   * Optional best-effort callback to auto-subscribe this node to events for a PR
+   * whose URL appears in a `save_artifact` / `send_message` payload. Fired after
+   * a successful save/send; never throws into the caller. Idempotent on the
+   * runtime side (no-ops if the node is already subscribed to that PR).
+   */
+  onEnsurePrSubscription?: (prUrl: string) => Promise<void> | void;
   /**
    * Optional callback for \`publish_task\`. When provided, node agents can
    * publish draft tasks (transition draft → open) without the broader
@@ -1198,6 +1227,10 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
         });
       }
 
+      // The message reached at least one peer (ok or partial). If it carried a
+      // pr_url, ensure this node is subscribed to that PR's events.
+      await maybeEnsurePrSubscription(config, data);
+
       if (result.success === 'partial') {
         return jsonResult({
           success: 'partial',
@@ -1524,6 +1557,8 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
           summary: summary ?? undefined,
           dataKeys: data ? Object.keys(data) : undefined,
         });
+
+        await maybeEnsurePrSubscription(config, data);
 
         return jsonResult({
           success: true,

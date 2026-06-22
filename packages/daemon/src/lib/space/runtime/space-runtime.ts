@@ -1422,6 +1422,61 @@ export class SpaceRuntime {
   }
 
   /**
+   * Ensure a workflow worker node is subscribed to events for a specific PR.
+   *
+   * Called from the node-agent `save_artifact` / `send_message` handlers when a
+   * `pr_url` payload is present, so the node that created/announced a PR
+   * automatically receives its review/comment/reaction events without having to
+   * call `subscribe_pr_events` manually.
+   *
+   * Idempotent: no-ops when the node already has any subscription for this PR's
+   * exact topic (any kind — covers prior `auto`, `dynamic`, or manual tool
+   * registrations) so re-saves and re-sends never create duplicate deliveries.
+   * Registers as `auto` so it does not count against the per-slot interest cap.
+   */
+  ensurePrSubscriptionForNode(
+    workflowRunId: string,
+    taskId: string,
+    nodeId: string,
+    agentName: string,
+    prUrl: string
+  ): { success: boolean; subscribed?: boolean; error?: string; topicPattern?: string } {
+    const parsed = parsePrUrl(prUrl);
+    if (!parsed) {
+      return { success: false, error: `Unable to parse GitHub PR URL: ${prUrl}` };
+    }
+    const topicPattern = buildPrEventTopicPattern(parsed);
+    const already = this.topicTrie.count(
+      (target) =>
+        isWorkflowSubscriptionTarget(target) &&
+        target.workflowRunId === workflowRunId &&
+        target.taskId === taskId &&
+        target.nodeId === nodeId &&
+        target.agentName === agentName &&
+        target.topic === topicPattern
+    );
+    if (already > 0) return { success: true, subscribed: false, topicPattern };
+    try {
+      const result = this.registerSubscription(
+        workflowRunId,
+        taskId,
+        nodeId,
+        agentName,
+        topicPattern,
+        { subscriptionKind: 'auto' }
+      );
+      if (!result.success) return { success: false, error: result.error, topicPattern };
+      return { success: true, subscribed: true, topicPattern };
+    } catch (err) {
+      return {
+        success: false,
+        error: err instanceof Error ? err.message : String(err),
+        topicPattern,
+      };
+    }
+  }
+
+  /**
    * Sync the PR-event auto-subscription for a run that just transitioned to
    * `blocked` via direct `workflowRunRepo.transitionStatus(...)` paths that
    * bypass {@link transitionRunStatusAndEmit} (markFailed RPC, gate rejection

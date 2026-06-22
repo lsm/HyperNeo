@@ -889,6 +889,22 @@ export class SpaceRuntimeService {
     return this.runtime.registerSubscription(workflowRunId, taskId, nodeId, agentName, topic);
   }
 
+  ensurePrSubscription(
+    workflowRunId: string,
+    taskId: string,
+    nodeId: string,
+    agentName: string,
+    prUrl: string
+  ): { success: boolean; subscribed?: boolean; error?: string; topicPattern?: string } {
+    return this.runtime.ensurePrSubscriptionForNode(
+      workflowRunId,
+      taskId,
+      nodeId,
+      agentName,
+      prUrl
+    );
+  }
+
   unregisterSubscription(
     workflowRunId: string,
     taskId: string,
