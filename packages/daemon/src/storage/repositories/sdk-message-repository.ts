@@ -506,14 +506,23 @@ export class SDKMessageRepository {
     sessionId: string,
     limit?: number,
     before?: number,
-    since?: number
+    since?: number,
+    beforeRowid?: number,
+    sinceRowid?: number
   ): {
     messages: Array<
       ChatMessage & { timestamp: number; origin?: MessageOrigin; sendStatus?: string }
     >;
     hasMore: boolean;
   } {
-    return this._getSDKMessagesImpl(sessionId, limit ?? 100, before, since);
+    return this._getSDKMessagesImpl(
+      sessionId,
+      limit ?? 100,
+      before,
+      since,
+      beforeRowid,
+      sinceRowid
+    );
   }
 
   getRenderableTextMessages(
@@ -593,7 +602,9 @@ export class SDKMessageRepository {
     sessionId: string,
     limit: number,
     before?: number,
-    since?: number
+    since?: number,
+    beforeRowid?: number,
+    sinceRowid?: number
   ): {
     messages: Array<
       ChatMessage & { timestamp: number; origin?: MessageOrigin; sendStatus?: string }
@@ -602,7 +613,7 @@ export class SDKMessageRepository {
   } {
     // Step 1: Get top-level messages (excluding subagent messages)
     // Show user messages that were consumed to SDK, plus any that failed to deliver.
-    let query = `SELECT id, sdk_message, timestamp, send_status, origin FROM sdk_messages
+    let query = `SELECT id, sdk_message, timestamp, send_status, origin, rowid FROM sdk_messages
       WHERE session_id = ?
         AND parent_tool_use_id IS NULL
         AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))
@@ -635,21 +646,33 @@ export class SDKMessageRepository {
         )`;
     const params: SQLiteValue[] = [sessionId];
 
-    // Cursor-based pagination: get messages at or BEFORE a timestamp (loading
-    // older). The boundary is INCLUSIVE so a same-millisecond burst (e.g.
-    // hook_started/progress/response sharing one timestamp) isn't permanently
-    // skipped at a page boundary — the boundary row re-fetched here is deduped
-    // client-side by id (SessionStore.prependMessages).
+    // Cursor-based pagination: get messages before the oldest loaded row.
+    // When the caller supplies the boundary rowid (insertion order), use a
+    // strict (timestamp, rowid) composite predicate so the cursor advances
+    // monotonically even when >limit rows share one timestamp. Without a
+    // rowid, fall back to an inclusive timestamp boundary (the re-fetched
+    // boundary row is deduped client-side by id).
     if (before !== undefined && before > 0) {
-      query += ` AND timestamp <= ?`;
-      params.push(new Date(before).toISOString());
+      const beforeIso = new Date(before).toISOString();
+      if (beforeRowid !== undefined && beforeRowid > 0) {
+        query += ` AND (timestamp < ? OR (timestamp = ? AND rowid < ?))`;
+        params.push(beforeIso, beforeIso, beforeRowid);
+      } else {
+        query += ` AND timestamp <= ?`;
+        params.push(beforeIso);
+      }
     }
 
-    // Get messages at or AFTER a timestamp (loading newer / real-time updates).
-    // Inclusive for the same same-millisecond reason; callers dedup by id.
+    // Get messages after a timestamp (loading newer / real-time updates).
     if (since !== undefined && since > 0) {
-      query += ` AND timestamp >= ?`;
-      params.push(new Date(since).toISOString());
+      const sinceIso = new Date(since).toISOString();
+      if (sinceRowid !== undefined && sinceRowid > 0) {
+        query += ` AND (timestamp > ? OR (timestamp = ? AND rowid > ?))`;
+        params.push(sinceIso, sinceIso, sinceRowid);
+      } else {
+        query += ` AND timestamp >= ?`;
+        params.push(sinceIso);
+      }
     }
 
     // Order DESC to get newest messages first, then reverse for chronological display.
@@ -679,6 +702,9 @@ export class SDKMessageRepository {
       const extra: Record<string, unknown> = {
         id: r.id,
         timestamp,
+        // Insertion-order rowid — exposed so callers can build a monotonic
+        // (timestamp, rowid) pagination cursor for same-ms bursts.
+        rowid: typeof r.rowid === 'number' ? r.rowid : Number(r.rowid ?? 0),
         // DB origin wins; undefined explicitly clears any SDK-level origin object.
         origin: r.origin != null ? (r.origin as MessageOrigin) : undefined,
       };
