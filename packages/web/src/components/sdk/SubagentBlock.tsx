@@ -15,7 +15,7 @@ import { cn } from '../../lib/utils.ts';
 import { RunningBorder } from './RunningBorder.tsx';
 import MarkdownRenderer from '../chat/MarkdownRenderer.tsx';
 import type { AgentInput } from '@neokai/shared/sdk/sdk-tools.d.ts';
-import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
+import type { SDKMessage, SDKTaskNotificationMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import {
   hasRenderableThinking,
   isHiddenSystemSubtype,
@@ -110,6 +110,18 @@ interface SubagentBlockProps {
   toolResultsMap?: Map<string, unknown>;
   /** Map of SDK message UUIDs to replacement/retraction status. */
   replacementStatusMap?: Map<string, MessageReplacementStatus>;
+  /** Terminal task_notification for this Task/Agent tool_use (status/summary/usage),
+   * folded onto the header instead of a standalone system row. */
+  taskNotification?: {
+    status: 'completed' | 'failed' | 'stopped';
+    summary?: string;
+    usage?: { total_tokens: number; tool_uses: number; duration_ms: number };
+  };
+  /** Full tool_use_id → task_notification map, so nested tool_use blocks inside
+   * this subagent can fold their own terminal status onto their ToolResultCard
+   * (the top-level suppression relies on toolInputsMap having the nested id, so
+   * the nested card must actually receive the notification). */
+  taskNotificationsMap?: Map<string, SDKTaskNotificationMessage>;
   /** Additional CSS classes */
   className?: string;
   /** When true, wrap this block in <RunningBorder> so the animated arc traces
@@ -295,6 +307,8 @@ export function SubagentBlock({
   nestedMessages = [],
   toolResultsMap,
   replacementStatusMap,
+  taskNotification,
+  taskNotificationsMap,
   className,
   isRunning = false,
 }: SubagentBlockProps) {
@@ -302,6 +316,11 @@ export function SubagentBlock({
 
   const colors = getSubagentColors(input.subagent_type ?? 'general-purpose');
   const outputText = extractOutputText(output);
+  // task_notification is authoritative when present; otherwise fall back to isError.
+  const taskStatus = taskNotification?.status;
+  const notificationIsError = taskStatus === 'failed' || taskStatus === 'stopped';
+  const notificationIsSuccess = taskStatus === 'completed';
+  const showErrorIcon = notificationIsError || (!taskNotification && isError);
 
   /**
    * Filter out the first user message that duplicates the input prompt.
@@ -313,9 +332,30 @@ export function SubagentBlock({
   const filteredNestedMessages = useMemo(() => {
     if (nestedMessages.length === 0) return [];
 
+    // Nested tool_use ids — their task_notification is folded onto the nested
+    // ToolResultCard (via taskNotificationsMap), so a standalone
+    // task_notification row for one of these would duplicate the folded status
+    // on expand. Suppress those; orphan notifications (no tool_use_id, or a
+    // tool_use not present in this timeline) are still rendered.
+    const nestedToolUseIds = new Set<string>();
+    for (const msg of nestedMessages) {
+      if (msg.type !== 'assistant' || !Array.isArray(msg.message.content)) continue;
+      for (const block of msg.message.content) {
+        const b = block as Record<string, unknown>;
+        if (b.type === 'tool_use' && typeof b.id === 'string') nestedToolUseIds.add(b.id);
+      }
+    }
+
     return nestedMessages.filter((msg, idx) => {
       if (shouldHideNestedSystemMessage(msg, idx === nestedMessages.length - 1)) {
         return false;
+      }
+
+      // Suppress a folded nested task_notification: its tool_use card already
+      // shows the status, so a standalone row would duplicate it.
+      if (msg.type === 'system' && (msg as { subtype?: string }).subtype === 'task_notification') {
+        const toolUseId = (msg as { tool_use_id?: string }).tool_use_id;
+        if (toolUseId && nestedToolUseIds.has(toolUseId)) return false;
       }
 
       // Only check the first message
@@ -372,7 +412,22 @@ export function SubagentBlock({
               {filteredNestedMessages.length}
             </span>
           )}
-          {isError && (
+          {notificationIsSuccess && (
+            <svg
+              class="w-4 h-4 text-green-600 dark:text-green-400"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M5 13l4 4L19 7"
+              />
+            </svg>
+          )}
+          {showErrorIcon && (
             <svg
               class="w-4 h-4 text-red-600 dark:text-red-400"
               fill="none"
@@ -401,6 +456,32 @@ export function SubagentBlock({
       {/* Expanded content */}
       {isExpanded && (
         <div class={cn('border-t bg-white dark:bg-gray-900', colors.border)}>
+          {/* Folded task_notification summary + usage. */}
+          {taskNotification && (taskNotification.summary || taskNotification.usage) && (
+            <div class="border-b border-gray-200 dark:border-gray-700 p-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+              {taskNotification.summary && (
+                <span
+                  class={cn(
+                    'font-medium',
+                    notificationIsSuccess
+                      ? 'text-green-700 dark:text-green-300'
+                      : notificationIsError
+                        ? 'text-red-700 dark:text-red-300'
+                        : 'text-gray-600 dark:text-gray-300'
+                  )}
+                >
+                  {taskNotification.summary}
+                </span>
+              )}
+              {taskNotification.usage && (
+                <span class="flex flex-wrap gap-x-4 gap-y-1 font-mono text-gray-500 dark:text-gray-400">
+                  <span>{taskNotification.usage.total_tokens.toLocaleString()} tokens</span>
+                  <span>{taskNotification.usage.tool_uses} tool uses</span>
+                  <span>{(taskNotification.usage.duration_ms / 1000).toFixed(1)}s</span>
+                </span>
+              )}
+            </div>
+          )}
           {/* Input section */}
           <div class="border-b border-gray-200 dark:border-gray-700 p-3">
             <div class="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-2">Input</div>
@@ -423,6 +504,7 @@ export function SubagentBlock({
                     isLiveTail={idx === filteredNestedMessages.length - 1}
                     toolResultsMap={toolResultsMap}
                     replacementStatusMap={replacementStatusMap}
+                    taskNotificationsMap={taskNotificationsMap}
                   />
                 ))}
               </div>
@@ -467,11 +549,13 @@ function NestedMessageRenderer({
   isLiveTail,
   toolResultsMap,
   replacementStatusMap,
+  taskNotificationsMap,
 }: {
   message: SDKMessage;
   isLiveTail: boolean;
   toolResultsMap?: Map<string, unknown>;
   replacementStatusMap?: Map<string, MessageReplacementStatus>;
+  taskNotificationsMap?: Map<string, SDKTaskNotificationMessage>;
 }) {
   const replacementStatus = replacementStatusMap?.get(getMessageUuid(message) ?? '');
   const withReplacementStatus = (content: ComponentChild) => {
@@ -550,6 +634,7 @@ function NestedMessageRenderer({
               }
               variant="default"
               isOutputRemoved={resultData?.isOutputRemoved || false}
+              taskNotification={taskNotificationsMap?.get(toolBlock.id)}
             />
           );
         })}

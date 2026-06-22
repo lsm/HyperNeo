@@ -2672,7 +2672,15 @@ export interface ApprovalRecord {
 /** A single chronological activity entry within an active turn. */
 export type ActivityEntry =
   /** Assistant `tool_use` block — surfaces tool name + an input preview. */
-  | { kind: 'tool_use'; toolName: string; preview: string; ts: number; uuid: string }
+  | {
+      kind: 'tool_use';
+      toolName: string;
+      preview: string;
+      ts: number;
+      uuid: string;
+      /** The tool_use block `id` — links this entry to a matching `task_notification` (by `tool_use_id`) so the roster can render the task's terminal status (✓/✗) without a separate system row. */
+      toolUseId?: string;
+    }
   /** Assistant `text` block (non-empty) — surfaces the assistant's text. */
   | { kind: 'text'; text: string; ts: number; uuid: string }
   /** Assistant `thinking` block (non-empty) — surfaces a thinking preview. */

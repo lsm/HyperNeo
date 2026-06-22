@@ -27,6 +27,7 @@ function makeRow(opts: {
   origin?: string | null;
   turnIndex?: number;
   nodeExecutionId?: string | null;
+  messageType?: string;
 }) {
   return parseThreadRow({
     id: opts.id,
@@ -37,7 +38,7 @@ function makeRow(opts: {
     label: opts.label,
     taskId: 't',
     taskTitle: 'Task',
-    messageType: 'assistant',
+    messageType: opts.messageType ?? 'assistant',
     content: JSON.stringify(opts.message),
     createdAt: opts.createdAt,
     origin: opts.origin,
@@ -591,6 +592,294 @@ describe('MinimalThreadFeed', () => {
     expect(screen.getByTestId('minimal-thread-active-meta').textContent).toContain('⚙ 4');
     expect(turn.textContent).toContain('2 messages');
     expect(screen.getByTestId('minimal-thread-last-event').textContent).toContain('last event');
+  });
+
+  it('folds task_notification onto the roster entry when the tool_use is rostered', () => {
+    const t = Date.now();
+    const rows = [
+      makeRow({
+        id: 'a1',
+        label: 'Coder Agent',
+        createdAt: t,
+        turnIndex: 1,
+        message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'bun test' } }]),
+      }),
+      makeRow({
+        id: 'n1',
+        label: 'Coder Agent',
+        createdAt: t + 500,
+        turnIndex: 1,
+        messageType: 'system',
+        message: {
+          type: 'system',
+          subtype: 'task_notification',
+          task_id: 't',
+          tool_use_id: 'tu-a1-0',
+          status: 'completed',
+          summary: '42 tests passed',
+          output_file: '/tmp/o',
+        },
+      }),
+    ];
+    const summary: ActiveTurnSummary = {
+      sessionId: 'space:s:task:t',
+      turnIndex: 1,
+      entries: [
+        {
+          kind: 'tool_use',
+          toolName: 'Bash',
+          preview: 'bun test',
+          ts: t,
+          uuid: 'a1',
+          toolUseId: 'tu-a1-0',
+        },
+      ],
+    };
+
+    render(
+      <MinimalThreadFeed
+        parsedRows={rows}
+        activeAgentLabels={new Set(['Coder Agent'])}
+        activeTurnSummaries={[summary]}
+      />
+    );
+
+    // No standalone task_notification system row — it's folded onto the roster.
+    expect(screen.queryByText('Task completed')).toBeNull();
+    const entries = screen.getAllByTestId('minimal-thread-roster-entry');
+    expect(entries[0].dataset.taskStatus).toBe('completed');
+    expect(entries[0].textContent).toContain('42 tests passed');
+  });
+
+  it('does not fold when the summary turnIndex is stale vs the compact rows turn', () => {
+    const t = Date.now();
+    // Compact rows are on turn 1 (active). The summary claims turn 2 — a stale
+    // delta from the previous turn. Its tool_use_id must NOT suppress the
+    // notification (no matching rendered turn → fallback row).
+    const rows = [
+      makeRow({
+        id: 'a1',
+        label: 'Coder Agent',
+        createdAt: t,
+        turnIndex: 1,
+        message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'bun test' } }]),
+      }),
+      makeRow({
+        id: 'n1',
+        label: 'Coder Agent',
+        createdAt: t + 500,
+        turnIndex: 1,
+        messageType: 'system',
+        message: {
+          type: 'system',
+          subtype: 'task_notification',
+          task_id: 't',
+          tool_use_id: 'tu-a1-0',
+          status: 'completed',
+          summary: '42 tests passed',
+          output_file: '/tmp/o',
+        },
+      }),
+    ];
+    const staleSummary: ActiveTurnSummary = {
+      sessionId: 'space:s:task:t',
+      turnIndex: 2,
+      entries: [
+        {
+          kind: 'tool_use',
+          toolName: 'Bash',
+          preview: 'bun test',
+          ts: t,
+          uuid: 'a1',
+          toolUseId: 'tu-a1-0',
+        },
+      ],
+    };
+
+    render(
+      <MinimalThreadFeed
+        parsedRows={rows}
+        activeAgentLabels={new Set(['Coder Agent'])}
+        activeTurnSummaries={[staleSummary]}
+      />
+    );
+
+    // Turn mismatch → not folded → notification falls back to a row.
+    const feed = screen.getByTestId('space-task-event-feed-minimal');
+    expect(feed.textContent).toContain('42 tests passed');
+    expect(feed.textContent).toContain('Task completed');
+  });
+
+  it('drops the active roster when the summary turnIndex mismatches the trailing turn', () => {
+    const t = Date.now();
+    // Active turn on turn 1, but the summary claims turn 2 (stale active-turn
+    // delta). buildActiveTurn must not fold the stale tool/status onto the rail.
+    const rows = [
+      makeRow({
+        id: 'a1',
+        label: 'Coder Agent',
+        createdAt: t,
+        turnIndex: 1,
+        message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'bun test' } }]),
+      }),
+    ];
+    const staleSummary: ActiveTurnSummary = {
+      sessionId: 'space:s:task:t',
+      turnIndex: 2,
+      entries: [
+        {
+          kind: 'tool_use',
+          toolName: 'Bash',
+          preview: 'bun test',
+          ts: t,
+          uuid: 'a1',
+          toolUseId: 'tu-a1-0',
+        },
+      ],
+    };
+
+    render(
+      <MinimalThreadFeed
+        parsedRows={rows}
+        activeAgentLabels={new Set(['Coder Agent'])}
+        activeTurnSummaries={[staleSummary]}
+      />
+    );
+
+    // Turn is still active, but the stale-turn summary yields no roster entries.
+    expect(screen.queryAllByTestId('minimal-thread-roster-entry')).toHaveLength(0);
+  });
+
+  it('labels a stopped task_notification as Task stopped, not Task failed', () => {
+    const t = Date.now();
+    const rows = [
+      makeRow({
+        id: 'a1',
+        label: 'Coder Agent',
+        createdAt: t,
+        message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'ls' } }]),
+      }),
+      makeRow({ id: 'r1', label: 'Coder Agent', createdAt: t + 100, message: resultMessage('r1') }),
+      makeRow({
+        id: 'n1',
+        label: 'Coder Agent',
+        createdAt: t + 200,
+        messageType: 'system',
+        message: {
+          type: 'system',
+          subtype: 'task_notification',
+          task_id: 't',
+          tool_use_id: 'tu-a1-0',
+          status: 'stopped',
+          summary: 'killed by user',
+          output_file: '/tmp/o',
+        },
+      }),
+    ];
+
+    render(<MinimalThreadFeed parsedRows={rows} />);
+
+    const feed = screen.getByTestId('space-task-event-feed-minimal');
+    expect(feed.textContent).toContain('Task stopped');
+    expect(feed.textContent).not.toContain('Task failed');
+  });
+
+  it('falls back to a system row for task_notification with no roster target (completed turn)', () => {
+    const t = Date.now();
+    // Tool_use + result → completed turn (no active roster). The notification
+    // has a tool_use_id but no rendered roster target, so it must NOT be
+    // suppressed — its summary survives as a standalone row.
+    const rows = [
+      makeRow({
+        id: 'a1',
+        label: 'Coder Agent',
+        createdAt: t,
+        message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'false' } }]),
+      }),
+      makeRow({ id: 'r1', label: 'Coder Agent', createdAt: t + 100, message: resultMessage('r1') }),
+      makeRow({
+        id: 'n1',
+        label: 'Coder Agent',
+        createdAt: t + 200,
+        messageType: 'system',
+        message: {
+          type: 'system',
+          subtype: 'task_notification',
+          task_id: 't',
+          tool_use_id: 'tu-a1-0',
+          status: 'failed',
+          summary: 'Bash exited 1',
+          output_file: '/tmp/o',
+          usage: { total_tokens: 4321, tool_uses: 3, duration_ms: 4500 },
+        },
+      }),
+    ];
+
+    render(<MinimalThreadFeed parsedRows={rows} />);
+
+    // No active summary → no roster target → notification renders as a row,
+    // preserving both summary and usage (terminal metadata not lost).
+    const feed = screen.getByTestId('space-task-event-feed-minimal');
+    expect(feed.textContent).toContain('Bash exited 1');
+    expect(feed.textContent).toContain('4,321 tokens');
+    expect(feed.textContent).toContain('3 tool uses');
+  });
+
+  it('falls back to a row when a stale summary lingers after the turn went terminal', () => {
+    const t = Date.now();
+    // Tool_use + result → terminal turn, but the active-turn LiveQuery still
+    // holds a summary for it (stale). The notification must NOT be suppressed,
+    // because no active roster renders for a terminal trailing block.
+    const rows = [
+      makeRow({
+        id: 'a1',
+        label: 'Coder Agent',
+        createdAt: t,
+        message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'bun test' } }]),
+      }),
+      makeRow({ id: 'r1', label: 'Coder Agent', createdAt: t + 100, message: resultMessage('r1') }),
+      makeRow({
+        id: 'n1',
+        label: 'Coder Agent',
+        createdAt: t + 200,
+        messageType: 'system',
+        message: {
+          type: 'system',
+          subtype: 'task_notification',
+          task_id: 't',
+          tool_use_id: 'tu-a1-0',
+          status: 'completed',
+          summary: 'all green',
+          output_file: '/tmp/o',
+        },
+      }),
+    ];
+    const staleSummary: ActiveTurnSummary = {
+      sessionId: 'space:s:task:t',
+      turnIndex: 1,
+      entries: [
+        {
+          kind: 'tool_use',
+          toolName: 'Bash',
+          preview: 'bun test',
+          ts: t,
+          uuid: 'a1',
+          toolUseId: 'tu-a1-0',
+        },
+      ],
+    };
+
+    render(
+      <MinimalThreadFeed
+        parsedRows={rows}
+        activeAgentLabels={new Set(['Coder Agent'])}
+        activeTurnSummaries={[staleSummary]}
+      />
+    );
+
+    // Stale summary is ignored (terminal trailing block) → notification falls back to a row.
+    const feed = screen.getByTestId('space-task-event-feed-minimal');
+    expect(feed.textContent).toContain('all green');
   });
 
   it('caps the active roster at 8 most-recent tool calls', () => {

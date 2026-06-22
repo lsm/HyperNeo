@@ -1652,6 +1652,9 @@ assistant_entries AS (
     json_extract(je.value, '$.type') AS blockType,
     json_extract(je.value, '$.name') AS toolName,
     json_extract(je.value, '$.input') AS toolInput,
+    -- tool_use block id — lets the roster link to a matching task_notification
+    -- (by tool_use_id) and render the task's terminal status inline.
+    json_extract(je.value, '$.id') AS toolUseId,
     json_extract(je.value, '$.text') AS textValue,
     json_extract(je.value, '$.thinking') AS thinkingValue
   FROM active_rows ar,
@@ -1686,6 +1689,7 @@ user_entries AS (
     END AS blockType,
     NULL AS toolName,
     NULL AS toolInput,
+    NULL AS toolUseId,
     -- Extract the plain-text body of the message.
     -- - String content → use directly.
     -- - Array content → concatenate text blocks.
@@ -1768,6 +1772,7 @@ hook_entries AS (
     '__hook' AS blockType,
     hookName AS toolName,
     NULL AS toolInput,
+    NULL AS toolUseId,
     CASE
       WHEN stdout IS NOT NULL AND TRIM(stdout) != ''
         THEN SUBSTR(TRIM(stdout), 1, 120)
@@ -1794,6 +1799,7 @@ SELECT
   blockType,
   toolName,
   toolInput,
+  toolUseId,
   textValue,
   thinkingValue,
   NULL AS hookEvent,
@@ -1811,6 +1817,7 @@ SELECT
   blockType,
   toolName,
   toolInput,
+  toolUseId,
   textValue,
   thinkingValue,
   NULL AS hookEvent,
@@ -1828,6 +1835,7 @@ SELECT
   blockType,
   toolName,
   toolInput,
+  toolUseId,
   textValue,
   thinkingValue,
   hookEvent,
@@ -2026,12 +2034,14 @@ export function buildActiveTurnSummariesFromRows(
       } else if (rawInput && typeof rawInput === 'object') {
         parsedInput = rawInput as Record<string, unknown>;
       }
+      const toolUseId = typeof row.toolUseId === 'string' ? row.toolUseId : undefined;
       entry = {
         kind: 'tool_use',
         toolName,
         preview: activityPreviewFromToolInput(toolName, parsedInput),
         ts,
         uuid,
+        ...(toolUseId ? { toolUseId } : {}),
       };
     } else if (blockType === 'text') {
       const text = typeof row.textValue === 'string' ? row.textValue : '';
@@ -2103,12 +2113,14 @@ function mapActiveTurnEntryRow(row: Record<string, unknown>): Record<string, unk
     } else if (rawInput && typeof rawInput === 'object') {
       parsedInput = rawInput as Record<string, unknown>;
     }
+    const toolUseId = typeof row.toolUseId === 'string' ? row.toolUseId : undefined;
     entry = {
       kind: 'tool_use',
       toolName,
       preview: activityPreviewFromToolInput(toolName, parsedInput),
       ts,
       uuid,
+      ...(toolUseId ? { toolUseId } : {}),
     };
   } else if (blockType === 'text') {
     const text = typeof row.textValue === 'string' ? row.textValue : '';
