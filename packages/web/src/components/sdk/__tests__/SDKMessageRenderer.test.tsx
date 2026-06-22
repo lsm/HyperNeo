@@ -509,6 +509,23 @@ describe('SDKMessageRenderer', () => {
 
       expect(container.textContent).toContain('standalone notice');
     });
+
+    it('renders the fallback row for a nested notification whose parent card is absent', () => {
+      // Has parent_tool_use_id → would normally be hidden by the sub-agent
+      // skip. But with the parent Task/Agent card paginated out (not foldable),
+      // it must still render the fallback row instead of being dropped.
+      const message = {
+        ...baseNotification,
+        parent_tool_use_id: 'task-missing',
+      } as unknown as SDKMessage;
+
+      const { container } = render(
+        <SDKMessageRenderer message={message} foldableToolUseIds={new Set()} />
+      );
+
+      expect(container.textContent).toContain('Task completed');
+      expect(container.textContent).toContain('Bash exited 0');
+    });
   });
 
   describe('Unknown Message Types', () => {

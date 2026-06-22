@@ -301,7 +301,13 @@ export function ToolResultCard({
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
-              aria-label={taskNotification ? 'task failed' : undefined}
+              aria-label={
+                taskNotification
+                  ? taskStatus === 'stopped'
+                    ? 'task stopped'
+                    : 'task failed'
+                  : undefined
+              }
             >
               <path
                 strokeLinecap="round"

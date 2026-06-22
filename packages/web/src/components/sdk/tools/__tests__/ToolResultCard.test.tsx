@@ -301,6 +301,26 @@ describe('ToolResultCard Component', () => {
       expect(screen.getByText('Bash exited 1')).toBeTruthy();
     });
 
+    it('labels a stopped task as task stopped, not task failed', () => {
+      render(
+        <ToolResultCard
+          toolName="Bash"
+          toolId="bash-stop"
+          input={{ command: 'sleep 10' }}
+          output="killed"
+          taskNotification={{
+            status: 'stopped',
+            summary: 'killed by user',
+            usage: { total_tokens: 10, tool_uses: 1, duration_ms: 5 },
+          }}
+          defaultExpanded={true}
+        />
+      );
+
+      expect(screen.getByLabelText('task stopped')).toBeTruthy();
+      expect(screen.queryAllByLabelText('task failed')).toHaveLength(0);
+    });
+
     it('falls back to isError X when no task_notification is present', () => {
       render(
         <ToolResultCard

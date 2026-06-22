@@ -292,8 +292,19 @@ function SDKMessageRendererImpl({
     return null;
   }
 
-  // Skip sub-agent messages - they're now shown inside SubagentBlock
-  if (!showSubagentMessages && isSubagentMessage(sdkMessage, subagentMessagesMap)) {
+  // Skip sub-agent messages - they're now shown inside SubagentBlock.
+  // Exception: a nested task_notification. If its parent card is in the slice
+  // it's folded onto the nested ToolResultCard (suppressed below); if the parent
+  // was paginated out it must render the fallback row. Either way don't drop it
+  // here — the task_notification branch below decides fold vs fallback.
+  if (
+    !showSubagentMessages &&
+    isSubagentMessage(sdkMessage, subagentMessagesMap) &&
+    !(
+      isSDKSystemMessage(sdkMessage) &&
+      (sdkMessage as { subtype?: string }).subtype === 'task_notification'
+    )
+  ) {
     return null;
   }
 
