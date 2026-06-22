@@ -635,15 +635,20 @@ export class SDKMessageRepository {
         )`;
     const params: SQLiteValue[] = [sessionId];
 
-    // Cursor-based pagination: get messages BEFORE a timestamp (for loading older)
+    // Cursor-based pagination: get messages at or BEFORE a timestamp (loading
+    // older). The boundary is INCLUSIVE so a same-millisecond burst (e.g.
+    // hook_started/progress/response sharing one timestamp) isn't permanently
+    // skipped at a page boundary — the boundary row re-fetched here is deduped
+    // client-side by id (SessionStore.prependMessages).
     if (before !== undefined && before > 0) {
-      query += ` AND timestamp < ?`;
+      query += ` AND timestamp <= ?`;
       params.push(new Date(before).toISOString());
     }
 
-    // Get messages AFTER a timestamp (for loading newer / real-time updates)
+    // Get messages at or AFTER a timestamp (loading newer / real-time updates).
+    // Inclusive for the same same-millisecond reason; callers dedup by id.
     if (since !== undefined && since > 0) {
-      query += ` AND timestamp > ?`;
+      query += ` AND timestamp >= ?`;
       params.push(new Date(since).toISOString());
     }
 

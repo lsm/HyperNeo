@@ -315,6 +315,33 @@ describe('SDKMessageRepository', () => {
       expect(messages.length).toBe(50);
     });
 
+    it('includes same-timestamp rows at the before cursor (inclusive boundary)', () => {
+      // 'older' at T-1d; 'a' and 'b' share timestamp T (a same-ms burst like
+      // hook phases). saveSDKMessage stamps real time, so set timestamps directly.
+      repository.saveSDKMessage('session-1', createUserMessage('older', 'm-older'));
+      repository.saveSDKMessage('session-1', createUserMessage('a', 'm-a'));
+      repository.saveSDKMessage('session-1', createUserMessage('b', 'm-b'));
+      const Tiso = '2026-01-01T00:00:00.000Z';
+      const Tms = new Date(Tiso).getTime();
+      db.prepare(
+        `UPDATE sdk_messages SET timestamp = ? WHERE json_extract(sdk_message, '$.uuid') = 'm-older'`
+      ).run('2025-12-31T00:00:00.000Z');
+      db.prepare(
+        `UPDATE sdk_messages SET timestamp = ? WHERE json_extract(sdk_message, '$.uuid') IN ('m-a', 'm-b')`
+      ).run(Tiso);
+
+      // before = T (the boundary/oldest-shown cursor). An inclusive boundary
+      // surfaces the same-ms sibling 'b' (and 'a', which the client dedups by
+      // id) plus the older row — instead of permanently skipping rows at T.
+      const { messages } = repository.getSDKMessages('session-1', 100, Tms);
+      const texts = messages.map(
+        (m) =>
+          (m as { message?: { content?: Array<{ text?: string }> } }).message?.content?.[0]?.text
+      );
+      expect(texts).toContain('b');
+      expect(texts).toContain('older');
+    });
+
     it('should exclude render-only hidden system subtypes from pagination', () => {
       repository.saveSDKMessage('session-1', createUserMessage('Visible'));
       for (const subtype of ['session_state_changed', 'commands_changed', 'task_progress']) {
