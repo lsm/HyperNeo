@@ -1460,14 +1460,24 @@ export class SpaceRuntime {
       target.taskId === taskId &&
       target.nodeId === nodeId &&
       target.agentName === agentName;
+    // PR change: drop any prior auto_pr subscription for this slot whose topic
+    // differs from the new PR, and purge its queued/retrying/digest deliveries
+    // so a stale event already in flight cannot flush after the PR changed.
+    // Done before the dedup check so a manual sub for the new PR cannot
+    // short-circuit this stale cleanup.
+    const stale: WorkflowSubscriptionTarget[] = [];
+    this.topicTrie.remove((target) => {
+      if (owns(target) && target.subscriptionKind === 'auto_pr' && target.topic !== topicPattern) {
+        stale.push(target);
+        return true;
+      }
+      return false;
+    });
+    this.purgeDeliveriesForTargets(stale, 'pr_changed');
     // Idempotent: no-op if this node already receives this PR's events under
     // any subscription kind.
     const already = this.topicTrie.count((target) => owns(target) && target.topic === topicPattern);
     if (already > 0) return { success: true, subscribed: false, topicPattern };
-    // PR change: drop any prior auto_pr subscription for this slot (runtime-
-    // managed) before registering the new PR. User-registered dynamic/static
-    // subscriptions are intentionally left untouched.
-    this.topicTrie.remove((target) => owns(target) && target.subscriptionKind === 'auto_pr');
     try {
       const result = this.registerSubscription(
         workflowRunId,
@@ -1574,6 +1584,55 @@ export class SpaceRuntime {
           store.markDeliveryFailed(item.event.eventId, item.deliveryKey, {
             terminal: true,
             reason: 'auto_pr_subscription_cleared',
+          });
+          store.markEventFailedIfAllDeliveriesTerminal(item.event.eventId);
+        }
+        return false;
+      });
+      state.pendingDigest = remaining;
+      if (state.pendingDigest.length === 0 && state.digestTimer) {
+        clearTimeout(state.digestTimer);
+        state.digestTimer = null;
+      }
+    }
+  }
+
+  /**
+   * Purge queued, in-flight-retry, and buffered-digest deliveries for a set of
+   * removed workflow subscription targets. Used when a worker's `auto_pr`
+   * subscription is dropped on a PR change so a stale event already in flight
+   * cannot flush to the worker after its current PR has moved on. Mirrors the
+   * cleanup {@link clearPrEventSubscriptionsForRun} performs for gate `auto`
+   * subscriptions, but scoped to specific targets instead of the whole run.
+   */
+  private purgeDeliveriesForTargets(targets: WorkflowSubscriptionTarget[], reason: string): void {
+    if (targets.length === 0) return;
+    const store = this.config.externalEventStore;
+    const isStale = (target: WorkflowSubscriptionTarget): boolean =>
+      targets.some(
+        (t) =>
+          t.workflowRunId === target.workflowRunId &&
+          t.taskId === target.taskId &&
+          t.nodeId === target.nodeId &&
+          t.agentName === target.agentName &&
+          t.topic === target.topic &&
+          t.subscriptionKind === target.subscriptionKind
+      );
+    for (const target of targets) {
+      this.failQueuedDeliveriesForTarget(target, reason);
+      for (const deliveryKey of Array.from(this.externalEventRetryTimers.keys())) {
+        if (this.deliveryKeyMatchesTarget(deliveryKey, target)) {
+          this.clearExternalEventRetry(deliveryKey);
+        }
+      }
+    }
+    for (const [, state] of this.externalEventRateLimits) {
+      const remaining = state.pendingDigest.filter((item) => {
+        if (!isStale(item.target)) return true;
+        if (store) {
+          store.markDeliveryFailed(item.event.eventId, item.deliveryKey, {
+            terminal: true,
+            reason,
           });
           store.markEventFailedIfAllDeliveriesTerminal(item.event.eventId);
         }

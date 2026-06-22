@@ -900,6 +900,60 @@ describe('SpaceRuntime external event subscriptions', () => {
       expect(injected).toHaveLength(1);
     });
 
+    test('clears a stale auto_pr sub even when a manual sub for the new PR dedup-short-circuits', async () => {
+      const workflow = createWorkflow('code');
+      const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const task = tasks[0]!;
+      const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: 'session-pr-dedup',
+        startedAt: Date.now(),
+      });
+      tam.alive.add('session-pr-dedup');
+
+      // Worker auto-subscribes to PR A, then manually subscribes to PR B before
+      // announcing it.
+      runtime.ensurePrSubscriptionForNode(
+        run.id,
+        task.id,
+        'code',
+        'coder',
+        'https://github.com/lsm/neokai/pull/41'
+      );
+      runtime.registerSubscription(
+        run.id,
+        task.id,
+        'code',
+        'coder',
+        'github/lsm/neokai/pull_request/42.*'
+      );
+      // Announce PR B — dedup finds the manual sub, but the stale auto_pr for A
+      // must still be dropped (not left lingering behind the early return).
+      const r = runtime.ensurePrSubscriptionForNode(
+        run.id,
+        task.id,
+        'code',
+        'coder',
+        'https://github.com/lsm/neokai/pull/42'
+      );
+      expect(r.success).toBe(true);
+      expect(r.subscribed).toBe(false); // deduped against the manual sub
+
+      // PR A event is NOT delivered — stale auto_pr dropped despite the short-circuit.
+      await eventService.publish(
+        makeEvent({
+          topic: 'github/lsm/neokai/pull_request/41.review_submitted',
+          dedupeKey: 'pr-a-event',
+        })
+      );
+      expect(injected).toHaveLength(0);
+
+      // PR B event IS delivered (manual sub intact).
+      await eventService.publish(makeEvent({ dedupeKey: 'pr-b-event' }));
+      expect(injected).toHaveLength(1);
+    });
+
     test('auto_pr subscription survives the blocked-gate wake-up cleanup', async () => {
       const workflow = createWorkflow('code');
       const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
