@@ -1794,6 +1794,9 @@ describe('NAMED_QUERY_REGISTRY', () => {
         expect(entries[0].kind).toBe('tool_use');
         expect(entries[0].toolName).toBe('Bash');
         expect(entries[0].preview).toBe('bun test');
+        // tool_use block id is emitted so the roster can link to a
+        // matching task_notification and render its terminal status inline.
+        expect(entries[0].toolUseId).toBe('tu-1');
         // No closed-turn entries leak through.
         const previews = entries.map((e) => String(e.preview ?? e.text ?? ''));
         expect(previews).not.toContain('closed-text');

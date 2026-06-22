@@ -1368,6 +1368,8 @@ export default function ChatContainer({
                     toolResultsMap={maps.toolResultsMap}
                     toolInputsMap={maps.toolInputsMap}
                     subagentMessagesMap={maps.subagentMessagesMap}
+                    taskNotificationsMap={maps.taskNotificationsMap}
+                    foldableToolUseIds={maps.foldableToolUseIds}
                     replacementStatusMap={maps.replacementStatusMap}
                     sessionInfo={
                       msg.uuid

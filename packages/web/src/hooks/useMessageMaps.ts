@@ -20,7 +20,11 @@
  */
 
 import { useMemo } from 'preact/hooks';
-import type { SDKMessage, SDKSystemMessage } from '@neokai/shared/sdk/sdk.d.ts';
+import type {
+  SDKMessage,
+  SDKSystemMessage,
+  SDKTaskNotificationMessage,
+} from '@neokai/shared/sdk/sdk.d.ts';
 import type { ChatMessage } from '@neokai/shared';
 import {
   buildMessageReplacementStatusMap,
@@ -43,6 +47,16 @@ export interface UseMessageMapsResult {
   sessionInfoMap: Map<string, SDKSystemMessage>;
   /** Map of parent tool use IDs to their sub-agent messages */
   subagentMessagesMap: Map<string, SDKMessage[]>;
+  /** Map of tool use IDs to their terminal task_notification (status/summary/usage) */
+  taskNotificationsMap: Map<string, SDKTaskNotificationMessage>;
+  /**
+   * Tool use IDs whose card is actually rendered in this slice — top-level
+   * tool_use ids plus nested tool_use ids whose parent Task/Agent card is
+   * present (so its SubagentBlock will fold the notification). Used to gate
+   * task_notification suppression: a nested tool_use whose parent was paginated
+   * out has no render target, so its notification must fall back to a row.
+   */
+  foldableToolUseIds: Set<string>;
   /** Map of SDK message UUIDs to replacement/retraction status */
   replacementStatusMap: Map<string, MessageReplacementStatus>;
 }
@@ -101,6 +115,22 @@ export function useMessageMaps(
             map.set(blockObj.id as string, blockObj.input);
           }
         });
+      }
+    });
+    return map;
+  }, [sdkMessages]);
+
+  // Map of tool use IDs to their terminal task_notification. task_notification
+  // (system, subtype task_notification) carries status/summary/usage and links
+  // back to its originating tool_use via tool_use_id. Folded onto the tool card
+  // instead of rendered as a standalone system row.
+  const taskNotificationsMap = useMemo(() => {
+    const map = new Map<string, SDKTaskNotificationMessage>();
+    sdkMessages.forEach((msg) => {
+      if (msg.type !== 'system' || msg.subtype !== 'task_notification') return;
+      const notification = msg as SDKTaskNotificationMessage;
+      if (notification.tool_use_id) {
+        map.set(notification.tool_use_id, notification);
       }
     });
     return map;
@@ -176,11 +206,43 @@ export function useMessageMaps(
     return map;
   }, [sdkMessages]);
 
+  // Tool use IDs whose card actually renders in this slice. Top-level
+  // tool_use ids render as ToolResultCard / SubagentBlock headers; a nested
+  // tool_use renders only inside its parent SubagentBlock, so it's foldable
+  // only when the parent Task/Agent tool_use is also present. A page boundary
+  // that keeps a nested tool_use but drops its parent must NOT fold its
+  // task_notification — there's no target — so it falls back to a system row.
+  const foldableToolUseIds = useMemo(() => {
+    const topLevel = new Set<string>();
+    sdkMessages.forEach((msg) => {
+      if (msg.type !== 'assistant' || !Array.isArray(msg.message.content)) return;
+      if ((msg as SDKMessage & { parent_tool_use_id?: string | null }).parent_tool_use_id) return;
+      msg.message.content.forEach((block: unknown) => {
+        const b = block as Record<string, unknown>;
+        if (b.type === 'tool_use' && typeof b.id === 'string') topLevel.add(b.id);
+      });
+    });
+    const foldable = new Set(topLevel);
+    sdkMessages.forEach((msg) => {
+      if (msg.type !== 'assistant' || !Array.isArray(msg.message.content)) return;
+      const parent = (msg as SDKMessage & { parent_tool_use_id?: string | null })
+        .parent_tool_use_id;
+      if (!parent || !topLevel.has(parent)) return;
+      msg.message.content.forEach((block: unknown) => {
+        const b = block as Record<string, unknown>;
+        if (b.type === 'tool_use' && typeof b.id === 'string') foldable.add(b.id);
+      });
+    });
+    return foldable;
+  }, [sdkMessages]);
+
   return {
     toolResultsMap,
     toolInputsMap,
     sessionInfoMap,
     subagentMessagesMap,
+    taskNotificationsMap,
+    foldableToolUseIds,
     replacementStatusMap,
   };
 }
