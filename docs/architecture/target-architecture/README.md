@@ -13,7 +13,7 @@
 - [Configuration And Extension Resolution Design](./configuration-and-extension-resolution.md)
 - [UI Design System Architecture Design](./ui-design-system-architecture.md)
 - [Prompt Policy Registry Spec](../../research/token-efficiency/prompt-policy-registry-spec.md)
-- [Architecture Refactor Execution Plan](../../plans/architecture-refactor-execution-plan/00-overview.md)
+- [Architecture Refactor Execution Plan](execution-plan/00-overview.md)
 
 ---
 
