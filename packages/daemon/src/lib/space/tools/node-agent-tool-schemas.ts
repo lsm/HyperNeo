@@ -110,6 +110,19 @@ export const UnsubscribeExternalEventSchema = z.object({
 
 export type UnsubscribeExternalEventInput = z.infer<typeof UnsubscribeExternalEventSchema>;
 
+export const SubscribePrEventsSchema = z.object({
+  prUrl: z
+    .string()
+    .optional()
+    .describe(
+      "GitHub PR URL to scope events to (e.g. 'https://github.com/owner/repo/pull/123'). " +
+        "Omit to use this workflow run's current PR, resolved from gate data / artifacts."
+    ),
+  label: z.string().describe('Optional label for diagnostics').optional(),
+});
+
+export type SubscribePrEventsInput = z.infer<typeof SubscribePrEventsSchema>;
+
 // ---------------------------------------------------------------------------
 // save_artifact
 // ---------------------------------------------------------------------------
@@ -475,6 +488,7 @@ export const NODE_AGENT_TOOL_SCHEMAS = {
   read_gate: ReadGateSchema,
   subscribe_external_event: SubscribeExternalEventSchema,
   unsubscribe_external_event: UnsubscribeExternalEventSchema,
+  subscribe_pr_events: SubscribePrEventsSchema,
   restore_node_agent: RestoreNodeAgentSchema,
   list_tasks: ListTasksSchema,
   get_task: GetTaskSchema,

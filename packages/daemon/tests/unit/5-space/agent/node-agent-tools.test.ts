@@ -32,6 +32,7 @@ import { ChannelResolver } from '../../../../src/lib/space/runtime/channel-resol
 import { PendingAgentMessageRepository } from '../../../../src/storage/repositories/pending-agent-message-repository.ts';
 import { McpAuditLogRepository } from '../../../../src/storage/repositories/mcp-audit-log-repository.ts';
 import { jsonResult } from '../../../../src/lib/space/tools/tool-result.ts';
+import type { SubscribeExternalEventInput } from '../../../../src/lib/space/tools/node-agent-tool-schemas.ts';
 import { registerGateFeature } from '../../../../src/lib/space/runtime/gate-features.ts';
 import type { SpaceWorkflow, Gate, WorkflowChannel } from '@neokai/shared';
 import type {
@@ -4920,5 +4921,90 @@ describe('node-agent-tools \u2014 archive_task', () => {
     expect(data.task.status).toBe('archived');
     expect(data.task.pendingCheckpointType).toBeNull();
     expect(data.task.pendingCompletionSubmittedByNodeId).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: subscribe_pr_events
+// ---------------------------------------------------------------------------
+
+describe('node-agent-tools: subscribe_pr_events', () => {
+  let ctx: TestCtx;
+
+  beforeEach(() => {
+    ctx = makeCtx();
+  });
+  afterEach(() => {
+    ctx.db.close();
+  });
+
+  test('resolves the run PR from gate data and subscribes to its events', async () => {
+    const gateDataRepo = new GateDataRepository(ctx.db);
+    gateDataRepo.set(ctx.workflowRunId, 'gate-pr', {
+      pr_url: 'https://github.com/acme/widgets/pull/123',
+    });
+
+    let captured: { topicPattern: string; label?: string } | null = null;
+    const onSubscribeExternalEvent = async (args: SubscribeExternalEventInput) => {
+      captured = args;
+      return jsonResult({ success: true, topicPattern: args.topicPattern });
+    };
+
+    const handlers = createNodeAgentToolHandlers(
+      makeConfig(ctx, { gateDataRepo, onSubscribeExternalEvent })
+    );
+    const result = await handlers.subscribe_pr_events({ label: 'coder-pr' });
+    const data = JSON.parse(result.content[0].text);
+
+    expect(data.success).toBe(true);
+    expect(captured).not.toBeNull();
+    expect(captured!.topicPattern).toBe('github/acme/widgets/pull_request/123.*');
+    expect(captured!.label).toBe('coder-pr');
+  });
+
+  test('uses an explicit prUrl arg instead of the run PR', async () => {
+    let captured: { topicPattern: string } | null = null;
+    const onSubscribeExternalEvent = async (args: SubscribeExternalEventInput) => {
+      captured = args;
+      return jsonResult({ success: true, topicPattern: args.topicPattern });
+    };
+
+    const handlers = createNodeAgentToolHandlers(makeConfig(ctx, { onSubscribeExternalEvent }));
+    const result = await handlers.subscribe_pr_events({
+      prUrl: 'https://github.com/acme/widgets/pull/999',
+    });
+    const data = JSON.parse(result.content[0].text);
+
+    expect(data.success).toBe(true);
+    expect(captured!.topicPattern).toBe('github/acme/widgets/pull_request/999.*');
+  });
+
+  test('errors when no PR URL is resolvable for the run', async () => {
+    const onSubscribeExternalEvent = async () => jsonResult({ success: true });
+    const handlers = createNodeAgentToolHandlers(makeConfig(ctx, { onSubscribeExternalEvent }));
+    const result = await handlers.subscribe_pr_events({});
+    const data = JSON.parse(result.content[0].text);
+
+    expect(data.success).toBe(false);
+    expect(data.error).toMatch(/No PR URL/i);
+  });
+
+  test('errors when an explicit prUrl cannot be parsed', async () => {
+    const onSubscribeExternalEvent = async () => jsonResult({ success: true });
+    const handlers = createNodeAgentToolHandlers(makeConfig(ctx, { onSubscribeExternalEvent }));
+    const result = await handlers.subscribe_pr_events({ prUrl: 'not-a-pr-url' });
+    const data = JSON.parse(result.content[0].text);
+
+    expect(data.success).toBe(false);
+    expect(data.error).toMatch(/Could not parse/i);
+  });
+
+  test('errors when external-event subscriptions are not available', async () => {
+    const handlers = createNodeAgentToolHandlers(makeConfig(ctx)); // no callback wired
+    const result = await handlers.subscribe_pr_events({});
+    const data = JSON.parse(result.content[0].text);
+
+    expect(data.success).toBe(false);
+    expect(data.error).toMatch(/not available/i);
   });
 });

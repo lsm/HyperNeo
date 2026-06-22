@@ -74,6 +74,7 @@ import {
   ArchiveTaskSchema,
   SubscribeExternalEventSchema,
   UnsubscribeExternalEventSchema,
+  SubscribePrEventsSchema,
 } from './node-agent-tool-schemas';
 import type {
   ListPeersInput,
@@ -93,6 +94,7 @@ import type {
   ArchiveTaskInput,
   SubscribeExternalEventInput,
   UnsubscribeExternalEventInput,
+  SubscribePrEventsInput,
 } from './node-agent-tool-schemas';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { SpaceTask } from '@neokai/shared';
@@ -100,6 +102,7 @@ import type { McpAuditLogRepository } from '../../../storage/repositories/mcp-au
 import { parseAddress } from '../../../../../messaging/src/address';
 import { translateLegacyNodeTargets } from '../messaging-adapter';
 import { getEffectiveGate, hasInjectedGateFeature } from '../runtime/gate-features';
+import { buildPrEventTopicPattern, parsePrUrl } from '../runtime/parse-pr-url';
 import type { WorkflowHookEngine } from '../runtime/workflow-hook-engine';
 import { wrapHandlerWithHooks } from '../runtime/workflow-hook-engine';
 
@@ -1644,6 +1647,33 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
       return result;
     },
 
+    async subscribe_pr_events(args: SubscribePrEventsInput): Promise<ToolResult> {
+      if (!config.onSubscribeExternalEvent) {
+        return jsonResult({
+          success: false,
+          error: 'External event subscriptions are not available.',
+        });
+      }
+      const prUrl =
+        args.prUrl || resolvePrUrlForRun(gateDataRepo, config.artifactRepo, workflowRunId);
+      const parsed = prUrl ? parsePrUrl(prUrl) : null;
+      if (!parsed) {
+        return jsonResult({
+          success: false,
+          error: args.prUrl
+            ? `Could not parse GitHub PR URL: ${args.prUrl}`
+            : 'No PR URL found for this workflow run. Open a PR first or pass prUrl explicitly.',
+        });
+      }
+      const topicPattern = buildPrEventTopicPattern(parsed);
+      const result = await config.onSubscribeExternalEvent({ topicPattern, label: args.label });
+      const payload = decodeToolResultPayload(result);
+      if (payload?.success) {
+        logAudit('subscribe_pr_events', { prUrl, topicPattern, label: args.label });
+      }
+      return result;
+    },
+
     async unsubscribe_external_event(args: UnsubscribeExternalEventInput): Promise<ToolResult> {
       if (!config.onUnsubscribeExternalEvent) {
         return jsonResult({
@@ -2010,6 +2040,14 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
             'Unsubscribe from external events for this node-agent session.',
             UnsubscribeExternalEventSchema.shape,
             (args) => handlers.unsubscribe_external_event(args)
+          ),
+          tool(
+            'subscribe_pr_events',
+            "Subscribe to GitHub PR events scoped to this workflow run's PR (reviews, comments, reactions). " +
+              "Resolves the run's current PR automatically; pass `prUrl` to target a different PR. " +
+              'Events are delivered to this node-agent session as messages. The coder node typically calls this.',
+            SubscribePrEventsSchema.shape,
+            (args) => handlers.subscribe_pr_events(args)
           ),
         ]
       : []),
