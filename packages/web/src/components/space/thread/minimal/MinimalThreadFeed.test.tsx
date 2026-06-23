@@ -784,17 +784,69 @@ describe('MinimalThreadFeed', () => {
     expect(feed.textContent).not.toContain('Task failed');
   });
 
-  it('falls back to a system row for task_notification with no roster target (completed turn)', () => {
+  it('folds task_notification onto a completed turn roster entry', () => {
     const t = Date.now();
-    // Tool_use + result → completed turn (no active roster). The notification
-    // has a tool_use_id but no rendered roster target, so it must NOT be
-    // suppressed — its summary survives as a standalone row.
     const rows = [
       makeRow({
         id: 'a1',
         label: 'Coder Agent',
         createdAt: t,
         message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'false' } }]),
+      }),
+      makeRow({
+        id: 'r1',
+        label: 'Coder Agent',
+        createdAt: t + 100,
+        message: resultMessage('r1', 'Done'),
+      }),
+      makeRow({
+        id: 'n1',
+        label: 'Coder Agent',
+        createdAt: t + 200,
+        messageType: 'system',
+        message: {
+          type: 'system',
+          subtype: 'task_notification',
+          task_id: 't',
+          tool_use_id: 'tu-a1-0',
+          status: 'failed',
+          summary: 'Bash exited 1',
+          output_file: '/tmp/o',
+          usage: { total_tokens: 4321, tool_uses: 3, duration_ms: 4500 },
+        },
+      }),
+    ];
+
+    render(<MinimalThreadFeed parsedRows={rows} />);
+
+    expect(screen.queryByText('Task failed')).toBeNull();
+    const entry = screen.getByTestId('minimal-thread-roster-entry');
+    expect(entry.dataset.rosterKind).toBe('tool');
+    expect(entry.dataset.taskStatus).toBe('failed');
+    expect(entry.textContent).toContain('Bash exited 1');
+    expect(entry.textContent).toContain('4,321 tok');
+    expect(entry.textContent).toContain('3 tools');
+    expect(entry.textContent).toContain('4.5s');
+    expect(entry.textContent).toContain('✗');
+  });
+
+  it('falls back to a system row for task_notification with no roster target (completed turn)', () => {
+    const t = Date.now();
+    // More than ROSTER_MAX_ENTRIES tool_use blocks → the first tool is capped
+    // out of the completed roster. Its notification must remain standalone so
+    // terminal metadata is not lost.
+    const rows = [
+      makeRow({
+        id: 'a1',
+        label: 'Coder Agent',
+        createdAt: t,
+        message: assistantToolUse(
+          'a1',
+          Array.from({ length: 9 }, (_, i) => ({
+            name: 'Bash',
+            input: { command: `echo ${i + 1}` },
+          }))
+        ),
       }),
       makeRow({ id: 'r1', label: 'Coder Agent', createdAt: t + 100, message: resultMessage('r1') }),
       makeRow({
@@ -817,7 +869,7 @@ describe('MinimalThreadFeed', () => {
 
     render(<MinimalThreadFeed parsedRows={rows} />);
 
-    // No active summary → no roster target → notification renders as a row,
+    // Capped out of the completed roster → notification renders as a row,
     // preserving both summary and usage (terminal metadata not lost).
     const feed = screen.getByTestId('space-task-event-feed-minimal');
     expect(feed.textContent).toContain('Bash exited 1');

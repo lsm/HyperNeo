@@ -202,6 +202,7 @@ interface CompletedFeedTurn {
    * exec) — the result message hasn't arrived yet.
    */
   resultInfo?: ResultMessage;
+  roster: ActiveRosterEntry[];
 }
 
 interface ActiveFeedTurn {
@@ -576,11 +577,72 @@ function extractLastAssistantText(rows: ParsedThreadRow[]): {
   return { text: tailFallback, fallback: true, sourceRow: tail };
 }
 
+type TaskNotificationLite = {
+  status: 'completed' | 'failed' | 'stopped';
+  summary?: string;
+  usage?: { total_tokens: number; tool_uses: number; duration_ms: number };
+};
+
+function formatCompletedToolPreview(toolName: string, input: unknown): string {
+  if (typeof input !== 'object' || input === null) return '';
+  const record = input as Record<string, unknown>;
+  if (toolName === 'Bash' && typeof record.command === 'string') return record.command;
+  if (typeof record.file_path === 'string') return record.file_path;
+  if (typeof record.path === 'string') return record.path;
+  if (typeof record.pattern === 'string') return record.pattern;
+  const firstString = Object.values(record).find(
+    (value): value is string => typeof value === 'string'
+  );
+  return firstString ?? '';
+}
+
+function foldTaskNotification(
+  entry: RosterToolEntry,
+  taskNotificationsByToolUseId: Map<string, TaskNotificationLite>
+): RosterToolEntry {
+  if (!entry.toolUseId) return entry;
+  const notification = taskNotificationsByToolUseId.get(entry.toolUseId);
+  if (!notification) return entry;
+  return {
+    ...entry,
+    taskStatus: notification.status,
+    ...(notification.summary ? { taskSummary: notification.summary } : {}),
+    ...(notification.usage ? { taskUsage: notification.usage } : {}),
+  };
+}
+
+function completedRosterEntries(
+  rows: ParsedThreadRow[],
+  taskNotificationsByToolUseId: Map<string, TaskNotificationLite>
+): ActiveRosterEntry[] {
+  const entries: RosterToolEntry[] = [];
+  for (const row of rows) {
+    for (const block of getToolUseContentBlocks(row)) {
+      const toolUseIdValue = (block as { id?: unknown }).id;
+      const toolUseId = typeof toolUseIdValue === 'string' ? toolUseIdValue : undefined;
+      entries.push(
+        foldTaskNotification(
+          {
+            kind: 'tool',
+            tool: block.name,
+            preview: formatCompletedToolPreview(block.name, block.input),
+            ts: row.createdAt,
+            ...(toolUseId ? { toolUseId } : {}),
+          },
+          taskNotificationsByToolUseId
+        )
+      );
+    }
+  }
+  return entries.slice(-ROSTER_MAX_ENTRIES);
+}
+
 function buildCompletedTurn(
   block: AgentTurnBlock,
   rows: ParsedThreadRow[],
   turnId: string,
   resultInfo: ResultMessage | undefined,
+  taskNotificationsByToolUseId: Map<string, TaskNotificationLite>,
   transitionSummary: ActiveTurnSummary | undefined = undefined
 ): CompletedFeedTurn {
   const startedAt = rows[0].createdAt;
@@ -613,14 +675,9 @@ function buildCompletedTurn(
     highlightMessageUuid: highlightUuid,
     replacementStatus: sourceRow?.replacementStatus,
     resultInfo,
+    roster: completedRosterEntries(rows, taskNotificationsByToolUseId),
   };
 }
-
-type TaskNotificationLite = {
-  status: 'completed' | 'failed' | 'stopped';
-  summary?: string;
-  usage?: { total_tokens: number; tool_uses: number; duration_ms: number };
-};
 
 /**
  * Scan parsedRows for terminal task_notification system rows, keyed by
@@ -658,9 +715,16 @@ function indexTaskNotifications(rows: ParsedThreadRow[]): Map<string, TaskNotifi
  */
 function collectRosteredToolUseIds(
   summaries: ActiveTurnSummary[],
-  renderedTurnKeys: Set<string>
+  renderedTurnKeys: Set<string>,
+  completedRows: ParsedThreadRow[][],
+  taskNotificationsByToolUseId: Map<string, TaskNotificationLite>
 ): Set<string> {
   const ids = new Set<string>();
+  for (const rows of completedRows) {
+    for (const entry of completedRosterEntries(rows, taskNotificationsByToolUseId)) {
+      if (entry.kind === 'tool' && entry.toolUseId) ids.add(entry.toolUseId);
+    }
+  }
   for (const summary of summaries) {
     // Match on (sessionId, turnIndex): a stale summary whose turn no longer
     // matches the compact feed's active turn must not contribute tool IDs.
@@ -1162,14 +1226,50 @@ function buildFeedTurns(
     if (sid && turnIndex !== undefined) renderedTurnKeys.add(`${sid}:${turnIndex}`);
   }
 
-  // tool_use_ids whose status is actually rendered on an active-roster entry
-  // (i.e. the tool is in a rendered turn's summary AND within the last
-  // ROSTER_MAX_ENTRIES entries). A task_notification is suppressed ONLY when
-  // its tool_use_id is in this set — otherwise there is no inline target
-  // (completed turn, missing/stale summary, turn mismatch, or capped out of the
-  // roster) and the notification must fall back to a standalone system row so
-  // the terminal summary/usage/failure is not lost.
-  const rosteredToolUseIds = collectRosteredToolUseIds(activeTurnSummaries, renderedTurnKeys);
+  const completedRows = blocks.flatMap((block) => {
+    const out: ParsedThreadRow[][] = [];
+    const { result: blockResult } = extractBlockEnvelopes(block.rows);
+    let pendingAgentRows: ParsedThreadRow[] = [];
+    const flush = () => {
+      if (
+        pendingAgentRows.length > 0 &&
+        rowsContainResult(pendingAgentRows, blockResult) &&
+        extractLastAssistantText(pendingAgentRows).text.length > 0
+      ) {
+        out.push(pendingAgentRows);
+      }
+      pendingAgentRows = [];
+    };
+    for (const row of block.rows) {
+      if (buildCompactBoundaryTurn(row) || isUserRow(row)) {
+        flush();
+        continue;
+      }
+      const message = row.message;
+      if (
+        message?.type === 'system' &&
+        (message as { subtype?: string }).subtype !== 'task_notification'
+      ) {
+        flush();
+        continue;
+      }
+      pendingAgentRows.push(row);
+    }
+    flush();
+    return out;
+  });
+
+  // tool_use_ids whose status is actually rendered on an active or completed
+  // roster entry. A task_notification is suppressed ONLY when its tool_use_id is
+  // in this set — otherwise there is no inline target (missing/stale summary,
+  // turn mismatch, or capped out of the roster) and the notification must fall
+  // back to a standalone system row so terminal metadata is not lost.
+  const rosteredToolUseIds = collectRosteredToolUseIds(
+    activeTurnSummaries,
+    renderedTurnKeys,
+    completedRows,
+    taskNotificationsByToolUseId
+  );
 
   const latestRowIdBySession = new Map<string, string>();
   for (const row of rowsWithReplacementStatus) {
@@ -1220,7 +1320,14 @@ function buildFeedTurns(
           )
         : undefined;
       turns.push(
-        buildCompletedTurn(block, pendingAgentRows, turnId, resultInfo, transitionSummary)
+        buildCompletedTurn(
+          block,
+          pendingAgentRows,
+          turnId,
+          resultInfo,
+          taskNotificationsByToolUseId,
+          transitionSummary
+        )
       );
       perAgentTrailing.set(blockKey, {
         turnIdx: turns.length - 1,
@@ -1575,6 +1682,13 @@ function CompletedBody({
         data-testid="minimal-thread-agent-bubble"
       >
         <ReplacementBadge status={turn.replacementStatus} />
+        {turn.roster.length > 0 ? (
+          <div class="mb-2 space-y-0.5">
+            {turn.roster.map((entry, i) => (
+              <RosterEntry key={`${entry.kind}-${i}`} entry={entry} isLatest={false} />
+            ))}
+          </div>
+        ) : null}
         {turn.lastMessage ? (
           <div class="text-sm text-gray-100 leading-relaxed [&_a]:text-blue-400">
             {turn.fallback ? (
