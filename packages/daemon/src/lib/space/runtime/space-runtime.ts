@@ -1699,6 +1699,12 @@ export class SpaceRuntime {
     const key = this.buildQueueKey(target);
     const queued = this.pendingExternalEventQueue.get(key);
     const inMemoryDeliveryKeys = new Set(queued?.map((item) => item.deliveryKey) ?? []);
+
+    // Collect dispatchable items from both in-memory queue and DB-persisted
+    // pending deliveries into a single list so they can be sorted and
+    // dispatched in chronological order.
+    const dispatchable: PendingExternalEvent[] = [];
+
     if (queued) {
       this.pendingExternalEventQueue.delete(key);
       const now = Date.now();
@@ -1707,23 +1713,37 @@ export class SpaceRuntime {
           this.failQueuedDeliveryForTtl(item, key);
           continue;
         }
-        this.clearExternalEventRetry(item.deliveryKey);
-        void this.enqueueDeliverableExternalEvent(
-          targetWithExecution,
-          item.event,
-          item.deliveryKey,
-          item.deliveryMode,
-          item.createdAt,
-          true
-        );
+        dispatchable.push(item);
       }
     }
-    void this.flushPersistedPendingDeliveriesForTarget(targetWithExecution, inMemoryDeliveryKeys);
+
+    this.collectPersistedPendingDeliveries(targetWithExecution, inMemoryDeliveryKeys, dispatchable);
+
+    if (dispatchable.length === 0) return;
+
+    // Sort by createdAt so events from both sources are dispatched in
+    // chronological order regardless of which queue held them. Uses stable
+    // sort (default in modern JS engines) so items with the same createdAt
+    // preserve their insertion order (FIFO from the in-memory queue).
+    dispatchable.sort((a, b) => a.createdAt - b.createdAt);
+
+    for (const item of dispatchable) {
+      this.clearExternalEventRetry(item.deliveryKey);
+      void this.enqueueDeliverableExternalEvent(
+        targetWithExecution,
+        item.event,
+        item.deliveryKey,
+        item.deliveryMode,
+        item.createdAt,
+        true
+      );
+    }
   }
 
-  private flushPersistedPendingDeliveriesForTarget(
+  private collectPersistedPendingDeliveries(
     target: WorkflowSubscriptionTarget,
-    skipDeliveryKeys: Set<string>
+    skipDeliveryKeys: Set<string>,
+    dispatchable: PendingExternalEvent[]
   ): void {
     const store = this.config.externalEventStore;
     if (!store || !target.sessionId) return;
@@ -1781,7 +1801,7 @@ export class SpaceRuntime {
         ? 'defer'
         : 'immediate';
       const eventPayload = this.externalEventPayloadFromRecord(eventRecord.event);
-      const queuedItem = {
+      const queuedItem: PendingExternalEvent = {
         event: eventPayload,
         deliveryKey: delivery.deliveryKey,
         deliveryMode: mode,
@@ -1791,15 +1811,7 @@ export class SpaceRuntime {
         this.failQueuedDeliveryForTtl(queuedItem, this.buildQueueKey(target));
         continue;
       }
-      this.clearExternalEventRetry(delivery.deliveryKey);
-      void this.enqueueDeliverableExternalEvent(
-        target,
-        eventPayload,
-        delivery.deliveryKey,
-        mode,
-        eventRecord.createdAt,
-        true
-      );
+      dispatchable.push(queuedItem);
     }
   }
 
@@ -2144,7 +2156,7 @@ export class SpaceRuntime {
     );
     state.timestamps.push(now);
     if (state.timestamps.length <= EXTERNAL_EVENT_RATE_LIMIT_PER_MIN) {
-      await this.deliverToSession(target, event, deliveryKey, deliveryMode);
+      await this.deliverToSession(target, event, deliveryKey, deliveryMode, createdAt);
       this.scheduleExternalEventRateLimitCleanup(rateLimitKey);
       return;
     }
@@ -2282,7 +2294,8 @@ export class SpaceRuntime {
     target: WorkflowSubscriptionTarget,
     event: ExternalEventPublishedPayload,
     deliveryKey: string,
-    deliveryMode: 'immediate' | 'defer'
+    deliveryMode: 'immediate' | 'defer',
+    fallbackCreatedAt?: number
   ): Promise<void> {
     const store = this.config.externalEventStore;
     if (!store || !target.sessionId) return;
@@ -2353,7 +2366,7 @@ export class SpaceRuntime {
         deliveryKey,
         deliveryMode,
         failureReason,
-        queued?.createdAt
+        queued?.createdAt ?? fallbackCreatedAt
       );
     } finally {
       this.externalEventDeliveriesInFlight.delete(deliveryKey);
