@@ -1167,8 +1167,8 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     };
     const base = `https://api.github.com/repos/${gitHubRepoPath(watched.owner, watched.repo)}`;
     const endpoints = [
-      { key: 'issue_comments', path: '/issues/comments' },
-      { key: 'review_comments', path: '/pulls/comments' },
+      { key: 'issue_comments', path: '/issues/comments', extra: 'sort=updated&direction=desc' },
+      { key: 'review_comments', path: '/pulls/comments', extra: 'sort=updated&direction=desc' },
       { key: 'pulls', path: '/pulls', extra: 'state=all&sort=updated&direction=desc' },
     ];
     let partialScan = false;

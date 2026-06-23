@@ -2361,6 +2361,41 @@ describe('GitHubEventExtension', () => {
     }
   });
 
+  test('polling requests newest issue and review comments first', async () => {
+    const db = setupDb();
+    const { service } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    const calls: string[] = [];
+    const fetchImpl = (async (url: string | URL | Request) => {
+      calls.push(String(url));
+      return pollingResponse([]);
+    }) as typeof fetch;
+
+    try {
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+
+      const issueCommentsUrl = new URL(calls.find((url) => url.includes('/issues/comments')) ?? '');
+      const reviewCommentsUrl = new URL(calls.find((url) => url.includes('/pulls/comments')) ?? '');
+      expect(issueCommentsUrl.searchParams.get('sort')).toBe('updated');
+      expect(issueCommentsUrl.searchParams.get('direction')).toBe('desc');
+      expect(reviewCommentsUrl.searchParams.get('sort')).toBe('updated');
+      expect(reviewCommentsUrl.searchParams.get('direction')).toBe('desc');
+    } finally {
+      await extension.stop();
+    }
+  });
+
   test('reaction polling targets the newest PRs when more than the limit are returned', async () => {
     const db = setupDb();
     const { service, received } = setupExternalEventService(db);
