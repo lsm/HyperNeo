@@ -3,7 +3,7 @@ import { globalSettings } from '../../lib/state.ts';
 import { updateGlobalSettings } from '../../lib/api-helpers.ts';
 import { toast } from '../../lib/toast.ts';
 import type { PermissionMode, ThinkingLevel, SettingSource } from '@neokai/shared';
-import { normalizeThinkingLevel } from '@neokai/shared';
+import { MAX_GITHUB_POLLING_INTERVAL_SECONDS, normalizeThinkingLevel } from '@neokai/shared';
 import {
   SettingsSection,
   SettingsRow,
@@ -39,6 +39,9 @@ export function GeneralSettings() {
     settings?.permissionMode ?? 'default'
   );
   const [localAutoScroll, setLocalAutoScroll] = useState(settings?.autoScroll ?? true);
+  const [localGitHubPollingInterval, setLocalGitHubPollingInterval] = useState(
+    String(settings?.githubPollingInterval ?? 120)
+  );
   const [localThinkingLevel, setLocalThinkingLevel] = useState<ThinkingLevel>(
     normalizeThinkingLevel(settings?.thinkingLevel)
   );
@@ -54,6 +57,7 @@ export function GeneralSettings() {
       setLocalModel(settings.model ?? 'sonnet');
       setLocalPermissionMode(settings.permissionMode ?? 'default');
       setLocalAutoScroll(settings.autoScroll ?? true);
+      setLocalGitHubPollingInterval(String(settings.githubPollingInterval ?? 120));
       setLocalThinkingLevel(normalizeThinkingLevel(settings.thinkingLevel));
       setLocalShowArchived(settings.showArchived ?? false);
       setLocalSettingSources(settings.settingSources ?? ['user', 'project', 'local']);
@@ -117,6 +121,45 @@ export function GeneralSettings() {
     }
   };
 
+  const handleGitHubPollingIntervalChange = (value: string) => {
+    setLocalGitHubPollingInterval(value);
+  };
+
+  const handleGitHubPollingIntervalBlur = async () => {
+    const trimmed = localGitHubPollingInterval.trim();
+    const current = settings?.githubPollingInterval ?? 120;
+    if (trimmed === '') {
+      setLocalGitHubPollingInterval(String(current));
+      return;
+    }
+
+    const interval = Number(trimmed);
+    if (
+      !Number.isInteger(interval) ||
+      interval < 0 ||
+      interval > MAX_GITHUB_POLLING_INTERVAL_SECONDS
+    ) {
+      toast.error(
+        `GitHub polling interval must be a whole number between 0 and ${MAX_GITHUB_POLLING_INTERVAL_SECONDS}`
+      );
+      setLocalGitHubPollingInterval(String(current));
+      return;
+    }
+
+    setLocalGitHubPollingInterval(String(interval));
+    if (interval === current) return;
+
+    setIsUpdating(true);
+    try {
+      await updateGlobalSettings({ githubPollingInterval: interval });
+    } catch {
+      toast.error('Failed to update GitHub polling interval');
+      setLocalGitHubPollingInterval(String(current));
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
   const handleShowArchivedChange = async (value: boolean) => {
     setLocalShowArchived(value);
     setIsUpdating(true);
@@ -172,6 +215,26 @@ export function GeneralSettings() {
           onChange={handleThinkingLevelChange}
           options={THINKING_LEVEL_OPTIONS}
           disabled={isUpdating}
+        />
+      </SettingsRow>
+
+      <SettingsRow
+        label="GitHub polling interval (seconds)"
+        description="How often to poll watched GitHub repositories; 0 disables polling."
+      >
+        <input
+          type="number"
+          min="0"
+          max={MAX_GITHUB_POLLING_INTERVAL_SECONDS}
+          step="1"
+          placeholder="120"
+          value={localGitHubPollingInterval}
+          onInput={(event) =>
+            handleGitHubPollingIntervalChange((event.target as HTMLInputElement).value)
+          }
+          onBlur={handleGitHubPollingIntervalBlur}
+          disabled={isUpdating}
+          class="w-24 rounded-lg border border-white/[0.08] bg-dark-800 px-3 py-1.5 text-sm text-gray-200 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
         />
       </SettingsRow>
 

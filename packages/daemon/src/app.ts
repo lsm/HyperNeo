@@ -12,7 +12,7 @@ import { AuthManager } from './lib/auth-manager';
 import { SettingsManager } from './lib/settings-manager';
 import { StateProjectionService } from './lib/state-projection-service';
 import { createClientEventBridge } from './lib/client-event-bridge';
-import { MessageHub, MessageHubRouter } from '@neokai/shared';
+import { MAX_GITHUB_POLLING_INTERVAL_SECONDS, MessageHub, MessageHubRouter } from '@neokai/shared';
 import type { Provider } from '@neokai/shared/provider';
 import {
   createDaemonInternalEventBus,
@@ -124,6 +124,23 @@ async function applyStoredProviderCredentials(
       logError(`[Daemon] Failed to load stored credentials for ${provider.id}:`, error);
     }
   }
+}
+
+export async function syncGitHubPollingCapability(
+  extensionConfigStore: Pick<
+    ExternalEventExtensionConfigStore,
+    'getGlobalConfig' | 'setGlobalConfig'
+  >,
+  pollingEnabled: boolean
+): Promise<void> {
+  const githubGlobalConfig = await extensionConfigStore.getGlobalConfig('github');
+  await extensionConfigStore.setGlobalConfig('github', {
+    ...githubGlobalConfig,
+    capabilities: {
+      ...githubGlobalConfig.capabilities,
+      polling: pollingEnabled,
+    },
+  });
 }
 
 export interface CreateDaemonAppOptions {
@@ -369,6 +386,11 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     // discovered. Room-scoped sessions use their own defaultPath for project-level
     // MCP resolution and are not affected by this global instance.
     const settingsManager = new SettingsManager(db, process.env.NEOKAI_WORKSPACE_PATH ?? homedir());
+    const getGitHubPollingIntervalSeconds = () => {
+      const value = settingsManager.getGlobalSettings().githubPollingInterval;
+      if (value === undefined || !Number.isFinite(value)) return 120;
+      return Math.min(MAX_GITHUB_POLLING_INTERVAL_SECONDS, Math.max(0, Math.trunc(value)));
+    };
     applyProviderModelAllowlistsToEnv(settingsManager.getGlobalSettings().providerModelAllowlists);
 
     // Seed disabled built-in state so initializeProviders() won't register
@@ -595,11 +617,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     startupPhase('github service');
     // Initialize GitHub service if configured
     let gitHubService: GitHubService | null = null;
-    const shouldEnableGitHub =
-      config.githubWebhookSecret ||
-      (config.githubPollingInterval && config.githubPollingInterval > 0);
+    const shouldEnableGitHub = config.githubWebhookSecret || getGitHubPollingIntervalSeconds() > 0;
 
-    if (shouldEnableGitHub && hasAnthropicAuth) {
+    if (hasAnthropicAuth) {
       // Get API key for AI agents (security + routing).
       // Fall back to stored provider credentials so GitHub works when the sole
       // auth source is the credential store.
@@ -631,12 +651,17 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
           githubToken: process.env.GITHUB_TOKEN, // Optional GitHub token for polling
           jobQueue,
           jobProcessor,
+          getPollingIntervalSeconds: getGitHubPollingIntervalSeconds,
         });
 
-        logInfo('[Daemon] GitHub integration enabled', {
-          webhook: !!config.githubWebhookSecret,
-          polling: !!(config.githubPollingInterval && config.githubPollingInterval > 0),
-        });
+        if (shouldEnableGitHub) {
+          logInfo('[Daemon] GitHub integration enabled', {
+            webhook: !!config.githubWebhookSecret,
+            polling: getGitHubPollingIntervalSeconds() > 0,
+          });
+        } else {
+          logInfo('[Daemon] GitHub integration initialized; polling disabled by settings');
+        }
       } else {
         logInfo('[Daemon] GitHub integration disabled - no API key available for AI agents');
       }
@@ -665,24 +690,36 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       },
     };
     const extensionManager = new ExternalEventExtensionManager();
-    const githubPollingEnabled = !!(
-      config.githubPollingInterval && config.githubPollingInterval > 0
-    );
-    if (githubPollingEnabled) {
-      const githubGlobalConfig = await extensionConfigStore.getGlobalConfig('github');
-      await extensionConfigStore.setGlobalConfig('github', {
-        ...githubGlobalConfig,
-        capabilities: {
-          ...githubGlobalConfig.capabilities,
-          polling: true,
-        },
-      });
-    }
+    const githubPollingEnabled = getGitHubPollingIntervalSeconds() > 0;
+    await syncGitHubPollingCapability(extensionConfigStore, githubPollingEnabled);
     extensionManager.register(
       new GitHubEventExtension(db.getDatabase(), process.env.GITHUB_TOKEN, {
-        ...(githubPollingEnabled ? { pollIntervalMs: config.githubPollingInterval! * 1000 } : {}),
+        getPollIntervalMs: () => getGitHubPollingIntervalSeconds() * 1000,
         credentialStore: credentialManager.getCredentialStore(),
       })
+    );
+
+    const githubEventExtension = extensionManager.getExtension('github') as
+      | GitHubEventExtension
+      | undefined;
+    let lastGitHubPollingIntervalSeconds = getGitHubPollingIntervalSeconds();
+    internalEventBus.subscribe(
+      'settings.updated',
+      (event) => {
+        if (event.namespaceId !== 'global') return;
+        const nextGitHubPollingIntervalSeconds = getGitHubPollingIntervalSeconds();
+        if (nextGitHubPollingIntervalSeconds === lastGitHubPollingIntervalSeconds) return;
+        lastGitHubPollingIntervalSeconds = nextGitHubPollingIntervalSeconds;
+        gitHubService?.refreshPolling({ reschedulePending: true });
+        void (async () => {
+          await syncGitHubPollingCapability(
+            extensionConfigStore,
+            getGitHubPollingIntervalSeconds() > 0
+          );
+          await githubEventExtension?.refreshPollingInterval();
+        })();
+      },
+      { subscriberName: 'github-polling-settings' }
     );
 
     startupPhase('external event extensions');
@@ -852,7 +889,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     // Start GitHub service after server is ready.
     // GitHubService.start() registers the github.poll handler and enqueues the
     // initial job when jobProcessor/jobQueue are provided.
-    if (gitHubService) {
+    if (gitHubService && shouldEnableGitHub) {
       gitHubService.start();
       logInfo('[Daemon] GitHub service started');
     }
