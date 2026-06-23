@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { ChatMessage, Session, GitSessionStatusResponse } from '@neokai/shared';
+import { extractBackgroundTasks, type BackgroundTask } from '../hooks/useRunningToolUseIds.ts';
 import { getGitSessionStatus } from '../lib/api-helpers.ts';
 import { cn } from '../lib/utils.ts';
-import { extractBackgroundTasks, type BackgroundTask } from '../hooks/useRunningToolUseIds.ts';
 import { IconButton } from './ui/IconButton.tsx';
 
 interface SessionInfoPanelButtonProps {
