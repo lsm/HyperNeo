@@ -690,10 +690,14 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     const githubEventExtension = extensionManager.getExtension('github') as
       | GitHubEventExtension
       | undefined;
+    let lastGitHubPollingIntervalSeconds = getGitHubPollingIntervalSeconds();
     internalEventBus.subscribe(
       'settings.updated',
       (event) => {
         if (event.namespaceId !== 'global') return;
+        const nextGitHubPollingIntervalSeconds = getGitHubPollingIntervalSeconds();
+        if (nextGitHubPollingIntervalSeconds === lastGitHubPollingIntervalSeconds) return;
+        lastGitHubPollingIntervalSeconds = nextGitHubPollingIntervalSeconds;
         gitHubService?.refreshPolling({ reschedulePending: true });
         void (async () => {
           const githubGlobalConfig = await extensionConfigStore.getGlobalConfig('github');
