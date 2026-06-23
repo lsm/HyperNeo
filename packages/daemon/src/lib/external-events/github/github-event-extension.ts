@@ -216,6 +216,12 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       await assertRpcConfigEnabled(context, this.sourceId);
       const params = data as { spaceId: string };
       if (!params.spaceId) throw new Error('spaceId is required');
+      const willReenablePollingRows = this.repo
+        .listWatchedRepos(params.spaceId)
+        .some((repo) => repo.pollingEnabled);
+      if (willReenablePollingRows) {
+        this.assertPollingIntervalEnabled();
+      }
       this.repo.setRepoEnabled(params.spaceId, true);
       // Re-enabling a space can revive polling-configured rows whose
       // `enabled` flag was just flipped back on. If the global polling
@@ -223,8 +229,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       // disablePollingCapabilityIfUnused), the timer would never restart
       // on its own. Re-arm the capability + timer here when any newly
       // re-enabled polling row exists.
-      if (this.repo.listPollingRepos(params.spaceId).length > 0) {
-        this.assertPollingIntervalEnabled();
+      if (willReenablePollingRows) {
         await this.enablePollingCapability(context);
         this.ensurePollingActive();
       }

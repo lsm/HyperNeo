@@ -3783,6 +3783,9 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
         clientHub.request('space.github.enable', { spaceId: 'space-1' })
       ).rejects.toThrow('GitHub polling is disabled globally');
 
+      const stored = extension.repo.getWatchedRepo('space-1', 'acme', 'widgets')!;
+      expect(stored.enabled).toBe(false);
+      expect(extension.repo.isSpaceEnabled('space-1')).toBe(true);
       const global = await configStore.getGlobalConfig('github');
       expect(global.capabilities.polling).toBe(false);
     } finally {
