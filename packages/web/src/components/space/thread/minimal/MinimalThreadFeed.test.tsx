@@ -656,6 +656,91 @@ describe('MinimalThreadFeed', () => {
     expect(entry.textContent).toContain('✓');
   });
 
+  it('does not suppress active turn task_notification when active summary is missing', () => {
+    const t = Date.now();
+    const rows = [
+      makeRow({
+        id: 'a1',
+        label: 'Coder Agent',
+        createdAt: t,
+        turnIndex: 1,
+        message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'bun test' } }]),
+      }),
+      makeRow({
+        id: 'a2',
+        label: 'Coder Agent',
+        createdAt: t + 100,
+        turnIndex: 1,
+        message: assistantText('a2', 'Still working'),
+      }),
+      makeRow({
+        id: 'n1',
+        label: 'Coder Agent',
+        createdAt: t + 200,
+        turnIndex: 1,
+        messageType: 'system',
+        message: {
+          type: 'system',
+          subtype: 'task_notification',
+          task_id: 't',
+          tool_use_id: 'tu-a1-0',
+          status: 'completed',
+          summary: 'active summary missing',
+          output_file: '/tmp/o',
+        },
+      }),
+    ];
+
+    render(<MinimalThreadFeed parsedRows={rows} activeAgentLabels={new Set(['Coder Agent'])} />);
+
+    const turns = screen.getAllByTestId('minimal-thread-turn');
+    expect(turns[0].dataset.turnState).toBe('active');
+    const feed = screen.getByTestId('space-task-event-feed-minimal');
+    expect(feed.textContent).toContain('Task completed');
+    expect(feed.textContent).toContain('active summary missing');
+  });
+
+  it('keeps pre-result task_notifications inside completed slices for folding', () => {
+    const t = Date.now();
+    const rows = [
+      makeRow({
+        id: 'a1',
+        label: 'Coder Agent',
+        createdAt: t,
+        message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'bun test' } }]),
+      }),
+      makeRow({
+        id: 'n1',
+        label: 'Coder Agent',
+        createdAt: t + 100,
+        messageType: 'system',
+        message: {
+          type: 'system',
+          subtype: 'task_notification',
+          task_id: 't',
+          tool_use_id: 'tu-a1-0',
+          status: 'completed',
+          summary: 'settled before result',
+          output_file: '/tmp/o',
+        },
+      }),
+      makeRow({
+        id: 'a2',
+        label: 'Coder Agent',
+        createdAt: t + 200,
+        message: assistantText('a2', 'Done'),
+      }),
+      makeRow({ id: 'r1', label: 'Coder Agent', createdAt: t + 300, message: resultMessage('r1') }),
+    ];
+
+    render(<MinimalThreadFeed parsedRows={rows} />);
+
+    expect(screen.queryByText('Task completed')).toBeNull();
+    const entry = screen.getByTestId('minimal-thread-roster-entry');
+    expect(entry.dataset.taskStatus).toBe('completed');
+    expect(entry.textContent).toContain('settled before result');
+  });
+
   it('renders the active rail and tool roster for the live turn when activeAgentLabels includes the agent', () => {
     const t = Date.now();
     const rows = [

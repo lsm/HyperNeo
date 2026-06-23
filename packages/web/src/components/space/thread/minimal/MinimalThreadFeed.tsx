@@ -1226,10 +1226,13 @@ function buildFeedTurns(
 
   const completedRows = blocks.flatMap((block) => {
     const out: ParsedThreadRow[][] = [];
+    const blockKey = normalizeAgentKey(block.agentLabel);
+    const trailingBlockCanUpgradeToActive = normalisedActive.has(blockKey) && !block.isTerminal;
     let pendingAgentRows: ParsedThreadRow[] = [];
-    const flush = () => {
+    const flush = (isFinal = false) => {
       if (
         pendingAgentRows.length > 0 &&
+        !(isFinal && trailingBlockCanUpgradeToActive) &&
         extractLastAssistantText(pendingAgentRows).text.length > 0
       ) {
         out.push(pendingAgentRows);
@@ -1241,13 +1244,16 @@ function buildFeedTurns(
         flush();
         continue;
       }
-      if (buildOperationalSystemTurn(row, false, new Set())) {
+      const message = row.message;
+      const subtype =
+        message?.type === 'system' ? (message as { subtype?: string }).subtype : undefined;
+      if (subtype !== 'task_notification' && buildOperationalSystemTurn(row, false, new Set())) {
         flush();
         continue;
       }
       pendingAgentRows.push(row);
     }
-    flush();
+    flush(true);
     return out;
   });
 
