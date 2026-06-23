@@ -32,6 +32,10 @@ export type PendingMessageStatus = 'pending' | 'delivered' | 'expired' | 'failed
 
 /** Default TTL for a queued message when the caller doesn't pass `expiresAt`. */
 export const DEFAULT_PENDING_MESSAGE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+/** Default retention window before pending rows are considered too stale to deliver. */
+export const DEFAULT_PENDING_MESSAGE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+/** Default maximum pending rows kept per `(workflow_run_id, target_agent_name)`. */
+export const DEFAULT_PENDING_MESSAGE_MAX_PER_TARGET = 50;
 /** Default retry cap for delivery attempts. */
 export const DEFAULT_PENDING_MESSAGE_MAX_ATTEMPTS = 5;
 
@@ -80,6 +84,14 @@ export interface EnqueueResult {
   record: PendingAgentMessageRecord;
   /** True when this was a pre-existing row matched by idempotency key; false when a new row was inserted. */
   deduped: boolean;
+}
+
+export interface PendingMessageRetentionOptions {
+  runId?: string | null;
+  now?: number;
+  retentionMs?: number;
+  maxPerTarget?: number;
+  includeExpiresAt?: boolean;
 }
 
 export class PendingAgentMessageRepository {
@@ -319,6 +331,97 @@ export class PendingAgentMessageRepository {
           );
     const result = runId === null ? stmt.run(now) : stmt.run(now, runId);
     return result.changes;
+  }
+
+  /**
+   * Enforce queue retention so pending rows cannot grow without bound.
+   * Rows older than `retentionMs` or beyond `maxPerTarget` for their
+   * `(workflow_run_id, target_agent_name)` queue are moved to `expired`.
+   */
+  enforceRetention(options: PendingMessageRetentionOptions = {}): number {
+    const runId = options.runId ?? null;
+    const now = options.now ?? Date.now();
+    const retentionMs = options.retentionMs ?? DEFAULT_PENDING_MESSAGE_RETENTION_MS;
+    const maxPerTarget = options.maxPerTarget ?? DEFAULT_PENDING_MESSAGE_MAX_PER_TARGET;
+    const includeExpiresAt = options.includeExpiresAt ?? true;
+
+    let changes = 0;
+    const expireBefore = now - retentionMs;
+    const ttlPredicate = includeExpiresAt
+      ? '(created_at <= ? OR expires_at <= ?)'
+      : 'created_at <= ?';
+    const ttlStmt =
+      runId === null
+        ? this.db.prepare(
+            `UPDATE pending_agent_messages
+							 SET status = 'expired'
+							 WHERE status = 'pending' AND ${ttlPredicate}`
+          )
+        : this.db.prepare(
+            `UPDATE pending_agent_messages
+							 SET status = 'expired'
+							 WHERE status = 'pending'
+							   AND ${ttlPredicate}
+							   AND workflow_run_id = ?`
+          );
+    const ttlParams = includeExpiresAt ? [expireBefore, now] : [expireBefore];
+    changes += (runId === null ? ttlStmt.run(...ttlParams) : ttlStmt.run(...ttlParams, runId))
+      .changes;
+
+    if (maxPerTarget < 1) {
+      const capStmt =
+        runId === null
+          ? this.db.prepare(
+              `UPDATE pending_agent_messages
+								 SET status = 'expired'
+								 WHERE status = 'pending'`
+            )
+          : this.db.prepare(
+              `UPDATE pending_agent_messages
+								 SET status = 'expired'
+								 WHERE status = 'pending' AND workflow_run_id = ?`
+            );
+      changes += (runId === null ? capStmt.run() : capStmt.run(runId)).changes;
+      return changes;
+    }
+
+    const capStmt =
+      runId === null
+        ? this.db.prepare(
+            `UPDATE pending_agent_messages
+							 SET status = 'expired'
+							 WHERE rowid IN (
+							   SELECT rowid FROM (
+							     SELECT rowid,
+							            ROW_NUMBER() OVER (
+							              PARTITION BY workflow_run_id, target_agent_name
+							              ORDER BY created_at DESC, rowid DESC
+							            ) AS queue_rank
+							     FROM pending_agent_messages
+							     WHERE status = 'pending'
+							   )
+							   WHERE queue_rank > ?
+							 )`
+          )
+        : this.db.prepare(
+            `UPDATE pending_agent_messages
+							 SET status = 'expired'
+							 WHERE rowid IN (
+							   SELECT rowid FROM (
+							     SELECT rowid,
+							            ROW_NUMBER() OVER (
+							              PARTITION BY workflow_run_id, target_agent_name
+							              ORDER BY created_at DESC, rowid DESC
+							            ) AS queue_rank
+							     FROM pending_agent_messages
+							     WHERE status = 'pending' AND workflow_run_id = ?
+							   )
+							   WHERE queue_rank > ?
+							 )`
+          );
+    changes += (runId === null ? capStmt.run(maxPerTarget) : capStmt.run(runId, maxPerTarget))
+      .changes;
+    return changes;
   }
 
   /**
