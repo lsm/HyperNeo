@@ -2189,6 +2189,137 @@ describe('GitHubEventExtension', () => {
     }
   });
 
+  test('first comment endpoint poll starts at a recent lookback instead of historical backfill', async () => {
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: { publish: async () => {} },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    const calls: string[] = [];
+    const fetchImpl = (async (url: string | URL | Request) => {
+      calls.push(String(url));
+      return pollingResponse([]);
+    }) as typeof fetch;
+
+    try {
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+
+      const issueCommentsSince = new URL(calls[0]).searchParams.get('since');
+      const reviewCommentsSince = new URL(calls[1]).searchParams.get('since');
+      const pullsSince = new URL(calls[2]).searchParams.get('since');
+      expect(issueCommentsSince).toBeTruthy();
+      expect(reviewCommentsSince).toBeTruthy();
+      expect(Date.now() - Date.parse(issueCommentsSince!)).toBeLessThanOrEqual(
+        24 * 60 * 60 * 1000 + 5_000
+      );
+      expect(Date.now() - Date.parse(reviewCommentsSince!)).toBeLessThanOrEqual(
+        24 * 60 * 60 * 1000 + 5_000
+      );
+      expect(pullsSince).toBeNull();
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('paginated first comment poll keeps the same seeded lookback on the next page', async () => {
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: { publish: async () => {} },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    const calls: string[] = [];
+    const pageOneRows = Array.from({ length: 100 }, (_, index) => ({
+      id: index + 1,
+      html_url: `https://github.com/acme/widgets/pull/7#issuecomment-${index + 1}`,
+      body: 'looks good',
+      user: { login: 'bot', type: 'Bot' },
+      updated_at: '2026-01-01T00:00:00Z',
+      issue: { number: 7, pull_request: { url: 'api' } },
+    }));
+    const fetchImpl = (async (url: string | URL | Request) => {
+      calls.push(String(url));
+      const parsed = new URL(String(url));
+      if (parsed.pathname.endsWith('/issues/comments') && parsed.searchParams.get('page') === '1') {
+        return pollingResponse(pageOneRows);
+      }
+      return pollingResponse([]);
+    }) as typeof fetch;
+
+    try {
+      const repo = extension.repo.listPollingRepos()[0];
+      await extension.pollWatchedRepo(repo, fetchImpl);
+      const firstSince = new URL(calls[0]).searchParams.get('since');
+
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      const secondIssueCommentsUrl = calls.at(-3)!;
+      const secondSince = new URL(secondIssueCommentsUrl).searchParams.get('since');
+      const secondPage = new URL(secondIssueCommentsUrl).searchParams.get('page');
+
+      expect(firstSince).toBeTruthy();
+      expect(secondPage).toBe('2');
+      expect(secondSince).toBe(firstSince);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('empty first comment window persists the seeded lookback before pulls advance', async () => {
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: { publish: async () => {} },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    const calls: string[] = [];
+    const fetchImpl = (async (url: string | URL | Request) => {
+      calls.push(String(url));
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/pulls')) return pollingResponse([createPullRequestRow(7)]);
+      return pollingResponse([]);
+    }) as typeof fetch;
+
+    try {
+      const repo = extension.repo.listPollingRepos()[0];
+      await extension.pollWatchedRepo(repo, fetchImpl);
+      const initialIssueCommentsSince = new URL(calls[0]).searchParams.get('since');
+      const initialReviewCommentsSince = new URL(calls[1]).searchParams.get('since');
+
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      const nextIssueCommentsSince = new URL(calls.at(-4)!).searchParams.get('since');
+      const nextReviewCommentsSince = new URL(calls.at(-3)!).searchParams.get('since');
+
+      expect(initialIssueCommentsSince).toBeTruthy();
+      expect(initialReviewCommentsSince).toBeTruthy();
+      expect(nextIssueCommentsSince).toBe(initialIssueCommentsSince);
+      expect(nextReviewCommentsSince).toBe(initialReviewCommentsSince);
+    } finally {
+      await extension.stop();
+    }
+  });
+
   test('polling publishes positive PR reactions with canonical reaction topic', async () => {
     const db = setupDb();
     const { service, received } = setupExternalEventService(db);
