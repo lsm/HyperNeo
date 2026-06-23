@@ -867,6 +867,14 @@ function buildCompactBoundaryTurn(row: ParsedThreadRow): CompactBoundaryFeedTurn
   };
 }
 
+function isFoldedTaskNotification(row: ParsedThreadRow, rosteredToolUseIds: Set<string>): boolean {
+  const message = row.message;
+  if (!message || message.type !== 'system') return false;
+  if ((message as { subtype?: string }).subtype !== 'task_notification') return false;
+  const toolUseId = (message as { tool_use_id?: string }).tool_use_id;
+  return !!toolUseId && rosteredToolUseIds.has(toolUseId);
+}
+
 function buildOperationalSystemTurn(
   row: ParsedThreadRow,
   isSessionTail: boolean,
@@ -890,10 +898,7 @@ function buildOperationalSystemTurn(
   // capped out of the last ROSTER_MAX_ENTRIES entries), fall through to a
   // system turn so the terminal summary/usage/failure is not silently lost.
   // True orphans (no tool_use_id) also fall through.
-  if (subtype === 'task_notification') {
-    const toolUseId = (message as { tool_use_id?: string }).tool_use_id;
-    if (toolUseId && rosteredToolUseIds.has(toolUseId)) return null;
-  }
+  if (isFoldedTaskNotification(row, rosteredToolUseIds)) return null;
   // Honor the centralized hidden-subtype contract so Space task threads
   // don't surface noisy rows the main transcript already hides.
   if (isHiddenSystemSubtype(subtype)) return null;
@@ -1236,11 +1241,7 @@ function buildFeedTurns(
         flush();
         continue;
       }
-      const message = row.message;
-      if (
-        message?.type === 'system' &&
-        (message as { subtype?: string }).subtype !== 'task_notification'
-      ) {
+      if (buildOperationalSystemTurn(row, false, new Set())) {
         flush();
         continue;
       }
@@ -1343,6 +1344,9 @@ function buildFeedTurns(
       if (operationalSystemTurn) {
         flushAgent();
         turns.push(operationalSystemTurn);
+        continue;
+      }
+      if (isFoldedTaskNotification(row, rosteredToolUseIds)) {
         continue;
       }
       if (isUserRow(row)) {

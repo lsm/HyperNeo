@@ -510,6 +510,97 @@ describe('MinimalThreadFeed', () => {
     expect(screen.queryByText('preliminary')).toBeNull();
   });
 
+  it('keeps folded post-result task_notification rows from creating active rails', () => {
+    const t = Date.now();
+    const rows = [
+      makeRow({
+        id: 'a1',
+        label: 'Coder Agent',
+        createdAt: t,
+        message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'bun test' } }]),
+      }),
+      makeRow({
+        id: 'r1',
+        label: 'Coder Agent',
+        createdAt: t + 100,
+        message: resultMessage('r1', 'Done'),
+      }),
+      makeRow({
+        id: 'n1',
+        label: 'Coder Agent',
+        createdAt: t + 200,
+        messageType: 'system',
+        message: {
+          type: 'system',
+          subtype: 'task_notification',
+          task_id: 't',
+          tool_use_id: 'tu-a1-0',
+          status: 'completed',
+          summary: 'all green',
+          output_file: '/tmp/o',
+        },
+      }),
+    ];
+
+    render(<MinimalThreadFeed parsedRows={rows} activeAgentLabels={new Set(['Coder Agent'])} />);
+
+    const turn = screen.getByTestId('minimal-thread-turn');
+    expect(turn.dataset.turnState).toBe('completed');
+    expect(screen.queryByTestId('minimal-thread-active-rail')).toBeNull();
+    expect(screen.queryByText('Task completed')).toBeNull();
+    const entry = screen.getByTestId('minimal-thread-roster-entry');
+    expect(entry.dataset.taskStatus).toBe('completed');
+    expect(entry.textContent).toContain('all green');
+  });
+
+  it('mirrors hidden row handling when collecting completed roster targets', () => {
+    const t = Date.now();
+    const rows = [
+      makeRow({
+        id: 'a1',
+        label: 'Coder Agent',
+        createdAt: t,
+        message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'bun test' } }]),
+      }),
+      makeRow({
+        id: 's1',
+        label: 'Coder Agent',
+        createdAt: t + 50,
+        messageType: 'system',
+        message: { type: 'system', subtype: 'task_started', uuid: 's1' },
+      }),
+      makeRow({
+        id: 'a2',
+        label: 'Coder Agent',
+        createdAt: t + 100,
+        message: assistantText('a2', 'Done'),
+      }),
+      makeRow({ id: 'r1', label: 'Coder Agent', createdAt: t + 200, message: resultMessage('r1') }),
+      makeRow({
+        id: 'n1',
+        label: 'Coder Agent',
+        createdAt: t + 300,
+        messageType: 'system',
+        message: {
+          type: 'system',
+          subtype: 'task_notification',
+          task_id: 't',
+          tool_use_id: 'tu-a1-0',
+          status: 'completed',
+          summary: 'no duplicate row',
+          output_file: '/tmp/o',
+        },
+      }),
+    ];
+
+    render(<MinimalThreadFeed parsedRows={rows} />);
+
+    expect(screen.queryByText('Task completed')).toBeNull();
+    const entry = screen.getByTestId('minimal-thread-roster-entry');
+    expect(entry.dataset.taskStatus).toBe('completed');
+    expect(entry.textContent).toContain('no duplicate row');
+  });
+
   it('folds task_notification onto an earlier completed segment in a user-interrupted block', () => {
     const t = Date.now();
     const rows = [
