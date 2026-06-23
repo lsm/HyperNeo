@@ -2308,7 +2308,7 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(injected.some((item) => item.message.includes(events[0]!.id))).toBe(false);
   });
 
-  test('marks delivery failed when target execution is not active', async () => {
+  test('persists pending delivery when target execution is not active', async () => {
     const { workflow, run, task } = await startRunWithSubscription();
     const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
     nodeExecutionRepo.update(execution.id, {
@@ -2323,12 +2323,13 @@ describe('SpaceRuntime external event subscriptions', () => {
 
     expect(injected).toHaveLength(0);
     const delivery = eventStore.listDeliveries(event.id)[0]!;
-    expect(delivery.state).toBe('failed');
+    expect(delivery.state).toBe('pending');
     expect(delivery.failureReason).toBe('node_execution_not_active');
-    expect(eventStore.getById(event.id)?.state).toBe('failed');
+    expect(eventStore.listPendingDeliveries()).toContainEqual(delivery);
+    expect(eventStore.getById(event.id)?.state).toBe('published');
   });
 
-  test('does not deliver external events to idle executions with retained sessions', async () => {
+  test('persists pending delivery for idle executions with retained sessions', async () => {
     const { workflow, run, task } = await startRunWithSubscription();
     const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
     nodeExecutionRepo.update(execution.id, {
@@ -2343,8 +2344,47 @@ describe('SpaceRuntime external event subscriptions', () => {
 
     expect(injected).toHaveLength(0);
     const delivery = eventStore.listDeliveries(event.id)[0]!;
-    expect(delivery.state).toBe('failed');
+    expect(delivery.state).toBe('pending');
     expect(delivery.failureReason).toBe('node_execution_not_active');
+    expect(eventStore.listPendingDeliveries()).toContainEqual(delivery);
+    expect(eventStore.getById(event.id)?.state).toBe('published');
+  });
+
+  test('fails delivery when inactive target task is already done', async () => {
+    const { workflow, run, task } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'idle',
+      agentSessionId: 'session-done-task',
+      completedAt: Date.now(),
+    });
+    taskRepo.updateTask(task.id, { status: 'done' });
+
+    const event = makeEvent();
+    await eventService.publish(event);
+
+    expect(injected).toHaveLength(0);
+    const delivery = eventStore.listDeliveries(event.id)[0]!;
+    expect(delivery.state).toBe('failed');
+    expect(delivery.failureReason).toBe('target_task_terminal');
+    expect(eventStore.listPendingDeliveries()).not.toContainEqual(delivery);
+    expect(eventStore.getById(event.id)?.state).toBe('failed');
+  });
+
+  test('fails delivery when pending target execution belongs to a done task', async () => {
+    const { workflow, run, task } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    expect(execution.status).toBe('pending');
+    taskRepo.updateTask(task.id, { status: 'done' });
+
+    const event = makeEvent();
+    await eventService.publish(event);
+
+    expect(injected).toHaveLength(0);
+    const delivery = eventStore.listDeliveries(event.id)[0]!;
+    expect(delivery.state).toBe('failed');
+    expect(delivery.failureReason).toBe('target_task_terminal');
+    expect(eventStore.listPendingDeliveries()).not.toContainEqual(delivery);
     expect(eventStore.getById(event.id)?.state).toBe('failed');
   });
 
@@ -2693,6 +2733,39 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(eventStore.getById(event.id)?.state).toBe('delivered');
   });
 
+  test('terminalizes persisted pending deliveries for terminal tasks during runtime rehydrate', async () => {
+    const { workflow, run, task } = await startRunWithSubscription();
+    const event = makeEvent();
+    await eventService.publish(event);
+    const delivery = eventStore.listDeliveries(event.id)[0]!;
+    expect(delivery.state).toBe('pending');
+    taskRepo.updateTask(task.id, { status: 'done' });
+
+    await runtime.stop();
+    runtime = new SpaceRuntime({
+      db,
+      spaceManager: new SpaceManager(db),
+      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+      spaceWorkflowManager: workflowManager,
+      workflowRunRepo,
+      taskRepo,
+      nodeExecutionRepo,
+      internalEventBus: bus,
+      commandBus: createInternalCommandBus(),
+      externalEventStore: eventStore,
+      taskAgentManager: tam as never,
+    });
+    runtime.registerSubscription(run.id, task.id, 'code', 'coder', DEFAULT_TOPIC);
+
+    await runtime.rehydrateExecutors();
+
+    const rehydratedDelivery = eventStore.listDeliveries(event.id)[0]!;
+    expect(rehydratedDelivery.state).toBe('failed');
+    expect(rehydratedDelivery.failureReason).toBe('target_task_terminal');
+    expect(eventStore.listPendingDeliveries()).not.toContainEqual(rehydratedDelivery);
+    expect(eventStore.getById(event.id)?.state).toBe('failed');
+  });
+
   test('ignores terminal runs when matching external event deliveries', async () => {
     const { workflow, run, task } = await startRunWithSubscription();
     workflowRunRepo.updateRun(run.id, { status: 'cancelled' });
@@ -2857,12 +2930,12 @@ describe('SpaceRuntime external event subscriptions', () => {
     const event = makeEvent();
     await eventService.publish(event);
 
-    // The code node should be terminalized immediately (no queueable execution)
+    // The code node should be persisted as pending instead of terminalized.
     const deliveries = eventStore.listDeliveries(event.id);
     expect(deliveries).toHaveLength(2);
     const codeDelivery = deliveries.find((d) => d.nodeId === 'code')!;
     expect(codeDelivery).toBeDefined();
-    expect(codeDelivery.state).toBe('failed');
+    expect(codeDelivery.state).toBe('pending');
     expect(codeDelivery.failureReason).toBe('node_execution_not_active');
   });
 
@@ -3347,8 +3420,8 @@ describe('SpaceRuntime external event subscriptions', () => {
     const deliveries = eventStore.listDeliveries(event.id);
     expect(deliveries).toHaveLength(2);
     expect(deliveries.some((delivery) => delivery.state === 'delivered')).toBe(true);
-    expect(deliveries.some((delivery) => delivery.state === 'failed')).toBe(true);
-    expect(eventStore.getById(event.id)?.state).toBe('failed');
+    expect(deliveries.some((delivery) => delivery.state === 'pending')).toBe(true);
+    expect(eventStore.getById(event.id)?.state).toBe('published');
   });
 
   test('terminalizes delivery instead of retrying when run is terminal after transient dispatch failure', async () => {
@@ -3767,6 +3840,58 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(injected).toHaveLength(0);
   });
 
+  test('terminalizes DB-only pending deliveries when run interests are cleared', async () => {
+    const { workflow, run, task } = await startRunWithSubscription();
+    const event = makeEvent();
+    await eventService.publish(event);
+    const pendingDelivery = eventStore.listDeliveries(event.id)[0]!;
+    expect(pendingDelivery.state).toBe('pending');
+
+    runtime.clearRunInterests(run.id);
+
+    const delivery = eventStore.listDeliveries(event.id)[0]!;
+    expect(delivery.state).toBe('failed');
+    expect(delivery.failureReason).toBe('run_terminal_cleanup');
+    expect(eventStore.getById(event.id)?.state).toBe('failed');
+  });
+
+  test('terminalizes DB-only pending deliveries when target subscription is cleared', async () => {
+    const { workflow, run, task } = await startRunWithSubscription();
+    const event = makeEvent();
+    await eventService.publish(event);
+    const pendingDelivery = eventStore.listDeliveries(event.id)[0]!;
+    expect(pendingDelivery.state).toBe('pending');
+
+    runtime.unregisterExecution(run.id, task.id, 'code', 'coder');
+
+    const delivery = eventStore.listDeliveries(event.id)[0]!;
+    expect(delivery.state).toBe('failed');
+    expect(delivery.failureReason).toBe('node_execution_cancelled');
+    expect(eventStore.getById(event.id)?.state).toBe('failed');
+  });
+
+  test('preserves DB-only pending deliveries when another target subscription survives', async () => {
+    const { workflow, run, task } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'idle',
+      completedAt: Date.now(),
+    });
+    runtime.registerSubscription(run.id, task.id, 'code', 'coder', DEFAULT_TOPIC, {
+      subscriptionKind: 'auto',
+    });
+    const event = makeEvent();
+    await eventService.publish(event);
+    const pendingDelivery = eventStore.listDeliveries(event.id)[0]!;
+    expect(pendingDelivery.state).toBe('pending');
+
+    runtime.clearPrEventSubscriptionsForRun(run.id);
+
+    const delivery = eventStore.listDeliveries(event.id)[0]!;
+    expect(delivery.state).toBe('pending');
+    expect(delivery.failureReason).toBe('node_execution_not_active');
+    expect(eventStore.getById(event.id)?.state).toBe('published');
+  });
   test('terminalizes persisted pending deliveries for non-deliverable runs on rehydrate', async () => {
     const { workflow, run, task } = await startRunWithSubscription();
     const event = makeEvent();

@@ -129,6 +129,7 @@ const WEBHOOK_PATH = '/webhook/github/space';
 
 interface GitHubEventExtensionOptions {
   pollIntervalMs?: number;
+  getPollIntervalMs?: () => number | undefined;
   fetchImpl?: typeof fetch;
   /**
    * Optional credential store used to persist the GitHub PAT outside env vars.
@@ -199,7 +200,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
   async start(context: ExternalEventExtensionContext): Promise<void> {
     this.context = context;
     this.stopped = false;
-    if (!(await this.isPollingGloballyEnabled())) return;
+    if (!(await this.isPollingGloballyEnabled()) || this.getPollIntervalMs() <= 0) return;
     this.scheduleNextPoll();
   }
 
@@ -215,14 +216,18 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       await assertRpcConfigEnabled(context, this.sourceId);
       const params = data as { spaceId: string };
       if (!params.spaceId) throw new Error('spaceId is required');
+      const willReenablePollingRows = this.repo
+        .listWatchedRepos(params.spaceId)
+        .some((repo) => repo.pollingEnabled);
       this.repo.setRepoEnabled(params.spaceId, true);
       // Re-enabling a space can revive polling-configured rows whose
       // `enabled` flag was just flipped back on. If the global polling
       // capability was cleared while the space was disabled (see
       // disablePollingCapabilityIfUnused), the timer would never restart
-      // on its own. Re-arm the capability + timer here when any newly
-      // re-enabled polling row exists.
-      if (this.repo.listPollingRepos(params.spaceId).length > 0) {
+      // on its own. Re-arm the capability + timer here only when polling is
+      // globally enabled; interval=0 should still allow webhook delivery to
+      // resume for the space without re-enabling polling.
+      if (willReenablePollingRows && this.getPollIntervalMs() > 0) {
         await this.enablePollingCapability(context);
         this.ensurePollingActive();
       }
@@ -264,6 +269,9 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         throw new Error('spaceId, owner and repo are required');
       }
       const existing = this.repo.getWatchedRepo(params.spaceId, params.owner, params.repo);
+      if (params.pollingEnabled && !existing?.pollingEnabled) {
+        this.assertPollingIntervalEnabled();
+      }
       const replacingAutoSecret = Boolean(params.webhookSecret && existing?.webhookAutoRegistered);
       const disablingAutoWebhook = Boolean(
         existing?.webhookAutoRegistered &&
@@ -293,8 +301,10 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         // the row is later removed.
         this.repo.setPollingIntent(params.spaceId, true);
         await this.persistSpaceConfig(context, watchedRepo.spaceId);
-        await this.enablePollingCapability(context);
-        this.ensurePollingActive();
+        if (this.getPollIntervalMs() > 0) {
+          await this.enablePollingCapability(context);
+          this.ensurePollingActive();
+        }
       } else {
         // Per-row polling was turned off (or the row was added without
         // polling). If the user explicitly disabled the last polling-configured
@@ -488,6 +498,9 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       if (!params.spaceId || typeof params.enabled !== 'boolean') {
         throw new Error('spaceId and enabled are required');
       }
+      if (params.enabled) {
+        this.assertPollingIntervalEnabled();
+      }
       const repos = this.repo.listWatchedRepos(params.spaceId);
       for (const repo of repos) {
         if (params.enabled && repo.webhookEnabled && repo.webhookSecret) {
@@ -652,8 +665,23 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     return global.globallyEnabled && global.capabilities.polling !== false;
   }
 
+  async refreshPollingInterval(): Promise<void> {
+    if (this.stopped) return;
+    if (!(await this.isPollingGloballyEnabled()) || this.getPollIntervalMs() <= 0) {
+      if (this.pollTimer) clearTimeout(this.pollTimer);
+      this.pollTimer = null;
+      return;
+    }
+    if (this.activePollCycle) return;
+    const delay = this.getNextPollDelayMs();
+    if (delay === null) return;
+    this.scheduleNextPollAfter(delay);
+  }
+
   private scheduleNextPoll(): void {
-    this.scheduleNextPollAfter(this.options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS);
+    const delay = this.getNextPollDelayMs();
+    if (delay === null) return;
+    this.scheduleNextPollAfter(delay);
   }
 
   /**
@@ -697,18 +725,33 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       }
       return;
     }
+    const delay = this.getNextPollDelayMs();
+    if (delay === null) return;
+    this.scheduleNextPollAfter(delay);
+  }
+
+  private getNextPollDelayMs(): number | null {
+    const intervalMs = this.getPollIntervalMs();
+    if (intervalMs <= 0) return null;
+
     const now = Date.now();
-    let delay: number;
     if (now < this.rateLimitedUntil) {
       // Retry-After-based cooldowns may be shorter than the minimum backoff;
       // honor them exactly. Primary reset windows are floored to the minimum.
-      delay = this.rateLimitedFromRetryAfter
+      const rateLimitDelay = this.rateLimitedFromRetryAfter
         ? Math.max(0, this.rateLimitedUntil - now)
         : Math.max(RATE_LIMIT_MIN_BACKOFF_MS, this.rateLimitedUntil - now);
-    } else {
-      delay = this.options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
+      return Math.max(intervalMs, rateLimitDelay);
     }
-    this.scheduleNextPollAfter(delay);
+    return intervalMs;
+  }
+
+  private getPollIntervalMs(): number {
+    const configured = this.options.getPollIntervalMs?.() ?? this.options.pollIntervalMs;
+    if (configured === undefined || !Number.isFinite(configured)) {
+      return DEFAULT_POLL_INTERVAL_MS;
+    }
+    return Math.max(0, Math.trunc(configured));
   }
 
   /**
@@ -835,9 +878,17 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     });
   }
 
+  private assertPollingIntervalEnabled(): void {
+    if (this.getPollIntervalMs() <= 0) {
+      throw new Error(
+        'GitHub polling is disabled globally. Set GitHub polling interval above 0 in General settings to enable polling.'
+      );
+    }
+  }
+
   private ensurePollingActive(): void {
     if (this.stopped) return;
-    if (this.pollTimer) return;
+    if (this.pollTimer || this.getPollIntervalMs() <= 0) return;
     this.scheduleNextPoll();
   }
 

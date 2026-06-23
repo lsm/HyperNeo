@@ -36,6 +36,26 @@ describe('SettingsRepository', () => {
     db.close();
   });
 
+  describe('global GitHub polling setting', () => {
+    it('should include the default GitHub polling interval', () => {
+      const settings = repository.getGlobalSettings();
+
+      expect(settings.githubPollingInterval).toBe(120);
+    });
+
+    it('should backfill GitHub polling interval for legacy stored settings', () => {
+      const legacySettings = { ...DEFAULT_GLOBAL_SETTINGS };
+      delete (legacySettings as Partial<GlobalSettings>).githubPollingInterval;
+      db.prepare(
+        `INSERT INTO global_settings (id, settings, updated_at) VALUES (1, ?, datetime('now'))`
+      ).run(JSON.stringify(legacySettings));
+
+      const settings = repository.getGlobalSettings();
+
+      expect(settings.githubPollingInterval).toBe(120);
+    });
+  });
+
   describe('getGlobalToolsConfig', () => {
     it('should return default config when no config exists', () => {
       const config = repository.getGlobalToolsConfig();

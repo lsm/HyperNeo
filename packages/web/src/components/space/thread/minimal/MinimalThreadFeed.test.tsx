@@ -510,6 +510,402 @@ describe('MinimalThreadFeed', () => {
     expect(screen.queryByText('preliminary')).toBeNull();
   });
 
+  it('keeps folded post-result task_notification rows from creating active rails', () => {
+    const t = Date.now();
+    const rows = [
+      makeRow({
+        id: 'a1',
+        label: 'Coder Agent',
+        createdAt: t,
+        message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'bun test' } }]),
+      }),
+      makeRow({
+        id: 'r1',
+        label: 'Coder Agent',
+        createdAt: t + 100,
+        message: resultMessage('r1', 'Done'),
+      }),
+      makeRow({
+        id: 'n1',
+        label: 'Coder Agent',
+        createdAt: t + 200,
+        messageType: 'system',
+        message: {
+          type: 'system',
+          subtype: 'task_notification',
+          task_id: 't',
+          tool_use_id: 'tu-a1-0',
+          status: 'completed',
+          summary: 'all green',
+          output_file: '/tmp/o',
+        },
+      }),
+    ];
+
+    render(<MinimalThreadFeed parsedRows={rows} activeAgentLabels={new Set(['Coder Agent'])} />);
+
+    const turn = screen.getByTestId('minimal-thread-turn');
+    expect(turn.dataset.turnState).toBe('completed');
+    expect(screen.queryByTestId('minimal-thread-active-rail')).toBeNull();
+    expect(screen.queryByText('Task completed')).toBeNull();
+    const entry = screen.getByTestId('minimal-thread-roster-entry');
+    expect(entry.dataset.taskStatus).toBe('completed');
+    expect(entry.textContent).toContain('all green');
+  });
+
+  it('mirrors hidden row handling when collecting completed roster targets', () => {
+    const t = Date.now();
+    const rows = [
+      makeRow({
+        id: 'a1',
+        label: 'Coder Agent',
+        createdAt: t,
+        message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'bun test' } }]),
+      }),
+      makeRow({
+        id: 's1',
+        label: 'Coder Agent',
+        createdAt: t + 50,
+        messageType: 'system',
+        message: { type: 'system', subtype: 'task_started', uuid: 's1' },
+      }),
+      makeRow({
+        id: 'a2',
+        label: 'Coder Agent',
+        createdAt: t + 100,
+        message: assistantText('a2', 'Done'),
+      }),
+      makeRow({ id: 'r1', label: 'Coder Agent', createdAt: t + 200, message: resultMessage('r1') }),
+      makeRow({
+        id: 'n1',
+        label: 'Coder Agent',
+        createdAt: t + 300,
+        messageType: 'system',
+        message: {
+          type: 'system',
+          subtype: 'task_notification',
+          task_id: 't',
+          tool_use_id: 'tu-a1-0',
+          status: 'completed',
+          summary: 'no duplicate row',
+          output_file: '/tmp/o',
+        },
+      }),
+    ];
+
+    render(<MinimalThreadFeed parsedRows={rows} />);
+
+    expect(screen.queryByText('Task completed')).toBeNull();
+    const entry = screen.getByTestId('minimal-thread-roster-entry');
+    expect(entry.dataset.taskStatus).toBe('completed');
+    expect(entry.textContent).toContain('no duplicate row');
+  });
+
+  it('folds task_notification onto an earlier completed segment in a user-interrupted block', () => {
+    const t = Date.now();
+    const rows = [
+      makeRow({
+        id: 'a1',
+        label: 'Coder Agent',
+        createdAt: t,
+        message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'bun test' } }]),
+      }),
+      makeRow({
+        id: 'a2',
+        label: 'Coder Agent',
+        createdAt: t + 100,
+        message: assistantText('a2', 'First segment done'),
+      }),
+      makeRow({
+        id: 'u1',
+        label: 'Coder Agent',
+        createdAt: t + 200,
+        message: humanUserMessage('u1', 'continue'),
+        messageType: 'user',
+      }),
+      makeRow({
+        id: 'a3',
+        label: 'Coder Agent',
+        createdAt: t + 300,
+        message: assistantText('a3', 'Final answer'),
+      }),
+      makeRow({ id: 'r1', label: 'Coder Agent', createdAt: t + 400, message: resultMessage('r1') }),
+      makeRow({
+        id: 'n1',
+        label: 'Coder Agent',
+        createdAt: t + 500,
+        messageType: 'system',
+        message: {
+          type: 'system',
+          subtype: 'task_notification',
+          task_id: 't',
+          tool_use_id: 'tu-a1-0',
+          status: 'completed',
+          summary: 'early tool passed',
+          output_file: '/tmp/o',
+        },
+      }),
+    ];
+
+    render(<MinimalThreadFeed parsedRows={rows} />);
+
+    expect(screen.queryByText('Task completed')).toBeNull();
+    const entry = screen.getByTestId('minimal-thread-roster-entry');
+    expect(entry.dataset.taskStatus).toBe('completed');
+    expect(entry.textContent).toContain('early tool passed');
+    expect(entry.textContent).toContain('✓');
+  });
+
+  it('does not suppress active turn task_notification when active summary is missing', () => {
+    const t = Date.now();
+    const rows = [
+      makeRow({
+        id: 'a1',
+        label: 'Coder Agent',
+        createdAt: t,
+        turnIndex: 1,
+        message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'bun test' } }]),
+      }),
+      makeRow({
+        id: 'a2',
+        label: 'Coder Agent',
+        createdAt: t + 100,
+        turnIndex: 1,
+        message: assistantText('a2', 'Still working'),
+      }),
+      makeRow({
+        id: 'n1',
+        label: 'Coder Agent',
+        createdAt: t + 200,
+        turnIndex: 1,
+        messageType: 'system',
+        message: {
+          type: 'system',
+          subtype: 'task_notification',
+          task_id: 't',
+          tool_use_id: 'tu-a1-0',
+          status: 'completed',
+          summary: 'active summary missing',
+          output_file: '/tmp/o',
+        },
+      }),
+    ];
+
+    render(<MinimalThreadFeed parsedRows={rows} activeAgentLabels={new Set(['Coder Agent'])} />);
+
+    const turns = screen.getAllByTestId('minimal-thread-turn');
+    expect(turns[0].dataset.turnState).toBe('active');
+    const feed = screen.getByTestId('space-task-event-feed-minimal');
+    expect(feed.textContent).toContain('Task completed');
+    expect(feed.textContent).toContain('active summary missing');
+  });
+
+  it('keeps pre-result task_notifications inside completed slices for folding', () => {
+    const t = Date.now();
+    const rows = [
+      makeRow({
+        id: 'a1',
+        label: 'Coder Agent',
+        createdAt: t,
+        message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'bun test' } }]),
+      }),
+      makeRow({
+        id: 'n1',
+        label: 'Coder Agent',
+        createdAt: t + 100,
+        messageType: 'system',
+        message: {
+          type: 'system',
+          subtype: 'task_notification',
+          task_id: 't',
+          tool_use_id: 'tu-a1-0',
+          status: 'completed',
+          summary: 'settled before result',
+          output_file: '/tmp/o',
+        },
+      }),
+      makeRow({
+        id: 'a2',
+        label: 'Coder Agent',
+        createdAt: t + 200,
+        message: assistantText('a2', 'Done'),
+      }),
+      makeRow({ id: 'r1', label: 'Coder Agent', createdAt: t + 300, message: resultMessage('r1') }),
+    ];
+
+    render(<MinimalThreadFeed parsedRows={rows} />);
+
+    expect(screen.queryByText('Task completed')).toBeNull();
+    const entry = screen.getByTestId('minimal-thread-roster-entry');
+    expect(entry.dataset.taskStatus).toBe('completed');
+    expect(entry.textContent).toContain('settled before result');
+  });
+
+  it('keeps capped pre-result task_notifications as standalone rows only', () => {
+    const t = Date.now();
+    const rows = [
+      makeRow({
+        id: 'a1',
+        label: 'Coder Agent',
+        createdAt: t,
+        message: assistantToolUse(
+          'a1',
+          Array.from({ length: 9 }, (_, i) => ({
+            name: 'Bash',
+            input: { command: `echo ${i + 1}` },
+          }))
+        ),
+      }),
+      makeRow({
+        id: 'n1',
+        label: 'Coder Agent',
+        createdAt: t + 100,
+        messageType: 'system',
+        message: {
+          type: 'system',
+          subtype: 'task_notification',
+          task_id: 't',
+          tool_use_id: 'tu-a1-0',
+          status: 'completed',
+          summary: 'first tool done',
+          output_file: '/tmp/o',
+        },
+      }),
+      makeRow({
+        id: 'a2',
+        label: 'Coder Agent',
+        createdAt: t + 200,
+        message: assistantText('a2', 'Done'),
+      }),
+      makeRow({ id: 'r1', label: 'Coder Agent', createdAt: t + 300, message: resultMessage('r1') }),
+    ];
+
+    render(<MinimalThreadFeed parsedRows={rows} />);
+
+    const feed = screen.getByTestId('space-task-event-feed-minimal');
+    expect(feed.textContent).toContain('Task completed');
+    expect(feed.textContent).toContain('first tool done');
+    expect(screen.queryAllByTestId('minimal-thread-roster-entry')).toHaveLength(0);
+  });
+
+  it('folds completed slices inside active blocks without suppressing the active tail', () => {
+    const t = Date.now();
+    const rows = [
+      makeRow({
+        id: 'a1',
+        label: 'Coder Agent',
+        createdAt: t,
+        turnIndex: 1,
+        message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'bun test' } }]),
+      }),
+      makeRow({
+        id: 'a2',
+        label: 'Coder Agent',
+        createdAt: t + 100,
+        turnIndex: 1,
+        message: assistantText('a2', 'Completed slice'),
+      }),
+      makeRow({
+        id: 'u1',
+        label: 'Coder Agent',
+        createdAt: t + 200,
+        turnIndex: 1,
+        message: humanUserMessage('u1', 'continue'),
+        messageType: 'user',
+      }),
+      makeRow({
+        id: 'a3',
+        label: 'Coder Agent',
+        createdAt: t + 300,
+        turnIndex: 1,
+        message: assistantToolUse('a3', [{ name: 'Bash', input: { command: 'still running' } }]),
+      }),
+      makeRow({
+        id: 'n1',
+        label: 'Coder Agent',
+        createdAt: t + 400,
+        turnIndex: 1,
+        messageType: 'system',
+        message: {
+          type: 'system',
+          subtype: 'task_notification',
+          task_id: 't',
+          tool_use_id: 'tu-a1-0',
+          status: 'completed',
+          summary: 'completed slice folded',
+          output_file: '/tmp/o',
+        },
+      }),
+    ];
+
+    render(<MinimalThreadFeed parsedRows={rows} activeAgentLabels={new Set(['Coder Agent'])} />);
+
+    const entries = screen.getAllByTestId('minimal-thread-roster-entry');
+    expect(entries.some((entry) => entry.textContent?.includes('completed slice folded'))).toBe(
+      true
+    );
+    expect(screen.queryByText('Task completed')).toBeNull();
+    const turns = screen.getAllByTestId('minimal-thread-turn');
+    expect(turns.some((turn) => turn.dataset.turnState === 'active')).toBe(true);
+  });
+
+  it('does not suppress active turn task_notification after boundary-flushed slice', () => {
+    const t = Date.now();
+    const rows = [
+      makeRow({
+        id: 'a1',
+        label: 'Coder Agent',
+        createdAt: t,
+        turnIndex: 1,
+        message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'bun test' } }]),
+      }),
+      makeRow({
+        id: 'a2',
+        label: 'Coder Agent',
+        createdAt: t + 100,
+        turnIndex: 1,
+        message: assistantText('a2', 'Still working'),
+      }),
+      makeRow({
+        id: 'u1',
+        label: 'Coder Agent',
+        createdAt: t + 200,
+        turnIndex: 1,
+        message: humanUserMessage('u1', 'continue'),
+        messageType: 'user',
+      }),
+      makeRow({
+        id: 'a3',
+        label: 'Coder Agent',
+        createdAt: t + 300,
+        turnIndex: 1,
+        message: assistantToolUse('a3', [{ name: 'Bash', input: { command: 'still running' } }]),
+      }),
+      makeRow({
+        id: 'n1',
+        label: 'Coder Agent',
+        createdAt: t + 400,
+        turnIndex: 1,
+        messageType: 'system',
+        message: {
+          type: 'system',
+          subtype: 'task_notification',
+          task_id: 't',
+          tool_use_id: 'tu-a3-0',
+          status: 'completed',
+          summary: 'boundary active fallback',
+          output_file: '/tmp/o',
+        },
+      }),
+    ];
+
+    render(<MinimalThreadFeed parsedRows={rows} activeAgentLabels={new Set(['Coder Agent'])} />);
+
+    const feed = screen.getByTestId('space-task-event-feed-minimal');
+    expect(feed.textContent).toContain('Task completed');
+    expect(feed.textContent).toContain('boundary active fallback');
+  });
+
   it('renders the active rail and tool roster for the live turn when activeAgentLabels includes the agent', () => {
     const t = Date.now();
     const rows = [
@@ -784,17 +1180,145 @@ describe('MinimalThreadFeed', () => {
     expect(feed.textContent).not.toContain('Task failed');
   });
 
-  it('falls back to a system row for task_notification with no roster target (completed turn)', () => {
+  it('folds task_notification onto a completed turn roster entry', () => {
     const t = Date.now();
-    // Tool_use + result → completed turn (no active roster). The notification
-    // has a tool_use_id but no rendered roster target, so it must NOT be
-    // suppressed — its summary survives as a standalone row.
     const rows = [
       makeRow({
         id: 'a1',
         label: 'Coder Agent',
         createdAt: t,
         message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'false' } }]),
+      }),
+      makeRow({
+        id: 'r1',
+        label: 'Coder Agent',
+        createdAt: t + 100,
+        message: resultMessage('r1', 'Done'),
+      }),
+      makeRow({
+        id: 'n1',
+        label: 'Coder Agent',
+        createdAt: t + 200,
+        messageType: 'system',
+        message: {
+          type: 'system',
+          subtype: 'task_notification',
+          task_id: 't',
+          tool_use_id: 'tu-a1-0',
+          status: 'failed',
+          summary: 'Bash exited 1',
+          output_file: '/tmp/o',
+          usage: { total_tokens: 4321, tool_uses: 3, duration_ms: 4500 },
+        },
+      }),
+    ];
+
+    render(<MinimalThreadFeed parsedRows={rows} />);
+
+    expect(screen.queryByText('Task failed')).toBeNull();
+    const entry = screen.getByTestId('minimal-thread-roster-entry');
+    expect(entry.dataset.rosterKind).toBe('tool');
+    expect(entry.dataset.taskStatus).toBe('failed');
+    expect(entry.textContent).toContain('Bash exited 1');
+    expect(entry.textContent).toContain('4,321 tok');
+    expect(entry.textContent).toContain('3 tools');
+    expect(entry.textContent).toContain('4.5s');
+    expect(entry.textContent).toContain('✗');
+  });
+
+  it('renders stopped task_notification distinctly when folded onto completed roster', () => {
+    const t = Date.now();
+    const rows = [
+      makeRow({
+        id: 'a1',
+        label: 'Coder Agent',
+        createdAt: t,
+        message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'sleep 10' } }]),
+      }),
+      makeRow({
+        id: 'r1',
+        label: 'Coder Agent',
+        createdAt: t + 100,
+        message: resultMessage('r1', 'Stopped'),
+      }),
+      makeRow({
+        id: 'n1',
+        label: 'Coder Agent',
+        createdAt: t + 200,
+        messageType: 'system',
+        message: {
+          type: 'system',
+          subtype: 'task_notification',
+          task_id: 't',
+          tool_use_id: 'tu-a1-0',
+          status: 'stopped',
+          summary: 'cancelled by user',
+          output_file: '/tmp/o',
+        },
+      }),
+    ];
+
+    render(<MinimalThreadFeed parsedRows={rows} />);
+
+    expect(screen.queryByTestId('minimal-thread-system')).toBeNull();
+    const entry = screen.getByTestId('minimal-thread-roster-entry');
+    expect(entry.dataset.taskStatus).toBe('stopped');
+    expect(entry.textContent).toContain('Task stopped');
+    expect(entry.textContent).toContain('cancelled by user');
+    expect(entry.textContent).toContain('■');
+    expect(entry.textContent).not.toContain('✗');
+    expect(entry.querySelector('[aria-label="task stopped"]')).toBeTruthy();
+    expect(entry.querySelector('[aria-label="task failed"]')).toBeNull();
+  });
+
+  it('caps completed roster previews and suppresses MCP previews', () => {
+    const t = Date.now();
+    const longCommand = `node -e "${'x'.repeat(240)}"`;
+    const rows = [
+      makeRow({
+        id: 'a1',
+        label: 'Coder Agent',
+        createdAt: t,
+        message: assistantToolUse('a1', [
+          { name: 'Bash', input: { command: longCommand } },
+          { name: 'mcp__node-agent__send_message', input: { message: 'secret '.repeat(80) } },
+        ]),
+      }),
+      makeRow({
+        id: 'r1',
+        label: 'Coder Agent',
+        createdAt: t + 100,
+        message: resultMessage('r1', 'Done'),
+      }),
+    ];
+
+    render(<MinimalThreadFeed parsedRows={rows} />);
+
+    const entries = screen.getAllByTestId('minimal-thread-roster-entry');
+    const bashText = entries[0].textContent ?? '';
+    expect(bashText).toContain('…');
+    expect(bashText).not.toContain(longCommand);
+    expect(bashText.length).toBeLessThan(longCommand.length);
+    expect(entries[1].textContent).not.toContain('secret');
+  });
+
+  it('falls back to a system row for task_notification with no roster target (completed turn)', () => {
+    const t = Date.now();
+    // More than ROSTER_MAX_ENTRIES tool_use blocks → the first tool is capped
+    // out of the completed roster. Its notification must remain standalone so
+    // terminal metadata is not lost.
+    const rows = [
+      makeRow({
+        id: 'a1',
+        label: 'Coder Agent',
+        createdAt: t,
+        message: assistantToolUse(
+          'a1',
+          Array.from({ length: 9 }, (_, i) => ({
+            name: 'Bash',
+            input: { command: `echo ${i + 1}` },
+          }))
+        ),
       }),
       makeRow({ id: 'r1', label: 'Coder Agent', createdAt: t + 100, message: resultMessage('r1') }),
       makeRow({
@@ -817,7 +1341,7 @@ describe('MinimalThreadFeed', () => {
 
     render(<MinimalThreadFeed parsedRows={rows} />);
 
-    // No active summary → no roster target → notification renders as a row,
+    // Capped out of the completed roster → notification renders as a row,
     // preserving both summary and usage (terminal metadata not lost).
     const feed = screen.getByTestId('space-task-event-feed-minimal');
     expect(feed.textContent).toContain('Bash exited 1');

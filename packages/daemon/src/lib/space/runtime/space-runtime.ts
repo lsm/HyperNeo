@@ -27,6 +27,7 @@ import type {
   SpaceApprovalSource,
   SpaceTask,
   SpaceTaskPriority,
+  SpaceTaskStatus,
   SpaceWorkflow,
   SpaceWorkflowRun,
   UpdateSpaceTaskParams,
@@ -704,6 +705,12 @@ function longHorizonSpaceIdFromWorkflowRunId(workflowRunId: string): string | nu
 function isExternallyDeliverableRun(status: SpaceWorkflowRun['status']): boolean {
   return status === 'in_progress' || status === 'blocked';
 }
+
+const EXTERNAL_EVENT_TARGET_TASK_TERMINAL_STATUSES: ReadonlySet<SpaceTaskStatus> = new Set([
+  'done',
+  'cancelled',
+  'archived',
+]);
 
 function parseSubscriptionQueueKey(
   key: string
@@ -1832,7 +1839,13 @@ export class SpaceRuntime {
           continue;
         }
 
-        if (target.sessionId && this.isTargetSessionLive(target.sessionId)) {
+        if (this.isTargetTaskTerminal(target.taskId)) {
+          store.markDeliveryFailed(payload.eventId, deliveryKey, {
+            terminal: true,
+            reason: 'target_task_terminal',
+          });
+          store.markEventFailedIfAllDeliveriesTerminal(payload.eventId);
+        } else if (target.sessionId && this.isTargetSessionLive(target.sessionId)) {
           await this.enqueueDeliverableExternalEvent(target, payload, deliveryKey, 'immediate');
         } else if (target.sessionId) {
           await this.enqueueDeliverableExternalEvent(target, payload, deliveryKey, 'defer');
@@ -1844,11 +1857,11 @@ export class SpaceRuntime {
         ) {
           this.queueForPendingNode(target, payload, deliveryKey);
         } else {
+          this.clearExternalEventRetry(deliveryKey);
           store.markDeliveryFailed(payload.eventId, deliveryKey, {
-            terminal: true,
+            terminal: false,
             reason: 'node_execution_not_active',
           });
-          store.markEventFailedIfAllDeliveriesTerminal(payload.eventId);
         }
       } catch (err) {
         log.warn(
@@ -2471,15 +2484,36 @@ export class SpaceRuntime {
   ): void {
     const key = this.buildQueueKey(target);
     const queued = this.pendingExternalEventQueue.get(key);
-    if (!queued) return;
-    this.failQueuedDeliveries(queued, reason);
-    for (const item of queued) {
-      this.clearExternalEventRetry(item.deliveryKey);
+    if (queued) {
+      this.failQueuedDeliveries(queued, reason);
+      for (const item of queued) {
+        this.clearExternalEventRetry(item.deliveryKey);
+      }
+      this.pendingExternalEventQueue.delete(key);
     }
-    this.pendingExternalEventQueue.delete(key);
+
+    const store = this.config.externalEventStore;
+    if (!store) return;
+    for (const delivery of store.listPendingDeliveries(target.workflowRunId)) {
+      if (
+        delivery.taskId !== target.taskId ||
+        delivery.nodeId !== target.nodeId ||
+        delivery.agentName !== target.agentName
+      ) {
+        continue;
+      }
+      const eventRecord = store.getById(delivery.eventId);
+      if (eventRecord?.event && this.isTargetStillSubscribed(target, eventRecord.event.topic)) {
+        continue;
+      }
+      store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, { terminal: true, reason });
+      store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
+      this.clearExternalEventRetry(delivery.deliveryKey);
+    }
   }
 
   private clearQueuedDeliveriesForRun(workflowRunId: string, reason: string): void {
+    const store = this.config.externalEventStore;
     for (const [queueKey, queued] of this.pendingExternalEventQueue) {
       const parsed = parseSubscriptionQueueKey(queueKey);
       if (!parsed || parsed.workflowRunId !== workflowRunId) continue;
@@ -2488,6 +2522,12 @@ export class SpaceRuntime {
         this.clearExternalEventRetry(item.deliveryKey);
       }
       this.pendingExternalEventQueue.delete(queueKey);
+    }
+    if (!store) return;
+    for (const delivery of store.listPendingDeliveries(workflowRunId)) {
+      store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, { terminal: true, reason });
+      store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
+      this.clearExternalEventRetry(delivery.deliveryKey);
     }
   }
 
@@ -2560,6 +2600,11 @@ export class SpaceRuntime {
           execution.agentName === target.agentName &&
           (execution.status === 'idle' || execution.status === 'cancelled')
       );
+  }
+
+  private isTargetTaskTerminal(taskId: string): boolean {
+    const task = this.config.taskRepo.getTask(taskId);
+    return task ? EXTERNAL_EVENT_TARGET_TASK_TERMINAL_STATUSES.has(task.status) : true;
   }
 
   private buildQueueKey(
@@ -4179,6 +4224,15 @@ export class SpaceRuntime {
         continue;
       }
 
+      if (this.isTargetTaskTerminal(target.taskId)) {
+        store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, {
+          terminal: true,
+          reason: 'target_task_terminal',
+        });
+        store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
+        continue;
+      }
+
       if (!this.isTargetStillSubscribed(target, eventRecord.event.topic)) {
         store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, {
           terminal: true,
@@ -4481,8 +4535,10 @@ export class SpaceRuntime {
         ex.status === 'waiting_rebind' ||
         ex.status === 'blocked'
     );
+    const pendingMessageRepo = this.config.pendingMessageRepo;
+    pendingMessageRepo?.enforceRetention({ runId: run.id });
     const hasQueuedNodeHandoff =
-      this.config.pendingMessageRepo
+      pendingMessageRepo
         ?.listPendingForRun(run.id)
         .some((row) => row.targetKind === 'node_agent') ?? false;
     if (hasDriveableExecution || hasQueuedNodeHandoff) return 'skipped';
@@ -5939,17 +5995,18 @@ export class SpaceRuntime {
       return false;
     }
 
-    const expiredNodeHandoffs = repo
-      .listByRunAndStatus(runId, 'expired')
-      .filter((row) => row.targetKind === 'node_agent');
-    if (expiredNodeHandoffs.length > 0) {
-      const first = expiredNodeHandoffs[0];
-      const reason = `Queued workflow handoff to ${first.targetAgentName} expired before delivery after ${first.attempts} attempt(s)`;
-      await this.blockRunForQueuedHandoffFailure(runId, meta.spaceId, canonicalTask, reason);
-      return true;
+    if (pending.length === 0) {
+      const expiredNodeHandoffs = repo
+        .listByRunAndStatus(runId, 'expired')
+        .filter((row) => row.targetKind === 'node_agent');
+      if (expiredNodeHandoffs.length > 0) {
+        const first = expiredNodeHandoffs[0];
+        const reason = `Queued workflow handoff to ${first.targetAgentName} expired before delivery after ${first.attempts} attempt(s)`;
+        await this.blockRunForQueuedHandoffFailure(runId, meta.spaceId, canonicalTask, reason);
+        return true;
+      }
+      return false;
     }
-
-    if (pending.length === 0) return false;
 
     if (!space) {
       let blockedReason: string | null = null;
