@@ -19,6 +19,7 @@ import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/reposit
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
+import { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository';
 import { createSpaceTables } from '../../helpers/space-test-db';
 
 const SPACE_ID = 'space-runtime-events';
@@ -128,6 +129,7 @@ describe('SpaceRuntime external event subscriptions', () => {
   let workflowRunRepo: SpaceWorkflowRunRepository;
   let taskRepo: SpaceTaskRepository;
   let nodeExecutionRepo: NodeExecutionRepository;
+  let artifactRepo: WorkflowRunArtifactRepository;
   let workflowManager: SpaceWorkflowManager;
   let runtime: SpaceRuntime;
   let eventStore: ExternalEventStore;
@@ -211,6 +213,7 @@ describe('SpaceRuntime external event subscriptions', () => {
       return { ok: true };
     });
     tam = new MockTaskAgentManager();
+    artifactRepo = new WorkflowRunArtifactRepository(db);
     runtime = new SpaceRuntime({
       db,
       spaceManager: new SpaceManager(db),
@@ -219,6 +222,7 @@ describe('SpaceRuntime external event subscriptions', () => {
       workflowRunRepo,
       taskRepo,
       nodeExecutionRepo,
+      artifactRepo,
       internalEventBus: bus,
       commandBus,
       externalEventStore: eventStore,
@@ -1018,6 +1022,40 @@ describe('SpaceRuntime external event subscriptions', () => {
       runtime.clearPrEventSubscriptionsForRun(run.id);
       await eventService.publish(makeEvent());
       expect(injected).toHaveLength(1);
+    });
+
+    test('rehydrateWorkerPrSubscriptionsForRun rebuilds auto_pr from saved pr_url artifacts', async () => {
+      const workflow = createWorkflow('code');
+      const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const task = tasks[0]!;
+      const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: 'session-rehydrate',
+        startedAt: Date.now(),
+      });
+      tam.alive.add('session-rehydrate');
+
+      // Worker previously saved a pr_url artifact; the in-memory auto_pr is
+      // gone after a daemon restart.
+      artifactRepo.upsert({
+        id: 'art-rehydrate',
+        runId: run.id,
+        nodeId: 'code',
+        artifactType: 'result',
+        artifactKey: '',
+        data: { pr_url: 'https://github.com/lsm/neokai/pull/42' },
+      });
+
+      // Rehydrate rebuilds the worker's auto_pr from the artifact.
+      const rehydrated = runtime.rehydrateWorkerPrSubscriptionsForRun(run.id);
+      expect(rehydrated).toBe(1);
+
+      // The rebuilt subscription delivers the PR event.
+      await eventService.publish(makeEvent());
+      expect(injected).toHaveLength(1);
+      expect(injected[0]!.sessionId).toBe('session-rehydrate');
+      void task;
     });
   });
 

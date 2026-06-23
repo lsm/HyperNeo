@@ -1509,6 +1509,54 @@ export class SpaceRuntime {
   }
 
   /**
+   * Rebuild worker-level `auto_pr` subscriptions for a run from the `pr_url`
+   * artifacts each node saved. Worker PR subscriptions live only in the
+   * in-memory TopicTrie and are lost on daemon restart; this is the rehydrate
+   * path (called from SpaceRuntimeService at startup and on space resume) so
+   * GitHub review/comment events keep reaching the worker that opened the PR.
+   *
+   * For each node that saved a `pr_url`, re-registers an `auto_pr` sub for that
+   * node's agent slot via {@link ensurePrSubscriptionForNode} (idempotent).
+   * Returns the count of newly-registered subscriptions. Best-effort: errors
+   * for individual runs are caught by the caller.
+   */
+  rehydrateWorkerPrSubscriptionsForRun(workflowRunId: string): number {
+    const artifactRepo = this.config.artifactRepo;
+    if (!artifactRepo) return 0;
+    const taskId = this.resolveExecutionTaskId(workflowRunId);
+    if (!taskId) return 0;
+    // First pr_url artifact per node wins.
+    const prUrlByNode = new Map<string, string>();
+    const fromData = (data: Record<string, unknown> | undefined): string =>
+      (typeof data?.pr_url === 'string' && data.pr_url) ||
+      (typeof data?.prUrl === 'string' && data.prUrl) ||
+      '';
+    for (const artifact of artifactRepo.listByRun(workflowRunId) ?? []) {
+      const prUrl = fromData(artifact.data);
+      if (prUrl && artifact.nodeId && !prUrlByNode.has(artifact.nodeId)) {
+        prUrlByNode.set(artifact.nodeId, prUrl);
+      }
+    }
+    if (prUrlByNode.size === 0) return 0;
+    let rehydrated = 0;
+    for (const execution of this.config.nodeExecutionRepo.listByWorkflowRun(workflowRunId)) {
+      const prUrl = execution.workflowNodeId
+        ? prUrlByNode.get(execution.workflowNodeId)
+        : undefined;
+      if (!prUrl || !execution.agentName || !execution.workflowNodeId) continue;
+      const result = this.ensurePrSubscriptionForNode(
+        workflowRunId,
+        taskId,
+        execution.workflowNodeId,
+        execution.agentName,
+        prUrl
+      );
+      if (result.success && result.subscribed) rehydrated++;
+    }
+    return rehydrated;
+  }
+
+  /**
    * Sync the PR-event auto-subscription for a run that just transitioned to
    * `blocked` via direct `workflowRunRepo.transitionStatus(...)` paths that
    * bypass {@link transitionRunStatusAndEmit} (markFailed RPC, gate rejection
