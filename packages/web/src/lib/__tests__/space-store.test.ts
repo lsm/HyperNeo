@@ -475,6 +475,35 @@ describe('SpaceStore — space selection', () => {
     expect(mockHub.request).not.toHaveBeenCalled();
   });
 
+  it('discards stale agent list results after a space switch', async () => {
+    await spaceStore.selectSpace('space-1');
+    let resolveList: (value: { agents: SpaceAgent[] }) => void = () => {};
+    mockHub.request.mockImplementation((method: string, params?: Record<string, unknown>) => {
+      if (method === 'spaceAgent.list' && params?.spaceId === 'space-1') {
+        return new Promise<{ agents: SpaceAgent[] }>((resolve) => {
+          resolveList = resolve;
+        });
+      }
+      if (method === 'spaceAgent.list') return Promise.resolve({ agents: [] });
+      if (method === 'spaceAgent.listBuiltInTemplates') return Promise.resolve({ templates: [] });
+      if (method === 'spaceWorkflow.list') return Promise.resolve({ workflows: [] });
+      if (method === 'spaceWorkflow.listBuiltInTemplates')
+        return Promise.resolve({ workflows: [] });
+      if (method === 'spaceLongHorizonAgent.list') return Promise.resolve({ agents: [] });
+      if (method === 'spaceLongHorizonAgent.listBuiltInTemplates') {
+        return Promise.resolve({ templates: [] });
+      }
+      return Promise.resolve({});
+    });
+
+    const request = spaceStore.ensureConfigData();
+    await spaceStore.selectSpace('space-2');
+    resolveList({ agents: [makeAgent('stale-agent')] });
+    await request;
+
+    expect(spaceStore.agents.value.some((agent) => agent.id === 'stale-agent')).toBe(false);
+  });
+
   it('clears state on clearSpace()', async () => {
     await spaceStore.selectSpace('space-1');
     spaceStore.tasks.value = [makeTask('t1')];

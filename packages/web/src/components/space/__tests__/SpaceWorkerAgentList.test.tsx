@@ -230,4 +230,19 @@ describe('SpaceWorkerAgentList', () => {
     await waitFor(() => expect(mockSyncAgentFromTemplate).toHaveBeenCalledWith('coder-agent'));
     await waitFor(() => expect(queryByText('Sync Worker Agent from Template')).toBeNull());
   });
+
+  it('clears stale modals when the active space changes', async () => {
+    mockAgents.value = [makeAgent('coder-agent')];
+
+    const { getByLabelText, getByText, queryByText, rerender } = render(<SpaceWorkerAgentList />);
+
+    fireEvent.click(getByLabelText('Delete Agent coder-agent'));
+    expect(getByText('Delete Worker Agent')).toBeTruthy();
+
+    mockSpaceId.value = 'space-2';
+    rerender(<SpaceWorkerAgentList />);
+
+    await waitFor(() => expect(queryByText('Delete Worker Agent')).toBeNull());
+    expect(mockDeleteAgent).not.toHaveBeenCalled();
+  });
 });

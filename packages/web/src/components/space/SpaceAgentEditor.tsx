@@ -28,7 +28,10 @@ import type { SpaceAgentTemplate } from '../../lib/space-store';
 import { spaceStore } from '../../lib/space-store';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
-import { WorkflowModelSelect } from './visual-editor/WorkflowModelSelect';
+import {
+  WorkflowModelSelect,
+  type WorkflowModelSelection,
+} from './visual-editor/WorkflowModelSelect';
 
 // ============================================================================
 // Constants
@@ -38,7 +41,7 @@ type ToolName = (typeof KNOWN_TOOLS)[number];
 
 /** Tool presets map preset name → tool selection */
 const TOOL_PRESETS: Record<string, ToolName[]> = {
-  'Full Coding': ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob', 'WebFetch', 'WebSearch'],
+  'Full Coding': [...KNOWN_TOOLS],
   'Read Only': ['Read', 'Grep', 'Glob'],
 };
 
@@ -56,8 +59,8 @@ const THINKING_LEVEL_OPTIONS: Array<{ value: '' | ThinkingLevel; label: string }
 // ============================================================================
 
 /** Detect which preset name matches a given tool list, or 'Custom' if no match */
-function detectPreset(toolList: string[] | undefined): string {
-  if (!toolList) return 'Full Coding';
+function detectPreset(toolList: string[] | null | undefined): string {
+  if (!toolList) return 'Inherited';
   for (const [preset, presetTools] of Object.entries(TOOL_PRESETS)) {
     if (toolList.length === presetTools.length && presetTools.every((t) => toolList.includes(t))) {
       return preset;
@@ -149,6 +152,7 @@ export function SpaceAgentEditor({
     agent?.description ?? promotionDraft?.description ?? ''
   );
   const [model, setModel] = useState(agent?.model ?? promotionDraft?.model ?? '');
+  const [provider, setProvider] = useState(agent?.provider ?? promotionDraft?.provider ?? '');
   const [thinkingLevel, setThinkingLevel] = useState<'' | ThinkingLevel>(
     agent?.thinkingLevel
       ? normalizeThinkingLevel(agent.thinkingLevel)
@@ -158,6 +162,9 @@ export function SpaceAgentEditor({
   );
   const [tools, setTools] = useState<string[]>(
     agent?.tools ?? promotionDraft?.tools ?? [...TOOL_PRESETS['Full Coding']]
+  );
+  const [toolsOverridden, setToolsOverridden] = useState(
+    agent?.tools !== undefined || promotionDraft?.tools !== undefined || !isEdit
   );
   const [customPrompt, setCustomPrompt] = useState(
     agent?.customPrompt ?? promotionDraft?.customPrompt ?? ''
@@ -184,6 +191,7 @@ export function SpaceAgentEditor({
   const applyPreset = (presetName: string) => {
     setActivePreset(presetName);
     if (presetName in TOOL_PRESETS) {
+      setToolsOverridden(true);
       setTools([...TOOL_PRESETS[presetName]]);
     }
   };
@@ -195,12 +203,14 @@ export function SpaceAgentEditor({
     setDescription(template.description ?? '');
     setCustomPrompt(template.customPrompt ?? '');
     setTools([...template.tools]);
+    setToolsOverridden(true);
     setActivePreset(detectPreset(template.tools));
     setErrors((prev) => ({ ...prev, tools: '', name: '', model: '' }));
     setSaveError(null);
   };
 
   const toggleTool = (tool: string) => {
+    setToolsOverridden(true);
     setTools((prev) => {
       const next = prev.includes(tool) ? prev.filter((t) => t !== tool) : [...prev, tool];
       setActivePreset(detectPreset(next));
@@ -222,7 +232,7 @@ export function SpaceAgentEditor({
       }
     }
 
-    if (tools.length === 0) {
+    if (toolsOverridden && tools.length === 0) {
       newErrors['tools'] = 'At least one tool must be selected';
     }
 
@@ -238,18 +248,32 @@ export function SpaceAgentEditor({
     setSaveError(null);
 
     try {
+      const trimmedDescription = description.trim();
       const trimmedModel = model.trim();
+      const providerChanged = provider !== (agent?.provider ?? '');
+      const templateTracked = agent?.templateName || agent?.templateHash;
+      const templateFieldsChanged =
+        isEdit &&
+        templateTracked &&
+        (trimmedDescription !== (agent.description ?? '') ||
+          customPrompt !== (agent.customPrompt ?? '') ||
+          (toolsOverridden && JSON.stringify(tools) !== JSON.stringify(agent.tools ?? [])));
       const baseParams = {
         name: name.trim(),
-        description: description.trim() || undefined,
-        ...(trimmedModel ? { model: trimmedModel } : {}),
+        description: trimmedDescription || (isEdit ? null : undefined),
+        ...(trimmedModel ? { model: trimmedModel, provider: provider || undefined } : {}),
+        ...(isEdit && !trimmedModel && (agent?.model || agent?.provider)
+          ? { model: null, provider: null }
+          : {}),
+        ...(isEdit && trimmedModel && providerChanged && !provider ? { provider: null } : {}),
         customPrompt: customPrompt || null,
-        tools: tools.length > 0 ? tools : undefined,
+        ...(toolsOverridden ? { tools: tools.length > 0 ? tools : null } : {}),
         ...(clearSettingSources ||
         JSON.stringify(settingSources) !==
           JSON.stringify(agent?.settingSources ?? inheritedSettingSources)
           ? { settingSources: clearSettingSources ? null : settingSources }
           : {}),
+        ...(templateFieldsChanged ? { templateName: null, templateHash: null } : {}),
       };
 
       if (isEdit && agent) {
@@ -257,16 +281,32 @@ export function SpaceAgentEditor({
           ...baseParams,
           thinkingLevel: thinkingLevel || null,
         });
-      } else if (promotionDraft) {
-        await spaceStore.promoteSessionToAgent(promotionDraft.sourceSessionId, {
-          ...baseParams,
-          thinkingLevel: thinkingLevel || undefined,
-        });
       } else {
-        await spaceStore.createAgent({
-          ...baseParams,
-          thinkingLevel: thinkingLevel || undefined,
-        });
+        const {
+          tools: _editTools,
+          templateName: _templateName,
+          templateHash: _templateHash,
+          model: _editModel,
+          provider: _editProvider,
+          ...createBaseParams
+        } = baseParams;
+        const createParams = {
+          ...createBaseParams,
+          ...(toolsOverridden ? { tools } : {}),
+          description: trimmedDescription || undefined,
+          ...(trimmedModel ? { model: trimmedModel, provider: provider || undefined } : {}),
+        };
+        if (promotionDraft) {
+          await spaceStore.promoteSessionToAgent(promotionDraft.sourceSessionId, {
+            ...createParams,
+            thinkingLevel: thinkingLevel || undefined,
+          });
+        } else {
+          await spaceStore.createAgent({
+            ...createParams,
+            thinkingLevel: thinkingLevel || undefined,
+          });
+        }
       }
 
       onSave();
@@ -378,8 +418,10 @@ export function SpaceAgentEditor({
           </label>
           <WorkflowModelSelect
             value={model || undefined}
-            onChange={(value) => {
+            provider={provider || undefined}
+            onChange={(value, selection?: WorkflowModelSelection) => {
               setModel(value ?? '');
+              setProvider(selection?.provider ?? '');
               if (errors['model']) setErrors((prev) => ({ ...prev, model: '' }));
             }}
             testId="space-agent-model-select"
@@ -494,10 +536,34 @@ export function SpaceAgentEditor({
           <div class="flex items-center justify-between mb-2">
             <label class="block text-sm font-medium text-gray-200">
               Tools
-              <span class="text-red-400 ml-1">*</span>
+              {toolsOverridden ? (
+                <span class="text-red-400 ml-1">*</span>
+              ) : (
+                <span class="text-gray-400 text-xs ml-2">(inherited)</span>
+              )}
             </label>
             {/* Tool presets */}
             <div class="flex gap-1.5">
+              {isEdit && !toolsOverridden && (
+                <button
+                  type="button"
+                  class="text-xs px-2.5 py-1 rounded border border-blue-600 bg-blue-900/20 text-blue-300"
+                >
+                  Inherited
+                </button>
+              )}
+              {isEdit && toolsOverridden && agent?.tools === undefined && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setToolsOverridden(false);
+                    setActivePreset('Inherited');
+                  }}
+                  class="text-xs px-2.5 py-1 rounded border border-dark-600 text-gray-400 hover:border-dark-500 hover:text-gray-300"
+                >
+                  Inherit defaults
+                </button>
+              )}
               {[...Object.keys(TOOL_PRESETS), 'Custom'].map((preset) => (
                 <button
                   key={preset}

@@ -102,14 +102,20 @@ vi.mock('../visual-editor/WorkflowModelSelect', () => ({
     className,
   }: {
     value?: string;
-    onChange: (value: string | undefined) => void;
+    onChange: (
+      value: string | undefined,
+      selection?: { provider: string; modelId: string }
+    ) => void;
     testId: string;
     className?: string;
   }) => (
     <select
       data-testid={testId}
       value={value ?? ''}
-      onChange={(e) => onChange((e.target as HTMLSelectElement).value || undefined)}
+      onChange={(e) => {
+        const value = (e.target as HTMLSelectElement).value || undefined;
+        onChange(value, value ? { provider: 'anthropic', modelId: value } : undefined);
+      }}
       class={className}
     >
       <option value="">— No override —</option>
@@ -387,39 +393,19 @@ describe('SpaceAgentEditor', () => {
     expect(promptTextarea.value).toBe('You are an expert code reviewer.');
   });
 
-  it('applies "Full Coding" preset and selects expected tools', () => {
+  it('applies "Full Coding" preset and selects all known tools', () => {
     const { getByText, container } = render(<SpaceAgentEditor {...DEFAULT_PROPS} />);
     fireEvent.click(getByText('Full Coding'));
 
-    const expectedTools = [
-      'Read',
-      'Write',
-      'Edit',
-      'Bash',
-      'Grep',
-      'Glob',
-      'WebFetch',
-      'WebSearch',
-    ];
     const toolCheckboxes = container.querySelectorAll('input[type="checkbox"]');
 
-    for (const tool of expectedTools) {
+    for (const tool of KNOWN_TOOLS) {
       const found = Array.from(toolCheckboxes).some((cb) => {
         const label = (cb as HTMLInputElement).closest('label');
         return label?.textContent?.includes(tool) && (cb as HTMLInputElement).checked;
       });
       expect(found, `Expected ${tool} to be checked after Full Coding preset`).toBe(true);
     }
-    // Task/TaskOutput/TaskStop should NOT be checked
-    const taskNotChecked = Array.from(toolCheckboxes).every((cb) => {
-      const label = (cb as HTMLInputElement).closest('label');
-      const toolName = label?.textContent?.trim();
-      if (toolName === 'Task' || toolName === 'TaskOutput' || toolName === 'TaskStop') {
-        return !(cb as HTMLInputElement).checked;
-      }
-      return true;
-    });
-    expect(taskNotChecked).toBe(true);
   });
 
   it('applies "Read Only" preset and selects only Read, Grep, Glob', () => {
@@ -518,6 +504,87 @@ describe('SpaceAgentEditor', () => {
       expect(mockUpdateAgent).toHaveBeenCalledWith(
         'agent-1',
         expect.objectContaining({ name: 'Updated Coder' })
+      );
+    });
+  });
+
+  it('sends nulls when clearing model and description overrides in edit mode', async () => {
+    const agent = makeAgent({
+      id: 'agent-1',
+      description: 'Old description',
+      model: 'claude-haiku-4-5',
+      provider: 'anthropic',
+    });
+    mockUpdateAgent.mockResolvedValue(agent);
+
+    const { getByPlaceholderText, getByTestId, getByRole } = render(
+      <SpaceAgentEditor {...DEFAULT_PROPS} agent={agent} />
+    );
+
+    fireEvent.input(getByPlaceholderText("Briefly describe this agent's specialization..."), {
+      target: { value: '' },
+    });
+    fireEvent.change(getByTestId('space-agent-model-select'), { target: { value: '' } });
+    fireEvent.submit(getByRole('dialog').querySelector('form')!);
+
+    await waitFor(() => {
+      expect(mockUpdateAgent).toHaveBeenCalledWith(
+        'agent-1',
+        expect.objectContaining({ description: null, model: null, provider: null })
+      );
+    });
+  });
+
+  it('persists provider with model overrides', async () => {
+    mockCreateAgent.mockResolvedValue({ id: 'new-agent' });
+
+    const { getByPlaceholderText, getByTestId, getByRole } = render(
+      <SpaceAgentEditor {...DEFAULT_PROPS} />
+    );
+
+    fillName(getByPlaceholderText, 'Provider Agent');
+    fillModel(getByTestId, 'claude-sonnet-4-6');
+    fireEvent.submit(getByRole('dialog').querySelector('form')!);
+
+    await waitFor(() => {
+      expect(mockCreateAgent).toHaveBeenCalledWith(
+        expect.objectContaining({ model: 'claude-sonnet-4-6', provider: 'anthropic' })
+      );
+    });
+  });
+
+  it('preserves inherited tools for edits until tools are customized', async () => {
+    const agent = makeAgent({ id: 'agent-1', tools: undefined });
+    mockUpdateAgent.mockResolvedValue(agent);
+
+    const { getByPlaceholderText, getByRole } = render(
+      <SpaceAgentEditor {...DEFAULT_PROPS} agent={agent} />
+    );
+
+    fireEvent.input(getByPlaceholderText('e.g., Senior Coder'), { target: { value: 'Renamed' } });
+    fireEvent.submit(getByRole('dialog').querySelector('form')!);
+
+    await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalled());
+    expect(mockUpdateAgent.mock.calls[0][1]).not.toHaveProperty('tools');
+  });
+
+  it('clears template tracking when preset-defining fields are customized', async () => {
+    const agent = makeAgent({ id: 'agent-1', templateName: 'Coder', templateHash: 'hash-old' });
+    mockUpdateAgent.mockResolvedValue(agent);
+
+    const { getByPlaceholderText, getByRole } = render(
+      <SpaceAgentEditor {...DEFAULT_PROPS} agent={agent} />
+    );
+
+    fireEvent.input(getByPlaceholderText("Briefly describe this agent's specialization..."), {
+      target: { value: 'Custom description' },
+    });
+    fireEvent.submit(getByRole('dialog').querySelector('form')!);
+
+    await waitFor(() => {
+      expect(mockUpdateAgent).toHaveBeenCalledWith(
+        'agent-1',
+        expect.objectContaining({ templateName: null, templateHash: null })
       );
     });
   });

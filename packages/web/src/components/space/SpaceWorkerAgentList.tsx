@@ -173,6 +173,14 @@ export function SpaceWorkerAgentList() {
     .join('|');
 
   useEffect(() => {
+    setEditorOpen(false);
+    setEditingAgent(null);
+    setDeletingAgent(null);
+    setDeleteError(null);
+    setSyncingAgent(null);
+  }, [spaceId]);
+
+  useEffect(() => {
     if (!spaceId) return;
     const hub = connectionManager.getHubIfConnected();
     if (!hub) return;

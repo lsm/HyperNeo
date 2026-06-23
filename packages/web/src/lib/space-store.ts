@@ -1056,7 +1056,8 @@ class SpaceStore {
       const result = await hub.request<{ agents: SpaceAgent[] }>('spaceAgent.list', {
         spaceId,
       });
-      this.agents.value = result?.agents ?? [];
+      if (this.spaceId.value !== spaceId) return;
+      this.agents.value = (result?.agents ?? []).filter((agent) => agent.spaceId === spaceId);
     } catch (err) {
       logger.error('Failed to fetch agents:', err);
     }
