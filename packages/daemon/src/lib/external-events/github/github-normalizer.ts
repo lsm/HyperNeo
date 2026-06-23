@@ -5,6 +5,7 @@ export type GitHubEventKind =
   | 'pull_request_review'
   | 'pull_request_review_comment'
   | 'pull_request'
+  | 'check_run'
   | 'reaction';
 
 export interface NormalizedGitHubEvent {
@@ -77,6 +78,10 @@ function prUrl(owner: string, repo: string, number: number): string {
   return `https://github.com/${owner}/${repo}/pull/${number}`;
 }
 
+function isFailedCheckConclusion(conclusion: string): boolean {
+  return conclusion !== '' && conclusion !== 'success' && conclusion !== 'skipped';
+}
+
 export function normalizeGitHubWebhook(
   eventType: string,
   deliveryId: string,
@@ -86,7 +91,8 @@ export function normalizeGitHubWebhook(
     eventType !== 'issue_comment' &&
     eventType !== 'pull_request_review' &&
     eventType !== 'pull_request_review_comment' &&
-    eventType !== 'pull_request'
+    eventType !== 'pull_request' &&
+    eventType !== 'check_run'
   ) {
     return null;
   }
@@ -101,6 +107,7 @@ export function normalizeGitHubWebhook(
   let externalId = `${eventType}:${deliveryId}`;
   let occurredAt = Date.now();
   let title = '';
+  let extraPayload: Record<string, unknown> | undefined;
 
   if (eventType === 'issue_comment') {
     const issue = asObject(root.issue);
@@ -139,6 +146,23 @@ export function normalizeGitHubWebhook(
     );
     occurredAt = parseTs(comment.updated_at ?? comment.created_at);
     title = `PR #${prNumber} inline review comment`;
+  } else if (eventType === 'check_run') {
+    if (action !== 'completed') return null;
+    const checkRun = asObject(root.check_run);
+    const conclusion = getString(checkRun.conclusion);
+    if (!isFailedCheckConclusion(conclusion)) return null;
+    const pullRequests = Array.isArray(checkRun.pull_requests) ? checkRun.pull_requests : [];
+    const pr = asObject(pullRequests[0]);
+    prNumber = getNumber(pr.number);
+    if (!prNumber) return null;
+    const checkName = getString(checkRun.name, 'check run');
+    body = `${checkName} concluded with ${conclusion}`;
+    externalId = `check_run:${getNumber(checkRun.id) || deliveryId}:${conclusion}`;
+    externalUrl = getString(checkRun.html_url, prUrl(repo.owner, repo.repo, prNumber));
+    occurredAt = parseTs(checkRun.completed_at ?? checkRun.updated_at ?? checkRun.started_at);
+    title = `PR #${prNumber} check failed`;
+    extraPayload = { checkName, conclusion, runUrl: externalUrl };
+    actor = sender;
   } else {
     const pr = asObject(root.pull_request);
     actor = userFrom(pr.user ?? root.sender);
@@ -171,6 +195,7 @@ export function normalizeGitHubWebhook(
     externalId,
     occurredAt,
     rawPayload: payload,
+    payload: extraPayload,
   };
 }
 
@@ -294,6 +319,8 @@ export function mapEventType(
       return { resource: 'pull_request', entityId, action: `review_comment_${action}` };
     case 'reaction':
       return { resource: 'pull_request', entityId, action: `reaction_${action}` };
+    case 'check_run':
+      return { resource: 'pull_request', entityId, action: 'check_failed' };
     case 'pull_request':
       return { resource: 'pull_request', entityId, action };
   }
