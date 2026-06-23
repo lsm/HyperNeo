@@ -27,10 +27,11 @@ function makeFileList(files: File[]): FileList {
 }
 
 function makeDragEvent(
-  opts: { types?: string[]; files?: File[]; sameTarget?: boolean } = {}
+  opts: { types?: string[]; files?: File[]; relatedTarget?: Node | null } = {}
 ): DragEvent {
-  const target = {} as EventTarget;
-  const currentTarget = opts.sameTarget === false ? ({} as EventTarget) : target;
+  const currentTarget = document.createElement('div');
+  const target = document.createElement('div');
+  currentTarget.append(target);
   const files = opts.files ?? [];
   const dataTransfer: MockDataTransfer = {
     types: opts.types ?? [],
@@ -42,6 +43,7 @@ function makeDragEvent(
     stopPropagation: vi.fn(),
     currentTarget,
     target,
+    relatedTarget: opts.relatedTarget ?? null,
     dataTransfer: dataTransfer as unknown as DataTransfer,
   } as unknown as DragEvent;
 }
@@ -93,15 +95,19 @@ describe('useImageDropZone', () => {
     });
     expect(result.current.isDragging).toBe(true);
 
-    // Leaving onto a child element (currentTarget !== target) must not hide it.
+    const child = document.createElement('div');
+    const evtInside = makeDragEvent({ relatedTarget: child });
+    (evtInside.currentTarget as HTMLElement).append(child);
+
+    // Leaving onto another child inside the zone must not hide it.
     act(() => {
-      result.current.dragHandlers.onDragLeave(makeDragEvent({ sameTarget: false }));
+      result.current.dragHandlers.onDragLeave(evtInside);
     });
     expect(result.current.isDragging).toBe(true);
 
-    // Leaving the zone entirely (currentTarget === target) hides it.
+    // Leaving the zone entirely hides it even when dragleave bubbled from a child.
     act(() => {
-      result.current.dragHandlers.onDragLeave(makeDragEvent({ sameTarget: true }));
+      result.current.dragHandlers.onDragLeave(makeDragEvent({ relatedTarget: document.body }));
     });
     expect(result.current.isDragging).toBe(false);
   });

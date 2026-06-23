@@ -9,8 +9,8 @@
  * - The overlay only activates for drags carrying files (`dataTransfer.types`
  *   includes `'Files'`) and only when `enabled` is true.
  * - `onDragLeave` only hides the overlay when the pointer leaves the zone
- *   entirely (`currentTarget === target`), so moving between child elements
- *   inside the zone does not flicker it off.
+ *   entirely (`relatedTarget` is outside the zone), so moving between child
+ *   elements inside the zone does not flicker it off.
  * - `onDrop` forwards the dropped files to `onFiles` when enabled.
  */
 
@@ -66,8 +66,16 @@ export function useImageDropZone(
   const handleDragLeave = useCallback((e: DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    // Only hide overlay when leaving the drop zone entirely.
-    if (e.currentTarget === e.target) {
+    // Only hide overlay when leaving the drop zone entirely. Dragleave bubbles
+    // from descendants, so use relatedTarget containment rather than comparing
+    // target/currentTarget.
+    const dropZone = e.currentTarget;
+    const nextTarget = e.relatedTarget;
+    if (!(dropZone instanceof Node) || !(nextTarget instanceof Node)) {
+      setIsDragging(false);
+      return;
+    }
+    if (!dropZone.contains(nextTarget)) {
       setIsDragging(false);
     }
   }, []);
