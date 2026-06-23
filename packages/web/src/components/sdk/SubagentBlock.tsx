@@ -550,6 +550,7 @@ export function SubagentBlock({
                     replacementStatusMap={replacementStatusMap}
                     taskNotificationsMap={taskNotificationsMap}
                     taskProgressMap={taskProgressMap}
+                    isParentRunning={isRunning}
                     completedHookUuids={nestedCompletedHookUuids}
                   />
                 ))}
@@ -597,6 +598,7 @@ function NestedMessageRenderer({
   replacementStatusMap,
   taskNotificationsMap,
   taskProgressMap,
+  isParentRunning,
   completedHookUuids,
 }: {
   message: SDKMessage;
@@ -605,6 +607,7 @@ function NestedMessageRenderer({
   replacementStatusMap?: Map<string, MessageReplacementStatus>;
   taskNotificationsMap?: Map<string, SDKTaskNotificationMessage>;
   taskProgressMap?: Map<string, SDKTaskProgressMessage>;
+  isParentRunning?: boolean;
   completedHookUuids?: Set<string>;
 }) {
   const replacementStatus = replacementStatusMap?.get(getMessageUuid(message) ?? '');
@@ -672,6 +675,9 @@ function NestedMessageRenderer({
           const resultData = toolResultsMap?.get(toolBlock.id) as
             | { content: unknown; isOutputRemoved?: boolean }
             | undefined;
+          const taskNotification = taskNotificationsMap?.get(toolBlock.id);
+          const taskProgress = taskProgressMap?.get(toolBlock.id);
+          const isRunningTool = !!isParentRunning && !!taskProgress && !taskNotification;
           return (
             <ToolResultCard
               key={`tool-${idx}`}
@@ -684,9 +690,9 @@ function NestedMessageRenderer({
               }
               variant="default"
               isOutputRemoved={resultData?.isOutputRemoved || false}
-              taskNotification={taskNotificationsMap?.get(toolBlock.id)}
-              taskProgress={taskProgressMap?.get(toolBlock.id)}
-              isRunning={!!taskProgressMap?.has(toolBlock.id)}
+              taskNotification={taskNotification}
+              taskProgress={taskProgress}
+              isRunning={isRunningTool}
             />
           );
         })}
