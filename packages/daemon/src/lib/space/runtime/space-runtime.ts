@@ -1525,31 +1525,45 @@ export class SpaceRuntime {
     if (!artifactRepo) return 0;
     const taskId = this.resolveExecutionTaskId(workflowRunId);
     if (!taskId) return 0;
-    // First pr_url artifact per node wins.
-    const prUrlByNode = new Map<string, string>();
+    const executions = this.config.nodeExecutionRepo.listByWorkflowRun(workflowRunId);
+    // Artifacts record only `nodeId`, not which agent saved the pr_url. To avoid
+    // subscribing sibling agents on multi-agent nodes (which never announced the
+    // PR), only rehydrate nodes with a single agent slot; multi-agent nodes
+    // self-heal on the worker's next save/send. (Single-agent nodes — the common
+    // coder/reviewer case — are exact.)
+    const agentCountByNode = new Map<string, number>();
+    for (const execution of executions) {
+      const nodeId = execution.workflowNodeId;
+      if (nodeId) agentCountByNode.set(nodeId, (agentCountByNode.get(nodeId) ?? 0) + 1);
+    }
+    // Latest (most-recently-updated) pr_url artifact per node — a worker that
+    // replaced its PR must rehydrate to the current PR, not a stale one.
+    const latest = new Map<string, { prUrl: string; ts: number }>();
     const fromData = (data: Record<string, unknown> | undefined): string =>
       (typeof data?.pr_url === 'string' && data.pr_url) ||
       (typeof data?.prUrl === 'string' && data.prUrl) ||
       '';
     for (const artifact of artifactRepo.listByRun(workflowRunId) ?? []) {
       const prUrl = fromData(artifact.data);
-      if (prUrl && artifact.nodeId && !prUrlByNode.has(artifact.nodeId)) {
-        prUrlByNode.set(artifact.nodeId, prUrl);
-      }
+      if (!prUrl || !artifact.nodeId) continue;
+      const ts = artifact.updatedAt ?? artifact.createdAt ?? 0;
+      const prev = latest.get(artifact.nodeId);
+      if (!prev || ts >= prev.ts) latest.set(artifact.nodeId, { prUrl, ts });
     }
-    if (prUrlByNode.size === 0) return 0;
+    if (latest.size === 0) return 0;
     let rehydrated = 0;
-    for (const execution of this.config.nodeExecutionRepo.listByWorkflowRun(workflowRunId)) {
-      const prUrl = execution.workflowNodeId
-        ? prUrlByNode.get(execution.workflowNodeId)
-        : undefined;
-      if (!prUrl || !execution.agentName || !execution.workflowNodeId) continue;
+    for (const execution of executions) {
+      const nodeId = execution.workflowNodeId;
+      if (!nodeId || !execution.agentName) continue;
+      if ((agentCountByNode.get(nodeId) ?? 0) !== 1) continue; // multi-agent node — skip
+      const entry = latest.get(nodeId);
+      if (!entry) continue;
       const result = this.ensurePrSubscriptionForNode(
         workflowRunId,
         taskId,
-        execution.workflowNodeId,
+        nodeId,
         execution.agentName,
-        prUrl
+        entry.prUrl
       );
       if (result.success && result.subscribed) rehydrated++;
     }

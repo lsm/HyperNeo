@@ -1057,6 +1057,51 @@ describe('SpaceRuntime external event subscriptions', () => {
       expect(injected[0]!.sessionId).toBe('session-rehydrate');
       void task;
     });
+
+    test('rehydrateWorkerPrSubscriptionsForRun uses the latest pr_url artifact per node', async () => {
+      const workflow = createWorkflow('code');
+      const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: 'session-latest',
+        startedAt: Date.now(),
+      });
+      tam.alive.add('session-latest');
+
+      // Worker saves PR A, then replaces it with PR B.
+      artifactRepo.upsert({
+        id: 'art-a',
+        runId: run.id,
+        nodeId: 'code',
+        artifactType: 'result',
+        artifactKey: 'a',
+        data: { pr_url: 'https://github.com/lsm/neokai/pull/41' },
+      });
+      artifactRepo.upsert({
+        id: 'art-b',
+        runId: run.id,
+        nodeId: 'code',
+        artifactType: 'result',
+        artifactKey: 'b',
+        data: { pr_url: 'https://github.com/lsm/neokai/pull/42' },
+      });
+
+      runtime.rehydrateWorkerPrSubscriptionsForRun(run.id);
+
+      // The stale PR A (41) event is not delivered.
+      await eventService.publish(
+        makeEvent({
+          topic: 'github/lsm/neokai/pull_request/41.review_submitted',
+          dedupeKey: 'pr-41',
+        })
+      );
+      expect(injected).toHaveLength(0);
+
+      // The current PR B (42) event is delivered.
+      await eventService.publish(makeEvent({ dedupeKey: 'pr-42' }));
+      expect(injected).toHaveLength(1);
+    });
   });
 
   test('queues matching events for pending nodes and flushes after session creation', async () => {
