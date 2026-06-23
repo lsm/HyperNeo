@@ -1248,11 +1248,12 @@ function buildFeedTurns(
   const completedRows = blocks.flatMap((block) => {
     const out: ParsedThreadRow[][] = [];
     const blockKey = normalizeAgentKey(block.agentLabel);
-    if (normalisedActive.has(blockKey) && !block.isTerminal) return out;
+    const trailingBlockCanUpgradeToActive = normalisedActive.has(blockKey) && !block.isTerminal;
     let pendingAgentRows: ParsedThreadRow[] = [];
-    const flush = () => {
+    const flush = (isFinal = false) => {
       if (
         pendingAgentRows.length > 0 &&
+        !(isFinal && trailingBlockCanUpgradeToActive) &&
         extractLastAssistantText(pendingAgentRows).text.length > 0
       ) {
         out.push(pendingAgentRows);
@@ -1273,7 +1274,7 @@ function buildFeedTurns(
       }
       pendingAgentRows.push(row);
     }
-    flush();
+    flush(true);
     return out;
   });
 

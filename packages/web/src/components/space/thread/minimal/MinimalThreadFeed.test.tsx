@@ -788,6 +788,67 @@ describe('MinimalThreadFeed', () => {
     expect(screen.queryAllByTestId('minimal-thread-roster-entry')).toHaveLength(0);
   });
 
+  it('folds completed slices inside active blocks without suppressing the active tail', () => {
+    const t = Date.now();
+    const rows = [
+      makeRow({
+        id: 'a1',
+        label: 'Coder Agent',
+        createdAt: t,
+        turnIndex: 1,
+        message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'bun test' } }]),
+      }),
+      makeRow({
+        id: 'a2',
+        label: 'Coder Agent',
+        createdAt: t + 100,
+        turnIndex: 1,
+        message: assistantText('a2', 'Completed slice'),
+      }),
+      makeRow({
+        id: 'u1',
+        label: 'Coder Agent',
+        createdAt: t + 200,
+        turnIndex: 1,
+        message: humanUserMessage('u1', 'continue'),
+        messageType: 'user',
+      }),
+      makeRow({
+        id: 'a3',
+        label: 'Coder Agent',
+        createdAt: t + 300,
+        turnIndex: 1,
+        message: assistantToolUse('a3', [{ name: 'Bash', input: { command: 'still running' } }]),
+      }),
+      makeRow({
+        id: 'n1',
+        label: 'Coder Agent',
+        createdAt: t + 400,
+        turnIndex: 1,
+        messageType: 'system',
+        message: {
+          type: 'system',
+          subtype: 'task_notification',
+          task_id: 't',
+          tool_use_id: 'tu-a1-0',
+          status: 'completed',
+          summary: 'completed slice folded',
+          output_file: '/tmp/o',
+        },
+      }),
+    ];
+
+    render(<MinimalThreadFeed parsedRows={rows} activeAgentLabels={new Set(['Coder Agent'])} />);
+
+    const entries = screen.getAllByTestId('minimal-thread-roster-entry');
+    expect(entries.some((entry) => entry.textContent?.includes('completed slice folded'))).toBe(
+      true
+    );
+    expect(screen.queryByText('Task completed')).toBeNull();
+    const turns = screen.getAllByTestId('minimal-thread-turn');
+    expect(turns.some((turn) => turn.dataset.turnState === 'active')).toBe(true);
+  });
+
   it('does not suppress active turn task_notification after boundary-flushed slice', () => {
     const t = Date.now();
     const rows = [
@@ -814,16 +875,23 @@ describe('MinimalThreadFeed', () => {
         messageType: 'user',
       }),
       makeRow({
-        id: 'n1',
+        id: 'a3',
         label: 'Coder Agent',
         createdAt: t + 300,
+        turnIndex: 1,
+        message: assistantToolUse('a3', [{ name: 'Bash', input: { command: 'still running' } }]),
+      }),
+      makeRow({
+        id: 'n1',
+        label: 'Coder Agent',
+        createdAt: t + 400,
         turnIndex: 1,
         messageType: 'system',
         message: {
           type: 'system',
           subtype: 'task_notification',
           task_id: 't',
-          tool_use_id: 'tu-a1-0',
+          tool_use_id: 'tu-a3-0',
           status: 'completed',
           summary: 'boundary active fallback',
           output_file: '/tmp/o',
