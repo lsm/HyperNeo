@@ -126,6 +126,23 @@ async function applyStoredProviderCredentials(
   }
 }
 
+export async function syncGitHubPollingCapability(
+  extensionConfigStore: Pick<
+    ExternalEventExtensionConfigStore,
+    'getGlobalConfig' | 'setGlobalConfig'
+  >,
+  pollingEnabled: boolean
+): Promise<void> {
+  const githubGlobalConfig = await extensionConfigStore.getGlobalConfig('github');
+  await extensionConfigStore.setGlobalConfig('github', {
+    ...githubGlobalConfig,
+    capabilities: {
+      ...githubGlobalConfig.capabilities,
+      polling: pollingEnabled,
+    },
+  });
+}
+
 export interface CreateDaemonAppOptions {
   config: Config;
   /**
@@ -674,16 +691,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     };
     const extensionManager = new ExternalEventExtensionManager();
     const githubPollingEnabled = getGitHubPollingIntervalSeconds() > 0;
-    if (githubPollingEnabled) {
-      const githubGlobalConfig = await extensionConfigStore.getGlobalConfig('github');
-      await extensionConfigStore.setGlobalConfig('github', {
-        ...githubGlobalConfig,
-        capabilities: {
-          ...githubGlobalConfig.capabilities,
-          polling: true,
-        },
-      });
-    }
+    await syncGitHubPollingCapability(extensionConfigStore, githubPollingEnabled);
     extensionManager.register(
       new GitHubEventExtension(db.getDatabase(), process.env.GITHUB_TOKEN, {
         getPollIntervalMs: () => getGitHubPollingIntervalSeconds() * 1000,
@@ -704,14 +712,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         lastGitHubPollingIntervalSeconds = nextGitHubPollingIntervalSeconds;
         gitHubService?.refreshPolling({ reschedulePending: true });
         void (async () => {
-          const githubGlobalConfig = await extensionConfigStore.getGlobalConfig('github');
-          await extensionConfigStore.setGlobalConfig('github', {
-            ...githubGlobalConfig,
-            capabilities: {
-              ...githubGlobalConfig.capabilities,
-              polling: getGitHubPollingIntervalSeconds() > 0,
-            },
-          });
+          await syncGitHubPollingCapability(
+            extensionConfigStore,
+            getGitHubPollingIntervalSeconds() > 0
+          );
           await githubEventExtension?.refreshPollingInterval();
         })();
       },

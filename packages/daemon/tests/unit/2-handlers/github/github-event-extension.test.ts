@@ -8,6 +8,7 @@ import {
   type ExternalEvent,
 } from '../../../../src/lib/external-events';
 import { GitHubEventExtension } from '../../../../src/lib/external-events/github';
+import { syncGitHubPollingCapability } from '../../../../src/app';
 import {
   mapEventType,
   normalizeGitHubWebhook,
@@ -3667,6 +3668,18 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
     }
   });
 
+  test('syncGitHubPollingCapability clears stale polling capability at startup when interval is 0', async () => {
+    const configStore = new RecordingConfigStore({
+      globallyEnabled: true,
+      polling: true,
+    });
+
+    await syncGitHubPollingCapability(configStore, false);
+
+    const global = await configStore.getGlobalConfig('github');
+    expect(global.capabilities.polling).toBe(false);
+  });
+
   test('space.github.setPollingEnabled flips global capability and starts timer', async () => {
     const db = setupDb();
     const extension = new GitHubEventExtension(db, undefined, { pollIntervalMs: 60_000 });
@@ -3703,6 +3716,118 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
       expect(global.capabilities.polling).toBe(true);
       expect(extension.repo.listWatchedRepos('space-1')[0].pollingEnabled).toBe(true);
       expect(internals.pollTimer).not.toBeNull();
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('refreshPollingInterval preserves active rate-limit deferral', async () => {
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, undefined, { getPollIntervalMs: () => 5_000 });
+    const configStore = new RecordingConfigStore({
+      globallyEnabled: true,
+      polling: true,
+    });
+    const context = {
+      publisher: { publish: async () => {} },
+      config: configStore,
+      onSourceConfigChanged() {},
+    };
+    try {
+      await extension.start(context);
+      const internals = extension as unknown as {
+        rateLimitedUntil: number;
+        rateLimitedFromRetryAfter: boolean;
+        pollTimer: unknown;
+      };
+      internals.rateLimitedUntil = Date.now() + 60_000;
+      internals.rateLimitedFromRetryAfter = true;
+
+      await extension.refreshPollingInterval();
+
+      expect(internals.pollTimer).not.toBeNull();
+      expect((internals.pollTimer as { _idleTimeout?: number })._idleTimeout).toBeGreaterThan(
+        50_000
+      );
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('space.github.enable rejects polling capability re-arm when global interval is 0', async () => {
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, undefined, { getPollIntervalMs: () => 0 });
+    const { clientHub, hub, ready } = setupHubPair();
+    await ready;
+    const configStore = new RecordingConfigStore({
+      globallyEnabled: true,
+      polling: false,
+    });
+    const context = {
+      publisher: { publish: async () => {} },
+      config: configStore,
+      onSourceConfigChanged() {},
+    };
+    try {
+      await extension.start(context);
+      extension.registerRpcHandlers(hub, context);
+      extension.repo.upsertWatchedRepo({
+        spaceId: 'space-1',
+        owner: 'acme',
+        repo: 'widgets',
+        pollingEnabled: true,
+        enabled: false,
+      });
+
+      await expect(
+        clientHub.request('space.github.enable', { spaceId: 'space-1' })
+      ).rejects.toThrow('GitHub polling is disabled globally');
+
+      const global = await configStore.getGlobalConfig('github');
+      expect(global.capabilities.polling).toBe(false);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('space.github.watchRepo allows preserving existing pollingEnabled while interval is 0', async () => {
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, undefined, { getPollIntervalMs: () => 0 });
+    const { clientHub, hub, ready } = setupHubPair();
+    await ready;
+    const configStore = new RecordingConfigStore({
+      globallyEnabled: true,
+      polling: false,
+    });
+    const context = {
+      publisher: { publish: async () => {} },
+      config: configStore,
+      onSourceConfigChanged() {},
+    };
+    try {
+      await extension.start(context);
+      extension.registerRpcHandlers(hub, context);
+      extension.repo.upsertWatchedRepo({
+        spaceId: 'space-1',
+        owner: 'acme',
+        repo: 'widgets',
+        pollingEnabled: true,
+      });
+
+      const result = await clientHub.request<{ watchedRepo: { enabled: boolean } }>(
+        'space.github.watchRepo',
+        {
+          spaceId: 'space-1',
+          owner: 'acme',
+          repo: 'widgets',
+          pollingEnabled: true,
+          enabled: false,
+        }
+      );
+
+      expect(result.watchedRepo.enabled).toBe(false);
+      const global = await configStore.getGlobalConfig('github');
+      expect(global.capabilities.polling).toBe(false);
     } finally {
       await extension.stop();
     }

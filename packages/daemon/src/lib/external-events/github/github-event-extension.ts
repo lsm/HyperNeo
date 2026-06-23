@@ -224,6 +224,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       // on its own. Re-arm the capability + timer here when any newly
       // re-enabled polling row exists.
       if (this.repo.listPollingRepos(params.spaceId).length > 0) {
+        this.assertPollingIntervalEnabled();
         await this.enablePollingCapability(context);
         this.ensurePollingActive();
       }
@@ -264,10 +265,10 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       if (!params.spaceId || !params.owner || !params.repo) {
         throw new Error('spaceId, owner and repo are required');
       }
-      if (params.pollingEnabled) {
+      const existing = this.repo.getWatchedRepo(params.spaceId, params.owner, params.repo);
+      if (params.pollingEnabled && !existing?.pollingEnabled) {
         this.assertPollingIntervalEnabled();
       }
-      const existing = this.repo.getWatchedRepo(params.spaceId, params.owner, params.repo);
       const replacingAutoSecret = Boolean(params.webhookSecret && existing?.webhookAutoRegistered);
       const disablingAutoWebhook = Boolean(
         existing?.webhookAutoRegistered &&
@@ -297,8 +298,10 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         // the row is later removed.
         this.repo.setPollingIntent(params.spaceId, true);
         await this.persistSpaceConfig(context, watchedRepo.spaceId);
-        await this.enablePollingCapability(context);
-        this.ensurePollingActive();
+        if (this.getPollIntervalMs() > 0) {
+          await this.enablePollingCapability(context);
+          this.ensurePollingActive();
+        }
       } else {
         // Per-row polling was turned off (or the row was added without
         // polling). If the user explicitly disabled the last polling-configured
@@ -666,13 +669,15 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       this.pollTimer = null;
       return;
     }
-    this.scheduleNextPoll();
+    const delay = this.getNextPollDelayMs();
+    if (delay === null) return;
+    this.scheduleNextPollAfter(delay);
   }
 
   private scheduleNextPoll(): void {
-    const intervalMs = this.getPollIntervalMs();
-    if (intervalMs <= 0) return;
-    this.scheduleNextPollAfter(intervalMs);
+    const delay = this.getNextPollDelayMs();
+    if (delay === null) return;
+    this.scheduleNextPollAfter(delay);
   }
 
   /**
@@ -716,19 +721,25 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       }
       return;
     }
+    const delay = this.getNextPollDelayMs();
+    if (delay === null) return;
+    this.scheduleNextPollAfter(delay);
+  }
+
+  private getNextPollDelayMs(): number | null {
+    const intervalMs = this.getPollIntervalMs();
+    if (intervalMs <= 0) return null;
+
     const now = Date.now();
-    let delay: number;
     if (now < this.rateLimitedUntil) {
       // Retry-After-based cooldowns may be shorter than the minimum backoff;
       // honor them exactly. Primary reset windows are floored to the minimum.
-      delay = this.rateLimitedFromRetryAfter
+      const rateLimitDelay = this.rateLimitedFromRetryAfter
         ? Math.max(0, this.rateLimitedUntil - now)
         : Math.max(RATE_LIMIT_MIN_BACKOFF_MS, this.rateLimitedUntil - now);
-    } else {
-      delay = this.getPollIntervalMs();
-      if (delay <= 0) return;
+      return Math.max(intervalMs, rateLimitDelay);
     }
-    this.scheduleNextPollAfter(delay);
+    return intervalMs;
   }
 
   private getPollIntervalMs(): number {
