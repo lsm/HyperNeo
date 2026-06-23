@@ -1829,9 +1829,39 @@ hook_entries AS (
       WHEN hookSubtype = 'hook_response' AND outcome = 'success' THEN 'completed'
       WHEN hookSubtype = 'hook_response' THEN 'failed'
       ELSE 'running'
-    END AS hookStatus
+    END AS hookStatus,
+    NULL AS attempt,
+    NULL AS maxRetries,
+    NULL AS retryDelayMs,
+    NULL AS errorStatus
   FROM hook_runs
   WHERE rn = 1
+),
+api_retry_entries AS (
+  SELECT
+    ar.sessionId AS sessionId,
+    ar.turnIndex AS turnIndex,
+    ar.createdAt AS ts,
+    base.rowid AS rowId,
+    -3 AS blockIdx,
+    json_extract(ar.content, '$.uuid') AS uuid,
+    '__api_retry' AS blockType,
+    NULL AS toolName,
+    NULL AS toolInput,
+    NULL AS toolUseId,
+    NULL AS textValue,
+    NULL AS thinkingValue,
+    NULL AS hookEvent,
+    NULL AS hookStatus,
+    COALESCE(json_extract(ar.content, '$.attempt'), 1) AS attempt,
+    COALESCE(json_extract(ar.content, '$.max_retries'), 0) AS maxRetries,
+    COALESCE(json_extract(ar.content, '$.retry_delay_ms'), 0) AS retryDelayMs,
+    json_extract(ar.content, '$.error_status') AS errorStatus
+  FROM active_rows ar
+  JOIN sdk_messages base ON base.id = ar.id
+  WHERE ar.messageType = 'system'
+    AND json_valid(ar.content)
+    AND json_extract(ar.content, '$.subtype') = 'api_retry'
 )
 SELECT
   sessionId || ':' || turnIndex || ':' || rowId || ':' || blockIdx AS id,
@@ -1848,7 +1878,11 @@ SELECT
   textValue,
   thinkingValue,
   NULL AS hookEvent,
-  NULL AS hookStatus
+  NULL AS hookStatus,
+  NULL AS attempt,
+  NULL AS maxRetries,
+  NULL AS retryDelayMs,
+  NULL AS errorStatus
 FROM assistant_entries
 UNION ALL
 SELECT
@@ -1866,7 +1900,11 @@ SELECT
   textValue,
   thinkingValue,
   NULL AS hookEvent,
-  NULL AS hookStatus
+  NULL AS hookStatus,
+  NULL AS attempt,
+  NULL AS maxRetries,
+  NULL AS retryDelayMs,
+  NULL AS errorStatus
 FROM user_entries
 UNION ALL
 SELECT
@@ -1884,8 +1922,34 @@ SELECT
   textValue,
   thinkingValue,
   hookEvent,
-  hookStatus
+  hookStatus,
+  attempt,
+  maxRetries,
+  retryDelayMs,
+  errorStatus
 FROM hook_entries
+UNION ALL
+SELECT
+  sessionId || ':' || turnIndex || ':' || rowId || ':' || blockIdx AS id,
+  sessionId,
+  turnIndex,
+  ts,
+  rowId,
+  blockIdx,
+  uuid,
+  blockType,
+  toolName,
+  toolInput,
+  toolUseId,
+  textValue,
+  thinkingValue,
+  hookEvent,
+  hookStatus,
+  attempt,
+  maxRetries,
+  retryDelayMs,
+  errorStatus
+FROM api_retry_entries
 ORDER BY sessionId ASC, ts ASC, rowId ASC, blockIdx ASC, id ASC
 `.trim();
 
@@ -1910,6 +1974,11 @@ function activityOneLine(value: string, max = ACTIVITY_PREVIEW_MAX_LEN): string 
 function activityStringProp(input: Record<string, unknown>, key: string): string {
   const value = input[key];
   return typeof value === 'string' ? value : '';
+}
+
+function activityNumberProp(input: Record<string, unknown>, key: string, fallback = 0): number {
+  const value = Number(input[key] ?? fallback);
+  return Number.isFinite(value) ? value : fallback;
 }
 
 function activityPathBase(path: string): string {
@@ -2118,6 +2187,16 @@ export function buildActiveTurnSummariesFromRows(
         uuid,
         ...(stdoutSummary ? { summary: activityOneLine(stdoutSummary) } : {}),
       };
+    } else if (blockType === '__api_retry') {
+      entry = {
+        kind: 'api_retry',
+        attempt: activityNumberProp(row, 'attempt', 1),
+        maxRetries: activityNumberProp(row, 'maxRetries'),
+        retryDelayMs: activityNumberProp(row, 'retryDelayMs'),
+        errorStatus: row.errorStatus === null ? null : activityNumberProp(row, 'errorStatus'),
+        ts,
+        uuid,
+      };
     }
     if (!entry) continue;
 
@@ -2196,6 +2275,16 @@ function mapActiveTurnEntryRow(row: Record<string, unknown>): Record<string, unk
       ts,
       uuid,
       ...(stdoutSummary ? { summary: activityOneLine(stdoutSummary) } : {}),
+    };
+  } else if (blockType === '__api_retry') {
+    entry = {
+      kind: 'api_retry',
+      attempt: activityNumberProp(row, 'attempt', 1),
+      maxRetries: activityNumberProp(row, 'maxRetries'),
+      retryDelayMs: activityNumberProp(row, 'retryDelayMs'),
+      errorStatus: row.errorStatus === null ? null : activityNumberProp(row, 'errorStatus'),
+      ts,
+      uuid,
     };
   }
 

@@ -594,6 +594,50 @@ describe('MinimalThreadFeed', () => {
     expect(screen.getByTestId('minimal-thread-last-event').textContent).toContain('last event');
   });
 
+  it('renders api_retry summary entries as dedicated roster rows', () => {
+    const t = Date.now();
+    const rows = [
+      makeRow({
+        id: 'a1',
+        label: 'Coder Agent',
+        createdAt: t,
+        turnIndex: 1,
+        message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'bun test' } }]),
+      }),
+    ];
+    const summary: ActiveTurnSummary = {
+      sessionId: 'space:s:task:t',
+      turnIndex: 1,
+      entries: [
+        {
+          kind: 'api_retry',
+          attempt: 2,
+          maxRetries: 3,
+          retryDelayMs: 5000,
+          errorStatus: 429,
+          ts: t + 500,
+          uuid: 'retry-1',
+        },
+      ],
+    };
+
+    render(
+      <MinimalThreadFeed
+        parsedRows={rows}
+        activeAgentLabels={new Set(['Coder Agent'])}
+        activeTurnSummaries={[summary]}
+      />
+    );
+
+    const entries = screen.getAllByTestId('minimal-thread-roster-entry');
+    expect(entries).toHaveLength(1);
+    expect(entries[0].dataset.rosterKind).toBe('api_retry');
+    expect(entries[0].textContent).toContain('API retry');
+    expect(entries[0].textContent).toContain('attempt 2/3');
+    expect(entries[0].textContent).toContain('status 429');
+    expect(entries[0].textContent).toContain('delay 5000ms');
+  });
+
   it('folds task_notification onto the roster entry when the tool_use is rostered', () => {
     const t = Date.now();
     const rows = [

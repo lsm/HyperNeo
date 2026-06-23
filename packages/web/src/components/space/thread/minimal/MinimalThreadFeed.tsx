@@ -155,13 +155,22 @@ interface RosterHookEntry {
   summary?: string;
   ts: number;
 }
+interface RosterApiRetryEntry {
+  kind: 'api_retry';
+  attempt: number;
+  maxRetries: number;
+  retryDelayMs: number;
+  errorStatus: number | null;
+  ts: number;
+}
 type ActiveRosterEntry =
   | RosterToolEntry
   | RosterMessageEntry
   | RosterThinkingEntry
   | RosterUserEntry
   | RosterHandoffEntry
-  | RosterHookEntry;
+  | RosterHookEntry
+  | RosterApiRetryEntry;
 
 const TASK_THREAD_MESSAGE_BUBBLE_WIDTH_CLASS = 'max-w-[85%] md:max-w-[86%]';
 const TASK_THREAD_AGENT_BUBBLE_WIDTH_CLASS = 'max-w-full md:max-w-[86%]';
@@ -374,6 +383,11 @@ function asTrimmedString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function finiteNumber(value: unknown, fallback = 0): number {
+  const n = Number(value ?? fallback);
+  return Number.isFinite(n) ? n : fallback;
+}
+
 function mapActivityEntry(entry: ActivityEntry): ActiveRosterEntry | null {
   switch (entry.kind) {
     case 'tool_use':
@@ -416,6 +430,15 @@ function mapActivityEntry(entry: ActivityEntry): ActiveRosterEntry | null {
         ...(summary ? { summary } : {}),
       };
     }
+    case 'api_retry':
+      return {
+        kind: 'api_retry',
+        attempt: finiteNumber(entry.attempt, 1),
+        maxRetries: finiteNumber(entry.maxRetries),
+        retryDelayMs: finiteNumber(entry.retryDelayMs),
+        errorStatus: entry.errorStatus === null ? null : finiteNumber(entry.errorStatus),
+        ts: entry.ts,
+      };
     default:
       return null;
   }
@@ -1413,6 +1436,29 @@ function RosterEntry({ entry, isLatest }: { entry: ActiveRosterEntry; isLatest: 
             ✗
           </span>
         )}
+      </div>
+    );
+  }
+
+  if (entry.kind === 'api_retry') {
+    const status = entry.errorStatus === null ? 'n/a' : String(entry.errorStatus);
+    return (
+      <div
+        class={`flex items-baseline gap-2 font-mono text-xs leading-5 ${fadeClass}`}
+        data-testid="minimal-thread-roster-entry"
+        data-roster-kind="api_retry"
+      >
+        <span class="shrink-0 text-amber-400" aria-hidden="true">
+          ↻
+        </span>
+        <span class="min-w-0 truncate">
+          <span class="font-semibold text-amber-300">API retry</span>
+          <span class="text-gray-400">: </span>
+          <span class={bodyClass}>
+            attempt {entry.attempt}/{entry.maxRetries} · status {status} · delay{' '}
+            {entry.retryDelayMs}ms
+          </span>
+        </span>
       </div>
     );
   }
