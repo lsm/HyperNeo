@@ -79,14 +79,7 @@ function prUrl(owner: string, repo: string, number: number): string {
 }
 
 function isFailedCheckConclusion(conclusion: string): boolean {
-  return (
-    conclusion === 'failure' ||
-    conclusion === 'cancelled' ||
-    conclusion === 'timed_out' ||
-    conclusion === 'action_required' ||
-    conclusion === 'neutral' ||
-    conclusion === 'stale'
-  );
+  return conclusion !== '' && conclusion !== 'success' && conclusion !== 'skipped';
 }
 
 export function normalizeGitHubWebhook(

@@ -279,15 +279,17 @@ describe('GitHubEventExtension', () => {
     expect(normalizeGitHubWebhook('check_run', 'delivery-1', payload)).toBeNull();
   });
 
-  test('normalizes stale check_run webhooks as failures', () => {
-    const payload = checkRunPayload({
-      check_run: { ...checkRunPayload().check_run, conclusion: 'stale' },
-    });
-    const normalized = normalizeGitHubWebhook('check_run', 'delivery-1', payload)!;
-    expect(normalized.payload?.conclusion).toBe('stale');
-    expect(mapEventType(normalized.eventType, normalized.action, normalized.entityId).action).toBe(
-      'check_failed'
-    );
+  test('normalizes non-success check_run conclusions as failures', () => {
+    for (const conclusion of ['stale', 'startup_failure']) {
+      const payload = checkRunPayload({
+        check_run: { ...checkRunPayload().check_run, conclusion },
+      });
+      const normalized = normalizeGitHubWebhook('check_run', 'delivery-1', payload)!;
+      expect(normalized.payload?.conclusion).toBe(conclusion);
+      expect(
+        mapEventType(normalized.eventType, normalized.action, normalized.entityId).action
+      ).toBe('check_failed');
+    }
   });
 
   test('drops non-completed check_run webhooks', () => {
