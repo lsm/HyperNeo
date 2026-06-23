@@ -17,6 +17,8 @@ import { Database } from 'bun:sqlite';
 import {
   PendingAgentMessageRepository,
   DEFAULT_PENDING_MESSAGE_MAX_ATTEMPTS,
+  DEFAULT_PENDING_MESSAGE_MAX_PER_TARGET,
+  DEFAULT_PENDING_MESSAGE_RETENTION_MS,
 } from '../../../../src/storage/repositories/pending-agent-message-repository.ts';
 import { createSpaceTables } from '../../helpers/space-test-db.ts';
 
@@ -363,6 +365,142 @@ describe('PendingAgentMessageRepository — markAttemptFailed', () => {
     const again = repo.getById(record.id);
     expect(again!.attempts).toBe(2);
     expect(again!.lastError).toBe('err-2');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// expireStale
+// ---------------------------------------------------------------------------
+
+describe('PendingAgentMessageRepository — enforceRetention', () => {
+  test('expires pending rows older than the retention window', () => {
+    const now = Date.now();
+    const old = repo.enqueue({
+      workflowRunId: RUN_ID,
+      spaceId: SPACE_ID,
+      targetKind: 'node_agent',
+      targetAgentName: 'coder',
+      message: 'old',
+    });
+    const fresh = repo.enqueue({
+      workflowRunId: RUN_ID,
+      spaceId: SPACE_ID,
+      targetKind: 'node_agent',
+      targetAgentName: 'coder',
+      message: 'fresh',
+    });
+    db.prepare('UPDATE pending_agent_messages SET created_at = ? WHERE id = ?').run(
+      now - DEFAULT_PENDING_MESSAGE_RETENTION_MS - 1,
+      old.record.id
+    );
+    db.prepare('UPDATE pending_agent_messages SET created_at = ? WHERE id = ?').run(
+      now,
+      fresh.record.id
+    );
+
+    const count = repo.enforceRetention({ runId: RUN_ID, now });
+
+    expect(count).toBe(1);
+    expect(repo.getById(old.record.id)!.status).toBe('expired');
+    expect(repo.getById(fresh.record.id)!.status).toBe('pending');
+  });
+
+  test('expires rows whose per-message TTL elapsed before applying the cap', () => {
+    const now = Date.now();
+    const stillValid = repo.enqueue({
+      workflowRunId: RUN_ID,
+      spaceId: SPACE_ID,
+      targetKind: 'node_agent',
+      targetAgentName: 'coder',
+      message: 'valid',
+      expiresAt: now + 60_000,
+    });
+    const expired = repo.enqueue({
+      workflowRunId: RUN_ID,
+      spaceId: SPACE_ID,
+      targetKind: 'node_agent',
+      targetAgentName: 'coder',
+      message: 'expired',
+      expiresAt: now - 1,
+    });
+    db.prepare('UPDATE pending_agent_messages SET created_at = ? WHERE id = ?').run(
+      now,
+      stillValid.record.id
+    );
+    db.prepare('UPDATE pending_agent_messages SET created_at = ? WHERE id = ?').run(
+      now + 1,
+      expired.record.id
+    );
+
+    const count = repo.enforceRetention({ runId: RUN_ID, now, maxPerTarget: 1 });
+
+    expect(count).toBe(1);
+    expect(repo.getById(expired.record.id)!.status).toBe('expired');
+    expect(repo.getById(stillValid.record.id)!.status).toBe('pending');
+  });
+
+  test('keeps only the newest maxPerTarget pending rows for a target', () => {
+    const now = Date.now();
+    const records = Array.from(
+      { length: DEFAULT_PENDING_MESSAGE_MAX_PER_TARGET + 2 },
+      (_, index) => {
+        const { record } = repo.enqueue({
+          workflowRunId: RUN_ID,
+          spaceId: SPACE_ID,
+          targetKind: 'node_agent',
+          targetAgentName: 'coder',
+          message: `msg-${index}`,
+        });
+        db.prepare('UPDATE pending_agent_messages SET created_at = ? WHERE id = ?').run(
+          now + index,
+          record.id
+        );
+        return record;
+      }
+    );
+
+    const count = repo.enforceRetention({ runId: RUN_ID, now: now + records.length });
+
+    expect(count).toBe(2);
+    const pending = repo.listPendingForTarget(RUN_ID, 'coder');
+    expect(pending).toHaveLength(DEFAULT_PENDING_MESSAGE_MAX_PER_TARGET);
+    expect(repo.getById(records[0].id)!.status).toBe('expired');
+    expect(repo.getById(records[1].id)!.status).toBe('expired');
+    expect(repo.getById(records[2].id)!.status).toBe('pending');
+  });
+
+  test('applies maxPerTarget separately per run and target', () => {
+    const now = Date.now();
+    db.exec(
+      `INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, started_at, completed_at, created_at, updated_at) VALUES ('run-002', '${SPACE_ID}', 'wf1', 'Run 2', 'in_progress', NULL, NULL, ${now}, ${now})`
+    );
+
+    for (let index = 0; index < 3; index++) {
+      for (const [runId, targetAgentName] of [
+        [RUN_ID, 'coder'],
+        [RUN_ID, 'reviewer'],
+        ['run-002', 'coder'],
+      ] as const) {
+        const { record } = repo.enqueue({
+          workflowRunId: runId,
+          spaceId: SPACE_ID,
+          targetKind: 'node_agent',
+          targetAgentName,
+          message: `${runId}-${targetAgentName}-${index}`,
+        });
+        db.prepare('UPDATE pending_agent_messages SET created_at = ? WHERE id = ?').run(
+          now + index,
+          record.id
+        );
+      }
+    }
+
+    const count = repo.enforceRetention({ now: now + 3, maxPerTarget: 2 });
+
+    expect(count).toBe(3);
+    expect(repo.listPendingForTarget(RUN_ID, 'coder')).toHaveLength(2);
+    expect(repo.listPendingForTarget(RUN_ID, 'reviewer')).toHaveLength(2);
+    expect(repo.listPendingForTarget('run-002', 'coder')).toHaveLength(2);
   });
 });
 
