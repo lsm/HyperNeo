@@ -470,6 +470,54 @@ describe('SDKMessageRenderer', () => {
       expect(container.innerHTML).toBe('');
     });
 
+    it('folds a top-level Bash task_notification onto an in-slice Bash card', () => {
+      const toolUseId = 'toolu_bash_in_slice';
+      const notification = {
+        ...baseNotification,
+        tool_use_id: toolUseId,
+        summary: 'Command completed',
+      } as unknown as SDKMessage;
+      const assistantMessage = {
+        type: 'assistant',
+        message: {
+          id: 'msg_bash_tool_use',
+          type: 'message',
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool_use',
+              id: toolUseId,
+              name: 'Bash',
+              input: { command: 'echo ok', description: 'Command completed' },
+            },
+          ],
+          model: 'claude-3-5-sonnet-20241022',
+          stop_reason: 'tool_use',
+          stop_sequence: null,
+          usage: { input_tokens: 10, output_tokens: 20 },
+        },
+        parent_tool_use_id: null,
+        uuid: createUUID(),
+        session_id: 'test-session',
+      } as unknown as SDKMessage;
+      const taskNotificationsMap = new Map([[toolUseId, notification]]);
+      const foldableToolUseIds = new Set([toolUseId]);
+
+      const { container } = render(
+        <>
+          <SDKMessageRenderer
+            message={assistantMessage}
+            taskNotificationsMap={taskNotificationsMap}
+            foldableToolUseIds={foldableToolUseIds}
+          />
+          <SDKMessageRenderer message={notification} foldableToolUseIds={foldableToolUseIds} />
+        </>
+      );
+
+      expect(container.textContent).not.toContain('Task completed');
+      expect(container.querySelector('[aria-label="task completed"]')).toBeTruthy();
+    });
+
     it('renders the fallback row when the tool_use is paginated out of the slice', () => {
       const message = { ...baseNotification } as unknown as SDKMessage;
 

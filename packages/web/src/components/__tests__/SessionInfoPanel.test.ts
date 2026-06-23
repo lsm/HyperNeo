@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { extractBackgroundTasks } from '../SessionInfoPanel';
+import { extractBackgroundTasks } from '../../hooks/useRunningToolUseIds.ts';
 import type { ChatMessage } from '@neokai/shared';
 
 describe('SessionInfoPanel', () => {
@@ -41,6 +41,7 @@ describe('SessionInfoPanel', () => {
     ).toEqual([
       {
         id: 'task-1',
+        toolUseId: 'tool-1',
         label: 'bun test',
         status: 'paused',
         backgrounded: true,
