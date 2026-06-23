@@ -68,6 +68,7 @@ export const spaceOverlayHighlightMessageIdSignal = signal<string | null>(null);
 export interface SearchMessageLoadTarget {
   sessionId: string;
   before?: number;
+  rowid?: number;
 }
 
 export interface SearchHighlightTarget {

@@ -21,7 +21,9 @@ import type { ComponentChildren } from 'preact';
 import { useState } from 'preact/hooks';
 import type {
   SDKAPIRetryMessage,
+  SDKHookProgressMessage,
   SDKHookResponseMessage,
+  SDKHookStartedMessage,
   SDKInformationalMessage,
   SDKMessage,
   SDKModelRefusalFallbackMessage,
@@ -50,9 +52,13 @@ type SystemMessage = Extract<SDKMessage, { type: 'system' }>;
 interface Props {
   message: SystemMessage;
   isLiveTail?: boolean;
+  /** UUIDs of hook_started/hook_progress phases whose run reached
+   * hook_response in the same turn; gates the running spinner so historical
+   * phases don't look live. */
+  completedHookUuids?: Set<string>;
 }
 
-export function SDKSystemMessage({ message, isLiveTail = false }: Props) {
+export function SDKSystemMessage({ message, isLiveTail = false, completedHookUuids }: Props) {
   // Init message - session started
   if (isSDKSystemInit(message)) {
     return <SystemInitMessage message={message} />;
@@ -84,6 +90,28 @@ export function SDKSystemMessage({ message, isLiveTail = false }: Props) {
       );
     }
     return null; // Don't show null status
+  }
+
+  // Hook started / progress — compact "running" card (hook_response has its own card below).
+  // A hook_id whose hook_response is already in the slice is history: render it
+  // settled instead of spinning so completed hooks don't look still-running.
+  if (message.subtype === 'hook_started') {
+    return (
+      <HookRunningCard
+        message={message as SDKHookStartedMessage}
+        progress={undefined}
+        completed={isHookPhaseCompleted(message as { uuid?: string }, completedHookUuids)}
+      />
+    );
+  }
+  if (message.subtype === 'hook_progress') {
+    return (
+      <HookRunningCard
+        message={undefined}
+        progress={message as SDKHookProgressMessage}
+        completed={isHookPhaseCompleted(message as { uuid?: string }, completedHookUuids)}
+      />
+    );
   }
 
   // Hook response
@@ -584,6 +612,82 @@ function SystemInitMessage({ message }: { message: Extract<SystemMessage, { subt
  * Matches the visual pattern of ToolResultCard (header button + chevron + expand/collapse).
  * Default collapsed since hooks are noise, not signal.
  */
+/**
+ * Hook Running Card — compact indicator for hook_started / hook_progress.
+ * Spinner + hook_name + hook_event + the latest stdout snippet. The terminal
+ * hook_response renders via HookResponseCard instead. When `completed` is true
+ * the hook already has a response in the slice, so this row is history and
+ * renders a settled (non-animated) marker instead of a running spinner.
+ */
+function HookRunningCard({
+  message,
+  progress,
+  completed = false,
+}: {
+  message: SDKHookStartedMessage | undefined;
+  progress: SDKHookProgressMessage | undefined;
+  completed?: boolean;
+}) {
+  const hookName = (message ?? progress)?.hook_name ?? 'hook';
+  const hookEvent = (message ?? progress)?.hook_event ?? '';
+  const stdout = progress?.stdout?.trim() ?? '';
+  const summary = stdout ? stdout.split('\n')[0].slice(0, 80) : undefined;
+
+  return (
+    <div class="my-2 flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 p-2 text-sm dark:border-slate-700 dark:bg-slate-900/30">
+      {completed ? (
+        <svg
+          class="h-4 w-4 flex-shrink-0 text-slate-400 dark:text-slate-500"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+          aria-label="hook finished"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+        </svg>
+      ) : (
+        <svg
+          class="h-4 w-4 flex-shrink-0 animate-spin text-slate-500 dark:text-slate-400"
+          fill="none"
+          viewBox="0 0 24 24"
+          aria-label="hook running"
+        >
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+          <path
+            class="opacity-75"
+            fill="currentColor"
+            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+          />
+        </svg>
+      )}
+      <span
+        class={`font-semibold ${completed ? 'text-slate-500 dark:text-slate-400' : 'text-slate-900 dark:text-slate-100'}`}
+      >
+        {hookName}
+      </span>
+      <span class="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs text-slate-600 dark:bg-slate-800 dark:text-slate-400">
+        {hookEvent}
+      </span>
+      {summary && (
+        <span class="truncate font-mono text-xs text-slate-600 dark:text-slate-400">{summary}</span>
+      )}
+    </div>
+  );
+}
+
+/**
+ * A hook_started/hook_progress row is "completed" when its UUID is in the
+ * turn-scoped completed set — its run reached hook_response in the same turn.
+ * See useMessageMaps.completedHookUuids.
+ */
+function isHookPhaseCompleted(
+  message: { uuid?: string },
+  completedHookUuids?: Set<string>
+): boolean {
+  if (!message.uuid || !completedHookUuids) return false;
+  return completedHookUuids.has(message.uuid);
+}
+
 function HookResponseCard({ message }: { message: SDKHookResponseMessage }) {
   const [isExpanded, setIsExpanded] = useState(false);
 

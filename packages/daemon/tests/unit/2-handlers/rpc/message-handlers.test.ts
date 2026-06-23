@@ -728,6 +728,8 @@ describe('Message RPC Handlers', () => {
       expect(sessionManagerData.agentSessionData.mocks.getSDKMessages).toHaveBeenCalledWith(
         50,
         undefined,
+        undefined,
+        undefined,
         undefined
       );
     });
@@ -741,6 +743,8 @@ describe('Message RPC Handlers', () => {
       expect(sessionManagerData.agentSessionData.mocks.getSDKMessages).toHaveBeenCalledWith(
         undefined,
         1234567890,
+        undefined,
+        undefined,
         undefined
       );
     });
@@ -754,7 +758,24 @@ describe('Message RPC Handlers', () => {
       expect(sessionManagerData.agentSessionData.mocks.getSDKMessages).toHaveBeenCalledWith(
         undefined,
         undefined,
-        1234567890
+        1234567890,
+        undefined,
+        undefined
+      );
+    });
+
+    test('forwards beforeRowid/sinceRowid cursor params', async () => {
+      const handler = messageHubData.handlers.get('message.sdkMessages');
+      expect(handler).toBeDefined();
+
+      await handler!({ sessionId: 'session-123', before: 1234567890, beforeRowid: 42 }, {});
+
+      expect(sessionManagerData.agentSessionData.mocks.getSDKMessages).toHaveBeenCalledWith(
+        undefined,
+        1234567890,
+        undefined,
+        42,
+        undefined
       );
     });
 

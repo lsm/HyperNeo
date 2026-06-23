@@ -315,6 +315,63 @@ describe('SDKMessageRepository', () => {
       expect(messages.length).toBe(50);
     });
 
+    it('includes same-timestamp rows at the before cursor (inclusive boundary)', () => {
+      // 'older' at T-1d; 'a' and 'b' share timestamp T (a same-ms burst like
+      // hook phases). saveSDKMessage stamps real time, so set timestamps directly.
+      repository.saveSDKMessage('session-1', createUserMessage('older', 'm-older'));
+      repository.saveSDKMessage('session-1', createUserMessage('a', 'm-a'));
+      repository.saveSDKMessage('session-1', createUserMessage('b', 'm-b'));
+      const Tiso = '2026-01-01T00:00:00.000Z';
+      const Tms = new Date(Tiso).getTime();
+      db.prepare(
+        `UPDATE sdk_messages SET timestamp = ? WHERE json_extract(sdk_message, '$.uuid') = 'm-older'`
+      ).run('2025-12-31T00:00:00.000Z');
+      db.prepare(
+        `UPDATE sdk_messages SET timestamp = ? WHERE json_extract(sdk_message, '$.uuid') IN ('m-a', 'm-b')`
+      ).run(Tiso);
+
+      // before = T (the boundary/oldest-shown cursor). An inclusive boundary
+      // surfaces the same-ms sibling 'b' (and 'a', which the client dedups by
+      // id) plus the older row — instead of permanently skipping rows at T.
+      const { messages } = repository.getSDKMessages('session-1', 100, Tms);
+      const texts = messages.map(
+        (m) =>
+          (m as { message?: { content?: Array<{ text?: string }> } }).message?.content?.[0]?.text
+      );
+      expect(texts).toContain('b');
+      expect(texts).toContain('older');
+    });
+
+    it('advances through more-than-limit same-timestamp rows via the rowid cursor', () => {
+      // 5 messages sharing one timestamp T, paginated with limit 3. A
+      // timestamp-only cursor would return the same newest 3 every page (client
+      // dedups them, never reaching rows 1-2). The (timestamp, rowid) cursor
+      // must reach the older same-ms rows.
+      for (let i = 0; i < 5; i += 1) {
+        repository.saveSDKMessage('session-1', createUserMessage(`same-${i}`, `m-${i}`));
+      }
+      const Tiso = '2026-01-01T00:00:00.000Z';
+      const Tms = new Date(Tiso).getTime();
+      db.prepare(`UPDATE sdk_messages SET timestamp = ? WHERE session_id = 'session-1'`).run(Tiso);
+
+      const page1 = repository.getSDKMessages('session-1', 3);
+      expect(page1.hasMore).toBe(true);
+      const oldest = page1.messages[0] as { rowid?: number; timestamp?: number };
+      expect(oldest.rowid).toBeDefined();
+
+      // Page 2 uses the oldest page-1 row's (timestamp, rowid) as the cursor.
+      const page2 = repository.getSDKMessages('session-1', 3, Tms, undefined, oldest.rowid);
+      const page2Texts = page2.messages.map(
+        (m) =>
+          (m as { message?: { content?: Array<{ text?: string }> } }).message?.content?.[0]?.text
+      );
+      // The two older same-ms rows (inserted first) are now reachable.
+      expect(page2Texts).toContain('same-0');
+      expect(page2Texts).toContain('same-1');
+      // None of page 1's rows leak into page 2.
+      expect(page2Texts).not.toContain('same-4');
+    });
+
     it('should exclude render-only hidden system subtypes from pagination', () => {
       repository.saveSDKMessage('session-1', createUserMessage('Visible'));
       for (const subtype of ['session_state_changed', 'commands_changed', 'task_progress']) {
@@ -829,7 +886,11 @@ describe('SDKMessageRepository', () => {
         total_cost_usd: 0,
         usage: {},
       } as unknown as SDKMessage);
-      for (const subtype of ['session_state_changed', 'commands_changed', 'hook_progress']) {
+      // hook_started/hook_progress are no longer globally hidden (chat-visible
+      // hook events now); task_* are hidden but kept as progress signals via
+      // LAST_MESSAGE_PROGRESS_SUBTYPES, so they're not skipped here. Sample the
+      // remaining hidden non-progress subtypes.
+      for (const subtype of ['session_state_changed', 'commands_changed', 'elicitation_complete']) {
         repository.saveSDKMessage('session-1', {
           type: 'system',
           subtype,

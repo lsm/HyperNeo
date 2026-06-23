@@ -147,12 +147,21 @@ interface RosterHandoffEntry {
   text: string;
   ts: number;
 }
+interface RosterHookEntry {
+  kind: 'hook';
+  hookName: string;
+  hookEvent: string;
+  status: 'running' | 'completed' | 'failed';
+  summary?: string;
+  ts: number;
+}
 type ActiveRosterEntry =
   | RosterToolEntry
   | RosterMessageEntry
   | RosterThinkingEntry
   | RosterUserEntry
-  | RosterHandoffEntry;
+  | RosterHandoffEntry
+  | RosterHookEntry;
 
 const TASK_THREAD_MESSAGE_BUBBLE_WIDTH_CLASS = 'max-w-[85%] md:max-w-[86%]';
 const TASK_THREAD_AGENT_BUBBLE_WIDTH_CLASS = 'max-w-full md:max-w-[86%]';
@@ -394,6 +403,18 @@ function mapActivityEntry(entry: ActivityEntry): ActiveRosterEntry | null {
       const text = asTrimmedString(entry.text);
       if (!text) return null;
       return { kind: 'handoff', text, ts: entry.ts };
+    }
+    case 'hook': {
+      const summary = asTrimmedString(entry.summary);
+      return {
+        kind: 'hook',
+        hookName: typeof entry.hookName === 'string' ? entry.hookName : '',
+        hookEvent: typeof entry.hookEvent === 'string' ? entry.hookEvent : '',
+        status:
+          entry.status === 'completed' || entry.status === 'failed' ? entry.status : 'running',
+        ts: entry.ts,
+        ...(summary ? { summary } : {}),
+      };
     }
     default:
       return null;
@@ -798,6 +819,13 @@ function buildOperationalSystemTurn(
   if (!message || message.type !== 'system') return null;
   const subtype = (message as { subtype?: string }).subtype;
   if (!subtype || subtype === 'init') return null;
+  // Hooks surface ONLY as roster entries in the minimal feed (one entry per
+  // hook run via the active-turn summary). Suppress every hook_* system row so
+  // the feed never shows a standalone hook card. The chat transcript still
+  // renders hook_started/hook_progress/hook_response.
+  if (subtype === 'hook_started' || subtype === 'hook_progress' || subtype === 'hook_response') {
+    return null;
+  }
   // task_notification is folded onto its originating tool_use roster entry
   // (active turn only). Suppress the standalone row ONLY when that target
   // exists — i.e. the tool_use is in an active summary's rendered roster. When
@@ -1385,6 +1413,40 @@ function RosterEntry({ entry, isLatest }: { entry: ActiveRosterEntry; isLatest: 
             ✗
           </span>
         )}
+      </div>
+    );
+  }
+
+  if (entry.kind === 'hook') {
+    const isRunning = entry.status === 'running';
+    const isSuccess = entry.status === 'completed';
+    const isError = entry.status === 'failed';
+    return (
+      <div
+        class={`flex items-start gap-2 font-mono text-xs leading-5 ${fadeClass}`}
+        data-testid="minimal-thread-roster-entry"
+        data-roster-kind="hook"
+        data-hook-status={entry.status}
+      >
+        <span class="mt-0.5 shrink-0" aria-hidden="true">
+          {isRunning ? (
+            <span class="inline-block h-3 w-3 animate-spin rounded-full border border-gray-500 border-t-transparent" />
+          ) : isSuccess ? (
+            <span class="text-green-400">✓</span>
+          ) : isError ? (
+            <span class="text-red-400">✗</span>
+          ) : null}
+        </span>
+        <span class="min-w-0 truncate">
+          <span class="font-semibold text-slate-300">{entry.hookName || 'hook'}</span>
+          {entry.hookEvent ? (
+            <>
+              <span class="text-gray-400"> · </span>
+              <span class="text-gray-400">{entry.hookEvent}</span>
+            </>
+          ) : null}
+          {entry.summary ? <span class={` ${bodyClass}`}> — {entry.summary}</span> : null}
+        </span>
       </div>
     );
   }

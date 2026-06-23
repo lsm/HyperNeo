@@ -84,12 +84,29 @@ function sortRows(rows: SpaceTaskThreadMessageRow[]): SpaceTaskThreadMessageRow[
   });
 }
 
-function sortActiveTurnRows(rows: ActiveTurnEntryRow[]): ActiveTurnEntryRow[] {
+export function sortActiveTurnRows(rows: ActiveTurnEntryRow[]): ActiveTurnEntryRow[] {
   return [...rows].sort((a, b) => {
     if (a.sessionId !== b.sessionId) return a.sessionId.localeCompare(b.sessionId);
     if (a.ts !== b.ts) return a.ts - b.ts;
-    return a.id.localeCompare(b.id);
+    // id shape: <sessionId>:<turn>:<rowId>:<blockIdx> where rowId is the numeric
+    // sdk_messages.rowid (insertion order) and blockIdx is numeric. sessionId may
+    // contain ':', so split from the right and compare the trailing components
+    // NUMERICALLY — a lexicographic compare would order rowid 10 before rowid 9
+    // and break same-millisecond emission order.
+    const [ar, ab] = activeTurnRowPosition(a.id);
+    const [br, bb] = activeTurnRowPosition(b.id);
+    if (ar !== br) return ar - br;
+    return ab - bb;
   });
+}
+
+/** Extract the trailing (rowId, blockIdx) numeric pair from an active-turn row
+ * id. Returns [0, 0] for unparseable ids so they sort stably. */
+function activeTurnRowPosition(id: string): [number, number] {
+  const parts = id.split(':');
+  const rowId = Number.parseInt(parts[parts.length - 2] ?? '', 10);
+  const blockIdx = Number.parseInt(parts[parts.length - 1] ?? '', 10);
+  return [Number.isNaN(rowId) ? 0 : rowId, Number.isNaN(blockIdx) ? 0 : blockIdx];
 }
 
 function applyDelta(

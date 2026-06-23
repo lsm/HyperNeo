@@ -208,14 +208,23 @@ export class Database {
     sessionId: string,
     limit?: number,
     before?: number,
-    since?: number
+    since?: number,
+    beforeRowid?: number,
+    sinceRowid?: number
   ): {
     messages: Array<
       ChatMessage & { timestamp: number; origin?: MessageOrigin; sendStatus?: string }
     >;
     hasMore: boolean;
   } {
-    return this.sdkMessageRepo.getSDKMessages(sessionId, limit, before, since);
+    return this.sdkMessageRepo.getSDKMessages(
+      sessionId,
+      limit,
+      before,
+      since,
+      beforeRowid,
+      sinceRowid
+    );
   }
 
   getBackgroundTaskMessages(sessionId: string): Array<ChatMessage & { timestamp: number }> {

@@ -1841,6 +1841,162 @@ describe('NAMED_QUERY_REGISTRY', () => {
         expect(entries[2].preview).toBe('ls');
       });
 
+      test('collapses hook_started→progress→response into one roster entry per hook_id', async () => {
+        const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+        insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+
+        // Anchor the active turn with a tool_use so active-turn detection fires.
+        insertSdkMessageAt('a1', sessionId, now + 1000, {
+          type: 'assistant',
+          uuid: 'a1',
+          message: {
+            content: [{ type: 'tool_use', id: 'tu-1', name: 'Bash', input: { command: 'ls' } }],
+          },
+        });
+        // A completed hook run (3 messages, same hook_id).
+        insertSdkMessageAt(
+          'h1s',
+          sessionId,
+          now + 2000,
+          {
+            type: 'system',
+            subtype: 'hook_started',
+            hook_id: 'hook-A',
+            hook_name: 'pre-commit',
+            hook_event: 'PreToolUse',
+            uuid: 'h1s',
+          },
+          'system'
+        );
+        insertSdkMessageAt(
+          'h1p',
+          sessionId,
+          now + 3000,
+          {
+            type: 'system',
+            subtype: 'hook_progress',
+            hook_id: 'hook-A',
+            hook_name: 'pre-commit',
+            hook_event: 'PreToolUse',
+            stdout: 'running checks',
+            uuid: 'h1p',
+          },
+          'system'
+        );
+        insertSdkMessageAt(
+          'h1r',
+          sessionId,
+          now + 4000,
+          {
+            type: 'system',
+            subtype: 'hook_response',
+            hook_id: 'hook-A',
+            hook_name: 'pre-commit',
+            hook_event: 'PreToolUse',
+            outcome: 'success',
+            stdout: 'all good',
+            uuid: 'h1r',
+          },
+          'system'
+        );
+        // A still-running hook (only started).
+        insertSdkMessageAt(
+          'h2s',
+          sessionId,
+          now + 5000,
+          {
+            type: 'system',
+            subtype: 'hook_started',
+            hook_id: 'hook-B',
+            hook_name: 'lint',
+            hook_event: 'PostToolUse',
+            uuid: 'h2s',
+          },
+          'system'
+        );
+
+        const summaries = await buildSummaries(taskId);
+        const entries = summaries[0].entries as Array<Record<string, unknown>>;
+        const hooks = entries.filter((e) => e.kind === 'hook');
+        // One entry per hook_id, despite hook-A having 3 messages.
+        expect(hooks).toHaveLength(2);
+        const hookA = hooks.find((h) => h.hookName === 'pre-commit');
+        const hookB = hooks.find((h) => h.hookName === 'lint');
+        expect(hookA?.status).toBe('completed');
+        expect(hookA?.hookEvent).toBe('PreToolUse');
+        expect(hookB?.status).toBe('running');
+      });
+
+      test('breaks same-millisecond hook phase ties by insertion order (rowid)', async () => {
+        const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+        insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+
+        insertSdkMessageAt('a1', sessionId, now + 1000, {
+          type: 'assistant',
+          uuid: 'a1',
+          message: {
+            content: [{ type: 'tool_use', id: 'tu-1', name: 'Bash', input: { command: 'ls' } }],
+          },
+        });
+        // All three hook phases share the same millisecond. sdk_messages ids
+        // are random UUIDs, so the tiebreak must be insertion order (rowid):
+        // inserted started → progress → response, so response is newest.
+        const same = now + 2000;
+        insertSdkMessageAt(
+          'hs',
+          sessionId,
+          same,
+          {
+            type: 'system',
+            subtype: 'hook_started',
+            hook_id: 'h-tie',
+            hook_name: 'fast',
+            hook_event: 'PreToolUse',
+            uuid: 'hs',
+          },
+          'system'
+        );
+        insertSdkMessageAt(
+          'hp',
+          sessionId,
+          same,
+          {
+            type: 'system',
+            subtype: 'hook_progress',
+            hook_id: 'h-tie',
+            hook_name: 'fast',
+            hook_event: 'PreToolUse',
+            stdout: 'mid',
+            uuid: 'hp',
+          },
+          'system'
+        );
+        insertSdkMessageAt(
+          'hr',
+          sessionId,
+          same,
+          {
+            type: 'system',
+            subtype: 'hook_response',
+            hook_id: 'h-tie',
+            hook_name: 'fast',
+            hook_event: 'PreToolUse',
+            outcome: 'success',
+            stdout: 'done',
+            uuid: 'hr',
+          },
+          'system'
+        );
+
+        const summaries = await buildSummaries(taskId);
+        const hooks = (summaries[0].entries as Array<Record<string, unknown>>).filter(
+          (e) => e.kind === 'hook'
+        );
+        expect(hooks).toHaveLength(1);
+        // Response (last inserted) wins despite the shared timestamp.
+        expect(hooks[0].status).toBe('completed');
+      });
+
       test('distinguishes real human input from synthetic agent handoffs via isReplay', async () => {
         const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
         insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
@@ -1989,6 +2145,157 @@ describe('NAMED_QUERY_REGISTRY', () => {
         expect(orchEntries.map((e) => e.text)).toContain('orch active');
         expect(nodeEntries.map((e) => e.text)).toContain('node active');
       });
+
+      test('partitions hook runs per session — a shared hook_id cannot collapse two sessions', async () => {
+        const orchestrationSessionId = 'space:test:task:hp-orch';
+        const nodeSessionId = 'space:test:task:hp-node';
+        const workflowRunId = 'wr-hook-partition';
+        const workflowNodeId = 'node-hook-part';
+        const taskId = insertSpaceTask({
+          taskAgentSessionId: orchestrationSessionId,
+          workflowRunId,
+        });
+        insertSession(orchestrationSessionId, 'space_task_agent', '{"status":"processing"}');
+        insertSession(nodeSessionId, 'worker', '{"status":"processing"}');
+        insertNodeExecution({
+          id: 'ne-hook-part',
+          workflowRunId,
+          workflowNodeId,
+          agentName: 'coder',
+          agentSessionId: nodeSessionId,
+          status: 'in_progress',
+        });
+
+        // Both sessions emit the SAME hook_id at the same millisecond. The
+        // ROW_NUMBER window must partition per (session, turn, hook_id); a
+        // hook_id-only partition would keep just the globally-newest rn=1 and
+        // drop the other session's hook before summaries are grouped by sessionId.
+        const shared = { hook_id: 'h-shared', hook_name: 'lint', hook_event: 'PreToolUse' };
+        for (const [sid, prefix] of [
+          [orchestrationSessionId, 'o'],
+          [nodeSessionId, 'n'],
+        ] as const) {
+          insertSdkMessageAt(`${prefix}-a`, sid, now + 500, {
+            type: 'assistant',
+            uuid: `${prefix}-a`,
+            message: { content: [{ type: 'text', text: `${prefix} active` }] },
+          });
+          insertSdkMessageAt(
+            `${prefix}-hs`,
+            sid,
+            now + 1000,
+            { type: 'system', subtype: 'hook_started', uuid: `${prefix}-hs`, ...shared },
+            'system'
+          );
+          insertSdkMessageAt(
+            `${prefix}-hr`,
+            sid,
+            now + 1000,
+            {
+              type: 'system',
+              subtype: 'hook_response',
+              uuid: `${prefix}-hr`,
+              outcome: 'success',
+              ...shared,
+            },
+            'system'
+          );
+        }
+
+        const summaries = await buildSummaries(taskId);
+        const bySession = new Map(summaries.map((s) => [s.sessionId, s]));
+        for (const sid of [orchestrationSessionId, nodeSessionId]) {
+          const hooks = (bySession.get(sid)!.entries as Array<Record<string, unknown>>).filter(
+            (e) => e.kind === 'hook'
+          );
+          expect(hooks, `${sid} hook was dropped by a cross-session partition`).toHaveLength(1);
+          expect(hooks[0].hookName).toBe('lint');
+          expect(hooks[0].status).toBe('completed');
+        }
+      });
+
+      test('messages.bySession orders same-millisecond hook phases by insertion order (rowid)', async () => {
+        insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+        const same = now + 1000;
+        // Insertion order is started -> progress -> response, but the
+        // sdk_messages ids are reverse-alphabetical (hz, hy, hx). An `id`
+        // tiebreak would emit them backwards (response, progress, started);
+        // the rowid tiebreak preserves emission order so the chat transcript
+        // never renders a later hook phase before an earlier one.
+        const base = { hook_id: 'h-fast', hook_name: 'fast', hook_event: 'PreToolUse' };
+        insertSdkMessageAt(
+          'hz',
+          sessionId,
+          same,
+          { type: 'system', subtype: 'hook_started', uuid: 'hz', ...base },
+          'system'
+        );
+        insertSdkMessageAt(
+          'hy',
+          sessionId,
+          same,
+          { type: 'system', subtype: 'hook_progress', uuid: 'hy', stdout: 'mid', ...base },
+          'system'
+        );
+        insertSdkMessageAt(
+          'hx',
+          sessionId,
+          same,
+          {
+            type: 'system',
+            subtype: 'hook_response',
+            uuid: 'hx',
+            outcome: 'success',
+            ...base,
+          },
+          'system'
+        );
+
+        const entry = NAMED_QUERY_REGISTRY.get('messages.bySession')!;
+        const rows = db.prepare(entry.sql).all(sessionId, 100) as Array<{ content: string }>;
+        const subtypes = rows
+          .map((r) => JSON.parse(r.content) as { subtype?: string })
+          .filter((m) => typeof m.subtype === 'string' && m.subtype.startsWith('hook_'))
+          .map((m) => m.subtype);
+        expect(subtypes).toEqual(['hook_started', 'hook_progress', 'hook_response']);
+      });
+
+      test('orders same-millisecond tool_use and hook by insertion order, not UUID id', async () => {
+        const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+        insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+        const same = now + 1000;
+        // Assistant tool_use row inserted FIRST (lower rowid) but its sdk_messages
+        // id ('tzzz-a') sorts AFTER the hook's id ('haaa'), so a UUID-based
+        // tiebreak would render the hook before the tool that triggered it.
+        insertSdkMessageAt('tzzz-a', sessionId, same, {
+          type: 'assistant',
+          uuid: 'tzzz-a',
+          message: {
+            content: [
+              { type: 'tool_use', id: 'tu-trigger', name: 'Bash', input: { command: 'ls' } },
+            ],
+          },
+        });
+        insertSdkMessageAt(
+          'haaa',
+          sessionId,
+          same,
+          {
+            type: 'system',
+            subtype: 'hook_started',
+            uuid: 'haaa',
+            hook_id: 'h1',
+            hook_name: 'lint',
+            hook_event: 'PreToolUse',
+          },
+          'system'
+        );
+
+        const summaries = await buildSummaries(taskId);
+        const kinds = (summaries[0].entries as Array<Record<string, unknown>>).map((e) => e.kind);
+        // The tool_use (inserted first) must precede the hook it triggered.
+        expect(kinds).toEqual(['tool_use', 'hook']);
+      });
     });
 
     // ---------------------------------------------------------------------
@@ -2058,6 +2365,114 @@ describe('NAMED_QUERY_REGISTRY', () => {
         const rows = await runEntries(taskId);
         return mod.buildActiveTurnSummariesFromRows(rows);
       }
+
+      test('compact feed excludes hook_* system rows (roster-only via active-turn summary)', () => {
+        const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+        insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+        insertSdkMessageAt('a1', sessionId, now + 1000, {
+          type: 'assistant',
+          uuid: 'a1',
+          message: { content: [{ type: 'text', text: 'hi' }] },
+        });
+        // hook_started/progress/response are no longer globally hidden, but in
+        // the task thread they surface only as roster entries (the active-turn
+        // summary collapses them). The compact payload must filter them
+        // server-side instead of shipping + client-suppressing each phase.
+        for (const [sub, id] of [
+          ['hook_started', 'hs'],
+          ['hook_progress', 'hp'],
+          ['hook_response', 'hr'],
+        ] as const) {
+          insertSdkMessageAt(
+            id,
+            sessionId,
+            now + 2000,
+            {
+              type: 'system',
+              subtype: sub,
+              uuid: id,
+              hook_id: 'h1',
+              hook_name: 'lint',
+              hook_event: 'PreToolUse',
+              ...(sub === 'hook_response' ? { outcome: 'success' } : {}),
+            },
+            'system'
+          );
+        }
+
+        const ids = queryCompact(taskId).map((r) => String(r.id));
+        expect(ids).toContain('a1');
+        expect(ids).not.toContain('hs');
+        expect(ids).not.toContain('hp');
+        expect(ids).not.toContain('hr');
+      });
+
+      test('hook burst does not consume the compact tail (excluded before ranking)', () => {
+        const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+        insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+        // Oldest assistant row, then 6 newer hook rows. Without excluding hooks
+        // before nonTerminalRankDesc is assigned, the 6 newer hook rows would
+        // occupy ranks 1-5 (tail limit) and rank this assistant row OUT of the
+        // compact feed. The upstream filter in `ranked` must keep the assistant.
+        insertSdkMessageAt('a-old', sessionId, now + 1000, {
+          type: 'assistant',
+          uuid: 'a-old',
+          message: { content: [{ type: 'text', text: 'real work' }] },
+        });
+        for (let i = 0; i < 6; i += 1) {
+          insertSdkMessageAt(
+            `hp${i}`,
+            sessionId,
+            now + 2000 + i,
+            {
+              type: 'system',
+              subtype: 'hook_progress',
+              uuid: `hp${i}`,
+              hook_id: 'h1',
+              hook_name: 'lint',
+              hook_event: 'PreToolUse',
+              stdout: `phase ${i}`,
+            },
+            'system'
+          );
+        }
+
+        const ids = queryCompact(taskId).map((r) => String(r.id));
+        expect(ids).toContain('a-old');
+        for (let i = 0; i < 6; i += 1) expect(ids).not.toContain(`hp${i}`);
+      });
+
+      test('malformed system sdk_message does not break the compact feed', () => {
+        const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+        insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+        insertSdkMessageAt('a-good', sessionId, now + 1000, {
+          type: 'assistant',
+          uuid: 'a-good',
+          message: { content: [{ type: 'text', text: 'ok' }] },
+        });
+        // A malformed system row must not raise 'malformed JSON' from the
+        // hook-subtype json_extract and kill the whole subscription; the
+        // json_valid guard lets it fall through and the good row still ships.
+        insertSdkMessageAt(
+          'bad-sys',
+          sessionId,
+          now + 2000,
+          { type: 'system', subtype: 'informational', uuid: 'bad-sys' },
+          'system'
+        );
+        db.exec('PRAGMA ignore_check_constraints = ON');
+        // Drop the json_extract expression index so the UPDATE doesn't try to
+        // re-index the malformed blob (mirrors live-query-messages malformed-JSON test).
+        db.exec('DROP INDEX IF EXISTS idx_sdk_messages_uuid_status');
+        db.prepare(`UPDATE sdk_messages SET sdk_message = ? WHERE id = ?`).run(
+          '{not-json',
+          'bad-sys'
+        );
+        db.exec('PRAGMA ignore_check_constraints = OFF');
+
+        const ids = queryCompact(taskId).map((r) => String(r.id));
+        expect(ids).toContain('a-good');
+      });
 
       test('long active turn: compact feed ≤5 non-terminal rows AND summary carries every entry', async () => {
         const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
@@ -2708,7 +3123,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
       }
     });
 
-    test('all ORDER BY clauses include a deterministic tiebreaker (id column)', () => {
+    test('all ORDER BY clauses include a deterministic tiebreaker (id or rowid column)', () => {
       for (const [name, entry] of NAMED_QUERY_REGISTRY) {
         const upperSql = entry.sql.toUpperCase();
         expect(upperSql).toContain('ORDER BY');
@@ -2718,9 +3133,15 @@ describe('NAMED_QUERY_REGISTRY', () => {
           .replace(/\s+LIMIT\s+\?(\s+OFFSET\s+\?)?/, '')
           .replace(/\s+/g, ' ')
           .trim();
-        // Must end with either `id ASC` or `id DESC` (tiebreaker)
-        const hasIdTiebreaker = /\bID\s+(ASC|DESC)\s*$/.test(sqlForCheck);
-        expect(hasIdTiebreaker).toBe(true, `${name} ORDER BY lacks deterministic id tiebreaker`);
+        // Must end with `<col> ASC|DESC` where col is a unique per-row key: the
+        // explicit `id` (UUID) or the implicit `rowid` (monotonic insertion
+        // order). `rowid` is the preferred tiebreak for tables whose `id` is a
+        // random UUID, since it preserves emission order for same-ms rows.
+        const hasTiebreaker = /\b(ID|ROWID)\s+(ASC|DESC)\s*$/.test(sqlForCheck);
+        expect(hasTiebreaker).toBe(
+          true,
+          `${name} ORDER BY lacks deterministic id/rowid tiebreaker`
+        );
       }
     });
   });
