@@ -202,6 +202,7 @@ interface CompletedFeedTurn {
    * exec) — the result message hasn't arrived yet.
    */
   resultInfo?: ResultMessage;
+  roster: ActiveRosterEntry[];
 }
 
 interface ActiveFeedTurn {
@@ -576,11 +577,92 @@ function extractLastAssistantText(rows: ParsedThreadRow[]): {
   return { text: tailFallback, fallback: true, sourceRow: tail };
 }
 
+type TaskNotificationLite = {
+  status: 'completed' | 'failed' | 'stopped';
+  summary?: string;
+  usage?: { total_tokens: number; tool_uses: number; duration_ms: number };
+};
+
+const COMPLETED_TOOL_PREVIEW_MAX_CHARS = 100;
+
+function capCompletedToolPreview(value: string): string {
+  const oneLine = value.replace(/\s+/g, ' ').trim();
+  if (oneLine.length <= COMPLETED_TOOL_PREVIEW_MAX_CHARS) return oneLine;
+  return `${oneLine.slice(0, COMPLETED_TOOL_PREVIEW_MAX_CHARS - 1)}…`;
+}
+
+function formatCompletedToolPreview(toolName: string, input: unknown): string {
+  if (toolName.startsWith('mcp__')) return '';
+  if (typeof input !== 'object' || input === null) return '';
+  const record = input as Record<string, unknown>;
+  if (toolName === 'Bash' && typeof record.command === 'string') {
+    return capCompletedToolPreview(record.command);
+  }
+  if (typeof record.file_path === 'string') return capCompletedToolPreview(record.file_path);
+  if (typeof record.path === 'string') return capCompletedToolPreview(record.path);
+  if (typeof record.pattern === 'string') return capCompletedToolPreview(record.pattern);
+  const firstString = Object.values(record).find(
+    (value): value is string => typeof value === 'string'
+  );
+  return firstString ? capCompletedToolPreview(firstString) : '';
+}
+
+function foldTaskNotification(
+  entry: RosterToolEntry,
+  taskNotificationsByToolUseId: Map<string, TaskNotificationLite>
+): RosterToolEntry {
+  if (!entry.toolUseId) return entry;
+  const notification = taskNotificationsByToolUseId.get(entry.toolUseId);
+  if (!notification) return entry;
+  return {
+    ...entry,
+    taskStatus: notification.status,
+    ...(notification.summary ? { taskSummary: notification.summary } : {}),
+    ...(notification.usage ? { taskUsage: notification.usage } : {}),
+  };
+}
+
+function indexCompletedFoldableToolUseIds(rows: ParsedThreadRow[]): Set<string> {
+  const visible = new Set<string>();
+  for (const entry of completedRosterEntries(rows, new Map())) {
+    if (entry.kind === 'tool' && entry.toolUseId) visible.add(entry.toolUseId);
+  }
+  return visible;
+}
+
+function completedRosterEntries(
+  rows: ParsedThreadRow[],
+  taskNotificationsByToolUseId: Map<string, TaskNotificationLite>,
+  foldableToolUseIds?: ReadonlySet<string>
+): ActiveRosterEntry[] {
+  const entries: RosterToolEntry[] = [];
+  for (const row of rows) {
+    for (const block of getToolUseContentBlocks(row)) {
+      const toolUseIdValue = (block as { id?: unknown }).id;
+      const toolUseId = typeof toolUseIdValue === 'string' ? toolUseIdValue : undefined;
+      const entry: RosterToolEntry = {
+        kind: 'tool',
+        tool: block.name,
+        preview: formatCompletedToolPreview(block.name, block.input),
+        ts: row.createdAt,
+        ...(toolUseId ? { toolUseId } : {}),
+      };
+      entries.push(
+        toolUseId && foldableToolUseIds && !foldableToolUseIds.has(toolUseId)
+          ? entry
+          : foldTaskNotification(entry, taskNotificationsByToolUseId)
+      );
+    }
+  }
+  return entries.slice(-ROSTER_MAX_ENTRIES);
+}
+
 function buildCompletedTurn(
   block: AgentTurnBlock,
   rows: ParsedThreadRow[],
   turnId: string,
   resultInfo: ResultMessage | undefined,
+  taskNotificationsByToolUseId: Map<string, TaskNotificationLite>,
   transitionSummary: ActiveTurnSummary | undefined = undefined
 ): CompletedFeedTurn {
   const startedAt = rows[0].createdAt;
@@ -613,14 +695,13 @@ function buildCompletedTurn(
     highlightMessageUuid: highlightUuid,
     replacementStatus: sourceRow?.replacementStatus,
     resultInfo,
+    roster: completedRosterEntries(
+      rows,
+      taskNotificationsByToolUseId,
+      indexCompletedFoldableToolUseIds(rows)
+    ),
   };
 }
-
-type TaskNotificationLite = {
-  status: 'completed' | 'failed' | 'stopped';
-  summary?: string;
-  usage?: { total_tokens: number; tool_uses: number; duration_ms: number };
-};
 
 /**
  * Scan parsedRows for terminal task_notification system rows, keyed by
@@ -658,9 +739,13 @@ function indexTaskNotifications(rows: ParsedThreadRow[]): Map<string, TaskNotifi
  */
 function collectRosteredToolUseIds(
   summaries: ActiveTurnSummary[],
-  renderedTurnKeys: Set<string>
+  renderedTurnKeys: Set<string>,
+  completedRows: ParsedThreadRow[][]
 ): Set<string> {
   const ids = new Set<string>();
+  for (const rows of completedRows) {
+    for (const id of indexCompletedFoldableToolUseIds(rows)) ids.add(id);
+  }
   for (const summary of summaries) {
     // Match on (sessionId, turnIndex): a stale summary whose turn no longer
     // matches the compact feed's active turn must not contribute tool IDs.
@@ -681,15 +766,8 @@ function buildActiveTurn(
   taskNotificationsByToolUseId: Map<string, TaskNotificationLite>
 ): ActiveFeedTurn {
   const roster = rosterEntriesFromSummary(summary, ROSTER_MAX_ENTRIES).map((entry) => {
-    if (entry.kind !== 'tool' || !entry.toolUseId) return entry;
-    const n = taskNotificationsByToolUseId.get(entry.toolUseId);
-    if (!n) return entry;
-    return {
-      ...entry,
-      taskStatus: n.status,
-      ...(n.summary ? { taskSummary: n.summary } : {}),
-      ...(n.usage ? { taskUsage: n.usage } : {}),
-    };
+    if (entry.kind !== 'tool') return entry;
+    return foldTaskNotification(entry, taskNotificationsByToolUseId);
   });
   return {
     state: 'active',
@@ -810,6 +888,14 @@ function buildCompactBoundaryTurn(row: ParsedThreadRow): CompactBoundaryFeedTurn
   };
 }
 
+function isFoldedTaskNotification(row: ParsedThreadRow, rosteredToolUseIds: Set<string>): boolean {
+  const message = row.message;
+  if (!message || message.type !== 'system') return false;
+  if ((message as { subtype?: string }).subtype !== 'task_notification') return false;
+  const toolUseId = (message as { tool_use_id?: string }).tool_use_id;
+  return !!toolUseId && rosteredToolUseIds.has(toolUseId);
+}
+
 function buildOperationalSystemTurn(
   row: ParsedThreadRow,
   isSessionTail: boolean,
@@ -833,10 +919,7 @@ function buildOperationalSystemTurn(
   // capped out of the last ROSTER_MAX_ENTRIES entries), fall through to a
   // system turn so the terminal summary/usage/failure is not silently lost.
   // True orphans (no tool_use_id) also fall through.
-  if (subtype === 'task_notification') {
-    const toolUseId = (message as { tool_use_id?: string }).tool_use_id;
-    if (toolUseId && rosteredToolUseIds.has(toolUseId)) return null;
-  }
+  if (isFoldedTaskNotification(row, rosteredToolUseIds)) return null;
   // Honor the centralized hidden-subtype contract so Space task threads
   // don't surface noisy rows the main transcript already hides.
   if (isHiddenSystemSubtype(subtype)) return null;
@@ -1162,14 +1245,49 @@ function buildFeedTurns(
     if (sid && turnIndex !== undefined) renderedTurnKeys.add(`${sid}:${turnIndex}`);
   }
 
-  // tool_use_ids whose status is actually rendered on an active-roster entry
-  // (i.e. the tool is in a rendered turn's summary AND within the last
-  // ROSTER_MAX_ENTRIES entries). A task_notification is suppressed ONLY when
-  // its tool_use_id is in this set — otherwise there is no inline target
-  // (completed turn, missing/stale summary, turn mismatch, or capped out of the
-  // roster) and the notification must fall back to a standalone system row so
-  // the terminal summary/usage/failure is not lost.
-  const rosteredToolUseIds = collectRosteredToolUseIds(activeTurnSummaries, renderedTurnKeys);
+  const completedRows = blocks.flatMap((block) => {
+    const out: ParsedThreadRow[][] = [];
+    const blockKey = normalizeAgentKey(block.agentLabel);
+    const trailingBlockCanUpgradeToActive = normalisedActive.has(blockKey) && !block.isTerminal;
+    let pendingAgentRows: ParsedThreadRow[] = [];
+    const flush = (isFinal = false) => {
+      if (
+        pendingAgentRows.length > 0 &&
+        !(isFinal && trailingBlockCanUpgradeToActive) &&
+        extractLastAssistantText(pendingAgentRows).text.length > 0
+      ) {
+        out.push(pendingAgentRows);
+      }
+      pendingAgentRows = [];
+    };
+    for (const row of block.rows) {
+      if (buildCompactBoundaryTurn(row) || isUserRow(row)) {
+        flush();
+        continue;
+      }
+      const message = row.message;
+      const subtype =
+        message?.type === 'system' ? (message as { subtype?: string }).subtype : undefined;
+      if (subtype !== 'task_notification' && buildOperationalSystemTurn(row, false, new Set())) {
+        flush();
+        continue;
+      }
+      pendingAgentRows.push(row);
+    }
+    flush(true);
+    return out;
+  });
+
+  // tool_use_ids whose status is actually rendered on an active or completed
+  // roster entry. A task_notification is suppressed ONLY when its tool_use_id is
+  // in this set — otherwise there is no inline target (missing/stale summary,
+  // turn mismatch, or capped out of the roster) and the notification must fall
+  // back to a standalone system row so terminal metadata is not lost.
+  const rosteredToolUseIds = collectRosteredToolUseIds(
+    activeTurnSummaries,
+    renderedTurnKeys,
+    completedRows
+  );
 
   const latestRowIdBySession = new Map<string, string>();
   for (const row of rowsWithReplacementStatus) {
@@ -1220,7 +1338,14 @@ function buildFeedTurns(
           )
         : undefined;
       turns.push(
-        buildCompletedTurn(block, pendingAgentRows, turnId, resultInfo, transitionSummary)
+        buildCompletedTurn(
+          block,
+          pendingAgentRows,
+          turnId,
+          resultInfo,
+          taskNotificationsByToolUseId,
+          transitionSummary
+        )
       );
       perAgentTrailing.set(blockKey, {
         turnIdx: turns.length - 1,
@@ -1245,6 +1370,9 @@ function buildFeedTurns(
       if (operationalSystemTurn) {
         flushAgent();
         turns.push(operationalSystemTurn);
+        continue;
+      }
+      if (isFoldedTaskNotification(row, rosteredToolUseIds)) {
         continue;
       }
       if (isUserRow(row)) {
@@ -1367,7 +1495,9 @@ function RosterEntry({ entry, isLatest }: { entry: ActiveRosterEntry; isLatest: 
     const toolLabel = rosterToolLabel(entry.tool);
     const preview = entry.preview.trim();
     const isSuccess = entry.taskStatus === 'completed';
-    const isError = entry.taskStatus === 'failed' || entry.taskStatus === 'stopped';
+    const isStopped = entry.taskStatus === 'stopped';
+    const isError = entry.taskStatus === 'failed';
+    const statusLabel = isStopped ? 'Task stopped' : null;
     return (
       <div
         class={`flex items-start gap-2 font-mono text-xs leading-5 ${fadeClass}`}
@@ -1386,10 +1516,26 @@ function RosterEntry({ entry, isLatest }: { entry: ActiveRosterEntry; isLatest: 
               <span class={bodyClass}>{preview}</span>
             </>
           ) : null}
+          {statusLabel ? (
+            <>
+              <span class="text-gray-400"> — </span>
+              <span class="text-amber-300">{statusLabel}</span>
+            </>
+          ) : null}
           {entry.taskSummary ? (
             <>
               <span class="text-gray-400"> — </span>
-              <span class={isSuccess ? 'text-green-400' : isError ? 'text-red-400' : bodyClass}>
+              <span
+                class={
+                  isSuccess
+                    ? 'text-green-400'
+                    : isStopped
+                      ? 'text-amber-300'
+                      : isError
+                        ? 'text-red-400'
+                        : bodyClass
+                }
+              >
                 {entry.taskSummary}
               </span>
             </>
@@ -1406,6 +1552,11 @@ function RosterEntry({ entry, isLatest }: { entry: ActiveRosterEntry; isLatest: 
         {isSuccess && (
           <span class="mt-0.5 shrink-0 text-green-400" aria-label="task completed">
             ✓
+          </span>
+        )}
+        {isStopped && (
+          <span class="mt-0.5 shrink-0 text-amber-300" aria-label="task stopped">
+            ■
           </span>
         )}
         {isError && (
@@ -1575,6 +1726,13 @@ function CompletedBody({
         data-testid="minimal-thread-agent-bubble"
       >
         <ReplacementBadge status={turn.replacementStatus} />
+        {turn.roster.length > 0 ? (
+          <div class="mb-2 space-y-0.5">
+            {turn.roster.map((entry, i) => (
+              <RosterEntry key={`${entry.kind}-${i}`} entry={entry} isLatest={false} />
+            ))}
+          </div>
+        ) : null}
         {turn.lastMessage ? (
           <div class="text-sm text-gray-100 leading-relaxed [&_a]:text-blue-400">
             {turn.fallback ? (
