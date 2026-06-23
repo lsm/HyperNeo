@@ -57,6 +57,10 @@ interface Props {
   /** tool_use_ids whose card is rendered in this slice — gates task_notification
    * suppression (a nested tool_use whose parent is paginated out has no target). */
   foldableToolUseIds?: Set<string>;
+  /** UUIDs of hook_started/hook_progress phases whose run reached
+   * hook_response in the same turn — gates the hook running spinner so
+   * completed phases don't look still-running. */
+  completedHookUuids?: Set<string>;
   replacementStatusMap?: Map<string, MessageReplacementStatus>;
   sessionInfo?: SystemInitMessage; // Optional session init info to attach to user messages
   // Question handling props for inline QuestionPrompt rendering
@@ -247,6 +251,7 @@ function SDKMessageRendererImpl({
   subagentMessagesMap,
   taskNotificationsMap,
   foldableToolUseIds,
+  completedHookUuids,
   replacementStatusMap,
   sessionInfo,
   sessionId,
@@ -376,7 +381,13 @@ function SDKMessageRendererImpl({
   } else if (isSDKResultMessage(sdkMessage)) {
     renderedMessage = <SDKResultMessage message={sdkMessage} />;
   } else if (isSDKSystemMessage(sdkMessage)) {
-    renderedMessage = <SDKSystemMessage message={sdkMessage} isLiveTail={isLiveTail} />;
+    renderedMessage = (
+      <SDKSystemMessage
+        message={sdkMessage}
+        isLiveTail={isLiveTail}
+        completedHookUuids={completedHookUuids}
+      />
+    );
   } else if (isSDKToolProgressMessage(sdkMessage)) {
     const toolInput = toolInputsMap?.get((sdkMessage as SDKToolProgressMessageType).tool_use_id);
     renderedMessage = <SDKToolProgressMessage message={sdkMessage} toolInput={toolInput} />;
@@ -424,6 +435,7 @@ function areMessageRendererPropsEqual(prev: Props, next: Props): boolean {
     prev.subagentMessagesMap === next.subagentMessagesMap &&
     prev.taskNotificationsMap === next.taskNotificationsMap &&
     prev.foldableToolUseIds === next.foldableToolUseIds &&
+    prev.completedHookUuids === next.completedHookUuids &&
     prev.replacementStatusMap === next.replacementStatusMap &&
     prev.sessionInfo === next.sessionInfo &&
     prev.sessionId === next.sessionId &&

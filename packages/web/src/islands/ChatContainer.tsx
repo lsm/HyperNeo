@@ -622,16 +622,22 @@ export default function ChatContainer({
       const oldScrollHeight = container.scrollHeight;
       const oldScrollTop = container.scrollTop;
 
-      const oldestMessage = messages[0] as ChatMessage & { timestamp?: number };
+      const oldestMessage = messages[0] as ChatMessage & { timestamp?: number; rowid?: number };
       const beforeTimestamp = oldestMessage?.timestamp;
       if (!beforeTimestamp) {
         setHasMoreMessages(false);
         return;
       }
 
-      // Load older messages via sessionStore RPC (pure WebSocket)
-      const { messages: olderMessages, hasMore } =
-        await sessionStore.loadOlderMessages(beforeTimestamp);
+      // Load older messages via sessionStore RPC (pure WebSocket). Pass the
+      // oldest row's rowid so the (timestamp, rowid) cursor advances through
+      // same-millisecond bursts instead of looping on deduped duplicates.
+      const { messages: olderMessages, hasMore } = await sessionStore.loadOlderMessages(
+        beforeTimestamp,
+        100,
+        undefined,
+        oldestMessage?.rowid
+      );
       if (olderMessages.length === 0) {
         setHasMoreMessages(false);
         return;
@@ -807,12 +813,14 @@ export default function ChatContainer({
     const applyTargetWindow = async () => {
       setLoadingOlder(true);
       let before = searchLoadTarget.before;
+      let beforeRowid = searchLoadTarget.rowid;
       if (!before) return;
       while (!cancelled) {
         const { messages: targetWindow, hasMore } = await sessionStore.loadOlderMessages(
           before,
           100,
-          searchLoadTarget.sessionId
+          searchLoadTarget.sessionId,
+          beforeRowid
         );
         if (cancelled) return;
         if (sessionStore.activeSessionId.value !== searchLoadTarget.sessionId) {
@@ -835,12 +843,25 @@ export default function ChatContainer({
           resetSearchTarget();
           return;
         }
-        const oldestMessage = targetWindow[0] as ChatMessage & { timestamp?: number };
-        if (!oldestMessage.timestamp || oldestMessage.timestamp >= before) {
+        const oldestMessage = targetWindow[0] as ChatMessage & {
+          timestamp?: number;
+          rowid?: number;
+        };
+        // Progress on the composite (timestamp, rowid) cursor: with a rowid
+        // cursor the new page can share the cursor's timestamp but carry older
+        // rowids — that still counts as forward progress. Only reset when
+        // neither axis advanced.
+        const ts = oldestMessage.timestamp;
+        const rid = oldestMessage.rowid;
+        const advanced =
+          (ts !== undefined && ts < before) ||
+          (ts === before && rid !== undefined && beforeRowid !== undefined && rid < beforeRowid);
+        if (!ts || !advanced) {
           resetSearchTarget();
           return;
         }
-        before = oldestMessage.timestamp;
+        before = ts;
+        beforeRowid = rid;
       }
     };
     applyTargetWindow()
@@ -1370,6 +1391,7 @@ export default function ChatContainer({
                     subagentMessagesMap={maps.subagentMessagesMap}
                     taskNotificationsMap={maps.taskNotificationsMap}
                     foldableToolUseIds={maps.foldableToolUseIds}
+                    completedHookUuids={maps.completedHookUuids}
                     replacementStatusMap={maps.replacementStatusMap}
                     sessionInfo={
                       msg.uuid

@@ -1194,7 +1194,8 @@ github_events AS (
     NULL AS parentToolUseId,
     1 AS isRenderable,
     0 AS isTerminal,
-    NULL AS turnUserMessageId
+    NULL AS turnUserMessageId,
+    NULL AS insOrder
   FROM target_task tt
   JOIN space_github_events ge ON ge.task_id = tt.id
   WHERE ge.state IN ('routed', 'delivered')
@@ -1258,7 +1259,12 @@ sdk_rows_raw AS (
     CAST((julianday(sm.timestamp) - 2440587.5) * 86400000 AS INTEGER) AS createdAt,
     sm.parent_tool_use_id AS parentToolUseId,
     sm.is_renderable AS isRenderable,
-    sm.is_terminal AS isTerminal
+    sm.is_terminal AS isTerminal,
+    -- Insertion order (implicit rowid) appended last for positional UNION
+    -- alignment with github_events. Used as the same-millisecond tiebreak in
+    -- turn-boundary computation so a hook_response and the result closing the
+    -- same turn don't split across a turn boundary by random UUID id.
+    sm.rowid AS insOrder
   FROM target_task tt
   JOIN sdk_messages sm ON sm.task_id = tt.id
   LEFT JOIN sessions s_kind ON s_kind.id = sm.session_id
@@ -1357,7 +1363,8 @@ sdk_rows AS (
     t.parentToolUseId,
     t.isRenderable,
     t.isTerminal,
-    urs.userMessageId AS turnUserMessageId
+    urs.userMessageId AS turnUserMessageId,
+    t.insOrder AS insOrder
   FROM sdk_rows_with_turn t
   LEFT JOIN user_row_starts urs
     ON urs.sessionId = t.sessionId
@@ -1383,7 +1390,8 @@ joined AS (
     parentToolUseId,
     isRenderable,
     isTerminal,
-    turnUserMessageId
+    turnUserMessageId,
+    insOrder
   FROM sdk_rows
 )
 `.trim();
@@ -1449,7 +1457,10 @@ session_turns AS (
     COALESCE(
       SUM(j.isTerminal) OVER (
         PARTITION BY j.sessionId
-        ORDER BY j.createdAt ASC, j.id ASC
+        -- Order by insertion order (insOrder = sdk_messages.rowid) so a
+        -- same-millisecond hook_response and the result that closes the turn
+        -- stay in the same turn instead of splitting by random UUID id.
+        ORDER BY j.createdAt ASC, j.insOrder ASC
         ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
       ),
       0
@@ -1474,6 +1485,21 @@ ranked AS (
       ELSE NULL
     END AS userRowRankAsc
   FROM session_turns st
+  -- hook_* rows are roster-only (the active-turn summary collapses each run).
+  -- Exclude them BEFORE ranking so a burst of hook progress/response rows
+  -- can't consume the 5-row non-terminal tail and rank real assistant/tool
+  -- rows out of the task thread.
+  WHERE NOT (
+    st.messageType = 'system'
+    -- Guard json_extract on valid JSON only: a malformed sdk_message blob
+    -- would otherwise raise SQLite's 'malformed JSON' and break the whole
+    -- compact subscription. Malformed system rows fall through (treated as
+    -- non-hook) to the parser's raw-row fallback.
+    AND COALESCE(
+      CASE WHEN json_valid(st.content) THEN json_extract(st.content, '$.subtype') END,
+      ''
+    ) IN ('hook_started', 'hook_progress', 'hook_response')
+  )
 ),
 scored AS (
   SELECT
@@ -1519,7 +1545,9 @@ selected AS (
     -- would be dropped on any non-trivial turn (the system:init row sits at
     -- position 1 of every session, far outside the tail of 5). System rows
     -- are inherently rare so passing them through here is cheap and keeps the
-    -- per-exec metadata dropdowns working consistently.
+    -- per-exec metadata dropdowns working consistently. (hook_* system rows
+    -- are already excluded upstream in the ranked CTE so they neither consume
+    -- tail slots nor ship in the payload.)
     OR s.messageType = 'system'
     OR (
       s.isTerminalLocal = 0
@@ -1607,7 +1635,10 @@ session_turns AS (
     COALESCE(
       SUM(j.isTerminal) OVER (
         PARTITION BY j.sessionId
-        ORDER BY j.createdAt ASC, j.id ASC
+        -- Order by insertion order (insOrder = sdk_messages.rowid) so a
+        -- same-millisecond hook_response and the result that closes the turn
+        -- stay in the same turn instead of splitting by random UUID id.
+        ORDER BY j.createdAt ASC, j.insOrder ASC
         ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
       ),
       0
@@ -1646,7 +1677,11 @@ assistant_entries AS (
     ar.sessionId AS sessionId,
     ar.turnIndex AS turnIndex,
     ar.createdAt AS ts,
-    ar.id AS rowId,
+    -- rowId is insertion order (sdk_messages.rowid), NOT the random UUID id,
+    -- so the entry id + final ORDER BY keep same-millisecond rows (e.g. a
+    -- tool_use and the hook it triggers) in emission order instead of shuffling
+    -- by UUID.
+    base.rowid AS rowId,
     CAST(je.key AS INTEGER) AS blockIdx,
     json_extract(ar.content, '$.uuid') AS uuid,
     json_extract(je.value, '$.type') AS blockType,
@@ -1657,7 +1692,8 @@ assistant_entries AS (
     json_extract(je.value, '$.id') AS toolUseId,
     json_extract(je.value, '$.text') AS textValue,
     json_extract(je.value, '$.thinking') AS thinkingValue
-  FROM active_rows ar,
+  FROM active_rows ar
+  JOIN sdk_messages base ON base.id = ar.id,
        json_each(json_extract(ar.content, '$.message.content')) je
   WHERE ar.messageType = 'assistant'
     AND json_type(ar.content, '$.message.content') = 'array'
@@ -1679,7 +1715,7 @@ user_entries AS (
     ar.sessionId AS sessionId,
     ar.turnIndex AS turnIndex,
     ar.createdAt AS ts,
-    ar.id AS rowId,
+    base.rowid AS rowId,
     -1 AS blockIdx,
     json_extract(ar.content, '$.uuid') AS uuid,
     CASE
@@ -1707,6 +1743,7 @@ user_entries AS (
     END AS textValue,
     NULL AS thinkingValue
   FROM active_rows ar
+  JOIN sdk_messages base ON base.id = ar.id
   WHERE ar.messageType = 'user'
     -- Skip user rows whose content is exclusively tool_result blocks (or
     -- mixes tool_result with empty/whitespace-only text blocks). Such rows
@@ -1730,6 +1767,71 @@ user_entries AS (
           AND TRIM(COALESCE(json_extract(je.value, '$.text'), '')) != ''
       )
     )
+),
+-- One row per hook run in the active turn. A hook emits hook_started →
+-- hook_progress → hook_response; collapse to the LATEST message per hook_id
+-- so the roster shows a single entry whose status reflects the final phase
+-- (running while started/progress, completed/failed once response arrives).
+hook_runs AS (
+  SELECT
+    ar.sessionId AS sessionId,
+    ar.turnIndex AS turnIndex,
+    ar.createdAt AS ts,
+    base.rowid AS rowId,
+    json_extract(ar.content, '$.uuid') AS uuid,
+    json_extract(ar.content, '$.hook_id') AS hookId,
+    json_extract(ar.content, '$.hook_name') AS hookName,
+    json_extract(ar.content, '$.hook_event') AS hookEvent,
+    json_extract(ar.content, '$.subtype') AS hookSubtype,
+    json_extract(ar.content, '$.outcome') AS outcome,
+    json_extract(ar.content, '$.stdout') AS stdout,
+    ROW_NUMBER() OVER (
+      -- Partition per (session, turn, hook_id): hook_id is only unique within a
+      -- single agent's turn, so two active sessions emitting the same hook_id
+      -- must not collapse into one window (one would be dropped before grouping
+      -- by sessionId).
+      PARTITION BY ar.sessionId, ar.turnIndex, json_extract(ar.content, '$.hook_id')
+      -- createdAt ties (same-millisecond hook_started/progress/response) are
+      -- broken by insertion order: sdk_messages.id is a random UUID, so join
+      -- back to the base table for its implicit rowid, which is monotonic.
+      ORDER BY ar.createdAt DESC, base.rowid DESC
+    ) AS rn
+  FROM active_rows ar
+  JOIN sdk_messages base ON base.id = ar.id
+  WHERE ar.messageType = 'system'
+    -- Guard the hook json_extract calls on valid JSON so a single malformed
+    -- sdk_message blob can't raise 'malformed JSON' and break the active-turn
+    -- subscription. Malformed rows simply don't qualify as hook runs.
+    AND json_valid(ar.content)
+    AND json_extract(ar.content, '$.subtype') IN ('hook_started', 'hook_progress', 'hook_response')
+    AND json_extract(ar.content, '$.hook_id') IS NOT NULL
+),
+hook_entries AS (
+  SELECT
+    sessionId,
+    turnIndex,
+    ts,
+    rowId,
+    -2 AS blockIdx,
+    uuid,
+    '__hook' AS blockType,
+    hookName AS toolName,
+    NULL AS toolInput,
+    NULL AS toolUseId,
+    CASE
+      WHEN stdout IS NOT NULL AND TRIM(stdout) != ''
+        THEN SUBSTR(TRIM(stdout), 1, 120)
+      ELSE NULL
+    END AS textValue,
+    NULL AS thinkingValue,
+    hookEvent AS hookEvent,
+    CASE
+      WHEN hookSubtype = 'hook_response' AND outcome = 'success' THEN 'completed'
+      WHEN hookSubtype = 'hook_response' THEN 'failed'
+      ELSE 'running'
+    END AS hookStatus
+  FROM hook_runs
+  WHERE rn = 1
 )
 SELECT
   sessionId || ':' || turnIndex || ':' || rowId || ':' || blockIdx AS id,
@@ -1744,7 +1846,9 @@ SELECT
   toolInput,
   toolUseId,
   textValue,
-  thinkingValue
+  thinkingValue,
+  NULL AS hookEvent,
+  NULL AS hookStatus
 FROM assistant_entries
 UNION ALL
 SELECT
@@ -1760,8 +1864,28 @@ SELECT
   toolInput,
   toolUseId,
   textValue,
-  thinkingValue
+  thinkingValue,
+  NULL AS hookEvent,
+  NULL AS hookStatus
 FROM user_entries
+UNION ALL
+SELECT
+  sessionId || ':' || turnIndex || ':' || rowId || ':' || blockIdx AS id,
+  sessionId,
+  turnIndex,
+  ts,
+  rowId,
+  blockIdx,
+  uuid,
+  blockType,
+  toolName,
+  toolInput,
+  toolUseId,
+  textValue,
+  thinkingValue,
+  hookEvent,
+  hookStatus
+FROM hook_entries
 ORDER BY sessionId ASC, ts ASC, rowId ASC, blockIdx ASC, id ASC
 `.trim();
 
@@ -1978,6 +2102,22 @@ export function buildActiveTurnSummariesFromRows(
     } else if (blockType === '__user_replay') {
       const text = typeof row.textValue === 'string' ? row.textValue : '';
       entry = { kind: 'agent_handoff', text: activityOneLine(text), ts, uuid };
+    } else if (blockType === '__hook') {
+      const hookName = typeof row.toolName === 'string' ? row.toolName : '';
+      const hookEvent = typeof row.hookEvent === 'string' ? row.hookEvent : '';
+      const rawStatus = typeof row.hookStatus === 'string' ? row.hookStatus : 'running';
+      const status: 'running' | 'completed' | 'failed' =
+        rawStatus === 'completed' || rawStatus === 'failed' ? rawStatus : 'running';
+      const stdoutSummary = typeof row.textValue === 'string' ? row.textValue.trim() : '';
+      entry = {
+        kind: 'hook',
+        hookName,
+        hookEvent,
+        status,
+        ts,
+        uuid,
+        ...(stdoutSummary ? { summary: activityOneLine(stdoutSummary) } : {}),
+      };
     }
     if (!entry) continue;
 
@@ -2041,6 +2181,22 @@ function mapActiveTurnEntryRow(row: Record<string, unknown>): Record<string, unk
   } else if (blockType === '__user_replay') {
     const text = typeof row.textValue === 'string' ? row.textValue : '';
     entry = { kind: 'agent_handoff', text: activityOneLine(text), ts, uuid };
+  } else if (blockType === '__hook') {
+    const hookName = typeof row.toolName === 'string' ? row.toolName : '';
+    const hookEvent = typeof row.hookEvent === 'string' ? row.hookEvent : '';
+    const rawStatus = typeof row.hookStatus === 'string' ? row.hookStatus : 'running';
+    const status: 'running' | 'completed' | 'failed' =
+      rawStatus === 'completed' || rawStatus === 'failed' ? rawStatus : 'running';
+    const stdoutSummary = typeof row.textValue === 'string' ? row.textValue.trim() : '';
+    entry = {
+      kind: 'hook',
+      hookName,
+      hookEvent,
+      status,
+      ts,
+      uuid,
+      ...(stdoutSummary ? { summary: activityOneLine(stdoutSummary) } : {}),
+    };
   }
 
   return {
@@ -2311,7 +2467,8 @@ WITH top_level AS (
     sdk_message,
     timestamp,
     send_status,
-    origin
+    origin,
+    rowid
   FROM sdk_messages
   WHERE session_id = ?1
     AND parent_tool_use_id IS NULL
@@ -2343,7 +2500,13 @@ WITH top_level AS (
           AND (newer.message_type != 'user' OR COALESCE(newer.send_status, 'consumed') IN ('consumed', 'failed'))
       )
     )
-  ORDER BY timestamp DESC, id DESC
+  -- Cap window orders by (timestamp, rowid) so a LiveQuery limit that cuts
+  -- through same-millisecond hook_started/progress/response rows keeps the
+  -- later phases (insertion order) instead of dropping the terminal response
+  -- by random UUID. The planner falls back to idx_sdk_messages_session + a
+  -- bounded temp sort (rowid isn't in the composite index) — acceptable for a
+  -- capped window, and correctness beats the micro-optimisation here.
+  ORDER BY timestamp DESC, rowid DESC
   LIMIT ?2
 ),
 tool_use_ids AS (
@@ -2368,7 +2531,8 @@ subagent AS (
     sm.sdk_message AS sdk_message,
     sm.timestamp AS timestamp,
     sm.send_status AS send_status,
-    sm.origin AS origin
+    sm.origin AS origin,
+    sm.rowid AS rowid
   FROM sdk_messages sm
   WHERE sm.session_id = ?1
     AND sm.parent_tool_use_id IN (SELECT id FROM tool_use_ids)
@@ -2380,7 +2544,8 @@ SELECT
   sdk_message                                                       AS content,
   CAST((julianday(timestamp) - 2440587.5) * 86400000 AS INTEGER)    AS timestamp,
   send_status                                                       AS sendStatus,
-  origin                                                            AS origin
+  origin                                                            AS origin,
+  rowid                                                             AS rowid
 FROM top_level
 UNION ALL
 SELECT
@@ -2388,9 +2553,10 @@ SELECT
   sdk_message                                                       AS content,
   CAST((julianday(timestamp) - 2440587.5) * 86400000 AS INTEGER)    AS timestamp,
   send_status                                                       AS sendStatus,
-  origin                                                            AS origin
+  origin                                                            AS origin,
+  rowid                                                             AS rowid
 FROM subagent
-ORDER BY timestamp ASC, id ASC
+ORDER BY timestamp ASC, rowid ASC
 `.trim();
 
 /**
@@ -2423,6 +2589,10 @@ function mapMessageRow(row: Record<string, unknown>): Record<string, unknown> {
   const extras: Record<string, unknown> = {
     id: row.id,
     timestamp: typeof row.timestamp === 'number' ? row.timestamp : Number(row.timestamp ?? 0),
+    // Insertion-order rowid — exposed so ChatContainer can seed the
+    // (timestamp, rowid) pagination cursor from the initial LiveQuery
+    // snapshot, not just from the RPC page fetches.
+    rowid: typeof row.rowid === 'number' ? row.rowid : Number(row.rowid ?? 0),
     origin: row.origin != null ? row.origin : undefined,
   };
   if (row.sendStatus === 'failed') {

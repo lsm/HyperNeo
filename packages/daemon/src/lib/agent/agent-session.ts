@@ -1142,14 +1142,16 @@ export class AgentSession
   getSDKMessages(
     limit?: number,
     before?: number,
-    since?: number
+    since?: number,
+    beforeRowid?: number,
+    sinceRowid?: number
   ): {
     messages: Array<
       ChatMessage & { timestamp: number; origin?: MessageOrigin; sendStatus?: string }
     >;
     hasMore: boolean;
   } {
-    return this.db.getSDKMessages(this.session.id, limit, before, since);
+    return this.db.getSDKMessages(this.session.id, limit, before, since, beforeRowid, sinceRowid);
   }
 
   getBackgroundTaskMessages(): Array<ChatMessage & { timestamp: number }> {

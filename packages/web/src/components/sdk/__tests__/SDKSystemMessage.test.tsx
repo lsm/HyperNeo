@@ -938,7 +938,7 @@ describe('SDKSystemMessage', () => {
       expect(container.innerHTML).toBe('');
     });
 
-    it('should return null for hook_started', () => {
+    it('renders hook_started as a running card', () => {
       const message = {
         type: 'system',
         subtype: 'hook_started',
@@ -950,10 +950,12 @@ describe('SDKSystemMessage', () => {
 
       const { container } = render(<SDKSystemMessage message={message} />);
 
-      expect(container.innerHTML).toBe('');
+      expect(container.querySelector('[aria-label="hook running"]')).toBeTruthy();
+      expect(container.textContent).toContain('pre-commit');
+      expect(container.textContent).toContain('PreToolUse');
     });
 
-    it('should return null for hook_progress', () => {
+    it('renders hook_progress as a running card with stdout summary', () => {
       const message = {
         type: 'system',
         subtype: 'hook_progress',
@@ -966,7 +968,8 @@ describe('SDKSystemMessage', () => {
 
       const { container } = render(<SDKSystemMessage message={message} />);
 
-      expect(container.innerHTML).toBe('');
+      expect(container.querySelector('[aria-label="hook running"]')).toBeTruthy();
+      expect(container.textContent).toContain('Progress...');
     });
 
     it('should return null for task_started', () => {

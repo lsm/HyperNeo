@@ -71,7 +71,29 @@ function lastActiveTurnSubscribeSubId(): string {
 // Imports (after mocks)
 // ---------------------------------------------------------------------------
 
-import { useSpaceTaskMessages } from '../useSpaceTaskMessages';
+import { useSpaceTaskMessages, sortActiveTurnRows } from '../useSpaceTaskMessages';
+
+describe('sortActiveTurnRows', () => {
+  it('breaks same-timestamp ties by numeric rowid, not lexicographic id', () => {
+    // Active-turn row ids embed the numeric sdk_messages.rowid as the
+    // third component: <sessionId>:<turn>:<rowId>:<blockIdx>. A lexicographic
+    // compare would order rowid 10 before rowid 9 ("10" < "9"); the sort must
+    // treat the trailing components numerically so emission order holds.
+    const make = (rowId: number, blockIdx: number) =>
+      ({
+        id: `space:test:task:sess:1:${rowId}:${blockIdx}`,
+        sessionId: 'space:test:task:sess',
+        ts: 1000,
+      }) as never;
+    const sorted = sortActiveTurnRows([make(10, -2), make(9, 0), make(2, 0), make(11, -1)]);
+    expect(sorted.map((r) => r.id)).toEqual([
+      'space:test:task:sess:1:2:0',
+      'space:test:task:sess:1:9:0',
+      'space:test:task:sess:1:10:-2',
+      'space:test:task:sess:1:11:-1',
+    ]);
+  });
+});
 
 describe('useSpaceTaskMessages', () => {
   beforeEach(() => {

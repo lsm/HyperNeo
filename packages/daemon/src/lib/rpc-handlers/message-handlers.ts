@@ -134,11 +134,15 @@ export function setupMessageHandlers(
       limit,
       before,
       since,
+      beforeRowid,
+      sinceRowid,
     } = data as {
       sessionId: string;
       limit?: number;
       before?: number; // Cursor: get messages older than this timestamp
       since?: number; // Get messages newer than this timestamp
+      beforeRowid?: number; // Insertion-order tiebreak for same-ms pagination
+      sinceRowid?: number;
     };
 
     const agentSession = await sessionManager.getSessionAsync(targetSessionId);
@@ -151,7 +155,9 @@ export function setupMessageHandlers(
           targetSessionId,
           limit,
           before,
-          since
+          since,
+          beforeRowid,
+          sinceRowid
         );
         return {
           sdkMessages,
@@ -162,7 +168,13 @@ export function setupMessageHandlers(
       throw new Error('Session not found');
     }
 
-    const { messages: sdkMessages, hasMore } = agentSession.getSDKMessages(limit, before, since);
+    const { messages: sdkMessages, hasMore } = agentSession.getSDKMessages(
+      limit,
+      before,
+      since,
+      beforeRowid,
+      sinceRowid
+    );
     return {
       sdkMessages,
       hasMore,

@@ -769,12 +769,12 @@ describe('isHiddenSystemSubtype', () => {
     expect(isHiddenSystemSubtype('commands_changed')).toBe(true);
   });
 
-  test('should return true for hook_started', () => {
-    expect(isHiddenSystemSubtype('hook_started')).toBe(true);
+  test('should return false for hook_started (rendered in chat + task roster)', () => {
+    expect(isHiddenSystemSubtype('hook_started')).toBe(false);
   });
 
-  test('should return true for hook_progress', () => {
-    expect(isHiddenSystemSubtype('hook_progress')).toBe(true);
+  test('should return false for hook_progress (rendered in chat + task roster)', () => {
+    expect(isHiddenSystemSubtype('hook_progress')).toBe(false);
   });
 
   test('should return true for task_started', () => {

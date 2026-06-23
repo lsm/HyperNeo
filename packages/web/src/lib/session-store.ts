@@ -800,7 +800,8 @@ class SessionStore {
   async loadOlderMessages(
     beforeTimestamp: number,
     limit = 100,
-    sessionIdOverride?: string
+    sessionIdOverride?: string,
+    beforeRowid?: number
   ): Promise<{ messages: ChatMessage[]; hasMore: boolean }> {
     const sessionId = sessionIdOverride ?? this.activeSessionId.value;
     if (!sessionId) return { messages: [], hasMore: false };
@@ -815,6 +816,9 @@ class SessionStore {
         sessionId,
         before: beforeTimestamp,
         limit,
+        // Insertion-order tiebreak so a same-ms burst at the page boundary
+        // advances the cursor instead of looping on deduped duplicates.
+        ...(beforeRowid !== undefined ? { beforeRowid } : {}),
       });
 
       if (
