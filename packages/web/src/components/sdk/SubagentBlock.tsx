@@ -15,7 +15,11 @@ import { cn } from '../../lib/utils.ts';
 import { RunningBorder } from './RunningBorder.tsx';
 import MarkdownRenderer from '../chat/MarkdownRenderer.tsx';
 import type { AgentInput } from '@neokai/shared/sdk/sdk-tools.d.ts';
-import type { SDKMessage, SDKTaskNotificationMessage } from '@neokai/shared/sdk/sdk.d.ts';
+import type {
+  SDKMessage,
+  SDKTaskNotificationMessage,
+  SDKTaskProgressMessage,
+} from '@neokai/shared/sdk/sdk.d.ts';
 import {
   hasRenderableThinking,
   isHiddenSystemSubtype,
@@ -25,6 +29,7 @@ import {
   isThinkingBlock,
   type ContentBlock,
 } from '@neokai/shared/sdk/type-guards';
+import { TaskProgressLine } from './tools/TaskProgressLine.tsx';
 import { ToolResultCard } from './tools/index.ts';
 import { ThinkingBlock } from './ThinkingBlock.tsx';
 import { SDKSystemMessage } from './SDKSystemMessage.tsx';
@@ -122,6 +127,10 @@ interface SubagentBlockProps {
    * (the top-level suppression relies on toolInputsMap having the nested id, so
    * the nested card must actually receive the notification). */
   taskNotificationsMap?: Map<string, SDKTaskNotificationMessage>;
+  /** Latest live task_progress for this Task/Agent tool_use. */
+  taskProgress?: SDKTaskProgressMessage;
+  /** Full tool_use_id → task_progress map for nested tool_use blocks. */
+  taskProgressMap?: Map<string, SDKTaskProgressMessage>;
   /** Additional CSS classes */
   className?: string;
   /** When true, wrap this block in <RunningBorder> so the animated arc traces
@@ -309,6 +318,8 @@ export function SubagentBlock({
   replacementStatusMap,
   taskNotification,
   taskNotificationsMap,
+  taskProgress,
+  taskProgressMap,
   className,
   isRunning = false,
 }: SubagentBlockProps) {
@@ -484,6 +495,8 @@ export function SubagentBlock({
         </div>
       </button>
 
+      {isRunning && taskProgress && <TaskProgressLine progress={taskProgress} />}
+
       {/* Expanded content */}
       {isExpanded && (
         <div class={cn('border-t bg-white dark:bg-gray-900', colors.border)}>
@@ -536,6 +549,7 @@ export function SubagentBlock({
                     toolResultsMap={toolResultsMap}
                     replacementStatusMap={replacementStatusMap}
                     taskNotificationsMap={taskNotificationsMap}
+                    taskProgressMap={taskProgressMap}
                     completedHookUuids={nestedCompletedHookUuids}
                   />
                 ))}
@@ -582,6 +596,7 @@ function NestedMessageRenderer({
   toolResultsMap,
   replacementStatusMap,
   taskNotificationsMap,
+  taskProgressMap,
   completedHookUuids,
 }: {
   message: SDKMessage;
@@ -589,6 +604,7 @@ function NestedMessageRenderer({
   toolResultsMap?: Map<string, unknown>;
   replacementStatusMap?: Map<string, MessageReplacementStatus>;
   taskNotificationsMap?: Map<string, SDKTaskNotificationMessage>;
+  taskProgressMap?: Map<string, SDKTaskProgressMessage>;
   completedHookUuids?: Set<string>;
 }) {
   const replacementStatus = replacementStatusMap?.get(getMessageUuid(message) ?? '');
@@ -669,6 +685,7 @@ function NestedMessageRenderer({
               variant="default"
               isOutputRemoved={resultData?.isOutputRemoved || false}
               taskNotification={taskNotificationsMap?.get(toolBlock.id)}
+              taskProgress={taskProgressMap?.get(toolBlock.id)}
             />
           );
         })}

@@ -913,6 +913,76 @@ describe('useMessageMaps', () => {
     });
   });
 
+  describe('taskProgressMap', () => {
+    it('maps tool_use_id to its latest task_progress', () => {
+      const messages = [
+        {
+          type: 'system',
+          uuid: uuid1,
+          session_id: 'session-1',
+          subtype: 'task_progress',
+          task_id: 'task-1',
+          tool_use_id: 'tu-1',
+          description: 'first',
+          usage: { total_tokens: 10, tool_uses: 1, duration_ms: 1000 },
+          last_tool_name: 'Read',
+        },
+        {
+          type: 'system',
+          uuid: uuid2,
+          session_id: 'session-1',
+          subtype: 'task_progress',
+          task_id: 'task-1',
+          tool_use_id: 'tu-1',
+          description: 'second',
+          usage: { total_tokens: 12400, tool_uses: 3, duration_ms: 8200 },
+          last_tool_name: 'Bash',
+          summary: 'still running',
+        },
+      ] as unknown as SDKMessage[];
+
+      const { result } = renderHook(() => useMessageMaps(messages, 'session-1'));
+      expect(result.current.taskProgressMap.size).toBe(1);
+      const progress = result.current.taskProgressMap.get('tu-1');
+      expect(progress?.description).toBe('second');
+      expect(progress?.usage.total_tokens).toBe(12400);
+      expect(progress?.last_tool_name).toBe('Bash');
+    });
+
+    it('skips task_progress without a tool_use_id', () => {
+      const messages = [
+        {
+          type: 'system',
+          uuid: uuid1,
+          session_id: 'session-1',
+          subtype: 'task_progress',
+          task_id: 'task-1',
+          description: 'orphan',
+          usage: { total_tokens: 10, tool_uses: 1, duration_ms: 1000 },
+        },
+      ] as unknown as SDKMessage[];
+
+      const { result } = renderHook(() => useMessageMaps(messages, 'session-1'));
+      expect(result.current.taskProgressMap.size).toBe(0);
+    });
+
+    it('ignores non-task_progress system messages', () => {
+      const messages = [
+        {
+          type: 'system',
+          uuid: uuid1,
+          session_id: 'session-1',
+          subtype: 'task_started',
+          task_id: 'task-1',
+          tool_use_id: 'tu-1',
+        },
+      ] as unknown as SDKMessage[];
+
+      const { result } = renderHook(() => useMessageMaps(messages, 'session-1'));
+      expect(result.current.taskProgressMap.size).toBe(0);
+    });
+  });
+
   describe('foldableToolUseIds', () => {
     it('includes top-level tool_uses and nested ones whose parent Task card is present', () => {
       const messages = [

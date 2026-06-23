@@ -357,6 +357,36 @@ describe('SubagentBlock', () => {
       ).toBeTruthy();
     });
 
+    it('shows live progress while the subagent card is running', () => {
+      const input = createAgentInput('Explore', 'Find files', 'Search for test files');
+
+      const { container } = render(
+        <SubagentBlock
+          input={input}
+          toolId="toolu_task123"
+          isRunning={true}
+          taskProgress={
+            {
+              type: 'system',
+              subtype: 'task_progress',
+              task_id: 'task-1',
+              tool_use_id: 'toolu_task123',
+              description: 'searching',
+              usage: { total_tokens: 12400, tool_uses: 3, duration_ms: 8200 },
+              last_tool_name: 'Bash',
+              summary: 'checking files',
+              uuid: 'progress-1',
+              session_id: 'session-1',
+            } as never
+          }
+        />
+      );
+
+      expect(container.textContent).toContain('Running · 12.4k tok · 3 tools · 8.2s · last: Bash');
+      expect(container.textContent).toContain('checking files');
+      expect(container.querySelector('[aria-label="running task progress"]')).toBeTruthy();
+    });
+
     it('should render nested user messages', () => {
       const input = createAgentInput('Explore', 'Find files', 'Search for test files');
       const nestedMessages = [createNestedUserMessage('Check in the src folder.')];
