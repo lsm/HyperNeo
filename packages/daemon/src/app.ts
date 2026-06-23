@@ -602,7 +602,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     let gitHubService: GitHubService | null = null;
     const shouldEnableGitHub = config.githubWebhookSecret || getGitHubPollingIntervalSeconds() > 0;
 
-    if (shouldEnableGitHub && hasAnthropicAuth) {
+    if (hasAnthropicAuth) {
       // Get API key for AI agents (security + routing).
       // Fall back to stored provider credentials so GitHub works when the sole
       // auth source is the credential store.
@@ -637,10 +637,14 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
           getPollingIntervalSeconds: getGitHubPollingIntervalSeconds,
         });
 
-        logInfo('[Daemon] GitHub integration enabled', {
-          webhook: !!config.githubWebhookSecret,
-          polling: getGitHubPollingIntervalSeconds() > 0,
-        });
+        if (shouldEnableGitHub) {
+          logInfo('[Daemon] GitHub integration enabled', {
+            webhook: !!config.githubWebhookSecret,
+            polling: getGitHubPollingIntervalSeconds() > 0,
+          });
+        } else {
+          logInfo('[Daemon] GitHub integration initialized; polling disabled by settings');
+        }
       } else {
         logInfo('[Daemon] GitHub integration disabled - no API key available for AI agents');
       }
@@ -881,7 +885,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     // Start GitHub service after server is ready.
     // GitHubService.start() registers the github.poll handler and enqueues the
     // initial job when jobProcessor/jobQueue are provided.
-    if (gitHubService) {
+    if (gitHubService && shouldEnableGitHub) {
       gitHubService.start();
       logInfo('[Daemon] GitHub service started');
     }
