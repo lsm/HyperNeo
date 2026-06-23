@@ -22,6 +22,7 @@ import type {
   ModelInfo,
 } from '@neokai/shared';
 import { Logger } from '../logger';
+import { getModelInfo } from '../model-service.js';
 import {
   NATIVE_CONTEXT_WINDOW_PROVIDER_IDS,
   PROVIDER_NO_SDK_AUTO_COMPACT,
@@ -109,15 +110,31 @@ export class ContextFetcher {
 
     try {
       const response = await query.getContextUsage();
-      const info = ContextFetcher.toContextInfo(response, modelMetadata);
+      const resolvedMetadata = await ContextFetcher.resolveMetadataForResponse(
+        response,
+        modelMetadata
+      );
+      const info = ContextFetcher.toContextInfo(response, resolvedMetadata);
       if (info) {
-        ContextFetcher.warnOnCapacityMismatch(response, modelMetadata, this.logger);
+        ContextFetcher.warnOnCapacityMismatch(response, resolvedMetadata, this.logger);
       }
       return info;
     } catch (error) {
       this.logger.warn('query.getContextUsage() failed:', error);
       return null;
     }
+  }
+
+  private static async resolveMetadataForResponse(
+    response: SDKControlGetContextUsageResponse,
+    modelMetadata: ContextMetadata
+  ): Promise<ContextMetadata> {
+    const providerId = modelMetadata?.provider;
+    const responseModel = response.model ? normalizeModelId(response.model) : undefined;
+    if (!providerId || !responseModel) return modelMetadata;
+
+    const responseMetadata = await getModelInfo(responseModel, 'global', providerId);
+    return responseMetadata ?? modelMetadata;
   }
 
   /**
