@@ -3855,6 +3855,20 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(eventStore.getById(event.id)?.state).toBe('failed');
   });
 
+  test('terminalizes DB-only pending deliveries when target subscription is cleared', async () => {
+    const { workflow, run, task } = await startRunWithSubscription();
+    const event = makeEvent();
+    await eventService.publish(event);
+    const pendingDelivery = eventStore.listDeliveries(event.id)[0]!;
+    expect(pendingDelivery.state).toBe('pending');
+
+    runtime.unregisterExecution(run.id, task.id, 'code', 'coder');
+
+    const delivery = eventStore.listDeliveries(event.id)[0]!;
+    expect(delivery.state).toBe('failed');
+    expect(delivery.failureReason).toBe('node_execution_cancelled');
+    expect(eventStore.getById(event.id)?.state).toBe('failed');
+  });
   test('terminalizes persisted pending deliveries for non-deliverable runs on rehydrate', async () => {
     const { workflow, run, task } = await startRunWithSubscription();
     const event = makeEvent();

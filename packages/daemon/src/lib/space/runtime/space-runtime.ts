@@ -2484,12 +2484,28 @@ export class SpaceRuntime {
   ): void {
     const key = this.buildQueueKey(target);
     const queued = this.pendingExternalEventQueue.get(key);
-    if (!queued) return;
-    this.failQueuedDeliveries(queued, reason);
-    for (const item of queued) {
-      this.clearExternalEventRetry(item.deliveryKey);
+    if (queued) {
+      this.failQueuedDeliveries(queued, reason);
+      for (const item of queued) {
+        this.clearExternalEventRetry(item.deliveryKey);
+      }
+      this.pendingExternalEventQueue.delete(key);
     }
-    this.pendingExternalEventQueue.delete(key);
+
+    const store = this.config.externalEventStore;
+    if (!store) return;
+    for (const delivery of store.listPendingDeliveries(target.workflowRunId)) {
+      if (
+        delivery.taskId !== target.taskId ||
+        delivery.nodeId !== target.nodeId ||
+        delivery.agentName !== target.agentName
+      ) {
+        continue;
+      }
+      store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, { terminal: true, reason });
+      store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
+      this.clearExternalEventRetry(delivery.deliveryKey);
+    }
   }
 
   private clearQueuedDeliveriesForRun(workflowRunId: string, reason: string): void {
