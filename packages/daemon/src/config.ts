@@ -30,7 +30,6 @@ export interface Config {
   disableGoalProcessing?: boolean; // For testing/CI - disables automatic goal processing (tick loop)
   // GitHub integration
   githubWebhookSecret?: string; // Secret for verifying webhook signatures
-  githubPollingInterval?: number; // Polling interval in seconds (0 = disabled)
   githubDefaultFilter?: string; // Default filter config as JSON string
 }
 
@@ -68,7 +67,6 @@ export function getConfig(overrides?: ConfigOverrides): Config {
     disableGoalProcessing: process.env.NEOKAI_DISABLE_GOAL_PROCESSING === '1',
     // GitHub integration
     githubWebhookSecret: process.env.GITHUB_WEBHOOK_SECRET,
-    githubPollingInterval: parseInt(process.env.GITHUB_POLLING_INTERVAL || '0'),
     githubDefaultFilter: process.env.GITHUB_DEFAULT_FILTER,
   };
 }

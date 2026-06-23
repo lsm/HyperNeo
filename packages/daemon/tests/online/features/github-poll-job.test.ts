@@ -38,16 +38,14 @@ import type { Job, JobStatus } from '../../../src/storage/repositories/job-queue
  * Environment variables injected into the in-process daemon to enable GitHub
  * polling without touching real credentials.
  *
- * GITHUB_POLLING_INTERVAL=300 (5 min) keeps self-scheduled jobs far in the
- * future so the test can assert a single pending job without racing against a
- * second real execution.
+ * The persisted global GitHub polling interval defaults to 120 seconds, which
+ * keeps self-scheduled jobs far enough in the future for stable assertions.
  *
  * GITHUB_TOKEN is a fake value that satisfies the token-presence guard inside
  * GitHubService. No repositories are added to the polling service, so
  * triggerPoll() is a no-op even before the stub is applied.
  */
 const GITHUB_TEST_ENV: Record<string, string> = {
-  GITHUB_POLLING_INTERVAL: '300',
   GITHUB_TOKEN: 'ghp_fake_token_for_job_queue_test',
 };
 
@@ -198,9 +196,9 @@ describe('GitHub polling via job queue (online)', () => {
     expect(next).toBeDefined();
     expect(next!.queue).toBe(GITHUB_POLL);
 
-    // The next job should be scheduled ~300 s from now (GITHUB_POLLING_INTERVAL).
-    // We verify it is at least 200 s in the future to allow for minor clock skew.
-    const minExpectedRunAt = Date.now() + 200_000;
+    // The next job should be scheduled ~120 s from now (default global settings).
+    // We verify it is at least 100 s in the future to allow for minor clock skew.
+    const minExpectedRunAt = Date.now() + 100_000;
     expect(next!.runAt).toBeGreaterThan(minExpectedRunAt);
   }, 15_000);
 
@@ -231,7 +229,7 @@ describe('GitHub polling via job queue (online)', () => {
   test('github service polling is active (isPolling returns true)', () => {
     const daemonCtx = getDaemonCtx(daemon);
 
-    // gitHubService should be initialized because GITHUB_POLLING_INTERVAL > 0
+    // gitHubService should be initialized because the default polling interval is > 0
     // and a GITHUB_TOKEN was provided.
     expect(daemonCtx.gitHubService).not.toBeNull();
     expect(daemonCtx.gitHubService!.isPolling()).toBe(true);

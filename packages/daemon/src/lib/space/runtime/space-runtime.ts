@@ -27,6 +27,7 @@ import type {
   SpaceApprovalSource,
   SpaceTask,
   SpaceTaskPriority,
+  SpaceTaskStatus,
   SpaceWorkflow,
   SpaceWorkflowRun,
   UpdateSpaceTaskParams,
@@ -704,6 +705,12 @@ function longHorizonSpaceIdFromWorkflowRunId(workflowRunId: string): string | nu
 function isExternallyDeliverableRun(status: SpaceWorkflowRun['status']): boolean {
   return status === 'in_progress' || status === 'blocked';
 }
+
+const EXTERNAL_EVENT_TARGET_TASK_TERMINAL_STATUSES: ReadonlySet<SpaceTaskStatus> = new Set([
+  'done',
+  'cancelled',
+  'archived',
+]);
 
 function parseSubscriptionQueueKey(
   key: string
@@ -1691,14 +1698,36 @@ export class SpaceRuntime {
     const targetWithExecution = this.resolveSubscriptionTarget(target);
     const key = this.buildQueueKey(target);
     const queued = this.pendingExternalEventQueue.get(key);
-    if (!queued) return;
-    this.pendingExternalEventQueue.delete(key);
-    const now = Date.now();
-    for (const item of queued) {
-      if (this.isQueuedExternalEventExpired(item, now)) {
-        this.failQueuedDeliveryForTtl(item, key);
-        continue;
+    const inMemoryDeliveryKeys = new Set(queued?.map((item) => item.deliveryKey) ?? []);
+
+    // Collect dispatchable items from both in-memory queue and DB-persisted
+    // pending deliveries into a single list so they can be sorted and
+    // dispatched in chronological order.
+    const dispatchable: PendingExternalEvent[] = [];
+
+    if (queued) {
+      this.pendingExternalEventQueue.delete(key);
+      const now = Date.now();
+      for (const item of queued) {
+        if (this.isQueuedExternalEventExpired(item, now)) {
+          this.failQueuedDeliveryForTtl(item, key);
+          continue;
+        }
+        dispatchable.push(item);
       }
+    }
+
+    this.collectPersistedPendingDeliveries(targetWithExecution, inMemoryDeliveryKeys, dispatchable);
+
+    if (dispatchable.length === 0) return;
+
+    // Sort by createdAt so events from both sources are dispatched in
+    // chronological order regardless of which queue held them. Uses stable
+    // sort (default in modern JS engines) so items with the same createdAt
+    // preserve their insertion order (FIFO from the in-memory queue).
+    dispatchable.sort((a, b) => a.createdAt - b.createdAt);
+
+    for (const item of dispatchable) {
       this.clearExternalEventRetry(item.deliveryKey);
       void this.enqueueDeliverableExternalEvent(
         targetWithExecution,
@@ -1708,6 +1737,81 @@ export class SpaceRuntime {
         item.createdAt,
         true
       );
+    }
+  }
+
+  private collectPersistedPendingDeliveries(
+    target: WorkflowSubscriptionTarget,
+    skipDeliveryKeys: Set<string>,
+    dispatchable: PendingExternalEvent[]
+  ): void {
+    const store = this.config.externalEventStore;
+    if (!store || !target.sessionId) return;
+
+    const deliveries = store
+      .listPendingDeliveries(target.workflowRunId)
+      .filter(
+        (delivery) =>
+          delivery.taskId === target.taskId &&
+          delivery.nodeId === target.nodeId &&
+          delivery.agentName === target.agentName &&
+          !skipDeliveryKeys.has(delivery.deliveryKey) &&
+          // Only flush deliveries that were explicitly marked retryable (e.g.
+          // `node_execution_not_active`). Rows with null failureReason are
+          // still being processed by the original dispatch path (in-flight or
+          // digest-pending) and must not be re-dispatched here.
+          delivery.failureReason !== null
+      )
+      .map((delivery) => {
+        const eventRecord = store.getById(delivery.eventId);
+        return eventRecord ? { delivery, eventRecord } : null;
+      })
+      .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
+      .filter(({ eventRecord }) => eventRecord.state === 'published')
+      .sort(
+        (a, b) =>
+          a.eventRecord.createdAt - b.eventRecord.createdAt ||
+          a.delivery.updatedAt - b.delivery.updatedAt ||
+          a.delivery.deliveryKey.localeCompare(b.delivery.deliveryKey)
+      );
+
+    for (const { delivery, eventRecord } of deliveries) {
+      if (store.isDeliveryTerminal(delivery.eventId, delivery.deliveryKey)) continue;
+      if (this.externalEventDeliveriesInFlight.has(delivery.deliveryKey)) continue;
+      if (this.isTargetTaskTerminal(target.taskId)) {
+        store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, {
+          terminal: true,
+          reason: 'target_task_terminal',
+        });
+        store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
+        this.clearExternalEventRetry(delivery.deliveryKey);
+        continue;
+      }
+      if (!this.isTargetStillSubscribed(target, eventRecord.event.topic)) {
+        store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, {
+          terminal: true,
+          reason: 'subscription_no_longer_active',
+        });
+        store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
+        this.clearExternalEventRetry(delivery.deliveryKey);
+        continue;
+      }
+
+      const mode: 'immediate' | 'defer' = delivery.failureReason?.startsWith('deliveryMode:defer;')
+        ? 'defer'
+        : 'immediate';
+      const eventPayload = this.externalEventPayloadFromRecord(eventRecord.event);
+      const queuedItem: PendingExternalEvent = {
+        event: eventPayload,
+        deliveryKey: delivery.deliveryKey,
+        deliveryMode: mode,
+        createdAt: eventRecord.createdAt,
+      };
+      if (this.isQueuedExternalEventExpired(queuedItem)) {
+        this.failQueuedDeliveryForTtl(queuedItem, this.buildQueueKey(target));
+        continue;
+      }
+      dispatchable.push(queuedItem);
     }
   }
 
@@ -1832,7 +1936,13 @@ export class SpaceRuntime {
           continue;
         }
 
-        if (target.sessionId && this.isTargetSessionLive(target.sessionId)) {
+        if (this.isTargetTaskTerminal(target.taskId)) {
+          store.markDeliveryFailed(payload.eventId, deliveryKey, {
+            terminal: true,
+            reason: 'target_task_terminal',
+          });
+          store.markEventFailedIfAllDeliveriesTerminal(payload.eventId);
+        } else if (target.sessionId && this.isTargetSessionLive(target.sessionId)) {
           await this.enqueueDeliverableExternalEvent(target, payload, deliveryKey, 'immediate');
         } else if (target.sessionId) {
           await this.enqueueDeliverableExternalEvent(target, payload, deliveryKey, 'defer');
@@ -1844,11 +1954,11 @@ export class SpaceRuntime {
         ) {
           this.queueForPendingNode(target, payload, deliveryKey);
         } else {
+          this.clearExternalEventRetry(deliveryKey);
           store.markDeliveryFailed(payload.eventId, deliveryKey, {
-            terminal: true,
+            terminal: false,
             reason: 'node_execution_not_active',
           });
-          store.markEventFailedIfAllDeliveriesTerminal(payload.eventId);
         }
       } catch (err) {
         log.warn(
@@ -2046,7 +2156,7 @@ export class SpaceRuntime {
     );
     state.timestamps.push(now);
     if (state.timestamps.length <= EXTERNAL_EVENT_RATE_LIMIT_PER_MIN) {
-      await this.deliverToSession(target, event, deliveryKey, deliveryMode);
+      await this.deliverToSession(target, event, deliveryKey, deliveryMode, createdAt);
       this.scheduleExternalEventRateLimitCleanup(rateLimitKey);
       return;
     }
@@ -2184,7 +2294,8 @@ export class SpaceRuntime {
     target: WorkflowSubscriptionTarget,
     event: ExternalEventPublishedPayload,
     deliveryKey: string,
-    deliveryMode: 'immediate' | 'defer'
+    deliveryMode: 'immediate' | 'defer',
+    fallbackCreatedAt?: number
   ): Promise<void> {
     const store = this.config.externalEventStore;
     if (!store || !target.sessionId) return;
@@ -2255,7 +2366,7 @@ export class SpaceRuntime {
         deliveryKey,
         deliveryMode,
         failureReason,
-        queued?.createdAt
+        queued?.createdAt ?? fallbackCreatedAt
       );
     } finally {
       this.externalEventDeliveriesInFlight.delete(deliveryKey);
@@ -2471,15 +2582,36 @@ export class SpaceRuntime {
   ): void {
     const key = this.buildQueueKey(target);
     const queued = this.pendingExternalEventQueue.get(key);
-    if (!queued) return;
-    this.failQueuedDeliveries(queued, reason);
-    for (const item of queued) {
-      this.clearExternalEventRetry(item.deliveryKey);
+    if (queued) {
+      this.failQueuedDeliveries(queued, reason);
+      for (const item of queued) {
+        this.clearExternalEventRetry(item.deliveryKey);
+      }
+      this.pendingExternalEventQueue.delete(key);
     }
-    this.pendingExternalEventQueue.delete(key);
+
+    const store = this.config.externalEventStore;
+    if (!store) return;
+    for (const delivery of store.listPendingDeliveries(target.workflowRunId)) {
+      if (
+        delivery.taskId !== target.taskId ||
+        delivery.nodeId !== target.nodeId ||
+        delivery.agentName !== target.agentName
+      ) {
+        continue;
+      }
+      const eventRecord = store.getById(delivery.eventId);
+      if (eventRecord?.event && this.isTargetStillSubscribed(target, eventRecord.event.topic)) {
+        continue;
+      }
+      store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, { terminal: true, reason });
+      store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
+      this.clearExternalEventRetry(delivery.deliveryKey);
+    }
   }
 
   private clearQueuedDeliveriesForRun(workflowRunId: string, reason: string): void {
+    const store = this.config.externalEventStore;
     for (const [queueKey, queued] of this.pendingExternalEventQueue) {
       const parsed = parseSubscriptionQueueKey(queueKey);
       if (!parsed || parsed.workflowRunId !== workflowRunId) continue;
@@ -2488,6 +2620,12 @@ export class SpaceRuntime {
         this.clearExternalEventRetry(item.deliveryKey);
       }
       this.pendingExternalEventQueue.delete(queueKey);
+    }
+    if (!store) return;
+    for (const delivery of store.listPendingDeliveries(workflowRunId)) {
+      store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, { terminal: true, reason });
+      store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
+      this.clearExternalEventRetry(delivery.deliveryKey);
     }
   }
 
@@ -2560,6 +2698,11 @@ export class SpaceRuntime {
           execution.agentName === target.agentName &&
           (execution.status === 'idle' || execution.status === 'cancelled')
       );
+  }
+
+  private isTargetTaskTerminal(taskId: string): boolean {
+    const task = this.config.taskRepo.getTask(taskId);
+    return task ? EXTERNAL_EVENT_TARGET_TASK_TERMINAL_STATUSES.has(task.status) : true;
   }
 
   private buildQueueKey(
@@ -4179,6 +4322,15 @@ export class SpaceRuntime {
         continue;
       }
 
+      if (this.isTargetTaskTerminal(target.taskId)) {
+        store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, {
+          terminal: true,
+          reason: 'target_task_terminal',
+        });
+        store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
+        continue;
+      }
+
       if (!this.isTargetStillSubscribed(target, eventRecord.event.topic)) {
         store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, {
           terminal: true,
@@ -4481,8 +4633,10 @@ export class SpaceRuntime {
         ex.status === 'waiting_rebind' ||
         ex.status === 'blocked'
     );
+    const pendingMessageRepo = this.config.pendingMessageRepo;
+    pendingMessageRepo?.enforceRetention({ runId: run.id });
     const hasQueuedNodeHandoff =
-      this.config.pendingMessageRepo
+      pendingMessageRepo
         ?.listPendingForRun(run.id)
         .some((row) => row.targetKind === 'node_agent') ?? false;
     if (hasDriveableExecution || hasQueuedNodeHandoff) return 'skipped';
@@ -5939,17 +6093,18 @@ export class SpaceRuntime {
       return false;
     }
 
-    const expiredNodeHandoffs = repo
-      .listByRunAndStatus(runId, 'expired')
-      .filter((row) => row.targetKind === 'node_agent');
-    if (expiredNodeHandoffs.length > 0) {
-      const first = expiredNodeHandoffs[0];
-      const reason = `Queued workflow handoff to ${first.targetAgentName} expired before delivery after ${first.attempts} attempt(s)`;
-      await this.blockRunForQueuedHandoffFailure(runId, meta.spaceId, canonicalTask, reason);
-      return true;
+    if (pending.length === 0) {
+      const expiredNodeHandoffs = repo
+        .listByRunAndStatus(runId, 'expired')
+        .filter((row) => row.targetKind === 'node_agent');
+      if (expiredNodeHandoffs.length > 0) {
+        const first = expiredNodeHandoffs[0];
+        const reason = `Queued workflow handoff to ${first.targetAgentName} expired before delivery after ${first.attempts} attempt(s)`;
+        await this.blockRunForQueuedHandoffFailure(runId, meta.spaceId, canonicalTask, reason);
+        return true;
+      }
+      return false;
     }
-
-    if (pending.length === 0) return false;
 
     if (!space) {
       let blockedReason: string | null = null;
