@@ -869,6 +869,31 @@ describe('ContextFetcher.fetch', () => {
       expect(warnSpy).not.toHaveBeenCalled();
     });
 
+    it('resolves metadata from the SDK-reported model before warning', async () => {
+      const getContextUsage = mock(async () =>
+        baseResponse({
+          totalTokens: 10_000,
+          maxTokens: 1_000_000,
+          rawMaxTokens: 1_000_000,
+          model: 'glm-5.2[1m]',
+        })
+      );
+      const query = { getContextUsage } as unknown as Query;
+
+      const fetcher = new ContextFetcher('stale-session-metadata-session');
+      const warnSpy = spyOn(fetcher.logger, 'warn');
+
+      const info = await fetcher.fetch(query, {
+        id: 'glm-5',
+        contextWindow: 200_000,
+        provider: 'glm',
+        preferContextWindowMetadata: true,
+      });
+
+      expect(info?.totalCapacity).toBe(1_000_000);
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
     it('does not warn when metadata is missing', async () => {
       const getContextUsage = mock(async () => baseResponse({ maxTokens: 200_000 }));
       const query = { getContextUsage } as unknown as Query;
