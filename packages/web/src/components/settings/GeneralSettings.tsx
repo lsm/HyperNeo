@@ -39,6 +39,9 @@ export function GeneralSettings() {
     settings?.permissionMode ?? 'default'
   );
   const [localAutoScroll, setLocalAutoScroll] = useState(settings?.autoScroll ?? true);
+  const [localGitHubPollingInterval, setLocalGitHubPollingInterval] = useState(
+    String(settings?.githubPollingInterval ?? 120)
+  );
   const [localThinkingLevel, setLocalThinkingLevel] = useState<ThinkingLevel>(
     normalizeThinkingLevel(settings?.thinkingLevel)
   );
@@ -54,6 +57,7 @@ export function GeneralSettings() {
       setLocalModel(settings.model ?? 'sonnet');
       setLocalPermissionMode(settings.permissionMode ?? 'default');
       setLocalAutoScroll(settings.autoScroll ?? true);
+      setLocalGitHubPollingInterval(String(settings.githubPollingInterval ?? 120));
       setLocalThinkingLevel(normalizeThinkingLevel(settings.thinkingLevel));
       setLocalShowArchived(settings.showArchived ?? false);
       setLocalSettingSources(settings.settingSources ?? ['user', 'project', 'local']);
@@ -117,6 +121,34 @@ export function GeneralSettings() {
     }
   };
 
+  const handleGitHubPollingIntervalChange = async (value: string) => {
+    setLocalGitHubPollingInterval(value);
+    if (value.trim() === '') return;
+
+    const interval = Number(value);
+    if (!Number.isInteger(interval) || interval < 0) {
+      toast.error('GitHub polling interval must be a non-negative whole number');
+      return;
+    }
+
+    setIsUpdating(true);
+    try {
+      await updateGlobalSettings({ githubPollingInterval: interval });
+    } catch {
+      toast.error('Failed to update GitHub polling interval');
+      setLocalGitHubPollingInterval(String(settings?.githubPollingInterval ?? 120));
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  const handleGitHubPollingIntervalBlur = () => {
+    const interval = Number(localGitHubPollingInterval);
+    if (!Number.isInteger(interval) || interval < 0) {
+      setLocalGitHubPollingInterval(String(settings?.githubPollingInterval ?? 120));
+    }
+  };
+
   const handleShowArchivedChange = async (value: boolean) => {
     setLocalShowArchived(value);
     setIsUpdating(true);
@@ -172,6 +204,25 @@ export function GeneralSettings() {
           onChange={handleThinkingLevelChange}
           options={THINKING_LEVEL_OPTIONS}
           disabled={isUpdating}
+        />
+      </SettingsRow>
+
+      <SettingsRow
+        label="GitHub polling interval (seconds)"
+        description="How often to poll watched GitHub repositories; 0 disables polling."
+      >
+        <input
+          type="number"
+          min="0"
+          step="1"
+          placeholder="120"
+          value={localGitHubPollingInterval}
+          onInput={(event) =>
+            handleGitHubPollingIntervalChange((event.target as HTMLInputElement).value)
+          }
+          onBlur={handleGitHubPollingIntervalBlur}
+          disabled={isUpdating}
+          class="w-24 rounded-lg border border-white/[0.08] bg-dark-800 px-3 py-1.5 text-sm text-gray-200 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
         />
       </SettingsRow>
 

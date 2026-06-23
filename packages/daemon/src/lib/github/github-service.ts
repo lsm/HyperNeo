@@ -39,6 +39,7 @@ import { createWebhookHandler } from './webhook-handler';
 import { Logger } from '../logger';
 
 const log = new Logger('github-service');
+const DEFAULT_GITHUB_POLLING_INTERVAL_SECONDS = 120;
 
 /**
  * Configuration options for the GitHub service
@@ -60,6 +61,8 @@ export interface GitHubServiceOptions {
   jobQueue?: JobQueueRepository;
   /** Job queue processor — required to register the github.poll handler */
   jobProcessor?: JobQueueProcessor;
+  /** Live global setting getter for GitHub polling interval in seconds */
+  getPollingIntervalSeconds?: () => number | undefined;
 }
 
 /**
@@ -91,6 +94,8 @@ export class GitHubService {
   private webhookHandler?: (req: Request) => Promise<Response>;
   private jobQueue?: JobQueueRepository;
   private jobProcessor?: JobQueueProcessor;
+  private getPollingIntervalSeconds?: () => number | undefined;
+  private pollJobHandlerRegistered = false;
 
   constructor(options: GitHubServiceOptions) {
     this.db = options.db;
@@ -101,6 +106,7 @@ export class GitHubService {
     this.githubToken = options.githubToken;
     this.jobQueue = options.jobQueue;
     this.jobProcessor = options.jobProcessor;
+    this.getPollingIntervalSeconds = options.getPollingIntervalSeconds;
 
     // Initialize filter config manager
     this.filterConfigManager = createFilterConfigManager(this.db.getDatabase());
@@ -129,7 +135,7 @@ export class GitHubService {
 
     log.info('GitHubService initialized', {
       hasWebhookSecret: !!this.config.githubWebhookSecret,
-      pollingInterval: this.config.githubPollingInterval,
+      pollingInterval: this.getPollingIntervalSecondsValue(),
       hasApiKey: !!this.apiKey,
     });
   }
@@ -150,14 +156,26 @@ export class GitHubService {
       log.info('Webhook handler initialized');
     }
 
-    // Create polling service if interval is configured and token is available
-    if (
-      this.config.githubPollingInterval &&
-      this.config.githubPollingInterval > 0 &&
-      this.githubToken
-    ) {
-      const intervalMs = this.config.githubPollingInterval * 1000;
+    this.refreshPolling();
 
+    log.info('GitHub service started');
+  }
+
+  refreshPolling(): void {
+    const intervalSeconds = this.getPollingIntervalSecondsValue();
+
+    if (intervalSeconds <= 0 || !this.githubToken) {
+      if (this.pollingService) {
+        this.pollingService.stop();
+        this.pollingService = undefined;
+        log.info('Polling service stopped', { intervalSeconds });
+      }
+      return;
+    }
+
+    const intervalMs = intervalSeconds * 1000;
+
+    if (!this.pollingService) {
       this.pollingService = createPollingService(
         {
           token: this.githubToken,
@@ -167,39 +185,44 @@ export class GitHubService {
           await this.processEvent(event);
         }
       );
+    }
 
-      // Register the github.poll job handler so the processor can execute it.
-      // pollingService.start() is called inside this guard so that isRunning() is
-      // consistent with whether an actual poll chain is in place — if jobQueue/
-      // jobProcessor are absent no scheduling exists and the service must not
-      // report itself as running.
-      if (this.jobProcessor && this.jobQueue) {
+    if (this.jobProcessor && this.jobQueue) {
+      if (!this.pollingService.isRunning()) {
         this.pollingService.start();
         log.info('Polling service started (job-queue-driven)', { intervalMs });
+      }
 
+      if (!this.pollJobHandlerRegistered) {
         this.jobProcessor.register(GITHUB_POLL, () =>
           handleGitHubPoll({
             pollingService: this.pollingService,
             jobQueue: this.jobQueue!,
-            intervalMs,
+            intervalMs: this.getPollingIntervalSecondsValue() * 1000,
           })
         );
+        this.pollJobHandlerRegistered = true;
         log.info('github.poll job handler registered');
+      }
 
-        // Enqueue the initial poll immediately if no job is already in flight.
-        const existing = this.jobQueue.listJobs({
-          queue: GITHUB_POLL,
-          status: ['pending', 'processing'],
-          limit: 1,
-        });
-        if (existing.length === 0) {
-          this.jobQueue.enqueue({ queue: GITHUB_POLL, payload: {}, runAt: Date.now() });
-          log.info('Enqueued initial github.poll job');
-        }
+      const existing = this.jobQueue.listJobs({
+        queue: GITHUB_POLL,
+        status: ['pending', 'processing'],
+        limit: 1,
+      });
+      if (existing.length === 0) {
+        this.jobQueue.enqueue({ queue: GITHUB_POLL, payload: {}, runAt: Date.now() });
+        log.info('Enqueued initial github.poll job');
       }
     }
+  }
 
-    log.info('GitHub service started');
+  private getPollingIntervalSecondsValue(): number {
+    const configured = this.getPollingIntervalSeconds?.();
+    if (configured === undefined || !Number.isFinite(configured)) {
+      return DEFAULT_GITHUB_POLLING_INTERVAL_SECONDS;
+    }
+    return Math.max(0, Math.trunc(configured));
   }
 
   /**

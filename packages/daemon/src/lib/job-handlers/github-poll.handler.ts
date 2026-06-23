@@ -49,7 +49,7 @@ export async function handleGitHubPoll(deps: GitHubPollHandlerDeps): Promise<Git
 
   // Compute nextRunAt after the poll so the interval is measured from
   // completion, not from when the job was dequeued.
-  const nextRunAt = Date.now() + intervalMs;
+  const nextRunAt = intervalMs > 0 ? Date.now() + intervalMs : 0;
 
   // Only enqueue the next job if no pending job is already waiting.
   // We check 'pending' only (not 'processing') because the current job is
@@ -64,7 +64,7 @@ export async function handleGitHubPoll(deps: GitHubPollHandlerDeps): Promise<Git
     limit: 1,
   });
 
-  if (existingJobs.length === 0) {
+  if (intervalMs > 0 && existingJobs.length === 0) {
     jobQueue.enqueue({
       queue: GITHUB_POLL,
       payload: {},

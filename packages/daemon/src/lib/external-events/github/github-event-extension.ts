@@ -129,6 +129,7 @@ const WEBHOOK_PATH = '/webhook/github/space';
 
 interface GitHubEventExtensionOptions {
   pollIntervalMs?: number;
+  getPollIntervalMs?: () => number | undefined;
   fetchImpl?: typeof fetch;
   /**
    * Optional credential store used to persist the GitHub PAT outside env vars.
@@ -199,7 +200,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
   async start(context: ExternalEventExtensionContext): Promise<void> {
     this.context = context;
     this.stopped = false;
-    if (!(await this.isPollingGloballyEnabled())) return;
+    if (!(await this.isPollingGloballyEnabled()) || this.getPollIntervalMs() <= 0) return;
     this.scheduleNextPoll();
   }
 
@@ -652,8 +653,20 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     return global.globallyEnabled && global.capabilities.polling !== false;
   }
 
+  async refreshPollingInterval(): Promise<void> {
+    if (this.stopped) return;
+    if (!(await this.isPollingGloballyEnabled()) || this.getPollIntervalMs() <= 0) {
+      if (this.pollTimer) clearTimeout(this.pollTimer);
+      this.pollTimer = null;
+      return;
+    }
+    this.scheduleNextPoll();
+  }
+
   private scheduleNextPoll(): void {
-    this.scheduleNextPollAfter(this.options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS);
+    const intervalMs = this.getPollIntervalMs();
+    if (intervalMs <= 0) return;
+    this.scheduleNextPollAfter(intervalMs);
   }
 
   /**
@@ -706,9 +719,18 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         ? Math.max(0, this.rateLimitedUntil - now)
         : Math.max(RATE_LIMIT_MIN_BACKOFF_MS, this.rateLimitedUntil - now);
     } else {
-      delay = this.options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
+      delay = this.getPollIntervalMs();
+      if (delay <= 0) return;
     }
     this.scheduleNextPollAfter(delay);
+  }
+
+  private getPollIntervalMs(): number {
+    const configured = this.options.getPollIntervalMs?.() ?? this.options.pollIntervalMs;
+    if (configured === undefined || !Number.isFinite(configured)) {
+      return DEFAULT_POLL_INTERVAL_MS;
+    }
+    return Math.max(0, Math.trunc(configured));
   }
 
   /**
@@ -837,7 +859,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 
   private ensurePollingActive(): void {
     if (this.stopped) return;
-    if (this.pollTimer) return;
+    if (this.pollTimer || this.getPollIntervalMs() <= 0) return;
     this.scheduleNextPoll();
   }
 

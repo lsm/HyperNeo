@@ -142,6 +142,9 @@ export interface GlobalSettings extends SDKSupportedSettings, FileOnlySettings {
   // Default auto-scroll setting for new sessions
   autoScroll?: boolean;
 
+  // GitHub polling interval in seconds (0 disables polling)
+  githubPollingInterval?: number;
+
   // Default coordinator mode for new sessions
   coordinatorMode?: boolean;
 
@@ -186,6 +189,7 @@ export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
   // Default auto-scroll to true so new sessions inherit this setting
   // This must match the display default in GlobalSettingsEditor (autoScroll ?? true)
   autoScroll: true,
+  githubPollingInterval: 120,
   // Default coordinator mode to false (user opts in when needed)
   coordinatorMode: false,
   // Room agent: default to 3 concurrent workers

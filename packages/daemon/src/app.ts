@@ -369,6 +369,11 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     // discovered. Room-scoped sessions use their own defaultPath for project-level
     // MCP resolution and are not affected by this global instance.
     const settingsManager = new SettingsManager(db, process.env.NEOKAI_WORKSPACE_PATH ?? homedir());
+    const getGitHubPollingIntervalSeconds = () => {
+      const value = settingsManager.getGlobalSettings().githubPollingInterval;
+      if (value === undefined || !Number.isFinite(value)) return 120;
+      return Math.max(0, Math.trunc(value));
+    };
     applyProviderModelAllowlistsToEnv(settingsManager.getGlobalSettings().providerModelAllowlists);
 
     // Seed disabled built-in state so initializeProviders() won't register
@@ -595,9 +600,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     startupPhase('github service');
     // Initialize GitHub service if configured
     let gitHubService: GitHubService | null = null;
-    const shouldEnableGitHub =
-      config.githubWebhookSecret ||
-      (config.githubPollingInterval && config.githubPollingInterval > 0);
+    const shouldEnableGitHub = config.githubWebhookSecret || hasAnthropicAuth;
 
     if (shouldEnableGitHub && hasAnthropicAuth) {
       // Get API key for AI agents (security + routing).
@@ -631,11 +634,12 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
           githubToken: process.env.GITHUB_TOKEN, // Optional GitHub token for polling
           jobQueue,
           jobProcessor,
+          getPollingIntervalSeconds: getGitHubPollingIntervalSeconds,
         });
 
         logInfo('[Daemon] GitHub integration enabled', {
           webhook: !!config.githubWebhookSecret,
-          polling: !!(config.githubPollingInterval && config.githubPollingInterval > 0),
+          polling: getGitHubPollingIntervalSeconds() > 0,
         });
       } else {
         logInfo('[Daemon] GitHub integration disabled - no API key available for AI agents');
@@ -665,9 +669,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       },
     };
     const extensionManager = new ExternalEventExtensionManager();
-    const githubPollingEnabled = !!(
-      config.githubPollingInterval && config.githubPollingInterval > 0
-    );
+    const githubPollingEnabled = getGitHubPollingIntervalSeconds() > 0;
     if (githubPollingEnabled) {
       const githubGlobalConfig = await extensionConfigStore.getGlobalConfig('github');
       await extensionConfigStore.setGlobalConfig('github', {
@@ -680,9 +682,35 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     }
     extensionManager.register(
       new GitHubEventExtension(db.getDatabase(), process.env.GITHUB_TOKEN, {
-        ...(githubPollingEnabled ? { pollIntervalMs: config.githubPollingInterval! * 1000 } : {}),
+        getPollIntervalMs: () => getGitHubPollingIntervalSeconds() * 1000,
         credentialStore: credentialManager.getCredentialStore(),
       })
+    );
+
+    const githubEventExtension = extensionManager.getExtension('github') as
+      | GitHubEventExtension
+      | undefined;
+    internalEventBus.subscribe(
+      'settings.updated',
+      (event) => {
+        if (event.namespaceId !== 'global' || event.settings.githubPollingInterval === undefined)
+          return;
+        gitHubService?.refreshPolling();
+        void (async () => {
+          if (getGitHubPollingIntervalSeconds() > 0) {
+            const githubGlobalConfig = await extensionConfigStore.getGlobalConfig('github');
+            await extensionConfigStore.setGlobalConfig('github', {
+              ...githubGlobalConfig,
+              capabilities: {
+                ...githubGlobalConfig.capabilities,
+                polling: true,
+              },
+            });
+          }
+          await githubEventExtension?.refreshPollingInterval();
+        })();
+      },
+      { subscriberName: 'github-polling-settings' }
     );
 
     startupPhase('external event extensions');

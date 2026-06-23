@@ -60,7 +60,6 @@ function makeDaemonHub() {
 
 function makeConfig(overrides: Record<string, unknown> = {}) {
   return {
-    githubPollingInterval: 60, // seconds
     githubWebhookSecret: undefined,
     ...overrides,
   } as never;
@@ -96,15 +95,19 @@ describe('GitHubService — job-queue-driven polling', () => {
     } as never;
   }
 
-  function makeService(configOverrides: Record<string, unknown> = {}) {
+  function makeService(
+    configOverrides: Record<string, unknown> = {},
+    getPollingIntervalSeconds = () => 60
+  ) {
     return new GitHubService({
       db: makeDb(),
-      daemonHub: makeDaemonHub(),
+      internalEventBus: makeDaemonHub(),
       config: makeConfig(configOverrides),
       apiKey: 'test-api-key',
       githubToken: 'test-github-token',
       jobQueue: makeJobQueue(),
       jobProcessor: makeJobProcessor(),
+      getPollingIntervalSeconds,
     });
   }
 
@@ -133,7 +136,7 @@ describe('GitHubService — job-queue-driven polling', () => {
     const listWithExisting = mock(() => [makeJob({ status: 'pending' })]);
     const svc = new GitHubService({
       db: makeDb(),
-      daemonHub: makeDaemonHub(),
+      internalEventBus: makeDaemonHub(),
       config: makeConfig(),
       apiKey: 'test-api-key',
       githubToken: 'test-github-token',
@@ -150,7 +153,7 @@ describe('GitHubService — job-queue-driven polling', () => {
     const listWithExisting = mock(() => [makeJob({ status: 'processing' })]);
     const svc = new GitHubService({
       db: makeDb(),
-      daemonHub: makeDaemonHub(),
+      internalEventBus: makeDaemonHub(),
       config: makeConfig(),
       apiKey: 'test-api-key',
       githubToken: 'test-github-token',
@@ -166,7 +169,7 @@ describe('GitHubService — job-queue-driven polling', () => {
   it('does not register handler or enqueue when jobProcessor is absent', () => {
     const svc = new GitHubService({
       db: makeDb(),
-      daemonHub: makeDaemonHub(),
+      internalEventBus: makeDaemonHub(),
       config: makeConfig(),
       apiKey: 'test-api-key',
       githubToken: 'test-github-token',
@@ -182,12 +185,13 @@ describe('GitHubService — job-queue-driven polling', () => {
   it('does not register handler or enqueue when polling interval is 0', () => {
     const svc = new GitHubService({
       db: makeDb(),
-      daemonHub: makeDaemonHub(),
-      config: makeConfig({ githubPollingInterval: 0 }),
+      internalEventBus: makeDaemonHub(),
+      config: makeConfig(),
       apiKey: 'test-api-key',
       githubToken: 'test-github-token',
       jobQueue: makeJobQueue(),
       jobProcessor: makeJobProcessor(),
+      getPollingIntervalSeconds: () => 0,
     });
 
     svc.start();
@@ -199,7 +203,7 @@ describe('GitHubService — job-queue-driven polling', () => {
   it('does not register handler or enqueue when githubToken is absent', () => {
     const svc = new GitHubService({
       db: makeDb(),
-      daemonHub: makeDaemonHub(),
+      internalEventBus: makeDaemonHub(),
       config: makeConfig(),
       apiKey: 'test-api-key',
       // no githubToken
@@ -222,12 +226,13 @@ describe('GitHubService — job-queue-driven polling', () => {
 
     const svc = new GitHubService({
       db: makeDb(),
-      daemonHub: makeDaemonHub(),
+      internalEventBus: makeDaemonHub(),
       config: makeConfig(),
       apiKey: 'test-api-key',
       githubToken: 'test-github-token',
       jobQueue: makeJobQueue(),
       jobProcessor: { register: capturingRegister } as never,
+      getPollingIntervalSeconds: () => 60,
     });
 
     svc.start();
@@ -296,12 +301,13 @@ describe('GitHubService — job-queue-driven polling', () => {
 
     const svc = new GitHubService({
       db: makeDb(),
-      daemonHub: makeDaemonHub(),
+      internalEventBus: makeDaemonHub(),
       config: makeConfig(),
       apiKey: 'test-api-key',
       githubToken: 'test-github-token',
       jobQueue: makeJobQueue(),
       jobProcessor: { register: capturingRegister } as never,
+      getPollingIntervalSeconds: () => 60,
     });
 
     svc.start();
@@ -332,5 +338,39 @@ describe('GitHubService — job-queue-driven polling', () => {
 
     // But the chain self-schedules so polling resumes automatically when restarted
     expect(enqueueMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses the latest polling interval when self-scheduling jobs', async () => {
+    let intervalSeconds = 60;
+    let capturedHandler: (() => Promise<unknown>) | undefined;
+    const capturingRegister = mock((_queue: string, handler: () => Promise<unknown>) => {
+      capturedHandler = handler;
+    });
+
+    const svc = new GitHubService({
+      db: makeDb(),
+      internalEventBus: makeDaemonHub(),
+      config: makeConfig(),
+      apiKey: 'test-api-key',
+      githubToken: 'test-github-token',
+      jobQueue: makeJobQueue(),
+      jobProcessor: { register: capturingRegister } as never,
+      getPollingIntervalSeconds: () => intervalSeconds,
+    });
+
+    svc.start();
+    intervalSeconds = 30;
+    enqueueMock.mockClear();
+
+    await capturedHandler!();
+
+    const delayedJob = enqueueMock.mock.calls.find((call) => {
+      const [arg] = call as [{ runAt: number }];
+      return arg.runAt > Date.now() + 20_000;
+    });
+    expect(delayedJob).toBeDefined();
+    const [arg] = delayedJob as [{ runAt: number }];
+    expect(arg.runAt).toBeGreaterThanOrEqual(Date.now() + 29_000);
+    expect(arg.runAt).toBeLessThanOrEqual(Date.now() + 31_000);
   });
 });
