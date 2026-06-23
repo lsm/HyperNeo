@@ -805,6 +805,7 @@ describe('GitHubEventExtension', () => {
         'issue_comment',
         'pull_request_review',
         'pull_request_review_comment',
+        'check_run',
       ]);
       expect(body.config).toMatchObject({
         url: 'https://example.com/webhook/github/space',
@@ -1528,6 +1529,7 @@ describe('GitHubEventExtension', () => {
               'issue_comment',
               'pull_request_review',
               'pull_request_review_comment',
+              'check_run',
             ],
             config: { url: 'https://example.com/webhook/github/space', content_type: 'json' },
           }),
@@ -1639,6 +1641,7 @@ describe('GitHubEventExtension', () => {
               'issue_comment',
               'pull_request_review',
               'pull_request_review_comment',
+              'check_run',
             ],
             config: { url: 'https://example.com/webhook/github/space', content_type: 'form' },
           }),
