@@ -2502,6 +2502,10 @@ export class SpaceRuntime {
       ) {
         continue;
       }
+      const eventRecord = store.getById(delivery.eventId);
+      if (eventRecord?.event && this.isTargetStillSubscribed(target, eventRecord.event.topic)) {
+        continue;
+      }
       store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, { terminal: true, reason });
       store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
       this.clearExternalEventRetry(delivery.deliveryKey);

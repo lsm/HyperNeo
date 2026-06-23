@@ -3869,6 +3869,29 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(delivery.failureReason).toBe('node_execution_cancelled');
     expect(eventStore.getById(event.id)?.state).toBe('failed');
   });
+
+  test('preserves DB-only pending deliveries when another target subscription survives', async () => {
+    const { workflow, run, task } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'idle',
+      completedAt: Date.now(),
+    });
+    runtime.registerSubscription(run.id, task.id, 'code', 'coder', DEFAULT_TOPIC, {
+      subscriptionKind: 'auto',
+    });
+    const event = makeEvent();
+    await eventService.publish(event);
+    const pendingDelivery = eventStore.listDeliveries(event.id)[0]!;
+    expect(pendingDelivery.state).toBe('pending');
+
+    runtime.clearPrEventSubscriptionsForRun(run.id);
+
+    const delivery = eventStore.listDeliveries(event.id)[0]!;
+    expect(delivery.state).toBe('pending');
+    expect(delivery.failureReason).toBe('node_execution_not_active');
+    expect(eventStore.getById(event.id)?.state).toBe('published');
+  });
   test('terminalizes persisted pending deliveries for non-deliverable runs on rehydrate', async () => {
     const { workflow, run, task } = await startRunWithSubscription();
     const event = makeEvent();
