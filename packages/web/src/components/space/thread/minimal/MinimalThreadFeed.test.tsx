@@ -741,6 +741,103 @@ describe('MinimalThreadFeed', () => {
     expect(entry.textContent).toContain('settled before result');
   });
 
+  it('keeps capped pre-result task_notifications as standalone rows only', () => {
+    const t = Date.now();
+    const rows = [
+      makeRow({
+        id: 'a1',
+        label: 'Coder Agent',
+        createdAt: t,
+        message: assistantToolUse(
+          'a1',
+          Array.from({ length: 9 }, (_, i) => ({
+            name: 'Bash',
+            input: { command: `echo ${i + 1}` },
+          }))
+        ),
+      }),
+      makeRow({
+        id: 'n1',
+        label: 'Coder Agent',
+        createdAt: t + 100,
+        messageType: 'system',
+        message: {
+          type: 'system',
+          subtype: 'task_notification',
+          task_id: 't',
+          tool_use_id: 'tu-a1-0',
+          status: 'completed',
+          summary: 'first tool done',
+          output_file: '/tmp/o',
+        },
+      }),
+      makeRow({
+        id: 'a2',
+        label: 'Coder Agent',
+        createdAt: t + 200,
+        message: assistantText('a2', 'Done'),
+      }),
+      makeRow({ id: 'r1', label: 'Coder Agent', createdAt: t + 300, message: resultMessage('r1') }),
+    ];
+
+    render(<MinimalThreadFeed parsedRows={rows} />);
+
+    const feed = screen.getByTestId('space-task-event-feed-minimal');
+    expect(feed.textContent).toContain('Task completed');
+    expect(feed.textContent).toContain('first tool done');
+    expect(screen.queryAllByTestId('minimal-thread-roster-entry')).toHaveLength(0);
+  });
+
+  it('does not suppress active turn task_notification after boundary-flushed slice', () => {
+    const t = Date.now();
+    const rows = [
+      makeRow({
+        id: 'a1',
+        label: 'Coder Agent',
+        createdAt: t,
+        turnIndex: 1,
+        message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'bun test' } }]),
+      }),
+      makeRow({
+        id: 'a2',
+        label: 'Coder Agent',
+        createdAt: t + 100,
+        turnIndex: 1,
+        message: assistantText('a2', 'Still working'),
+      }),
+      makeRow({
+        id: 'u1',
+        label: 'Coder Agent',
+        createdAt: t + 200,
+        turnIndex: 1,
+        message: humanUserMessage('u1', 'continue'),
+        messageType: 'user',
+      }),
+      makeRow({
+        id: 'n1',
+        label: 'Coder Agent',
+        createdAt: t + 300,
+        turnIndex: 1,
+        messageType: 'system',
+        message: {
+          type: 'system',
+          subtype: 'task_notification',
+          task_id: 't',
+          tool_use_id: 'tu-a1-0',
+          status: 'completed',
+          summary: 'boundary active fallback',
+          output_file: '/tmp/o',
+        },
+      }),
+    ];
+
+    render(<MinimalThreadFeed parsedRows={rows} activeAgentLabels={new Set(['Coder Agent'])} />);
+
+    const feed = screen.getByTestId('space-task-event-feed-minimal');
+    expect(feed.textContent).toContain('Task completed');
+    expect(feed.textContent).toContain('boundary active fallback');
+  });
+
   it('renders the active rail and tool roster for the live turn when activeAgentLabels includes the agent', () => {
     const t = Date.now();
     const rows = [

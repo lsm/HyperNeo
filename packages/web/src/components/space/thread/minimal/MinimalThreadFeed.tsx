@@ -622,26 +622,35 @@ function foldTaskNotification(
   };
 }
 
+function indexCompletedFoldableToolUseIds(rows: ParsedThreadRow[]): Set<string> {
+  const visible = new Set<string>();
+  for (const entry of completedRosterEntries(rows, new Map())) {
+    if (entry.kind === 'tool' && entry.toolUseId) visible.add(entry.toolUseId);
+  }
+  return visible;
+}
+
 function completedRosterEntries(
   rows: ParsedThreadRow[],
-  taskNotificationsByToolUseId: Map<string, TaskNotificationLite>
+  taskNotificationsByToolUseId: Map<string, TaskNotificationLite>,
+  foldableToolUseIds?: ReadonlySet<string>
 ): ActiveRosterEntry[] {
   const entries: RosterToolEntry[] = [];
   for (const row of rows) {
     for (const block of getToolUseContentBlocks(row)) {
       const toolUseIdValue = (block as { id?: unknown }).id;
       const toolUseId = typeof toolUseIdValue === 'string' ? toolUseIdValue : undefined;
+      const entry: RosterToolEntry = {
+        kind: 'tool',
+        tool: block.name,
+        preview: formatCompletedToolPreview(block.name, block.input),
+        ts: row.createdAt,
+        ...(toolUseId ? { toolUseId } : {}),
+      };
       entries.push(
-        foldTaskNotification(
-          {
-            kind: 'tool',
-            tool: block.name,
-            preview: formatCompletedToolPreview(block.name, block.input),
-            ts: row.createdAt,
-            ...(toolUseId ? { toolUseId } : {}),
-          },
-          taskNotificationsByToolUseId
-        )
+        toolUseId && foldableToolUseIds && !foldableToolUseIds.has(toolUseId)
+          ? entry
+          : foldTaskNotification(entry, taskNotificationsByToolUseId)
       );
     }
   }
@@ -686,7 +695,11 @@ function buildCompletedTurn(
     highlightMessageUuid: highlightUuid,
     replacementStatus: sourceRow?.replacementStatus,
     resultInfo,
-    roster: completedRosterEntries(rows, taskNotificationsByToolUseId),
+    roster: completedRosterEntries(
+      rows,
+      taskNotificationsByToolUseId,
+      indexCompletedFoldableToolUseIds(rows)
+    ),
   };
 }
 
@@ -727,14 +740,11 @@ function indexTaskNotifications(rows: ParsedThreadRow[]): Map<string, TaskNotifi
 function collectRosteredToolUseIds(
   summaries: ActiveTurnSummary[],
   renderedTurnKeys: Set<string>,
-  completedRows: ParsedThreadRow[][],
-  taskNotificationsByToolUseId: Map<string, TaskNotificationLite>
+  completedRows: ParsedThreadRow[][]
 ): Set<string> {
   const ids = new Set<string>();
   for (const rows of completedRows) {
-    for (const entry of completedRosterEntries(rows, taskNotificationsByToolUseId)) {
-      if (entry.kind === 'tool' && entry.toolUseId) ids.add(entry.toolUseId);
-    }
+    for (const id of indexCompletedFoldableToolUseIds(rows)) ids.add(id);
   }
   for (const summary of summaries) {
     // Match on (sessionId, turnIndex): a stale summary whose turn no longer
@@ -1238,12 +1248,11 @@ function buildFeedTurns(
   const completedRows = blocks.flatMap((block) => {
     const out: ParsedThreadRow[][] = [];
     const blockKey = normalizeAgentKey(block.agentLabel);
-    const trailingBlockCanUpgradeToActive = normalisedActive.has(blockKey) && !block.isTerminal;
+    if (normalisedActive.has(blockKey) && !block.isTerminal) return out;
     let pendingAgentRows: ParsedThreadRow[] = [];
-    const flush = (isFinal = false) => {
+    const flush = () => {
       if (
         pendingAgentRows.length > 0 &&
-        !(isFinal && trailingBlockCanUpgradeToActive) &&
         extractLastAssistantText(pendingAgentRows).text.length > 0
       ) {
         out.push(pendingAgentRows);
@@ -1264,7 +1273,7 @@ function buildFeedTurns(
       }
       pendingAgentRows.push(row);
     }
-    flush(true);
+    flush();
     return out;
   });
 
@@ -1276,8 +1285,7 @@ function buildFeedTurns(
   const rosteredToolUseIds = collectRosteredToolUseIds(
     activeTurnSummaries,
     renderedTurnKeys,
-    completedRows,
-    taskNotificationsByToolUseId
+    completedRows
   );
 
   const latestRowIdBySession = new Map<string, string>();
