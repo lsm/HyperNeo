@@ -7,7 +7,7 @@
  * - Renders in edit mode (with agent prop, fields pre-filled)
  * - Form validation: name required
  * - Form validation: name uniqueness
- * - Form validation: model required
+ * - Model override is optional
  * - Form validation: at least one tool selected
  * - Tool presets: "Full Coding" selects correct tools
  * - Tool presets: "Read Only" selects correct tools
@@ -247,15 +247,15 @@ describe('SpaceAgentEditor', () => {
     expect(await findByText('An agent with this name already exists')).toBeTruthy();
   });
 
-  it('shows model required error when submitting with empty model', async () => {
-    const { getByPlaceholderText, getByRole, findByText } = render(
-      <SpaceAgentEditor {...DEFAULT_PROPS} />
-    );
+  it('allows submitting with an empty model to inherit the default', async () => {
+    const { getByPlaceholderText, getByRole } = render(<SpaceAgentEditor {...DEFAULT_PROPS} />);
     fillName(getByPlaceholderText, 'My Agent');
-    // Leave model empty
     const form = getByRole('dialog').querySelector('form');
     fireEvent.submit(form!);
-    expect(await findByText('Model is required')).toBeTruthy();
+    await waitFor(() =>
+      expect(mockCreateAgent).toHaveBeenCalledWith(expect.objectContaining({ name: 'My Agent' }))
+    );
+    expect(mockCreateAgent.mock.calls[0][0]).not.toHaveProperty('model');
   });
 
   it('shows tools error when no tools are selected', async () => {

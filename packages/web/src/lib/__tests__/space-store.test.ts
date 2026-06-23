@@ -1951,6 +1951,24 @@ describe('SpaceStore — CRUD methods', () => {
     expect(spaceStore.agents.value.some((agent) => agent.id === 'a1')).toBe(true);
   });
 
+  it('ignores returned agent when the active space changes before the request resolves', async () => {
+    await spaceStore.selectSpace('space-1');
+    let resolveRequest: (value: { agent: SpaceAgent }) => void = () => {};
+    mockHub.request.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveRequest = resolve;
+        })
+    );
+
+    const request = spaceStore.createAgent({ name: 'Coder' });
+    await spaceStore.selectSpace('space-2');
+    resolveRequest({ agent: makeAgent('stale-agent') });
+    await request;
+
+    expect(spaceStore.agents.value.some((agent) => agent.id === 'stale-agent')).toBe(false);
+  });
+
   it('deleteAgent calls spaceAgent.delete RPC and removes the agent locally', async () => {
     await spaceStore.selectSpace('space-1');
     spaceStore.agents.value = [makeAgent('a1')];

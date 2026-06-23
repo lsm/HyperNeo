@@ -155,6 +155,7 @@ export function SpaceWorkerAgentList() {
   const [deletingAgent, setDeletingAgent] = useState<SpaceAgent | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [syncingAgent, setSyncingAgent] = useState<SpaceAgent | null>(null);
 
   // Drift detection: set of agent IDs that have drifted from their preset.
   // Empty until the first successful drift report fetch — agents not in the
@@ -198,8 +199,9 @@ export function SpaceWorkerAgentList() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- driftKey captures the list identity
   }, [spaceId, driftKey]);
 
-  const handleSync = async (agent: SpaceAgent) => {
-    if (!spaceId) return;
+  const handleSyncConfirm = async () => {
+    if (!spaceId || !syncingAgent) return;
+    const agent = syncingAgent;
     setSyncingAgentId(agent.id);
     try {
       await spaceStore.syncAgentFromTemplate(agent.id);
@@ -211,6 +213,7 @@ export function SpaceWorkerAgentList() {
         next.delete(agent.id);
         return next;
       });
+      setSyncingAgent(null);
       toast.success(`"${agent.name}" synced from template`);
     } catch (err) {
       toast.error(`Sync failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -317,7 +320,7 @@ export function SpaceWorkerAgentList() {
                 syncing={syncingAgentId === agent.id}
                 onEdit={handleEdit}
                 onDelete={handleDeleteClick}
-                onSync={handleSync}
+                onSync={setSyncingAgent}
               />
             ))}
           </div>
@@ -331,6 +334,19 @@ export function SpaceWorkerAgentList() {
           existingAgentNames={existingAgentNames}
           onSave={handleEditorClose}
           onCancel={handleEditorClose}
+        />
+      )}
+
+      {syncingAgent && (
+        <ConfirmModal
+          isOpen
+          onClose={() => setSyncingAgent(null)}
+          onConfirm={handleSyncConfirm}
+          title="Sync Worker Agent from Template"
+          message={`Sync "${syncingAgent.name}" from the current "${syncingAgent.templateName ?? 'template'}" preset? This overwrites its description, tools, and custom prompt.`}
+          confirmText="Sync"
+          confirmButtonVariant="primary"
+          isLoading={syncingAgentId === syncingAgent.id}
         />
       )}
 

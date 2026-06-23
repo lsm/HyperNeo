@@ -1,4 +1,4 @@
-import { cleanup, render } from '@testing-library/preact';
+import { cleanup, fireEvent, render, waitFor } from '@testing-library/preact';
 import { signal } from '@preact/signals';
 import type {
   SpaceAgent,
@@ -209,5 +209,25 @@ describe('SpaceWorkerAgentList', () => {
     expect(getByText('No worker agents configured.')).toBeTruthy();
     expect(getByText('Create a worker agent or seed one from a built-in template.')).toBeTruthy();
     expect(queryByText('Create a workflow to define worker agents.')).toBeNull();
+  });
+
+  it('confirms before syncing a drifted worker agent from its template', async () => {
+    mockAgents.value = [makeAgent('coder-agent', { templateName: 'coder' })];
+    mockHubRequest.mockResolvedValueOnce({
+      report: { agents: [{ agentId: 'coder-agent', drifted: true }] },
+    });
+
+    const { getAllByText, getByText, queryByText } = render(<SpaceWorkerAgentList />);
+
+    await waitFor(() => expect(getByText('Sync')).toBeTruthy());
+    fireEvent.click(getByText('Sync'));
+
+    expect(mockSyncAgentFromTemplate).not.toHaveBeenCalled();
+    expect(getByText('Sync Worker Agent from Template')).toBeTruthy();
+
+    fireEvent.click(getAllByText('Sync')[1]);
+
+    await waitFor(() => expect(mockSyncAgentFromTemplate).toHaveBeenCalledWith('coder-agent'));
+    await waitFor(() => expect(queryByText('Sync Worker Agent from Template')).toBeNull());
   });
 });

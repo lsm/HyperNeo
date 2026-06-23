@@ -7,13 +7,13 @@
  * - From Template (built-in seeded templates)
  * - Name (required, unique within space)
  * - Description (optional)
- * - Model (dropdown override)
+ * - Model (dropdown override, optional for default model inheritance)
  * - Tools (multi-select checkboxes from KNOWN_TOOLS)
  * - Custom Prompt (monospace textarea with line numbers; appended after NeoKai contract)
  *
  * Tool presets: "Full Coding" · "Read Only" · "Custom"
  *
- * Validation: name required + unique, model required, at least one tool selected.
+ * Validation: name required + unique, at least one tool selected.
  */
 
 import type {
@@ -222,10 +222,6 @@ export function SpaceAgentEditor({
       }
     }
 
-    if (!model.trim()) {
-      newErrors['model'] = 'Model is required';
-    }
-
     if (tools.length === 0) {
       newErrors['tools'] = 'At least one tool must be selected';
     }
@@ -242,10 +238,11 @@ export function SpaceAgentEditor({
     setSaveError(null);
 
     try {
+      const trimmedModel = model.trim();
       const baseParams = {
         name: name.trim(),
         description: description.trim() || undefined,
-        model: model.trim(),
+        ...(trimmedModel ? { model: trimmedModel } : {}),
         customPrompt: customPrompt || null,
         tools: tools.length > 0 ? tools : undefined,
         ...(clearSettingSources ||
@@ -375,9 +372,9 @@ export function SpaceAgentEditor({
 
         {/* Model */}
         <div>
-          <label class="block text-sm font-medium text-gray-200 mb-1.5">
+          <label class="block text-sm font-medium text-gray-300 mb-1.5">
             Model
-            <span class="text-red-400 ml-1">*</span>
+            <span class="text-gray-400 text-xs ml-2">(optional override)</span>
           </label>
           <WorkflowModelSelect
             value={model || undefined}

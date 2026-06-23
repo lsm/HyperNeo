@@ -2538,7 +2538,12 @@ class SpaceStore {
   // Agent Methods
   // ========================================
 
-  private upsertAgent(agent: SpaceAgent): void {
+  private upsertAgent(agent: SpaceAgent, expectedSpaceId?: string): void {
+    const activeSpaceId = this.spaceId.value;
+    const agentSpaceId = agent.spaceId;
+    if (expectedSpaceId && activeSpaceId !== expectedSpaceId) return;
+    if (agentSpaceId && activeSpaceId && agentSpaceId !== activeSpaceId) return;
+
     const exists = this.agents.value.some((a) => a.id === agent.id);
     this.agents.value = exists
       ? this.agents.value.map((a) => (a.id === agent.id ? agent : a))
@@ -2559,7 +2564,7 @@ class SpaceStore {
       ...params,
       spaceId,
     });
-    this.upsertAgent(agent);
+    this.upsertAgent(agent, spaceId);
     return agent;
   }
 
@@ -2595,7 +2600,7 @@ class SpaceStore {
       spaceId,
       sessionId,
     });
-    this.upsertAgent(agent);
+    this.upsertAgent(agent, spaceId);
     return agent;
   }
 
@@ -2611,7 +2616,7 @@ class SpaceStore {
       spaceId,
       ...params,
     });
-    this.upsertAgent(agent);
+    this.upsertAgent(agent, spaceId);
     return agent;
   }
 
@@ -2626,7 +2631,7 @@ class SpaceStore {
       spaceId,
       agentId,
     });
-    this.upsertAgent(agent);
+    this.upsertAgent(agent, spaceId);
     return agent;
   }
 
