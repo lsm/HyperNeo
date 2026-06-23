@@ -4535,8 +4535,10 @@ export class SpaceRuntime {
         ex.status === 'waiting_rebind' ||
         ex.status === 'blocked'
     );
+    const pendingMessageRepo = this.config.pendingMessageRepo;
+    pendingMessageRepo?.enforceRetention({ runId: run.id });
     const hasQueuedNodeHandoff =
-      this.config.pendingMessageRepo
+      pendingMessageRepo
         ?.listPendingForRun(run.id)
         .some((row) => row.targetKind === 'node_agent') ?? false;
     if (hasDriveableExecution || hasQueuedNodeHandoff) return 'skipped';
@@ -5993,17 +5995,18 @@ export class SpaceRuntime {
       return false;
     }
 
-    const expiredNodeHandoffs = repo
-      .listByRunAndStatus(runId, 'expired')
-      .filter((row) => row.targetKind === 'node_agent');
-    if (expiredNodeHandoffs.length > 0) {
-      const first = expiredNodeHandoffs[0];
-      const reason = `Queued workflow handoff to ${first.targetAgentName} expired before delivery after ${first.attempts} attempt(s)`;
-      await this.blockRunForQueuedHandoffFailure(runId, meta.spaceId, canonicalTask, reason);
-      return true;
+    if (pending.length === 0) {
+      const expiredNodeHandoffs = repo
+        .listByRunAndStatus(runId, 'expired')
+        .filter((row) => row.targetKind === 'node_agent');
+      if (expiredNodeHandoffs.length > 0) {
+        const first = expiredNodeHandoffs[0];
+        const reason = `Queued workflow handoff to ${first.targetAgentName} expired before delivery after ${first.attempts} attempt(s)`;
+        await this.blockRunForQueuedHandoffFailure(runId, meta.spaceId, canonicalTask, reason);
+        return true;
+      }
+      return false;
     }
-
-    if (pending.length === 0) return false;
 
     if (!space) {
       let blockedReason: string | null = null;
