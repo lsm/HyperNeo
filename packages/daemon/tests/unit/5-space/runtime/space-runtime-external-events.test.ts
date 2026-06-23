@@ -2444,6 +2444,98 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(eventStore.listDeliveries(later.id)[0]!.state).toBe('delivered');
   });
 
+  test('flushes DB-persisted pending deliveries even when in-memory queue is non-empty', async () => {
+    const { run, task } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+
+    // Event A: arrives while node is idle → persisted as pending in DB only
+    // (not added to in-memory queue).
+    nodeExecutionRepo.update(execution.id, {
+      status: 'idle',
+      agentSessionId: 'session-idle-split',
+      completedAt: Date.now(),
+    });
+    tam.alive.add('session-idle-split');
+    const idleEvent = makeEvent({
+      id: 'evt-idle-split',
+      dedupeKey: 'dedupe-idle-split',
+    });
+    await eventService.publish(idleEvent);
+    expect(eventStore.listDeliveries(idleEvent.id)[0]!.state).toBe('pending');
+    expect(eventStore.listDeliveries(idleEvent.id)[0]!.failureReason).toBe(
+      'node_execution_not_active'
+    );
+
+    // Simulate a separate in-memory queued delivery (from a transient failure
+    // while the node was active) by manually inserting one into the pending
+    // queue. This delivery has a DIFFERENT delivery key from the idle event.
+    const liveEvent = makeEvent({
+      id: 'evt-live-split',
+      dedupeKey: 'dedupe-live-split',
+    });
+    const liveDeliveryKey = `live-split-${liveEvent.id}`;
+    eventStore.store(liveEvent);
+    eventStore.registerExpectedDelivery(liveEvent.id, liveDeliveryKey, {
+      workflowRunId: run.id,
+      taskId: task.id,
+      nodeId: 'code',
+      agentName: 'coder',
+    });
+    const livePayload = {
+      eventId: liveEvent.id,
+      source: 'github',
+      topic: liveEvent.topic,
+      dedupeKey: liveEvent.dedupeKey,
+      summary: liveEvent.summary,
+      payload: liveEvent.payload,
+      occurredAt: liveEvent.occurredAt,
+      ingestedAt: liveEvent.ingestedAt,
+      spaceId: liveEvent.spaceId,
+    };
+    // Directly inject into the in-memory pending queue.
+    const runtimeInternal = runtime as unknown as {
+      pendingExternalEventQueue: Map<
+        string,
+        Array<{
+          event: typeof livePayload;
+          deliveryKey: string;
+          deliveryMode: string;
+          createdAt: number;
+        }>
+      >;
+      buildQueueKey: (target: unknown) => string;
+    };
+    const queueKey = runtimeInternal.buildQueueKey({
+      workflowRunId: run.id,
+      taskId: task.id,
+      nodeId: 'code',
+      agentName: 'coder',
+    });
+    runtimeInternal.pendingExternalEventQueue.set(queueKey, [
+      {
+        event: livePayload,
+        deliveryKey: liveDeliveryKey,
+        deliveryMode: 'defer',
+        createdAt: Date.now(),
+      },
+    ]);
+
+    // On activation flush, BOTH the in-memory item and the DB-persisted item
+    // should be delivered — the DB-persisted one must not be skipped.
+    runtime.flushPendingNodeQueue({
+      workflowRunId: run.id,
+      taskId: task.id,
+      nodeId: 'code',
+      agentName: 'coder',
+      sessionId: 'session-idle-split',
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const idleDeliveryAfter = eventStore.listDeliveries(idleEvent.id)[0]!;
+    expect(idleDeliveryAfter.state).toBe('delivered');
+    expect(eventStore.getById(idleEvent.id)?.state).toBe('delivered');
+  });
+
   test('fails delivery when inactive target task is already done', async () => {
     const { workflow, run, task } = await startRunWithSubscription();
     const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;

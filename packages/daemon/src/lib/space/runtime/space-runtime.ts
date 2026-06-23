@@ -1698,6 +1698,7 @@ export class SpaceRuntime {
     const targetWithExecution = this.resolveSubscriptionTarget(target);
     const key = this.buildQueueKey(target);
     const queued = this.pendingExternalEventQueue.get(key);
+    const inMemoryDeliveryKeys = new Set(queued?.map((item) => item.deliveryKey) ?? []);
     if (queued) {
       this.pendingExternalEventQueue.delete(key);
       const now = Date.now();
@@ -1717,12 +1718,13 @@ export class SpaceRuntime {
         );
       }
     }
-    if (!queued || queued.length === 0) {
-      void this.flushPersistedPendingDeliveriesForTarget(targetWithExecution);
-    }
+    void this.flushPersistedPendingDeliveriesForTarget(targetWithExecution, inMemoryDeliveryKeys);
   }
 
-  private flushPersistedPendingDeliveriesForTarget(target: WorkflowSubscriptionTarget): void {
+  private flushPersistedPendingDeliveriesForTarget(
+    target: WorkflowSubscriptionTarget,
+    skipDeliveryKeys: Set<string>
+  ): void {
     const store = this.config.externalEventStore;
     if (!store || !target.sessionId) return;
 
@@ -1732,7 +1734,13 @@ export class SpaceRuntime {
         (delivery) =>
           delivery.taskId === target.taskId &&
           delivery.nodeId === target.nodeId &&
-          delivery.agentName === target.agentName
+          delivery.agentName === target.agentName &&
+          !skipDeliveryKeys.has(delivery.deliveryKey) &&
+          // Only flush deliveries that were explicitly marked retryable (e.g.
+          // `node_execution_not_active`). Rows with null failureReason are
+          // still being processed by the original dispatch path (in-flight or
+          // digest-pending) and must not be re-dispatched here.
+          delivery.failureReason !== null
       )
       .map((delivery) => {
         const eventRecord = store.getById(delivery.eventId);
