@@ -219,17 +219,15 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       const willReenablePollingRows = this.repo
         .listWatchedRepos(params.spaceId)
         .some((repo) => repo.pollingEnabled);
-      if (willReenablePollingRows) {
-        this.assertPollingIntervalEnabled();
-      }
       this.repo.setRepoEnabled(params.spaceId, true);
       // Re-enabling a space can revive polling-configured rows whose
       // `enabled` flag was just flipped back on. If the global polling
       // capability was cleared while the space was disabled (see
       // disablePollingCapabilityIfUnused), the timer would never restart
-      // on its own. Re-arm the capability + timer here when any newly
-      // re-enabled polling row exists.
-      if (willReenablePollingRows) {
+      // on its own. Re-arm the capability + timer here only when polling is
+      // globally enabled; interval=0 should still allow webhook delivery to
+      // resume for the space without re-enabling polling.
+      if (willReenablePollingRows && this.getPollIntervalMs() > 0) {
         await this.enablePollingCapability(context);
         this.ensurePollingActive();
       }
@@ -674,6 +672,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       this.pollTimer = null;
       return;
     }
+    if (this.activePollCycle) return;
     const delay = this.getNextPollDelayMs();
     if (delay === null) return;
     this.scheduleNextPollAfter(delay);

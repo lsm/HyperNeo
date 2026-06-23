@@ -3754,7 +3754,42 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
     }
   });
 
-  test('space.github.enable rejects polling capability re-arm when global interval is 0', async () => {
+  test('refreshPollingInterval does not schedule over an active poll cycle', async () => {
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, undefined, { getPollIntervalMs: () => 5_000 });
+    const configStore = new RecordingConfigStore({
+      globallyEnabled: true,
+      polling: true,
+    });
+    const context = {
+      publisher: { publish: async () => {} },
+      config: configStore,
+      onSourceConfigChanged() {},
+    };
+    let releasePoll!: () => void;
+    const activePollCycle = new Promise<void>((resolve) => {
+      releasePoll = resolve;
+    });
+    try {
+      await extension.start(context);
+      const internals = extension as unknown as {
+        activePollCycle: Promise<void> | undefined;
+        pollTimer: unknown;
+      };
+      if (internals.pollTimer) clearTimeout(internals.pollTimer as ReturnType<typeof setTimeout>);
+      internals.pollTimer = null;
+      internals.activePollCycle = activePollCycle;
+
+      await extension.refreshPollingInterval();
+
+      expect(internals.pollTimer).toBeNull();
+    } finally {
+      releasePoll();
+      await extension.stop();
+    }
+  });
+
+  test('space.github.enable re-enables webhook delivery without polling re-arm when interval is 0', async () => {
     const db = setupDb();
     const extension = new GitHubEventExtension(db, undefined, { getPollIntervalMs: () => 0 });
     const { clientHub, hub, ready } = setupHubPair();
@@ -3776,15 +3811,15 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
         owner: 'acme',
         repo: 'widgets',
         pollingEnabled: true,
+        webhookEnabled: true,
+        webhookSecret: 'secret',
         enabled: false,
       });
 
-      await expect(
-        clientHub.request('space.github.enable', { spaceId: 'space-1' })
-      ).rejects.toThrow('GitHub polling is disabled globally');
+      await clientHub.request('space.github.enable', { spaceId: 'space-1' });
 
       const stored = extension.repo.getWatchedRepo('space-1', 'acme', 'widgets')!;
-      expect(stored.enabled).toBe(false);
+      expect(stored.enabled).toBe(true);
       expect(extension.repo.isSpaceEnabled('space-1')).toBe(true);
       const global = await configStore.getGlobalConfig('github');
       expect(global.capabilities.polling).toBe(false);
