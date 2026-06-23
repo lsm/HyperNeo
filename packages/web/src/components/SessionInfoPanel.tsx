@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { ChatMessage, Session, GitSessionStatusResponse } from '@neokai/shared';
 import { getGitSessionStatus } from '../lib/api-helpers.ts';
 import { cn } from '../lib/utils.ts';
+import { extractBackgroundTasks, type BackgroundTask } from '../hooks/useRunningToolUseIds.ts';
 import { IconButton } from './ui/IconButton.tsx';
 
 interface SessionInfoPanelButtonProps {
@@ -17,15 +18,6 @@ interface SessionTodo {
   content: string;
   status: TodoStatus;
   activeForm?: string;
-}
-
-type BackgroundTaskStatus = 'pending' | 'running' | 'paused' | 'completed' | 'failed' | 'killed';
-
-interface BackgroundTask {
-  id: string;
-  label: string;
-  status: BackgroundTaskStatus;
-  backgrounded: boolean;
 }
 
 interface SourceItem {
@@ -52,20 +44,6 @@ function basename(path: string | null | undefined): string {
 function asTodoStatus(value: unknown): TodoStatus {
   if (value === 'completed' || value === 'in_progress' || value === 'pending') return value;
   return 'pending';
-}
-
-function asBackgroundTaskStatus(value: unknown): BackgroundTaskStatus | null {
-  if (
-    value === 'pending' ||
-    value === 'running' ||
-    value === 'paused' ||
-    value === 'completed' ||
-    value === 'failed' ||
-    value === 'killed'
-  ) {
-    return value;
-  }
-  return null;
 }
 
 function truncate(value: string, maxLength = 48): string {
@@ -112,62 +90,6 @@ function extractLatestTodos(messages: ChatMessage[]): SessionTodo[] {
   }
 
   return [];
-}
-
-export function extractBackgroundTasks(
-  messages: ChatMessage[],
-  toolInputsMap: Map<string, unknown>
-): BackgroundTask[] {
-  const tasks = new Map<string, BackgroundTask>();
-
-  for (const message of messages) {
-    const record = message as unknown as Record<string, unknown>;
-    if (record.type !== 'system') continue;
-
-    const taskId = getString(record, 'task_id');
-    if (!taskId) continue;
-
-    if (record.subtype === 'task_started') {
-      const toolUseId = getString(record, 'tool_use_id');
-      const toolInput = toolUseId ? toolInputsMap.get(toolUseId) : undefined;
-      const inputLabel = isRecord(toolInput)
-        ? getString(toolInput, 'description') || getString(toolInput, 'command')
-        : undefined;
-      tasks.set(taskId, {
-        id: taskId,
-        label: inputLabel || getString(record, 'description') || 'Background task',
-        status: 'running',
-        backgrounded: false,
-      });
-      continue;
-    }
-
-    const existing = tasks.get(taskId);
-    if (!existing) continue;
-
-    if (record.subtype === 'task_updated' && isRecord(record.patch)) {
-      const status = asBackgroundTaskStatus(getString(record.patch, 'status'));
-      if (status) {
-        existing.status = status;
-      }
-      if (typeof record.patch.is_backgrounded === 'boolean') {
-        existing.backgrounded = record.patch.is_backgrounded;
-      }
-      const description = getString(record.patch, 'description');
-      if (description) existing.label = description;
-      continue;
-    }
-
-    if (record.subtype === 'task_notification') {
-      const status = getString(record, 'status');
-      if (status === 'completed' || status === 'failed') existing.status = status;
-      if (status === 'stopped') existing.status = 'killed';
-    }
-  }
-
-  return [...tasks.values()]
-    .filter((task) => task.backgrounded || task.status === 'running' || task.status === 'paused')
-    .slice(-4);
 }
 
 function extractSources(messages: ChatMessage[]): SourceItem[] {
