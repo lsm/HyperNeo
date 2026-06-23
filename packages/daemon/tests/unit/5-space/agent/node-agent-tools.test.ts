@@ -5083,4 +5083,38 @@ describe('node-agent-tools: auto pr subscription hook', () => {
     expect(data.success).toBe(true);
     expect(calls).toEqual(['https://github.com/acme/widgets/pull/55']);
   });
+
+  test('send_message with pr_url still auto-subscribes when delivery is gated-failed', async () => {
+    const calls: string[] = [];
+    const onEnsurePrSubscription = async (prUrl: string) => {
+      calls.push(prUrl);
+    };
+    // Closed review gate: deliverMessage reports failure, but the worker still
+    // needs PR events while it waits for review — so the hook must fire before
+    // the gated-failure early return.
+    const agentMessageRouter = {
+      deliverMessage: async () => ({
+        success: false as const,
+        delivered: [],
+        failed: [],
+        reason: 'Gate closed: review pending',
+      }),
+    } as unknown as AgentMessageRouter;
+    const config = makeConfig(ctx, {
+      channelResolver: makeResolver([makeResolvedChannel('coder', 'reviewer')]),
+      messageInjector: async () => {},
+      agentMessageRouter,
+      onEnsurePrSubscription,
+    });
+    const handlers = createNodeAgentToolHandlers(config);
+    const result = await handlers.send_message({
+      target: 'reviewer',
+      message: 'PR up for review',
+      data: { pr_url: 'https://github.com/acme/widgets/pull/77' },
+    });
+    const data = JSON.parse(result.content[0].text);
+
+    expect(data.success).toBe(false);
+    expect(calls).toEqual(['https://github.com/acme/widgets/pull/77']);
+  });
 });

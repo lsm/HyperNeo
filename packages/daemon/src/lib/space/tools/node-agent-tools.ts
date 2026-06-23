@@ -1200,6 +1200,12 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
         }
       }
 
+      // Ensure the subscription for any pr_url the caller provided, regardless of
+      // delivery outcome. A worker sending a pr_url to a review gate hits the
+      // gated-failure return below (gate still closed) yet still needs to receive
+      // PR review events while it waits — so this must run before that early return.
+      await maybeEnsurePrSubscription(config, data);
+
       if (!result.success) {
         // Rate-limited gate block: surface explicit retry guidance so the
         // agent does not re-dispatch on the next tick. The error message is
@@ -1226,10 +1232,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
           retryAfterMs,
         });
       }
-
-      // The message reached at least one peer (ok or partial). If it carried a
-      // pr_url, ensure this node is subscribed to that PR's events.
-      await maybeEnsurePrSubscription(config, data);
 
       if (result.success === 'partial') {
         return jsonResult({
