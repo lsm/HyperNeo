@@ -902,8 +902,17 @@ export default function ChatContainer({
   // Message Maps (for tool results/inputs)
   // ========================================
   const removedOutputs = session?.metadata?.removedOutputs || [];
+  const messagesWithBackgroundTasks = useMemo(
+    () => [...messages, ...backgroundTaskMessages],
+    [messages, backgroundTaskMessages]
+  );
   const runningToolUseIds = useRunningToolUseIds(backgroundTaskMessages);
-  const maps = useMessageMaps(messages, sessionId, removedOutputs, runningToolUseIds);
+  const maps = useMessageMaps(
+    messagesWithBackgroundTasks,
+    sessionId,
+    removedOutputs,
+    runningToolUseIds
+  );
 
   const handleQuestionResolved = useCallback(
     (state: 'submitted' | 'cancelled', responses: QuestionDraftResponse[]) => {
