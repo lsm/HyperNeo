@@ -1480,25 +1480,32 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
               checkRunPartialScan = true;
               break;
             }
+            if (response.status === 403) break;
             partialScan = true;
             checkRunPartialScan = true;
             break;
           }
           const rows = rowsFromPollingPayload(await response.json(), checkRunEndpointKey);
           for (const row of rows) {
-            const event = normalizeGitHubCheckRun({
-              repo: watched,
-              checkRun: row,
-              source: 'polling',
-              deliveryId: `poll:check_run:${checkRunIdFrom(row)}`,
-              rawPayload: row,
-              prNumber: pullRequestNumberFromCheckRun(row, pullRequestNumbersByHeadSha) ?? prNumber,
-            });
-            if (!event || event.occurredAt < checkRunWatermark) continue;
-            await this.publishEvent(watched.spaceId, event, this.context);
-            checkRunPending = Math.max(checkRunPending, event.occurredAt);
-            watermarks.pending = Math.max(watermarks.pending, event.occurredAt);
-            count++;
+            for (const checkRunPrNumber of pullRequestNumbersFromCheckRun(
+              row,
+              pullRequestNumbersByHeadSha,
+              prNumber
+            )) {
+              const event = normalizeGitHubCheckRun({
+                repo: watched,
+                checkRun: row,
+                source: 'polling',
+                deliveryId: `poll:check_run:${checkRunIdFrom(row)}:${checkRunPrNumber}`,
+                rawPayload: row,
+                prNumber: checkRunPrNumber,
+              });
+              if (!event || event.occurredAt < checkRunWatermark) continue;
+              await this.publishEvent(watched.spaceId, event, this.context);
+              checkRunPending = Math.max(checkRunPending, event.occurredAt);
+              watermarks.pending = Math.max(watermarks.pending, event.occurredAt);
+              count++;
+            }
           }
           if (rateLimit.remaining < RATE_LIMIT_LOW_REMAINING_THRESHOLD) {
             this.applyRateLimit(rateLimit);
@@ -1808,20 +1815,25 @@ function checkRunIdFrom(row: unknown): number | string {
   return typeof id === 'number' || typeof id === 'string' ? id : 'unknown';
 }
 
-function pullRequestNumberFromCheckRun(
+function pullRequestNumbersFromCheckRun(
   row: unknown,
-  pullRequestNumbersByHeadSha: Map<string, number>
-): number | undefined {
-  if (!row || typeof row !== 'object') return undefined;
+  pullRequestNumbersByHeadSha: Map<string, number>,
+  fallbackPrNumber: number
+): number[] {
+  if (!row || typeof row !== 'object') return [];
+  const numbers: number[] = [];
   const prs = (row as { pull_requests?: unknown }).pull_requests;
   if (Array.isArray(prs)) {
     for (const pr of prs) {
       const number = pullRequestNumberFrom(pr);
-      if (number) return number;
+      if (number && !numbers.includes(number)) numbers.push(number);
     }
   }
+  if (numbers.length > 0) return numbers;
   const headSha = (row as { head_sha?: unknown }).head_sha;
-  return typeof headSha === 'string' ? pullRequestNumbersByHeadSha.get(headSha) : undefined;
+  const mappedNumber =
+    typeof headSha === 'string' ? pullRequestNumbersByHeadSha.get(headSha) : undefined;
+  return mappedNumber ? [mappedNumber] : fallbackPrNumber ? [fallbackPrNumber] : [];
 }
 
 function isPositiveReaction(row: unknown): boolean {

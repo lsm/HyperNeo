@@ -2013,12 +2013,12 @@ describe('SpaceRuntime', () => {
       expect(workflowRunRepo.getRun(run.id)!.status).toBe('in_progress');
     });
 
-    test('expired queued handoffs block the run instead of being silently dropped', async () => {
+    test('expired queued handoffs are swept before stalled-run recovery', async () => {
       const { run, task, pendingRepo } = await setupQueuedHandoff({ ttlMs: -1 });
       await buildRepairRuntime(makeRepairTam(), pendingRepo).executeTick();
       expect(pendingRepo.listAllForRun(run.id)[0].status).toBe('expired');
       expect(workflowRunRepo.getRun(run.id)!.status).toBe('blocked');
-      expect(taskRepo.getTask(task.id)!.result).toContain('expired before delivery');
+      expect(taskRepo.getTask(task.id)!.result).toContain('stalled across daemon restart');
     });
 
     test('terminal task with queued handoff marks the handoff failed', async () => {

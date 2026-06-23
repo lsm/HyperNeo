@@ -41,7 +41,10 @@ import { SpaceAgentRepository } from '../../../../src/storage/repositories/space
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository.ts';
 import { ToolContinuationRecoveryRepository } from '../../../../src/storage/repositories/tool-continuation-recovery-repository.ts';
-import { PendingAgentMessageRepository } from '../../../../src/storage/repositories/pending-agent-message-repository.ts';
+import {
+  PendingAgentMessageRepository,
+  DEFAULT_PENDING_MESSAGE_RETENTION_MS,
+} from '../../../../src/storage/repositories/pending-agent-message-repository.ts';
 import { ChannelCycleRepository } from '../../../../src/storage/repositories/channel-cycle-repository.ts';
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
@@ -999,6 +1002,51 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       expect(findExec(run.id, STEP_B)).toBeUndefined();
       expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
       expect(taskRepo.getTask(task.id)?.blockReason).toBe('execution_failed');
+    });
+
+    test('expired queued handoff does not cause stalled-run recovery to skip', async () => {
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Coding', agentId: AGENT },
+        { id: STEP_B, name: 'Review', agentId: AGENT },
+      ]);
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Expired queued handoff recovery',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
+      const task = taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Expired queued handoff recovery',
+        description: '',
+        workflowRunId: run.id,
+        workflowNodeId: STEP_A,
+        status: 'in_progress',
+      });
+      seedExec(run.id, STEP_A, 'Coding', 'idle');
+      const pendingRepo = new PendingAgentMessageRepository(db);
+      const { record } = pendingRepo.enqueue({
+        workflowRunId: run.id,
+        spaceId: SPACE_ID,
+        taskId: task.id,
+        sourceAgentName: 'Coding',
+        targetKind: 'node_agent',
+        targetAgentName: 'Review',
+        message: 'stale review request',
+      });
+      db.prepare('UPDATE pending_agent_messages SET created_at = ? WHERE id = ?').run(
+        Date.now() - DEFAULT_PENDING_MESSAGE_RETENTION_MS - 1,
+        record.id
+      );
+
+      await makeRuntime({
+        pendingMessageRepo: pendingRepo,
+      }).recoverStalledRuns();
+
+      expect(pendingRepo.getById(record.id)?.status).toBe('expired');
+      expect(findExec(run.id, STEP_B).status).toBe('pending');
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+      expect(taskRepo.getTask(task.id)?.status).toBe('in_progress');
     });
 
     test('coder idle with queued handoff and reviewer never created → tick repair creates and spawns reviewer', async () => {

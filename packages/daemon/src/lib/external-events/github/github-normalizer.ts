@@ -79,7 +79,12 @@ function prUrl(owner: string, repo: string, number: number): string {
 }
 
 function isFailedCheckConclusion(conclusion: string): boolean {
-  return conclusion !== '' && conclusion !== 'success' && conclusion !== 'skipped';
+  return (
+    conclusion !== '' &&
+    conclusion !== 'success' &&
+    conclusion !== 'skipped' &&
+    conclusion !== 'neutral'
+  );
 }
 
 export function normalizeGitHubWebhook(
@@ -276,7 +281,7 @@ export function normalizeGitHubCheckRun(params: {
   const occurredAt = parseTs(checkRun.completed_at ?? checkRun.updated_at ?? checkRun.started_at);
   const canonicalOwner = repo.owner.toLowerCase();
   const canonicalRepo = repo.repo.toLowerCase();
-  const externalId = `check_run:${id}:${conclusion}`;
+  const externalId = `check_run:${id}:${conclusion}:${prNumber}`;
   if (params.source === 'webhook') {
     const body = `${name} concluded with ${conclusion}`;
     return {
