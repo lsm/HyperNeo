@@ -55,6 +55,7 @@ import { getProviderLabel } from '../hooks/index.ts';
 import { useAutoScroll } from '../hooks/useAutoScroll.ts';
 import { useChatComposerController } from '../hooks/useChatComposerController.ts';
 import { useMessageMaps } from '../hooks/useMessageMaps.ts';
+import { useRunningToolUseIds } from '../hooks/useRunningToolUseIds.ts';
 // Hooks
 import { useModal } from '../hooks/useModal.ts';
 import { useScrollToMessage } from '../hooks/useScrollToMessage.ts';
@@ -903,7 +904,13 @@ export default function ChatContainer({
     () => [...messages, ...backgroundTaskMessages],
     [messages, backgroundTaskMessages]
   );
-  const maps = useMessageMaps(messagesWithBackgroundTasks, sessionId, removedOutputs);
+  const runningToolUseIds = useRunningToolUseIds(backgroundTaskMessages);
+  const maps = useMessageMaps(
+    messagesWithBackgroundTasks,
+    sessionId,
+    removedOutputs,
+    runningToolUseIds
+  );
 
   const handleQuestionResolved = useCallback(
     (state: 'submitted' | 'cancelled', responses: QuestionDraftResponse[]) => {
@@ -1396,6 +1403,9 @@ export default function ChatContainer({
                     taskNotificationsMap={maps.taskNotificationsMap}
                     foldableToolUseIds={maps.foldableToolUseIds}
                     completedHookUuids={maps.completedHookUuids}
+                    runningToolUseIds={
+                      msg.uuid ? maps.runningToolUseIdsByMessageUuid.get(msg.uuid) : undefined
+                    }
                     replacementStatusMap={maps.replacementStatusMap}
                     sessionInfo={
                       msg.uuid

@@ -49,6 +49,8 @@ export interface UseMessageMapsResult {
   subagentMessagesMap: Map<string, SDKMessage[]>;
   /** Map of tool use IDs to their terminal task_notification (status/summary/usage) */
   taskNotificationsMap: Map<string, SDKTaskNotificationMessage>;
+  /** Map of assistant message UUIDs to the tool_use IDs currently running in that message. */
+  runningToolUseIdsByMessageUuid: Map<string, Set<string>>;
   /**
    * Tool use IDs whose card is actually rendered in this slice — top-level
    * tool_use ids plus nested tool_use ids whose parent Task/Agent card is
@@ -75,7 +77,8 @@ export interface UseMessageMapsResult {
 export function useMessageMaps(
   messages: ChatMessage[],
   sessionId: string,
-  removedOutputs: string[] = []
+  removedOutputs: string[] = [],
+  runningToolUseIds: Set<string> = new Set()
 ): UseMessageMapsResult {
   // Cast to SDKMessage[] for duck-typed property access; NeokaiActionMessage will not match
   // 'user'/'assistant'/'system' checks and will be safely skipped by all maps.
@@ -143,6 +146,25 @@ export function useMessageMaps(
     });
     return map;
   }, [sdkMessages]);
+
+  const runningToolUseIdsByMessageUuid = useMemo(() => {
+    const map = new Map<string, Set<string>>();
+    if (runningToolUseIds.size === 0) return map;
+
+    sdkMessages.forEach((msg) => {
+      if (msg.type !== 'assistant' || !msg.uuid || !Array.isArray(msg.message.content)) return;
+      const ids = new Set<string>();
+      msg.message.content.forEach((block: unknown) => {
+        const blockObj = block as Record<string, unknown>;
+        if (blockObj.type === 'tool_use' && typeof blockObj.id === 'string') {
+          if (runningToolUseIds.has(blockObj.id)) ids.add(blockObj.id);
+        }
+      });
+      if (ids.size > 0) map.set(msg.uuid, ids);
+    });
+
+    return map;
+  }, [sdkMessages, runningToolUseIds]);
 
   // Map of user message UUIDs to their attached session init info
   const sessionInfoMap = useMemo(() => {
@@ -284,6 +306,7 @@ export function useMessageMaps(
     sessionInfoMap,
     subagentMessagesMap,
     taskNotificationsMap,
+    runningToolUseIdsByMessageUuid,
     foldableToolUseIds,
     replacementStatusMap,
     completedHookUuids,
