@@ -422,6 +422,44 @@ describe('SDKMessageRepository', () => {
       expect(hasMore).toBe(true);
     });
 
+    it('should include only latest task progress without counting it against metadata cap', () => {
+      repository.saveSDKMessage('session-1', {
+        type: 'system',
+        subtype: 'task_started',
+        uuid: 'metadata-task-started',
+        session_id: 'session-1',
+        task_id: 'task-1',
+        tool_use_id: 'toolu_task123',
+        description: 'Long task',
+      } as unknown as SDKMessage);
+
+      for (let i = 0; i < 305; i++) {
+        repository.saveSDKMessage('session-1', {
+          type: 'system',
+          subtype: 'task_progress',
+          uuid: `metadata-task-progress-${i}`,
+          session_id: 'session-1',
+          task_id: 'task-1',
+          tool_use_id: 'toolu_task123',
+          description: `progress ${i}`,
+          usage: { total_tokens: i, tool_uses: i, duration_ms: i },
+        } as unknown as SDKMessage);
+      }
+
+      const metadataMessages = repository.getBackgroundTaskMessages('session-1');
+      const progressMessages = metadataMessages.filter(
+        (message) => (message as { subtype?: string }).subtype === 'task_progress'
+      );
+
+      expect(
+        metadataMessages.some(
+          (message) => (message as { subtype?: string }).subtype === 'task_started'
+        )
+      ).toBe(true);
+      expect(progressMessages).toHaveLength(1);
+      expect((progressMessages[0] as { description?: string }).description).toBe('progress 304');
+    });
+
     it('should retain task start rows when background task metadata is capped', () => {
       repository.saveSDKMessage('session-1', {
         type: 'system',
