@@ -2538,6 +2538,13 @@ class SpaceStore {
   // Agent Methods
   // ========================================
 
+  private upsertAgent(agent: SpaceAgent): void {
+    const exists = this.agents.value.some((a) => a.id === agent.id);
+    this.agents.value = exists
+      ? this.agents.value.map((a) => (a.id === agent.id ? agent : a))
+      : [...this.agents.value, agent];
+  }
+
   /**
    * Create a new agent in the space
    */
@@ -2552,6 +2559,7 @@ class SpaceStore {
       ...params,
       spaceId,
     });
+    this.upsertAgent(agent);
     return agent;
   }
 
@@ -2587,6 +2595,7 @@ class SpaceStore {
       spaceId,
       sessionId,
     });
+    this.upsertAgent(agent);
     return agent;
   }
 
@@ -2602,6 +2611,22 @@ class SpaceStore {
       spaceId,
       ...params,
     });
+    this.upsertAgent(agent);
+    return agent;
+  }
+
+  async syncAgentFromTemplate(agentId: string): Promise<SpaceAgent> {
+    const spaceId = this.spaceId.value;
+    if (!spaceId) throw new Error('No space selected');
+
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) throw new Error('Not connected');
+
+    const { agent } = await hub.request<{ agent: SpaceAgent }>('spaceAgent.syncFromTemplate', {
+      spaceId,
+      agentId,
+    });
+    this.upsertAgent(agent);
     return agent;
   }
 
@@ -2616,6 +2641,7 @@ class SpaceStore {
     if (!hub) throw new Error('Not connected');
 
     await hub.request('spaceAgent.delete', { id: agentId, spaceId });
+    this.agents.value = this.agents.value.filter((agent) => agent.id !== agentId);
   }
 
   // ========================================
