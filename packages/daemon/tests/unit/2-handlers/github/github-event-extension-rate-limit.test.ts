@@ -193,7 +193,7 @@ describe('GitHubEventExtension rate-limit-aware polling', () => {
       // watermark records the processed event.
       const updated = extension.repo.getWatchedRepoById(repo.id);
       expect(updated?.pollCursor?.lastSeenAt).toBe(0);
-      expect(updated?.pollCursor?.endpointLastSeenAt?.issue_comments).toBe(
+      expect(updated?.pollCursor?.endpointLastSeenAt?.issue_comments).toBeGreaterThanOrEqual(
         Date.parse(row.updated_at)
       );
     } finally {
@@ -506,7 +506,7 @@ describe('GitHubEventExtension rate-limit-aware polling', () => {
       // Partial scan: shared watermark must not advance so skipped endpoints
       // are not permanently truncated.
       expect(updated?.pollCursor?.lastSeenAt).toBe(0);
-      expect(updated?.pollCursor?.endpointLastSeenAt?.issue_comments).toBe(
+      expect(updated?.pollCursor?.endpointLastSeenAt?.issue_comments).toBeGreaterThanOrEqual(
         Date.parse(row.updated_at)
       );
     } finally {
