@@ -1476,10 +1476,16 @@ export class SpaceRuntime {
         target.subscriptionKind === 'auto_pr' &&
         (target.topic ?? '').toLowerCase() !== topicPatternLower
     );
-    // Idempotent: no-op if this node already receives this PR's events under
-    // any subscription kind.
+    // Idempotent: no-op if this node already receives this PR's events under a
+    // durable subscription (auto_pr / dynamic / static). A blocked-gate `auto`
+    // (gate-wake) sub does NOT count — clearPrEventSubscriptionsForRun deletes
+    // it when the gate opens, which would otherwise leave the worker
+    // unsubscribed right when review/comment events start arriving.
     const already = this.topicTrie.count(
-      (target) => owns(target) && (target.topic ?? '').toLowerCase() === topicPatternLower
+      (target) =>
+        owns(target) &&
+        target.subscriptionKind !== 'auto' &&
+        (target.topic ?? '').toLowerCase() === topicPatternLower
     );
     if (already > 0) return { success: true, subscribed: false, topicPattern };
     try {

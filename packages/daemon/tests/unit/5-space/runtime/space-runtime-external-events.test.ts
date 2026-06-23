@@ -979,6 +979,46 @@ describe('SpaceRuntime external event subscriptions', () => {
       await eventService.publish(makeEvent());
       expect(injected).toHaveLength(1); // auto_pr survived
     });
+
+    test('registers auto_pr even when a gate-wake auto sub already exists for the PR', async () => {
+      const workflow = createWorkflow('code');
+      const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const task = tasks[0]!;
+      const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: 'session-gate-overlap',
+        startedAt: Date.now(),
+      });
+      tam.alive.add('session-gate-overlap');
+
+      // A blocked-gate wake-up `auto` sub already covers this PR on the slot.
+      runtime.registerSubscription(
+        run.id,
+        task.id,
+        'code',
+        'coder',
+        'github/lsm/neokai/pull_request/42.*',
+        { subscriptionKind: 'auto' }
+      );
+      // Worker saves pr_url — must still get its own durable auto_pr, NOT dedup
+      // against the transient gate-wake auto.
+      const r = runtime.ensurePrSubscriptionForNode(
+        run.id,
+        task.id,
+        'code',
+        'coder',
+        'https://github.com/lsm/neokai/pull/42'
+      );
+      expect(r.success).toBe(true);
+      expect(r.subscribed).toBe(true);
+
+      // Gate opens → the gate-wake auto is cleared, but auto_pr survives and
+      // the worker still receives the PR event.
+      runtime.clearPrEventSubscriptionsForRun(run.id);
+      await eventService.publish(makeEvent());
+      expect(injected).toHaveLength(1);
+    });
   });
 
   test('queues matching events for pending nodes and flushes after session creation', async () => {
