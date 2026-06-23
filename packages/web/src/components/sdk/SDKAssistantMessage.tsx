@@ -54,6 +54,8 @@ interface Props {
    * Set by the compact task thread renderer for the last non-terminal message.
    */
   isRunning?: boolean;
+  /** Tool use IDs within this message whose cards are currently running. */
+  runningToolUseIds?: Set<string>;
   /**
    * When true, Task/Agent tool_use blocks are rendered as normal tool cards
    * instead of SubagentBlock.
@@ -72,6 +74,7 @@ export function SDKAssistantMessage({
   pendingQuestion,
   onQuestionResolved,
   isRunning,
+  runningToolUseIds,
   flattenSubagentTools = false,
 }: Props) {
   const { message: apiMessage } = message;
@@ -275,7 +278,7 @@ export function SDKAssistantMessage({
             pendingQuestion={pendingQuestion}
             onQuestionResolved={onQuestionResolved}
             flattenSubagentTools={flattenSubagentTools}
-            isRunning={!!isRunning}
+            isRunning={!!isRunning || runningToolUseIds?.has(block.id)}
           />
         );
       })}

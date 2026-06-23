@@ -854,6 +854,65 @@ describe('useMessageMaps', () => {
     });
   });
 
+  describe('runningToolUseIdsByMessageUuid', () => {
+    it('maps running tool use IDs to their assistant message UUID', () => {
+      const messages = [
+        {
+          type: 'assistant',
+          uuid: uuid1,
+          session_id: 'session-1',
+          message: {
+            role: 'assistant',
+            content: [
+              { type: 'tool_use', id: 'tool-running', name: 'Bash', input: {} },
+              { type: 'tool_use', id: 'tool-idle', name: 'Read', input: {} },
+            ],
+          },
+        },
+        {
+          type: 'assistant',
+          uuid: uuid2,
+          session_id: 'session-1',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'tool_use', id: 'tool-running-2', name: 'Task', input: {} }],
+          },
+        },
+      ] as unknown as SDKMessage[];
+
+      const { result } = renderHook(() =>
+        useMessageMaps(messages, 'session-1', [], new Set(['tool-running', 'tool-running-2']))
+      );
+
+      expect(result.current.runningToolUseIdsByMessageUuid.get(uuid1)).toEqual(
+        new Set(['tool-running'])
+      );
+      expect(result.current.runningToolUseIdsByMessageUuid.get(uuid2)).toEqual(
+        new Set(['tool-running-2'])
+      );
+    });
+
+    it('does not mark idle tool uses as running', () => {
+      const messages = [
+        {
+          type: 'assistant',
+          uuid: uuid1,
+          session_id: 'session-1',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'tool_use', id: 'tool-idle', name: 'Bash', input: {} }],
+          },
+        },
+      ] as unknown as SDKMessage[];
+
+      const { result } = renderHook(() =>
+        useMessageMaps(messages, 'session-1', [], new Set(['other-tool']))
+      );
+
+      expect(result.current.runningToolUseIdsByMessageUuid.size).toBe(0);
+    });
+  });
+
   describe('foldableToolUseIds', () => {
     it('includes top-level tool_uses and nested ones whose parent Task card is present', () => {
       const messages = [
