@@ -600,7 +600,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     startupPhase('github service');
     // Initialize GitHub service if configured
     let gitHubService: GitHubService | null = null;
-    const shouldEnableGitHub = config.githubWebhookSecret || hasAnthropicAuth;
+    const shouldEnableGitHub = config.githubWebhookSecret || getGitHubPollingIntervalSeconds() > 0;
 
     if (shouldEnableGitHub && hasAnthropicAuth) {
       // Get API key for AI agents (security + routing).

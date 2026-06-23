@@ -121,31 +121,36 @@ export function GeneralSettings() {
     }
   };
 
-  const handleGitHubPollingIntervalChange = async (value: string) => {
+  const handleGitHubPollingIntervalChange = (value: string) => {
     setLocalGitHubPollingInterval(value);
-    if (value.trim() === '') return;
+  };
 
-    const interval = Number(value);
-    if (!Number.isInteger(interval) || interval < 0) {
-      toast.error('GitHub polling interval must be a non-negative whole number');
+  const handleGitHubPollingIntervalBlur = async () => {
+    const trimmed = localGitHubPollingInterval.trim();
+    const current = settings?.githubPollingInterval ?? 120;
+    if (trimmed === '') {
+      setLocalGitHubPollingInterval(String(current));
       return;
     }
+
+    const interval = Number(trimmed);
+    if (!Number.isInteger(interval) || interval < 0) {
+      toast.error('GitHub polling interval must be a non-negative whole number');
+      setLocalGitHubPollingInterval(String(current));
+      return;
+    }
+
+    setLocalGitHubPollingInterval(String(interval));
+    if (interval === current) return;
 
     setIsUpdating(true);
     try {
       await updateGlobalSettings({ githubPollingInterval: interval });
     } catch {
       toast.error('Failed to update GitHub polling interval');
-      setLocalGitHubPollingInterval(String(settings?.githubPollingInterval ?? 120));
+      setLocalGitHubPollingInterval(String(current));
     } finally {
       setIsUpdating(false);
-    }
-  };
-
-  const handleGitHubPollingIntervalBlur = () => {
-    const interval = Number(localGitHubPollingInterval);
-    if (!Number.isInteger(interval) || interval < 0) {
-      setLocalGitHubPollingInterval(String(settings?.githubPollingInterval ?? 120));
     }
   };
 
