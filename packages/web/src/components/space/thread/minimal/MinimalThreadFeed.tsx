@@ -745,15 +745,8 @@ function buildActiveTurn(
   taskNotificationsByToolUseId: Map<string, TaskNotificationLite>
 ): ActiveFeedTurn {
   const roster = rosterEntriesFromSummary(summary, ROSTER_MAX_ENTRIES).map((entry) => {
-    if (entry.kind !== 'tool' || !entry.toolUseId) return entry;
-    const n = taskNotificationsByToolUseId.get(entry.toolUseId);
-    if (!n) return entry;
-    return {
-      ...entry,
-      taskStatus: n.status,
-      ...(n.summary ? { taskSummary: n.summary } : {}),
-      ...(n.usage ? { taskUsage: n.usage } : {}),
-    };
+    if (entry.kind !== 'tool') return entry;
+    return foldTaskNotification(entry, taskNotificationsByToolUseId);
   });
   return {
     state: 'active',
@@ -1228,12 +1221,10 @@ function buildFeedTurns(
 
   const completedRows = blocks.flatMap((block) => {
     const out: ParsedThreadRow[][] = [];
-    const { result: blockResult } = extractBlockEnvelopes(block.rows);
     let pendingAgentRows: ParsedThreadRow[] = [];
     const flush = () => {
       if (
         pendingAgentRows.length > 0 &&
-        rowsContainResult(pendingAgentRows, blockResult) &&
         extractLastAssistantText(pendingAgentRows).text.length > 0
       ) {
         out.push(pendingAgentRows);

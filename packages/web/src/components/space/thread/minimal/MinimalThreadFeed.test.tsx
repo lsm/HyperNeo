@@ -510,6 +510,61 @@ describe('MinimalThreadFeed', () => {
     expect(screen.queryByText('preliminary')).toBeNull();
   });
 
+  it('folds task_notification onto an earlier completed segment in a user-interrupted block', () => {
+    const t = Date.now();
+    const rows = [
+      makeRow({
+        id: 'a1',
+        label: 'Coder Agent',
+        createdAt: t,
+        message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'bun test' } }]),
+      }),
+      makeRow({
+        id: 'a2',
+        label: 'Coder Agent',
+        createdAt: t + 100,
+        message: assistantText('a2', 'First segment done'),
+      }),
+      makeRow({
+        id: 'u1',
+        label: 'Coder Agent',
+        createdAt: t + 200,
+        message: humanUserMessage('u1', 'continue'),
+        messageType: 'user',
+      }),
+      makeRow({
+        id: 'a3',
+        label: 'Coder Agent',
+        createdAt: t + 300,
+        message: assistantText('a3', 'Final answer'),
+      }),
+      makeRow({ id: 'r1', label: 'Coder Agent', createdAt: t + 400, message: resultMessage('r1') }),
+      makeRow({
+        id: 'n1',
+        label: 'Coder Agent',
+        createdAt: t + 500,
+        messageType: 'system',
+        message: {
+          type: 'system',
+          subtype: 'task_notification',
+          task_id: 't',
+          tool_use_id: 'tu-a1-0',
+          status: 'completed',
+          summary: 'early tool passed',
+          output_file: '/tmp/o',
+        },
+      }),
+    ];
+
+    render(<MinimalThreadFeed parsedRows={rows} />);
+
+    expect(screen.queryByText('Task completed')).toBeNull();
+    const entry = screen.getByTestId('minimal-thread-roster-entry');
+    expect(entry.dataset.taskStatus).toBe('completed');
+    expect(entry.textContent).toContain('early tool passed');
+    expect(entry.textContent).toContain('✓');
+  });
+
   it('renders the active rail and tool roster for the live turn when activeAgentLabels includes the agent', () => {
     const t = Date.now();
     const rows = [
