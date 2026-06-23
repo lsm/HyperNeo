@@ -132,6 +132,23 @@ function payloadFor(event: string): unknown {
   };
 }
 
+function checkRunPayload(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    action: 'completed',
+    repository: baseRepo,
+    sender: { login: 'github-actions[bot]', type: 'Bot' },
+    check_run: {
+      id: 987,
+      name: 'daemon unit tests',
+      conclusion: 'failure',
+      html_url: 'https://github.com/acme/widgets/runs/987',
+      completed_at: '2026-01-01T00:00:00Z',
+      pull_requests: [{ number: 7, url: 'https://api.github.com/repos/acme/widgets/pulls/7' }],
+    },
+    ...overrides,
+  };
+}
+
 function webhookRequest(payload: unknown, event: string, signature?: string): Request {
   const headers: Record<string, string> = {
     'X-GitHub-Event': event,
@@ -235,6 +252,47 @@ describe('GitHubEventExtension', () => {
     expect(event.payload.prNumber).toBe(7);
     expect(event.payload.repoOwner).toBe('acme');
     expect(event.dedupeKey).toBe('acme/widgets:issue_comment:101:created');
+  });
+
+  test('normalizes failed check_run webhooks to check_failed topics', () => {
+    const normalized = normalizeGitHubWebhook('check_run', 'delivery-1', checkRunPayload())!;
+    expect(normalized.eventType).toBe('check_run');
+    expect(normalized.action).toBe('completed');
+    expect(normalized.prNumber).toBe(7);
+    expect(mapEventType(normalized.eventType, normalized.action, normalized.entityId)).toEqual({
+      resource: 'pull_request',
+      entityId: '7',
+      action: 'check_failed',
+    });
+
+    const event = toExternalEvent('space-1', normalized);
+    expect(event.topic).toBe('github/acme/widgets/pull_request/7.check_failed');
+    expect(event.payload.checkName).toBe('daemon unit tests');
+    expect(event.payload.conclusion).toBe('failure');
+    expect(event.payload.runUrl).toBe('https://github.com/acme/widgets/runs/987');
+  });
+
+  test('drops successful check_run webhooks', () => {
+    const payload = checkRunPayload({
+      check_run: { ...checkRunPayload().check_run, conclusion: 'success' },
+    });
+    expect(normalizeGitHubWebhook('check_run', 'delivery-1', payload)).toBeNull();
+  });
+
+  test('drops non-completed check_run webhooks', () => {
+    expect(
+      normalizeGitHubWebhook('check_run', 'delivery-1', checkRunPayload({ action: 'created' }))
+    ).toBeNull();
+    expect(
+      normalizeGitHubWebhook('check_run', 'delivery-1', checkRunPayload({ action: 'rerequested' }))
+    ).toBeNull();
+  });
+
+  test('drops check_run webhooks without pull requests', () => {
+    const payload = checkRunPayload({
+      check_run: { ...checkRunPayload().check_run, pull_requests: [] },
+    });
+    expect(normalizeGitHubWebhook('check_run', 'delivery-1', payload)).toBeNull();
   });
 
   test('webhook verifies signatures, checks enablement, and publishes ExternalEventService event', async () => {
