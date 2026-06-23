@@ -2463,7 +2463,7 @@ describe('GitHubEventExtension', () => {
       await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
       const event = received.find((item) => item.payload.eventType === 'check_run')!;
       expect(event.topic).toBe('github/acme/widgets/pull_request/7.check_failed');
-      expect(event.dedupeKey).toBe('acme/widgets:check_run:7001:failure:7');
+      expect(event.dedupeKey).toBe('acme/widgets:check_run:7001:failure');
       expect(event.payload).toMatchObject({
         action: 'failed',
         checkRunId: 7001,
@@ -2830,12 +2830,18 @@ describe('GitHubEventExtension', () => {
       repo: 'widgets',
       pollingEnabled: true,
     });
+    let checkRunRequestCount = 0;
     const fetchImpl = (async (url: string | URL | Request) => {
       const path = new URL(String(url)).pathname;
       if (path.endsWith('/issues/comments')) return pollingResponse([]);
       if (path.endsWith('/pulls/comments')) return pollingResponse([]);
-      if (path.endsWith('/pulls')) return pollingResponse([createPullRequestRow(7)]);
+      if (path.endsWith('/pulls'))
+        return pollingResponse([
+          createPullRequestRow(7, { head: { sha: 'sha-7' } }),
+          createPullRequestRow(8, { head: { sha: 'sha-8' } }),
+        ]);
       if (path.endsWith('/check-runs')) {
+        checkRunRequestCount++;
         return new Response(JSON.stringify({ message: 'Resource not accessible by integration' }), {
           status: 403,
           headers: { 'X-RateLimit-Remaining': '4999' },
@@ -2846,6 +2852,7 @@ describe('GitHubEventExtension', () => {
     }) as typeof fetch;
     try {
       await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      expect(checkRunRequestCount).toBe(1);
       expect(received.some((item) => item.topic.endsWith('.reaction_added'))).toBe(true);
     } finally {
       await extension.stop();
@@ -2876,16 +2883,18 @@ describe('GitHubEventExtension', () => {
           createPullRequestRow(7, { head: { sha: 'shared-sha' } }),
           createPullRequestRow(8, { head: { sha: 'shared-sha' } }),
         ]);
-      if (path.endsWith('/check-runs'))
+      if (path.endsWith('/check-runs')) {
+        expect(new URL(String(url)).searchParams.get('filter')).toBe('all');
         return pollingResponse({
           check_runs: [
             createCheckRunRow({
               id: 7001,
               head_sha: 'shared-sha',
-              pull_requests: [{ number: 7 }, { number: 8 }],
+              pull_requests: [],
             }),
           ],
         });
+      }
       return pollingResponse([]);
     }) as typeof fetch;
     try {

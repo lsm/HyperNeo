@@ -1226,9 +1226,10 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       { key: 'review_comments', path: '/pulls/comments' },
       { key: 'pulls', path: '/pulls', extra: 'state=all&sort=updated&direction=desc' },
     ];
-    const pullRequestNumbersByHeadSha = new Map<string, number>();
+    const pullRequestNumbersByHeadSha = new Map<string, number[]>();
     for (const [prNumber, headSha] of Object.entries(recentPullRequestHeadShas)) {
-      if (headSha) pullRequestNumbersByHeadSha.set(headSha, Number(prNumber));
+      if (headSha)
+        addPullRequestNumberByHeadSha(pullRequestNumbersByHeadSha, headSha, Number(prNumber));
     }
     let partialScan = false;
     let latestRateLimit: GitHubRateLimitInfo | undefined;
@@ -1342,14 +1343,24 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
           if (headSha && prNumber) {
             const previousHeadSha = recentPullRequestHeadShas[prNumber];
             if (!isPullRequestOpen(row)) {
-              if (previousHeadSha) pullRequestNumbersByHeadSha.delete(previousHeadSha);
+              if (previousHeadSha) {
+                removePullRequestNumberByHeadSha(
+                  pullRequestNumbersByHeadSha,
+                  previousHeadSha,
+                  prNumber
+                );
+              }
               delete recentPullRequestHeadShas[prNumber];
               continue;
             }
             if (previousHeadSha && previousHeadSha !== headSha) {
-              pullRequestNumbersByHeadSha.delete(previousHeadSha);
+              removePullRequestNumberByHeadSha(
+                pullRequestNumbersByHeadSha,
+                previousHeadSha,
+                prNumber
+              );
             }
-            pullRequestNumbersByHeadSha.set(headSha, prNumber);
+            addPullRequestNumberByHeadSha(pullRequestNumbersByHeadSha, headSha, prNumber);
             recentPullRequestHeadShas[prNumber] = headSha;
           }
         }
@@ -1431,12 +1442,14 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         endpointPendingLastSeenAt[checkRunEndpointKey] ?? 0
       );
       let checkRunPartialScan = false;
-      for (const [headSha, prNumber] of pullRequestNumbersByHeadSha) {
+      let checkRunPermissionDenied = false;
+      for (const [headSha, prNumbers] of pullRequestNumbersByHeadSha) {
+        const fallbackPrNumber = prNumbers[0] ?? 0;
         let page = 1;
         while (true) {
           const query = new URLSearchParams({
             status: 'completed',
-            filter: 'latest',
+            filter: 'all',
             per_page: '100',
             page: String(page),
           });
@@ -1480,18 +1493,22 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
               checkRunPartialScan = true;
               break;
             }
-            if (response.status === 403) break;
+            if (response.status === 403) {
+              checkRunPermissionDenied = true;
+              break;
+            }
             partialScan = true;
             checkRunPartialScan = true;
             break;
           }
           const rows = rowsFromPollingPayload(await response.json(), checkRunEndpointKey);
           for (const row of rows) {
-            for (const checkRunPrNumber of pullRequestNumbersFromCheckRun(
+            const checkRunPrNumbers = pullRequestNumbersFromCheckRun(
               row,
               pullRequestNumbersByHeadSha,
-              prNumber
-            )) {
+              fallbackPrNumber
+            );
+            for (const checkRunPrNumber of checkRunPrNumbers) {
               const event = normalizeGitHubCheckRun({
                 repo: watched,
                 checkRun: row,
@@ -1499,6 +1516,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
                 deliveryId: `poll:check_run:${checkRunIdFrom(row)}:${checkRunPrNumber}`,
                 rawPayload: row,
                 prNumber: checkRunPrNumber,
+                prScopedDedupe: checkRunPrNumbers.length > 1,
               });
               if (!event || event.occurredAt < checkRunWatermark) continue;
               await this.publishEvent(watched.spaceId, event, this.context);
@@ -1516,9 +1534,9 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
           if (rows.length < 100) break;
           page++;
         }
-        if (checkRunPartialScan) break;
+        if (checkRunPartialScan || checkRunPermissionDenied) break;
       }
-      if (checkRunPartialScan || hasBacklog) {
+      if (checkRunPartialScan || checkRunPermissionDenied || hasBacklog) {
         endpointPendingLastSeenAt[checkRunEndpointKey] = checkRunPending;
       } else {
         if (checkRunPending > 0) endpointLastSeenAt[checkRunEndpointKey] = checkRunPending;
@@ -1815,9 +1833,34 @@ function checkRunIdFrom(row: unknown): number | string {
   return typeof id === 'number' || typeof id === 'string' ? id : 'unknown';
 }
 
+function addPullRequestNumberByHeadSha(
+  pullRequestNumbersByHeadSha: Map<string, number[]>,
+  headSha: string,
+  prNumber: number
+): void {
+  const numbers = pullRequestNumbersByHeadSha.get(headSha) ?? [];
+  if (!numbers.includes(prNumber)) numbers.push(prNumber);
+  pullRequestNumbersByHeadSha.set(headSha, numbers);
+}
+
+function removePullRequestNumberByHeadSha(
+  pullRequestNumbersByHeadSha: Map<string, number[]>,
+  headSha: string,
+  prNumber: number
+): void {
+  const numbers = pullRequestNumbersByHeadSha.get(headSha);
+  if (!numbers) return;
+  const next = numbers.filter((number) => number !== prNumber);
+  if (next.length > 0) {
+    pullRequestNumbersByHeadSha.set(headSha, next);
+  } else {
+    pullRequestNumbersByHeadSha.delete(headSha);
+  }
+}
+
 function pullRequestNumbersFromCheckRun(
   row: unknown,
-  pullRequestNumbersByHeadSha: Map<string, number>,
+  pullRequestNumbersByHeadSha: Map<string, number[]>,
   fallbackPrNumber: number
 ): number[] {
   if (!row || typeof row !== 'object') return [];
@@ -1831,9 +1874,9 @@ function pullRequestNumbersFromCheckRun(
   }
   if (numbers.length > 0) return numbers;
   const headSha = (row as { head_sha?: unknown }).head_sha;
-  const mappedNumber =
+  const mappedNumbers =
     typeof headSha === 'string' ? pullRequestNumbersByHeadSha.get(headSha) : undefined;
-  return mappedNumber ? [mappedNumber] : fallbackPrNumber ? [fallbackPrNumber] : [];
+  return mappedNumbers?.length ? mappedNumbers : fallbackPrNumber ? [fallbackPrNumber] : [];
 }
 
 function isPositiveReaction(row: unknown): boolean {

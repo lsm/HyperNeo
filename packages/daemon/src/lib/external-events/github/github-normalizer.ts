@@ -256,6 +256,7 @@ export function normalizeGitHubCheckRun(params: {
   rawPayload: unknown;
   sender?: unknown;
   prNumber?: number;
+  prScopedDedupe?: boolean;
 }): NormalizedGitHubEvent | null {
   const checkRun = asObject(params.checkRun);
   if (params.source === 'webhook') {
@@ -281,7 +282,9 @@ export function normalizeGitHubCheckRun(params: {
   const occurredAt = parseTs(checkRun.completed_at ?? checkRun.updated_at ?? checkRun.started_at);
   const canonicalOwner = repo.owner.toLowerCase();
   const canonicalRepo = repo.repo.toLowerCase();
-  const externalId = `check_run:${id}:${conclusion}:${prNumber}`;
+  const externalId = params.prScopedDedupe
+    ? `check_run:${id}:${conclusion}:${prNumber}`
+    : `check_run:${id}:${conclusion}`;
   if (params.source === 'webhook') {
     const body = `${name} concluded with ${conclusion}`;
     return {
