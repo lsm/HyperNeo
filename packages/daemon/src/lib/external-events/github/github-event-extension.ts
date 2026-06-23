@@ -37,6 +37,7 @@ const REACTION_POLL_RATE_LIMIT_FLOOR = 100;
 const RATE_LIMIT_LOW_REMAINING_THRESHOLD = 10;
 /** Minimum backoff applied when scheduling the next poll after rate-limit detection. */
 const RATE_LIMIT_MIN_BACKOFF_MS = 60_000;
+const COMMENT_ENDPOINT_INITIAL_LOOKBACK_MS = 24 * 60 * 60 * 1000;
 
 /**
  * Parsed GitHub rate-limit state from response headers.
@@ -1190,8 +1191,16 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       // not advance this endpoint's `since` and skip events that arrived between
       // endpoint requests.
       const savedEndpointWatermark = endpointLastSeenAt[endpoint.key] ?? 0;
-      const endpointWatermark =
-        savedEndpointWatermark > 0 ? savedEndpointWatermark : watermarks.committed;
+      const seedCommentEndpointWatermark =
+        savedEndpointWatermark === 0 &&
+        watermarks.committed === 0 &&
+        (endpoint.key === 'issue_comments' || endpoint.key === 'review_comments');
+      const endpointWatermark = seedCommentEndpointWatermark
+        ? Date.now() - COMMENT_ENDPOINT_INITIAL_LOOKBACK_MS
+        : savedEndpointWatermark > 0
+          ? savedEndpointWatermark
+          : watermarks.committed;
+      if (seedCommentEndpointWatermark) endpointLastSeenAt[endpoint.key] = endpointWatermark;
       const since = endpointWatermark ? new Date(endpointWatermark).toISOString() : undefined;
       // Seed reaction-poll targets on upgrade: a cursor from before reaction
       // polling shipped may have an `etags.pulls` entry but no
