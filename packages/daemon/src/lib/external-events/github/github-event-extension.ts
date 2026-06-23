@@ -10,6 +10,7 @@ import type {
   RpcExternalEventExtension,
 } from '../types';
 import {
+  normalizeGitHubCheckRun,
   normalizeGitHubPollingRow,
   normalizeGitHubReaction,
   normalizeGitHubWebhook,
@@ -1210,6 +1211,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     const etags = cursor.etags ?? {};
     const processedPages = cursor.processedPages ?? {};
     const recentPullRequestNumbers = cursor.recentPullRequestNumbers ?? [];
+    const recentPullRequestHeadShas = cursor.recentPullRequestHeadShas ?? {};
     const seenReactionIds = cursor.seenReactionIds ?? {};
     const reactionEtags = cursor.reactionEtags ?? {};
     const endpointLastSeenAt = cursor.endpointLastSeenAt ?? {};
@@ -1224,6 +1226,10 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       { key: 'review_comments', path: '/pulls/comments' },
       { key: 'pulls', path: '/pulls', extra: 'state=all&sort=updated&direction=desc' },
     ];
+    const pullRequestNumbersByHeadSha = new Map<string, number>();
+    for (const [prNumber, headSha] of Object.entries(recentPullRequestHeadShas)) {
+      if (headSha) pullRequestNumbersByHeadSha.set(headSha, Number(prNumber));
+    }
     let partialScan = false;
     let latestRateLimit: GitHubRateLimitInfo | undefined;
 
@@ -1260,7 +1266,11 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       // for that one pulls fetch so GitHub returns the full newest list (an
       // empty delta under `since` would leave reaction targets unseeded until
       // unrelated PR metadata changes).
-      const pullsNeedsSeed = endpoint.key === 'pulls' && recentPullRequestNumbers.length === 0;
+      const pullsNeedsSeed =
+        endpoint.key === 'pulls' &&
+        (recentPullRequestNumbers.length === 0 ||
+          (recentPullRequestNumbers.length > 0 &&
+            Object.keys(recentPullRequestHeadShas).length === 0));
       if (since && !pullsNeedsSeed) query.set('since', since);
       query.set('per_page', '100');
       query.set('page', String(page));
@@ -1323,7 +1333,27 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       }
       const etag = response.headers.get('ETag');
       if (etag && page === 1) etags[endpoint.key] = etag;
-      const rows = (await response.json()) as unknown[];
+      const payload = await response.json();
+      const rows = rowsFromPollingPayload(payload, endpoint.key);
+      if (endpoint.key === 'pulls') {
+        for (const row of rows) {
+          const headSha = headShaFromPullRequest(row);
+          const prNumber = pullRequestNumberFrom(row);
+          if (headSha && prNumber) {
+            const previousHeadSha = recentPullRequestHeadShas[prNumber];
+            if (!isPullRequestOpen(row)) {
+              if (previousHeadSha) pullRequestNumbersByHeadSha.delete(previousHeadSha);
+              delete recentPullRequestHeadShas[prNumber];
+              continue;
+            }
+            if (previousHeadSha && previousHeadSha !== headSha) {
+              pullRequestNumbersByHeadSha.delete(previousHeadSha);
+            }
+            pullRequestNumbersByHeadSha.set(headSha, prNumber);
+            recentPullRequestHeadShas[prNumber] = headSha;
+          }
+        }
+      }
       if (endpoint.key === 'pulls' && page === 1) {
         // `/pulls?sort=updated&direction=desc` returns PRs newest-first. The
         // `since` watermark turns ordinary polls into deltas (only PRs updated
@@ -1388,6 +1418,104 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         this.applyRateLimit(rateLimit);
         partialScan = true;
         break;
+      }
+    }
+
+    const hasBacklog = Object.values(processedPages).some((page) => page > 1);
+
+    if (!partialScan) {
+      const checkRunEndpointKey = 'check_runs';
+      const checkRunWatermark = endpointLastSeenAt[checkRunEndpointKey] ?? watermarks.committed;
+      let checkRunPending = Math.max(
+        checkRunWatermark,
+        endpointPendingLastSeenAt[checkRunEndpointKey] ?? 0
+      );
+      let checkRunPartialScan = false;
+      for (const [headSha, prNumber] of pullRequestNumbersByHeadSha) {
+        let page = 1;
+        while (true) {
+          const query = new URLSearchParams({
+            status: 'completed',
+            filter: 'latest',
+            per_page: '100',
+            page: String(page),
+          });
+          const response = await fetchImpl(
+            `${base}/commits/${encodeURIComponent(headSha)}/check-runs?${query.toString()}`,
+            { headers: gitHubPollingHeaders(token) }
+          );
+          const rateLimit = parseRateLimitHeaders(response);
+          latestRateLimit = mergeRateLimitInfo(latestRateLimit, rateLimit);
+          if (rateLimit.limited) {
+            if (response.status === 429 && rateLimit.remaining > 0 && !rateLimit.retryAfter) {
+              this.applyRateLimit({
+                remaining: rateLimit.remaining,
+                resetAt: Date.now() + RATE_LIMIT_MIN_BACKOFF_MS,
+                limited: true,
+                retryAfter: true,
+              });
+            } else {
+              this.applyRateLimit(rateLimit);
+            }
+            partialScan = true;
+            checkRunPartialScan = true;
+            break;
+          }
+          if (!response.ok) {
+            const errorText = await response.text();
+            if (
+              (response.status === 403 || response.status === 429) &&
+              isRateLimitError(errorText)
+            ) {
+              const secondaryDelayMs = rateLimit.retryAfter
+                ? rateLimit.resetAt - Date.now()
+                : RATE_LIMIT_MIN_BACKOFF_MS;
+              this.applyRateLimit({
+                remaining: rateLimit.remaining,
+                resetAt: Date.now() + secondaryDelayMs,
+                limited: true,
+                retryAfter: true,
+              });
+              partialScan = true;
+              checkRunPartialScan = true;
+              break;
+            }
+            partialScan = true;
+            checkRunPartialScan = true;
+            break;
+          }
+          const rows = rowsFromPollingPayload(await response.json(), checkRunEndpointKey);
+          for (const row of rows) {
+            const event = normalizeGitHubCheckRun({
+              repo: watched,
+              checkRun: row,
+              source: 'polling',
+              deliveryId: `poll:check_run:${checkRunIdFrom(row)}`,
+              rawPayload: row,
+              prNumber: pullRequestNumberFromCheckRun(row, pullRequestNumbersByHeadSha) ?? prNumber,
+            });
+            if (!event || event.occurredAt < checkRunWatermark) continue;
+            await this.publishEvent(watched.spaceId, event, this.context);
+            checkRunPending = Math.max(checkRunPending, event.occurredAt);
+            watermarks.pending = Math.max(watermarks.pending, event.occurredAt);
+            count++;
+          }
+          if (rateLimit.remaining < RATE_LIMIT_LOW_REMAINING_THRESHOLD) {
+            this.applyRateLimit(rateLimit);
+            partialScan = true;
+            checkRunPartialScan = true;
+            break;
+          }
+          if (rows.length < 100) break;
+          page++;
+        }
+        if (checkRunPartialScan) break;
+      }
+      if (checkRunPartialScan || hasBacklog) {
+        endpointPendingLastSeenAt[checkRunEndpointKey] = checkRunPending;
+      } else {
+        if (checkRunPending > 0) endpointLastSeenAt[checkRunEndpointKey] = checkRunPending;
+        delete endpointPendingLastSeenAt[checkRunEndpointKey];
       }
     }
 
@@ -1503,7 +1631,6 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       }
     }
 
-    const hasBacklog = Object.values(processedPages).some((page) => page > 1);
     // Prune reaction ETags for PRs that are no longer reaction-poll targets
     // so the cursor does not grow unbounded across a repo's lifetime.
     const trackedPrSet = new Set(recentPullRequestNumbers);
@@ -1519,6 +1646,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       etags,
       processedPages,
       recentPullRequestNumbers,
+      recentPullRequestHeadShas,
       seenReactionIds,
       reactionEtags,
       endpointLastSeenAt,
@@ -1656,6 +1784,44 @@ function isPullRequestOpen(row: unknown): boolean {
   if (!row || typeof row !== 'object') return false;
   const state = (row as { state?: unknown }).state;
   return state === 'open';
+}
+
+function rowsFromPollingPayload(payload: unknown, endpointKey: string): unknown[] {
+  if (endpointKey === 'check_runs') {
+    const checkRuns = (payload as { check_runs?: unknown } | null)?.check_runs;
+    return Array.isArray(checkRuns) ? checkRuns : [];
+  }
+  return Array.isArray(payload) ? payload : [];
+}
+
+function headShaFromPullRequest(row: unknown): string {
+  if (!row || typeof row !== 'object') return '';
+  const head = (row as { head?: unknown }).head;
+  if (!head || typeof head !== 'object') return '';
+  const sha = (head as { sha?: unknown }).sha;
+  return typeof sha === 'string' ? sha : '';
+}
+
+function checkRunIdFrom(row: unknown): number | string {
+  if (!row || typeof row !== 'object') return 'unknown';
+  const id = (row as { id?: unknown }).id;
+  return typeof id === 'number' || typeof id === 'string' ? id : 'unknown';
+}
+
+function pullRequestNumberFromCheckRun(
+  row: unknown,
+  pullRequestNumbersByHeadSha: Map<string, number>
+): number | undefined {
+  if (!row || typeof row !== 'object') return undefined;
+  const prs = (row as { pull_requests?: unknown }).pull_requests;
+  if (Array.isArray(prs)) {
+    for (const pr of prs) {
+      const number = pullRequestNumberFrom(pr);
+      if (number) return number;
+    }
+  }
+  const headSha = (row as { head_sha?: unknown }).head_sha;
+  return typeof headSha === 'string' ? pullRequestNumbersByHeadSha.get(headSha) : undefined;
 }
 
 function isPositiveReaction(row: unknown): boolean {

@@ -87,16 +87,25 @@ export function normalizeGitHubWebhook(
   deliveryId: string,
   payload: unknown
 ): NormalizedGitHubEvent | null {
+  const root = asObject(payload);
+  if (eventType === 'check_run') {
+    return normalizeGitHubCheckRun({
+      repo: repoFromPayload(root),
+      checkRun: root.check_run,
+      source: 'webhook',
+      deliveryId,
+      rawPayload: payload,
+      sender: root.sender,
+    });
+  }
   if (
     eventType !== 'issue_comment' &&
     eventType !== 'pull_request_review' &&
     eventType !== 'pull_request_review_comment' &&
-    eventType !== 'pull_request' &&
-    eventType !== 'check_run'
+    eventType !== 'pull_request'
   ) {
     return null;
   }
-  const root = asObject(payload);
   const action = getString(root.action, 'unknown');
   const repo = repoFromPayload(root);
   const sender = userFrom(root.sender);
@@ -107,7 +116,6 @@ export function normalizeGitHubWebhook(
   let externalId = `${eventType}:${deliveryId}`;
   let occurredAt = Date.now();
   let title = '';
-  let extraPayload: Record<string, unknown> | undefined;
 
   if (eventType === 'issue_comment') {
     const issue = asObject(root.issue);
@@ -146,23 +154,6 @@ export function normalizeGitHubWebhook(
     );
     occurredAt = parseTs(comment.updated_at ?? comment.created_at);
     title = `PR #${prNumber} inline review comment`;
-  } else if (eventType === 'check_run') {
-    if (action !== 'completed') return null;
-    const checkRun = asObject(root.check_run);
-    const conclusion = getString(checkRun.conclusion);
-    if (!isFailedCheckConclusion(conclusion)) return null;
-    const pullRequests = Array.isArray(checkRun.pull_requests) ? checkRun.pull_requests : [];
-    const pr = asObject(pullRequests[0]);
-    prNumber = getNumber(pr.number);
-    if (!prNumber) return null;
-    const checkName = getString(checkRun.name, 'check run');
-    body = `${checkName} concluded with ${conclusion}`;
-    externalId = `check_run:${getNumber(checkRun.id) || deliveryId}:${conclusion}`;
-    externalUrl = getString(checkRun.html_url, prUrl(repo.owner, repo.repo, prNumber));
-    occurredAt = parseTs(checkRun.completed_at ?? checkRun.updated_at ?? checkRun.started_at);
-    title = `PR #${prNumber} check failed`;
-    extraPayload = { checkName, conclusion, runUrl: externalUrl };
-    actor = sender;
   } else {
     const pr = asObject(root.pull_request);
     actor = userFrom(pr.user ?? root.sender);
@@ -195,7 +186,6 @@ export function normalizeGitHubWebhook(
     externalId,
     occurredAt,
     rawPayload: payload,
-    payload: extraPayload,
   };
 }
 
@@ -250,6 +240,95 @@ export function normalizeGitHubPollingRow(
     externalId: `${eventType}:${id}${dedupeSuffix}`,
     occurredAt: updatedAt,
     rawPayload: row,
+  };
+}
+
+export function normalizeGitHubCheckRun(params: {
+  repo: GitHubPollingRepo;
+  checkRun: unknown;
+  source: 'webhook' | 'polling';
+  deliveryId: string;
+  rawPayload: unknown;
+  sender?: unknown;
+  prNumber?: number;
+}): NormalizedGitHubEvent | null {
+  const checkRun = asObject(params.checkRun);
+  if (params.source === 'webhook') {
+    const action = getString(asObject(params.rawPayload).action);
+    if (action !== 'completed') return null;
+  }
+  const status = getString(checkRun.status, params.source === 'webhook' ? 'completed' : '');
+  if (status !== 'completed') return null;
+  const conclusion = getString(checkRun.conclusion);
+  if (!isFailedCheckConclusion(conclusion)) return null;
+  const prs = Array.isArray(checkRun.pull_requests) ? checkRun.pull_requests : [];
+  const pr = asObject(prs[0]);
+  const prNumber = params.prNumber ?? getNumber(pr.number);
+  const repo = params.repo;
+  if (!repo.owner || !repo.repo || !prNumber) return null;
+  const id = getNumber(checkRun.id);
+  if (!id) return null;
+  const sender = userFrom(params.sender);
+  const actor = params.source === 'webhook' ? sender : userFrom(checkRun.app ?? params.sender);
+  const name = getString(checkRun.name, 'check run');
+  const headSha = getString(checkRun.head_sha);
+  const htmlUrl = getString(checkRun.html_url, prUrl(repo.owner, repo.repo, prNumber));
+  const occurredAt = parseTs(checkRun.completed_at ?? checkRun.updated_at ?? checkRun.started_at);
+  const canonicalOwner = repo.owner.toLowerCase();
+  const canonicalRepo = repo.repo.toLowerCase();
+  const externalId = `check_run:${id}:${conclusion}`;
+  if (params.source === 'webhook') {
+    const body = `${name} concluded with ${conclusion}`;
+    return {
+      deliveryId: params.deliveryId,
+      dedupeKey: `${canonicalOwner}/${canonicalRepo}:${externalId}`,
+      source: params.source,
+      eventType: 'check_run',
+      action: 'completed',
+      repoOwner: repo.owner,
+      repoName: repo.repo,
+      entityId: String(prNumber),
+      prNumber,
+      prUrl: prUrl(repo.owner, repo.repo, prNumber),
+      actor: actor.login,
+      actorType: actor.type,
+      body,
+      summary: `PR #${prNumber} check failed by ${actor.login}: ${truncateBody(body)}`,
+      externalUrl: htmlUrl,
+      externalId,
+      occurredAt,
+      rawPayload: params.rawPayload,
+      payload: { checkName: name, conclusion, runUrl: htmlUrl },
+    };
+  }
+  return {
+    deliveryId: params.deliveryId,
+    dedupeKey: `${canonicalOwner}/${canonicalRepo}:${externalId}`,
+    source: params.source,
+    eventType: 'check_run',
+    action: 'failed',
+    repoOwner: repo.owner,
+    repoName: repo.repo,
+    entityId: String(prNumber),
+    prNumber,
+    prUrl: prUrl(repo.owner, repo.repo, prNumber),
+    actor: actor.login,
+    actorType: actor.type,
+    body: conclusion,
+    summary: `PR #${prNumber} check ${name} ${conclusion}`,
+    externalUrl: htmlUrl,
+    externalId,
+    occurredAt,
+    rawPayload: params.rawPayload,
+    payload: {
+      checkRunId: id,
+      name,
+      checkName: name,
+      conclusion,
+      status,
+      headSha,
+      runUrl: htmlUrl,
+    },
   };
 }
 
