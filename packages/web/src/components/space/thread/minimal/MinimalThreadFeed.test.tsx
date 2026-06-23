@@ -604,6 +604,22 @@ describe('MinimalThreadFeed', () => {
         turnIndex: 1,
         message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'bun test' } }]),
       }),
+      makeRow({
+        id: 'retry-1',
+        label: 'Coder Agent',
+        createdAt: t + 500,
+        turnIndex: 1,
+        messageType: 'system',
+        message: {
+          type: 'system',
+          subtype: 'api_retry',
+          uuid: 'retry-1',
+          attempt: 2,
+          max_retries: 3,
+          retry_delay_ms: 5000,
+          error_status: 429,
+        },
+      }),
     ];
     const summary: ActiveTurnSummary = {
       sessionId: 'space:s:task:t',
@@ -636,6 +652,7 @@ describe('MinimalThreadFeed', () => {
     expect(entries[0].textContent).toContain('attempt 2/3');
     expect(entries[0].textContent).toContain('status 429');
     expect(entries[0].textContent).toContain('delay 5000ms');
+    expect(screen.getAllByText('API retry')).toHaveLength(1);
   });
 
   it('folds task_notification onto the roster entry when the tool_use is rostered', () => {

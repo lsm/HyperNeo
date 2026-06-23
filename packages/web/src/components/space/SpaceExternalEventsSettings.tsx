@@ -713,8 +713,8 @@ export function SpaceExternalEventsSettings({
               </div>
               <p class="mt-1 text-xs text-gray-400">
                 Use a public HTTPS tunnel for local development. Configure GitHub webhooks for
-                pull_request, issue_comment, pull_request_review, and pull_request_review_comment
-                events.
+                pull_request, issue_comment, pull_request_review, pull_request_review_comment, and
+                check_run events.
               </p>
             </div>
 

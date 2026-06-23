@@ -695,6 +695,20 @@ function collectRosteredToolUseIds(
   return ids;
 }
 
+function collectRosteredApiRetryUuids(
+  summaries: ActiveTurnSummary[],
+  renderedTurnKeys: Set<string>
+): Set<string> {
+  const uuids = new Set<string>();
+  for (const summary of summaries) {
+    if (!renderedTurnKeys.has(`${summary.sessionId}:${summary.turnIndex}`)) continue;
+    for (const entry of summary.entries) {
+      if (entry.kind === 'api_retry' && entry.uuid) uuids.add(entry.uuid);
+    }
+  }
+  return uuids;
+}
+
 function buildActiveTurn(
   block: AgentTurnBlock,
   rows: ParsedThreadRow[],
@@ -836,7 +850,8 @@ function buildCompactBoundaryTurn(row: ParsedThreadRow): CompactBoundaryFeedTurn
 function buildOperationalSystemTurn(
   row: ParsedThreadRow,
   isSessionTail: boolean,
-  rosteredToolUseIds: Set<string>
+  rosteredToolUseIds: Set<string>,
+  rosteredApiRetryUuids: Set<string>
 ): SystemFeedTurn | null {
   const message = row.message;
   if (!message || message.type !== 'system') return null;
@@ -859,6 +874,10 @@ function buildOperationalSystemTurn(
   if (subtype === 'task_notification') {
     const toolUseId = (message as { tool_use_id?: string }).tool_use_id;
     if (toolUseId && rosteredToolUseIds.has(toolUseId)) return null;
+  }
+  if (subtype === 'api_retry') {
+    const uuid = (message as { uuid?: unknown }).uuid;
+    if (typeof uuid === 'string' && rosteredApiRetryUuids.has(uuid)) return null;
   }
   // Honor the centralized hidden-subtype contract so Space task threads
   // don't surface noisy rows the main transcript already hides.
@@ -1193,6 +1212,7 @@ function buildFeedTurns(
   // roster) and the notification must fall back to a standalone system row so
   // the terminal summary/usage/failure is not lost.
   const rosteredToolUseIds = collectRosteredToolUseIds(activeTurnSummaries, renderedTurnKeys);
+  const rosteredApiRetryUuids = collectRosteredApiRetryUuids(activeTurnSummaries, renderedTurnKeys);
 
   const latestRowIdBySession = new Map<string, string>();
   for (const row of rowsWithReplacementStatus) {
@@ -1263,7 +1283,8 @@ function buildFeedTurns(
       const operationalSystemTurn = buildOperationalSystemTurn(
         row,
         row.sessionId ? latestRowIdBySession.get(row.sessionId) === String(row.id) : false,
-        rosteredToolUseIds
+        rosteredToolUseIds,
+        rosteredApiRetryUuids
       );
       if (operationalSystemTurn) {
         flushAgent();
