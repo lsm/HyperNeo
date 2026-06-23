@@ -1857,6 +1857,7 @@ export class SpaceRuntime {
         ) {
           this.queueForPendingNode(target, payload, deliveryKey);
         } else {
+          this.clearExternalEventRetry(deliveryKey);
           store.markDeliveryFailed(payload.eventId, deliveryKey, {
             terminal: false,
             reason: 'node_execution_not_active',
@@ -4191,6 +4192,15 @@ export class SpaceRuntime {
         store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, {
           terminal: true,
           reason: 'run_not_externally_deliverable',
+        });
+        store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
+        continue;
+      }
+
+      if (this.isTargetTaskTerminal(target.taskId)) {
+        store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, {
+          terminal: true,
+          reason: 'target_task_terminal',
         });
         store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
         continue;

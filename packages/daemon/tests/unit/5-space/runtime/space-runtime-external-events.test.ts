@@ -2733,6 +2733,39 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(eventStore.getById(event.id)?.state).toBe('delivered');
   });
 
+  test('terminalizes persisted pending deliveries for terminal tasks during runtime rehydrate', async () => {
+    const { workflow, run, task } = await startRunWithSubscription();
+    const event = makeEvent();
+    await eventService.publish(event);
+    const delivery = eventStore.listDeliveries(event.id)[0]!;
+    expect(delivery.state).toBe('pending');
+    taskRepo.updateTask(task.id, { status: 'done' });
+
+    await runtime.stop();
+    runtime = new SpaceRuntime({
+      db,
+      spaceManager: new SpaceManager(db),
+      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+      spaceWorkflowManager: workflowManager,
+      workflowRunRepo,
+      taskRepo,
+      nodeExecutionRepo,
+      internalEventBus: bus,
+      commandBus: createInternalCommandBus(),
+      externalEventStore: eventStore,
+      taskAgentManager: tam as never,
+    });
+    runtime.registerSubscription(run.id, task.id, 'code', 'coder', DEFAULT_TOPIC);
+
+    await runtime.rehydrateExecutors();
+
+    const rehydratedDelivery = eventStore.listDeliveries(event.id)[0]!;
+    expect(rehydratedDelivery.state).toBe('failed');
+    expect(rehydratedDelivery.failureReason).toBe('target_task_terminal');
+    expect(eventStore.listPendingDeliveries()).not.toContainEqual(rehydratedDelivery);
+    expect(eventStore.getById(event.id)?.state).toBe('failed');
+  });
+
   test('ignores terminal runs when matching external event deliveries', async () => {
     const { workflow, run, task } = await startRunWithSubscription();
     workflowRunRepo.updateRun(run.id, { status: 'cancelled' });
