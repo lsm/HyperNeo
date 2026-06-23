@@ -2350,6 +2350,100 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(eventStore.getById(event.id)?.state).toBe('published');
   });
 
+  test('flushes persisted pending deliveries when an idle worker activates', async () => {
+    const { run, task } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'idle',
+      agentSessionId: 'session-idle-stale',
+      completedAt: Date.now(),
+    });
+    tam.alive.add('session-idle-stale');
+
+    const event = makeEvent();
+    await eventService.publish(event);
+    expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
+
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-reactivated',
+      completedAt: null,
+    });
+    runtime.flushPendingNodeQueue({
+      workflowRunId: run.id,
+      taskId: task.id,
+      nodeId: 'code',
+      agentName: 'coder',
+      sessionId: 'session-reactivated',
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(injected).toHaveLength(1);
+    expect(injected[0]!.sessionId).toBe('session-reactivated');
+    expect(JSON.parse(injected[0]!.message).eventId).toBe(event.id);
+    expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
+    expect(eventStore.getById(event.id)?.state).toBe('delivered');
+  });
+
+  test('flushes persisted pending deliveries in chronological order', async () => {
+    const { run, task } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'idle',
+      agentSessionId: 'session-idle-stale',
+      completedAt: Date.now(),
+    });
+    tam.alive.add('session-idle-stale');
+
+    const later = makeEvent({
+      id: 'evt-later-pending-flush',
+      dedupeKey: 'dedupe-later-pending-flush',
+      occurredAt: 1_700_000_000_200,
+      ingestedAt: 1_700_000_001_200,
+    });
+    const earlier = makeEvent({
+      id: 'evt-earlier-pending-flush',
+      dedupeKey: 'dedupe-earlier-pending-flush',
+      occurredAt: 1_700_000_000_100,
+      ingestedAt: 1_700_000_001_100,
+    });
+    await eventService.publish(later);
+    await eventService.publish(earlier);
+    const laterDelivery = eventStore.listDeliveries(later.id)[0]!;
+    const earlierDelivery = eventStore.listDeliveries(earlier.id)[0]!;
+    db.prepare(`UPDATE space_external_events SET created_at = ? WHERE id = ?`).run(
+      Date.now() - 200,
+      later.id
+    );
+    db.prepare(`UPDATE space_external_events SET created_at = ? WHERE id = ?`).run(
+      Date.now() - 300,
+      earlier.id
+    );
+    expect(laterDelivery.state).toBe('pending');
+    expect(earlierDelivery.state).toBe('pending');
+
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-reactivated-order',
+      completedAt: null,
+    });
+    runtime.flushPendingNodeQueue({
+      workflowRunId: run.id,
+      taskId: task.id,
+      nodeId: 'code',
+      agentName: 'coder',
+      sessionId: 'session-reactivated-order',
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(injected.map((item) => JSON.parse(item.message).eventId)).toEqual([
+      earlier.id,
+      later.id,
+    ]);
+    expect(eventStore.listDeliveries(earlier.id)[0]!.state).toBe('delivered');
+    expect(eventStore.listDeliveries(later.id)[0]!.state).toBe('delivered');
+  });
+
   test('fails delivery when inactive target task is already done', async () => {
     const { workflow, run, task } = await startRunWithSubscription();
     const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;

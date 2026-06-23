@@ -1698,21 +1698,98 @@ export class SpaceRuntime {
     const targetWithExecution = this.resolveSubscriptionTarget(target);
     const key = this.buildQueueKey(target);
     const queued = this.pendingExternalEventQueue.get(key);
-    if (!queued) return;
-    this.pendingExternalEventQueue.delete(key);
-    const now = Date.now();
-    for (const item of queued) {
-      if (this.isQueuedExternalEventExpired(item, now)) {
-        this.failQueuedDeliveryForTtl(item, key);
+    if (queued) {
+      this.pendingExternalEventQueue.delete(key);
+      const now = Date.now();
+      for (const item of queued) {
+        if (this.isQueuedExternalEventExpired(item, now)) {
+          this.failQueuedDeliveryForTtl(item, key);
+          continue;
+        }
+        this.clearExternalEventRetry(item.deliveryKey);
+        void this.enqueueDeliverableExternalEvent(
+          targetWithExecution,
+          item.event,
+          item.deliveryKey,
+          item.deliveryMode,
+          item.createdAt,
+          true
+        );
+      }
+    }
+    if (!queued || queued.length === 0) {
+      void this.flushPersistedPendingDeliveriesForTarget(targetWithExecution);
+    }
+  }
+
+  private flushPersistedPendingDeliveriesForTarget(target: WorkflowSubscriptionTarget): void {
+    const store = this.config.externalEventStore;
+    if (!store || !target.sessionId) return;
+
+    const deliveries = store
+      .listPendingDeliveries(target.workflowRunId)
+      .filter(
+        (delivery) =>
+          delivery.taskId === target.taskId &&
+          delivery.nodeId === target.nodeId &&
+          delivery.agentName === target.agentName
+      )
+      .map((delivery) => {
+        const eventRecord = store.getById(delivery.eventId);
+        return eventRecord ? { delivery, eventRecord } : null;
+      })
+      .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
+      .filter(({ eventRecord }) => eventRecord.state === 'published')
+      .sort(
+        (a, b) =>
+          a.eventRecord.createdAt - b.eventRecord.createdAt ||
+          a.delivery.updatedAt - b.delivery.updatedAt ||
+          a.delivery.deliveryKey.localeCompare(b.delivery.deliveryKey)
+      );
+
+    for (const { delivery, eventRecord } of deliveries) {
+      if (store.isDeliveryTerminal(delivery.eventId, delivery.deliveryKey)) continue;
+      if (this.externalEventDeliveriesInFlight.has(delivery.deliveryKey)) continue;
+      if (this.isTargetTaskTerminal(target.taskId)) {
+        store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, {
+          terminal: true,
+          reason: 'target_task_terminal',
+        });
+        store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
+        this.clearExternalEventRetry(delivery.deliveryKey);
         continue;
       }
-      this.clearExternalEventRetry(item.deliveryKey);
+      if (!this.isTargetStillSubscribed(target, eventRecord.event.topic)) {
+        store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, {
+          terminal: true,
+          reason: 'subscription_no_longer_active',
+        });
+        store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
+        this.clearExternalEventRetry(delivery.deliveryKey);
+        continue;
+      }
+
+      const mode: 'immediate' | 'defer' = delivery.failureReason?.startsWith('deliveryMode:defer;')
+        ? 'defer'
+        : 'immediate';
+      const eventPayload = this.externalEventPayloadFromRecord(eventRecord.event);
+      const queuedItem = {
+        event: eventPayload,
+        deliveryKey: delivery.deliveryKey,
+        deliveryMode: mode,
+        createdAt: eventRecord.createdAt,
+      };
+      if (this.isQueuedExternalEventExpired(queuedItem)) {
+        this.failQueuedDeliveryForTtl(queuedItem, this.buildQueueKey(target));
+        continue;
+      }
+      this.clearExternalEventRetry(delivery.deliveryKey);
       void this.enqueueDeliverableExternalEvent(
-        targetWithExecution,
-        item.event,
-        item.deliveryKey,
-        item.deliveryMode,
-        item.createdAt,
+        target,
+        eventPayload,
+        delivery.deliveryKey,
+        mode,
+        eventRecord.createdAt,
         true
       );
     }
