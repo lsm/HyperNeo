@@ -686,6 +686,7 @@ function NestedMessageRenderer({
               isOutputRemoved={resultData?.isOutputRemoved || false}
               taskNotification={taskNotificationsMap?.get(toolBlock.id)}
               taskProgress={taskProgressMap?.get(toolBlock.id)}
+              isRunning={!!taskProgressMap?.has(toolBlock.id)}
             />
           );
         })}

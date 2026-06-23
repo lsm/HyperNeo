@@ -2384,7 +2384,12 @@ ORDER BY s.last_active_at DESC, s.id DESC
  * inflates the JSON and merges the extras to produce a ChatMessage-shaped
  * object.
  */
-const BACKGROUND_TASK_METADATA_SUBTYPES = ['task_started', 'task_updated', 'task_notification'];
+const BACKGROUND_TASK_METADATA_SUBTYPES = [
+  'task_started',
+  'task_updated',
+  'task_progress',
+  'task_notification',
+];
 const BACKGROUND_TASK_METADATA_BATCH_SIZE = 300;
 
 function toSqlStringList(subtypes: Iterable<string>): string {
