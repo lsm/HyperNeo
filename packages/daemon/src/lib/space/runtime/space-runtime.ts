@@ -27,6 +27,7 @@ import type {
   SpaceApprovalSource,
   SpaceTask,
   SpaceTaskPriority,
+  SpaceTaskStatus,
   SpaceWorkflow,
   SpaceWorkflowRun,
   UpdateSpaceTaskParams,
@@ -704,6 +705,12 @@ function longHorizonSpaceIdFromWorkflowRunId(workflowRunId: string): string | nu
 function isExternallyDeliverableRun(status: SpaceWorkflowRun['status']): boolean {
   return status === 'in_progress' || status === 'blocked';
 }
+
+const EXTERNAL_EVENT_TARGET_TASK_TERMINAL_STATUSES: ReadonlySet<SpaceTaskStatus> = new Set([
+  'done',
+  'cancelled',
+  'archived',
+]);
 
 function parseSubscriptionQueueKey(
   key: string
@@ -1832,7 +1839,13 @@ export class SpaceRuntime {
           continue;
         }
 
-        if (target.sessionId && this.isTargetSessionLive(target.sessionId)) {
+        if (this.isTargetTaskTerminal(target.taskId)) {
+          store.markDeliveryFailed(payload.eventId, deliveryKey, {
+            terminal: true,
+            reason: 'target_task_terminal',
+          });
+          store.markEventFailedIfAllDeliveriesTerminal(payload.eventId);
+        } else if (target.sessionId && this.isTargetSessionLive(target.sessionId)) {
           await this.enqueueDeliverableExternalEvent(target, payload, deliveryKey, 'immediate');
         } else if (target.sessionId) {
           await this.enqueueDeliverableExternalEvent(target, payload, deliveryKey, 'defer');
@@ -1845,10 +1858,9 @@ export class SpaceRuntime {
           this.queueForPendingNode(target, payload, deliveryKey);
         } else {
           store.markDeliveryFailed(payload.eventId, deliveryKey, {
-            terminal: true,
+            terminal: false,
             reason: 'node_execution_not_active',
           });
-          store.markEventFailedIfAllDeliveriesTerminal(payload.eventId);
         }
       } catch (err) {
         log.warn(
@@ -2560,6 +2572,11 @@ export class SpaceRuntime {
           execution.agentName === target.agentName &&
           (execution.status === 'idle' || execution.status === 'cancelled')
       );
+  }
+
+  private isTargetTaskTerminal(taskId: string): boolean {
+    const task = this.config.taskRepo.getTask(taskId);
+    return task ? EXTERNAL_EVENT_TARGET_TASK_TERMINAL_STATUSES.has(task.status) : true;
   }
 
   private buildQueueKey(
