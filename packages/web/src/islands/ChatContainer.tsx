@@ -1065,6 +1065,21 @@ export default function ChatContainer({
   const messagesLoaded = sessionStore.messagesLoaded.value;
   const loading = !error && (!sessionStateLoaded || !messagesLoaded);
 
+  // Content-column image drop zone. The composer (MessageInput) registers its
+  // file-drop handler upward via registerDropTarget; this column owns the actual
+  // drag/drop surface so an image can be dropped anywhere over the chat column.
+  // Keep these hooks before conditional render returns so hook order remains stable.
+  const dropFilesRef = useRef<FileDropHandler | null>(null);
+  const registerDropTarget = useCallback((fn: FileDropHandler | null) => {
+    dropFilesRef.current = fn;
+  }, []);
+  const composerDisabled =
+    isWaitingForInput || !isConnected || modelSwitching || coordinatorSwitching || sandboxSwitching;
+  const dropEnabled = !readonly && session?.status !== 'archived' && !composerDisabled;
+  const { isDragging, dragHandlers } = useImageDropZone((files) => {
+    void dropFilesRef.current?.(files);
+  }, dropEnabled);
+
   // ========================================
   // Pending Agent Render (before loading check)
   // ========================================
@@ -1238,20 +1253,6 @@ export default function ChatContainer({
       </div>
     );
   }
-
-  // Content-column image drop zone. The composer (MessageInput) registers its
-  // file-drop handler upward via registerDropTarget; this column owns the actual
-  // drag/drop surface so an image can be dropped anywhere over the chat column.
-  const dropFilesRef = useRef<FileDropHandler | null>(null);
-  const registerDropTarget = useCallback((fn: FileDropHandler | null) => {
-    dropFilesRef.current = fn;
-  }, []);
-  const composerDisabled =
-    isWaitingForInput || !isConnected || modelSwitching || coordinatorSwitching || sandboxSwitching;
-  const dropEnabled = !readonly && session?.status !== 'archived' && !composerDisabled;
-  const { isDragging, dragHandlers } = useImageDropZone((files) => {
-    void dropFilesRef.current?.(files);
-  }, dropEnabled);
 
   return (
     <div
