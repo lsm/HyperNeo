@@ -9,6 +9,8 @@
 import type { ThinkingLevel } from '../types.ts';
 import type { CustomEndpointConfig } from './custom-endpoint.ts';
 
+export const MAX_GITHUB_POLLING_INTERVAL_SECONDS = Math.floor(2_147_483_647 / 1000);
+
 export type SettingSource = 'user' | 'project' | 'local';
 
 export type PermissionMode = 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'dontAsk';

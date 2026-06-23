@@ -12,6 +12,7 @@
 
 import type { Database } from '../../storage/database';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
+import { MAX_GITHUB_POLLING_INTERVAL_SECONDS } from '@neokai/shared';
 import type { Config } from '../../config';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository';
 import type { JobQueueProcessor } from '../../storage/job-queue-processor';
@@ -161,10 +162,11 @@ export class GitHubService {
     log.info('GitHub service started');
   }
 
-  refreshPolling(): void {
+  refreshPolling(options: { reschedulePending?: boolean } = {}): void {
     const intervalSeconds = this.getPollingIntervalSecondsValue();
 
     if (intervalSeconds <= 0 || !this.githubToken) {
+      this.deletePendingPollJobs();
       if (this.pollingService) {
         this.pollingService.stop();
         this.pollingService = undefined;
@@ -205,6 +207,10 @@ export class GitHubService {
         log.info('github.poll job handler registered');
       }
 
+      if (options.reschedulePending) {
+        this.deletePendingPollJobs();
+      }
+
       const existing = this.jobQueue.listJobs({
         queue: GITHUB_POLL,
         status: ['pending', 'processing'],
@@ -222,7 +228,14 @@ export class GitHubService {
     if (configured === undefined || !Number.isFinite(configured)) {
       return DEFAULT_GITHUB_POLLING_INTERVAL_SECONDS;
     }
-    return Math.max(0, Math.trunc(configured));
+    return Math.min(MAX_GITHUB_POLLING_INTERVAL_SECONDS, Math.max(0, Math.trunc(configured)));
+  }
+
+  private deletePendingPollJobs(): void {
+    if (!this.jobQueue) return;
+    for (const job of this.jobQueue.listJobs({ queue: GITHUB_POLL, status: 'pending' })) {
+      this.jobQueue.deleteJob(job.id);
+    }
   }
 
   /**

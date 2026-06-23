@@ -12,7 +12,7 @@ import { AuthManager } from './lib/auth-manager';
 import { SettingsManager } from './lib/settings-manager';
 import { StateProjectionService } from './lib/state-projection-service';
 import { createClientEventBridge } from './lib/client-event-bridge';
-import { MessageHub, MessageHubRouter } from '@neokai/shared';
+import { MAX_GITHUB_POLLING_INTERVAL_SECONDS, MessageHub, MessageHubRouter } from '@neokai/shared';
 import type { Provider } from '@neokai/shared/provider';
 import {
   createDaemonInternalEventBus,
@@ -372,7 +372,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     const getGitHubPollingIntervalSeconds = () => {
       const value = settingsManager.getGlobalSettings().githubPollingInterval;
       if (value === undefined || !Number.isFinite(value)) return 120;
-      return Math.max(0, Math.trunc(value));
+      return Math.min(MAX_GITHUB_POLLING_INTERVAL_SECONDS, Math.max(0, Math.trunc(value)));
     };
     applyProviderModelAllowlistsToEnv(settingsManager.getGlobalSettings().providerModelAllowlists);
 
@@ -693,20 +693,17 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     internalEventBus.subscribe(
       'settings.updated',
       (event) => {
-        if (event.namespaceId !== 'global' || event.settings.githubPollingInterval === undefined)
-          return;
-        gitHubService?.refreshPolling();
+        if (event.namespaceId !== 'global') return;
+        gitHubService?.refreshPolling({ reschedulePending: true });
         void (async () => {
-          if (getGitHubPollingIntervalSeconds() > 0) {
-            const githubGlobalConfig = await extensionConfigStore.getGlobalConfig('github');
-            await extensionConfigStore.setGlobalConfig('github', {
-              ...githubGlobalConfig,
-              capabilities: {
-                ...githubGlobalConfig.capabilities,
-                polling: true,
-              },
-            });
-          }
+          const githubGlobalConfig = await extensionConfigStore.getGlobalConfig('github');
+          await extensionConfigStore.setGlobalConfig('github', {
+            ...githubGlobalConfig,
+            capabilities: {
+              ...githubGlobalConfig.capabilities,
+              polling: getGitHubPollingIntervalSeconds() > 0,
+            },
+          });
           await githubEventExtension?.refreshPollingInterval();
         })();
       },

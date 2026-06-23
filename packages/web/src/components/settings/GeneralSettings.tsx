@@ -3,7 +3,7 @@ import { globalSettings } from '../../lib/state.ts';
 import { updateGlobalSettings } from '../../lib/api-helpers.ts';
 import { toast } from '../../lib/toast.ts';
 import type { PermissionMode, ThinkingLevel, SettingSource } from '@neokai/shared';
-import { normalizeThinkingLevel } from '@neokai/shared';
+import { MAX_GITHUB_POLLING_INTERVAL_SECONDS, normalizeThinkingLevel } from '@neokai/shared';
 import {
   SettingsSection,
   SettingsRow,
@@ -134,8 +134,14 @@ export function GeneralSettings() {
     }
 
     const interval = Number(trimmed);
-    if (!Number.isInteger(interval) || interval < 0) {
-      toast.error('GitHub polling interval must be a non-negative whole number');
+    if (
+      !Number.isInteger(interval) ||
+      interval < 0 ||
+      interval > MAX_GITHUB_POLLING_INTERVAL_SECONDS
+    ) {
+      toast.error(
+        `GitHub polling interval must be a whole number between 0 and ${MAX_GITHUB_POLLING_INTERVAL_SECONDS}`
+      );
       setLocalGitHubPollingInterval(String(current));
       return;
     }
@@ -219,6 +225,7 @@ export function GeneralSettings() {
         <input
           type="number"
           min="0"
+          max={MAX_GITHUB_POLLING_INTERVAL_SECONDS}
           step="1"
           placeholder="120"
           value={localGitHubPollingInterval}

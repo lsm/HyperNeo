@@ -71,11 +71,13 @@ describe('GitHubService — job-queue-driven polling', () => {
   let registerMock: ReturnType<typeof mock>;
   let enqueueMock: ReturnType<typeof mock>;
   let listJobsMock: ReturnType<typeof mock>;
+  let deleteJobMock: ReturnType<typeof mock>;
 
   beforeEach(() => {
     registerMock = mock(() => {});
     enqueueMock = mock(() => makeJob());
     listJobsMock = mock(() => []); // no existing jobs → enqueue initial
+    deleteJobMock = mock(() => true);
   });
 
   afterEach(() => {
@@ -92,6 +94,7 @@ describe('GitHubService — job-queue-driven polling', () => {
     return {
       enqueue: enqueueMock,
       listJobs: listOverride ?? listJobsMock,
+      deleteJob: deleteJobMock,
     } as never;
   }
 
@@ -338,6 +341,65 @@ describe('GitHubService — job-queue-driven polling', () => {
 
     // But the chain self-schedules so polling resumes automatically when restarted
     expect(enqueueMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('replaces pending github.poll jobs when rescheduling after an interval change', () => {
+    const pendingJob = makeJob({
+      id: 'pending-job',
+      status: 'pending',
+      runAt: Date.now() + 120_000,
+    });
+    const listWithPending = mock((filter?: { status?: string | string[] }) => {
+      const status = filter?.status;
+      if (status === 'pending') return [pendingJob];
+      if (Array.isArray(status) && status.includes('pending')) return [];
+      return [];
+    });
+
+    const svc = new GitHubService({
+      db: makeDb(),
+      internalEventBus: makeDaemonHub(),
+      config: makeConfig(),
+      apiKey: 'test-api-key',
+      githubToken: 'test-github-token',
+      jobQueue: makeJobQueue(listWithPending),
+      jobProcessor: makeJobProcessor(),
+      getPollingIntervalSeconds: () => 30,
+    });
+
+    svc.start();
+    enqueueMock.mockClear();
+    deleteJobMock.mockClear();
+
+    svc.refreshPolling({ reschedulePending: true });
+
+    expect(deleteJobMock).toHaveBeenCalledWith('pending-job');
+    expect(enqueueMock).toHaveBeenCalledTimes(1);
+    const [arg] = enqueueMock.mock.calls[0] as [{ runAt: number }];
+    expect(arg.runAt).toBeLessThanOrEqual(Date.now() + 100);
+  });
+
+  it('deletes pending github.poll jobs when polling is disabled', () => {
+    const pendingJob = makeJob({ id: 'pending-job', status: 'pending' });
+    const listWithPending = mock((filter?: { status?: string | string[] }) =>
+      filter?.status === 'pending' ? [pendingJob] : []
+    );
+
+    const svc = new GitHubService({
+      db: makeDb(),
+      internalEventBus: makeDaemonHub(),
+      config: makeConfig(),
+      apiKey: 'test-api-key',
+      githubToken: 'test-github-token',
+      jobQueue: makeJobQueue(listWithPending),
+      jobProcessor: makeJobProcessor(),
+      getPollingIntervalSeconds: () => 0,
+    });
+
+    svc.start();
+
+    expect(deleteJobMock).toHaveBeenCalledWith('pending-job');
+    expect(enqueueMock).not.toHaveBeenCalled();
   });
 
   it('uses the latest polling interval when self-scheduling jobs', async () => {
