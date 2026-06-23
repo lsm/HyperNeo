@@ -22,39 +22,25 @@ const DEFAULT_COMPACTION_COOLDOWN_MS = 60_000;
 export const COMPACTION_THRESHOLD = 0.85;
 
 /**
- * The SDK's own auto-compact reserve. The SDK fires compaction at
- * `window - 13_000`. NeoKai's fallback uses the same reserve (clamped for
- * small windows) so it fires at the same point the SDK would have — for
- * providers in `PROVIDER_NO_SDK_AUTO_COMPACT` the SDK never fires, so NeoKai
- * is the sole compaction path and matching the SDK's threshold gives
- * consistent behaviour.
+ * The SDK's own auto-compact buffer. The SDK computes its trigger as
+ * `autoCompactWindow − min(maxOutputTokens, 20000) − 13000`, so the buffer it
+ * keeps below the window is `min(maxOutputTokens, 20000) + 13000`. Every modern
+ * model has a default max output ≥ 20000, so the first term caps at 20000 and
+ * the buffer is a flat 33_000. NeoKai's fallback uses the same buffer so it
+ * fires at the same point the SDK would have — for Kimi (and any provider in
+ * `PROVIDER_NO_SDK_AUTO_COMPACT`) the SDK never fires, so NeoKai is the sole
+ * compaction path and matching the SDK's threshold gives consistent behaviour.
  */
-const SDK_AUTO_COMPACT_RESERVE_TOKENS = 13_000;
+const SDK_AUTO_COMPACT_RESERVE_TOKENS = 33_000;
 
 /**
- * Cap on the SDK reserve as a fraction of the window. For small windows the
- * 13_000 fixed reserve can exceed 10% of the window (or even the whole
- * window), which would produce a zero or negative threshold. Scale the
- * reserve down proportionally so the threshold stays positive and meaningful.
- */
-const RESERVE_FRACTION_CAP = 0.1;
-
-/**
- * Compute the NeoKai fallback threshold for a context window. Uses the SDK's
- * own 13_000 token reserve, scaled down for small windows so the threshold
- * is always at least 1 token.
- *
- * This matches where the SDK's own auto-compact would have fired, so for
- * providers where the SDK is disabled (`PROVIDER_NO_SDK_AUTO_COMPACT`),
- * NeoKai behaves consistently with the SDK's intended trigger point.
+ * Compute the NeoKai fallback threshold for a context window: the point at
+ * which the SDK's own auto-compact would have fired (`window − 33_000`), floored
+ * at 1 so tiny windows still produce a positive threshold.
  */
 export function reserveBasedThreshold(contextWindow: number): number {
   if (!Number.isFinite(contextWindow) || contextWindow <= 0) return 0;
-  const reserve = Math.min(
-    SDK_AUTO_COMPACT_RESERVE_TOKENS,
-    Math.floor(contextWindow * RESERVE_FRACTION_CAP)
-  );
-  return Math.max(1, contextWindow - reserve);
+  return Math.max(1, contextWindow - SDK_AUTO_COMPACT_RESERVE_TOKENS);
 }
 
 export class ContextTracker {
