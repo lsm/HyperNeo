@@ -1061,6 +1061,82 @@ describe('MinimalThreadFeed', () => {
     expect(entry.textContent).toContain('✗');
   });
 
+  it('renders stopped task_notification distinctly when folded onto completed roster', () => {
+    const t = Date.now();
+    const rows = [
+      makeRow({
+        id: 'a1',
+        label: 'Coder Agent',
+        createdAt: t,
+        message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'sleep 10' } }]),
+      }),
+      makeRow({
+        id: 'r1',
+        label: 'Coder Agent',
+        createdAt: t + 100,
+        message: resultMessage('r1', 'Stopped'),
+      }),
+      makeRow({
+        id: 'n1',
+        label: 'Coder Agent',
+        createdAt: t + 200,
+        messageType: 'system',
+        message: {
+          type: 'system',
+          subtype: 'task_notification',
+          task_id: 't',
+          tool_use_id: 'tu-a1-0',
+          status: 'stopped',
+          summary: 'cancelled by user',
+          output_file: '/tmp/o',
+        },
+      }),
+    ];
+
+    render(<MinimalThreadFeed parsedRows={rows} />);
+
+    expect(screen.queryByTestId('minimal-thread-system')).toBeNull();
+    const entry = screen.getByTestId('minimal-thread-roster-entry');
+    expect(entry.dataset.taskStatus).toBe('stopped');
+    expect(entry.textContent).toContain('Task stopped');
+    expect(entry.textContent).toContain('cancelled by user');
+    expect(entry.textContent).toContain('■');
+    expect(entry.textContent).not.toContain('✗');
+    expect(entry.querySelector('[aria-label="task stopped"]')).toBeTruthy();
+    expect(entry.querySelector('[aria-label="task failed"]')).toBeNull();
+  });
+
+  it('caps completed roster previews and suppresses MCP previews', () => {
+    const t = Date.now();
+    const longCommand = `node -e "${'x'.repeat(240)}"`;
+    const rows = [
+      makeRow({
+        id: 'a1',
+        label: 'Coder Agent',
+        createdAt: t,
+        message: assistantToolUse('a1', [
+          { name: 'Bash', input: { command: longCommand } },
+          { name: 'mcp__node-agent__send_message', input: { message: 'secret '.repeat(80) } },
+        ]),
+      }),
+      makeRow({
+        id: 'r1',
+        label: 'Coder Agent',
+        createdAt: t + 100,
+        message: resultMessage('r1', 'Done'),
+      }),
+    ];
+
+    render(<MinimalThreadFeed parsedRows={rows} />);
+
+    const entries = screen.getAllByTestId('minimal-thread-roster-entry');
+    const bashText = entries[0].textContent ?? '';
+    expect(bashText).toContain('…');
+    expect(bashText).not.toContain(longCommand);
+    expect(bashText.length).toBeLessThan(longCommand.length);
+    expect(entries[1].textContent).not.toContain('secret');
+  });
+
   it('falls back to a system row for task_notification with no roster target (completed turn)', () => {
     const t = Date.now();
     // More than ROSTER_MAX_ENTRIES tool_use blocks → the first tool is capped

@@ -583,17 +583,28 @@ type TaskNotificationLite = {
   usage?: { total_tokens: number; tool_uses: number; duration_ms: number };
 };
 
+const COMPLETED_TOOL_PREVIEW_MAX_CHARS = 100;
+
+function capCompletedToolPreview(value: string): string {
+  const oneLine = value.replace(/\s+/g, ' ').trim();
+  if (oneLine.length <= COMPLETED_TOOL_PREVIEW_MAX_CHARS) return oneLine;
+  return `${oneLine.slice(0, COMPLETED_TOOL_PREVIEW_MAX_CHARS - 1)}…`;
+}
+
 function formatCompletedToolPreview(toolName: string, input: unknown): string {
+  if (toolName.startsWith('mcp__')) return '';
   if (typeof input !== 'object' || input === null) return '';
   const record = input as Record<string, unknown>;
-  if (toolName === 'Bash' && typeof record.command === 'string') return record.command;
-  if (typeof record.file_path === 'string') return record.file_path;
-  if (typeof record.path === 'string') return record.path;
-  if (typeof record.pattern === 'string') return record.pattern;
+  if (toolName === 'Bash' && typeof record.command === 'string') {
+    return capCompletedToolPreview(record.command);
+  }
+  if (typeof record.file_path === 'string') return capCompletedToolPreview(record.file_path);
+  if (typeof record.path === 'string') return capCompletedToolPreview(record.path);
+  if (typeof record.pattern === 'string') return capCompletedToolPreview(record.pattern);
   const firstString = Object.values(record).find(
     (value): value is string => typeof value === 'string'
   );
-  return firstString ?? '';
+  return firstString ? capCompletedToolPreview(firstString) : '';
 }
 
 function foldTaskNotification(
@@ -1475,7 +1486,9 @@ function RosterEntry({ entry, isLatest }: { entry: ActiveRosterEntry; isLatest: 
     const toolLabel = rosterToolLabel(entry.tool);
     const preview = entry.preview.trim();
     const isSuccess = entry.taskStatus === 'completed';
-    const isError = entry.taskStatus === 'failed' || entry.taskStatus === 'stopped';
+    const isStopped = entry.taskStatus === 'stopped';
+    const isError = entry.taskStatus === 'failed';
+    const statusLabel = isStopped ? 'Task stopped' : null;
     return (
       <div
         class={`flex items-start gap-2 font-mono text-xs leading-5 ${fadeClass}`}
@@ -1494,10 +1507,26 @@ function RosterEntry({ entry, isLatest }: { entry: ActiveRosterEntry; isLatest: 
               <span class={bodyClass}>{preview}</span>
             </>
           ) : null}
+          {statusLabel ? (
+            <>
+              <span class="text-gray-400"> — </span>
+              <span class="text-amber-300">{statusLabel}</span>
+            </>
+          ) : null}
           {entry.taskSummary ? (
             <>
               <span class="text-gray-400"> — </span>
-              <span class={isSuccess ? 'text-green-400' : isError ? 'text-red-400' : bodyClass}>
+              <span
+                class={
+                  isSuccess
+                    ? 'text-green-400'
+                    : isStopped
+                      ? 'text-amber-300'
+                      : isError
+                        ? 'text-red-400'
+                        : bodyClass
+                }
+              >
                 {entry.taskSummary}
               </span>
             </>
@@ -1514,6 +1543,11 @@ function RosterEntry({ entry, isLatest }: { entry: ActiveRosterEntry; isLatest: 
         {isSuccess && (
           <span class="mt-0.5 shrink-0 text-green-400" aria-label="task completed">
             ✓
+          </span>
+        )}
+        {isStopped && (
+          <span class="mt-0.5 shrink-0 text-amber-300" aria-label="task stopped">
+            ■
           </span>
         )}
         {isError && (
