@@ -343,6 +343,38 @@ describe('GitHubService — job-queue-driven polling', () => {
     expect(enqueueMock).toHaveBeenCalledTimes(1);
   });
 
+  it('recomputes interval after an in-flight poll before self-scheduling', async () => {
+    let intervalSeconds = 60;
+    let capturedHandler: (() => Promise<unknown>) | undefined;
+    const capturingRegister = mock((_queue: string, handler: () => Promise<unknown>) => {
+      capturedHandler = handler;
+    });
+
+    const svc = new GitHubService({
+      db: makeDb(),
+      internalEventBus: makeDaemonHub(),
+      config: makeConfig(),
+      apiKey: 'test-api-key',
+      githubToken: 'test-github-token',
+      jobQueue: makeJobQueue(),
+      jobProcessor: { register: capturingRegister } as never,
+      getPollingIntervalSeconds: () => intervalSeconds,
+    });
+
+    svc.start();
+    const pollingService = svc.getPollingService()!;
+    pollingService.triggerPoll = mock(async () => {
+      intervalSeconds = 30;
+    });
+    enqueueMock.mockClear();
+
+    await capturedHandler!();
+
+    const [arg] = enqueueMock.mock.calls[0] as [{ runAt: number }];
+    expect(arg.runAt).toBeGreaterThanOrEqual(Date.now() + 29_000);
+    expect(arg.runAt).toBeLessThanOrEqual(Date.now() + 31_000);
+  });
+
   it('replaces pending github.poll jobs when rescheduling after an interval change', () => {
     const pendingJob = makeJob({
       id: 'pending-job',

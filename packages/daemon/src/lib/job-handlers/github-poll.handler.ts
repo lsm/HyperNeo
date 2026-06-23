@@ -15,7 +15,7 @@ const log = new Logger('github-poll-handler');
 export interface GitHubPollHandlerDeps {
   pollingService: GitHubPollingService | undefined;
   jobQueue: JobQueueRepository;
-  intervalMs: number;
+  intervalMs: number | (() => number);
 }
 
 // Extends Record<string, unknown> so the result satisfies JobHandler's return type.
@@ -25,7 +25,7 @@ export interface GitHubPollResult extends Record<string, unknown> {
 }
 
 export async function handleGitHubPoll(deps: GitHubPollHandlerDeps): Promise<GitHubPollResult> {
-  const { pollingService, jobQueue, intervalMs } = deps;
+  const { pollingService, jobQueue } = deps;
 
   let polled = false;
 
@@ -49,6 +49,7 @@ export async function handleGitHubPoll(deps: GitHubPollHandlerDeps): Promise<Git
 
   // Compute nextRunAt after the poll so the interval is measured from
   // completion, not from when the job was dequeued.
+  const intervalMs = typeof deps.intervalMs === 'function' ? deps.intervalMs() : deps.intervalMs;
   const nextRunAt = intervalMs > 0 ? Date.now() + intervalMs : 0;
 
   // Only enqueue the next job if no pending job is already waiting.

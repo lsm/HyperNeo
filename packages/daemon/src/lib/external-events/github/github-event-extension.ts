@@ -264,6 +264,9 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       if (!params.spaceId || !params.owner || !params.repo) {
         throw new Error('spaceId, owner and repo are required');
       }
+      if (params.pollingEnabled) {
+        this.assertPollingIntervalEnabled();
+      }
       const existing = this.repo.getWatchedRepo(params.spaceId, params.owner, params.repo);
       const replacingAutoSecret = Boolean(params.webhookSecret && existing?.webhookAutoRegistered);
       const disablingAutoWebhook = Boolean(
@@ -488,6 +491,9 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       const params = data as { spaceId?: string; enabled?: boolean };
       if (!params.spaceId || typeof params.enabled !== 'boolean') {
         throw new Error('spaceId and enabled are required');
+      }
+      if (params.enabled) {
+        this.assertPollingIntervalEnabled();
       }
       const repos = this.repo.listWatchedRepos(params.spaceId);
       for (const repo of repos) {
@@ -855,6 +861,14 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       ...global,
       capabilities: { ...global.capabilities, polling: false },
     });
+  }
+
+  private assertPollingIntervalEnabled(): void {
+    if (this.getPollIntervalMs() <= 0) {
+      throw new Error(
+        'GitHub polling is disabled globally. Set GitHub polling interval above 0 in General settings to enable polling.'
+      );
+    }
   }
 
   private ensurePollingActive(): void {

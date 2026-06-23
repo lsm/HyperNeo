@@ -200,7 +200,7 @@ export class GitHubService {
           handleGitHubPoll({
             pollingService: this.pollingService,
             jobQueue: this.jobQueue!,
-            intervalMs: this.getPollingIntervalSecondsValue() * 1000,
+            intervalMs: () => this.getPollingIntervalSecondsValue() * 1000,
           })
         );
         this.pollJobHandlerRegistered = true;
