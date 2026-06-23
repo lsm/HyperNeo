@@ -84,7 +84,8 @@ function isFailedCheckConclusion(conclusion: string): boolean {
     conclusion === 'cancelled' ||
     conclusion === 'timed_out' ||
     conclusion === 'action_required' ||
-    conclusion === 'neutral'
+    conclusion === 'neutral' ||
+    conclusion === 'stale'
   );
 }
 
