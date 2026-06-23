@@ -320,6 +320,9 @@ export class SpaceRuntimeService {
         // being marked ignored. Runs after recovery completes inside the
         // first executeTick().
         await this.rehydrateBlockedRunPrEventSubscriptions();
+        // Rebuild durable worker auto_pr subs (in-memory, lost on restart)
+        // from saved pr_url artifacts.
+        await this.rehydrateWorkerPrSubscriptions();
       },
     });
   }
@@ -887,6 +890,22 @@ export class SpaceRuntimeService {
     topic: string
   ): { success: boolean; error?: string } {
     return this.runtime.registerSubscription(workflowRunId, taskId, nodeId, agentName, topic);
+  }
+
+  ensurePrSubscription(
+    workflowRunId: string,
+    taskId: string,
+    nodeId: string,
+    agentName: string,
+    prUrl: string
+  ): { success: boolean; subscribed?: boolean; error?: string; topicPattern?: string } {
+    return this.runtime.ensurePrSubscriptionForNode(
+      workflowRunId,
+      taskId,
+      nodeId,
+      agentName,
+      prUrl
+    );
   }
 
   unregisterSubscription(
@@ -2212,6 +2231,63 @@ export class SpaceRuntimeService {
       );
     }
     return rehydrated;
+  }
+
+  /**
+   * Re-register worker-level `auto_pr` subscriptions for the active runs of a
+   * space after a daemon restart. Worker PR subscriptions live only in the
+   * runtime's in-memory TopicTrie and are lost on restart; this rebuilds them
+   * from `pr_url` artifacts each node saved so GitHub review/comment events
+   * keep reaching the worker that opened the PR. Idempotent and best-effort —
+   * errors for individual runs are logged and swallowed.
+   *
+   * Companion to {@link rehydrateBlockedRunPrEventSubscriptionsForSpace}: that
+   * one rebuilds the transient gate-wake `auto` sub; this rebuilds the durable
+   * per-worker `auto_pr` subs.
+   */
+  rehydrateWorkerPrSubscriptionsForSpace(spaceId: string): number {
+    let rehydrated = 0;
+    try {
+      const activeRuns = this.config.workflowRunRepo
+        .listBySpace(spaceId)
+        .filter((run) => run.status === 'in_progress' || run.status === 'blocked');
+      for (const run of activeRuns) {
+        rehydrated += this.runtime.rehydrateWorkerPrSubscriptionsForRun(run.id);
+      }
+      if (rehydrated > 0) {
+        log.info(
+          `SpaceRuntimeService: rehydrated ${rehydrated} worker auto_pr subscription(s) in space ${spaceId}`
+        );
+      }
+    } catch (err) {
+      log.error(
+        `SpaceRuntimeService: rehydrateWorkerPrSubscriptionsForSpace(${spaceId}) failed: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+    return rehydrated;
+  }
+
+  /**
+   * Startup wrapper: rebuild worker `auto_pr` subscriptions for every active
+   * (non-paused/stopped) space. Companion to
+   * {@link rehydrateBlockedRunPrEventSubscriptions}.
+   */
+  async rehydrateWorkerPrSubscriptions(): Promise<void> {
+    try {
+      const spaces = await this.config.spaceManager.listSpaces(false);
+      let rehydrated = 0;
+      for (const space of spaces) {
+        if (space.paused || space.stopped) continue;
+        rehydrated += this.rehydrateWorkerPrSubscriptionsForSpace(space.id);
+      }
+      if (rehydrated > 0) {
+        log.info(`SpaceRuntimeService: rehydrated ${rehydrated} worker auto_pr subscription(s)`);
+      }
+    } catch (err) {
+      log.error(
+        `SpaceRuntimeService: rehydrateWorkerPrSubscriptions failed: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
   }
   /**
    * Reset any `blocked` node executions for a run back to `pending` so the

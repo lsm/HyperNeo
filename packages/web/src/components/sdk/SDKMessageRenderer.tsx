@@ -94,6 +94,8 @@ interface Props {
    * animated arc traces exactly that element's rounded-rect border.
    */
   isRunning?: boolean;
+  /** Tool use IDs within this assistant message whose cards are currently running. */
+  runningToolUseIds?: Set<string>;
   /** Visual marker for messages superseded/retracted by later SDK rows. */
   replacementStatus?: MessageReplacementStatus;
   /** True when this row is the latest visible SDK row in the session stream. */
@@ -265,6 +267,7 @@ function SDKMessageRendererImpl({
   flattenSubagentTools = false,
   showToolResultUserMessages = false,
   isRunning,
+  runningToolUseIds,
   replacementStatus,
   isLiveTail = false,
 }: Props) {
@@ -376,6 +379,7 @@ function SDKMessageRendererImpl({
         onQuestionResolved={onQuestionResolved}
         flattenSubagentTools={flattenSubagentTools}
         isRunning={isRunning}
+        runningToolUseIds={runningToolUseIds}
       />
     );
   } else if (isSDKResultMessage(sdkMessage)) {
@@ -449,6 +453,7 @@ function areMessageRendererPropsEqual(prev: Props, next: Props): boolean {
     prev.flattenSubagentTools === next.flattenSubagentTools &&
     prev.showToolResultUserMessages === next.showToolResultUserMessages &&
     prev.isRunning === next.isRunning &&
+    prev.runningToolUseIds === next.runningToolUseIds &&
     prev.replacementStatus === next.replacementStatus &&
     prev.isLiveTail === next.isLiveTail
   );
