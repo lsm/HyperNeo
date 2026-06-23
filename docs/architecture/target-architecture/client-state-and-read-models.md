@@ -284,6 +284,8 @@ Events:
 Commands:
 
 - `space.update`
+- `space.slug.update`
+- `space.concurrentLimit.set`
 - `space.pause`
 - `space.resume`
 - `space.stop`
@@ -297,6 +299,10 @@ Notes:
   lookup shape used by Space detail hydration and online Space chat assertions. `space.overview` is a
   selected-shell aggregate and must not replace that direct detail lookup unless it explicitly supports the
   same request/response contract.
+- `space.updateSlug` remains a compatibility alias for `space.slug.update` because current `space.update`
+  params do not include slug edits. `space.setConcurrentLimit` remains a compatibility alias for
+  `space.concurrentLimit.set`, or for the target update command only if that command explicitly preserves
+  the dedicated limit-helper request shape.
 
 ### 7.4 SpaceTaskStore
 
@@ -506,7 +512,7 @@ Notes:
 
 - Current workflow detail cache and version map move here.
 - External-event source enablement and delivery inspection belong to the configure surface because they drive Space settings. Existing RPCs map as follows during migration: `externalEvents.extensions.list` stays under the same global extension query name, `externalEvents.extensions.setGlobalEnabled` stays under the same global command name, and `space.externalEvents.listDeliveries` maps to `space.externalEvents.deliveries.list`.
-- Existing Space agent CRUD RPCs map as follows during migration: `spaceAgent.list` -> `space.agent.list`, `spaceAgent.create` -> `space.agent.create`, `spaceAgent.update` -> `space.agent.update`, and `spaceAgent.delete` -> `space.agent.delete`.
+- Existing Space agent CRUD/detail RPCs map as follows during migration: `spaceAgent.list` -> `space.agent.list`, `spaceAgent.get` -> `space.agent.get`, `spaceAgent.create` -> `space.agent.create`, `spaceAgent.update` -> `space.agent.update`, and `spaceAgent.delete` -> `space.agent.delete`. `space.agent.get` preserves the focused ID lookup contract covered by the Space-agent RPC suite and must stay available until callers migrate from the legacy detail read.
 - Existing agent/template RPCs map as follows during migration: `spaceAgent.listBuiltInTemplates` -> `space.agentTemplate.builtin.list`, `spaceAgent.syncFromTemplate` -> `space.agent.syncFromTemplate`, `spaceAgent.getPromotionDraft` -> `space.agent.promotionDraft.get`, and `spaceAgent.promoteSession` -> `space.agent.promoteSession`.
 - Existing template drift RPCs map as follows during migration: `spaceAgent.getDriftReport` -> `space.agentTemplate.driftReport`, `spaceWorkflow.detectDrift` -> `space.workflowTemplate.drift`, and `spaceWorkflow.detectDuplicateDrift` -> `space.workflowTemplate.duplicateDrift`.
 - Existing workflow CRUD/detail RPCs map as follows during migration: `spaceWorkflow.list` -> `space.workflow.list`, `spaceWorkflow.get` -> `space.workflow.get`, `spaceWorkflow.create` -> `space.workflow.create`, `spaceWorkflow.update` -> `space.workflow.update`, and `spaceWorkflow.delete` -> `space.workflow.delete`.
