@@ -1205,7 +1205,8 @@ export class TaskAgentManager {
     const repo = this.config.pendingMessageRepo;
     if (!repo) return;
 
-    // Expire stale rows first so we don't deliver messages that have exceeded their TTL.
+    // Expire stale/overflow rows first so we don't deliver messages beyond retention limits.
+    repo.enforceRetention({ runId: workflowRunId });
     repo.expireStale(workflowRunId);
 
     const execution = this.config.nodeExecutionRepo.getByAgentSessionId(sessionId);
@@ -1219,7 +1220,7 @@ export class TaskAgentManager {
     const pending = queueTargetNames
       .flatMap((targetName) => repo.listPendingForTarget(workflowRunId, targetName))
       .filter((row) => row.targetKind === 'node_agent')
-      .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
+      .sort((a, b) => a.createdAt - b.createdAt);
     if (pending.length === 0) return;
 
     log.info(
@@ -1303,6 +1304,7 @@ export class TaskAgentManager {
     const inject = this.config.spaceAgentInjector;
     if (!repo || !inject) return;
 
+    repo.enforceRetention({ runId: workflowRunId });
     repo.expireStale(workflowRunId);
 
     const pending = repo
