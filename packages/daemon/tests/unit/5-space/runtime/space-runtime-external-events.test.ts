@@ -19,6 +19,7 @@ import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/reposit
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
+import { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository';
 import { createSpaceTables } from '../../helpers/space-test-db';
 
 const SPACE_ID = 'space-runtime-events';
@@ -128,6 +129,7 @@ describe('SpaceRuntime external event subscriptions', () => {
   let workflowRunRepo: SpaceWorkflowRunRepository;
   let taskRepo: SpaceTaskRepository;
   let nodeExecutionRepo: NodeExecutionRepository;
+  let artifactRepo: WorkflowRunArtifactRepository;
   let workflowManager: SpaceWorkflowManager;
   let runtime: SpaceRuntime;
   let eventStore: ExternalEventStore;
@@ -211,6 +213,7 @@ describe('SpaceRuntime external event subscriptions', () => {
       return { ok: true };
     });
     tam = new MockTaskAgentManager();
+    artifactRepo = new WorkflowRunArtifactRepository(db);
     runtime = new SpaceRuntime({
       db,
       spaceManager: new SpaceManager(db),
@@ -219,6 +222,7 @@ describe('SpaceRuntime external event subscriptions', () => {
       workflowRunRepo,
       taskRepo,
       nodeExecutionRepo,
+      artifactRepo,
       internalEventBus: bus,
       commandBus,
       externalEventStore: eventStore,
@@ -776,6 +780,328 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(deliveries).toHaveLength(1);
     expect(deliveries[0]!.state).toBe('delivered');
     expect(deliveries[0]!.taskId).toBe(task.id);
+  });
+
+  describe('ensurePrSubscriptionForNode', () => {
+    test('auto-subscribes a node to its PR, delivers, and dedupes on repeat', async () => {
+      const workflow = createWorkflow('code');
+      const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const task = tasks[0]!;
+      const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: 'session-pr',
+        startedAt: Date.now(),
+      });
+      tam.alive.add('session-pr');
+
+      const r1 = runtime.ensurePrSubscriptionForNode(
+        run.id,
+        task.id,
+        'code',
+        'coder',
+        'https://github.com/lsm/neokai/pull/42'
+      );
+      expect(r1.success).toBe(true);
+      expect(r1.subscribed).toBe(true);
+      expect(r1.topicPattern).toBe('github/lsm/neokai/pull_request/42.*');
+
+      await eventService.publish(makeEvent());
+      expect(injected).toHaveLength(1);
+      expect(injected[0]!.sessionId).toBe('session-pr');
+
+      // Re-ensure no-ops (dedup) — no duplicate registration.
+      const r2 = runtime.ensurePrSubscriptionForNode(
+        run.id,
+        task.id,
+        'code',
+        'coder',
+        'https://github.com/lsm/neokai/pull/42'
+      );
+      expect(r2.success).toBe(true);
+      expect(r2.subscribed).toBe(false);
+    });
+
+    test('dedupes against a prior manual subscription for the same PR', async () => {
+      const workflow = createWorkflow('code');
+      const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const task = tasks[0]!;
+      runtime.registerSubscription(
+        run.id,
+        task.id,
+        'code',
+        'coder',
+        'github/lsm/neokai/pull_request/42.*'
+      );
+      const r = runtime.ensurePrSubscriptionForNode(
+        run.id,
+        task.id,
+        'code',
+        'coder',
+        'https://github.com/lsm/neokai/pull/42'
+      );
+      expect(r.success).toBe(true);
+      expect(r.subscribed).toBe(false);
+    });
+
+    test('returns failure for an unparseable PR URL', async () => {
+      const workflow = createWorkflow('code');
+      const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const task = tasks[0]!;
+      const r = runtime.ensurePrSubscriptionForNode(
+        run.id,
+        task.id,
+        'code',
+        'coder',
+        'not-a-pr-url'
+      );
+      expect(r.success).toBe(false);
+      expect(r.error).toMatch(/Unable to parse/i);
+    });
+
+    test("drops the prior auto_pr subscription when the node's PR changes", async () => {
+      const workflow = createWorkflow('code');
+      const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const task = tasks[0]!;
+      const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: 'session-pr-change',
+        startedAt: Date.now(),
+      });
+      tam.alive.add('session-pr-change');
+
+      // Node announces PR 41, then replaces it with PR 42.
+      runtime.ensurePrSubscriptionForNode(
+        run.id,
+        task.id,
+        'code',
+        'coder',
+        'https://github.com/lsm/neokai/pull/41'
+      );
+      const r = runtime.ensurePrSubscriptionForNode(
+        run.id,
+        task.id,
+        'code',
+        'coder',
+        'https://github.com/lsm/neokai/pull/42'
+      );
+      expect(r.success).toBe(true);
+      expect(r.subscribed).toBe(true);
+      expect(r.topicPattern).toBe('github/lsm/neokai/pull_request/42.*');
+
+      // Event for the OLD PR (41) is not delivered — stale subscription dropped.
+      await eventService.publish(
+        makeEvent({
+          topic: 'github/lsm/neokai/pull_request/41.review_submitted',
+          dedupeKey: 'pr-41-event',
+        })
+      );
+      expect(injected).toHaveLength(0);
+
+      // Event for the NEW PR (42) is delivered.
+      await eventService.publish(makeEvent({ dedupeKey: 'pr-42-event' }));
+      expect(injected).toHaveLength(1);
+    });
+
+    test('clears a stale auto_pr sub even when a manual sub for the new PR dedup-short-circuits', async () => {
+      const workflow = createWorkflow('code');
+      const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const task = tasks[0]!;
+      const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: 'session-pr-dedup',
+        startedAt: Date.now(),
+      });
+      tam.alive.add('session-pr-dedup');
+
+      // Worker auto-subscribes to PR A, then manually subscribes to PR B before
+      // announcing it.
+      runtime.ensurePrSubscriptionForNode(
+        run.id,
+        task.id,
+        'code',
+        'coder',
+        'https://github.com/lsm/neokai/pull/41'
+      );
+      runtime.registerSubscription(
+        run.id,
+        task.id,
+        'code',
+        'coder',
+        'github/lsm/neokai/pull_request/42.*'
+      );
+      // Announce PR B — dedup finds the manual sub, but the stale auto_pr for A
+      // must still be dropped (not left lingering behind the early return).
+      const r = runtime.ensurePrSubscriptionForNode(
+        run.id,
+        task.id,
+        'code',
+        'coder',
+        'https://github.com/lsm/neokai/pull/42'
+      );
+      expect(r.success).toBe(true);
+      expect(r.subscribed).toBe(false); // deduped against the manual sub
+
+      // PR A event is NOT delivered — stale auto_pr dropped despite the short-circuit.
+      await eventService.publish(
+        makeEvent({
+          topic: 'github/lsm/neokai/pull_request/41.review_submitted',
+          dedupeKey: 'pr-a-event',
+        })
+      );
+      expect(injected).toHaveLength(0);
+
+      // PR B event IS delivered (manual sub intact).
+      await eventService.publish(makeEvent({ dedupeKey: 'pr-b-event' }));
+      expect(injected).toHaveLength(1);
+    });
+
+    test('auto_pr subscription survives the blocked-gate wake-up cleanup', async () => {
+      const workflow = createWorkflow('code');
+      const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const task = tasks[0]!;
+      const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: 'session-pr-survive',
+        startedAt: Date.now(),
+      });
+      tam.alive.add('session-pr-survive');
+
+      runtime.ensurePrSubscriptionForNode(
+        run.id,
+        task.id,
+        'code',
+        'coder',
+        'https://github.com/lsm/neokai/pull/42'
+      );
+      // Simulate the blocked-gate wake-up path that clears `auto` subscriptions.
+      runtime.clearPrEventSubscriptionsForRun(run.id);
+
+      await eventService.publish(makeEvent());
+      expect(injected).toHaveLength(1); // auto_pr survived
+    });
+
+    test('registers auto_pr even when a gate-wake auto sub already exists for the PR', async () => {
+      const workflow = createWorkflow('code');
+      const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const task = tasks[0]!;
+      const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: 'session-gate-overlap',
+        startedAt: Date.now(),
+      });
+      tam.alive.add('session-gate-overlap');
+
+      // A blocked-gate wake-up `auto` sub already covers this PR on the slot.
+      runtime.registerSubscription(
+        run.id,
+        task.id,
+        'code',
+        'coder',
+        'github/lsm/neokai/pull_request/42.*',
+        { subscriptionKind: 'auto' }
+      );
+      // Worker saves pr_url — must still get its own durable auto_pr, NOT dedup
+      // against the transient gate-wake auto.
+      const r = runtime.ensurePrSubscriptionForNode(
+        run.id,
+        task.id,
+        'code',
+        'coder',
+        'https://github.com/lsm/neokai/pull/42'
+      );
+      expect(r.success).toBe(true);
+      expect(r.subscribed).toBe(true);
+
+      // Gate opens → the gate-wake auto is cleared, but auto_pr survives and
+      // the worker still receives the PR event.
+      runtime.clearPrEventSubscriptionsForRun(run.id);
+      await eventService.publish(makeEvent());
+      expect(injected).toHaveLength(1);
+    });
+
+    test('rehydrateWorkerPrSubscriptionsForRun rebuilds auto_pr from saved pr_url artifacts', async () => {
+      const workflow = createWorkflow('code');
+      const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const task = tasks[0]!;
+      const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: 'session-rehydrate',
+        startedAt: Date.now(),
+      });
+      tam.alive.add('session-rehydrate');
+
+      // Worker previously saved a pr_url artifact; the in-memory auto_pr is
+      // gone after a daemon restart.
+      artifactRepo.upsert({
+        id: 'art-rehydrate',
+        runId: run.id,
+        nodeId: 'code',
+        artifactType: 'result',
+        artifactKey: '',
+        data: { pr_url: 'https://github.com/lsm/neokai/pull/42' },
+      });
+
+      // Rehydrate rebuilds the worker's auto_pr from the artifact.
+      const rehydrated = runtime.rehydrateWorkerPrSubscriptionsForRun(run.id);
+      expect(rehydrated).toBe(1);
+
+      // The rebuilt subscription delivers the PR event.
+      await eventService.publish(makeEvent());
+      expect(injected).toHaveLength(1);
+      expect(injected[0]!.sessionId).toBe('session-rehydrate');
+      void task;
+    });
+
+    test('rehydrateWorkerPrSubscriptionsForRun uses the latest pr_url artifact per node', async () => {
+      const workflow = createWorkflow('code');
+      const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: 'session-latest',
+        startedAt: Date.now(),
+      });
+      tam.alive.add('session-latest');
+
+      // Worker saves PR A, then replaces it with PR B.
+      artifactRepo.upsert({
+        id: 'art-a',
+        runId: run.id,
+        nodeId: 'code',
+        artifactType: 'result',
+        artifactKey: 'a',
+        data: { pr_url: 'https://github.com/lsm/neokai/pull/41' },
+      });
+      artifactRepo.upsert({
+        id: 'art-b',
+        runId: run.id,
+        nodeId: 'code',
+        artifactType: 'result',
+        artifactKey: 'b',
+        data: { pr_url: 'https://github.com/lsm/neokai/pull/42' },
+      });
+
+      runtime.rehydrateWorkerPrSubscriptionsForRun(run.id);
+
+      // The stale PR A (41) event is not delivered.
+      await eventService.publish(
+        makeEvent({
+          topic: 'github/lsm/neokai/pull_request/41.review_submitted',
+          dedupeKey: 'pr-41',
+        })
+      );
+      expect(injected).toHaveLength(0);
+
+      // The current PR B (42) event is delivered.
+      await eventService.publish(makeEvent({ dedupeKey: 'pr-42' }));
+      expect(injected).toHaveLength(1);
+    });
   });
 
   test('queues matching events for pending nodes and flushes after session creation', async () => {
