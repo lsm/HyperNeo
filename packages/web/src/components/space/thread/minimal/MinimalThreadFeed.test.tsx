@@ -656,6 +656,97 @@ describe('MinimalThreadFeed', () => {
     expect(entry.textContent).toContain('✓');
   });
 
+  it('keeps earlier completed slices when api_retry appears in the active tail', () => {
+    const t = Date.now();
+    const summary: ActiveTurnSummary = {
+      sessionId: 'space:s:task:t',
+      turnIndex: 1,
+      entries: [
+        {
+          kind: 'api_retry',
+          attempt: 1,
+          maxRetries: 3,
+          retryDelayMs: 1000,
+          errorStatus: 529,
+          ts: t + 350,
+          uuid: 'retry1',
+        },
+      ],
+    };
+    const rows = [
+      makeRow({
+        id: 'a1',
+        label: 'Coder Agent',
+        createdAt: t,
+        turnIndex: 1,
+        message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'bun test' } }]),
+      }),
+      makeRow({
+        id: 'a2',
+        label: 'Coder Agent',
+        createdAt: t + 100,
+        turnIndex: 1,
+        message: assistantText('a2', 'Completed slice'),
+      }),
+      makeRow({
+        id: 'u1',
+        label: 'Coder Agent',
+        createdAt: t + 200,
+        turnIndex: 1,
+        message: humanUserMessage('u1', 'continue'),
+        messageType: 'user',
+      }),
+      makeRow({
+        id: 'retry1',
+        label: 'Coder Agent',
+        createdAt: t + 350,
+        turnIndex: 1,
+        messageType: 'system',
+        message: {
+          type: 'system',
+          subtype: 'api_retry',
+          uuid: 'retry1',
+          session_id: 'space:s:task:t',
+          attempt: 1,
+          max_retries: 3,
+          retry_delay_ms: 1000,
+          error_status: 529,
+          error: 'overloaded',
+        },
+      }),
+      makeRow({
+        id: 'n1',
+        label: 'Coder Agent',
+        createdAt: t + 400,
+        turnIndex: 1,
+        messageType: 'system',
+        message: {
+          type: 'system',
+          subtype: 'task_notification',
+          task_id: 't',
+          tool_use_id: 'tu-a1-0',
+          status: 'completed',
+          summary: 'completed slice folded once',
+          output_file: '/tmp/o',
+        },
+      }),
+    ];
+
+    render(
+      <MinimalThreadFeed
+        parsedRows={rows}
+        activeAgentLabels={new Set(['Coder Agent'])}
+        activeTurnSummaries={[summary]}
+      />
+    );
+
+    const entries = screen.getAllByTestId('minimal-thread-roster-entry');
+    expect(
+      entries.some((entry) => entry.textContent?.includes('completed slice folded once'))
+    ).toBe(true);
+    expect(screen.queryByText('Task completed')).toBeNull();
+  });
+
   it('does not suppress active turn task_notification when active summary is missing', () => {
     const t = Date.now();
     const rows = [
@@ -1531,6 +1622,111 @@ describe('MinimalThreadFeed', () => {
     // Stale summary is ignored (terminal trailing block) → notification falls back to a row.
     const feed = screen.getByTestId('space-task-event-feed-minimal');
     expect(feed.textContent).toContain('all green');
+  });
+
+  it('does not suppress a capped task_notification when a rostered api_retry splits the active pre-scan', () => {
+    const t = Date.now();
+    const summaryEntries: ActiveTurnSummary['entries'] = [
+      ...Array.from({ length: 9 }, (_, i) => ({
+        kind: 'tool_use' as const,
+        toolName: 'Bash',
+        preview: `echo ${i + 1}`,
+        ts: t + i,
+        uuid: 'a1',
+        toolUseId: `tu-a1-${i}`,
+      })),
+      {
+        kind: 'api_retry' as const,
+        attempt: 1,
+        maxRetries: 3,
+        retryDelayMs: 1000,
+        errorStatus: 529,
+        ts: t + 100,
+        uuid: 'retry1',
+      },
+    ];
+    const rows = [
+      makeRow({
+        id: 'a1',
+        label: 'Coder Agent',
+        createdAt: t,
+        turnIndex: 1,
+        message: assistantToolUse(
+          'a1',
+          Array.from({ length: 9 }, (_, i) => ({
+            name: 'Bash',
+            input: { command: `echo ${i + 1}` },
+          }))
+        ),
+      }),
+      makeRow({
+        id: 'a1-text',
+        label: 'Coder Agent',
+        createdAt: t + 50,
+        turnIndex: 1,
+        message: assistantText('a1-text', 'working on it'),
+      }),
+      makeRow({
+        id: 'retry1',
+        label: 'Coder Agent',
+        createdAt: t + 100,
+        turnIndex: 1,
+        messageType: 'system',
+        message: {
+          type: 'system',
+          subtype: 'api_retry',
+          uuid: 'retry1',
+          session_id: 'space:s:task:t',
+          attempt: 1,
+          max_retries: 3,
+          retry_delay_ms: 1000,
+          error_status: 529,
+          error: 'overloaded',
+        },
+      }),
+      makeRow({
+        id: 'post-retry-text',
+        label: 'Coder Agent',
+        createdAt: t + 150,
+        turnIndex: 1,
+        message: assistantText('post-retry-text', 'still working after retry'),
+      }),
+      makeRow({
+        id: 'n1',
+        label: 'Coder Agent',
+        createdAt: t + 200,
+        turnIndex: 1,
+        messageType: 'system',
+        message: {
+          type: 'system',
+          subtype: 'task_notification',
+          task_id: 't',
+          tool_use_id: 'tu-a1-1',
+          status: 'failed',
+          summary: 'second tool failed after retry',
+          output_file: '/tmp/o',
+          usage: { total_tokens: 1234, tool_uses: 1, duration_ms: 2500 },
+        },
+      }),
+    ];
+    const summary: ActiveTurnSummary = {
+      sessionId: 'space:s:task:t',
+      turnIndex: 1,
+      entries: summaryEntries,
+    };
+
+    render(
+      <MinimalThreadFeed
+        parsedRows={rows}
+        activeAgentLabels={new Set(['Coder Agent'])}
+        activeTurnSummaries={[summary]}
+      />
+    );
+
+    const feed = screen.getByTestId('space-task-event-feed-minimal');
+    expect(feed.textContent).toContain('Task failed');
+    expect(feed.textContent).toContain('second tool failed after retry');
+    expect(feed.textContent).toContain('1,234 tokens');
   });
 
   it('caps the active roster at 8 most-recent tool calls', () => {
