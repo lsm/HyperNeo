@@ -2698,6 +2698,16 @@ export type ActivityEntry =
       summary?: string;
       ts: number;
       uuid: string;
+    }
+  /** SDK `system:api_retry` row — preserves retry visibility in the active roster. */
+  | {
+      kind: 'api_retry';
+      attempt: number;
+      maxRetries: number;
+      retryDelayMs: number;
+      errorStatus: number | null;
+      ts: number;
+      uuid: string;
     };
 
 /**
