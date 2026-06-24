@@ -74,6 +74,12 @@ export const TERMINAL_EVENT_STATES: ReadonlySet<ExternalEventState> = new Set<Ex
  * `space_external_event_deliveries`.
  *
  * `pending`: registered, not yet attempted or attempt may retry.
+ *   - `failureReason === null`: owned by an in-process dispatch path
+ *     (pending queue, in-flight, or rate-limit digest). The activation
+ *     flush intentionally skips these to avoid duplicate dispatch;
+ *     requeuePersistedPendingDeliveries recovers them across a crash.
+ *   - `failureReason !== null`: explicitly retryable (e.g.
+ *     `node_execution_not_active`); eligible for the activation flush.
  * `delivered` (terminal): command-bus injection succeeded.
  * `failed` (terminal): retry budget exhausted, scope mismatch, node cancellation, etc.
  */
