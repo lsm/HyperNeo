@@ -1641,9 +1641,32 @@ export class SpaceRuntime {
           a.delivery.deliveryKey.localeCompare(b.delivery.deliveryKey)
       );
 
+    // Mirror requeuePersistedPendingDeliveries: only dispatch persisted rows
+    // when the workflow run is externally deliverable. All deliveries here
+    // share target.workflowRunId, so the run state is computed once. A
+    // 'blocked' run is deliverable only while it still has an active execution
+    // to receive the event; otherwise the persisted rows are terminally failed
+    // with run_not_externally_deliverable and the event's terminal state is
+    // updated.
+    const run = this.config.workflowRunRepo.getRun(target.workflowRunId);
+    const runDeliverable = run
+      ? run.status === 'blocked'
+        ? this.hasActiveExecutionForRun(run.id)
+        : isExternallyDeliverableRun(run.status)
+      : false;
+
     for (const { delivery, eventRecord } of deliveries) {
       if (store.isDeliveryTerminal(delivery.eventId, delivery.deliveryKey)) continue;
       if (this.externalEventDeliveriesInFlight.has(delivery.deliveryKey)) continue;
+      if (!runDeliverable) {
+        store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, {
+          terminal: true,
+          reason: 'run_not_externally_deliverable',
+        });
+        store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
+        this.clearExternalEventRetry(delivery.deliveryKey);
+        continue;
+      }
       if (this.isTargetTaskTerminal(target.taskId)) {
         store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, {
           terminal: true,

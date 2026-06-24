@@ -4290,6 +4290,102 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(eventStore.getById(event.id)?.state).toBe('failed');
   });
 
+  test('activation flush terminalizes persisted pending deliveries for terminal runs', async () => {
+    const { run, task } = await startRunWithSubscription();
+    // Make the node execution non-active so the published event is persisted as
+    // a retryable pending delivery (failureReason = node_execution_not_active),
+    // which is the only kind collectPersistedPendingDeliveries re-dispatches.
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, { status: 'idle', completedAt: Date.now() });
+
+    const event = makeEvent();
+    await eventService.publish(event);
+    const persisted = eventStore.listDeliveries(event.id)[0]!;
+    expect(persisted.state).toBe('pending');
+    expect(persisted.failureReason).toBe('node_execution_not_active');
+
+    // Run transitions to terminal before the node reactivates.
+    workflowRunRepo.updateRun(run.id, { status: 'cancelled' });
+
+    runtime.flushPendingNodeQueue({
+      workflowRunId: run.id,
+      taskId: task.id,
+      nodeId: 'code',
+      agentName: 'coder',
+      sessionId: 'session-activation-after-terminal',
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const delivery = eventStore.listDeliveries(event.id)[0]!;
+    expect(delivery.state).toBe('failed');
+    expect(delivery.failureReason).toBe('run_not_externally_deliverable');
+    expect(eventStore.getById(event.id)?.state).toBe('failed');
+    expect(injected).toHaveLength(0);
+  });
+
+  test('activation flush terminalizes persisted pending deliveries for blocked runs without active execution', async () => {
+    const { run, task } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, { status: 'idle', completedAt: Date.now() });
+
+    const event = makeEvent();
+    await eventService.publish(event);
+    expect(eventStore.listDeliveries(event.id)[0]!.failureReason).toBe('node_execution_not_active');
+
+    // Run becomes blocked with no active execution to receive the event.
+    workflowRunRepo.updateRun(run.id, { status: 'blocked' });
+
+    runtime.flushPendingNodeQueue({
+      workflowRunId: run.id,
+      taskId: task.id,
+      nodeId: 'code',
+      agentName: 'coder',
+      sessionId: 'session-activation-blocked-no-exec',
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const delivery = eventStore.listDeliveries(event.id)[0]!;
+    expect(delivery.state).toBe('failed');
+    expect(delivery.failureReason).toBe('run_not_externally_deliverable');
+    expect(eventStore.getById(event.id)?.state).toBe('failed');
+    expect(injected).toHaveLength(0);
+  });
+
+  test('activation flush dispatches persisted pending deliveries for blocked runs with active execution', async () => {
+    const { run, task } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, { status: 'idle', completedAt: Date.now() });
+
+    const event = makeEvent();
+    await eventService.publish(event);
+    expect(eventStore.listDeliveries(event.id)[0]!.failureReason).toBe('node_execution_not_active');
+
+    // Reactivate the node execution, then leave the run blocked — a blocked run
+    // with an active execution is still externally deliverable.
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-activation-blocked-active',
+      startedAt: Date.now(),
+      completedAt: null,
+    });
+    tam.alive.add('session-activation-blocked-active');
+    workflowRunRepo.updateRun(run.id, { status: 'blocked' });
+
+    runtime.flushPendingNodeQueue({
+      workflowRunId: run.id,
+      taskId: task.id,
+      nodeId: 'code',
+      agentName: 'coder',
+      sessionId: 'session-activation-blocked-active',
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(injected).toHaveLength(1);
+    const delivery = eventStore.listDeliveries(event.id)[0]!;
+    expect(delivery.state).toBe('delivered');
+    expect(eventStore.getById(event.id)?.state).toBe('delivered');
+  });
+
   test('does not requeue persisted pending deliveries for removed subscriptions', async () => {
     const { workflow, run, task } = await startRunWithSubscription();
     const event = makeEvent();
