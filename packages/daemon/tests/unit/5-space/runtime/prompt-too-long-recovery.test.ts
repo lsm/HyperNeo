@@ -104,9 +104,35 @@ function buildLinearWorkflow(
 function makeMockTaskAgentManager(
   taskRepo: SpaceTaskRepository,
   nodeExecutionRepo: NodeExecutionRepository,
-  inject: (sessionId: string, message: string) => Promise<string>
+  sdkMessages: SDKMessageRepository,
+  db: BunDatabase,
+  options: {
+    inject?: (sessionId: string, message: string) => Promise<string>;
+    /** Simulate a real injection that cannot deliver (throws). */
+    injectThrows?: boolean;
+  } = {}
 ) {
   const spawned: string[] = [];
+  const defaultInject = async (sessionId: string, message: string): Promise<string> => {
+    // Mirror production injectMessageIntoSession: persist the injected message
+    // so getLastSDKMessage advances to it, and return its dbId. This is what
+    // makes the message-advance detection in the recovery state machine work.
+    sdkMessages.saveSDKMessage(sessionId, {
+      type: 'user',
+      message: { role: 'user', content: message },
+    } as never);
+    const row = db
+      .prepare(
+        `SELECT id FROM sdk_messages WHERE session_id = ? ORDER BY timestamp DESC, rowid DESC LIMIT 1`
+      )
+      .get(sessionId) as { id: string };
+    return row.id;
+  };
+  const inject = options.injectThrows
+    ? async (_sid: string, _msg: string) => {
+        throw new Error('session could not be rehydrated');
+      }
+    : (options.inject ?? defaultInject);
   return {
     isSpawning: () => false,
     isTaskAgentAlive: () => false,
@@ -282,11 +308,6 @@ describe('SpaceRuntime — prompt-too-long recovery', () => {
     db.prepare(`UPDATE sdk_messages SET timestamp = ? WHERE session_id = ?`).run(ts, sessionId);
   }
 
-  /** Remove every SDK message for a session (used to swap the "last" message). */
-  function clearMessages(sessionId: string): void {
-    db.prepare(`DELETE FROM sdk_messages WHERE session_id = ?`).run(sessionId);
-  }
-
   function promptTooLongRecoveryMap(
     rt: SpaceRuntime
   ): Map<string, { compactAttempts: number; awaitingContinue: boolean }> {
@@ -297,25 +318,47 @@ describe('SpaceRuntime — prompt-too-long recovery', () => {
     ).promptTooLongRecovery;
   }
 
-  test('compacts then continues when an idle execution overflows', async () => {
-    const injections: Array<{ sessionId: string; message: string }> = [];
-    const tam = makeMockTaskAgentManager(
-      taskRepo,
-      nodeExecutionRepo,
-      async (sessionId, message) => {
+  /** Build a TAM whose inject persists the message (like production) and records calls. */
+  function makeRecordingTam(injections: Array<{ sessionId: string; message: string }>): unknown {
+    return makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, sdkMessageRepo, db, {
+      inject: async (sessionId, message) => {
         injections.push({ sessionId, message });
-        return `injected:${injections.length}`;
-      }
-    );
-    const rt = new SpaceRuntime(buildConfig(tam));
+        // Mirror production: persist the injected message so getLastSDKMessage
+        // advances to it, and return its dbId.
+        sdkMessageRepo.saveSDKMessage(sessionId, {
+          type: 'user',
+          message: { role: 'user', content: message },
+        } as never);
+        const row = db
+          .prepare(
+            `SELECT id FROM sdk_messages WHERE session_id = ? ORDER BY timestamp DESC, rowid DESC LIMIT 1`
+          )
+          .get(sessionId) as { id: string };
+        return row.id;
+      },
+    });
+  }
+
+  async function setupIdleOverflowExecution(
+    rt: SpaceRuntime,
+    sessionId: string,
+    promptTooLong = true
+  ): Promise<{ run: { id: string }; execution: { id: string } }> {
     const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
       { id: STEP_A, name: 'Work', agentId: AGENT },
     ]);
     const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
     const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
-    const sessionId = 'session:overflow';
     nodeExecutionRepo.update(execution.id, { status: 'idle', agentSessionId: sessionId });
-    saveResultMessage(sessionId, { promptTooLong: true });
+    saveResultMessage(sessionId, { promptTooLong });
+    return { run, execution };
+  }
+
+  test('compacts then continues when an idle execution overflows', async () => {
+    const injections: Array<{ sessionId: string; message: string }> = [];
+    const rt = new SpaceRuntime(buildConfig(makeRecordingTam(injections)));
+    const sessionId = 'session:overflow';
+    const { run, execution } = await setupIdleOverflowExecution(rt, sessionId, true);
 
     // Tick 1: overflow detected → inject /compact FIRST.
     await rt.executeTick();
@@ -324,80 +367,113 @@ describe('SpaceRuntime — prompt-too-long recovery', () => {
     expect(state?.compactAttempts).toBe(1);
     expect(state?.awaitingContinue).toBe(true);
 
-    // Simulate compaction completing: replace the last message with a success result.
-    clearMessages(sessionId);
+    // Tick 2: the injected /compact is now the last (non-terminal) message — the
+    // recovery must still fire (it is not gated on classification.terminal) and
+    // wait, not re-inject.
+    await rt.executeTick();
+    expect(injections.map((i) => i.message)).toEqual(['/compact']);
+
+    // Simulate compaction completing: a success result lands (newer than /compact).
     saveResultMessage(sessionId, { promptTooLong: false });
 
-    // Tick 2: last message no longer overflow → inject the continue nag.
+    // Tick 3: last message advanced past /compact and is non-overflow → continue nag.
     await rt.executeTick();
     expect(injections.map((i) => i.message)).toEqual(['/compact', buildPromptTooLongContinueNag()]);
-    expect(promptTooLongRecoveryMap(rt).get(`${run.id}:${execution.id}`)?.awaitingContinue).toBe(
-      false
-    );
   });
 
   test('does not double-inject /compact while awaiting the compacted result', async () => {
-    const injections: string[] = [];
-    const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, async (_sid, message) => {
-      injections.push(message);
-      return 'ok';
-    });
-    const rt = new SpaceRuntime(buildConfig(tam));
-    const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
-      { id: STEP_A, name: 'Work', agentId: AGENT },
-    ]);
-    const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-    const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
-    const sessionId = 'session:overflow2';
-    nodeExecutionRepo.update(execution.id, { status: 'idle', agentSessionId: sessionId });
-    saveResultMessage(sessionId, { promptTooLong: true });
+    const injections: Array<{ sessionId: string; message: string }> = [];
+    const rt = new SpaceRuntime(buildConfig(makeRecordingTam(injections)));
+    const { run, execution } = await setupIdleOverflowExecution(rt, 'session:overflow2', true);
 
+    await rt.executeTick(); // inject /compact
+    // The injected /compact is the last message; awaitingContinue is set. Two
+    // more ticks must NOT inject another /compact.
     await rt.executeTick();
-    // The last message is still the overflow result — a second tick must NOT
-    // inject another /compact (awaitingContinue guard).
     await rt.executeTick();
-    expect(injections).toEqual(['/compact']);
+    expect(injections.map((i) => i.message)).toEqual(['/compact']);
     expect(promptTooLongRecoveryMap(rt).get(`${run.id}:${execution.id}`)?.compactAttempts).toBe(1);
   });
 
-  test('escalates to blocked after MAX attempts when compaction cannot help', async () => {
-    const injections: string[] = [];
-    const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, async (_sid, message) => {
-      injections.push(message);
-      return 'ok';
+  test('does not stall when a fresh overflow result follows the /compact', async () => {
+    // P1: if the /compact turn itself ends with another prompt-too-long result,
+    // the message-advance detection must clear the wait and escalate after MAX.
+    const injections: Array<{ sessionId: string; message: string }> = [];
+    const rt = new SpaceRuntime(buildConfig(makeRecordingTam(injections)));
+    const sessionId = 'session:fresh-overflow';
+    const { run, execution } = await setupIdleOverflowExecution(rt, sessionId, true);
+
+    // Tick 1: inject /compact (attempt 1).
+    await rt.executeTick();
+    // The /compact turn ends with ANOTHER overflow (compaction couldn't shrink).
+    saveResultMessage(sessionId, { promptTooLong: true });
+    // Tick 2: new overflow result → advance detection clears awaiting → attempt 2.
+    await rt.executeTick();
+    saveResultMessage(sessionId, { promptTooLong: true });
+    // Tick 3: attempts exhausted (2) → escalate to blocked.
+    await rt.executeTick();
+
+    expect(injections.map((i) => i.message)).toEqual(['/compact', '/compact']);
+    const updated = nodeExecutionRepo.getById(execution.id);
+    expect(updated?.status).toBe('blocked');
+    expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
+    expect(promptTooLongRecoveryMap(rt).has(`${run.id}:${execution.id}`)).toBe(false);
+  });
+
+  test('does not stall when /compact injection fails', async () => {
+    // P1: a thrown injectRuntimeRecoveryMessage must not leave awaitingContinue
+    // set; failed attempts count toward the cap and escalate instead of looping
+    // forever on the same overflow result.
+    const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, sdkMessageRepo, db, {
+      injectThrows: true,
     });
     const rt = new SpaceRuntime(buildConfig(tam));
-    const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
-      { id: STEP_A, name: 'Work', agentId: AGENT },
-    ]);
-    const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-    const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+    const { run, execution } = await setupIdleOverflowExecution(rt, 'session:inject-fail', true);
+
+    // After at least one failed inject, awaitingContinue must NOT be set (the bug
+    // would leave it true and stall forever on subsequent ticks).
+    await rt.executeTick();
+    const stateAfterFail = promptTooLongRecoveryMap(rt).get(`${run.id}:${execution.id}`);
+    expect(stateAfterFail?.awaitingContinue).toBe(false);
+    expect(stateAfterFail?.compactAttempts).toBeGreaterThan(0);
+
+    // Keep ticking — failed attempts accumulate and escalate to blocked rather
+    // than retrying indefinitely.
+    for (let i = 0; i < 5 && nodeExecutionRepo.getById(execution.id)?.status !== 'blocked'; i++) {
+      await rt.executeTick();
+    }
+    expect(nodeExecutionRepo.getById(execution.id)?.status).toBe('blocked');
+  });
+
+  test('escalates to blocked after MAX attempts when compaction cannot help', async () => {
+    const injections: Array<{ sessionId: string; message: string }> = [];
+    const rt = new SpaceRuntime(buildConfig(makeRecordingTam(injections)));
     const sessionId = 'session:unrecoverable';
-    nodeExecutionRepo.update(execution.id, { status: 'idle', agentSessionId: sessionId });
+    const { run, execution } = await setupIdleOverflowExecution(rt, sessionId, true);
 
     const continueNag = buildPromptTooLongContinueNag();
     // Realistic "compaction can't help" cycle: each /compact shrinks context
     // (success result → continue nag), but the session re-overflows on the next
     // turn because a single message already exceeds the limit.
     // Cycle 1
-    saveResultMessage(sessionId, { promptTooLong: true });
     await rt.executeTick(); // → /compact (attempt 1)
-    clearMessages(sessionId);
     saveResultMessage(sessionId, { promptTooLong: false });
     await rt.executeTick(); // → continue nag
     // Cycle 2
-    clearMessages(sessionId);
     saveResultMessage(sessionId, { promptTooLong: true });
     await rt.executeTick(); // → /compact (attempt 2)
-    clearMessages(sessionId);
     saveResultMessage(sessionId, { promptTooLong: false });
     await rt.executeTick(); // → continue nag
     // Cycle 3: attempts exhausted → escalate to blocked
-    clearMessages(sessionId);
     saveResultMessage(sessionId, { promptTooLong: true });
     await rt.executeTick();
 
-    expect(injections).toEqual(['/compact', continueNag, '/compact', continueNag]);
+    expect(injections.map((i) => i.message)).toEqual([
+      '/compact',
+      continueNag,
+      '/compact',
+      continueNag,
+    ]);
     const updated = nodeExecutionRepo.getById(execution.id);
     expect(updated?.status).toBe('blocked');
     expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');

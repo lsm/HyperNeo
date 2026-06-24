@@ -25,20 +25,35 @@ export const MAX_PROMPT_TOO_LONG_RECOVERY_ATTEMPTS = 2;
  * `SpaceRuntime.promptTooLongRecovery`.
  */
 export interface PromptTooLongRecoveryState {
-  /** Total `/compact` injections across the execution's lifetime. */
+  /**
+   * Total `/compact` injections across the execution's lifetime. Accumulates
+   * across compact→continue→re-overflow cycles so repeated unhelpful compactions
+   * escalate to `blocked` instead of resetting each cycle.
+   */
   compactAttempts: number;
   /**
-   * True after a `/compact` was injected and we are waiting for the compacted
-   * result to land before sending the "continue your work" nag. Guards against
-   * re-injecting `/compact` while the old prompt-too-long result is still the
-   * last persisted message.
+   * True after a `/compact` was successfully injected and we are waiting for the
+   * compacted result to land before sending the "continue your work" nag. Guards
+   * against re-injecting `/compact` while the injected command is still the last
+   * persisted message.
    */
   awaitingContinue: boolean;
-  lastActionAt: number | null;
+  /**
+   * dbId of the injected `/compact` message. While `awaitingContinue` is set, a
+   * tick whose last-message dbId differs from this means the `/compact` turn has
+   * landed a new result (success or a fresh overflow) — the wait is over and the
+   * state is re-evaluated. This prevents a fresh overflow result from being
+   * treated like the pre-compact result and stalling forever.
+   */
+  awaitingContinueAfterDbId: string | null;
 }
 
 export function createPromptTooLongRecoveryState(): PromptTooLongRecoveryState {
-  return { compactAttempts: 0, awaitingContinue: false, lastActionAt: null };
+  return {
+    compactAttempts: 0,
+    awaitingContinue: false,
+    awaitingContinueAfterDbId: null,
+  };
 }
 
 /**
