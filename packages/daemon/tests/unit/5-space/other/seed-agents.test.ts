@@ -536,6 +536,26 @@ describe('preset agent exact definitions', () => {
     expect(reviewer.customPrompt).toContain('REVIEW_POSTED');
   });
 
+  // Regression: the reviewer must never teach the `gh api ... -f body=@-`
+  // pattern. `gh api` does NOT read stdin via `@-` (unlike curl) — it posts the
+  // literal string "@-" and silently discards the heredoc body. The contract
+  // must instead show the command-substitution + quoted-heredoc form and warn
+  // about the trap explicitly.
+  it('Reviewer custom prompt warns against -f body=@- and teaches the heredoc command-substitution form', async () => {
+    const { seeded } = await seedPresetAgents('space-1', manager);
+    const reviewer = seeded.find((a) => a.name === 'Reviewer')!;
+    const prompt = reviewer.customPrompt!;
+    // Explicit warning so the model recognises and avoids the @- trap.
+    expect(prompt).toContain('Never use -f body=@-');
+    // Correct multi-line form: a quoted ('EOF') heredoc wrapped in $(...)
+    // passed to -f body="$(...)". Handles apostrophes/quotes in the body.
+    expect(prompt).toContain("-f body=\"$(cat <<'EOF'");
+    // The old inline single-quote body form (`-f body='## 🤖 Review ...`)
+    // broke on any apostrophe in the body — that fragility is what drove the
+    // reviewer to adopt the broken @- workaround. It must be gone.
+    expect(prompt).not.toContain("-f body='## 🤖 Review");
+  });
+
   it('QA has shared system contract prompt', async () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
     const qa = seeded.find((a) => a.name === 'QA')!;
