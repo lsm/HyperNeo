@@ -1588,6 +1588,33 @@ describe('openai-responses-bridge server', () => {
     expect(body.error.message).toBe('slow down');
   });
 
+  it('maps upstream 529 responses to Anthropic overloaded_error', async () => {
+    server = createOpenAIResponsesBridgeServer({
+      auth: { source: 'api_key', apiKey: 'sk-test' },
+      models,
+      fetchImpl: async () =>
+        new Response(JSON.stringify({ error: { message: 'overloaded' } }), {
+          status: 529,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+    });
+
+    const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'gpt-5.3-codex',
+        max_tokens: 128,
+        messages: [{ role: 'user', content: 'hi' }],
+      }),
+    });
+
+    const body = (await resp.json()) as { error: { type: string; message: string } };
+    expect(resp.status).toBe(529);
+    expect(body.error.type).toBe('overloaded_error');
+    expect(body.error.message).toBe('overloaded');
+  });
+
   it('uses Codex ChatGPT OAuth endpoint and account header for OAuth auth', async () => {
     let capturedUrl = '';
     let capturedHeaders: Headers | undefined;

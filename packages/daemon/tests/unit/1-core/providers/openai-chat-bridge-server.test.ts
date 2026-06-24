@@ -218,6 +218,35 @@ describe('OpenAI Chat Completions bridge server', () => {
     expect(body.error.type).toBe('authentication_error');
   });
 
+  it('maps upstream 529 to overloaded_error', async () => {
+    const fetchMock = mock(
+      async () =>
+        new Response(JSON.stringify({ error: { message: 'overloaded' } }), {
+          status: 529,
+          headers: { 'Content-Type': 'application/json' },
+        })
+    );
+    const server = createOpenAIChatBridgeServer({
+      baseUrl: 'http://upstream.test',
+      fetchImpl: fetchMock as typeof fetch,
+    });
+    servers.push(server);
+
+    const response = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'm',
+        messages: [{ role: 'user', content: 'hi' }],
+        stream: true,
+      }),
+    });
+    expect(response.status).toBe(529);
+    const body = (await response.json()) as { type: string; error: { type: string } };
+    expect(body.type).toBe('error');
+    expect(body.error.type).toBe('overloaded_error');
+  });
+
   it('does not crash when controller is already closed before upstream error', async () => {
     // Regression: catch-block `send()` calls used to throw TypeError when the
     // ReadableStreamDefaultController was already closed (client disconnect /
