@@ -215,11 +215,11 @@ export function ensureAgentTools(
  *                   explicitly so auto-compact fires at the correct threshold.
  * glm              — Sets CLAUDE_CODE_AUTO_COMPACT_WINDOW per model (1M for
  *                   glm-5.2[1m], 200k for the rest). The `[1m]` suffix is
- *                   recognised by PP() so the SDK's effective window matches
- *                   metadata. NeoKai fallback would otherwise fire at 850k
- *                   (reserveBasedThreshold(1M)) and preempt the SDK's correct
- *                   ~987k trigger. If `[1m]` recognition regresses, the
- *                   context-fetcher capacity-mismatch warning surfaces it.
+ *                   recognised by the SDK's context-window resolver so the
+ *                   SDK's effective window matches metadata and its own
+ *                   auto-compact fires correctly (1M − 33k buffer). If `[1m]`
+ *                   recognition regresses, the context-fetcher capacity-mismatch
+ *                   warning surfaces it.
  */
 export const NATIVE_CONTEXT_WINDOW_PROVIDER_IDS = [
   'anthropic',
@@ -250,24 +250,31 @@ export const PROVIDER_NO_SDK_AUTO_COMPACT: ReadonlySet<string> = new Set();
  * auto-compact at the right threshold. For these, we disable SDK auto-compact
  * and let NeoKai's fallback handle compaction.
  */
-export function shouldUseNeoKaiCompactFallback(providerId: string, sdkModelId?: string): boolean {
+export function shouldUseNeoKaiCompactFallback(providerId: string): boolean {
+  // The SDK's context-window resolver only grants >200k to `[1m]`-suffixed or
+  // first-party 1M model IDs; every other ID falls back to a hardcoded 200k.
+  // It then clamps `CLAUDE_CODE_AUTO_COMPACT_WINDOW` to `min(window, 200k)`,
+  // so for a model whose real window is neither 200k nor 1M the SDK fires
+  // compaction at the wrong (too-low) threshold. Kimi's real window is 262k
+  // and no Kimi route (China `kimi-for-coding` or Global `kimi-k2.7-code`) is
+  // recognised by the resolver, so every Kimi session is routed here and
+  // NeoKai compacts at the metadata window (262k − 13k reserve) instead.
   if (providerId === 'kimi') {
-    return sdkModelId !== 'kimi-k2.7-code';
+    return true;
   }
   return PROVIDER_NO_SDK_AUTO_COMPACT.has(providerId);
 }
 
 export function buildProviderSettings(
   providerId: string,
-  contextWindow?: number | null,
-  sdkModelId?: string
+  contextWindow?: number | null
 ): Options['settings'] {
   if (NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId)) {
     return undefined;
   }
 
-  if (shouldUseNeoKaiCompactFallback(providerId, sdkModelId)) {
-    // SDK auto-compact would fire at the wrong threshold (200k PP fallback
+  if (shouldUseNeoKaiCompactFallback(providerId)) {
+    // SDK auto-compact would fire at the wrong threshold (200k fallback
     // instead of the real model window). Disable it and let NeoKai's
     // fallback trigger handle compaction at the SDK-style reserve threshold.
     return { autoCompactEnabled: false };
@@ -512,7 +519,7 @@ export class QueryOptionsBuilder {
       // output style, CLAUDE.md content, etc.).
       settingSources:
         config.settingSources ?? this.ctx.settingsManager.getGlobalSettings().settingSources,
-      settings: buildProviderSettings(providerId, modelInfo?.contextWindow, sdkModelId),
+      settings: buildProviderSettings(providerId, modelInfo?.contextWindow),
 
       // ============ Streaming ============
       includePartialMessages: config.includePartialMessages,
