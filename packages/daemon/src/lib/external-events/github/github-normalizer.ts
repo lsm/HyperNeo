@@ -47,7 +47,7 @@ function getNumber(value: unknown, fallback = 0): number {
   return typeof value === 'number' ? value : fallback;
 }
 
-function parseTs(value: unknown): number {
+export function parseGitHubTimestamp(value: unknown): number {
   const raw = getString(value);
   const parsed = raw ? Date.parse(raw) : Number.NaN;
   return Number.isFinite(parsed) ? parsed : Date.now();
@@ -131,7 +131,7 @@ export function normalizeGitHubWebhook(
     body = getString(comment.body);
     externalId = `issue_comment:${getNumber(comment.id) || deliveryId}:${action}`;
     externalUrl = getString(comment.html_url, prUrl(repo.owner, repo.repo, prNumber));
-    occurredAt = parseTs(comment.updated_at ?? comment.created_at);
+    occurredAt = parseGitHubTimestamp(comment.updated_at ?? comment.created_at);
     title = `PR #${prNumber} comment`;
   } else if (eventType === 'pull_request_review') {
     const pr = asObject(root.pull_request);
@@ -144,7 +144,7 @@ export function normalizeGitHubWebhook(
       review.html_url,
       getString(pr.html_url, prUrl(repo.owner, repo.repo, prNumber))
     );
-    occurredAt = parseTs(review.submitted_at ?? review.updated_at);
+    occurredAt = parseGitHubTimestamp(review.submitted_at ?? review.updated_at);
     title = `PR #${prNumber} review ${getString(review.state, action)}`;
   } else if (eventType === 'pull_request_review_comment') {
     const pr = asObject(root.pull_request);
@@ -157,7 +157,7 @@ export function normalizeGitHubWebhook(
       comment.html_url,
       getString(pr.html_url, prUrl(repo.owner, repo.repo, prNumber))
     );
-    occurredAt = parseTs(comment.updated_at ?? comment.created_at);
+    occurredAt = parseGitHubTimestamp(comment.updated_at ?? comment.created_at);
     title = `PR #${prNumber} inline review comment`;
   } else {
     const pr = asObject(root.pull_request);
@@ -166,7 +166,7 @@ export function normalizeGitHubWebhook(
     body = getString(pr.body);
     externalId = `pull_request:${getNumber(pr.id) || prNumber}:${action}:${deliveryId}`;
     externalUrl = getString(pr.html_url, prUrl(repo.owner, repo.repo, prNumber));
-    occurredAt = parseTs(pr.updated_at ?? pr.created_at);
+    occurredAt = parseGitHubTimestamp(pr.updated_at ?? pr.created_at);
     title = `PR #${prNumber} ${action}`;
   }
   if (!repo.owner || !repo.repo || !prNumber) return null;
@@ -220,7 +220,7 @@ export function normalizeGitHubPollingRow(
   if (endpointKey === 'issue_comments') eventType = 'issue_comment';
   if (endpointKey === 'review_comments') eventType = 'pull_request_review_comment';
   const id = getNumber(obj.id) || prNumber;
-  const updatedAt = parseTs(obj.updated_at ?? obj.created_at);
+  const updatedAt = parseGitHubTimestamp(obj.updated_at ?? obj.created_at);
   const dedupeVersion =
     endpointKey === 'pulls' ? String(updatedAt) : getString(obj.updated_at ?? obj.created_at);
   const dedupeSuffix = dedupeVersion ? `:${dedupeVersion}` : '';
@@ -279,7 +279,9 @@ export function normalizeGitHubCheckRun(params: {
   const name = getString(checkRun.name, 'check run');
   const headSha = getString(checkRun.head_sha);
   const htmlUrl = getString(checkRun.html_url, prUrl(repo.owner, repo.repo, prNumber));
-  const occurredAt = parseTs(checkRun.completed_at ?? checkRun.updated_at ?? checkRun.started_at);
+  const occurredAt = parseGitHubTimestamp(
+    checkRun.completed_at ?? checkRun.updated_at ?? checkRun.started_at
+  );
   const canonicalOwner = repo.owner.toLowerCase();
   const canonicalRepo = repo.repo.toLowerCase();
   const externalId = params.prScopedDedupe
@@ -350,7 +352,7 @@ export function normalizeGitHubReaction(
   if (!id || !prNumber) return null;
   const user = userFrom(obj.user);
   const createdAt = getString(obj.created_at);
-  const occurredAt = parseTs(createdAt);
+  const occurredAt = parseGitHubTimestamp(createdAt);
   const canonicalOwner = watched.owner.toLowerCase();
   const canonicalRepo = watched.repo.toLowerCase();
   const repoFullName = `${watched.owner}/${watched.repo}`;

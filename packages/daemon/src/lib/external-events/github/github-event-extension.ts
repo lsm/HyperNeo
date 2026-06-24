@@ -14,6 +14,7 @@ import {
   normalizeGitHubPollingRow,
   normalizeGitHubReaction,
   normalizeGitHubWebhook,
+  parseGitHubTimestamp,
   toExternalEvent,
 } from './github-normalizer';
 import {
@@ -1503,11 +1504,15 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
           }
           const rows = rowsFromPollingPayload(await response.json(), checkRunEndpointKey);
           for (const row of rows) {
+            const rowOccurredAt = checkRunOccurredAt(row);
+            if (rowOccurredAt < checkRunWatermark) continue;
+            checkRunPending = Math.max(checkRunPending, rowOccurredAt);
             const checkRunPrNumbers = pullRequestNumbersFromCheckRun(
               row,
               pullRequestNumbersByHeadSha,
               fallbackPrNumber
             );
+            const legacyDedupePrNumber = checkRunPrNumbers[0];
             for (const checkRunPrNumber of checkRunPrNumbers) {
               const event = normalizeGitHubCheckRun({
                 repo: watched,
@@ -1516,11 +1521,11 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
                 deliveryId: `poll:check_run:${checkRunIdFrom(row)}:${checkRunPrNumber}`,
                 rawPayload: row,
                 prNumber: checkRunPrNumber,
-                prScopedDedupe: checkRunPrNumbers.length > 1,
+                prScopedDedupe:
+                  checkRunPrNumbers.length > 1 && checkRunPrNumber !== legacyDedupePrNumber,
               });
-              if (!event || event.occurredAt < checkRunWatermark) continue;
+              if (!event) continue;
               await this.publishEvent(watched.spaceId, event, this.context);
-              checkRunPending = Math.max(checkRunPending, event.occurredAt);
               watermarks.pending = Math.max(watermarks.pending, event.occurredAt);
               count++;
             }
@@ -1831,6 +1836,12 @@ function checkRunIdFrom(row: unknown): number | string {
   if (!row || typeof row !== 'object') return 'unknown';
   const id = (row as { id?: unknown }).id;
   return typeof id === 'number' || typeof id === 'string' ? id : 'unknown';
+}
+
+function checkRunOccurredAt(row: unknown): number {
+  if (!row || typeof row !== 'object') return Date.now();
+  const checkRun = row as { completed_at?: unknown; updated_at?: unknown; started_at?: unknown };
+  return parseGitHubTimestamp(checkRun.completed_at ?? checkRun.updated_at ?? checkRun.started_at);
 }
 
 function addPullRequestNumberByHeadSha(
