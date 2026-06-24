@@ -2133,14 +2133,32 @@ export class SpaceRuntime {
 
   private resolveDigestDeliveryTarget(item: ExternalEventDigestItem): WorkflowSubscriptionTarget {
     const target = item.target;
-    const resolved = this.resolveSubscriptionTarget({
+    const liveTarget = this.resolveLiveDeliveryTarget({
       workflowRunId: target.workflowRunId,
       taskId: target.taskId,
       nodeId: target.nodeId,
       agentName: target.agentName,
     });
-    if (resolved.sessionId) return resolved;
-    return item.allowTargetSessionFallback ? target : resolved;
+    if (liveTarget?.sessionId) return liveTarget;
+    // No current worker session for this node. The activation flush's
+    // allowTargetSessionFallback may fall back to the sessionId captured at
+    // spawn time — but only when that session is still live. A superseded
+    // (dead) activation session must never receive the digest; returning a
+    // sessionless target makes deliverDigestToSession requeue the items as
+    // pending for the next activation.
+    if (
+      item.allowTargetSessionFallback &&
+      target.sessionId &&
+      this.isTargetSessionLive(target.sessionId)
+    ) {
+      return target;
+    }
+    return {
+      workflowRunId: target.workflowRunId,
+      taskId: target.taskId,
+      nodeId: target.nodeId,
+      agentName: target.agentName,
+    };
   }
 
   private async deliverToSession(
@@ -2496,6 +2514,31 @@ export class SpaceRuntime {
   ): WorkflowSubscriptionTarget {
     const current = this.getCurrentQueueableOrActiveExecution(target);
     return current?.agentSessionId ? { ...target, sessionId: current.agentSessionId } : target;
+  }
+
+  /**
+   * Re-resolves the authoritative live session for `target` — the stale-session
+   * guard used immediately before injecting an external event.
+   *
+   * `target.sessionId` is captured when a delivery is queued (at node spawn /
+   * activation time). By the time the async dispatch runs the worker may have
+   * been superseded: it crashed and was respawned (a new `agentSessionId` on
+   * the same node execution) or its execution was reset to pending
+   * (`agentSessionId` cleared). The node execution record is authoritative —
+   * `spawnWorkflowNodeAgentForExecution` writes the new `agentSessionId`
+   * before returning — so `getCurrentQueueableOrActiveExecution` is trusted
+   * over the captured `sessionId`.
+   *
+   * Returns the target retargeted onto the *current* live session, or `null`
+   * when no live session can be resolved. Callers requeue the delivery as
+   * pending instead of injecting into a superseded (dead) session.
+   */
+  private resolveLiveDeliveryTarget(
+    target: Pick<WorkflowSubscriptionTarget, 'workflowRunId' | 'taskId' | 'nodeId' | 'agentName'>
+  ): WorkflowSubscriptionTarget | null {
+    const current = this.getCurrentQueueableOrActiveExecution(target);
+    if (!current?.agentSessionId) return null;
+    return { ...target, sessionId: current.agentSessionId };
   }
 
   private isPending(target: WorkflowSubscriptionTarget): boolean {
