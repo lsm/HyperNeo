@@ -1101,6 +1101,17 @@ describe('createCustomAgentInit', () => {
     expect(fallback.model).toBe('claude-sonnet-4-6');
   });
 
+  it('uses saved agent provider with agent model overrides', () => {
+    const init = createCustomAgentInit(
+      makeConfig({
+        customAgent: makeAgent({ model: 'custom-model', provider: 'openrouter' }),
+      })
+    );
+
+    expect(init.model).toBe('custom-model');
+    expect(init.provider).toBe('openrouter');
+  });
+
   it('applies thinking level precedence slot > agent > app default', () => {
     const slot = createCustomAgentInit(
       makeConfig({

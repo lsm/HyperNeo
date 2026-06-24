@@ -123,6 +123,7 @@ export interface SpaceAgentTemplate {
   description: string;
   tools: string[];
   customPrompt: string;
+  templateHash?: string | null;
 }
 
 function workflowToSummary(wf: SpaceWorkflow): SpaceWorkflowSummary {

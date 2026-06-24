@@ -233,6 +233,7 @@ describe('Space Agent RPC Handlers', () => {
       for (const template of result.templates) {
         expect(template.tools.length).toBeGreaterThan(0);
         expect(template.customPrompt.length).toBeGreaterThan(0);
+        expect(template.templateHash).toBeTruthy();
       }
     });
 
@@ -480,6 +481,20 @@ describe('Space Agent RPC Handlers', () => {
       expect(result.agent.name).toBe('FullAgent');
       expect(result.agent.description).toBe('A detailed agent');
       expect(result.agent.customPrompt).toBe('You are helpful.');
+    });
+
+    it('persists template tracking metadata on create', async () => {
+      const result = await call<{
+        agent: { templateName: string | null; templateHash: string | null };
+      }>(hubData.handlers, 'spaceAgent.create', {
+        spaceId: 'space-1',
+        name: 'TemplateAgent',
+        templateName: 'Coder',
+        templateHash: 'coder-hash',
+      });
+
+      expect(result.agent.templateName).toBe('Coder');
+      expect(result.agent.templateHash).toBe('coder-hash');
     });
 
     it('emits spaceAgent.created event after creation', async () => {

@@ -337,6 +337,7 @@ describe('SpaceAgentEditor', () => {
         description: 'Research specialist',
         tools: ['Read', 'Bash', 'Grep', 'Glob', 'WebFetch', 'WebSearch'],
         customPrompt: 'You are a research specialist.',
+        templateHash: 'research-hash',
       },
     ];
 
@@ -393,19 +394,44 @@ describe('SpaceAgentEditor', () => {
     expect(promptTextarea.value).toBe('You are an expert code reviewer.');
   });
 
-  it('applies "Full Coding" preset and selects all known tools', () => {
+  it('applies "Full Coding" preset and selects the seeded coding tools', () => {
     const { getByText, container } = render(<SpaceAgentEditor {...DEFAULT_PROPS} />);
     fireEvent.click(getByText('Full Coding'));
 
+    const expectedTools = [
+      'Read',
+      'Write',
+      'Edit',
+      'Bash',
+      'Grep',
+      'Glob',
+      'WebFetch',
+      'WebSearch',
+      'NotebookEdit',
+      'TodoWrite',
+      'AskUserQuestion',
+      'EnterPlanMode',
+      'ExitPlanMode',
+      'Skill',
+      'ToolSearch',
+    ];
     const toolCheckboxes = container.querySelectorAll('input[type="checkbox"]');
 
-    for (const tool of KNOWN_TOOLS) {
+    for (const tool of expectedTools) {
       const found = Array.from(toolCheckboxes).some((cb) => {
         const label = (cb as HTMLInputElement).closest('label');
         return label?.textContent?.includes(tool) && (cb as HTMLInputElement).checked;
       });
       expect(found, `Expected ${tool} to be checked after Full Coding preset`).toBe(true);
     }
+
+    const orchestrationToolsUnchecked = ['Workflow', 'CronCreate', 'RemoteTrigger'].every((tool) =>
+      Array.from(toolCheckboxes).every((cb) => {
+        const label = (cb as HTMLInputElement).closest('label');
+        return label?.textContent?.trim() !== tool || !(cb as HTMLInputElement).checked;
+      })
+    );
+    expect(orchestrationToolsUnchecked).toBe(true);
   });
 
   it('applies "Read Only" preset and selects only Read, Grep, Glob', () => {
@@ -531,6 +557,30 @@ describe('SpaceAgentEditor', () => {
       expect(mockUpdateAgent).toHaveBeenCalledWith(
         'agent-1',
         expect.objectContaining({ description: null, model: null, provider: null })
+      );
+    });
+  });
+
+  it('persists template metadata when creating from a built-in template', async () => {
+    mockAgentTemplates = [
+      {
+        name: 'Research',
+        description: 'Research specialist',
+        tools: ['Read', 'Grep'],
+        customPrompt: 'You are a research specialist.',
+        templateHash: 'research-hash',
+      },
+    ];
+    mockCreateAgent.mockResolvedValue({ id: 'new-agent' });
+
+    const { getByLabelText, getByRole } = render(<SpaceAgentEditor {...DEFAULT_PROPS} />);
+
+    fireEvent.change(getByLabelText('From Template'), { target: { value: 'Research' } });
+    fireEvent.submit(getByRole('dialog').querySelector('form')!);
+
+    await waitFor(() => {
+      expect(mockCreateAgent).toHaveBeenCalledWith(
+        expect.objectContaining({ templateName: 'Research', templateHash: 'research-hash' })
       );
     });
   });

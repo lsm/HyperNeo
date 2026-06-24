@@ -26,6 +26,7 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event
 import type { SpaceAgentManager } from '../space/managers/space-agent-manager';
 import type { SpaceManager } from '../space/managers/space-manager';
 import { getPresetAgentTemplates } from '../space/agents/seed-agents';
+import { computeAgentTemplateHash } from '../space/agents/agent-template-hash';
 import { Logger } from '../logger';
 
 const log = new Logger('space-agent-handlers');
@@ -174,7 +175,12 @@ export function setupSpaceAgentHandlers(
     const space = await spaceManager.getSpace(params.spaceId);
     if (!space) throw new Error(`Space not found: ${params.spaceId}`);
 
-    return { templates: getPresetAgentTemplates() };
+    return {
+      templates: getPresetAgentTemplates().map((template) => ({
+        ...template,
+        templateHash: computeAgentTemplateHash(template),
+      })),
+    };
   });
 
   // spaceAgent.create — create a new agent within a Space
@@ -190,6 +196,8 @@ export function setupSpaceAgentHandlers(
       customPrompt?: string | null;
       tools?: string[];
       settingSources?: import('@neokai/shared').SettingSource[];
+      templateName?: string | null;
+      templateHash?: string | null;
     };
 
     if (!params.spaceId) throw new Error('spaceId is required');
@@ -206,6 +214,8 @@ export function setupSpaceAgentHandlers(
       customPrompt: params.customPrompt,
       tools: params.tools,
       settingSources: params.settingSources,
+      templateName: params.templateName,
+      templateHash: params.templateHash,
     });
 
     if (!result.ok) throw new Error(result.error);

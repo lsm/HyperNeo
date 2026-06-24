@@ -40,8 +40,26 @@ import {
 type ToolName = (typeof KNOWN_TOOLS)[number];
 
 /** Tool presets map preset name → tool selection */
+const FULL_CODING_TOOLS: ToolName[] = [
+  'Read',
+  'Write',
+  'Edit',
+  'Bash',
+  'Grep',
+  'Glob',
+  'WebFetch',
+  'WebSearch',
+  'NotebookEdit',
+  'TodoWrite',
+  'AskUserQuestion',
+  'EnterPlanMode',
+  'ExitPlanMode',
+  'Skill',
+  'ToolSearch',
+];
+
 const TOOL_PRESETS: Record<string, ToolName[]> = {
-  'Full Coding': [...KNOWN_TOOLS],
+  'Full Coding': FULL_CODING_TOOLS,
   'Read Only': ['Read', 'Grep', 'Glob'],
 };
 
@@ -181,6 +199,7 @@ export function SpaceAgentEditor({
     detectPreset(agent?.tools ?? promotionDraft?.tools)
   );
   const [selectedTemplateName, setSelectedTemplateName] = useState<string>('');
+  const [selectedTemplateHash, setSelectedTemplateHash] = useState<string | null>(null);
 
   // UI state
   const [saving, setSaving] = useState(false);
@@ -204,6 +223,7 @@ export function SpaceAgentEditor({
     setCustomPrompt(template.customPrompt ?? '');
     setTools([...template.tools]);
     setToolsOverridden(true);
+    setSelectedTemplateHash(template.templateHash ?? null);
     setActivePreset(detectPreset(template.tools));
     setErrors((prev) => ({ ...prev, tools: '', name: '', model: '' }));
     setSaveError(null);
@@ -295,6 +315,9 @@ export function SpaceAgentEditor({
           ...(toolsOverridden ? { tools } : {}),
           description: trimmedDescription || undefined,
           ...(trimmedModel ? { model: trimmedModel, provider: provider || undefined } : {}),
+          ...(selectedTemplateName
+            ? { templateName: selectedTemplateName, templateHash: selectedTemplateHash }
+            : {}),
         };
         if (promotionDraft) {
           await spaceStore.promoteSessionToAgent(promotionDraft.sourceSessionId, {
