@@ -6,6 +6,7 @@ import { useState } from 'preact/hooks';
 import type { ToolResultCardProps } from './tool-types.ts';
 import { ToolIcon } from './ToolIcon.tsx';
 import { ToolSummary } from './ToolSummary.tsx';
+import { TaskProgressLine } from './TaskProgressLine.tsx';
 import { DiffViewer } from './DiffViewer.tsx';
 import { CodeViewer } from './CodeViewer.tsx';
 import {
@@ -76,6 +77,7 @@ export function ToolResultCard({
   className,
   isRunning = false,
   taskNotification,
+  taskProgress,
 }: ToolResultCardProps) {
   // Terminal task_notification status. When present it is the authoritative
   // signal (green check on completed, red X on failed/stopped). When absent we
@@ -338,6 +340,8 @@ export function ToolResultCard({
           )}
         </div>
       </button>
+
+      {isRunning && taskProgress && <TaskProgressLine progress={taskProgress} />}
 
       {/* Expanded content - input and output details */}
       {isExpanded && (

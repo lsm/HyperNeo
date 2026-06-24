@@ -321,6 +321,47 @@ describe('ToolResultCard Component', () => {
       expect(screen.queryAllByLabelText('task failed')).toHaveLength(0);
     });
 
+    it('shows live progress only while running', () => {
+      const taskProgress = {
+        type: 'system',
+        subtype: 'task_progress',
+        task_id: 'task-1',
+        tool_use_id: 'bash-progress',
+        description: 'running bash',
+        usage: { total_tokens: 12400, tool_uses: 3, duration_ms: 8200 },
+        last_tool_name: 'Bash',
+        summary: 'checking files',
+        uuid: 'progress-1',
+        session_id: 'session-1',
+      } as const;
+
+      const { rerender } = render(
+        <ToolResultCard
+          toolName="Bash"
+          toolId="bash-progress"
+          input={{ command: 'bun test' }}
+          isRunning={true}
+          taskProgress={taskProgress}
+        />
+      );
+
+      expect(screen.getByLabelText('running task progress')).toBeTruthy();
+      expect(screen.getByText(/Running · 12.4k tok · 3 tools · 8.2s · last: Bash/)).toBeTruthy();
+      expect(screen.getByText(/checking files/)).toBeTruthy();
+
+      rerender(
+        <ToolResultCard
+          toolName="Bash"
+          toolId="bash-progress"
+          input={{ command: 'bun test' }}
+          isRunning={false}
+          taskProgress={taskProgress}
+        />
+      );
+
+      expect(screen.queryByLabelText('running task progress')).toBeNull();
+    });
+
     it('falls back to isError X when no task_notification is present', () => {
       render(
         <ToolResultCard

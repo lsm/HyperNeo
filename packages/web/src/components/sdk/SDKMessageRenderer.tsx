@@ -10,6 +10,7 @@ import type {
   SDKMessage,
   SDKRateLimitEvent as SDKRateLimitEventType,
   SDKTaskNotificationMessage,
+  SDKTaskProgressMessage,
   SDKToolProgressMessage as SDKToolProgressMessageType,
 } from '@neokai/shared/sdk/sdk.d.ts';
 import type {
@@ -54,6 +55,8 @@ interface Props {
   subagentMessagesMap?: Map<string, SDKMessage[]>;
   /** tool_use_id → terminal task_notification (folded onto the tool card). */
   taskNotificationsMap?: Map<string, SDKTaskNotificationMessage>;
+  /** tool_use_id → latest live task_progress (folded onto running tool cards). */
+  taskProgressMap?: Map<string, SDKTaskProgressMessage>;
   /** tool_use_ids whose card is rendered in this slice — gates task_notification
    * suppression (a nested tool_use whose parent is paginated out has no target). */
   foldableToolUseIds?: Set<string>;
@@ -252,6 +255,7 @@ function SDKMessageRendererImpl({
   toolInputsMap,
   subagentMessagesMap,
   taskNotificationsMap,
+  taskProgressMap,
   foldableToolUseIds,
   completedHookUuids,
   replacementStatusMap,
@@ -372,6 +376,7 @@ function SDKMessageRendererImpl({
         toolResultsMap={toolResultsMap}
         subagentMessagesMap={subagentMessagesMap}
         taskNotificationsMap={taskNotificationsMap}
+        taskProgressMap={taskProgressMap}
         replacementStatusMap={replacementStatusMap}
         sessionId={sessionId}
         resolvedQuestions={resolvedQuestions}
@@ -438,6 +443,7 @@ function areMessageRendererPropsEqual(prev: Props, next: Props): boolean {
     prev.toolInputsMap === next.toolInputsMap &&
     prev.subagentMessagesMap === next.subagentMessagesMap &&
     prev.taskNotificationsMap === next.taskNotificationsMap &&
+    prev.taskProgressMap === next.taskProgressMap &&
     prev.foldableToolUseIds === next.foldableToolUseIds &&
     prev.completedHookUuids === next.completedHookUuids &&
     prev.replacementStatusMap === next.replacementStatusMap &&
