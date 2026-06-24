@@ -34,6 +34,7 @@ import type {
   WorkflowChannel,
   WorkflowNode,
 } from '@neokai/shared';
+import type { SDKMessage } from '@neokai/shared/sdk';
 import {
   computeGateDefaults,
   isChannelCyclic,
@@ -83,6 +84,13 @@ import {
 import { evaluateGate } from './gate-evaluator';
 import { executeGateScript } from './gate-script-executor';
 import { classifyLastMessageForIdleAgent } from './last-message-classifier';
+import {
+  MAX_PROMPT_TOO_LONG_RECOVERY_ATTEMPTS,
+  buildPromptTooLongContinueNag,
+  createPromptTooLongRecoveryState,
+  isPromptTooLongResult,
+  type PromptTooLongRecoveryState,
+} from './prompt-too-long-recovery';
 import type { SelectWorkflowWithLlm } from './llm-workflow-selector';
 import type {
   InternalEventBus,
@@ -960,6 +968,13 @@ export class SpaceRuntime {
    * can be nudged/restarted without touching sibling agents.
    */
   private agentStuckRecovery = new Map<string, AgentStuckRecoveryState>();
+
+  /**
+   * Prompt-too-long recovery state keyed by `${runId}:${nodeExecutionId}`.
+   * Tracks compact-then-continue progress for executions that overflowed their
+   * context window and received a terminal `prompt_too_long` result.
+   */
+  private promptTooLongRecovery = new Map<string, PromptTooLongRecoveryState>();
   private readonly toolContinuationRepo: ToolContinuationRecoveryRepository;
   private readonly topicTrie = new TopicTrie<SubscriptionTarget>();
   private readonly pendingExternalEventQueue = new Map<string, PendingExternalEvent[]>();
@@ -5026,6 +5041,11 @@ export class SpaceRuntime {
         this.nonTerminalIdleStates.delete(key);
       }
     }
+    for (const key of this.promptTooLongRecovery.keys()) {
+      if (key.startsWith(runId + ':')) {
+        this.promptTooLongRecovery.delete(key);
+      }
+    }
   }
 
   private getAgentNoProgressThresholdMs(workflow: SpaceWorkflow, execution: NodeExecution): number {
@@ -5068,6 +5088,125 @@ export class SpaceRuntime {
       'Continue the same task from the current repository and workflow state. Inspect task/workflow status, recent messages, git state, PR state, and artifacts as needed before acting. Do not start from scratch blindly.',
       'If you are blocked, report the blocker clearly through the available workflow tools.',
     ].join('\n');
+  }
+
+  /**
+   * Compact-then-continue recovery for an idle execution that overflowed its
+   * context window (terminal `prompt_too_long` result).
+   *
+   * State machine (keyed by `${runId}:${executionId}`):
+   *  - prompt-too-long & not awaiting & attempts < MAX → inject `/compact`,
+   *    increment attempts, set awaitingContinue.
+   *  - prompt-too-long & awaitingContinue               → wait (compact still
+   *    in flight; the old overflow result is still the last persisted message).
+   *  - prompt-too-long & attempts >= MAX                → escalate to blocked.
+   *  - NOT prompt-too-long & awaitingContinue           → compaction shrank the
+   *    context; inject the resume nag and clear awaitingContinue.
+   *
+   * The continue nag fires ONLY once the last message is no longer a
+   * prompt-too-long result, i.e. the context dropped back below the limit — so
+   * it never re-hits the same wall. Repeated overflow after continue increments
+   * attempts and escalates to blocked when compaction cannot help.
+   */
+  private async recoverPromptTooLongIdleExecution(
+    runId: string,
+    spaceId: string,
+    canonicalTask: SpaceTask,
+    execution: NodeExecution,
+    lastMessage: SDKMessage | null | undefined,
+    manager: TaskAgentManager | undefined
+  ): Promise<'handled' | 'blocked'> {
+    const key = `${runId}:${execution.id}`;
+    const sessionId = execution.agentSessionId;
+    const now = Date.now();
+    const state = this.promptTooLongRecovery.get(key) ?? createPromptTooLongRecoveryState();
+    this.promptTooLongRecovery.set(key, state);
+
+    const overflowed = isPromptTooLongResult(lastMessage);
+
+    if (overflowed) {
+      // Already injected a compact for this cycle — wait for it to take effect
+      // before re-injecting (prevents double-compact while the old overflow
+      // result is still the last persisted message).
+      if (state.awaitingContinue) {
+        return 'handled';
+      }
+      if (state.compactAttempts >= MAX_PROMPT_TOO_LONG_RECOVERY_ATTEMPTS) {
+        const reason = `Context overflow ("prompt is too long") could not be resolved after ${state.compactAttempts} compaction attempt(s); agent ${execution.agentName} cannot make progress.`;
+        this.promptTooLongRecovery.delete(key);
+        this.config.nodeExecutionRepo.update(execution.id, {
+          status: 'blocked',
+          result: reason,
+        });
+        await this.transitionRunStatusAndEmit(runId, 'blocked');
+        await this.updateTaskAndEmit(spaceId, canonicalTask.id, {
+          status: 'blocked',
+          result: reason,
+          blockReason: 'execution_failed',
+          completedAt: null,
+        });
+        await this.safeNotify({
+          kind: 'task_blocked',
+          spaceId,
+          taskId: canonicalTask.id,
+          reason,
+          timestamp: new Date(now).toISOString(),
+        });
+        await this.safeNotify({
+          kind: 'workflow_run_blocked',
+          spaceId,
+          runId,
+          reason,
+          timestamp: new Date(now).toISOString(),
+        });
+        log.warn(
+          `SpaceRuntime: blocked execution ${execution.id} (agent ${execution.agentName}) after repeated context overflow; compaction could not shrink context enough`
+        );
+        return 'blocked';
+      }
+      // Compact FIRST, then continue on a later tick.
+      state.compactAttempts += 1;
+      state.awaitingContinue = true;
+      state.lastActionAt = now;
+      try {
+        await manager?.injectRuntimeRecoveryMessage(sessionId!, '/compact');
+        log.warn(
+          `SpaceRuntime: injected /compact for overflowed execution ${execution.id} ` +
+            `(agent ${execution.agentName}, session ${sessionId}, attempt ${state.compactAttempts}/${MAX_PROMPT_TOO_LONG_RECOVERY_ATTEMPTS})`
+        );
+      } catch (err) {
+        log.warn(
+          `SpaceRuntime: failed to inject /compact for overflowed execution ${execution.id} ` +
+            `(session ${sessionId}): ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+      return 'handled';
+    }
+
+    // Not prompt-too-long: if we were awaiting continue, compaction succeeded —
+    // send the resume nag. This is the shrinkage verification: the last message
+    // is no longer an overflow result, so the context is back under the limit.
+    if (state.awaitingContinue) {
+      state.awaitingContinue = false;
+      state.lastActionAt = now;
+      try {
+        await manager?.injectRuntimeRecoveryMessage(sessionId!, buildPromptTooLongContinueNag());
+        log.warn(
+          `SpaceRuntime: injected continue nag after compaction for execution ${execution.id} (agent ${execution.agentName}, session ${sessionId})`
+        );
+      } catch (err) {
+        log.warn(
+          `SpaceRuntime: failed to inject continue nag for execution ${execution.id} ` +
+            `(session ${sessionId}): ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+      return 'handled';
+    }
+
+    // No active recovery phase and not overflowing — nothing to do; the caller
+    // clears the state via the normal terminal-skip path.
+    this.promptTooLongRecovery.delete(key);
+    return 'handled';
   }
 
   private async handleAliveStuckExecutions(
@@ -6243,7 +6382,29 @@ export class SpaceRuntime {
       const classification = classifyLastMessageForIdleAgent(lastMessage);
       const key = `${runId}:${execution.id}`;
       if (classification.terminal) {
+        // Prompt-too-long overflow is a terminal result that the generic idle
+        // sweep would otherwise skip, leaving the execution stuck forever. Route
+        // it to compact-then-continue recovery BEFORE the normal terminal skip.
+        // The branch also fires while `awaitingContinue` is set so we can inject
+        // the resume nag after the compacted result lands (the last message is
+        // then no longer prompt-too-long).
+        const ptlState = this.promptTooLongRecovery.get(key);
+        if (isPromptTooLongResult(lastMessage) || ptlState?.awaitingContinue) {
+          const manager = tam ?? this.config.taskAgentManager;
+          const outcome = await this.recoverPromptTooLongIdleExecution(
+            runId,
+            spaceId,
+            canonicalTask,
+            execution,
+            lastMessage,
+            manager
+          );
+          if (outcome === 'blocked') return 'blocked';
+          preservedAny = true;
+          continue;
+        }
         this.nonTerminalIdleStates.delete(key);
+        this.promptTooLongRecovery.delete(key);
         continue;
       }
 

@@ -288,10 +288,13 @@ describe('QueryOptionsBuilder', () => {
       });
     });
 
-    it('should disable SDK auto-compaction when context window is unavailable', () => {
-      expect(buildProviderSettings('openrouter')).toEqual({
-        autoCompactEnabled: false,
-      });
+    it('should not disable SDK auto-compaction when context window is unavailable (avoid dead zone)', () => {
+      // Previously returned { autoCompactEnabled: false }, creating a dead zone
+      // with no compaction path (no SDK auto-compact, no NeoKai fallback) and
+      // guaranteeing context overflow. Returning undefined lets the SDK use its
+      // built-in auto-compact (enabled by default); the reactive prompt-too-long
+      // recovery handles any sub-200k mismatch.
+      expect(buildProviderSettings('openrouter')).toBeUndefined();
     });
 
     it('should use NeoKai fallback for both Kimi regions (SDK clamps every Kimi route to 200k)', () => {
@@ -367,16 +370,16 @@ describe('QueryOptionsBuilder', () => {
       });
     });
 
-    it('should disable SDK auto-compaction for OpenRouter when model is unknown', async () => {
+    it('should not disable SDK auto-compaction for OpenRouter when model is unknown (avoid dead zone)', async () => {
       registerOpenRouterProvider();
       // Empty cache — model not found
       setModelsCache(new Map());
       mockSession.config.provider = 'openrouter';
       mockSession.config.model = 'unknown-model';
       const options = await builder.build();
-      expect(options.settings).toEqual({
-        autoCompactEnabled: false,
-      });
+      // Returning undefined lets the SDK use its built-in auto-compact instead
+      // of creating a dead zone (no SDK compact, no NeoKai fallback).
+      expect(options.settings).toBeUndefined();
     });
 
     it('should leave settings undefined for native anthropic provider', async () => {

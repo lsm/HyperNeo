@@ -280,11 +280,16 @@ export function buildProviderSettings(
     return { autoCompactEnabled: false };
   }
 
+  // When the real context window is unknown (provider metadata did not report
+  // one), do NOT silently disable SDK auto-compaction — that creates a dead
+  // zone with no compaction path at all and guarantees context overflow.
+  // Returning `undefined` lets the SDK use its built-in auto-compact (enabled by
+  // default with its 200k fallback window). This is strictly better than
+  // disabling: correct for the common (>=200k) case, and the reactive
+  // prompt-too-long recovery (SpaceRuntime) handles any sub-200k mismatch.
   const autoCompactWindow = contextWindow;
   if (!autoCompactWindow) {
-    return {
-      autoCompactEnabled: false,
-    };
+    return undefined;
   }
 
   // Keep SDK auto-compaction enabled for non-native providers only when we can
