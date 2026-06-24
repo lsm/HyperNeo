@@ -2163,6 +2163,69 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(eventStore.listDeliveries(later.id)[0]!.state).toBe('delivered');
   });
 
+  test('concurrent flushPendingNodeQueue calls do not double-dispatch persisted deliveries', async () => {
+    const { run, task } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    // Node idle with no live session → every event persists as a pending
+    // delivery in the DB (failureReason set) waiting for an activation flush.
+    nodeExecutionRepo.update(execution.id, {
+      status: 'idle',
+      agentSessionId: null,
+      completedAt: Date.now(),
+    });
+
+    // Publish more events than the per-minute rate limit (default 10) so the
+    // flush dispatch overflows into the rate-limit digest path, where the
+    // concurrent-flush race lives (the digest timer defers the in-flight claim).
+    const events = Array.from({ length: 12 }, (_, index) =>
+      makeEvent({
+        id: `evt-concurrent-flush-${index}`,
+        dedupeKey: `dedupe-concurrent-flush-${index}`,
+      })
+    );
+    for (const event of events) {
+      await eventService.publish(event);
+    }
+    expect(eventStore.listPendingDeliveries()).toHaveLength(12);
+
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-concurrent-flush',
+      completedAt: null,
+    });
+    tam.alive.add('session-concurrent-flush');
+
+    const flushTarget = {
+      workflowRunId: run.id,
+      taskId: task.id,
+      nodeId: 'code',
+      agentName: 'coder',
+      sessionId: 'session-concurrent-flush',
+    };
+    // Two back-to-back flush calls before the digest timer (setTimeout 0)
+    // fires. The second flush re-reads the same DB-persisted pending rows and
+    // must NOT re-select the deliveries already claimed by the first flush.
+    runtime.flushPendingNodeQueue(flushTarget);
+    runtime.flushPendingNodeQueue(flushTarget);
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // 10 immediate injections + 1 digest injection.
+    const immediateInjections = injected.filter(
+      (item) => !item.message.includes('events received')
+    );
+    const digestInjections = injected.filter((item) => item.message.includes('events received'));
+    expect(immediateInjections).toHaveLength(10);
+    expect(digestInjections).toHaveLength(1);
+    // The digest must cover exactly the 2 overflowed events — not 4 (which
+    // would indicate the second flush re-dispatched the same deliveries).
+    expect(digestInjections[0]!.message).toContain('2 events received');
+    // Every delivery is delivered exactly once.
+    for (const event of events) {
+      expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
+    }
+  });
+
   test('flushes DB-persisted pending deliveries even when in-memory queue is non-empty', async () => {
     const { run, task } = await startRunWithSubscription();
     const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;

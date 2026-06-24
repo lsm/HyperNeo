@@ -2022,6 +2022,14 @@ export class SpaceRuntime {
       createdAt,
       allowTargetSessionFallback,
     });
+    // Claim the delivery synchronously so a concurrent flushPendingNodeQueue
+    // call cannot re-select the same DB-persisted pending delivery before the
+    // digest timer fires. The immediate path already claims synchronously in
+    // deliverToSession; the digest path defers that claim until the timer
+    // callback runs, opening a window where a second flush re-reads the same
+    // row from the DB and dispatches it again. Released in deliverDigestToSession
+    // (success, failure, or session-loss requeue) and on stop().
+    this.externalEventDeliveriesInFlight.add(deliveryKey);
     if (!state.digestTimer) {
       state.digestTimer = setTimeout(() => {
         state.digestTimer = null;
@@ -2063,6 +2071,10 @@ export class SpaceRuntime {
           item.deliveryMode,
           item.createdAt
         );
+        // Release the synchronous digest-path claim acquired in
+        // enqueueDeliverableExternalEvent; the item is back in the pending
+        // queue and will be re-claimed on the next flush.
+        this.externalEventDeliveriesInFlight.delete(item.deliveryKey);
       }
       return;
     }
@@ -3591,6 +3603,10 @@ export class SpaceRuntime {
           reason: `deliveryMode:${item.deliveryMode}; digest pending during runtime stop`,
         });
         this.preservePendingDigestItem(item);
+        // Release the synchronous digest-path claim acquired in
+        // enqueueDeliverableExternalEvent so the requeued delivery can be
+        // retried/flushed after a restart.
+        this.externalEventDeliveriesInFlight.delete(item.deliveryKey);
       }
     }
     this.externalEventRateLimits.clear();
