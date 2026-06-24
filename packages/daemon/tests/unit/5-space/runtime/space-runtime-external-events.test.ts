@@ -1352,6 +1352,105 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(eventStore.getById(events[10]!.id)?.state).toBe('delivered');
   });
 
+  test('does not deliver activation-flushed digest to a superseded session', async () => {
+    const { run, task } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+
+    // Events queue while the worker is not yet active (no live session).
+    const events = Array.from({ length: 11 }, (_, index) =>
+      makeEvent({
+        id: `evt-digest-superseded-${index}`,
+        dedupeKey: `dedupe-digest-superseded-${index}`,
+        occurredAt: 1_700_000_000_000 + index,
+      })
+    );
+    for (const event of events) {
+      await eventService.publish(event);
+    }
+    for (const event of events) {
+      expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
+    }
+
+    // The worker activates — spawn assigns its agentSessionId before the
+    // activation flush drains the pending queue.
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-activation',
+      startedAt: Date.now(),
+      completedAt: null,
+    });
+    tam.alive.add('session-activation');
+    runtime.flushPendingNodeQueue({
+      workflowRunId: run.id,
+      taskId: task.id,
+      nodeId: 'code',
+      agentName: 'coder',
+      sessionId: 'session-activation',
+    });
+
+    // The first ten events dispatch synchronously to the activation session
+    // (under the rate limit); the eleventh is deferred to the digest timer.
+    expect(injected).toHaveLength(10);
+    expect(injected.every((item) => item.sessionId === 'session-activation')).toBe(true);
+
+    // Before the digest timer fires the activation session is superseded: the
+    // worker crashed and its execution was reset to pending (agentSessionId
+    // cleared) with no live session remaining.
+    tam.alive.delete('session-activation');
+    nodeExecutionRepo.update(execution.id, {
+      status: 'pending',
+      agentSessionId: null,
+      startedAt: null,
+      completedAt: null,
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // The digest must NOT inject into the superseded (dead) session — it is
+    // requeued as pending for the next activation instead.
+    expect(injected).toHaveLength(10);
+    const digestDelivery = eventStore.listDeliveries(events[10]!.id)[0]!;
+    expect(digestDelivery.state).toBe('pending');
+    expect(digestDelivery.failureReason).toContain('session loss');
+    expect(eventStore.getById(events[10]!.id)?.state).toBe('published');
+  });
+
+  test('retargets activation flush to the current session when the activation session is superseded', async () => {
+    const { run, task } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+
+    const event = makeEvent();
+    await eventService.publish(event);
+    expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
+
+    // The activation session has been superseded by a respawned worker before
+    // the flush runs: the node execution now points at a different live session.
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-current',
+      startedAt: Date.now(),
+      completedAt: null,
+    });
+    tam.alive.add('session-current');
+
+    // flushPendingNodeQueue is invoked with the stale activation session id;
+    // resolveSubscriptionTarget re-resolves onto the current worker so the
+    // event is never injected into the superseded session.
+    runtime.flushPendingNodeQueue({
+      workflowRunId: run.id,
+      taskId: task.id,
+      nodeId: 'code',
+      agentName: 'coder',
+      sessionId: 'session-stale-activation',
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(injected).toHaveLength(1);
+    expect(injected[0]!.sessionId).toBe('session-current');
+    expect(JSON.parse(injected[0]!.message).eventId).toBe(event.id);
+    expect(eventStore.getById(event.id)?.state).toBe('delivered');
+  });
+
   test('preserves deferred mode when digest delivery is retried after rehydrate', async () => {
     const { workflow, run, task } = await startRunWithSubscription();
     const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
@@ -2009,6 +2108,15 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(oldestDelivery.state).toBe('failed');
     expect(oldestDelivery.failureReason).toBe('pending_node_queue_overflow');
 
+    // The worker activates — spawn assigns its agentSessionId to the node
+    // execution before the activation flush drains the pending queue.
+    nodeExecutionRepo.update(nodeExecutionRepo.listByNode(run.id, 'code')[0]!.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-overflow',
+      startedAt: Date.now(),
+      completedAt: null,
+    });
+    tam.alive.add('session-overflow');
     runtime.flushPendingNodeQueue({
       workflowRunId: run.id,
       taskId: task.id,
