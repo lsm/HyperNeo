@@ -1943,16 +1943,7 @@ export class SpaceRuntime {
           });
           store.markEventFailedIfAllDeliveriesTerminal(payload.eventId);
         } else if (target.sessionId && this.isTargetSessionLive(target.sessionId)) {
-          const execution = this.getCurrentQueueableOrActiveExecution(target);
-          const deliveryMode = execution?.status === 'idle' ? 'defer' : 'immediate';
-          if (execution?.status === 'idle') {
-            this.config.nodeExecutionRepo.update(execution.id, {
-              status: 'in_progress',
-              startedAt: execution.startedAt ?? Date.now(),
-              completedAt: null,
-            });
-          }
-          await this.enqueueDeliverableExternalEvent(target, payload, deliveryKey, deliveryMode);
+          await this.enqueueDeliverableExternalEvent(target, payload, deliveryKey, 'immediate');
         } else if (target.sessionId) {
           await this.enqueueDeliverableExternalEvent(target, payload, deliveryKey, 'defer');
         } else if (this.isPending(target)) {
