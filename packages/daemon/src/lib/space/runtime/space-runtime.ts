@@ -60,6 +60,7 @@ import { ToolContinuationRecoveryRepository } from '../../../storage/repositorie
 import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
 import { Logger } from '../../logger';
+import { isSDKResultError } from '@neokai/shared/sdk';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import type { SpaceManager } from '../managers/space-manager';
 import { isValidSpaceTaskTransition, SpaceTaskManager } from '../managers/space-task-manager';
@@ -81,6 +82,7 @@ import {
   MAX_AGENT_STUCK_RESTARTS,
   MAX_BLOCKED_RUN_RETRIES,
   MAX_TASK_AGENT_CRASH_RETRIES,
+  MAX_TERMINAL_ERROR_CONTINUE_RETRIES,
 } from './constants';
 import { evaluateGate } from './gate-evaluator';
 import { executeGateScript } from './gate-script-executor';
@@ -426,6 +428,23 @@ interface NonTerminalIdleState {
   failedNudgeCount: number;
   lastNudgeAt: number | null;
   lastAttentionLogAt: number | null;
+}
+
+/**
+ * Recovery state for a node-agent session that ended on a terminal error
+ * result. Tracks the number of auto-continue injections and the normalized
+ * error signature of the last error we continued past, so a deterministic
+ * repeat (identical signature) can be escalated instead of looped on.
+ *
+ * `lastSessionId` detects a re-spawn (new session after `blocked` recovery):
+ * the count resets so a genuinely restarted session gets a fresh budget, while
+ * the total stays bounded by `MAX_BLOCKED_RUN_RETRIES`.
+ */
+interface TerminalErrorContinueState {
+  lastSessionId: string | null;
+  continueCount: number;
+  lastRetriedErrorSignature: string | null;
+  lastContinueAt: number | null;
 }
 
 const NON_TERMINAL_IDLE_FAILED_NUDGE_RETRY_MS = 60 * 1000;
@@ -982,6 +1001,15 @@ export class SpaceRuntime {
    * then repeated qualified idle is logged for human visibility.
    */
   private nonTerminalIdleStates = new Map<string, NonTerminalIdleState>();
+
+  /**
+   * In-memory recovery state keyed by `${runId}:${nodeExecutionId}` for
+   * node-agent sessions that ended on a terminal error result.
+   *
+   * Bounds auto-continue injections (`MAX_TERMINAL_ERROR_CONTINUE_RETRIES`)
+   * before escalating to `blocked`, and short-circuits deterministic repeats.
+   */
+  private terminalErrorContinueStates = new Map<string, TerminalErrorContinueState>();
 
   /**
    * In-memory Layer 1 recovery state keyed by `${runId}:${nodeExecutionId}`.
@@ -5186,6 +5214,11 @@ export class SpaceRuntime {
         this.promptTooLongRecovery.delete(key);
       }
     }
+    for (const key of this.terminalErrorContinueStates.keys()) {
+      if (key.startsWith(runId + ':')) {
+        this.terminalErrorContinueStates.delete(key);
+      }
+    }
   }
 
   private getAgentNoProgressThresholdMs(workflow: SpaceWorkflow, execution: NodeExecution): number {
@@ -6059,6 +6092,24 @@ export class SpaceRuntime {
       }
       nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
 
+      // Catch-all recovery: a node-agent session that ended on a terminal error
+      // result (e.g. Codex 400, error_during_execution) leaves the node idle
+      // with a *live* session that no other sweep recovers — the result is
+      // classified terminal so the non-terminal-idle and alive-stuck paths both
+      // bail. Auto-continue once/twice, then escalate to `blocked` so
+      // attemptBlockedRunRecovery takes over with its own bounded re-spawn.
+      const terminalErrorOutcome = await this.handleTerminalErrorIdleExecutions(
+        runId,
+        meta.spaceId,
+        canonicalTask,
+        tam,
+        space ?? null
+      );
+      if (terminalErrorOutcome === 'blocked') {
+        return;
+      }
+      nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
+
       if (
         canonicalTask.status === 'done' ||
         canonicalTask.status === 'cancelled' ||
@@ -6922,6 +6973,264 @@ export class SpaceRuntime {
       }
     }
     return preservedAny ? 'preserved' : 'none';
+  }
+
+  /**
+   * Catch-all recovery for idle node-agent sessions that ended on a terminal
+   * error result (e.g. Codex 400, `error_during_execution`).
+   *
+   * The result is classified `terminal`, so neither `handleAliveStuckExecutions`
+   * nor `handleNonTerminalIdleExecutions` acts on it — the node silently goes
+   * idle with a live session and no recovery fires. This sweep injects a bounded
+   * number of "continue" messages via the same primitive a manual continue uses
+   * (`tam.injectRuntimeRecoveryMessage`), then escalates to `blocked` so
+   * `attemptBlockedRunRecovery` takes over with its own re-spawn cap.
+   *
+   * Guards (see task #673):
+   * - Only retryable subtypes (`error_during_execution`, `error_max_turns`).
+   *   Cost (`error_max_budget_usd`) and structured-output exhaustion are skipped.
+   * - Prompt-too-long results are skipped (deferred to #670 compaction).
+   * - Only when the task is `in_progress` with no `reportedStatus` and the
+   *   session is still alive.
+   * - Per-execution retry cap (`MAX_TERMINAL_ERROR_CONTINUE_RETRIES`).
+   * - Deterministic repeats (identical error signature) escalate immediately.
+   * - Grace cooldown between attempts (mirrors the alive-stuck nag grace).
+   */
+  private async handleTerminalErrorIdleExecutions(
+    runId: string,
+    spaceId: string,
+    canonicalTask: SpaceTask,
+    tam: TaskAgentManager,
+    space?: Space | null
+  ): Promise<'none' | 'continued' | 'blocked'> {
+    if (space?.paused || space?.stopped) return 'none';
+
+    // Explicit completion / review signals are authoritative — a final tool
+    // call may have parked the task even if the error result row persisted.
+    if (
+      canonicalTask.reportedStatus !== null ||
+      canonicalTask.status === 'review' ||
+      canonicalTask.status === 'approved' ||
+      canonicalTask.status === 'done' ||
+      canonicalTask.status === 'cancelled' ||
+      canonicalTask.status === 'archived'
+    ) {
+      return 'none';
+    }
+    if (canonicalTask.status !== 'in_progress') return 'none';
+
+    const graceMs = this.config.agentStuckNagGraceMs ?? DEFAULT_AGENT_STUCK_NAG_GRACE_MS;
+    const now = Date.now();
+
+    const idleExecutions = this.config.nodeExecutionRepo
+      .listByWorkflowRun(runId)
+      .filter((execution) => execution.status === 'idle' && !!execution.agentSessionId);
+
+    for (const execution of idleExecutions) {
+      const sessionId = execution.agentSessionId;
+      if (!sessionId) continue;
+
+      // Only recover live sessions — a dead session is owned by the crash-retry
+      // path in processRunTick (resetWorkflowNodeExecutionForSpawnRetry).
+      if (!tam.isSessionAlive(sessionId)) continue;
+
+      const lastMessage = this.getSdkMessageRepo().getLastSDKMessage(sessionId);
+      if (!lastMessage || !isSDKResultError(lastMessage)) continue;
+
+      // Only retryable subtypes. Cost guard and structured-output exhaustion are
+      // non-retryable; auth errors arrive via session.error/blocked instead.
+      if (
+        lastMessage.subtype !== 'error_during_execution' &&
+        lastMessage.subtype !== 'error_max_turns'
+      ) {
+        continue;
+      }
+
+      // Defer over-long-context results to #670 (compaction), not a plain
+      // continue — continuing won't shrink the context.
+      if (this.isPromptTooLongResultError(lastMessage)) continue;
+
+      const key = `${runId}:${execution.id}`;
+      const state =
+        this.terminalErrorContinueStates.get(key) ??
+        ({
+          lastSessionId: sessionId,
+          continueCount: 0,
+          lastRetriedErrorSignature: null,
+          lastContinueAt: null,
+        } satisfies TerminalErrorContinueState);
+      this.terminalErrorContinueStates.set(key, state);
+
+      // A re-spawn (e.g. after blocked recovery) produces a new session id.
+      // Reset the budget so a genuinely restarted session gets a fresh chance;
+      // total attempts stay bounded by MAX_BLOCKED_RUN_RETRIES.
+      if (state.lastSessionId !== sessionId) {
+        state.lastSessionId = sessionId;
+        state.continueCount = 0;
+        state.lastRetriedErrorSignature = null;
+        state.lastContinueAt = null;
+      }
+
+      const signature = this.computeTerminalErrorSignature(lastMessage);
+
+      // Deterministic repeat: a plain continue already failed to clear this
+      // exact error, so looping again cannot help — escalate to blocked.
+      if (state.lastRetriedErrorSignature === signature) {
+        await this.escalateTerminalErrorToBlocked(
+          runId,
+          spaceId,
+          canonicalTask,
+          execution,
+          lastMessage,
+          `Terminal error recurred with an identical signature after a runtime continue (${signature})`
+        );
+        return 'blocked';
+      }
+
+      // Retry cap exhausted — escalate to blocked so attemptBlockedRunRecovery
+      // can attempt a single bounded re-spawn.
+      if (state.continueCount >= MAX_TERMINAL_ERROR_CONTINUE_RETRIES) {
+        await this.escalateTerminalErrorToBlocked(
+          runId,
+          spaceId,
+          canonicalTask,
+          execution,
+          lastMessage,
+          `Terminal error persisted after ${state.continueCount} runtime continue(s) (${signature})`
+        );
+        return 'blocked';
+      }
+
+      // Grace cooldown between attempts — give the agent time to reach a turn
+      // boundary and act on the previous continue before injecting another.
+      if (state.lastContinueAt !== null && now - state.lastContinueAt < graceMs) {
+        continue;
+      }
+
+      try {
+        await tam.injectRuntimeRecoveryMessage(
+          sessionId,
+          this.buildTerminalErrorContinueMessage(execution, lastMessage)
+        );
+        state.continueCount += 1;
+        state.lastContinueAt = now;
+        state.lastRetriedErrorSignature = signature;
+        log.warn(
+          `Node ${execution.workflowNodeId} ended idle on a terminal error result; ` +
+            `sent runtime continue ${state.continueCount}/${MAX_TERMINAL_ERROR_CONTINUE_RETRIES}: ` +
+            `execution=${execution.id} agent=${execution.agentName} session=${sessionId} ` +
+            `subtype=${lastMessage.subtype} signature=${signature}`
+        );
+      } catch (error) {
+        // Apply the grace cooldown even on failure so a transiently-failing
+        // injection (e.g. a rehydrate race) can't tight-loop every tick. The
+        // count/signature stay unset so a later success still counts correctly;
+        // a persistently-dead session is caught by the isSessionAlive guard.
+        state.lastContinueAt = now;
+        log.warn(
+          `Failed to send runtime continue for terminal-error idle node ${execution.workflowNodeId}; ` +
+            `needs attention: execution=${execution.id} agent=${execution.agentName} ` +
+            `session=${sessionId} signature=${signature}: ${formatCommandError(error)}`
+        );
+      }
+    }
+    return 'none';
+  }
+
+  /**
+   * Escalate a terminal-error-idle execution to `blocked`, mirroring the
+   * alive-stuck blocked path so `attemptBlockedRunRecovery` picks it up on the
+   * next tick with its own `MAX_BLOCKED_RUN_RETRIES` re-spawn cap.
+   */
+  private async escalateTerminalErrorToBlocked(
+    runId: string,
+    spaceId: string,
+    canonicalTask: SpaceTask,
+    execution: NodeExecution,
+    errorResult: { subtype: string; errors?: string[] },
+    detail: string
+  ): Promise<void> {
+    const errorSnippet = (errorResult.errors ?? []).join('; ').slice(0, 280);
+    const reason =
+      `Agent session ended on a terminal error result and exhausted runtime auto-continue recovery ` +
+      `(node ${execution.workflowNodeId}, agent ${execution.agentName}, subtype ${errorResult.subtype}): ` +
+      `${detail}${errorSnippet ? ` — ${errorSnippet}` : ''}`;
+    this.config.nodeExecutionRepo.update(execution.id, {
+      status: 'blocked',
+      result: reason,
+    });
+    await this.transitionRunStatusAndEmit(runId, 'blocked');
+    await this.updateTaskAndEmit(spaceId, canonicalTask.id, {
+      status: 'blocked',
+      result: reason,
+      blockReason: 'execution_failed',
+      completedAt: null,
+    });
+    const dedupKey = `${canonicalTask.id}:blocked`;
+    if (!this.notifiedTaskSet.has(dedupKey)) {
+      this.notifiedTaskSet.add(dedupKey);
+      await this.safeNotify({
+        kind: 'task_blocked',
+        spaceId,
+        taskId: canonicalTask.id,
+        reason,
+        timestamp: new Date().toISOString(),
+      });
+    }
+    await this.safeNotify({
+      kind: 'workflow_run_blocked',
+      spaceId,
+      runId,
+      reason,
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  /**
+   * Normalized signature for a terminal error result, used to detect
+   * deterministic repeats (same subtype + terminal_reason + error strings).
+   */
+  private computeTerminalErrorSignature(message: {
+    subtype: string;
+    terminal_reason?: string;
+    errors?: string[];
+  }): string {
+    const terminalReason =
+      typeof message.terminal_reason === 'string' ? message.terminal_reason : '';
+    // Errors can be verbose; trim each so a recurring identical failure matches
+    // while an unrelated new error does not.
+    const errors = (message.errors ?? []).map((entry) => entry.trim().slice(0, 200));
+    return `${message.subtype}|${terminalReason}|${errors.join('\n')}`;
+  }
+
+  /**
+   * Whether a terminal error result represents an over-long-context failure.
+   * Such results must compact (#670) rather than receive a plain continue,
+   * which would only re-hit the same context limit.
+   */
+  private isPromptTooLongResultError(message: {
+    terminal_reason?: string;
+    errors?: string[];
+  }): boolean {
+    if (message.terminal_reason === 'prompt_too_long') return true;
+    return (message.errors ?? []).some((entry) => /prompt is too long/i.test(entry));
+  }
+
+  private buildTerminalErrorContinueMessage(
+    execution: NodeExecution,
+    errorResult: { subtype: string; errors?: string[] }
+  ): string {
+    const errorSummary = (errorResult.errors ?? []).join('; ').slice(0, 280);
+    return [
+      '[Runtime recovery — terminal error]',
+      '',
+      `Your previous turn ended with a terminal error result (${errorResult.subtype})` +
+        `${errorSummary ? `: ${errorSummary}` : ''}.`,
+      `The error appears transient. Resume your assigned task for node ${execution.workflowNodeId}` +
+        ` (agent ${execution.agentName}) from the current repository and workflow state.`,
+      'Inspect task/workflow status, recent messages, and any partial work before continuing.',
+      'If the same error recurs, report the blocker clearly through the available workflow tools.',
+    ].join('\n');
   }
 
   private async handleWaitingRebindExecutions(
