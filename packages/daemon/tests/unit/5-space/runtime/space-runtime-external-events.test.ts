@@ -4361,6 +4361,45 @@ describe('SpaceRuntime event-driven gate evaluation', () => {
     expect(eventStore.getById(event.id)?.state).toBe('delivered');
   });
 
+  test('clearPrEventSubscriptionsForRun releases digest-path in-flight claims for purged auto-PR items', async () => {
+    const { run } = await startRun();
+    const result = runtime.registerPrEventSubscriptionForRun(run.id, PR_URL);
+    expect(result.success).toBe(true);
+
+    // Publish more PR events than the per-minute rate limit (default 10) so the
+    // overflow lands in the rate-limit digest, where enqueueDeliverableExternalEvent
+    // acquires the synchronous in-flight claim.
+    const events = Array.from({ length: 12 }, (_, index) =>
+      makePrEvent({
+        id: `evt-auto-pr-digest-${index}`,
+        dedupeKey: `dedupe-auto-pr-digest-${index}`,
+      })
+    );
+    for (const event of events) {
+      await eventService.publish(event);
+    }
+    // The two overflowed events are buffered in the digest (their setTimeout(0)
+    // flush has not fired — the run is in_progress so no macrotask yields during
+    // the publish loop). Capture their delivery keys before the purge.
+    const overflowKeys = events
+      .slice(10)
+      .map((event) => eventStore.listDeliveries(event.id)[0]!.deliveryKey);
+
+    // Drop the auto subscription while the overflow events are still buffered.
+    runtime.clearPrEventSubscriptionsForRun(run.id);
+
+    const inFlight = runtime as unknown as { externalEventDeliveriesInFlight: Set<string> };
+    // The purged digest items must release their synchronous in-flight claims —
+    // otherwise externalEventDeliveriesInFlight leaks a terminal delivery key on
+    // every cleared subscription and can block later deliveries reusing the key.
+    for (const [index, deliveryKey] of overflowKeys.entries()) {
+      expect(inFlight.externalEventDeliveriesInFlight.has(deliveryKey)).toBe(false);
+      const delivery = eventStore.listDeliveries(events[10 + index]!.id)[0]!;
+      expect(delivery.state).toBe('failed');
+      expect(delivery.failureReason).toBe('auto_pr_subscription_cleared');
+    }
+  });
+
   test('explicit dynamic PR subscription matches PR events', async () => {
     const { run, task, sessionId } = await startRun();
     const result = runtime.registerSubscription(

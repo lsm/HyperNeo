@@ -1519,6 +1519,10 @@ export class SpaceRuntime {
           });
           store.markEventFailedIfAllDeliveriesTerminal(item.event.eventId);
         }
+        // Release the synchronous digest-path claim acquired in
+        // enqueueDeliverableExternalEvent so the terminal delivery key does not
+        // leak in externalEventDeliveriesInFlight.
+        this.externalEventDeliveriesInFlight.delete(item.deliveryKey);
         return false;
       });
       state.pendingDigest = remaining;
