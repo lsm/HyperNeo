@@ -2669,11 +2669,7 @@ export class SpaceRuntime {
     return this.config.nodeExecutionRepo
       .listByNode(target.workflowRunId, target.nodeId)
       .filter(
-        (execution) =>
-          execution.agentName === target.agentName &&
-          (execution.status === 'pending' ||
-            execution.status === 'in_progress' ||
-            execution.status === 'waiting_rebind')
+        (execution) => execution.agentName === target.agentName && execution.status !== 'cancelled'
       )
       .sort((a, b) => (b.updatedAt ?? b.createdAt) - (a.updatedAt ?? a.createdAt))[0];
   }
@@ -2684,9 +2680,9 @@ export class SpaceRuntime {
 
   /**
    * Returns true when the target node-agent has at least one terminal
-   * execution (idle/cancelled). Used to prevent queueing deliveries for
-   * targets that have permanently finished but whose run is still active
-   * due to other nodes.
+   * execution (cancelled). Used to prevent queueing deliveries for targets
+   * that have permanently finished but whose run is still active due to
+   * other nodes.
    */
   private hasTerminalExecutionForTarget(
     target: Pick<WorkflowSubscriptionTarget, 'workflowRunId' | 'taskId' | 'nodeId' | 'agentName'>
@@ -2694,9 +2690,7 @@ export class SpaceRuntime {
     return this.config.nodeExecutionRepo
       .listByNode(target.workflowRunId, target.nodeId)
       .some(
-        (execution) =>
-          execution.agentName === target.agentName &&
-          (execution.status === 'idle' || execution.status === 'cancelled')
+        (execution) => execution.agentName === target.agentName && execution.status === 'cancelled'
       );
   }
 
