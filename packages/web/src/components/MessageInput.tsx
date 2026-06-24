@@ -24,6 +24,7 @@ import {
   useModal,
   useModelSwitcher,
   useReferenceAutocomplete,
+  type RegisterFileDropTarget,
 } from '../hooks';
 
 import { getMessagesBottomPaddingPx } from '../lib/layout-metrics.ts';
@@ -87,6 +88,13 @@ interface MessageInputProps {
   onDraftActiveChange?: (hasDraft: boolean) => void;
   /** Whether the backing agent/session is currently processing or queued. */
   isProcessing?: boolean;
+  /**
+   * Registers this composer's file-drop handler with the parent drop zone
+   * (the content column). When provided, the column owns the drag/drop surface
+   * and forwards dropped files here. When omitted, no column-level drop zone is
+   * active.
+   */
+  registerDropTarget?: RegisterFileDropTarget;
 }
 
 export default function MessageInput({
@@ -103,6 +111,7 @@ export default function MessageInput({
   leadingPaddingClass,
   onDraftActiveChange,
   isProcessing,
+  registerDropTarget,
 }: MessageInputProps) {
   // Cache touch device detection — computed once on first render, stable thereafter.
   // Using useRef (not a module constant) so tests can mock matchMedia before render.
@@ -110,9 +119,6 @@ export default function MessageInput({
     window.matchMedia('(pointer: coarse)').matches ||
       ('ontouchstart' in window && window.innerWidth < 768)
   );
-
-  // Drag and drop state
-  const [isDragging, setIsDragging] = useState(false);
 
   // Textarea ref for programmatic focus after reference selection
   const textareaInputRef = useRef<HTMLTextAreaElement>(null);
@@ -144,6 +150,17 @@ export default function MessageInput({
     handlePaste,
   } = useFileAttachments();
   const { handleInterrupt } = useInterrupt({ sessionId });
+
+  // Register this composer's file-drop handler with the parent drop zone (the
+  // content column), which owns the drag/drop surface. The wrapper self-gates on
+  // `disabled` so a drop during a transient disabled state is a safe no-op.
+  // Cleared on unmount or when the composer becomes unable to receive files.
+  useEffect(() => {
+    registerDropTarget?.((files) => {
+      if (!disabled) void handleFileDrop(files);
+    });
+    return () => registerDropTarget?.(null);
+  }, [disabled, handleFileDrop, registerDropTarget]);
 
   useEffect(() => {
     onDraftActiveChange?.(content.trim().length > 0);
@@ -394,7 +411,6 @@ export default function MessageInput({
   }, [
     syncMessagesContainerPadding,
     attachments.length,
-    isDragging,
     queuedForCurrentTurn.length,
     queuedForNextTurn.length,
   ]);
@@ -580,85 +596,9 @@ export default function MessageInput({
   );
 
   // Drag and drop handlers
-  const handleDragEnter = useCallback(
-    (e: DragEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (disabled || !e.dataTransfer?.types.includes('Files')) return;
-      setIsDragging(true);
-    },
-    [disabled]
-  );
-
-  const handleDragOver = useCallback(
-    (e: DragEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (disabled) return;
-      if (e.dataTransfer) {
-        e.dataTransfer.dropEffect = 'copy';
-      }
-    },
-    [disabled]
-  );
-
-  const handleDragLeave = useCallback((e: DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    // Only hide overlay when leaving the drop zone entirely
-    if (e.currentTarget === e.target) {
-      setIsDragging(false);
-    }
-  }, []);
-
-  const handleDrop = useCallback(
-    async (e: DragEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      setIsDragging(false);
-
-      if (disabled || !e.dataTransfer?.files) return;
-
-      const files = e.dataTransfer.files;
-      if (files.length > 0) {
-        await handleFileDrop(files);
-      }
-    },
-    [disabled, handleFileDrop]
-  );
-
   return (
     <ContentContainer className="pb-2">
-      <div
-        class="relative"
-        onDragEnter={handleDragEnter}
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
-        onDrop={handleDrop}
-      >
-        {/* Drag Overlay */}
-        {isDragging && (
-          <div class="absolute inset-0 z-50 flex items-center justify-center bg-dark-900/90 backdrop-blur-sm border-2 border-dashed border-blue-500 rounded-2xl pointer-events-none">
-            <div class="text-center">
-              <svg
-                class="w-16 h-16 mx-auto mb-4 text-blue-400"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width={2}
-                  d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
-                />
-              </svg>
-              <p class="text-lg font-medium text-white">Drop images here</p>
-              <p class="text-sm text-gray-400 mt-1">PNG, JPG, GIF, or WebP</p>
-            </div>
-          </div>
-        )}
-
+      <div class="relative">
         <form
           onSubmit={(e) => {
             e.preventDefault();

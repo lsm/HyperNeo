@@ -12,6 +12,7 @@ import MessageInput from './MessageInput.tsx';
 import SessionStatusBar from './SessionStatusBar.tsx';
 import { borderColors } from '../lib/design-tokens.ts';
 import { cn } from '../lib/utils.ts';
+import type { RegisterFileDropTarget } from '../hooks';
 
 export interface ChatComposerProps {
   sessionId: string;
@@ -56,6 +57,11 @@ export interface ChatComposerProps {
   onDraftActiveChange?: (hasDraft: boolean) => void;
   /** Optional inline error message rendered above the status bar (used by task sessions) */
   errorMessage?: string | null;
+  /**
+   * Forwarded to MessageInput so the owning content column can register itself
+   * as the file-drop target. @see MessageInput#registerDropTarget
+   */
+  registerDropTarget?: RegisterFileDropTarget;
 }
 
 export const CHAT_COMPOSER_READABILITY_SCRIM_TEST_ID = 'chat-composer-readability-scrim';
@@ -96,6 +102,7 @@ export function ChatComposer({
   onDraftActiveChange,
   onThinkingLevelChange,
   errorMessage,
+  registerDropTarget,
 }: ChatComposerProps) {
   return (
     <div class="chat-footer absolute bottom-0 left-0 right-0 z-10 isolate pt-4 bg-transparent">
@@ -187,6 +194,7 @@ export function ChatComposer({
               leadingPaddingClass={inputLeadingPaddingClass}
               onDraftActiveChange={onDraftActiveChange}
               isProcessing={isProcessing}
+              registerDropTarget={registerDropTarget}
             />
           )
         )}

@@ -37,6 +37,7 @@ import { ArchiveConfirmDialog } from '../components/ArchiveConfirmDialog.tsx';
 // Components
 import { ChatComposer } from '../components/ChatComposer.tsx';
 import { ChatHeader } from '../components/ChatHeader.tsx';
+import { ImageDropOverlay } from '../components/ImageDropOverlay.tsx';
 import type { ErrorBannerAction } from '../components/ErrorBanner.tsx';
 import { ErrorBanner } from '../components/ErrorBanner.tsx';
 import { ErrorDialog } from '../components/ErrorDialog.tsx';
@@ -54,6 +55,7 @@ import { WorktreeChoiceInline } from '../components/WorktreeChoiceInline.tsx';
 import { getProviderLabel } from '../hooks/index.ts';
 import { useAutoScroll } from '../hooks/useAutoScroll.ts';
 import { useChatComposerController } from '../hooks/useChatComposerController.ts';
+import { useImageDropZone, type FileDropHandler } from '../hooks';
 import { useMessageMaps } from '../hooks/useMessageMaps.ts';
 import { useRunningToolUseIds } from '../hooks/useRunningToolUseIds.ts';
 // Hooks
@@ -1072,6 +1074,21 @@ export default function ChatContainer({
   const messagesLoaded = sessionStore.messagesLoaded.value;
   const loading = !error && (!sessionStateLoaded || !messagesLoaded);
 
+  // Content-column image drop zone. The composer (MessageInput) registers its
+  // file-drop handler upward via registerDropTarget; this column owns the actual
+  // drag/drop surface so an image can be dropped anywhere over the chat column.
+  // Keep these hooks before conditional render returns so hook order remains stable.
+  const dropFilesRef = useRef<FileDropHandler | null>(null);
+  const registerDropTarget = useCallback((fn: FileDropHandler | null) => {
+    dropFilesRef.current = fn;
+  }, []);
+  const composerDisabled =
+    isWaitingForInput || !isConnected || modelSwitching || coordinatorSwitching || sandboxSwitching;
+  const dropEnabled = !readonly && session?.status !== 'archived' && !composerDisabled;
+  const { isDragging, dragHandlers } = useImageDropZone((files) => {
+    void dropFilesRef.current?.(files);
+  }, dropEnabled);
+
   // ========================================
   // Pending Agent Render (before loading check)
   // ========================================
@@ -1250,7 +1267,9 @@ export default function ChatContainer({
     <div
       class="flex-1 flex flex-col bg-app-content overflow-hidden relative"
       data-testid="chat-container"
+      {...dragHandlers}
     >
+      {isDragging && <ImageDropOverlay />}
       {/* Loading overlay for archive/delete operations */}
       {(sessionActions.archiving || sessionActions.deleting) && (
         <div class="absolute inset-0 z-20 flex items-center justify-center bg-dark-900/80 backdrop-blur-sm">
@@ -1472,6 +1491,7 @@ export default function ChatContainer({
         onSandboxModeChange={handleSandboxModeChange}
         onSend={handleSendMessage}
         onOpenTools={toolsModal.open}
+        registerDropTarget={registerDropTarget}
       />
 
       {/* Delete Modal */}
