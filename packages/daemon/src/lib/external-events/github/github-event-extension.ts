@@ -1396,8 +1396,15 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
             const headRef = headRefKey(headRepo, headSha);
             const previousHeadPrNumbers = [...(pullRequestNumbersByHeadRef.get(headRef) ?? [])];
             addPullRequestNumberByHeadSha(pullRequestNumbersByHeadRef, headRef, prNumber);
-            if (!previousHeadPrNumbers.includes(prNumber))
+            if (!previousHeadPrNumbers.includes(prNumber)) {
+              // A new PR joined this head: clear the ETag and reset the per-head
+              // check-run watermark so older failed rows are re-evaluated for the
+              // new PR. Store-level dedupe prevents duplicate delivery for PRs
+              // that already received the event.
               clearCheckRunEtagsForHead(checkRunEtags, headRef);
+              delete checkRunHeadLastSeenAt[headRef];
+              delete checkRunHeadPendingLastSeenAt[headRef];
+            }
             recentPullRequestHeadShas[prNumber] = headSha;
             recentPullRequestHeadRepos[prNumber] = headRepo;
           }
@@ -1483,10 +1490,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       // continue to the next head.
       let checkRunRateLimited = false;
       const globalCheckRunWatermark =
-        endpointLastSeenAt[checkRunEndpointKey] ??
-        checkRunPollingEnabledAt ??
-        watched.createdAt ??
-        watermarks.committed;
+        endpointLastSeenAt[checkRunEndpointKey] ?? checkRunPollingEnabledAt ?? watermarks.committed;
       checkRunHeadLoop: for (const [headRef, prNumbers] of pullRequestNumbersByHeadRef) {
         const { repoPath: headRepoPath, headSha } = parseHeadRefKey(headRef);
         const fallbackPrNumbers = prNumbers;
@@ -1590,7 +1594,6 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
               pullRequestNumbersByHeadRef,
               fallbackPrNumbers
             );
-            const legacyDedupePrNumber = checkRunPrNumbers[0];
             const checkRunId = checkRunIdFrom(row);
             const conclusion = checkRunConclusionFrom(row);
             const checkRunLegacyKey = `${checkRunId}:${conclusion}`;
@@ -1607,14 +1610,13 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
             if (existingLegacyPr !== undefined && !(checkRunLegacyKey in checkRunLegacyPrs)) {
               checkRunLegacyPrs[checkRunLegacyKey] = existingLegacyPr;
             }
-            const singlePrShouldScope =
-              checkRunPrNumbers.length === 1 &&
-              ((recordedLegacyPr !== undefined && recordedLegacyPr !== legacyDedupePrNumber) ||
-                (existingLegacyPr !== undefined && existingLegacyPr !== legacyDedupePrNumber));
+            // The unscoped legacy key belongs to the recorded/existing owner,
+            // not whichever PR happens to be first in the fan-out list.
+            const legacyOwner = recordedLegacyPr ?? existingLegacyPr ?? checkRunPrNumbers[0]!;
+            const legacyPrInFanOut = checkRunPrNumbers.includes(legacyOwner);
             for (const checkRunPrNumber of checkRunPrNumbers) {
-              const isLegacyPr = checkRunPrNumber === legacyDedupePrNumber;
-              const prScopedDedupe =
-                checkRunPrNumbers.length > 1 ? !isLegacyPr : singlePrShouldScope;
+              const isLegacyPr = legacyPrInFanOut && checkRunPrNumber === legacyOwner;
+              const prScopedDedupe = !isLegacyPr;
               const event = normalizeGitHubCheckRun({
                 repo: watched,
                 checkRun: row,
@@ -1626,11 +1628,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
               });
               if (!event) continue;
               await this.publishEvent(watched.spaceId, event, this.context);
-              if (
-                checkRunPrNumbers.length === 1 &&
-                !prScopedDedupe &&
-                !(checkRunLegacyKey in checkRunLegacyPrs)
-              ) {
+              if (!prScopedDedupe && !(checkRunLegacyKey in checkRunLegacyPrs)) {
                 checkRunLegacyPrs[checkRunLegacyKey] = checkRunPrNumber;
               }
               watermarks.pending = Math.max(watermarks.pending, event.occurredAt);

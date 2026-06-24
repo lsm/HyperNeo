@@ -236,9 +236,16 @@ export class GitHubEventExtensionRepository {
         );
     }
     const watched = this.getWatchedRepo(params.spaceId, params.owner, params.repo)!;
-    if (pollingNewlyEnabled && !watched.pollCursor?.checkRunPollingEnabledAt) {
+    if (pollingNewlyEnabled) {
+      // (Re)seed the check-run baseline on every false→true polling transition
+      // so failures from the disabled window are not backfilled as fresh events.
+      // Clearing the per-head cursors ensures the head scan starts clean.
       const cursor = watched.pollCursor ?? {};
       cursor.checkRunPollingEnabledAt = now;
+      delete cursor.checkRunHeadLastSeenAt;
+      delete cursor.checkRunHeadPendingLastSeenAt;
+      delete cursor.endpointLastSeenAt?.check_runs;
+      delete cursor.endpointPendingLastSeenAt?.check_runs;
       this.updatePollCursorJson(watched.id, cursor);
     }
     return this.getWatchedRepoById(watched.id)!;
