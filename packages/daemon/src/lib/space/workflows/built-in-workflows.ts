@@ -468,7 +468,7 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
               '2. Implement the changes with logical, well-described commits\n' +
               '3. Write or update tests to cover new behavior\n' +
               '4. Run the test suite and fix any failures\n' +
-              '5. If code changed: open a PR with `gh pr create` — include a clear title and description\n' +
+              '5. If code changed: open a PR with `gh pr create` — include a clear title and description. After `gh pr create`, call `subscribe_pr_events({})` (no arguments needed — the PR URL is auto-resolved from the run). This subscribes you to review comments, CI failures, and reactions for your PR so you receive them directly and can act on them. Do this once per PR.\n' +
               '6. If code changed: hand off by calling `send_message` to the review target ' +
               'with `data: { pr_url: "<url>" }`. Use the current target and required data ' +
               'fields from the Runtime Execution Contract injected into your task prompt. ' +
@@ -707,7 +707,7 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
               '2. Investigate using web search, code exploration, and available documentation\n' +
               '3. Write findings to well-structured markdown file(s)\n' +
               '4. Include sources, evidence, and clear conclusions\n' +
-              '5. Commit findings and open a PR with `gh pr create`\n' +
+              '5. Commit findings and open a PR with `gh pr create`. After `gh pr create`, call `subscribe_pr_events({})` (no arguments needed — the PR URL is auto-resolved from the run). This subscribes you to review comments, CI failures, and reactions for your PR so you receive them directly and can act on them. Do this once per PR.\n' +
               '6. Hand off to Review by calling `send_message(target="Review", message="<short summary>", data: { pr_url: "<PR url>" })`. ' +
               'The hook validates the PR is open and mergeable before Review activates. ' +
               'Always re-supply `data: { pr_url }` on every send — the hook runs on every send.\n\n' +
@@ -1096,7 +1096,7 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
               'Steps:\n' +
               '1. Implement backend and frontend changes with focused commits\n' +
               '2. Add/update unit, integration, and UI tests as needed\n' +
-              '3. Open or update the PR and ensure it remains mergeable\n' +
+              '3. Open or update the PR and ensure it remains mergeable. After `gh pr create`, call `subscribe_pr_events({})` (no arguments needed — the PR URL is auto-resolved from the run). This subscribes you to review comments, CI failures, and reactions for your PR so you receive them directly and can act on them. Do this once per PR.\n' +
               '4. Hand off by calling `send_message` to the review target with ' +
               '`data: { pr_url: "<url>" }`; `save_artifact` alone will not deliver the handoff\n' +
               '5. Share blockers clearly with Reviewer/QA when needed',
@@ -1555,6 +1555,18 @@ function migrateCodexFeatureToNodeToggle(
   return { nodes: migratedNodes, gates: migratedGates };
 }
 
+const CURRENT_CODING_WORKFLOW_PR_STEP_PROMPT =
+  '5. If code changed: open a PR with `gh pr create` — include a clear title and description. After `gh pr create`, call `subscribe_pr_events({})` (no arguments needed — the PR URL is auto-resolved from the run). This subscribes you to review comments, CI failures, and reactions for your PR so you receive them directly and can act on them. Do this once per PR.\n';
+const RETIRED_CODING_WORKFLOW_PR_STEP_PROMPT =
+  '5. If code changed: open a PR with `gh pr create` — include a clear title and description\n';
+const CURRENT_FULLSTACK_CODING_PR_STEP_PROMPT =
+  '3. Open or update the PR and ensure it remains mergeable. After `gh pr create`, call `subscribe_pr_events({})` (no arguments needed — the PR URL is auto-resolved from the run). This subscribes you to review comments, CI failures, and reactions for your PR so you receive them directly and can act on them. Do this once per PR.\n';
+const RETIRED_FULLSTACK_CODING_PR_STEP_PROMPT =
+  '3. Open or update the PR and ensure it remains mergeable\n';
+const CURRENT_RESEARCH_PR_STEP_PROMPT =
+  '5. Commit findings and open a PR with `gh pr create`. After `gh pr create`, call `subscribe_pr_events({})` (no arguments needed — the PR URL is auto-resolved from the run). This subscribes you to review comments, CI failures, and reactions for your PR so you receive them directly and can act on them. Do this once per PR.\n';
+const RETIRED_RESEARCH_PR_STEP_PROMPT = '5. Commit findings and open a PR with `gh pr create`\n';
+
 const CURRENT_CODING_WORKFLOW_HANDOFF_PROMPT =
   '6. If code changed: hand off by calling `send_message` to the review target ' +
   'with `data: { pr_url: "<url>" }`. Use the current target and required data ' +
@@ -1665,22 +1677,38 @@ const RETIRED_CODEX_REACTION_APPROVAL_GUIDANCE =
   'before codex[bot] has `+1` unless that timeout has elapsed.';
 
 const BUILT_IN_PROMPT_PATCH_VARIANTS = [
+  // Pre-PR-dev Coding Workflow: PR step gained subscribe instruction, all other
+  // steps unchanged. Existing seeded spaces have the old step-5 text without
+  // subscribe — swap the step text only.
+  [[CURRENT_CODING_WORKFLOW_PR_STEP_PROMPT, RETIRED_CODING_WORKFLOW_PR_STEP_PROMPT]],
+  // Gate-era Coding Workflow: PR step + handoff + rehandoff all differ.
   [
+    [CURRENT_CODING_WORKFLOW_PR_STEP_PROMPT, RETIRED_CODING_WORKFLOW_PR_STEP_PROMPT],
     [CURRENT_CODING_WORKFLOW_HANDOFF_PROMPT, RETIRED_CODING_WORKFLOW_HANDOFF_PROMPT],
     [CURRENT_CODING_WORKFLOW_REHANDOFF_PROMPT, RETIRED_CODING_WORKFLOW_REHANDOFF_PROMPT],
   ],
+  // Hardcoded-era Coding Workflow: PR step + hardcoded handoff + rehandoff.
   [
+    [CURRENT_CODING_WORKFLOW_PR_STEP_PROMPT, RETIRED_CODING_WORKFLOW_PR_STEP_PROMPT],
     [CURRENT_CODING_WORKFLOW_HANDOFF_PROMPT, RETIRED_HARDCODED_CODING_WORKFLOW_HANDOFF_PROMPT],
     [CURRENT_CODING_WORKFLOW_REHANDOFF_PROMPT, RETIRED_HARDCODED_CODING_WORKFLOW_REHANDOFF_PROMPT],
   ],
+  // Pre-PR-dev Fullstack Coding: PR step gained subscribe, rest unchanged.
+  [[CURRENT_FULLSTACK_CODING_PR_STEP_PROMPT, RETIRED_FULLSTACK_CODING_PR_STEP_PROMPT]],
+  // Gate-era Fullstack Coding: PR step + ready prompt + step-4 handoff.
   [
+    [CURRENT_FULLSTACK_CODING_PR_STEP_PROMPT, RETIRED_FULLSTACK_CODING_PR_STEP_PROMPT],
     [CURRENT_FULLSTACK_CODING_READY_PROMPT, RETIRED_FULLSTACK_CODING_READY_PROMPT],
     [CURRENT_FULLSTACK_CODING_STEP_PROMPT, RETIRED_FULLSTACK_CODING_STEP_PROMPT],
   ],
+  // Hardcoded-era Fullstack Coding: PR step + hardcoded ready + step-4 handoff.
   [
+    [CURRENT_FULLSTACK_CODING_PR_STEP_PROMPT, RETIRED_FULLSTACK_CODING_PR_STEP_PROMPT],
     [CURRENT_FULLSTACK_CODING_READY_PROMPT, RETIRED_HARDCODED_FULLSTACK_CODING_READY_PROMPT],
     [CURRENT_FULLSTACK_CODING_STEP_PROMPT, RETIRED_HARDCODED_FULLSTACK_CODING_STEP_PROMPT],
   ],
+  // Pre-PR-dev Research: PR step gained subscribe, handoff unchanged.
+  [[CURRENT_RESEARCH_PR_STEP_PROMPT, RETIRED_RESEARCH_PR_STEP_PROMPT]],
   [[CURRENT_FULLSTACK_REVIEW_HANDOFF_PROMPT, RETIRED_FULLSTACK_REVIEW_HANDOFF_PROMPT]],
   [[CURRENT_FULLSTACK_REVIEW_HANDOFF_PROMPT, RETIRED_HARDCODED_FULLSTACK_REVIEW_HANDOFF_PROMPT]],
   // Guidance-only swap: covers PD_PLAN_REVIEW_PROMPT and any other persisted

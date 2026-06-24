@@ -145,6 +145,21 @@ describe('CODING_WORKFLOW template', () => {
     expect(prompt).toContain('The reviewer handles the merge.');
   });
 
+  test('coding-role prompts instruct subscribing to PR events after PR creation', () => {
+    const prompts = [
+      CODING_WORKFLOW.nodes[0].agents[0]?.customPrompt?.value,
+      FULLSTACK_QA_LOOP_WORKFLOW.nodes.find((node) => node.name === 'Coding')?.agents[0]
+        .customPrompt?.value,
+      RESEARCH_WORKFLOW.nodes[0].agents[0]?.customPrompt?.value,
+    ];
+
+    for (const prompt of prompts) {
+      expect(prompt).toContain('`subscribe_pr_events({})`');
+      expect(prompt).toContain('review comments, CI failures, and reactions');
+      expect(prompt).toContain('Do this once per PR');
+    }
+  });
+
   test('coder prompt gives behavioral handoff guidance without hard-coded gate details', () => {
     const prompt = CODING_WORKFLOW.nodes[0].agents[0]?.customPrompt?.value;
     expect(prompt).toContain('hand off by calling `send_message` to the review target');
@@ -1922,6 +1937,10 @@ describe('seedBuiltInWorkflows()', () => {
       .customPrompt!.value;
     const stalePrompt = templatePrompt
       .replace(
+        '5. If code changed: open a PR with `gh pr create` — include a clear title and description. After `gh pr create`, call `subscribe_pr_events({})` (no arguments needed — the PR URL is auto-resolved from the run). This subscribes you to review comments, CI failures, and reactions for your PR so you receive them directly and can act on them. Do this once per PR.\n',
+        '5. If code changed: open a PR with `gh pr create` — include a clear title and description\n'
+      )
+      .replace(
         '6. If code changed: hand off by calling `send_message` to the review target ' +
           'with `data: { pr_url: "<url>" }`. Use the current target and required data ' +
           'fields from the Runtime Execution Contract injected into your task prompt. ' +
@@ -1978,6 +1997,79 @@ describe('seedBuiltInWorkflows()', () => {
     );
   });
 
+  test('re-stamp adds subscribe step to pre-PR-dev Coding/Fullstack/Research prompts', () => {
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+
+    // Simulate each workflow's persisted Coding/Research prompt as it was on
+    // dev BEFORE this PR: the step text lacks the subscribe instruction but all
+    // other steps are identical to the current template. Restamp must detect
+    // the drift and swap in the current template (which includes subscribe).
+    const cases = [
+      {
+        workflow: CODING_WORKFLOW,
+        nodeName: 'Coding',
+        currentStep:
+          '5. If code changed: open a PR with `gh pr create` — include a clear title and description. After `gh pr create`, call `subscribe_pr_events({})` (no arguments needed — the PR URL is auto-resolved from the run). This subscribes you to review comments, CI failures, and reactions for your PR so you receive them directly and can act on them. Do this once per PR.\n',
+        retiredStep:
+          '5. If code changed: open a PR with `gh pr create` — include a clear title and description\n',
+      },
+      {
+        workflow: FULLSTACK_QA_LOOP_WORKFLOW,
+        nodeName: 'Coding',
+        currentStep:
+          '3. Open or update the PR and ensure it remains mergeable. After `gh pr create`, call `subscribe_pr_events({})` (no arguments needed — the PR URL is auto-resolved from the run). This subscribes you to review comments, CI failures, and reactions for your PR so you receive them directly and can act on them. Do this once per PR.\n',
+        retiredStep: '3. Open or update the PR and ensure it remains mergeable\n',
+      },
+      {
+        workflow: RESEARCH_WORKFLOW,
+        nodeName: 'Research',
+        currentStep:
+          '5. Commit findings and open a PR with `gh pr create`. After `gh pr create`, call `subscribe_pr_events({})` (no arguments needed — the PR URL is auto-resolved from the run). This subscribes you to review comments, CI failures, and reactions for your PR so you receive them directly and can act on them. Do this once per PR.\n',
+        retiredStep: '5. Commit findings and open a PR with `gh pr create`\n',
+      },
+    ];
+
+    for (const { workflow, nodeName, currentStep, retiredStep } of cases) {
+      const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === workflow.name)!;
+      const node = wf.nodes.find((n) => n.name === nodeName)!;
+      const templatePrompt = workflow.nodes.find((n) => n.name === nodeName)!.agents[0]
+        .customPrompt!.value;
+      // Build the pre-PR-dev stale prompt: revert ONLY the step text.
+      const stalePrompt = templatePrompt.replace(currentStep, retiredStep);
+      expect(stalePrompt).not.toBe(templatePrompt);
+      expect(stalePrompt).not.toContain('subscribe_pr_events');
+
+      manager.updateWorkflow(wf.id, {
+        nodes: wf.nodes.map((n) =>
+          n.id !== node.id
+            ? n
+            : {
+                ...n,
+                agents: n.agents.map((a, i) =>
+                  i === 0 ? { ...a, customPrompt: { value: stalePrompt } } : a
+                ),
+              }
+        ),
+      });
+      db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+        `stale-pr-step-${workflow.name}`,
+        wf.id
+      );
+
+      const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+      expect(result.restamped).toContain(workflow.name);
+
+      const after = manager.getWorkflow(wf.id)!;
+      const afterNode = after.nodes.find((n) => n.id === node.id)!;
+      const afterPrompt = afterNode.agents[0].customPrompt?.value;
+      expect(afterPrompt).toBe(templatePrompt);
+      expect(afterPrompt).toContain('subscribe_pr_events');
+      expect(after.templateHash).toBe(
+        computeWorkflowHash(getBuiltInWorkflows().find((w) => w.name === workflow.name)!)
+      );
+    }
+  });
+
   test('re-stamp preserves customized prompts containing retired built-in text', () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
@@ -2023,6 +2115,10 @@ describe('seedBuiltInWorkflows()', () => {
     const templatePrompt = FULLSTACK_QA_LOOP_WORKFLOW.nodes.find((n) => n.name === 'Coding')!
       .agents[0].customPrompt!.value;
     const stalePrompt = templatePrompt
+      .replace(
+        '3. Open or update the PR and ensure it remains mergeable. After `gh pr create`, call `subscribe_pr_events({})` (no arguments needed — the PR URL is auto-resolved from the run). This subscribes you to review comments, CI failures, and reactions for your PR so you receive them directly and can act on them. Do this once per PR.\n',
+        '3. Open or update the PR and ensure it remains mergeable\n'
+      )
       .replace(
         'When implementation is ready, ensure the PR is open and mergeable, then call `send_message` ' +
           'to the review target with `data: { pr_url: "<url>" }`. Use the current ' +
