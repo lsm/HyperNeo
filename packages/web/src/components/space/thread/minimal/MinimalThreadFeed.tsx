@@ -762,15 +762,11 @@ function indexTaskNotifications(rows: ParsedThreadRow[]): Map<string, TaskNotifi
  * to fold). A task_notification is only suppressed when its tool_use_id is in
  * this set; otherwise its status must render as a fallback row.
  */
-function collectRosteredToolUseIds(
+function collectActiveRosteredToolUseIds(
   summaries: ActiveTurnSummary[],
-  renderedTurnKeys: Set<string>,
-  completedRows: ParsedThreadRow[][]
+  renderedTurnKeys: Set<string>
 ): Set<string> {
   const ids = new Set<string>();
-  for (const rows of completedRows) {
-    for (const id of indexCompletedFoldableToolUseIds(rows)) ids.add(id);
-  }
   for (const summary of summaries) {
     // Match on (sessionId, turnIndex): a stale summary whose turn no longer
     // matches the compact feed's active turn must not contribute tool IDs.
@@ -794,6 +790,18 @@ function collectRosteredApiRetryUuids(
     }
   }
   return uuids;
+}
+
+function collectRosteredToolUseIds(
+  summaries: ActiveTurnSummary[],
+  renderedTurnKeys: Set<string>,
+  completedRows: ParsedThreadRow[][]
+): Set<string> {
+  const ids = collectActiveRosteredToolUseIds(summaries, renderedTurnKeys);
+  for (const rows of completedRows) {
+    for (const id of indexCompletedFoldableToolUseIds(rows)) ids.add(id);
+  }
+  return ids;
 }
 
 function buildActiveTurn(
@@ -1316,6 +1324,12 @@ function buildFeedTurns(
     if (sid && turnIndex !== undefined) renderedTurnKeys.add(`${sid}:${turnIndex}`);
   }
 
+  const rosteredActiveToolUseIds = collectActiveRosteredToolUseIds(
+    activeTurnSummaries,
+    renderedTurnKeys
+  );
+  const rosteredApiRetryUuids = collectRosteredApiRetryUuids(activeTurnSummaries, renderedTurnKeys);
+
   const completedRows = blocks.flatMap((block) => {
     const out: ParsedThreadRow[][] = [];
     const blockKey = normalizeAgentKey(block.agentLabel);
@@ -1340,8 +1354,16 @@ function buildFeedTurns(
       const subtype =
         message?.type === 'system' ? (message as { subtype?: string }).subtype : undefined;
       if (
+        subtype === 'task_notification' &&
+        trailingBlockCanUpgradeToActive &&
+        !isFoldedTaskNotification(row, rosteredActiveToolUseIds)
+      ) {
+        pendingAgentRows = [];
+        continue;
+      }
+      if (
         subtype !== 'task_notification' &&
-        buildOperationalSystemTurn(row, false, new Set(), new Set())
+        buildOperationalSystemTurn(row, false, rosteredActiveToolUseIds, rosteredApiRetryUuids)
       ) {
         flush();
         continue;
@@ -1362,7 +1384,6 @@ function buildFeedTurns(
     renderedTurnKeys,
     completedRows
   );
-  const rosteredApiRetryUuids = collectRosteredApiRetryUuids(activeTurnSummaries, renderedTurnKeys);
 
   const latestRowIdBySession = new Map<string, string>();
   for (const row of rowsWithReplacementStatus) {
