@@ -2203,7 +2203,12 @@ describe('SDKMessageHandler', () => {
         expect(enqueueMessageSpy).not.toHaveBeenCalled();
       });
 
-      it('does not enqueue /compact for global Kimi (SDK handles via official model)', async () => {
+      it('enqueues /compact for global Kimi (SDK clamps its window to 200k)', async () => {
+        // Global Kimi (kimi-k2.7-code) is NOT recognised by the SDK's
+        // context-window resolver, so the SDK reports 200k and clamps
+        // CLAUDE_CODE_AUTO_COMPACT_WINDOW to min(200k, 262144). Route it through
+        // NeoKai's fallback so compaction fires at the real 262k metadata window
+        // (reserveBasedThreshold(262144) = 229144), not the SDK's clamped 200k.
         setModelsCache(
           new Map([
             [
@@ -2225,9 +2230,9 @@ describe('SDKMessageHandler', () => {
         const getContextUsageSpy = mock(async () => ({
           categories: [{ name: 'Messages', tokens: 250_000 }],
           totalTokens: 250_000,
-          maxTokens: 262_144,
-          rawMaxTokens: 262_144,
-          percentage: 95,
+          maxTokens: 200_000,
+          rawMaxTokens: 200_000,
+          percentage: 125,
           gridRows: [],
           model: 'kimi-k2.7-code',
           memoryFiles: [],
@@ -2262,9 +2267,9 @@ describe('SDKMessageHandler', () => {
         await new Promise((resolve) => setTimeout(resolve, 0));
 
         expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
-        expect(mockContextTracker.shouldCompactAt).not.toHaveBeenCalled();
-        expect(mockContextTracker.markCompactionTriggered).not.toHaveBeenCalled();
-        expect(enqueueMessageSpy).not.toHaveBeenCalledWith('/compact', true);
+        expect(mockContextTracker.shouldCompactAt).toHaveBeenCalledWith(229_144);
+        expect(mockContextTracker.markCompactionTriggered).toHaveBeenCalledTimes(1);
+        expect(enqueueMessageSpy).toHaveBeenCalledWith('/compact', true);
       });
 
       it('enqueues /compact for China Kimi when SDK reports the unknown-model window', async () => {
@@ -2326,7 +2331,7 @@ describe('SDKMessageHandler', () => {
         await new Promise((resolve) => setTimeout(resolve, 0));
 
         expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
-        expect(mockContextTracker.shouldCompactAt).toHaveBeenCalledWith(249_144);
+        expect(mockContextTracker.shouldCompactAt).toHaveBeenCalledWith(229_144);
         expect(mockContextTracker.markCompactionTriggered).toHaveBeenCalledTimes(1);
         expect(enqueueMessageSpy).toHaveBeenCalledWith('/compact', true);
       });

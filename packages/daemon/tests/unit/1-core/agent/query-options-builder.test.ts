@@ -268,13 +268,11 @@ describe('QueryOptionsBuilder', () => {
 
     it('should not override SDK auto-compaction for GLM (env var + [1m] suffix configures SDK correctly)', () => {
       // GLM sets CLAUDE_CODE_AUTO_COMPACT_WINDOW per model in buildSdkConfig,
-      // and the [1m] suffix on glm-5.2[1m] is recognised by PP(). The SDK's
-      // effective window matches metadata, so SDK auto-compact fires at the
-      // correct threshold. If [1m] recognition regresses, the context-fetcher
-      // capacity-mismatch warning surfaces it. We must NOT enable NeoKai
-      // fallback here — it would fire at 850k (reserveBasedThreshold(1M)) and
-      // preempt the SDK's correct ~987k trigger, cutting off 137k of the
-      // advertised 1M context.
+      // and the [1m] suffix on glm-5.2[1m] is recognised by the SDK's
+      // context-window resolver. The SDK's effective window matches metadata,
+      // so its own auto-compact fires correctly (1M − 33k buffer). If [1m]
+      // recognition regresses, the context-fetcher capacity-mismatch warning
+      // surfaces it. GLM stays native, so no NeoKai fallback override is needed.
       expect(buildProviderSettings('glm')).toBeUndefined();
       expect(buildProviderSettings('glm', 1_000_000)).toBeUndefined();
     });
@@ -296,18 +294,18 @@ describe('QueryOptionsBuilder', () => {
       });
     });
 
-    it('should use NeoKai fallback for China Kimi and SDK auto-compact for Global Kimi', () => {
-      // China routes kimi-for-coding, which SDK PP() still treats as 200k.
-      // Global routes kimi-k2.7-code, which follows Moonshot's Claude Code docs.
+    it('should use NeoKai fallback for both Kimi regions (SDK clamps every Kimi route to 200k)', () => {
+      // The SDK's context-window resolver only recognises [1m]-suffixed or
+      // first-party 1M model IDs. Neither China (kimi-for-coding) nor Global
+      // (kimi-k2.7-code) qualifies, so CLAUDE_CODE_AUTO_COMPACT_WINDOW is
+      // clamped to min(200k, 262144) = 200k and the SDK would fire compaction
+      // ~62k early. Route both regions through NeoKai's fallback, which compacts
+      // at the real metadata window (reserveBasedThreshold(262144) = 229144).
       expect(buildProviderSettings('kimi')).toEqual({
         autoCompactEnabled: false,
       });
-      expect(buildProviderSettings('kimi', 262_144, 'kimi-for-coding')).toEqual({
+      expect(buildProviderSettings('kimi', 262_144)).toEqual({
         autoCompactEnabled: false,
-      });
-      expect(buildProviderSettings('kimi', 262_144, 'kimi-k2.7-code')).toEqual({
-        autoCompactEnabled: true,
-        autoCompactWindow: 262_144,
       });
     });
 
