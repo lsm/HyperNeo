@@ -70,6 +70,7 @@ import { MAX_AGENT_SLOT_EVENT_INTERESTS } from '../export-format';
 import { getBuiltInGateScript } from '../workflows/built-in-workflows';
 import { getEffectiveGate } from './gate-features';
 import { buildPrEventTopicPattern, parsePrUrl } from './parse-pr-url';
+import { deliveryModeFromFailureReason } from './delivery-mode';
 import { CompletionDetector } from './completion-detector';
 import {
   DEFAULT_AGENT_NO_PROGRESS_THRESHOLD_MS,
@@ -1650,9 +1651,7 @@ export class SpaceRuntime {
         continue;
       }
 
-      const mode: 'immediate' | 'defer' = delivery.failureReason?.startsWith('deliveryMode:defer;')
-        ? 'defer'
-        : 'immediate';
+      const mode = deliveryModeFromFailureReason(delivery.failureReason);
       const eventPayload = this.externalEventPayloadFromRecord(eventRecord.event);
       const queuedItem: PendingExternalEvent = {
         event: eventPayload,
@@ -4187,9 +4186,7 @@ export class SpaceRuntime {
         continue;
       }
 
-      const mode: 'immediate' | 'defer' = delivery.failureReason?.startsWith('deliveryMode:defer;')
-        ? 'defer'
-        : 'immediate';
+      const mode = deliveryModeFromFailureReason(delivery.failureReason);
       const eventPayload = this.externalEventPayloadFromRecord(eventRecord.event);
       const queuedItem = {
         event: eventPayload,
