@@ -2468,6 +2468,149 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(queuedItems.some((item) => item.createdAt === oldCreatedAt)).toBe(true);
   });
 
+  // --- null-failureReason pending delivery invariant -----------------------
+  //
+  // A `pending` row whose `failureReason` is null is, by contract, still owned
+  // by its original in-process dispatch path (the in-memory pending queue, an
+  // in-flight dispatch, or a pending rate-limit digest). The activation flush
+  // intentionally skips such rows so it never duplicates a delivery. The
+  // counterpart to that skip is crash recovery: rows left `pending`+null by an
+  // interruption are re-queued by requeuePersistedPendingDeliveries on the next
+  // rehydrate, so the skip can never strand them permanently. These two tests
+  // pin both halves of that invariant.
+
+  test('does not re-dispatch a pending delivery with null failureReason during activation flush', async () => {
+    const { run, task } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+
+    // Persist a pending+null delivery row directly, simulating a row owned by
+    // an in-process dispatch path that tracks it in memory (in-flight or
+    // digest-pending) rather than via the failureReason column. The activation
+    // flush must leave it untouched so its owner path delivers it exactly once.
+    const event = makeEvent({ id: 'evt-null-failure-skip', dedupeKey: 'dedupe-null-failure-skip' });
+    eventStore.store(event);
+    const deliveryKey = JSON.stringify([
+      'github',
+      event.dedupeKey,
+      task.id,
+      'code',
+      'coder',
+      run.id,
+    ]);
+    eventStore.registerExpectedDelivery(event.id, deliveryKey, {
+      workflowRunId: run.id,
+      taskId: task.id,
+      nodeId: 'code',
+      agentName: 'coder',
+    });
+    expect(eventStore.getDelivery(event.id, deliveryKey)!.state).toBe('pending');
+    expect(eventStore.getDelivery(event.id, deliveryKey)!.failureReason).toBeNull();
+
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-null-failure-skip',
+      completedAt: null,
+    });
+    tam.alive.add('session-null-failure-skip');
+    runtime.flushPendingNodeQueue({
+      workflowRunId: run.id,
+      taskId: task.id,
+      nodeId: 'code',
+      agentName: 'coder',
+      sessionId: 'session-null-failure-skip',
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // Not dispatched by the flush, and the row is unchanged — the owner path
+    // remains responsible for it.
+    expect(injected).toHaveLength(0);
+    const delivery = eventStore.getDelivery(event.id, deliveryKey)!;
+    expect(delivery.state).toBe('pending');
+    expect(delivery.failureReason).toBeNull();
+    expect(eventStore.listPendingDeliveries()).toContainEqual(delivery);
+  });
+
+  test('recovers a pending delivery with null failureReason after an interruption via requeue', async () => {
+    const { run, task } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+
+    // Persist a pending+null delivery row, as would be left by an in-flight or
+    // digest-pending dispatch that was interrupted by a crash before stop()
+    // could stamp a failureReason.
+    const event = makeEvent({
+      id: 'evt-null-failure-requeue',
+      dedupeKey: 'dedupe-null-failure-requeue',
+    });
+    eventStore.store(event);
+    const deliveryKey = JSON.stringify([
+      'github',
+      event.dedupeKey,
+      task.id,
+      'code',
+      'coder',
+      run.id,
+    ]);
+    eventStore.registerExpectedDelivery(event.id, deliveryKey, {
+      workflowRunId: run.id,
+      taskId: task.id,
+      nodeId: 'code',
+      agentName: 'coder',
+    });
+    expect(eventStore.getDelivery(event.id, deliveryKey)!.failureReason).toBeNull();
+
+    // Simulate a crash + restart: tear down the runtime and rebuild it over the
+    // same DB, then rehydrate (which runs requeuePersistedPendingDeliveries).
+    await runtime.stop();
+    const commandBus = createInternalCommandBus();
+    commandBus.register('agent.message.inject', async (command) => {
+      injected.push({
+        sessionId: command.sessionId,
+        message: command.message,
+        deliveryMode: command.deliveryMode,
+      });
+      return { ok: true };
+    });
+    runtime = new SpaceRuntime({
+      db,
+      spaceManager: new SpaceManager(db),
+      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+      spaceWorkflowManager: workflowManager,
+      workflowRunRepo,
+      taskRepo,
+      nodeExecutionRepo,
+      internalEventBus: bus,
+      commandBus,
+      externalEventStore: eventStore,
+      taskAgentManager: tam as never,
+    });
+    runtime.registerSubscription(run.id, task.id, 'code', 'coder', DEFAULT_TOPIC);
+    await runtime.rehydrateExecutors();
+
+    // Activate the node — requeue re-queued the null-failure row into the
+    // in-memory pending queue, so the activation flush now drains and delivers it.
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-null-failure-requeue',
+      completedAt: null,
+    });
+    tam.alive.add('session-null-failure-requeue');
+    runtime.flushPendingNodeQueue({
+      workflowRunId: run.id,
+      taskId: task.id,
+      nodeId: 'code',
+      agentName: 'coder',
+      sessionId: 'session-null-failure-requeue',
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(injected).toHaveLength(1);
+    expect(JSON.parse(injected[0]!.message).eventId).toBe(event.id);
+    expect(eventStore.getDelivery(event.id, deliveryKey)!.state).toBe('delivered');
+    expect(eventStore.getById(event.id)?.state).toBe('delivered');
+  });
+
   test('fails delivery when inactive target task is already done', async () => {
     const { workflow, run, task } = await startRunWithSubscription();
     const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
