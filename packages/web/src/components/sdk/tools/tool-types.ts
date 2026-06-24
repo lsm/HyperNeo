@@ -3,6 +3,7 @@
  */
 
 import type { JSX } from 'preact';
+import type { SDKTaskProgressMessage } from '@neokai/shared/sdk/sdk.d.ts';
 
 /**
  * Display variant for tool components
@@ -143,6 +144,8 @@ export interface ToolResultCardProps {
     summary?: string;
     usage?: { total_tokens: number; tool_uses: number; duration_ms: number };
   };
+  /** Latest live task_progress for this running tool_use. */
+  taskProgress?: SDKTaskProgressMessage;
 }
 
 /**

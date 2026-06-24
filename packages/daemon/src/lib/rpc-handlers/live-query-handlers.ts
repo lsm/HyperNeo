@@ -2528,6 +2528,45 @@ task_starts AS (
       task_id
     ) IN (SELECT task_id FROM recent_task_ids)
     AND id NOT IN (SELECT id FROM recent_metadata)
+),
+latest_progress AS (
+  SELECT
+    id,
+    sdk_message,
+    timestamp,
+    send_status,
+    origin,
+    rowid,
+    task_id
+  FROM (
+    SELECT
+      id,
+      sdk_message,
+      timestamp,
+      send_status,
+      origin,
+      rowid,
+      COALESCE(
+        CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.task_id') END,
+        task_id
+      ) AS task_id,
+      ROW_NUMBER() OVER (
+        PARTITION BY COALESCE(
+          CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.tool_use_id') END,
+          ''
+        )
+        ORDER BY timestamp DESC, rowid DESC
+      ) AS rn
+    FROM sdk_messages
+    WHERE session_id = ?
+      AND parent_tool_use_id IS NULL
+      AND COALESCE(message_subtype, '') = 'task_progress'
+      AND COALESCE(
+        CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.tool_use_id') END,
+        ''
+      ) != ''
+  )
+  WHERE rn = 1
 )
 SELECT
   id,
@@ -2539,6 +2578,8 @@ FROM (
   SELECT * FROM recent_metadata
   UNION ALL
   SELECT * FROM task_starts
+  UNION ALL
+  SELECT * FROM latest_progress
 )
 ORDER BY timestamp DESC, rowid DESC
 `.trim();
@@ -3106,7 +3147,7 @@ export function setupLiveQueryHandlers(
     mapResult: (_rawRows, params) => {
       const sessionId = params[0];
       if (typeof sessionId !== 'string' || sessionId.length === 0) return undefined;
-      const rows = stmtBackgroundTaskMetadata.all(sessionId, sessionId) as Record<
+      const rows = stmtBackgroundTaskMetadata.all(sessionId, sessionId, sessionId) as Record<
         string,
         unknown
       >[];

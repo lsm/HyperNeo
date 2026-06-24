@@ -9,7 +9,11 @@
  */
 
 import type { PendingUserQuestion, QuestionDraftResponse, ResolvedQuestion } from '@neokai/shared';
-import type { SDKMessage, SDKTaskNotificationMessage } from '@neokai/shared/sdk/sdk.d.ts';
+import type {
+  SDKMessage,
+  SDKTaskNotificationMessage,
+  SDKTaskProgressMessage,
+} from '@neokai/shared/sdk/sdk.d.ts';
 import type { AgentInput } from '@neokai/shared/sdk/sdk-tools.d.ts';
 import {
   type ContentBlock,
@@ -39,6 +43,8 @@ interface Props {
   subagentMessagesMap?: Map<string, SDKMessage[]>;
   /** tool_use_id → terminal task_notification (folded onto the tool card). */
   taskNotificationsMap?: Map<string, SDKTaskNotificationMessage>;
+  /** tool_use_id → latest live task_progress (folded onto running tool cards). */
+  taskProgressMap?: Map<string, SDKTaskProgressMessage>;
   replacementStatusMap?: Map<string, MessageReplacementStatus>;
   // Question handling props for inline QuestionPrompt rendering
   sessionId?: string;
@@ -68,6 +74,7 @@ export function SDKAssistantMessage({
   toolResultsMap,
   subagentMessagesMap,
   taskNotificationsMap,
+  taskProgressMap,
   replacementStatusMap,
   sessionId,
   resolvedQuestions,
@@ -263,6 +270,7 @@ export function SDKAssistantMessage({
         const toolResult = toolResultsMap?.get(block.id);
         const nestedMessages = subagentMessagesMap?.get(block.id) || [];
         const taskNotification = taskNotificationsMap?.get(block.id);
+        const taskProgress = taskProgressMap?.get(block.id);
         return (
           <ToolUseBlock
             key={`tool-${idx}`}
@@ -273,6 +281,8 @@ export function SDKAssistantMessage({
             replacementStatusMap={replacementStatusMap}
             taskNotification={taskNotification}
             taskNotificationsMap={taskNotificationsMap}
+            taskProgress={taskProgress}
+            taskProgressMap={taskProgressMap}
             sessionId={sessionId}
             resolvedQuestions={resolvedQuestions}
             pendingQuestion={pendingQuestion}
@@ -319,6 +329,8 @@ function ToolUseBlock({
   replacementStatusMap,
   taskNotification,
   taskNotificationsMap,
+  taskProgress,
+  taskProgressMap,
   sessionId: propSessionId,
   resolvedQuestions,
   pendingQuestion,
@@ -333,6 +345,8 @@ function ToolUseBlock({
   replacementStatusMap?: Map<string, MessageReplacementStatus>;
   taskNotification?: SDKTaskNotificationMessage;
   taskNotificationsMap?: Map<string, SDKTaskNotificationMessage>;
+  taskProgress?: SDKTaskProgressMessage;
+  taskProgressMap?: Map<string, SDKTaskProgressMessage>;
   sessionId?: string;
   resolvedQuestions?: Map<string, ResolvedQuestion>;
   pendingQuestion?: PendingUserQuestion | null;
@@ -375,6 +389,8 @@ function ToolUseBlock({
         replacementStatusMap={replacementStatusMap}
         taskNotification={taskNotification}
         taskNotificationsMap={taskNotificationsMap}
+        taskProgress={taskProgress}
+        taskProgressMap={taskProgressMap}
         isRunning={isRunning}
       />
     );
@@ -433,6 +449,7 @@ function ToolUseBlock({
             sessionId={sessionId}
             isOutputRemoved={isOutputRemoved}
             taskNotification={taskNotification}
+            taskProgress={taskProgress}
             isRunning={isRunning}
           />
         </div>
@@ -452,6 +469,7 @@ function ToolUseBlock({
           sessionId={sessionId}
           isOutputRemoved={isOutputRemoved}
           taskNotification={taskNotification}
+          taskProgress={taskProgress}
           isRunning={isRunning}
         />
         {/* Render QuestionPrompt inline - ALWAYS show the form */}
@@ -493,6 +511,7 @@ function ToolUseBlock({
       sessionId={sessionId}
       isOutputRemoved={isOutputRemoved}
       taskNotification={taskNotification}
+      taskProgress={taskProgress}
       isRunning={isRunning}
     />
   );
