@@ -428,6 +428,25 @@ const EXTERNAL_EVENT_RATE_LIMIT_PER_MIN = parsePositiveIntegerEnv(
   'EXTERNAL_EVENT_RATE_LIMIT_PER_MIN',
   10
 );
+/**
+ * TTL for pending external-event deliveries that are waiting for their target
+ * node to become active (in-memory pending queue, DB-persisted pending rows,
+ * and retry replay).
+ *
+ * **TTL anchor is the external event's age** — i.e. the source-event row's
+ * `created_at` (ingestion time), NOT the delivery row's registration time.
+ * External events are time-sensitive (e.g. a GitHub review comment), so a
+ * delivery is dropped once its *event* is older than this window, regardless
+ * of when the delivery row was registered. This matters for delayed
+ * registration (event backdated/backlogged, subscription added late, or daemon
+ * restart replay): such deliveries must not get a fresh TTL window measured
+ * from registration. The delivery table intentionally has no `created_at`
+ * column; if registration-age TTL were ever wanted, it would require a schema
+ * migration plus changes to both `collectPersistedPendingDeliveries` and the
+ * rehydrate retry sweep (which both read `eventRecord.createdAt`).
+ *
+ * See `isQueuedExternalEventExpired` and design doc §5 "Backpressure — Event TTL".
+ */
 const EXTERNAL_EVENT_QUEUE_TTL_MS = parsePositiveIntegerEnv('EXTERNAL_EVENT_QUEUE_TTL_MS', 300_000);
 
 export function parsePositiveIntegerEnv(name: string, fallback: number): number {
@@ -1689,6 +1708,10 @@ export class SpaceRuntime {
 
       const mode = deliveryModeFromFailureReason(delivery.failureReason);
       const eventPayload = this.externalEventPayloadFromRecord(eventRecord.event);
+      // TTL anchor is the event's creation/ingestion time, NOT the delivery
+      // row's registration/updated time — see EXTERNAL_EVENT_QUEUE_TTL_MS.
+      // A delivery registered late for an already-stale event must still
+      // expire, so the event age (not the delivery age) drives the check.
       const queuedItem: PendingExternalEvent = {
         event: eventPayload,
         deliveryKey: delivery.deliveryKey,
@@ -2477,6 +2500,14 @@ export class SpaceRuntime {
     this.pendingExternalEventQueue.set(key, queue);
   }
 
+  /**
+   * Whether a pending external-event delivery has exceeded its TTL.
+   *
+   * `item.createdAt` is the event's creation/ingestion time for DB-persisted
+   * deliveries (and the queueing time for in-memory deliveries, which ≈ event
+   * ingestion time since they are queued the moment the event is handled).
+   * Expiry is therefore event-age based — see EXTERNAL_EVENT_QUEUE_TTL_MS.
+   */
   private isQueuedExternalEventExpired(item: PendingExternalEvent, now = Date.now()): boolean {
     return now - item.createdAt > EXTERNAL_EVENT_QUEUE_TTL_MS;
   }
@@ -4283,6 +4314,11 @@ export class SpaceRuntime {
 
       const mode = deliveryModeFromFailureReason(delivery.failureReason);
       const eventPayload = this.externalEventPayloadFromRecord(eventRecord.event);
+      // TTL anchor is the event's creation/ingestion time, not the delivery's
+      // registration/updated time — see EXTERNAL_EVENT_QUEUE_TTL_MS. This
+      // rehydrate retry sweep must use the same anchor as the activation
+      // flush (collectPersistedPendingDeliveries) so a persisted pending
+      // delivery cannot dodge the TTL by being replayed after a restart.
       const queuedItem = {
         event: eventPayload,
         deliveryKey: delivery.deliveryKey,
