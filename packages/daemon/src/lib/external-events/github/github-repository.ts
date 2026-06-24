@@ -18,6 +18,25 @@ export interface PollCursor {
    * owner's stored event.
    */
   checkRunLegacyPrs?: Record<string, number>;
+  /**
+   * Stable wall-clock epoch when check-run polling was first enabled for this
+   * watched repo. Captured once when `pollingEnabled` flips on so the initial
+   * check-run cursor can be seeded from the enable time rather than from
+   * mutable `updatedAt` or scan-time clock.
+   */
+  checkRunPollingEnabledAt?: number;
+  /**
+   * Per-head check-run high-water marks. Each key is a `headRef` and the value
+   * is the latest `completed_at` published for that head. Keeps heads isolated
+   * so a skipped/failed head does not lose events when other heads advance the
+   * repo-wide watermark.
+   */
+  checkRunHeadLastSeenAt?: Record<string, number>;
+  /**
+   * Per-head pending high-water marks while that head is paginating or the
+   * overall scan ends before all heads are committed.
+   */
+  checkRunHeadPendingLastSeenAt?: Record<string, number>;
   pullsSeedInProgress?: boolean;
   seenReactionIds?: Record<string, boolean>;
   /**
@@ -124,6 +143,9 @@ export class GitHubEventExtensionRepository {
   }): GitHubWatchedRepo {
     const now = Date.now();
     const existing = this.getWatchedRepo(params.spaceId, params.owner, params.repo);
+    const pollingNewlyEnabled = Boolean(
+      params.pollingEnabled && (!existing || !existing.pollingEnabled)
+    );
     if (existing) {
       this.db
         .prepare(
@@ -179,41 +201,47 @@ export class GitHubEventExtensionRepository {
           now,
           existing.id
         );
-      return this.getWatchedRepoById(existing.id)!;
-    }
-    const id = generateUUID();
-    const spaceEnabled = params.enabled ?? this.isSpaceEnabled(params.spaceId);
-    this.db
-      .prepare(
-        `INSERT INTO space_github_watched_repos
+    } else {
+      const id = generateUUID();
+      const spaceEnabled = params.enabled ?? this.isSpaceEnabled(params.spaceId);
+      this.db
+        .prepare(
+          `INSERT INTO space_github_watched_repos
 					 (id, space_id, owner, repo, enabled, webhook_enabled, polling_enabled, webhook_secret, webhook_remote_id, webhook_url,
 					  webhook_auto_registered, webhook_active, webhook_last_checked_at, webhook_last_error, webhook_configured_at, created_at, updated_at)
 					 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      )
-      .run(
-        id,
-        params.spaceId,
-        params.owner,
-        params.repo,
-        spaceEnabled ? 1 : 0,
-        params.webhookEnabled === false ? 0 : 1,
-        params.pollingEnabled ? 1 : 0,
-        params.webhookSecret ?? null,
-        params.webhookRemoteId ?? null,
-        params.webhookUrl ?? null,
-        params.webhookAutoRegistered ? 1 : 0,
-        params.webhookActive === undefined || params.webhookActive === null
-          ? null
-          : params.webhookActive
-            ? 1
-            : 0,
-        params.webhookLastCheckedAt ?? null,
-        params.webhookLastError ?? null,
-        params.webhookConfiguredAt ?? null,
-        now,
-        now
-      );
-    return this.getWatchedRepoById(id)!;
+        )
+        .run(
+          id,
+          params.spaceId,
+          params.owner,
+          params.repo,
+          spaceEnabled ? 1 : 0,
+          params.webhookEnabled === false ? 0 : 1,
+          params.pollingEnabled ? 1 : 0,
+          params.webhookSecret ?? null,
+          params.webhookRemoteId ?? null,
+          params.webhookUrl ?? null,
+          params.webhookAutoRegistered ? 1 : 0,
+          params.webhookActive === undefined || params.webhookActive === null
+            ? null
+            : params.webhookActive
+              ? 1
+              : 0,
+          params.webhookLastCheckedAt ?? null,
+          params.webhookLastError ?? null,
+          params.webhookConfiguredAt ?? null,
+          now,
+          now
+        );
+    }
+    const watched = this.getWatchedRepo(params.spaceId, params.owner, params.repo)!;
+    if (pollingNewlyEnabled && !watched.pollCursor?.checkRunPollingEnabledAt) {
+      const cursor = watched.pollCursor ?? {};
+      cursor.checkRunPollingEnabledAt = now;
+      this.updatePollCursorJson(watched.id, cursor);
+    }
+    return this.getWatchedRepoById(watched.id)!;
   }
 
   clearWebhookRegistration(id: string, options: { clearSecret?: boolean } = {}): void {
@@ -497,6 +525,21 @@ export class GitHubEventExtensionRepository {
         `UPDATE space_github_watched_repos SET last_poll_at = ?, poll_cursor = ?, updated_at = ? WHERE id = ?`
       )
       .run(Date.now(), JSON.stringify(cursor), Date.now(), id);
+  }
+
+  /**
+   * Update only the `poll_cursor` JSON without advancing `last_poll_at`.
+   *
+   * Used for cursor seeding that must happen outside a poll cycle (e.g.
+   * capturing `checkRunPollingEnabledAt` at enable time). Setting
+   * `last_poll_at` here would poison the stale-reaction guard, which falls
+   * back to `watched.lastPollAt` as the committed watermark on the first
+   * real poll and would suppress historical reactions as already-seen.
+   */
+  updatePollCursorJson(id: string, cursor: PollCursor): void {
+    this.db
+      .prepare(`UPDATE space_github_watched_repos SET poll_cursor = ?, updated_at = ? WHERE id = ?`)
+      .run(JSON.stringify(cursor), Date.now(), id);
   }
 
   updateWebhookStatus(

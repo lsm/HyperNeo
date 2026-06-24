@@ -9,6 +9,7 @@ import type {
   HttpExternalEventExtension,
   RpcExternalEventExtension,
 } from '../types';
+import { ExternalEventStore } from '../external-event-store';
 import {
   normalizeGitHubCheckRun,
   normalizeGitHubPollingRow,
@@ -189,6 +190,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
    */
   private rateLimitedFromRetryAfter = false;
   private readonly credentialStore?: CredentialStore;
+  private readonly eventStore: ExternalEventStore;
 
   constructor(
     db: BunDatabase,
@@ -196,6 +198,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     private readonly options: GitHubEventExtensionOptions = {}
   ) {
     this.repo = new GitHubEventExtensionRepository(db);
+    this.eventStore = new ExternalEventStore(db);
     this.credentialStore = options.credentialStore;
   }
 
@@ -1216,6 +1219,9 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     const recentPullRequestHeadRepos = cursor.recentPullRequestHeadRepos ?? {};
     const checkRunEtags = cursor.checkRunEtags ?? {};
     const checkRunLegacyPrs = cursor.checkRunLegacyPrs ?? {};
+    const checkRunHeadLastSeenAt = cursor.checkRunHeadLastSeenAt ?? {};
+    let checkRunHeadPendingLastSeenAt = cursor.checkRunHeadPendingLastSeenAt ?? {};
+    const checkRunPollingEnabledAt = cursor.checkRunPollingEnabledAt;
     const pullsSeedInProgress = cursor.pullsSeedInProgress ?? false;
     const seenReactionIds = cursor.seenReactionIds ?? {};
     const reactionEtags = cursor.reactionEtags ?? {};
@@ -1471,26 +1477,25 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 
     if (!partialScan && !pullsHasBacklog) {
       const checkRunEndpointKey = 'check_runs';
-      if (
-        !endpointLastSeenAt[checkRunEndpointKey] &&
-        !endpointPendingLastSeenAt[checkRunEndpointKey]
-      ) {
-        // Seed from when polling was enabled / the repo was last updated rather
-        // than scan-time clock, so check runs that completed between enablement
-        // and the first poll are not treated as historical. Fall back to now
-        // only for rows that pre-date this cursor field.
-        endpointLastSeenAt[checkRunEndpointKey] = watched.updatedAt ?? Date.now();
-      }
-      const checkRunWatermark = endpointLastSeenAt[checkRunEndpointKey] ?? watermarks.committed;
-      let checkRunPending = Math.max(
-        checkRunWatermark,
-        endpointPendingLastSeenAt[checkRunEndpointKey] ?? 0
-      );
-      let checkRunPartialScan = false;
       let checkRunPermissionDenied = false;
+      // Rate-limit / repo-wide denial stops the entire head loop. Transient
+      // per-head failures (500/502) skip the failing head but let the loop
+      // continue to the next head.
+      let checkRunRateLimited = false;
+      const globalCheckRunWatermark =
+        endpointLastSeenAt[checkRunEndpointKey] ??
+        checkRunPollingEnabledAt ??
+        watched.createdAt ??
+        watermarks.committed;
       checkRunHeadLoop: for (const [headRef, prNumbers] of pullRequestNumbersByHeadRef) {
         const { repoPath: headRepoPath, headSha } = parseHeadRefKey(headRef);
         const fallbackPrNumbers = prNumbers;
+        const headWatermark =
+          checkRunHeadLastSeenAt[headRef] ??
+          checkRunHeadPendingLastSeenAt[headRef] ??
+          globalCheckRunWatermark;
+        let headPending = Math.max(headWatermark, checkRunHeadPendingLastSeenAt[headRef] ?? 0);
+        let headSucceeded = false;
         let page = 1;
         while (true) {
           const query = new URLSearchParams({
@@ -1522,10 +1527,13 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
               this.applyRateLimit(rateLimit);
             }
             partialScan = true;
-            checkRunPartialScan = true;
+            checkRunRateLimited = true;
             break;
           }
-          if (response.status === 304) break;
+          if (response.status === 304) {
+            headSucceeded = true;
+            break;
+          }
           if (!response.ok) {
             const errorText = await response.text();
             if (
@@ -1542,7 +1550,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
                 retryAfter: true,
               });
               partialScan = true;
-              checkRunPartialScan = true;
+              checkRunRateLimited = true;
               break;
             }
             if (response.status === 403) {
@@ -1564,29 +1572,45 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
               }
               delete checkRunEtags[checkRunEtagKey];
               pullRequestNumbersByHeadRef.delete(headRef);
+              headSucceeded = true;
               break;
             }
-            partialScan = true;
-            checkRunPartialScan = true;
-            break;
+            // Other non-rate-limit failures (500/502/etc.) stop check-run
+            // scanning for this head but do not block reaction polling.
+            // Skip to the next head without committing this head's cursor.
+            continue checkRunHeadLoop;
           }
           const rows = rowsFromPollingPayload(await response.json(), checkRunEndpointKey);
           for (const row of rows) {
             const rowOccurredAt = checkRunOccurredAt(row);
-            if (rowOccurredAt < checkRunWatermark) continue;
-            checkRunPending = Math.max(checkRunPending, rowOccurredAt);
+            if (rowOccurredAt < headWatermark) continue;
+            headPending = Math.max(headPending, rowOccurredAt);
             const checkRunPrNumbers = pullRequestNumbersFromCheckRun(
               row,
               pullRequestNumbersByHeadRef,
               fallbackPrNumbers
             );
             const legacyDedupePrNumber = checkRunPrNumbers[0];
-            const checkRunLegacyKey = `${checkRunIdFrom(row)}:${checkRunConclusionFrom(row)}`;
+            const checkRunId = checkRunIdFrom(row);
+            const conclusion = checkRunConclusionFrom(row);
+            const checkRunLegacyKey = `${checkRunId}:${conclusion}`;
             const recordedLegacyPr = checkRunLegacyPrs[checkRunLegacyKey];
+            const unscopedDedupeKey = `${watched.owner.toLowerCase()}/${watched.repo.toLowerCase()}:check_run:${checkRunId}:${conclusion}`;
+            const existingEvent =
+              recordedLegacyPr === undefined
+                ? this.eventStore.getByDedupe(watched.spaceId, this.sourceId, unscopedDedupeKey)
+                : null;
+            const existingLegacyPr =
+              existingEvent && typeof existingEvent.event.payload.prNumber === 'number'
+                ? existingEvent.event.payload.prNumber
+                : undefined;
+            if (existingLegacyPr !== undefined && !(checkRunLegacyKey in checkRunLegacyPrs)) {
+              checkRunLegacyPrs[checkRunLegacyKey] = existingLegacyPr;
+            }
             const singlePrShouldScope =
               checkRunPrNumbers.length === 1 &&
-              recordedLegacyPr !== undefined &&
-              recordedLegacyPr !== legacyDedupePrNumber;
+              ((recordedLegacyPr !== undefined && recordedLegacyPr !== legacyDedupePrNumber) ||
+                (existingLegacyPr !== undefined && existingLegacyPr !== legacyDedupePrNumber));
             for (const checkRunPrNumber of checkRunPrNumbers) {
               const isLegacyPr = checkRunPrNumber === legacyDedupePrNumber;
               const prScopedDedupe =
@@ -1595,7 +1619,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
                 repo: watched,
                 checkRun: row,
                 source: 'polling',
-                deliveryId: `poll:check_run:${checkRunIdFrom(row)}:${checkRunPrNumber}`,
+                deliveryId: `poll:check_run:${checkRunId}:${checkRunPrNumber}`,
                 rawPayload: row,
                 prNumber: checkRunPrNumber,
                 prScopedDedupe,
@@ -1616,23 +1640,37 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
           if (rateLimit.remaining < RATE_LIMIT_LOW_REMAINING_THRESHOLD) {
             this.applyRateLimit(rateLimit);
             partialScan = true;
-            checkRunPartialScan = true;
+            checkRunRateLimited = true;
             break;
           }
           const checkRunEtag = response.headers.get('ETag');
           if (rows.length < 100) {
             if (checkRunEtag) checkRunEtags[checkRunEtagKey] = checkRunEtag;
+            headSucceeded = true;
             break;
           }
           delete checkRunEtags[checkRunEtagKey];
           page++;
         }
-        if (checkRunPartialScan || checkRunPermissionDenied) break;
+        // A skipped/failed head keeps its previous cursor; only successful heads
+        // advance their pending watermark this cycle.
+        if (headSucceeded) {
+          checkRunHeadPendingLastSeenAt[headRef] = headPending;
+        }
+        if (checkRunRateLimited || checkRunPermissionDenied) break;
       }
-      if (checkRunPartialScan || checkRunPermissionDenied || hasBacklog) {
-        endpointPendingLastSeenAt[checkRunEndpointKey] = checkRunPending;
+      if (checkRunRateLimited || checkRunPermissionDenied || hasBacklog) {
+        // Rate-limit or repo-wide denial: leave all per-head watermarks pending
+        // so every head resumes from its last committed cursor on the next poll.
       } else {
-        if (checkRunPending > 0) endpointLastSeenAt[checkRunEndpointKey] = checkRunPending;
+        // Commit successful heads. Heads that hit transient failures never
+        // updated their pending entry, so they keep their prior committed value.
+        for (const [headRef, headPending] of Object.entries(checkRunHeadPendingLastSeenAt)) {
+          checkRunHeadLastSeenAt[headRef] = headPending;
+        }
+        checkRunHeadPendingLastSeenAt = {};
+        const maxHeadWatermark = Math.max(0, ...Object.values(checkRunHeadLastSeenAt));
+        if (maxHeadWatermark > 0) endpointLastSeenAt[checkRunEndpointKey] = maxHeadWatermark;
         delete endpointPendingLastSeenAt[checkRunEndpointKey];
       }
     }
@@ -1755,6 +1793,18 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     for (const key of Object.keys(reactionEtags)) {
       if (!trackedPrSet.has(Number(key))) delete reactionEtags[Number(key)];
     }
+    // Prune per-head check-run cursors for heads that are no longer tracked.
+    const trackedHeadSet = new Set(pullRequestNumbersByHeadRef.keys());
+    for (const key of Object.keys(checkRunHeadLastSeenAt)) {
+      if (!trackedHeadSet.has(key)) delete checkRunHeadLastSeenAt[key];
+    }
+    for (const key of Object.keys(checkRunHeadPendingLastSeenAt)) {
+      if (!trackedHeadSet.has(key)) delete checkRunHeadPendingLastSeenAt[key];
+    }
+    for (const key of Object.keys(checkRunEtags)) {
+      const headRef = key.split(':page:')[0];
+      if (!trackedHeadSet.has(headRef)) delete checkRunEtags[key];
+    }
     // After a partial scan, do not advance the shared watermark; skipped
     // endpoints would miss events between the old watermark and the new one.
     // The processed endpoint's own watermark is recorded separately.
@@ -1768,6 +1818,9 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       recentPullRequestHeadRepos,
       checkRunEtags,
       checkRunLegacyPrs,
+      checkRunPollingEnabledAt,
+      checkRunHeadLastSeenAt,
+      checkRunHeadPendingLastSeenAt,
       pullsSeedInProgress: nextPullsSeedInProgress,
       seenReactionIds,
       reactionEtags,
