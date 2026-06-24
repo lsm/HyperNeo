@@ -443,6 +443,27 @@ describe('Space Agent RPC Handlers', () => {
         expect.objectContaining({ spaceId: 'space-1' })
       );
     });
+
+    it('persists template tracking metadata when promoting from a template', async () => {
+      insertSession(db, {
+        id: 'session-template-promotion',
+        type: 'space_chat',
+        context: { spaceId: 'space-1' },
+      });
+
+      const result = await call<{
+        agent: { templateName: string | null; templateHash: string | null };
+      }>(hubData.handlers, 'spaceAgent.promoteSession', {
+        spaceId: 'space-1',
+        sessionId: 'session-template-promotion',
+        name: 'Template Promotion',
+        templateName: 'Coder',
+        templateHash: 'coder-hash',
+      });
+
+      expect(result.agent.templateName).toBe('Coder');
+      expect(result.agent.templateHash).toBe('coder-hash');
+    });
   });
 
   describe('spaceAgent.create', () => {
@@ -664,6 +685,26 @@ describe('Space Agent RPC Handlers', () => {
       });
       expect(result.agent.description).toBe('New desc');
       expect(result.agent.customPrompt).toBe('New prompt');
+    });
+
+    it('clears template tracking metadata on update', async () => {
+      const created = await call<{ agent: { id: string } }>(hubData.handlers, 'spaceAgent.create', {
+        spaceId: 'space-1',
+        name: 'TemplateTracked',
+        templateName: 'Coder',
+        templateHash: 'coder-hash',
+      });
+
+      const result = await call<{
+        agent: { templateName: string | null; templateHash: string | null };
+      }>(hubData.handlers, 'spaceAgent.update', {
+        id: created.agent.id,
+        templateName: null,
+        templateHash: null,
+      });
+
+      expect(result.agent.templateName).toBeNull();
+      expect(result.agent.templateHash).toBeNull();
     });
 
     it('does not sync shared long-horizon agent rows when worker changes', async () => {

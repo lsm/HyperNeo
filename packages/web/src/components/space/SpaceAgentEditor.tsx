@@ -271,6 +271,12 @@ export function SpaceAgentEditor({
       const trimmedDescription = description.trim();
       const trimmedModel = model.trim();
       const providerChanged = provider !== (agent?.provider ?? '');
+      const selectedTemplate = builtInTemplates.find((item) => item.name === selectedTemplateName);
+      const selectedTemplateStillMatches =
+        selectedTemplate &&
+        trimmedDescription === (selectedTemplate.description ?? '') &&
+        customPrompt === (selectedTemplate.customPrompt ?? '') &&
+        JSON.stringify(tools) === JSON.stringify(selectedTemplate.tools);
       const templateTracked = agent?.templateName || agent?.templateHash;
       const templateFieldsChanged =
         isEdit &&
@@ -287,7 +293,11 @@ export function SpaceAgentEditor({
           : {}),
         ...(isEdit && trimmedModel && providerChanged && !provider ? { provider: null } : {}),
         customPrompt: customPrompt || null,
-        ...(toolsOverridden ? { tools: tools.length > 0 ? tools : null } : {}),
+        ...(toolsOverridden
+          ? { tools: tools.length > 0 ? tools : null }
+          : isEdit && agent?.tools !== undefined
+            ? { tools: null }
+            : {}),
         ...(clearSettingSources ||
         JSON.stringify(settingSources) !==
           JSON.stringify(agent?.settingSources ?? inheritedSettingSources)
@@ -315,7 +325,7 @@ export function SpaceAgentEditor({
           ...(toolsOverridden ? { tools } : {}),
           description: trimmedDescription || undefined,
           ...(trimmedModel ? { model: trimmedModel, provider: provider || undefined } : {}),
-          ...(selectedTemplateName
+          ...(selectedTemplateName && selectedTemplateStillMatches
             ? { templateName: selectedTemplateName, templateHash: selectedTemplateHash }
             : {}),
         };
@@ -575,7 +585,7 @@ export function SpaceAgentEditor({
                   Inherited
                 </button>
               )}
-              {isEdit && toolsOverridden && agent?.tools === undefined && (
+              {isEdit && toolsOverridden && (
                 <button
                   type="button"
                   onClick={() => {

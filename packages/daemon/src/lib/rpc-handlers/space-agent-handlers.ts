@@ -258,6 +258,8 @@ export function setupSpaceAgentHandlers(
       customPrompt?: string | null;
       tools?: string[];
       settingSources?: import('@neokai/shared').SettingSource[];
+      templateName?: string | null;
+      templateHash?: string | null;
     };
     if (!params.spaceId) throw new Error('spaceId is required');
     if (!params.sessionId) throw new Error('sessionId is required');
@@ -286,6 +288,8 @@ export function setupSpaceAgentHandlers(
       customPrompt: params.customPrompt,
       tools: params.tools,
       settingSources: params.settingSources,
+      templateName: params.templateName,
+      templateHash: params.templateHash,
     });
     if (!result.ok) throw new Error(result.error);
 
@@ -326,6 +330,8 @@ export function setupSpaceAgentHandlers(
       customPrompt?: string | null;
       tools?: string[] | null;
       settingSources?: import('@neokai/shared').SettingSource[] | null;
+      templateName?: string | null;
+      templateHash?: string | null;
     };
 
     if (!params.id) throw new Error('id is required');
@@ -341,6 +347,8 @@ export function setupSpaceAgentHandlers(
       customPrompt: updateFields.customPrompt,
       tools: updateFields.tools,
       settingSources: updateFields.settingSources,
+      templateName: updateFields.templateName,
+      templateHash: updateFields.templateHash,
     });
 
     if (!result.ok) throw new Error(result.error);

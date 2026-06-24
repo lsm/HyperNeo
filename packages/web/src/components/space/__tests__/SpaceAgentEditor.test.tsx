@@ -561,7 +561,7 @@ describe('SpaceAgentEditor', () => {
     });
   });
 
-  it('persists template metadata when creating from a built-in template', async () => {
+  it('persists template metadata when creating from an unchanged built-in template', async () => {
     mockAgentTemplates = [
       {
         name: 'Research',
@@ -583,6 +583,33 @@ describe('SpaceAgentEditor', () => {
         expect.objectContaining({ templateName: 'Research', templateHash: 'research-hash' })
       );
     });
+  });
+
+  it('omits template metadata when template fields are customized before create', async () => {
+    mockAgentTemplates = [
+      {
+        name: 'Research',
+        description: 'Research specialist',
+        tools: ['Read', 'Grep'],
+        customPrompt: 'You are a research specialist.',
+        templateHash: 'research-hash',
+      },
+    ];
+    mockCreateAgent.mockResolvedValue({ id: 'new-agent' });
+
+    const { getByLabelText, getByPlaceholderText, getByRole } = render(
+      <SpaceAgentEditor {...DEFAULT_PROPS} />
+    );
+
+    fireEvent.change(getByLabelText('From Template'), { target: { value: 'Research' } });
+    fireEvent.input(getByPlaceholderText("Briefly describe this agent's specialization..."), {
+      target: { value: 'Custom research specialist' },
+    });
+    fireEvent.submit(getByRole('dialog').querySelector('form')!);
+
+    await waitFor(() => expect(mockCreateAgent).toHaveBeenCalled());
+    expect(mockCreateAgent.mock.calls[0][0]).not.toHaveProperty('templateName');
+    expect(mockCreateAgent.mock.calls[0][0]).not.toHaveProperty('templateHash');
   });
 
   it('persists provider with model overrides', async () => {
@@ -616,6 +643,23 @@ describe('SpaceAgentEditor', () => {
 
     await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalled());
     expect(mockUpdateAgent.mock.calls[0][1]).not.toHaveProperty('tools');
+  });
+
+  it('clears explicit tool overrides when inheriting defaults in edit mode', async () => {
+    const agent = makeAgent({ id: 'agent-1', tools: ['Read', 'Grep'] });
+    mockUpdateAgent.mockResolvedValue(agent);
+
+    const { getByText, getByRole } = render(<SpaceAgentEditor {...DEFAULT_PROPS} agent={agent} />);
+
+    fireEvent.click(getByText('Inherit defaults'));
+    fireEvent.submit(getByRole('dialog').querySelector('form')!);
+
+    await waitFor(() => {
+      expect(mockUpdateAgent).toHaveBeenCalledWith(
+        'agent-1',
+        expect.objectContaining({ tools: null })
+      );
+    });
   });
 
   it('clears template tracking when preset-defining fields are customized', async () => {

@@ -657,7 +657,9 @@ export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionIn
   const model =
     slotOverrides?.model ?? customAgent.model ?? space.defaultModel ?? DEFAULT_CUSTOM_AGENT_MODEL;
   const thinkingLevel = slotOverrides?.thinkingLevel ?? customAgent.thinkingLevel;
-  const provider = customAgent.provider ?? inferProviderForModel(model);
+  const provider = slotOverrides?.model
+    ? inferProviderForModel(model)
+    : (customAgent.provider ?? inferProviderForModel(model));
 
   const resolvedPrompt = resolveCustomAgentPrompt(customAgent, slotOverrides);
   const visiblePrompt = resolvedPrompt.value;
