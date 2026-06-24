@@ -2576,6 +2576,65 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(queuedItems.some((item) => item.createdAt === oldCreatedAt)).toBe(true);
   });
 
+  test('drops persisted pending delivery whose event predates TTL even when the delivery row was just registered (event-age TTL anchor)', async () => {
+    // Regression guard for the TTL anchor decision (task #667): the TTL for a
+    // DB-persisted pending delivery is measured from the EVENT's
+    // creation/ingestion time, NOT the delivery row's registration time.
+    // A delivery registered "now" for an already-stale event must still
+    // expire — otherwise delayed registration (backlog replay, a subscription
+    // added late, or a daemon-restart requeue) would resurrect stale events.
+    // If the anchor were ever switched to registration age, this test would
+    // fail (the delivery would be delivered instead of expired).
+    const { run, task } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    // Idle execution → delivery is persisted as pending (not in-memory queue).
+    nodeExecutionRepo.update(execution.id, {
+      status: 'idle',
+      agentSessionId: null,
+      completedAt: Date.now(),
+    });
+
+    const event = makeEvent({
+      id: 'evt-delayed-registration',
+      dedupeKey: 'dedupe-delayed-registration',
+    });
+    await eventService.publish(event);
+    const delivery = eventStore.listDeliveries(event.id)[0]!;
+    expect(delivery.state).toBe('pending');
+    // The delivery row was registered moments ago (updated_at ≈ now).
+    expect(Date.now() - delivery.updatedAt).toBeLessThan(5_000);
+
+    // Backdate only the EVENT's created_at past the TTL window, leaving the
+    // delivery registration time recent. This is the discriminator: under
+    // event-age TTL this must expire; under registration-age TTL it would
+    // still be deliverable.
+    db.prepare(`UPDATE space_external_events SET created_at = ? WHERE id = ?`).run(
+      Date.now() - 301_000, // just over the 5-minute EXTERNAL_EVENT_QUEUE_TTL_MS
+      event.id
+    );
+
+    // Reactivate the worker so the activation flush attempts delivery.
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-delayed-registration',
+      completedAt: null,
+    });
+    runtime.flushPendingNodeQueue({
+      workflowRunId: run.id,
+      taskId: task.id,
+      nodeId: 'code',
+      agentName: 'coder',
+      sessionId: 'session-delayed-registration',
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(injected).toHaveLength(0);
+    const finalDelivery = eventStore.listDeliveries(event.id)[0]!;
+    expect(finalDelivery.state).toBe('failed');
+    expect(finalDelivery.failureReason).toBe('ttl_expired');
+    expect(eventStore.getById(event.id)?.state).toBe('failed');
+  });
+
   // --- null-failureReason pending delivery invariant -----------------------
   //
   // A `pending` row whose `failureReason` is null is, by contract, still owned
