@@ -44,6 +44,12 @@ export {
   type UseFileAttachmentsResult,
 } from './useFileAttachments';
 export {
+  useImageDropZone,
+  type FileDropHandler,
+  type RegisterFileDropTarget,
+  type DragHandlers,
+} from './useImageDropZone';
+export {
   useAutoScroll,
   type UseAutoScrollOptions,
   type UseAutoScrollResult,

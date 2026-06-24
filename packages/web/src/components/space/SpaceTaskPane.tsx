@@ -8,7 +8,8 @@ import {
 } from '@neokai/shared';
 import type { ComponentChildren } from 'preact';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
-import type { TaskComposerTarget } from '../../hooks';
+import type { TaskComposerTarget, FileDropHandler } from '../../hooks';
+import { useImageDropZone } from '../../hooks';
 import { borderColors } from '../../lib/design-tokens';
 import {
   navigateToSpaceTask,
@@ -35,6 +36,7 @@ import { SpaceTaskUnifiedThread } from './SpaceTaskUnifiedThread';
 import { SubmitForReviewModal } from './SubmitForReviewModal';
 import { TaskBlockedBanner } from './TaskBlockedBanner';
 import { TaskCanvasToggleButton, TaskSessionChatComposer } from './TaskSessionChatComposer';
+import { ImageDropOverlay } from '../ImageDropOverlay.tsx';
 import { getTransitionActions } from './TaskStatusActions';
 import { useRunGateSummaries } from './use-run-gate-summaries.ts';
 import { useRunHookStates } from './use-run-hook-states.ts';
@@ -492,6 +494,17 @@ export function SpaceTaskPane({
 
   const canSendThreadMessage =
     !isTerminalTask && !ensuringThread && !sendingThread && composerTargets.length > 0;
+
+  // Thread-column image drop zone. The inline composer registers its file-drop
+  // handler upward via registerDropTarget; this column owns the drag/drop surface
+  // so an image can be dropped anywhere over the thread (feed + composer).
+  const dropFilesRef = useRef<FileDropHandler | null>(null);
+  const registerDropTarget = useCallback((fn: FileDropHandler | null) => {
+    dropFilesRef.current = fn;
+  }, []);
+  const { isDragging, dragHandlers } = useImageDropZone((files) => {
+    void dropFilesRef.current?.(files);
+  }, canSendThreadMessage);
   const canShowCanvasTab = !!task.workflowRunId && !!canvasWorkflowId;
   const activitySummary = STATUS_LABELS[task.status];
   const resolvedBanner = resolveActiveTaskBanner(
@@ -1037,7 +1050,9 @@ export function SpaceTaskPane({
           <div
             class="h-full flex flex-col relative"
             style={`--task-composer-offset: ${taskComposerPaddingPx}px;`}
+            {...dragHandlers}
           >
+            {isDragging && <ImageDropOverlay />}
             {canShowCanvasTab && (
               <div class="pointer-events-none absolute top-4 right-4 z-20">
                 <TaskCanvasToggleButton
@@ -1111,6 +1126,7 @@ export function SpaceTaskPane({
                 }}
                 onComposerRef={setTaskComposerElement}
                 onSend={sendThreadMessage}
+                registerDropTarget={registerDropTarget}
               />
             )}
           </div>
