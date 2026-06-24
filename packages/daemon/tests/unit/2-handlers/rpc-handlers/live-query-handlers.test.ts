@@ -1841,6 +1841,49 @@ describe('NAMED_QUERY_REGISTRY', () => {
         expect(entries[2].preview).toBe('ls');
       });
 
+      test('emits api_retry rows with retry attempt, delay, and status details', async () => {
+        const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+        insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+
+        insertSdkMessageAt('a1', sessionId, now + 1000, {
+          type: 'assistant',
+          uuid: 'a1',
+          message: {
+            content: [
+              { type: 'tool_use', id: 'tu-1', name: 'Bash', input: { command: 'bun test' } },
+            ],
+          },
+        });
+        insertSdkMessageAt(
+          'retry-1',
+          sessionId,
+          now + 2000,
+          {
+            type: 'system',
+            subtype: 'api_retry',
+            uuid: 'retry-1',
+            attempt: 2,
+            max_retries: 3,
+            retry_delay_ms: 5000,
+            error_status: 429,
+          },
+          'system'
+        );
+
+        const summaries = await buildSummaries(taskId);
+        expect(summaries).toHaveLength(1);
+        const entries = summaries[0].entries as Array<Record<string, unknown>>;
+        expect(entries.map((e) => e.kind)).toEqual(['tool_use', 'api_retry']);
+        expect(entries[1]).toMatchObject({
+          kind: 'api_retry',
+          attempt: 2,
+          maxRetries: 3,
+          retryDelayMs: 5000,
+          errorStatus: 429,
+          uuid: 'retry-1',
+        });
+      });
+
       test('collapses hook_started→progress→response into one roster entry per hook_id', async () => {
         const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
         insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
