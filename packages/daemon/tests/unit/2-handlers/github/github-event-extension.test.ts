@@ -194,14 +194,31 @@ function setupExternalEventService(db: BunDatabase): {
   return { service, received };
 }
 
-function pollingResponse(body: unknown[], remaining = 5_000): Response {
+function pollingResponse(body: unknown[] | Record<string, unknown>, remaining = 5_000): Response {
   return new Response(JSON.stringify(body), {
     status: 200,
     headers: { 'X-RateLimit-Remaining': String(remaining) },
   });
 }
 
-function createPullRequestRow(number: number): Record<string, unknown> {
+function pollingResponseWithHeaders(
+  body: unknown[] | Record<string, unknown>,
+  headers: Record<string, string>
+): Response {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { 'X-RateLimit-Remaining': '5000', ...headers },
+  });
+}
+
+function createPullRequestRow(
+  number: number,
+  overrides: Partial<{
+    state: string;
+    head: { sha: string; repo?: { owner?: { login?: string }; name?: string } };
+    updated_at: string;
+  }> = {}
+): Record<string, unknown> {
   return {
     id: number * 10,
     number,
@@ -209,9 +226,11 @@ function createPullRequestRow(number: number): Record<string, unknown> {
     title: `PR ${number}`,
     body: `Body ${number}`,
     html_url: `https://github.com/acme/widgets/pull/${number}`,
+    head: { sha: 'abc123' },
     user: { login: 'dev', type: 'User' },
     created_at: '2026-01-01T00:00:00Z',
     updated_at: '2026-01-01T00:00:00Z',
+    ...overrides,
   };
 }
 
@@ -228,6 +247,33 @@ function createReactionRow(
     content: '+1',
     created_at: '2026-01-02T00:00:00Z',
     user: { login: 'codex[bot]', type: 'Bot' },
+    ...overrides,
+  };
+}
+
+function createCheckRunRow(
+  overrides: Partial<{
+    id: number;
+    name: string;
+    status: string;
+    conclusion: string;
+    head_sha: string;
+    html_url: string;
+    completed_at: string;
+    updated_at: string;
+    pull_requests: Array<{ number: number }>;
+  }> = {}
+): Record<string, unknown> {
+  return {
+    id: 7001,
+    name: 'unit tests',
+    status: 'completed',
+    conclusion: 'failure',
+    head_sha: 'abc123',
+    html_url: 'https://github.com/acme/widgets/actions/runs/1/job/7001',
+    completed_at: '2099-01-03T00:00:00Z',
+    pull_requests: [{ number: 7 }],
+    app: { login: 'github-actions', type: 'Bot' },
     ...overrides,
   };
 }
@@ -274,10 +320,12 @@ describe('GitHubEventExtension', () => {
   });
 
   test('drops successful check_run webhooks', () => {
-    const payload = checkRunPayload({
-      check_run: { ...checkRunPayload().check_run, conclusion: 'success' },
-    });
-    expect(normalizeGitHubWebhook('check_run', 'delivery-1', payload)).toBeNull();
+    for (const conclusion of ['success', 'skipped', 'neutral']) {
+      const payload = checkRunPayload({
+        check_run: { ...checkRunPayload().check_run, conclusion },
+      });
+      expect(normalizeGitHubWebhook('check_run', 'delivery-1', payload)).toBeNull();
+    }
   });
 
   test('normalizes non-success check_run conclusions as failures', () => {
@@ -860,6 +908,7 @@ describe('GitHubEventExtension', () => {
               'issue_comment',
               'pull_request_review',
               'pull_request_review_comment',
+              'check_run',
             ],
             config: { url: 'https://example.com/webhook/github/space', content_type: 'json' },
           }),
@@ -1416,6 +1465,7 @@ describe('GitHubEventExtension', () => {
               'issue_comment',
               'pull_request_review',
               'pull_request_review_comment',
+              'check_run',
             ],
             config: { url: 'https://example.com/webhook/github/space', content_type: 'json' },
           }),
@@ -2342,7 +2392,11 @@ describe('GitHubEventExtension', () => {
       const firstSince = new URL(calls[0]).searchParams.get('since');
 
       await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
-      const secondIssueCommentsUrl = calls.at(-3)!;
+      const secondIssueCommentsUrl = calls.find(
+        (url) =>
+          new URL(url).pathname.endsWith('/issues/comments') &&
+          new URL(url).searchParams.get('page') === '2'
+      )!;
       const secondSince = new URL(secondIssueCommentsUrl).searchParams.get('since');
       const secondPage = new URL(secondIssueCommentsUrl).searchParams.get('page');
 
@@ -2383,13 +2437,1675 @@ describe('GitHubEventExtension', () => {
       const initialReviewCommentsSince = new URL(calls[1]).searchParams.get('since');
 
       await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
-      const nextIssueCommentsSince = new URL(calls.at(-4)!).searchParams.get('since');
-      const nextReviewCommentsSince = new URL(calls.at(-3)!).searchParams.get('since');
+      const nextIssueCommentsSince = new URL(calls.at(-5)!).searchParams.get('since');
+      const nextReviewCommentsSince = new URL(calls.at(-4)!).searchParams.get('since');
 
       expect(initialIssueCommentsSince).toBeTruthy();
       expect(initialReviewCommentsSince).toBeTruthy();
       expect(nextIssueCommentsSince).toBe(initialIssueCommentsSince);
       expect(nextReviewCommentsSince).toBe(initialReviewCommentsSince);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('polling publishes failed check runs with canonical check_failed topic', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls')) return pollingResponse([createPullRequestRow(7)]);
+      if (path.endsWith('/check-runs'))
+        return pollingResponse({ check_runs: [createCheckRunRow()] });
+      return pollingResponse([]);
+    }) as typeof fetch;
+    try {
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      const event = received.find((item) => item.payload.eventType === 'check_run')!;
+      expect(event.topic).toBe('github/acme/widgets/pull_request/7.check_failed');
+      expect(event.dedupeKey).toBe('acme/widgets:check_run:7001:failure');
+      expect(event.payload).toMatchObject({
+        action: 'failed',
+        checkRunId: 7001,
+        name: 'unit tests',
+        conclusion: 'failure',
+        status: 'completed',
+        headSha: 'abc123',
+      });
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('polling drops successful, skipped, and neutral check runs', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls')) return pollingResponse([createPullRequestRow(7)]);
+      if (path.endsWith('/check-runs'))
+        return pollingResponse({
+          check_runs: [
+            createCheckRunRow({ id: 1, conclusion: 'success' }),
+            createCheckRunRow({ id: 2, conclusion: 'skipped' }),
+            createCheckRunRow({ id: 3, conclusion: 'neutral' }),
+          ],
+        });
+      return pollingResponse([]);
+    }) as typeof fetch;
+    try {
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      expect(received.some((item) => item.payload.eventType === 'check_run')).toBe(false);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('polling drops non-completed check runs', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls')) return pollingResponse([createPullRequestRow(7)]);
+      if (path.endsWith('/check-runs'))
+        return pollingResponse({ check_runs: [createCheckRunRow({ status: 'in_progress' })] });
+      return pollingResponse([]);
+    }) as typeof fetch;
+    try {
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      expect(received.some((item) => item.payload.eventType === 'check_run')).toBe(false);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('polling drops check runs with no associated PR', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls')) return pollingResponse([]);
+      if (path.endsWith('/check-runs'))
+        return pollingResponse({ check_runs: [createCheckRunRow({ pull_requests: [] })] });
+      return pollingResponse([]);
+    }) as typeof fetch;
+    try {
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      expect(received.some((item) => item.payload.eventType === 'check_run')).toBe(false);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('polling dedupes repeated check run IDs', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls')) return pollingResponse([createPullRequestRow(7)]);
+      if (path.endsWith('/check-runs'))
+        return pollingResponse({ check_runs: [createCheckRunRow({ id: 7001 })] });
+      return pollingResponse([]);
+    }) as typeof fetch;
+    try {
+      const repo = extension.repo.listPollingRepos()[0];
+      await extension.pollWatchedRepo(repo, fetchImpl);
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      const storedCount = db
+        .prepare(
+          `SELECT COUNT(*) AS count FROM space_external_events WHERE topic = 'github/acme/widgets/pull_request/7.check_failed'`
+        )
+        .get() as { count: number };
+      expect(storedCount.count).toBe(1);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('polling dedupes check runs already delivered by webhook', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    const webhookEvent = toExternalEvent(
+      'space-1',
+      normalizeGitHubWebhook(
+        'check_run',
+        'delivery-1',
+        checkRunPayload({
+          check_run: {
+            ...checkRunPayload().check_run,
+            id: 7001,
+            completed_at: '2026-01-03T00:00:00Z',
+          },
+        })
+      )!
+    );
+    await service.publish(webhookEvent);
+    received.length = 0;
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls')) return pollingResponse([createPullRequestRow(7)]);
+      if (path.endsWith('/check-runs'))
+        return pollingResponse({ check_runs: [createCheckRunRow({ name: 'daemon unit tests' })] });
+      return pollingResponse([]);
+    }) as typeof fetch;
+    try {
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      const storedCount = db
+        .prepare(
+          `SELECT COUNT(*) AS count FROM space_external_events WHERE topic = 'github/acme/widgets/pull_request/7.check_failed'`
+        )
+        .get() as { count: number };
+      expect(storedCount.count).toBe(1);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('polling keeps same-second check runs eligible for store-level dedupe', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    let pollCount = 0;
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls')) return pollingResponse([createPullRequestRow(7)]);
+      if (path.endsWith('/check-runs')) {
+        pollCount++;
+        return pollingResponse({
+          check_runs: [
+            createCheckRunRow({ id: 7001 }),
+            ...(pollCount > 1 ? [createCheckRunRow({ id: 7002 })] : []),
+          ],
+        });
+      }
+      return pollingResponse([]);
+    }) as typeof fetch;
+    try {
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      const storedRows = db
+        .prepare(
+          `SELECT payload_json AS payload FROM space_external_events WHERE topic = 'github/acme/widgets/pull_request/7.check_failed'`
+        )
+        .all() as Array<{ payload: string }>;
+      const checkRunIds = storedRows
+        .map((row) => JSON.parse(row.payload).checkRunId as number)
+        .sort();
+      expect(checkRunIds).toEqual([7001, 7002]);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('polling preserves check-run heads beyond reaction target limit', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    let pollCount = 0;
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const parsed = new URL(String(url));
+      const path = parsed.pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls')) {
+        pollCount++;
+        return pollCount === 1
+          ? pollingResponse(
+              Array.from({ length: 11 }, (_, index) =>
+                createPullRequestRow(index + 1, { head: { sha: `sha-${index + 1}` } })
+              )
+            )
+          : new Response('', { status: 304 });
+      }
+      if (path.endsWith('/check-runs')) {
+        const headSha = decodeURIComponent(path.split('/commits/')[1].split('/check-runs')[0]);
+        return pollingResponse({
+          check_runs:
+            headSha === 'sha-11'
+              ? [
+                  createCheckRunRow({
+                    id: 7011,
+                    head_sha: 'sha-11',
+                    pull_requests: [],
+                  }),
+                ]
+              : [],
+        });
+      }
+      return pollingResponse([]);
+    }) as typeof fetch;
+    try {
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      expect(received.some((item) => item.payload.checkRunId === 7011)).toBe(true);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('polling does not track check-run heads for closed PR deltas', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls'))
+        return pollingResponse([
+          createPullRequestRow(7, { state: 'closed', head: { sha: 'abc123' } }),
+        ]);
+      if (path.endsWith('/check-runs'))
+        return pollingResponse({ check_runs: [createCheckRunRow({ pull_requests: [] })] });
+      return pollingResponse([]);
+    }) as typeof fetch;
+    try {
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      expect(received.some((item) => item.payload.eventType === 'check_run')).toBe(false);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('check-run permission errors do not block reaction polling', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    let checkRunRequestCount = 0;
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls'))
+        return pollingResponse([
+          createPullRequestRow(7, { head: { sha: 'sha-7' } }),
+          createPullRequestRow(8, { head: { sha: 'sha-8' } }),
+        ]);
+      if (path.endsWith('/check-runs')) {
+        checkRunRequestCount++;
+        return new Response(JSON.stringify({ message: 'Resource not accessible by integration' }), {
+          status: 403,
+          headers: { 'X-RateLimit-Remaining': '4999' },
+        });
+      }
+      if (path.endsWith('/issues/7/reactions')) return pollingResponse([createReactionRow()]);
+      return pollingResponse([]);
+    }) as typeof fetch;
+    try {
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      expect(checkRunRequestCount).toBe(1);
+      expect(received.some((item) => item.topic.endsWith('.reaction_added'))).toBe(true);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('polling publishes associated check runs for every PR', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls'))
+        return pollingResponse([
+          createPullRequestRow(7, { head: { sha: 'shared-sha' } }),
+          createPullRequestRow(8, { head: { sha: 'shared-sha' } }),
+        ]);
+      if (path.endsWith('/check-runs')) {
+        expect(new URL(String(url)).searchParams.get('filter')).toBe('all');
+        return pollingResponse({
+          check_runs: [
+            createCheckRunRow({
+              id: 7001,
+              head_sha: 'shared-sha',
+              pull_requests: [],
+            }),
+          ],
+        });
+      }
+      return pollingResponse([]);
+    }) as typeof fetch;
+    try {
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      const topics = received
+        .filter((item) => item.payload.eventType === 'check_run')
+        .map((item) => item.topic)
+        .sort();
+      expect(topics).toEqual([
+        'github/acme/widgets/pull_request/7.check_failed',
+        'github/acme/widgets/pull_request/8.check_failed',
+      ]);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('polling skips missing check-run refs and continues to later heads', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const parsed = new URL(String(url));
+      const path = parsed.pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls'))
+        return pollingResponse([
+          createPullRequestRow(7, { head: { sha: 'missing-sha' } }),
+          createPullRequestRow(8, { head: { sha: 'active-sha' } }),
+        ]);
+      if (path.endsWith('/check-runs')) {
+        const headSha = decodeURIComponent(path.split('/commits/')[1].split('/check-runs')[0]);
+        if (headSha === 'missing-sha') return new Response('{}', { status: 404 });
+        return pollingResponse({
+          check_runs: [createCheckRunRow({ id: 7008, head_sha: 'active-sha', pull_requests: [] })],
+        });
+      }
+      return pollingResponse([]);
+    }) as typeof fetch;
+    try {
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      const checkRunTopics = received
+        .filter((item) => item.payload.eventType === 'check_run')
+        .map((item) => item.topic);
+      expect(checkRunTopics).toEqual(['github/acme/widgets/pull_request/8.check_failed']);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('polling caches check-run ETags per head page', async () => {
+    const db = setupDb();
+    const { service } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    const checkRunIfNoneMatch: Array<string | null> = [];
+    let pollCount = 0;
+    const fetchImpl = (async (url: string | URL | Request, init?: RequestInit) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls')) return pollingResponse([createPullRequestRow(7)]);
+      if (path.endsWith('/check-runs')) {
+        pollCount++;
+        const headers = new Headers(init?.headers);
+        checkRunIfNoneMatch.push(headers.get('If-None-Match'));
+        if (pollCount === 2) return new Response('', { status: 304 });
+        return pollingResponseWithHeaders({ check_runs: [] }, { ETag: 'W/"checks-abc123"' });
+      }
+      return pollingResponse([]);
+    }) as typeof fetch;
+    try {
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      expect(checkRunIfNoneMatch).toEqual([null, 'W/"checks-abc123"']);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('polling does not cache full check-run pages before pagination completes', async () => {
+    const db = setupDb();
+    const { service } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    const checkRunIfNoneMatch: Array<string | null> = [];
+    const fetchImpl = (async (url: string | URL | Request, init?: RequestInit) => {
+      const parsed = new URL(String(url));
+      const path = parsed.pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls')) return pollingResponse([createPullRequestRow(7)]);
+      if (path.endsWith('/check-runs')) {
+        checkRunIfNoneMatch.push(new Headers(init?.headers).get('If-None-Match'));
+        const page = parsed.searchParams.get('page');
+        if (page === '1') {
+          return pollingResponseWithHeaders(
+            {
+              check_runs: Array.from({ length: 100 }, (_, index) =>
+                createCheckRunRow({ id: 7100 + index })
+              ),
+            },
+            { ETag: 'W/"checks-full-page"' }
+          );
+        }
+        return pollingResponseWithHeaders({ check_runs: [] }, { ETag: 'W/"checks-empty-page"' });
+      }
+      return pollingResponse([]);
+    }) as typeof fetch;
+    try {
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      expect(checkRunIfNoneMatch).toEqual([null, null, null, 'W/"checks-empty-page"']);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('polling filters check-run PR numbers to the tracked head', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls'))
+        return pollingResponse([
+          createPullRequestRow(7, {
+            head: {
+              sha: 'fork-sha',
+              repo: { owner: { login: 'contrib' }, name: 'widgets-fork' },
+            },
+          }),
+        ]);
+      if (path.endsWith('/check-runs'))
+        return pollingResponse({
+          check_runs: [
+            createCheckRunRow({
+              id: 7017,
+              head_sha: 'fork-sha',
+              pull_requests: [{ number: 1 }],
+            }),
+          ],
+        });
+      return pollingResponse([]);
+    }) as typeof fetch;
+    try {
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      const checkRunTopics = received
+        .filter((item) => item.payload.eventType === 'check_run')
+        .map((item) => item.topic);
+      expect(checkRunTopics).toEqual(['github/acme/widgets/pull_request/7.check_failed']);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('polling invalidates check-run ETags when tracked PRs for a head change', async () => {
+    const db = setupDb();
+    const { service } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    const checkRunIfNoneMatch: Array<string | null> = [];
+    let pollCount = 0;
+    const fetchImpl = (async (url: string | URL | Request, init?: RequestInit) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls')) {
+        pollCount++;
+        return pollingResponse(
+          pollCount === 1
+            ? [createPullRequestRow(7, { head: { sha: 'shared-sha' } })]
+            : [
+                createPullRequestRow(7, { head: { sha: 'shared-sha' } }),
+                createPullRequestRow(8, { head: { sha: 'shared-sha' } }),
+              ]
+        );
+      }
+      if (path.endsWith('/check-runs')) {
+        checkRunIfNoneMatch.push(new Headers(init?.headers).get('If-None-Match'));
+        return pollingResponseWithHeaders({ check_runs: [] }, { ETag: 'W/"shared-sha-checks"' });
+      }
+      return pollingResponse([]);
+    }) as typeof fetch;
+    try {
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      expect(checkRunIfNoneMatch).toEqual([null, null]);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('polling keeps pulls seed mode until pull pagination completes', async () => {
+    const db = setupDb();
+    const { service } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    const seeded = extension.repo.listPollingRepos()[0];
+    extension.repo.updatePollCursor(seeded.id, {
+      lastSeenAt: Date.parse('2026-06-01T00:00:00Z'),
+      etags: { pulls: 'W/"old-pulls"' },
+      processedPages: {},
+      recentPullRequestNumbers: [1],
+      recentPullRequestHeadShas: {},
+    });
+    const pullsSinceValues: Array<string | null> = [];
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const parsed = new URL(String(url));
+      const path = parsed.pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls')) {
+        pullsSinceValues.push(parsed.searchParams.get('since'));
+        const page = parsed.searchParams.get('page');
+        return pollingResponse(
+          page === '1'
+            ? Array.from({ length: 100 }, (_, index) =>
+                createPullRequestRow(index + 1, { head: { sha: `sha-${index + 1}` } })
+              )
+            : [createPullRequestRow(101, { head: { sha: 'sha-101' } })]
+        );
+      }
+      if (path.endsWith('/check-runs')) return pollingResponse({ check_runs: [] });
+      return pollingResponse([]);
+    }) as typeof fetch;
+    try {
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      expect(pullsSinceValues).toEqual([null, null]);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('polling seeds the check-run cursor before the first scan', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls')) return pollingResponse([createPullRequestRow(7)]);
+      if (path.endsWith('/check-runs'))
+        return pollingResponse({
+          check_runs: [createCheckRunRow({ id: 7001, completed_at: '2020-01-03T00:00:00Z' })],
+        });
+      return pollingResponse([]);
+    }) as typeof fetch;
+    try {
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      expect(received.some((item) => item.payload.eventType === 'check_run')).toBe(false);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('polling queries fork head repositories for check runs', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    const checkRunPaths: string[] = [];
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls'))
+        return pollingResponse([
+          createPullRequestRow(7, {
+            head: {
+              sha: 'fork-sha',
+              repo: { owner: { login: 'contrib' }, name: 'widgets-fork' },
+            },
+          }),
+        ]);
+      if (path.endsWith('/check-runs')) {
+        checkRunPaths.push(path);
+        return pollingResponse({
+          check_runs: [createCheckRunRow({ id: 7017, head_sha: 'fork-sha', pull_requests: [] })],
+        });
+      }
+      return pollingResponse([]);
+    }) as typeof fetch;
+    try {
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      // Fork heads are queried on both the fork repo and the watched base repo.
+      expect(checkRunPaths).toEqual([
+        '/repos/contrib/widgets-fork/commits/fork-sha/check-runs',
+        '/repos/acme/widgets/commits/fork-sha/check-runs',
+      ]);
+      expect(
+        received.some((item) => item.topic === 'github/acme/widgets/pull_request/7.check_failed')
+      ).toBe(true);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('polling seeds check-run cursor from stable polling-enabled time', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    const repo = extension.repo.listPollingRepos()[0];
+    // Simulate a check run that completed after polling was enabled — it must
+    // not be filtered as historical. checkRunPollingEnabledAt is captured at
+    // upsert time; a run completing after it should be published.
+    const enabledAt = repo.pollCursor?.checkRunPollingEnabledAt ?? Date.now();
+    const afterEnabled = new Date(enabledAt + 1000).toISOString();
+    const beforeEnabled = new Date(enabledAt - 1000).toISOString();
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls')) return pollingResponse([createPullRequestRow(7)]);
+      if (path.endsWith('/check-runs'))
+        return pollingResponse({
+          check_runs: [
+            // filter=all returns newest-first.
+            createCheckRunRow({ id: 7002, completed_at: afterEnabled }),
+            createCheckRunRow({ id: 7001, completed_at: beforeEnabled }),
+          ],
+        });
+      return pollingResponse([]);
+    }) as typeof fetch;
+    try {
+      await extension.pollWatchedRepo(repo, fetchImpl);
+      const checkRunIds = received
+        .filter((item) => item.payload.eventType === 'check_run')
+        .map((item) => item.payload.checkRunId);
+      expect(checkRunIds).toEqual([7002]);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('polling skips check-run scan when pull discovery fails', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    let checkRunRequestCount = 0;
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls')) return new Response('Internal Server Error', { status: 500 });
+      if (path.endsWith('/check-runs')) {
+        checkRunRequestCount++;
+        return pollingResponse({ check_runs: [createCheckRunRow()] });
+      }
+      return pollingResponse([]);
+    }) as typeof fetch;
+    try {
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      expect(checkRunRequestCount).toBe(0);
+      expect(received.some((item) => item.payload.eventType === 'check_run')).toBe(false);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('polling continues check-run scan past inaccessible fork heads', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    const checkRunPaths: string[] = [];
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls'))
+        return pollingResponse([
+          createPullRequestRow(7, {
+            head: {
+              sha: 'fork-sha',
+              repo: { owner: { login: 'contrib' }, name: 'widgets-fork' },
+            },
+          }),
+          createPullRequestRow(8, { head: { sha: 'base-sha' } }),
+        ]);
+      if (path.endsWith('/check-runs')) {
+        checkRunPaths.push(path);
+        const headSha = decodeURIComponent(path.split('/commits/')[1].split('/check-runs')[0]);
+        if (path.includes('contrib/widgets-fork')) {
+          return new Response('Forbidden', { status: 403 });
+        }
+        // Only the base-sha head has a failure; fork-sha has no runs on the
+        // base repo in this scenario.
+        if (headSha === 'base-sha')
+          return pollingResponse({
+            check_runs: [createCheckRunRow({ id: 7001, head_sha: 'base-sha', pull_requests: [] })],
+          });
+        return pollingResponse({ check_runs: [] });
+      }
+      return pollingResponse([]);
+    }) as typeof fetch;
+    try {
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      expect(checkRunPaths).toContain('/repos/contrib/widgets-fork/commits/fork-sha/check-runs');
+      expect(checkRunPaths).toContain('/repos/acme/widgets/commits/base-sha/check-runs');
+      const checkRunTopics = received
+        .filter((item) => item.payload.eventType === 'check_run')
+        .map((item) => item.topic);
+      expect(checkRunTopics).toEqual(['github/acme/widgets/pull_request/8.check_failed']);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('polling suppresses superseded failures for newly tracked PRs', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    let pollCount = 0;
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls')) {
+        pollCount++;
+        return pollingResponse(
+          pollCount === 1
+            ? [createPullRequestRow(7, { head: { sha: 'shared-sha' } })]
+            : [
+                createPullRequestRow(7, { head: { sha: 'shared-sha' } }),
+                createPullRequestRow(8, { head: { sha: 'shared-sha' } }),
+              ]
+        );
+      }
+      if (path.endsWith('/check-runs'))
+        // filter=all returns newest-first: a success at 10:05 then a failure at 10:00.
+        return pollingResponse({
+          check_runs: [
+            createCheckRunRow({
+              id: 7002,
+              head_sha: 'shared-sha',
+              conclusion: 'success',
+              pull_requests: [],
+            }),
+            createCheckRunRow({
+              id: 7001,
+              head_sha: 'shared-sha',
+              conclusion: 'failure',
+              pull_requests: [],
+            }),
+          ],
+        });
+      return pollingResponse([]);
+    }) as typeof fetch;
+    try {
+      const repo = extension.repo.listPollingRepos()[0];
+      await extension.pollWatchedRepo(repo, fetchImpl);
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      // Neither PR should receive a check_failed since the latest run is green.
+      const topics = db
+        .prepare(
+          `SELECT topic FROM space_external_events WHERE topic LIKE 'github/acme/widgets/pull_request/%.check_failed'`
+        )
+        .all()
+        .map((row) => (row as { topic: string }).topic);
+      expect(topics).toEqual([]);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('polling queries base repo for fork head check runs', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    const checkRunPaths: string[] = [];
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls'))
+        return pollingResponse([
+          createPullRequestRow(7, {
+            head: {
+              sha: 'fork-sha',
+              repo: { owner: { login: 'contrib' }, name: 'widgets-fork' },
+            },
+          }),
+        ]);
+      if (path.endsWith('/check-runs')) {
+        checkRunPaths.push(path);
+        // Fork repo has no check runs; base repo has the failure.
+        if (path.includes('contrib/widgets-fork')) return pollingResponse({ check_runs: [] });
+        return pollingResponse({
+          check_runs: [createCheckRunRow({ id: 7018, head_sha: 'fork-sha', pull_requests: [] })],
+        });
+      }
+      return pollingResponse([]);
+    }) as typeof fetch;
+    try {
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      expect(checkRunPaths).toContain('/repos/contrib/widgets-fork/commits/fork-sha/check-runs');
+      expect(checkRunPaths).toContain('/repos/acme/widgets/commits/fork-sha/check-runs');
+      expect(
+        received.some((item) => item.topic === 'github/acme/widgets/pull_request/7.check_failed')
+      ).toBe(true);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('polling reseeds check-run cursors when space is re-enabled', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    // Disable the repo (enabled false), then re-enable — the check-run
+    // baseline should refresh even though pollingEnabled stayed true.
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      enabled: false,
+    });
+    const beforeReEnable = Date.now();
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      enabled: true,
+    });
+    const repo = extension.repo.listPollingRepos()[0];
+    expect(repo.pollCursor?.checkRunPollingEnabledAt).toBeGreaterThanOrEqual(beforeReEnable);
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls')) return pollingResponse([createPullRequestRow(7)]);
+      if (path.endsWith('/check-runs'))
+        return pollingResponse({
+          check_runs: [createCheckRunRow({ id: 7001, completed_at: '2020-01-01T00:00:00Z' })],
+        });
+      return pollingResponse([]);
+    }) as typeof fetch;
+    try {
+      await extension.pollWatchedRepo(repo, fetchImpl);
+      expect(received.some((item) => item.payload.eventType === 'check_run')).toBe(false);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('polling scopes check-run dedupe when legacy key belongs to a different PR', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    let pollCount = 0;
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls')) {
+        pollCount++;
+        return pollingResponse(
+          pollCount === 1
+            ? [createPullRequestRow(7, { head: { sha: 'shared-sha' } })]
+            : [createPullRequestRow(8, { head: { sha: 'shared-sha' } })]
+        );
+      }
+      if (path.endsWith('/check-runs'))
+        return pollingResponse({
+          check_runs: [createCheckRunRow({ id: 7001, head_sha: 'shared-sha', pull_requests: [] })],
+        });
+      return pollingResponse([]);
+    }) as typeof fetch;
+    try {
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      const dedupeKeys = db
+        .prepare(
+          `SELECT dedupe_key FROM space_external_events WHERE topic LIKE 'github/acme/widgets/pull_request/%.check_failed'`
+        )
+        .all() as { dedupe_key: string }[];
+      expect(dedupeKeys.map((row) => row.dedupe_key).sort()).toEqual([
+        'acme/widgets:check_run:7001:failure',
+        'acme/widgets:check_run:7001:failure:8',
+      ]);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('polling scopes legacy check-run key when owner was seeded by webhook', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    // Webhook delivers the unscoped legacy key for PR #7 before any polling
+    // populates checkRunLegacyPrs.
+    const webhookEvent = toExternalEvent(
+      'space-1',
+      normalizeGitHubWebhook(
+        'check_run',
+        'delivery-webhook',
+        checkRunPayload({
+          check_run: {
+            ...(checkRunPayload().check_run as Record<string, unknown>),
+            id: 7001,
+            completed_at: '2099-01-03T00:00:00Z',
+          },
+        })
+      )!
+    );
+    await service.publish(webhookEvent);
+    received.length = 0;
+    // Now polling observes the same check run for PR #8 (same head SHA).
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls'))
+        return pollingResponse([createPullRequestRow(8, { head: { sha: 'abc123' } })]);
+      if (path.endsWith('/check-runs'))
+        return pollingResponse({
+          check_runs: [createCheckRunRow({ id: 7001, head_sha: 'abc123', pull_requests: [] })],
+        });
+      return pollingResponse([]);
+    }) as typeof fetch;
+    try {
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      const dedupeKeys = db
+        .prepare(
+          `SELECT dedupe_key FROM space_external_events WHERE topic LIKE 'github/acme/widgets/pull_request/%.check_failed'`
+        )
+        .all() as { dedupe_key: string }[];
+      expect(dedupeKeys.map((row) => row.dedupe_key).sort()).toEqual([
+        'acme/widgets:check_run:7001:failure',
+        'acme/widgets:check_run:7001:failure:8',
+      ]);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('polling isolates per-head check-run cursors so skipped heads do not lose events', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    let pollCount = 0;
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls')) {
+        pollCount++;
+        return pollingResponse([
+          createPullRequestRow(7, { head: { sha: 'head-a' } }),
+          createPullRequestRow(8, { head: { sha: 'head-b' } }),
+        ]);
+      }
+      if (path.endsWith('/check-runs')) {
+        const headSha = decodeURIComponent(path.split('/commits/')[1].split('/check-runs')[0]);
+        // Cycle 1: head-a returns a 500 (transient), head-b returns a failure.
+        // Cycle 2: head-a returns the failure that completed during cycle 1.
+        if (pollCount === 1) {
+          if (headSha === 'head-a') return new Response('Server Error', { status: 500 });
+          return pollingResponse({
+            check_runs: [createCheckRunRow({ id: 7002, head_sha: 'head-b', pull_requests: [] })],
+          });
+        }
+        if (headSha === 'head-a')
+          return pollingResponse({
+            check_runs: [createCheckRunRow({ id: 7001, head_sha: 'head-a', pull_requests: [] })],
+          });
+        return pollingResponse({ check_runs: [] });
+      }
+      return pollingResponse([]);
+    }) as typeof fetch;
+    try {
+      const repo = extension.repo.listPollingRepos()[0];
+      await extension.pollWatchedRepo(repo, fetchImpl);
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      const checkRunIds = received
+        .filter((item) => item.payload.eventType === 'check_run')
+        .map((item) => item.payload.checkRunId)
+        .sort();
+      // head-a's event is not lost even though head-b advanced its own cursor.
+      expect(checkRunIds).toEqual([7001, 7002]);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('polling keeps reactions running after a transient check-run 5xx', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls')) return pollingResponse([createPullRequestRow(7)]);
+      if (path.endsWith('/check-runs')) return new Response('Server Error', { status: 500 });
+      if (path.endsWith('/issues/7/reactions'))
+        return pollingResponse([createReactionRow({ id: 9001, content: '+1' })]);
+      return pollingResponse([]);
+    }) as typeof fetch;
+    try {
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      expect(received.some((item) => item.payload.eventType === 'reaction')).toBe(true);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('polling seeds legacy check-run cursor from committed watermark, not createdAt', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    // Simulate a legacy cursor: no checkRunPollingEnabledAt, an old
+    // committed watermark, and an old createdAt.
+    const repo = extension.repo.listPollingRepos()[0];
+    const committedAt = Date.parse('2026-06-20T00:00:00Z');
+    extension.repo.updatePollCursorJson(repo.id, {
+      lastSeenAt: committedAt,
+      recentPullRequestNumbers: [7],
+      recentPullRequestHeadShas: { 7: 'abc123' },
+    });
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls')) return pollingResponse([createPullRequestRow(7)]);
+      if (path.endsWith('/check-runs'))
+        return pollingResponse({
+          // A failure from before the committed watermark — must be dropped.
+          check_runs: [createCheckRunRow({ id: 7001, completed_at: '2026-06-18T00:00:00Z' })],
+        });
+      return pollingResponse([]);
+    }) as typeof fetch;
+    try {
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      expect(received.some((item) => item.payload.eventType === 'check_run')).toBe(false);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('polling reprocesses check runs when a head gains a new PR', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    let pollCount = 0;
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls')) {
+        pollCount++;
+        return pollingResponse(
+          pollCount === 1
+            ? [createPullRequestRow(7, { head: { sha: 'shared-sha' } })]
+            : [
+                createPullRequestRow(7, { head: { sha: 'shared-sha' } }),
+                createPullRequestRow(8, { head: { sha: 'shared-sha' } }),
+              ]
+        );
+      }
+      if (path.endsWith('/check-runs'))
+        return pollingResponse({
+          check_runs: [createCheckRunRow({ id: 7001, head_sha: 'shared-sha', pull_requests: [] })],
+        });
+      return pollingResponse([]);
+    }) as typeof fetch;
+    try {
+      const repo = extension.repo.listPollingRepos()[0];
+      // Cycle 1: PR #7 gets the failure.
+      await extension.pollWatchedRepo(repo, fetchImpl);
+      // Cycle 2: PR #8 joins the same head — the failure must be re-evaluated.
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      const storedRows = db
+        .prepare(
+          `SELECT topic, dedupe_key FROM space_external_events WHERE topic LIKE 'github/acme/widgets/pull_request/%.check_failed'`
+        )
+        .all() as { topic: string; dedupe_key: string }[];
+      const topics = storedRows.map((row) => row.topic).sort();
+      expect(topics).toEqual([
+        'github/acme/widgets/pull_request/7.check_failed',
+        'github/acme/widgets/pull_request/8.check_failed',
+      ]);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('polling seeds reset heads below the global check-run cursor', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    let pollCount = 0;
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls')) {
+        pollCount++;
+        return pollingResponse(
+          pollCount === 1
+            ? [
+                createPullRequestRow(7, { head: { sha: 'shared-sha' } }),
+                createPullRequestRow(9, { head: { sha: 'other-sha' } }),
+              ]
+            : [
+                createPullRequestRow(7, { head: { sha: 'shared-sha' } }),
+                createPullRequestRow(8, { head: { sha: 'shared-sha' } }),
+                createPullRequestRow(9, { head: { sha: 'other-sha' } }),
+              ]
+        );
+      }
+      if (path.endsWith('/check-runs')) {
+        const headSha = decodeURIComponent(path.split('/commits/')[1].split('/check-runs')[0]);
+        if (headSha === 'other-sha')
+          // A later successful check on another head that advances the global cursor.
+          return pollingResponse({
+            check_runs: [
+              createCheckRunRow({
+                id: 7002,
+                head_sha: 'other-sha',
+                conclusion: 'success',
+                pull_requests: [],
+              }),
+            ],
+          });
+        // shared-sha has the older failure that must not be dropped.
+        return pollingResponse({
+          check_runs: [createCheckRunRow({ id: 7001, head_sha: 'shared-sha', pull_requests: [] })],
+        });
+      }
+      return pollingResponse([]);
+    }) as typeof fetch;
+    try {
+      const repo = extension.repo.listPollingRepos()[0];
+      await extension.pollWatchedRepo(repo, fetchImpl);
+      // Cycle 2: PR #8 joins shared-sha — the per-head watermark was cleared,
+      // but the global cursor advanced past the failure on cycle 1. The reset
+      // head must seed below the global cursor so the failure is re-evaluated.
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      const topics = db
+        .prepare(
+          `SELECT topic FROM space_external_events WHERE topic LIKE 'github/acme/widgets/pull_request/%.check_failed'`
+        )
+        .all()
+        .map((row) => (row as { topic: string }).topic)
+        .sort();
+      expect(topics).toEqual([
+        'github/acme/widgets/pull_request/7.check_failed',
+        'github/acme/widgets/pull_request/8.check_failed',
+      ]);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('polling reseeds check-run baseline when polling is re-enabled', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    // Disable polling, then re-enable — the check-run baseline should refresh.
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: false,
+    });
+    const beforeReEnable = Date.now();
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    const repo = extension.repo.listPollingRepos()[0];
+    expect(repo.pollCursor?.checkRunPollingEnabledAt).toBeGreaterThanOrEqual(beforeReEnable);
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls')) return pollingResponse([createPullRequestRow(7)]);
+      if (path.endsWith('/check-runs'))
+        return pollingResponse({
+          check_runs: [
+            // Failure from the disabled window — must be filtered.
+            createCheckRunRow({ id: 7001, completed_at: '2020-01-01T00:00:00Z' }),
+          ],
+        });
+      return pollingResponse([]);
+    }) as typeof fetch;
+    try {
+      await extension.pollWatchedRepo(repo, fetchImpl);
+      expect(received.some((item) => item.payload.eventType === 'check_run')).toBe(false);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('polling honors recorded legacy owner during fan-out regardless of order', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    // Webhook delivers the unscoped legacy key for PR #7.
+    const webhookEvent = toExternalEvent(
+      'space-1',
+      normalizeGitHubWebhook(
+        'check_run',
+        'delivery-webhook',
+        checkRunPayload({
+          check_run: {
+            ...(checkRunPayload().check_run as Record<string, unknown>),
+            id: 7001,
+            completed_at: '2099-01-03T00:00:00Z',
+          },
+        })
+      )!
+    );
+    await service.publish(webhookEvent);
+    received.length = 0;
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      // /pulls orders PRs [8, 7] — #8 is first but #7 owns the legacy key.
+      if (path.endsWith('/pulls'))
+        return pollingResponse([
+          createPullRequestRow(8, { head: { sha: 'abc123' } }),
+          createPullRequestRow(7, { head: { sha: 'abc123' } }),
+        ]);
+      if (path.endsWith('/check-runs'))
+        return pollingResponse({
+          check_runs: [createCheckRunRow({ id: 7001, head_sha: 'abc123', pull_requests: [] })],
+        });
+      return pollingResponse([]);
+    }) as typeof fetch;
+    try {
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      const dedupeKeys = db
+        .prepare(
+          `SELECT dedupe_key FROM space_external_events WHERE topic LIKE 'github/acme/widgets/pull_request/%.check_failed'`
+        )
+        .all() as { dedupe_key: string }[];
+      // #7 keeps the unscoped key; #8 gets the scoped key even though it was
+      // first in the fan-out list.
+      expect(dedupeKeys.map((row) => row.dedupe_key).sort()).toEqual([
+        'acme/widgets:check_run:7001:failure',
+        'acme/widgets:check_run:7001:failure:8',
+      ]);
     } finally {
       await extension.stop();
     }

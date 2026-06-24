@@ -9,10 +9,13 @@ import type {
   HttpExternalEventExtension,
   RpcExternalEventExtension,
 } from '../types';
+import { ExternalEventStore } from '../external-event-store';
 import {
+  normalizeGitHubCheckRun,
   normalizeGitHubPollingRow,
   normalizeGitHubReaction,
   normalizeGitHubWebhook,
+  parseGitHubTimestamp,
   toExternalEvent,
 } from './github-normalizer';
 import {
@@ -187,6 +190,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
    */
   private rateLimitedFromRetryAfter = false;
   private readonly credentialStore?: CredentialStore;
+  private readonly eventStore: ExternalEventStore;
 
   constructor(
     db: BunDatabase,
@@ -194,6 +198,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     private readonly options: GitHubEventExtensionOptions = {}
   ) {
     this.repo = new GitHubEventExtensionRepository(db);
+    this.eventStore = new ExternalEventStore(db);
     this.credentialStore = options.credentialStore;
   }
 
@@ -1210,10 +1215,19 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     const etags = cursor.etags ?? {};
     const processedPages = cursor.processedPages ?? {};
     const recentPullRequestNumbers = cursor.recentPullRequestNumbers ?? [];
+    const recentPullRequestHeadShas = cursor.recentPullRequestHeadShas ?? {};
+    const recentPullRequestHeadRepos = cursor.recentPullRequestHeadRepos ?? {};
+    const checkRunEtags = cursor.checkRunEtags ?? {};
+    const checkRunLegacyPrs = cursor.checkRunLegacyPrs ?? {};
+    const checkRunHeadLastSeenAt = cursor.checkRunHeadLastSeenAt ?? {};
+    let checkRunHeadPendingLastSeenAt = cursor.checkRunHeadPendingLastSeenAt ?? {};
+    const checkRunPollingEnabledAt = cursor.checkRunPollingEnabledAt;
+    const pullsSeedInProgress = cursor.pullsSeedInProgress ?? false;
     const seenReactionIds = cursor.seenReactionIds ?? {};
     const reactionEtags = cursor.reactionEtags ?? {};
     const endpointLastSeenAt = cursor.endpointLastSeenAt ?? {};
     const endpointPendingLastSeenAt = cursor.endpointPendingLastSeenAt ?? {};
+    let nextPullsSeedInProgress = pullsSeedInProgress;
     const watermarks = {
       committed: cursor.lastSeenAt ?? watched.lastPollAt ?? 0,
       pending: cursor.pendingLastSeenAt ?? cursor.lastSeenAt ?? watched.lastPollAt ?? 0,
@@ -1224,6 +1238,17 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       { key: 'review_comments', path: '/pulls/comments' },
       { key: 'pulls', path: '/pulls', extra: 'state=all&sort=updated&direction=desc' },
     ];
+    const pullRequestNumbersByHeadRef = new Map<string, number[]>();
+    for (const [prNumber, headSha] of Object.entries(recentPullRequestHeadShas)) {
+      const headRepo =
+        recentPullRequestHeadRepos[Number(prNumber)] ?? gitHubRepoPath(watched.owner, watched.repo);
+      if (headSha)
+        addPullRequestNumberByHeadSha(
+          pullRequestNumbersByHeadRef,
+          headRefKey(headRepo, headSha),
+          Number(prNumber)
+        );
+    }
     let partialScan = false;
     let latestRateLimit: GitHubRateLimitInfo | undefined;
 
@@ -1260,7 +1285,12 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       // for that one pulls fetch so GitHub returns the full newest list (an
       // empty delta under `since` would leave reaction targets unseeded until
       // unrelated PR metadata changes).
-      const pullsNeedsSeed = endpoint.key === 'pulls' && recentPullRequestNumbers.length === 0;
+      const pullsNeedsSeed =
+        endpoint.key === 'pulls' &&
+        (pullsSeedInProgress ||
+          recentPullRequestNumbers.length === 0 ||
+          (recentPullRequestNumbers.length > 0 &&
+            Object.keys(recentPullRequestHeadShas).length === 0));
       if (since && !pullsNeedsSeed) query.set('since', since);
       query.set('per_page', '100');
       query.set('page', String(page));
@@ -1319,11 +1349,67 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
           partialScan = true;
           break;
         }
+        // A failed `/pulls` discovery leaves the tracked head cursor stale.
+        // Treat it as a partial scan so check-run polling (which derives PR
+        // numbers from the fetched `/pulls` data) is skipped this cycle.
+        if (endpoint.key === 'pulls') {
+          partialScan = true;
+        }
         continue;
       }
       const etag = response.headers.get('ETag');
       if (etag && page === 1) etags[endpoint.key] = etag;
-      const rows = (await response.json()) as unknown[];
+      const payload = await response.json();
+      const rows = rowsFromPollingPayload(payload, endpoint.key);
+      if (endpoint.key === 'pulls') {
+        for (const row of rows) {
+          const headSha = headShaFromPullRequest(row);
+          const headRepo = headRepoFromPullRequest(row, watched);
+          const prNumber = pullRequestNumberFrom(row);
+          if (headSha && prNumber) {
+            const previousHeadSha = recentPullRequestHeadShas[prNumber];
+            const previousHeadRepo =
+              recentPullRequestHeadRepos[prNumber] ?? gitHubRepoPath(watched.owner, watched.repo);
+            if (!isPullRequestOpen(row)) {
+              if (previousHeadSha) {
+                const previousHeadRef = headRefKey(previousHeadRepo, previousHeadSha);
+                removePullRequestNumberByHeadSha(
+                  pullRequestNumbersByHeadRef,
+                  previousHeadRef,
+                  prNumber
+                );
+                clearCheckRunEtagsForHead(checkRunEtags, previousHeadRef);
+              }
+              delete recentPullRequestHeadShas[prNumber];
+              delete recentPullRequestHeadRepos[prNumber];
+              continue;
+            }
+            if (previousHeadSha && (previousHeadSha !== headSha || previousHeadRepo !== headRepo)) {
+              const previousHeadRef = headRefKey(previousHeadRepo, previousHeadSha);
+              removePullRequestNumberByHeadSha(
+                pullRequestNumbersByHeadRef,
+                previousHeadRef,
+                prNumber
+              );
+              clearCheckRunEtagsForHead(checkRunEtags, previousHeadRef);
+            }
+            const headRef = headRefKey(headRepo, headSha);
+            const previousHeadPrNumbers = [...(pullRequestNumbersByHeadRef.get(headRef) ?? [])];
+            addPullRequestNumberByHeadSha(pullRequestNumbersByHeadRef, headRef, prNumber);
+            if (!previousHeadPrNumbers.includes(prNumber)) {
+              // A new PR joined this head: clear the ETag and reset the per-head
+              // check-run watermark so older failed rows are re-evaluated for the
+              // new PR. Store-level dedupe prevents duplicate delivery for PRs
+              // that already received the event.
+              clearCheckRunEtagsForHead(checkRunEtags, headRef);
+              delete checkRunHeadLastSeenAt[headRef];
+              delete checkRunHeadPendingLastSeenAt[headRef];
+            }
+            recentPullRequestHeadShas[prNumber] = headSha;
+            recentPullRequestHeadRepos[prNumber] = headRepo;
+          }
+        }
+      }
       if (endpoint.key === 'pulls' && page === 1) {
         // `/pulls?sort=updated&direction=desc` returns PRs newest-first. The
         // `since` watermark turns ordinary polls into deltas (only PRs updated
@@ -1371,6 +1457,8 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         }
       }
       processedPages[endpoint.key] = rows.length >= 100 ? page + 1 : 1;
+      if (endpoint.key === 'pulls')
+        nextPullsSeedInProgress = pullsNeedsSeed && processedPages.pulls > 1;
       // Only advance the per-endpoint watermark once the endpoint's backlog is
       // complete. While pages remain, the next poll must keep using the old
       // watermark so remaining pages are not filtered out by `since`.
@@ -1388,6 +1476,259 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         this.applyRateLimit(rateLimit);
         partialScan = true;
         break;
+      }
+    }
+
+    const hasBacklog = Object.values(processedPages).some((page) => page > 1);
+    const pullsHasBacklog = (processedPages.pulls ?? 1) > 1;
+
+    if (!partialScan && !pullsHasBacklog) {
+      const checkRunEndpointKey = 'check_runs';
+      let checkRunPermissionDenied = false;
+      // Rate-limit / repo-wide denial stops the entire head loop. Transient
+      // per-head failures (500/502) skip the failing head but let the loop
+      // continue to the next head.
+      let checkRunRateLimited = false;
+      // The base seed for heads that have no per-head cursor (first scan or
+      // reset after a PR-set change). Deliberately excludes
+      // endpointLastSeenAt (the max of all committed per-head watermarks) so
+      // a reset head is not filtered by another head's advanced cursor.
+      const baseCheckRunWatermark = checkRunPollingEnabledAt ?? watermarks.committed;
+      const watchedBaseRepoPath = gitHubRepoPath(watched.owner, watched.repo);
+      for (const [headRef, prNumbers] of pullRequestNumbersByHeadRef) {
+        const { repoPath: headRepoPath, headSha } = parseHeadRefKey(headRef);
+        const fallbackPrNumbers = prNumbers;
+        const headWatermark =
+          checkRunHeadLastSeenAt[headRef] ??
+          checkRunHeadPendingLastSeenAt[headRef] ??
+          baseCheckRunWatermark;
+        let headPending = Math.max(headWatermark, checkRunHeadPendingLastSeenAt[headRef] ?? 0);
+        // headSucceeded is only true when EVERY queried repo path completed
+        // without error, so a failed fork leg does not advance the per-head
+        // cursor past failures the fork leg never saw.
+        let headSucceeded = true;
+        let headPruned = false;
+        // For fork heads, also query the watched base repo because GitHub
+        // Actions `pull_request` workflows create check runs under the base
+        // repo, not the fork.
+        const repoPathsToQuery =
+          headRepoPath !== watchedBaseRepoPath
+            ? [headRepoPath, watchedBaseRepoPath]
+            : [headRepoPath];
+        // Track check identity (name + app) whose latest conclusion is
+        // non-failure so earlier superseded failures are not replayed. Rows from
+        // `filter=all` arrive newest-first, so the first conclusion seen for a
+        // name+app is the latest.
+        const supersededCheckKeys = new Set<string>();
+        const seenCheckRunIds = new Set<number | string>();
+        for (const checkRunRepoPath of repoPathsToQuery) {
+          if (headPruned) break;
+          let page = 1;
+          while (true) {
+            const query = new URLSearchParams({
+              status: 'completed',
+              filter: 'all',
+              per_page: '100',
+              page: String(page),
+            });
+            const checkRunHeaders = gitHubPollingHeaders(token);
+            // ETag key includes the repo path so fork and base repo responses
+            // cache independently and do not cross-pollinate If-None-Match.
+            const checkRunEtagKey = `${headRef}:${checkRunRepoPath}:page:${page}`;
+            if (checkRunEtags[checkRunEtagKey]) {
+              checkRunHeaders['If-None-Match'] = checkRunEtags[checkRunEtagKey];
+            }
+            const response = await fetchImpl(
+              `${GITHUB_API_BASE}/repos/${checkRunRepoPath}/commits/${encodeURIComponent(headSha)}/check-runs?${query.toString()}`,
+              { headers: checkRunHeaders }
+            );
+            const rateLimit = parseRateLimitHeaders(response);
+            latestRateLimit = mergeRateLimitInfo(latestRateLimit, rateLimit);
+            if (rateLimit.limited) {
+              if (response.status === 429 && rateLimit.remaining > 0 && !rateLimit.retryAfter) {
+                this.applyRateLimit({
+                  remaining: rateLimit.remaining,
+                  resetAt: Date.now() + RATE_LIMIT_MIN_BACKOFF_MS,
+                  limited: true,
+                  retryAfter: true,
+                });
+              } else {
+                this.applyRateLimit(rateLimit);
+              }
+              partialScan = true;
+              checkRunRateLimited = true;
+              headSucceeded = false;
+              break;
+            }
+            if (response.status === 304) {
+              break;
+            }
+            if (!response.ok) {
+              const errorText = await response.text();
+              if (
+                (response.status === 403 || response.status === 429) &&
+                isRateLimitError(errorText)
+              ) {
+                const secondaryDelayMs = rateLimit.retryAfter
+                  ? rateLimit.resetAt - Date.now()
+                  : RATE_LIMIT_MIN_BACKOFF_MS;
+                this.applyRateLimit({
+                  remaining: rateLimit.remaining,
+                  resetAt: Date.now() + secondaryDelayMs,
+                  limited: true,
+                  retryAfter: true,
+                });
+                partialScan = true;
+                checkRunRateLimited = true;
+                headSucceeded = false;
+                break;
+              }
+              if (response.status === 403) {
+                // A 403 on a fork head repository means the token cannot read
+                // that contributor fork; skip this repo path but keep scanning
+                // the remaining heads. Only treat a 403 on the watched base repo
+                // as repo-wide denial.
+                if (checkRunRepoPath !== watchedBaseRepoPath) {
+                  clearCheckRunEtagsForHead(checkRunEtags, headRef);
+                  headSucceeded = false;
+                  break;
+                }
+                checkRunPermissionDenied = true;
+                headSucceeded = false;
+                break;
+              }
+              if (response.status === 404 || response.status === 422) {
+                if (checkRunRepoPath === headRepoPath) {
+                  for (const prNumber of prNumbers) {
+                    delete recentPullRequestHeadShas[prNumber];
+                    delete recentPullRequestHeadRepos[prNumber];
+                  }
+                  delete checkRunEtags[checkRunEtagKey];
+                  pullRequestNumbersByHeadRef.delete(headRef);
+                  // Head was pruned — stop scanning all remaining repo paths so
+                  // the base-repo leg does not publish for a deleted head.
+                  headPruned = true;
+                }
+                break;
+              }
+              // Other non-rate-limit failures (500/502/etc.) stop check-run
+              // scanning for this repo path but do not block reaction polling.
+              headSucceeded = false;
+              break;
+            }
+            const rows = rowsFromPollingPayload(await response.json(), checkRunEndpointKey);
+            let reachedOldRows = false;
+            for (const row of rows) {
+              const rowOccurredAt = checkRunOccurredAt(row);
+              if (rowOccurredAt < headWatermark) {
+                // Rows are newest-first; once we pass the watermark, all
+                // remaining rows are older. Stop paginating to conserve API
+                // budget.
+                reachedOldRows = true;
+                break;
+              }
+              headPending = Math.max(headPending, rowOccurredAt);
+              const checkRunId = checkRunIdFrom(row);
+              // Dedupe across fork + base repo queries for the same head SHA.
+              if (seenCheckRunIds.has(checkRunId)) continue;
+              seenCheckRunIds.add(checkRunId);
+              const checkName = checkRunNameFrom(row);
+              const appKey = checkRunAppKeyFrom(row);
+              const supersessionKey = `${checkName}:${appKey}`;
+              const conclusion = checkRunConclusionFrom(row);
+              // Suppress superseded failures: if a newer run of the same check
+              // name+app concluded non-failure, skip this older failed row.
+              if (supersededCheckKeys.has(supersessionKey)) continue;
+              if (isNonFailureConclusion(conclusion)) {
+                supersededCheckKeys.add(supersessionKey);
+                continue;
+              }
+              const checkRunPrNumbers = pullRequestNumbersFromCheckRun(
+                row,
+                pullRequestNumbersByHeadRef,
+                fallbackPrNumbers
+              );
+              const checkRunLegacyKey = `${checkRunId}:${conclusion}`;
+              const recordedLegacyPr = checkRunLegacyPrs[checkRunLegacyKey];
+              const unscopedDedupeKey = `${watched.owner.toLowerCase()}/${watched.repo.toLowerCase()}:check_run:${checkRunId}:${conclusion}`;
+              const existingEvent =
+                recordedLegacyPr === undefined
+                  ? this.eventStore.getByDedupe(watched.spaceId, this.sourceId, unscopedDedupeKey)
+                  : null;
+              const existingLegacyPr =
+                existingEvent && typeof existingEvent.event.payload.prNumber === 'number'
+                  ? existingEvent.event.payload.prNumber
+                  : undefined;
+              if (existingLegacyPr !== undefined && !(checkRunLegacyKey in checkRunLegacyPrs)) {
+                checkRunLegacyPrs[checkRunLegacyKey] = existingLegacyPr;
+              }
+              // The unscoped legacy key belongs to the recorded/existing owner,
+              // not whichever PR happens to be first in the fan-out list.
+              const legacyOwner = recordedLegacyPr ?? existingLegacyPr ?? checkRunPrNumbers[0]!;
+              const legacyPrInFanOut = checkRunPrNumbers.includes(legacyOwner);
+              for (const checkRunPrNumber of checkRunPrNumbers) {
+                const isLegacyPr = legacyPrInFanOut && checkRunPrNumber === legacyOwner;
+                const prScopedDedupe = !isLegacyPr;
+                const event = normalizeGitHubCheckRun({
+                  repo: watched,
+                  checkRun: row,
+                  source: 'polling',
+                  deliveryId: `poll:check_run:${checkRunId}:${checkRunPrNumber}`,
+                  rawPayload: row,
+                  prNumber: checkRunPrNumber,
+                  prScopedDedupe,
+                });
+                if (!event) continue;
+                await this.publishEvent(watched.spaceId, event, this.context);
+                if (!prScopedDedupe && !(checkRunLegacyKey in checkRunLegacyPrs)) {
+                  checkRunLegacyPrs[checkRunLegacyKey] = checkRunPrNumber;
+                }
+                watermarks.pending = Math.max(watermarks.pending, event.occurredAt);
+                count++;
+              }
+            }
+            if (reachedOldRows) {
+              const checkRunEtag = response.headers.get('ETag');
+              if (checkRunEtag) checkRunEtags[checkRunEtagKey] = checkRunEtag;
+              break;
+            }
+            if (rateLimit.remaining < RATE_LIMIT_LOW_REMAINING_THRESHOLD) {
+              this.applyRateLimit(rateLimit);
+              partialScan = true;
+              checkRunRateLimited = true;
+              headSucceeded = false;
+              break;
+            }
+            const checkRunEtag = response.headers.get('ETag');
+            if (rows.length < 100) {
+              if (checkRunEtag) checkRunEtags[checkRunEtagKey] = checkRunEtag;
+              break;
+            }
+            delete checkRunEtags[checkRunEtagKey];
+            page++;
+          }
+          if (checkRunRateLimited || checkRunPermissionDenied) break;
+        }
+        // A skipped/failed head keeps its previous cursor; only successful heads
+        // advance their pending watermark this cycle.
+        if (headSucceeded) {
+          checkRunHeadPendingLastSeenAt[headRef] = headPending;
+        }
+        if (checkRunRateLimited || checkRunPermissionDenied) break;
+      }
+      if (checkRunRateLimited || checkRunPermissionDenied || hasBacklog) {
+        // Rate-limit or repo-wide denial: leave all per-head watermarks pending
+        // so every head resumes from its last committed cursor on the next poll.
+      } else {
+        // Commit successful heads. Heads that hit transient failures never
+        // updated their pending entry, so they keep their prior committed value.
+        for (const [headRef, headPending] of Object.entries(checkRunHeadPendingLastSeenAt)) {
+          checkRunHeadLastSeenAt[headRef] = headPending;
+        }
+        checkRunHeadPendingLastSeenAt = {};
+        const maxHeadWatermark = Math.max(0, ...Object.values(checkRunHeadLastSeenAt));
+        if (maxHeadWatermark > 0) endpointLastSeenAt[checkRunEndpointKey] = maxHeadWatermark;
+        delete endpointPendingLastSeenAt[checkRunEndpointKey];
       }
     }
 
@@ -1503,12 +1844,29 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       }
     }
 
-    const hasBacklog = Object.values(processedPages).some((page) => page > 1);
     // Prune reaction ETags for PRs that are no longer reaction-poll targets
     // so the cursor does not grow unbounded across a repo's lifetime.
     const trackedPrSet = new Set(recentPullRequestNumbers);
     for (const key of Object.keys(reactionEtags)) {
       if (!trackedPrSet.has(Number(key))) delete reactionEtags[Number(key)];
+    }
+    // Prune per-head check-run cursors for heads that are no longer tracked.
+    const trackedHeadSet = new Set(pullRequestNumbersByHeadRef.keys());
+    for (const key of Object.keys(checkRunHeadLastSeenAt)) {
+      if (!trackedHeadSet.has(key)) delete checkRunHeadLastSeenAt[key];
+    }
+    for (const key of Object.keys(checkRunHeadPendingLastSeenAt)) {
+      if (!trackedHeadSet.has(key)) delete checkRunHeadPendingLastSeenAt[key];
+    }
+    for (const key of Object.keys(checkRunEtags)) {
+      let etagTracked = false;
+      for (const headRef of trackedHeadSet) {
+        if (key.startsWith(`${headRef}:`)) {
+          etagTracked = true;
+          break;
+        }
+      }
+      if (!etagTracked) delete checkRunEtags[key];
     }
     // After a partial scan, do not advance the shared watermark; skipped
     // endpoints would miss events between the old watermark and the new one.
@@ -1519,6 +1877,14 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       etags,
       processedPages,
       recentPullRequestNumbers,
+      recentPullRequestHeadShas,
+      recentPullRequestHeadRepos,
+      checkRunEtags,
+      checkRunLegacyPrs,
+      checkRunPollingEnabledAt,
+      checkRunHeadLastSeenAt,
+      checkRunHeadPendingLastSeenAt,
+      pullsSeedInProgress: nextPullsSeedInProgress,
       seenReactionIds,
       reactionEtags,
       endpointLastSeenAt,
@@ -1656,6 +2022,142 @@ function isPullRequestOpen(row: unknown): boolean {
   if (!row || typeof row !== 'object') return false;
   const state = (row as { state?: unknown }).state;
   return state === 'open';
+}
+
+function rowsFromPollingPayload(payload: unknown, endpointKey: string): unknown[] {
+  if (endpointKey === 'check_runs') {
+    const checkRuns = (payload as { check_runs?: unknown } | null)?.check_runs;
+    return Array.isArray(checkRuns) ? checkRuns : [];
+  }
+  return Array.isArray(payload) ? payload : [];
+}
+
+function headShaFromPullRequest(row: unknown): string {
+  if (!row || typeof row !== 'object') return '';
+  const head = (row as { head?: unknown }).head;
+  if (!head || typeof head !== 'object') return '';
+  const sha = (head as { sha?: unknown }).sha;
+  return typeof sha === 'string' ? sha : '';
+}
+
+function checkRunIdFrom(row: unknown): number | string {
+  if (!row || typeof row !== 'object') return 'unknown';
+  const id = (row as { id?: unknown }).id;
+  return typeof id === 'number' || typeof id === 'string' ? id : 'unknown';
+}
+
+function checkRunConclusionFrom(row: unknown): string {
+  if (!row || typeof row !== 'object') return '';
+  const conclusion = (row as { conclusion?: unknown }).conclusion;
+  return typeof conclusion === 'string' ? conclusion : '';
+}
+
+function checkRunAppKeyFrom(row: unknown): string {
+  if (!row || typeof row !== 'object') return '';
+  const app = (row as { app?: unknown }).app;
+  if (!app || typeof app !== 'object') return '';
+  const slug = (app as { slug?: unknown }).slug;
+  if (typeof slug === 'string' && slug) return slug;
+  const id = (app as { id?: unknown }).id;
+  return typeof id === 'number' ? String(id) : '';
+}
+
+function checkRunNameFrom(row: unknown): string {
+  if (!row || typeof row !== 'object') return '';
+  const name = (row as { name?: unknown }).name;
+  return typeof name === 'string' ? name : '';
+}
+
+/**
+ * Returns true for conclusions that represent a non-failure (CI is green or
+ * skipped). Used to suppress earlier failed runs of the same check name when a
+ * newer run superseded them.
+ */
+function isNonFailureConclusion(conclusion: string): boolean {
+  return conclusion === 'success' || conclusion === 'skipped' || conclusion === 'neutral';
+}
+
+function headRepoFromPullRequest(row: unknown, watched: GitHubWatchedRepo): string {
+  if (!row || typeof row !== 'object') return gitHubRepoPath(watched.owner, watched.repo);
+  const head = (row as { head?: unknown }).head;
+  if (!head || typeof head !== 'object') return gitHubRepoPath(watched.owner, watched.repo);
+  const repo = (head as { repo?: unknown }).repo;
+  if (!repo || typeof repo !== 'object') return gitHubRepoPath(watched.owner, watched.repo);
+  const owner = (repo as { owner?: unknown }).owner;
+  const ownerLogin = owner && typeof owner === 'object' ? (owner as { login?: unknown }).login : '';
+  const repoName = (repo as { name?: unknown }).name;
+  if (typeof ownerLogin === 'string' && typeof repoName === 'string' && ownerLogin && repoName) {
+    return gitHubRepoPath(ownerLogin, repoName);
+  }
+  return gitHubRepoPath(watched.owner, watched.repo);
+}
+
+function headRefKey(repoPath: string, headSha: string): string {
+  return `${repoPath}@${headSha}`;
+}
+
+function parseHeadRefKey(key: string): { repoPath: string; headSha: string } {
+  const separator = key.lastIndexOf('@');
+  return {
+    repoPath: separator > 0 ? key.slice(0, separator) : '',
+    headSha: separator > 0 ? key.slice(separator + 1) : key,
+  };
+}
+
+function checkRunOccurredAt(row: unknown): number {
+  if (!row || typeof row !== 'object') return Date.now();
+  const checkRun = row as { completed_at?: unknown; updated_at?: unknown; started_at?: unknown };
+  return parseGitHubTimestamp(checkRun.completed_at ?? checkRun.updated_at ?? checkRun.started_at);
+}
+
+function addPullRequestNumberByHeadSha(
+  pullRequestNumbersByHeadSha: Map<string, number[]>,
+  headSha: string,
+  prNumber: number
+): void {
+  const numbers = pullRequestNumbersByHeadSha.get(headSha) ?? [];
+  if (!numbers.includes(prNumber)) numbers.push(prNumber);
+  pullRequestNumbersByHeadSha.set(headSha, numbers);
+}
+
+function removePullRequestNumberByHeadSha(
+  pullRequestNumbersByHeadSha: Map<string, number[]>,
+  headSha: string,
+  prNumber: number
+): void {
+  const numbers = pullRequestNumbersByHeadSha.get(headSha);
+  if (!numbers) return;
+  const next = numbers.filter((number) => number !== prNumber);
+  if (next.length > 0) {
+    pullRequestNumbersByHeadSha.set(headSha, next);
+  } else {
+    pullRequestNumbersByHeadSha.delete(headSha);
+  }
+}
+
+function clearCheckRunEtagsForHead(checkRunEtags: Record<string, string>, headRef: string): void {
+  const prefix = `${headRef}:`;
+  for (const key of Object.keys(checkRunEtags)) {
+    if (key.startsWith(prefix)) delete checkRunEtags[key];
+  }
+}
+
+function pullRequestNumbersFromCheckRun(
+  row: unknown,
+  _pullRequestNumbersByHeadSha: Map<string, number[]>,
+  fallbackPrNumbers: number[]
+): number[] {
+  if (!row || typeof row !== 'object') return [];
+  const fallbackSet = new Set(fallbackPrNumbers);
+  const numbers: number[] = [];
+  const prs = (row as { pull_requests?: unknown }).pull_requests;
+  if (Array.isArray(prs)) {
+    for (const pr of prs) {
+      const number = pullRequestNumberFrom(pr);
+      if (number && fallbackSet.has(number) && !numbers.includes(number)) numbers.push(number);
+    }
+  }
+  return numbers.length > 0 ? numbers : fallbackPrNumbers;
 }
 
 function isPositiveReaction(row: unknown): boolean {
