@@ -155,13 +155,23 @@ interface RosterHookEntry {
   summary?: string;
   ts: number;
 }
+interface RosterApiRetryEntry {
+  kind: 'api_retry';
+  attempt: number;
+  maxRetries: number;
+  retryDelayMs: number;
+  errorStatus: number | null;
+  ts: number;
+  uuid: string;
+}
 type ActiveRosterEntry =
   | RosterToolEntry
   | RosterMessageEntry
   | RosterThinkingEntry
   | RosterUserEntry
   | RosterHandoffEntry
-  | RosterHookEntry;
+  | RosterHookEntry
+  | RosterApiRetryEntry;
 
 const TASK_THREAD_MESSAGE_BUBBLE_WIDTH_CLASS = 'max-w-[85%] md:max-w-[86%]';
 const TASK_THREAD_AGENT_BUBBLE_WIDTH_CLASS = 'max-w-full md:max-w-[86%]';
@@ -375,6 +385,11 @@ function asTrimmedString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function finiteNumber(value: unknown, fallback = 0): number {
+  const n = Number(value ?? fallback);
+  return Number.isFinite(n) ? n : fallback;
+}
+
 function mapActivityEntry(entry: ActivityEntry): ActiveRosterEntry | null {
   switch (entry.kind) {
     case 'tool_use':
@@ -417,6 +432,16 @@ function mapActivityEntry(entry: ActivityEntry): ActiveRosterEntry | null {
         ...(summary ? { summary } : {}),
       };
     }
+    case 'api_retry':
+      return {
+        kind: 'api_retry',
+        attempt: finiteNumber(entry.attempt, 1),
+        maxRetries: finiteNumber(entry.maxRetries),
+        retryDelayMs: finiteNumber(entry.retryDelayMs),
+        errorStatus: entry.errorStatus === null ? null : finiteNumber(entry.errorStatus),
+        ts: entry.ts,
+        uuid: typeof entry.uuid === 'string' ? entry.uuid : '',
+      };
     default:
       return null;
   }
@@ -757,6 +782,20 @@ function collectRosteredToolUseIds(
   return ids;
 }
 
+function collectRosteredApiRetryUuids(
+  summaries: ActiveTurnSummary[],
+  renderedTurnKeys: Set<string>
+): Set<string> {
+  const uuids = new Set<string>();
+  for (const summary of summaries) {
+    if (!renderedTurnKeys.has(`${summary.sessionId}:${summary.turnIndex}`)) continue;
+    for (const entry of rosterEntriesFromSummary(summary, ROSTER_MAX_ENTRIES)) {
+      if (entry.kind === 'api_retry') uuids.add(entry.uuid);
+    }
+  }
+  return uuids;
+}
+
 function buildActiveTurn(
   block: AgentTurnBlock,
   rows: ParsedThreadRow[],
@@ -899,7 +938,8 @@ function isFoldedTaskNotification(row: ParsedThreadRow, rosteredToolUseIds: Set<
 function buildOperationalSystemTurn(
   row: ParsedThreadRow,
   isSessionTail: boolean,
-  rosteredToolUseIds: Set<string>
+  rosteredToolUseIds: Set<string>,
+  rosteredApiRetryUuids: Set<string>
 ): SystemFeedTurn | null {
   const message = row.message;
   if (!message || message.type !== 'system') return null;
@@ -920,6 +960,10 @@ function buildOperationalSystemTurn(
   // system turn so the terminal summary/usage/failure is not silently lost.
   // True orphans (no tool_use_id) also fall through.
   if (isFoldedTaskNotification(row, rosteredToolUseIds)) return null;
+  if (subtype === 'api_retry') {
+    const uuid = (message as { uuid?: unknown }).uuid;
+    if (typeof uuid === 'string' && rosteredApiRetryUuids.has(uuid)) return null;
+  }
   // Honor the centralized hidden-subtype contract so Space task threads
   // don't surface noisy rows the main transcript already hides.
   if (isHiddenSystemSubtype(subtype)) return null;
@@ -1038,6 +1082,33 @@ function buildOperationalSystemTurn(
       createdAt: row.createdAt,
       title: 'Commands changed',
       body: `${count.toLocaleString()} slash commands available`,
+      sessionId: row.sessionId,
+      highlightMessageUuid: highlightUuid,
+      replacementStatus: row.replacementStatus,
+    };
+  }
+
+  if (subtype === 'api_retry') {
+    const retry = message as {
+      attempt?: unknown;
+      max_retries?: unknown;
+      retry_delay_ms?: unknown;
+      error_status?: unknown;
+    };
+    const attempt = finiteNumber(retry.attempt, 1);
+    const maxRetries = finiteNumber(retry.max_retries);
+    const retryDelayMs = finiteNumber(retry.retry_delay_ms);
+    const status = retry.error_status === null ? 'n/a' : String(finiteNumber(retry.error_status));
+    return {
+      state: 'system',
+      id: `system-${String(row.id)}`,
+      agent: row.label,
+      agentKind: row.kind,
+      agentRole: row.role,
+      agentNodeExecutionId: row.nodeExecutionId ?? null,
+      createdAt: row.createdAt,
+      title: 'API retry',
+      body: `Attempt ${attempt}/${maxRetries}, delay ${retryDelayMs}ms, status ${status}`,
       sessionId: row.sessionId,
       highlightMessageUuid: highlightUuid,
       replacementStatus: row.replacementStatus,
@@ -1268,7 +1339,10 @@ function buildFeedTurns(
       const message = row.message;
       const subtype =
         message?.type === 'system' ? (message as { subtype?: string }).subtype : undefined;
-      if (subtype !== 'task_notification' && buildOperationalSystemTurn(row, false, new Set())) {
+      if (
+        subtype !== 'task_notification' &&
+        buildOperationalSystemTurn(row, false, new Set(), new Set())
+      ) {
         flush();
         continue;
       }
@@ -1288,6 +1362,7 @@ function buildFeedTurns(
     renderedTurnKeys,
     completedRows
   );
+  const rosteredApiRetryUuids = collectRosteredApiRetryUuids(activeTurnSummaries, renderedTurnKeys);
 
   const latestRowIdBySession = new Map<string, string>();
   for (const row of rowsWithReplacementStatus) {
@@ -1365,7 +1440,8 @@ function buildFeedTurns(
       const operationalSystemTurn = buildOperationalSystemTurn(
         row,
         row.sessionId ? latestRowIdBySession.get(row.sessionId) === String(row.id) : false,
-        rosteredToolUseIds
+        rosteredToolUseIds,
+        rosteredApiRetryUuids
       );
       if (operationalSystemTurn) {
         flushAgent();
@@ -1564,6 +1640,29 @@ function RosterEntry({ entry, isLatest }: { entry: ActiveRosterEntry; isLatest: 
             ✗
           </span>
         )}
+      </div>
+    );
+  }
+
+  if (entry.kind === 'api_retry') {
+    const status = entry.errorStatus === null ? 'n/a' : String(entry.errorStatus);
+    return (
+      <div
+        class={`flex items-baseline gap-2 font-mono text-xs leading-5 ${fadeClass}`}
+        data-testid="minimal-thread-roster-entry"
+        data-roster-kind="api_retry"
+      >
+        <span class="shrink-0 text-amber-400" aria-hidden="true">
+          ↻
+        </span>
+        <span class="min-w-0 truncate">
+          <span class="font-semibold text-amber-300">API retry</span>
+          <span class="text-gray-400">: </span>
+          <span class={bodyClass}>
+            attempt {entry.attempt}/{entry.maxRetries} · status {status} · delay{' '}
+            {entry.retryDelayMs}ms
+          </span>
+        </span>
       </div>
     );
   }

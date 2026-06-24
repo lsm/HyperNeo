@@ -3,7 +3,7 @@
  */
 
 export { SpaceAgentEditor } from './SpaceAgentEditor';
-export { SpaceAgentList } from './SpaceAgentList';
+export { SpaceWorkerAgentList } from './SpaceWorkerAgentList';
 export { SpaceCreateDialog } from './SpaceCreateDialog';
 export { SpaceCreateTaskDialog } from './SpaceCreateTaskDialog';
 export { SpaceOverview } from './SpaceOverview';

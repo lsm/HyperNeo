@@ -1213,10 +1213,14 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     const processedPages = cursor.processedPages ?? {};
     const recentPullRequestNumbers = cursor.recentPullRequestNumbers ?? [];
     const recentPullRequestHeadShas = cursor.recentPullRequestHeadShas ?? {};
+    const recentPullRequestHeadRepos = cursor.recentPullRequestHeadRepos ?? {};
+    const checkRunEtags = cursor.checkRunEtags ?? {};
+    const pullsSeedInProgress = cursor.pullsSeedInProgress ?? false;
     const seenReactionIds = cursor.seenReactionIds ?? {};
     const reactionEtags = cursor.reactionEtags ?? {};
     const endpointLastSeenAt = cursor.endpointLastSeenAt ?? {};
     const endpointPendingLastSeenAt = cursor.endpointPendingLastSeenAt ?? {};
+    let nextPullsSeedInProgress = pullsSeedInProgress;
     const watermarks = {
       committed: cursor.lastSeenAt ?? watched.lastPollAt ?? 0,
       pending: cursor.pendingLastSeenAt ?? cursor.lastSeenAt ?? watched.lastPollAt ?? 0,
@@ -1227,10 +1231,16 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       { key: 'review_comments', path: '/pulls/comments' },
       { key: 'pulls', path: '/pulls', extra: 'state=all&sort=updated&direction=desc' },
     ];
-    const pullRequestNumbersByHeadSha = new Map<string, number[]>();
+    const pullRequestNumbersByHeadRef = new Map<string, number[]>();
     for (const [prNumber, headSha] of Object.entries(recentPullRequestHeadShas)) {
+      const headRepo =
+        recentPullRequestHeadRepos[Number(prNumber)] ?? gitHubRepoPath(watched.owner, watched.repo);
       if (headSha)
-        addPullRequestNumberByHeadSha(pullRequestNumbersByHeadSha, headSha, Number(prNumber));
+        addPullRequestNumberByHeadSha(
+          pullRequestNumbersByHeadRef,
+          headRefKey(headRepo, headSha),
+          Number(prNumber)
+        );
     }
     let partialScan = false;
     let latestRateLimit: GitHubRateLimitInfo | undefined;
@@ -1270,7 +1280,8 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       // unrelated PR metadata changes).
       const pullsNeedsSeed =
         endpoint.key === 'pulls' &&
-        (recentPullRequestNumbers.length === 0 ||
+        (pullsSeedInProgress ||
+          recentPullRequestNumbers.length === 0 ||
           (recentPullRequestNumbers.length > 0 &&
             Object.keys(recentPullRequestHeadShas).length === 0));
       if (since && !pullsNeedsSeed) query.set('since', since);
@@ -1340,29 +1351,42 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       if (endpoint.key === 'pulls') {
         for (const row of rows) {
           const headSha = headShaFromPullRequest(row);
+          const headRepo = headRepoFromPullRequest(row, watched);
           const prNumber = pullRequestNumberFrom(row);
           if (headSha && prNumber) {
             const previousHeadSha = recentPullRequestHeadShas[prNumber];
+            const previousHeadRepo =
+              recentPullRequestHeadRepos[prNumber] ?? gitHubRepoPath(watched.owner, watched.repo);
             if (!isPullRequestOpen(row)) {
               if (previousHeadSha) {
+                const previousHeadRef = headRefKey(previousHeadRepo, previousHeadSha);
                 removePullRequestNumberByHeadSha(
-                  pullRequestNumbersByHeadSha,
-                  previousHeadSha,
+                  pullRequestNumbersByHeadRef,
+                  previousHeadRef,
                   prNumber
                 );
+                clearCheckRunEtagsForHead(checkRunEtags, previousHeadRef);
               }
               delete recentPullRequestHeadShas[prNumber];
+              delete recentPullRequestHeadRepos[prNumber];
               continue;
             }
-            if (previousHeadSha && previousHeadSha !== headSha) {
+            if (previousHeadSha && (previousHeadSha !== headSha || previousHeadRepo !== headRepo)) {
+              const previousHeadRef = headRefKey(previousHeadRepo, previousHeadSha);
               removePullRequestNumberByHeadSha(
-                pullRequestNumbersByHeadSha,
-                previousHeadSha,
+                pullRequestNumbersByHeadRef,
+                previousHeadRef,
                 prNumber
               );
+              clearCheckRunEtagsForHead(checkRunEtags, previousHeadRef);
             }
-            addPullRequestNumberByHeadSha(pullRequestNumbersByHeadSha, headSha, prNumber);
+            const headRef = headRefKey(headRepo, headSha);
+            const previousHeadPrNumbers = [...(pullRequestNumbersByHeadRef.get(headRef) ?? [])];
+            addPullRequestNumberByHeadSha(pullRequestNumbersByHeadRef, headRef, prNumber);
+            if (!previousHeadPrNumbers.includes(prNumber))
+              clearCheckRunEtagsForHead(checkRunEtags, headRef);
             recentPullRequestHeadShas[prNumber] = headSha;
+            recentPullRequestHeadRepos[prNumber] = headRepo;
           }
         }
       }
@@ -1413,6 +1437,8 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         }
       }
       processedPages[endpoint.key] = rows.length >= 100 ? page + 1 : 1;
+      if (endpoint.key === 'pulls')
+        nextPullsSeedInProgress = pullsNeedsSeed && processedPages.pulls > 1;
       // Only advance the per-endpoint watermark once the endpoint's backlog is
       // complete. While pages remain, the next poll must keep using the old
       // watermark so remaining pages are not filtered out by `since`.
@@ -1434,9 +1460,16 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     }
 
     const hasBacklog = Object.values(processedPages).some((page) => page > 1);
+    const pullsHasBacklog = (processedPages.pulls ?? 1) > 1;
 
-    if (!partialScan) {
+    if (!partialScan && !pullsHasBacklog) {
       const checkRunEndpointKey = 'check_runs';
+      if (
+        !endpointLastSeenAt[checkRunEndpointKey] &&
+        !endpointPendingLastSeenAt[checkRunEndpointKey]
+      ) {
+        endpointLastSeenAt[checkRunEndpointKey] = Date.now();
+      }
       const checkRunWatermark = endpointLastSeenAt[checkRunEndpointKey] ?? watermarks.committed;
       let checkRunPending = Math.max(
         checkRunWatermark,
@@ -1444,8 +1477,9 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       );
       let checkRunPartialScan = false;
       let checkRunPermissionDenied = false;
-      for (const [headSha, prNumbers] of pullRequestNumbersByHeadSha) {
-        const fallbackPrNumber = prNumbers[0] ?? 0;
+      for (const [headRef, prNumbers] of pullRequestNumbersByHeadRef) {
+        const { repoPath: headRepoPath, headSha } = parseHeadRefKey(headRef);
+        const fallbackPrNumbers = prNumbers;
         let page = 1;
         while (true) {
           const query = new URLSearchParams({
@@ -1454,9 +1488,14 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
             per_page: '100',
             page: String(page),
           });
+          const checkRunHeaders = gitHubPollingHeaders(token);
+          const checkRunEtagKey = `${headRef}:page:${page}`;
+          if (checkRunEtags[checkRunEtagKey]) {
+            checkRunHeaders['If-None-Match'] = checkRunEtags[checkRunEtagKey];
+          }
           const response = await fetchImpl(
-            `${base}/commits/${encodeURIComponent(headSha)}/check-runs?${query.toString()}`,
-            { headers: gitHubPollingHeaders(token) }
+            `${GITHUB_API_BASE}/repos/${headRepoPath}/commits/${encodeURIComponent(headSha)}/check-runs?${query.toString()}`,
+            { headers: checkRunHeaders }
           );
           const rateLimit = parseRateLimitHeaders(response);
           latestRateLimit = mergeRateLimitInfo(latestRateLimit, rateLimit);
@@ -1475,6 +1514,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
             checkRunPartialScan = true;
             break;
           }
+          if (response.status === 304) break;
           if (!response.ok) {
             const errorText = await response.text();
             if (
@@ -1498,6 +1538,15 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
               checkRunPermissionDenied = true;
               break;
             }
+            if (response.status === 404 || response.status === 422) {
+              for (const prNumber of prNumbers) {
+                delete recentPullRequestHeadShas[prNumber];
+                delete recentPullRequestHeadRepos[prNumber];
+              }
+              delete checkRunEtags[checkRunEtagKey];
+              pullRequestNumbersByHeadRef.delete(headRef);
+              break;
+            }
             partialScan = true;
             checkRunPartialScan = true;
             break;
@@ -1509,8 +1558,8 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
             checkRunPending = Math.max(checkRunPending, rowOccurredAt);
             const checkRunPrNumbers = pullRequestNumbersFromCheckRun(
               row,
-              pullRequestNumbersByHeadSha,
-              fallbackPrNumber
+              pullRequestNumbersByHeadRef,
+              fallbackPrNumbers
             );
             const legacyDedupePrNumber = checkRunPrNumbers[0];
             for (const checkRunPrNumber of checkRunPrNumbers) {
@@ -1536,7 +1585,12 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
             checkRunPartialScan = true;
             break;
           }
-          if (rows.length < 100) break;
+          const checkRunEtag = response.headers.get('ETag');
+          if (rows.length < 100) {
+            if (checkRunEtag) checkRunEtags[checkRunEtagKey] = checkRunEtag;
+            break;
+          }
+          delete checkRunEtags[checkRunEtagKey];
           page++;
         }
         if (checkRunPartialScan || checkRunPermissionDenied) break;
@@ -1677,6 +1731,9 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       processedPages,
       recentPullRequestNumbers,
       recentPullRequestHeadShas,
+      recentPullRequestHeadRepos,
+      checkRunEtags,
+      pullsSeedInProgress: nextPullsSeedInProgress,
       seenReactionIds,
       reactionEtags,
       endpointLastSeenAt,
@@ -1838,6 +1895,33 @@ function checkRunIdFrom(row: unknown): number | string {
   return typeof id === 'number' || typeof id === 'string' ? id : 'unknown';
 }
 
+function headRepoFromPullRequest(row: unknown, watched: GitHubWatchedRepo): string {
+  if (!row || typeof row !== 'object') return gitHubRepoPath(watched.owner, watched.repo);
+  const head = (row as { head?: unknown }).head;
+  if (!head || typeof head !== 'object') return gitHubRepoPath(watched.owner, watched.repo);
+  const repo = (head as { repo?: unknown }).repo;
+  if (!repo || typeof repo !== 'object') return gitHubRepoPath(watched.owner, watched.repo);
+  const owner = (repo as { owner?: unknown }).owner;
+  const ownerLogin = owner && typeof owner === 'object' ? (owner as { login?: unknown }).login : '';
+  const repoName = (repo as { name?: unknown }).name;
+  if (typeof ownerLogin === 'string' && typeof repoName === 'string' && ownerLogin && repoName) {
+    return gitHubRepoPath(ownerLogin, repoName);
+  }
+  return gitHubRepoPath(watched.owner, watched.repo);
+}
+
+function headRefKey(repoPath: string, headSha: string): string {
+  return `${repoPath}@${headSha}`;
+}
+
+function parseHeadRefKey(key: string): { repoPath: string; headSha: string } {
+  const separator = key.lastIndexOf('@');
+  return {
+    repoPath: separator > 0 ? key.slice(0, separator) : '',
+    headSha: separator > 0 ? key.slice(separator + 1) : key,
+  };
+}
+
 function checkRunOccurredAt(row: unknown): number {
   if (!row || typeof row !== 'object') return Date.now();
   const checkRun = row as { completed_at?: unknown; updated_at?: unknown; started_at?: unknown };
@@ -1869,25 +1953,29 @@ function removePullRequestNumberByHeadSha(
   }
 }
 
+function clearCheckRunEtagsForHead(checkRunEtags: Record<string, string>, headRef: string): void {
+  const prefix = `${headRef}:page:`;
+  for (const key of Object.keys(checkRunEtags)) {
+    if (key.startsWith(prefix)) delete checkRunEtags[key];
+  }
+}
+
 function pullRequestNumbersFromCheckRun(
   row: unknown,
-  pullRequestNumbersByHeadSha: Map<string, number[]>,
-  fallbackPrNumber: number
+  _pullRequestNumbersByHeadSha: Map<string, number[]>,
+  fallbackPrNumbers: number[]
 ): number[] {
   if (!row || typeof row !== 'object') return [];
+  const fallbackSet = new Set(fallbackPrNumbers);
   const numbers: number[] = [];
   const prs = (row as { pull_requests?: unknown }).pull_requests;
   if (Array.isArray(prs)) {
     for (const pr of prs) {
       const number = pullRequestNumberFrom(pr);
-      if (number && !numbers.includes(number)) numbers.push(number);
+      if (number && fallbackSet.has(number) && !numbers.includes(number)) numbers.push(number);
     }
   }
-  if (numbers.length > 0) return numbers;
-  const headSha = (row as { head_sha?: unknown }).head_sha;
-  const mappedNumbers =
-    typeof headSha === 'string' ? pullRequestNumbersByHeadSha.get(headSha) : undefined;
-  return mappedNumbers?.length ? mappedNumbers : fallbackPrNumber ? [fallbackPrNumber] : [];
+  return numbers.length > 0 ? numbers : fallbackPrNumbers;
 }
 
 function isPositiveReaction(row: unknown): boolean {

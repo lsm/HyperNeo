@@ -8,6 +8,9 @@ export interface PollCursor {
   processedPages?: Record<string, number>;
   recentPullRequestNumbers?: number[];
   recentPullRequestHeadShas?: Record<number, string>;
+  recentPullRequestHeadRepos?: Record<number, string>;
+  checkRunEtags?: Record<string, string>;
+  pullsSeedInProgress?: boolean;
   seenReactionIds?: Record<string, boolean>;
   /**
    * Per-PR reaction-list ETags. Sent as `If-None-Match` on the

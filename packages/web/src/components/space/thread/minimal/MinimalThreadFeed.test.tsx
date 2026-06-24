@@ -990,6 +990,133 @@ describe('MinimalThreadFeed', () => {
     expect(screen.getByTestId('minimal-thread-last-event').textContent).toContain('last event');
   });
 
+  it('renders api_retry summary entries as dedicated roster rows', () => {
+    const t = Date.now();
+    const rows = [
+      makeRow({
+        id: 'a1',
+        label: 'Coder Agent',
+        createdAt: t,
+        turnIndex: 1,
+        message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'bun test' } }]),
+      }),
+      makeRow({
+        id: 'retry-1',
+        label: 'Coder Agent',
+        createdAt: t + 500,
+        turnIndex: 1,
+        messageType: 'system',
+        message: {
+          type: 'system',
+          subtype: 'api_retry',
+          uuid: 'retry-1',
+          attempt: 2,
+          max_retries: 3,
+          retry_delay_ms: 5000,
+          error_status: 429,
+        },
+      }),
+    ];
+    const summary: ActiveTurnSummary = {
+      sessionId: 'space:s:task:t',
+      turnIndex: 1,
+      entries: [
+        {
+          kind: 'api_retry',
+          attempt: 2,
+          maxRetries: 3,
+          retryDelayMs: 5000,
+          errorStatus: 429,
+          ts: t + 500,
+          uuid: 'retry-1',
+        },
+      ],
+    };
+
+    render(
+      <MinimalThreadFeed
+        parsedRows={rows}
+        activeAgentLabels={new Set(['Coder Agent'])}
+        activeTurnSummaries={[summary]}
+      />
+    );
+
+    const entries = screen.getAllByTestId('minimal-thread-roster-entry');
+    expect(entries).toHaveLength(1);
+    expect(entries[0].dataset.rosterKind).toBe('api_retry');
+    expect(entries[0].textContent).toContain('API retry');
+    expect(entries[0].textContent).toContain('attempt 2/3');
+    expect(entries[0].textContent).toContain('status 429');
+    expect(entries[0].textContent).toContain('delay 5000ms');
+    expect(screen.getAllByText('API retry')).toHaveLength(1);
+  });
+
+  it('falls back to a system row when api_retry is capped out of the active roster', () => {
+    const t = Date.now();
+    const rows = [
+      makeRow({
+        id: 'a1',
+        label: 'Coder Agent',
+        createdAt: t,
+        turnIndex: 1,
+        message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'bun test' } }]),
+      }),
+      makeRow({
+        id: 'retry-1',
+        label: 'Coder Agent',
+        createdAt: t + 500,
+        turnIndex: 1,
+        messageType: 'system',
+        message: {
+          type: 'system',
+          subtype: 'api_retry',
+          uuid: 'retry-1',
+          attempt: 1,
+          max_retries: 3,
+          retry_delay_ms: 1000,
+          error_status: null,
+        },
+      }),
+    ];
+    const summary: ActiveTurnSummary = {
+      sessionId: 'space:s:task:t',
+      turnIndex: 1,
+      entries: [
+        {
+          kind: 'api_retry',
+          attempt: 1,
+          maxRetries: 3,
+          retryDelayMs: 1000,
+          errorStatus: null,
+          ts: t + 500,
+          uuid: 'retry-1',
+        },
+        ...Array.from({ length: 8 }, (_, i) => ({
+          kind: 'text' as const,
+          text: `later ${i}`,
+          ts: t + 600 + i,
+          uuid: `later-${i}`,
+        })),
+      ],
+    };
+
+    render(
+      <MinimalThreadFeed
+        parsedRows={rows}
+        activeAgentLabels={new Set(['Coder Agent'])}
+        activeTurnSummaries={[summary]}
+      />
+    );
+
+    const entries = screen.getAllByTestId('minimal-thread-roster-entry');
+    expect(entries.some((entry) => entry.dataset.rosterKind === 'api_retry')).toBe(false);
+    const feed = screen.getByTestId('space-task-event-feed-minimal');
+    expect(feed.textContent).toContain('API retry');
+    expect(feed.textContent).toContain('Attempt 1/3');
+    expect(feed.textContent).toContain('delay 1000ms');
+    expect(feed.textContent).toContain('status n/a');
+  });
+
   it('folds task_notification onto the roster entry when the tool_use is rostered', () => {
     const t = Date.now();
     const rows = [

@@ -202,9 +202,8 @@ vi.mock('../../components/space/SpaceSessionsPage', () => ({
   ),
 }));
 
-vi.mock('../../components/space/SpaceAgentList', () => ({
-  SpaceAgentList: () => <div data-testid="space-agent-list" />,
-  getWorkerAgentsFromWorkflows: () => [],
+vi.mock('../../components/space/SpaceWorkerAgentList', () => ({
+  SpaceWorkerAgentList: () => <div data-testid="space-worker-agent-list" />,
 }));
 
 vi.mock('../../components/space/SpaceLongHorizonAgents', () => ({
@@ -380,7 +379,7 @@ describe('SpaceIsland — route-driven views', () => {
     // Wait for lazy SpaceConfigurePage to load through Suspense
     await waitFor(
       () => {
-        expect(getByTestId('space-agent-list')).toBeTruthy();
+        expect(getByTestId('space-worker-agent-list')).toBeTruthy();
       },
       { timeout: LAZY_LOAD_TIMEOUT }
     );
@@ -435,52 +434,9 @@ describe('SpaceIsland — configure workflow editor', () => {
     expect(getByTestId('space-configure-tab-settings')).toBeTruthy();
   });
 
-  it('loads workflow details only for the Agents configure tab', async () => {
-    configureTabBridge.signal.value = 'workflows';
-    await renderConfigure();
-    expect(mockEnsureWorkflowDetails).not.toHaveBeenCalled();
-
-    cleanup();
-    mockEnsureWorkflowDetails.mockClear();
+  it('does not load workflow details for the Worker Agents configure tab', async () => {
     configureTabBridge.signal.value = 'agents';
     await renderConfigure();
-    await waitFor(() => {
-      expect(mockEnsureWorkflowDetails).toHaveBeenCalledTimes(1);
-    });
-  });
-
-  it('cancels stale Agents-tab detail loads after tab switches', async () => {
-    let resolveConfig: () => void = () => {};
-    mockEnsureConfigData.mockImplementation(
-      () =>
-        new Promise<void>((resolve) => {
-          resolveConfig = resolve;
-        })
-    );
-    configureTabBridge.signal.value = 'agents';
-    const result = await renderConfigure();
-
-    fireEvent.click(result.getByTestId('space-configure-tab-workflows'));
-    resolveConfig();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    expect(mockEnsureWorkflowDetails).not.toHaveBeenCalled();
-  });
-
-  it('does not load workflow details when config data failed to load', async () => {
-    let resolveConfig: () => void = () => {};
-    mockEnsureConfigData.mockImplementation(
-      () =>
-        new Promise<void>((resolve) => {
-          resolveConfig = resolve;
-        })
-    );
-    configureTabBridge.signal.value = 'agents';
-    await renderConfigure();
-
-    mockConfigDataLoaded.value = false;
-    resolveConfig();
-    await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(mockEnsureWorkflowDetails).not.toHaveBeenCalled();
   });

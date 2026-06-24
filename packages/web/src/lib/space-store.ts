@@ -123,6 +123,7 @@ export interface SpaceAgentTemplate {
   description: string;
   tools: string[];
   customPrompt: string;
+  templateHash?: string | null;
 }
 
 function workflowToSummary(wf: SpaceWorkflow): SpaceWorkflowSummary {
@@ -1056,7 +1057,8 @@ class SpaceStore {
       const result = await hub.request<{ agents: SpaceAgent[] }>('spaceAgent.list', {
         spaceId,
       });
-      this.agents.value = result?.agents ?? [];
+      if (this.spaceId.value !== spaceId) return;
+      this.agents.value = (result?.agents ?? []).filter((agent) => agent.spaceId === spaceId);
     } catch (err) {
       logger.error('Failed to fetch agents:', err);
     }
@@ -2538,6 +2540,18 @@ class SpaceStore {
   // Agent Methods
   // ========================================
 
+  private upsertAgent(agent: SpaceAgent, expectedSpaceId?: string): void {
+    const activeSpaceId = this.spaceId.value;
+    const agentSpaceId = agent.spaceId;
+    if (expectedSpaceId && activeSpaceId !== expectedSpaceId) return;
+    if (agentSpaceId && activeSpaceId && agentSpaceId !== activeSpaceId) return;
+
+    const exists = this.agents.value.some((a) => a.id === agent.id);
+    this.agents.value = exists
+      ? this.agents.value.map((a) => (a.id === agent.id ? agent : a))
+      : [...this.agents.value, agent];
+  }
+
   /**
    * Create a new agent in the space
    */
@@ -2552,6 +2566,7 @@ class SpaceStore {
       ...params,
       spaceId,
     });
+    this.upsertAgent(agent, spaceId);
     return agent;
   }
 
@@ -2587,6 +2602,7 @@ class SpaceStore {
       spaceId,
       sessionId,
     });
+    this.upsertAgent(agent, spaceId);
     return agent;
   }
 
@@ -2602,6 +2618,22 @@ class SpaceStore {
       spaceId,
       ...params,
     });
+    this.upsertAgent(agent, spaceId);
+    return agent;
+  }
+
+  async syncAgentFromTemplate(agentId: string): Promise<SpaceAgent> {
+    const spaceId = this.spaceId.value;
+    if (!spaceId) throw new Error('No space selected');
+
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) throw new Error('Not connected');
+
+    const { agent } = await hub.request<{ agent: SpaceAgent }>('spaceAgent.syncFromTemplate', {
+      spaceId,
+      agentId,
+    });
+    this.upsertAgent(agent, spaceId);
     return agent;
   }
 
@@ -2616,6 +2648,7 @@ class SpaceStore {
     if (!hub) throw new Error('Not connected');
 
     await hub.request('spaceAgent.delete', { id: agentId, spaceId });
+    this.agents.value = this.agents.value.filter((agent) => agent.id !== agentId);
   }
 
   // ========================================
