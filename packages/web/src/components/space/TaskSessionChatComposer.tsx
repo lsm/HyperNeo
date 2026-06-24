@@ -2,7 +2,11 @@ import type { MessageDeliveryMode, MessageImage, SpaceTaskActivityMember } from 
 import type { Ref } from 'preact';
 import { useMemo, useState } from 'preact/hooks';
 import { ChatComposer } from '../ChatComposer.tsx';
-import { useTargetSessionContext, type TaskComposerTarget } from '../../hooks';
+import {
+  useTargetSessionContext,
+  type TaskComposerTarget,
+  type RegisterFileDropTarget,
+} from '../../hooks';
 import { cn } from '../../lib/utils.ts';
 import { getAgentColor } from './thread/space-task-thread-agent-colors';
 import { agentInitial } from './thread/minimal/minimal-mock-data';
@@ -31,6 +35,8 @@ interface TaskSessionChatComposerProps {
     target: TaskComposerTarget | null,
     images?: MessageImage[]
   ) => Promise<boolean>;
+  /** Forwarded to ChatComposer/MessageInput so the thread column can own the drop zone. */
+  registerDropTarget?: RegisterFileDropTarget;
 }
 
 export function TaskCanvasToggleButton({
@@ -87,6 +93,7 @@ export function TaskSessionChatComposer({
   onDraftActiveChange,
   onComposerRef,
   onSend,
+  registerDropTarget,
 }: TaskSessionChatComposerProps) {
   const [targetMenuOpen, setTargetMenuOpen] = useState(false);
   const [toolsModalOpen, setToolsModalOpen] = useState(false);
@@ -258,6 +265,7 @@ export function TaskSessionChatComposer({
         inputLeadingPaddingClass={targetPicker ? 'pl-12' : undefined}
         onDraftActiveChange={onDraftActiveChange}
         errorMessage={errorMessage}
+        registerDropTarget={registerDropTarget}
       />
       <TaskToolsModal
         isOpen={toolsModalOpen}
