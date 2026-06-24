@@ -3847,23 +3847,6 @@ export class TaskAgentManager {
       );
       return jsonResult(result);
     };
-    const onEnsurePrSubscription = async (prUrl: string): Promise<void> => {
-      try {
-        this.config.spaceRuntimeService.ensurePrSubscription(
-          workflowRunId,
-          taskId,
-          workflowNodeId,
-          agentName,
-          prUrl
-        );
-      } catch (err) {
-        log.error(
-          `TaskAgentManager.onEnsurePrSubscription: failed for run ${workflowRunId} ` +
-            `node ${workflowNodeId}/${agentName}: ${err instanceof Error ? err.message : String(err)}`
-        );
-      }
-    };
-
     const onCreateStandaloneTask = async (args: {
       title: string;
       description: string;
@@ -4031,7 +4014,6 @@ export class TaskAgentManager {
       onArchiveTask,
       onSubscribeExternalEvent,
       onUnsubscribeExternalEvent,
-      onEnsurePrSubscription,
       artifactRepo: this.config.artifactRepo,
       taskRepo: this.config.taskRepo,
       auditLogRepo: this.auditLogRepo,

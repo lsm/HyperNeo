@@ -840,8 +840,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     // resumed space's blocked runs would have no PR-event subscription until
     // some other gate write happens.
     spaceRuntimeService.rehydrateBlockedRunPrEventSubscriptionsForSpace(spaceId);
-    // Rebuild durable worker auto_pr subs from saved pr_url artifacts.
-    spaceRuntimeService.rehydrateWorkerPrSubscriptionsForSpace(spaceId);
   });
 
   setupSpaceAgentHandlers(

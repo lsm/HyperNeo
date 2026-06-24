@@ -5010,10 +5010,10 @@ describe('node-agent-tools: subscribe_pr_events', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Tests: auto pr subscription hook (save_artifact / send_message → pr_url)
+// Tests: pr_url payloads do not implicitly subscribe
 // ---------------------------------------------------------------------------
 
-describe('node-agent-tools: auto pr subscription hook', () => {
+describe('node-agent-tools: pr_url payloads do not auto-subscribe', () => {
   let ctx: TestCtx;
 
   beforeEach(() => {
@@ -5023,12 +5023,8 @@ describe('node-agent-tools: auto pr subscription hook', () => {
     ctx.db.close();
   });
 
-  test('save_artifact with pr_url auto-subscribes via onEnsurePrSubscription', async () => {
-    const calls: string[] = [];
-    const onEnsurePrSubscription = async (prUrl: string) => {
-      calls.push(prUrl);
-    };
-    const handlers = createNodeAgentToolHandlers(makeConfig(ctx, { onEnsurePrSubscription }));
+  test('save_artifact with pr_url succeeds without requiring a subscription callback', async () => {
+    const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
     const result = await handlers.save_artifact({
       type: 'result',
       data: { pr_url: 'https://github.com/acme/widgets/pull/123' },
@@ -5036,41 +5032,18 @@ describe('node-agent-tools: auto pr subscription hook', () => {
     const data = JSON.parse(result.content[0].text);
 
     expect(data.success).toBe(true);
-    expect(calls).toEqual(['https://github.com/acme/widgets/pull/123']);
+    const artifacts = ctx.artifactRepo.listByRun(ctx.workflowRunId);
+    expect(artifacts).toHaveLength(1);
+    expect(artifacts[0]!.data.pr_url).toBe('https://github.com/acme/widgets/pull/123');
   });
 
-  test('save_artifact accepts prUrl (camelCase key)', async () => {
-    const calls: string[] = [];
-    const onEnsurePrSubscription = async (prUrl: string) => {
-      calls.push(prUrl);
-    };
-    const handlers = createNodeAgentToolHandlers(makeConfig(ctx, { onEnsurePrSubscription }));
-    await handlers.save_artifact({
-      type: 'result',
-      data: { prUrl: 'https://github.com/acme/widgets/pull/9' },
-    });
-    expect(calls).toEqual(['https://github.com/acme/widgets/pull/9']);
-  });
-
-  test('save_artifact without pr_url does not invoke the hook', async () => {
-    const calls: string[] = [];
-    const onEnsurePrSubscription = async (prUrl: string) => {
-      calls.push(prUrl);
-    };
-    const handlers = createNodeAgentToolHandlers(makeConfig(ctx, { onEnsurePrSubscription }));
-    await handlers.save_artifact({ type: 'progress', summary: 'working' });
-    expect(calls).toHaveLength(0);
-  });
-
-  test('send_message with pr_url on a successful send auto-subscribes', async () => {
-    const calls: string[] = [];
-    const onEnsurePrSubscription = async (prUrl: string) => {
-      calls.push(prUrl);
-    };
+  test('send_message with pr_url succeeds without requiring a subscription callback', async () => {
+    const delivered: Array<{ sessionId: string; message: string }> = [];
     const config = makeConfig(ctx, {
       channelResolver: makeResolver([makeResolvedChannel('coder', 'reviewer')]),
-      messageInjector: async () => {},
-      onEnsurePrSubscription,
+      messageInjector: async (sessionId, message) => {
+        delivered.push({ sessionId, message });
+      },
     });
     const handlers = createNodeAgentToolHandlers(config);
     const result = await handlers.send_message({
@@ -5081,40 +5054,7 @@ describe('node-agent-tools: auto pr subscription hook', () => {
     const data = JSON.parse(result.content[0].text);
 
     expect(data.success).toBe(true);
-    expect(calls).toEqual(['https://github.com/acme/widgets/pull/55']);
-  });
-
-  test('send_message with pr_url still auto-subscribes when delivery is gated-failed', async () => {
-    const calls: string[] = [];
-    const onEnsurePrSubscription = async (prUrl: string) => {
-      calls.push(prUrl);
-    };
-    // Closed review gate: deliverMessage reports failure, but the worker still
-    // needs PR events while it waits for review — so the hook must fire before
-    // the gated-failure early return.
-    const agentMessageRouter = {
-      deliverMessage: async () => ({
-        success: false as const,
-        delivered: [],
-        failed: [],
-        reason: 'Gate closed: review pending',
-      }),
-    } as unknown as AgentMessageRouter;
-    const config = makeConfig(ctx, {
-      channelResolver: makeResolver([makeResolvedChannel('coder', 'reviewer')]),
-      messageInjector: async () => {},
-      agentMessageRouter,
-      onEnsurePrSubscription,
-    });
-    const handlers = createNodeAgentToolHandlers(config);
-    const result = await handlers.send_message({
-      target: 'reviewer',
-      message: 'PR up for review',
-      data: { pr_url: 'https://github.com/acme/widgets/pull/77' },
-    });
-    const data = JSON.parse(result.content[0].text);
-
-    expect(data.success).toBe(false);
-    expect(calls).toEqual(['https://github.com/acme/widgets/pull/77']);
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0]!.sessionId).toBe(ctx.reviewerSessionId);
   });
 });
