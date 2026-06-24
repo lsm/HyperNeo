@@ -645,8 +645,13 @@ describe('SpaceAgentEditor', () => {
     expect(mockUpdateAgent.mock.calls[0][1]).not.toHaveProperty('tools');
   });
 
-  it('clears explicit tool overrides when inheriting defaults in edit mode', async () => {
-    const agent = makeAgent({ id: 'agent-1', tools: ['Read', 'Grep'] });
+  it('clears explicit tool overrides and template tracking when inheriting defaults in edit mode', async () => {
+    const agent = makeAgent({
+      id: 'agent-1',
+      tools: ['Read', 'Grep'],
+      templateName: 'Research',
+      templateHash: 'research-hash',
+    });
     mockUpdateAgent.mockResolvedValue(agent);
 
     const { getByText, getByRole } = render(<SpaceAgentEditor {...DEFAULT_PROPS} agent={agent} />);
@@ -657,7 +662,7 @@ describe('SpaceAgentEditor', () => {
     await waitFor(() => {
       expect(mockUpdateAgent).toHaveBeenCalledWith(
         'agent-1',
-        expect.objectContaining({ tools: null })
+        expect.objectContaining({ tools: null, templateName: null, templateHash: null })
       );
     });
   });

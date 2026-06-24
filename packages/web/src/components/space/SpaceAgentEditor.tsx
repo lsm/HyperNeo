@@ -278,11 +278,13 @@ export function SpaceAgentEditor({
         customPrompt === (selectedTemplate.customPrompt ?? '') &&
         JSON.stringify(tools) === JSON.stringify(selectedTemplate.tools);
       const templateTracked = agent?.templateName || agent?.templateHash;
+      const explicitToolsCleared = isEdit && !toolsOverridden && agent?.tools !== undefined;
       const templateFieldsChanged =
         isEdit &&
         templateTracked &&
         (trimmedDescription !== (agent.description ?? '') ||
           customPrompt !== (agent.customPrompt ?? '') ||
+          explicitToolsCleared ||
           (toolsOverridden && JSON.stringify(tools) !== JSON.stringify(agent.tools ?? [])));
       const baseParams = {
         name: name.trim(),
