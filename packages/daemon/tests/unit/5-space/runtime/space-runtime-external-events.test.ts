@@ -782,6 +782,48 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(deliveries[0]!.taskId).toBe(task.id);
   });
 
+  test('delivers matching events to an idle node-agent session', async () => {
+    const { run } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'idle',
+      agentSessionId: 'session-idle',
+      startedAt: Date.now(),
+      completedAt: Date.now(),
+    });
+    tam.alive.add('session-idle');
+
+    const event = makeEvent();
+    await eventService.publish(event);
+
+    expect(injected).toHaveLength(1);
+    expect(injected[0]!.sessionId).toBe('session-idle');
+    expect(injected[0]!.deliveryMode).toBe('immediate');
+    expect(JSON.parse(injected[0]!.message).eventId).toBe(event.id);
+    expect(eventStore.getById(event.id)?.state).toBe('delivered');
+    expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
+  });
+
+  test('does not deliver matching events to a cancelled node execution', async () => {
+    const { run } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'cancelled',
+      agentSessionId: 'session-cancelled',
+      startedAt: Date.now(),
+      completedAt: Date.now(),
+    });
+    tam.alive.add('session-cancelled');
+
+    const event = makeEvent();
+    await eventService.publish(event);
+
+    expect(injected).toHaveLength(0);
+    const delivery = eventStore.listDeliveries(event.id)[0]!;
+    expect(delivery.state).toBe('pending');
+    expect(delivery.failureReason).toBe('node_execution_not_active');
+  });
+
   describe('ensurePrSubscriptionForNode', () => {
     test('auto-subscribes a node to its PR, delivers, and dedupes on repeat', async () => {
       const workflow = createWorkflow('code');
@@ -2329,7 +2371,7 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(eventStore.getById(event.id)?.state).toBe('published');
   });
 
-  test('persists pending delivery for idle executions with retained sessions', async () => {
+  test('delivers immediately for idle executions with retained live sessions', async () => {
     const { workflow, run, task } = await startRunWithSubscription();
     const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
     nodeExecutionRepo.update(execution.id, {
@@ -2342,12 +2384,12 @@ describe('SpaceRuntime external event subscriptions', () => {
     const event = makeEvent();
     await eventService.publish(event);
 
-    expect(injected).toHaveLength(0);
+    expect(injected).toHaveLength(1);
+    expect(injected[0]!.sessionId).toBe('session-idle-stale');
     const delivery = eventStore.listDeliveries(event.id)[0]!;
-    expect(delivery.state).toBe('pending');
-    expect(delivery.failureReason).toBe('node_execution_not_active');
-    expect(eventStore.listPendingDeliveries()).toContainEqual(delivery);
-    expect(eventStore.getById(event.id)?.state).toBe('published');
+    expect(delivery.state).toBe('delivered');
+    expect(eventStore.listPendingDeliveries()).not.toContainEqual(delivery);
+    expect(eventStore.getById(event.id)?.state).toBe('delivered');
   });
 
   test('flushes persisted pending deliveries when an idle worker activates', async () => {
@@ -3255,12 +3297,12 @@ describe('SpaceRuntime external event subscriptions', () => {
       agentSessionId: 'session-review-active',
       startedAt: Date.now(),
     });
-    // Create an idle execution for the code node (terminal for that target)
+    // Create a cancelled execution for the code node (terminal for that target)
     const codeExecution = nodeExecutionRepo.createOrIgnore({
       workflowRunId: run.id,
       workflowNodeId: 'code',
       agentName: 'coder',
-      status: 'idle',
+      status: 'cancelled',
     });
     nodeExecutionRepo.update(codeExecution.id, {
       completedAt: Date.now(),
@@ -3751,6 +3793,7 @@ describe('SpaceRuntime external event subscriptions', () => {
       agentSessionId: 'session-review-idle',
       completedAt: Date.now(),
     });
+    tam.alive.add('session-review-idle');
     workflowRunRepo.updateRun(run.id, { status: 'blocked' });
 
     const event = makeEvent();
@@ -3758,9 +3801,8 @@ describe('SpaceRuntime external event subscriptions', () => {
 
     const deliveries = eventStore.listDeliveries(event.id);
     expect(deliveries).toHaveLength(2);
-    expect(deliveries.some((delivery) => delivery.state === 'delivered')).toBe(true);
-    expect(deliveries.some((delivery) => delivery.state === 'pending')).toBe(true);
-    expect(eventStore.getById(event.id)?.state).toBe('published');
+    expect(deliveries.every((delivery) => delivery.state === 'delivered')).toBe(true);
+    expect(eventStore.getById(event.id)?.state).toBe('delivered');
   });
 
   test('terminalizes delivery instead of retrying when run is terminal after transient dispatch failure', async () => {
