@@ -798,10 +798,15 @@ describe('SpaceRuntime external event subscriptions', () => {
 
     expect(injected).toHaveLength(1);
     expect(injected[0]!.sessionId).toBe('session-idle');
-    expect(injected[0]!.deliveryMode).toBe('immediate');
+    expect(injected[0]!.deliveryMode).toBe('defer');
     expect(JSON.parse(injected[0]!.message).eventId).toBe(event.id);
     expect(eventStore.getById(event.id)?.state).toBe('delivered');
     expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
+    const updatedExecution = nodeExecutionRepo
+      .listByNode(run.id, 'code')
+      .find((item) => item.id === execution.id)!;
+    expect(updatedExecution.status).toBe('in_progress');
+    expect(updatedExecution.completedAt).toBeNull();
   });
 
   test('does not deliver matching events to a cancelled node execution', async () => {
@@ -2371,7 +2376,7 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(eventStore.getById(event.id)?.state).toBe('published');
   });
 
-  test('delivers immediately for idle executions with retained live sessions', async () => {
+  test('delivers with defer mode for idle executions with retained live sessions', async () => {
     const { workflow, run, task } = await startRunWithSubscription();
     const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
     nodeExecutionRepo.update(execution.id, {
@@ -2386,6 +2391,12 @@ describe('SpaceRuntime external event subscriptions', () => {
 
     expect(injected).toHaveLength(1);
     expect(injected[0]!.sessionId).toBe('session-idle-stale');
+    expect(injected[0]!.deliveryMode).toBe('defer');
+    const updatedExecution = nodeExecutionRepo
+      .listByNode(run.id, 'code')
+      .find((item) => item.id === execution.id)!;
+    expect(updatedExecution.status).toBe('in_progress');
+    expect(updatedExecution.completedAt).toBeNull();
     const delivery = eventStore.listDeliveries(event.id)[0]!;
     expect(delivery.state).toBe('delivered');
     expect(eventStore.listPendingDeliveries()).not.toContainEqual(delivery);
