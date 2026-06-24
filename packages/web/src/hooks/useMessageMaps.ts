@@ -24,6 +24,7 @@ import type {
   SDKMessage,
   SDKSystemMessage,
   SDKTaskNotificationMessage,
+  SDKTaskProgressMessage,
 } from '@neokai/shared/sdk/sdk.d.ts';
 import type { ChatMessage } from '@neokai/shared';
 import {
@@ -51,6 +52,8 @@ export interface UseMessageMapsResult {
   taskNotificationsMap: Map<string, SDKTaskNotificationMessage>;
   /** Map of assistant message UUIDs to the tool_use IDs currently running in that message. */
   runningToolUseIdsByMessageUuid: Map<string, Set<string>>;
+  /** Map of tool use IDs to their latest live task_progress (usage/last tool/summary) */
+  taskProgressMap: Map<string, SDKTaskProgressMessage>;
   /**
    * Tool use IDs whose card is actually rendered in this slice — top-level
    * tool_use ids plus nested tool_use ids whose parent Task/Agent card is
@@ -165,6 +168,21 @@ export function useMessageMaps(
 
     return map;
   }, [sdkMessages, runningToolUseIds]);
+
+  // Map of tool use IDs to their latest live task_progress. task_progress
+  // carries live usage/summary/last-tool data and links directly to its
+  // originating tool_use via tool_use_id. Keep only the latest row per tool.
+  const taskProgressMap = useMemo(() => {
+    const map = new Map<string, SDKTaskProgressMessage>();
+    sdkMessages.forEach((msg) => {
+      if (msg.type !== 'system' || msg.subtype !== 'task_progress') return;
+      const progress = msg as SDKTaskProgressMessage;
+      if (progress.tool_use_id) {
+        map.set(progress.tool_use_id, progress);
+      }
+    });
+    return map;
+  }, [sdkMessages]);
 
   // Map of user message UUIDs to their attached session init info
   const sessionInfoMap = useMemo(() => {
@@ -307,6 +325,7 @@ export function useMessageMaps(
     subagentMessagesMap,
     taskNotificationsMap,
     runningToolUseIdsByMessageUuid,
+    taskProgressMap,
     foldableToolUseIds,
     replacementStatusMap,
     completedHookUuids,
