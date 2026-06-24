@@ -116,7 +116,11 @@ type ResponsesInputItem =
   | {
       type: 'function_call_output';
       call_id: string;
-      output: string | Array<ResponsesInputText | ResponsesInputImage>;
+      // The OpenAI Responses API documents function_call_output.output as a
+      // string. The ChatGPT Codex backend hard-rejects non-string shapes with
+      // `{"detail":"Unsupported content type"}`, so this is always stringified
+      // (see toolResultContent).
+      output: string;
     }
   | ResponsesReasoningItem;
 
@@ -272,15 +276,7 @@ const ESTIMATED_IMAGE_TOKENS = 300;
 
 function estimateResponsesContentTokens(item: ResponsesInputItem): number {
   if (item.type === 'function_call_output') {
-    if (typeof item.output === 'string') {
-      return estimateTextTokens(item.output);
-    }
-    return item.output.reduce((sum, block) => {
-      if (block.type === 'input_image') {
-        return sum + ESTIMATED_IMAGE_TOKENS;
-      }
-      return sum + estimateTextTokens(block.text);
-    }, 0);
+    return estimateTextTokens(item.output);
   }
   if (item.type === 'function_call') {
     return estimateTextTokens(item.name) + estimateTextTokens(item.arguments);
@@ -330,30 +326,33 @@ function estimateResponsesPayloadTokens(
   );
 }
 
-function toolResultContent(
-  content: AnthropicContentBlockToolResult['content']
-): string | Array<ResponsesInputText | ResponsesInputImage> {
+/**
+ * Convert an Anthropic tool_result `content` into the string expected by the
+ * OpenAI Responses API's `function_call_output.output` field.
+ *
+ * The Responses API documents `output` as a string; the ChatGPT Codex backend
+ * hard-rejects non-string shapes with `{"detail":"Unsupported content type"}`.
+ * Images cannot be carried in a string output, so non-text blocks are rendered
+ * as descriptive placeholders (the model still learns that media was returned).
+ */
+function toolResultContent(content: AnthropicContentBlockToolResult['content']): string {
   if (typeof content === 'string') return content;
-  const hasNonText = content.some((block) => block.type !== 'text');
-  if (!hasNonText) {
-    return content.map((block) => (block.type === 'text' ? block.text : '')).join('\n');
-  }
-  const result: Array<ResponsesInputText | ResponsesInputImage> = [];
+  const parts: string[] = [];
   for (const block of content) {
     if (block.type === 'text') {
-      result.push({ type: 'input_text', text: block.text });
+      parts.push(block.text);
       continue;
     }
     if (block.type === 'image') {
-      result.push(imageBlockToInputImage(block));
+      const source = block.source as { type?: string; media_type?: string; url?: string };
+      parts.push(
+        `[image: ${source.type === 'url' ? (source.url ?? 'url') : (source.media_type ?? 'unknown')}]`
+      );
       continue;
     }
-    result.push({
-      type: 'input_text',
-      text: `[Unsupported content block: ${(block as { type?: string }).type ?? 'unknown'}]`,
-    });
+    parts.push(`[Unsupported content block: ${(block as { type?: string }).type ?? 'unknown'}]`);
   }
-  return result;
+  return parts.filter(Boolean).join('\n');
 }
 
 function appendInputMessage(
@@ -432,11 +431,7 @@ function appendUserBlocks(items: ResponsesInputItem[], blocks: AnthropicContentB
       items.push({
         type: 'function_call_output',
         call_id: result.tool_use_id,
-        output: result.is_error
-          ? typeof output === 'string'
-            ? `[Tool error]\n${output}`
-            : [{ type: 'input_text' as const, text: `[Tool error]` }, ...output]
-          : output,
+        output: result.is_error ? `[Tool error]\n${output}` : output,
       });
       continue;
     }
@@ -744,6 +739,70 @@ function parseOpenAIError(status: number, text: string): string {
     if (typeof message === 'string' && message) return message;
   }
   return text || `OpenAI API request failed with status ${status}`;
+}
+
+/**
+ * Build a compact, payload-free summary of a Responses request body for
+ * diagnostic logging when the upstream rejects it (4xx).
+ *
+ * The ChatGPT Codex backend returns `{"detail":"Unsupported content type"}` on
+ * 400 without identifying which item it rejected. This summary captures, per
+ * input item: its `type`, the shapes most likely to trigger that error
+ * (function_call_output.output form, function_call.status presence, reasoning
+ * encrypted_content, message content block types) — without dumping potentially
+ * large or sensitive text payloads.
+ */
+function summarizeResponsesRequestFor4xx(body: ResponsesRequest): Record<string, unknown> {
+  const input = body.input.map((item) => {
+    if (item.type === 'function_call_output') {
+      return {
+        type: item.type,
+        call_id: item.call_id,
+        outputType: typeof item.output === 'string' ? 'string' : typeof item.output,
+      };
+    }
+    if (item.type === 'function_call') {
+      return {
+        type: item.type,
+        call_id: item.call_id,
+        name: item.name,
+        hasStatus: item.status !== undefined,
+      };
+    }
+    if (item.type === 'reasoning') {
+      return {
+        type: item.type,
+        encryptedContentLength: item.encrypted_content.length,
+      };
+    }
+    // message
+    return {
+      type: item.type,
+      role: item.role,
+      contentBlockTypes: item.content.map((block) => block.type),
+    };
+  });
+  return {
+    model: body.model,
+    inputItemCount: body.input.length,
+    inputItemTypes: body.input.map((i) => i.type),
+    input,
+    ...(body.previous_response_id ? { previous_response_id: body.previous_response_id } : {}),
+    ...(body.reasoning ? { reasoning: body.reasoning } : {}),
+    ...(body.include ? { include: body.include } : {}),
+    ...(body.tools ? { toolCount: body.tools.length } : {}),
+  };
+}
+
+/** Log a 4xx upstream rejection with the translated request body summary. */
+function logUpstream4xx(status: number, requestBody: ResponsesRequest, errorText: string): void {
+  // 4xx = client-side request problem (the body we built is rejected). 5xx is
+  // server-side, so the request-body summary is noise there.
+  if (status < 400 || status >= 500) return;
+  const summary = summarizeResponsesRequestFor4xx(requestBody);
+  logger.warn(
+    `openai-responses: upstream rejected request (HTTP ${status}): ${errorText.slice(0, 500)} | requestBodySummary=${JSON.stringify(summary)}`
+  );
 }
 
 function parseSSEBlock(block: string): OpenAIStreamEvent | null {
@@ -1401,12 +1460,45 @@ export function createOpenAIResponsesBridgeServer(
             });
             continuation = undefined;
           } else {
+            logUpstream4xx(openAIResponse.status, requestBody, errorText);
             return sendJsonError(
               openAIResponse.status,
               mapOpenAIStatusToAnthropicError(openAIResponse.status),
               parseOpenAIError(openAIResponse.status, errorText)
             );
           }
+        }
+        // Reasoning `encrypted_content` replay can trigger a 400
+        // "Unsupported content type" on the ChatGPT Codex backend when the
+        // encrypted blob is stale (e.g. after an SDK context rewrite). The
+        // error is terminal for the worker turn, so retry once without the
+        // replayed reasoning items so the turn completes. The streaming
+        // response refreshes/clears the per-session reasoning cache via
+        // onReasoningItems, so subsequent turns stop replaying the bad blob.
+        if (
+          !openAIResponse.ok &&
+          openAIResponse.status === 400 &&
+          requestBody.input.some((item) => item.type === 'reasoning')
+        ) {
+          const errorText = await openAIResponse.text();
+          logUpstream4xx(openAIResponse.status, requestBody, errorText);
+          logger.warn(
+            'openai-responses: 400 with replayed reasoning present — retrying once without reasoning items'
+          );
+          try {
+            requestBody = buildResponsesRequest(body, model, continuation, buildOpts, undefined);
+          } catch (err) {
+            return sendJsonError(
+              400,
+              'invalid_request_error',
+              err instanceof Error ? err.message : 'Bad Request'
+            );
+          }
+          openAIResponse = await fetchImpl(upstreamUrl, {
+            method: 'POST',
+            headers: buildOpenAIHeaders(config.auth, resolvedAuth),
+            body: JSON.stringify(requestBody),
+          });
         }
       } catch (err) {
         logger.warn('openai-responses: upstream request failed:', err);
@@ -1419,6 +1511,7 @@ export function createOpenAIResponsesBridgeServer(
 
       if (!openAIResponse.ok) {
         const text = await openAIResponse.text();
+        logUpstream4xx(openAIResponse.status, requestBody, text);
         return sendJsonError(
           openAIResponse.status,
           mapOpenAIStatusToAnthropicError(openAIResponse.status),
