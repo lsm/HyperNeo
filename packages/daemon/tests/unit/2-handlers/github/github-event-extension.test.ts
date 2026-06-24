@@ -3733,6 +3733,85 @@ describe('GitHubEventExtension', () => {
     }
   });
 
+  test('polling seeds reset heads below the global check-run cursor', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    let pollCount = 0;
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls')) {
+        pollCount++;
+        return pollingResponse(
+          pollCount === 1
+            ? [
+                createPullRequestRow(7, { head: { sha: 'shared-sha' } }),
+                createPullRequestRow(9, { head: { sha: 'other-sha' } }),
+              ]
+            : [
+                createPullRequestRow(7, { head: { sha: 'shared-sha' } }),
+                createPullRequestRow(8, { head: { sha: 'shared-sha' } }),
+                createPullRequestRow(9, { head: { sha: 'other-sha' } }),
+              ]
+        );
+      }
+      if (path.endsWith('/check-runs')) {
+        const headSha = decodeURIComponent(path.split('/commits/')[1].split('/check-runs')[0]);
+        if (headSha === 'other-sha')
+          // A later successful check on another head that advances the global cursor.
+          return pollingResponse({
+            check_runs: [
+              createCheckRunRow({
+                id: 7002,
+                head_sha: 'other-sha',
+                conclusion: 'success',
+                pull_requests: [],
+              }),
+            ],
+          });
+        // shared-sha has the older failure that must not be dropped.
+        return pollingResponse({
+          check_runs: [createCheckRunRow({ id: 7001, head_sha: 'shared-sha', pull_requests: [] })],
+        });
+      }
+      return pollingResponse([]);
+    }) as typeof fetch;
+    try {
+      const repo = extension.repo.listPollingRepos()[0];
+      await extension.pollWatchedRepo(repo, fetchImpl);
+      // Cycle 2: PR #8 joins shared-sha — the per-head watermark was cleared,
+      // but the global cursor advanced past the failure on cycle 1. The reset
+      // head must seed below the global cursor so the failure is re-evaluated.
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      const topics = db
+        .prepare(
+          `SELECT topic FROM space_external_events WHERE topic LIKE 'github/acme/widgets/pull_request/%.check_failed'`
+        )
+        .all()
+        .map((row) => (row as { topic: string }).topic)
+        .sort();
+      expect(topics).toEqual([
+        'github/acme/widgets/pull_request/7.check_failed',
+        'github/acme/widgets/pull_request/8.check_failed',
+      ]);
+    } finally {
+      await extension.stop();
+    }
+  });
+
   test('polling reseeds check-run baseline when polling is re-enabled', async () => {
     const db = setupDb();
     const { service, received } = setupExternalEventService(db);

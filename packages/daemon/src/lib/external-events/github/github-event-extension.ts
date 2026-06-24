@@ -1489,15 +1489,18 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       // per-head failures (500/502) skip the failing head but let the loop
       // continue to the next head.
       let checkRunRateLimited = false;
-      const globalCheckRunWatermark =
-        endpointLastSeenAt[checkRunEndpointKey] ?? checkRunPollingEnabledAt ?? watermarks.committed;
+      // The base seed for heads that have no per-head cursor (first scan or
+      // reset after a PR-set change). Deliberately excludes
+      // endpointLastSeenAt (the max of all committed per-head watermarks) so
+      // a reset head is not filtered by another head's advanced cursor.
+      const baseCheckRunWatermark = checkRunPollingEnabledAt ?? watermarks.committed;
       checkRunHeadLoop: for (const [headRef, prNumbers] of pullRequestNumbersByHeadRef) {
         const { repoPath: headRepoPath, headSha } = parseHeadRefKey(headRef);
         const fallbackPrNumbers = prNumbers;
         const headWatermark =
           checkRunHeadLastSeenAt[headRef] ??
           checkRunHeadPendingLastSeenAt[headRef] ??
-          globalCheckRunWatermark;
+          baseCheckRunWatermark;
         let headPending = Math.max(headWatermark, checkRunHeadPendingLastSeenAt[headRef] ?? 0);
         let headSucceeded = false;
         let page = 1;
