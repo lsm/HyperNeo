@@ -10,6 +10,14 @@ export interface PollCursor {
   recentPullRequestHeadShas?: Record<number, string>;
   recentPullRequestHeadRepos?: Record<number, string>;
   checkRunEtags?: Record<string, string>;
+  /**
+   * Maps a check-run identity (`{id}:{conclusion}`) to the PR number that owns
+   * the unscoped legacy dedupe key (`check_run:{id}:{conclusion}`). Used by
+   * polling to decide when the same check run later belongs to a different PR
+   * and must fall back to a PR-scoped key to avoid colliding with the prior
+   * owner's stored event.
+   */
+  checkRunLegacyPrs?: Record<string, number>;
   pullsSeedInProgress?: boolean;
   seenReactionIds?: Record<string, boolean>;
   /**

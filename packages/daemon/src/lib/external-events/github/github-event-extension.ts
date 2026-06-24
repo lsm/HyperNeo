@@ -1215,6 +1215,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     const recentPullRequestHeadShas = cursor.recentPullRequestHeadShas ?? {};
     const recentPullRequestHeadRepos = cursor.recentPullRequestHeadRepos ?? {};
     const checkRunEtags = cursor.checkRunEtags ?? {};
+    const checkRunLegacyPrs = cursor.checkRunLegacyPrs ?? {};
     const pullsSeedInProgress = cursor.pullsSeedInProgress ?? false;
     const seenReactionIds = cursor.seenReactionIds ?? {};
     const reactionEtags = cursor.reactionEtags ?? {};
@@ -1342,6 +1343,12 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
           partialScan = true;
           break;
         }
+        // A failed `/pulls` discovery leaves the tracked head cursor stale.
+        // Treat it as a partial scan so check-run polling (which derives PR
+        // numbers from the fetched `/pulls` data) is skipped this cycle.
+        if (endpoint.key === 'pulls') {
+          partialScan = true;
+        }
         continue;
       }
       const etag = response.headers.get('ETag');
@@ -1468,7 +1475,11 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         !endpointLastSeenAt[checkRunEndpointKey] &&
         !endpointPendingLastSeenAt[checkRunEndpointKey]
       ) {
-        endpointLastSeenAt[checkRunEndpointKey] = Date.now();
+        // Seed from when polling was enabled / the repo was last updated rather
+        // than scan-time clock, so check runs that completed between enablement
+        // and the first poll are not treated as historical. Fall back to now
+        // only for rows that pre-date this cursor field.
+        endpointLastSeenAt[checkRunEndpointKey] = watched.updatedAt ?? Date.now();
       }
       const checkRunWatermark = endpointLastSeenAt[checkRunEndpointKey] ?? watermarks.committed;
       let checkRunPending = Math.max(
@@ -1477,7 +1488,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       );
       let checkRunPartialScan = false;
       let checkRunPermissionDenied = false;
-      for (const [headRef, prNumbers] of pullRequestNumbersByHeadRef) {
+      checkRunHeadLoop: for (const [headRef, prNumbers] of pullRequestNumbersByHeadRef) {
         const { repoPath: headRepoPath, headSha } = parseHeadRefKey(headRef);
         const fallbackPrNumbers = prNumbers;
         let page = 1;
@@ -1535,6 +1546,14 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
               break;
             }
             if (response.status === 403) {
+              // A 403 on a fork head repository means the token cannot read that
+              // contributor fork; skip it and keep scanning the remaining heads.
+              // Only treat a 403 on the watched base repo as repo-wide denial.
+              const baseRepoPath = gitHubRepoPath(watched.owner, watched.repo);
+              if (headRepoPath !== baseRepoPath) {
+                clearCheckRunEtagsForHead(checkRunEtags, headRef);
+                continue checkRunHeadLoop;
+              }
               checkRunPermissionDenied = true;
               break;
             }
@@ -1562,7 +1581,16 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
               fallbackPrNumbers
             );
             const legacyDedupePrNumber = checkRunPrNumbers[0];
+            const checkRunLegacyKey = `${checkRunIdFrom(row)}:${checkRunConclusionFrom(row)}`;
+            const recordedLegacyPr = checkRunLegacyPrs[checkRunLegacyKey];
+            const singlePrShouldScope =
+              checkRunPrNumbers.length === 1 &&
+              recordedLegacyPr !== undefined &&
+              recordedLegacyPr !== legacyDedupePrNumber;
             for (const checkRunPrNumber of checkRunPrNumbers) {
+              const isLegacyPr = checkRunPrNumber === legacyDedupePrNumber;
+              const prScopedDedupe =
+                checkRunPrNumbers.length > 1 ? !isLegacyPr : singlePrShouldScope;
               const event = normalizeGitHubCheckRun({
                 repo: watched,
                 checkRun: row,
@@ -1570,11 +1598,17 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
                 deliveryId: `poll:check_run:${checkRunIdFrom(row)}:${checkRunPrNumber}`,
                 rawPayload: row,
                 prNumber: checkRunPrNumber,
-                prScopedDedupe:
-                  checkRunPrNumbers.length > 1 && checkRunPrNumber !== legacyDedupePrNumber,
+                prScopedDedupe,
               });
               if (!event) continue;
               await this.publishEvent(watched.spaceId, event, this.context);
+              if (
+                checkRunPrNumbers.length === 1 &&
+                !prScopedDedupe &&
+                !(checkRunLegacyKey in checkRunLegacyPrs)
+              ) {
+                checkRunLegacyPrs[checkRunLegacyKey] = checkRunPrNumber;
+              }
               watermarks.pending = Math.max(watermarks.pending, event.occurredAt);
               count++;
             }
@@ -1733,6 +1767,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       recentPullRequestHeadShas,
       recentPullRequestHeadRepos,
       checkRunEtags,
+      checkRunLegacyPrs,
       pullsSeedInProgress: nextPullsSeedInProgress,
       seenReactionIds,
       reactionEtags,
@@ -1893,6 +1928,12 @@ function checkRunIdFrom(row: unknown): number | string {
   if (!row || typeof row !== 'object') return 'unknown';
   const id = (row as { id?: unknown }).id;
   return typeof id === 'number' || typeof id === 'string' ? id : 'unknown';
+}
+
+function checkRunConclusionFrom(row: unknown): string {
+  if (!row || typeof row !== 'object') return '';
+  const conclusion = (row as { conclusion?: unknown }).conclusion;
+  return typeof conclusion === 'string' ? conclusion : '';
 }
 
 function headRepoFromPullRequest(row: unknown, watched: GitHubWatchedRepo): string {
