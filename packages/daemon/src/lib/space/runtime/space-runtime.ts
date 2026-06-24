@@ -1520,6 +1520,10 @@ export class SpaceRuntime {
           });
           store.markEventFailedIfAllDeliveriesTerminal(item.event.eventId);
         }
+        // Release the synchronous digest-path claim acquired in
+        // enqueueDeliverableExternalEvent so the terminal delivery key does not
+        // leak in externalEventDeliveriesInFlight.
+        this.externalEventDeliveriesInFlight.delete(item.deliveryKey);
         return false;
       });
       state.pendingDigest = remaining;
@@ -1610,10 +1614,19 @@ export class SpaceRuntime {
           delivery.nodeId === target.nodeId &&
           delivery.agentName === target.agentName &&
           !skipDeliveryKeys.has(delivery.deliveryKey) &&
-          // Only flush deliveries that were explicitly marked retryable (e.g.
-          // `node_execution_not_active`). Rows with null failureReason are
-          // still being processed by the original dispatch path (in-flight or
-          // digest-pending) and must not be re-dispatched here.
+          // Only flush deliveries that carry an explicit retryable
+          // failureReason (e.g. `node_execution_not_active`). A `pending` row
+          // with a null failureReason is still owned by its original dispatch
+          // path and re-dispatching it here would duplicate delivery. The three
+          // in-process owners of a null-failureReason pending row are:
+          //   1. the in-memory pending queue (queueForPendingNode) — already
+          //      drained by the caller and excluded via `skipDeliveryKeys`,
+          //   2. an in-flight dispatch (externalEventDeliveriesInFlight), and
+          //   3. a pending rate-limit digest (externalEventRateLimits.pendingDigest),
+          //      for which this filter is the *only* guard against a duplicate.
+          // Rows left pending+null by a crash/interruption are recovered by
+          // requeuePersistedPendingDeliveries() on the next rehydrate, which
+          // re-queues ALL pending rows (null or not) so none stay stranded.
           delivery.failureReason !== null
       )
       .map((delivery) => {
@@ -1629,9 +1642,32 @@ export class SpaceRuntime {
           a.delivery.deliveryKey.localeCompare(b.delivery.deliveryKey)
       );
 
+    // Mirror requeuePersistedPendingDeliveries: only dispatch persisted rows
+    // when the workflow run is externally deliverable. All deliveries here
+    // share target.workflowRunId, so the run state is computed once. A
+    // 'blocked' run is deliverable only while it still has an active execution
+    // to receive the event; otherwise the persisted rows are terminally failed
+    // with run_not_externally_deliverable and the event's terminal state is
+    // updated.
+    const run = this.config.workflowRunRepo.getRun(target.workflowRunId);
+    const runDeliverable = run
+      ? run.status === 'blocked'
+        ? this.hasActiveExecutionForRun(run.id)
+        : isExternallyDeliverableRun(run.status)
+      : false;
+
     for (const { delivery, eventRecord } of deliveries) {
       if (store.isDeliveryTerminal(delivery.eventId, delivery.deliveryKey)) continue;
       if (this.externalEventDeliveriesInFlight.has(delivery.deliveryKey)) continue;
+      if (!runDeliverable) {
+        store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, {
+          terminal: true,
+          reason: 'run_not_externally_deliverable',
+        });
+        store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
+        this.clearExternalEventRetry(delivery.deliveryKey);
+        continue;
+      }
       if (this.isTargetTaskTerminal(target.taskId)) {
         store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, {
           terminal: true,
@@ -2021,6 +2057,14 @@ export class SpaceRuntime {
       createdAt,
       allowTargetSessionFallback,
     });
+    // Claim the delivery synchronously so a concurrent flushPendingNodeQueue
+    // call cannot re-select the same DB-persisted pending delivery before the
+    // digest timer fires. The immediate path already claims synchronously in
+    // deliverToSession; the digest path defers that claim until the timer
+    // callback runs, opening a window where a second flush re-reads the same
+    // row from the DB and dispatches it again. Released in deliverDigestToSession
+    // (success, failure, or session-loss requeue) and on stop().
+    this.externalEventDeliveriesInFlight.add(deliveryKey);
     if (!state.digestTimer) {
       state.digestTimer = setTimeout(() => {
         state.digestTimer = null;
@@ -2062,6 +2106,10 @@ export class SpaceRuntime {
           item.deliveryMode,
           item.createdAt
         );
+        // Release the synchronous digest-path claim acquired in
+        // enqueueDeliverableExternalEvent; the item is back in the pending
+        // queue and will be re-claimed on the next flush.
+        this.externalEventDeliveriesInFlight.delete(item.deliveryKey);
       }
       return;
     }
@@ -2132,14 +2180,32 @@ export class SpaceRuntime {
 
   private resolveDigestDeliveryTarget(item: ExternalEventDigestItem): WorkflowSubscriptionTarget {
     const target = item.target;
-    const resolved = this.resolveSubscriptionTarget({
+    const liveTarget = this.resolveLiveDeliveryTarget({
       workflowRunId: target.workflowRunId,
       taskId: target.taskId,
       nodeId: target.nodeId,
       agentName: target.agentName,
     });
-    if (resolved.sessionId) return resolved;
-    return item.allowTargetSessionFallback ? target : resolved;
+    if (liveTarget?.sessionId) return liveTarget;
+    // No current worker session for this node. The activation flush's
+    // allowTargetSessionFallback may fall back to the sessionId captured at
+    // spawn time — but only when that session is still live. A superseded
+    // (dead) activation session must never receive the digest; returning a
+    // sessionless target makes deliverDigestToSession requeue the items as
+    // pending for the next activation.
+    if (
+      item.allowTargetSessionFallback &&
+      target.sessionId &&
+      this.isTargetSessionLive(target.sessionId)
+    ) {
+      return target;
+    }
+    return {
+      workflowRunId: target.workflowRunId,
+      taskId: target.taskId,
+      nodeId: target.nodeId,
+      agentName: target.agentName,
+    };
   }
 
   private async deliverToSession(
@@ -2495,6 +2561,31 @@ export class SpaceRuntime {
   ): WorkflowSubscriptionTarget {
     const current = this.getCurrentQueueableOrActiveExecution(target);
     return current?.agentSessionId ? { ...target, sessionId: current.agentSessionId } : target;
+  }
+
+  /**
+   * Re-resolves the authoritative live session for `target` — the stale-session
+   * guard used immediately before injecting an external event.
+   *
+   * `target.sessionId` is captured when a delivery is queued (at node spawn /
+   * activation time). By the time the async dispatch runs the worker may have
+   * been superseded: it crashed and was respawned (a new `agentSessionId` on
+   * the same node execution) or its execution was reset to pending
+   * (`agentSessionId` cleared). The node execution record is authoritative —
+   * `spawnWorkflowNodeAgentForExecution` writes the new `agentSessionId`
+   * before returning — so `getCurrentQueueableOrActiveExecution` is trusted
+   * over the captured `sessionId`.
+   *
+   * Returns the target retargeted onto the *current* live session, or `null`
+   * when no live session can be resolved. Callers requeue the delivery as
+   * pending instead of injecting into a superseded (dead) session.
+   */
+  private resolveLiveDeliveryTarget(
+    target: Pick<WorkflowSubscriptionTarget, 'workflowRunId' | 'taskId' | 'nodeId' | 'agentName'>
+  ): WorkflowSubscriptionTarget | null {
+    const current = this.getCurrentQueueableOrActiveExecution(target);
+    if (!current?.agentSessionId) return null;
+    return { ...target, sessionId: current.agentSessionId };
   }
 
   private isPending(target: WorkflowSubscriptionTarget): boolean {
@@ -3590,6 +3681,10 @@ export class SpaceRuntime {
           reason: `deliveryMode:${item.deliveryMode}; digest pending during runtime stop`,
         });
         this.preservePendingDigestItem(item);
+        // Release the synchronous digest-path claim acquired in
+        // enqueueDeliverableExternalEvent so the requeued delivery can be
+        // retried/flushed after a restart.
+        this.externalEventDeliveriesInFlight.delete(item.deliveryKey);
       }
     }
     this.externalEventRateLimits.clear();
