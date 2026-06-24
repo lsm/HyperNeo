@@ -1503,7 +1503,11 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
           checkRunHeadPendingLastSeenAt[headRef] ??
           baseCheckRunWatermark;
         let headPending = Math.max(headWatermark, checkRunHeadPendingLastSeenAt[headRef] ?? 0);
-        let headSucceeded = false;
+        // headSucceeded is only true when EVERY queried repo path completed
+        // without error, so a failed fork leg does not advance the per-head
+        // cursor past failures the fork leg never saw.
+        let headSucceeded = true;
+        let headPruned = false;
         // For fork heads, also query the watched base repo because GitHub
         // Actions `pull_request` workflows create check runs under the base
         // repo, not the fork.
@@ -1511,13 +1515,14 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
           headRepoPath !== watchedBaseRepoPath
             ? [headRepoPath, watchedBaseRepoPath]
             : [headRepoPath];
-        // Track check names whose latest conclusion is non-failure so earlier
-        // superseded failures are not replayed to newly tracked PRs. Rows from
+        // Track check identity (name + app) whose latest conclusion is
+        // non-failure so earlier superseded failures are not replayed. Rows from
         // `filter=all` arrive newest-first, so the first conclusion seen for a
-        // name is the latest.
-        const supersededCheckNames = new Set<string>();
+        // name+app is the latest.
+        const supersededCheckKeys = new Set<string>();
         const seenCheckRunIds = new Set<number | string>();
         for (const checkRunRepoPath of repoPathsToQuery) {
+          if (headPruned) break;
           let page = 1;
           while (true) {
             const query = new URLSearchParams({
@@ -1527,7 +1532,9 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
               page: String(page),
             });
             const checkRunHeaders = gitHubPollingHeaders(token);
-            const checkRunEtagKey = `${headRef}:page:${page}`;
+            // ETag key includes the repo path so fork and base repo responses
+            // cache independently and do not cross-pollinate If-None-Match.
+            const checkRunEtagKey = `${headRef}:${checkRunRepoPath}:page:${page}`;
             if (checkRunEtags[checkRunEtagKey]) {
               checkRunHeaders['If-None-Match'] = checkRunEtags[checkRunEtagKey];
             }
@@ -1550,10 +1557,10 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
               }
               partialScan = true;
               checkRunRateLimited = true;
+              headSucceeded = false;
               break;
             }
             if (response.status === 304) {
-              headSucceeded = true;
               break;
             }
             if (!response.ok) {
@@ -1573,18 +1580,21 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
                 });
                 partialScan = true;
                 checkRunRateLimited = true;
+                headSucceeded = false;
                 break;
               }
               if (response.status === 403) {
                 // A 403 on a fork head repository means the token cannot read
-                // that contributor fork; skip it and keep scanning the remaining
-                // heads. Only treat a 403 on the watched base repo as repo-wide
-                // denial.
+                // that contributor fork; skip this repo path but keep scanning
+                // the remaining heads. Only treat a 403 on the watched base repo
+                // as repo-wide denial.
                 if (checkRunRepoPath !== watchedBaseRepoPath) {
                   clearCheckRunEtagsForHead(checkRunEtags, headRef);
+                  headSucceeded = false;
                   break;
                 }
                 checkRunPermissionDenied = true;
+                headSucceeded = false;
                 break;
               }
               if (response.status === 404 || response.status === 422) {
@@ -1595,30 +1605,42 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
                   }
                   delete checkRunEtags[checkRunEtagKey];
                   pullRequestNumbersByHeadRef.delete(headRef);
+                  // Head was pruned — stop scanning all remaining repo paths so
+                  // the base-repo leg does not publish for a deleted head.
+                  headPruned = true;
                 }
-                headSucceeded = true;
                 break;
               }
               // Other non-rate-limit failures (500/502/etc.) stop check-run
               // scanning for this repo path but do not block reaction polling.
+              headSucceeded = false;
               break;
             }
             const rows = rowsFromPollingPayload(await response.json(), checkRunEndpointKey);
+            let reachedOldRows = false;
             for (const row of rows) {
               const rowOccurredAt = checkRunOccurredAt(row);
-              if (rowOccurredAt < headWatermark) continue;
+              if (rowOccurredAt < headWatermark) {
+                // Rows are newest-first; once we pass the watermark, all
+                // remaining rows are older. Stop paginating to conserve API
+                // budget.
+                reachedOldRows = true;
+                break;
+              }
               headPending = Math.max(headPending, rowOccurredAt);
               const checkRunId = checkRunIdFrom(row);
               // Dedupe across fork + base repo queries for the same head SHA.
               if (seenCheckRunIds.has(checkRunId)) continue;
               seenCheckRunIds.add(checkRunId);
               const checkName = checkRunNameFrom(row);
+              const appKey = checkRunAppKeyFrom(row);
+              const supersessionKey = `${checkName}:${appKey}`;
               const conclusion = checkRunConclusionFrom(row);
               // Suppress superseded failures: if a newer run of the same check
-              // name concluded non-failure, skip this older failed row.
-              if (supersededCheckNames.has(checkName)) continue;
+              // name+app concluded non-failure, skip this older failed row.
+              if (supersededCheckKeys.has(supersessionKey)) continue;
               if (isNonFailureConclusion(conclusion)) {
-                supersededCheckNames.add(checkName);
+                supersededCheckKeys.add(supersessionKey);
                 continue;
               }
               const checkRunPrNumbers = pullRequestNumbersFromCheckRun(
@@ -1665,16 +1687,21 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
                 count++;
               }
             }
+            if (reachedOldRows) {
+              const checkRunEtag = response.headers.get('ETag');
+              if (checkRunEtag) checkRunEtags[checkRunEtagKey] = checkRunEtag;
+              break;
+            }
             if (rateLimit.remaining < RATE_LIMIT_LOW_REMAINING_THRESHOLD) {
               this.applyRateLimit(rateLimit);
               partialScan = true;
               checkRunRateLimited = true;
+              headSucceeded = false;
               break;
             }
             const checkRunEtag = response.headers.get('ETag');
             if (rows.length < 100) {
               if (checkRunEtag) checkRunEtags[checkRunEtagKey] = checkRunEtag;
-              headSucceeded = true;
               break;
             }
             delete checkRunEtags[checkRunEtagKey];
@@ -1832,8 +1859,14 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       if (!trackedHeadSet.has(key)) delete checkRunHeadPendingLastSeenAt[key];
     }
     for (const key of Object.keys(checkRunEtags)) {
-      const headRef = key.split(':page:')[0];
-      if (!trackedHeadSet.has(headRef)) delete checkRunEtags[key];
+      let etagTracked = false;
+      for (const headRef of trackedHeadSet) {
+        if (key.startsWith(`${headRef}:`)) {
+          etagTracked = true;
+          break;
+        }
+      }
+      if (!etagTracked) delete checkRunEtags[key];
     }
     // After a partial scan, do not advance the shared watermark; skipped
     // endpoints would miss events between the old watermark and the new one.
@@ -2019,6 +2052,16 @@ function checkRunConclusionFrom(row: unknown): string {
   return typeof conclusion === 'string' ? conclusion : '';
 }
 
+function checkRunAppKeyFrom(row: unknown): string {
+  if (!row || typeof row !== 'object') return '';
+  const app = (row as { app?: unknown }).app;
+  if (!app || typeof app !== 'object') return '';
+  const slug = (app as { slug?: unknown }).slug;
+  if (typeof slug === 'string' && slug) return slug;
+  const id = (app as { id?: unknown }).id;
+  return typeof id === 'number' ? String(id) : '';
+}
+
 function checkRunNameFrom(row: unknown): string {
   if (!row || typeof row !== 'object') return '';
   const name = (row as { name?: unknown }).name;
@@ -2093,7 +2136,7 @@ function removePullRequestNumberByHeadSha(
 }
 
 function clearCheckRunEtagsForHead(checkRunEtags: Record<string, string>, headRef: string): void {
-  const prefix = `${headRef}:page:`;
+  const prefix = `${headRef}:`;
   for (const key of Object.keys(checkRunEtags)) {
     if (key.startsWith(prefix)) delete checkRunEtags[key];
   }

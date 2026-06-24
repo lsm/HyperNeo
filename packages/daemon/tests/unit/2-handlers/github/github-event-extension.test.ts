@@ -3322,8 +3322,9 @@ describe('GitHubEventExtension', () => {
       if (path.endsWith('/check-runs'))
         return pollingResponse({
           check_runs: [
-            createCheckRunRow({ id: 7001, completed_at: beforeEnabled }),
+            // filter=all returns newest-first.
             createCheckRunRow({ id: 7002, completed_at: afterEnabled }),
+            createCheckRunRow({ id: 7001, completed_at: beforeEnabled }),
           ],
         });
       return pollingResponse([]);
