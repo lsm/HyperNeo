@@ -1494,7 +1494,8 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       // endpointLastSeenAt (the max of all committed per-head watermarks) so
       // a reset head is not filtered by another head's advanced cursor.
       const baseCheckRunWatermark = checkRunPollingEnabledAt ?? watermarks.committed;
-      checkRunHeadLoop: for (const [headRef, prNumbers] of pullRequestNumbersByHeadRef) {
+      const watchedBaseRepoPath = gitHubRepoPath(watched.owner, watched.repo);
+      for (const [headRef, prNumbers] of pullRequestNumbersByHeadRef) {
         const { repoPath: headRepoPath, headSha } = parseHeadRefKey(headRef);
         const fallbackPrNumbers = prNumbers;
         const headWatermark =
@@ -1503,155 +1504,183 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
           baseCheckRunWatermark;
         let headPending = Math.max(headWatermark, checkRunHeadPendingLastSeenAt[headRef] ?? 0);
         let headSucceeded = false;
-        let page = 1;
-        while (true) {
-          const query = new URLSearchParams({
-            status: 'completed',
-            filter: 'all',
-            per_page: '100',
-            page: String(page),
-          });
-          const checkRunHeaders = gitHubPollingHeaders(token);
-          const checkRunEtagKey = `${headRef}:page:${page}`;
-          if (checkRunEtags[checkRunEtagKey]) {
-            checkRunHeaders['If-None-Match'] = checkRunEtags[checkRunEtagKey];
-          }
-          const response = await fetchImpl(
-            `${GITHUB_API_BASE}/repos/${headRepoPath}/commits/${encodeURIComponent(headSha)}/check-runs?${query.toString()}`,
-            { headers: checkRunHeaders }
-          );
-          const rateLimit = parseRateLimitHeaders(response);
-          latestRateLimit = mergeRateLimitInfo(latestRateLimit, rateLimit);
-          if (rateLimit.limited) {
-            if (response.status === 429 && rateLimit.remaining > 0 && !rateLimit.retryAfter) {
-              this.applyRateLimit({
-                remaining: rateLimit.remaining,
-                resetAt: Date.now() + RATE_LIMIT_MIN_BACKOFF_MS,
-                limited: true,
-                retryAfter: true,
-              });
-            } else {
-              this.applyRateLimit(rateLimit);
+        // For fork heads, also query the watched base repo because GitHub
+        // Actions `pull_request` workflows create check runs under the base
+        // repo, not the fork.
+        const repoPathsToQuery =
+          headRepoPath !== watchedBaseRepoPath
+            ? [headRepoPath, watchedBaseRepoPath]
+            : [headRepoPath];
+        // Track check names whose latest conclusion is non-failure so earlier
+        // superseded failures are not replayed to newly tracked PRs. Rows from
+        // `filter=all` arrive newest-first, so the first conclusion seen for a
+        // name is the latest.
+        const supersededCheckNames = new Set<string>();
+        const seenCheckRunIds = new Set<number | string>();
+        for (const checkRunRepoPath of repoPathsToQuery) {
+          let page = 1;
+          while (true) {
+            const query = new URLSearchParams({
+              status: 'completed',
+              filter: 'all',
+              per_page: '100',
+              page: String(page),
+            });
+            const checkRunHeaders = gitHubPollingHeaders(token);
+            const checkRunEtagKey = `${headRef}:page:${page}`;
+            if (checkRunEtags[checkRunEtagKey]) {
+              checkRunHeaders['If-None-Match'] = checkRunEtags[checkRunEtagKey];
             }
-            partialScan = true;
-            checkRunRateLimited = true;
-            break;
-          }
-          if (response.status === 304) {
-            headSucceeded = true;
-            break;
-          }
-          if (!response.ok) {
-            const errorText = await response.text();
-            if (
-              (response.status === 403 || response.status === 429) &&
-              isRateLimitError(errorText)
-            ) {
-              const secondaryDelayMs = rateLimit.retryAfter
-                ? rateLimit.resetAt - Date.now()
-                : RATE_LIMIT_MIN_BACKOFF_MS;
-              this.applyRateLimit({
-                remaining: rateLimit.remaining,
-                resetAt: Date.now() + secondaryDelayMs,
-                limited: true,
-                retryAfter: true,
-              });
+            const response = await fetchImpl(
+              `${GITHUB_API_BASE}/repos/${checkRunRepoPath}/commits/${encodeURIComponent(headSha)}/check-runs?${query.toString()}`,
+              { headers: checkRunHeaders }
+            );
+            const rateLimit = parseRateLimitHeaders(response);
+            latestRateLimit = mergeRateLimitInfo(latestRateLimit, rateLimit);
+            if (rateLimit.limited) {
+              if (response.status === 429 && rateLimit.remaining > 0 && !rateLimit.retryAfter) {
+                this.applyRateLimit({
+                  remaining: rateLimit.remaining,
+                  resetAt: Date.now() + RATE_LIMIT_MIN_BACKOFF_MS,
+                  limited: true,
+                  retryAfter: true,
+                });
+              } else {
+                this.applyRateLimit(rateLimit);
+              }
               partialScan = true;
               checkRunRateLimited = true;
               break;
             }
-            if (response.status === 403) {
-              // A 403 on a fork head repository means the token cannot read that
-              // contributor fork; skip it and keep scanning the remaining heads.
-              // Only treat a 403 on the watched base repo as repo-wide denial.
-              const baseRepoPath = gitHubRepoPath(watched.owner, watched.repo);
-              if (headRepoPath !== baseRepoPath) {
-                clearCheckRunEtagsForHead(checkRunEtags, headRef);
-                continue checkRunHeadLoop;
-              }
-              checkRunPermissionDenied = true;
-              break;
-            }
-            if (response.status === 404 || response.status === 422) {
-              for (const prNumber of prNumbers) {
-                delete recentPullRequestHeadShas[prNumber];
-                delete recentPullRequestHeadRepos[prNumber];
-              }
-              delete checkRunEtags[checkRunEtagKey];
-              pullRequestNumbersByHeadRef.delete(headRef);
+            if (response.status === 304) {
               headSucceeded = true;
               break;
             }
-            // Other non-rate-limit failures (500/502/etc.) stop check-run
-            // scanning for this head but do not block reaction polling.
-            // Skip to the next head without committing this head's cursor.
-            continue checkRunHeadLoop;
-          }
-          const rows = rowsFromPollingPayload(await response.json(), checkRunEndpointKey);
-          for (const row of rows) {
-            const rowOccurredAt = checkRunOccurredAt(row);
-            if (rowOccurredAt < headWatermark) continue;
-            headPending = Math.max(headPending, rowOccurredAt);
-            const checkRunPrNumbers = pullRequestNumbersFromCheckRun(
-              row,
-              pullRequestNumbersByHeadRef,
-              fallbackPrNumbers
-            );
-            const checkRunId = checkRunIdFrom(row);
-            const conclusion = checkRunConclusionFrom(row);
-            const checkRunLegacyKey = `${checkRunId}:${conclusion}`;
-            const recordedLegacyPr = checkRunLegacyPrs[checkRunLegacyKey];
-            const unscopedDedupeKey = `${watched.owner.toLowerCase()}/${watched.repo.toLowerCase()}:check_run:${checkRunId}:${conclusion}`;
-            const existingEvent =
-              recordedLegacyPr === undefined
-                ? this.eventStore.getByDedupe(watched.spaceId, this.sourceId, unscopedDedupeKey)
-                : null;
-            const existingLegacyPr =
-              existingEvent && typeof existingEvent.event.payload.prNumber === 'number'
-                ? existingEvent.event.payload.prNumber
-                : undefined;
-            if (existingLegacyPr !== undefined && !(checkRunLegacyKey in checkRunLegacyPrs)) {
-              checkRunLegacyPrs[checkRunLegacyKey] = existingLegacyPr;
-            }
-            // The unscoped legacy key belongs to the recorded/existing owner,
-            // not whichever PR happens to be first in the fan-out list.
-            const legacyOwner = recordedLegacyPr ?? existingLegacyPr ?? checkRunPrNumbers[0]!;
-            const legacyPrInFanOut = checkRunPrNumbers.includes(legacyOwner);
-            for (const checkRunPrNumber of checkRunPrNumbers) {
-              const isLegacyPr = legacyPrInFanOut && checkRunPrNumber === legacyOwner;
-              const prScopedDedupe = !isLegacyPr;
-              const event = normalizeGitHubCheckRun({
-                repo: watched,
-                checkRun: row,
-                source: 'polling',
-                deliveryId: `poll:check_run:${checkRunId}:${checkRunPrNumber}`,
-                rawPayload: row,
-                prNumber: checkRunPrNumber,
-                prScopedDedupe,
-              });
-              if (!event) continue;
-              await this.publishEvent(watched.spaceId, event, this.context);
-              if (!prScopedDedupe && !(checkRunLegacyKey in checkRunLegacyPrs)) {
-                checkRunLegacyPrs[checkRunLegacyKey] = checkRunPrNumber;
+            if (!response.ok) {
+              const errorText = await response.text();
+              if (
+                (response.status === 403 || response.status === 429) &&
+                isRateLimitError(errorText)
+              ) {
+                const secondaryDelayMs = rateLimit.retryAfter
+                  ? rateLimit.resetAt - Date.now()
+                  : RATE_LIMIT_MIN_BACKOFF_MS;
+                this.applyRateLimit({
+                  remaining: rateLimit.remaining,
+                  resetAt: Date.now() + secondaryDelayMs,
+                  limited: true,
+                  retryAfter: true,
+                });
+                partialScan = true;
+                checkRunRateLimited = true;
+                break;
               }
-              watermarks.pending = Math.max(watermarks.pending, event.occurredAt);
-              count++;
+              if (response.status === 403) {
+                // A 403 on a fork head repository means the token cannot read
+                // that contributor fork; skip it and keep scanning the remaining
+                // heads. Only treat a 403 on the watched base repo as repo-wide
+                // denial.
+                if (checkRunRepoPath !== watchedBaseRepoPath) {
+                  clearCheckRunEtagsForHead(checkRunEtags, headRef);
+                  break;
+                }
+                checkRunPermissionDenied = true;
+                break;
+              }
+              if (response.status === 404 || response.status === 422) {
+                if (checkRunRepoPath === headRepoPath) {
+                  for (const prNumber of prNumbers) {
+                    delete recentPullRequestHeadShas[prNumber];
+                    delete recentPullRequestHeadRepos[prNumber];
+                  }
+                  delete checkRunEtags[checkRunEtagKey];
+                  pullRequestNumbersByHeadRef.delete(headRef);
+                }
+                headSucceeded = true;
+                break;
+              }
+              // Other non-rate-limit failures (500/502/etc.) stop check-run
+              // scanning for this repo path but do not block reaction polling.
+              break;
             }
+            const rows = rowsFromPollingPayload(await response.json(), checkRunEndpointKey);
+            for (const row of rows) {
+              const rowOccurredAt = checkRunOccurredAt(row);
+              if (rowOccurredAt < headWatermark) continue;
+              headPending = Math.max(headPending, rowOccurredAt);
+              const checkRunId = checkRunIdFrom(row);
+              // Dedupe across fork + base repo queries for the same head SHA.
+              if (seenCheckRunIds.has(checkRunId)) continue;
+              seenCheckRunIds.add(checkRunId);
+              const checkName = checkRunNameFrom(row);
+              const conclusion = checkRunConclusionFrom(row);
+              // Suppress superseded failures: if a newer run of the same check
+              // name concluded non-failure, skip this older failed row.
+              if (supersededCheckNames.has(checkName)) continue;
+              if (isNonFailureConclusion(conclusion)) {
+                supersededCheckNames.add(checkName);
+                continue;
+              }
+              const checkRunPrNumbers = pullRequestNumbersFromCheckRun(
+                row,
+                pullRequestNumbersByHeadRef,
+                fallbackPrNumbers
+              );
+              const checkRunLegacyKey = `${checkRunId}:${conclusion}`;
+              const recordedLegacyPr = checkRunLegacyPrs[checkRunLegacyKey];
+              const unscopedDedupeKey = `${watched.owner.toLowerCase()}/${watched.repo.toLowerCase()}:check_run:${checkRunId}:${conclusion}`;
+              const existingEvent =
+                recordedLegacyPr === undefined
+                  ? this.eventStore.getByDedupe(watched.spaceId, this.sourceId, unscopedDedupeKey)
+                  : null;
+              const existingLegacyPr =
+                existingEvent && typeof existingEvent.event.payload.prNumber === 'number'
+                  ? existingEvent.event.payload.prNumber
+                  : undefined;
+              if (existingLegacyPr !== undefined && !(checkRunLegacyKey in checkRunLegacyPrs)) {
+                checkRunLegacyPrs[checkRunLegacyKey] = existingLegacyPr;
+              }
+              // The unscoped legacy key belongs to the recorded/existing owner,
+              // not whichever PR happens to be first in the fan-out list.
+              const legacyOwner = recordedLegacyPr ?? existingLegacyPr ?? checkRunPrNumbers[0]!;
+              const legacyPrInFanOut = checkRunPrNumbers.includes(legacyOwner);
+              for (const checkRunPrNumber of checkRunPrNumbers) {
+                const isLegacyPr = legacyPrInFanOut && checkRunPrNumber === legacyOwner;
+                const prScopedDedupe = !isLegacyPr;
+                const event = normalizeGitHubCheckRun({
+                  repo: watched,
+                  checkRun: row,
+                  source: 'polling',
+                  deliveryId: `poll:check_run:${checkRunId}:${checkRunPrNumber}`,
+                  rawPayload: row,
+                  prNumber: checkRunPrNumber,
+                  prScopedDedupe,
+                });
+                if (!event) continue;
+                await this.publishEvent(watched.spaceId, event, this.context);
+                if (!prScopedDedupe && !(checkRunLegacyKey in checkRunLegacyPrs)) {
+                  checkRunLegacyPrs[checkRunLegacyKey] = checkRunPrNumber;
+                }
+                watermarks.pending = Math.max(watermarks.pending, event.occurredAt);
+                count++;
+              }
+            }
+            if (rateLimit.remaining < RATE_LIMIT_LOW_REMAINING_THRESHOLD) {
+              this.applyRateLimit(rateLimit);
+              partialScan = true;
+              checkRunRateLimited = true;
+              break;
+            }
+            const checkRunEtag = response.headers.get('ETag');
+            if (rows.length < 100) {
+              if (checkRunEtag) checkRunEtags[checkRunEtagKey] = checkRunEtag;
+              headSucceeded = true;
+              break;
+            }
+            delete checkRunEtags[checkRunEtagKey];
+            page++;
           }
-          if (rateLimit.remaining < RATE_LIMIT_LOW_REMAINING_THRESHOLD) {
-            this.applyRateLimit(rateLimit);
-            partialScan = true;
-            checkRunRateLimited = true;
-            break;
-          }
-          const checkRunEtag = response.headers.get('ETag');
-          if (rows.length < 100) {
-            if (checkRunEtag) checkRunEtags[checkRunEtagKey] = checkRunEtag;
-            headSucceeded = true;
-            break;
-          }
-          delete checkRunEtags[checkRunEtagKey];
-          page++;
+          if (checkRunRateLimited || checkRunPermissionDenied) break;
         }
         // A skipped/failed head keeps its previous cursor; only successful heads
         // advance their pending watermark this cycle.
@@ -1988,6 +2017,21 @@ function checkRunConclusionFrom(row: unknown): string {
   if (!row || typeof row !== 'object') return '';
   const conclusion = (row as { conclusion?: unknown }).conclusion;
   return typeof conclusion === 'string' ? conclusion : '';
+}
+
+function checkRunNameFrom(row: unknown): string {
+  if (!row || typeof row !== 'object') return '';
+  const name = (row as { name?: unknown }).name;
+  return typeof name === 'string' ? name : '';
+}
+
+/**
+ * Returns true for conclusions that represent a non-failure (CI is green or
+ * skipped). Used to suppress earlier failed runs of the same check name when a
+ * newer run superseded them.
+ */
+function isNonFailureConclusion(conclusion: string): boolean {
+  return conclusion === 'success' || conclusion === 'skipped' || conclusion === 'neutral';
 }
 
 function headRepoFromPullRequest(row: unknown, watched: GitHubWatchedRepo): string {

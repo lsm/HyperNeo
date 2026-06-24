@@ -143,9 +143,15 @@ export class GitHubEventExtensionRepository {
   }): GitHubWatchedRepo {
     const now = Date.now();
     const existing = this.getWatchedRepo(params.spaceId, params.owner, params.repo);
-    const pollingNewlyEnabled = Boolean(
-      params.pollingEnabled && (!existing || !existing.pollingEnabled)
-    );
+    // Detect transitions that (re)activate polling for this repo: either the
+    // `pollingEnabled` flag or the row-level `enabled` flag flipping true while
+    // the other is already true. Both require reseeding the check-run baseline
+    // so failures from the inactive period are not backfilled.
+    const wasActive = existing?.enabled && existing?.pollingEnabled;
+    const nextEnabled = params.enabled === undefined ? (existing?.enabled ?? true) : params.enabled;
+    const nextPolling = params.pollingEnabled ?? existing?.pollingEnabled ?? false;
+    const willBeActive = nextEnabled && nextPolling;
+    const pollingNewlyEnabled = willBeActive && !wasActive;
     if (existing) {
       this.db
         .prepare(
