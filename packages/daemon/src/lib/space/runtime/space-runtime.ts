@@ -1613,10 +1613,19 @@ export class SpaceRuntime {
           delivery.nodeId === target.nodeId &&
           delivery.agentName === target.agentName &&
           !skipDeliveryKeys.has(delivery.deliveryKey) &&
-          // Only flush deliveries that were explicitly marked retryable (e.g.
-          // `node_execution_not_active`). Rows with null failureReason are
-          // still being processed by the original dispatch path (in-flight or
-          // digest-pending) and must not be re-dispatched here.
+          // Only flush deliveries that carry an explicit retryable
+          // failureReason (e.g. `node_execution_not_active`). A `pending` row
+          // with a null failureReason is still owned by its original dispatch
+          // path and re-dispatching it here would duplicate delivery. The three
+          // in-process owners of a null-failureReason pending row are:
+          //   1. the in-memory pending queue (queueForPendingNode) — already
+          //      drained by the caller and excluded via `skipDeliveryKeys`,
+          //   2. an in-flight dispatch (externalEventDeliveriesInFlight), and
+          //   3. a pending rate-limit digest (externalEventRateLimits.pendingDigest),
+          //      for which this filter is the *only* guard against a duplicate.
+          // Rows left pending+null by a crash/interruption are recovered by
+          // requeuePersistedPendingDeliveries() on the next rehydrate, which
+          // re-queues ALL pending rows (null or not) so none stay stranded.
           delivery.failureReason !== null
       )
       .map((delivery) => {
