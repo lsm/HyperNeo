@@ -2397,10 +2397,9 @@ describe('SpaceRuntime external event subscriptions', () => {
     const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
     nodeExecutionRepo.update(execution.id, {
       status: 'idle',
-      agentSessionId: 'session-idle-stale',
+      agentSessionId: null,
       completedAt: Date.now(),
     });
-    tam.alive.add('session-idle-stale');
 
     const event = makeEvent();
     await eventService.publish(event);
@@ -2432,10 +2431,9 @@ describe('SpaceRuntime external event subscriptions', () => {
     const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
     nodeExecutionRepo.update(execution.id, {
       status: 'idle',
-      agentSessionId: 'session-idle-stale',
+      agentSessionId: null,
       completedAt: Date.now(),
     });
-    tam.alive.add('session-idle-stale');
 
     const later = makeEvent({
       id: 'evt-later-pending-flush',
@@ -2494,10 +2492,9 @@ describe('SpaceRuntime external event subscriptions', () => {
     // (not added to in-memory queue).
     nodeExecutionRepo.update(execution.id, {
       status: 'idle',
-      agentSessionId: 'session-idle-split',
+      agentSessionId: null,
       completedAt: Date.now(),
     });
-    tam.alive.add('session-idle-split');
     const idleEvent = makeEvent({
       id: 'evt-idle-split',
       dedupeKey: 'dedupe-idle-split',
@@ -2585,10 +2582,9 @@ describe('SpaceRuntime external event subscriptions', () => {
     // Event A: older, persisted as pending while node is idle.
     nodeExecutionRepo.update(execution.id, {
       status: 'idle',
-      agentSessionId: 'session-order-test',
+      agentSessionId: null,
       completedAt: Date.now(),
     });
-    tam.alive.add('session-order-test');
     const olderEvent = makeEvent({
       id: 'evt-older-cross-source',
       dedupeKey: 'dedupe-older-cross',
@@ -2694,10 +2690,9 @@ describe('SpaceRuntime external event subscriptions', () => {
     // Event arrives while node is idle → persisted as pending.
     nodeExecutionRepo.update(execution.id, {
       status: 'idle',
-      agentSessionId: 'session-ttl-test',
+      agentSessionId: null,
       completedAt: Date.now(),
     });
-    tam.alive.add('session-ttl-test');
     const event = makeEvent({
       id: 'evt-ttl-preserved',
       dedupeKey: 'dedupe-ttl-preserved',
