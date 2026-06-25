@@ -5276,15 +5276,38 @@ export class SpaceRuntime {
       state.awaitingContinueAfterDbId = null;
       state.awaitingContinueSince = null;
       // Only a SUCCESS result proves compaction shrank the context — queue the
-      // resume nag. A non-overflow ERROR result (model/auth/rate-limit) means
-      // compaction failed; route it to re-compact/escalate instead of resuming
-      // into an unchanged, still-over-limit context.
+      // resume nag and record this result as the resume anchor. A non-overflow
+      // ERROR result (model/auth/rate-limit) means compaction failed; route it to
+      // re-compact/escalate instead of resuming into an unchanged, still-over-limit
+      // context.
       if (lastMessageIsSuccessResult) {
         state.continueNagPending = true;
+        state.awaitingResumeAfterDbId = lastMessageDbId;
       } else if (!overflowed) {
         compactJustFailed = true;
       }
       // A fresh overflow result falls through with `overflowed` to re-compact.
+    }
+
+    // Resume-nag wait: after the continue nag is delivered it is an enqueued
+    // user message invisible to getLastSDKMessage, so the sweep keeps seeing the
+    // compact-success anchor until the resumed turn advances. Hold the recovery
+    // open (preventing the terminal-skip from clearing the state and resetting
+    // compactAttempts prematurely). When the resumed turn advances:
+    //  - a prompt-too-long result → re-compact/escalate with attempts PRESERVED;
+    //  - any other message → productive, clear the recovery state (fresh next time).
+    if (state.awaitingResume && state.awaitingResumeAfterDbId !== null) {
+      if (lastMessageDbId === state.awaitingResumeAfterDbId) {
+        return 'handled'; // nag still in flight / resumed turn hasn't advanced
+      }
+      state.awaitingResume = false;
+      state.awaitingResumeAfterDbId = null;
+      if (!overflowed) {
+        // Resumed turn produced a non-overflow message — real progress.
+        this.promptTooLongRecovery.delete(key);
+        return 'handled';
+      }
+      // Resumed turn overflowed — attempts preserved, fall through to re-compact.
     }
 
     // Bound the post-compact wait: if the /compact turn produced no result
@@ -5395,14 +5418,12 @@ export class SpaceRuntime {
       if (nagDelivered) {
         state.continueNagPending = false;
         state.continueNagAttempts = 0;
-        // NOTE: compactAttempts is NOT reset here. A reset on nag delivery would
-        // let a session that compacts "successfully" but immediately re-overflows
-        // (context right at the edge) loop forever without escalating. Instead,
-        // attempts are forgiven implicitly when the resumed turn makes real
-        // progress: a normal (non-overflow) terminal result hits the terminal-skip
-        // path, which clears this recovery state entirely — so the next overflow
-        // starts fresh. An immediate re-overflow (no progress) leaves the state in
-        // place, so attempts accumulate and escalate at the cap.
+        // compactAttempts is NOT reset here (see awaitingResume handling above).
+        // The delivered nag is an enqueued user message invisible to
+        // getLastSDKMessage, so awaitingResume holds the recovery open until the
+        // resumed turn actually advances — preventing the terminal-skip from
+        // clearing the state (and resetting attempts) while the nag is in flight.
+        state.awaitingResume = true;
         log.warn(
           `SpaceRuntime: injected continue nag after compaction for execution ${execution.id} (agent ${execution.agentName}, session ${sessionId})`
         );
@@ -6663,7 +6684,8 @@ export class SpaceRuntime {
       if (
         isPromptTooLongResult(lastMessage) ||
         ptlState?.awaitingContinue ||
-        ptlState?.continueNagPending
+        ptlState?.continueNagPending ||
+        ptlState?.awaitingResume
       ) {
         const manager = tam ?? this.config.taskAgentManager;
         const outcome = await this.recoverPromptTooLongIdleExecution(

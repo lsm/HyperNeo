@@ -38,9 +38,9 @@ export const COMPACT_RESULT_TIMEOUT_MS = 5 * 60 * 1000;
  */
 export interface PromptTooLongRecoveryState {
   /**
-   * Consecutive *unproductive* `/compact` attempts. Reset to 0 once a compaction
-   * is productive (the resume nag is delivered), so the cap targets repeated
-   * unhelpful compactions rather than lifetime total.
+   * Consecutive *unproductive* `/compact` attempts. Forgiven implicitly when the
+   * resumed turn makes real progress (a non-overflow result clears the recovery
+   * state); an immediate re-overflow leaves this in place so the cap escalates.
    */
   compactAttempts: number;
   /**
@@ -50,10 +50,10 @@ export interface PromptTooLongRecoveryState {
    */
   awaitingContinue: boolean;
   /**
-   * dbId of the injected `/compact` message. Used to detect when a NEW message
-   * has landed. The wait is cleared only when that new message is a `result`
-   * (real turn completion) — not an intermediate `status: 'compacting'` row —
-   * so the resume nag is never sent mid-compaction.
+   * dbId of the last message observed when `/compact` was injected (the
+   * pre-compact result). `getLastSDKMessage` keeps returning this while the
+   * enqueued `/compact` is in flight; the wait clears only when a newer consumed
+   * `result` lands.
    */
   awaitingContinueAfterDbId: string | null;
   /** Timestamp (ms) the `/compact` was injected, for the wait timeout. */
@@ -65,6 +65,17 @@ export interface PromptTooLongRecoveryState {
   continueNagPending: boolean;
   /** Failed resume-nag deliveries; bounded before giving up. */
   continueNagAttempts: number;
+  /**
+   * True after the resume nag was delivered. Like the `/compact`, the nag is an
+   * enqueued user message invisible to `getLastSDKMessage`, so the sweep keeps
+   * seeing the compact-success result until the resumed turn advances. This
+   * marker keeps recovery entered (preventing the terminal-skip from clearing
+   * the state prematurely); it clears once a message newer than
+   * `awaitingResumeAfterDbId` arrives.
+   */
+  awaitingResume: boolean;
+  /** dbId of the compact-success result that preceded the resume nag. */
+  awaitingResumeAfterDbId: string | null;
 }
 
 export function createPromptTooLongRecoveryState(): PromptTooLongRecoveryState {
@@ -75,6 +86,8 @@ export function createPromptTooLongRecoveryState(): PromptTooLongRecoveryState {
     awaitingContinueSince: null,
     continueNagPending: false,
     continueNagAttempts: 0,
+    awaitingResume: false,
+    awaitingResumeAfterDbId: null,
   };
 }
 

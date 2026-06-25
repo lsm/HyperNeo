@@ -523,6 +523,35 @@ describe('SpaceRuntime — prompt-too-long recovery', () => {
     expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
   });
 
+  test('preserves attempts while the resume nag is enqueued (no premature reset)', async () => {
+    // Round-7 regression: the continue nag is an enqueued user message invisible
+    // to getLastSDKMessage, so the sweep keeps seeing the compact-success result.
+    // Without the awaitingResume hold, the terminal-skip would clear the recovery
+    // state (resetting compactAttempts) before the resumed turn advances. Verify
+    // the state — and compactAttempts — survive ticks in that window.
+    const injections: Array<{ sessionId: string; message: string }> = [];
+    const rt = new SpaceRuntime(buildConfig(makeRecordingTam(injections)));
+    const sessionId = 'session:nag-enqueued';
+    const { run, execution } = await setupIdleOverflowExecution(rt, sessionId, true);
+
+    await rt.executeTick(); // → /compact (attempt 1)
+    saveResultMessage(sessionId, { promptTooLong: false }); // compact success
+    await rt.executeTick(); // → continue nag delivered (awaitingResume=true)
+
+    // The nag is enqueued; getLastSDKMessage still returns the compact-success
+    // result. Multiple ticks must NOT clear/reset the state.
+    await rt.executeTick();
+    await rt.executeTick();
+    const preserved = promptTooLongRecoveryMap(rt).get(`${run.id}:${execution.id}`);
+    expect(preserved?.compactAttempts).toBe(1); // still preserved, not reset
+
+    // Now the resumed turn immediately re-overflows → re-compact with attempts
+    // preserved (attempt 2), not a fresh attempt 1.
+    saveResultMessage(sessionId, { promptTooLong: true });
+    await rt.executeTick();
+    expect(injections.filter((i) => i.message === '/compact').length).toBe(2);
+  });
+
   test('escalates to blocked when the /compact turn hangs (wait timeout)', async () => {
     // P2: if the /compact turn never produces a result, awaitingContinue must not
     // wait forever — the recovery escalates after COMPACT_RESULT_TIMEOUT_MS.
