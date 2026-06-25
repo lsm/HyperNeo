@@ -842,7 +842,15 @@ function parseSSEBlock(block: string): OpenAIStreamEvent | null {
   if (!data || data === '[DONE]') return null;
   const parsed = parseJsonObject(data);
   if (!parsed) return null;
-  return { type: eventType || (parsed.type as string | undefined), ...parsed };
+  return {
+    type: eventType || (parsed.type as string | undefined),
+    ...parsed,
+    // Preserve the raw SSE `event:` name. The spread above lets the payload
+    // `type` overwrite it, so a flat `event: error` block whose data has a
+    // different type (e.g. {"type":"server_error"}) would otherwise lose the
+    // fact that it was an error frame.
+    ...(eventType ? { sseEvent: eventType } : {}),
+  };
 }
 
 async function* readOpenAIStream(
@@ -1131,7 +1139,17 @@ async function streamResponsesToAnthropic({
         continue;
       }
 
-      if (event.type === 'response.failed' || event.type === 'error') {
+      const sseEvent = (event as { sseEvent?: string }).sseEvent;
+      // An error frame is signalled by the payload type (`error` /
+      // `response.failed`) OR by the raw SSE `event:` name — a flat
+      // `event: error` block whose data type is the error category (e.g.
+      // {"type":"server_error"}) only carries the name in sseEvent.
+      if (
+        event.type === 'response.failed' ||
+        event.type === 'error' ||
+        sseEvent === 'error' ||
+        sseEvent === 'response.failed'
+      ) {
         ensureStarted();
         closeThinkingBlock();
         closeTextBlock();
@@ -1151,7 +1169,15 @@ async function streamResponsesToAnthropic({
         const topLevelError: Record<string, unknown> = {};
         if (typeof flatEvent.code === 'string') topLevelError.code = flatEvent.code;
         if (typeof flatEvent.message === 'string') topLevelError.message = flatEvent.message;
-        if (typeof flatEvent.type === 'string' && flatEvent.type !== event.type)
+        // The payload `type` is the error category when it differs from the SSE
+        // event discriminator (sseEvent / "error" / "response.failed").
+        const discriminant = sseEvent ?? event.type;
+        if (
+          typeof flatEvent.type === 'string' &&
+          flatEvent.type !== discriminant &&
+          flatEvent.type !== 'error' &&
+          flatEvent.type !== 'response.failed'
+        )
           topLevelError.type = flatEvent.type;
         const errorBody =
           event.error ??

@@ -567,7 +567,12 @@ function chatChunkErrorBody(chunk: OpenAIChatStreamChunk): string | undefined {
     const message = typeof flat.message === 'string' ? flat.message : undefined;
     const type = typeof flat.type === 'string' ? flat.type : undefined;
     const code = typeof flat.code === 'string' ? flat.code : undefined;
-    if (message || type || code) {
+    // Require an actual error signal (a message or a code) — NOT a bare `type`.
+    // Some OpenAI-compatible endpoints send JSON heartbeat/metadata frames like
+    // `{"type":"ping"}`; treating type-only frames as errors would abort a
+    // valid stream with a terminal api_error before later choices arrive.
+    // A `type` is still folded into the body for classification when present.
+    if (message || code) {
       const error: Record<string, unknown> = {};
       if (message) error.message = message;
       if (type) error.type = type;

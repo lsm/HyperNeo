@@ -168,6 +168,28 @@ describe('openai-chat-bridge: body-embedded / mid-stream error normalization', (
     expect((errorEvent?.data as { error: { type: string } }).error.type).toBe('overloaded_error');
   });
 
+  it('ignores type-only heartbeat frames (e.g. {"type":"ping"}) and streams normally', async () => {
+    // A bare top-level `type` with no message/code is a heartbeat/metadata
+    // frame, not an error — it must not abort the stream.
+    const sse =
+      'data: {"type":"ping"}\n\n' +
+      'data: {"choices":[{"delta":{"content":"hi"}}]}\n\n' +
+      'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n';
+    server = makeServer(
+      async () =>
+        new Response(sse, { status: 200, headers: { 'Content-Type': 'text/event-stream' } })
+    );
+
+    const res = await postMessages(server.port);
+    expect(res.status).toBe(200);
+    const events = await readSSEEventTypes(res.body);
+    expect(events.find((e) => e.event === 'error')).toBeUndefined();
+    const stop = events.find((e) => e.event === 'message_delta');
+    expect((stop?.data as { delta?: { stop_reason?: string } }).delta?.stop_reason).toBe(
+      'end_turn'
+    );
+  });
+
   it('streams a mislabeled-content-type SSE response without buffering or misclassifying it', async () => {
     // A proxy that streams valid SSE but sends Content-Type text/plain (or none)
     // must flow straight through to the streamer — NOT be buffered and matched

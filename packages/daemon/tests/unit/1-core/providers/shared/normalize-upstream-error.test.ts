@@ -237,6 +237,21 @@ describe('normalizeOpenAiUpstreamError', () => {
     expect(normalizeOpenAiUpstreamError(body, 429)).toBeNull();
   });
 
+  it('recognizes a numeric HTTP status code in error.code (429 on a 400)', () => {
+    // Some gateways put the rate-limit status in the body as a numeric code
+    // while returning HTTP 400. readStringField coerces it to "429".
+    const body = JSON.stringify({ error: { code: 429, message: 'Too Many Requests' } });
+    const result = normalizeOpenAiUpstreamError(body, 400);
+    expect(result?.type).toBe('rate_limit_error');
+    expect(result?.status).toBe(429);
+  });
+
+  it('recognizes a numeric 503 code as overload', () => {
+    const body = JSON.stringify({ error: { code: 503, message: 'Service Unavailable' } });
+    const result = normalizeOpenAiUpstreamError(body, 500);
+    expect(result?.type).toBe('overloaded_error');
+  });
+
   it('returns null for a normal invalid_request error', () => {
     const body = JSON.stringify({
       error: { type: 'invalid_request_error', message: 'bad model id' },

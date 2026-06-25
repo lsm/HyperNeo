@@ -169,13 +169,14 @@ const OPENAI_OVERLOAD_PATTERN =
   /overloaded|service unavailable|temporarily unavailable|try again (?:later|in)/i;
 /**
  * Structured `error.type`/`error.code` values that mark a transient fault.
- * Includes OpenAI values (`rate_limit_exceeded`, `server_error`) and Anthropic
- * values (`rate_limit_error`, `overloaded_error`) — the generic detector also
- * serves the Anthropic pass-through bridge, where an Anthropic-shaped body is
- * the strongest possible structured signal.
+ * Includes OpenAI values (`rate_limit_exceeded`, `server_error`), Anthropic
+ * values (`rate_limit_error`, `overloaded_error`), and the HTTP status codes
+ * some gateways put in `error.code` (e.g. `{"error":{"code":429}}` on a 400) —
+ * the generic detector also serves the Anthropic pass-through bridge, where an
+ * Anthropic-shaped body is the strongest possible structured signal.
  */
-const TRANSIENT_RATE_LIMIT_TYPES = new Set(['rate_limit_exceeded', 'rate_limit_error']);
-const TRANSIENT_OVERLOAD_TYPES = new Set(['server_error', 'overloaded_error']);
+const TRANSIENT_RATE_LIMIT_TYPES = new Set(['rate_limit_exceeded', 'rate_limit_error', '429']);
+const TRANSIENT_OVERLOAD_TYPES = new Set(['server_error', 'overloaded_error', '503', '529']);
 
 /**
  * Inspect an OpenAI-compatible upstream response body for transient signals.
