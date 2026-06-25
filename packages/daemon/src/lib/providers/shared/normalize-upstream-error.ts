@@ -138,16 +138,22 @@ export function normalizeGlmUpstreamError(
       ? (parsed.error as Record<string, unknown>)
       : undefined;
   const codeField = readStringField(errorObj, 'code') ?? readStringField(parsed, 'code');
-  const messageField =
-    readStringField(errorObj, 'message') ?? readStringField(parsed, 'message') ?? body;
+  // Message for substring matching — extracted error/message fields only, NOT
+  // the raw body (a valid JSON success response whose content mentions the GLM
+  // overload phrases must not be misclassified). The result message still falls
+  // back to the body for context.
+  const messageForMatching =
+    readStringField(errorObj, 'message') ?? readStringField(parsed, 'message');
+  const messageField = messageForMatching ?? body;
 
   const isTransientCode = codeField === GLM_RATE_LIMIT_CODE;
-  // Match the GLM-specific Chinese substrings against both the raw body and the
-  // extracted message so we catch Anthropic-shaped envelopes that wrap the
-  // original GLM message in `error.message`.
-  const hasOverloadText =
-    containsAny(body, GLM_TRANSIENT_ERROR_SUBSTRINGS) ||
-    containsAny(messageField, GLM_TRANSIENT_ERROR_SUBSTRINGS);
+  // For JSON bodies, match ONLY against the extracted error/message fields. For
+  // non-JSON bodies (plain-text errors from proxies), fall back to scanning the
+  // raw text since there are no structured fields to read.
+  const hasOverloadText = parsed
+    ? messageForMatching !== undefined &&
+      containsAny(messageForMatching, GLM_TRANSIENT_ERROR_SUBSTRINGS)
+    : containsAny(body, GLM_TRANSIENT_ERROR_SUBSTRINGS);
 
   if (!isTransientCode && !hasOverloadText) return null;
 

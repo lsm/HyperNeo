@@ -94,6 +94,18 @@ describe('normalizeGlmUpstreamError', () => {
       const body = JSON.stringify({ type: 'message', id: 'msg_1' });
       expect(normalizeGlmUpstreamError(body, 200)).toBeNull();
     });
+
+    it('does NOT scan a JSON success body for GLM overload phrases', () => {
+      // A valid Anthropic-shaped message whose assistant content mentions
+      // "稍后再试" must not be misclassified as overloaded — only the extracted
+      // error.message / top-level message is matched for JSON bodies.
+      const body = JSON.stringify({
+        type: 'message',
+        role: 'assistant',
+        content: [{ type: 'text', text: '请稍后再试，稍后重试。' }],
+      });
+      expect(normalizeGlmUpstreamError(body, 200)).toBeNull();
+    });
   });
 
   it('exposes GLM transient substrings for query-runner (B4) coordination', () => {
