@@ -2647,6 +2647,36 @@ describe('MinimalThreadFeed', () => {
       // carries an explanation.
       expect(summary?.textContent).toContain('Error during execution');
     });
+
+    it('keeps a terminal-error turn visible even when the agent emitted no reply text', () => {
+      const t = Date.now();
+      const rows = [
+        makeRow({
+          id: 'a1',
+          label: 'Coder Agent',
+          createdAt: t,
+          // tool_use only — no text assistant message before the error result
+          message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'echo test' } }]),
+        }),
+        makeRow({
+          id: 'r1',
+          label: 'Coder Agent',
+          createdAt: t + 1000,
+          message: errorResultMessage('r1'),
+        }),
+      ];
+
+      const { container } = render(<MinimalThreadFeed parsedRows={rows} />);
+      const bubble = container.querySelector('[data-testid="minimal-thread-agent-bubble"]');
+      // Without the exemption from the empty-body filter, this turn would be
+      // dropped (empty lastMessage) and the red bubble would never render.
+      expect(bubble).not.toBeNull();
+      expect(bubble?.getAttribute('data-result-error')).toBe('true');
+      const summary = container.querySelector(
+        '[data-testid="minimal-thread-result-error-summary"]'
+      );
+      expect(summary?.textContent).toContain('something failed');
+    });
   });
 
   it('caps the active roster at 8 most-recent entries even with mixed kinds', () => {

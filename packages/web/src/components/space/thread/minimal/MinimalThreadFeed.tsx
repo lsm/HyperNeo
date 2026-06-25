@@ -1558,10 +1558,14 @@ function buildFeedTurns(
   // noise; the reply is rendered in the sibling that holds the result text.
   // A turn with no reply text but with roster content (tool calls / task
   // outcomes) is still meaningful — e.g. a killed task whose outcome lives in
-  // the roster — so keep it.
+  // the roster — so keep it. A turn that ended in a result error (any subtype)
+  // is also kept even with no text and no roster: the red bubble + inline
+  // error summary IS the visible content.
   return turns.filter((t) => {
     if (t.state !== 'completed') return true;
+    if (t.resultInfo && isSDKResultError(t.resultInfo)) return true;
     return t.lastMessage.length > 0 || t.roster.length > 0;
+  });
   });
 }
 
