@@ -2814,7 +2814,7 @@ export class SpaceRuntime {
     const newest = new Date(Math.max(...occurredAtValues)).toISOString();
     return `${items.length} events received for topics: ${topics.join(
       ', '
-    )} (oldest: ${oldest}, newest: ${newest}). Use subscribe_external_event to get details.`;
+    )} (oldest: ${oldest}, newest: ${newest}). Use get_external_event(eventId) for full details.`;
   }
 
   /**

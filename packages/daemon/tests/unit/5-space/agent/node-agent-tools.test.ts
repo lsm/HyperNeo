@@ -31,6 +31,8 @@ import { AgentMessageRouter } from '../../../../src/lib/space/runtime/agent-mess
 import { ChannelResolver } from '../../../../src/lib/space/runtime/channel-resolver.ts';
 import { PendingAgentMessageRepository } from '../../../../src/storage/repositories/pending-agent-message-repository.ts';
 import { McpAuditLogRepository } from '../../../../src/storage/repositories/mcp-audit-log-repository.ts';
+import { ExternalEventStore } from '../../../../src/lib/external-events/external-event-store.ts';
+import type { ExternalEvent } from '../../../../src/lib/external-events/types.ts';
 import { jsonResult } from '../../../../src/lib/space/tools/tool-result.ts';
 import type { SubscribeExternalEventInput } from '../../../../src/lib/space/tools/node-agent-tool-schemas.ts';
 import { registerGateFeature } from '../../../../src/lib/space/runtime/gate-features.ts';
@@ -2474,6 +2476,147 @@ describe('node-agent-tools: external event subscriptions', () => {
     );
     expect(withRegistered).toContain('subscribe_external_event');
     expect(withRegistered).toContain('unsubscribe_external_event');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: get_external_event
+// ---------------------------------------------------------------------------
+
+function makeGitHubEvent(overrides: Partial<ExternalEvent> = {}): ExternalEvent {
+  return {
+    id: crypto.randomUUID(),
+    spaceId: 'space-node-tools-test',
+    source: 'github',
+    topic: 'github/owner/repo/pull_request_review_comment/42.created',
+    occurredAt: Date.now(),
+    ingestedAt: Date.now(),
+    summary: 'review comment on PR #42',
+    dedupeKey: `dedupe-${Math.random().toString(36).slice(2)}`,
+    externalUrl: 'https://github.com/owner/repo/pull/42#discussion_r1',
+    payload: {
+      eventType: 'pull_request_review_comment',
+      action: 'created',
+      actor: 'octocat',
+      actorType: 'User',
+      body: 'nit: prefer const',
+      prNumber: 42,
+      prUrl: 'https://github.com/owner/repo/pull/42',
+      entityId: '42',
+      repoOwner: 'owner',
+      repoName: 'repo',
+      deliveryId: 'delivery-1',
+      externalId: 'ext-1',
+      source: 'webhook',
+      rawPayload: {
+        comment: {
+          id: 1,
+          node_id: 'PRRC_node1',
+          body: 'nit: prefer const',
+          path: 'src/index.ts',
+          line: 10,
+          side: 'RIGHT',
+          in_reply_to_id: null,
+          html_url: 'https://github.com/owner/repo/pull/42#discussion_r1',
+          pull_request_url: 'https://github.com/owner/repo/pull/42',
+        },
+      },
+    },
+    ...overrides,
+  };
+}
+
+describe('node-agent-tools: get_external_event', () => {
+  let ctx: TestCtx;
+
+  beforeEach(() => {
+    ctx = makeCtx();
+  });
+
+  afterEach(() => {
+    ctx.db.close();
+  });
+
+  test('returns the full record (incl. rawPayload) for a known eventId', async () => {
+    const store = new ExternalEventStore(ctx.db);
+    const event = makeGitHubEvent({ spaceId: ctx.spaceId });
+    store.store(event);
+
+    const handlers = createNodeAgentToolHandlers(makeConfig(ctx, { externalEventStore: store }));
+    const result = await handlers.get_external_event({ eventId: event.id });
+    const data = JSON.parse(result.content[0].text);
+
+    expect(data.success).toBe(true);
+    expect(data.event.id).toBe(event.id);
+    expect(data.event.topic).toBe(event.topic);
+    expect(data.event.summary).toBe(event.summary);
+    expect(data.event.externalUrl).toBe(event.externalUrl);
+    // The complete source payload — including the nested rawPayload — is present.
+    expect(data.event.payload.body).toBe('nit: prefer const');
+    expect(data.event.payload.rawPayload.comment.node_id).toBe('PRRC_node1');
+    expect(data.event.payload.rawPayload.comment.path).toBe('src/index.ts');
+    expect(data.event.payload.actor).toBe('octocat');
+    expect(data.event.payload.eventType).toBe('pull_request_review_comment');
+  });
+
+  test('returns a not-found result for an unknown eventId', async () => {
+    const store = new ExternalEventStore(ctx.db);
+    const handlers = createNodeAgentToolHandlers(makeConfig(ctx, { externalEventStore: store }));
+    const result = await handlers.get_external_event({ eventId: 'does-not-exist' });
+    const data = JSON.parse(result.content[0].text);
+
+    expect(data.success).toBe(false);
+    expect(data.error).toContain('not found');
+  });
+
+  test('treats an event in another space as not-found (no cross-space leak)', async () => {
+    const store = new ExternalEventStore(ctx.db);
+    // Seed the foreign-space row so the event FK is satisfied; the lookup must
+    // still reject it because the caller's space differs. Use a distinct
+    // workspace_path — the column is UNIQUE and the default helper hardcodes /tmp.
+    ctx.db
+      .prepare(
+        `INSERT INTO spaces (id, workspace_path, name, description, background_context, instructions,
+         allowed_models, session_ids, slug, status, created_at, updated_at)
+         VALUES (?, '/tmp/space-other', ?, '', '', '', '[]', '[]', ?, 'active', ?, ?)`
+      )
+      .run('space-other', 'Space other', 'space-other', Date.now(), Date.now());
+    const event = makeGitHubEvent({ spaceId: 'space-other' });
+    store.store(event);
+
+    const handlers = createNodeAgentToolHandlers(makeConfig(ctx, { externalEventStore: store }));
+    const result = await handlers.get_external_event({ eventId: event.id });
+    const data = JSON.parse(result.content[0].text);
+
+    expect(data.success).toBe(false);
+    expect(data.error).toContain('not found');
+  });
+
+  test('returns unavailable when the store is not wired', async () => {
+    const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
+    const result = await handlers.get_external_event({ eventId: 'any' });
+    const data = JSON.parse(result.content[0].text);
+
+    expect(data.success).toBe(false);
+    expect(data.error).toContain('not available');
+  });
+
+  test('createNodeAgentMcpServer registers get_external_event only when the store is wired', () => {
+    const store = new ExternalEventStore(ctx.db);
+
+    const withoutStore = createNodeAgentMcpServer(makeConfig(ctx));
+    const withoutRegistered = Object.keys(
+      (withoutStore as unknown as { instance: { _registeredTools: Record<string, unknown> } })
+        .instance._registeredTools
+    );
+    expect(withoutRegistered).not.toContain('get_external_event');
+
+    const withStore = createNodeAgentMcpServer(makeConfig(ctx, { externalEventStore: store }));
+    const withRegistered = Object.keys(
+      (withStore as unknown as { instance: { _registeredTools: Record<string, unknown> } }).instance
+        ._registeredTools
+    );
+    expect(withRegistered).toContain('get_external_event');
   });
 });
 

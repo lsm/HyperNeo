@@ -1164,7 +1164,7 @@ describe('SpaceRuntime external event subscriptions', () => {
       events.slice(0, 10).map((event) => event.id)
     );
     expect(injected[10]!.message).toBe(
-      '5 events received for topics: github/lsm/neokai/pull_request/42.review_comment, github/lsm/neokai/pull_request/42.review_submitted (oldest: 2023-11-14T22:13:20.010Z, newest: 2023-11-14T22:13:20.014Z). Use subscribe_external_event to get details.'
+      '5 events received for topics: github/lsm/neokai/pull_request/42.review_comment, github/lsm/neokai/pull_request/42.review_submitted (oldest: 2023-11-14T22:13:20.010Z, newest: 2023-11-14T22:13:20.014Z). Use get_external_event(eventId) for full details.'
     );
     for (const event of events) {
       expect(eventStore.getById(event.id)?.state).toBe('delivered');

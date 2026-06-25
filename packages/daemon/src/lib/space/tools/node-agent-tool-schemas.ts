@@ -124,6 +124,28 @@ export const SubscribePrEventsSchema = z.object({
 export type SubscribePrEventsInput = z.infer<typeof SubscribePrEventsSchema>;
 
 // ---------------------------------------------------------------------------
+// get_external_event
+// ---------------------------------------------------------------------------
+
+/**
+ * Schema for `get_external_event` input.
+ *
+ * Fetches the full raw record for a single external event by its id — the
+ * on-demand deep-dive counterpart to the lean "essence" injected into sessions
+ * as a message. Use this for the rare (~1%) case where the digested summary is
+ * not enough and you need the complete payload (incl. `rawPayload`, `body`,
+ * `actor`, `eventType`, source-native fields, etc.).
+ */
+export const GetExternalEventSchema = z.object({
+  eventId: z
+    .string()
+    .min(1)
+    .describe('The id of the external event to fetch (as carried in injected event digests)'),
+});
+
+export type GetExternalEventInput = z.infer<typeof GetExternalEventSchema>;
+
+// ---------------------------------------------------------------------------
 // save_artifact
 // ---------------------------------------------------------------------------
 
@@ -489,6 +511,7 @@ export const NODE_AGENT_TOOL_SCHEMAS = {
   subscribe_external_event: SubscribeExternalEventSchema,
   unsubscribe_external_event: UnsubscribeExternalEventSchema,
   subscribe_pr_events: SubscribePrEventsSchema,
+  get_external_event: GetExternalEventSchema,
   restore_node_agent: RestoreNodeAgentSchema,
   list_tasks: ListTasksSchema,
   get_task: GetTaskSchema,
