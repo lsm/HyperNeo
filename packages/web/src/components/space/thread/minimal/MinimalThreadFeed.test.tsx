@@ -1579,6 +1579,51 @@ describe('MinimalThreadFeed', () => {
     expect(taskEntries[0].textContent).toContain('3 tools');
   });
 
+  it('does not duplicate a task_notification that folds onto a rostered tool (roster-only turn)', () => {
+    const t = Date.now();
+    // Roster-only completed turn: a single tool (within cap) + result, no
+    // assistant reply text. The task_notification folds onto the tool card and
+    // must NOT also render as a standalone roster entry (the global pre-scan
+    // excludes text-less turns, so the within-turn roster must gate standalone).
+    const rows = [
+      makeRow({
+        id: 'a1',
+        label: 'Coder Agent',
+        createdAt: t,
+        message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'bun test' } }]),
+      }),
+      makeRow({ id: 'r1', label: 'Coder Agent', createdAt: t + 100, message: resultMessage('r1') }),
+      makeRow({
+        id: 'n1',
+        label: 'Coder Agent',
+        createdAt: t + 200,
+        messageType: 'system',
+        message: {
+          type: 'system',
+          subtype: 'task_notification',
+          task_id: 't',
+          tool_use_id: 'tu-a1-0',
+          status: 'completed',
+          summary: 'all tests passed',
+          output_file: '/tmp/o',
+          usage: { total_tokens: 500, tool_uses: 1, duration_ms: 1200 },
+        },
+      }),
+    ];
+
+    render(<MinimalThreadFeed parsedRows={rows} />);
+
+    // Outcome folds onto the Bash tool card exactly once — never standalone.
+    const standalone = screen
+      .getAllByTestId('minimal-thread-roster-entry')
+      .filter((e) => (e as HTMLElement).dataset.rosterKind === 'task_notification');
+    expect(standalone).toHaveLength(0);
+    const toolEntries = screen
+      .getAllByTestId('minimal-thread-roster-entry')
+      .filter((e) => (e as HTMLElement).dataset.rosterKind === 'tool');
+    expect(toolEntries.some((e) => e.textContent?.includes('all tests passed'))).toBe(true);
+  });
+
   it('falls back to a row when a stale summary lingers after the turn went terminal', () => {
     const t = Date.now();
     // Tool_use + result → terminal turn, but the active-turn LiveQuery still

@@ -743,7 +743,13 @@ function buildCompletedTurn(
         taskNotificationsByToolUseId,
         indexCompletedFoldableToolUseIds(rows)
       );
-      return [...base, ...standaloneTaskNotificationEntries(rows, globalRosteredToolUseIds)];
+      // Suppress standalone entries for outcomes already folded onto a tool
+      // card in THIS turn (the global pre-scan misses roster-only turns).
+      const rostered = new Set([
+        ...globalRosteredToolUseIds,
+        ...rosteredToolUseIdsFromRoster(base),
+      ]);
+      return [...base, ...standaloneTaskNotificationEntries(rows, rostered)];
     })(),
   };
 }
@@ -810,6 +816,23 @@ function standaloneTaskNotificationEntries(
 }
 
 /**
+ * tool_use_ids whose tool cards are present in a given roster. Combined with
+ * the global rostered set to gate standalone task_notification entries: a
+ * notification must NOT emit a standalone roster entry if its outcome already
+ * folds onto a tool card in THIS turn's roster — otherwise roster-only turns
+ * (no assistant text, kept only for their roster) would show the outcome twice
+ * (once folded, once standalone), since the global pre-scan excludes those
+ * text-less turns and so omits their tool ids.
+ */
+function rosteredToolUseIdsFromRoster(roster: ActiveRosterEntry[]): Set<string> {
+  const ids = new Set<string>();
+  for (const entry of roster) {
+    if (entry.kind === 'tool' && entry.toolUseId) ids.add(entry.toolUseId);
+  }
+  return ids;
+}
+
+/**
  * Collect the tool_use_ids that have a rendered active-roster target — i.e.
  * tool_use entries that survive the ROSTER_MAX_ENTRIES cap in a summary whose
  * session actually renders an active roster. A summary only renders an active
@@ -862,11 +885,13 @@ function buildActiveTurn(
   });
   // Append standalone outcome entries for task_notifications whose tool_use
   // isn't rostered in any turn (capped out / orphan). Folded ones are already
-  // on their tool card; checking the global set prevents cross-turn duplication.
-  const roster = [
-    ...baseRoster,
-    ...standaloneTaskNotificationEntries(rows, globalRosteredToolUseIds),
-  ];
+  // on their tool card; checking the global set + this turn's roster prevents
+  // both cross-turn and within-turn duplication.
+  const rostered = new Set([
+    ...globalRosteredToolUseIds,
+    ...rosteredToolUseIdsFromRoster(baseRoster),
+  ]);
+  const roster = [...baseRoster, ...standaloneTaskNotificationEntries(rows, rostered)];
   return {
     state: 'active',
     id: turnId,
@@ -1293,11 +1318,19 @@ function buildFeedTurns(
     const blockKey = normalizeAgentKey(block.agentLabel);
     const trailingBlockCanUpgradeToActive = normalisedActive.has(blockKey) && !block.isTerminal;
     let pendingAgentRows: ParsedThreadRow[] = [];
+    // A completed slice contributes to the rostered-tool pre-scan when it has
+    // an assistant reply OR tool_use content. Including tool-only slices
+    // (no reply text — e.g. a background task turn) means their tool ids enter
+    // the global rostered set, so a task_notification that folds onto one of
+    // those tools isn't duplicated as a standalone roster entry elsewhere.
+    const sliceContributesToRoster = (sliceRows: ParsedThreadRow[]) =>
+      extractLastAssistantText(sliceRows).text.length > 0 ||
+      sliceRows.some((r) => getToolUseContentBlocks(r).length > 0);
     const flush = (isFinal = false) => {
       if (
         pendingAgentRows.length > 0 &&
         !(isFinal && trailingBlockCanUpgradeToActive) &&
-        extractLastAssistantText(pendingAgentRows).text.length > 0
+        sliceContributesToRoster(pendingAgentRows)
       ) {
         out.push(pendingAgentRows);
       }
