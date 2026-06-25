@@ -7049,11 +7049,27 @@ export class SpaceRuntime {
       const key = `${runId}:${execution.id}`;
       if (!lastMessage || !isSDKResultError(lastMessage)) continue;
 
+      // Defer over-long-context results to #670 (compaction), not a plain
+      // continue — continuing won't shrink the context.
+      if (this.isPromptTooLongResultError(lastMessage)) continue;
+
+      // Only retryable subtypes. Cost guard and structured-output exhaustion are
+      // non-retryable; auth errors arrive via session.error/blocked instead.
+      if (
+        lastMessage.subtype !== 'error_during_execution' &&
+        lastMessage.subtype !== 'error_max_turns'
+      ) {
+        continue;
+      }
+
       // A dead session cannot be continued. The liveness/crash-retry sweep
       // earlier in processRunTick only considers in_progress/pending rows, so
-      // an idle execution whose session died on a terminal error would
-      // otherwise sit unrecovered — reset it for a bounded re-spawn (or block
-      // if crash retries are exhausted).
+      // an idle execution whose session died on a retryable terminal error
+      // would otherwise sit unrecovered — reset it for a bounded re-spawn (or
+      // block if crash retries are exhausted). This runs AFTER the subtype
+      // guards above so non-retryable/cost-guarded subtypes are skipped
+      // consistently whether the session is live or dead (no wasteful
+      // guaranteed-to-re-fail re-spawns).
       if (!tam.isSessionAlive(sessionId)) {
         const crashExhausted = this.resetWorkflowNodeExecutionForSpawnRetry(
           runId,
@@ -7068,19 +7084,6 @@ export class SpaceRuntime {
           return 'blocked';
         }
         continue; // reset to pending; the spawn loop re-spawns a fresh session
-      }
-
-      // Defer over-long-context results to #670 (compaction), not a plain
-      // continue — continuing won't shrink the context.
-      if (this.isPromptTooLongResultError(lastMessage)) continue;
-
-      // Only retryable subtypes. Cost guard and structured-output exhaustion are
-      // non-retryable; auth errors arrive via session.error/blocked instead.
-      if (
-        lastMessage.subtype !== 'error_during_execution' &&
-        lastMessage.subtype !== 'error_max_turns'
-      ) {
-        continue;
       }
 
       const state =

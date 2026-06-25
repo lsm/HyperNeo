@@ -436,6 +436,25 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
     expect(nodeExecutionRepo.getById(executionId)?.status).not.toBe('idle');
   });
 
+  test('dead NON-retryable terminal-error session is skipped, not wastefully re-spawned', async () => {
+    const { executionId } = seedIdleErrorRun({
+      subtype: 'error_max_budget_usd',
+      sessionAlive: false,
+    });
+    const tam = makeTam({ isSessionAlive: () => false });
+    const rt = new SpaceRuntime(buildConfig(tam));
+    (rt as unknown as { recoveryDone: boolean }).recoveryDone = true;
+
+    await rt.executeTick();
+
+    // A dead cost-guarded session is NOT re-spawned — the subtype guards run
+    // before the dead-session reset, so non-retryable subtypes are skipped
+    // consistently whether the session is live or dead (no guaranteed-to-re-fail
+    // re-spawns).
+    expect(tam._injected).toHaveLength(0);
+    expect(nodeExecutionRepo.getById(executionId)?.status).toBe('idle');
+  });
+
   test('task not in_progress is left alone', async () => {
     seedIdleErrorRun({ subtype: 'error_during_execution', taskStatus: 'done' });
     const tam = makeTam();
