@@ -86,6 +86,12 @@ export interface PromptTooLongRecoveryState {
   awaitingResumeAfterDbId: string | null;
   /** Timestamp (ms) the resume nag was delivered, for the resume-wait timeout. */
   awaitingResumeSince: number | null;
+  /**
+   * dbId of the last progress message observed during the resume wait. The
+   * timeout refreshes only when a NEWER message appears (this id changes), so a
+   * turn that hangs after producing one row still times out.
+   */
+  awaitingResumeLastProgressDbId: string | null;
 }
 
 export function createPromptTooLongRecoveryState(): PromptTooLongRecoveryState {
@@ -100,6 +106,7 @@ export function createPromptTooLongRecoveryState(): PromptTooLongRecoveryState {
     awaitingResume: false,
     awaitingResumeAfterDbId: null,
     awaitingResumeSince: null,
+    awaitingResumeLastProgressDbId: null,
   };
 }
 

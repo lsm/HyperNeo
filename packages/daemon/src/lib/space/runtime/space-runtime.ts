@@ -5316,6 +5316,7 @@ export class SpaceRuntime {
         state.awaitingResume = false;
         state.awaitingResumeAfterDbId = null;
         state.awaitingResumeSince = null;
+        state.awaitingResumeLastProgressDbId = null;
         if (lastMessageIsSuccessResult) {
           // Productive — real progress. Clear the recovery state (fresh next time).
           this.promptTooLongRecovery.delete(key);
@@ -5327,16 +5328,17 @@ export class SpaceRuntime {
           compactJustFailed = true;
         }
       } else {
-        // No resumed-turn result yet. If a newer message than the anchor has
-        // appeared (the consumed nag, an assistant/tool-use row, etc.) the turn
-        // IS progressing — refresh the timeout clock so a legitimately long but
-        // active resumed turn isn't mis-blocked. The timeout fires only when no
-        // new message has landed for the whole window.
+        // No resumed-turn result yet. Refresh the timeout clock ONLY when a NEW
+        // progress message appears (dbId differs from the anchor AND from the
+        // last progress dbId). Refreshing on every tick for an unchanged row
+        // would let a turn that hung after producing one message never time out.
         if (
           lastMessageDbId !== state.awaitingResumeAfterDbId &&
+          lastMessageDbId !== state.awaitingResumeLastProgressDbId &&
           state.awaitingResumeSince !== null
         ) {
           state.awaitingResumeSince = now;
+          state.awaitingResumeLastProgressDbId = lastMessageDbId;
         }
         if (
           state.awaitingResumeSince !== null &&
@@ -5349,7 +5351,8 @@ export class SpaceRuntime {
             canonicalTask,
             execution,
             now,
-            reason
+            reason,
+            manager
           );
           return 'blocked';
         }
@@ -5372,7 +5375,8 @@ export class SpaceRuntime {
         canonicalTask,
         execution,
         now,
-        reason
+        reason,
+        manager
       );
       return 'blocked';
     }
@@ -5399,7 +5403,8 @@ export class SpaceRuntime {
           canonicalTask,
           execution,
           now,
-          reason
+          reason,
+          manager
         );
         return 'blocked';
       }
@@ -5492,7 +5497,8 @@ export class SpaceRuntime {
             canonicalTask,
             execution,
             now,
-            reason
+            reason,
+            manager
           );
           return 'blocked';
         }
@@ -5519,9 +5525,23 @@ export class SpaceRuntime {
     canonicalTask: SpaceTask,
     execution: NodeExecution,
     now: number,
-    reason: string
+    reason: string,
+    manager: TaskAgentManager | undefined
   ): Promise<void> {
     const key = `${runId}:${execution.id}`;
+    // Cancel the (possibly still-running) session before detaching. A timed-out
+    // /compact or resumed turn may still be processing; leaving it alive while the
+    // bounded blocked-run retry spawns a fresh agent would run two sessions
+    // concurrently for one execution.
+    if (execution.agentSessionId) {
+      try {
+        manager?.cancelBySessionId?.(execution.agentSessionId);
+      } catch (err) {
+        log.warn(
+          `SpaceRuntime: failed to cancel session ${execution.agentSessionId} during prompt-too-long escalation: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+    }
     this.promptTooLongRecovery.delete(key);
     this.config.nodeExecutionRepo.update(execution.id, {
       status: 'blocked',
