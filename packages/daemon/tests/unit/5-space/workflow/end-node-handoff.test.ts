@@ -434,13 +434,18 @@ describe('Post-approval merge conflict routes to coder, not human', () => {
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('Forge evidence');
   });
 
-  test('pre-merge checks are re-run after a conflict fix, with QA re-confirm', () => {
+  test('pre-merge checks are re-run before retrying; cycle budget and cap handled', () => {
     // A conflict-fix push changes the PR head; the reviewer must re-verify CI
-    // and review threads (steps 1 and 2) before retrying the merge, and when a
-    // QA node approved, ask it to re-confirm code it validated.
+    // and review threads (steps 1 and 2) before retrying the merge.
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/Rerun the pre-merge checks/);
-    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/QA node/);
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/do NOT retry the merge immediately/);
+    // Conflict handoffs reuse the Review → Coding cycle budget; the prompt must
+    // not over-promise 2 attempts when the cycle cap may already be exhausted,
+    // and must fall back to space-agent when the cap blocks the handoff.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/cycle cap/);
+    // No QA/browser re-run orchestration — there is no QA → Review channel, and
+    // that is a workflow-structure concern outside this merge template.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('QA node');
   });
 
   test('conflict routing ordering: detect -> artifact -> message coder -> wait -> reverify -> retry/escalate', () => {
