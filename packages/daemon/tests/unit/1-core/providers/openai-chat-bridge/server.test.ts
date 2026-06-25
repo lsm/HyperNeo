@@ -97,6 +97,26 @@ describe('openai-chat-bridge: body-embedded / mid-stream error normalization', (
     expect(json.error.type).toBe('overloaded_error');
   });
 
+  it('recognizes non-canonical JSON content-types (application/problem+json, case-insensitive)', async () => {
+    // The gate must match the JSON media-type family case-insensitively,
+    // including RFC 7807 problem+json — otherwise these error bodies bypass
+    // normalization and the streamer emits an empty end_turn.
+    server = makeServer(
+      async () =>
+        new Response(
+          JSON.stringify({
+            error: { type: 'rate_limit_exceeded', message: 'Too Many Requests' },
+          }),
+          { status: 200, headers: { 'Content-Type': 'Application/Problem+JSON; charset=utf-8' } }
+        )
+    );
+
+    const res = await postMessages(server.port);
+    expect(res.status).toBe(429);
+    const json = (await res.json()) as { error: { type: string } };
+    expect(json.error.type).toBe('rate_limit_error');
+  });
+
   it('classifies a mid-stream rate-limit chunk to rate_limit_error SSE (not api_error)', async () => {
     // Upstream returns a valid SSE stream that emits an `error` chunk mid-stream.
     const sse =

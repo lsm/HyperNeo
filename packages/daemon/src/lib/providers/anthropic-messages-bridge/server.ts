@@ -22,7 +22,7 @@
  */
 
 import { createAnthropicErrorBody, type AnthropicErrorType } from '../shared/error-envelope.js';
-import { normalizeUpstreamError } from '../shared/normalize-upstream-error.js';
+import { isJsonContentType, normalizeUpstreamError } from '../shared/normalize-upstream-error.js';
 import { Logger } from '../../logger.js';
 
 const logger = new Logger('anthropic-messages-bridge-server');
@@ -283,7 +283,7 @@ export function createAnthropicMessagesBridgeServer(
       // /v1/messages/count_tokens (GLM can return the same overload body for
       // either).
       const upstreamContentType = upstreamResponse.headers.get('content-type') ?? '';
-      const isJsonBody = upstreamContentType.includes('application/json');
+      const isJsonBody = isJsonContentType(upstreamContentType);
       if (upstreamResponse.ok && isJsonBody && (isMessages || isCountTokens)) {
         const bodyText = await upstreamResponse.text();
         const normalized = normalizeUpstreamError(bodyText, upstreamResponse.status);

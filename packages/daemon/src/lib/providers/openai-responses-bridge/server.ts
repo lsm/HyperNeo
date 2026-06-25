@@ -29,7 +29,10 @@ import {
 } from '../provider-anthropic-compat/translator.js';
 import { getModelContextWindow as getCodexModelContextWindow } from '../codex-models.js';
 import { createAnthropicErrorBody, type AnthropicErrorType } from '../shared/error-envelope.js';
-import { normalizeOpenAiUpstreamError } from '../shared/normalize-upstream-error.js';
+import {
+  isJsonContentType,
+  normalizeOpenAiUpstreamError,
+} from '../shared/normalize-upstream-error.js';
 import { Logger } from '../../logger.js';
 
 const logger = new Logger('openai-responses-bridge-server');
@@ -1543,6 +1546,21 @@ export function createOpenAIResponsesBridgeServer(
         ) {
           const errorText = await openAIResponse.text();
           logUpstream4xx(openAIResponse.status, requestBody, errorText);
+          // A transient 400 (rate_limit/overload in the body) is NOT a
+          // stale-reasoning failure. Normalize it to retryable so the SDK
+          // retries with backoff, instead of self-healing by dropping reasoning
+          // (which would mask the real rate-limit and skip the SDK retry path).
+          const reasoningNormalized = normalizeOpenAiUpstreamError(
+            errorText,
+            openAIResponse.status
+          );
+          if (reasoningNormalized) {
+            logger.warn(
+              `openai-responses: normalized reasoning 400 to retryable ` +
+                `${reasoningNormalized.type} (${reasoningNormalized.status}): ${reasoningNormalized.message.slice(0, 200)}`
+            );
+            return sendRetryableUpstreamError(reasoningNormalized);
+          }
           logger.warn(
             'openai-responses: 400 with replayed reasoning present — retrying once without reasoning items'
           );
@@ -1598,7 +1616,7 @@ export function createOpenAIResponsesBridgeServer(
       // real SSE stream with a missing/mislabeled content-type flows straight
       // through to the streamer.
       const upstreamContentType = openAIResponse.headers.get('content-type') ?? '';
-      if (openAIResponse.ok && upstreamContentType.includes('application/json')) {
+      if (openAIResponse.ok && isJsonContentType(upstreamContentType)) {
         const bodyText = await openAIResponse.text();
         const normalized = normalizeOpenAiUpstreamError(bodyText, openAIResponse.status);
         if (normalized) {

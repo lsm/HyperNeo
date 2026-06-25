@@ -98,6 +98,18 @@ function containsAny(haystack: string, needles: readonly string[]): boolean {
 }
 
 /**
+ * True when a Content-Type value denotes a JSON body — `application/json`,
+ * `Application/JSON`, or any JSON-based media type such as
+ * `application/problem+json` (RFC 7807) or `application/vnd.api+json`. HTTP
+ * media types are case-insensitive, so the check is too. Used by the bridges to
+ * decide when a 200 response is a body-embedded JSON error worth buffering and
+ * normalizing (vs. a real SSE stream that must flow through unbuffered).
+ */
+export function isJsonContentType(contentType: string): boolean {
+  return /application\/(?:[\w.+-]+\+)?json/i.test(contentType);
+}
+
+/**
  * Inspect a GLM upstream response body for transient overload/rate-limit
  * signals the HTTP status alone cannot convey. GLM frequently returns 200 with
  * an error body (no SSE), or a 4xx carrying an overload code — both surface as
@@ -191,9 +203,18 @@ export function normalizeOpenAiUpstreamError(
     parsed?.error && typeof parsed.error === 'object' && !Array.isArray(parsed.error)
       ? (parsed.error as Record<string, unknown>)
       : undefined;
-  const typeField = readStringField(errorObj, 'type')?.toLowerCase();
-  const codeField = readStringField(errorObj, 'code')?.toLowerCase();
-  const messageField = readStringField(errorObj, 'message') ?? body;
+  // Read structured fields from the nested `error` object, falling back to the
+  // top-level body — some upstreams emit a FLAT body like
+  // `{"code":"rate_limit_exceeded","message":"slow down"}` with no `error`
+  // wrapper, and those top-level fields are structured evidence too.
+  const typeField = (
+    readStringField(errorObj, 'type') ?? readStringField(parsed, 'type')
+  )?.toLowerCase();
+  const codeField = (
+    readStringField(errorObj, 'code') ?? readStringField(parsed, 'code')
+  )?.toLowerCase();
+  const messageField =
+    readStringField(errorObj, 'message') ?? readStringField(parsed, 'message') ?? body;
 
   // Inspect BOTH `type` and `code` independently. OpenAI-compatible payloads
   // sometimes set `error.type` to a broad category (e.g. "requests") while the
@@ -224,9 +245,15 @@ export function normalizeOpenAiUpstreamError(
   const isHard4xx = status >= 400 && status < 500 && status !== 429;
   if (isHard4xx && !isRateType && !isServerType) return null;
 
-  if (isRate && !isOverload) {
-    return rateLimit(messageField);
-  }
+  // Structured type evidence wins over loose message substrings: a body whose
+  // `type` is `rate_limit_exceeded` must classify as rate_limit_error (429) even
+  // if its message also matches the overload regex (e.g. "...try again in 20s").
+  if (isRateType) return rateLimit(messageField);
+  if (isServerType) return overloaded(messageField);
+  // No structured signal — fall back to message evidence. This branch is only
+  // reached where message evidence is trusted (200-with-body / 5xx), since the
+  // hard-4xx guard above already returned for message-only hard-4xx matches.
+  if (isRateMessage) return rateLimit(messageField);
   return overloaded(messageField);
 }
 

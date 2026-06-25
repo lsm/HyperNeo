@@ -38,7 +38,10 @@ import {
 } from '../provider-anthropic-compat/translator.js';
 import { estimateAnthropicInputTokens } from '../provider-anthropic-compat/token-estimator.js';
 import { createAnthropicErrorBody, type AnthropicErrorType } from '../shared/error-envelope.js';
-import { normalizeOpenAiUpstreamError } from '../shared/normalize-upstream-error.js';
+import {
+  isJsonContentType,
+  normalizeOpenAiUpstreamError,
+} from '../shared/normalize-upstream-error.js';
 import { Logger } from '../../logger.js';
 
 const logger = new Logger('openai-chat-bridge-server');
@@ -945,7 +948,7 @@ export function createOpenAIChatBridgeServer(
       // whole body and breaking incremental output. A real SSE stream (any other
       // content-type, or none) flows straight through to readChatStream.
       const upstreamContentType = upstreamResponse.headers.get('content-type') ?? '';
-      if (upstreamContentType.includes('application/json')) {
+      if (isJsonContentType(upstreamContentType)) {
         const bodyText = await upstreamResponse.text();
         const normalized = normalizeOpenAiUpstreamError(bodyText, upstreamResponse.status);
         if (normalized) {

@@ -199,6 +199,36 @@ describe('normalizeOpenAiUpstreamError', () => {
     expect(result?.status).toBe(529);
   });
 
+  it('reads flat top-level code/type fields (no error wrapper) on a hard 4xx', () => {
+    // A flat body like {"code":"rate_limit_exceeded","message":"slow down"} has
+    // no nested `error` object; the top-level code is structured evidence that
+    // must pass the hard-4xx guard (message-only evidence is rejected there).
+    const body = JSON.stringify({ code: 'rate_limit_exceeded', message: 'slow down' });
+    const result = normalizeOpenAiUpstreamError(body, 400);
+    expect(result?.type).toBe('rate_limit_error');
+    expect(result?.status).toBe(429);
+  });
+
+  it('reads a flat top-level server_error type on a hard 4xx', () => {
+    const body = JSON.stringify({ type: 'server_error', message: 'down' });
+    const result = normalizeOpenAiUpstreamError(body, 400);
+    expect(result?.type).toBe('overloaded_error');
+  });
+
+  it('prefers the structured rate-limit type over overload retry text', () => {
+    // The message also matches the overload regex ("try again in"), but the
+    // structured type rate_limit_exceeded must win → rate_limit_error (429).
+    const body = JSON.stringify({
+      error: {
+        type: 'rate_limit_exceeded',
+        message: 'Rate limit reached. Please try again in 20s',
+      },
+    });
+    const result = normalizeOpenAiUpstreamError(body, 429);
+    expect(result?.type).toBe('rate_limit_error');
+    expect(result?.status).toBe(429);
+  });
+
   it('returns null for a normal invalid_request error', () => {
     const body = JSON.stringify({
       error: { type: 'invalid_request_error', message: 'bad model id' },

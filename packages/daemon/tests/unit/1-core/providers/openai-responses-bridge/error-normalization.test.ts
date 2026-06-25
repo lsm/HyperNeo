@@ -272,4 +272,44 @@ describe('openai-responses-bridge: body-embedded / mid-stream error normalizatio
     const json = (await res.json()) as { error: { type: string } };
     expect(json.error.type).toBe('rate_limit_error');
   });
+
+  it('normalizes a transient 400 on a replayed-reasoning request before self-healing', async () => {
+    // A 400 with replayed reasoning present must be inspected for a transient
+    // body BEFORE the bridge self-heals by stripping reasoning — otherwise a
+    // rate-limit 400 is masked by a reasoning-stripped retry and the SDK never
+    // sees the retryable signal.
+    let call = 0;
+    server = makeServer(async () => {
+      call += 1;
+      if (call === 1) {
+        // First turn: emit reasoning so the bridge caches it for the session.
+        return new Response(
+          [
+            'event: response.completed',
+            'data: {"type":"response.completed","response":{"id":"resp_1","usage":{"input_tokens":5,"output_tokens":2},"output":[{"type":"reasoning","encrypted_content":"ENC_BLOB"}]}}',
+            '',
+            '',
+          ].join('\n'),
+          { status: 200, headers: { 'Content-Type': 'text/event-stream' } }
+        );
+      }
+      // Second turn: the bridge replays the cached reasoning item; upstream
+      // returns a rate-limit 400. Must be normalized, not reasoning-stripped.
+      return new Response(
+        JSON.stringify({ error: { type: 'rate_limit_exceeded', message: 'slow down' } }),
+        { status: 400, headers: { 'Content-Type': 'application/json' } }
+      );
+    });
+
+    // Turn 1: primes the per-session reasoning cache.
+    const first = await postMessages(server.port);
+    await readSSEEvents(first.body);
+
+    // Turn 2: replayed reasoning + rate-limit 400 -> normalized to 429.
+    const res = await postMessages(server.port);
+    expect(res.status).toBe(429);
+    expect(res.headers.get('x-should-retry')).toBe('true');
+    const json = (await res.json()) as { error: { type: string } };
+    expect(json.error.type).toBe('rate_limit_error');
+  });
 });
