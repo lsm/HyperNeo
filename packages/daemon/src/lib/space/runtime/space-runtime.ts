@@ -5345,7 +5345,15 @@ export class SpaceRuntime {
       }
       if (injectedDbId !== null) {
         state.awaitingContinue = true;
-        state.awaitingContinueAfterDbId = injectedDbId;
+        // Anchor the wait on the PRE-COMPACT last message (the overflow result),
+        // NOT the injected `/compact`. `getLastSDKMessage` excludes user messages
+        // saved with send_status='enqueued' (sdk-message-repository.ts:995), and
+        // injectRuntimeRecoveryMessage enqueues the `/compact` — so the injected
+        // row is invisible to getLastSDKMessage until the SDK consumes it. While
+        // the `/compact` is in flight, getLastSDKMessage keeps returning this
+        // pre-compact result; the wait clears only when a newer consumed/result
+        // row lands (the compacted turn's output).
+        state.awaitingContinueAfterDbId = lastMessageDbId;
         state.awaitingContinueSince = now;
         log.warn(
           `SpaceRuntime: injected /compact for overflowed execution ${execution.id} ` +

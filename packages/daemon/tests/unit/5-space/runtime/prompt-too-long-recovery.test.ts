@@ -116,8 +116,11 @@ function makeMockTaskAgentManager(
   const spawned: string[] = [];
   const defaultInject = async (sessionId: string, message: string): Promise<string> => {
     // Mirror production injectMessageIntoSession: persist the injected message
-    // so getLastSDKMessage advances to it, and return its dbId. This is what
-    // makes the message-advance detection in the recovery state machine work.
+    // with send_status='enqueued'. Critically, getLastSDKMessage EXCLUDES
+    // enqueued user messages (sdk-message-repository.ts:995), so the injected
+    // /compact is invisible to the idle sweep until the SDK consumes it —
+    // exactly like production. Simulating this is what makes the message-advance
+    // detection test meaningful.
     sdkMessages.saveSDKMessage(sessionId, {
       type: 'user',
       message: { role: 'user', content: message },
@@ -127,6 +130,7 @@ function makeMockTaskAgentManager(
         `SELECT id FROM sdk_messages WHERE session_id = ? ORDER BY timestamp DESC, rowid DESC LIMIT 1`
       )
       .get(sessionId) as { id: string };
+    db.prepare(`UPDATE sdk_messages SET send_status = 'enqueued' WHERE id = ?`).run(row.id);
     return row.id;
   };
   const inject = options.injectThrows
@@ -332,8 +336,8 @@ describe('SpaceRuntime — prompt-too-long recovery', () => {
     return makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, sdkMessageRepo, db, {
       inject: async (sessionId, message) => {
         injections.push({ sessionId, message });
-        // Mirror production: persist the injected message so getLastSDKMessage
-        // advances to it, and return its dbId.
+        // Mirror production: persist with send_status='enqueued' (excluded from
+        // getLastSDKMessage until consumed).
         sdkMessageRepo.saveSDKMessage(sessionId, {
           type: 'user',
           message: { role: 'user', content: message },
@@ -343,6 +347,7 @@ describe('SpaceRuntime — prompt-too-long recovery', () => {
             `SELECT id FROM sdk_messages WHERE session_id = ? ORDER BY timestamp DESC, rowid DESC LIMIT 1`
           )
           .get(sessionId) as { id: string };
+        db.prepare(`UPDATE sdk_messages SET send_status = 'enqueued' WHERE id = ?`).run(row.id);
         return row.id;
       },
     });
