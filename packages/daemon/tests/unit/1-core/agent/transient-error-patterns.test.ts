@@ -185,4 +185,39 @@ describe('isRetryableProviderError', () => {
       expect(isRetryableProviderError('UNAUTHORIZED')).toBe(false);
     });
   });
+
+  describe('GLM (Zhipu) multi-language provider overload', () => {
+    // Acceptance case: a GLM 529 `[1305]` payload ("该模型当前访问量过大，请您稍后再试"
+    // — model traffic too high, try again later) must be retryable. The HTTP 529
+    // transport status may not appear in the surfaced string, so the provider-specific
+    // code/Chinese signals are matched directly.
+    it('classifies the full GLM 1305 payload as retryable', () => {
+      expect(isRetryableProviderError('[1305][该模型当前访问量过大，请您稍后再试]')).toBe(true);
+    });
+
+    // Each signal must independently classify as retryable (defence in depth).
+    const glmSignals = ['[1305]', '访问量过大', '当前访问量过大'];
+    for (const signal of glmSignals) {
+      it(`classifies GLM signal "${signal}" as retryable`, () => {
+        expect(isRetryableProviderError(signal)).toBe(true);
+      });
+    }
+
+    // The GLM code is matched in its bracketed payload shape only — a bare 1305
+    // (token count, port, request id) must NOT false-positive into a retry, and
+    // generic Chinese retry advice (稍后再试 = "try again later") must NOT either
+    // (it appears on localized terminal/validation errors).
+    const glmFalsePositives = [
+      'prompt is too long: 1305 tokens > 1000 maximum',
+      'request id: req_1305abc',
+      'ECONNREFUSED 127.0.0.1:1305',
+      '参数错误，请稍后再试',
+      '请稍后再试',
+    ];
+    for (const msg of glmFalsePositives) {
+      it(`does NOT classify as retryable: ${msg}`, () => {
+        expect(isRetryableProviderError(msg)).toBe(false);
+      });
+    }
+  });
 });

@@ -68,6 +68,16 @@ export const RETRYABLE_PROVIDER_ERROR_TEXT: readonly string[] = [
   'gateway timeout',
   'service unavailable',
   'temporarily unavailable',
+  // GLM (Zhipu) provider overload — code 1305 ("该模型当前访问量过大" = model traffic
+  // too high, try again later). The HTTP 529 transport status may not survive into the
+  // surfaced error string, so match the provider-specific signals directly. The code is
+  // matched in its bracketed payload shape `[1305]` (not as a bare number) so unrelated
+  // numerics (token counts, ports, request ids) cannot false-positive into a retry; the
+  // Chinese phrases are overload-specific descriptions ("access volume too high") that
+  // also catch the payload regardless of how the code is rendered.
+  '[1305]',
+  '访问量过大',
+  '当前访问量过大',
 ];
 
 /**
