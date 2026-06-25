@@ -2677,6 +2677,80 @@ describe('MinimalThreadFeed', () => {
       );
       expect(summary?.textContent).toContain('something failed');
     });
+
+    it('keeps a budget-cap turn visible even when the agent emitted no reply text', () => {
+      const t = Date.now();
+      const rows = [
+        makeRow({
+          id: 'a1',
+          label: 'Coder Agent',
+          createdAt: t,
+          // tool_use only — no text before the budget-cap result
+          message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'echo test' } }]),
+        }),
+        makeRow({
+          id: 'r1',
+          label: 'Coder Agent',
+          createdAt: t + 1000,
+          message: budgetErrorResultMessage('r1'),
+        }),
+      ];
+
+      const { container } = render(<MinimalThreadFeed parsedRows={rows} />);
+      const bubble = container.querySelector('[data-testid="minimal-thread-agent-bubble"]');
+      // Budget-cap is excluded from the red-bubble treatment but the turn must
+      // still render so the amber result-info dropdown is accessible.
+      expect(bubble).not.toBeNull();
+      expect(bubble?.getAttribute('data-result-error')).toBeNull();
+      expect(bubble?.className).not.toMatch(/bg-red-900/);
+      expect(container.querySelector('button[title="Run result"]')).not.toBeNull();
+    });
+
+    it('folds post-result task_notification onto an error-only turn instead of duplicating', () => {
+      const t = Date.now();
+      const rows = [
+        makeRow({
+          id: 'a1',
+          label: 'Coder Agent',
+          createdAt: t,
+          // tool_use only — no text assistant message before the error result
+          message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'bun test' } }]),
+        }),
+        makeRow({
+          id: 'r1',
+          label: 'Coder Agent',
+          createdAt: t + 100,
+          message: errorResultMessage('r1'),
+        }),
+        makeRow({
+          id: 'n1',
+          label: 'Coder Agent',
+          createdAt: t + 200,
+          messageType: 'system',
+          message: {
+            type: 'system',
+            subtype: 'task_notification',
+            task_id: 'task-x',
+            tool_use_id: 'tu-a1-0',
+            status: 'failed',
+            summary: 'tests failed',
+            output_file: '/tmp/o',
+          },
+        }),
+      ];
+
+      render(<MinimalThreadFeed parsedRows={rows} />);
+
+      // The error-only turn is visible with the red bubble.
+      const bubble = screen.getByTestId('minimal-thread-agent-bubble');
+      expect(bubble.getAttribute('data-result-error')).toBe('true');
+      // The task_notification folds onto the roster tool entry (no standalone
+      // system row duplicating it).
+      const entry = screen.getByTestId('minimal-thread-roster-entry');
+      expect(entry.dataset.taskStatus).toBe('failed');
+      expect(entry.textContent).toContain('tests failed');
+      expect(screen.queryByText('Task failed')).toBeNull();
+    });
   });
 
   it('caps the active roster at 8 most-recent entries even with mixed kinds', () => {

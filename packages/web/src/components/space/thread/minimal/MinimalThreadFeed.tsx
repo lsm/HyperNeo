@@ -549,6 +549,17 @@ function rowsContainResult(
   return resultInfo !== undefined && rows.some((row) => row.message === resultInfo);
 }
 
+/**
+ * Whether a row slice contains any non-success result message. Used to keep
+ * error-only turns (no assistant text) visible and to collect their
+ * tool_use_ids for task_notification folding — covering ALL error subtypes
+ * (including error_max_budget_usd), since visibility is separate from the
+ * narrower inline red-bubble treatment.
+ */
+function rowsContainResultError(rows: ParsedThreadRow[]): boolean {
+  return rows.some((row) => row.message && isSDKResultError(row.message));
+}
+
 function latestSessionId(rows: ParsedThreadRow[]): string | null {
   for (let i = rows.length - 1; i >= 0; i--) {
     if (rows[i].sessionId) return rows[i].sessionId;
@@ -1360,7 +1371,12 @@ function buildFeedTurns(
       if (
         pendingAgentRows.length > 0 &&
         !(isFinal && trailingBlockCanUpgradeToActive) &&
-        sliceContributesToRoster(pendingAgentRows)
+        // Keep slices with text, tool_use content, OR any result error —
+        // error-only turns must be included so their tool_use_ids are collected
+        // into rosteredToolUseIds and post-result task_notifications fold onto
+        // the now-visible roster instead of duplicating as standalone rows.
+        sliceContributesToRoster(pendingAgentRows) ||
+          rowsContainResultError(pendingAgentRows)
       ) {
         out.push(pendingAgentRows);
       }
