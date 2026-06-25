@@ -350,6 +350,24 @@ describe('Shared merge template canonical content', () => {
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('merge conflict');
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('do NOT force');
   });
+
+  test('remote branch deletion is a separate step after merge, no delete flag on merge', () => {
+    // Owner-requested: after a successful squash-merge, delete the PR remote
+    // branch via a SEPARATE command. The merge command must never carry a
+    // delete flag.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('gh pr merge {{pr_url}} --squash');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain(
+      'gh pr merge {{pr_url}} --squash --delete-branch'
+    );
+    // Separate delete step using the PR head branch name.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('headRefName');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('git push origin --delete');
+    // The delete step must come AFTER the merge command.
+    const mergeIdx = PR_MERGE_POST_APPROVAL_INSTRUCTIONS.indexOf('gh pr merge {{pr_url}} --squash');
+    const deleteIdx = PR_MERGE_POST_APPROVAL_INSTRUCTIONS.indexOf('git push origin --delete');
+    expect(mergeIdx).toBeGreaterThan(-1);
+    expect(deleteIdx).toBeGreaterThan(mergeIdx);
+  });
 });
 
 // ---------------------------------------------------------------------------
