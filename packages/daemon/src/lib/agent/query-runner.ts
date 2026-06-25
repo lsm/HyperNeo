@@ -1100,6 +1100,13 @@ export class QueryRunner {
           this.ctx.startupTimeoutTimer = null;
         }
 
+        // Reset firstMessageReceived so the retry's startup timer is effective.
+        // Recursive retries do NOT go through start(), so without this reset a
+        // stale true value (from a system:init in the failed attempt) would
+        // disable the retry's startup timeout — the session could hang forever
+        // if the replacement SDK process never emits its first message.
+        this.ctx.firstMessageReceived = false;
+
         // Re-enqueue the last consumed user message so the retry has input to
         // process. Without this, the message was already shifted out of
         // MessageQueue by messageGenerator() and the retry starts with an
@@ -1151,19 +1158,36 @@ export class QueryRunner {
           this.ctx.resetProcessExitedPromise();
         }
 
+        // Restore provider env vars BEFORE the backoff sleep so process.env is
+        // clean during the wait AND regardless of whether the retry proceeds or
+        // is cancelled by the post-sleep re-check below. Without this, a
+        // cancellation return (e.g. generation bump from restart) would skip
+        // the restore, and when the finally treats this run as stale it skips
+        // cleanup entirely — leaking provider routing into later sessions.
+        const envVarsToRestore = this.ctx.originalEnvVars;
+        if (Object.keys(envVarsToRestore).length > 0) {
+          const { getProviderService: getProviderServiceForRetry } = await import(
+            '../provider-service'
+          );
+          getProviderServiceForRetry().restoreEnvVars(envVarsToRestore);
+          this.ctx.originalEnvVars = {};
+        }
+
         // Exponential backoff before the retry attempt — gives the transient
-        // provider condition time to clear. Sleeps AFTER cleanup so the
-        // subprocess-exit wait and the backoff don't compound unnecessarily;
+        // provider condition time to clear. Sleeps AFTER cleanup+env-restore so
+        // the subprocess-exit wait and the backoff don't compound unnecessarily;
         // the notice above was already shown to the user.
         await sleep(delayMs);
 
-        // Re-check cancellation/generation immediately before recursing. The
-        // backoff window (2-8s) is long enough that the user may have
-        // interrupted the turn, a restart may have bumped the generation, or
-        // the daemon may be shutting down. Without this re-check the cancelled
-        // turn would relaunch an orphaned query after the sleep.
+        // Re-check cancellation/generation/queue immediately before recursing.
+        // The backoff window (2-8s) is long enough that the user may have
+        // interrupted the turn, a restart may have called stop() (which stops
+        // the queue without bumping generation or marking interrupted), or the
+        // daemon may be shutting down. Without this re-check the cancelled turn
+        // would relaunch an orphaned query after the sleep.
         if (
           this.ctx.isCleaningUp() ||
+          !messageQueue.isRunning() ||
           this.ctx.getQueryGeneration() !== queryGeneration ||
           stateManager.getState().status === 'interrupted' ||
           this.ctx.queryAbortController?.signal.aborted === true
@@ -1172,20 +1196,6 @@ export class QueryRunner {
             'Provider error retry cancelled: session interrupted/restarted/cleaning up during backoff.'
           );
           return;
-        }
-
-        // Restore provider env vars BEFORE recursing so the next attempt
-        // captures the true original env. Without this, the recursive runQuery
-        // sees process.env still containing this attempt's ANTHROPIC_* overrides,
-        // captures those as "original", and the final finally{} restoration
-        // leaks provider routing into later sessions.
-        const envVarsToRestore = this.ctx.originalEnvVars;
-        if (Object.keys(envVarsToRestore).length > 0) {
-          const { getProviderService: getProviderServiceForRetry } = await import(
-            '../provider-service'
-          );
-          getProviderServiceForRetry().restoreEnvVars(envVarsToRestore);
-          this.ctx.originalEnvVars = {};
         }
 
         return await this.runQuery(queryGeneration, retryAttempt + 1);
@@ -1408,6 +1418,12 @@ export class QueryRunner {
         if (!this.ctx.isCleaningUp()) {
           await stateManager.setIdle();
         }
+
+        // Clear the last consumed user message so a stale value from this turn
+        // cannot be replayed on the NEXT turn's retry path. Without this, a 5xx
+        // that fires before the next turn's generator yields would re-enqueue
+        // the previous turn's already-completed message.
+        this._lastConsumedUserMessage = null;
 
         // Null queryPromise last so callers awaiting it see queryObject=null.
         this.ctx.queryPromise = null;
