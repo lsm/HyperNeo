@@ -264,6 +264,24 @@ describe('normalizeOpenAiUpstreamError', () => {
     expect(result?.type).toBe('overloaded_error');
   });
 
+  it('recognizes a 502 body code as overload', () => {
+    const body = JSON.stringify({ error: { code: 502, message: 'upstream failed' } });
+    const result = normalizeOpenAiUpstreamError(body, 200);
+    expect(result?.type).toBe('overloaded_error');
+  });
+
+  it('reads RFC 7807 problem+json detail/status fields', () => {
+    const body = JSON.stringify({ status: 429, detail: 'Too Many Requests' });
+    const result = normalizeOpenAiUpstreamError(body, 200);
+    expect(result?.type).toBe('rate_limit_error');
+  });
+
+  it('classifies standard 5xx reason phrases in error.message', () => {
+    const body = JSON.stringify({ error: { message: 'Internal Server Error' } });
+    const result = normalizeOpenAiUpstreamError(body, 200);
+    expect(result?.type).toBe('overloaded_error');
+  });
+
   it('returns null for a normal invalid_request error', () => {
     const body = JSON.stringify({
       error: { type: 'invalid_request_error', message: 'bad model id' },

@@ -138,12 +138,15 @@ export function normalizeGlmUpstreamError(
       ? (parsed.error as Record<string, unknown>)
       : undefined;
   const codeField = readStringField(errorObj, 'code') ?? readStringField(parsed, 'code');
-  // Message for substring matching — extracted error/message fields only, NOT
-  // the raw body (a valid JSON success response whose content mentions the GLM
-  // overload phrases must not be misclassified). The result message still falls
-  // back to the body for context.
+  // Message for substring matching — extracted error/message/detail fields only,
+  // NOT the raw body (a valid JSON success response whose content mentions the
+  // GLM overload phrases must not be misclassified). The result message still
+  // falls back to the body for context.
   const messageForMatching =
-    readStringField(errorObj, 'message') ?? readStringField(parsed, 'message');
+    readStringField(errorObj, 'message') ??
+    readStringField(parsed, 'message') ??
+    readStringField(errorObj, 'detail') ??
+    readStringField(parsed, 'detail');
   const messageField = messageForMatching ?? body;
 
   const isTransientCode = codeField === GLM_RATE_LIMIT_CODE;
@@ -172,7 +175,7 @@ export function normalizeGlmUpstreamError(
 // a genuine 4xx invalid_request into a retryable error on weak evidence.
 const OPENAI_RATE_LIMIT_PATTERN = /rate_limit_exceeded|rate[ _-]?limit|too many requests/i;
 const OPENAI_OVERLOAD_PATTERN =
-  /overloaded|service unavailable|temporarily unavailable|try again (?:later|in)/i;
+  /overloaded|service unavailable|temporarily unavailable|try again (?:later|in)|internal server error|bad gateway|gateway timeout/i;
 /**
  * Structured `error.type`/`error.code` values that mark a transient fault.
  * Includes OpenAI values (`rate_limit_exceeded`, `server_error`), Anthropic
@@ -182,7 +185,15 @@ const OPENAI_OVERLOAD_PATTERN =
  * Anthropic-shaped body is the strongest possible structured signal.
  */
 const TRANSIENT_RATE_LIMIT_TYPES = new Set(['rate_limit_exceeded', 'rate_limit_error', '429']);
-const TRANSIENT_OVERLOAD_TYPES = new Set(['server_error', 'overloaded_error', '503', '529']);
+const TRANSIENT_OVERLOAD_TYPES = new Set([
+  'server_error',
+  'overloaded_error',
+  '500',
+  '502',
+  '503',
+  '504',
+  '529',
+]);
 
 /**
  * True if a string is a recognized transient error type/code — OpenAI
@@ -226,18 +237,25 @@ export function normalizeOpenAiUpstreamError(
   // top-level body — some upstreams emit a FLAT body like
   // `{"code":"rate_limit_exceeded","message":"slow down"}` with no `error`
   // wrapper, and those top-level fields are structured evidence too.
+  // Also accept RFC 7807 problem+json fields: `detail` (message) and `status`
+  // (HTTP status code), since the content-type gate already accepts
+  // `application/problem+json`.
   const typeField = (
     readStringField(errorObj, 'type') ?? readStringField(parsed, 'type')
   )?.toLowerCase();
   const codeField = (
-    readStringField(errorObj, 'code') ?? readStringField(parsed, 'code')
+    readStringField(errorObj, 'code') ??
+    readStringField(parsed, 'code') ??
+    readStringField(errorObj, 'status') ??
+    readStringField(parsed, 'status')
   )?.toLowerCase();
   // Message for substring matching — use ONLY the extracted error/top-level
-  // message, NOT the raw body. Scanning the whole body would misclassify a valid
-  // non-error JSON response (e.g. a non-streaming completion whose text mentions
-  // "rate limit" or "overloaded") as a retryable error.
+  // message (or problem+json `detail`), NOT the raw body.
   const messageForMatching =
-    readStringField(errorObj, 'message') ?? readStringField(parsed, 'message');
+    readStringField(errorObj, 'message') ??
+    readStringField(parsed, 'message') ??
+    readStringField(errorObj, 'detail') ??
+    readStringField(parsed, 'detail');
   // Result message falls back to the body so the surfaced error has context.
   const messageField = messageForMatching ?? body;
 
