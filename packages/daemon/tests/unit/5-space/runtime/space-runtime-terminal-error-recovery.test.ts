@@ -141,13 +141,16 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
     } = {}
   ) {
     const injected: Array<{ sessionId: string; message: string }> = [];
+    const cancelled: string[] = [];
     return {
       isSessionAlive: overrides.isSessionAlive ?? (() => true),
       isExecutionSpawning: () => false,
       isSpawning: () => false,
       isTaskAgentAlive: () => true,
       rehydrate: async () => {},
-      cancelBySessionId: () => {},
+      cancelBySessionId: (sessionId: string) => {
+        cancelled.push(sessionId);
+      },
       interruptBySessionId: async () => {},
       restartStuckSubSession: async () => {},
       getAgentSessionById: () => null,
@@ -178,6 +181,7 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
         }),
       injectIntoTaskAgent: async () => ({ injected: false, reason: 'no-session' }),
       _injected: injected,
+      _cancelled: cancelled,
     };
   }
 
@@ -274,6 +278,27 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
     return { runId: run.id, taskId: task.id, executionId: execution.id };
   }
 
+  /**
+   * Simulate `handleSubSessionComplete` returning a continued execution to
+   * `idle` after the resumed turn ends, optionally re-writing the persisted
+   * terminal result (e.g. to a different error signature). Production flips the
+   * execution to `in_progress` on a continue; tests must move it back to idle
+   * for the sweep to re-evaluate it on the next tick.
+   */
+  function resumeToIdle(
+    executionId: string,
+    opts: { subtype: string; errors?: string[]; terminalReason?: string }
+  ): void {
+    const execution = nodeExecutionRepo.getById(executionId);
+    const sessionId = execution?.agentSessionId ?? SESSION;
+    db.prepare(`DELETE FROM sdk_messages WHERE session_id = ?`).run(sessionId);
+    saveResultError(sessionId, opts);
+    nodeExecutionRepo.update(executionId, {
+      status: 'idle',
+      startedAt: Date.now() - 60_000,
+    });
+  }
+
   beforeEach(() => {
     db = makeDb();
     seedSpaceRow(db, SPACE_ID);
@@ -312,7 +337,7 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
   });
 
   test('error_during_execution on a live idle session injects one continue', async () => {
-    const { runId, taskId } = seedIdleErrorRun({
+    const { runId, taskId, executionId } = seedIdleErrorRun({
       subtype: 'error_during_execution',
       errors: ['API Error: 400 {"type":"error","message":"Invalid request"}'],
     });
@@ -326,6 +351,9 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
     expect(tam._injected[0].sessionId).toBe(SESSION);
     expect(tam._injected[0].message).toContain('[Runtime recovery — terminal error]');
     expect(tam._injected[0].message).toContain('error_during_execution');
+    // Execution flips to in_progress so the resumed turn is monitored by the
+    // crash-retry/alive-stuck paths; handleSubSessionComplete returns it to idle.
+    expect(nodeExecutionRepo.getById(executionId)?.status).toBe('in_progress');
     // Run/task remain in_progress — recovery is a continue, not a block.
     expect(workflowRunRepo.getRun(runId)?.status).toBe('in_progress');
     expect(taskRepo.getTask(taskId)?.status).toBe('in_progress');
@@ -411,7 +439,7 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
     expect(tam._injected).toHaveLength(0);
   });
 
-  test('retries up to the cap then escalates to blocked', async () => {
+  test('retries up to the cap then escalates to blocked (clearing the stale session)', async () => {
     const { runId, taskId, executionId } = seedIdleErrorRun({
       subtype: 'error_during_execution',
       errors: ['transient hiccup A'],
@@ -420,14 +448,13 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
     const rt = new SpaceRuntime(buildConfig(tam));
     (rt as unknown as { recoveryDone: boolean }).recoveryDone = true;
 
-    // First tick → continue #1 (signature A).
+    // First tick → continue #1 (signature A); execution flips to in_progress.
     await rt.executeTick();
     expect(tam._injected).toHaveLength(1);
 
-    // Re-write the persisted result to a DIFFERENT error so the signature
-    // changes and the cap (not the repeat guard) is what trips.
-    db.prepare(`DELETE FROM sdk_messages WHERE session_id = ?`).run(SESSION);
-    saveResultError(SESSION, {
+    // Simulate the resumed turn ending back at idle with a DIFFERENT error so
+    // the signature changes and the cap (not the repeat guard) is what trips.
+    resumeToIdle(executionId, {
       subtype: 'error_during_execution',
       errors: ['transient hiccup B'],
     });
@@ -436,9 +463,7 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
     await rt.executeTick();
     expect(tam._injected).toHaveLength(2);
 
-    // Re-write again to yet another distinct error.
-    db.prepare(`DELETE FROM sdk_messages WHERE session_id = ?`).run(SESSION);
-    saveResultError(SESSION, {
+    resumeToIdle(executionId, {
       subtype: 'error_during_execution',
       errors: ['transient hiccup C'],
     });
@@ -446,7 +471,12 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
     // Third tick → cap (2) exhausted → blocked.
     await rt.executeTick();
 
-    expect(nodeExecutionRepo.getById(executionId)?.status).toBe('blocked');
+    const execution = nodeExecutionRepo.getById(executionId)!;
+    expect(execution.status).toBe('blocked');
+    // The stale live session is cancelled and cleared so attemptBlockedRunRecovery
+    // re-spawns a FRESH session instead of re-promoting this one.
+    expect(execution.agentSessionId).toBeNull();
+    expect(tam._cancelled).toContain(SESSION);
     expect(workflowRunRepo.getRun(runId)?.status).toBe('blocked');
     expect(taskRepo.getTask(taskId)?.status).toBe('blocked');
     expect(taskRepo.getTask(taskId)?.blockReason).toBe('execution_failed');
@@ -454,7 +484,7 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
     expect(notifications).toContainEqual(expect.objectContaining({ kind: 'workflow_run_blocked' }));
   });
 
-  test('deterministic repeat (identical signature) escalates to blocked immediately', async () => {
+  test('deterministic repeat (identical signature) escalates to blocked', async () => {
     const { runId, taskId, executionId } = seedIdleErrorRun({
       subtype: 'error_during_execution',
       errors: ['Codex 400 invalid_request_error'],
@@ -467,17 +497,23 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
     await rt.executeTick();
     expect(tam._injected).toHaveLength(1);
 
-    // The persisted result is unchanged → same signature next tick. A plain
-    // continue already failed to clear it, so escalate immediately.
+    // Resumed turn re-errored identically → same signature next evaluation.
+    resumeToIdle(executionId, {
+      subtype: 'error_during_execution',
+      errors: ['Codex 400 invalid_request_error'],
+    });
+
+    // Second tick → grace (0) passed, repeat detected → blocked, no 2nd continue.
     await rt.executeTick();
 
-    expect(tam._injected).toHaveLength(1); // no second continue
+    expect(tam._injected).toHaveLength(1);
     expect(nodeExecutionRepo.getById(executionId)?.status).toBe('blocked');
+    expect(nodeExecutionRepo.getById(executionId)?.agentSessionId).toBeNull();
     expect(workflowRunRepo.getRun(runId)?.status).toBe('blocked');
     expect(taskRepo.getTask(taskId)?.status).toBe('blocked');
   });
 
-  test('grace cooldown suppresses a second immediate continue', async () => {
+  test('grace cooldown suppresses a re-evaluation before the prior continue is consumed', async () => {
     const { executionId } = seedIdleErrorRun({
       subtype: 'error_during_execution',
       errors: ['hiccup'],
@@ -491,11 +527,15 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
     await rt.executeTick();
     expect(tam._injected).toHaveLength(1);
 
-    // Replace with a distinct signature so only the cooldown could suppress it.
-    db.prepare(`DELETE FROM sdk_messages WHERE session_id = ?`).run(SESSION);
-    saveResultError(SESSION, { subtype: 'error_during_execution', errors: ['different'] });
+    // Resumed turn ends back at idle with a distinct signature. Even though the
+    // signature differs (so neither the repeat nor the cap would trip), the
+    // cooldown must give the prior continue its grace window before acting again.
+    resumeToIdle(executionId, {
+      subtype: 'error_during_execution',
+      errors: ['different'],
+    });
 
-    // Immediate second tick → within grace → no new continue, execution idle.
+    // Immediate second tick → within grace → no new continue.
     await rt.executeTick();
     expect(tam._injected).toHaveLength(1);
     expect(nodeExecutionRepo.getById(executionId)?.status).toBe('idle');
@@ -516,7 +556,7 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
     expect(tam._injected).toHaveLength(1);
 
     // Simulate a blocked-recovery re-spawn: same execution, new session id,
-    // fresh error result.
+    // fresh error result, back to idle.
     nodeExecutionRepo.update(executionId, {
       status: 'idle',
       agentSessionId: 'session:gen-2',
@@ -531,5 +571,36 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
     // Budget reset → a continue fires for the new session despite the prior one.
     expect(tam._injected).toHaveLength(2);
     expect(tam._injected[1].sessionId).toBe('session:gen-2');
+  });
+
+  test('persistently failing injection escalates to blocked (bounded, no infinite loop)', async () => {
+    const { runId, taskId, executionId } = seedIdleErrorRun({
+      subtype: 'error_during_execution',
+      errors: ['live-but-wedged'],
+    });
+    const tam = makeTam({
+      injectRuntimeRecoveryMessage: async () => {
+        throw new Error('rehydration index mismatch');
+      },
+    });
+    const rt = new SpaceRuntime(buildConfig(tam));
+    (rt as unknown as { recoveryDone: boolean }).recoveryDone = true;
+
+    // First tick → injection fails (failure 1); execution stays idle.
+    await rt.executeTick();
+    expect(nodeExecutionRepo.getById(executionId)?.status).toBe('idle');
+
+    // Second tick → still within grace(0)? grace=0 means cooldown never blocks,
+    // but failedInjectionCount(1) < cap(2) → retry → fails again (failure 2).
+    await rt.executeTick();
+    expect(nodeExecutionRepo.getById(executionId)?.status).toBe('idle');
+
+    // Third tick → failedInjectionCount(2) >= cap → escalate to blocked.
+    await rt.executeTick();
+
+    expect(nodeExecutionRepo.getById(executionId)?.status).toBe('blocked');
+    expect(nodeExecutionRepo.getById(executionId)?.agentSessionId).toBeNull();
+    expect(workflowRunRepo.getRun(runId)?.status).toBe('blocked');
+    expect(taskRepo.getTask(taskId)?.status).toBe('blocked');
   });
 });

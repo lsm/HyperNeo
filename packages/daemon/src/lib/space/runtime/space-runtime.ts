@@ -445,6 +445,13 @@ interface TerminalErrorContinueState {
   continueCount: number;
   lastRetriedErrorSignature: string | null;
   lastContinueAt: number | null;
+  /**
+   * Consecutive failed `injectRuntimeRecoveryMessage` attempts. A live but
+   * wedged session whose injection keeps throwing would otherwise retry every
+   * grace interval forever; once this reaches the cap the execution escalates
+   * to `blocked`. Reset to 0 on any successful injection.
+   */
+  failedInjectionCount: number;
 }
 
 const NON_TERMINAL_IDLE_FAILED_NUDGE_RETRY_MS = 60 * 1000;
@@ -7058,6 +7065,7 @@ export class SpaceRuntime {
           continueCount: 0,
           lastRetriedErrorSignature: null,
           lastContinueAt: null,
+          failedInjectionCount: 0,
         } satisfies TerminalErrorContinueState);
       this.terminalErrorContinueStates.set(key, state);
 
@@ -7069,12 +7077,40 @@ export class SpaceRuntime {
         state.continueCount = 0;
         state.lastRetriedErrorSignature = null;
         state.lastContinueAt = null;
+        state.failedInjectionCount = 0;
       }
 
       const signature = this.computeTerminalErrorSignature(lastMessage);
 
-      // Deterministic repeat: a plain continue already failed to clear this
-      // exact error, so looping again cannot help — escalate to blocked.
+      // Grace cooldown FIRST. getLastSDKMessage skips user rows the SDK has not
+      // yet consumed, so immediately after a continue the last message is still
+      // the old terminal result. Evaluating the repeat/cap checks before the
+      // cooldown would block the run before the prior continue is even consumed.
+      // The grace window gives the injected continue time to take effect; only
+      // after it passes do we re-evaluate whether the error recurred.
+      if (state.lastContinueAt !== null && now - state.lastContinueAt < graceMs) {
+        continue;
+      }
+
+      // Bound persistently-failing injections: a live but wedged session whose
+      // injection keeps throwing would otherwise retry every grace interval
+      // forever. Escalate once consecutive failures reach the cap.
+      if (state.failedInjectionCount >= MAX_TERMINAL_ERROR_CONTINUE_RETRIES) {
+        await this.escalateTerminalErrorToBlocked(
+          runId,
+          spaceId,
+          canonicalTask,
+          execution,
+          lastMessage,
+          tam,
+          `runtime continue injection failed ${state.failedInjectionCount} consecutive time(s) for a live session (${signature})`
+        );
+        return 'blocked';
+      }
+
+      // Deterministic repeat (evaluated only after the grace window): a plain
+      // continue already failed to clear this exact error, so looping again
+      // cannot help — escalate to blocked.
       if (state.lastRetriedErrorSignature === signature) {
         await this.escalateTerminalErrorToBlocked(
           runId,
@@ -7082,6 +7118,7 @@ export class SpaceRuntime {
           canonicalTask,
           execution,
           lastMessage,
+          tam,
           `Terminal error recurred with an identical signature after a runtime continue (${signature})`
         );
         return 'blocked';
@@ -7096,15 +7133,10 @@ export class SpaceRuntime {
           canonicalTask,
           execution,
           lastMessage,
+          tam,
           `Terminal error persisted after ${state.continueCount} runtime continue(s) (${signature})`
         );
         return 'blocked';
-      }
-
-      // Grace cooldown between attempts — give the agent time to reach a turn
-      // boundary and act on the previous continue before injecting another.
-      if (state.lastContinueAt !== null && now - state.lastContinueAt < graceMs) {
-        continue;
       }
 
       try {
@@ -7115,6 +7147,13 @@ export class SpaceRuntime {
         state.continueCount += 1;
         state.lastContinueAt = now;
         state.lastRetriedErrorSignature = signature;
+        state.failedInjectionCount = 0;
+        // Mark the execution active so the resumed turn is monitored by the
+        // crash-retry and alive-stuck paths (which only scan in_progress). The
+        // normal sub-session completion callback returns it to `idle` when the
+        // resumed turn ends; without this, a session that hangs or dies after
+        // the injection would sit unmonitored as an idle execution.
+        this.config.nodeExecutionRepo.update(execution.id, { status: 'in_progress' });
         log.warn(
           `Node ${execution.workflowNodeId} ended idle on a terminal error result; ` +
             `sent runtime continue ${state.continueCount}/${MAX_TERMINAL_ERROR_CONTINUE_RETRIES}: ` +
@@ -7122,13 +7161,15 @@ export class SpaceRuntime {
             `subtype=${lastMessage.subtype} signature=${signature}`
         );
       } catch (error) {
-        // Apply the grace cooldown even on failure so a transiently-failing
-        // injection (e.g. a rehydrate race) can't tight-loop every tick. The
-        // count/signature stay unset so a later success still counts correctly;
-        // a persistently-dead session is caught by the isSessionAlive guard.
+        // Apply the grace cooldown on failure so a transiently-failing
+        // injection can't tight-loop every tick. The continue count/signature
+        // stay unset so a later success still counts correctly; consecutive
+        // failures are bounded by the failedInjectionCount check above.
         state.lastContinueAt = now;
+        state.failedInjectionCount += 1;
         log.warn(
-          `Failed to send runtime continue for terminal-error idle node ${execution.workflowNodeId}; ` +
+          `Failed to send runtime continue for terminal-error idle node ${execution.workflowNodeId} ` +
+            `(failure ${state.failedInjectionCount}/${MAX_TERMINAL_ERROR_CONTINUE_RETRIES}); ` +
             `needs attention: execution=${execution.id} agent=${execution.agentName} ` +
             `session=${sessionId} signature=${signature}: ${formatCommandError(error)}`
         );
@@ -7148,6 +7189,7 @@ export class SpaceRuntime {
     canonicalTask: SpaceTask,
     execution: NodeExecution,
     errorResult: { subtype: string; errors?: string[] },
+    tam: TaskAgentManager,
     detail: string
   ): Promise<void> {
     const errorSnippet = (errorResult.errors ?? []).join('; ').slice(0, 280);
@@ -7155,9 +7197,27 @@ export class SpaceRuntime {
       `Agent session ended on a terminal error result and exhausted runtime auto-continue recovery ` +
       `(node ${execution.workflowNodeId}, agent ${execution.agentName}, subtype ${errorResult.subtype}): ` +
       `${detail}${errorSnippet ? ` — ${errorSnippet}` : ''}`;
+    // Tear down the stale live session and clear the row's agentSessionId.
+    // attemptBlockedRunRecovery resets blocked executions to `pending` WITHOUT
+    // clearing agentSessionId, and the pending-repair loop re-promotes any
+    // pending execution whose agentSessionId is still alive back to
+    // in_progress — so leaving the live terminal session attached would skip
+    // the fresh re-spawn entirely and leave the run stuck on the same session.
+    if (execution.agentSessionId) {
+      try {
+        tam.cancelBySessionId(execution.agentSessionId);
+      } catch (err) {
+        log.warn(
+          `SpaceRuntime: failed to cancel stale terminal-error session ${execution.agentSessionId} during block escalation: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+    }
     this.config.nodeExecutionRepo.update(execution.id, {
       status: 'blocked',
       result: reason,
+      agentSessionId: null,
+      startedAt: null,
+      completedAt: null,
     });
     await this.transitionRunStatusAndEmit(runId, 'blocked');
     await this.updateTaskAndEmit(spaceId, canonicalTask.id, {
