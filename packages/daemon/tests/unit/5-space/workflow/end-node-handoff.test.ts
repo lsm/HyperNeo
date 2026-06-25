@@ -351,3 +351,76 @@ describe('Shared merge template canonical content', () => {
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('do NOT force');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Merge-conflict routing: reviewer routes conflicts to the coder, not a human
+// ---------------------------------------------------------------------------
+
+describe('Post-approval merge conflict routes to coder, not human', () => {
+  test('conflict is routed to the upstream coder instead of escalating to a human', () => {
+    // The old template told the reviewer to call request_human_input on a
+    // conflict ("let the human resolve"). Conflicts are routine coder work —
+    // the template must not instruct human escalation on a conflict.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('request_human_input');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('let the human resolve');
+    // Explicit "do NOT escalate to a human" directive (spans a line break).
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/do NOT escalate to a\s+human/);
+    // The reviewer must discover the upstream coding node dynamically.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('list_reachable_agents');
+  });
+
+  test('conflict detection keys on DIRTY mergeStateStatus and conflict markers', () => {
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('mergeStateStatus: DIRTY');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/conflict markers/);
+  });
+
+  test('coder handoff carries PR URL, base branch, and conflicting files', () => {
+    // The send_message payload to the coder must include everything the coder
+    // needs to rebase and resolve.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('base_branch: "dev"');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('conflicting_files');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('reason: "merge_conflict"');
+  });
+
+  test('coder is told to rebase, resolve, test, push, then report back', () => {
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/Rebase onto latest/);
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('origin/dev');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/resolve the listed conflicts/);
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/run the tests/);
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/report back to Review/);
+  });
+
+  test('retry is capped at 2 coder attempts before space-agent escalation', () => {
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/maximum 2 coder attempts/);
+    // Escalation target after the cap is space-agent, not a human.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('send_message(target="space-agent"');
+    // The "do NOT escalate to a human" directive precedes the space-agent
+    // escalation — i.e. the first reaction to a conflict is coder routing,
+    // and space-agent escalation only appears later (after the retry cap).
+    const noHumanIdx = PR_MERGE_POST_APPROVAL_INSTRUCTIONS.indexOf('do NOT escalate to a');
+    const escalateIdx = PR_MERGE_POST_APPROVAL_INSTRUCTIONS.indexOf('escalate to space-agent');
+    expect(noHumanIdx).toBeGreaterThan(-1);
+    expect(escalateIdx).toBeGreaterThan(noHumanIdx);
+  });
+
+  test('each conflict attempt is recorded as Forge evidence', () => {
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('merge_conflict_loop');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(
+      /save_artifact\(\{ type: "merge_conflict_loop"/
+    );
+  });
+
+  test('conflict routing ordering: detect -> evidence -> message coder -> wait -> retry/escalate', () => {
+    const text = PR_MERGE_POST_APPROVAL_INSTRUCTIONS;
+    const detectIdx = text.indexOf('mergeStateStatus: DIRTY');
+    const evidenceIdx = text.indexOf('merge_conflict_loop');
+    const coderIdx = text.indexOf('list_reachable_agents');
+    const retryIdx = text.indexOf('re-attempt');
+    const escalateIdx = text.indexOf('escalate to space-agent');
+    expect(detectIdx).toBeGreaterThan(-1);
+    expect(evidenceIdx).toBeGreaterThan(detectIdx);
+    expect(coderIdx).toBeGreaterThan(evidenceIdx);
+    expect(retryIdx).toBeGreaterThan(coderIdx);
+    expect(escalateIdx).toBeGreaterThan(retryIdx);
+  });
+});

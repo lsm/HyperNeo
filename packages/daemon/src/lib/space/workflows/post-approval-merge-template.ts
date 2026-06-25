@@ -34,6 +34,13 @@
  * `post_approval_action` discriminator was removed — post-approval routing is
  * declarative on the workflow's `postApproval` field, not signalled at runtime.
  *
+ * Merge-conflict routing (not human escalation): when `gh pr merge` fails on a
+ * conflict with the base branch (`dev`), the reviewer does NOT escalate to a
+ * human. Conflicts are routine coder work — step 3 routes them back to the
+ * upstream implementation node (coder) with the conflicting files, caps the
+ * loop at 2 coder attempts, records each attempt as Forge evidence
+ * (`merge_conflict_loop`), and only escalates to `space-agent` after the cap.
+ *
  * The runtime appends the universal `mark_complete` instruction in
  * `PostApprovalRouter`; keep this workflow data focused on PR-specific work.
  */
@@ -62,8 +69,36 @@ export const PR_MERGE_POST_APPROVAL_INSTRUCTIONS: string = [
   '   Auto-merging or auto-resolving review conversations is NOT allowed.',
   '3. Merge:',
   '     gh pr merge {{pr_url}} --squash',
-  '   On a merge conflict, do NOT force — exit, call request_human_input with',
-  '   a clear summary of the conflict, and let the human resolve.',
+  '   On a merge conflict, do NOT force the merge and do NOT escalate to a',
+  '   human — merge conflicts are routine coder work. Detect a conflict from',
+  '   `mergeStateStatus: DIRTY` (step 1) or conflict markers / "merge conflict"',
+  '   in the `gh pr merge` failure output, then route it back to the coder:',
+  '   a. Capture the conflicting files. Re-read the merge failure output or run',
+  '        gh pr view {{pr_url}} --json headRefName,files',
+  '      and list every path that conflicts against the base branch `dev`.',
+  '   b. Record the attempt as Forge evidence so the loop is auditable:',
+  '        save_artifact({ type: "merge_conflict_loop", append: true,',
+  '          summary: "Merge conflict attempt <N> of 2 on PR {{pr_url}}",',
+  '          data: { pr_url: "{{pr_url}}", base_branch: "dev",',
+  '                  conflicting_files: ["..."], attempt: <N> } })',
+  '   c. Message the upstream implementation node that opened this PR. Resolve',
+  '      the exact target with `list_reachable_agents` (it is `Coding` in a',
+  '      Coding workflow, `Research` in a Research workflow) and send:',
+  '        send_message(target="<upstream node>", message="<short summary>",',
+  '          data: { pr_url: "{{pr_url}}", base_branch: "dev",',
+  '                  conflicting_files: ["..."], reason: "merge_conflict" })',
+  '      The message body MUST instruct the coder: "Rebase onto latest',
+  '      `origin/dev`, resolve the listed conflicts, run the tests that touch',
+  '      the conflicted files, push, then report back to Review."',
+  '   d. Do NOT close the task and do NOT escalate to a human on a conflict',
+  '      alone — wait for the coder to confirm the rebase is pushed.',
+  '   e. After the coder reports back, re-attempt `gh pr merge {{pr_url}} --squash`.',
+  '      If it still conflicts, loop once more — maximum 2 coder attempts. If the',
+  '      merge still fails after 2 coder attempts, escalate to space-agent with',
+  '      the accumulated evidence and stop:',
+  '        send_message(target="space-agent", message="Merge conflict on PR',
+  '          {{pr_url}} unresolved after 2 coder attempts",',
+  '          data: { pr_url: "{{pr_url}}", conflicting_files: ["..."], attempts: 2 })',
   '4. Sync safely without switching branches in isolated worktrees:',
   '     git fetch origin dev',
   '   If you are already on `dev`, run `git pull --ff-only origin dev`. If you are in a task',
