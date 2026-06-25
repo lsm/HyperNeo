@@ -238,12 +238,15 @@ export function normalizeOpenAiUpstreamError(
 
   if (!isRate && !isOverload) return null;
 
-  // A hard 4xx (other than 429) usually means a permanent client error
-  // (auth/not-found/bad-request). Only reclassify it when the body carries a
-  // strong STRUCTURED transient signal; otherwise leave it to the status-based
-  // mapping so we don't retry a genuine 401/404 indefinitely.
-  const isHard4xx = status >= 400 && status < 500 && status !== 429;
-  if (isHard4xx && !isRateType && !isServerType) return null;
+  // An explicit client-side status (4xx, including 429) is a trustworthy
+  // signal: a hard 4xx usually means a permanent client error
+  // (auth/not-found/bad-request), and a 429 is already a rate limit. Only let a
+  // STRONG STRUCTURED transient signal (error.type/error.code) override such a
+  // status — never loose message substrings. Otherwise we'd either retry a
+  // genuine 401/404 indefinitely, or let a "try again later" message override an
+  // explicit 429 and mislabel it as overloaded_error.
+  const isExplicitClientStatus = status >= 400 && status < 500;
+  if (isExplicitClientStatus && !isRateType && !isServerType) return null;
 
   // Structured type evidence wins over loose message substrings: a body whose
   // `type` is `rate_limit_exceeded` must classify as rate_limit_error (429) even

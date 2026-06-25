@@ -229,6 +229,14 @@ describe('normalizeOpenAiUpstreamError', () => {
     expect(result?.status).toBe(429);
   });
 
+  it('does not let weak "try again" text override an explicit HTTP 429', () => {
+    // A 429 is already a rate limit; a loose "Please try again later" message
+    // (which matches the overload regex) must NOT reclassify it as
+    // overloaded_error. Defer to the status-based mapping (rate_limit_error).
+    const body = JSON.stringify({ error: { message: 'Please try again later' } });
+    expect(normalizeOpenAiUpstreamError(body, 429)).toBeNull();
+  });
+
   it('returns null for a normal invalid_request error', () => {
     const body = JSON.stringify({
       error: { type: 'invalid_request_error', message: 'bad model id' },
