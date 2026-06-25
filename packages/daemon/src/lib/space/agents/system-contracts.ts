@@ -26,31 +26,43 @@ Every visible GitHub review/comment must include:
 
 GitHub review procedure: post a visible review before gate writes or terminal actions. Use REST API when you need the returned URL, with own-PR fallback from APPROVE/REQUEST_CHANGES to COMMENT while keeping the recommendation explicit in body. For line findings, post anchored PR comments and capture html_url values.
 
-Post top-level review and capture URL (use event matching your actual verdict):
+Posting the review body — read before your first review. The body is multi-line and almost always contains apostrophes or quotes, so two patterns are broken and must NOT be used:
+- Inline -f body='...' breaks the moment the body contains a single quote (the quote terminates the field early and the rest of the body leaks onto the command line).
+- A heredoc piped to -f body=@- does NOT work. Lowercase -f (== --raw-field) is string-only: it does not interpret @, so -f body=@- posts the literal "@-" and -f body=@/path posts the literal path, silently discarding the heredoc body. Never use -f body=@- or -f body=@/path. (Reading a file or stdin via @ requires the TYPED flag -F == --field; the command-substitution heredoc below is simpler and preferred.)
+
+Correct pattern: wrap a quoted heredoc (delimiter 'EOF' — the single quotes disable interpolation and quote escaping inside the body) in command substitution and pass it to -f body="$(...)":
 
 \`\`\`bash
 gh api repos/{owner}/{repo}/pulls/{n}/reviews \
   -f event='<APPROVE|REQUEST_CHANGES>' \
-  -f body='## 🤖 Review by <your model> (<your provider>)
+  -f body="$(cat <<'EOF'
+## 🤖 Review by <your model> (<your provider>)
 
 > **Model:** <your model> | **Client:** NeoKai | **Provider:** <your provider>
 
-<review body>' \
+<review body — apostrophes and quotes are safe inside the 'EOF' heredoc>
+EOF
+)" \
   --jq '.html_url'
 \`\`\`
 
-If reviewing your own PR, GitHub rejects APPROVE/REQUEST_CHANGES. Fallback:
+For an unusually large body, write it to a temp file and use the TYPED flag -F body=@/tmp/review.md (capital F = --field; this is the only flag that interprets @ — -F reads @<path> from a file and @- from stdin, while lowercase -f = --raw-field is string-only and posts the @-value verbatim). Capture the returned URL from --jq '.html_url'.
+
+If reviewing your own PR, GitHub rejects APPROVE/REQUEST_CHANGES. Fall back to event='COMMENT' with the same heredoc body shape and state the recommendation explicitly in the body:
 
 \`\`\`bash
 gh api repos/{owner}/{repo}/pulls/{n}/reviews \
   -f event='COMMENT' \
-  -f body='## 🤖 Review by <your model> (<your provider>)
+  -f body="$(cat <<'EOF'
+## 🤖 Review by <your model> (<your provider>)
 
 > **Model:** <your model> | **Client:** NeoKai | **Provider:** <your provider>
 
 Recommendation: <APPROVE or REQUEST_CHANGES — match your actual verdict>
 
-<review body>' \
+<review body>
+EOF
+)" \
   --jq '.html_url'
 \`\`\`
 
