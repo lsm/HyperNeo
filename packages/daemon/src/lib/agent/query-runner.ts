@@ -1077,7 +1077,17 @@ export class QueryRunner {
           `Provider error (5xx/overloaded/unavailable) detected; retrying in ${delayMs}ms ` +
             `(attempt ${retryAttempt + 1}/${maxProviderRetries}).`
         );
-        await stateManager.setIdle();
+        // Deliberately do NOT call stateManager.setIdle() here. The existing
+        // transient-connection retry (~1006) and startup-timeout retry (~931)
+        // call setIdle before recursing, but those retry near-instantly. The
+        // provider retry has a multi-second backoff window — calling setIdle
+        // would leave the session appearing idle (turn finished) while a retry
+        // is still pending. Keeping the current 'processing' state during
+        // backoff is more accurate: queryPromise is still set so
+        // ensureQueryStarted() won't launch a duplicate query, and state
+        // observers see the turn as in-progress. The recursive runQuery's
+        // message generator re-asserts 'processing' on the next yield; the
+        // finally block sets 'idle' when the turn actually completes.
 
         // Clear the startup timer from THIS attempt. If the 5xx happened before
         // firstMessageReceived, the timer is still armed and would fire during
