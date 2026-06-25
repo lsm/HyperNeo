@@ -208,6 +208,21 @@ describe('openai-chat-bridge: body-embedded / mid-stream error normalization', (
     expect((errorEvent?.data as { error: { type: string } }).error.type).toBe('overloaded_error');
   });
 
+  it('admits a flat error frame with a numeric code (e.g. {"code":429})', async () => {
+    const sse = 'event: error\n' + 'data: {"code":429}\n\n';
+    server = makeServer(
+      async () =>
+        new Response(sse, { status: 200, headers: { 'Content-Type': 'text/event-stream' } })
+    );
+
+    const res = await postMessages(server.port);
+    expect(res.status).toBe(200);
+    const events = await readSSEEventTypes(res.body);
+    const errorEvent = events.find((e) => e.event === 'error');
+    expect(errorEvent).toBeDefined();
+    expect((errorEvent?.data as { error: { type: string } }).error.type).toBe('rate_limit_error');
+  });
+
   it('streams a mislabeled-content-type SSE response without buffering or misclassifying it', async () => {
     // A proxy that streams valid SSE but sends Content-Type text/plain (or none)
     // must flow straight through to the streamer — NOT be buffered and matched

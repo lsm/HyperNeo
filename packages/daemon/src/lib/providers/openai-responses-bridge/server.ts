@@ -31,6 +31,7 @@ import { getModelContextWindow as getCodexModelContextWindow } from '../codex-mo
 import { createAnthropicErrorBody, type AnthropicErrorType } from '../shared/error-envelope.js';
 import {
   isJsonContentType,
+  isOpenAiTransientErrorType,
   normalizeOpenAiUpstreamError,
 } from '../shared/normalize-upstream-error.js';
 import { Logger } from '../../logger.js';
@@ -1141,14 +1142,15 @@ async function streamResponsesToAnthropic({
 
       const sseEvent = (event as { sseEvent?: string }).sseEvent;
       // An error frame is signalled by the payload type (`error` /
-      // `response.failed`) OR by the raw SSE `event:` name — a flat
-      // `event: error` block whose data type is the error category (e.g.
-      // {"type":"server_error"}) only carries the name in sseEvent.
+      // `response.failed`), the raw SSE `event:` name, OR a data-only frame
+      // whose payload type is a known transient error category (e.g.
+      // {"type":"server_error"} with no event line).
       if (
         event.type === 'response.failed' ||
         event.type === 'error' ||
         sseEvent === 'error' ||
-        sseEvent === 'response.failed'
+        sseEvent === 'response.failed' ||
+        (event.type !== undefined && isOpenAiTransientErrorType(event.type))
       ) {
         ensureStarted();
         closeThinkingBlock();
@@ -1167,14 +1169,16 @@ async function streamResponsesToAnthropic({
             : undefined;
         const flatEvent = event as Record<string, unknown>;
         const topLevelError: Record<string, unknown> = {};
-        if (typeof flatEvent.code === 'string') topLevelError.code = flatEvent.code;
+        // Accept numeric codes (e.g. {"code":429}) — coerce to string.
+        const rawCode = flatEvent.code;
+        if (typeof rawCode === 'string') topLevelError.code = rawCode;
+        else if (typeof rawCode === 'number' && Number.isFinite(rawCode))
+          topLevelError.code = String(rawCode);
         if (typeof flatEvent.message === 'string') topLevelError.message = flatEvent.message;
-        // The payload `type` is the error category when it differs from the SSE
-        // event discriminator (sseEvent / "error" / "response.failed").
-        const discriminant = sseEvent ?? event.type;
+        // The payload `type` is the error category when it is not the literal
+        // event discriminator ("error" / "response.failed").
         if (
           typeof flatEvent.type === 'string' &&
-          flatEvent.type !== discriminant &&
           flatEvent.type !== 'error' &&
           flatEvent.type !== 'response.failed'
         )

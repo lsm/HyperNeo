@@ -567,7 +567,15 @@ function chatChunkErrorBody(chunk: OpenAIChatStreamChunk): string | undefined {
     const flat = chunk as Record<string, unknown>;
     const message = typeof flat.message === 'string' ? flat.message : undefined;
     const type = typeof flat.type === 'string' ? flat.type : undefined;
-    const code = typeof flat.code === 'string' ? flat.code : undefined;
+    // Accept numeric codes (some gateways send {"code":429}) — coerce to string
+    // so the normalizer can classify them.
+    const rawCode = flat.code;
+    const code =
+      typeof rawCode === 'string'
+        ? rawCode
+        : typeof rawCode === 'number' && Number.isFinite(rawCode)
+          ? String(rawCode)
+          : undefined;
     // Require an actual error signal: a message, a code, OR a `type` that is a
     // recognized transient error type. A bare unknown `type` is treated as a
     // heartbeat/metadata frame (e.g. `{"type":"ping"}`) and ignored so it

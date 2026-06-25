@@ -258,6 +258,18 @@ describe('normalizeOpenAiUpstreamError', () => {
     });
     expect(normalizeOpenAiUpstreamError(body, 400)).toBeNull();
   });
+
+  it('does NOT scan the whole body for retry words (success body false positive)', () => {
+    // A valid non-streaming JSON completion whose content mentions "rate limit"
+    // must NOT be classified as retryable — only the extracted error.message is
+    // matched, never the raw body.
+    const body = JSON.stringify({
+      id: 'chatcmpl-1',
+      object: 'chat.completion',
+      choices: [{ message: { content: 'The rate limit is 50 requests per minute.' } }],
+    });
+    expect(normalizeOpenAiUpstreamError(body, 200)).toBeNull();
+  });
 });
 
 describe('normalizeUpstreamError (combined)', () => {

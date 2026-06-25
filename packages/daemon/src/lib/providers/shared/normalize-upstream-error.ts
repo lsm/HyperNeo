@@ -226,8 +226,14 @@ export function normalizeOpenAiUpstreamError(
   const codeField = (
     readStringField(errorObj, 'code') ?? readStringField(parsed, 'code')
   )?.toLowerCase();
-  const messageField =
-    readStringField(errorObj, 'message') ?? readStringField(parsed, 'message') ?? body;
+  // Message for substring matching — use ONLY the extracted error/top-level
+  // message, NOT the raw body. Scanning the whole body would misclassify a valid
+  // non-error JSON response (e.g. a non-streaming completion whose text mentions
+  // "rate limit" or "overloaded") as a retryable error.
+  const messageForMatching =
+    readStringField(errorObj, 'message') ?? readStringField(parsed, 'message');
+  // Result message falls back to the body so the surfaced error has context.
+  const messageField = messageForMatching ?? body;
 
   // Inspect BOTH `type` and `code` independently. OpenAI-compatible payloads
   // sometimes set `error.type` to a broad category (e.g. "requests") while the
@@ -243,8 +249,10 @@ export function normalizeOpenAiUpstreamError(
     (typeField !== undefined && TRANSIENT_OVERLOAD_TYPES.has(typeField)) ||
     (codeField !== undefined && TRANSIENT_OVERLOAD_TYPES.has(codeField));
 
-  const isRateMessage = OPENAI_RATE_LIMIT_PATTERN.test(messageField);
-  const isOverloadMessage = OPENAI_OVERLOAD_PATTERN.test(messageField);
+  const isRateMessage =
+    messageForMatching !== undefined && OPENAI_RATE_LIMIT_PATTERN.test(messageForMatching);
+  const isOverloadMessage =
+    messageForMatching !== undefined && OPENAI_OVERLOAD_PATTERN.test(messageForMatching);
 
   const isRate = isRateType || isRateMessage;
   const isOverload = isServerType || isOverloadMessage;

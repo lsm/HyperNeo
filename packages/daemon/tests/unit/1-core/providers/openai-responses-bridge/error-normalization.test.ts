@@ -197,6 +197,38 @@ describe('openai-responses-bridge: body-embedded / mid-stream error normalizatio
     expect((errorEvent?.data as { error: { type: string } }).error.type).toBe('overloaded_error');
   });
 
+  it('classifies a flat error frame with a numeric code (e.g. {"code":429})', async () => {
+    const sse = 'event: error\n' + 'data: {"code":429}\n\n';
+    server = makeServer(
+      async () =>
+        new Response(sse, { status: 200, headers: { 'Content-Type': 'text/event-stream' } })
+    );
+
+    const res = await postMessages(server.port);
+    expect(res.status).toBe(200);
+    const events = await readSSEEvents(res.body);
+    const errorEvent = events.find((e) => e.event === 'error');
+    expect(errorEvent).toBeDefined();
+    expect((errorEvent?.data as { error: { type: string } }).error.type).toBe('rate_limit_error');
+  });
+
+  it('detects a data-only transient frame (no event line, known error type)', async () => {
+    // A frame with no `event:` line but a known transient payload type must be
+    // detected as an error frame via the payload type itself.
+    const sse = 'data: {"type":"server_error","message":"the engine is overloaded"}\n\n';
+    server = makeServer(
+      async () =>
+        new Response(sse, { status: 200, headers: { 'Content-Type': 'text/event-stream' } })
+    );
+
+    const res = await postMessages(server.port);
+    expect(res.status).toBe(200);
+    const events = await readSSEEvents(res.body);
+    const errorEvent = events.find((e) => e.event === 'error');
+    expect(errorEvent).toBeDefined();
+    expect((errorEvent?.data as { error: { type: string } }).error.type).toBe('overloaded_error');
+  });
+
   it('normalizes a 200-with-body rate-limit error before streaming', async () => {
     // A Responses-compatible proxy returns 200 with a JSON error body instead
     // of an SSE stream. Without normalization the streamer would emit a
