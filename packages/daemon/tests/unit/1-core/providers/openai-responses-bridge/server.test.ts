@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { configureLogger, subscribeToStructuredLogs, LogLevel } from '@neokai/shared';
 import {
   _openAIResponsesBridgeServerTesting,
   anthropicMessagesToResponsesInput,
@@ -285,7 +286,7 @@ describe('openai-responses-bridge server', () => {
     ]);
   });
 
-  it('preserves non-text blocks in tool_result content as structured output', () => {
+  it('stringifies non-text tool_result content to a string (Codex rejects arrays)', () => {
     const input = anthropicMessagesToResponsesInput([
       {
         role: 'assistant',
@@ -320,10 +321,10 @@ describe('openai-responses-bridge server', () => {
       {
         type: 'function_call_output',
         call_id: 'call_1',
-        output: [
-          { type: 'input_text', text: 'Screenshot taken.' },
-          { type: 'input_image', image_url: 'data:image/png;base64,screendata' },
-        ],
+        // function_call_output.output must be a string on the Responses API;
+        // the ChatGPT Codex backend hard-rejects arrays with "Unsupported
+        // content type". Images become descriptive placeholders.
+        output: 'Screenshot taken.\n[image: image/png]',
       },
     ]);
   });
@@ -363,6 +364,41 @@ describe('openai-responses-bridge server', () => {
         output: 'Line 1\nLine 2',
       },
     ]);
+  });
+
+  it('stringifies is_error tool_result content with images to a string', () => {
+    const input = anthropicMessagesToResponsesInput([
+      {
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: 'call_1', name: 'screenshot', input: {} }],
+      },
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: 'call_1',
+            is_error: true,
+            content: [
+              { type: 'text', text: 'Capture failed.' },
+              {
+                type: 'image',
+                source: { type: 'base64', media_type: 'image/png', data: 'screendata' },
+              },
+            ],
+          } as unknown as { type: 'tool_result'; tool_use_id: string; content: string },
+        ],
+      },
+    ]);
+
+    // is_error tool results are stringified too — no array output that Codex
+    // would reject.
+    const fnOutput = input.find((i) => i.type === 'function_call_output') as {
+      type: 'function_call_output';
+      output: unknown;
+    };
+    expect(typeof fnOutput.output).toBe('string');
+    expect(fnOutput.output).toBe('[Tool error]\nCapture failed.\n[image: image/png]');
   });
 
   it('throws on unsupported image source types', () => {
@@ -1613,6 +1649,355 @@ describe('openai-responses-bridge server', () => {
     expect(resp.status).toBe(529);
     expect(body.error.type).toBe('overloaded_error');
     expect(body.error.message).toBe('overloaded');
+  });
+
+  describe('4xx request diagnostics', () => {
+    let logEvents: Array<{ level: string; message: string }>;
+    let unsubscribe: () => void;
+
+    beforeEach(() => {
+      configureLogger({
+        level: LogLevel.WARN,
+        filter: ['kai:daemon:openai-responses-bridge-server'],
+      });
+      logEvents = [];
+      unsubscribe = subscribeToStructuredLogs((event) => {
+        logEvents.push({ level: event.level, message: event.message });
+      });
+    });
+
+    afterEach(() => {
+      unsubscribe();
+      configureLogger({ level: LogLevel.SILENT, filter: [] });
+    });
+
+    it('logs the translated request body summary when upstream returns 400 "Unsupported content type"', async () => {
+      server = createOpenAIResponsesBridgeServer({
+        auth: { source: 'api_key', apiKey: 'sk-test' },
+        models,
+        fetchImpl: async () =>
+          new Response('{"detail":"Unsupported content type"}', {
+            status: 400,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+      });
+
+      const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'gpt-5.3-codex',
+          max_tokens: 128,
+          messages: [
+            { role: 'user', content: 'First.' },
+            {
+              role: 'assistant',
+              content: [
+                { type: 'text', text: 'Checking.' },
+                { type: 'tool_use', id: 'call_1', name: 'lookup', input: { q: 'codex' } },
+              ],
+            },
+            {
+              role: 'user',
+              content: [{ type: 'tool_result', tool_use_id: 'call_1', content: 'found' }],
+            },
+          ],
+        }),
+      });
+      await resp.text();
+
+      expect(resp.status).toBe(400);
+      // A single warn line capturing the upstream rejection + request body summary.
+      const rejectionLogs = logEvents.filter((e) =>
+        e.message.includes('upstream rejected request (HTTP 400)')
+      );
+      expect(rejectionLogs.length).toBe(1);
+      const summaryJson = rejectionLogs[0]!.message.slice(
+        rejectionLogs[0]!.message.indexOf('requestBodySummary=') + 'requestBodySummary='.length
+      );
+      const summary = JSON.parse(summaryJson) as Record<string, unknown>;
+      // Item types are enumerated so the rejected item can be identified.
+      expect(summary.inputItemTypes).toEqual([
+        'message',
+        'message',
+        'function_call',
+        'function_call_output',
+      ]);
+      // Shapes most likely to trigger "Unsupported content type" are captured.
+      const input = summary.input as Array<Record<string, unknown>>;
+      const fnOutput = input.find((i) => i.type === 'function_call_output');
+      expect(fnOutput?.outputType).toBe('string');
+      const fnCall = input.find((i) => i.type === 'function_call');
+      expect(fnCall?.hasStatus).toBe(true);
+    });
+
+    it('captures reasoning encrypted_content shape in the 4xx summary', async () => {
+      server = createOpenAIResponsesBridgeServer({
+        auth: { source: 'api_key', apiKey: 'sk-test' },
+        models,
+        fetchImpl: async (_url, init) => {
+          const reqBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          const input = reqBody.input as Array<Record<string, unknown>>;
+          // First request: succeed and return encrypted reasoning to be cached.
+          if (!input.some((i) => i.type === 'reasoning')) {
+            return sse([
+              {
+                event: 'response.output_text.delta',
+                data: { type: 'response.output_text.delta', delta: 'ok' },
+              },
+              {
+                event: 'response.completed',
+                data: {
+                  type: 'response.completed',
+                  response: {
+                    id: 'resp_1',
+                    usage: { input_tokens: 5, output_tokens: 1 },
+                    output: [{ type: 'reasoning', encrypted_content: 'enc_xyz' }],
+                  },
+                },
+              },
+            ]);
+          }
+          // Second request (carries replayed reasoning): rejected by upstream.
+          return new Response('{"detail":"Unsupported content type"}', {
+            status: 400,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        },
+      });
+
+      // First turn to populate the reasoning cache.
+      const first = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'gpt-5.3-codex',
+          max_tokens: 128,
+          messages: [{ role: 'user', content: 'First.' }],
+          thinking: { type: 'enabled', budget_tokens: 16000 },
+        }),
+      });
+      await readSSEEvents(first.body);
+
+      // Second turn replays the reasoning item; upstream rejects with 400.
+      const second = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'gpt-5.3-codex',
+          max_tokens: 128,
+          messages: [
+            { role: 'user', content: 'First.' },
+            { role: 'assistant', content: 'ok' },
+            { role: 'user', content: 'Second.' },
+          ],
+          thinking: { type: 'enabled', budget_tokens: 16000 },
+        }),
+      });
+      await second.text();
+
+      const rejectionLogs = logEvents.filter((e) =>
+        e.message.includes('upstream rejected request (HTTP 400)')
+      );
+      expect(rejectionLogs.length).toBe(1);
+      const summaryJson = rejectionLogs[0]!.message.slice(
+        rejectionLogs[0]!.message.indexOf('requestBodySummary=') + 'requestBodySummary='.length
+      );
+      const summary = JSON.parse(summaryJson) as Record<string, unknown>;
+      expect(summary.inputItemTypes).toContain('reasoning');
+      const reasoning = (summary.input as Array<Record<string, unknown>>).find(
+        (i) => i.type === 'reasoning'
+      );
+      // encrypted_content length is captured (not the payload itself).
+      expect(reasoning?.encryptedContentLength).toBe('enc_xyz'.length);
+    });
+
+    it('does not log request body summary for 5xx (server-side errors)', async () => {
+      server = createOpenAIResponsesBridgeServer({
+        auth: { source: 'api_key', apiKey: 'sk-test' },
+        models,
+        fetchImpl: async () =>
+          new Response('{"error":{"message":"internal"}}', {
+            status: 503,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+      });
+
+      const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'gpt-5.3-codex',
+          max_tokens: 128,
+          messages: [{ role: 'user', content: 'hi' }],
+        }),
+      });
+      await resp.text();
+
+      expect(resp.status).toBe(503);
+      // 5xx is server-side — no request-body summary is logged.
+      expect(logEvents.some((e) => e.message.includes('requestBodySummary='))).toBe(false);
+    });
+  });
+
+  it('self-heals: retries without reasoning on a 400 and completes the turn', async () => {
+    const capturedInputs: Array<Record<string, unknown>[]> = [];
+    server = createOpenAIResponsesBridgeServer({
+      auth: { source: 'api_key', apiKey: 'sk-test' },
+      models,
+      fetchImpl: async (_url, init) => {
+        const reqBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        const input = reqBody.input as Array<Record<string, unknown>>;
+        capturedInputs.push(input);
+        // Any request carrying a replayed reasoning item is rejected — this
+        // simulates the stale encrypted_content trigger (candidate 1).
+        if (input.some((i) => i.type === 'reasoning')) {
+          return new Response('{"detail":"Unsupported content type"}', {
+            status: 400,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        // Requests without reasoning succeed (including the self-healing retry).
+        // The first turn returns reasoning in its output so it gets cached for
+        // the session; the retry returns plain text.
+        const isFirstTurn =
+          input.length === 1 && (input[0] as Record<string, unknown>)?.type === 'message';
+        return sse([
+          ...(isFirstTurn
+            ? [
+                {
+                  event: 'response.completed',
+                  data: {
+                    type: 'response.completed',
+                    response: {
+                      id: 'resp_1',
+                      usage: { input_tokens: 5, output_tokens: 1 },
+                      output: [{ type: 'reasoning', encrypted_content: 'enc_cached' }],
+                    },
+                  },
+                },
+              ]
+            : [
+                {
+                  event: 'response.output_text.delta',
+                  data: { type: 'response.output_text.delta', delta: 'recovered' },
+                },
+                {
+                  event: 'response.completed',
+                  data: {
+                    type: 'response.completed',
+                    response: { usage: { input_tokens: 5, output_tokens: 1 }, output: [] },
+                  },
+                },
+              ]),
+        ]);
+      },
+    });
+
+    // First turn: returns reasoning, which gets cached for the session.
+    const first = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'gpt-5.3-codex',
+        max_tokens: 128,
+        messages: [{ role: 'user', content: 'First.' }],
+        thinking: { type: 'enabled', budget_tokens: 16000 },
+      }),
+    });
+    await readSSEEvents(first.body);
+
+    // Second turn replays the cached reasoning; upstream 400s, then the bridge
+    // retries once without reasoning.
+    const second = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'gpt-5.3-codex',
+        max_tokens: 128,
+        messages: [
+          { role: 'user', content: 'First.' },
+          { role: 'assistant', content: 'recovered' },
+          { role: 'user', content: 'Second.' },
+        ],
+        thinking: { type: 'enabled', budget_tokens: 16000 },
+      }),
+    });
+    const events = await readSSEEvents(second.body);
+
+    // The turn completes (does not surface the terminal 400 to the SDK).
+    expect(second.status).toBe(200);
+    expect(textDeltaEvents(events).join('')).toBe('recovered');
+
+    // Two upstream calls for the second turn: first WITH reasoning (rejected),
+    // then the retry WITHOUT reasoning.
+    expect(capturedInputs.length).toBe(3);
+    expect(capturedInputs[1]!.some((i) => i.type === 'reasoning')).toBe(true);
+    expect(capturedInputs[2]!.some((i) => i.type === 'reasoning')).toBe(false);
+  });
+
+  it('surfaces the 400 when the reasoning-strip retry also fails', async () => {
+    server = createOpenAIResponsesBridgeServer({
+      auth: { source: 'api_key', apiKey: 'sk-test' },
+      models,
+      fetchImpl: async (_url, init) => {
+        const reqBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        const input = reqBody.input as Array<Record<string, unknown>>;
+        // First turn succeeds and returns reasoning.
+        if (!input.some((i) => i.type === 'reasoning') && input.length === 1) {
+          return sse([
+            {
+              event: 'response.completed',
+              data: {
+                type: 'response.completed',
+                response: {
+                  id: 'resp_1',
+                  usage: { input_tokens: 5, output_tokens: 1 },
+                  output: [{ type: 'reasoning', encrypted_content: 'enc_bad' }],
+                },
+              },
+            },
+          ]);
+        }
+        // Every multi-message request 400s — even the retry without reasoning.
+        return new Response('{"detail":"Unsupported content type"}', {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      },
+    });
+
+    const first = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'gpt-5.3-codex',
+        max_tokens: 128,
+        messages: [{ role: 'user', content: 'First.' }],
+        thinking: { type: 'enabled', budget_tokens: 16000 },
+      }),
+    });
+    await readSSEEvents(first.body);
+
+    const second = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'gpt-5.3-codex',
+        max_tokens: 128,
+        messages: [
+          { role: 'user', content: 'First.' },
+          { role: 'assistant', content: 'ok' },
+          { role: 'user', content: 'Second.' },
+        ],
+        thinking: { type: 'enabled', budget_tokens: 16000 },
+      }),
+    });
+    const body = (await second.json()) as { error: { type: string; message: string } };
+
+    // When the retry also fails, the 400 surfaces to the SDK as before.
+    expect(second.status).toBe(400);
+    expect(body.error.message).toContain('Unsupported content type');
   });
 
   it('uses Codex ChatGPT OAuth endpoint and account header for OAuth auth', async () => {
