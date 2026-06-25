@@ -552,6 +552,43 @@ describe('SpaceRuntime — prompt-too-long recovery', () => {
     expect(injections.filter((i) => i.message === '/compact').length).toBe(2);
   });
 
+  test('preserves attempts even when the resume nag is consumed (visible)', async () => {
+    // Round-8 regression: production consumes the nag before
+    // injectRuntimeRecoveryMessage returns (enqueueWithId resolves after the SDK
+    // consumes it), so getLastSDKMessage INCLUDES the nag as a user message.
+    // awaitingResume must still wait for a resumed-turn RESULT, not clear on the
+    // consumed nag itself — otherwise attempts reset and the edge loop recurs.
+    const injections: Array<{ sessionId: string; message: string }> = [];
+    const rt = new SpaceRuntime(buildConfig(makeRecordingTam(injections)));
+    const sessionId = 'session:nag-consumed';
+    const { run, execution } = await setupIdleOverflowExecution(rt, sessionId, true);
+
+    await rt.executeTick(); // → /compact (attempt 1)
+    saveResultMessage(sessionId, { promptTooLong: false }); // compact success
+    await rt.executeTick(); // → continue nag delivered (awaitingResume=true)
+
+    // Simulate production: the nag is consumed (visible to getLastSDKMessage).
+    db.prepare(
+      `UPDATE sdk_messages SET send_status = 'consumed'
+       WHERE id = (
+         SELECT id FROM sdk_messages
+         WHERE session_id = ? AND message_type = 'user'
+         ORDER BY timestamp DESC, rowid DESC LIMIT 1
+       )`
+    ).run(sessionId);
+
+    // Tick with the consumed nag as the last message — must NOT clear the state
+    // (the nag is a user message, not a resumed-turn result).
+    await rt.executeTick();
+    const preserved = promptTooLongRecoveryMap(rt).get(`${run.id}:${execution.id}`);
+    expect(preserved?.compactAttempts).toBe(1);
+
+    // Resumed turn overflows → re-compact with attempts preserved (attempt 2).
+    saveResultMessage(sessionId, { promptTooLong: true });
+    await rt.executeTick();
+    expect(injections.filter((i) => i.message === '/compact').length).toBe(2);
+  });
+
   test('escalates to blocked when the /compact turn hangs (wait timeout)', async () => {
     // P2: if the /compact turn never produces a result, awaitingContinue must not
     // wait forever — the recovery escalates after COMPACT_RESULT_TIMEOUT_MS.

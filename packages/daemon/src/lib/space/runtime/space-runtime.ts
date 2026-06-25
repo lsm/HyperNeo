@@ -5295,15 +5295,23 @@ export class SpaceRuntime {
     // open (preventing the terminal-skip from clearing the state and resetting
     // compactAttempts prematurely). When the resumed turn advances:
     //  - a prompt-too-long result → re-compact/escalate with attempts PRESERVED;
-    //  - any other message → productive, clear the recovery state (fresh next time).
+    //  - any other RESULT → productive, clear the recovery state (fresh next time).
+    //
+    // The wait clears ONLY on a RESULT from the resumed turn — not on the
+    // consumed continue nag itself. injectRuntimeRecoveryMessage awaits
+    // messageQueue.enqueueWithId, which resolves only after the SDK consumes the
+    // nag (flipping send_status to 'consumed' so getLastSDKMessage includes it),
+    // but before the resumed API call returns. So the consumed nag (a user
+    // message) is briefly the last message; treating it as "advance" would clear
+    // the state and reset attempts before the resumed turn produces anything.
     if (state.awaitingResume && state.awaitingResumeAfterDbId !== null) {
-      if (lastMessageDbId === state.awaitingResumeAfterDbId) {
-        return 'handled'; // nag still in flight / resumed turn hasn't advanced
+      if (!lastMessageIsResult || lastMessageDbId === state.awaitingResumeAfterDbId) {
+        return 'handled'; // nag enqueued/consumed but resumed turn hasn't produced a result
       }
       state.awaitingResume = false;
       state.awaitingResumeAfterDbId = null;
       if (!overflowed) {
-        // Resumed turn produced a non-overflow message — real progress.
+        // Resumed turn produced a non-overflow result — real progress.
         this.promptTooLongRecovery.delete(key);
         return 'handled';
       }
