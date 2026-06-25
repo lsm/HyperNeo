@@ -429,6 +429,30 @@ describe('Ollama Anthropic bridge server', () => {
     expect(body.error.message).toContain('Too Many Requests');
   });
 
+  it('maps upstream 529 to Anthropic overloaded_error', async () => {
+    const fetchMock = mock(async () => new Response('Overloaded', { status: 529 }));
+    const server = createOllamaAnthropicBridgeServer({
+      baseUrl: 'https://ollama.com',
+      apiKey: 'cloud-key',
+      fetchImpl: fetchMock as typeof fetch,
+    });
+    servers.push(server);
+
+    const response = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'gpt-oss:120b-cloud',
+        messages: [{ role: 'user', content: 'Hi' }],
+      }),
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(529);
+    expect(body.error.type).toBe('overloaded_error');
+    expect(body.error.message).toContain('Overloaded');
+  });
+
   it('maps upstream failures to Anthropic JSON errors', async () => {
     const fetchMock = mock(async () => new Response('Unauthorized', { status: 401 }));
     const server = createOllamaAnthropicBridgeServer({
