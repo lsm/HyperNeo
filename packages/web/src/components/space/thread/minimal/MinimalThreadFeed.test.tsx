@@ -208,6 +208,38 @@ function errorResultMessage(uuid: string) {
   };
 }
 
+function budgetErrorResultMessage(uuid: string) {
+  return {
+    type: 'result',
+    uuid,
+    subtype: 'error_max_budget_usd',
+    is_error: true,
+    duration_ms: 1000,
+    duration_api_ms: 800,
+    num_turns: 1,
+    errors: ['Budget limit exceeded'],
+    stop_reason: null,
+    total_cost_usd: 0.5,
+    usage: { input_tokens: 50, output_tokens: 25 },
+  };
+}
+
+function errorResultMessageWithEmptyErrors(uuid: string) {
+  return {
+    type: 'result',
+    uuid,
+    subtype: 'error_during_execution',
+    is_error: true,
+    duration_ms: 1000,
+    duration_api_ms: 800,
+    num_turns: 1,
+    errors: [],
+    stop_reason: null,
+    total_cost_usd: 0.001,
+    usage: { input_tokens: 50, output_tokens: 25 },
+  };
+}
+
 describe('MinimalThreadFeed', () => {
   beforeEach(() => {
     cleanup();
@@ -2493,6 +2525,127 @@ describe('MinimalThreadFeed', () => {
       // `isError` flag wires the amber accent class onto the trigger so
       // failures surface in the actions row before the dropdown opens.
       expect(trigger?.className).toMatch(/amber/);
+    });
+  });
+
+  describe('Terminal result error inline surfacing', () => {
+    it('paints the completed turn bubble red and surfaces the error inline for error subtypes', () => {
+      const t = Date.now();
+      const rows = [
+        makeRow({
+          id: 'a1',
+          label: 'Coder Agent',
+          createdAt: t,
+          message: assistantText('a1', 'attempting'),
+        }),
+        makeRow({
+          id: 'r1',
+          label: 'Coder Agent',
+          createdAt: t + 1000,
+          message: errorResultMessage('r1'),
+        }),
+      ];
+
+      const { container } = render(<MinimalThreadFeed parsedRows={rows} />);
+      const bubble = container.querySelector('[data-testid="minimal-thread-agent-bubble"]');
+      expect(bubble).not.toBeNull();
+      // Red bubble treatment — data attribute + red bg/border classes.
+      expect(bubble?.getAttribute('data-result-error')).toBe('true');
+      expect(bubble?.className).toMatch(/bg-red-900\/20/);
+      expect(bubble?.className).toMatch(/border-red-800/);
+      // Inline error summary surfaces the first error string without opening
+      // the dropdown.
+      const summary = container.querySelector(
+        '[data-testid="minimal-thread-result-error-summary"]'
+      );
+      expect(summary).not.toBeNull();
+      expect(summary?.textContent).toContain('something failed');
+    });
+
+    it('excludes error_max_budget_usd from the inline red treatment', () => {
+      const t = Date.now();
+      const rows = [
+        makeRow({
+          id: 'a1',
+          label: 'Coder Agent',
+          createdAt: t,
+          message: assistantText('a1', 'ran out of budget'),
+        }),
+        makeRow({
+          id: 'r1',
+          label: 'Coder Agent',
+          createdAt: t + 1000,
+          message: budgetErrorResultMessage('r1'),
+        }),
+      ];
+
+      const { container } = render(<MinimalThreadFeed parsedRows={rows} />);
+      const bubble = container.querySelector('[data-testid="minimal-thread-agent-bubble"]');
+      expect(bubble).not.toBeNull();
+      // Budget cap is a deliberate cost guard, not an execution failure — no
+      // red bubble, no inline summary. It still gets the amber dropdown trigger.
+      expect(bubble?.getAttribute('data-result-error')).toBeNull();
+      expect(bubble?.className).not.toMatch(/bg-red-900/);
+      expect(
+        container.querySelector('[data-testid="minimal-thread-result-error-summary"]')
+      ).toBeNull();
+      expect(container.querySelector('button[title="Run result"]')).not.toBeNull();
+    });
+
+    it('does not paint the bubble red for successful results', () => {
+      const t = Date.now();
+      const rows = [
+        makeRow({
+          id: 'a1',
+          label: 'Coder Agent',
+          createdAt: t,
+          message: assistantText('a1', 'all good'),
+        }),
+        makeRow({
+          id: 'r1',
+          label: 'Coder Agent',
+          createdAt: t + 1000,
+          message: resultMessage('r1', 'done'),
+        }),
+      ];
+
+      const { container } = render(<MinimalThreadFeed parsedRows={rows} />);
+      const bubble = container.querySelector('[data-testid="minimal-thread-agent-bubble"]');
+      expect(bubble).not.toBeNull();
+      expect(bubble?.getAttribute('data-result-error')).toBeNull();
+      expect(bubble?.className).toMatch(/bg-dark-800/);
+      expect(
+        container.querySelector('[data-testid="minimal-thread-result-error-summary"]')
+      ).toBeNull();
+    });
+
+    it('falls back to a subtype label when errors[] is empty', () => {
+      const t = Date.now();
+      const rows = [
+        makeRow({
+          id: 'a1',
+          label: 'Coder Agent',
+          createdAt: t,
+          message: assistantText('a1', 'attempting'),
+        }),
+        makeRow({
+          id: 'r1',
+          label: 'Coder Agent',
+          createdAt: t + 1000,
+          message: errorResultMessageWithEmptyErrors('r1'),
+        }),
+      ];
+
+      const { container } = render(<MinimalThreadFeed parsedRows={rows} />);
+      const bubble = container.querySelector('[data-testid="minimal-thread-agent-bubble"]');
+      expect(bubble?.getAttribute('data-result-error')).toBe('true');
+      const summary = container.querySelector(
+        '[data-testid="minimal-thread-result-error-summary"]'
+      );
+      expect(summary).not.toBeNull();
+      // No error string → humanized subtype label so the red bubble always
+      // carries an explanation.
+      expect(summary?.textContent).toContain('Error during execution');
     });
   });
 
