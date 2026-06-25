@@ -1911,6 +1911,282 @@ describe('QueryRunner', () => {
       });
     }
   });
+
+  describe('bounded provider error retry (5xx / overloaded / unavailable)', () => {
+    // Integration tests: exercise the runQuery() catch block when a 5xx /
+    // overloaded / provider-unavailable error escapes the SDK. buildSpy is set
+    // to throw the provider error so the bounded retry path fires without
+    // needing a real subprocess. ANTHROPIC_API_KEY is set to a dummy value so
+    // the pre-query auth check passes. Backoff delay is zeroed via env var so
+    // tests don't sleep for real.
+
+    let savedApiKey: string | undefined;
+    let savedBaseDelay: string | undefined;
+    let savedMaxRetries: string | undefined;
+
+    beforeEach(() => {
+      savedApiKey = process.env.ANTHROPIC_API_KEY;
+      savedBaseDelay = process.env.NEOKAI_PROVIDER_RETRY_BASE_DELAY_MS;
+      savedMaxRetries = process.env.NEOKAI_PROVIDER_MAX_RETRIES;
+      process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+      // Zero the backoff delay so retries fire immediately.
+      process.env.NEOKAI_PROVIDER_RETRY_BASE_DELAY_MS = '0';
+      mockSession.workspacePath = tmpdir();
+    });
+
+    afterEach(() => {
+      if (savedApiKey === undefined) {
+        delete process.env.ANTHROPIC_API_KEY;
+      } else {
+        process.env.ANTHROPIC_API_KEY = savedApiKey;
+      }
+      if (savedBaseDelay === undefined) {
+        delete process.env.NEOKAI_PROVIDER_RETRY_BASE_DELAY_MS;
+      } else {
+        process.env.NEOKAI_PROVIDER_RETRY_BASE_DELAY_MS = savedBaseDelay;
+      }
+      if (savedMaxRetries === undefined) {
+        delete process.env.NEOKAI_PROVIDER_MAX_RETRIES;
+      } else {
+        process.env.NEOKAI_PROVIDER_MAX_RETRIES = savedMaxRetries;
+      }
+    });
+
+    it('should retry up to the cap (3) on a 529 overloaded error', async () => {
+      buildSpy.mockRejectedValue(
+        new Error('529 {"type":"error","error":{"type":"overloaded_error"}}')
+      );
+
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      // 1 initial + 3 retries = 4 calls total
+      expect(buildSpy).toHaveBeenCalledTimes(4);
+    });
+
+    it('should retry up to the cap on a 503 service unavailable error', async () => {
+      buildSpy.mockRejectedValue(new Error('503 Service Unavailable'));
+
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(buildSpy).toHaveBeenCalledTimes(4);
+    });
+
+    it('should retry up to the cap on a 500 internal server error', async () => {
+      buildSpy.mockRejectedValue(new Error('500 Internal Server Error'));
+
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(buildSpy).toHaveBeenCalledTimes(4);
+    });
+
+    it('should retry up to the cap on a 502 bad gateway error', async () => {
+      buildSpy.mockRejectedValue(new Error('502 Bad Gateway'));
+
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(buildSpy).toHaveBeenCalledTimes(4);
+    });
+
+    it('should NOT retry 401 authentication errors (terminal)', async () => {
+      buildSpy.mockRejectedValue(new Error('401 Unauthorized'));
+
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      // No retry — exactly 1 call
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('should NOT retry 402 quota/billing errors (terminal)', async () => {
+      buildSpy.mockRejectedValue(new Error('402 {"error":{"message":"insufficient_quota"}}'));
+
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('should NOT retry model_not_found errors (terminal)', async () => {
+      buildSpy.mockRejectedValue(new Error('model_not_found: invalid-model-id'));
+
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('should NOT retry a 5xx that also contains a 401 auth signal', async () => {
+      // Belt-and-suspenders: even though "500" is present, the auth guard wins.
+      buildSpy.mockRejectedValue(new Error('500 error: invalid_api_key'));
+
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('should not retry provider errors after an intentional interrupt', async () => {
+      buildSpy.mockRejectedValue(new Error('503 Service Unavailable'));
+      getStateSpy.mockReturnValue({ status: 'interrupted' });
+
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('should surface error via handleError after exhausting retries', async () => {
+      buildSpy.mockRejectedValue(new Error('529 overloaded'));
+
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(handleErrorSpy).toHaveBeenCalled();
+    });
+
+    it('should show exhausted-retry user-facing message after retries are exhausted', async () => {
+      buildSpy.mockRejectedValue(new Error('529 overloaded'));
+
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(handleErrorSpy).toHaveBeenCalledWith(
+        'test-session-id',
+        expect.any(Error),
+        expect.any(String),
+        expect.stringContaining('temporarily unavailable'),
+        expect.anything(),
+        expect.any(Object)
+      );
+      const userMessage = handleErrorSpy.mock.calls[0][3] as string;
+      expect(userMessage).toContain('retried');
+      // Must NOT leak raw error internals
+      expect(userMessage).not.toContain('529');
+    });
+
+    it('should display a sanitized retry notice on each retry attempt', async () => {
+      buildSpy.mockRejectedValue(new Error('503 Service Unavailable'));
+
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      // 3 retries → 3 retry notices (plus the final exhausted terminal error
+      // which goes through handleError, not displayErrorAsAssistantMessage).
+      const retryNotices = saveSDKMessageSpy.mock.calls.filter(([, msg]) => {
+        const content = (msg as { message?: { content?: Array<{ text?: string }> } }).message
+          ?.content;
+        return Array.isArray(content) && content.some((c) => c.text?.includes('Retrying'));
+      });
+      expect(retryNotices).toHaveLength(3);
+    });
+
+    it('should re-enqueue tracked user message on the first provider retry', async () => {
+      const consumedUuid = 'consumed-msg-uuid';
+      const consumedContent = [{ type: 'text' as const, text: 'Hello, Claude!' }];
+
+      buildSpy.mockRejectedValue(new Error('529 overloaded'));
+
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+
+      (runner as unknown as { _lastConsumedUserMessage: unknown })._lastConsumedUserMessage = {
+        uuid: consumedUuid,
+        content: consumedContent,
+      };
+
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(enqueueWithIdSpy).toHaveBeenCalledWith(consumedUuid, consumedContent);
+    });
+
+    it('should call stateManager.setIdle after exhausting retries', async () => {
+      buildSpy.mockRejectedValue(new Error('503 Service Unavailable'));
+
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(setIdleSpy).toHaveBeenCalled();
+    });
+
+    it('should respect NEOKAI_PROVIDER_MAX_RETRIES env override (1 retry)', async () => {
+      process.env.NEOKAI_PROVIDER_MAX_RETRIES = '1';
+      buildSpy.mockRejectedValue(new Error('503 Service Unavailable'));
+
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      // 1 initial + 1 retry = 2 calls
+      expect(buildSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it('should close queryObject before retrying to prevent transport crash', async () => {
+      let closeCalled = false;
+      const mockQueryObject = {
+        close: () => {
+          closeCalled = true;
+        },
+        [Symbol.asyncIterator]: function* () {},
+      } as unknown as import('@anthropic-ai/claude-agent-sdk').Query;
+
+      buildSpy.mockRejectedValue(new Error('503 Service Unavailable'));
+
+      const ctx = createContext({ queryObject: mockQueryObject });
+      runner = new QueryRunner(ctx);
+
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(closeCalled).toBe(true);
+      expect(ctx.queryObject).toBeNull();
+    });
+
+    it('should NOT retry transient connection errors via the bounded path (stays 1-shot)', async () => {
+      // Transient connection patterns (e.g. "TypeError: fetch failed") must
+      // still be handled by the 1-shot transient path, not the bounded path.
+      buildSpy.mockRejectedValue(new Error('TypeError: fetch failed'));
+
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      // Transient path: exactly 2 calls (1 + 1 retry), NOT 4.
+      expect(buildSpy).toHaveBeenCalledTimes(2);
+    });
+  });
 });
 
 describe('QueryRunner error categorization', () => {
