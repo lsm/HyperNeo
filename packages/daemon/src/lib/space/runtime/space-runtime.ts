@@ -5260,9 +5260,12 @@ export class SpaceRuntime {
     const lastMessageIsResult =
       !!lastMessage && (lastMessage as { type?: string }).type === 'result';
     const overflowed = isPromptTooLongResult(lastMessage);
+    const lastMessageIsSuccessResult =
+      lastMessageIsResult && !(lastMessage as { is_error?: boolean }).is_error;
 
     // The `/compact` turn landed a RESULT (real completion — not an intermediate
     // status/compact_boundary row). End the wait and re-evaluate.
+    let compactJustFailed = false;
     if (
       state.awaitingContinue &&
       lastMessageIsResult &&
@@ -5272,11 +5275,16 @@ export class SpaceRuntime {
       state.awaitingContinue = false;
       state.awaitingContinueAfterDbId = null;
       state.awaitingContinueSince = null;
-      // A non-overflow result means compaction shrank the context — queue the
-      // resume nag. A fresh overflow result falls through to re-compact/escalate.
-      if (!overflowed) {
+      // Only a SUCCESS result proves compaction shrank the context — queue the
+      // resume nag. A non-overflow ERROR result (model/auth/rate-limit) means
+      // compaction failed; route it to re-compact/escalate instead of resuming
+      // into an unchanged, still-over-limit context.
+      if (lastMessageIsSuccessResult) {
         state.continueNagPending = true;
+      } else if (!overflowed) {
+        compactJustFailed = true;
       }
+      // A fresh overflow result falls through with `overflowed` to re-compact.
     }
 
     // Bound the post-compact wait: if the /compact turn produced no result
@@ -5299,13 +5307,18 @@ export class SpaceRuntime {
       return 'blocked';
     }
 
-    if (overflowed) {
+    // Re-compact/escalate on a fresh overflow OR a just-failed compaction
+    // (non-overflow error result). Both mean compaction did not shrink the
+    // context enough.
+    if (overflowed || compactJustFailed) {
       // `/compact` still in flight — wait for the result.
       if (state.awaitingContinue) {
         return 'handled';
       }
       if (state.compactAttempts >= MAX_PROMPT_TOO_LONG_RECOVERY_ATTEMPTS) {
-        const reason = `Context overflow ("prompt is too long") could not be resolved after ${state.compactAttempts} compaction attempt(s); agent ${execution.agentName} cannot make progress.`;
+        const reason = compactJustFailed
+          ? `Context-overflow recovery: /compact failed (non-overflow error) after ${state.compactAttempts} attempt(s) for agent ${execution.agentName}.`
+          : `Context overflow ("prompt is too long") could not be resolved after ${state.compactAttempts} compaction attempt(s); agent ${execution.agentName} cannot make progress.`;
         await this.escalatePromptTooLongBlocked(
           runId,
           spaceId,
@@ -5422,6 +5435,11 @@ export class SpaceRuntime {
     this.config.nodeExecutionRepo.update(execution.id, {
       status: 'blocked',
       result: reason,
+      // Detach the overflowed session. Its context is exhausted, so reusing it
+      // would just re-overflow. Clearing the id lets the bounded blocked-run
+      // retry (attemptBlockedRunRecovery) spawn fresh on retry instead of
+      // resurrecting this terminal-overflow session into a stuck in_progress.
+      agentSessionId: null,
     });
     await this.transitionRunStatusAndEmit(runId, 'blocked');
     await this.updateTaskAndEmit(spaceId, canonicalTask.id, {

@@ -293,15 +293,23 @@ describe('SpaceRuntime — prompt-too-long recovery', () => {
   /** Save a result SDK message as the last message for a session. */
   function saveResultMessage(
     sessionId: string,
-    opts: { promptTooLong?: boolean; minutesAgo?: number }
+    opts: { promptTooLong?: boolean; nonOverflowError?: boolean; minutesAgo?: number }
   ): void {
     const message = {
       type: 'result',
-      subtype: opts.promptTooLong ? 'error_during_execution' : 'success',
-      is_error: !!opts.promptTooLong,
+      subtype: opts.promptTooLong
+        ? 'error_during_execution'
+        : opts.nonOverflowError
+          ? 'error_during_execution'
+          : 'success',
+      is_error: !!(opts.promptTooLong || opts.nonOverflowError),
       terminal_reason: opts.promptTooLong ? 'prompt_too_long' : 'completed',
-      errors: opts.promptTooLong ? ['prompt is too long: 205616 tokens > 200000 maximum'] : [],
-      result: opts.promptTooLong ? '' : 'ok',
+      errors: opts.promptTooLong
+        ? ['prompt is too long: 205616 tokens > 200000 maximum']
+        : opts.nonOverflowError
+          ? ['API Error: 500 Internal Server Error']
+          : [],
+      result: opts.promptTooLong || opts.nonOverflowError ? '' : 'ok',
     };
     sdkMessageRepo.saveSDKMessage(sessionId, message as never);
     const minutesAgo = opts.minutesAgo ?? 20;
@@ -547,5 +555,48 @@ describe('SpaceRuntime — prompt-too-long recovery', () => {
 
     expect(injections.filter((i) => i.message !== '/compact').length).toBeGreaterThanOrEqual(2);
     expect(nodeExecutionRepo.getById(execution.id)?.status).toBe('blocked');
+  });
+
+  test('re-compacts instead of resuming when /compact errors (non-overflow)', async () => {
+    // P2: a non-overflow ERROR result (model/auth/rate-limit) means compaction
+    // failed — the recovery must NOT treat it as success and resume into an
+    // unchanged over-limit context. It re-compacts (counting as unproductive).
+    const injections: Array<{ sessionId: string; message: string }> = [];
+    const rt = new SpaceRuntime(buildConfig(makeRecordingTam(injections)));
+    const sessionId = 'session:compact-error';
+    const { run, execution } = await setupIdleOverflowExecution(rt, sessionId, true);
+
+    await rt.executeTick(); // → /compact (attempt 1)
+    // The /compact turn fails with a NON-overflow error.
+    saveResultMessage(sessionId, { nonOverflowError: true });
+    await rt.executeTick(); // → re-compact (attempt 2), NOT a continue nag
+    // Still failing → re-compact attempt 2 already used; another error escalates.
+    saveResultMessage(sessionId, { nonOverflowError: true });
+    await rt.executeTick(); // attempts exhausted → blocked
+
+    // No continue nag should ever have been sent (compaction never succeeded).
+    expect(injections.some((i) => i.message === buildPromptTooLongContinueNag())).toBe(false);
+    expect(injections.filter((i) => i.message === '/compact').length).toBeGreaterThanOrEqual(2);
+    expect(nodeExecutionRepo.getById(execution.id)?.status).toBe('blocked');
+  });
+
+  test('detaches the overflowed session when escalating to blocked', async () => {
+    // P2: escalation clears agentSessionId so the bounded blocked-run retry
+    // spawns fresh instead of resurrecting the terminal-overflow session.
+    const injections: Array<{ sessionId: string; message: string }> = [];
+    const rt = new SpaceRuntime(buildConfig(makeRecordingTam(injections)));
+    const sessionId = 'session:block-clear';
+    const { execution } = await setupIdleOverflowExecution(rt, sessionId, true);
+
+    // Force exhaustion: two unproductive compactions (fresh overflow each time).
+    await rt.executeTick(); // /compact 1
+    saveResultMessage(sessionId, { promptTooLong: true });
+    await rt.executeTick(); // /compact 2
+    saveResultMessage(sessionId, { promptTooLong: true });
+    await rt.executeTick(); // → blocked
+
+    const blocked = nodeExecutionRepo.getById(execution.id);
+    expect(blocked?.status).toBe('blocked');
+    expect(blocked?.agentSessionId).toBeNull();
   });
 });
