@@ -14,11 +14,23 @@
 import type { SDKMessage } from '@neokai/shared/sdk';
 
 /**
- * Maximum `/compact` attempts for a single execution before escalating to
+ * Maximum consecutive *unproductive* `/compact` attempts before escalating to
  * `blocked`. Bounds the loop when compaction cannot shrink the context enough
- * (e.g. a single message already exceeds the limit).
+ * (e.g. a single message already exceeds the limit). Reset to 0 once a
+ * compaction is productive (the resume nag is delivered), so a long-running
+ * worker that legitimately re-fills context over time is not penalised for
+ * stale recovery history.
  */
 export const MAX_PROMPT_TOO_LONG_RECOVERY_ATTEMPTS = 2;
+
+/**
+ * Maximum time to wait for the `/compact` turn to produce a result before
+ * treating the compaction as hung and escalating to `blocked`. The SDK's
+ * compaction involves an LLM summarisation call, so this is generous; if no
+ * result lands in this window the session is stuck (and the execution is
+ * `idle`, so the alive-stuck sweep cannot rescue it).
+ */
+export const COMPACT_RESULT_TIMEOUT_MS = 5 * 60 * 1000;
 
 /**
  * Per-execution recovery state. Keyed by `${runId}:${executionId}` in
@@ -26,26 +38,33 @@ export const MAX_PROMPT_TOO_LONG_RECOVERY_ATTEMPTS = 2;
  */
 export interface PromptTooLongRecoveryState {
   /**
-   * Total `/compact` injections across the execution's lifetime. Accumulates
-   * across compact→continue→re-overflow cycles so repeated unhelpful compactions
-   * escalate to `blocked` instead of resetting each cycle.
+   * Consecutive *unproductive* `/compact` attempts. Reset to 0 once a compaction
+   * is productive (the resume nag is delivered), so the cap targets repeated
+   * unhelpful compactions rather than lifetime total.
    */
   compactAttempts: number;
   /**
    * True after a `/compact` was successfully injected and we are waiting for the
-   * compacted result to land before sending the "continue your work" nag. Guards
-   * against re-injecting `/compact` while the injected command is still the last
-   * persisted message.
+   * compacted RESULT to land. Guards against re-injecting `/compact` while the
+   * turn is in flight.
    */
   awaitingContinue: boolean;
   /**
-   * dbId of the injected `/compact` message. While `awaitingContinue` is set, a
-   * tick whose last-message dbId differs from this means the `/compact` turn has
-   * landed a new result (success or a fresh overflow) — the wait is over and the
-   * state is re-evaluated. This prevents a fresh overflow result from being
-   * treated like the pre-compact result and stalling forever.
+   * dbId of the injected `/compact` message. Used to detect when a NEW message
+   * has landed. The wait is cleared only when that new message is a `result`
+   * (real turn completion) — not an intermediate `status: 'compacting'` row —
+   * so the resume nag is never sent mid-compaction.
    */
   awaitingContinueAfterDbId: string | null;
+  /** Timestamp (ms) the `/compact` was injected, for the wait timeout. */
+  awaitingContinueSince: number | null;
+  /**
+   * True once compaction produced a non-overflow result and the "resume your
+   * work" nag still needs to be delivered (or retried after a failed delivery).
+   */
+  continueNagPending: boolean;
+  /** Failed resume-nag deliveries; bounded before giving up. */
+  continueNagAttempts: number;
 }
 
 export function createPromptTooLongRecoveryState(): PromptTooLongRecoveryState {
@@ -53,6 +72,9 @@ export function createPromptTooLongRecoveryState(): PromptTooLongRecoveryState {
     compactAttempts: 0,
     awaitingContinue: false,
     awaitingContinueAfterDbId: null,
+    awaitingContinueSince: null,
+    continueNagPending: false,
+    continueNagAttempts: 0,
   };
 }
 

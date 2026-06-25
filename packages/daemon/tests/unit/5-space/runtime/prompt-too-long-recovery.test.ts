@@ -28,6 +28,7 @@ import type { SpaceWorkflow } from '@neokai/shared';
 import {
   isPromptTooLongResult,
   buildPromptTooLongContinueNag,
+  COMPACT_RESULT_TIMEOUT_MS,
   MAX_PROMPT_TOO_LONG_RECOVERY_ATTEMPTS,
 } from '../../../../src/lib/space/runtime/prompt-too-long-recovery';
 
@@ -445,38 +446,106 @@ describe('SpaceRuntime — prompt-too-long recovery', () => {
     expect(nodeExecutionRepo.getById(execution.id)?.status).toBe('blocked');
   });
 
-  test('escalates to blocked after MAX attempts when compaction cannot help', async () => {
+  test('does not block a long-running worker whose compactions are productive', async () => {
+    // P2: compactAttempts resets on a productive resume, so a worker that
+    // legitimately re-fills context over time is not penalised for stale
+    // recovery history. Only CONSECUTIVE unproductive compactions escalate.
     const injections: Array<{ sessionId: string; message: string }> = [];
     const rt = new SpaceRuntime(buildConfig(makeRecordingTam(injections)));
-    const sessionId = 'session:unrecoverable';
+    const sessionId = 'session:long-running';
     const { run, execution } = await setupIdleOverflowExecution(rt, sessionId, true);
 
     const continueNag = buildPromptTooLongContinueNag();
-    // Realistic "compaction can't help" cycle: each /compact shrinks context
-    // (success result → continue nag), but the session re-overflows on the next
-    // turn because a single message already exceeds the limit.
-    // Cycle 1
-    await rt.executeTick(); // → /compact (attempt 1)
-    saveResultMessage(sessionId, { promptTooLong: false });
-    await rt.executeTick(); // → continue nag
-    // Cycle 2
-    saveResultMessage(sessionId, { promptTooLong: true });
-    await rt.executeTick(); // → /compact (attempt 2)
-    saveResultMessage(sessionId, { promptTooLong: false });
-    await rt.executeTick(); // → continue nag
-    // Cycle 3: attempts exhausted → escalate to blocked
-    saveResultMessage(sessionId, { promptTooLong: true });
-    await rt.executeTick();
+    // Three productive cycles: each /compact succeeds (context shrank) and the
+    // resume nag resets the counter. The worker must NOT be blocked.
+    for (let cycle = 0; cycle < 3; cycle++) {
+      await rt.executeTick(); // → /compact
+      saveResultMessage(sessionId, { promptTooLong: false });
+      await rt.executeTick(); // → continue nag (resets compactAttempts)
+      saveResultMessage(sessionId, { promptTooLong: true }); // re-overflow later
+    }
 
     expect(injections.map((i) => i.message)).toEqual([
       '/compact',
       continueNag,
       '/compact',
       continueNag,
+      '/compact',
+      continueNag,
     ]);
-    const updated = nodeExecutionRepo.getById(execution.id);
-    expect(updated?.status).toBe('blocked');
+    expect(nodeExecutionRepo.getById(execution.id)?.status).toBe('idle');
+    expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+    // compactAttempts was reset by the last productive resume.
+    expect(promptTooLongRecoveryMap(rt).get(`${run.id}:${execution.id}`)?.compactAttempts).toBe(0);
+  });
+
+  test('escalates to blocked when the /compact turn hangs (wait timeout)', async () => {
+    // P2: if the /compact turn never produces a result, awaitingContinue must not
+    // wait forever — the recovery escalates after COMPACT_RESULT_TIMEOUT_MS.
+    const injections: Array<{ sessionId: string; message: string }> = [];
+    const rt = new SpaceRuntime(buildConfig(makeRecordingTam(injections)));
+    const sessionId = 'session:hung-compact';
+    const { run, execution } = await setupIdleOverflowExecution(rt, sessionId, true);
+
+    // Tick 1: inject /compact. The turn "hangs" — no result lands.
+    await rt.executeTick();
+    expect(injections.map((i) => i.message)).toEqual(['/compact']);
+
+    // Simulate the timeout elapsing with no result (the /compact is still the
+    // last message, so the wait has not cleared).
+    const states = (
+      rt as unknown as {
+        promptTooLongRecovery: Map<string, { awaitingContinueSince: number | null }>;
+      }
+    ).promptTooLongRecovery;
+    const state = states.get(`${run.id}:${execution.id}`);
+    expect(state?.awaitingContinueSince).not.toBeNull();
+    state!.awaitingContinueSince = Date.now() - (COMPACT_RESULT_TIMEOUT_MS + 1000);
+
+    await rt.executeTick(); // → timeout → blocked
+
+    expect(nodeExecutionRepo.getById(execution.id)?.status).toBe('blocked');
     expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
-    expect(promptTooLongRecoveryMap(rt).has(`${run.id}:${execution.id}`)).toBe(false);
+  });
+
+  test('retries then escalates when the resume nag cannot be delivered', async () => {
+    // P2: a failed continue-nag injection must not be silently swallowed — it
+    // retries and escalates to blocked if delivery keeps failing.
+    const injections: Array<{ sessionId: string; message: string }> = [];
+    // /compact succeeds, but the continue nag always fails.
+    let injectCallCount = 0;
+    const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, sdkMessageRepo, db, {
+      inject: async (sessionId, message) => {
+        injectCallCount += 1;
+        if (message === '/compact') {
+          // /compact persists + returns dbId (success)
+          injections.push({ sessionId, message });
+          sdkMessageRepo.saveSDKMessage(sessionId, {
+            type: 'user',
+            message: { role: 'user', content: message },
+          } as never);
+          const row = db
+            .prepare(
+              `SELECT id FROM sdk_messages WHERE session_id = ? ORDER BY timestamp DESC, rowid DESC LIMIT 1`
+            )
+            .get(sessionId) as { id: string };
+          return row.id;
+        }
+        // continue nag always fails
+        injections.push({ sessionId, message });
+        throw new Error('session gone');
+      },
+    });
+    const rt = new SpaceRuntime(buildConfig(tam));
+    const sessionId = 'session:nag-fail';
+    const { run, execution } = await setupIdleOverflowExecution(rt, sessionId, true);
+
+    await rt.executeTick(); // → /compact (succeeds)
+    saveResultMessage(sessionId, { promptTooLong: false }); // compaction succeeded
+    await rt.executeTick(); // → continue nag (fails, attempt 1)
+    await rt.executeTick(); // → continue nag (fails, attempt 2) → blocked
+
+    expect(injections.filter((i) => i.message !== '/compact').length).toBeGreaterThanOrEqual(2);
+    expect(nodeExecutionRepo.getById(execution.id)?.status).toBe('blocked');
   });
 });

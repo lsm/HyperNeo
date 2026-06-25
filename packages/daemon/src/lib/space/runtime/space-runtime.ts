@@ -86,6 +86,7 @@ import { evaluateGate } from './gate-evaluator';
 import { executeGateScript } from './gate-script-executor';
 import { classifyLastMessageForIdleAgent } from './last-message-classifier';
 import {
+  COMPACT_RESULT_TIMEOUT_MS,
   MAX_PROMPT_TOO_LONG_RECOVERY_ATTEMPTS,
   buildPromptTooLongContinueNag,
   createPromptTooLongRecoveryState,
@@ -5223,25 +5224,23 @@ export class SpaceRuntime {
    * context window (terminal `prompt_too_long` result).
    *
    * State machine (keyed by `${runId}:${executionId}`):
-   *  - prompt-too-long & awaitingContinue & last msg unchanged → wait (`/compact`
-   *    turn still in flight; the injected command is still the last message).
-   *  - prompt-too-long & not awaiting & attempts < MAX → inject `/compact`,
-   *    increment attempts, set awaitingContinue + record the injected msg dbId.
+   *  - prompt-too-long & awaitingContinue (compact in flight) & no result yet &
+   *    within timeout → wait.
+   *  - awaitingContinue & a `result` landed → clear the wait; if the result is
+   *    non-overflow, mark continueNagPending; if overflow, re-compact/escalate.
+   *  - awaitingContinue past COMPACT_RESULT_TIMEOUT_MS with no result → the
+   *    compact turn hung → escalate to blocked.
+   *  - prompt-too-long & not awaiting & attempts < MAX → inject `/compact`.
    *  - prompt-too-long & attempts >= MAX → escalate to blocked.
-   *  - NOT prompt-too-long & awaitingContinue (or just-compacted) → compaction
-   *    shrank the context; inject the resume nag and clear state.
+   *  - continueNagPending → deliver the resume nag; on success reset
+   *    compactAttempts (productive compaction) and clear; on failure retry,
+   *    bounded, then escalate.
    *
-   * Message-advance detection: `awaitingContinueAfterDbId` records the injected
-   * `/compact` message. Once the last-message dbId differs, the `/compact` turn
-   * has landed a new result — the wait clears and the new state is re-evaluated.
-   * This prevents a fresh overflow result (compaction couldn't shrink enough)
-   * from being mistaken for the pre-compact result and stalling forever.
-   *
-   * The continue nag fires ONLY once the last message is no longer a
-   * prompt-too-long result, i.e. the context dropped back below the limit — so
-   * it never re-hits the same wall. Injection failures count toward the cap so a
-   * session that cannot receive the compact escalates instead of retrying
-   * forever.
+   * The wait clears ONLY on a `result` message (real turn completion) — not an
+   * intermediate `status: 'compacting'` row — so the resume nag is never sent
+   * mid-compaction. `compactAttempts` counts consecutive *unproductive*
+   * compactions and resets on a productive resume, so a long-running worker is
+   * not penalised for stale recovery history.
    */
   private async recoverPromptTooLongIdleExecution(
     runId: string,
@@ -5258,64 +5257,68 @@ export class SpaceRuntime {
     this.promptTooLongRecovery.set(key, state);
 
     const lastMessageDbId = (lastMessage as { dbId?: string } | null | undefined)?.dbId ?? null;
-    // The `/compact` turn has landed a newer message — end the wait and
-    // re-evaluate the post-compact state (success → resume; fresh overflow →
-    // re-compact/escalate).
+    const lastMessageIsResult =
+      !!lastMessage && (lastMessage as { type?: string }).type === 'result';
+    const overflowed = isPromptTooLongResult(lastMessage);
+
+    // The `/compact` turn landed a RESULT (real completion — not an intermediate
+    // status/compact_boundary row). End the wait and re-evaluate.
     if (
       state.awaitingContinue &&
+      lastMessageIsResult &&
       state.awaitingContinueAfterDbId !== null &&
       lastMessageDbId !== state.awaitingContinueAfterDbId
     ) {
       state.awaitingContinue = false;
       state.awaitingContinueAfterDbId = null;
+      state.awaitingContinueSince = null;
+      // A non-overflow result means compaction shrank the context — queue the
+      // resume nag. A fresh overflow result falls through to re-compact/escalate.
+      if (!overflowed) {
+        state.continueNagPending = true;
+      }
     }
 
-    const overflowed = isPromptTooLongResult(lastMessage);
+    // Bound the post-compact wait: if the /compact turn produced no result
+    // within the timeout, it hung — escalate (the execution is `idle`, so the
+    // alive-stuck sweep cannot rescue it).
+    if (
+      state.awaitingContinue &&
+      state.awaitingContinueSince !== null &&
+      now - state.awaitingContinueSince > COMPACT_RESULT_TIMEOUT_MS
+    ) {
+      const reason = `Context-overflow recovery timed out: the /compact turn did not produce a result within ${COMPACT_RESULT_TIMEOUT_MS / 1000}s for agent ${execution.agentName}.`;
+      await this.escalatePromptTooLongBlocked(
+        runId,
+        spaceId,
+        canonicalTask,
+        execution,
+        now,
+        reason
+      );
+      return 'blocked';
+    }
 
     if (overflowed) {
-      // `/compact` still in flight (the injected command is still the last
-      // persisted message) — wait for it to take effect before re-injecting.
+      // `/compact` still in flight — wait for the result.
       if (state.awaitingContinue) {
         return 'handled';
       }
       if (state.compactAttempts >= MAX_PROMPT_TOO_LONG_RECOVERY_ATTEMPTS) {
         const reason = `Context overflow ("prompt is too long") could not be resolved after ${state.compactAttempts} compaction attempt(s); agent ${execution.agentName} cannot make progress.`;
-        this.promptTooLongRecovery.delete(key);
-        this.config.nodeExecutionRepo.update(execution.id, {
-          status: 'blocked',
-          result: reason,
-        });
-        await this.transitionRunStatusAndEmit(runId, 'blocked');
-        await this.updateTaskAndEmit(spaceId, canonicalTask.id, {
-          status: 'blocked',
-          result: reason,
-          blockReason: 'execution_failed',
-          completedAt: null,
-        });
-        await this.safeNotify({
-          kind: 'task_blocked',
-          spaceId,
-          taskId: canonicalTask.id,
-          reason,
-          timestamp: new Date(now).toISOString(),
-        });
-        await this.safeNotify({
-          kind: 'workflow_run_blocked',
-          spaceId,
+        await this.escalatePromptTooLongBlocked(
           runId,
-          reason,
-          timestamp: new Date(now).toISOString(),
-        });
-        log.warn(
-          `SpaceRuntime: blocked execution ${execution.id} (agent ${execution.agentName}) after repeated context overflow; compaction could not shrink context enough`
+          spaceId,
+          canonicalTask,
+          execution,
+          now,
+          reason
         );
         return 'blocked';
       }
       // Compact FIRST, then continue on a later tick. Count the attempt toward
-      // the cap up front so a session that cannot receive the compact (e.g.
-      // unrehydratable after a daemon restart, or no manager) still escalates
-      // instead of retrying forever. Only mark awaiting after a successful
-      // injection — otherwise the next tick must be free to retry.
+      // the cap up front so a session that cannot receive the compact still
+      // escalates. Only mark awaiting after a successful injection.
       state.compactAttempts += 1;
       let injectedDbId: string | null = null;
       try {
@@ -5330,6 +5333,7 @@ export class SpaceRuntime {
       if (injectedDbId !== null) {
         state.awaitingContinue = true;
         state.awaitingContinueAfterDbId = injectedDbId;
+        state.awaitingContinueSince = now;
         log.warn(
           `SpaceRuntime: injected /compact for overflowed execution ${execution.id} ` +
             `(agent ${execution.agentName}, session ${sessionId}, attempt ${state.compactAttempts}/${MAX_PROMPT_TOO_LONG_RECOVERY_ATTEMPTS})`
@@ -5343,37 +5347,106 @@ export class SpaceRuntime {
       return 'handled';
     }
 
-    // Not prompt-too-long. If a `/compact` is still in flight (the injected
-    // command or compact_boundary is the last non-terminal message), wait for
-    // the post-compact result.
+    // Not prompt-too-long. If a `/compact` is still in flight (no result yet),
+    // wait for the post-compact result.
     if (state.awaitingContinue) {
       return 'handled';
     }
 
-    // Not overflowing and not waiting: if we previously compacted, compaction
-    // succeeded (the context dropped below the limit) and the `/compact` turn
-    // landed a non-overflow result. Inject the resume nag. Keep the state so
-    // compactAttempts accumulates across compact→continue→re-overflow cycles
-    // (escalation relies on this); it is cleared by the terminal-skip path once
-    // the session resumes normally, or on escalation to `blocked`.
-    if (state.compactAttempts > 0) {
+    // Compaction succeeded — deliver the resume nag (retryable on failure so a
+    // transient/absent injection is not silently swallowed). On success the
+    // compaction was productive: reset compactAttempts so a long-running worker
+    // that legitimately re-fills context is not blocked by stale history.
+    if (state.continueNagPending) {
+      let nagDelivered = false;
       try {
-        await manager?.injectRuntimeRecoveryMessage(sessionId!, buildPromptTooLongContinueNag());
-        log.warn(
-          `SpaceRuntime: injected continue nag after compaction for execution ${execution.id} (agent ${execution.agentName}, session ${sessionId})`
-        );
+        nagDelivered =
+          !!(await manager?.injectRuntimeRecoveryMessage(
+            sessionId!,
+            buildPromptTooLongContinueNag()
+          )) && !!manager;
       } catch (err) {
         log.warn(
           `SpaceRuntime: failed to inject continue nag for execution ${execution.id} ` +
             `(session ${sessionId}): ${err instanceof Error ? err.message : String(err)}`
         );
       }
+      if (nagDelivered) {
+        state.continueNagPending = false;
+        state.continueNagAttempts = 0;
+        state.compactAttempts = 0; // productive compaction — forgive prior attempts
+        log.warn(
+          `SpaceRuntime: injected continue nag after compaction for execution ${execution.id} (agent ${execution.agentName}, session ${sessionId})`
+        );
+      } else {
+        state.continueNagAttempts += 1;
+        if (state.continueNagAttempts >= MAX_PROMPT_TOO_LONG_RECOVERY_ATTEMPTS) {
+          const reason = `Context-overflow recovery could not deliver the resume nag to agent ${execution.agentName} after ${state.continueNagAttempts} attempts (session unavailable).`;
+          await this.escalatePromptTooLongBlocked(
+            runId,
+            spaceId,
+            canonicalTask,
+            execution,
+            now,
+            reason
+          );
+          return 'blocked';
+        }
+        log.warn(
+          `SpaceRuntime: continue nag delivery failed for execution ${execution.id} ` +
+            `(session ${sessionId}); will retry (attempt ${state.continueNagAttempts}/${MAX_PROMPT_TOO_LONG_RECOVERY_ATTEMPTS})`
+        );
+      }
       return 'handled';
     }
 
-    // No compaction history and not overflowing — nothing to recover.
+    // No active recovery phase and not overflowing — nothing to recover.
     this.promptTooLongRecovery.delete(key);
     return 'handled';
+  }
+
+  /**
+   * Shared escalation: mark the execution + run `blocked`, notify, and clear the
+   * prompt-too-long recovery state.
+   */
+  private async escalatePromptTooLongBlocked(
+    runId: string,
+    spaceId: string,
+    canonicalTask: SpaceTask,
+    execution: NodeExecution,
+    now: number,
+    reason: string
+  ): Promise<void> {
+    const key = `${runId}:${execution.id}`;
+    this.promptTooLongRecovery.delete(key);
+    this.config.nodeExecutionRepo.update(execution.id, {
+      status: 'blocked',
+      result: reason,
+    });
+    await this.transitionRunStatusAndEmit(runId, 'blocked');
+    await this.updateTaskAndEmit(spaceId, canonicalTask.id, {
+      status: 'blocked',
+      result: reason,
+      blockReason: 'execution_failed',
+      completedAt: null,
+    });
+    await this.safeNotify({
+      kind: 'task_blocked',
+      spaceId,
+      taskId: canonicalTask.id,
+      reason,
+      timestamp: new Date(now).toISOString(),
+    });
+    await this.safeNotify({
+      kind: 'workflow_run_blocked',
+      spaceId,
+      runId,
+      reason,
+      timestamp: new Date(now).toISOString(),
+    });
+    log.warn(
+      `SpaceRuntime: blocked execution ${execution.id} (agent ${execution.agentName}) — ${reason}`
+    );
   }
 
   private async handleAliveStuckExecutions(
@@ -6550,11 +6623,15 @@ export class SpaceRuntime {
       const key = `${runId}:${execution.id}`;
       // Prompt-too-long recovery takes priority over both the terminal-skip and
       // the generic non-terminal idle path. It must fire for a terminal overflow
-      // result AND while awaiting a post-compact result (the `/compact` user
-      // message and compact_boundary rows are non-terminal), so the resume nag
-      // fires regardless of the compacted message's type.
+      // result, while awaiting a post-compact result, and while a resume nag is
+      // pending (retryable) — regardless of whether the latest message is
+      // classified as terminal.
       const ptlState = this.promptTooLongRecovery.get(key);
-      if (isPromptTooLongResult(lastMessage) || ptlState?.awaitingContinue) {
+      if (
+        isPromptTooLongResult(lastMessage) ||
+        ptlState?.awaitingContinue ||
+        ptlState?.continueNagPending
+      ) {
         const manager = tam ?? this.config.taskAgentManager;
         const outcome = await this.recoverPromptTooLongIdleExecution(
           runId,
