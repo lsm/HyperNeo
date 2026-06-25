@@ -10,6 +10,7 @@ import { describe, expect, it, beforeEach, mock } from 'bun:test';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { StateProjectionService } from '../../../../src/lib/state-projection-service';
 import type { Database } from '../../../../src/storage';
+import type { ReactiveDatabase } from '../../../../src/storage/reactive-database';
 import type { Session, GlobalSettings, AgentProcessingState } from '@neokai/shared';
 import { STATE_CHANNELS, DEFAULT_GLOBAL_SETTINGS } from '@neokai/shared';
 import type {
@@ -532,6 +533,7 @@ describe('StateProjectionService — session error persistence', () => {
   let service: StateProjectionService;
   let memDb: BunDatabase;
   let eventSubscribers: Map<string, Function[]>;
+  let notifyChange: ReturnType<typeof mock>;
 
   beforeEach(() => {
     memDb = new BunDatabase(':memory:');
@@ -539,6 +541,7 @@ describe('StateProjectionService — session error persistence', () => {
     memDb.prepare('INSERT INTO sessions (id) VALUES (?)').run('sess-cooldown-1');
 
     eventSubscribers = new Map();
+    notifyChange = mock(() => {});
     const mockInternalEventBus = {
       subscribe: mock((event: string, handler: Function) => {
         const existing = eventSubscribers.get(event) || [];
@@ -553,6 +556,10 @@ describe('StateProjectionService — session error persistence', () => {
     // `Database` facade stand-in — only `getDatabase()` is exercised by the
     // persistence path, so a minimal mock over the real in-memory DB suffices.
     const dbFacade = { getDatabase: () => memDb } as unknown as Database;
+    // ReactiveDatabase stand-in — `notifyChange` is spied so the test asserts
+    // the LiveQuery engine is told the sessions table changed (the write
+    // bypasses the reactive proxy, so an explicit notify is required).
+    const reactiveDb = { notifyChange } as unknown as ReactiveDatabase;
 
     service = new StateProjectionService(
       { event: mock(async () => {}), onRequest: mock(() => () => {}) } as never,
@@ -561,7 +568,10 @@ describe('StateProjectionService — session error persistence', () => {
       {} as never,
       {} as never,
       dbFacade,
-      mockInternalEventBus
+      mockInternalEventBus,
+      undefined,
+      undefined,
+      reactiveDb
     );
   });
 
@@ -592,6 +602,9 @@ describe('StateProjectionService — session error persistence', () => {
       message: 'Anthropic authentication failed.',
       providerId: 'anthropic',
     });
+    // The write bypasses the reactive proxy, so the LiveQuery engine must be
+    // notified explicitly that the sessions table changed.
+    expect(notifyChange).toHaveBeenCalledWith('sessions');
   });
 
   it('clears sessions.last_error on session.errorClear', async () => {
@@ -603,9 +616,11 @@ describe('StateProjectionService — session error persistence', () => {
     });
     expect(lastError('sess-cooldown-1')).not.toBeNull();
 
+    notifyChange.mockClear();
     const clearHandler = eventSubscribers.get('session.errorClear')?.[0];
     await clearHandler!({ sessionId: 'sess-cooldown-1' });
     expect(lastError('sess-cooldown-1')).toBeNull();
+    expect(notifyChange).toHaveBeenCalledWith('sessions');
   });
 
   it('ignores error events without a structured category', async () => {
@@ -615,7 +630,8 @@ describe('StateProjectionService — session error persistence', () => {
       error: 'plain string error',
       details: { code: 'ERR_001' },
     });
-    // No category → nothing persisted (column stays NULL).
+    // No category → nothing persisted (column stays NULL) and no notify fired.
     expect(lastError('sess-cooldown-1')).toBeNull();
+    expect(notifyChange).not.toHaveBeenCalled();
   });
 });

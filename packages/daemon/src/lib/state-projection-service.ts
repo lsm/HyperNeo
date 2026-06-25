@@ -24,6 +24,7 @@ import type { SettingsManager } from './settings-manager';
 import type { ProviderCredentialManager } from './credentials/provider-credential-manager';
 import type { Config } from '../config';
 import type { Database } from '../storage/database';
+import type { ReactiveDatabase } from '../storage/reactive-database';
 import { Logger } from './logger';
 import type {
   SessionsState,
@@ -89,7 +90,8 @@ export class StateProjectionService {
     private db?: Database,
     private internalEventBus?: InternalEventBus<DaemonInternalEventMap>,
     clientEvents?: IClientEventGateway,
-    private credentialManager?: ProviderCredentialManager
+    private credentialManager?: ProviderCredentialManager,
+    private reactiveDb?: ReactiveDatabase
   ) {
     this.clientEvents = clientEvents ?? new ClientEventGateway({ hub: messageHub });
     this.setupHandlers();
@@ -276,6 +278,10 @@ export class StateProjectionService {
       const db = this.db.getDatabase();
       if (!details) {
         db.prepare('UPDATE sessions SET last_error = NULL WHERE id = ?').run(sessionId);
+        // The write bypasses the ReactiveDatabase proxy, so notify explicitly
+        // — otherwise the activity LiveQuery wouldn't re-evaluate on a clear
+        // that isn't accompanied by a state-machine transition.
+        this.reactiveDb?.notifyChange('sessions');
         return;
       }
       const err = details as {
@@ -297,6 +303,8 @@ export class StateProjectionService {
         JSON.stringify(snapshot),
         sessionId
       );
+      // See above: bypasses the proxy, so notify the LiveQuery engine directly.
+      this.reactiveDb?.notifyChange('sessions');
     } catch (err) {
       this.logger.warn(`Failed to persist session error for ${sessionId}:`, err);
     }

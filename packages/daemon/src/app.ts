@@ -577,7 +577,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       db,
       internalEventBus,
       undefined,
-      credentialManager
+      credentialManager,
+      reactiveDb
     );
 
     // Initialize ClientEventBridge — forwards selected InternalEventBus events to
