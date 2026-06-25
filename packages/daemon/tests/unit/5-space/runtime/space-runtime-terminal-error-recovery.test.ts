@@ -351,9 +351,10 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
     expect(tam._injected[0].sessionId).toBe(SESSION);
     expect(tam._injected[0].message).toContain('[Runtime recovery — terminal error]');
     expect(tam._injected[0].message).toContain('error_during_execution');
-    // Execution flips to in_progress so the resumed turn is monitored by the
-    // crash-retry/alive-stuck paths; handleSubSessionComplete returns it to idle.
-    expect(nodeExecutionRepo.getById(executionId)?.status).toBe('in_progress');
+    // Execution stays idle: handleSubSessionComplete is a one-shot callback that
+    // already fired for the terminal error, so flipping to in_progress would
+    // leave it stuck. The sweep re-evaluates idle rows every tick instead.
+    expect(nodeExecutionRepo.getById(executionId)?.status).toBe('idle');
     // Run/task remain in_progress — recovery is a continue, not a block.
     expect(workflowRunRepo.getRun(runId)?.status).toBe('in_progress');
     expect(taskRepo.getTask(taskId)?.status).toBe('in_progress');
@@ -417,15 +418,22 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
     expect(tam._injected).toHaveLength(0);
   });
 
-  test('dead session is not continued (crash-retry path owns it)', async () => {
-    seedIdleErrorRun({ subtype: 'error_during_execution', sessionAlive: false });
+  test('dead terminal-error session is reset for re-spawn (not left stuck idle)', async () => {
+    const { executionId } = seedIdleErrorRun({
+      subtype: 'error_during_execution',
+      sessionAlive: false,
+    });
     const tam = makeTam({ isSessionAlive: () => false });
     const rt = new SpaceRuntime(buildConfig(tam));
     (rt as unknown as { recoveryDone: boolean }).recoveryDone = true;
 
     await rt.executeTick();
 
+    // A dead session cannot be continued. The crash-retry path only scans
+    // in_progress/pending, so this sweep resets the idle row for a bounded
+    // re-spawn instead of leaving it stuck idle.
     expect(tam._injected).toHaveLength(0);
+    expect(nodeExecutionRepo.getById(executionId)?.status).not.toBe('idle');
   });
 
   test('task not in_progress is left alone', async () => {
@@ -602,5 +610,44 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
     expect(nodeExecutionRepo.getById(executionId)?.agentSessionId).toBeNull();
     expect(workflowRunRepo.getRun(runId)?.status).toBe('blocked');
     expect(taskRepo.getTask(taskId)?.status).toBe('blocked');
+  });
+
+  test('recovery state is cleared after progress so a later recurrence gets a fresh budget', async () => {
+    const { executionId } = seedIdleErrorRun({
+      subtype: 'error_during_execution',
+      errors: ['generic 400'],
+    });
+    const tam = makeTam();
+    const rt = new SpaceRuntime(buildConfig(tam));
+    (rt as unknown as { recoveryDone: boolean }).recoveryDone = true;
+
+    // Tick 1 → continue #1 (signature stored).
+    await rt.executeTick();
+    expect(tam._injected).toHaveLength(1);
+
+    // Simulate the continue succeeding: the agent made progress and the last
+    // message is no longer a terminal error result.
+    db.prepare(`DELETE FROM sdk_messages WHERE session_id = ?`).run(SESSION);
+    sdkMessageRepo.saveSDKMessage(SESSION, {
+      type: 'assistant',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'done' }],
+        stop_reason: 'end_turn',
+      },
+    } as never);
+
+    // Tick 2 → last message is non-error → recovery state cleared, no action.
+    await rt.executeTick();
+    expect(tam._injected).toHaveLength(1);
+
+    // The same (reused) session later hits the SAME generic terminal error.
+    db.prepare(`DELETE FROM sdk_messages WHERE session_id = ?`).run(SESSION);
+    saveResultError(SESSION, { subtype: 'error_during_execution', errors: ['generic 400'] });
+
+    // Tick 3 → state was cleared, so this is treated as a fresh incident and
+    // earns a continue (NOT an immediate deterministic-repeat block).
+    await rt.executeTick();
+    expect(tam._injected).toHaveLength(2);
   });
 });

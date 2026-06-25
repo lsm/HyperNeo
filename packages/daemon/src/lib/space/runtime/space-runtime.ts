@@ -6994,13 +6994,18 @@ export class SpaceRuntime {
    * `attemptBlockedRunRecovery` takes over with its own re-spawn cap.
    *
    * Guards (see task #673):
-   * - Only retryable subtypes (`error_during_execution`, `error_max_turns`).
-   *   Cost (`error_max_budget_usd`) and structured-output exhaustion are skipped.
-   * - Prompt-too-long results are skipped (deferred to #670 compaction).
-   * - Only when the task is `in_progress` with no `reportedStatus` and the
-   *   session is still alive.
+   * - Only retryable subtypes (`error_during_execution`, `error_max_turns`) are
+   *   continued. Cost (`error_max_budget_usd`) and structured-output exhaustion
+   *   are skipped (non-retryable); prompt-too-long is deferred to #670.
+   * - Only when the task is `in_progress` with no `reportedStatus`.
+   * - A live session gets a bounded continue; a dead session is reset for a
+   *   bounded re-spawn (the crash-retry path only scans in_progress/pending, so
+   *   an idle dead terminal-error row would otherwise sit unrecovered).
    * - Per-execution retry cap (`MAX_TERMINAL_ERROR_CONTINUE_RETRIES`).
-   * - Deterministic repeats (identical error signature) escalate immediately.
+   * - Deterministic repeats (identical error signature) escalate immediately,
+   *   but only after the prior continue's grace window — and recovery state is
+   *   cleared once the execution observes a non-error result, so a later
+   *   recurrence in the same (reused) session gets a fresh budget.
    * - Grace cooldown between attempts (mirrors the alive-stuck nag grace).
    */
   private async handleTerminalErrorIdleExecutions(
@@ -7037,12 +7042,48 @@ export class SpaceRuntime {
       const sessionId = execution.agentSessionId;
       if (!sessionId) continue;
 
-      // Only recover live sessions — a dead session is owned by the crash-retry
-      // path in processRunTick (resetWorkflowNodeExecutionForSpawnRetry).
-      if (!tam.isSessionAlive(sessionId)) continue;
-
       const lastMessage = this.getSdkMessageRepo().getLastSDKMessage(sessionId);
+      const key = `${runId}:${execution.id}`;
+
+      // Reset recovery state once the execution has moved past the terminal
+      // error (progress / non-error result). Node-agent sessions are reused
+      // across later activations of the same task, so without this a
+      // recovered execution that later hits the same generic signature would
+      // be treated as a deterministic repeat from the earlier incident and
+      // blocked without its retry budget.
+      if (
+        this.terminalErrorContinueStates.has(key) &&
+        (!lastMessage || !isSDKResultError(lastMessage))
+      ) {
+        this.terminalErrorContinueStates.delete(key);
+      }
+
       if (!lastMessage || !isSDKResultError(lastMessage)) continue;
+
+      // A dead session cannot be continued. The liveness/crash-retry sweep
+      // earlier in processRunTick only considers in_progress/pending rows, so
+      // an idle execution whose session died on a terminal error would
+      // otherwise sit unrecovered — reset it for a bounded re-spawn (or block
+      // if crash retries are exhausted).
+      if (!tam.isSessionAlive(sessionId)) {
+        const crashExhausted = this.resetWorkflowNodeExecutionForSpawnRetry(
+          runId,
+          execution,
+          `terminal-error session is no longer alive (subtype ${lastMessage.subtype})`,
+          sessionId
+        );
+        if (crashExhausted) {
+          await this.blockRunForAgentCrash(runId, spaceId, canonicalTask, [
+            this.config.nodeExecutionRepo.getById(execution.id) ?? execution,
+          ]);
+          return 'blocked';
+        }
+        continue; // reset to pending; the spawn loop re-spawns a fresh session
+      }
+
+      // Defer over-long-context results to #670 (compaction), not a plain
+      // continue — continuing won't shrink the context.
+      if (this.isPromptTooLongResultError(lastMessage)) continue;
 
       // Only retryable subtypes. Cost guard and structured-output exhaustion are
       // non-retryable; auth errors arrive via session.error/blocked instead.
@@ -7053,11 +7094,6 @@ export class SpaceRuntime {
         continue;
       }
 
-      // Defer over-long-context results to #670 (compaction), not a plain
-      // continue — continuing won't shrink the context.
-      if (this.isPromptTooLongResultError(lastMessage)) continue;
-
-      const key = `${runId}:${execution.id}`;
       const state =
         this.terminalErrorContinueStates.get(key) ??
         ({
@@ -7148,12 +7184,13 @@ export class SpaceRuntime {
         state.lastContinueAt = now;
         state.lastRetriedErrorSignature = signature;
         state.failedInjectionCount = 0;
-        // Mark the execution active so the resumed turn is monitored by the
-        // crash-retry and alive-stuck paths (which only scan in_progress). The
-        // normal sub-session completion callback returns it to `idle` when the
-        // resumed turn ends; without this, a session that hangs or dies after
-        // the injection would sit unmonitored as an idle execution.
-        this.config.nodeExecutionRepo.update(execution.id, { status: 'in_progress' });
+        // NB: the execution is intentionally left `idle`. The sweep re-evaluates
+        // idle rows every tick, so once the SDK writes the resumed turn's new
+        // last message the cooldown/repeat/cap logic re-applies naturally.
+        // Flipping to `in_progress` here would be a regression:
+        // handleSubSessionComplete is a one-shot callback that already fired for
+        // the original terminal error, so it would NOT re-fire to return the
+        // resumed turn to `idle`, leaving the row stuck in `in_progress`.
         log.warn(
           `Node ${execution.workflowNodeId} ended idle on a terminal error result; ` +
             `sent runtime continue ${state.continueCount}/${MAX_TERMINAL_ERROR_CONTINUE_RETRIES}: ` +
