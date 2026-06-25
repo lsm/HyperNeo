@@ -360,14 +360,14 @@ describe('Post-approval merge conflict routes to coder, not human', () => {
   test('first conflict is routed to the upstream coder, not a human', () => {
     // The old template told the reviewer to call request_human_input on a
     // conflict ("let the human resolve"). That path is gone: a conflict ALONE
-    // routes to the coder. request_human_input is reserved for the exhaustion
-    // path (step g), after the "do NOT escalate on a conflict alone" directive.
+    // routes to the coder.
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('let the human resolve');
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/do NOT escalate to a\s+human/);
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('list_reachable_agents');
-    const noEscalateIdx = PR_MERGE_POST_APPROVAL_INSTRUCTIONS.indexOf('do NOT escalate to a');
-    const humanInputIdx = PR_MERGE_POST_APPROVAL_INSTRUCTIONS.indexOf('request_human_input');
-    expect(humanInputIdx).toBeGreaterThan(noEscalateIdx);
+    // request_human_input is NOT on the post-approval node-agent surface (only
+    // the Task Agent surface registers it), so the template must never instruct
+    // calling it — otherwise the reviewer invokes a tool it does not have.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('request_human_input');
   });
 
   test('conflict-resolution diff is inspected before retrying the merge', () => {
@@ -379,12 +379,16 @@ describe('Post-approval merge conflict routes to coder, not human', () => {
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/request changes from the coder/);
   });
 
-  test('exhausted retries escalate via space-agent AND request_human_input (no stuck task)', () => {
-    // send_message(space-agent) only injects a chat message and does not move
-    // the approved task out of post-approval; request_human_input is the
-    // terminal action that transitions the task so it is not left stuck.
-    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('request_human_input');
-    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('stuck in post-approval');
+  test('exhausted retries escalate to space-agent with real count/exit reason (no false completion)', () => {
+    // The post-approval node-agent surface has no block/request-human tool, so
+    // escalation is a result artifact + space-agent message; the task must NOT
+    // be marked complete (the PR is not merged).
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('request_human_input');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('do NOT mark the task complete');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('exit_reason');
+    // The escalation must report the real attempt count, not a hard-coded 2 —
+    // the loop can end early via a cycle-cap rejection before 2 attempts.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('unresolved after 2 coder attempts');
   });
 
   test('conflict detection keys on DIRTY mergeStateStatus and conflict markers', () => {
