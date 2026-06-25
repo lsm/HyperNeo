@@ -399,14 +399,30 @@ describe('Post-approval merge conflict routes to coder, not human', () => {
 
   test('exhausted retries escalate to space-agent with real count/exit reason (no false completion)', () => {
     // The post-approval node-agent surface has no block/request-human tool, so
-    // escalation is a result artifact + space-agent message; the task must NOT
-    // be marked complete (the PR is not merged).
+    // escalation is a non-result artifact + space-agent message; the task must
+    // NOT be marked complete (the PR is not merged).
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('request_human_input');
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('do NOT mark the task complete');
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('exit_reason');
+    // The escalation artifact must NOT be a "result" artifact — mark_complete
+    // picks up the latest result-artifact summary as the task result, so a
+    // "Merge unresolved" result would poison a later completion. It uses a
+    // dedicated non-result type instead (the step-6 success artifact is the
+    // only "result" artifact, and it carries data, not a failure summary).
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('type: "merge_blocked"');
     // The escalation must report the real attempt count, not a hard-coded 2 —
     // the loop can end early via a cycle-cap rejection before 2 attempts.
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('unresolved after 2 coder attempts');
+  });
+
+  test('review_url lookup paginates, passes the host, and falls back to PR comments', () => {
+    // gh pr view --json reviews exposes no URL; the REST reviews API must be
+    // paginated (--paginate, default per_page hides older approvals) and use the
+    // same <host> step 2 extracts for GitHub Enterprise. Own-PR setups may have
+    // only a PR comment (no COMMENTED review), so fall back to the comment URL.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('--hostname <host>');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('--paginate');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('/issues/<number>/comments');
   });
 
   test('conflict detection keys on DIRTY mergeStateStatus and conflict markers', () => {
