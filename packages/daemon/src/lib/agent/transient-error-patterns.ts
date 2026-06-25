@@ -45,3 +45,91 @@ export const TRANSIENT_CONNECTION_ERROR_REGEXES: readonly RegExp[] = [
   /Unable to connect/i,
   /backend connection error/i,
 ];
+
+/**
+ * Descriptive (non-numeric) substrings that indicate a retryable provider error.
+ * Numeric 5xx codes are matched separately via HTTP_5XX_STATUS_RE to avoid
+ * false positives on bare digit substrings (e.g. "5000ms", UUID fragments).
+ *
+ * IMPORTANT: Only server-side/transient failures belong here. 4xx, auth,
+ * quota, and model_not_found errors are terminal and MUST NOT be added —
+ * they are non-retryable (guarded explicitly by isRetryableProviderError).
+ *
+ * Coordinated with B1 (529→overloaded mapping), B2 (broadened transient
+ * patterns), B3 (body normalization). As those land, provider-specific
+ * transient signals can be added here.
+ */
+export const RETRYABLE_PROVIDER_ERROR_TEXT: readonly string[] = [
+  // Anthropic 529 overloaded (server-side capacity)
+  'overloaded',
+  // Generic 5xx descriptive patterns
+  'internal server error',
+  'bad gateway',
+  'gateway timeout',
+  'service unavailable',
+  'temporarily unavailable',
+];
+
+/**
+ * Matches standalone 5xx HTTP status codes (500-599) with word boundaries so
+ * longer digit sequences like "5000ms" or UUID fragments don't false-positive.
+ * Covers 500, 502, 503, 504, 520, 529, …
+ */
+export const HTTP_5XX_STATUS_RE = /\b5\d{2}\b/;
+
+/**
+ * Matches standalone 4xx HTTP status codes (400-499) with word boundaries.
+ * Used as a terminal guard — 4xx errors (auth, quota, validation) must never
+ * be retried. 429 rate-limit is handled separately by RateLimitWatchdog.
+ */
+export const HTTP_4XX_STATUS_RE = /\b4\d{2}\b/;
+
+/**
+ * Detect whether an error message represents a retryable provider error
+ * (5xx / overloaded / provider-unavailable). Used by query-runner.ts to
+ * decide whether to fire a bounded retry with backoff.
+ *
+ * Excludes 4xx/auth/quota/model_not_found — those are terminal and must
+ * never be retried, even if a retryable signal accidentally co-occurs.
+ *
+ * Numeric status codes are matched with word boundaries (\b5\d{2}\b) so that
+ * digit sequences embedded in longer numbers (e.g. "5000ms timeout", UUID
+ * fragments containing "500") do not false-positive into a retry.
+ */
+export function isRetryableProviderError(errorMessage: string): boolean {
+  const lower = errorMessage.toLowerCase();
+
+  // Terminal text guards — auth/quota/model errors (non-numeric patterns).
+  if (
+    lower.includes('unauthorized') ||
+    lower.includes('invalid_api_key') ||
+    lower.includes('model_not_found') ||
+    lower.includes('quota') ||
+    lower.includes('insufficient_quota') ||
+    lower.includes('not implemented')
+  ) {
+    return false;
+  }
+
+  // Terminal numeric guard — any standalone 4xx status code. Word-bounded so
+  // "4010 tokens" or "14023 tokens" don't false-positive.
+  if (HTTP_4XX_STATUS_RE.test(errorMessage)) {
+    return false;
+  }
+
+  // Permanent 5xx guard — 501 Not Implemented is returned by NeoKai's bridges
+  // (openai-chat-bridge, ollama-bridge) for unsupported routes. It is never
+  // transient, so exclude it from the retryable 5xx class.
+  if (/\b501\b/.test(errorMessage)) {
+    return false;
+  }
+
+  // Retryable: any standalone 5xx status code (500-599). Covers 500/502/503/
+  // 504/529/… in one bounded check.
+  if (HTTP_5XX_STATUS_RE.test(errorMessage)) {
+    return true;
+  }
+
+  // Retryable: descriptive provider-unavailable patterns.
+  return RETRYABLE_PROVIDER_ERROR_TEXT.some((substr) => lower.includes(substr));
+}
