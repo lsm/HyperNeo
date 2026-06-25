@@ -44,6 +44,14 @@ export interface PromptTooLongRecoveryState {
    */
   compactAttempts: number;
   /**
+   * Set when a re-compact injection failed (the session was momentarily
+   * unavailable). Included in the recovery gate so the next tick re-enters and
+   * retries/escalates — otherwise a non-overflow-error last message wouldn't
+   * re-enter the gate (it's not prompt-too-long) and the terminal-skip would
+   * clear the state, dropping the promised retry.
+   */
+  compactRetryPending: boolean;
+  /**
    * True after a `/compact` was successfully injected and we are waiting for the
    * compacted RESULT to land. Guards against re-injecting `/compact` while the
    * turn is in flight.
@@ -83,6 +91,7 @@ export interface PromptTooLongRecoveryState {
 export function createPromptTooLongRecoveryState(): PromptTooLongRecoveryState {
   return {
     compactAttempts: 0,
+    compactRetryPending: false,
     awaitingContinue: false,
     awaitingContinueAfterDbId: null,
     awaitingContinueSince: null,

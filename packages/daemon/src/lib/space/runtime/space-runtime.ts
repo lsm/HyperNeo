@@ -5326,21 +5326,33 @@ export class SpaceRuntime {
         if (!overflowed) {
           compactJustFailed = true;
         }
-      } else if (
-        state.awaitingResumeSince !== null &&
-        now - state.awaitingResumeSince > COMPACT_RESULT_TIMEOUT_MS
-      ) {
-        const reason = `Context-overflow recovery timed out: the resumed turn did not produce a result within ${COMPACT_RESULT_TIMEOUT_MS / 1000}s for agent ${execution.agentName}.`;
-        await this.escalatePromptTooLongBlocked(
-          runId,
-          spaceId,
-          canonicalTask,
-          execution,
-          now,
-          reason
-        );
-        return 'blocked';
       } else {
+        // No resumed-turn result yet. If a newer message than the anchor has
+        // appeared (the consumed nag, an assistant/tool-use row, etc.) the turn
+        // IS progressing — refresh the timeout clock so a legitimately long but
+        // active resumed turn isn't mis-blocked. The timeout fires only when no
+        // new message has landed for the whole window.
+        if (
+          lastMessageDbId !== state.awaitingResumeAfterDbId &&
+          state.awaitingResumeSince !== null
+        ) {
+          state.awaitingResumeSince = now;
+        }
+        if (
+          state.awaitingResumeSince !== null &&
+          now - state.awaitingResumeSince > COMPACT_RESULT_TIMEOUT_MS
+        ) {
+          const reason = `Context-overflow recovery timed out: the resumed turn did not produce a result within ${COMPACT_RESULT_TIMEOUT_MS / 1000}s for agent ${execution.agentName}.`;
+          await this.escalatePromptTooLongBlocked(
+            runId,
+            spaceId,
+            canonicalTask,
+            execution,
+            now,
+            reason
+          );
+          return 'blocked';
+        }
         return 'handled'; // nag enqueued/consumed but resumed turn hasn't produced a result
       }
     }
@@ -5367,16 +5379,20 @@ export class SpaceRuntime {
 
     // Re-compact/escalate on a fresh overflow OR a just-failed compaction
     // (non-overflow error result). Both mean compaction did not shrink the
-    // context enough.
-    if (overflowed || compactJustFailed) {
+    // context enough. Also re-enter on a pending retry after a previously failed
+    // injection (compactRetryPending) — a non-overflow-error last message
+    // wouldn't otherwise re-enter the gate.
+    if (overflowed || compactJustFailed || state.compactRetryPending) {
+      state.compactRetryPending = false;
       // `/compact` still in flight — wait for the result.
       if (state.awaitingContinue) {
         return 'handled';
       }
       if (state.compactAttempts >= MAX_PROMPT_TOO_LONG_RECOVERY_ATTEMPTS) {
-        const reason = compactJustFailed
-          ? `Context-overflow recovery: /compact failed (non-overflow error) after ${state.compactAttempts} attempt(s) for agent ${execution.agentName}.`
-          : `Context overflow ("prompt is too long") could not be resolved after ${state.compactAttempts} compaction attempt(s); agent ${execution.agentName} cannot make progress.`;
+        const reason =
+          compactJustFailed || state.compactRetryPending
+            ? `Context-overflow recovery: /compact failed (non-overflow error) after ${state.compactAttempts} attempt(s) for agent ${execution.agentName}.`
+            : `Context overflow ("prompt is too long") could not be resolved after ${state.compactAttempts} compaction attempt(s); agent ${execution.agentName} cannot make progress.`;
         await this.escalatePromptTooLongBlocked(
           runId,
           spaceId,
@@ -5418,6 +5434,9 @@ export class SpaceRuntime {
             `(agent ${execution.agentName}, session ${sessionId}, attempt ${state.compactAttempts}/${MAX_PROMPT_TOO_LONG_RECOVERY_ATTEMPTS})`
         );
       } else {
+        // Injection failed — preserve a retryable flag so the next tick re-enters
+        // (a non-overflow-error last message wouldn't re-enter the gate on its own).
+        state.compactRetryPending = true;
         log.warn(
           `SpaceRuntime: could not inject /compact for overflowed execution ${execution.id} ` +
             `(session ${sessionId}); will retry or escalate on the next tick`
@@ -6721,7 +6740,8 @@ export class SpaceRuntime {
         isPromptTooLongResult(lastMessage) ||
         ptlState?.awaitingContinue ||
         ptlState?.continueNagPending ||
-        ptlState?.awaitingResume
+        ptlState?.awaitingResume ||
+        ptlState?.compactRetryPending
       ) {
         const manager = tam ?? this.config.taskAgentManager;
         const outcome = await this.recoverPromptTooLongIdleExecution(
