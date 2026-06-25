@@ -1112,7 +1112,14 @@ export class QueryRunner {
         // message doesn't expire in the queue (enqueueWithId has a ~30s TTL) if
         // an operator configures a long backoff, and so a cancelled retry
         // doesn't leave an orphaned message in the queue.
+        //
+        // Clear _lastConsumedUserMessage IMMEDIATELY after saving so a stale
+        // value can't persist if the retry is cancelled (e.g. generation bump
+        // from restart) — the finally block skips cleanup for stale queries, so
+        // without this clear the old replay message would survive into the next
+        // turn.
         const retryMsg = this._lastConsumedUserMessage;
+        this._lastConsumedUserMessage = null;
 
         // Display a sanitized retry message so the user knows what's happening,
         // but never show the raw provider error string.

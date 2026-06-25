@@ -105,7 +105,8 @@ export function isRetryableProviderError(errorMessage: string): boolean {
     lower.includes('invalid_api_key') ||
     lower.includes('model_not_found') ||
     lower.includes('quota') ||
-    lower.includes('insufficient_quota')
+    lower.includes('insufficient_quota') ||
+    lower.includes('not implemented')
   ) {
     return false;
   }
@@ -113,6 +114,13 @@ export function isRetryableProviderError(errorMessage: string): boolean {
   // Terminal numeric guard — any standalone 4xx status code. Word-bounded so
   // "4010 tokens" or "14023 tokens" don't false-positive.
   if (HTTP_4XX_STATUS_RE.test(errorMessage)) {
+    return false;
+  }
+
+  // Permanent 5xx guard — 501 Not Implemented is returned by NeoKai's bridges
+  // (openai-chat-bridge, ollama-bridge) for unsupported routes. It is never
+  // transient, so exclude it from the retryable 5xx class.
+  if (/\b501\b/.test(errorMessage)) {
     return false;
   }
 
