@@ -164,6 +164,21 @@ interface RosterApiRetryEntry {
   ts: number;
   uuid: string;
 }
+/**
+ * Standalone task outcome entry — rendered directly in the roster (chat-
+ * container style: ✓/■/✗ + summary + usage) for task_notifications whose
+ * originating tool_use is NOT in the roster (capped out / orphan / completed
+ * turn). When the tool_use IS rostered, the outcome folds onto its tool card
+ * instead (see foldTaskNotification) so these two never duplicate.
+ */
+interface RosterTaskNotificationEntry {
+  kind: 'task_notification';
+  status: 'completed' | 'failed' | 'stopped';
+  summary?: string;
+  usage?: { total_tokens: number; tool_uses: number; duration_ms: number };
+  ts: number;
+  toolUseId?: string;
+}
 type ActiveRosterEntry =
   | RosterToolEntry
   | RosterMessageEntry
@@ -171,7 +186,8 @@ type ActiveRosterEntry =
   | RosterUserEntry
   | RosterHandoffEntry
   | RosterHookEntry
-  | RosterApiRetryEntry;
+  | RosterApiRetryEntry
+  | RosterTaskNotificationEntry;
 
 const TASK_THREAD_MESSAGE_BUBBLE_WIDTH_CLASS = 'max-w-[85%] md:max-w-[86%]';
 const TASK_THREAD_AGENT_BUBBLE_WIDTH_CLASS = 'max-w-full md:max-w-[86%]';
@@ -688,6 +704,7 @@ function buildCompletedTurn(
   turnId: string,
   resultInfo: ResultMessage | undefined,
   taskNotificationsByToolUseId: Map<string, TaskNotificationLite>,
+  globalRosteredToolUseIds: Set<string>,
   transitionSummary: ActiveTurnSummary | undefined = undefined
 ): CompletedFeedTurn {
   const startedAt = rows[0].createdAt;
@@ -720,11 +737,20 @@ function buildCompletedTurn(
     highlightMessageUuid: highlightUuid,
     replacementStatus: sourceRow?.replacementStatus,
     resultInfo,
-    roster: completedRosterEntries(
-      rows,
-      taskNotificationsByToolUseId,
-      indexCompletedFoldableToolUseIds(rows)
-    ),
+    roster: (() => {
+      const base = completedRosterEntries(
+        rows,
+        taskNotificationsByToolUseId,
+        indexCompletedFoldableToolUseIds(rows)
+      );
+      // Suppress standalone entries for outcomes already folded onto a tool
+      // card in THIS turn (the global pre-scan misses roster-only turns).
+      const rostered = new Set([
+        ...globalRosteredToolUseIds,
+        ...rosteredToolUseIdsFromRoster(base),
+      ]);
+      return [...base, ...standaloneTaskNotificationEntries(rows, rostered)];
+    })(),
   };
 }
 
@@ -753,6 +779,60 @@ function indexTaskNotifications(rows: ParsedThreadRow[]): Map<string, TaskNotifi
 }
 
 /**
+ * Build standalone roster entries for task_notifications whose originating
+ * tool_use is NOT rendered in the roster (capped out / orphan / completed
+ * turn). These have no tool card to fold onto, so they get their own
+ * chat-container-style outcome line. Entries whose tool_use IS rostered are
+ * skipped — their outcome folds onto that tool card (foldTaskNotification),
+ * so the two paths never duplicate.
+ */
+function standaloneTaskNotificationEntries(
+  rows: ParsedThreadRow[],
+  rosteredToolUseIds: Set<string>
+): RosterTaskNotificationEntry[] {
+  const out: RosterTaskNotificationEntry[] = [];
+  for (const row of rows) {
+    const msg = row.message;
+    if (!msg || msg.type !== 'system') continue;
+    if ((msg as { subtype?: string }).subtype !== 'task_notification') continue;
+    const n = msg as {
+      tool_use_id?: string;
+      status?: 'completed' | 'failed' | 'stopped';
+      summary?: string;
+      usage?: { total_tokens: number; tool_uses: number; duration_ms: number };
+    };
+    if (!n.status) continue;
+    if (n.tool_use_id && rosteredToolUseIds.has(n.tool_use_id)) continue;
+    out.push({
+      kind: 'task_notification',
+      status: n.status,
+      ts: row.createdAt,
+      ...(n.summary ? { summary: n.summary } : {}),
+      ...(n.usage ? { usage: n.usage } : {}),
+      ...(n.tool_use_id ? { toolUseId: n.tool_use_id } : {}),
+    });
+  }
+  return out;
+}
+
+/**
+ * tool_use_ids whose tool cards are present in a given roster. Combined with
+ * the global rostered set to gate standalone task_notification entries: a
+ * notification must NOT emit a standalone roster entry if its outcome already
+ * folds onto a tool card in THIS turn's roster — otherwise roster-only turns
+ * (no assistant text, kept only for their roster) would show the outcome twice
+ * (once folded, once standalone), since the global pre-scan excludes those
+ * text-less turns and so omits their tool ids.
+ */
+function rosteredToolUseIdsFromRoster(roster: ActiveRosterEntry[]): Set<string> {
+  const ids = new Set<string>();
+  for (const entry of roster) {
+    if (entry.kind === 'tool' && entry.toolUseId) ids.add(entry.toolUseId);
+  }
+  return ids;
+}
+
+/**
  * Collect the tool_use_ids that have a rendered active-roster target — i.e.
  * tool_use entries that survive the ROSTER_MAX_ENTRIES cap in a summary whose
  * session actually renders an active roster. A summary only renders an active
@@ -778,20 +858,6 @@ function collectActiveRosteredToolUseIds(
   return ids;
 }
 
-function collectRosteredApiRetryUuids(
-  summaries: ActiveTurnSummary[],
-  renderedTurnKeys: Set<string>
-): Set<string> {
-  const uuids = new Set<string>();
-  for (const summary of summaries) {
-    if (!renderedTurnKeys.has(`${summary.sessionId}:${summary.turnIndex}`)) continue;
-    for (const entry of rosterEntriesFromSummary(summary, ROSTER_MAX_ENTRIES)) {
-      if (entry.kind === 'api_retry') uuids.add(entry.uuid);
-    }
-  }
-  return uuids;
-}
-
 function collectRosteredToolUseIds(
   summaries: ActiveTurnSummary[],
   renderedTurnKeys: Set<string>,
@@ -810,12 +876,22 @@ function buildActiveTurn(
   turnId: string,
   summary: ActiveTurnSummary | undefined,
   sessionId: string | null,
-  taskNotificationsByToolUseId: Map<string, TaskNotificationLite>
+  taskNotificationsByToolUseId: Map<string, TaskNotificationLite>,
+  globalRosteredToolUseIds: Set<string>
 ): ActiveFeedTurn {
-  const roster = rosterEntriesFromSummary(summary, ROSTER_MAX_ENTRIES).map((entry) => {
+  const baseRoster = rosterEntriesFromSummary(summary, ROSTER_MAX_ENTRIES).map((entry) => {
     if (entry.kind !== 'tool') return entry;
     return foldTaskNotification(entry, taskNotificationsByToolUseId);
   });
+  // Append standalone outcome entries for task_notifications whose tool_use
+  // isn't rostered in any turn (capped out / orphan). Folded ones are already
+  // on their tool card; checking the global set + this turn's roster prevents
+  // both cross-turn and within-turn duplication.
+  const rostered = new Set([
+    ...globalRosteredToolUseIds,
+    ...rosteredToolUseIdsFromRoster(baseRoster),
+  ]);
+  const roster = [...baseRoster, ...standaloneTaskNotificationEntries(rows, rostered)];
   return {
     state: 'active',
     id: turnId,
@@ -946,8 +1022,7 @@ function isFoldedTaskNotification(row: ParsedThreadRow, rosteredToolUseIds: Set<
 function buildOperationalSystemTurn(
   row: ParsedThreadRow,
   isSessionTail: boolean,
-  rosteredToolUseIds: Set<string>,
-  rosteredApiRetryUuids: Set<string>
+  rosteredToolUseIds: Set<string>
 ): SystemFeedTurn | null {
   const message = row.message;
   if (!message || message.type !== 'system') return null;
@@ -968,10 +1043,18 @@ function buildOperationalSystemTurn(
   // system turn so the terminal summary/usage/failure is not silently lost.
   // True orphans (no tool_use_id) also fall through.
   if (isFoldedTaskNotification(row, rosteredToolUseIds)) return null;
-  if (subtype === 'api_retry') {
-    const uuid = (message as { uuid?: unknown }).uuid;
-    if (typeof uuid === 'string' && rosteredApiRetryUuids.has(uuid)) return null;
-  }
+  // These subtypes surface ONLY as roster entries in the minimal feed (like
+  // hooks) — never as standalone system cards in the main thread, even when
+  // capped out of the roster:
+  //   - api_retry: roster `api_retry` entry. (The chat transcript still
+  //     renders api_retry via SDKSystemMessage.)
+  //   - thinking_tokens: roster `thinking` entries carry the content; the
+  //     numeric token estimate is dropped (it's excluded from the chat
+  //     transcript pagination too).
+  //   - task_notification: folds onto its roster tool card when the tool is
+  //     rostered, otherwise a standalone roster entry. Never a main-thread card.
+  if (subtype === 'api_retry' || subtype === 'thinking_tokens' || subtype === 'task_notification')
+    return null;
   // Honor the centralized hidden-subtype contract so Space task threads
   // don't surface noisy rows the main transcript already hides.
   if (isHiddenSystemSubtype(subtype)) return null;
@@ -986,78 +1069,6 @@ function buildOperationalSystemTurn(
     typeof (message as { uuid?: unknown }).uuid === 'string'
       ? ((message as { uuid: string }).uuid as string)
       : undefined;
-
-  if (subtype === 'thinking_tokens') {
-    const estimatedTokens = (message as { estimated_tokens?: unknown }).estimated_tokens;
-    const delta = (message as { estimated_tokens_delta?: unknown }).estimated_tokens_delta;
-    const tokenText =
-      typeof estimatedTokens === 'number' ? estimatedTokens.toLocaleString() : 'unknown';
-    const deltaText =
-      typeof delta === 'number' ? ` (${delta >= 0 ? '+' : ''}${delta.toLocaleString()})` : '';
-    return {
-      state: 'system',
-      id: `system-${String(row.id)}`,
-      agent: row.label,
-      agentKind: row.kind,
-      agentRole: row.role,
-      agentNodeExecutionId: row.nodeExecutionId ?? null,
-      createdAt: row.createdAt,
-      title: 'Thinking tokens',
-      body: `${tokenText} estimated tokens${deltaText}`,
-      sessionId: row.sessionId,
-      highlightMessageUuid: highlightUuid,
-      replacementStatus: row.replacementStatus,
-    };
-  }
-
-  // task_notification fallback: only reached when there is no roster target
-  // (completed turn / missing/stale summary / capped-out tool). Surface the
-  // terminal status + summary + usage so failures aren't silently lost — this
-  // row is the only remaining place to show the terminal metadata, matching
-  // what the roster and the full chat notification renderer display.
-  if (subtype === 'task_notification') {
-    const status = (message as { status?: string }).status;
-    const summary = (message as { summary?: unknown }).summary;
-    const usage = (
-      message as {
-        usage?: { total_tokens?: number; tool_uses?: number; duration_ms?: number };
-      }
-    ).usage;
-    const title =
-      status === 'completed'
-        ? 'Task completed'
-        : status === 'failed'
-          ? 'Task failed'
-          : status === 'stopped'
-            ? 'Task stopped'
-            : 'Task notification';
-    const parts: string[] = [];
-    if (typeof summary === 'string' && summary.trim()) parts.push(summary.trim());
-    else if (typeof status === 'string') parts.push(status);
-    if (usage) {
-      const segs: string[] = [];
-      if (typeof usage.total_tokens === 'number')
-        segs.push(`${usage.total_tokens.toLocaleString()} tokens`);
-      if (typeof usage.tool_uses === 'number') segs.push(`${usage.tool_uses} tool uses`);
-      if (typeof usage.duration_ms === 'number')
-        segs.push(`${(usage.duration_ms / 1000).toFixed(1)}s`);
-      if (segs.length > 0) parts.push(segs.join(' · '));
-    }
-    return {
-      state: 'system',
-      id: `system-${String(row.id)}`,
-      agent: row.label,
-      agentKind: row.kind,
-      agentRole: row.role,
-      agentNodeExecutionId: row.nodeExecutionId ?? null,
-      createdAt: row.createdAt,
-      title,
-      body: parts.join('\n'),
-      sessionId: row.sessionId,
-      highlightMessageUuid: highlightUuid,
-      replacementStatus: row.replacementStatus,
-    };
-  }
 
   if (subtype === 'session_state_changed') {
     const state = (message as { state?: unknown }).state;
@@ -1090,33 +1101,6 @@ function buildOperationalSystemTurn(
       createdAt: row.createdAt,
       title: 'Commands changed',
       body: `${count.toLocaleString()} slash commands available`,
-      sessionId: row.sessionId,
-      highlightMessageUuid: highlightUuid,
-      replacementStatus: row.replacementStatus,
-    };
-  }
-
-  if (subtype === 'api_retry') {
-    const retry = message as {
-      attempt?: unknown;
-      max_retries?: unknown;
-      retry_delay_ms?: unknown;
-      error_status?: unknown;
-    };
-    const attempt = finiteNumber(retry.attempt, 1);
-    const maxRetries = finiteNumber(retry.max_retries);
-    const retryDelayMs = finiteNumber(retry.retry_delay_ms);
-    const status = retry.error_status === null ? 'n/a' : String(finiteNumber(retry.error_status));
-    return {
-      state: 'system',
-      id: `system-${String(row.id)}`,
-      agent: row.label,
-      agentKind: row.kind,
-      agentRole: row.role,
-      agentNodeExecutionId: row.nodeExecutionId ?? null,
-      createdAt: row.createdAt,
-      title: 'API retry',
-      body: `Attempt ${attempt}/${maxRetries}, delay ${retryDelayMs}ms, status ${status}`,
       sessionId: row.sessionId,
       highlightMessageUuid: highlightUuid,
       replacementStatus: row.replacementStatus,
@@ -1328,18 +1312,25 @@ function buildFeedTurns(
     activeTurnSummaries,
     renderedTurnKeys
   );
-  const rosteredApiRetryUuids = collectRosteredApiRetryUuids(activeTurnSummaries, renderedTurnKeys);
 
   const completedRows = blocks.flatMap((block) => {
     const out: ParsedThreadRow[][] = [];
     const blockKey = normalizeAgentKey(block.agentLabel);
     const trailingBlockCanUpgradeToActive = normalisedActive.has(blockKey) && !block.isTerminal;
     let pendingAgentRows: ParsedThreadRow[] = [];
+    // A completed slice contributes to the rostered-tool pre-scan when it has
+    // an assistant reply OR tool_use content. Including tool-only slices
+    // (no reply text — e.g. a background task turn) means their tool ids enter
+    // the global rostered set, so a task_notification that folds onto one of
+    // those tools isn't duplicated as a standalone roster entry elsewhere.
+    const sliceContributesToRoster = (sliceRows: ParsedThreadRow[]) =>
+      extractLastAssistantText(sliceRows).text.length > 0 ||
+      sliceRows.some((r) => getToolUseContentBlocks(r).length > 0);
     const flush = (isFinal = false) => {
       if (
         pendingAgentRows.length > 0 &&
         !(isFinal && trailingBlockCanUpgradeToActive) &&
-        extractLastAssistantText(pendingAgentRows).text.length > 0
+        sliceContributesToRoster(pendingAgentRows)
       ) {
         out.push(pendingAgentRows);
       }
@@ -1363,7 +1354,7 @@ function buildFeedTurns(
       }
       if (
         subtype !== 'task_notification' &&
-        buildOperationalSystemTurn(row, false, rosteredActiveToolUseIds, rosteredApiRetryUuids)
+        buildOperationalSystemTurn(row, false, rosteredActiveToolUseIds)
       ) {
         flush();
         continue;
@@ -1440,6 +1431,7 @@ function buildFeedTurns(
           turnId,
           resultInfo,
           taskNotificationsByToolUseId,
+          rosteredToolUseIds,
           transitionSummary
         )
       );
@@ -1461,8 +1453,7 @@ function buildFeedTurns(
       const operationalSystemTurn = buildOperationalSystemTurn(
         row,
         row.sessionId ? latestRowIdBySession.get(row.sessionId) === String(row.id) : false,
-        rosteredToolUseIds,
-        rosteredApiRetryUuids
+        rosteredToolUseIds
       );
       if (operationalSystemTurn) {
         flushAgent();
@@ -1522,7 +1513,8 @@ function buildFeedTurns(
         completed.id,
         summary,
         sessionId,
-        taskNotificationsByToolUseId
+        taskNotificationsByToolUseId,
+        rosteredToolUseIds
       );
     }
   }
@@ -1534,9 +1526,12 @@ function buildFeedTurns(
   // turn from the same agent. Showing the fragment as its own header-only row
   // (e.g. "REVIEWER 12:29 PM · 3 messages · 9s" with nothing under it) is
   // noise; the reply is rendered in the sibling that holds the result text.
+  // A turn with no reply text but with roster content (tool calls / task
+  // outcomes) is still meaningful — e.g. a killed task whose outcome lives in
+  // the roster — so keep it.
   return turns.filter((t) => {
     if (t.state !== 'completed') return true;
-    return t.lastMessage.length > 0;
+    return t.lastMessage.length > 0 || t.roster.length > 0;
   });
 }
 
@@ -1683,6 +1678,52 @@ function RosterEntry({ entry, isLatest }: { entry: ActiveRosterEntry; isLatest: 
             attempt {entry.attempt}/{entry.maxRetries} · status {status} · delay{' '}
             {entry.retryDelayMs}ms
           </span>
+        </span>
+      </div>
+    );
+  }
+
+  if (entry.kind === 'task_notification') {
+    const isSuccess = entry.status === 'completed';
+    const isStopped = entry.status === 'stopped';
+    const statusLabel = isSuccess ? 'Task completed' : isStopped ? 'Task stopped' : 'Task failed';
+    const statusColor = isSuccess
+      ? 'text-green-400'
+      : isStopped
+        ? 'text-amber-300'
+        : 'text-red-400';
+    return (
+      <div
+        class={`flex items-start gap-2 font-mono text-xs leading-5 ${fadeClass}`}
+        data-testid="minimal-thread-roster-entry"
+        data-roster-kind="task_notification"
+        data-task-status={entry.status}
+      >
+        <span class="mt-0.5 shrink-0" aria-hidden="true">
+          {isSuccess ? (
+            <span class="text-green-400">✓</span>
+          ) : isStopped ? (
+            <span class="text-amber-300">■</span>
+          ) : (
+            <span class="text-red-400">✗</span>
+          )}
+        </span>
+        <span class="min-w-0 truncate">
+          <span class={`font-semibold ${statusColor}`}>{statusLabel}</span>
+          {entry.summary ? (
+            <>
+              <span class="text-gray-400"> — </span>
+              <span class={bodyClass}>{entry.summary}</span>
+            </>
+          ) : null}
+          {entry.usage ? (
+            <span class="text-gray-500">
+              {' '}
+              · {entry.usage.total_tokens.toLocaleString()} tok · {entry.usage.tool_uses} tool
+              {entry.usage.tool_uses === 1 ? '' : 's'} ·{' '}
+              {(entry.usage.duration_ms / 1000).toFixed(1)}s
+            </span>
+          ) : null}
         </span>
       </div>
     );
