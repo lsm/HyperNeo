@@ -589,6 +589,55 @@ describe('SpaceRuntime — prompt-too-long recovery', () => {
     expect(injections.filter((i) => i.message === '/compact').length).toBe(2);
   });
 
+  test('escalates to blocked when the resumed turn hangs (resume-wait timeout)', async () => {
+    // P2: if the resumed turn never produces a result after the continue nag,
+    // awaitingResume must not wait forever — escalate after COMPACT_RESULT_TIMEOUT_MS.
+    const injections: Array<{ sessionId: string; message: string }> = [];
+    const rt = new SpaceRuntime(buildConfig(makeRecordingTam(injections)));
+    const sessionId = 'session:hung-resume';
+    const { run, execution } = await setupIdleOverflowExecution(rt, sessionId, true);
+
+    await rt.executeTick(); // → /compact
+    saveResultMessage(sessionId, { promptTooLong: false }); // compact success
+    await rt.executeTick(); // → continue nag (awaitingResume=true)
+
+    // Simulate the resumed turn hanging (no result ever lands).
+    const states = (
+      rt as unknown as {
+        promptTooLongRecovery: Map<string, { awaitingResumeSince: number | null }>;
+      }
+    ).promptTooLongRecovery;
+    const state = states.get(`${run.id}:${execution.id}`);
+    expect(state?.awaitingResumeSince).not.toBeNull();
+    state!.awaitingResumeSince = Date.now() - (COMPACT_RESULT_TIMEOUT_MS + 1000);
+
+    await rt.executeTick(); // → resume-wait timeout → blocked
+    expect(nodeExecutionRepo.getById(execution.id)?.status).toBe('blocked');
+    expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
+  });
+
+  test('re-compacts when the resumed turn errors (non-overflow), not silent clear', async () => {
+    // P2: a non-overflow ERROR result from the resumed turn (auth/rate-limit) is
+    // not "productive progress" — route it to re-compact/escalate instead of
+    // silently clearing the recovery state and leaving the run idle.
+    const injections: Array<{ sessionId: string; message: string }> = [];
+    const rt = new SpaceRuntime(buildConfig(makeRecordingTam(injections)));
+    const sessionId = 'session:resume-error';
+    const { execution } = await setupIdleOverflowExecution(rt, sessionId, true);
+
+    await rt.executeTick(); // → /compact (attempt 1)
+    saveResultMessage(sessionId, { promptTooLong: false }); // compact success
+    await rt.executeTick(); // → continue nag
+    // Resumed turn errors with a non-overflow error.
+    saveResultMessage(sessionId, { nonOverflowError: true });
+    await rt.executeTick(); // → re-compact (attempt 2, NOT a silent clear)
+
+    // No continue nag should have been sent for the errored resume, and a second
+    // /compact was injected (re-compact path, not productive clear).
+    expect(injections.some((i) => i.message === buildPromptTooLongContinueNag())).toBe(true); // the one productive nag after compact success
+    expect(injections.filter((i) => i.message === '/compact').length).toBe(2);
+  });
+
   test('escalates to blocked when the /compact turn hangs (wait timeout)', async () => {
     // P2: if the /compact turn never produces a result, awaitingContinue must not
     // wait forever — the recovery escalates after COMPACT_RESULT_TIMEOUT_MS.

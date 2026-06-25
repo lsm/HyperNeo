@@ -76,6 +76,8 @@ export interface PromptTooLongRecoveryState {
   awaitingResume: boolean;
   /** dbId of the compact-success result that preceded the resume nag. */
   awaitingResumeAfterDbId: string | null;
+  /** Timestamp (ms) the resume nag was delivered, for the resume-wait timeout. */
+  awaitingResumeSince: number | null;
 }
 
 export function createPromptTooLongRecoveryState(): PromptTooLongRecoveryState {
@@ -88,6 +90,7 @@ export function createPromptTooLongRecoveryState(): PromptTooLongRecoveryState {
     continueNagAttempts: 0,
     awaitingResume: false,
     awaitingResumeAfterDbId: null,
+    awaitingResumeSince: null,
   };
 }
 

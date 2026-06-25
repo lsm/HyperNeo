@@ -5293,29 +5293,52 @@ export class SpaceRuntime {
     // user message invisible to getLastSDKMessage, so the sweep keeps seeing the
     // compact-success anchor until the resumed turn advances. Hold the recovery
     // open (preventing the terminal-skip from clearing the state and resetting
-    // compactAttempts prematurely). When the resumed turn advances:
-    //  - a prompt-too-long result → re-compact/escalate with attempts PRESERVED;
-    //  - any other RESULT → productive, clear the recovery state (fresh next time).
+    // compactAttempts prematurely). When the resumed turn produces a RESULT:
+    //  - SUCCESS → productive, clear the recovery state (fresh next time);
+    //  - prompt-too-long → re-compact/escalate with attempts PRESERVED;
+    //  - non-overflow ERROR (auth/rate-limit/model) → route to re-compact/escalate
+    //    (not silently cleared as productive — the resume failed, and a persistent
+    //    error escalates to blocked at the cap rather than leaving the run idle).
+    //
+    // The wait is bounded by COMPACT_RESULT_TIMEOUT_MS: if the resumed turn never
+    // produces a result (provider hang / session died after consuming the nag),
+    // escalate — the execution is `idle`, so the alive-stuck sweep cannot rescue it.
     //
     // The wait clears ONLY on a RESULT from the resumed turn — not on the
-    // consumed continue nag itself. injectRuntimeRecoveryMessage awaits
-    // messageQueue.enqueueWithId, which resolves only after the SDK consumes the
-    // nag (flipping send_status to 'consumed' so getLastSDKMessage includes it),
-    // but before the resumed API call returns. So the consumed nag (a user
-    // message) is briefly the last message; treating it as "advance" would clear
-    // the state and reset attempts before the resumed turn produces anything.
+    // consumed continue nag itself (a user message), which getLastSDKMessage
+    // briefly returns before the resumed API call returns.
     if (state.awaitingResume && state.awaitingResumeAfterDbId !== null) {
+      if (
+        state.awaitingResumeSince !== null &&
+        now - state.awaitingResumeSince > COMPACT_RESULT_TIMEOUT_MS
+      ) {
+        const reason = `Context-overflow recovery timed out: the resumed turn did not produce a result within ${COMPACT_RESULT_TIMEOUT_MS / 1000}s for agent ${execution.agentName}.`;
+        await this.escalatePromptTooLongBlocked(
+          runId,
+          spaceId,
+          canonicalTask,
+          execution,
+          now,
+          reason
+        );
+        return 'blocked';
+      }
       if (!lastMessageIsResult || lastMessageDbId === state.awaitingResumeAfterDbId) {
         return 'handled'; // nag enqueued/consumed but resumed turn hasn't produced a result
       }
       state.awaitingResume = false;
       state.awaitingResumeAfterDbId = null;
-      if (!overflowed) {
-        // Resumed turn produced a non-overflow result — real progress.
+      state.awaitingResumeSince = null;
+      if (lastMessageIsSuccessResult) {
+        // Productive — real progress. Clear the recovery state (fresh next time).
         this.promptTooLongRecovery.delete(key);
         return 'handled';
       }
-      // Resumed turn overflowed — attempts preserved, fall through to re-compact.
+      // Overflow (fall through with `overflowed`) OR non-overflow error: the
+      // resume did not make progress → re-compact/escalate with attempts preserved.
+      if (!overflowed) {
+        compactJustFailed = true;
+      }
     }
 
     // Bound the post-compact wait: if the /compact turn produced no result
@@ -5432,6 +5455,7 @@ export class SpaceRuntime {
         // resumed turn actually advances — preventing the terminal-skip from
         // clearing the state (and resetting attempts) while the nag is in flight.
         state.awaitingResume = true;
+        state.awaitingResumeSince = now;
         log.warn(
           `SpaceRuntime: injected continue nag after compaction for execution ${execution.id} (agent ${execution.agentName}, session ${sessionId})`
         );
