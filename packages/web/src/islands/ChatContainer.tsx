@@ -1421,7 +1421,6 @@ export default function ChatContainer({
                     subagentMessagesMap={maps.subagentMessagesMap}
                     taskNotificationsMap={maps.taskNotificationsMap}
                     taskProgressMap={maps.taskProgressMap}
-                    foldableToolUseIds={maps.foldableToolUseIds}
                     completedHookUuids={maps.completedHookUuids}
                     runningToolUseIds={
                       msg.uuid ? maps.runningToolUseIdsByMessageUuid.get(msg.uuid) : undefined

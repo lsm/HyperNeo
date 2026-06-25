@@ -57,9 +57,6 @@ interface Props {
   taskNotificationsMap?: Map<string, SDKTaskNotificationMessage>;
   /** tool_use_id → latest live task_progress (folded onto running tool cards). */
   taskProgressMap?: Map<string, SDKTaskProgressMessage>;
-  /** tool_use_ids whose card is rendered in this slice — gates task_notification
-   * suppression (a nested tool_use whose parent is paginated out has no target). */
-  foldableToolUseIds?: Set<string>;
   /** UUIDs of hook_started/hook_progress phases whose run reached
    * hook_response in the same turn — gates the hook running spinner so
    * completed phases don't look still-running. */
@@ -256,7 +253,6 @@ function SDKMessageRendererImpl({
   subagentMessagesMap,
   taskNotificationsMap,
   taskProgressMap,
-  foldableToolUseIds,
   completedHookUuids,
   replacementStatusMap,
   sessionInfo,
@@ -304,19 +300,10 @@ function SDKMessageRendererImpl({
     return null;
   }
 
-  // Skip sub-agent messages - they're now shown inside SubagentBlock.
-  // Exception: a nested task_notification. If its parent card is in the slice
-  // it's folded onto the nested ToolResultCard (suppressed below); if the parent
-  // was paginated out it must render the fallback row. Either way don't drop it
-  // here — the task_notification branch below decides fold vs fallback.
-  if (
-    !showSubagentMessages &&
-    isSubagentMessage(sdkMessage, subagentMessagesMap) &&
-    !(
-      isSDKSystemMessage(sdkMessage) &&
-      (sdkMessage as { subtype?: string }).subtype === 'task_notification'
-    )
-  ) {
+  // Skip sub-agent messages - they're shown inside SubagentBlock. A nested
+  // task_notification has no standalone row (suppressed unconditionally below),
+  // so it doesn't need to be exempted here.
+  if (!showSubagentMessages && isSubagentMessage(sdkMessage, subagentMessagesMap)) {
     return null;
   }
 
@@ -324,22 +311,17 @@ function SDKMessageRendererImpl({
     return null;
   }
 
-  // task_notification is folded onto its originating tool_use card (green
-  // check / red X + summary + usage). Suppress the standalone system row only
-  // when that tool_use's card is actually rendered in the current paginated
-  // slice — verified via `foldableToolUseIds` (top-level tool_uses + nested
-  // tool_uses whose parent Task/Agent card is present). A nested tool_use
-  // whose parent SubagentBlock was paginated out has no render target, so its
-  // notification must fall back to a row. A true orphan (no tool_use_id) also
-  // falls through to SDKSystemMessage.
+  // task_notification is folded onto its originating tool_use card (green ✓ /
+  // red ✗ + summary + usage), rendered INDEPENDENTLY by ToolResultCard /
+  // SubagentBlock via the `taskNotificationsMap` prop. Suppress the standalone
+  // system row unconditionally — including orphans whose tool card paginated
+  // out of view and true orphans with no tool_use_id. The terminal status is
+  // only visible while the originating tool card is in the slice (task #684).
   if (
     isSDKSystemMessage(sdkMessage) &&
     (sdkMessage as { subtype?: string }).subtype === 'task_notification'
   ) {
-    const toolUseId = (sdkMessage as { tool_use_id?: string }).tool_use_id;
-    if (toolUseId && foldableToolUseIds?.has(toolUseId)) {
-      return null;
-    }
+    return null;
   }
 
   // Compute the rendered message component
@@ -444,7 +426,6 @@ function areMessageRendererPropsEqual(prev: Props, next: Props): boolean {
     prev.subagentMessagesMap === next.subagentMessagesMap &&
     prev.taskNotificationsMap === next.taskNotificationsMap &&
     prev.taskProgressMap === next.taskProgressMap &&
-    prev.foldableToolUseIds === next.foldableToolUseIds &&
     prev.completedHookUuids === next.completedHookUuids &&
     prev.replacementStatusMap === next.replacementStatusMap &&
     prev.sessionInfo === next.sessionInfo &&

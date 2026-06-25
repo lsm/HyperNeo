@@ -983,49 +983,6 @@ describe('useMessageMaps', () => {
     });
   });
 
-  describe('foldableToolUseIds', () => {
-    it('includes top-level tool_uses and nested ones whose parent Task card is present', () => {
-      const messages = [
-        {
-          type: 'assistant',
-          uuid: uuid1,
-          session_id: 'session-1',
-          message: {
-            role: 'assistant',
-            content: [{ type: 'tool_use', id: 'task-1', name: 'Task', input: {} }],
-          },
-        },
-        {
-          type: 'assistant',
-          uuid: uuid2,
-          session_id: 'session-1',
-          parent_tool_use_id: 'task-1',
-          message: {
-            role: 'assistant',
-            content: [{ type: 'tool_use', id: 'nested-1', name: 'Bash', input: {} }],
-          },
-        },
-        // Nested tool_use whose parent is NOT in the slice (paginated out).
-        {
-          type: 'assistant',
-          uuid: uuid3,
-          session_id: 'session-1',
-          parent_tool_use_id: 'task-missing',
-          message: {
-            role: 'assistant',
-            content: [{ type: 'tool_use', id: 'nested-orphan', name: 'Bash', input: {} }],
-          },
-        },
-      ] as unknown as SDKMessage[];
-
-      const { result } = renderHook(() => useMessageMaps(messages, 'session-1'));
-      const f = result.current.foldableToolUseIds;
-      expect(f.has('task-1')).toBe(true); // top-level
-      expect(f.has('nested-1')).toBe(true); // nested, parent present
-      expect(f.has('nested-orphan')).toBe(false); // nested, parent paginated out
-    });
-  });
-
   describe('performance characteristics', () => {
     it('keeps session init mapping linear for large tool-heavy threads', () => {
       const messages: SDKMessage[] = [];

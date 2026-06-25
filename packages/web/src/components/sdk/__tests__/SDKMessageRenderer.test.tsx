@@ -459,14 +459,13 @@ describe('SDKMessageRenderer', () => {
       session_id: 'test-session',
     };
 
-    it('suppresses the row when its tool_use card is rendered in the slice', () => {
+    it('suppresses the standalone row when its tool_use card is in the slice', () => {
       const message = { ...baseNotification } as unknown as SDKMessage;
 
-      const { container } = render(
-        <SDKMessageRenderer message={message} foldableToolUseIds={new Set(['tu-fold'])} />
-      );
+      const { container } = render(<SDKMessageRenderer message={message} />);
 
-      // Folded onto the tool card — no standalone row.
+      // Folded onto the tool card (✓ + summary + usage via ToolResultCard) — no
+      // standalone row.
       expect(container.innerHTML).toBe('');
     });
 
@@ -501,52 +500,47 @@ describe('SDKMessageRenderer', () => {
         session_id: 'test-session',
       } as unknown as SDKMessage;
       const taskNotificationsMap = new Map([[toolUseId, notification]]);
-      const foldableToolUseIds = new Set([toolUseId]);
 
       const { container } = render(
         <>
           <SDKMessageRenderer
             message={assistantMessage}
             taskNotificationsMap={taskNotificationsMap}
-            foldableToolUseIds={foldableToolUseIds}
           />
-          <SDKMessageRenderer message={notification} foldableToolUseIds={foldableToolUseIds} />
+          <SDKMessageRenderer message={notification} />
         </>
       );
 
+      // The card fold (✓ + summary) renders via ToolResultCard reading
+      // taskNotificationsMap; the standalone row is suppressed.
       expect(container.textContent).not.toContain('Task completed');
       expect(container.querySelector('[aria-label="task completed"]')).toBeTruthy();
     });
 
-    it('renders the fallback row when the tool_use is paginated out of the slice', () => {
+    it('suppresses the standalone row when the tool_use is paginated out of the slice', () => {
       const message = { ...baseNotification } as unknown as SDKMessage;
 
-      const { container } = render(
-        // foldableToolUseIds omits 'tu-fold' — the originating card isn't rendered.
-        <SDKMessageRenderer message={message} foldableToolUseIds={new Set()} />
-      );
+      const { container } = render(<SDKMessageRenderer message={message} />);
 
-      expect(container.textContent).toContain('Task completed');
-      expect(container.textContent).toContain('Bash exited 0');
+      // No standalone row even when the originating card isn't rendered (task
+      // #684); terminal status is only visible while the card is in view.
+      expect(container.innerHTML).toBe('');
     });
 
-    it('renders the fallback row for a nested tool_use whose parent card is paginated out', () => {
+    it('suppresses the standalone row for a nested tool_use whose parent card is paginated out', () => {
       const message = { ...baseNotification } as unknown as SDKMessage;
-      // 'tu-fold' is indexed (nested tool_use exists) but its parent Task card
-      // is absent → not foldable → must fall back to a row.
+
       const { container } = render(
         <SDKMessageRenderer
           message={message}
           toolInputsMap={new Map([['tu-fold', { command: 'echo hi' }]])}
-          foldableToolUseIds={new Set()}
         />
       );
 
-      expect(container.textContent).toContain('Task completed');
-      expect(container.textContent).toContain('Bash exited 0');
+      expect(container.innerHTML).toBe('');
     });
 
-    it('renders the fallback row for true orphans (no tool_use_id)', () => {
+    it('suppresses the standalone row for true orphans (no tool_use_id)', () => {
       const message = {
         ...baseNotification,
         tool_use_id: undefined,
@@ -555,24 +549,20 @@ describe('SDKMessageRenderer', () => {
 
       const { container } = render(<SDKMessageRenderer message={message} />);
 
-      expect(container.textContent).toContain('standalone notice');
+      expect(container.innerHTML).toBe('');
     });
 
-    it('renders the fallback row for a nested notification whose parent card is absent', () => {
-      // Has parent_tool_use_id → would normally be hidden by the sub-agent
-      // skip. But with the parent Task/Agent card paginated out (not foldable),
-      // it must still render the fallback row instead of being dropped.
+    it('suppresses the standalone row for a nested notification whose parent card is absent', () => {
+      // Has parent_tool_use_id → dropped by the sub-agent skip; the standalone
+      // row is suppressed unconditionally regardless (task #684).
       const message = {
         ...baseNotification,
         parent_tool_use_id: 'task-missing',
       } as unknown as SDKMessage;
 
-      const { container } = render(
-        <SDKMessageRenderer message={message} foldableToolUseIds={new Set()} />
-      );
+      const { container } = render(<SDKMessageRenderer message={message} />);
 
-      expect(container.textContent).toContain('Task completed');
-      expect(container.textContent).toContain('Bash exited 0');
+      expect(container.innerHTML).toBe('');
     });
   });
 

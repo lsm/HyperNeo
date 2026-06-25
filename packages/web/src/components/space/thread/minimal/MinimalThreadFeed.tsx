@@ -960,13 +960,11 @@ function buildOperationalSystemTurn(
   if (subtype === 'hook_started' || subtype === 'hook_progress' || subtype === 'hook_response') {
     return null;
   }
-  // task_notification is folded onto its originating tool_use roster entry
-  // (active turn only). Suppress the standalone row ONLY when that target
-  // exists — i.e. the tool_use is in an active summary's rendered roster. When
-  // there is no target (completed turn, missing summary, or the tool was
-  // capped out of the last ROSTER_MAX_ENTRIES entries), fall through to a
-  // system turn so the terminal summary/usage/failure is not silently lost.
-  // True orphans (no tool_use_id) also fall through.
+  // task_notification never renders a standalone row. The folded case (tool_use
+  // in an active summary's roster) is suppressed here; orphan / capped /
+  // completed cases are suppressed below. Terminal status (✓/✗ + summary +
+  // usage) is only shown on the roster entry when the tool is in view (task
+  // #684).
   if (isFoldedTaskNotification(row, rosteredToolUseIds)) return null;
   if (subtype === 'api_retry') {
     const uuid = (message as { uuid?: unknown }).uuid;
@@ -1010,53 +1008,13 @@ function buildOperationalSystemTurn(
     };
   }
 
-  // task_notification fallback: only reached when there is no roster target
-  // (completed turn / missing/stale summary / capped-out tool). Surface the
-  // terminal status + summary + usage so failures aren't silently lost — this
-  // row is the only remaining place to show the terminal metadata, matching
-  // what the roster and the full chat notification renderer display.
+  // task_notification with no roster target (completed turn / missing/stale
+  // summary / capped-out tool / true orphan): no longer rendered as a
+  // standalone system row (task #684). Terminal status is only visible on the
+  // roster entry when the originating tool is in view; an out-of-roster tool
+  // renders nothing.
   if (subtype === 'task_notification') {
-    const status = (message as { status?: string }).status;
-    const summary = (message as { summary?: unknown }).summary;
-    const usage = (
-      message as {
-        usage?: { total_tokens?: number; tool_uses?: number; duration_ms?: number };
-      }
-    ).usage;
-    const title =
-      status === 'completed'
-        ? 'Task completed'
-        : status === 'failed'
-          ? 'Task failed'
-          : status === 'stopped'
-            ? 'Task stopped'
-            : 'Task notification';
-    const parts: string[] = [];
-    if (typeof summary === 'string' && summary.trim()) parts.push(summary.trim());
-    else if (typeof status === 'string') parts.push(status);
-    if (usage) {
-      const segs: string[] = [];
-      if (typeof usage.total_tokens === 'number')
-        segs.push(`${usage.total_tokens.toLocaleString()} tokens`);
-      if (typeof usage.tool_uses === 'number') segs.push(`${usage.tool_uses} tool uses`);
-      if (typeof usage.duration_ms === 'number')
-        segs.push(`${(usage.duration_ms / 1000).toFixed(1)}s`);
-      if (segs.length > 0) parts.push(segs.join(' · '));
-    }
-    return {
-      state: 'system',
-      id: `system-${String(row.id)}`,
-      agent: row.label,
-      agentKind: row.kind,
-      agentRole: row.role,
-      agentNodeExecutionId: row.nodeExecutionId ?? null,
-      createdAt: row.createdAt,
-      title,
-      body: parts.join('\n'),
-      sessionId: row.sessionId,
-      highlightMessageUuid: highlightUuid,
-      replacementStatus: row.replacementStatus,
-    };
+    return null;
   }
 
   if (subtype === 'session_state_changed') {
@@ -1469,7 +1427,15 @@ function buildFeedTurns(
         turns.push(operationalSystemTurn);
         continue;
       }
-      if (isFoldedTaskNotification(row, rosteredToolUseIds)) {
+      // task_notification never renders a standalone system row (task #684) and
+      // must not be folded into an agent turn either — skip it entirely. Its
+      // terminal status (✓/✗ + summary + usage) is shown on the roster entry
+      // when the originating tool is in view.
+      if (
+        !!row.message &&
+        row.message.type === 'system' &&
+        (row.message as { subtype?: string }).subtype === 'task_notification'
+      ) {
         continue;
       }
       if (isUserRow(row)) {

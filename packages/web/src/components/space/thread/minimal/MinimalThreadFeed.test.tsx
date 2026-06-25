@@ -747,7 +747,7 @@ describe('MinimalThreadFeed', () => {
     expect(screen.queryByText('Task completed')).toBeNull();
   });
 
-  it('does not suppress active turn task_notification when active summary is missing', () => {
+  it('suppresses the standalone task_notification row when the active summary is missing', () => {
     const t = Date.now();
     const rows = [
       makeRow({
@@ -786,9 +786,9 @@ describe('MinimalThreadFeed', () => {
 
     const turns = screen.getAllByTestId('minimal-thread-turn');
     expect(turns[0].dataset.turnState).toBe('active');
-    const feed = screen.getByTestId('space-task-event-feed-minimal');
-    expect(feed.textContent).toContain('Task completed');
-    expect(feed.textContent).toContain('active summary missing');
+    // No active summary → no roster target → standalone row suppressed (task #684).
+    expect(screen.queryByText('Task completed')).toBeNull();
+    expect(screen.queryByText('active summary missing')).toBeNull();
   });
 
   it('keeps pre-result task_notifications inside completed slices for folding', () => {
@@ -832,7 +832,7 @@ describe('MinimalThreadFeed', () => {
     expect(entry.textContent).toContain('settled before result');
   });
 
-  it('keeps capped pre-result task_notifications as standalone rows only', () => {
+  it('drops the standalone row for a capped pre-result task_notification', () => {
     const t = Date.now();
     const rows = [
       makeRow({
@@ -873,10 +873,15 @@ describe('MinimalThreadFeed', () => {
 
     render(<MinimalThreadFeed parsedRows={rows} />);
 
-    const feed = screen.getByTestId('space-task-event-feed-minimal');
-    expect(feed.textContent).toContain('Task completed');
-    expect(feed.textContent).toContain('first tool done');
-    expect(screen.queryAllByTestId('minimal-thread-roster-entry')).toHaveLength(0);
+    // The capped tool (tu-a1-0, the first of 9) has no roster target → its
+    // notification no longer renders a standalone row (task #684); terminal
+    // status is lost for out-of-roster tools (intended tradeoff).
+    expect(screen.queryByText('Task completed')).toBeNull();
+    expect(screen.queryByText('first tool done')).toBeNull();
+    // The completed roster renders the most recent tools; the capped first
+    // tool isn't among them, so no entry carries its summary.
+    const entries = screen.queryAllByTestId('minimal-thread-roster-entry');
+    expect(entries.every((e) => !e.textContent?.includes('first tool done'))).toBe(true);
   });
 
   it('folds completed slices inside active blocks without suppressing the active tail', () => {
@@ -940,7 +945,7 @@ describe('MinimalThreadFeed', () => {
     expect(turns.some((turn) => turn.dataset.turnState === 'active')).toBe(true);
   });
 
-  it('does not suppress active turn task_notification after boundary-flushed slice', () => {
+  it('suppresses the standalone task_notification row after a boundary-flushed slice', () => {
     const t = Date.now();
     const rows = [
       makeRow({
@@ -992,9 +997,11 @@ describe('MinimalThreadFeed', () => {
 
     render(<MinimalThreadFeed parsedRows={rows} activeAgentLabels={new Set(['Coder Agent'])} />);
 
-    const feed = screen.getByTestId('space-task-event-feed-minimal');
-    expect(feed.textContent).toContain('Task completed');
-    expect(feed.textContent).toContain('boundary active fallback');
+    // No roster target for the boundary-flushed notification → standalone row
+    // suppressed (task #684). The active turn itself still renders.
+    expect(screen.getAllByTestId('minimal-thread-turn').length).toBeGreaterThan(0);
+    expect(screen.queryByText('Task completed')).toBeNull();
+    expect(screen.queryByText('boundary active fallback')).toBeNull();
   });
 
   it('renders the active rail and tool roster for the live turn when activeAgentLabels includes the agent', () => {
@@ -1265,11 +1272,11 @@ describe('MinimalThreadFeed', () => {
     expect(entries[0].textContent).toContain('42 tests passed');
   });
 
-  it('does not fold when the summary turnIndex is stale vs the compact rows turn', () => {
+  it('suppresses the standalone row when the summary turnIndex is stale vs the compact rows turn', () => {
     const t = Date.now();
     // Compact rows are on turn 1 (active). The summary claims turn 2 — a stale
-    // delta from the previous turn. Its tool_use_id must NOT suppress the
-    // notification (no matching rendered turn → fallback row).
+    // delta from the previous turn. Its tool_use_id has no matching rendered
+    // roster turn → no fold target → standalone row suppressed (task #684).
     const rows = [
       makeRow({
         id: 'a1',
@@ -1318,10 +1325,11 @@ describe('MinimalThreadFeed', () => {
       />
     );
 
-    // Turn mismatch → not folded → notification falls back to a row.
-    const feed = screen.getByTestId('space-task-event-feed-minimal');
-    expect(feed.textContent).toContain('42 tests passed');
-    expect(feed.textContent).toContain('Task completed');
+    // Turn mismatch → not folded → no roster target → standalone row suppressed
+    // (task #684). The stale-summary roster is dropped (no matching turn).
+    expect(screen.queryAllByTestId('minimal-thread-roster-entry')).toHaveLength(0);
+    expect(screen.queryByText('Task completed')).toBeNull();
+    expect(screen.queryByText('42 tests passed')).toBeNull();
   });
 
   it('drops the active roster when the summary turnIndex mismatches the trailing turn', () => {
@@ -1373,7 +1381,12 @@ describe('MinimalThreadFeed', () => {
         createdAt: t,
         message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'ls' } }]),
       }),
-      makeRow({ id: 'r1', label: 'Coder Agent', createdAt: t + 100, message: resultMessage('r1') }),
+      makeRow({
+        id: 'r1',
+        label: 'Coder Agent',
+        createdAt: t + 100,
+        message: resultMessage('r1', 'Stopped'),
+      }),
       makeRow({
         id: 'n1',
         label: 'Coder Agent',
@@ -1393,9 +1406,11 @@ describe('MinimalThreadFeed', () => {
 
     render(<MinimalThreadFeed parsedRows={rows} />);
 
-    const feed = screen.getByTestId('space-task-event-feed-minimal');
-    expect(feed.textContent).toContain('Task stopped');
-    expect(feed.textContent).not.toContain('Task failed');
+    // Stopped status is folded onto the roster entry (no standalone row, task
+    // #684): "Task stopped" shows on the entry, never "Task failed".
+    const entry = screen.getByTestId('minimal-thread-roster-entry');
+    expect(entry.textContent).toContain('Task stopped');
+    expect(entry.textContent).not.toContain('Task failed');
   });
 
   it('folds task_notification onto a completed turn roster entry', () => {
@@ -1520,11 +1535,12 @@ describe('MinimalThreadFeed', () => {
     expect(entries[1].textContent).not.toContain('secret');
   });
 
-  it('falls back to a system row for task_notification with no roster target (completed turn)', () => {
+  it('drops the standalone row for a task_notification with no roster target (capped completed tool)', () => {
     const t = Date.now();
     // More than ROSTER_MAX_ENTRIES tool_use blocks → the first tool is capped
-    // out of the completed roster. Its notification must remain standalone so
-    // terminal metadata is not lost.
+    // out of the completed roster. Its notification has no roster target, so it
+    // renders nothing — terminal metadata is lost for out-of-roster tools
+    // (task #684, intended tradeoff).
     const rows = [
       makeRow({
         id: 'a1',
@@ -1538,7 +1554,12 @@ describe('MinimalThreadFeed', () => {
           }))
         ),
       }),
-      makeRow({ id: 'r1', label: 'Coder Agent', createdAt: t + 100, message: resultMessage('r1') }),
+      makeRow({
+        id: 'r1',
+        label: 'Coder Agent',
+        createdAt: t + 100,
+        message: resultMessage('r1', 'Done'),
+      }),
       makeRow({
         id: 'n1',
         label: 'Coder Agent',
@@ -1559,19 +1580,19 @@ describe('MinimalThreadFeed', () => {
 
     render(<MinimalThreadFeed parsedRows={rows} />);
 
-    // Capped out of the completed roster → notification renders as a row,
-    // preserving both summary and usage (terminal metadata not lost).
-    const feed = screen.getByTestId('space-task-event-feed-minimal');
-    expect(feed.textContent).toContain('Bash exited 1');
-    expect(feed.textContent).toContain('4,321 tokens');
-    expect(feed.textContent).toContain('3 tool uses');
+    // Capped out of the roster → no standalone row, no fold target → the
+    // summary and usage are not rendered anywhere (intended tradeoff).
+    expect(screen.queryByText('Bash exited 1')).toBeNull();
+    expect(screen.queryByText('4,321 tokens')).toBeNull();
+    expect(screen.queryByText('3 tool uses')).toBeNull();
   });
 
-  it('falls back to a row when a stale summary lingers after the turn went terminal', () => {
+  it('folds a terminal-turn notification onto the completed roster, ignoring a stale active summary', () => {
     const t = Date.now();
     // Tool_use + result → terminal turn, but the active-turn LiveQuery still
-    // holds a summary for it (stale). The notification must NOT be suppressed,
-    // because no active roster renders for a terminal trailing block.
+    // holds a summary for it (stale). The stale summary is ignored; the
+    // notification folds onto the completed roster entry instead of rendering a
+    // standalone row (task #684).
     const rows = [
       makeRow({
         id: 'a1',
@@ -1579,7 +1600,12 @@ describe('MinimalThreadFeed', () => {
         createdAt: t,
         message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'bun test' } }]),
       }),
-      makeRow({ id: 'r1', label: 'Coder Agent', createdAt: t + 100, message: resultMessage('r1') }),
+      makeRow({
+        id: 'r1',
+        label: 'Coder Agent',
+        createdAt: t + 100,
+        message: resultMessage('r1', 'Done'),
+      }),
       makeRow({
         id: 'n1',
         label: 'Coder Agent',
@@ -1619,12 +1645,14 @@ describe('MinimalThreadFeed', () => {
       />
     );
 
-    // Stale summary is ignored (terminal trailing block) → notification falls back to a row.
-    const feed = screen.getByTestId('space-task-event-feed-minimal');
-    expect(feed.textContent).toContain('all green');
+    // Stale active summary ignored → no standalone row; the notification folds
+    // onto the completed roster entry.
+    expect(screen.queryByText('Task completed')).toBeNull();
+    const entry = screen.getByTestId('minimal-thread-roster-entry');
+    expect(entry.textContent).toContain('all green');
   });
 
-  it('does not suppress a capped task_notification when a rostered api_retry splits the active pre-scan', () => {
+  it('drops the standalone row for a capped task_notification when a rostered api_retry splits the active pre-scan', () => {
     const t = Date.now();
     const summaryEntries: ActiveTurnSummary['entries'] = [
       ...Array.from({ length: 9 }, (_, i) => ({
@@ -1723,10 +1751,14 @@ describe('MinimalThreadFeed', () => {
       />
     );
 
-    const feed = screen.getByTestId('space-task-event-feed-minimal');
-    expect(feed.textContent).toContain('Task failed');
-    expect(feed.textContent).toContain('second tool failed after retry');
-    expect(feed.textContent).toContain('1,234 tokens');
+    // tu-a1-1 is capped out of the active roster (8 most-recent entries) → no
+    // fold target → standalone row suppressed (task #684). The rostered
+    // api_retry still renders in the active roster; the capped notification's
+    // terminal metadata is lost (intended tradeoff).
+    expect(screen.queryByText('Task failed')).toBeNull();
+    expect(screen.queryByText('second tool failed after retry')).toBeNull();
+    expect(screen.queryByText('1,234 tokens')).toBeNull();
+    expect(screen.getAllByTestId('minimal-thread-roster-entry').length).toBeGreaterThan(0);
   });
 
   it('caps the active roster at 8 most-recent tool calls', () => {
