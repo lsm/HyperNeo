@@ -374,12 +374,31 @@ describe('Post-approval merge conflict routes to coder, not human', () => {
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/conflict markers/);
   });
 
+  test('coder handoff includes review_url so review-posted-gate opens', () => {
+    // Review → Coding is gated by review-posted-gate, which requires BOTH
+    // pr_url and review_url (writers: Review) and resets each cycle. A conflict
+    // handoff carrying only pr_url would be blocked, so the coder would never
+    // receive the rebase request. The payload must carry review_url too.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('review-posted-gate');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('requires both `pr_url`');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('review_url: "<approval review url>"');
+  });
+
   test('coder handoff carries PR URL, base branch, and conflicting files', () => {
     // The send_message payload to the coder must include everything the coder
     // needs to rebase and resolve.
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('base_branch: "dev"');
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('conflicting_files');
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('reason: "merge_conflict"');
+  });
+
+  test('conflict files are derived from the merge output, not PR file list', () => {
+    // `gh pr view --json files` lists every PR file, not the conflict subset —
+    // using it would hand the coder every changed file. Derive actual conflict
+    // paths from the merge failure output / a merge-tree trial instead.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('--json headRefName,files');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('merge-tree');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/Do NOT use/);
   });
 
   test('coder is told to rebase, resolve, test, push, then report back', () => {
@@ -403,24 +422,40 @@ describe('Post-approval merge conflict routes to coder, not human', () => {
     expect(escalateIdx).toBeGreaterThan(noHumanIdx);
   });
 
-  test('each conflict attempt is recorded as Forge evidence', () => {
+  test('each conflict attempt is recorded as a workflow artifact (not Forge evidence)', () => {
+    // The post-approval reviewer session has node-agent tools only — no
+    // add_forge_manual_note — so it cannot create real Forge evidence. The
+    // prompt must record a workflow artifact and must not claim Forge evidence.
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('merge_conflict_loop');
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(
       /save_artifact\(\{ type: "merge_conflict_loop"/
     );
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('workflow artifact');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('Forge evidence');
   });
 
-  test('conflict routing ordering: detect -> evidence -> message coder -> wait -> retry/escalate', () => {
+  test('pre-merge checks are re-run after a conflict fix, with QA re-confirm', () => {
+    // A conflict-fix push changes the PR head; the reviewer must re-verify CI
+    // and review threads (steps 1 and 2) before retrying the merge, and when a
+    // QA node approved, ask it to re-confirm code it validated.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/Rerun the pre-merge checks/);
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/QA node/);
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/do NOT retry the merge immediately/);
+  });
+
+  test('conflict routing ordering: detect -> artifact -> message coder -> wait -> reverify -> retry/escalate', () => {
     const text = PR_MERGE_POST_APPROVAL_INSTRUCTIONS;
     const detectIdx = text.indexOf('mergeStateStatus: DIRTY');
-    const evidenceIdx = text.indexOf('merge_conflict_loop');
+    const artifactIdx = text.indexOf('merge_conflict_loop');
     const coderIdx = text.indexOf('list_reachable_agents');
+    const reverifyIdx = text.indexOf('Rerun the pre-merge checks');
     const retryIdx = text.indexOf('re-attempt');
     const escalateIdx = text.indexOf('escalate to space-agent');
     expect(detectIdx).toBeGreaterThan(-1);
-    expect(evidenceIdx).toBeGreaterThan(detectIdx);
-    expect(coderIdx).toBeGreaterThan(evidenceIdx);
-    expect(retryIdx).toBeGreaterThan(coderIdx);
+    expect(artifactIdx).toBeGreaterThan(detectIdx);
+    expect(coderIdx).toBeGreaterThan(artifactIdx);
+    expect(reverifyIdx).toBeGreaterThan(coderIdx);
+    expect(retryIdx).toBeGreaterThan(reverifyIdx);
     expect(escalateIdx).toBeGreaterThan(retryIdx);
   });
 });
