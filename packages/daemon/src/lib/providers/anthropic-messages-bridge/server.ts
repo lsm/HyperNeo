@@ -75,6 +75,7 @@ function mapUpstreamStatus(status: number): AnthropicErrorType {
   if (status === 404) return 'not_found_error';
   if (status === 413) return 'request_too_large';
   if (status === 429) return 'rate_limit_error';
+  if (status === 529) return 'overloaded_error';
   if (status >= 500) return 'api_error';
   return 'invalid_request_error';
 }

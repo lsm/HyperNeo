@@ -278,6 +278,23 @@ describe('AnthropicMessagesBridge', () => {
       const payload = (await response.json()) as { error: { type: string } };
       expect(payload.error.type).toBe('authentication_error');
     });
+
+    it('maps 529 to overloaded_error', async () => {
+      const fetchMock = mock(async () => new Response('overloaded', { status: 529 }));
+      const server = createAnthropicMessagesBridgeServer({
+        baseUrl: 'https://api.example.com',
+        fetchImpl: fetchMock as typeof fetch,
+      });
+      servers.push(server);
+      const response = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: 'claude', messages: [], stream: true }),
+      });
+      expect(response.status).toBe(529);
+      const payload = (await response.json()) as { error: { type: string } };
+      expect(payload.error.type).toBe('overloaded_error');
+    });
   });
 
   describe('/v1/models with model metadata', () => {
