@@ -5395,7 +5395,14 @@ export class SpaceRuntime {
       if (nagDelivered) {
         state.continueNagPending = false;
         state.continueNagAttempts = 0;
-        state.compactAttempts = 0; // productive compaction — forgive prior attempts
+        // NOTE: compactAttempts is NOT reset here. A reset on nag delivery would
+        // let a session that compacts "successfully" but immediately re-overflows
+        // (context right at the edge) loop forever without escalating. Instead,
+        // attempts are forgiven implicitly when the resumed turn makes real
+        // progress: a normal (non-overflow) terminal result hits the terminal-skip
+        // path, which clears this recovery state entirely — so the next overflow
+        // starts fresh. An immediate re-overflow (no progress) leaves the state in
+        // place, so attempts accumulate and escalate at the cap.
         log.warn(
           `SpaceRuntime: injected continue nag after compaction for execution ${execution.id} (agent ${execution.agentName}, session ${sessionId})`
         );

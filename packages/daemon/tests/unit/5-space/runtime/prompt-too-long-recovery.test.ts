@@ -460,21 +460,26 @@ describe('SpaceRuntime — prompt-too-long recovery', () => {
   });
 
   test('does not block a long-running worker whose compactions are productive', async () => {
-    // P2: compactAttempts resets on a productive resume, so a worker that
-    // legitimately re-fills context over time is not penalised for stale
-    // recovery history. Only CONSECUTIVE unproductive compactions escalate.
+    // A worker that compacts, makes real progress (a normal terminal result),
+    // and only later re-fills context must not be penalised: the progress result
+    // clears the recovery state via the terminal-skip path, so the next overflow
+    // starts fresh. Contrast with immediate re-overflow (no progress), which
+    // accumulates and escalates.
     const injections: Array<{ sessionId: string; message: string }> = [];
     const rt = new SpaceRuntime(buildConfig(makeRecordingTam(injections)));
     const sessionId = 'session:long-running';
     const { run, execution } = await setupIdleOverflowExecution(rt, sessionId, true);
 
     const continueNag = buildPromptTooLongContinueNag();
-    // Three productive cycles: each /compact succeeds (context shrank) and the
-    // resume nag resets the counter. The worker must NOT be blocked.
+    // Three productive cycles. Between each, the resumed turn produces a normal
+    // success result (progress) which the terminal-skip path uses to clear state.
     for (let cycle = 0; cycle < 3; cycle++) {
-      await rt.executeTick(); // → /compact
+      await rt.executeTick(); // → /compact (fresh attempt, state was cleared)
+      saveResultMessage(sessionId, { promptTooLong: false }); // compact succeeded
+      await rt.executeTick(); // → continue nag
+      // Resumed turn completes normally — terminal-skip clears recovery state.
       saveResultMessage(sessionId, { promptTooLong: false });
-      await rt.executeTick(); // → continue nag (resets compactAttempts)
+      await rt.executeTick();
       saveResultMessage(sessionId, { promptTooLong: true }); // re-overflow later
     }
 
@@ -488,8 +493,34 @@ describe('SpaceRuntime — prompt-too-long recovery', () => {
     ]);
     expect(nodeExecutionRepo.getById(execution.id)?.status).toBe('idle');
     expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
-    // compactAttempts was reset by the last productive resume.
-    expect(promptTooLongRecoveryMap(rt).get(`${run.id}:${execution.id}`)?.compactAttempts).toBe(0);
+    // No lingering recovery state (cleared by the last progress result).
+    expect(promptTooLongRecoveryMap(rt).has(`${run.id}:${execution.id}`)).toBe(false);
+  });
+
+  test('blocks when compaction succeeds but the resume immediately re-overflows', async () => {
+    // The counter is NOT reset on nag delivery. If compaction succeeds but the
+    // resumed turn immediately re-overflows (no progress result in between),
+    // attempts accumulate and escalate — no infinite success→nag→overflow loop.
+    const injections: Array<{ sessionId: string; message: string }> = [];
+    const rt = new SpaceRuntime(buildConfig(makeRecordingTam(injections)));
+    const sessionId = 'session:edge-overflow';
+    const { run, execution } = await setupIdleOverflowExecution(rt, sessionId, true);
+
+    // Cycle 1: compact succeeds, continue nag, then immediate re-overflow.
+    await rt.executeTick(); // → /compact (attempt 1)
+    saveResultMessage(sessionId, { promptTooLong: false });
+    await rt.executeTick(); // → continue nag (attempts NOT reset)
+    saveResultMessage(sessionId, { promptTooLong: true }); // immediate re-overflow
+    // Cycle 2: attempts now 1 → /compact (attempt 2)
+    await rt.executeTick();
+    saveResultMessage(sessionId, { promptTooLong: false });
+    await rt.executeTick(); // → continue nag (attempts=2)
+    saveResultMessage(sessionId, { promptTooLong: true }); // immediate re-overflow
+    // Cycle 3: attempts=2 >= MAX → blocked
+    await rt.executeTick();
+
+    expect(nodeExecutionRepo.getById(execution.id)?.status).toBe('blocked');
+    expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
   });
 
   test('escalates to blocked when the /compact turn hangs (wait timeout)', async () => {
