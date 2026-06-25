@@ -536,6 +536,29 @@ describe('preset agent exact definitions', () => {
     expect(reviewer.customPrompt).toContain('REVIEW_POSTED');
   });
 
+  // Regression: the reviewer must never teach the `gh api ... -f body=@-`
+  // pattern. Lowercase -f (== --raw-field) is string-only and posts the @-value
+  // verbatim, so the heredoc body is discarded. The contract must instead show
+  // the command-substitution + quoted-heredoc form and warn about the trap.
+  it('Reviewer custom prompt warns against -f body=@- and teaches the heredoc command-substitution form', async () => {
+    const { seeded } = await seedPresetAgents('space-1', manager);
+    const reviewer = seeded.find((a) => a.name === 'Reviewer')!;
+    const prompt = reviewer.customPrompt!;
+    // Explicit warning so the model recognises and avoids the @- trap.
+    expect(prompt).toContain('Never use -f body=@-');
+    // Correct multi-line form: a quoted ('EOF') heredoc wrapped in $(...)
+    // passed to -f body="$(...)". Handles apostrophes/quotes in the body.
+    expect(prompt).toContain("-f body=\"$(cat <<'EOF'");
+    // The old inline single-quote body form (`-f body='## 🤖 Review ...`)
+    // broke on any apostrophe in the body — that fragility is what drove the
+    // reviewer to adopt the broken @- workaround. It must be gone.
+    expect(prompt).not.toContain("-f body='## 🤖 Review");
+    // Flag-naming accuracy: the typed flag that reads @<path>/@- is -F/--field.
+    // The contract must NOT mislabel -F as --raw-field (which is actually -f);
+    // such a mislabel would steer the agent back to the literal-path bug.
+    expect(prompt).not.toContain('-F/--raw-field');
+  });
+
   it('QA has shared system contract prompt', async () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
     const qa = seeded.find((a) => a.name === 'QA')!;
