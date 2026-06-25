@@ -29,6 +29,7 @@ import {
 } from '../provider-anthropic-compat/translator.js';
 import { getModelContextWindow as getCodexModelContextWindow } from '../codex-models.js';
 import { createAnthropicErrorBody, type AnthropicErrorType } from '../shared/error-envelope.js';
+import { normalizeOpenAiUpstreamError } from '../shared/normalize-upstream-error.js';
 import { Logger } from '../../logger.js';
 
 const logger = new Logger('openai-responses-bridge-server');
@@ -228,10 +229,29 @@ function continuationKey(sessionId: string, callId: string): string {
   return `${sessionId}\u0000${callId}`;
 }
 
-function sendJsonError(status: number, type: AnthropicErrorType, message: string): Response {
+function sendJsonError(
+  status: number,
+  type: AnthropicErrorType,
+  message: string,
+  extraHeaders?: Record<string, string>
+): Response {
   return new Response(createAnthropicErrorBody(type, message), {
     status,
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...extraHeaders },
+  });
+}
+
+/**
+ * Emit a normalized retryable upstream error with `x-should-retry: true` so the
+ * Claude Agent SDK retries (it already retries on 429 / >=500 status).
+ */
+function sendRetryableUpstreamError(normalized: {
+  type: AnthropicErrorType;
+  status: number;
+  message: string;
+}): Response {
+  return sendJsonError(normalized.status, normalized.type, normalized.message, {
+    'x-should-retry': 'true',
   });
 }
 
@@ -1112,7 +1132,16 @@ async function streamResponsesToAnthropic({
         ensureStarted();
         closeThinkingBlock();
         closeTextBlock();
-        send(errorSSE('api_error', streamErrorMessage(event)));
+        // Classify a transient mid-stream error (rate_limit / overloaded) so the
+        // correct Anthropic type surfaces. The SDK cannot retry a stream it has
+        // already started, but the right type lets the query-runner (B4)
+        // recognise and re-issue the whole query.
+        const message = streamErrorMessage(event);
+        const normalized = normalizeOpenAiUpstreamError(
+          JSON.stringify({ error: event.error ?? {} }),
+          200
+        );
+        send(errorSSE(normalized?.type ?? 'api_error', message));
         send(messageStopSSE());
         closeController();
         return;
@@ -1512,6 +1541,17 @@ export function createOpenAIResponsesBridgeServer(
       if (!openAIResponse.ok) {
         const text = await openAIResponse.text();
         logUpstream4xx(openAIResponse.status, requestBody, text);
+        // Inspect the BODY for transient signals (rate_limit_exceeded /
+        // server_error / overload text) the status alone misses — e.g. a 4xx
+        // carrying a rate-limit body. Reclassify so the SDK retries.
+        const normalized = normalizeOpenAiUpstreamError(text, openAIResponse.status);
+        if (normalized) {
+          logger.warn(
+            `openai-responses: normalized upstream error to retryable ` +
+              `${normalized.type} (${normalized.status}): ${normalized.message.slice(0, 200)}`
+          );
+          return sendRetryableUpstreamError(normalized);
+        }
         return sendJsonError(
           openAIResponse.status,
           mapOpenAIStatusToAnthropicError(openAIResponse.status),
