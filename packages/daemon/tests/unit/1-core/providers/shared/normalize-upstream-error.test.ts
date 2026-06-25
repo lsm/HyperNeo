@@ -157,6 +157,25 @@ describe('normalizeOpenAiUpstreamError', () => {
     expect(result?.status).toBe(429);
   });
 
+  it('inspects error.code even when error.type is a non-transient category', () => {
+    // OpenAI-compatible payloads can set type to a broad category while the
+    // transient value lives in code. A `type ?? code` short-circuit would miss it.
+    const body = JSON.stringify({
+      error: { type: 'requests', code: 'rate_limit_exceeded', message: 'slow down' },
+    });
+    const result = normalizeOpenAiUpstreamError(body, 200);
+    expect(result?.type).toBe('rate_limit_error');
+    expect(result?.status).toBe(429);
+  });
+
+  it('inspects error.code for server_error even when error.type is present', () => {
+    const body = JSON.stringify({
+      error: { type: 'requests', code: 'server_error', message: 'down' },
+    });
+    const result = normalizeOpenAiUpstreamError(body, 500);
+    expect(result?.type).toBe('overloaded_error');
+  });
+
   it('returns null for a normal invalid_request error', () => {
     const body = JSON.stringify({
       error: { type: 'invalid_request_error', message: 'bad model id' },

@@ -187,10 +187,14 @@ export function normalizeOpenAiUpstreamError(
   const codeField = readStringField(errorObj, 'code')?.toLowerCase();
   const messageField = readStringField(errorObj, 'message') ?? body;
 
-  const structuredType = typeField ?? codeField;
-  const isRateType = structuredType === 'rate_limit_exceeded';
+  // Inspect BOTH `type` and `code` independently. OpenAI-compatible payloads
+  // sometimes set `error.type` to a broad category (e.g. "requests") while the
+  // actionable transient value lives in `error.code` (e.g. "rate_limit_exceeded").
+  // A `type ?? code` short-circuit would miss that combination.
+  const isRateType = typeField === 'rate_limit_exceeded' || codeField === 'rate_limit_exceeded';
   const isServerType =
-    structuredType !== undefined && OPENAI_TRANSIENT_SERVER_TYPES.has(structuredType);
+    (typeField !== undefined && OPENAI_TRANSIENT_SERVER_TYPES.has(typeField)) ||
+    (codeField !== undefined && OPENAI_TRANSIENT_SERVER_TYPES.has(codeField));
 
   const isRateMessage = OPENAI_RATE_LIMIT_PATTERN.test(messageField);
   const isOverloadMessage = OPENAI_OVERLOAD_PATTERN.test(messageField);

@@ -132,4 +132,119 @@ describe('openai-responses-bridge: body-embedded / mid-stream error normalizatio
     const errorEvent = events.find((e) => e.event === 'error');
     expect((errorEvent?.data as { error: { type: string } }).error.type).toBe('api_error');
   });
+
+  it('classifies a response.failed event whose error is under response.error', async () => {
+    // response.failed carries the failure under event.response.error (not
+    // event.error). The bridge must read that shape to classify the transient.
+    const sse =
+      'event: response.failed\n' +
+      'data: {"type":"response.failed","response":{"error":{"type":"server_error","message":"overloaded"}}}\n\n';
+    server = makeServer(
+      async () =>
+        new Response(sse, { status: 200, headers: { 'Content-Type': 'text/event-stream' } })
+    );
+
+    const res = await postMessages(server.port);
+    expect(res.status).toBe(200);
+    const events = await readSSEEvents(res.body);
+    const errorEvent = events.find((e) => e.event === 'error');
+    expect(errorEvent).toBeDefined();
+    expect((errorEvent?.data as { error: { type: string } }).error.type).toBe('overloaded_error');
+  });
+
+  it('normalizes a 200-with-body rate-limit error before streaming', async () => {
+    // A Responses-compatible proxy returns 200 with a JSON error body instead
+    // of an SSE stream. Without normalization the streamer would emit a
+    // successful empty end_turn.
+    server = makeServer(
+      async () =>
+        new Response(
+          JSON.stringify({
+            error: { type: 'rate_limit_exceeded', message: 'Too Many Requests' },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+    );
+
+    const res = await postMessages(server.port);
+    expect(res.status).toBe(429);
+    expect(res.headers.get('x-should-retry')).toBe('true');
+    const json = (await res.json()) as { error: { type: string } };
+    expect(json.error.type).toBe('rate_limit_error');
+  });
+
+  it('normalizes a transient body on a tool-continuation 400 before falling back', async () => {
+    // Continuation requests hit a dedicated 400 branch that returns immediately
+    // unless the body mentions previous_response_id. A structured transient 400
+    // (e.g. rate_limit_exceeded) must still be normalized before the
+    // invalid_request fallback so the SDK retries.
+    let call = 0;
+    server = makeServer(async () => {
+      call += 1;
+      if (call === 1) {
+        // First turn: emit a function call + response.completed so the bridge
+        // stores a continuation (call_abc -> resp_tool).
+        return new Response(
+          [
+            'event: response.function_call_arguments.done',
+            'data: {"type":"response.function_call_arguments.done","call_id":"call_abc","name":"lookup","arguments":"{\\"q\\":\\"weather\\"}"}',
+            '',
+            'event: response.completed',
+            'data: {"type":"response.completed","response":{"id":"resp_tool","usage":{"input_tokens":10,"output_tokens":4},"output":[]}}',
+            '',
+            '',
+          ].join('\n'),
+          { status: 200, headers: { 'Content-Type': 'text/event-stream' } }
+        );
+      }
+      // Continuation turn: upstream returns 400 with a transient body (no
+      // previous_response_id mention).
+      return new Response(
+        JSON.stringify({ error: { type: 'rate_limit_exceeded', message: 'slow down' } }),
+        { status: 400, headers: { 'Content-Type': 'application/json' } }
+      );
+    });
+
+    // First request: primes the continuation.
+    const first = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'gpt-5.3-codex',
+        max_tokens: 128,
+        messages: [{ role: 'user', content: 'Use the tool.' }],
+        tools: [{ name: 'lookup', input_schema: { type: 'object' } }],
+      }),
+    });
+    await readSSEEvents(first.body);
+
+    // Continuation request: assistant tool_use + user tool_result for call_abc.
+    const res = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'gpt-5.3-codex',
+        max_tokens: 128,
+        messages: [
+          { role: 'user', content: 'Use the tool.' },
+          {
+            role: 'assistant',
+            content: [
+              { type: 'tool_use', id: 'call_abc', name: 'lookup', input: { q: 'weather' } },
+            ],
+          },
+          {
+            role: 'user',
+            content: [{ type: 'tool_result', tool_use_id: 'call_abc', content: 'found' }],
+          },
+        ],
+        tools: [{ name: 'lookup', input_schema: { type: 'object' } }],
+      }),
+    });
+
+    expect(res.status).toBe(429);
+    expect(res.headers.get('x-should-retry')).toBe('true');
+    const json = (await res.json()) as { error: { type: string } };
+    expect(json.error.type).toBe('rate_limit_error');
+  });
 });

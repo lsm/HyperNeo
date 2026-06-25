@@ -41,6 +41,14 @@ async function postMessages(
   });
 }
 
+async function postCountTokens(port: number): Promise<Response> {
+  return await fetch(`http://127.0.0.1:${port}/v1/messages/count_tokens`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'anthropic-version': '2023-06-01' },
+    body: JSON.stringify({ model: 'glm-5', messages: [{ role: 'user', content: 'hi' }] }),
+  });
+}
+
 describe('anthropic-messages-bridge: body-embedded upstream error normalization', () => {
   let server: AnthropicMessagesBridgeServer | undefined;
 
@@ -152,6 +160,36 @@ describe('anthropic-messages-bridge: body-embedded upstream error normalization'
     const res = await postMessages(server.port);
     // Not a recognized transient error → not reclassified. The buffered body is
     // returned to the SDK unchanged so it isn't silently swallowed.
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe(raw);
+  });
+
+  it('normalizes a count_tokens 200-with-body GLM overload too', async () => {
+    // GLM can return the same overload body from /v1/messages/count_tokens; the
+    // normalization must not be gated to /v1/messages only.
+    server = makeServer(
+      async () =>
+        new Response(JSON.stringify({ error: { code: '1305', message: '访问量过大' } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+    );
+
+    const res = await postCountTokens(server.port);
+    expect(res.status).toBe(429);
+    expect(res.headers.get('x-should-retry')).toBe('true');
+    const json = (await res.json()) as { error: { type: string } };
+    expect(json.error.type).toBe('rate_limit_error');
+  });
+
+  it('passes a normal count_tokens JSON response through unchanged', async () => {
+    const raw = JSON.stringify({ input_tokens: 42 });
+    server = makeServer(
+      async () =>
+        new Response(raw, { status: 200, headers: { 'Content-Type': 'application/json' } })
+    );
+
+    const res = await postCountTokens(server.port);
     expect(res.status).toBe(200);
     expect(await res.text()).toBe(raw);
   });

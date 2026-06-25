@@ -279,10 +279,12 @@ export function createAnthropicMessagesBridgeServer(
       // status gives the SDK nothing to retry on. When the body is not an event
       // stream, buffer it and inspect for a body-embedded transient error; if
       // found, re-emit as a retryable non-2xx response so the SDK retries. A
-      // genuine SSE stream is still passed through byte-for-byte below.
+      // genuine SSE stream is still passed through byte-for-byte below. Covers
+      // both /v1/messages and /v1/messages/count_tokens (GLM can return the
+      // same overload body for either).
       const upstreamContentType = upstreamResponse.headers.get('content-type') ?? '';
       const isEventStream = upstreamContentType.includes('text/event-stream');
-      if (upstreamResponse.ok && !isEventStream && isMessages) {
+      if (upstreamResponse.ok && !isEventStream && (isMessages || isCountTokens)) {
         const bodyText = await upstreamResponse.text();
         const normalized = normalizeUpstreamError(bodyText, upstreamResponse.status);
         if (normalized) {

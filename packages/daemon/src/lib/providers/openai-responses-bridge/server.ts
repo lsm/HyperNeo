@@ -1137,8 +1137,16 @@ async function streamResponsesToAnthropic({
         // already started, but the right type lets the query-runner (B4)
         // recognise and re-issue the whole query.
         const message = streamErrorMessage(event);
+        // `response.failed` carries the error under `event.response.error`; the
+        // `error` event carries it under `event.error`. Inspect whichever shape
+        // the upstream used so a transient `response.failed` is classified too.
+        const responseObject = event.response;
+        const responseError =
+          responseObject && typeof responseObject === 'object'
+            ? (responseObject as Record<string, unknown>).error
+            : undefined;
         const normalized = normalizeOpenAiUpstreamError(
-          JSON.stringify({ error: event.error ?? {} }),
+          JSON.stringify({ error: event.error ?? responseError ?? {} }),
           200
         );
         send(errorSSE(normalized?.type ?? 'api_error', message));
@@ -1490,6 +1498,17 @@ export function createOpenAIResponsesBridgeServer(
             continuation = undefined;
           } else {
             logUpstream4xx(openAIResponse.status, requestBody, errorText);
+            // The 400 isn't about previous_response_id — still inspect the body
+            // for a transient signal (a proxy may return 400 with a structured
+            // rate_limit/server body) before falling back to invalid_request.
+            const normalized = normalizeOpenAiUpstreamError(errorText, openAIResponse.status);
+            if (normalized) {
+              logger.warn(
+                `openai-responses: normalized continuation 400 to retryable ` +
+                  `${normalized.type} (${normalized.status}): ${normalized.message.slice(0, 200)}`
+              );
+              return sendRetryableUpstreamError(normalized);
+            }
             return sendJsonError(
               openAIResponse.status,
               mapOpenAIStatusToAnthropicError(openAIResponse.status),
@@ -1558,6 +1577,29 @@ export function createOpenAIResponsesBridgeServer(
           parseOpenAIError(openAIResponse.status, text)
         );
       }
+
+      // Some Responses-compatible proxies return 200 with a JSON error body
+      // instead of an SSE stream. With no SSE events the streamer below would
+      // emit a successful empty end_turn, hiding a body-embedded transient
+      // error. Buffer and classify before streaming (same as the chat bridge).
+      const upstreamContentType = openAIResponse.headers.get('content-type') ?? '';
+      if (openAIResponse.ok && !upstreamContentType.includes('text/event-stream')) {
+        const bodyText = await openAIResponse.text();
+        const normalized = normalizeOpenAiUpstreamError(bodyText, openAIResponse.status);
+        if (normalized) {
+          logger.warn(
+            `openai-responses: normalized 200-with-body upstream error to retryable ` +
+              `${normalized.type} (${normalized.status}): ${normalized.message.slice(0, 200)}`
+          );
+          return sendRetryableUpstreamError(normalized);
+        }
+        // Non-transient: reconstruct so the streaming path handles it as before.
+        openAIResponse = new Response(bodyText, {
+          status: openAIResponse.status,
+          headers: { 'Content-Type': upstreamContentType || 'application/json' },
+        });
+      }
+
       consumeContinuation(sessionId, resolvedContinuation);
 
       const estimatedInputTokens = continuation
