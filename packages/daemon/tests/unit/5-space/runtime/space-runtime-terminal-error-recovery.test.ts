@@ -612,8 +612,8 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
     expect(taskRepo.getTask(taskId)?.status).toBe('blocked');
   });
 
-  test('recovery state is cleared after progress so a later recurrence gets a fresh budget', async () => {
-    const { executionId } = seedIdleErrorRun({
+  test('a non-error last message (consumed continue / transient progress) does NOT reset the budget — same-signature recurrence is bounded', async () => {
+    const { runId, taskId, executionId } = seedIdleErrorRun({
       subtype: 'error_during_execution',
       errors: ['generic 400'],
     });
@@ -625,29 +625,36 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
     await rt.executeTick();
     expect(tam._injected).toHaveLength(1);
 
-    // Simulate the continue succeeding: the agent made progress and the last
-    // message is no longer a terminal error result.
+    // Simulate the injected continue being consumed / the agent mid-turn: the
+    // last message is briefly a non-error (assistant) message. The recovery
+    // state must NOT be cleared here — getLastSDKMessage returns consumed user
+    // rows too, so resetting on any non-error message would defeat the
+    // repeat/cap guards (unbounded continues).
     db.prepare(`DELETE FROM sdk_messages WHERE session_id = ?`).run(SESSION);
     sdkMessageRepo.saveSDKMessage(SESSION, {
       type: 'assistant',
       message: {
         role: 'assistant',
-        content: [{ type: 'text', text: 'done' }],
-        stop_reason: 'end_turn',
+        content: [{ type: 'text', text: 'working...' }],
+        stop_reason: null,
       },
     } as never);
 
-    // Tick 2 → last message is non-error → recovery state cleared, no action.
+    // Tick 2 → non-error last message → execution skipped, no state change.
     await rt.executeTick();
     expect(tam._injected).toHaveLength(1);
 
-    // The same (reused) session later hits the SAME generic terminal error.
+    // The resumed turn then fails with the SAME terminal error.
     db.prepare(`DELETE FROM sdk_messages WHERE session_id = ?`).run(SESSION);
     saveResultError(SESSION, { subtype: 'error_during_execution', errors: ['generic 400'] });
 
-    // Tick 3 → state was cleared, so this is treated as a fresh incident and
-    // earns a continue (NOT an immediate deterministic-repeat block).
+    // Tick 3 → state was preserved → deterministic-repeat detected → blocked.
+    // (A fresh budget only comes from a re-spawn / new session id, not from a
+    // transient non-error last message.)
     await rt.executeTick();
-    expect(tam._injected).toHaveLength(2);
+    expect(tam._injected).toHaveLength(1);
+    expect(nodeExecutionRepo.getById(executionId)?.status).toBe('blocked');
+    expect(workflowRunRepo.getRun(runId)?.status).toBe('blocked');
+    expect(taskRepo.getTask(taskId)?.status).toBe('blocked');
   });
 });

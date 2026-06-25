@@ -7003,9 +7003,12 @@ export class SpaceRuntime {
    *   an idle dead terminal-error row would otherwise sit unrecovered).
    * - Per-execution retry cap (`MAX_TERMINAL_ERROR_CONTINUE_RETRIES`).
    * - Deterministic repeats (identical error signature) escalate immediately,
-   *   but only after the prior continue's grace window — and recovery state is
-   *   cleared once the execution observes a non-error result, so a later
-   *   recurrence in the same (reused) session gets a fresh budget.
+   *   but only after the prior continue's grace window. A genuinely recovered
+   *   session gets a fresh budget only via a re-spawn (new session id), which
+   *   `attemptBlockedRunRecovery` provides after a block — the state is NOT
+   *   reset on a non-error last message, because `getLastSDKMessage` returns
+   *   consumed user rows (e.g. the injected continue) that are not evidence of
+   *   real progress and would otherwise defeat the repeat/cap guards.
    * - Grace cooldown between attempts (mirrors the alive-stuck nag grace).
    */
   private async handleTerminalErrorIdleExecutions(
@@ -7044,20 +7047,6 @@ export class SpaceRuntime {
 
       const lastMessage = this.getSdkMessageRepo().getLastSDKMessage(sessionId);
       const key = `${runId}:${execution.id}`;
-
-      // Reset recovery state once the execution has moved past the terminal
-      // error (progress / non-error result). Node-agent sessions are reused
-      // across later activations of the same task, so without this a
-      // recovered execution that later hits the same generic signature would
-      // be treated as a deterministic repeat from the earlier incident and
-      // blocked without its retry budget.
-      if (
-        this.terminalErrorContinueStates.has(key) &&
-        (!lastMessage || !isSDKResultError(lastMessage))
-      ) {
-        this.terminalErrorContinueStates.delete(key);
-      }
-
       if (!lastMessage || !isSDKResultError(lastMessage)) continue;
 
       // A dead session cannot be continued. The liveness/crash-retry sweep
