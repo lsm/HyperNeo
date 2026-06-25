@@ -583,6 +583,44 @@ describe('MinimalThreadFeed', () => {
     });
   });
 
+  it('renders a recovered turn (error then success) as a gray bubble, not red', async () => {
+    // When an earlier assistant row carries a transient `error` (e.g. a 429
+    // the SDK retried) but a later assistant row produced a successful reply,
+    // the turn recovered. The surfaced reply is the successful one, so the
+    // bubble must stay gray — painting it red would show an "API Error" header
+    // over a successful reply body, which is misleading.
+    const t = Date.now();
+    const rows = [
+      makeRow({
+        id: 'err',
+        label: 'Coder Agent',
+        createdAt: t,
+        message: assistantError('err', 'API Error: 429 overloaded', 'overloaded_error'),
+      }),
+      makeRow({
+        id: 'ok',
+        label: 'Coder Agent',
+        createdAt: t + 1000,
+        message: assistantText('ok', 'Recovered — here is the fix'),
+      }),
+      makeRow({
+        id: 'r1',
+        label: 'Coder Agent',
+        createdAt: t + 2000,
+        message: resultMessage('r1'),
+      }),
+    ];
+
+    render(<MinimalThreadFeed parsedRows={rows} />);
+    const bubble = screen.getByTestId('minimal-thread-agent-bubble');
+    expect(bubble.getAttribute('data-has-error')).toBeNull();
+    expect(bubble.className).toContain('bg-dark-800');
+    expect(bubble.className).not.toContain('border-red');
+    await waitFor(() => {
+      expect(screen.getByText('Recovered — here is the fix')).toBeTruthy();
+    });
+  });
+
   it('keeps folded post-result task_notification rows from creating active rails', () => {
     const t = Date.now();
     const rows = [
