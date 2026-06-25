@@ -859,6 +859,28 @@ export interface SpaceTaskActivityMember {
     | null;
   /** Raw processing phase when the session is actively processing */
   processingPhase?: 'initializing' | 'thinking' | 'streaming' | 'finalizing' | null;
+  /**
+   * Rate-limit cooldown details. Present (non-null) only when
+   * `processingStatus === 'rate_limit_cooldown'`. Extracted from the same
+   * `processing_state` JSON column the activity query reads, so the value
+   * stays reactive without a separate subscription. Surfaces the countdown +
+   * Retry/Cancel affordance in the Space task thread without forcing the
+   * user into the chat container.
+   */
+  rateLimitCooldown?: { retryCount: number; maxRetries: number; retryAt: number } | null;
+  /**
+   * Active structured session error snapshot (persisted on the session row),
+   * or null when the session has no active error. Mirrors the in-memory
+   * `errorCache` lifecycle (set on `session.error`, cleared on
+   * `session.errorClear`). `category` matches the daemon `ErrorCategory`
+   * union (e.g. `'provider_auth_error'`). `providerId` is present for
+   * provider errors so the task thread can render a re-authenticate affordance.
+   */
+  sessionError?: {
+    category: string;
+    message: string;
+    providerId?: string | null;
+  } | null;
   /** Number of persisted SDK messages seen in the backing session */
   messageCount: number;
   /** Linked SpaceTask when this member corresponds to a persisted step task */

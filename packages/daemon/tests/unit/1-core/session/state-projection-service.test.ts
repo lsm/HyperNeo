@@ -7,7 +7,9 @@
  */
 
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
+import { Database as BunDatabase } from 'bun:sqlite';
 import { StateProjectionService } from '../../../../src/lib/state-projection-service';
+import type { Database } from '../../../../src/storage';
 import type { Session, GlobalSettings, AgentProcessingState } from '@neokai/shared';
 import { STATE_CHANNELS, DEFAULT_GLOBAL_SETTINGS } from '@neokai/shared';
 import type {
@@ -518,5 +520,102 @@ describe('StateProjectionService', () => {
         expect(state.apiConnection.status).toBe('disconnected');
       });
     });
+  });
+});
+
+/**
+ * Real-DB coverage for the `sessions.last_error` persistence that shadows the
+ * in-memory errorCache. The mock-based suite above can't assert column writes,
+ * so this block wires a genuine in-memory SQLite database through the service.
+ */
+describe('StateProjectionService — session error persistence', () => {
+  let service: StateProjectionService;
+  let memDb: BunDatabase;
+  let eventSubscribers: Map<string, Function[]>;
+
+  beforeEach(() => {
+    memDb = new BunDatabase(':memory:');
+    memDb.exec(`CREATE TABLE sessions (id TEXT PRIMARY KEY, last_error TEXT)`);
+    memDb.prepare('INSERT INTO sessions (id) VALUES (?)').run('sess-cooldown-1');
+
+    eventSubscribers = new Map();
+    const mockInternalEventBus = {
+      subscribe: mock((event: string, handler: Function) => {
+        const existing = eventSubscribers.get(event) || [];
+        existing.push(handler);
+        eventSubscribers.set(event, existing);
+        return () => {};
+      }),
+      publish: mock(async () => ({ delivered: 0, failures: [] })),
+      publishAsync: mock(() => {}),
+    } as unknown as InternalEventBus<DaemonInternalEventMap>;
+
+    // `Database` facade stand-in — only `getDatabase()` is exercised by the
+    // persistence path, so a minimal mock over the real in-memory DB suffices.
+    const dbFacade = { getDatabase: () => memDb } as unknown as Database;
+
+    service = new StateProjectionService(
+      { event: mock(async () => {}), onRequest: mock(() => () => {}) } as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      dbFacade,
+      mockInternalEventBus
+    );
+  });
+
+  function lastError(sessionId: string): string | null {
+    const row = memDb.prepare('SELECT last_error FROM sessions WHERE id = ?').get(sessionId) as {
+      last_error: string | null;
+    };
+    return row.last_error;
+  }
+
+  it('persists a structured provider auth error to sessions.last_error', async () => {
+    const handler = eventSubscribers.get('session.error')?.[0];
+    await handler!({
+      sessionId: 'sess-cooldown-1',
+      error: 'Anthropic authentication failed.',
+      details: {
+        category: 'provider_auth_error',
+        userMessage: 'Anthropic authentication failed.',
+        message: '401 invalid_api_key',
+        metadata: { providerId: 'anthropic' },
+      },
+    });
+
+    const stored = lastError('sess-cooldown-1');
+    expect(stored).not.toBeNull();
+    expect(JSON.parse(stored!)).toEqual({
+      category: 'provider_auth_error',
+      message: 'Anthropic authentication failed.',
+      providerId: 'anthropic',
+    });
+  });
+
+  it('clears sessions.last_error on session.errorClear', async () => {
+    const errorHandler = eventSubscribers.get('session.error')?.[0];
+    await errorHandler!({
+      sessionId: 'sess-cooldown-1',
+      error: 'boom',
+      details: { category: 'provider_auth_error', userMessage: 'boom', metadata: {} },
+    });
+    expect(lastError('sess-cooldown-1')).not.toBeNull();
+
+    const clearHandler = eventSubscribers.get('session.errorClear')?.[0];
+    await clearHandler!({ sessionId: 'sess-cooldown-1' });
+    expect(lastError('sess-cooldown-1')).toBeNull();
+  });
+
+  it('ignores error events without a structured category', async () => {
+    const handler = eventSubscribers.get('session.error')?.[0];
+    await handler!({
+      sessionId: 'sess-cooldown-1',
+      error: 'plain string error',
+      details: { code: 'ERR_001' },
+    });
+    // No category → nothing persisted (column stays NULL).
+    expect(lastError('sess-cooldown-1')).toBeNull();
   });
 });

@@ -236,6 +236,12 @@ export class StateProjectionService {
           details,
           occurredAt: Date.now(),
         });
+        // Persist a small snapshot to the session row so DB-backed read models
+        // (the Space task thread's activity LiveQuery) can surface actionable
+        // errors — e.g. a re-authenticate affordance for PROVIDER_AUTH_ERROR —
+        // without a separate per-session subscription. Mirrors the in-memory
+        // cache lifecycle (cleared on `session.errorClear`).
+        this.persistSessionError(sessionId, details);
       },
       { subscriberName: 'StateProjectionService.sessionError' }
     );
@@ -246,9 +252,54 @@ export class StateProjectionService {
       (data) => {
         const { sessionId } = data as unknown as { sessionId: string };
         this.errorCache.set(sessionId, null);
+        this.persistSessionError(sessionId, null);
       },
       { subscriberName: 'StateProjectionService.sessionErrorClear' }
     );
+  }
+
+  /**
+   * Persist (or clear) the active session error snapshot on the session row.
+   *
+   * Writes a small JSON snapshot `{ category, message, providerId? }` derived
+   * from the structured error so DB-backed read models (the Space task thread
+   * activity LiveQuery) can surface actionable errors reactively. Passing
+   * `null` clears the column (mirrors `session.errorClear`).
+   *
+   * Best-effort: a DB write failure must never break the in-memory cache
+   * update or the subsequent state broadcast — every path is guarded and
+   * logs at most a warning.
+   */
+  private persistSessionError(sessionId: string, details: unknown): void {
+    if (!this.db) return;
+    try {
+      const db = this.db.getDatabase();
+      if (!details) {
+        db.prepare('UPDATE sessions SET last_error = NULL WHERE id = ?').run(sessionId);
+        return;
+      }
+      const err = details as {
+        category?: unknown;
+        userMessage?: unknown;
+        message?: unknown;
+        metadata?: Record<string, unknown> | undefined;
+      };
+      const category = typeof err.category === 'string' ? err.category : null;
+      if (!category) return;
+      const message =
+        (typeof err.userMessage === 'string' && err.userMessage) ||
+        (typeof err.message === 'string' && err.message) ||
+        '';
+      const providerIdRaw = err.metadata?.providerId;
+      const snapshot: Record<string, unknown> = { category, message };
+      if (typeof providerIdRaw === 'string') snapshot.providerId = providerIdRaw;
+      db.prepare('UPDATE sessions SET last_error = ? WHERE id = ?').run(
+        JSON.stringify(snapshot),
+        sessionId
+      );
+    } catch (err) {
+      this.logger.warn(`Failed to persist session error for ${sessionId}:`, err);
+    }
   }
 
   /**

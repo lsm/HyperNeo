@@ -138,4 +138,62 @@ describe('SpaceTaskUnifiedThread', () => {
     render(<SpaceTaskUnifiedThread taskId="task-1" />);
     expect(screen.getByText('No task-agent activity yet.')).toBeTruthy();
   });
+
+  describe('rate-limit cooldown banner', () => {
+    it('renders a pinned countdown + Retry/Cancel banner per cooldown member', () => {
+      const retryAt = Date.now() + 60_000;
+      render(
+        <SpaceTaskUnifiedThread
+          taskId="task-1"
+          cooldownBannerMembers={[
+            {
+              sessionId: 'worker-1',
+              label: 'Coder Agent',
+              retryCount: 2,
+              maxRetries: 5,
+              retryAt,
+            },
+          ]}
+        />
+      );
+
+      const banner = screen.getByTestId('space-thread-cooldown-banner');
+      expect(banner).toBeTruthy();
+      // Agent label is surfaced so the user knows which worker is throttled.
+      expect(banner.textContent).toContain('Coder Agent');
+      // RateLimitCooldownBanner renders the manual-override actions.
+      expect(screen.getByText('Retry Now')).toBeTruthy();
+      expect(screen.getByText('Cancel')).toBeTruthy();
+    });
+
+    it('does not render the banner stack when there are no cooldown members', () => {
+      render(<SpaceTaskUnifiedThread taskId="task-1" />);
+      expect(screen.queryByTestId('space-task-thread-banner-stack')).toBeNull();
+    });
+  });
+
+  describe('provider auth-error banner', () => {
+    it('renders a re-authenticate affordance per auth-error member', () => {
+      render(
+        <SpaceTaskUnifiedThread
+          taskId="task-1"
+          authErrorBannerMembers={[
+            {
+              sessionId: 'worker-1',
+              label: 'Coder Agent',
+              message: 'Anthropic authentication failed.',
+              providerId: 'anthropic',
+            },
+          ]}
+        />
+      );
+
+      const banner = screen.getByTestId('space-thread-auth-error-banner');
+      expect(banner).toBeTruthy();
+      expect(banner.textContent).toContain('Coder Agent');
+      expect(banner.textContent).toContain('Anthropic authentication failed.');
+      // Provider label is resolved via getProviderLabel → "Anthropic".
+      expect(screen.getByText('Re-authenticate Anthropic')).toBeTruthy();
+    });
+  });
 });

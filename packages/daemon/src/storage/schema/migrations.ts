@@ -725,6 +725,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
   // Migration 160: Backfill friction_digest evidence kind for databases that already ran migration 159.
   run(migrationMarkerKey(160), () => runMigration160(db));
+
+  // Migration 161: Persist the active session error snapshot (sessions.last_error).
+  run(migrationMarkerKey(161), () => runMigration161(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -10878,4 +10881,23 @@ export function runMigration159(db: BunDatabase): void {
 
 export function runMigration160(db: BunDatabase): void {
   widenEvolutionEvidenceKinds(db);
+}
+
+/**
+ * Migration 161: Add `sessions.last_error` for persisting the active session
+ * error snapshot.
+ *
+ * The structured session error (ErrorManager → StateProjectionService
+ * `errorCache`) was previously in-memory only and therefore invisible to the
+ * DB-backed activity LiveQuery. Persisting it as a small JSON snapshot
+ * ({ category, message, providerId }) lets the Space task thread surface a
+ * re-authenticate affordance (PROVIDER_AUTH_ERROR) reactively through the
+ * existing activity subscription, without forcing the user into the chat
+ * container. Cleared on `session.errorClear`, mirroring the in-memory cache.
+ */
+export function runMigration161(db: BunDatabase): void {
+  if (!tableExists(db, 'sessions')) return;
+  if (!tableHasColumn(db, 'sessions', 'last_error')) {
+    db.exec(`ALTER TABLE sessions ADD COLUMN last_error TEXT`);
+  }
 }
