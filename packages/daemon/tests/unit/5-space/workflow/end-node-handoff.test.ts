@@ -357,16 +357,34 @@ describe('Shared merge template canonical content', () => {
 // ---------------------------------------------------------------------------
 
 describe('Post-approval merge conflict routes to coder, not human', () => {
-  test('conflict is routed to the upstream coder instead of escalating to a human', () => {
+  test('first conflict is routed to the upstream coder, not a human', () => {
     // The old template told the reviewer to call request_human_input on a
-    // conflict ("let the human resolve"). Conflicts are routine coder work —
-    // the template must not instruct human escalation on a conflict.
-    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('request_human_input');
+    // conflict ("let the human resolve"). That path is gone: a conflict ALONE
+    // routes to the coder. request_human_input is reserved for the exhaustion
+    // path (step g), after the "do NOT escalate on a conflict alone" directive.
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('let the human resolve');
-    // Explicit "do NOT escalate to a human" directive (spans a line break).
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/do NOT escalate to a\s+human/);
-    // The reviewer must discover the upstream coding node dynamically.
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('list_reachable_agents');
+    const noEscalateIdx = PR_MERGE_POST_APPROVAL_INSTRUCTIONS.indexOf('do NOT escalate to a');
+    const humanInputIdx = PR_MERGE_POST_APPROVAL_INSTRUCTIONS.indexOf('request_human_input');
+    expect(humanInputIdx).toBeGreaterThan(noEscalateIdx);
+  });
+
+  test('conflict-resolution diff is inspected before retrying the merge', () => {
+    // The approval covered the pre-conflict head; a bad conflict resolution can
+    // pass CI, so the reviewer must inspect the conflict-fix diff and only
+    // merge when the resolution is sound.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/approval no longer covers/);
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/inspect the conflict-resolution diff/);
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/request changes from the coder/);
+  });
+
+  test('exhausted retries escalate via space-agent AND request_human_input (no stuck task)', () => {
+    // send_message(space-agent) only injects a chat message and does not move
+    // the approved task out of post-approval; request_human_input is the
+    // terminal action that transitions the task so it is not left stuck.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('request_human_input');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('stuck in post-approval');
   });
 
   test('conflict detection keys on DIRTY mergeStateStatus and conflict markers', () => {
