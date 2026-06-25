@@ -343,30 +343,17 @@ export function SubagentBlock({
   const filteredNestedMessages = useMemo(() => {
     if (nestedMessages.length === 0) return [];
 
-    // Nested tool_use ids — their task_notification is folded onto the nested
-    // ToolResultCard (via taskNotificationsMap), so a standalone
-    // task_notification row for one of these would duplicate the folded status
-    // on expand. Suppress those; orphan notifications (no tool_use_id, or a
-    // tool_use not present in this timeline) are still rendered.
-    const nestedToolUseIds = new Set<string>();
-    for (const msg of nestedMessages) {
-      if (msg.type !== 'assistant' || !Array.isArray(msg.message.content)) continue;
-      for (const block of msg.message.content) {
-        const b = block as Record<string, unknown>;
-        if (b.type === 'tool_use' && typeof b.id === 'string') nestedToolUseIds.add(b.id);
-      }
-    }
-
     return nestedMessages.filter((msg, idx) => {
       if (shouldHideNestedSystemMessage(msg, idx === nestedMessages.length - 1)) {
         return false;
       }
 
-      // Suppress a folded nested task_notification: its tool_use card already
-      // shows the status, so a standalone row would duplicate it.
+      // task_notification is folded onto its nested ToolResultCard via
+      // taskNotificationsMap (✓/✗ + summary + usage), so suppress the
+      // standalone row unconditionally — including orphans whose nested
+      // tool_use isn't in this timeline (task #684).
       if (msg.type === 'system' && (msg as { subtype?: string }).subtype === 'task_notification') {
-        const toolUseId = (msg as { tool_use_id?: string }).tool_use_id;
-        if (toolUseId && nestedToolUseIds.has(toolUseId)) return false;
+        return false;
       }
 
       // Only check the first message

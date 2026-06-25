@@ -752,32 +752,6 @@ function indexTaskNotifications(rows: ParsedThreadRow[]): Map<string, TaskNotifi
   return byToolUseId;
 }
 
-/**
- * Collect the tool_use_ids that have a rendered active-roster target — i.e.
- * tool_use entries that survive the ROSTER_MAX_ENTRIES cap in a summary whose
- * session actually renders an active roster. A summary only renders an active
- * roster when its session's trailing block is non-terminal AND that block's
- * agent is active; a stale summary left over after the compact rows advanced
- * to a terminal result must NOT suppress a task_notification (it has nowhere
- * to fold). A task_notification is only suppressed when its tool_use_id is in
- * this set; otherwise its status must render as a fallback row.
- */
-function collectActiveRosteredToolUseIds(
-  summaries: ActiveTurnSummary[],
-  renderedTurnKeys: Set<string>
-): Set<string> {
-  const ids = new Set<string>();
-  for (const summary of summaries) {
-    // Match on (sessionId, turnIndex): a stale summary whose turn no longer
-    // matches the compact feed's active turn must not contribute tool IDs.
-    if (!renderedTurnKeys.has(`${summary.sessionId}:${summary.turnIndex}`)) continue;
-    for (const entry of rosterEntriesFromSummary(summary, ROSTER_MAX_ENTRIES)) {
-      if (entry.kind === 'tool' && entry.toolUseId) ids.add(entry.toolUseId);
-    }
-  }
-  return ids;
-}
-
 function collectRosteredApiRetryUuids(
   summaries: ActiveTurnSummary[],
   renderedTurnKeys: Set<string>
@@ -790,18 +764,6 @@ function collectRosteredApiRetryUuids(
     }
   }
   return uuids;
-}
-
-function collectRosteredToolUseIds(
-  summaries: ActiveTurnSummary[],
-  renderedTurnKeys: Set<string>,
-  completedRows: ParsedThreadRow[][]
-): Set<string> {
-  const ids = collectActiveRosteredToolUseIds(summaries, renderedTurnKeys);
-  for (const rows of completedRows) {
-    for (const id of indexCompletedFoldableToolUseIds(rows)) ids.add(id);
-  }
-  return ids;
 }
 
 function buildActiveTurn(
@@ -935,18 +897,9 @@ function buildCompactBoundaryTurn(row: ParsedThreadRow): CompactBoundaryFeedTurn
   };
 }
 
-function isFoldedTaskNotification(row: ParsedThreadRow, rosteredToolUseIds: Set<string>): boolean {
-  const message = row.message;
-  if (!message || message.type !== 'system') return false;
-  if ((message as { subtype?: string }).subtype !== 'task_notification') return false;
-  const toolUseId = (message as { tool_use_id?: string }).tool_use_id;
-  return !!toolUseId && rosteredToolUseIds.has(toolUseId);
-}
-
 function buildOperationalSystemTurn(
   row: ParsedThreadRow,
   isSessionTail: boolean,
-  rosteredToolUseIds: Set<string>,
   rosteredApiRetryUuids: Set<string>
 ): SystemFeedTurn | null {
   const message = row.message;
@@ -960,12 +913,6 @@ function buildOperationalSystemTurn(
   if (subtype === 'hook_started' || subtype === 'hook_progress' || subtype === 'hook_response') {
     return null;
   }
-  // task_notification never renders a standalone row. The folded case (tool_use
-  // in an active summary's roster) is suppressed here; orphan / capped /
-  // completed cases are suppressed below. Terminal status (✓/✗ + summary +
-  // usage) is only shown on the roster entry when the tool is in view (task
-  // #684).
-  if (isFoldedTaskNotification(row, rosteredToolUseIds)) return null;
   if (subtype === 'api_retry') {
     const uuid = (message as { uuid?: unknown }).uuid;
     if (typeof uuid === 'string' && rosteredApiRetryUuids.has(uuid)) return null;
@@ -1282,66 +1229,7 @@ function buildFeedTurns(
     if (sid && turnIndex !== undefined) renderedTurnKeys.add(`${sid}:${turnIndex}`);
   }
 
-  const rosteredActiveToolUseIds = collectActiveRosteredToolUseIds(
-    activeTurnSummaries,
-    renderedTurnKeys
-  );
   const rosteredApiRetryUuids = collectRosteredApiRetryUuids(activeTurnSummaries, renderedTurnKeys);
-
-  const completedRows = blocks.flatMap((block) => {
-    const out: ParsedThreadRow[][] = [];
-    const blockKey = normalizeAgentKey(block.agentLabel);
-    const trailingBlockCanUpgradeToActive = normalisedActive.has(blockKey) && !block.isTerminal;
-    let pendingAgentRows: ParsedThreadRow[] = [];
-    const flush = (isFinal = false) => {
-      if (
-        pendingAgentRows.length > 0 &&
-        !(isFinal && trailingBlockCanUpgradeToActive) &&
-        extractLastAssistantText(pendingAgentRows).text.length > 0
-      ) {
-        out.push(pendingAgentRows);
-      }
-      pendingAgentRows = [];
-    };
-    for (const row of block.rows) {
-      if (buildCompactBoundaryTurn(row) || isUserRow(row)) {
-        flush();
-        continue;
-      }
-      const message = row.message;
-      const subtype =
-        message?.type === 'system' ? (message as { subtype?: string }).subtype : undefined;
-      if (
-        subtype === 'task_notification' &&
-        trailingBlockCanUpgradeToActive &&
-        !isFoldedTaskNotification(row, rosteredActiveToolUseIds)
-      ) {
-        pendingAgentRows = [];
-        continue;
-      }
-      if (
-        subtype !== 'task_notification' &&
-        buildOperationalSystemTurn(row, false, rosteredActiveToolUseIds, rosteredApiRetryUuids)
-      ) {
-        flush();
-        continue;
-      }
-      pendingAgentRows.push(row);
-    }
-    flush(true);
-    return out;
-  });
-
-  // tool_use_ids whose status is actually rendered on an active or completed
-  // roster entry. A task_notification is suppressed ONLY when its tool_use_id is
-  // in this set — otherwise there is no inline target (missing/stale summary,
-  // turn mismatch, or capped out of the roster) and the notification must fall
-  // back to a standalone system row so terminal metadata is not lost.
-  const rosteredToolUseIds = collectRosteredToolUseIds(
-    activeTurnSummaries,
-    renderedTurnKeys,
-    completedRows
-  );
 
   const latestRowIdBySession = new Map<string, string>();
   for (const row of rowsWithReplacementStatus) {
@@ -1419,7 +1307,6 @@ function buildFeedTurns(
       const operationalSystemTurn = buildOperationalSystemTurn(
         row,
         row.sessionId ? latestRowIdBySession.get(row.sessionId) === String(row.id) : false,
-        rosteredToolUseIds,
         rosteredApiRetryUuids
       );
       if (operationalSystemTurn) {

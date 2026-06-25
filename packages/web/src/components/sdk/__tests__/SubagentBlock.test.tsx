@@ -552,6 +552,40 @@ describe('SubagentBlock', () => {
       expect(dupTaskCompleted).toHaveLength(0);
     });
 
+    it('suppresses the standalone nested task_notification row for an orphan (no matching tool_use)', async () => {
+      const input = createAgentInput('Explore', 'Find files', 'Search for test files');
+      // Orphan notification: its tool_use_id is not present as a nested tool_use,
+      // so there is no ToolResultCard to fold it onto.
+      const nestedMessages = [
+        createNestedToolUseMessage(),
+        createNestedSystemMessage('task_notification', {
+          task_id: 't',
+          tool_use_id: 'toolu_orphan_not_in_timeline',
+          status: 'completed',
+          output_file: '/tmp/o',
+          summary: 'orphan notice',
+        }),
+      ];
+      const toolResultsMap = new Map([['toolu_nested123', { content: 'File content here' }]]);
+
+      const { container } = render(
+        <SubagentBlock
+          input={input}
+          toolId="toolu_task123"
+          nestedMessages={nestedMessages}
+          toolResultsMap={toolResultsMap}
+        />
+      );
+
+      fireEvent.click(container.querySelector('button')!);
+      await waitFor(() => expect(container.textContent).toContain('Read'));
+
+      // No standalone "Task completed" row and no orphan summary for an orphan
+      // nested notification (task #684).
+      expect(container.textContent).not.toContain('Task completed');
+      expect(container.textContent).not.toContain('orphan notice');
+    });
+
     it('should render nested tool use blocks', () => {
       const input = createAgentInput('Explore', 'Find files', 'Search for test files');
       const nestedMessages = [createNestedToolUseMessage()];
