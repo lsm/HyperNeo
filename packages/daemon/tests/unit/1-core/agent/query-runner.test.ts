@@ -2186,6 +2186,109 @@ describe('QueryRunner', () => {
       // Transient path: exactly 2 calls (1 + 1 retry), NOT 4.
       expect(buildSpy).toHaveBeenCalledTimes(2);
     });
+
+    it('should retry 504 gateway timeout errors (5xx class)', async () => {
+      buildSpy.mockRejectedValue(new Error('504 Gateway Timeout'));
+
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(buildSpy).toHaveBeenCalledTimes(4);
+    });
+
+    it('should NOT retry errors where digits are embedded in longer numbers (5000ms)', async () => {
+      // "5000ms" must not false-positive as a 500 status code.
+      buildSpy.mockRejectedValue(new Error('Request timed out after 5000ms'));
+
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('should not retry after backoff if interrupted during the backoff window', async () => {
+      // Use a non-zero delay so the abort can fire DURING the sleep.
+      process.env.NEOKAI_PROVIDER_RETRY_BASE_DELAY_MS = '100';
+      const abortController = new AbortController();
+      buildSpy.mockRejectedValue(new Error('503 Service Unavailable'));
+
+      // Pre-set the abort controller; buildSpy throws before runQuery creates
+      // its own, so ctx.queryAbortController stays as this one.
+      const ctx = createContext({ queryAbortController: abortController });
+      runner = new QueryRunner(ctx);
+
+      // Abort during the 100ms backoff sleep (well after the retry path entered).
+      setTimeout(() => abortController.abort(), 20);
+
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      // Only 1 call — the retry was cancelled by the post-backoff re-check.
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('should not retry after backoff if a restart bumped the generation', async () => {
+      process.env.NEOKAI_PROVIDER_RETRY_BASE_DELAY_MS = '100';
+      buildSpy.mockRejectedValue(new Error('503 Service Unavailable'));
+
+      let gen = 0;
+      const ctx = createContext({
+        incrementQueryGeneration: () => ++gen,
+        // Generation starts at 1 (matching the query). After the backoff, we
+        // bump it to 2 to simulate a restart during the sleep window.
+        getQueryGeneration: () => gen,
+      });
+      runner = new QueryRunner(ctx);
+
+      // Bump generation during the 100ms backoff (simulates restart()).
+      setTimeout(() => {
+        gen = 2;
+      }, 20);
+
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      // Only 1 call — the retry was cancelled because the generation changed.
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('should clear the stale startup timer before retrying a provider error', async () => {
+      // Pre-set a startup timer (simulates firstMessageReceived=false when the
+      // 5xx hit). The retry path must clear it so it cannot fire during a
+      // later retry and abort that retry's controller.
+      const fakeTimer = setTimeout(() => {}, 999999);
+      buildSpy.mockRejectedValue(new Error('503 Service Unavailable'));
+
+      const ctx = createContext({ startupTimeoutTimer: fakeTimer });
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      // The timer should have been cleared by the retry path (set to null),
+      // not left armed for a later retry's controller.
+      expect(ctx.startupTimeoutTimer).toBeNull();
+    });
+
+    it('should restore originalEnvVars before recursive retry (env-leak guard)', async () => {
+      // Pre-set non-empty originalEnvVars. The retry path must restore+clear
+      // them before recursing so the next attempt captures the true originals
+      // instead of this attempt's provider overrides.
+      buildSpy.mockRejectedValue(new Error('503 Service Unavailable'));
+
+      const ctx = createContext({
+        originalEnvVars: { ANTHROPIC_API_KEY: 'fake-original-key', SOME_VAR: 'val' },
+      });
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      // originalEnvVars should have been cleared by the retry path's restore.
+      expect(ctx.originalEnvVars).toEqual({});
+    });
   });
 });
 

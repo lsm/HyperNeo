@@ -1079,6 +1079,17 @@ export class QueryRunner {
         );
         await stateManager.setIdle();
 
+        // Clear the startup timer from THIS attempt. If the 5xx happened before
+        // firstMessageReceived, the timer is still armed and would fire during
+        // a later retry, aborting that retry's queryAbortController and turning
+        // a provider retry into a spurious startup-timeout. The recursive
+        // runQuery arms its own fresh timer.
+        const startupTimer = this.ctx.startupTimeoutTimer;
+        if (startupTimer) {
+          clearTimeout(startupTimer);
+          this.ctx.startupTimeoutTimer = null;
+        }
+
         // Re-enqueue the last consumed user message so the retry has input to
         // process. Without this, the message was already shifted out of
         // MessageQueue by messageGenerator() and the retry starts with an
@@ -1135,6 +1146,37 @@ export class QueryRunner {
         // subprocess-exit wait and the backoff don't compound unnecessarily;
         // the notice above was already shown to the user.
         await sleep(delayMs);
+
+        // Re-check cancellation/generation immediately before recursing. The
+        // backoff window (2-8s) is long enough that the user may have
+        // interrupted the turn, a restart may have bumped the generation, or
+        // the daemon may be shutting down. Without this re-check the cancelled
+        // turn would relaunch an orphaned query after the sleep.
+        if (
+          this.ctx.isCleaningUp() ||
+          this.ctx.getQueryGeneration() !== queryGeneration ||
+          stateManager.getState().status === 'interrupted' ||
+          this.ctx.queryAbortController?.signal.aborted === true
+        ) {
+          logger.warn(
+            'Provider error retry cancelled: session interrupted/restarted/cleaning up during backoff.'
+          );
+          return;
+        }
+
+        // Restore provider env vars BEFORE recursing so the next attempt
+        // captures the true original env. Without this, the recursive runQuery
+        // sees process.env still containing this attempt's ANTHROPIC_* overrides,
+        // captures those as "original", and the final finally{} restoration
+        // leaks provider routing into later sessions.
+        const envVarsToRestore = this.ctx.originalEnvVars;
+        if (Object.keys(envVarsToRestore).length > 0) {
+          const { getProviderService: getProviderServiceForRetry } = await import(
+            '../provider-service'
+          );
+          getProviderServiceForRetry().restoreEnvVars(envVarsToRestore);
+          this.ctx.originalEnvVars = {};
+        }
 
         return await this.runQuery(queryGeneration, retryAttempt + 1);
       }
