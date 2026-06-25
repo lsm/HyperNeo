@@ -1107,21 +1107,12 @@ export class QueryRunner {
         // if the replacement SDK process never emits its first message.
         this.ctx.firstMessageReceived = false;
 
-        // Re-enqueue the last consumed user message so the retry has input to
-        // process. Without this, the message was already shifted out of
-        // MessageQueue by messageGenerator() and the retry starts with an
-        // empty queue, silently dropping the user's request.
-        const lastMsg = this._lastConsumedUserMessage;
-        if (lastMsg) {
-          logger.warn(
-            `Re-enqueueing user message ${lastMsg.uuid} for provider error retry ` +
-              `(attempt ${retryAttempt + 1}/${maxProviderRetries}).`
-          );
-          // Fire-and-forget: the promise resolves when the retry's generator
-          // consumes the message, or rejects on timeout/interrupt (harmless).
-          messageQueue.enqueueWithId(lastMsg.uuid, lastMsg.content).catch(() => {});
-          this._lastConsumedUserMessage = null;
-        }
+        // Save the last consumed user message for re-enqueue AFTER the backoff
+        // (below). We defer the actual enqueue to just before recursing so the
+        // message doesn't expire in the queue (enqueueWithId has a ~30s TTL) if
+        // an operator configures a long backoff, and so a cancelled retry
+        // doesn't leave an orphaned message in the queue.
+        const retryMsg = this._lastConsumedUserMessage;
 
         // Display a sanitized retry message so the user knows what's happening,
         // but never show the raw provider error string.
@@ -1196,6 +1187,19 @@ export class QueryRunner {
             'Provider error retry cancelled: session interrupted/restarted/cleaning up during backoff.'
           );
           return;
+        }
+
+        // Re-enqueue the saved user message immediately before recursing so the
+        // retry's generator has input. Enqueueing here (not earlier) avoids the
+        // queue TTL expiry during long backoffs and prevents orphaned messages
+        // when the retry is cancelled by the re-check above.
+        if (retryMsg) {
+          logger.warn(
+            `Re-enqueueing user message ${retryMsg.uuid} for provider error retry ` +
+              `(attempt ${retryAttempt + 1}/${maxProviderRetries}).`
+          );
+          messageQueue.enqueueWithId(retryMsg.uuid, retryMsg.content).catch(() => {});
+          this._lastConsumedUserMessage = null;
         }
 
         return await this.runQuery(queryGeneration, retryAttempt + 1);
