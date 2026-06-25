@@ -302,17 +302,19 @@ describe('MinimalThreadFeed', () => {
     render(<MinimalThreadFeed parsedRows={rows} />);
 
     // Hidden subtypes (session_state_changed, commands_changed) are suppressed
-    // via isHiddenSystemSubtype; only thinking_tokens, model_fallback, and the
-    // warning notice render.
+    // via isHiddenSystemSubtype; thinking_tokens is roster-only. Only
+    // model_fallback and the warning notice render as system rows.
     const systemRows = screen.getAllByTestId('minimal-thread-system');
-    expect(systemRows).toHaveLength(3);
-    expect(systemRows[0].textContent).toContain('Thinking tokens');
-    expect(systemRows[0].textContent).toContain('1,250 estimated tokens (+25)');
-    expect(systemRows[1].textContent).toContain('Model fallback');
-    expect(systemRows[1].textContent).toContain('Retried with fallback model');
-    expect(systemRows[1].textContent).toContain('claude-opus-4-5 -> claude-sonnet-4-5');
-    expect(systemRows[2].textContent).toContain('Warning');
-    expect(systemRows[2].textContent).toContain('Hook warning shown to the user');
+    expect(systemRows).toHaveLength(2);
+    expect(systemRows[0].textContent).toContain('Model fallback');
+    expect(systemRows[0].textContent).toContain('Retried with fallback model');
+    expect(systemRows[0].textContent).toContain('claude-opus-4-5 -> claude-sonnet-4-5');
+    expect(systemRows[1].textContent).toContain('Warning');
+    expect(systemRows[1].textContent).toContain('Hook warning shown to the user');
+    // thinking_tokens is roster-only — never a main-thread system row.
+    expect(screen.getByTestId('space-task-event-feed-minimal').textContent).not.toContain(
+      'Thinking tokens'
+    );
   });
 
   it('renders worker shutdown rows only at the session tail', () => {
@@ -873,10 +875,15 @@ describe('MinimalThreadFeed', () => {
 
     render(<MinimalThreadFeed parsedRows={rows} />);
 
-    const feed = screen.getByTestId('space-task-event-feed-minimal');
-    expect(feed.textContent).toContain('Task completed');
-    expect(feed.textContent).toContain('first tool done');
-    expect(screen.queryAllByTestId('minimal-thread-roster-entry')).toHaveLength(0);
+    // tu-a1-0 is the oldest of 9 tools → capped out of the completed roster,
+    // so its outcome renders as a standalone roster entry (not a main-thread
+    // system row, and not folded — its tool card isn't in the roster).
+    const taskEntries = screen
+      .getAllByTestId('minimal-thread-roster-entry')
+      .filter((e) => (e as HTMLElement).dataset.rosterKind === 'task_notification');
+    expect(taskEntries).toHaveLength(1);
+    expect(taskEntries[0].textContent).toContain('Task completed');
+    expect(taskEntries[0].textContent).toContain('first tool done');
   });
 
   it('folds completed slices inside active blocks without suppressing the active tail', () => {
@@ -1142,7 +1149,7 @@ describe('MinimalThreadFeed', () => {
     expect(screen.getAllByText('API retry')).toHaveLength(1);
   });
 
-  it('falls back to a system row when api_retry is capped out of the active roster', () => {
+  it('does not render api_retry in the main thread when capped out of the active roster (roster-only)', () => {
     const t = Date.now();
     const rows = [
       makeRow({
@@ -1199,13 +1206,13 @@ describe('MinimalThreadFeed', () => {
       />
     );
 
+    // Capped out of the roster (8 newer text entries fill it) AND suppressed
+    // from the main thread — api_retry is roster-only, so it renders nowhere.
     const entries = screen.getAllByTestId('minimal-thread-roster-entry');
     expect(entries.some((entry) => entry.dataset.rosterKind === 'api_retry')).toBe(false);
     const feed = screen.getByTestId('space-task-event-feed-minimal');
-    expect(feed.textContent).toContain('API retry');
-    expect(feed.textContent).toContain('Attempt 1/3');
-    expect(feed.textContent).toContain('delay 1000ms');
-    expect(feed.textContent).toContain('status n/a');
+    expect(feed.textContent).not.toContain('API retry');
+    expect(feed.textContent).not.toContain('Attempt 1/3');
   });
 
   it('folds task_notification onto the roster entry when the tool_use is rostered', () => {
@@ -1520,11 +1527,12 @@ describe('MinimalThreadFeed', () => {
     expect(entries[1].textContent).not.toContain('secret');
   });
 
-  it('falls back to a system row for task_notification with no roster target (completed turn)', () => {
+  it('renders a standalone roster entry for task_notification with no roster target (completed turn)', () => {
     const t = Date.now();
     // More than ROSTER_MAX_ENTRIES tool_use blocks → the first tool is capped
-    // out of the completed roster. Its notification must remain standalone so
-    // terminal metadata is not lost.
+    // out of the completed roster. Its notification has no tool card to fold
+    // onto, so it renders as a standalone roster entry (terminal metadata not
+    // lost).
     const rows = [
       makeRow({
         id: 'a1',
@@ -1559,12 +1567,61 @@ describe('MinimalThreadFeed', () => {
 
     render(<MinimalThreadFeed parsedRows={rows} />);
 
-    // Capped out of the completed roster → notification renders as a row,
-    // preserving both summary and usage (terminal metadata not lost).
-    const feed = screen.getByTestId('space-task-event-feed-minimal');
-    expect(feed.textContent).toContain('Bash exited 1');
-    expect(feed.textContent).toContain('4,321 tokens');
-    expect(feed.textContent).toContain('3 tool uses');
+    // Capped out of the completed roster → standalone roster entry preserves
+    // status, summary, and usage (terminal metadata not lost).
+    const taskEntries = screen
+      .getAllByTestId('minimal-thread-roster-entry')
+      .filter((e) => (e as HTMLElement).dataset.rosterKind === 'task_notification');
+    expect(taskEntries).toHaveLength(1);
+    expect(taskEntries[0].textContent).toContain('Task failed');
+    expect(taskEntries[0].textContent).toContain('Bash exited 1');
+    expect(taskEntries[0].textContent).toContain('4,321 tok');
+    expect(taskEntries[0].textContent).toContain('3 tools');
+  });
+
+  it('does not duplicate a task_notification that folds onto a rostered tool (roster-only turn)', () => {
+    const t = Date.now();
+    // Roster-only completed turn: a single tool (within cap) + result, no
+    // assistant reply text. The task_notification folds onto the tool card and
+    // must NOT also render as a standalone roster entry (the global pre-scan
+    // excludes text-less turns, so the within-turn roster must gate standalone).
+    const rows = [
+      makeRow({
+        id: 'a1',
+        label: 'Coder Agent',
+        createdAt: t,
+        message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'bun test' } }]),
+      }),
+      makeRow({ id: 'r1', label: 'Coder Agent', createdAt: t + 100, message: resultMessage('r1') }),
+      makeRow({
+        id: 'n1',
+        label: 'Coder Agent',
+        createdAt: t + 200,
+        messageType: 'system',
+        message: {
+          type: 'system',
+          subtype: 'task_notification',
+          task_id: 't',
+          tool_use_id: 'tu-a1-0',
+          status: 'completed',
+          summary: 'all tests passed',
+          output_file: '/tmp/o',
+          usage: { total_tokens: 500, tool_uses: 1, duration_ms: 1200 },
+        },
+      }),
+    ];
+
+    render(<MinimalThreadFeed parsedRows={rows} />);
+
+    // Outcome folds onto the Bash tool card exactly once — never standalone.
+    const standalone = screen
+      .getAllByTestId('minimal-thread-roster-entry')
+      .filter((e) => (e as HTMLElement).dataset.rosterKind === 'task_notification');
+    expect(standalone).toHaveLength(0);
+    const toolEntries = screen
+      .getAllByTestId('minimal-thread-roster-entry')
+      .filter((e) => (e as HTMLElement).dataset.rosterKind === 'tool');
+    expect(toolEntries.some((e) => e.textContent?.includes('all tests passed'))).toBe(true);
   });
 
   it('falls back to a row when a stale summary lingers after the turn went terminal', () => {
@@ -1726,7 +1783,8 @@ describe('MinimalThreadFeed', () => {
     const feed = screen.getByTestId('space-task-event-feed-minimal');
     expect(feed.textContent).toContain('Task failed');
     expect(feed.textContent).toContain('second tool failed after retry');
-    expect(feed.textContent).toContain('1,234 tokens');
+    // Roster entry format uses the short "tok" suffix.
+    expect(feed.textContent).toContain('1,234 tok');
   });
 
   it('caps the active roster at 8 most-recent tool calls', () => {
