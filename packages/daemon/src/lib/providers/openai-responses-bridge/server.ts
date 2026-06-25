@@ -1136,20 +1136,33 @@ async function streamResponsesToAnthropic({
         // correct Anthropic type surfaces. The SDK cannot retry a stream it has
         // already started, but the right type lets the query-runner (B4)
         // recognise and re-issue the whole query.
-        const message = streamErrorMessage(event);
         // `response.failed` carries the error under `event.response.error`; the
-        // `error` event carries it under `event.error`. Inspect whichever shape
-        // the upstream used so a transient `response.failed` is classified too.
+        // `error` event under `event.error`; some upstreams put code/message at
+        // the event top level. Inspect whichever shape the upstream used.
         const responseObject = event.response;
         const responseError =
           responseObject && typeof responseObject === 'object'
             ? (responseObject as Record<string, unknown>).error
             : undefined;
+        const flatEvent = event as Record<string, unknown>;
+        const topLevelError: Record<string, unknown> = {};
+        if (typeof flatEvent.code === 'string') topLevelError.code = flatEvent.code;
+        if (typeof flatEvent.message === 'string') topLevelError.message = flatEvent.message;
+        if (typeof flatEvent.type === 'string' && flatEvent.type !== event.type)
+          topLevelError.type = flatEvent.type;
+        const errorBody =
+          event.error ??
+          responseError ??
+          (Object.keys(topLevelError).length > 0 ? topLevelError : undefined);
         const normalized = normalizeOpenAiUpstreamError(
-          JSON.stringify({ error: event.error ?? responseError ?? {} }),
+          JSON.stringify({ error: errorBody ?? {} }),
           200
         );
-        send(errorSSE(normalized?.type ?? 'api_error', message));
+        const bodyMessage =
+          errorBody && typeof (errorBody as Record<string, unknown>).message === 'string'
+            ? ((errorBody as Record<string, unknown>).message as string)
+            : undefined;
+        send(errorSSE(normalized?.type ?? 'api_error', bodyMessage ?? streamErrorMessage(event)));
         send(messageStopSSE());
         closeController();
         return;
@@ -1581,9 +1594,11 @@ export function createOpenAIResponsesBridgeServer(
       // Some Responses-compatible proxies return 200 with a JSON error body
       // instead of an SSE stream. With no SSE events the streamer below would
       // emit a successful empty end_turn, hiding a body-embedded transient
-      // error. Buffer and classify before streaming (same as the chat bridge).
+      // error. Only pre-buffer when the content-type explicitly says JSON — a
+      // real SSE stream with a missing/mislabeled content-type flows straight
+      // through to the streamer.
       const upstreamContentType = openAIResponse.headers.get('content-type') ?? '';
-      if (openAIResponse.ok && !upstreamContentType.includes('text/event-stream')) {
+      if (openAIResponse.ok && upstreamContentType.includes('application/json')) {
         const bodyText = await openAIResponse.text();
         const normalized = normalizeOpenAiUpstreamError(bodyText, openAIResponse.status);
         if (normalized) {
@@ -1596,7 +1611,7 @@ export function createOpenAIResponsesBridgeServer(
         // Non-transient: reconstruct so the streaming path handles it as before.
         openAIResponse = new Response(bodyText, {
           status: openAIResponse.status,
-          headers: { 'Content-Type': upstreamContentType || 'application/json' },
+          headers: { 'Content-Type': upstreamContentType },
         });
       }
 

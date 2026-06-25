@@ -148,14 +148,22 @@ export function normalizeGlmUpstreamError(
   return overloaded(messageField);
 }
 
-// OpenAI-compatible transient body signals. Used by the chat and responses
-// bridges (custom OpenAI endpoints + Codex). Kept tight to avoid turning a
-// genuine 4xx invalid_request into a retryable error on weak evidence.
+// Generic transient body signals. Used by the chat and responses bridges
+// (custom OpenAI endpoints + Codex) AND by the combined `normalizeUpstreamError`
+// the Anthropic-messages pass-through bridge calls. Kept tight to avoid turning
+// a genuine 4xx invalid_request into a retryable error on weak evidence.
 const OPENAI_RATE_LIMIT_PATTERN = /rate_limit_exceeded|rate[ _-]?limit|too many requests/i;
 const OPENAI_OVERLOAD_PATTERN =
   /overloaded|service unavailable|temporarily unavailable|try again (?:later|in)/i;
-/** OpenAI error `type`/`code` values that indicate a transient server fault. */
-const OPENAI_TRANSIENT_SERVER_TYPES = new Set(['server_error']);
+/**
+ * Structured `error.type`/`error.code` values that mark a transient fault.
+ * Includes OpenAI values (`rate_limit_exceeded`, `server_error`) and Anthropic
+ * values (`rate_limit_error`, `overloaded_error`) — the generic detector also
+ * serves the Anthropic pass-through bridge, where an Anthropic-shaped body is
+ * the strongest possible structured signal.
+ */
+const TRANSIENT_RATE_LIMIT_TYPES = new Set(['rate_limit_exceeded', 'rate_limit_error']);
+const TRANSIENT_OVERLOAD_TYPES = new Set(['server_error', 'overloaded_error']);
 
 /**
  * Inspect an OpenAI-compatible upstream response body for transient signals.
@@ -190,11 +198,16 @@ export function normalizeOpenAiUpstreamError(
   // Inspect BOTH `type` and `code` independently. OpenAI-compatible payloads
   // sometimes set `error.type` to a broad category (e.g. "requests") while the
   // actionable transient value lives in `error.code` (e.g. "rate_limit_exceeded").
-  // A `type ?? code` short-circuit would miss that combination.
-  const isRateType = typeField === 'rate_limit_exceeded' || codeField === 'rate_limit_exceeded';
+  // A `type ?? code` short-circuit would miss that combination. Recognise both
+  // OpenAI (`rate_limit_exceeded`/`server_error`) and Anthropic
+  // (`rate_limit_error`/`overloaded_error`) retryable type values — the latter is
+  // an explicit, unambiguous signal that always passes the hard-4xx guard.
+  const isRateType =
+    (typeField !== undefined && TRANSIENT_RATE_LIMIT_TYPES.has(typeField)) ||
+    (codeField !== undefined && TRANSIENT_RATE_LIMIT_TYPES.has(codeField));
   const isServerType =
-    (typeField !== undefined && OPENAI_TRANSIENT_SERVER_TYPES.has(typeField)) ||
-    (codeField !== undefined && OPENAI_TRANSIENT_SERVER_TYPES.has(codeField));
+    (typeField !== undefined && TRANSIENT_OVERLOAD_TYPES.has(typeField)) ||
+    (codeField !== undefined && TRANSIENT_OVERLOAD_TYPES.has(codeField));
 
   const isRateMessage = OPENAI_RATE_LIMIT_PATTERN.test(messageField);
   const isOverloadMessage = OPENAI_OVERLOAD_PATTERN.test(messageField);

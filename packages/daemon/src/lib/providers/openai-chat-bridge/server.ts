@@ -939,10 +939,13 @@ export function createOpenAIChatBridgeServer(
       }
 
       // Some OpenAI-compatible proxies return 200 with a JSON error body instead
-      // of an SSE stream. Buffer and classify before streaming so a transient
-      // body-embedded error can be re-emitted as a retryable non-2xx response.
+      // of an SSE stream. Only pre-buffer when the content-type explicitly says
+      // JSON — gating on "not event-stream" would also buffer endpoints that
+      // stream valid SSE with a missing/mislabeled content-type, waiting for the
+      // whole body and breaking incremental output. A real SSE stream (any other
+      // content-type, or none) flows straight through to readChatStream.
       const upstreamContentType = upstreamResponse.headers.get('content-type') ?? '';
-      if (!upstreamContentType.includes('text/event-stream')) {
+      if (upstreamContentType.includes('application/json')) {
         const bodyText = await upstreamResponse.text();
         const normalized = normalizeOpenAiUpstreamError(bodyText, upstreamResponse.status);
         if (normalized) {
@@ -956,7 +959,7 @@ export function createOpenAIChatBridgeServer(
         // the non-SSE body exactly as before (terminal api_error for the user).
         upstreamResponse = new Response(bodyText, {
           status: upstreamResponse.status,
-          headers: { 'Content-Type': upstreamContentType || 'application/json' },
+          headers: { 'Content-Type': upstreamContentType },
         });
       }
 

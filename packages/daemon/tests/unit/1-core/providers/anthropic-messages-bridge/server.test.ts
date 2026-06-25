@@ -131,6 +131,28 @@ describe('anthropic-messages-bridge: body-embedded upstream error normalization'
     expect(json.error.type).toBe('invalid_request_error');
   });
 
+  it('recognizes an Anthropic-shaped rate_limit_error body (even on a hard 4xx)', async () => {
+    // The pass-through bridge serves Anthropic-compatible upstreams; an explicit
+    // Anthropic rate_limit_error is the strongest structured signal and must be
+    // retried even when the HTTP status is 400.
+    server = makeServer(
+      async () =>
+        new Response(
+          JSON.stringify({
+            type: 'error',
+            error: { type: 'rate_limit_error', message: 'rate limit exceeded' },
+          }),
+          { status: 400, headers: { 'Content-Type': 'application/json' } }
+        )
+    );
+
+    const res = await postMessages(server.port);
+    expect(res.status).toBe(429);
+    expect(res.headers.get('x-should-retry')).toBe('true');
+    const json = (await res.json()) as { error: { type: string } };
+    expect(json.error.type).toBe('rate_limit_error');
+  });
+
   it('passes a normal 200 SSE stream through byte-for-byte (regression)', async () => {
     const sseBody =
       'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_1"}}\n\n' +

@@ -127,4 +127,28 @@ describe('openai-chat-bridge: body-embedded / mid-stream error normalization', (
     const errorEvent = events.find((e) => e.event === 'error');
     expect((errorEvent?.data as { error: { type: string } }).error.type).toBe('api_error');
   });
+
+  it('streams a mislabeled-content-type SSE response without buffering or misclassifying it', async () => {
+    // A proxy that streams valid SSE but sends Content-Type text/plain (or none)
+    // must flow straight through to the streamer — NOT be buffered and matched
+    // against the overload substring (which would misclassify a valid stream
+    // whose content happens to mention "overloaded" as a retryable error).
+    const sse =
+      'data: {"choices":[{"delta":{"content":"The server is overloaded but this is normal text"}}]}\n\n' +
+      'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n';
+    server = makeServer(
+      async () => new Response(sse, { status: 200, headers: { 'Content-Type': 'text/plain' } })
+    );
+
+    const res = await postMessages(server.port);
+    expect(res.status).toBe(200);
+    const events = await readSSEEventTypes(res.body);
+    // It streamed normally: a text delta was emitted (not an error event).
+    const errorEvent = events.find((e) => e.event === 'error');
+    expect(errorEvent).toBeUndefined();
+    const stop = events.find((e) => e.event === 'message_delta');
+    expect((stop?.data as { delta?: { stop_reason?: string } }).delta?.stop_reason).toBe(
+      'end_turn'
+    );
+  });
 });

@@ -176,6 +176,29 @@ describe('normalizeOpenAiUpstreamError', () => {
     expect(result?.type).toBe('overloaded_error');
   });
 
+  it('recognizes Anthropic rate_limit_error as a structured transient type', () => {
+    // The generic detector also serves the Anthropic pass-through bridge; an
+    // Anthropic-shaped body is an explicit, unambiguous signal that must pass
+    // the hard-4xx guard (a 400 carrying rate_limit_error should still retry).
+    const body = JSON.stringify({
+      type: 'error',
+      error: { type: 'rate_limit_error', message: 'rate limit exceeded' },
+    });
+    const result = normalizeOpenAiUpstreamError(body, 400);
+    expect(result?.type).toBe('rate_limit_error');
+    expect(result?.status).toBe(429);
+  });
+
+  it('recognizes Anthropic overloaded_error as a structured transient type', () => {
+    const body = JSON.stringify({
+      type: 'error',
+      error: { type: 'overloaded_error', message: 'Overloaded. Try again.' },
+    });
+    const result = normalizeOpenAiUpstreamError(body, 400);
+    expect(result?.type).toBe('overloaded_error');
+    expect(result?.status).toBe(529);
+  });
+
   it('returns null for a normal invalid_request error', () => {
     const body = JSON.stringify({
       error: { type: 'invalid_request_error', message: 'bad model id' },

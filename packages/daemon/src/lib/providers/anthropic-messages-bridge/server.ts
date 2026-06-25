@@ -276,15 +276,15 @@ export function createAnthropicMessagesBridgeServer(
 
       // GLM and some Anthropic-compatible shims return 200 with a JSON error
       // body (content-type application/json) instead of an SSE stream — the
-      // status gives the SDK nothing to retry on. When the body is not an event
-      // stream, buffer it and inspect for a body-embedded transient error; if
-      // found, re-emit as a retryable non-2xx response so the SDK retries. A
-      // genuine SSE stream is still passed through byte-for-byte below. Covers
-      // both /v1/messages and /v1/messages/count_tokens (GLM can return the
-      // same overload body for either).
+      // status gives the SDK nothing to retry on. Only pre-buffer when the
+      // content-type explicitly says JSON, so a genuine SSE stream with a
+      // missing/mislabeled content-type still passes through byte-for-byte and
+      // isn't stalled waiting for the whole body. Covers both /v1/messages and
+      // /v1/messages/count_tokens (GLM can return the same overload body for
+      // either).
       const upstreamContentType = upstreamResponse.headers.get('content-type') ?? '';
-      const isEventStream = upstreamContentType.includes('text/event-stream');
-      if (upstreamResponse.ok && !isEventStream && (isMessages || isCountTokens)) {
+      const isJsonBody = upstreamContentType.includes('application/json');
+      if (upstreamResponse.ok && isJsonBody && (isMessages || isCountTokens)) {
         const bodyText = await upstreamResponse.text();
         const normalized = normalizeUpstreamError(bodyText, upstreamResponse.status);
         if (normalized) {
