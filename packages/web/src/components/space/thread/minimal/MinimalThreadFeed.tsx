@@ -1369,14 +1369,14 @@ function buildFeedTurns(
       sliceRows.some((r) => getToolUseContentBlocks(r).length > 0);
     const flush = (isFinal = false) => {
       if (
-        pendingAgentRows.length > 0 &&
-        !(isFinal && trailingBlockCanUpgradeToActive) &&
-        // Keep slices with text, tool_use content, OR any result error —
-        // error-only turns must be included so their tool_use_ids are collected
-        // into rosteredToolUseIds and post-result task_notifications fold onto
-        // the now-visible roster instead of duplicating as standalone rows.
-        sliceContributesToRoster(pendingAgentRows) ||
-          rowsContainResultError(pendingAgentRows)
+        (pendingAgentRows.length > 0 &&
+          !(isFinal && trailingBlockCanUpgradeToActive) &&
+          // Keep slices with text, tool_use content, OR any result error —
+          // error-only turns must be included so their tool_use_ids are collected
+          // into rosteredToolUseIds and post-result task_notifications fold onto
+          // the now-visible roster instead of duplicating as standalone rows.
+          sliceContributesToRoster(pendingAgentRows)) ||
+        rowsContainResultError(pendingAgentRows)
       ) {
         out.push(pendingAgentRows);
       }
@@ -1402,7 +1402,11 @@ function buildFeedTurns(
         subtype !== 'task_notification' &&
         buildOperationalSystemTurn(row, false, rosteredActiveToolUseIds)
       ) {
-        flush();
+        // Mirror the main loop: only flush text-bearing slices so tool_use-only
+        // fragments aren't orphaned before the result arrives.
+        if (extractLastAssistantText(pendingAgentRows).text.length > 0) {
+          flush();
+        }
         continue;
       }
       pendingAgentRows.push(row);
@@ -1502,7 +1506,14 @@ function buildFeedTurns(
         rosteredToolUseIds
       );
       if (operationalSystemTurn) {
-        flushAgent();
+        // Don't orphan tool_use-only fragments: only flush when the pending
+        // slice has reply text. A tool_use-only slice would be dropped by the
+        // empty-body filter, losing its tools from the eventual error turn's
+        // roster. Keeping it pending lets the tool_use fold into whatever
+        // segment comes next (error result, more assistant rows, etc.).
+        if (extractLastAssistantText(pendingAgentRows).text.length > 0) {
+          flushAgent();
+        }
         turns.push(operationalSystemTurn);
         continue;
       }
@@ -1581,7 +1592,6 @@ function buildFeedTurns(
     if (t.state !== 'completed') return true;
     if (t.resultInfo && isSDKResultError(t.resultInfo)) return true;
     return t.lastMessage.length > 0 || t.roster.length > 0;
-  });
   });
 }
 
@@ -2025,8 +2035,6 @@ function CompletedBody({
               />
             </svg>
             <span class="break-words line-clamp-2">{errorSummary}</span>
-          </div>
-        ) : null}
           </div>
         ) : null}
         {turn.roster.length > 0 ? (

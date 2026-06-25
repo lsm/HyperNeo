@@ -2751,6 +2751,62 @@ describe('MinimalThreadFeed', () => {
       expect(entry.textContent).toContain('tests failed');
       expect(screen.queryByText('Task failed')).toBeNull();
     });
+
+    it('keeps tool_use visible across operational system row splits in error-only turns', () => {
+      const t = Date.now();
+      const rows = [
+        makeRow({
+          id: 'a1',
+          label: 'Coder Agent',
+          createdAt: t,
+          // tool_use only — no text before the system row and error result
+          message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'bun test' } }]),
+        }),
+        makeRow({
+          id: 's1',
+          label: 'Coder Agent',
+          createdAt: t + 50,
+          messageType: 'system',
+          message: operationalSystemMessage('s1', 'thinking_tokens', {
+            estimated_tokens: 5000,
+            estimated_tokens_delta: 100,
+          }),
+        }),
+        makeRow({
+          id: 'r1',
+          label: 'Coder Agent',
+          createdAt: t + 100,
+          message: errorResultMessage('r1'),
+        }),
+        makeRow({
+          id: 'n1',
+          label: 'Coder Agent',
+          createdAt: t + 200,
+          messageType: 'system',
+          message: {
+            type: 'system',
+            subtype: 'task_notification',
+            task_id: 'task-x',
+            tool_use_id: 'tu-a1-0',
+            status: 'failed',
+            summary: 'tests failed',
+          },
+        }),
+      ];
+
+      render(<MinimalThreadFeed parsedRows={rows} />);
+
+      // The error bubble is visible with the red treatment.
+      const bubble = screen.getByTestId('minimal-thread-agent-bubble');
+      expect(bubble.getAttribute('data-result-error')).toBe('true');
+      // The tool_use survives the system-row split and appears in the roster
+      // with its folded task status.
+      const entry = screen.getByTestId('minimal-thread-roster-entry');
+      expect(entry.dataset.taskStatus).toBe('failed');
+      expect(entry.textContent).toContain('tests failed');
+      // No standalone task_notification duplicating the roster.
+      expect(screen.queryByText('Task failed')).toBeNull();
+    });
   });
 
   it('caps the active roster at 8 most-recent entries even with mixed kinds', () => {
