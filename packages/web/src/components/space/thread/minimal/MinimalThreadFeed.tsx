@@ -190,6 +190,13 @@ interface CompletedFeedTurn {
   lastMessage: string;
   fallback: boolean;
   /**
+   * True when the surfaced assistant reply carries an SDK `error` field
+   * (e.g. `error: 'invalid_request'`). Renders the bubble with red error
+   * styling + an "API Error" header, mirroring SDKAssistantMessage's
+   * hasError branch, instead of the normal gray reply bubble.
+   */
+  hasError: boolean;
+  /**
    * Session id that produced this turn's reply text. Used by the
    * "open in session" affordance so clicking the button lands the user
    * on the right session even when multiple sessions are interleaved
@@ -557,8 +564,16 @@ function extractLastAssistantText(rows: ParsedThreadRow[]): {
   text: string;
   fallback: boolean;
   sourceRow: ParsedThreadRow | null;
+  /**
+   * True when the surfaced assistant reply (or any assistant row in the turn,
+   * when text came from a fallback) carries an SDK `error` field — e.g.
+   * `error: 'invalid_request'`. Drives the red error-bubble treatment in
+   * CompletedBody, mirroring SDKAssistantMessage's `hasError` branch.
+   */
+  hasError: boolean;
 } {
   let resultFallback: { text: string; sourceRow: ParsedThreadRow } | null = null;
+  let assistantHasError = false;
 
   for (let i = rows.length - 1; i >= 0; i--) {
     const row = rows[i];
@@ -578,6 +593,13 @@ function extractLastAssistantText(rows: ParsedThreadRow[]): {
     }
 
     if (!isSDKAssistantMessage(row.message)) continue;
+    // An assistant message may carry an `error` field (e.g. a 400
+    // invalid_request) alongside its text content. Track it so the reply
+    // bubble renders red instead of the normal gray, matching the chat
+    // transcript (SDKAssistantMessage detects the same field).
+    const hasError =
+      'error' in row.message && (row.message as { error?: unknown }).error !== undefined;
+    if (hasError) assistantHasError = true;
     const content = (row.message as { message?: { content?: unknown } }).message?.content;
     if (!Array.isArray(content)) continue;
     const texts = content
@@ -589,17 +611,23 @@ function extractLastAssistantText(rows: ParsedThreadRow[]): {
       )
       .map((block) => block.text.trim())
       .filter((s) => s.length > 0);
-    if (texts.length > 0) return { text: texts.join('\n\n'), fallback: false, sourceRow: row };
+    if (texts.length > 0)
+      return { text: texts.join('\n\n'), fallback: false, sourceRow: row, hasError };
   }
 
   // No assistant text anywhere in the turn — fall back to the result envelope.
   if (resultFallback) {
-    return { text: resultFallback.text, fallback: false, sourceRow: resultFallback.sourceRow };
+    return {
+      text: resultFallback.text,
+      fallback: false,
+      sourceRow: resultFallback.sourceRow,
+      hasError: assistantHasError,
+    };
   }
 
   const tail = rows[rows.length - 1] ?? null;
   const tailFallback = tail?.fallbackText ?? '';
-  return { text: tailFallback, fallback: true, sourceRow: tail };
+  return { text: tailFallback, fallback: true, sourceRow: tail, hasError: assistantHasError };
 }
 
 type TaskNotificationLite = {
@@ -696,7 +724,7 @@ function buildCompletedTurn(
   const endedAt = resultRow?.createdAt ?? lastRow.createdAt;
   const durationMs = Math.max(0, endedAt - startedAt);
   const durationSec = Math.max(1, Math.round(durationMs / 1000));
-  const { text, fallback, sourceRow } = extractLastAssistantText(rows);
+  const { text, fallback, sourceRow, hasError } = extractLastAssistantText(rows);
   const highlightSource = sourceRow ?? lastRow;
   const highlightUuid =
     highlightSource?.message &&
@@ -716,6 +744,7 @@ function buildCompletedTurn(
     messages: rows.length,
     lastMessage: text,
     fallback,
+    hasError,
     sessionId: highlightSource?.sessionId ?? lastRow.sessionId,
     highlightMessageUuid: highlightUuid,
     replacementStatus: sourceRow?.replacementStatus,
@@ -1842,10 +1871,34 @@ function CompletedBody({
   return (
     <div class={`mt-1.5 w-fit ${TASK_THREAD_AGENT_BUBBLE_WIDTH_CLASS}`}>
       <div
-        class="bg-dark-800 border border-dark-700 rounded-lg px-3 py-2"
+        class={
+          turn.hasError
+            ? 'bg-red-900/20 border border-red-800 rounded-lg px-3 py-2'
+            : 'bg-dark-800 border border-dark-700 rounded-lg px-3 py-2'
+        }
         data-testid="minimal-thread-agent-bubble"
+        data-has-error={turn.hasError || undefined}
       >
         <ReplacementBadge status={turn.replacementStatus} />
+        {turn.hasError ? (
+          <div class="flex items-center gap-2 text-red-400 text-sm font-medium mb-1">
+            <svg
+              class="w-4 h-4 shrink-0"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              aria-hidden="true"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+              />
+            </svg>
+            <span>API Error</span>
+          </div>
+        ) : null}
         {turn.roster.length > 0 ? (
           <div class="mb-2 space-y-0.5">
             {turn.roster.map((entry, i) => (
@@ -1854,7 +1907,13 @@ function CompletedBody({
           </div>
         ) : null}
         {turn.lastMessage ? (
-          <div class="text-sm text-gray-100 leading-relaxed [&_a]:text-blue-400">
+          <div
+            class={
+              turn.hasError
+                ? 'text-sm text-red-100 leading-relaxed [&_a]:text-red-300'
+                : 'text-sm text-gray-100 leading-relaxed [&_a]:text-blue-400'
+            }
+          >
             {turn.fallback ? (
               <p class="whitespace-pre-wrap break-words">{turn.lastMessage}</p>
             ) : (
