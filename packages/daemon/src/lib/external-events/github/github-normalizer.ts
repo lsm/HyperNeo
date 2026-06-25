@@ -221,8 +221,16 @@ export function normalizeGitHubPollingRow(
   if (endpointKey === 'review_comments') eventType = 'pull_request_review_comment';
   const id = getNumber(obj.id) || prNumber;
   const updatedAt = parseGitHubTimestamp(obj.updated_at ?? obj.created_at);
+  // `pulls` rows bump updated_at on every comment/check/push, so keying the
+  // dedupe on updated_at re-fires the same PR metadata every cycle. Re-emit
+  // only when the head actually changes (a real push); comments/checks already
+  // arrive via their own dedicated events. Fall back to updatedAt only when the
+  // head is missing (deleted-head PRs) so the row still dedupes within a cycle.
+  const headSha = endpointKey === 'pulls' ? getString(asObject(obj.head).sha) : '';
   const dedupeVersion =
-    endpointKey === 'pulls' ? String(updatedAt) : getString(obj.updated_at ?? obj.created_at);
+    endpointKey === 'pulls'
+      ? headSha || String(updatedAt)
+      : getString(obj.updated_at ?? obj.created_at);
   const dedupeSuffix = dedupeVersion ? `:${dedupeVersion}` : '';
   const canonicalOwner = watched.owner.toLowerCase();
   const canonicalRepo = watched.repo.toLowerCase();
