@@ -616,6 +616,34 @@ describe('SpaceRuntime — prompt-too-long recovery', () => {
     expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
   });
 
+  test('processes a resumed success past the timeout window instead of blocking', async () => {
+    // Round-10: a visible resumed-turn RESULT is processed BEFORE the timeout —
+    // a turn that took longer than the window but completed must not be mis-blocked.
+    const injections: Array<{ sessionId: string; message: string }> = [];
+    const rt = new SpaceRuntime(buildConfig(makeRecordingTam(injections)));
+    const sessionId = 'session:late-success';
+    const { run, execution } = await setupIdleOverflowExecution(rt, sessionId, true);
+
+    await rt.executeTick(); // → /compact
+    saveResultMessage(sessionId, { promptTooLong: false }); // compact success
+    await rt.executeTick(); // → continue nag (awaitingResume=true)
+
+    // Simulate the tick loop being delayed past the timeout, but the resumed
+    // turn DID produce a (late) success result.
+    const states = (
+      rt as unknown as {
+        promptTooLongRecovery: Map<string, { awaitingResumeSince: number | null }>;
+      }
+    ).promptTooLongRecovery;
+    const state = states.get(`${run.id}:${execution.id}`);
+    state!.awaitingResumeSince = Date.now() - (COMPACT_RESULT_TIMEOUT_MS + 1000);
+    saveResultMessage(sessionId, { promptTooLong: false }); // resumed success
+
+    await rt.executeTick(); // → processes the result (productive), NOT blocked
+    expect(nodeExecutionRepo.getById(execution.id)?.status).toBe('idle');
+    expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+  });
+
   test('re-compacts when the resumed turn errors (non-overflow), not silent clear', async () => {
     // P2: a non-overflow ERROR result from the resumed turn (auth/rate-limit) is
     // not "productive progress" — route it to re-compact/escalate instead of

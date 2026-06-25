@@ -5308,7 +5308,25 @@ export class SpaceRuntime {
     // consumed continue nag itself (a user message), which getLastSDKMessage
     // briefly returns before the resumed API call returns.
     if (state.awaitingResume && state.awaitingResumeAfterDbId !== null) {
-      if (
+      // Process a visible resumed-turn RESULT before the timeout — a turn that
+      // legitimately took longer than the window (e.g. tick loop paused) but
+      // did complete must not be mis-blocked. Timeout fires only when NO result
+      // has landed (mirrors the /compact wait's result-first ordering).
+      if (lastMessageIsResult && lastMessageDbId !== state.awaitingResumeAfterDbId) {
+        state.awaitingResume = false;
+        state.awaitingResumeAfterDbId = null;
+        state.awaitingResumeSince = null;
+        if (lastMessageIsSuccessResult) {
+          // Productive — real progress. Clear the recovery state (fresh next time).
+          this.promptTooLongRecovery.delete(key);
+          return 'handled';
+        }
+        // Overflow (fall through with `overflowed`) OR non-overflow error: the
+        // resume did not make progress → re-compact/escalate with attempts preserved.
+        if (!overflowed) {
+          compactJustFailed = true;
+        }
+      } else if (
         state.awaitingResumeSince !== null &&
         now - state.awaitingResumeSince > COMPACT_RESULT_TIMEOUT_MS
       ) {
@@ -5322,22 +5340,8 @@ export class SpaceRuntime {
           reason
         );
         return 'blocked';
-      }
-      if (!lastMessageIsResult || lastMessageDbId === state.awaitingResumeAfterDbId) {
+      } else {
         return 'handled'; // nag enqueued/consumed but resumed turn hasn't produced a result
-      }
-      state.awaitingResume = false;
-      state.awaitingResumeAfterDbId = null;
-      state.awaitingResumeSince = null;
-      if (lastMessageIsSuccessResult) {
-        // Productive — real progress. Clear the recovery state (fresh next time).
-        this.promptTooLongRecovery.delete(key);
-        return 'handled';
-      }
-      // Overflow (fall through with `overflowed`) OR non-overflow error: the
-      // resume did not make progress → re-compact/escalate with attempts preserved.
-      if (!overflowed) {
-        compactJustFailed = true;
       }
     }
 
