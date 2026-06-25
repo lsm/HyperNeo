@@ -179,6 +179,18 @@ const TRANSIENT_RATE_LIMIT_TYPES = new Set(['rate_limit_exceeded', 'rate_limit_e
 const TRANSIENT_OVERLOAD_TYPES = new Set(['server_error', 'overloaded_error', '503', '529']);
 
 /**
+ * True if a string is a recognized transient error type/code — OpenAI
+ * (`rate_limit_exceeded`, `server_error`), Anthropic (`rate_limit_error`,
+ * `overloaded_error`), or an HTTP status code some gateways put in `code`
+ * (`429`, `503`, `529`). Used to admit type-only flat error frames while still
+ * ignoring unknown heartbeat/metadata frames (e.g. `{"type":"ping"}`).
+ */
+export function isOpenAiTransientErrorType(type: string): boolean {
+  const t = type.toLowerCase();
+  return TRANSIENT_RATE_LIMIT_TYPES.has(t) || TRANSIENT_OVERLOAD_TYPES.has(t);
+}
+
+/**
  * Inspect an OpenAI-compatible upstream response body for transient signals.
  * OpenAI / most proxies already convey transient failures via 429 / 5xx
  * statuses (which the SDK retries), so this primarily recovers the two cases

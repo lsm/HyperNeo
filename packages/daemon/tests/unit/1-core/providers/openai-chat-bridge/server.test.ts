@@ -190,6 +190,24 @@ describe('openai-chat-bridge: body-embedded / mid-stream error normalization', (
     );
   });
 
+  it('admits a type-only flat error frame with a known transient type', async () => {
+    // A flat `event: error` block whose data is just {"type":"server_error"}
+    // (no message/code) is still a retryable error and must be surfaced, not
+    // ignored like a heartbeat.
+    const sse = 'event: error\n' + 'data: {"type":"server_error"}\n\n';
+    server = makeServer(
+      async () =>
+        new Response(sse, { status: 200, headers: { 'Content-Type': 'text/event-stream' } })
+    );
+
+    const res = await postMessages(server.port);
+    expect(res.status).toBe(200);
+    const events = await readSSEEventTypes(res.body);
+    const errorEvent = events.find((e) => e.event === 'error');
+    expect(errorEvent).toBeDefined();
+    expect((errorEvent?.data as { error: { type: string } }).error.type).toBe('overloaded_error');
+  });
+
   it('streams a mislabeled-content-type SSE response without buffering or misclassifying it', async () => {
     // A proxy that streams valid SSE but sends Content-Type text/plain (or none)
     // must flow straight through to the streamer — NOT be buffered and matched

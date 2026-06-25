@@ -40,6 +40,7 @@ import { estimateAnthropicInputTokens } from '../provider-anthropic-compat/token
 import { createAnthropicErrorBody, type AnthropicErrorType } from '../shared/error-envelope.js';
 import {
   isJsonContentType,
+  isOpenAiTransientErrorType,
   normalizeOpenAiUpstreamError,
 } from '../shared/normalize-upstream-error.js';
 import { Logger } from '../../logger.js';
@@ -567,12 +568,12 @@ function chatChunkErrorBody(chunk: OpenAIChatStreamChunk): string | undefined {
     const message = typeof flat.message === 'string' ? flat.message : undefined;
     const type = typeof flat.type === 'string' ? flat.type : undefined;
     const code = typeof flat.code === 'string' ? flat.code : undefined;
-    // Require an actual error signal (a message or a code) — NOT a bare `type`.
-    // Some OpenAI-compatible endpoints send JSON heartbeat/metadata frames like
-    // `{"type":"ping"}`; treating type-only frames as errors would abort a
-    // valid stream with a terminal api_error before later choices arrive.
-    // A `type` is still folded into the body for classification when present.
-    if (message || code) {
+    // Require an actual error signal: a message, a code, OR a `type` that is a
+    // recognized transient error type. A bare unknown `type` is treated as a
+    // heartbeat/metadata frame (e.g. `{"type":"ping"}`) and ignored so it
+    // doesn't abort a valid stream; a known type-only frame like
+    // `{"type":"server_error"}` is still admitted.
+    if (message || code || (type !== undefined && isOpenAiTransientErrorType(type))) {
       const error: Record<string, unknown> = {};
       if (message) error.message = message;
       if (type) error.type = type;
