@@ -33,7 +33,10 @@ import type { MessageQueue } from './message-queue';
 import type { ProcessingStateManager } from './processing-state-manager';
 import type { QueryLike } from './query-like';
 import type { QueryOptionsBuilder } from './query-options-builder';
-import { TRANSIENT_CONNECTION_ERROR_SUBSTRINGS } from './transient-error-patterns';
+import {
+  isRetryableProviderError,
+  TRANSIENT_CONNECTION_ERROR_SUBSTRINGS,
+} from './transient-error-patterns';
 
 // Re-exported for callers that import OriginalEnvVars from this module — canonical definition lives in provider-service.ts.
 export type { OriginalEnvVars } from '../provider-service';
@@ -94,6 +97,44 @@ function getStartupTimeoutMs(): number {
 // Env vars set after the process starts will not be picked up; the values displayed
 // in user-facing error messages reflect these module-load-time snapshots.
 const STARTUP_TIMEOUT_MS = getStartupTimeoutMs();
+
+/**
+ * Bounded retry config for 5xx / overloaded / provider-unavailable errors that
+ * escape the SDK's own retry logic. These are transient server-side failures that
+ * should be retried at the NeoKai level with exponential backoff before going terminal.
+ *
+ * Read lazily (at call time, not module load) so tests can set
+ * NEOKAI_PROVIDER_RETRY_BASE_DELAY_MS=0 in beforeEach to avoid real sleeps
+ * and NEOKAI_PROVIDER_MAX_RETRIES to adjust the cap.
+ */
+const DEFAULT_MAX_PROVIDER_RETRIES = 3;
+const DEFAULT_PROVIDER_RETRY_BASE_DELAY_MS = 2000;
+
+function getMaxProviderRetries(): number {
+  const raw = process.env.NEOKAI_PROVIDER_MAX_RETRIES;
+  if (!raw) return DEFAULT_MAX_PROVIDER_RETRIES;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_MAX_PROVIDER_RETRIES;
+}
+
+function getProviderRetryBaseDelayMs(): number {
+  const raw = process.env.NEOKAI_PROVIDER_RETRY_BASE_DELAY_MS;
+  if (!raw) return DEFAULT_PROVIDER_RETRY_BASE_DELAY_MS;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_PROVIDER_RETRY_BASE_DELAY_MS;
+}
+
+/**
+ * Exponential backoff delay for provider error retries.
+ * attempt is 0-indexed (0 → base, 1 → 2×base, 2 → 4×base, …).
+ */
+function getProviderRetryDelayMs(attempt: number): number {
+  return getProviderRetryBaseDelayMs() * 2 ** attempt;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 export const PROVIDER_MANAGED_ENV_VARS = new Set([
   'ANTHROPIC_BASE_URL',
@@ -411,9 +452,12 @@ export class QueryRunner {
    * Run the query (main execution loop)
    *
    * @param queryGeneration - Generation counter to detect stale queries
-   * @param isRetry - Whether this is an automatic retry after startup timeout
+   * @param retryAttempt - Retry attempt counter (0 = first attempt, 1+ = retry).
+   *   Used to gate bounded retries: startup-timeout / message-not-found /
+   *   transient-connection retries fire only on attempt 0 (1-shot), while
+   *   the 5xx/overloaded provider-retry path fires up to the configured cap.
    */
-  private async runQuery(queryGeneration: number, isRetry = false): Promise<void> {
+  private async runQuery(queryGeneration: number, retryAttempt = 0): Promise<void> {
     const { session, messageQueue, stateManager, errorManager, logger, optionsBuilder } = this.ctx;
 
     try {
@@ -846,6 +890,9 @@ export class QueryRunner {
       const isConversationNotFound = errorMessage.includes('No conversation found');
       const isMessageNotFound = errorMessage.includes('No message found');
 
+      // Bounded provider-retry cap (read lazily so tests can override via env).
+      const maxProviderRetries = getMaxProviderRetries();
+
       // Detect transient fetch/connection errors that escape the SDK's own retry logic.
       // These are mid-stream HTTP connection drops (network blip, server restart, timeout)
       // that should be retried rather than surfaced as raw developer-facing error strings.
@@ -887,7 +934,7 @@ export class QueryRunner {
       // This handles transient SDK startup failures (e.g., after a model switch)
       // where the second attempt succeeds reliably.
       // Skip messageQueue.clear() so the user's pending message is preserved for the retry.
-      if (isStartupTimeout && !isRetry && !this.ctx.isCleaningUp()) {
+      if (isStartupTimeout && retryAttempt === 0 && !this.ctx.isCleaningUp()) {
         logger.warn('Auto-retrying query after startup timeout (1 retry).');
         await stateManager.setIdle();
 
@@ -919,9 +966,9 @@ export class QueryRunner {
         // Use `return await` so this call's finally{} runs only after the retry
         // completes. Otherwise finally{} would race the retry and can tear down
         // shared state (queue/controller/queryObject) while it is still running.
-        return await this.runQuery(queryGeneration, true);
+        return await this.runQuery(queryGeneration, 1);
       }
-      if (isMessageNotFound && !isRetry && !this.ctx.isCleaningUp()) {
+      if (isMessageNotFound && retryAttempt === 0 && !this.ctx.isCleaningUp()) {
         // Consume the stale resumeSessionAt before retrying. The for-await loop
         // threw before reaching the consume at line ~548, so the value is still
         // pending. Without this, peek returns the same UUID and the retry fails
@@ -948,7 +995,7 @@ export class QueryRunner {
           this.ctx.resetProcessExitedPromise();
         }
 
-        return await this.runQuery(queryGeneration, true);
+        return await this.runQuery(queryGeneration, 1);
       }
 
       // Auto-retry once on transient connection errors (mid-stream HTTP drop).
@@ -957,7 +1004,7 @@ export class QueryRunner {
       if (
         isTransientConnectionError &&
         !isQueryInterrupted &&
-        !isRetry &&
+        retryAttempt === 0 &&
         !this.ctx.isCleaningUp()
       ) {
         logger.warn('Auto-retrying query after transient connection error (1 retry).');
@@ -1006,11 +1053,173 @@ export class QueryRunner {
           this.ctx.resetProcessExitedPromise();
         }
 
-        return await this.runQuery(queryGeneration, true);
+        return await this.runQuery(queryGeneration, 1);
+      }
+
+      // Bounded retry for 5xx / overloaded / provider-unavailable errors that
+      // escaped the SDK's own retry logic. These are transient server-side
+      // failures that should be retried at the NeoKai level with exponential
+      // backoff before going terminal. Mirrors the transient-connection retry
+      // above, but allows up to maxProviderRetries attempts with backoff.
+      //
+      // GUARDS:
+      // - retryAttempt < maxProviderRetries caps total retries (no unbounded loop).
+      // - isRetryableProviderError() excludes 4xx/auth/quota/model_not_found (terminal).
+      // - 429 rate-limit errors are handled earlier by RateLimitWatchdog, not here.
+      if (
+        !isQueryInterrupted &&
+        !this.ctx.isCleaningUp() &&
+        retryAttempt < maxProviderRetries &&
+        isRetryableProviderError(errorMessage)
+      ) {
+        const delayMs = getProviderRetryDelayMs(retryAttempt);
+        logger.warn(
+          `Provider error (5xx/overloaded/unavailable) detected; retrying in ${delayMs}ms ` +
+            `(attempt ${retryAttempt + 1}/${maxProviderRetries}).`
+        );
+        // Deliberately do NOT call stateManager.setIdle() here. The existing
+        // transient-connection retry (~1006) and startup-timeout retry (~931)
+        // call setIdle before recursing, but those retry near-instantly. The
+        // provider retry has a multi-second backoff window — calling setIdle
+        // would leave the session appearing idle (turn finished) while a retry
+        // is still pending. Keeping the current 'processing' state during
+        // backoff is more accurate: queryPromise is still set so
+        // ensureQueryStarted() won't launch a duplicate query, and state
+        // observers see the turn as in-progress. The recursive runQuery's
+        // message generator re-asserts 'processing' on the next yield; the
+        // finally block sets 'idle' when the turn actually completes.
+
+        // Clear the startup timer from THIS attempt. If the 5xx happened before
+        // firstMessageReceived, the timer is still armed and would fire during
+        // a later retry, aborting that retry's queryAbortController and turning
+        // a provider retry into a spurious startup-timeout. The recursive
+        // runQuery arms its own fresh timer.
+        const startupTimer = this.ctx.startupTimeoutTimer;
+        if (startupTimer) {
+          clearTimeout(startupTimer);
+          this.ctx.startupTimeoutTimer = null;
+        }
+
+        // Reset firstMessageReceived so the retry's startup timer is effective.
+        // Recursive retries do NOT go through start(), so without this reset a
+        // stale true value (from a system:init in the failed attempt) would
+        // disable the retry's startup timeout — the session could hang forever
+        // if the replacement SDK process never emits its first message.
+        this.ctx.firstMessageReceived = false;
+
+        // Save the last consumed user message for re-enqueue AFTER the backoff
+        // (below). We defer the actual enqueue to just before recursing so the
+        // message doesn't expire in the queue (enqueueWithId has a ~30s TTL) if
+        // an operator configures a long backoff, and so a cancelled retry
+        // doesn't leave an orphaned message in the queue.
+        //
+        // Clear _lastConsumedUserMessage IMMEDIATELY after saving so a stale
+        // value can't persist if the retry is cancelled (e.g. generation bump
+        // from restart) — the finally block skips cleanup for stale queries, so
+        // without this clear the old replay message would survive into the next
+        // turn.
+        const retryMsg = this._lastConsumedUserMessage;
+        this._lastConsumedUserMessage = null;
+
+        // Display a sanitized retry message so the user knows what's happening,
+        // but never show the raw provider error string.
+        try {
+          await this.displayErrorAsAssistantMessage(
+            `⚠️ The provider is temporarily unavailable. Retrying ` +
+              `(attempt ${retryAttempt + 1}/${maxProviderRetries})…`,
+            { markAsError: false }
+          );
+        } catch {
+          // Best-effort — don't let message emission block the retry
+        }
+
+        // Close the current queryObject BEFORE retrying to prevent the
+        // "Already connected to a transport" crash (same rationale as the
+        // startup-timeout retry above).
+        if (this.ctx.queryObject) {
+          try {
+            this.ctx.queryObject.close();
+          } catch {
+            // Ignore close errors — transport may already be in a broken state
+          }
+          this.ctx.queryObject = null;
+        }
+
+        // Wait for the old subprocess to fully exit before retrying, so it
+        // releases workspace locks before a replacement is spawned.
+        const exitPromise = this.ctx.processExitedPromise;
+        if (exitPromise) {
+          await Promise.race([
+            exitPromise,
+            new Promise((resolve) => setTimeout(resolve, RETRY_EXIT_TIMEOUT_MS)),
+          ]);
+          this.ctx.resetProcessExitedPromise();
+        }
+
+        // Restore provider env vars BEFORE the backoff sleep so process.env is
+        // clean during the wait AND regardless of whether the retry proceeds or
+        // is cancelled by the post-sleep re-check below. Without this, a
+        // cancellation return (e.g. generation bump from restart) would skip
+        // the restore, and when the finally treats this run as stale it skips
+        // cleanup entirely — leaking provider routing into later sessions.
+        const envVarsToRestore = this.ctx.originalEnvVars;
+        if (Object.keys(envVarsToRestore).length > 0) {
+          const { getProviderService: getProviderServiceForRetry } = await import(
+            '../provider-service'
+          );
+          getProviderServiceForRetry().restoreEnvVars(envVarsToRestore);
+          this.ctx.originalEnvVars = {};
+        }
+
+        // Exponential backoff before the retry attempt — gives the transient
+        // provider condition time to clear. Sleeps AFTER cleanup+env-restore so
+        // the subprocess-exit wait and the backoff don't compound unnecessarily;
+        // the notice above was already shown to the user.
+        await sleep(delayMs);
+
+        // Re-check cancellation/generation/queue immediately before recursing.
+        // The backoff window (2-8s) is long enough that the user may have
+        // interrupted the turn, a restart may have called stop() (which stops
+        // the queue without bumping generation or marking interrupted), or the
+        // daemon may be shutting down. Without this re-check the cancelled turn
+        // would relaunch an orphaned query after the sleep.
+        if (
+          this.ctx.isCleaningUp() ||
+          !messageQueue.isRunning() ||
+          this.ctx.getQueryGeneration() !== queryGeneration ||
+          stateManager.getState().status === 'interrupted' ||
+          this.ctx.queryAbortController?.signal.aborted === true
+        ) {
+          logger.warn(
+            'Provider error retry cancelled: session interrupted/restarted/cleaning up during backoff.'
+          );
+          return;
+        }
+
+        // Re-enqueue the saved user message immediately before recursing so the
+        // retry's generator has input. Enqueueing here (not earlier) avoids the
+        // queue TTL expiry during long backoffs and prevents orphaned messages
+        // when the retry is cancelled by the re-check above.
+        if (retryMsg) {
+          logger.warn(
+            `Re-enqueueing user message ${retryMsg.uuid} for provider error retry ` +
+              `(attempt ${retryAttempt + 1}/${maxProviderRetries}).`
+          );
+          messageQueue.enqueueWithId(retryMsg.uuid, retryMsg.content).catch(() => {});
+          this._lastConsumedUserMessage = null;
+        }
+
+        return await this.runQuery(queryGeneration, retryAttempt + 1);
       }
 
       // Clear the queue on non-retryable errors so stale messages don't bleed into the next session.
       messageQueue.clear();
+
+      // True when a retryable provider error (5xx/overloaded/unavailable) has
+      // exhausted all bounded retry attempts and is now going terminal. Used to
+      // surface a dedicated user-facing message distinct from generic SYSTEM errors.
+      const isProviderRetryExhausted =
+        retryAttempt >= maxProviderRetries && isRetryableProviderError(errorMessage);
 
       if (!isAbortError) {
         const apiErrorHandled = await this.handleApiValidationError(error);
@@ -1125,9 +1334,12 @@ export class QueryRunner {
                   `(workspace: ${session.workspacePath ?? 'unbound'}). The Claude SDK transcript no longer ` +
                   `contains that message UUID, likely after SDK compaction. Your message history in NeoKai ` +
                   `is preserved; only the AI context window is reset. Please resend your message.`
-                : isTransientConnectionError && isRetry
-                  ? 'Could not get a response. The connection was interrupted. Please try again.'
-                  : undefined;
+                : isProviderRetryExhausted
+                  ? `The provider is temporarily unavailable. The request was retried ` +
+                    `${maxProviderRetries} time(s) without success. Please try again later.`
+                  : isTransientConnectionError && retryAttempt > 0
+                    ? 'Could not get a response. The connection was interrupted. Please try again.'
+                    : undefined;
           // Skip error broadcast when rate-limit cooldown is scheduled —
           // the session.error event is terminal in Space workflows and would
           // prematurely mark the task as failed before the auto-retry fires.
@@ -1217,6 +1429,12 @@ export class QueryRunner {
         if (!this.ctx.isCleaningUp()) {
           await stateManager.setIdle();
         }
+
+        // Clear the last consumed user message so a stale value from this turn
+        // cannot be replayed on the NEXT turn's retry path. Without this, a 5xx
+        // that fires before the next turn's generator yields would re-enqueue
+        // the previous turn's already-completed message.
+        this._lastConsumedUserMessage = null;
 
         // Null queryPromise last so callers awaiting it see queryObject=null.
         this.ctx.queryPromise = null;
