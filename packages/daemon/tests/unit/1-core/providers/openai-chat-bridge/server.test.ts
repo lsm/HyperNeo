@@ -148,6 +148,26 @@ describe('openai-chat-bridge: body-embedded / mid-stream error normalization', (
     expect((errorEvent?.data as { error: { type: string } }).error.type).toBe('api_error');
   });
 
+  it('classifies a flat SSE error payload (event: error, top-level fields)', async () => {
+    // readChatStream drops the `event:` line; a flat payload like
+    // data: {"type":"server_error","message":"overloaded"} has no `error`
+    // wrapper and no choices, so it must be detected via the top-level fields
+    // (otherwise the bridge ends with a normal end_turn and hides the error).
+    const sse =
+      'event: error\n' + 'data: {"type":"server_error","message":"the engine is overloaded"}\n\n';
+    server = makeServer(
+      async () =>
+        new Response(sse, { status: 200, headers: { 'Content-Type': 'text/event-stream' } })
+    );
+
+    const res = await postMessages(server.port);
+    expect(res.status).toBe(200);
+    const events = await readSSEEventTypes(res.body);
+    const errorEvent = events.find((e) => e.event === 'error');
+    expect(errorEvent).toBeDefined();
+    expect((errorEvent?.data as { error: { type: string } }).error.type).toBe('overloaded_error');
+  });
+
   it('streams a mislabeled-content-type SSE response without buffering or misclassifying it', async () => {
     // A proxy that streams valid SSE but sends Content-Type text/plain (or none)
     // must flow straight through to the streamer — NOT be buffered and matched

@@ -550,6 +550,35 @@ async function* readChatStream(
 }
 
 /**
+ * Extract a serialized `{error: ...}` body from a chat-stream chunk, for both
+ * the standard nested `chunk.error` shape and a FLAT payload.
+ *
+ * `readChatStream` discards the SSE `event:` line, so a flat `event: error`
+ * block like `data: {"type":"server_error","message":"overloaded"}` reaches the
+ * loop with no `error` wrapper. Without this, the flat error chunk has no
+ * choices, is skipped, and the bridge ends with a normal `end_turn` instead of
+ * surfacing the (retryable) error. A flat chunk is only treated as an error
+ * when it has no choices and no usage but carries error-like top-level fields.
+ */
+function chatChunkErrorBody(chunk: OpenAIChatStreamChunk): string | undefined {
+  if (chunk.error) return JSON.stringify({ error: chunk.error });
+  if (!chunk.choices?.length && !chunk.usage) {
+    const flat = chunk as Record<string, unknown>;
+    const message = typeof flat.message === 'string' ? flat.message : undefined;
+    const type = typeof flat.type === 'string' ? flat.type : undefined;
+    const code = typeof flat.code === 'string' ? flat.code : undefined;
+    if (message || type || code) {
+      const error: Record<string, unknown> = {};
+      if (message) error.message = message;
+      if (type) error.type = type;
+      if (code) error.code = code;
+      return JSON.stringify({ error });
+    }
+  }
+  return undefined;
+}
+
+/**
  * Translate the upstream OpenAI Chat Completions SSE stream into Anthropic
  * Messages SSE events. Handles incremental tool_calls accumulation.
  */
@@ -648,16 +677,23 @@ async function streamChatToAnthropic(params: {
     let sawAnyChunk = false;
     for await (const chunk of readChatStream(upstreamResponse.body)) {
       sawAnyChunk = true;
-      if (chunk.error?.message) {
-        // Carry the serialized chunk error so the catch handler can classify a
+      const errorBody = chatChunkErrorBody(chunk);
+      if (errorBody) {
+        // Carry the serialized error body so the catch handler can classify a
         // transient mid-stream error (rate_limit / overloaded) instead of
         // defaulting to a terminal api_error. The SDK cannot retry a stream it
         // has already started, so the correct type also lets the query-runner
-        // (B4) recognise and re-issue the whole query.
-        const streamErr = new Error(chunk.error.message);
-        (streamErr as { upstreamErrorBody?: string }).upstreamErrorBody = JSON.stringify({
-          error: chunk.error,
-        });
+        // (B4) recognise and re-issue the whole query. Handles both the nested
+        // `chunk.error` shape and flat payloads (see chatChunkErrorBody).
+        let errorMessage = 'OpenAI stream error';
+        try {
+          const err = (JSON.parse(errorBody).error ?? {}) as { message?: string };
+          if (typeof err.message === 'string' && err.message) errorMessage = err.message;
+        } catch {
+          // keep default
+        }
+        const streamErr = new Error(errorMessage);
+        (streamErr as { upstreamErrorBody?: string }).upstreamErrorBody = errorBody;
         throw streamErr;
       }
       if (chunk.usage) {
