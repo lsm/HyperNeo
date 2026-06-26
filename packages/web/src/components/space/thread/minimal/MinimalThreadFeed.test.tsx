@@ -54,6 +54,15 @@ function assistantText(uuid: string, text: string) {
   };
 }
 
+function assistantError(uuid: string, text: string, error = 'invalid_request') {
+  return {
+    type: 'assistant',
+    uuid,
+    error,
+    message: { content: [{ type: 'text', text }] },
+  };
+}
+
 function assistantToolUse(
   uuid: string,
   tools: Array<{ name: string; input: Record<string, unknown> }>
@@ -510,6 +519,108 @@ describe('MinimalThreadFeed', () => {
     });
     // Doesn't pick the earlier text once a later assistant text exists.
     expect(screen.queryByText('preliminary')).toBeNull();
+  });
+
+  it('renders an assistant error message as a red error bubble (not gray)', async () => {
+    const t = Date.now();
+    const rows = [
+      makeRow({
+        id: 'a1',
+        label: 'Coder Agent',
+        createdAt: t,
+        message: assistantError(
+          'a1',
+          'API Error: 400 {"type":"invalid_request_error","message":"messages must alternate"}'
+        ),
+      }),
+      makeRow({
+        id: 'r1',
+        label: 'Coder Agent',
+        createdAt: t + 1000,
+        message: resultMessage('r1'),
+      }),
+    ];
+
+    render(<MinimalThreadFeed parsedRows={rows} />);
+    const bubble = screen.getByTestId('minimal-thread-agent-bubble');
+    // The error flag flows through → red bubble + data attribute.
+    expect(bubble.getAttribute('data-has-error')).toBe('true');
+    expect(bubble.className).toContain('border-red-800');
+    expect(bubble.className).toContain('bg-red-900');
+    // Normal gray bubble classes are absent.
+    expect(bubble.className).not.toContain('bg-dark-800');
+    // "API Error" header label mirrors SDKAssistantMessage's hasError branch.
+    expect(bubble.textContent).toContain('API Error');
+    // The error text still renders as the bubble body.
+    await waitFor(() => {
+      expect(screen.getByTestId('md').textContent).toContain('API Error: 400');
+    });
+  });
+
+  it('renders a normal assistant reply without error styling', async () => {
+    const t = Date.now();
+    const rows = [
+      makeRow({
+        id: 'a1',
+        label: 'Coder Agent',
+        createdAt: t,
+        message: assistantText('a1', 'all good'),
+      }),
+      makeRow({
+        id: 'r1',
+        label: 'Coder Agent',
+        createdAt: t + 1000,
+        message: resultMessage('r1'),
+      }),
+    ];
+
+    render(<MinimalThreadFeed parsedRows={rows} />);
+    const bubble = screen.getByTestId('minimal-thread-agent-bubble');
+    expect(bubble.getAttribute('data-has-error')).toBeNull();
+    expect(bubble.className).not.toContain('border-red');
+    expect(bubble.className).toContain('bg-dark-800');
+    expect(bubble.textContent).not.toContain('API Error');
+    await waitFor(() => {
+      expect(screen.getByText('all good')).toBeTruthy();
+    });
+  });
+
+  it('renders a recovered turn (error then success) as a gray bubble, not red', async () => {
+    // When an earlier assistant row carries a transient `error` (e.g. a 429
+    // the SDK retried) but a later assistant row produced a successful reply,
+    // the turn recovered. The surfaced reply is the successful one, so the
+    // bubble must stay gray — painting it red would show an "API Error" header
+    // over a successful reply body, which is misleading.
+    const t = Date.now();
+    const rows = [
+      makeRow({
+        id: 'err',
+        label: 'Coder Agent',
+        createdAt: t,
+        message: assistantError('err', 'API Error: 429 overloaded', 'overloaded_error'),
+      }),
+      makeRow({
+        id: 'ok',
+        label: 'Coder Agent',
+        createdAt: t + 1000,
+        message: assistantText('ok', 'Recovered — here is the fix'),
+      }),
+      makeRow({
+        id: 'r1',
+        label: 'Coder Agent',
+        createdAt: t + 2000,
+        message: resultMessage('r1'),
+      }),
+    ];
+
+    render(<MinimalThreadFeed parsedRows={rows} />);
+    const bubble = screen.getByTestId('minimal-thread-agent-bubble');
+    expect(bubble.getAttribute('data-has-error')).toBeNull();
+    expect(bubble.className).toContain('bg-dark-800');
+    expect(bubble.className).not.toContain('border-red');
+    await waitFor(() => {
+      expect(screen.getByText('Recovered — here is the fix')).toBeTruthy();
+    });
   });
 
   it('keeps folded post-result task_notification rows from creating active rails', () => {
