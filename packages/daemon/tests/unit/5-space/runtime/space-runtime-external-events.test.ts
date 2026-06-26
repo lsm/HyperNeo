@@ -1042,6 +1042,66 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
   });
 
+  test('rehydrates subscriptions for done runs with review or approved tasks', async () => {
+    for (const status of ['review', 'approved'] as const) {
+      const { run, task } = await startRunWithSubscription(DEFAULT_TOPIC, `code-${status}`, {
+        staticInterest: true,
+      });
+      taskRepo.updateTask(task.id, { status });
+      workflowRunRepo.updateRun(run.id, { status: 'done' });
+    }
+
+    runtime = new SpaceRuntime({
+      db,
+      spaceManager: new SpaceManager(db),
+      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+      spaceWorkflowManager: workflowManager,
+      workflowRunRepo,
+      taskRepo,
+      nodeExecutionRepo,
+      artifactRepo,
+      internalEventBus: bus,
+      commandBus: createInternalCommandBus(),
+      externalEventStore: eventStore,
+      taskAgentManager: tam as never,
+    });
+
+    await runtime.rehydrateExecutors();
+    const matches = (
+      runtime as unknown as {
+        lookupSubscriptionTargets(topic: string): Array<{ workflowRunId?: string }>;
+      }
+    ).lookupSubscriptionTargets(makeEvent().topic);
+
+    expect(matches.map((match) => match.workflowRunId).filter(Boolean)).toHaveLength(2);
+  });
+
+  test('keeps subscriptions while completion routes the task to approved', async () => {
+    const { run, task } = await startRunWithSubscription();
+    await (
+      runtime as unknown as {
+        transitionRunStatusAndEmit(runId: string, nextStatus: 'done'): Promise<unknown>;
+      }
+    ).transitionRunStatusAndEmit(run.id, 'done');
+    taskRepo.updateTask(task.id, { status: 'approved' });
+    await runtime.executeTick();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'idle',
+      agentSessionId: 'session-approved-task-idle',
+      startedAt: Date.now(),
+      completedAt: Date.now(),
+    });
+    tam.alive.add('session-approved-task-idle');
+
+    const event = makeEvent();
+    await eventService.publish(event);
+
+    expect(injected).toHaveLength(1);
+    expect(injected[0]!.sessionId).toBe('session-approved-task-idle');
+    expect(eventStore.getById(event.id)?.state).toBe('delivered');
+  });
+
   test('does not deliver matching events to a cancelled node execution', async () => {
     const { run } = await startRunWithSubscription();
     const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;

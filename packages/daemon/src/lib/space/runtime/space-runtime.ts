@@ -3572,7 +3572,7 @@ export class SpaceRuntime {
   ): Promise<SpaceWorkflowRun> {
     const previousStatus = this.config.workflowRunRepo.getRun(runId)?.status;
     const updated = this.config.workflowRunRepo.transitionStatus(runId, nextStatus);
-    if (nextStatus === 'cancelled' || this.shouldClearRunInterestsForDoneRun(runId, nextStatus)) {
+    if (nextStatus === 'cancelled') {
       this.clearRunInterests(runId);
     }
     if (nextStatus === 'blocked') {
@@ -4589,13 +4589,14 @@ export class SpaceRuntime {
         .filter(
           (run) =>
             !activeRuns.some((activeRun) => activeRun.id === run.id) &&
-            run.status !== 'done' &&
             run.status !== 'cancelled' &&
-            this.config.taskRepo.listByWorkflowRun(run.id).some((task) => task.status === 'review')
+            this.config.taskRepo
+              .listByWorkflowRun(run.id)
+              .some((task) => task.status === 'review' || task.status === 'approved')
         );
       if (reviewRuns.length > 0) {
         log.info(
-          `SpaceRuntime.rehydrateExecutors: found ${reviewRuns.length} review-pending run(s) with non-terminal status in space ${space.id}`
+          `SpaceRuntime.rehydrateExecutors: found ${reviewRuns.length} review/approved-pending run(s) in space ${space.id}`
         );
       }
       activeRuns.push(...reviewRuns);
