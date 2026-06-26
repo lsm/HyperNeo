@@ -2145,6 +2145,12 @@ describe('SpaceRuntime external event subscriptions', () => {
       '40 events received for topics: github/lsm/neokai/pull_request/42.review_submitted'
     );
     expect(injected.some((item) => item.message.includes(events[0]!.id))).toBe(false);
+    // The digest must list EVERY coalesced id (no cap/truncation) so every
+    // delivered event remains fetchable via get_external_event(eventId).
+    // events[1..40] are in the digest; verify an id well past the old 10-cap.
+    expect(injected[10]!.message).toContain(events[30]!.id);
+    expect(injected[10]!.message).toContain(events[40]!.id);
+    expect(injected[10]!.message).not.toContain('more)`');
   });
 
   test('persists pending delivery when target execution is not active', async () => {
