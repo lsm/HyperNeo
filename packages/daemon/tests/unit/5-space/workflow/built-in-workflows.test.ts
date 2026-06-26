@@ -171,7 +171,9 @@ describe('CODING_WORKFLOW template', () => {
     for (const prompt of prompts) {
       expect(prompt).toContain('`external_event` review comment essence');
       expect(prompt).toContain('`replyHandle.commentId`');
+      expect(prompt).toContain('gh api --hostname <host>');
       expect(prompt).toContain('pulls/{pull_number}/comments/{comment_id}/replies');
+      expect(prompt).toContain('gh api graphql --hostname <host>');
       expect(prompt).toContain('resolveReviewThread(input:{threadId:$threadId})');
       expect(prompt).toContain('PullRequestReviewThread.id');
       expect(prompt).toContain('`commentNodeId`');
@@ -2053,8 +2055,8 @@ describe('seedBuiltInWorkflows()', () => {
       .replace(
         '3. For valid items: make the fix, then reply to that specific thread. Prefer the ' +
           '`external_event` essence handle: use `replyHandle.commentId` as the REST ' +
-          '`{comment_id}` in ' +
-          '`gh api repos/{owner}/{repo}/pulls/{pull_number}/comments/{comment_id}/replies -f body="<ack>"` ' +
+          '`{comment_id}` and the PR URL host as `<host>` in ' +
+          '`gh api --hostname <host> repos/{owner}/{repo}/pulls/{pull_number}/comments/{comment_id}/replies -f body="<ack>"` ' +
           'explaining what changed. One reply per comment creates a visible audit trail.\n',
         '3. For valid items: make the fix, then reply to that specific thread via ' +
           '`gh api repos/{owner}/{repo}/pulls/{n}/comments/{comment_id}/replies -f body="<ack>"` ' +
@@ -2064,11 +2066,11 @@ describe('seedBuiltInWorkflows()', () => {
         'After pushing fixes for review feedback, resolve ALL open GitHub review conversation ' +
           'threads — including those where you disagree with the reviewer. When the feedback ' +
           'arrives as an `external_event` review comment essence, use its `replyHandle.commentId` ' +
-          'as the REST `{comment_id}` for ' +
-          '`gh api repos/{owner}/{repo}/pulls/{pull_number}/comments/{comment_id}/replies -f body="<ack>"`. ' +
+          'as the REST `{comment_id}` and the PR URL host as `<host>` for ' +
+          '`gh api --hostname <host> repos/{owner}/{repo}/pulls/{pull_number}/comments/{comment_id}/replies -f body="<ack>"`. ' +
           'Then resolve the thread with GraphQL ' +
-          "`gh api graphql -f query='mutation($threadId:ID!){resolveReviewThread(input:{threadId:$threadId}){thread{id isResolved}}}' -f threadId=<review-thread-node-id>`, " +
-          'where `<review-thread-node-id>` is the `PullRequestReviewThread.id` found by querying ' +
+          "`gh api graphql --hostname <host> -f query='mutation($threadId:ID!){resolveReviewThread(input:{threadId:$threadId}){thread{id isResolved}}}' -f threadId=<review-thread-node-id>`, " +
+          'where `<host>` is the PR URL host and `<review-thread-node-id>` is the `PullRequestReviewThread.id` found by querying ' +
           '`reviewThreads`; do not use the review comment `node_id`/`commentNodeId` as ' +
           '`threadId`. The PR-ready hook blocks on any unresolved thread, so leaving one ' +
           'open creates a deadlock. If the reviewer disagrees with your reasoning, they can ' +

@@ -376,11 +376,11 @@ const REVIEW_THREAD_RESOLUTION_GUIDANCE =
   'After pushing fixes for review feedback, resolve ALL open GitHub review conversation ' +
   'threads — including those where you disagree with the reviewer. When the feedback ' +
   'arrives as an `external_event` review comment essence, use its `replyHandle.commentId` ' +
-  'as the REST `{comment_id}` for ' +
-  '`gh api repos/{owner}/{repo}/pulls/{pull_number}/comments/{comment_id}/replies -f body="<ack>"`. ' +
+  'as the REST `{comment_id}` and the PR URL host as `<host>` for ' +
+  '`gh api --hostname <host> repos/{owner}/{repo}/pulls/{pull_number}/comments/{comment_id}/replies -f body="<ack>"`. ' +
   'Then resolve the thread with GraphQL ' +
-  "`gh api graphql -f query='mutation($threadId:ID!){resolveReviewThread(input:{threadId:$threadId}){thread{id isResolved}}}' -f threadId=<review-thread-node-id>`, " +
-  'where `<review-thread-node-id>` is the `PullRequestReviewThread.id` found by querying ' +
+  "`gh api graphql --hostname <host> -f query='mutation($threadId:ID!){resolveReviewThread(input:{threadId:$threadId}){thread{id isResolved}}}' -f threadId=<review-thread-node-id>`, " +
+  'where `<host>` is the PR URL host and `<review-thread-node-id>` is the `PullRequestReviewThread.id` found by querying ' +
   '`reviewThreads`; do not use the review comment `node_id`/`commentNodeId` as ' +
   '`threadId`. The PR-ready hook blocks on any unresolved thread, so leaving one ' +
   'open creates a deadlock. If the reviewer disagrees with your reasoning, they can ' +
@@ -494,8 +494,8 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
               'against the code and the task requirements. The Reviewer can be wrong.\n' +
               '3. For valid items: make the fix, then reply to that specific thread. Prefer the ' +
               '`external_event` essence handle: use `replyHandle.commentId` as the REST ' +
-              '`{comment_id}` in ' +
-              '`gh api repos/{owner}/{repo}/pulls/{pull_number}/comments/{comment_id}/replies -f body="<ack>"` ' +
+              '`{comment_id}` and the PR URL host as `<host>` in ' +
+              '`gh api --hostname <host> repos/{owner}/{repo}/pulls/{pull_number}/comments/{comment_id}/replies -f body="<ack>"` ' +
               'explaining what changed. One reply per comment creates a visible audit trail.\n' +
               '4. For items you disagree with: reply on the same thread explaining why, with ' +
               'evidence from the code or tests. Do not change code you believe is correct.\n' +
@@ -1704,8 +1704,8 @@ const BUILT_IN_PROMPT_PATCH_VARIANTS = [
     [
       '3. For valid items: make the fix, then reply to that specific thread. Prefer the ' +
         '`external_event` essence handle: use `replyHandle.commentId` as the REST ' +
-        '`{comment_id}` in ' +
-        '`gh api repos/{owner}/{repo}/pulls/{pull_number}/comments/{comment_id}/replies -f body="<ack>"` ' +
+        '`{comment_id}` and the PR URL host as `<host>` in ' +
+        '`gh api --hostname <host> repos/{owner}/{repo}/pulls/{pull_number}/comments/{comment_id}/replies -f body="<ack>"` ' +
         'explaining what changed. One reply per comment creates a visible audit trail.\n',
       RETIRED_CODING_WORKFLOW_REPLY_STEP_PROMPT,
     ],
@@ -1714,8 +1714,8 @@ const BUILT_IN_PROMPT_PATCH_VARIANTS = [
     [
       '3. For valid items: make the fix, then reply to that specific thread. Prefer the ' +
         '`external_event` essence handle: use `replyHandle.commentId` as the REST ' +
-        '`{comment_id}` in ' +
-        '`gh api repos/{owner}/{repo}/pulls/{pull_number}/comments/{comment_id}/replies -f body="<ack>"` ' +
+        '`{comment_id}` and the PR URL host as `<host>` in ' +
+        '`gh api --hostname <host> repos/{owner}/{repo}/pulls/{pull_number}/comments/{comment_id}/replies -f body="<ack>"` ' +
         'explaining what changed. One reply per comment creates a visible audit trail.\n',
       RETIRED_CODING_WORKFLOW_REPLY_STEP_PROMPT,
     ],
