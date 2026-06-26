@@ -519,6 +519,43 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
     expect(nodeExecutionRepo.getById(executionId)?.status).toBe('idle');
   });
 
+  test('a shared session across idle rows injects only one continue per tick', async () => {
+    // Simulate a reused agent session: two idle node executions reference the
+    // SAME agentSessionId, both ending on the terminal error result for it.
+    const { runId } = seedIdleErrorRun({
+      subtype: 'error_during_execution',
+      errors: ['shared-session error'],
+      sessionId: 'session:shared',
+    });
+    const second = nodeExecutionRepo.createOrIgnore({
+      workflowRunId: runId,
+      workflowNodeId: 'step-b',
+      agentName: 'Coder',
+      agentId: AGENT,
+      status: 'pending',
+    });
+    nodeExecutionRepo.update(second.id, {
+      status: 'idle',
+      agentSessionId: 'session:shared',
+      startedAt: Date.now() - 5 * 60_000,
+    });
+    expect(
+      nodeExecutionRepo
+        .listByWorkflowRun(runId)
+        .filter((e) => e.status === 'idle' && e.agentSessionId === 'session:shared')
+    ).toHaveLength(2);
+
+    const tam = makeTam();
+    const rt = new SpaceRuntime(buildConfig(tam));
+    (rt as unknown as { recoveryDone: boolean }).recoveryDone = true;
+
+    await rt.executeTick();
+
+    // One continue for the shared session — not one per idle row.
+    expect(tam._injected).toHaveLength(1);
+    expect(tam._injected[0].sessionId).toBe('session:shared');
+  });
+
   test('task not in_progress is left alone', async () => {
     seedIdleErrorRun({ subtype: 'error_during_execution', taskStatus: 'done' });
     const tam = makeTam();

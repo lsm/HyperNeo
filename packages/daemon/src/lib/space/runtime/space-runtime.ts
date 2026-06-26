@@ -7041,6 +7041,12 @@ export class SpaceRuntime {
       .listByWorkflowRun(runId)
       .filter((execution) => execution.status === 'idle' && !!execution.agentSessionId);
 
+    // Sessions can be reused across node activations (createSubSession points
+    // multiple execution rows at the same agentSessionId). Track sessions
+    // already evaluated this tick so a single terminal result on a shared
+    // session doesn't enqueue multiple continues (one per idle row).
+    const processedSessions = new Set<string>();
+
     for (const execution of idleExecutions) {
       const sessionId = execution.agentSessionId;
       if (!sessionId) continue;
@@ -7048,6 +7054,11 @@ export class SpaceRuntime {
       const lastMessage = this.getSdkMessageRepo().getLastSDKMessage(sessionId);
       const key = `${runId}:${execution.id}`;
       if (!lastMessage || !isSDKResultError(lastMessage)) continue;
+      // A shared session yields the same last message for every idle row that
+      // references it — claim it on the first terminal-error match so sibling
+      // rows don't double-inject a continue in the same tick.
+      if (processedSessions.has(sessionId)) continue;
+      processedSessions.add(sessionId);
 
       // Defer over-long-context results to #670 (compaction), not a plain
       // continue — continuing won't shrink the context.
