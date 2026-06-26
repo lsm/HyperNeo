@@ -1146,11 +1146,20 @@ export interface UpdateNodeExecutionParams {
  *
  * - `pending`     — run created, awaiting Task Agent to start nodes
  * - `in_progress` — at least one node execution is active
+ * - `review`      — run is awaiting review-stage follow-up
  * - `done`        — end node set `task.reportedStatus` or all nodes completed
  * - `blocked`     — run requires human intervention (gate rejection, crash, etc.)
  * - `cancelled`   — run was cancelled before completion
+ * - `archived`    — run is archived and no longer active
  */
-export type WorkflowRunStatus = 'pending' | 'in_progress' | 'done' | 'blocked' | 'cancelled';
+export type WorkflowRunStatus =
+  | 'pending'
+  | 'in_progress'
+  | 'review'
+  | 'done'
+  | 'blocked'
+  | 'cancelled'
+  | 'archived';
 
 /**
  * Tracks a single execution of a Space workflow.

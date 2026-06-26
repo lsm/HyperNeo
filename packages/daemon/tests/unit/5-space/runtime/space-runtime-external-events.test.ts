@@ -804,6 +804,56 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
   });
 
+  test('delivers matching events to an idle subscriber while the run is in review', async () => {
+    const { run } = await startRunWithSubscription();
+    workflowRunRepo.updateRun(run.id, { status: 'review' });
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'idle',
+      agentSessionId: 'session-review-idle',
+      startedAt: Date.now(),
+      completedAt: Date.now(),
+    });
+    tam.alive.add('session-review-idle');
+
+    const event = makeEvent();
+    await eventService.publish(event);
+
+    expect(injected).toHaveLength(1);
+    expect(injected[0]!.sessionId).toBe('session-review-idle');
+    expect(injected[0]!.deliveryMode).toBe('immediate');
+    expect(JSON.parse(injected[0]!.message).eventId).toBe(event.id);
+    expect(eventStore.getById(event.id)?.state).toBe('delivered');
+    expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
+  });
+
+  test('flushes pending external deliveries after a review-stage node activates', async () => {
+    const { run, task } = await startRunWithSubscription();
+    workflowRunRepo.updateRun(run.id, { status: 'review' });
+
+    const event = makeEvent();
+    await eventService.publish(event);
+
+    expect(injected).toHaveLength(0);
+    const pendingDelivery = eventStore.listDeliveries(event.id)[0]!;
+    expect(pendingDelivery.state).toBe('pending');
+    expect(pendingDelivery.failureReason).not.toBe('run_not_externally_deliverable');
+
+    runtime.flushPendingNodeQueue({
+      workflowRunId: run.id,
+      taskId: task.id,
+      nodeId: 'code',
+      agentName: 'coder',
+      sessionId: 'session-review-flush',
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(injected).toHaveLength(1);
+    expect(injected[0]!.sessionId).toBe('session-review-flush');
+    expect(eventStore.getById(event.id)?.state).toBe('delivered');
+    expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
+  });
+
   test('does not deliver matching events to a cancelled node execution', async () => {
     const { run } = await startRunWithSubscription();
     const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
@@ -3194,12 +3244,19 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(eventStore.getById(event.id)?.state).toBe('failed');
   });
 
-  test('ignores terminal runs when matching external event deliveries', async () => {
-    const { workflow, run, task } = await startRunWithSubscription();
-    workflowRunRepo.updateRun(run.id, { status: 'cancelled' });
+  test.each([
+    'done',
+    'cancelled',
+    'archived',
+  ] as const)('ignores %s runs when matching external event deliveries', async (status) => {
+    const { run } = await startRunWithSubscription();
     await runtime.executeTick();
+    workflowRunRepo.updateRun(run.id, { status });
 
-    const event = makeEvent();
+    const event = makeEvent({
+      id: `evt-terminal-run-${status}`,
+      dedupeKey: `dedupe-terminal-run-${status}`,
+    });
     await eventService.publish(event);
 
     expect(eventStore.getById(event.id)?.state).toBe('ignored');

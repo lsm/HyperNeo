@@ -92,13 +92,10 @@ describe('Gate rejection and recovery (WorkflowRunStatus)', () => {
     expect(canTransition('pending', 'blocked')).toBe(false);
   });
 
-  test('WorkflowRunStatus has no "review" state — review is a SpaceTask concept', () => {
-    // Confirm the run status type does not include 'review'
+  test('WorkflowRunStatus includes review and archived lifecycle states', () => {
     const allRunStatuses = Object.keys(VALID_TRANSITIONS) as WorkflowRunStatus[];
-    expect(allRunStatuses).not.toContain('review');
-    // All 5 valid statuses
     expect(allRunStatuses.sort()).toEqual(
-      ['blocked', 'cancelled', 'done', 'in_progress', 'pending'].sort()
+      ['archived', 'blocked', 'cancelled', 'done', 'in_progress', 'pending', 'review'].sort()
     );
   });
 
@@ -145,11 +142,9 @@ describe('Autonomy level vs review status (SpaceTask concept)', () => {
   test('SpaceTask review ≠ WorkflowRun blocked: they model different human-gate scenarios', () => {
     // review: task finished, awaiting human approval before marking done (supervised mode)
     // blocked: gate explicitly rejected OR agent/execution failed
-    // These are orthogonal: a task can be in 'review' while the run is 'in_progress'
-    const reviewStatus = 'review'; // SpaceTask status
+    const reviewStatus = 'review';
     const blockedStatus = 'blocked'; // WorkflowRunStatus
     expect(reviewStatus).not.toBe(blockedStatus);
-    // The run status machine has no 'review' state
-    expect(Object.keys(VALID_TRANSITIONS)).not.toContain(reviewStatus);
+    expect(Object.keys(VALID_TRANSITIONS)).toContain(reviewStatus);
   });
 });
