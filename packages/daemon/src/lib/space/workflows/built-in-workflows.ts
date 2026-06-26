@@ -1798,19 +1798,29 @@ function isExactRetiredBuiltInPrompt(existingValue: string, templateValue: strin
 }
 
 function buildRetiredBuiltInPromptValues(templateValue: string): string[] {
-  const values: string[] = [];
+  const values = new Set<string>();
+  let candidates = new Set([templateValue]);
+
   for (const replacements of BUILT_IN_PROMPT_PATCH_VARIANTS) {
-    let value = templateValue;
-    for (const [currentText, retiredText] of replacements) {
-      if (!value.includes(currentText)) {
-        value = templateValue;
-        break;
+    const nextCandidates = new Set(candidates);
+    for (const candidate of candidates) {
+      let value = candidate;
+      for (const [currentText, retiredText] of replacements) {
+        if (!value.includes(currentText)) {
+          value = candidate;
+          break;
+        }
+        value = value.replace(currentText, retiredText);
       }
-      value = value.replace(currentText, retiredText);
+      if (value !== candidate) {
+        values.add(value);
+        nextCandidates.add(value);
+      }
     }
-    if (value !== templateValue) values.push(value);
+    candidates = nextCandidates;
   }
-  return values;
+
+  return [...values];
 }
 
 function nodeReferences(node: WorkflowNode): Set<string> {

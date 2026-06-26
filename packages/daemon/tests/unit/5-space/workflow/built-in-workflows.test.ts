@@ -2016,13 +2016,40 @@ describe('seedBuiltInWorkflows()', () => {
     );
   });
 
-  test('re-stamp patches exact retired review thread reply and resolve guidance', () => {
+  test('re-stamp composes review thread guidance with older handoff variants', () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
     const codingNode = coding.nodes.find((n) => n.name === 'Coding')!;
     const templatePrompt = CODING_WORKFLOW.nodes.find((n) => n.name === 'Coding')!.agents[0]
       .customPrompt!.value;
     const stalePrompt = templatePrompt
+      .replace(
+        '5. If code changed: open a PR with `gh pr create` — include a clear title and description. After `gh pr create`, call `subscribe_pr_events({})` (no arguments needed — the PR URL is auto-resolved from the run). This subscribes you to review comments, CI failures, and reactions for your PR so you receive them directly and can act on them. Do this once per PR.\n',
+        '5. If code changed: open a PR with `gh pr create` — include a clear title and description\n'
+      )
+      .replace(
+        '6. If code changed: hand off by calling `send_message` to the review target ' +
+          'with `data: { pr_url: "<url>" }`. Use the current target and required data ' +
+          'fields from the Runtime Execution Contract injected into your task prompt. ' +
+          '`save_artifact` alone is insufficient; only `send_message` triggers the ' +
+          'hook-validated handoff. Always include the PR URL data field on every ' +
+          '`send_message` handoff — the hook validates every cycle, so even on round 2+ ' +
+          'you must re-supply it.\n',
+        '6. If code changed: hand off by sending a message to Review with ' +
+          '`data: { pr_url: "<url>" }`. The gate script verifies the PR is open and ' +
+          'mergeable, so make sure it actually is before sending. ' +
+          '**Always include `data: { pr_url }` on every send_message to Review** — the gate ' +
+          'data resets each cycle, so even on round 2+ you must re-supply it.\n'
+      )
+      .replace(
+        '6. Verify no unresolved review conversations remain, verify tests still pass, ' +
+          'then call `send_message` to the review target again to re-trigger the review ' +
+          'cycle. Re-supplying the PR URL data field is required because the hook ' +
+          'validates each handoff; `save_artifact` alone will not deliver it.',
+        '6. Verify no unresolved review conversations remain, verify tests still pass, ' +
+          'then send_message to Review again (again with `data: { pr_url }`) to ' +
+          're-trigger the review cycle'
+      )
       .replace(
         '3. For valid items: make the fix, then reply to that specific thread. Prefer the ' +
           '`external_event` essence handle: use `replyHandle.commentId` as the REST ' +
@@ -2071,7 +2098,7 @@ describe('seedBuiltInWorkflows()', () => {
       ),
     });
     db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
-      'stale-review-thread-guidance-hash',
+      'stale-composed-review-thread-guidance-hash',
       coding.id
     );
 
@@ -2084,6 +2111,7 @@ describe('seedBuiltInWorkflows()', () => {
     expect(afterPrompt).toBe(templatePrompt);
     expect(afterPrompt).toContain('replyHandle.commentId');
     expect(afterPrompt).toContain('PullRequestReviewThread.id');
+    expect(afterPrompt).toContain('hand off by calling `send_message` to the review target');
   });
 
   test('re-stamp adds subscribe step to pre-PR-dev Coding/Fullstack/Research prompts', () => {
