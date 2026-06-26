@@ -529,6 +529,9 @@ describe('Post-approval merge conflict routes to coder, not human', () => {
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('2-attempt cap');
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('after 2 rounds');
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/NO fixed conflict-count/);
+    // Each failed retry must restart at steps a/b (recompute conflicts + fresh
+    // artifact) so a later round never reuses stale conflicting_files.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/RESTART at steps a\/b/);
     // Escalation target is space-agent, not a human, and only on a real
     // non-conflict blocker or cycle-cap — NOT on conflict count.
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('send_message(target="space-agent"');
