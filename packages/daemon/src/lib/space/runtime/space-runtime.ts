@@ -7089,6 +7089,11 @@ export class SpaceRuntime {
           sessionId
         );
         if (crashExhausted) {
+          // Clear the stale dead session on the exhausted path too, otherwise
+          // attemptBlockedRunRecovery's reset to `pending` leaves the dead
+          // agentSessionId attached and the spawn loop reuses/re-blocks it
+          // instead of trying a fresh session.
+          this.config.nodeExecutionRepo.update(execution.id, { agentSessionId: null });
           await this.blockRunForAgentCrash(runId, spaceId, canonicalTask, [
             this.config.nodeExecutionRepo.getById(execution.id) ?? execution,
           ]);

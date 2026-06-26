@@ -395,8 +395,8 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
     expect(notifications).not.toContainEqual(expect.objectContaining({ kind: 'task_blocked' }));
   });
 
-  test('prompt-too-long result is not continued (deferred to #670)', async () => {
-    const { executionId } = seedIdleErrorRun({
+  test('prompt-too-long result is not continued via the terminal-error sweep (deferred to #670)', async () => {
+    seedIdleErrorRun({
       subtype: 'error_during_execution',
       errors: ['prompt is too long: 205616 tokens > 200000 maximum'],
       terminalReason: 'prompt_too_long',
@@ -407,8 +407,11 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
 
     await rt.executeTick();
 
-    expect(tam._injected).toHaveLength(0);
-    expect(nodeExecutionRepo.getById(executionId)?.status).toBe('idle');
+    // #670 owns prompt-too-long recovery (it injects a /compact). This sweep
+    // must NOT inject its own terminal-error continue on top of it.
+    expect(
+      tam._injected.filter((m) => m.message.includes('[Runtime recovery — terminal error]'))
+    ).toHaveLength(0);
   });
 
   test('prompt-too-long detected via errors[] only (no terminal_reason) is also skipped', async () => {
@@ -422,7 +425,9 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
 
     await rt.executeTick();
 
-    expect(tam._injected).toHaveLength(0);
+    expect(
+      tam._injected.filter((m) => m.message.includes('[Runtime recovery — terminal error]'))
+    ).toHaveLength(0);
   });
 
   test('dead terminal-error session is reset for a FRESH re-spawn (stale session cleared)', async () => {
