@@ -421,10 +421,19 @@ describe('Post-approval merge conflict routes to coder, not human', () => {
     // gh pr view --json reviews exposes no URL; the REST reviews API must be
     // paginated (--paginate, default per_page hides older approvals) and use the
     // same <host> step 2 extracts for GitHub Enterprise. Own-PR setups may have
-    // only a PR comment (no COMMENTED review), so fall back to the comment URL.
+    // only a COMMENTED review or a PR comment, so accept COMMENTED reviews and
+    // fall back to the (paginated) comment URL.
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('--hostname <host>');
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('--paginate');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/APPROVED or COMMENTED/);
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('/issues/<number>/comments');
+  });
+
+  test('request-changes handoff reuses the pr_url + review_url gate evidence', () => {
+    // The "request changes" send after a bad conflict fix travels the same
+    // Review → Coding channel (review-posted-gate, resetOnCycle), so it must
+    // also carry pr_url + review_url or it is blocked.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('pr_url + review_url handoff');
   });
 
   test('conflict detection keys on DIRTY mergeStateStatus and conflict markers', () => {
