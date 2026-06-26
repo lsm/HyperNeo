@@ -414,7 +414,10 @@ describe('Post-approval merge conflict routes to coder, not human', () => {
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('CHANGES_REQUESTED');
     // If a CHANGES_REQUESTED was posted in this loop and is now resolved, post
     // a fresh APPROVED before retrying (required-review repos block otherwise).
+    // Any conflict-fix force-push can dismiss stale approvals, so re-approve on
+    // EVERY retry — not only after a CHANGES_REQUESTED.
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/fresh APPROVED/);
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/every retry/);
   });
 
   test('exhausted retries escalate to space-agent with real count/exit reason (no false completion)', () => {
