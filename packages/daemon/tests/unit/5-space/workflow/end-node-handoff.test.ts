@@ -514,6 +514,10 @@ describe('Post-approval merge conflict routes to coder, not human', () => {
     // A rebase rewrites commits already on the remote PR branch, so a plain push
     // is rejected — the coder must use --force-with-lease to publish the fix.
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('--force-with-lease');
+    // The reactivated coder must NOT complete the task — only the Reviewer
+    // merges/closes. mark_complete is mirrored on every node-agent session, so
+    // the handoff must forbid it explicitly.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/Do NOT mark the task complete/);
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/report back to Review/);
   });
 
