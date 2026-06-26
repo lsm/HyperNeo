@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test } from 'bun:test';
+import { beforeEach, describe, expect, setDefaultTimeout, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import type { SpaceTask, SpaceWorkflow } from '@neokai/shared';
 import { ExternalEventService } from '../../../../src/lib/external-events/external-event-service';
@@ -21,6 +21,8 @@ import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/sp
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
 import { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository';
 import { createSpaceTables } from '../../helpers/space-test-db';
+
+setDefaultTimeout(10_000);
 
 const SPACE_ID = 'space-runtime-events';
 const AGENT_ID = 'agent-runtime-events';
@@ -82,6 +84,10 @@ function makeEvent(overrides: Partial<ExternalEvent> = {}): ExternalEvent {
 class MockTaskAgentManager {
   alive = new Set<string>();
   spawned: string[] = [];
+  activationCalls: Array<{ taskId: string; workflowRunId: string; agentName: string }> = [];
+  activationResult: Array<{ agentName: string; sessionId: string }> = [];
+  activationError: Error | null = null;
+  onActivate: (() => void) | null = null;
 
   isSessionAlive(sessionId: string): boolean {
     return this.alive.has(sessionId);
@@ -108,6 +114,20 @@ class MockTaskAgentManager {
   }
 
   async flushPendingMessagesForTarget(): Promise<void> {}
+
+  async activateTargetSessionsForMessage(
+    taskId: string,
+    workflowRunId: string,
+    agentName: string
+  ): Promise<Array<{ agentName: string; sessionId: string }>> {
+    this.activationCalls.push({ taskId, workflowRunId, agentName });
+    if (this.activationError) throw this.activationError;
+    this.onActivate?.();
+    for (const result of this.activationResult) {
+      this.alive.add(result.sessionId);
+    }
+    return this.activationResult;
+  }
 
   async spawnWorkflowNodeAgentForExecution(
     _task: unknown,
@@ -2136,8 +2156,8 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(injected.some((item) => item.message.includes(events[0]!.id))).toBe(false);
   });
 
-  test('persists pending delivery when target execution is not active', async () => {
-    const { workflow, run, task } = await startRunWithSubscription();
+  test('does not activate cancelled target executions', async () => {
+    const { run } = await startRunWithSubscription();
     const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
     nodeExecutionRepo.update(execution.id, {
       status: 'cancelled',
@@ -2149,12 +2169,180 @@ describe('SpaceRuntime external event subscriptions', () => {
     const event = makeEvent();
     await eventService.publish(event);
 
+    expect(tam.activationCalls).toHaveLength(0);
     expect(injected).toHaveLength(0);
     const delivery = eventStore.listDeliveries(event.id)[0]!;
     expect(delivery.state).toBe('pending');
     expect(delivery.failureReason).toBe('node_execution_not_active');
     expect(eventStore.listPendingDeliveries()).toContainEqual(delivery);
     expect(eventStore.getById(event.id)?.state).toBe('published');
+  });
+
+  test('activates idle subscribed targets instead of failing node_execution_not_active', async () => {
+    const { run, task } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'idle',
+      agentSessionId: null,
+      completedAt: Date.now(),
+    });
+    tam.activationResult = [{ agentName: 'coder', sessionId: 'session-activated-event' }];
+    tam.onActivate = () => {
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: 'session-activated-event',
+        completedAt: null,
+      });
+    };
+
+    const event = makeEvent();
+    await eventService.publish(event);
+
+    expect(tam.activationCalls).toEqual([
+      { taskId: task.id, workflowRunId: run.id, agentName: 'coder' },
+    ]);
+    expect(injected).toHaveLength(1);
+    expect(injected[0]!.sessionId).toBe('session-activated-event');
+    expect(JSON.parse(injected[0]!.message).eventId).toBe(event.id);
+    const delivery = eventStore.listDeliveries(event.id)[0]!;
+    expect(delivery.state).toBe('delivered');
+    expect(delivery.failureReason).toBeNull();
+  });
+
+  test('queues external events when activation starts without a ready session', async () => {
+    const { run, task } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'idle',
+      agentSessionId: null,
+      completedAt: Date.now(),
+    });
+    tam.activationResult = [{ agentName: 'coder', sessionId: 'session-starting-event' }];
+
+    const event = makeEvent();
+    await eventService.publish(event);
+
+    expect(tam.activationCalls).toEqual([
+      { taskId: task.id, workflowRunId: run.id, agentName: 'coder' },
+    ]);
+    expect(injected).toHaveLength(0);
+    expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
+
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-starting-event',
+      completedAt: null,
+    });
+    runtime.flushPendingNodeQueue({
+      workflowRunId: run.id,
+      taskId: task.id,
+      nodeId: 'code',
+      agentName: 'coder',
+      sessionId: 'session-starting-event',
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(injected).toHaveLength(1);
+    expect(injected[0]!.sessionId).toBe('session-starting-event');
+    expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
+  });
+
+  test('activation failures schedule bounded retries and terminalize', async () => {
+    const { run } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'idle',
+      agentSessionId: null,
+      completedAt: Date.now(),
+    });
+    tam.activationError = new Error('spawn failed');
+
+    const event = makeEvent();
+    await eventService.publish(event);
+    expect(eventStore.listDeliveries(event.id)[0]!.failureReason).toBe(
+      'activation_failed; spawn failed'
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 5_600));
+
+    const delivery = eventStore.listDeliveries(event.id)[0]!;
+    expect(delivery.state).toBe('failed');
+    expect(delivery.failureReason).toBe('activation_failed; spawn failed');
+    expect(eventStore.getById(event.id)?.state).toBe('failed');
+    expect(tam.activationCalls.length).toBeGreaterThanOrEqual(5);
+    expect(tam.activationCalls.length).toBeLessThanOrEqual(6);
+  });
+
+  test('paused spaces keep external events queued without terminal retry burn', async () => {
+    const { run, task } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'idle',
+      agentSessionId: null,
+      completedAt: Date.now(),
+    });
+    db.prepare(`UPDATE spaces SET paused = 1 WHERE id = ?`).run(SPACE_ID);
+
+    const event = makeEvent();
+    await eventService.publish(event);
+    await new Promise((resolve) => setTimeout(resolve, 5_600));
+
+    expect(tam.activationCalls).toHaveLength(0);
+    const pending = eventStore.listDeliveries(event.id)[0]!;
+    expect(pending.state).toBe('pending');
+    expect(pending.failureReason).toBe('node_execution_not_active');
+
+    db.prepare(`UPDATE spaces SET paused = 0 WHERE id = ?`).run(SPACE_ID);
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-after-pause',
+      completedAt: null,
+    });
+    tam.alive.add('session-after-pause');
+    runtime.flushPendingNodeQueue({
+      workflowRunId: run.id,
+      taskId: task.id,
+      nodeId: 'code',
+      agentName: 'coder',
+      sessionId: 'session-after-pause',
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(injected).toHaveLength(1);
+    expect(injected[0]!.sessionId).toBe('session-after-pause');
+    expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
+  });
+
+  test('activation retry does not double-deliver after pending flush wins', async () => {
+    const { run, task } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'idle',
+      agentSessionId: null,
+      completedAt: Date.now(),
+    });
+    tam.activationResult = [{ agentName: 'coder', sessionId: 'session-race' }];
+
+    const event = makeEvent();
+    await eventService.publish(event);
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-race',
+      completedAt: null,
+    });
+    tam.alive.add('session-race');
+    runtime.flushPendingNodeQueue({
+      workflowRunId: run.id,
+      taskId: task.id,
+      nodeId: 'code',
+      agentName: 'coder',
+      sessionId: 'session-race',
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 1_200));
+    expect(injected).toHaveLength(1);
+    expect(injected[0]!.sessionId).toBe('session-race');
+    expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
   });
 
   test('delivers immediately for idle executions with retained live sessions', async () => {
