@@ -7042,23 +7042,27 @@ export class SpaceRuntime {
       .filter((execution) => execution.status === 'idle' && !!execution.agentSessionId);
 
     // Sessions can be reused across node activations (createSubSession points
-    // multiple execution rows at the same agentSessionId). Track sessions
-    // already evaluated this tick so a single terminal result on a shared
-    // session doesn't enqueue multiple continues (one per idle row).
-    const processedSessions = new Set<string>();
-
+    // multiple execution rows at the same agentSessionId), and createSubSession
+    // treats the NEWEST such row as the current execution for the session.
+    // listByWorkflowRun returns rows in created_at ASC, so a naive "first idle
+    // row wins" dedup would attach recovery/blocked-escalation to a STALE node.
+    // Group by session and keep only the newest execution per agentSessionId so
+    // recovery targets the current activation, and each shared session is
+    // processed at most once per tick (no double-injected continues).
+    const newestPerSession = new Map<string, NodeExecution>();
     for (const execution of idleExecutions) {
-      const sessionId = execution.agentSessionId;
-      if (!sessionId) continue;
+      const sid = execution.agentSessionId!;
+      const existing = newestPerSession.get(sid);
+      if (!existing || (execution.createdAt ?? 0) >= (existing.createdAt ?? 0)) {
+        newestPerSession.set(sid, execution);
+      }
+    }
 
+    for (const execution of newestPerSession.values()) {
+      const sessionId = execution.agentSessionId!;
       const lastMessage = this.getSdkMessageRepo().getLastSDKMessage(sessionId);
       const key = `${runId}:${execution.id}`;
       if (!lastMessage || !isSDKResultError(lastMessage)) continue;
-      // A shared session yields the same last message for every idle row that
-      // references it — claim it on the first terminal-error match so sibling
-      // rows don't double-inject a continue in the same tick.
-      if (processedSessions.has(sessionId)) continue;
-      processedSessions.add(sessionId);
 
       // Defer over-long-context results to #670 (compaction), not a plain
       // continue — continuing won't shrink the context.
@@ -7089,14 +7093,20 @@ export class SpaceRuntime {
           sessionId
         );
         if (crashExhausted) {
-          // Clear the stale dead session on the exhausted path too, otherwise
-          // attemptBlockedRunRecovery's reset to `pending` leaves the dead
-          // agentSessionId attached and the spawn loop reuses/re-blocks it
-          // instead of trying a fresh session.
-          this.config.nodeExecutionRepo.update(execution.id, { agentSessionId: null });
-          await this.blockRunForAgentCrash(runId, spaceId, canonicalTask, [
-            this.config.nodeExecutionRepo.getById(execution.id) ?? execution,
-          ]);
+          // Crash retries exhausted: escalate via the terminal-error path so the
+          // blockReason is 'execution_failed' (consistent with the alive-session
+          // escalation) and the stale dead session is cleared — letting the row
+          // fall to blockRunForAgentCrash would tag it 'agent_crashed' and leave
+          // agentSessionId attached for attemptBlockedRunRecovery to reuse.
+          await this.escalateTerminalErrorToBlocked(
+            runId,
+            spaceId,
+            canonicalTask,
+            execution,
+            lastMessage,
+            tam,
+            `terminal-error session died and crash-retries exhausted (subtype ${lastMessage.subtype}, signature ${this.computeTerminalErrorSignature(lastMessage)})`
+          );
           return 'blocked';
         }
         // Clear the stale (dead, terminal-result-tainted) session id so the

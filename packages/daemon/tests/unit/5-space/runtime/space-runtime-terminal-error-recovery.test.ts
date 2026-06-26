@@ -561,6 +561,55 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
     expect(tam._injected[0].sessionId).toBe('session:shared');
   });
 
+  test('a shared session recovers via the NEWEST execution (not a stale node)', async () => {
+    // createSubSession treats the newest execution for a session as current.
+    // Two idle rows share a session; recovery must target the newest (step-b),
+    // so that a blocked escalation re-spawns the right workflow step.
+    const { runId, executionId: oldestId } = seedIdleErrorRun({
+      subtype: 'error_during_execution',
+      errors: ['shared-session error'],
+      sessionId: 'session:shared',
+    });
+    const newest = nodeExecutionRepo.createOrIgnore({
+      workflowRunId: runId,
+      workflowNodeId: 'step-b',
+      agentName: 'Coder',
+      agentId: AGENT,
+      status: 'pending',
+    });
+    nodeExecutionRepo.update(newest.id, {
+      status: 'idle',
+      agentSessionId: 'session:shared',
+      startedAt: Date.now() - 5 * 60_000,
+    });
+    // Force step-b to be unambiguously newer than step-a (same-ms createdAt
+    // otherwise ties break by UUID, making "newest" non-deterministic in tests).
+    db.prepare('UPDATE node_executions SET created_at = ? WHERE id = ?').run(
+      Date.now() + 60_000,
+      newest.id
+    );
+
+    const tam = makeTam();
+    const rt = new SpaceRuntime(buildConfig(tam));
+    (rt as unknown as { recoveryDone: boolean }).recoveryDone = true;
+
+    // Tick 1 → continue #1 (targets the newest execution, step-b).
+    await rt.executeTick();
+    expect(tam._injected).toHaveLength(1);
+
+    // Resume the NEWEST execution to idle with the SAME signature → deterministic
+    // repeat on step-b → blocked. The oldest (step-a) must remain untouched.
+    resumeToIdle(newest.id, {
+      subtype: 'error_during_execution',
+      errors: ['shared-session error'],
+    });
+    await rt.executeTick();
+
+    expect(tam._injected).toHaveLength(1); // no second continue
+    expect(nodeExecutionRepo.getById(newest.id)?.status).toBe('blocked');
+    expect(nodeExecutionRepo.getById(oldestId)?.status).toBe('idle');
+  });
+
   test('task not in_progress is left alone', async () => {
     seedIdleErrorRun({ subtype: 'error_during_execution', taskStatus: 'done' });
     const tam = makeTam();
