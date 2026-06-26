@@ -7083,7 +7083,22 @@ export class SpaceRuntime {
           ]);
           return 'blocked';
         }
+        // Clear the stale (dead, terminal-result-tainted) session id so the
+        // spawn loop creates a FRESH session. createSubSession reuses any prior
+        // execution row that still carries an agentSessionId (rehydrating it),
+        // which would resume from this terminal-error state instead of starting
+        // clean — defeating the re-spawn.
+        this.config.nodeExecutionRepo.update(execution.id, { agentSessionId: null });
         continue; // reset to pending; the spawn loop re-spawns a fresh session
+      }
+
+      // Preserve executions with active tool continuations — the next valid
+      // transcript item is the pending tool_result, and injecting a user
+      // continue here would race that delivery (orphan/409). Mirrors the guard
+      // in handleNonTerminalIdleExecutions.
+      if (this.toolContinuationRepo.hasActiveToolUseForExecution(execution.id)) continue;
+      if (this.toolContinuationRepo.listPendingInboxForExecution(execution.id).length > 0) {
+        continue;
       }
 
       const state =
@@ -7137,9 +7152,16 @@ export class SpaceRuntime {
       }
 
       // Deterministic repeat (evaluated only after the grace window): a plain
-      // continue already failed to clear this exact error, so looping again
-      // cannot help — escalate to blocked.
-      if (state.lastRetriedErrorSignature === signature) {
+      // continue already failed to clear this exact error_during_execution, so
+      // looping again cannot help — escalate to blocked. error_max_turns is
+      // exempt: a same-signature max-turns result just means the agent hit the
+      // per-turn cap again (likely after making progress), not a deterministic
+      // failure, so it should consume the continueCount cap below rather than
+      // being short-circuited to a single continue.
+      if (
+        state.lastRetriedErrorSignature === signature &&
+        lastMessage.subtype === 'error_during_execution'
+      ) {
         await this.escalateTerminalErrorToBlocked(
           runId,
           spaceId,
