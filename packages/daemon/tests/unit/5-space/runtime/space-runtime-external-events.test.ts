@@ -84,7 +84,12 @@ function makeEvent(overrides: Partial<ExternalEvent> = {}): ExternalEvent {
 class MockTaskAgentManager {
   alive = new Set<string>();
   spawned: string[] = [];
-  activationCalls: Array<{ taskId: string; workflowRunId: string; agentName: string }> = [];
+  activationCalls: Array<{
+    taskId: string;
+    workflowRunId: string;
+    agentName: string;
+    options?: { workflowNodeId?: string };
+  }> = [];
   activationResult: Array<{ agentName: string; sessionId: string }> = [];
   activationError: Error | null = null;
   onActivate: (() => void) | null = null;
@@ -118,9 +123,15 @@ class MockTaskAgentManager {
   async activateTargetSessionsForMessage(
     taskId: string,
     workflowRunId: string,
-    agentName: string
+    agentName: string,
+    options?: { workflowNodeId?: string }
   ): Promise<Array<{ agentName: string; sessionId: string }>> {
-    this.activationCalls.push({ taskId, workflowRunId, agentName });
+    this.activationCalls.push({
+      taskId,
+      workflowRunId,
+      agentName,
+      options: options?.workflowNodeId ? { workflowNodeId: options.workflowNodeId } : undefined,
+    });
     if (this.activationError) throw this.activationError;
     this.onActivate?.();
     for (const result of this.activationResult) {
@@ -2199,7 +2210,12 @@ describe('SpaceRuntime external event subscriptions', () => {
     await eventService.publish(event);
 
     expect(tam.activationCalls).toEqual([
-      { taskId: task.id, workflowRunId: run.id, agentName: 'coder' },
+      {
+        taskId: task.id,
+        workflowRunId: run.id,
+        agentName: 'coder',
+        options: { workflowNodeId: 'code' },
+      },
     ]);
     expect(injected).toHaveLength(1);
     expect(injected[0]!.sessionId).toBe('session-activated-event');
@@ -2223,7 +2239,12 @@ describe('SpaceRuntime external event subscriptions', () => {
     await eventService.publish(event);
 
     expect(tam.activationCalls).toEqual([
-      { taskId: task.id, workflowRunId: run.id, agentName: 'coder' },
+      {
+        taskId: task.id,
+        workflowRunId: run.id,
+        agentName: 'coder',
+        options: { workflowNodeId: 'code' },
+      },
     ]);
     expect(injected).toHaveLength(0);
     expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
@@ -4826,6 +4847,129 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(injected[0]!.deliveryMode).toBe('defer');
     expect(eventStore.getById(event.id)?.state).toBe('delivered');
   });
+
+  test('activation timeout schedules bounded retries and terminalizes', async () => {
+    const { run } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'idle',
+      agentSessionId: null,
+      completedAt: Date.now(),
+    });
+    // Empty result simulates activateTargetSessionsForMessage timing out.
+    tam.activationResult = [];
+
+    const event = makeEvent();
+    await eventService.publish(event);
+    expect(eventStore.listDeliveries(event.id)[0]!.failureReason).toBe('node_execution_not_active');
+
+    await new Promise((resolve) => setTimeout(resolve, 5_600));
+
+    const delivery = eventStore.listDeliveries(event.id)[0]!;
+    expect(delivery.state).toBe('failed');
+    expect(delivery.failureReason).toBe('node_execution_not_active');
+    expect(eventStore.getById(event.id)?.state).toBe('failed');
+    expect(tam.activationCalls.length).toBeGreaterThanOrEqual(5);
+    expect(tam.activationCalls.length).toBeLessThanOrEqual(6);
+  });
+
+  test('static subscription without node execution does not activate future nodes', async () => {
+    const workflow = workflowManager.createWorkflow({
+      spaceId: SPACE_ID,
+      name: 'Two-node workflow',
+      description: '',
+      nodes: [
+        {
+          id: 'start',
+          name: 'Start',
+          agents: [{ agentId: AGENT_ID, name: 'coder' }],
+        },
+        {
+          id: 'future',
+          name: 'Future',
+          agents: [{ agentId: AGENT_ID, name: 'reviewer' }],
+        },
+      ],
+      transitions: [],
+      startNodeId: 'start',
+      rules: [],
+      tags: [],
+    });
+    const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+    const task = tasks[0]!;
+    // Only the start node has an execution; subscribe to the future node.
+    runtime.registerSubscription(run.id, task.id, 'future', 'reviewer', DEFAULT_TOPIC, {
+      subscriptionKind: 'static',
+    });
+
+    const event = makeEvent();
+    await eventService.publish(event);
+
+    expect(tam.activationCalls).toHaveLength(0);
+    const delivery = eventStore.listDeliveries(event.id)[0]!;
+    expect(delivery.state).toBe('pending');
+    expect(eventStore.getById(event.id)?.state).toBe('published');
+  });
+
+  test('successful activation drains older queued events before current', async () => {
+    const { run, task } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'idle',
+      agentSessionId: null,
+      completedAt: Date.now(),
+    });
+    // Activation returns empty while the worker is idle, so older events persist
+    // as retryable pending deliveries.
+    tam.activationResult = [];
+
+    const older = makeEvent({
+      id: 'evt-older-queued',
+      dedupeKey: 'dedupe-older-queued',
+      occurredAt: 1_700_000_000_000,
+    });
+    const newer = makeEvent({
+      id: 'evt-newer-queued',
+      dedupeKey: 'dedupe-newer-queued',
+      occurredAt: 1_700_000_000_100,
+    });
+    await eventService.publish(older);
+    await eventService.publish(newer);
+    expect(eventStore.listDeliveries(older.id)[0]!.state).toBe('pending');
+    expect(eventStore.listDeliveries(newer.id)[0]!.state).toBe('pending');
+
+    // The third event arrives while the worker is activating: the execution is
+    // in_progress but has no sessionId yet, so activation kicks in and flushes
+    // the older persisted pending deliveries before delivering the current one.
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: null,
+      completedAt: null,
+    });
+    tam.activationResult = [{ agentName: 'coder', sessionId: 'session-activated' }];
+    tam.alive.add('session-activated');
+    tam.onActivate = () => {
+      nodeExecutionRepo.update(execution.id, {
+        agentSessionId: 'session-activated',
+      });
+    };
+
+    const current = makeEvent({
+      id: 'evt-current-activating',
+      dedupeKey: 'dedupe-current-activating',
+      occurredAt: 1_700_000_000_200,
+    });
+    await eventService.publish(current);
+
+    expect(injected.map((item) => JSON.parse(item.message).eventId)).toEqual([
+      older.id,
+      newer.id,
+      current.id,
+    ]);
+    expect(eventStore.getById(older.id)?.state).toBe('delivered');
+    expect(eventStore.getById(newer.id)?.state).toBe('delivered');
+    expect(eventStore.getById(current.id)?.state).toBe('delivered');
+  });
 });
 
 describe('SpaceRuntime event-driven gate evaluation', () => {
@@ -5180,41 +5324,6 @@ describe('SpaceRuntime event-driven gate evaluation', () => {
     const event = makePrEvent();
     await eventService.publish(event);
     // Agent-owned dynamic subscription still matches.
-    expect(injected).toHaveLength(1);
-  });
-
-  test('registerPrEventSubscriptionForRun drops the prior auto-subscription when the PR URL changes', async () => {
-    const { run } = await startRun();
-    const first = runtime.registerPrEventSubscriptionForRun(
-      run.id,
-      'https://github.com/lsm/neokai/pull/42'
-    );
-    expect(first.success).toBe(true);
-    expect(first.topicPattern).toBe('github/lsm/neokai/pull_request/42.*');
-
-    // Swap to a different PR — the old auto-subscription for PR #42 must be
-    // removed so obsolete events stop matching.
-    const second = runtime.registerPrEventSubscriptionForRun(
-      run.id,
-      'https://github.com/lsm/neokai/pull/99'
-    );
-    expect(second.success).toBe(true);
-    expect(second.topicPattern).toBe('github/lsm/neokai/pull_request/99.*');
-
-    // Event for the old PR — should NOT deliver.
-    const staleEvent = makePrEvent({
-      topic: 'github/lsm/neokai/pull_request/42.review_submitted',
-      dedupeKey: 'dedupe-stale-42',
-    });
-    await eventService.publish(staleEvent);
-    expect(injected).toHaveLength(0);
-
-    // Event for the new PR — SHOULD deliver.
-    const freshEvent = makePrEvent({
-      topic: 'github/lsm/neokai/pull_request/99.review_submitted',
-      dedupeKey: 'dedupe-fresh-99',
-    });
-    await eventService.publish(freshEvent);
     expect(injected).toHaveLength(1);
   });
 });

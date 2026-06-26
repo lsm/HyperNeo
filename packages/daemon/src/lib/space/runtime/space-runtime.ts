@@ -1891,6 +1891,7 @@ export class SpaceRuntime {
             continue;
           }
           if (activatedTarget?.sessionId && this.isTargetSessionLive(activatedTarget.sessionId)) {
+            this.flushPendingNodeQueue(activatedTarget);
             await this.enqueueDeliverableExternalEvent(
               activatedTarget,
               payload,
@@ -1898,6 +1899,7 @@ export class SpaceRuntime {
               'immediate'
             );
           } else if (activatedTarget?.sessionId) {
+            this.flushPendingNodeQueue(activatedTarget);
             await this.enqueueDeliverableExternalEvent(
               activatedTarget,
               payload,
@@ -1909,13 +1911,16 @@ export class SpaceRuntime {
               terminal: false,
               reason: 'node_execution_not_active',
             });
-            this.queueForPendingNode(activatedTarget, payload, deliveryKey);
+            // The persisted retryable delivery plus the activation retry timer
+            // are sufficient; do not duplicate it in the in-memory queue.
+            // In-memory items use queue-time ordering, which would break the
+            // chronological ordering between persisted pending deliveries.
             if (!(await this.isTargetSpacePausedOrStopped(activatedTarget))) {
               this.scheduleActivationRetry(
                 activatedTarget,
                 payload,
                 deliveryKey,
-                'activation did not produce a live session'
+                'node_execution_not_active'
               );
             }
           } else if (
@@ -2020,9 +2025,13 @@ export class SpaceRuntime {
     if (!run || !isExternallyDeliverableRun(run.status)) return null;
     const task = this.config.taskRepo.getTask(target.taskId);
     if (!task) return null;
+    // Static subscriptions can match workflow agents that have not been spawned
+    // yet. Only lazily activate when there is already a node execution for this
+    // target; otherwise queue for the active run and wait for normal workflow
+    // progression to create the execution.
+    if (!this.hasAnyExecutionForTarget(target)) return null;
     const space = await this.config.spaceManager.getSpace(task.spaceId);
-    if (!space || space.paused || space.stopped)
-      return this.hasAnyExecutionForTarget(target) ? target : null;
+    if (!space || space.paused || space.stopped) return target;
     const activate = this.config.taskAgentManager?.activateTargetSessionsForMessage;
     if (!activate) return null;
 
@@ -2037,7 +2046,11 @@ export class SpaceRuntime {
         workflowNodeId: target.nodeId,
       }
     );
-    if (activated.length === 0) return null;
+    // If activation timed out or could not produce a session, return the target
+    // so the caller queues the event and schedules a bounded activation retry.
+    // Returning null here would strand the event in the pending queue with no
+    // retry timer.
+    if (activated.length === 0) return target;
 
     return this.resolveSubscriptionTarget(target);
   }
