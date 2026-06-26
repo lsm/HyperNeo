@@ -390,12 +390,17 @@ describe('Post-approval merge conflict routes to coder, not human', () => {
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('request_human_input');
   });
 
-  test('conflict-resolution diff is inspected before retrying the merge', () => {
+  test('full conflict-fix delta is inspected before retrying the merge', () => {
     // The approval covered the pre-conflict head; a bad conflict resolution can
-    // pass CI, so the reviewer must inspect the conflict-fix diff and only
-    // merge when the resolution is sound.
+    // pass CI, so the reviewer must inspect the FULL delta since the approved
+    // head (not just the conflict files — the push may include unrelated
+    // changes) and only merge when it is sound.
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/approval no longer covers/);
-    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/inspect the conflict-resolution diff/);
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/FULL delta since the approved head/);
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('non-conflict changes');
+    // A request-changes on a bad fix posts a formal CHANGES_REQUESTED review for
+    // non-own PRs (the gate requires it); PR-comment fallback is own-PR only.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('CHANGES_REQUESTED');
   });
 
   test('exhausted retries escalate to space-agent with real count/exit reason (no false completion)', () => {
@@ -426,15 +431,19 @@ describe('Post-approval merge conflict routes to coder, not human', () => {
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('--paginate');
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/APPROVED or COMMENTED/);
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('/issues/<number>/comments');
+    // review_url is only required when the Review → Coding route is gated
+    // (Coding/Research workflows); Fullstack QA's Review → Coding is ungated.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('list_channels');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/ONLY when the route is gated/);
   });
 
-  test('request-changes handoff posts fresh evidence, not the stale approval URL', () => {
+  test('request-changes handoff posts fresh formal evidence', () => {
     // The "request changes" send after a bad conflict fix travels the same
-    // Review → Coding channel (review-posted-gate, resetOnCycle). It must carry
-    // gate evidence, AND that evidence should be a fresh PR comment documenting
-    // the new issue rather than the stale approval URL.
+    // Review → Coding channel (review-posted-gate, resetOnCycle). For non-own
+    // PRs the gate requires a formal CHANGES_REQUESTED review; the PR-comment
+    // fallback is own-PR only. Evidence must be fresh, not the prior approval.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/fresh formal CHANGES_REQUESTED/);
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/fresh PR comment/);
-    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('stale approval URL');
   });
 
   test('conflict detection keys on DIRTY mergeStateStatus and conflict markers', () => {
