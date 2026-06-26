@@ -362,6 +362,8 @@ describe('Shared merge template canonical content', () => {
     // Separate delete step using the PR head branch name.
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('headRefName');
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('git push origin --delete');
+    // Forked PR heads live in the fork — guard deletion to same-repo heads.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('isCrossRepository');
     // The delete step must come AFTER the merge command.
     const mergeIdx = PR_MERGE_POST_APPROVAL_INSTRUCTIONS.indexOf('gh pr merge {{pr_url}} --squash');
     const deleteIdx = PR_MERGE_POST_APPROVAL_INSTRUCTIONS.indexOf('git push origin --delete');
