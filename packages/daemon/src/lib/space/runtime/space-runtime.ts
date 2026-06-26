@@ -758,7 +758,7 @@ function longHorizonSpaceIdFromWorkflowRunId(workflowRunId: string): string | nu
 }
 
 function isExternallyDeliverableRun(status: SpaceWorkflowRun['status']): boolean {
-  return status === 'in_progress' || status === 'blocked';
+  return status === 'in_progress' || status === 'blocked' || status === 'done';
 }
 
 const EXTERNAL_EVENT_TARGET_TASK_TERMINAL_STATUSES: ReadonlySet<SpaceTaskStatus> = new Set([
@@ -2351,6 +2351,16 @@ export class SpaceRuntime {
         this.clearQueuedDelivery(target, deliveryKey);
         return;
       }
+      if (this.isTargetTaskTerminal(target.taskId)) {
+        store.markDeliveryFailed(event.eventId, deliveryKey, {
+          terminal: true,
+          reason: 'target_task_terminal',
+        });
+        store.markEventFailedIfAllDeliveriesTerminal(event.eventId);
+        this.clearExternalEventRetry(deliveryKey);
+        this.clearQueuedDelivery(target, deliveryKey);
+        return;
+      }
       const queued = this.getQueuedDelivery(target, deliveryKey);
       this.queueForRetry(
         target,
@@ -2439,6 +2449,16 @@ export class SpaceRuntime {
         this.config.externalEventStore?.markDeliveryFailed(event.eventId, deliveryKey, {
           terminal: true,
           reason: 'run_not_externally_deliverable',
+        });
+        this.clearExternalEventRetry(deliveryKey);
+        this.clearQueuedDelivery(target, deliveryKey);
+        this.config.externalEventStore?.markEventFailedIfAllDeliveriesTerminal(event.eventId);
+        return;
+      }
+      if (this.isTargetTaskTerminal(target.taskId)) {
+        this.config.externalEventStore?.markDeliveryFailed(event.eventId, deliveryKey, {
+          terminal: true,
+          reason: 'target_task_terminal',
         });
         this.clearExternalEventRetry(deliveryKey);
         this.clearQueuedDelivery(target, deliveryKey);
@@ -3572,7 +3592,7 @@ export class SpaceRuntime {
   ): Promise<SpaceWorkflowRun> {
     const previousStatus = this.config.workflowRunRepo.getRun(runId)?.status;
     const updated = this.config.workflowRunRepo.transitionStatus(runId, nextStatus);
-    if (nextStatus === 'done' || nextStatus === 'cancelled') {
+    if (nextStatus === 'cancelled') {
       this.clearRunInterests(runId);
     }
     if (nextStatus === 'blocked') {
@@ -3588,6 +3608,22 @@ export class SpaceRuntime {
     }
     await this.safeOnWorkflowRunUpdated(updated.spaceId, updated);
     return updated;
+  }
+
+  private shouldClearRunInterestsForDoneRun(
+    runId: string,
+    nextStatus: SpaceWorkflowRun['status']
+  ): boolean {
+    if (nextStatus !== 'done') return false;
+    const run = this.config.workflowRunRepo.getRun(runId);
+    if (!run) return true;
+    const canonicalTask = this.pickCanonicalTaskForRun(
+      run,
+      this.config.taskRepo.listByWorkflowRun(runId)
+    );
+    if (!canonicalTask) return true;
+    if (canonicalTask.status === 'review' || canonicalTask.status === 'approved') return false;
+    return true;
   }
 
   private fireRunBlockedHook(runId: string): void {
@@ -4573,13 +4609,14 @@ export class SpaceRuntime {
         .filter(
           (run) =>
             !activeRuns.some((activeRun) => activeRun.id === run.id) &&
-            run.status !== 'done' &&
             run.status !== 'cancelled' &&
-            this.config.taskRepo.listByWorkflowRun(run.id).some((task) => task.status === 'review')
+            this.config.taskRepo
+              .listByWorkflowRun(run.id)
+              .some((task) => task.status === 'review' || task.status === 'approved')
         );
       if (reviewRuns.length > 0) {
         log.info(
-          `SpaceRuntime.rehydrateExecutors: found ${reviewRuns.length} review-pending run(s) with non-terminal status in space ${space.id}`
+          `SpaceRuntime.rehydrateExecutors: found ${reviewRuns.length} review/approved-pending run(s) in space ${space.id}`
         );
       }
       activeRuns.push(...reviewRuns);
@@ -7928,6 +7965,10 @@ export class SpaceRuntime {
       // rehydratable and poll timers can detect external conditions that may help
       // unblock the run. Do not remove the executor or prune dedup keys here.
       if (run?.status === 'blocked') {
+        continue;
+      }
+
+      if (run?.status === 'done' && !this.shouldClearRunInterestsForDoneRun(runId, 'done')) {
         continue;
       }
 
