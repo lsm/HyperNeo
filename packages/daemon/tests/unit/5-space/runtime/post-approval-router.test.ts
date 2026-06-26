@@ -200,6 +200,15 @@ describe('PostApprovalRouter.route', () => {
     expect(delegates.spawned[0].kickoffMessage).toContain(task.title ?? '');
     expect(delegates.spawned[0].kickoffMessage).toContain('mark_complete');
     expect(delegates.spawned[0].kickoffMessage).toContain('Do NOT call approve_task');
+    // The appended completion instructions must not reference request_human_input
+    // — that tool is not registered on the post-approval node-agent surface, so
+    // referencing it sends the reviewer into an unregistered tool.
+    expect(delegates.spawned[0].kickoffMessage).not.toContain('request_human_input');
+    // A blocked-path artifact must be a NON-result type — mark_complete derives
+    // the task result from the latest result-artifact summary, so a "blocked"
+    // result artifact would poison a later successful completion.
+    expect(delegates.spawned[0].kickoffMessage).toMatch(/NON-result artifact/);
+    expect(delegates.spawned[0].kickoffMessage).toContain('type:"blocked"');
 
     const final = taskRepo.getTask(task.id);
     expect(final?.postApprovalSessionId).toBe('spawned-session-1');

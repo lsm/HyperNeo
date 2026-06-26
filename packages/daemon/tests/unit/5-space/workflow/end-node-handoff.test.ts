@@ -350,4 +350,256 @@ describe('Shared merge template canonical content', () => {
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('merge conflict');
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('do NOT force');
   });
+
+  test('remote branch deletion is a separate step after merge, no delete flag on merge', () => {
+    // Owner-requested: after a successful squash-merge, delete the PR remote
+    // branch via a SEPARATE command. The merge command must never carry a
+    // delete flag.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('gh pr merge {{pr_url}} --squash');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain(
+      'gh pr merge {{pr_url}} --squash --delete-branch'
+    );
+    // Separate delete step using the PR head branch name.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('headRefName');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('git push origin --delete');
+    // Forked PR heads live in the fork — guard deletion to same-repo heads.
+    // HEAD_REF and IS_FORK must be assigned (via --jq) before the delete, not
+    // left as unset shell variables.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('isCrossRepository');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('HEAD_REF=$(gh pr view');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('IS_FORK=');
+    // Branch cleanup is best-effort: a failed delete (protected branch, missing
+    // permission) must NOT block completion after the PR is already merged.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/BEST-EFFORT/);
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/do NOT let a/);
+    // The delete step must come AFTER the merge command.
+    const mergeIdx = PR_MERGE_POST_APPROVAL_INSTRUCTIONS.indexOf('gh pr merge {{pr_url}} --squash');
+    const deleteIdx = PR_MERGE_POST_APPROVAL_INSTRUCTIONS.indexOf('git push origin --delete');
+    expect(mergeIdx).toBeGreaterThan(-1);
+    expect(deleteIdx).toBeGreaterThan(mergeIdx);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Merge-conflict routing: reviewer routes conflicts to the coder, not a human
+// ---------------------------------------------------------------------------
+
+describe('Post-approval merge conflict routes to coder, not human', () => {
+  test('first conflict is routed to the upstream coder, not a human', () => {
+    // The old template told the reviewer to call request_human_input on a
+    // conflict ("let the human resolve"). That path is gone: a conflict ALONE
+    // routes to the coder.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('let the human resolve');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/do NOT escalate to a\s+human/);
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('list_reachable_agents');
+    // request_human_input is NOT on the post-approval node-agent surface (only
+    // the Task Agent surface registers it), so the template must never instruct
+    // calling it — otherwise the reviewer invokes a tool it does not have.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('request_human_input');
+  });
+
+  test('full conflict-fix delta is inspected before retrying the merge', () => {
+    // The approval covered the pre-conflict head; a bad conflict resolution can
+    // pass CI, so the reviewer must inspect the FULL delta (fetching the
+    // current PR head, not local HEAD) against approved_head_oid and only merge
+    // when it is sound.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/approval no longer covers/);
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/FULL delta against the/);
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('CUR_HEAD=');
+    // The PR head object must be fetched (refs/pull/<number>/head), not just
+    // the OID — otherwise merge-tree/diff hit an unknown object after a restart.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('refs/pull/<number>/head');
+    // The OLD approved head must also be fetched before the diff — it may no
+    // longer be local after a restart/cache miss.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain(
+      '"$APPROVED_HEAD_OID" "refs/pull/<number>/head"'
+    );
+    // A request-changes on a bad fix posts a formal CHANGES_REQUESTED review for
+    // non-own PRs (the gate requires it); PR-comment fallback is own-PR only.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('CHANGES_REQUESTED');
+    // If a CHANGES_REQUESTED was posted in this loop and is now resolved, post
+    // a fresh APPROVED before retrying (required-review repos block otherwise).
+    // Any conflict-fix force-push can dismiss stale approvals, so re-approve on
+    // EVERY retry — not only after a CHANGES_REQUESTED.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/fresh APPROVED/);
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/every retry/);
+  });
+
+  test('exhausted retries escalate to space-agent with real count/exit reason (no false completion)', () => {
+    // The post-approval node-agent surface has no block/request-human tool, so
+    // escalation is a non-result artifact + space-agent message; the task must
+    // NOT be marked complete (the PR is not merged).
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('request_human_input');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('do NOT mark the task complete');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('exit_reason');
+    // The escalation artifact must NOT be a "result" artifact — mark_complete
+    // picks up the latest result-artifact summary as the task result, so a
+    // "Merge unresolved" result would poison a later completion. It uses a
+    // dedicated non-result type instead (the step-6 success artifact is the
+    // only "result" artifact, and it carries data, not a failure summary).
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('type: "merge_blocked"');
+    // The escalation must report the real attempt count, not a hard-coded 2 —
+    // the loop can end early via a cycle-cap rejection before 2 attempts.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('unresolved after 2 coder attempts');
+  });
+
+  test('review_url lookup paginates, passes the host, and falls back to PR comments', () => {
+    // gh pr view --json reviews exposes no URL; the REST reviews API must be
+    // paginated (--paginate, default per_page hides older approvals) and use the
+    // same <host> step 2 extracts for GitHub Enterprise. Own-PR setups may have
+    // only a COMMENTED review or a PR comment, so accept COMMENTED reviews and
+    // fall back to the (paginated) comment URL.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('--hostname <host>');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('--paginate');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/APPROVED or COMMENTED/);
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('/issues/<number>/comments');
+    // review_url is only required when the Review → <upstream> route is gated.
+    // Only Coding's Review → Coding has review-posted-gate; Research's
+    // Review → Research and Fullstack QA's back-channel are ungated.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('list_channels');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/only the Coding workflow/);
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('Research and Fullstack');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/ONLY when the route is gated/);
+  });
+
+  test('request-changes handoff posts fresh formal evidence', () => {
+    // The "request changes" send after a bad conflict fix travels the same
+    // Review → Coding channel (review-posted-gate, resetOnCycle). For non-own
+    // PRs the gate requires a formal CHANGES_REQUESTED review; the PR-comment
+    // fallback is own-PR only. Evidence must be fresh, not the prior approval.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/fresh formal CHANGES_REQUESTED/);
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/fresh PR comment/);
+    // The bad-fix handoff must repeat BOTH pr_url and review_url — the gate
+    // resets each cycle, so a payload carrying only review_url is blocked.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/repeat BOTH pr_url/);
+  });
+
+  test('conflict detection keys on DIRTY mergeStateStatus and conflict markers', () => {
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('mergeStateStatus: DIRTY');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/conflict markers/);
+  });
+
+  test('coder handoff includes review_url so review-posted-gate opens', () => {
+    // Review → Coding is gated by review-posted-gate, which requires BOTH
+    // pr_url and review_url (writers: Review) and resets each cycle. A conflict
+    // handoff carrying only pr_url would be blocked, so the coder would never
+    // receive the rebase request. The payload must carry review_url too.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('review-posted-gate');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('requires both `pr_url`');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('review_url: "<approval review url>"');
+  });
+
+  test('coder handoff carries PR URL, base branch, and conflicting files', () => {
+    // The send_message payload to the coder must include everything the coder
+    // needs to rebase and resolve.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('base_branch: "dev"');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('conflicting_files');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('reason: "merge_conflict"');
+  });
+
+  test('conflict files are derived from the merge output, not PR file list', () => {
+    // `gh pr view --json files` lists every PR file, not the conflict subset —
+    // using it would hand the coder every changed file. Derive actual conflict
+    // paths from the merge failure output / a merge-tree trial instead.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('--json headRefName,files');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('merge-tree');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/Do NOT use/);
+  });
+
+  test('coder is told to rebase, resolve, test, push, then report back', () => {
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/Rebase onto latest/);
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('origin/dev');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/resolve the listed conflicts/);
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/run the tests/);
+    // A rebase rewrites commits already on the remote PR branch, so a plain push
+    // is rejected — the coder must use --force-with-lease to publish the fix.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('--force-with-lease');
+    // The reactivated coder must NOT complete the task — only the Reviewer
+    // merges/closes. mark_complete is mirrored on every node-agent session, so
+    // the handoff must forbid it explicitly.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/Do NOT mark the task complete/);
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/report back to Review/);
+  });
+
+  test('conflict loops continue until merge succeeds; escalation only on non-conflict blocker or cycle cap', () => {
+    // Operator direction: there is NO fixed conflict-count cap. New conflicts
+    // after a rebase are normal, so the reviewer keeps routing rounds back to
+    // the coder until the merge succeeds. The backstop is the channel cycle
+    // budget or a genuine non-conflict blocker.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('2-attempt cap');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('after 2 rounds');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/NO fixed conflict-count/);
+    // Each failed retry must restart at steps a/b (recompute conflicts + fresh
+    // artifact) so a later round never reuses stale conflicting_files.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/RESTART at steps a\/b/);
+    // Escalation target is space-agent, not a human, and only on a real
+    // non-conflict blocker or cycle-cap — NOT on conflict count.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('send_message(target="space-agent"');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/NON-CONFLICT blocker/);
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('non_conflict_blocker');
+    // The "do NOT escalate to a human" directive precedes the space-agent
+    // escalation — the first reaction to a conflict is coder routing.
+    const noHumanIdx = PR_MERGE_POST_APPROVAL_INSTRUCTIONS.indexOf('do NOT escalate to a');
+    const escalateIdx = PR_MERGE_POST_APPROVAL_INSTRUCTIONS.indexOf('escalate to space-agent');
+    expect(noHumanIdx).toBeGreaterThan(-1);
+    expect(escalateIdx).toBeGreaterThan(noHumanIdx);
+  });
+
+  test('cycle-cap and own-PR fallback handling is robust', () => {
+    // The cycle-cap is based on the ACTUAL upstream channel (Review → Coding or
+    // Review → Research), not hard-coded to Review → Coding.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/Review → Research/);
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('list_channels` reports');
+    // Re-approval has an own-PR fallback (GitHub blocks self-approval).
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/COMMENT review \/ PR comment/);
+    // Cleanup warnings must be a NON-result artifact (no mark_complete poisoning).
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('cleanup_warning');
+  });
+
+  test('each conflict attempt is recorded as a workflow artifact (not Forge evidence)', () => {
+    // The post-approval reviewer session has node-agent tools only — no
+    // add_forge_manual_note — so it cannot create real Forge evidence. The
+    // prompt must record a workflow artifact and must not claim Forge evidence.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('merge_conflict_loop');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(
+      /save_artifact\(\{ type: "merge_conflict_loop"/
+    );
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('workflow artifact');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('Forge evidence');
+    // The artifact records the approved head OID (the PR head at conflict time)
+    // so the reviewer has a reliable diff base after the coder pushes a fix,
+    // and the trial merge uses the PR head, not local HEAD.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('approved_head_oid');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('headRefOid');
+  });
+
+  test('pre-merge checks are re-run before retrying; cycle budget and cap handled', () => {
+    // A conflict-fix push changes the PR head; the reviewer must re-verify CI
+    // and review threads (steps 1 and 2) before retrying the merge.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/Rerun the pre-merge checks/);
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/do NOT retry the merge immediately/);
+    // Conflict handoffs reuse the Review → Coding cycle budget; the prompt must
+    // not over-promise 2 attempts when the cycle cap may already be exhausted,
+    // and must fall back to space-agent when the cap blocks the handoff.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/cycle cap/);
+    // No QA/browser re-run orchestration — there is no QA → Review channel, and
+    // that is a workflow-structure concern outside this merge template.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('QA node');
+  });
+
+  test('conflict routing ordering: detect -> artifact -> message coder -> wait -> reverify -> retry/escalate', () => {
+    const text = PR_MERGE_POST_APPROVAL_INSTRUCTIONS;
+    const detectIdx = text.indexOf('mergeStateStatus: DIRTY');
+    const artifactIdx = text.indexOf('merge_conflict_loop');
+    const coderIdx = text.indexOf('list_reachable_agents');
+    const reverifyIdx = text.indexOf('Rerun the pre-merge checks');
+    const retryIdx = text.indexOf('re-attempt');
+    const escalateIdx = text.indexOf('escalate to space-agent');
+    expect(detectIdx).toBeGreaterThan(-1);
+    expect(artifactIdx).toBeGreaterThan(detectIdx);
+    expect(coderIdx).toBeGreaterThan(artifactIdx);
+    expect(reverifyIdx).toBeGreaterThan(coderIdx);
+    expect(retryIdx).toBeGreaterThan(reverifyIdx);
+    expect(escalateIdx).toBeGreaterThan(retryIdx);
+  });
 });
