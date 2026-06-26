@@ -160,6 +160,25 @@ describe('CODING_WORKFLOW template', () => {
     }
   });
 
+  test('coding-role prompts instruct using external_event reply handles and GraphQL thread ids', () => {
+    const prompts = [
+      CODING_WORKFLOW.nodes[0].agents[0]?.customPrompt?.value,
+      FULLSTACK_QA_LOOP_WORKFLOW.nodes.find((node) => node.name === 'Coding')?.agents[0]
+        .customPrompt?.value,
+      RESEARCH_WORKFLOW.nodes[0].agents[0]?.customPrompt?.value,
+    ];
+
+    for (const prompt of prompts) {
+      expect(prompt).toContain('`external_event` review comment essence');
+      expect(prompt).toContain('`replyHandle.commentId`');
+      expect(prompt).toContain('pulls/{pull_number}/comments/{comment_id}/replies');
+      expect(prompt).toContain('resolveReviewThread(input:{threadId:$threadId})');
+      expect(prompt).toContain('PullRequestReviewThread.id');
+      expect(prompt).toContain('`commentNodeId`');
+      expect(prompt).toContain('do not use the review comment `node_id`');
+    }
+  });
+
   test('coder prompt gives behavioral handoff guidance without hard-coded gate details', () => {
     const prompt = CODING_WORKFLOW.nodes[0].agents[0]?.customPrompt?.value;
     expect(prompt).toContain('hand off by calling `send_message` to the review target');
@@ -1995,6 +2014,76 @@ describe('seedBuiltInWorkflows()', () => {
     expect(after.templateHash).toBe(
       computeWorkflowHash(getBuiltInWorkflows().find((w) => w.name === CODING_WORKFLOW.name)!)
     );
+  });
+
+  test('re-stamp patches exact retired review thread reply and resolve guidance', () => {
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+    const codingNode = coding.nodes.find((n) => n.name === 'Coding')!;
+    const templatePrompt = CODING_WORKFLOW.nodes.find((n) => n.name === 'Coding')!.agents[0]
+      .customPrompt!.value;
+    const stalePrompt = templatePrompt
+      .replace(
+        '3. For valid items: make the fix, then reply to that specific thread. Prefer the ' +
+          '`external_event` essence handle: use `replyHandle.commentId` as the REST ' +
+          '`{comment_id}` in ' +
+          '`gh api repos/{owner}/{repo}/pulls/{pull_number}/comments/{comment_id}/replies -f body="<ack>"` ' +
+          'explaining what changed. One reply per comment creates a visible audit trail.\n',
+        '3. For valid items: make the fix, then reply to that specific thread via ' +
+          '`gh api repos/{owner}/{repo}/pulls/{n}/comments/{comment_id}/replies -f body="<ack>"` ' +
+          'explaining what changed. One reply per comment creates a visible audit trail.\n'
+      )
+      .replace(
+        'After pushing fixes for review feedback, resolve ALL open GitHub review conversation ' +
+          'threads — including those where you disagree with the reviewer. When the feedback ' +
+          'arrives as an `external_event` review comment essence, use its `replyHandle.commentId` ' +
+          'as the REST `{comment_id}` for ' +
+          '`gh api repos/{owner}/{repo}/pulls/{pull_number}/comments/{comment_id}/replies -f body="<ack>"`. ' +
+          'Then resolve the thread with GraphQL ' +
+          "`gh api graphql -f query='mutation($threadId:ID!){resolveReviewThread(input:{threadId:$threadId}){thread{id isResolved}}}' -f threadId=<review-thread-node-id>`, " +
+          'where `<review-thread-node-id>` is the `PullRequestReviewThread.id` found by querying ' +
+          '`reviewThreads`; do not use the review comment `node_id`/`commentNodeId` as ' +
+          '`threadId`. The PR-ready hook blocks on any unresolved thread, so leaving one ' +
+          'open creates a deadlock. If the reviewer disagrees with your reasoning, they can ' +
+          're-open the thread. Use `gh api graphql` to verify no unresolved review conversations ' +
+          'remain before sending a message to Review again. Never set a PR to auto-merge — ' +
+          'auto-merge is not allowed.',
+        'After pushing fixes for review feedback, resolve ALL open GitHub review conversation ' +
+          'threads — including those where you disagree with the reviewer. First reply with your ' +
+          'reasoning, then resolve the thread with the `resolveReviewThread` mutation. The ' +
+          'PR-ready hook blocks on any unresolved thread, so leaving one open creates a deadlock. ' +
+          'If the reviewer disagrees with your reasoning, they can re-open the thread. ' +
+          'Use `gh api graphql` to verify no unresolved review conversations remain before ' +
+          'sending a message to Review again. ' +
+          'Never set a PR to auto-merge — auto-merge is not allowed.'
+      );
+
+    manager.updateWorkflow(coding.id, {
+      nodes: coding.nodes.map((n) =>
+        n.id !== codingNode.id
+          ? n
+          : {
+              ...n,
+              agents: n.agents.map((a, i) =>
+                i === 0 ? { ...a, customPrompt: { value: stalePrompt } } : a
+              ),
+            }
+      ),
+    });
+    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+      'stale-review-thread-guidance-hash',
+      coding.id
+    );
+
+    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    expect(result.restamped).toContain(CODING_WORKFLOW.name);
+
+    const after = manager.getWorkflow(coding.id)!;
+    const afterCodingNode = after.nodes.find((n) => n.id === codingNode.id)!;
+    const afterPrompt = afterCodingNode.agents[0].customPrompt?.value;
+    expect(afterPrompt).toBe(templatePrompt);
+    expect(afterPrompt).toContain('replyHandle.commentId');
+    expect(afterPrompt).toContain('PullRequestReviewThread.id');
   });
 
   test('re-stamp adds subscribe step to pre-PR-dev Coding/Fullstack/Research prompts', () => {
@@ -4204,6 +4293,8 @@ describe('CODING_WORKFLOW agent slot customPrompt', () => {
     expect(prompt).toContain('review_url');
     expect(prompt).toContain('comment_urls');
     expect(prompt).toContain('/replies');
+    expect(prompt).toContain('replyHandle.commentId');
+    expect(prompt).toContain('resolveReviewThread');
   });
 
   test('Review node reviewer has non-empty customPrompt', () => {

@@ -374,13 +374,19 @@ const PD_TASK_DISPATCHER_PROMPT =
 
 const REVIEW_THREAD_RESOLUTION_GUIDANCE =
   'After pushing fixes for review feedback, resolve ALL open GitHub review conversation ' +
-  'threads — including those where you disagree with the reviewer. First reply with your ' +
-  'reasoning, then resolve the thread with the `resolveReviewThread` mutation. The ' +
-  'PR-ready hook blocks on any unresolved thread, so leaving one open creates a deadlock. ' +
-  'If the reviewer disagrees with your reasoning, they can re-open the thread. ' +
-  'Use `gh api graphql` to verify no unresolved review conversations remain before ' +
-  'sending a message to Review again. ' +
-  'Never set a PR to auto-merge — auto-merge is not allowed.';
+  'threads — including those where you disagree with the reviewer. When the feedback ' +
+  'arrives as an `external_event` review comment essence, use its `replyHandle.commentId` ' +
+  'as the REST `{comment_id}` for ' +
+  '`gh api repos/{owner}/{repo}/pulls/{pull_number}/comments/{comment_id}/replies -f body="<ack>"`. ' +
+  'Then resolve the thread with GraphQL ' +
+  '`gh api graphql -f query="mutation($threadId:ID!){resolveReviewThread(input:{threadId:$threadId}){thread{id isResolved}}}" -f threadId=<review-thread-node-id>`, ' +
+  'where `<review-thread-node-id>` is the `PullRequestReviewThread.id` found by querying ' +
+  '`reviewThreads`; do not use the review comment `node_id`/`commentNodeId` as ' +
+  '`threadId`. The PR-ready hook blocks on any unresolved thread, so leaving one ' +
+  'open creates a deadlock. If the reviewer disagrees with your reasoning, they can ' +
+  're-open the thread. Use `gh api graphql` to verify no unresolved review conversations ' +
+  'remain before sending a message to Review again. Never set a PR to auto-merge — ' +
+  'auto-merge is not allowed.';
 
 const REVIEW_THREAD_APPROVAL_CHECK_GUIDANCE =
   'Verify the PR is still open, mergeable, and has no unresolved GitHub review ' +
@@ -486,8 +492,10 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
               'a summary.\n' +
               '2. For each comment: evaluate critically — do not blindly accept feedback. Verify ' +
               'against the code and the task requirements. The Reviewer can be wrong.\n' +
-              '3. For valid items: make the fix, then reply to that specific thread via ' +
-              '`gh api repos/{owner}/{repo}/pulls/{n}/comments/{comment_id}/replies -f body="<ack>"` ' +
+              '3. For valid items: make the fix, then reply to that specific thread. Prefer the ' +
+              '`external_event` essence handle: use `replyHandle.commentId` as the REST ' +
+              '`{comment_id}` in ' +
+              '`gh api repos/{owner}/{repo}/pulls/{pull_number}/comments/{comment_id}/replies -f body="<ack>"` ' +
               'explaining what changed. One reply per comment creates a visible audit trail.\n' +
               '4. For items you disagree with: reply on the same thread explaining why, with ' +
               'evidence from the code or tests. Do not change code you believe is correct.\n' +
@@ -1589,6 +1597,20 @@ const RETIRED_HARDCODED_CODING_WORKFLOW_HANDOFF_PROMPT =
   'only `send_message` delivers the gated handoff. ' +
   '**Always include `data: { pr_url }` on every send_message to Review** — the gate ' +
   'data resets each cycle, so even on round 2+ you must re-supply it.\n';
+const RETIRED_REVIEW_THREAD_RESOLUTION_GUIDANCE =
+  'After pushing fixes for review feedback, resolve ALL open GitHub review conversation ' +
+  'threads — including those where you disagree with the reviewer. First reply with your ' +
+  'reasoning, then resolve the thread with the `resolveReviewThread` mutation. The ' +
+  'PR-ready hook blocks on any unresolved thread, so leaving one open creates a deadlock. ' +
+  'If the reviewer disagrees with your reasoning, they can re-open the thread. ' +
+  'Use `gh api graphql` to verify no unresolved review conversations remain before ' +
+  'sending a message to Review again. ' +
+  'Never set a PR to auto-merge — auto-merge is not allowed.';
+const RETIRED_CODING_WORKFLOW_REPLY_STEP_PROMPT =
+  '3. For valid items: make the fix, then reply to that specific thread via ' +
+  '`gh api repos/{owner}/{repo}/pulls/{n}/comments/{comment_id}/replies -f body="<ack>"` ' +
+  'explaining what changed. One reply per comment creates a visible audit trail.\n';
+
 const CURRENT_CODING_WORKFLOW_REHANDOFF_PROMPT =
   '6. Verify no unresolved review conversations remain, verify tests still pass, ' +
   'then call `send_message` to the review target again to re-trigger the review ' +
@@ -1677,6 +1699,17 @@ const RETIRED_CODEX_REACTION_APPROVAL_GUIDANCE =
   'before codex[bot] has `+1` unless that timeout has elapsed.';
 
 const BUILT_IN_PROMPT_PATCH_VARIANTS = [
+  [[REVIEW_THREAD_RESOLUTION_GUIDANCE, RETIRED_REVIEW_THREAD_RESOLUTION_GUIDANCE]],
+  [
+    [
+      '3. For valid items: make the fix, then reply to that specific thread. Prefer the ' +
+        '`external_event` essence handle: use `replyHandle.commentId` as the REST ' +
+        '`{comment_id}` in ' +
+        '`gh api repos/{owner}/{repo}/pulls/{pull_number}/comments/{comment_id}/replies -f body="<ack>"` ' +
+        'explaining what changed. One reply per comment creates a visible audit trail.\n',
+      RETIRED_CODING_WORKFLOW_REPLY_STEP_PROMPT,
+    ],
+  ],
   // Pre-PR-dev Coding Workflow: PR step gained subscribe instruction, all other
   // steps unchanged. Existing seeded spaces have the old step-5 text without
   // subscribe — swap the step text only.
