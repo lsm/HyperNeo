@@ -607,6 +607,10 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
 
     expect(tam._injected).toHaveLength(1); // no second continue
     expect(nodeExecutionRepo.getById(newest.id)?.status).toBe('blocked');
+    // The blocked escalation detaches the stale session from EVERY sibling row
+    // (createSubSession would otherwise resurrect it via the older idle row).
+    expect(nodeExecutionRepo.getById(newest.id)?.agentSessionId).toBeNull();
+    expect(nodeExecutionRepo.getById(oldestId)?.agentSessionId).toBeNull();
     expect(nodeExecutionRepo.getById(oldestId)?.status).toBe('idle');
   });
 
@@ -619,6 +623,43 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
     await rt.executeTick();
 
     expect(tam._injected).toHaveLength(0);
+  });
+
+  test('a session already active (in_progress) on another execution is not recovered via the stale idle row', async () => {
+    // Reused agent session: older row idle on a terminal error, newer row
+    // in_progress on the same session (processing a new activation).
+    const { runId, executionId: idleId } = seedIdleErrorRun({
+      subtype: 'error_during_execution',
+      errors: ['stale-row error'],
+      sessionId: 'session:reused',
+    });
+    const newer = nodeExecutionRepo.createOrIgnore({
+      workflowRunId: runId,
+      workflowNodeId: 'step-b',
+      agentName: 'Coder',
+      agentId: AGENT,
+      status: 'pending',
+    });
+    nodeExecutionRepo.update(newer.id, {
+      status: 'in_progress',
+      agentSessionId: 'session:reused',
+      startedAt: Date.now(),
+    });
+    db.prepare('UPDATE node_executions SET created_at = ? WHERE id = ?').run(
+      Date.now() + 60_000,
+      newer.id
+    );
+
+    const tam = makeTam();
+    const rt = new SpaceRuntime(buildConfig(tam));
+    (rt as unknown as { recoveryDone: boolean }).recoveryDone = true;
+
+    await rt.executeTick();
+
+    // The session has an active owner; the stale idle row must not trigger a
+    // terminal-error continue that races the in-progress activation.
+    expect(tam._injected).toHaveLength(0);
+    expect(nodeExecutionRepo.getById(idleId)?.status).toBe('idle');
   });
 
   test('retries up to the cap then escalates to blocked (clearing the stale session)', async () => {

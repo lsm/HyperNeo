@@ -7037,21 +7037,31 @@ export class SpaceRuntime {
     const graceMs = this.config.agentStuckNagGraceMs ?? DEFAULT_AGENT_STUCK_NAG_GRACE_MS;
     const now = Date.now();
 
-    const idleExecutions = this.config.nodeExecutionRepo
-      .listByWorkflowRun(runId)
-      .filter((execution) => execution.status === 'idle' && !!execution.agentSessionId);
+    const allExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
+    const idleExecutions = allExecutions.filter(
+      (execution) => execution.status === 'idle' && !!execution.agentSessionId
+    );
 
-    // Sessions can be reused across node activations (createSubSession points
-    // multiple execution rows at the same agentSessionId), and createSubSession
-    // treats the NEWEST such row as the current execution for the session.
-    // listByWorkflowRun returns rows in created_at ASC, so a naive "first idle
-    // row wins" dedup would attach recovery/blocked-escalation to a STALE node.
-    // Group by session and keep only the newest execution per agentSessionId so
-    // recovery targets the current activation, and each shared session is
-    // processed at most once per tick (no double-injected continues).
+    // A reused named-agent session can have a newer activation in_progress while
+    // older rows remain idle. Skip any session that already has an active
+    // (in_progress/pending) owner — that session is processing the new
+    // activation and must not be recovered via the stale idle row.
+    const activeSessions = new Set<string>();
+    for (const ex of allExecutions) {
+      if (ex.agentSessionId && (ex.status === 'in_progress' || ex.status === 'pending')) {
+        activeSessions.add(ex.agentSessionId);
+      }
+    }
+
+    // createSubSession treats the NEWEST execution for a session as current
+    // (listByWorkflowRun is created_at ASC). Group by session, keep the newest
+    // idle row per session (excluding active-owner sessions), so recovery
+    // targets the current activation and each shared session is processed at
+    // most once per tick (no double-injected continues).
     const newestPerSession = new Map<string, NodeExecution>();
     for (const execution of idleExecutions) {
       const sid = execution.agentSessionId!;
+      if (activeSessions.has(sid)) continue;
       const existing = newestPerSession.get(sid);
       if (!existing || (execution.createdAt ?? 0) >= (existing.createdAt ?? 0)) {
         newestPerSession.set(sid, execution);
@@ -7064,6 +7074,11 @@ export class SpaceRuntime {
       const key = `${runId}:${execution.id}`;
       if (!lastMessage || !isSDKResultError(lastMessage)) continue;
 
+      // Deerring to #670: if its prompt-too-long state machine owns this
+      // execution it may be mid-compact even when the latest result is a
+      // non-overflow error_during_execution; a terminal-error continue here
+      // would race that recovery.
+      if (this.promptTooLongRecovery.has(key)) continue;
       // Defer over-long-context results to #670 (compaction), not a plain
       // continue — continuing won't shrink the context.
       if (this.isPromptTooLongResultError(lastMessage)) continue;
@@ -7074,6 +7089,15 @@ export class SpaceRuntime {
         lastMessage.subtype !== 'error_during_execution' &&
         lastMessage.subtype !== 'error_max_turns'
       ) {
+        continue;
+      }
+
+      // Preserve executions with active tool continuations BEFORE the dead-session
+      // reset — the pending tool_result is the next valid transcript item, and
+      // resetting/clearing the session here would orphan/409 it. Mirrors the
+      // guard in handleNonTerminalIdleExecutions.
+      if (this.toolContinuationRepo.hasActiveToolUseForExecution(execution.id)) continue;
+      if (this.toolContinuationRepo.listPendingInboxForExecution(execution.id).length > 0) {
         continue;
       }
 
@@ -7109,22 +7133,13 @@ export class SpaceRuntime {
           );
           return 'blocked';
         }
-        // Clear the stale (dead, terminal-result-tainted) session id so the
-        // spawn loop creates a FRESH session. createSubSession reuses any prior
-        // execution row that still carries an agentSessionId (rehydrating it),
-        // which would resume from this terminal-error state instead of starting
-        // clean — defeating the re-spawn.
-        this.config.nodeExecutionRepo.update(execution.id, { agentSessionId: null });
+        // Clear the stale (dead, terminal-result-tainted) session id from EVERY
+        // row that references it so the spawn loop creates a FRESH session.
+        // createSubSession reuses the most recent execution that still carries
+        // an agentSessionId, so leaving sibling idle rows attached would
+        // resurrect this terminal-tainted session on re-spawn.
+        this.detachSessionFromAllExecutions(runId, sessionId);
         continue; // reset to pending; the spawn loop re-spawns a fresh session
-      }
-
-      // Preserve executions with active tool continuations — the next valid
-      // transcript item is the pending tool_result, and injecting a user
-      // continue here would race that delivery (orphan/409). Mirrors the guard
-      // in handleNonTerminalIdleExecutions.
-      if (this.toolContinuationRepo.hasActiveToolUseForExecution(execution.id)) continue;
-      if (this.toolContinuationRepo.listPendingInboxForExecution(execution.id).length > 0) {
-        continue;
       }
 
       const state =
@@ -7256,6 +7271,21 @@ export class SpaceRuntime {
   }
 
   /**
+   * Clear an `agentSessionId` from every execution row in the run that currently
+   * references it. Used when tearing down a terminal-tainted session so that
+   * `createSubSession` (which reuses the most recent execution that still
+   * carries an agentSessionId) spawns a FRESH session instead of resurrecting
+   * the stale one via a sibling row.
+   */
+  private detachSessionFromAllExecutions(runId: string, sessionId: string): void {
+    for (const ex of this.config.nodeExecutionRepo.listByWorkflowRun(runId)) {
+      if (ex.agentSessionId === sessionId) {
+        this.config.nodeExecutionRepo.update(ex.id, { agentSessionId: null });
+      }
+    }
+  }
+
+  /**
    * Escalate a terminal-error-idle execution to `blocked`, mirroring the
    * alive-stuck blocked path so `attemptBlockedRunRecovery` picks it up on the
    * next tick with its own `MAX_BLOCKED_RUN_RETRIES` re-spawn cap.
@@ -7288,6 +7318,12 @@ export class SpaceRuntime {
           `SpaceRuntime: failed to cancel stale terminal-error session ${execution.agentSessionId} during block escalation: ${err instanceof Error ? err.message : String(err)}`
         );
       }
+      // Clear the session from EVERY row that references it. A reused named
+      // agent can have sibling idle rows pointing at the same agentSessionId;
+      // createSubSession reuses the most recent execution that still carries
+      // one, so leaving siblings attached would resurrect this terminal-tainted
+      // session on the next spawn instead of starting fresh.
+      this.detachSessionFromAllExecutions(runId, execution.agentSessionId);
     }
     this.config.nodeExecutionRepo.update(execution.id, {
       status: 'blocked',
