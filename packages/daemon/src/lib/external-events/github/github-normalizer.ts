@@ -15,8 +15,11 @@ export type GitHubEventKind =
  * - `commentId`: the REST numeric id (as a string) of the comment this event
  *   targets. It is the handle `POST /repos/{o}/{r}/pulls/{n}/comments/{comment_id}/replies`
  *   (and the `in_reply_to` body param of `POST .../pulls/{n}/comments`) needs
- *   to reply to a review comment. Populated for issue-comment and review-comment
- *   events; empty for reviews, PRs, check runs, and reactions.
+ *   to reply to a review comment. For review comments this is the ROOT comment
+ *   id (resolved via `in_reply_to_id`, since the reply endpoint rejects a reply's
+ *   own id and review threads are flat); for issue comments it is the comment's
+ *   own id (issue comments are not threaded). Populated for issue-comment and
+ *   review-comment events; empty for reviews, PRs, check runs, and reactions.
  * - `nodeId`: the GraphQL `node_id` of the event's primary entity (the comment,
  *   review, or pull request).
  *
@@ -197,7 +200,12 @@ export function normalizeGitHubWebhook(
     );
     occurredAt = parseGitHubTimestamp(comment.updated_at ?? comment.created_at);
     title = `PR #${prNumber} inline review comment`;
-    commentId = idString(comment.id);
+    // REST reply endpoint requires the ROOT review comment id, not the reply's
+    // own id (docs: "This must be the ID of a top-level review comment, not a
+    // reply to that comment."). Review threads are flat, so `in_reply_to_id`
+    // points at the root when present; fall back to the comment's own id for
+    // top-level comments. See https://docs.github.com/rest/pulls/comments.
+    commentId = idString(comment.in_reply_to_id ?? comment.id);
     nodeId = getString(comment.node_id);
   } else {
     const pr = asObject(root.pull_request);
@@ -264,10 +272,17 @@ export function normalizeGitHubPollingRow(
   if (endpointKey === 'review_comments') eventType = 'pull_request_review_comment';
   // REST numeric comment id is present on issue-comment and review-comment rows
   // (the handle `POST .../pulls/{n}/comments/{comment_id}/replies` needs). It is
-  // absent on /pulls rows (a PR is not a comment). The GraphQL `node_id` is
-  // present on all three row shapes.
+  // absent on /pulls rows (a PR is not a comment). For review comments, resolve
+  // to the ROOT comment id via `in_reply_to_id` (the reply endpoint rejects a
+  // reply's own id; review threads are flat so it always points at the root).
+  // Issue comments are not threaded, so their own id is correct. The GraphQL
+  // `node_id` is present on all three row shapes.
   const commentId =
-    endpointKey === 'issue_comments' || endpointKey === 'review_comments' ? idString(obj.id) : '';
+    endpointKey === 'review_comments'
+      ? idString(obj.in_reply_to_id ?? obj.id)
+      : endpointKey === 'issue_comments'
+        ? idString(obj.id)
+        : '';
   const nodeId = getString(obj.node_id);
   const id = getNumber(obj.id) || prNumber;
   const updatedAt = parseGitHubTimestamp(obj.updated_at ?? obj.created_at);

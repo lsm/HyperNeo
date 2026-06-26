@@ -197,6 +197,31 @@ describe('NormalizedGitHubEvent reply/resolve handles', () => {
       expect(normalized.nodeId).toBe('PRRC_kwAAA_reviewcomment');
     });
 
+    test('review comment that is a reply yields the ROOT comment id, not the reply id', () => {
+      // GitHub's reply endpoint requires a top-level comment id; a reply carries
+      // the root id in `in_reply_to_id` (review threads are flat). See
+      // https://docs.github.com/rest/pulls/comments.
+      const normalized = normalizeGitHubWebhook(
+        'pull_request_review_comment',
+        'delivery-1',
+        reviewCommentWebhook({
+          comment: {
+            id: 5000,
+            in_reply_to_id: 4242,
+            node_id: 'PRRC_kwAAA_reply',
+            body: 'reply within thread',
+            html_url: 'https://github.com/acme/widgets/pull/7#discussion_r5000',
+            user: { login: 'dev', type: 'User' },
+            created_at: '2026-01-01T00:00:00Z',
+          },
+        })
+      )!;
+      // commentId must be the ROOT id (4242), not the reply's own id (5000).
+      expect(normalized.commentId).toBe('4242');
+      // nodeId still references the triggering (reply) comment, by design.
+      expect(normalized.nodeId).toBe('PRRC_kwAAA_reply');
+    });
+
     test('issue comment yields REST comment id + comment node_id', () => {
       const normalized = normalizeGitHubWebhook(
         'issue_comment',
@@ -272,6 +297,21 @@ describe('NormalizedGitHubEvent reply/resolve handles', () => {
       expect(normalized.eventType).toBe('pull_request_review_comment');
       expect(normalized.commentId).toBe('4242');
       expect(normalized.nodeId).toBe('PRRC_kwAAA_poll');
+    });
+
+    test('review_comment endpoint row that is a reply yields the ROOT comment id', () => {
+      const row = {
+        id: 5000,
+        in_reply_to_id: 4242,
+        node_id: 'PRRC_kwAAA_pollreply',
+        body: 'reply within thread',
+        html_url: 'https://github.com/acme/widgets/pull/7#discussion_r5000',
+        user: { login: 'dev', type: 'User' },
+        updated_at: '2026-01-01T00:00:00Z',
+      };
+      const normalized = normalizeGitHubPollingRow(watched, row, 'review_comments')!;
+      expect(normalized.commentId).toBe('4242');
+      expect(normalized.nodeId).toBe('PRRC_kwAAA_pollreply');
     });
 
     test('issue_comments endpoint row yields REST comment id + node_id', () => {
