@@ -40,6 +40,8 @@ import {
   createSpaceAgentMcpServer,
   createSpaceAgentToolHandlers,
 } from '../../../../src/lib/space/tools/space-agent-tools.ts';
+import { ExternalEventStore } from '../../../../src/lib/external-events/external-event-store.ts';
+import type { ExternalEvent } from '../../../../src/lib/external-events/types.ts';
 import type { SpaceTask, SpaceWorkflow } from '@neokai/shared';
 import type { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import { formatAgentMessage } from '../../../../src/lib/space/agent-message-envelope.ts';
@@ -6007,5 +6009,132 @@ describe('cancel_task on draft — error message consistency', () => {
     // Should mention what transitions ARE allowed from draft
     expect(parsed.error).toContain('open');
     expect(parsed.error).toContain('archived');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// get_external_event (LH-agent / space-agent surface)
+// ---------------------------------------------------------------------------
+
+function makeGitHubExternalEvent(overrides: Partial<ExternalEvent> = {}): ExternalEvent {
+  return {
+    id: crypto.randomUUID(),
+    spaceId: 'space-tools-test',
+    source: 'github',
+    topic: 'github/owner/repo/pull_request/42.closed',
+    occurredAt: Date.now(),
+    ingestedAt: Date.now(),
+    summary: 'PR #42 closed',
+    dedupeKey: `dedupe-${Math.random().toString(36).slice(2)}`,
+    externalUrl: 'https://github.com/owner/repo/pull/42',
+    payload: {
+      eventType: 'pull_request',
+      action: 'closed',
+      actor: 'octocat',
+      actorType: 'User',
+      body: 'merging this',
+      prNumber: 42,
+      prUrl: 'https://github.com/owner/repo/pull/42',
+      entityId: '42',
+      repoOwner: 'owner',
+      repoName: 'repo',
+      deliveryId: 'delivery-1',
+      externalId: 'ext-1',
+      source: 'webhook',
+      rawPayload: {
+        pull_request: {
+          id: 1,
+          node_id: 'PR_node1',
+          number: 42,
+          html_url: 'https://github.com/owner/repo/pull/42',
+          merged: true,
+          state: 'closed',
+        },
+      },
+    },
+    ...overrides,
+  };
+}
+
+describe('space-agent-tools: get_external_event', () => {
+  let ctx: TestCtx;
+  beforeEach(() => {
+    ctx = makeCtx();
+  });
+  afterEach(() => {
+    ctx.db.close();
+  });
+
+  test('returns the full record (incl. rawPayload) for a known eventId', async () => {
+    const store = new ExternalEventStore(ctx.db);
+    const event = makeGitHubExternalEvent({ spaceId: ctx.spaceId });
+    store.store(event);
+
+    const handlers = makeHandlers(ctx, { externalEventStore: store });
+    const result = await handlers.get_external_event({ eventId: event.id });
+    const data = JSON.parse(result.content[0].text);
+
+    expect(data.success).toBe(true);
+    expect(data.event.id).toBe(event.id);
+    expect(data.event.payload.body).toBe('merging this');
+    expect(data.event.payload.rawPayload.pull_request.node_id).toBe('PR_node1');
+    expect(data.event.payload.actor).toBe('octocat');
+    expect(data.event.payload.eventType).toBe('pull_request');
+  });
+
+  test('returns a not-found result for an unknown eventId', async () => {
+    const store = new ExternalEventStore(ctx.db);
+    const handlers = makeHandlers(ctx, { externalEventStore: store });
+    const result = await handlers.get_external_event({ eventId: 'nope' });
+    const data = JSON.parse(result.content[0].text);
+
+    expect(data.success).toBe(false);
+    expect(data.error).toContain('not found');
+  });
+
+  test('treats an event in another space as not-found (no cross-space leak)', async () => {
+    const store = new ExternalEventStore(ctx.db);
+    // Seed the foreign-space row so the event FK is satisfied; the lookup must
+    // still reject it because the caller's space differs. Use a distinct
+    // workspace_path — the column is UNIQUE.
+    seedSpaceRow(ctx.db, 'space-other', '/tmp/space-other');
+    const event = makeGitHubExternalEvent({ spaceId: 'space-other' });
+    store.store(event);
+
+    const handlers = makeHandlers(ctx, { externalEventStore: store });
+    const result = await handlers.get_external_event({ eventId: event.id });
+    const data = JSON.parse(result.content[0].text);
+
+    expect(data.success).toBe(false);
+    expect(data.error).toContain('not found');
+  });
+
+  test('createSpaceAgentMcpServer registers get_external_event only when the store is wired', () => {
+    const store = new ExternalEventStore(ctx.db);
+
+    const withoutStore = createSpaceAgentMcpServer({
+      spaceId: ctx.spaceId,
+      runtime: ctx.runtime,
+      workflowManager: ctx.workflowManager,
+      taskRepo: ctx.taskRepo,
+      nodeExecutionRepo: ctx.nodeExecutionRepo,
+      workflowRunRepo: ctx.workflowRunRepo,
+      taskManager: ctx.taskManager,
+      spaceAgentManager: ctx.agentManager,
+    });
+    expect(getRegisteredToolNames(withoutStore)).not.toContain('get_external_event');
+
+    const withStore = createSpaceAgentMcpServer({
+      spaceId: ctx.spaceId,
+      runtime: ctx.runtime,
+      workflowManager: ctx.workflowManager,
+      taskRepo: ctx.taskRepo,
+      nodeExecutionRepo: ctx.nodeExecutionRepo,
+      workflowRunRepo: ctx.workflowRunRepo,
+      taskManager: ctx.taskManager,
+      spaceAgentManager: ctx.agentManager,
+      externalEventStore: store,
+    });
+    expect(getRegisteredToolNames(withStore)).toContain('get_external_event');
   });
 });

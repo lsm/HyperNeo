@@ -75,6 +75,7 @@ import {
   SubscribeExternalEventSchema,
   UnsubscribeExternalEventSchema,
   SubscribePrEventsSchema,
+  GetExternalEventSchema,
 } from './node-agent-tool-schemas';
 import type {
   ListPeersInput,
@@ -95,10 +96,12 @@ import type {
   SubscribeExternalEventInput,
   UnsubscribeExternalEventInput,
   SubscribePrEventsInput,
+  GetExternalEventInput,
 } from './node-agent-tool-schemas';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { SpaceTask } from '@neokai/shared';
 import type { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository';
+import type { ExternalEventStore } from '../../external-events/external-event-store';
 import { parseAddress } from '../../../../../messaging/src/address';
 import { translateLegacyNodeTargets } from '../messaging-adapter';
 import { getEffectiveGate, hasInjectedGateFeature } from '../runtime/gate-features';
@@ -439,6 +442,12 @@ export interface NodeAgentToolsConfig {
    * Optional — when absent, no audit entries are written.
    */
   auditLogRepo?: McpAuditLogRepository;
+  /**
+   * External event store for the `get_external_event` on-demand fetch tool.
+   * Optional — when absent, the tool is not registered. Reads are scoped to
+   * the current space so events never leak across spaces.
+   */
+  externalEventStore?: ExternalEventStore;
   /**
    * Optional callback invoked when the agent calls `restore_node_agent`.
    *
@@ -1689,6 +1698,38 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
       return result;
     },
 
+    /**
+     * Fetch the full raw record for a single external event by id.
+     *
+     * On-demand counterpart to the lean "essence" injected into sessions as a
+     * message: use this for the rare deep-dive case where the digested summary
+     * is not enough and you need the complete payload (incl. `rawPayload`,
+     * `body`, `actor`, `eventType`, source-native fields, etc.).
+     *
+     * Returns a clear not-found result for unknown ids. Reads are scoped to the
+     * current space — an id that resolves to an event in another space is
+     * treated as not-found so events never leak across spaces.
+     */
+    async get_external_event(args: GetExternalEventInput): Promise<ToolResult> {
+      const { externalEventStore } = config;
+      if (!externalEventStore) {
+        return jsonResult({
+          success: false,
+          error: 'External event lookup is not available.',
+        });
+      }
+      const record = externalEventStore.getById(args.eventId);
+      // Scope by space: getById resolves by id only, so an id belonging to
+      // another space must be treated as not-found.
+      if (!record || record.event.spaceId !== spaceId) {
+        return jsonResult({
+          success: false,
+          error: `External event not found: ${args.eventId}`,
+        });
+      }
+      return jsonResult({ success: true, event: record.event, state: record.state });
+    },
+
     async approve_task(args: ApproveTaskInput): Promise<ToolResult> {
       if (!config.onApproveTask) {
         return jsonResult({
@@ -2048,6 +2089,20 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
               'Events are delivered to this node-agent session as messages. The coder node typically calls this.',
             SubscribePrEventsSchema.shape,
             (args) => handlers.subscribe_pr_events(args)
+          ),
+        ]
+      : []),
+    ...(config.externalEventStore
+      ? [
+          tool(
+            'get_external_event',
+            'Fetch the full raw record for a single external event by id — the on-demand deep-dive counterpart to ' +
+              'the lean event summary injected into your session as a message. Use this for the rare case where the ' +
+              'summary is not enough and you need the complete payload (incl. `rawPayload`, `body`, `actor`, ' +
+              '`eventType`, source-native fields such as review `state`, check-run `conclusion`, diff `path`/`line`, etc.). ' +
+              'Returns a not-found result for unknown ids.',
+            GetExternalEventSchema.shape,
+            (args) => handlers.get_external_event(args)
           ),
         ]
       : []),

@@ -22,6 +22,7 @@
  */
 
 import { createAnthropicErrorBody, type AnthropicErrorType } from '../shared/error-envelope.js';
+import { isJsonContentType, normalizeUpstreamError } from '../shared/normalize-upstream-error.js';
 import { Logger } from '../../logger.js';
 
 const logger = new Logger('anthropic-messages-bridge-server');
@@ -63,10 +64,30 @@ export type AnthropicMessagesBridgeConfig = {
   models?: AnthropicMessagesBridgeModel[];
 };
 
-function sendJsonError(status: number, type: AnthropicErrorType, message: string): Response {
+function sendJsonError(
+  status: number,
+  type: AnthropicErrorType,
+  message: string,
+  extraHeaders?: Record<string, string>
+): Response {
   return new Response(createAnthropicErrorBody(type, message), {
     status,
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...extraHeaders },
+  });
+}
+
+/**
+ * Emit a normalized retryable upstream error. Sets `x-should-retry: true` so the
+ * retry intent is explicit (the Claude Agent SDK already retries on 429 / >=500
+ * status, and honours this header as a belt-and-braces override).
+ */
+function sendRetryableUpstreamError(normalized: {
+  type: AnthropicErrorType;
+  status: number;
+  message: string;
+}): Response {
+  return sendJsonError(normalized.status, normalized.type, normalized.message, {
+    'x-should-retry': 'true',
   });
 }
 
@@ -234,11 +255,54 @@ export function createAnthropicMessagesBridgeServer(
 
       if (!upstreamResponse.ok) {
         const text = await upstreamResponse.text();
+        // Inspect the BODY for provider-specific transient signals (GLM code
+        // 1305, 访问量过大, 稍后再试, …) that the status alone cannot convey. A
+        // 4xx carrying an overload code must be reclassified as retryable so the
+        // SDK retries instead of surfacing a terminal invalid_request_error.
+        const normalized = normalizeUpstreamError(text, upstreamResponse.status);
+        if (normalized) {
+          logger.warn(
+            `anthropic-messages-bridge: normalized upstream error to retryable ` +
+              `${normalized.type} (${normalized.status}): ${normalized.message.slice(0, 200)}`
+          );
+          return sendRetryableUpstreamError(normalized);
+        }
         return sendJsonError(
           upstreamResponse.status,
           mapUpstreamStatus(upstreamResponse.status),
           text || `Upstream returned HTTP ${upstreamResponse.status}`
         );
+      }
+
+      // GLM and some Anthropic-compatible shims return 200 with a JSON error
+      // body (content-type application/json) instead of an SSE stream — the
+      // status gives the SDK nothing to retry on. Only pre-buffer when the
+      // content-type explicitly says JSON, so a genuine SSE stream with a
+      // missing/mislabeled content-type still passes through byte-for-byte and
+      // isn't stalled waiting for the whole body. Covers both /v1/messages and
+      // /v1/messages/count_tokens (GLM can return the same overload body for
+      // either).
+      const upstreamContentType = upstreamResponse.headers.get('content-type') ?? '';
+      const isJsonBody = isJsonContentType(upstreamContentType);
+      if (upstreamResponse.ok && isJsonBody && (isMessages || isCountTokens)) {
+        const bodyText = await upstreamResponse.text();
+        const normalized = normalizeUpstreamError(bodyText, upstreamResponse.status);
+        if (normalized) {
+          logger.warn(
+            `anthropic-messages-bridge: normalized 200-with-body upstream error to retryable ` +
+              `${normalized.type} (${normalized.status}): ${normalized.message.slice(0, 200)}`
+          );
+          return sendRetryableUpstreamError(normalized);
+        }
+        // Not a recognized transient error. Re-wrap the buffered bytes unchanged
+        // so we neither break valid non-streaming responses nor hide unknown
+        // errors from the SDK.
+        return new Response(bodyText, {
+          status: upstreamResponse.status,
+          headers: {
+            'Content-Type': upstreamContentType || 'application/json',
+          },
+        });
       }
 
       // Pass the body stream through unchanged. The upstream is already

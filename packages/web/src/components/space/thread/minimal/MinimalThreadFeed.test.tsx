@@ -208,6 +208,38 @@ function errorResultMessage(uuid: string) {
   };
 }
 
+function budgetErrorResultMessage(uuid: string) {
+  return {
+    type: 'result',
+    uuid,
+    subtype: 'error_max_budget_usd',
+    is_error: true,
+    duration_ms: 1000,
+    duration_api_ms: 800,
+    num_turns: 1,
+    errors: ['Budget limit exceeded'],
+    stop_reason: null,
+    total_cost_usd: 0.5,
+    usage: { input_tokens: 50, output_tokens: 25 },
+  };
+}
+
+function errorResultMessageWithEmptyErrors(uuid: string) {
+  return {
+    type: 'result',
+    uuid,
+    subtype: 'error_during_execution',
+    is_error: true,
+    duration_ms: 1000,
+    duration_api_ms: 800,
+    num_turns: 1,
+    errors: [],
+    stop_reason: null,
+    total_cost_usd: 0.001,
+    usage: { input_tokens: 50, output_tokens: 25 },
+  };
+}
+
 describe('MinimalThreadFeed', () => {
   beforeEach(() => {
     cleanup();
@@ -2493,6 +2525,294 @@ describe('MinimalThreadFeed', () => {
       // `isError` flag wires the amber accent class onto the trigger so
       // failures surface in the actions row before the dropdown opens.
       expect(trigger?.className).toMatch(/amber/);
+    });
+  });
+
+  describe('Terminal result error inline surfacing', () => {
+    it('paints the completed turn bubble red and surfaces the error inline for error subtypes', () => {
+      const t = Date.now();
+      const rows = [
+        makeRow({
+          id: 'a1',
+          label: 'Coder Agent',
+          createdAt: t,
+          message: assistantText('a1', 'attempting'),
+        }),
+        makeRow({
+          id: 'r1',
+          label: 'Coder Agent',
+          createdAt: t + 1000,
+          message: errorResultMessage('r1'),
+        }),
+      ];
+
+      const { container } = render(<MinimalThreadFeed parsedRows={rows} />);
+      const bubble = container.querySelector('[data-testid="minimal-thread-agent-bubble"]');
+      expect(bubble).not.toBeNull();
+      // Red bubble treatment — data attribute + red bg/border classes.
+      expect(bubble?.getAttribute('data-result-error')).toBe('true');
+      expect(bubble?.className).toMatch(/bg-red-900\/20/);
+      expect(bubble?.className).toMatch(/border-red-800/);
+      // Inline error summary surfaces the first error string without opening
+      // the dropdown.
+      const summary = container.querySelector(
+        '[data-testid="minimal-thread-result-error-summary"]'
+      );
+      expect(summary).not.toBeNull();
+      expect(summary?.textContent).toContain('something failed');
+    });
+
+    it('excludes error_max_budget_usd from the inline red treatment', () => {
+      const t = Date.now();
+      const rows = [
+        makeRow({
+          id: 'a1',
+          label: 'Coder Agent',
+          createdAt: t,
+          message: assistantText('a1', 'ran out of budget'),
+        }),
+        makeRow({
+          id: 'r1',
+          label: 'Coder Agent',
+          createdAt: t + 1000,
+          message: budgetErrorResultMessage('r1'),
+        }),
+      ];
+
+      const { container } = render(<MinimalThreadFeed parsedRows={rows} />);
+      const bubble = container.querySelector('[data-testid="minimal-thread-agent-bubble"]');
+      expect(bubble).not.toBeNull();
+      // Budget cap is a deliberate cost guard, not an execution failure — no
+      // red bubble, no inline summary. It still gets the amber dropdown trigger.
+      expect(bubble?.getAttribute('data-result-error')).toBeNull();
+      expect(bubble?.className).not.toMatch(/bg-red-900/);
+      expect(
+        container.querySelector('[data-testid="minimal-thread-result-error-summary"]')
+      ).toBeNull();
+      expect(container.querySelector('button[title="Run result"]')).not.toBeNull();
+    });
+
+    it('does not paint the bubble red for successful results', () => {
+      const t = Date.now();
+      const rows = [
+        makeRow({
+          id: 'a1',
+          label: 'Coder Agent',
+          createdAt: t,
+          message: assistantText('a1', 'all good'),
+        }),
+        makeRow({
+          id: 'r1',
+          label: 'Coder Agent',
+          createdAt: t + 1000,
+          message: resultMessage('r1', 'done'),
+        }),
+      ];
+
+      const { container } = render(<MinimalThreadFeed parsedRows={rows} />);
+      const bubble = container.querySelector('[data-testid="minimal-thread-agent-bubble"]');
+      expect(bubble).not.toBeNull();
+      expect(bubble?.getAttribute('data-result-error')).toBeNull();
+      expect(bubble?.className).toMatch(/bg-dark-800/);
+      expect(
+        container.querySelector('[data-testid="minimal-thread-result-error-summary"]')
+      ).toBeNull();
+    });
+
+    it('falls back to a subtype label when errors[] is empty', () => {
+      const t = Date.now();
+      const rows = [
+        makeRow({
+          id: 'a1',
+          label: 'Coder Agent',
+          createdAt: t,
+          message: assistantText('a1', 'attempting'),
+        }),
+        makeRow({
+          id: 'r1',
+          label: 'Coder Agent',
+          createdAt: t + 1000,
+          message: errorResultMessageWithEmptyErrors('r1'),
+        }),
+      ];
+
+      const { container } = render(<MinimalThreadFeed parsedRows={rows} />);
+      const bubble = container.querySelector('[data-testid="minimal-thread-agent-bubble"]');
+      expect(bubble?.getAttribute('data-result-error')).toBe('true');
+      const summary = container.querySelector(
+        '[data-testid="minimal-thread-result-error-summary"]'
+      );
+      expect(summary).not.toBeNull();
+      // No error string → humanized subtype label so the red bubble always
+      // carries an explanation.
+      expect(summary?.textContent).toContain('Error during execution');
+    });
+
+    it('keeps a terminal-error turn visible even when the agent emitted no reply text', () => {
+      const t = Date.now();
+      const rows = [
+        makeRow({
+          id: 'a1',
+          label: 'Coder Agent',
+          createdAt: t,
+          // tool_use only — no text assistant message before the error result
+          message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'echo test' } }]),
+        }),
+        makeRow({
+          id: 'r1',
+          label: 'Coder Agent',
+          createdAt: t + 1000,
+          message: errorResultMessage('r1'),
+        }),
+      ];
+
+      const { container } = render(<MinimalThreadFeed parsedRows={rows} />);
+      const bubble = container.querySelector('[data-testid="minimal-thread-agent-bubble"]');
+      // Without the exemption from the empty-body filter, this turn would be
+      // dropped (empty lastMessage) and the red bubble would never render.
+      expect(bubble).not.toBeNull();
+      expect(bubble?.getAttribute('data-result-error')).toBe('true');
+      const summary = container.querySelector(
+        '[data-testid="minimal-thread-result-error-summary"]'
+      );
+      expect(summary?.textContent).toContain('something failed');
+    });
+
+    it('keeps a budget-cap turn visible even when the agent emitted no reply text', () => {
+      const t = Date.now();
+      const rows = [
+        makeRow({
+          id: 'a1',
+          label: 'Coder Agent',
+          createdAt: t,
+          // tool_use only — no text before the budget-cap result
+          message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'echo test' } }]),
+        }),
+        makeRow({
+          id: 'r1',
+          label: 'Coder Agent',
+          createdAt: t + 1000,
+          message: budgetErrorResultMessage('r1'),
+        }),
+      ];
+
+      const { container } = render(<MinimalThreadFeed parsedRows={rows} />);
+      const bubble = container.querySelector('[data-testid="minimal-thread-agent-bubble"]');
+      // Budget-cap is excluded from the red-bubble treatment but the turn must
+      // still render so the amber result-info dropdown is accessible.
+      expect(bubble).not.toBeNull();
+      expect(bubble?.getAttribute('data-result-error')).toBeNull();
+      expect(bubble?.className).not.toMatch(/bg-red-900/);
+      expect(container.querySelector('button[title="Run result"]')).not.toBeNull();
+    });
+
+    it('folds post-result task_notification onto an error-only turn instead of duplicating', () => {
+      const t = Date.now();
+      const rows = [
+        makeRow({
+          id: 'a1',
+          label: 'Coder Agent',
+          createdAt: t,
+          // tool_use only — no text assistant message before the error result
+          message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'bun test' } }]),
+        }),
+        makeRow({
+          id: 'r1',
+          label: 'Coder Agent',
+          createdAt: t + 100,
+          message: errorResultMessage('r1'),
+        }),
+        makeRow({
+          id: 'n1',
+          label: 'Coder Agent',
+          createdAt: t + 200,
+          messageType: 'system',
+          message: {
+            type: 'system',
+            subtype: 'task_notification',
+            task_id: 'task-x',
+            tool_use_id: 'tu-a1-0',
+            status: 'failed',
+            summary: 'tests failed',
+            output_file: '/tmp/o',
+          },
+        }),
+      ];
+
+      render(<MinimalThreadFeed parsedRows={rows} />);
+
+      // The error-only turn is visible with the red bubble.
+      const bubble = screen.getByTestId('minimal-thread-agent-bubble');
+      expect(bubble.getAttribute('data-result-error')).toBe('true');
+      // The task_notification folds onto the roster tool entry (no standalone
+      // system row duplicating it).
+      const entry = screen.getByTestId('minimal-thread-roster-entry');
+      expect(entry.dataset.taskStatus).toBe('failed');
+      expect(entry.textContent).toContain('tests failed');
+      expect(screen.queryByText('Task failed')).toBeNull();
+    });
+
+    it('keeps tool_use visible across operational system row splits in error-only turns', () => {
+      const t = Date.now();
+      const rows = [
+        makeRow({
+          id: 'a1',
+          label: 'Coder Agent',
+          createdAt: t,
+          // tool_use only — no text before the system row and error result
+          message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'bun test' } }]),
+        }),
+        makeRow({
+          id: 's1',
+          label: 'Coder Agent',
+          createdAt: t + 50,
+          messageType: 'system',
+          message: operationalSystemMessage('s1', 'model_refusal_fallback', {
+            content: 'Retried with fallback model',
+            original_model: 'claude-opus-4-5',
+            fallback_model: 'claude-sonnet-4-5',
+          }),
+        }),
+        makeRow({
+          id: 'r1',
+          label: 'Coder Agent',
+          createdAt: t + 100,
+          message: errorResultMessage('r1'),
+        }),
+        makeRow({
+          id: 'n1',
+          label: 'Coder Agent',
+          createdAt: t + 200,
+          messageType: 'system',
+          message: {
+            type: 'system',
+            subtype: 'task_notification',
+            task_id: 'task-x',
+            tool_use_id: 'tu-a1-0',
+            status: 'failed',
+            summary: 'tests failed',
+          },
+        }),
+      ];
+
+      render(<MinimalThreadFeed parsedRows={rows} />);
+
+      // The system-row split creates two completed turns in chronological
+      // order around the thinking_tokens card: a tool_use-only turn (kept by
+      // the roster-content filter from #2188) and the error turn.
+      const bubbles = screen.getAllByTestId('minimal-thread-agent-bubble');
+      expect(bubbles).toHaveLength(2);
+      // Turn 1 (tool_use): roster shows the folded task status.
+      const toolEntry = screen.getByTestId('minimal-thread-roster-entry');
+      expect(toolEntry.dataset.taskStatus).toBe('failed');
+      expect(toolEntry.textContent).toContain('tests failed');
+      // Turn 2 (error): red bubble + inline error summary.
+      const errorBubble = bubbles.find((b) => b.getAttribute('data-result-error') === 'true');
+      expect(errorBubble).toBeDefined();
+      const summary = screen.getByTestId('minimal-thread-result-error-summary');
+      expect(summary.textContent).toContain('something failed');
+      // No standalone task_notification duplicating the roster.
+      expect(screen.queryByText('Task failed')).toBeNull();
     });
   });
 

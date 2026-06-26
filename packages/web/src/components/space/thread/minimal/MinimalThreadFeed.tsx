@@ -29,6 +29,7 @@ import {
   isSDKCompactBoundary,
   isHiddenSystemSubtype,
   isConditionallyHiddenSystemMessage,
+  isSDKResultError,
   isSDKResultMessage,
   isSDKSystemInit,
   isToolUseBlock,
@@ -546,6 +547,17 @@ function rowsContainResult(
   resultInfo: ResultMessage | undefined
 ): boolean {
   return resultInfo !== undefined && rows.some((row) => row.message === resultInfo);
+}
+
+/**
+ * Whether a row slice contains any non-success result message. Used to keep
+ * error-only turns (no assistant text) visible and to collect their
+ * tool_use_ids for task_notification folding — covering ALL error subtypes
+ * (including error_max_budget_usd), since visibility is separate from the
+ * narrower inline red-bubble treatment.
+ */
+function rowsContainResultError(rows: ParsedThreadRow[]): boolean {
+  return rows.some((row) => row.message && isSDKResultError(row.message));
 }
 
 function latestSessionId(rows: ParsedThreadRow[]): string | null {
@@ -1357,9 +1369,14 @@ function buildFeedTurns(
       sliceRows.some((r) => getToolUseContentBlocks(r).length > 0);
     const flush = (isFinal = false) => {
       if (
-        pendingAgentRows.length > 0 &&
-        !(isFinal && trailingBlockCanUpgradeToActive) &&
-        sliceContributesToRoster(pendingAgentRows)
+        (pendingAgentRows.length > 0 &&
+          !(isFinal && trailingBlockCanUpgradeToActive) &&
+          // Keep slices with text, tool_use content, OR any result error —
+          // error-only turns must be included so their tool_use_ids are collected
+          // into rosteredToolUseIds and post-result task_notifications fold onto
+          // the now-visible roster instead of duplicating as standalone rows.
+          sliceContributesToRoster(pendingAgentRows)) ||
+        rowsContainResultError(pendingAgentRows)
       ) {
         out.push(pendingAgentRows);
       }
@@ -1557,9 +1574,12 @@ function buildFeedTurns(
   // noise; the reply is rendered in the sibling that holds the result text.
   // A turn with no reply text but with roster content (tool calls / task
   // outcomes) is still meaningful — e.g. a killed task whose outcome lives in
-  // the roster — so keep it.
+  // the roster — so keep it. A turn that ended in a result error (any subtype)
+  // is also kept even with no text and no roster: the red bubble + inline
+  // error summary IS the visible content.
   return turns.filter((t) => {
     if (t.state !== 'completed') return true;
+    if (t.resultInfo && isSDKResultError(t.resultInfo)) return true;
     return t.lastMessage.length > 0 || t.roster.length > 0;
   });
 }
@@ -1872,6 +1892,45 @@ function RosterEntry({ entry, isLatest }: { entry: ActiveRosterEntry; isLatest: 
 }
 
 /**
+ * Terminal result subtypes surfaced inline as a red bubble in the minimal feed.
+ * `error_max_budget_usd` is intentionally excluded — hitting a budget cap is a
+ * deliberate cost guard, not an execution failure, so painting the whole turn
+ * red would mislead. It still gets the amber result-info dropdown trigger.
+ */
+const INLINE_RESULT_ERROR_SUBTYPES: ReadonlySet<string> = new Set([
+  'error_during_execution',
+  'error_max_turns',
+  'error_max_structured_output_retries',
+]);
+
+function isInlineTerminalResultError(result: ResultMessage | undefined): boolean {
+  if (!result || !isSDKResultError(result)) return false;
+  return INLINE_RESULT_ERROR_SUBTYPES.has(result.subtype);
+}
+
+const RESULT_ERROR_SUBTYPE_LABELS: Record<string, string> = {
+  error_during_execution: 'Error during execution',
+  error_max_turns: 'Max turns reached',
+  error_max_structured_output_retries: 'Max structured output retries reached',
+};
+
+/**
+ * First-line error summary for a terminal result error. Prefers the SDK's
+ * `errors[]` (the model/SDK's own failure message); falls back to a humanized
+ * subtype label so the red bubble always carries an explanation even when the
+ * errors array is empty/missing (defensive against bridge providers that omit
+ * it).
+ */
+function getResultErrorSummary(result: ResultMessage): string {
+  const errors = (result as { errors?: unknown }).errors;
+  if (Array.isArray(errors)) {
+    const first = errors.find((e): e is string => typeof e === 'string' && e.trim().length > 0);
+    if (first) return first.trim();
+  }
+  return RESULT_ERROR_SUBTYPE_LABELS[result.subtype] ?? 'Run failed';
+}
+
+/**
  * Body for a completed agent turn — wraps the meta-line + reply text in a
  * left-aligned chat bubble that sizes to content up to a max-width cap.
  *
@@ -1894,6 +1953,9 @@ function CompletedBody({
   turn: CompletedFeedTurn;
   overlayTaskId?: string;
 }) {
+  const isTerminalError = isInlineTerminalResultError(turn.resultInfo);
+  const errorSummary =
+    isTerminalError && turn.resultInfo ? getResultErrorSummary(turn.resultInfo) : null;
   const openSession = turn.sessionId
     ? () => {
         // `pushOverlayHistory` reads the highlight signal; passing the message
@@ -1909,15 +1971,17 @@ function CompletedBody({
         }
       }
     : undefined;
+  const isErrorBubble = isTerminalError || turn.hasError;
   return (
     <div class={`mt-1.5 w-fit ${TASK_THREAD_AGENT_BUBBLE_WIDTH_CLASS}`}>
       <div
-        class={
-          turn.hasError
-            ? 'bg-red-900/20 border border-red-800 rounded-lg px-3 py-2'
-            : 'bg-dark-800 border border-dark-700 rounded-lg px-3 py-2'
-        }
+        class={`rounded-lg px-3 py-2 ${
+          isErrorBubble
+            ? 'bg-red-900/20 border border-red-800'
+            : 'bg-dark-800 border border-dark-700'
+        }`}
         data-testid="minimal-thread-agent-bubble"
+        data-result-error={isTerminalError ? 'true' : undefined}
         data-has-error={turn.hasError || undefined}
       >
         <ReplacementBadge status={turn.replacementStatus} />
@@ -1938,6 +2002,28 @@ function CompletedBody({
               />
             </svg>
             <span>API Error</span>
+          </div>
+        ) : null}
+        {errorSummary ? (
+          <div
+            class="mb-2 flex items-start gap-1.5 text-xs text-red-300"
+            data-testid="minimal-thread-result-error-summary"
+          >
+            <svg
+              class="mt-0.5 h-3.5 w-3.5 shrink-0 text-red-400"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              aria-hidden="true"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M12 9v2m0 4h.01M5.07 19h13.86a2 2 0 001.74-3L13.74 4a2 2 0 00-3.48 0L3.33 16a2 2 0 001.74 3z"
+              />
+            </svg>
+            <span class="break-words line-clamp-2">{errorSummary}</span>
           </div>
         ) : null}
         {turn.roster.length > 0 ? (

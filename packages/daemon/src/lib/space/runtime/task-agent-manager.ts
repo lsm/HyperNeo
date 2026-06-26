@@ -347,6 +347,12 @@ export interface TaskAgentManagerConfig {
   goalService?: import('../goals/goal-service').SpaceGoalService;
   /** Evolution scope service for scoped lesson injection. */
   evolutionScopeService?: EvolutionScopeService;
+  /**
+   * External event store, plumbed into node-agent tools so sub-sessions can
+   * call `get_external_event` for on-demand raw event fetch. Optional — when
+   * absent, the tool is not registered on node-agent sessions.
+   */
+  externalEventStore?: import('../../external-events/external-event-store').ExternalEventStore;
 }
 
 // ---------------------------------------------------------------------------
@@ -4017,6 +4023,7 @@ export class TaskAgentManager {
       artifactRepo: this.config.artifactRepo,
       taskRepo: this.config.taskRepo,
       auditLogRepo: this.auditLogRepo,
+      externalEventStore: this.config.externalEventStore,
       getSpaceAutonomyLevel: async (sid) => {
         const s = await spaceManager.getSpace(sid);
         return s?.autonomyLevel ?? 1;

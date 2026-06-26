@@ -53,6 +53,20 @@ export const DEFAULT_TOOL_USE_ACTIVE_TTL_MS = 60 * 60 * 1000;
 export const MAX_AGENT_STUCK_RESTARTS = 1;
 
 /**
+ * Maximum number of automatic "continue" injections for a node-agent session
+ * that ended on a terminal error result (e.g. Codex 400, error_during_execution).
+ *
+ * A worker whose SDK stream terminates with an error subtype leaves the node
+ * idle with a *live* session and no recovery fires — this cap bounds the
+ * runtime's auto-continue before escalating to `blocked` (where
+ * `attemptBlockedRunRecovery`, capped by `MAX_BLOCKED_RUN_RETRIES`, takes over
+ * with a fresh re-spawn). Deterministic repeats (identical error signature) are
+ * escalated immediately regardless of this count, since a plain continue cannot
+ * fix them.
+ */
+export const MAX_TERMINAL_ERROR_CONTINUE_RETRIES = 2;
+
+/**
  * Maximum number of automatic recovery attempts for a blocked workflow run.
  *
  * When a workflow run enters `blocked` status (e.g. a node agent failed after

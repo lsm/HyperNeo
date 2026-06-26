@@ -29,6 +29,11 @@ import {
 } from '../provider-anthropic-compat/translator.js';
 import { getModelContextWindow as getCodexModelContextWindow } from '../codex-models.js';
 import { createAnthropicErrorBody, type AnthropicErrorType } from '../shared/error-envelope.js';
+import {
+  isJsonContentType,
+  isOpenAiTransientErrorType,
+  normalizeOpenAiUpstreamError,
+} from '../shared/normalize-upstream-error.js';
 import { Logger } from '../../logger.js';
 
 const logger = new Logger('openai-responses-bridge-server');
@@ -228,10 +233,29 @@ function continuationKey(sessionId: string, callId: string): string {
   return `${sessionId}\u0000${callId}`;
 }
 
-function sendJsonError(status: number, type: AnthropicErrorType, message: string): Response {
+function sendJsonError(
+  status: number,
+  type: AnthropicErrorType,
+  message: string,
+  extraHeaders?: Record<string, string>
+): Response {
   return new Response(createAnthropicErrorBody(type, message), {
     status,
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...extraHeaders },
+  });
+}
+
+/**
+ * Emit a normalized retryable upstream error with `x-should-retry: true` so the
+ * Claude Agent SDK retries (it already retries on 429 / >=500 status).
+ */
+function sendRetryableUpstreamError(normalized: {
+  type: AnthropicErrorType;
+  status: number;
+  message: string;
+}): Response {
+  return sendJsonError(normalized.status, normalized.type, normalized.message, {
+    'x-should-retry': 'true',
   });
 }
 
@@ -819,7 +843,15 @@ function parseSSEBlock(block: string): OpenAIStreamEvent | null {
   if (!data || data === '[DONE]') return null;
   const parsed = parseJsonObject(data);
   if (!parsed) return null;
-  return { type: eventType || (parsed.type as string | undefined), ...parsed };
+  return {
+    type: eventType || (parsed.type as string | undefined),
+    ...parsed,
+    // Preserve the raw SSE `event:` name. The spread above lets the payload
+    // `type` overwrite it, so a flat `event: error` block whose data has a
+    // different type (e.g. {"type":"server_error"}) would otherwise lose the
+    // fact that it was an error frame.
+    ...(eventType ? { sseEvent: eventType } : {}),
+  };
 }
 
 async function* readOpenAIStream(
@@ -1108,11 +1140,70 @@ async function streamResponsesToAnthropic({
         continue;
       }
 
-      if (event.type === 'response.failed' || event.type === 'error') {
+      const sseEvent = (event as { sseEvent?: string }).sseEvent;
+      // An error frame is signalled by the payload type (`error` /
+      // `response.failed`), the raw SSE `event:` name, OR a data-only frame
+      // whose payload type is a known transient error category (e.g.
+      // {"type":"server_error"} with no event line).
+      if (
+        event.type === 'response.failed' ||
+        event.type === 'error' ||
+        sseEvent === 'error' ||
+        sseEvent === 'response.failed' ||
+        (event.type !== undefined && isOpenAiTransientErrorType(event.type))
+      ) {
         ensureStarted();
         closeThinkingBlock();
         closeTextBlock();
-        send(errorSSE('api_error', streamErrorMessage(event)));
+        // Classify a transient mid-stream error (rate_limit / overloaded) so the
+        // correct Anthropic type surfaces. The SDK cannot retry a stream it has
+        // already started, but the right type lets the query-runner (B4)
+        // recognise and re-issue the whole query.
+        // `response.failed` carries the error under `event.response.error`; the
+        // `error` event under `event.error`; some upstreams put code/message at
+        // the event top level. Inspect whichever shape the upstream used.
+        const responseObject = event.response;
+        const responseError =
+          responseObject && typeof responseObject === 'object'
+            ? (responseObject as Record<string, unknown>).error
+            : undefined;
+        const flatEvent = event as Record<string, unknown>;
+        const topLevelError: Record<string, unknown> = {};
+        // Accept numeric codes (e.g. {"code":429}) and RFC 7807 problem-detail
+        // fields (status→code, detail→message), coercing to strings.
+        const rawCode = flatEvent.code;
+        if (typeof rawCode === 'string') topLevelError.code = rawCode;
+        else if (typeof rawCode === 'number' && Number.isFinite(rawCode))
+          topLevelError.code = String(rawCode);
+        else {
+          const rawStatus = flatEvent.status;
+          if (typeof rawStatus === 'string') topLevelError.code = rawStatus;
+          else if (typeof rawStatus === 'number' && Number.isFinite(rawStatus))
+            topLevelError.code = String(rawStatus);
+        }
+        if (typeof flatEvent.message === 'string') topLevelError.message = flatEvent.message;
+        else if (typeof flatEvent.detail === 'string') topLevelError.message = flatEvent.detail;
+        // The payload `type` is the error category when it is not the literal
+        // event discriminator ("error" / "response.failed").
+        if (
+          typeof flatEvent.type === 'string' &&
+          flatEvent.type !== 'error' &&
+          flatEvent.type !== 'response.failed'
+        )
+          topLevelError.type = flatEvent.type;
+        const errorBody =
+          event.error ??
+          responseError ??
+          (Object.keys(topLevelError).length > 0 ? topLevelError : undefined);
+        const normalized = normalizeOpenAiUpstreamError(
+          JSON.stringify({ error: errorBody ?? {} }),
+          200
+        );
+        const bodyMessage =
+          errorBody && typeof (errorBody as Record<string, unknown>).message === 'string'
+            ? ((errorBody as Record<string, unknown>).message as string)
+            : undefined;
+        send(errorSSE(normalized?.type ?? 'api_error', bodyMessage ?? streamErrorMessage(event)));
         send(messageStopSSE());
         closeController();
         return;
@@ -1461,6 +1552,17 @@ export function createOpenAIResponsesBridgeServer(
             continuation = undefined;
           } else {
             logUpstream4xx(openAIResponse.status, requestBody, errorText);
+            // The 400 isn't about previous_response_id — still inspect the body
+            // for a transient signal (a proxy may return 400 with a structured
+            // rate_limit/server body) before falling back to invalid_request.
+            const normalized = normalizeOpenAiUpstreamError(errorText, openAIResponse.status);
+            if (normalized) {
+              logger.warn(
+                `openai-responses: normalized continuation 400 to retryable ` +
+                  `${normalized.type} (${normalized.status}): ${normalized.message.slice(0, 200)}`
+              );
+              return sendRetryableUpstreamError(normalized);
+            }
             return sendJsonError(
               openAIResponse.status,
               mapOpenAIStatusToAnthropicError(openAIResponse.status),
@@ -1482,6 +1584,21 @@ export function createOpenAIResponsesBridgeServer(
         ) {
           const errorText = await openAIResponse.text();
           logUpstream4xx(openAIResponse.status, requestBody, errorText);
+          // A transient 400 (rate_limit/overload in the body) is NOT a
+          // stale-reasoning failure. Normalize it to retryable so the SDK
+          // retries with backoff, instead of self-healing by dropping reasoning
+          // (which would mask the real rate-limit and skip the SDK retry path).
+          const reasoningNormalized = normalizeOpenAiUpstreamError(
+            errorText,
+            openAIResponse.status
+          );
+          if (reasoningNormalized) {
+            logger.warn(
+              `openai-responses: normalized reasoning 400 to retryable ` +
+                `${reasoningNormalized.type} (${reasoningNormalized.status}): ${reasoningNormalized.message.slice(0, 200)}`
+            );
+            return sendRetryableUpstreamError(reasoningNormalized);
+          }
           logger.warn(
             'openai-responses: 400 with replayed reasoning present — retrying once without reasoning items'
           );
@@ -1512,12 +1629,48 @@ export function createOpenAIResponsesBridgeServer(
       if (!openAIResponse.ok) {
         const text = await openAIResponse.text();
         logUpstream4xx(openAIResponse.status, requestBody, text);
+        // Inspect the BODY for transient signals (rate_limit_exceeded /
+        // server_error / overload text) the status alone misses — e.g. a 4xx
+        // carrying a rate-limit body. Reclassify so the SDK retries.
+        const normalized = normalizeOpenAiUpstreamError(text, openAIResponse.status);
+        if (normalized) {
+          logger.warn(
+            `openai-responses: normalized upstream error to retryable ` +
+              `${normalized.type} (${normalized.status}): ${normalized.message.slice(0, 200)}`
+          );
+          return sendRetryableUpstreamError(normalized);
+        }
         return sendJsonError(
           openAIResponse.status,
           mapOpenAIStatusToAnthropicError(openAIResponse.status),
           parseOpenAIError(openAIResponse.status, text)
         );
       }
+
+      // Some Responses-compatible proxies return 200 with a JSON error body
+      // instead of an SSE stream. With no SSE events the streamer below would
+      // emit a successful empty end_turn, hiding a body-embedded transient
+      // error. Only pre-buffer when the content-type explicitly says JSON — a
+      // real SSE stream with a missing/mislabeled content-type flows straight
+      // through to the streamer.
+      const upstreamContentType = openAIResponse.headers.get('content-type') ?? '';
+      if (openAIResponse.ok && isJsonContentType(upstreamContentType)) {
+        const bodyText = await openAIResponse.text();
+        const normalized = normalizeOpenAiUpstreamError(bodyText, openAIResponse.status);
+        if (normalized) {
+          logger.warn(
+            `openai-responses: normalized 200-with-body upstream error to retryable ` +
+              `${normalized.type} (${normalized.status}): ${normalized.message.slice(0, 200)}`
+          );
+          return sendRetryableUpstreamError(normalized);
+        }
+        // Non-transient: reconstruct so the streaming path handles it as before.
+        openAIResponse = new Response(bodyText, {
+          status: openAIResponse.status,
+          headers: { 'Content-Type': upstreamContentType },
+        });
+      }
+
       consumeContinuation(sessionId, resolvedContinuation);
 
       const estimatedInputTokens = continuation
