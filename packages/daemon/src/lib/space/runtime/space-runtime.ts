@@ -7042,6 +7042,17 @@ export class SpaceRuntime {
       (execution) => execution.status === 'idle' && !!execution.agentSessionId
     );
 
+    // Index executions by session so per-session guards can be checked across
+    // EVERY row sharing a session (a reused agent can leave tool-continuation
+    // or #670 prompt-too-long state on a sibling idle row, not the newest one).
+    const executionsBySession = new Map<string, NodeExecution[]>();
+    for (const ex of allExecutions) {
+      if (!ex.agentSessionId) continue;
+      const list = executionsBySession.get(ex.agentSessionId);
+      if (list) list.push(ex);
+      else executionsBySession.set(ex.agentSessionId, [ex]);
+    }
+
     // A reused named-agent session can have a newer activation in_progress while
     // older rows remain idle. Skip any session that already has an active
     // (in_progress/pending) owner — that session is processing the new
@@ -7073,12 +7084,18 @@ export class SpaceRuntime {
       const lastMessage = this.getSdkMessageRepo().getLastSDKMessage(sessionId);
       const key = `${runId}:${execution.id}`;
       if (!lastMessage || !isSDKResultError(lastMessage)) continue;
+      // Guards below are checked across EVERY row sharing this session: a reused
+      // agent can leave #670 prompt-too-long state or an active tool continuation
+      // on a sibling idle row, not the newest one selected here.
+      const sessionExecutions = executionsBySession.get(sessionId) ?? [execution];
 
-      // Deerring to #670: if its prompt-too-long state machine owns this
-      // execution it may be mid-compact even when the latest result is a
-      // non-overflow error_during_execution; a terminal-error continue here
-      // would race that recovery.
-      if (this.promptTooLongRecovery.has(key)) continue;
+      // Defer to #670: if its prompt-too-long state machine owns ANY execution for
+      // this session it may be mid-compact even when the latest result is a
+      // non-overflow error_during_execution; a terminal-error continue here would
+      // race that recovery.
+      if (sessionExecutions.some((e) => this.promptTooLongRecovery.has(`${runId}:${e.id}`))) {
+        continue;
+      }
       // Defer over-long-context results to #670 (compaction), not a plain
       // continue — continuing won't shrink the context.
       if (this.isPromptTooLongResultError(lastMessage)) continue;
@@ -7094,10 +7111,15 @@ export class SpaceRuntime {
 
       // Preserve executions with active tool continuations BEFORE the dead-session
       // reset — the pending tool_result is the next valid transcript item, and
-      // resetting/clearing the session here would orphan/409 it. Mirrors the
-      // guard in handleNonTerminalIdleExecutions.
-      if (this.toolContinuationRepo.hasActiveToolUseForExecution(execution.id)) continue;
-      if (this.toolContinuationRepo.listPendingInboxForExecution(execution.id).length > 0) {
+      // resetting/clearing the session here would orphan/409 it. Checked across
+      // all rows sharing the session (mirrors handleNonTerminalIdleExecutions).
+      if (
+        sessionExecutions.some(
+          (e) =>
+            this.toolContinuationRepo.hasActiveToolUseForExecution(e.id) ||
+            this.toolContinuationRepo.listPendingInboxForExecution(e.id).length > 0
+        )
+      ) {
         continue;
       }
 
