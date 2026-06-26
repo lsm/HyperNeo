@@ -435,9 +435,12 @@ describe('Post-approval merge conflict routes to coder, not human', () => {
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('--paginate');
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/APPROVED or COMMENTED/);
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('/issues/<number>/comments');
-    // review_url is only required when the Review → Coding route is gated
-    // (Coding/Research workflows); Fullstack QA's Review → Coding is ungated.
+    // review_url is only required when the Review → <upstream> route is gated.
+    // Only Coding's Review → Coding has review-posted-gate; Research's
+    // Review → Research and Fullstack QA's back-channel are ungated.
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('list_channels');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/only the Coding workflow/);
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('Research and Fullstack');
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/ONLY when the route is gated/);
   });
 
