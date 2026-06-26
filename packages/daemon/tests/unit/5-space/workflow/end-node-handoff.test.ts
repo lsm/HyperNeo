@@ -368,6 +368,10 @@ describe('Shared merge template canonical content', () => {
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('isCrossRepository');
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('HEAD_REF=$(gh pr view');
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('IS_FORK=');
+    // Branch cleanup is best-effort: a failed delete (protected branch, missing
+    // permission) must NOT block completion after the PR is already merged.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/BEST-EFFORT/);
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/do NOT let a/);
     // The delete step must come AFTER the merge command.
     const mergeIdx = PR_MERGE_POST_APPROVAL_INSTRUCTIONS.indexOf('gh pr merge {{pr_url}} --squash');
     const deleteIdx = PR_MERGE_POST_APPROVAL_INSTRUCTIONS.indexOf('git push origin --delete');
@@ -396,15 +400,21 @@ describe('Post-approval merge conflict routes to coder, not human', () => {
 
   test('full conflict-fix delta is inspected before retrying the merge', () => {
     // The approval covered the pre-conflict head; a bad conflict resolution can
-    // pass CI, so the reviewer must inspect the FULL delta since the approved
-    // head (not just the conflict files — the push may include unrelated
-    // changes) and only merge when it is sound.
+    // pass CI, so the reviewer must inspect the FULL delta (fetching the
+    // current PR head, not local HEAD) against approved_head_oid and only merge
+    // when it is sound.
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/approval no longer covers/);
-    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/FULL delta since the approved head/);
-    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('non-conflict changes');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/FULL delta against the/);
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('CUR_HEAD=');
+    // The PR head object must be fetched (refs/pull/<number>/head), not just
+    // the OID — otherwise merge-tree/diff hit an unknown object after a restart.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('refs/pull/<number>/head');
     // A request-changes on a bad fix posts a formal CHANGES_REQUESTED review for
     // non-own PRs (the gate requires it); PR-comment fallback is own-PR only.
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('CHANGES_REQUESTED');
+    // If a CHANGES_REQUESTED was posted in this loop and is now resolved, post
+    // a fresh APPROVED before retrying (required-review repos block otherwise).
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/fresh APPROVED/);
   });
 
   test('exhausted retries escalate to space-agent with real count/exit reason (no false completion)', () => {
