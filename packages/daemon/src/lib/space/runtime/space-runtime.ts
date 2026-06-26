@@ -3572,7 +3572,7 @@ export class SpaceRuntime {
   ): Promise<SpaceWorkflowRun> {
     const previousStatus = this.config.workflowRunRepo.getRun(runId)?.status;
     const updated = this.config.workflowRunRepo.transitionStatus(runId, nextStatus);
-    if (nextStatus === 'done' || nextStatus === 'cancelled') {
+    if (nextStatus === 'cancelled' || this.shouldClearRunInterestsForDoneRun(runId, nextStatus)) {
       this.clearRunInterests(runId);
     }
     if (nextStatus === 'blocked') {
@@ -3588,6 +3588,20 @@ export class SpaceRuntime {
     }
     await this.safeOnWorkflowRunUpdated(updated.spaceId, updated);
     return updated;
+  }
+
+  private shouldClearRunInterestsForDoneRun(
+    runId: string,
+    nextStatus: SpaceWorkflowRun['status']
+  ): boolean {
+    if (nextStatus !== 'done') return false;
+    const run = this.config.workflowRunRepo.getRun(runId);
+    if (!run) return true;
+    const canonicalTask = this.pickCanonicalTaskForRun(
+      run,
+      this.config.taskRepo.listByWorkflowRun(runId)
+    );
+    return canonicalTask ? this.isTargetTaskTerminal(canonicalTask.id) : true;
   }
 
   private fireRunBlockedHook(runId: string): void {

@@ -983,7 +983,11 @@ describe('SpaceRuntime external event subscriptions', () => {
   test('delivers matching events to an idle subscriber while the task is in review', async () => {
     const { run, task } = await startRunWithSubscription();
     taskRepo.updateTask(task.id, { status: 'review' });
-    workflowRunRepo.transitionStatus(run.id, 'done');
+    await (
+      runtime as unknown as {
+        transitionRunStatusAndEmit(runId: string, nextStatus: 'done'): Promise<unknown>;
+      }
+    ).transitionRunStatusAndEmit(run.id, 'done');
     const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
     nodeExecutionRepo.update(execution.id, {
       status: 'idle',
@@ -1007,7 +1011,11 @@ describe('SpaceRuntime external event subscriptions', () => {
   test('flushes pending external deliveries after a review task node activates', async () => {
     const { run, task } = await startRunWithSubscription();
     taskRepo.updateTask(task.id, { status: 'review' });
-    workflowRunRepo.transitionStatus(run.id, 'done');
+    await (
+      runtime as unknown as {
+        transitionRunStatusAndEmit(runId: string, nextStatus: 'done'): Promise<unknown>;
+      }
+    ).transitionRunStatusAndEmit(run.id, 'done');
 
     const event = makeEvent();
     await eventService.publish(event);
