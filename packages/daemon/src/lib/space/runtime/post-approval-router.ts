@@ -200,7 +200,9 @@ const POST_APPROVAL_COMPLETION_INSTRUCTIONS =
   `task from \`approved\` to \`done\`. If you are blocked and cannot complete the\n` +
   `work, do NOT call mark_complete — the post-approval node-agent surface has no\n` +
   `request-human tool, so surface the blocker via send_message(target="space-agent")\n` +
-  `and save an artifact describing the block, then stop.\n\n` +
+  `and save a NON-result artifact describing the block (e.g. type:"blocked"). A\n` +
+  `"result" artifact would be picked up as the task result on a later mark_complete,\n` +
+  `poisoning completion. Then stop.\n\n` +
   `Do NOT call approve_task; the task has already been approved upstream.`;
 
 export function appendPostApprovalCompletionInstructions(interpolatedInstructions: string): string {
