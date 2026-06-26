@@ -988,6 +988,7 @@ describe('SpaceRuntime external event subscriptions', () => {
         transitionRunStatusAndEmit(runId: string, nextStatus: 'done'): Promise<unknown>;
       }
     ).transitionRunStatusAndEmit(run.id, 'done');
+    await runtime.executeTick();
     const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
     nodeExecutionRepo.update(execution.id, {
       status: 'idle',
@@ -1016,6 +1017,7 @@ describe('SpaceRuntime external event subscriptions', () => {
         transitionRunStatusAndEmit(runId: string, nextStatus: 'done'): Promise<unknown>;
       }
     ).transitionRunStatusAndEmit(run.id, 'done');
+    await runtime.executeTick();
 
     const event = makeEvent();
     await eventService.publish(event);

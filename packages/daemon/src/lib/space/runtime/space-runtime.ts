@@ -3601,7 +3601,9 @@ export class SpaceRuntime {
       run,
       this.config.taskRepo.listByWorkflowRun(runId)
     );
-    return canonicalTask ? this.isTargetTaskTerminal(canonicalTask.id) : true;
+    if (!canonicalTask) return true;
+    if (canonicalTask.status === 'review' || canonicalTask.status === 'approved') return false;
+    return true;
   }
 
   private fireRunBlockedHook(runId: string): void {
@@ -7942,6 +7944,10 @@ export class SpaceRuntime {
       // rehydratable and poll timers can detect external conditions that may help
       // unblock the run. Do not remove the executor or prune dedup keys here.
       if (run?.status === 'blocked') {
+        continue;
+      }
+
+      if (run?.status === 'done' && !this.shouldClearRunInterestsForDoneRun(runId, 'done')) {
         continue;
       }
 
