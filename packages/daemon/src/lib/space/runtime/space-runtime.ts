@@ -2351,6 +2351,16 @@ export class SpaceRuntime {
         this.clearQueuedDelivery(target, deliveryKey);
         return;
       }
+      if (this.isTargetTaskTerminal(target.taskId)) {
+        store.markDeliveryFailed(event.eventId, deliveryKey, {
+          terminal: true,
+          reason: 'target_task_terminal',
+        });
+        store.markEventFailedIfAllDeliveriesTerminal(event.eventId);
+        this.clearExternalEventRetry(deliveryKey);
+        this.clearQueuedDelivery(target, deliveryKey);
+        return;
+      }
       const queued = this.getQueuedDelivery(target, deliveryKey);
       this.queueForRetry(
         target,
@@ -2439,6 +2449,16 @@ export class SpaceRuntime {
         this.config.externalEventStore?.markDeliveryFailed(event.eventId, deliveryKey, {
           terminal: true,
           reason: 'run_not_externally_deliverable',
+        });
+        this.clearExternalEventRetry(deliveryKey);
+        this.clearQueuedDelivery(target, deliveryKey);
+        this.config.externalEventStore?.markEventFailedIfAllDeliveriesTerminal(event.eventId);
+        return;
+      }
+      if (this.isTargetTaskTerminal(target.taskId)) {
+        this.config.externalEventStore?.markDeliveryFailed(event.eventId, deliveryKey, {
+          terminal: true,
+          reason: 'target_task_terminal',
         });
         this.clearExternalEventRetry(deliveryKey);
         this.clearQueuedDelivery(target, deliveryKey);

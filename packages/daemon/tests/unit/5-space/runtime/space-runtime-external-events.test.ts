@@ -4224,6 +4224,55 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(injected).toHaveLength(0);
   });
 
+  test('terminalizes retry when a done-run review task becomes terminal', async () => {
+    const { run, task } = await startRunWithSubscription();
+    taskRepo.updateTask(task.id, { status: 'review' });
+    workflowRunRepo.updateRun(run.id, { status: 'done' });
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'idle',
+      agentSessionId: 'session-retry-task-terminal-check',
+      startedAt: Date.now(),
+      completedAt: Date.now(),
+    });
+    await runtime.stop();
+    const commandBus = createInternalCommandBus();
+    let injectAttempts = 0;
+    commandBus.register('agent.message.inject', async () => {
+      injectAttempts++;
+      return { ok: false, error: 'simulated transient failure' };
+    });
+    runtime = new SpaceRuntime({
+      db,
+      spaceManager: new SpaceManager(db),
+      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+      spaceWorkflowManager: workflowManager,
+      workflowRunRepo,
+      taskRepo,
+      nodeExecutionRepo,
+      internalEventBus: bus,
+      commandBus,
+      externalEventStore: eventStore,
+      taskAgentManager: tam as never,
+    });
+    runtime.registerSubscription(run.id, task.id, 'code', 'coder', DEFAULT_TOPIC);
+    runtime.start();
+    await runtime.executeTick();
+
+    const event = makeEvent({ id: 'evt-retry-task-terminal-check' });
+    await eventService.publish(event);
+    expect(injectAttempts).toBe(1);
+
+    taskRepo.updateTask(task.id, { status: 'done' });
+
+    await new Promise((resolve) => setTimeout(resolve, 1250));
+
+    const delivery = eventStore.listDeliveries(event.id)[0]!;
+    expect(delivery.state).toBe('failed');
+    expect(delivery.failureReason).toBe('target_task_terminal');
+    expect(injectAttempts).toBe(1);
+  });
+
   test('terminalizes delivery when run becomes blocked without active execution during transient retry', async () => {
     const { workflow, run, task } = await startRunWithSubscription();
     const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
