@@ -555,6 +555,8 @@ export class SpaceRuntimeService {
       thinkingLevel: config.thinkingLevel,
       systemPrompt: config.systemPrompt,
       features: config.features,
+      sdkToolsPreset: config.sdkToolsPreset,
+      allowedTools: config.allowedTools,
       disallowedTools: config.disallowedTools,
       agent: config.agent,
       agents: config.agents,

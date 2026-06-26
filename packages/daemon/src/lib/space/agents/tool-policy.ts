@@ -25,7 +25,7 @@ export function deriveWorkerDisallowedTools(
   toolProfile: readonly string[] | null | undefined,
   options: WorkerToolPolicyOptions = {}
 ): string[] {
-  if (!toolProfile) return [];
+  if (!toolProfile || toolProfile.length === 0) return [];
 
   const allowed = new Set(toolProfile);
   const restricted = [...MUTATION_TOOLS, ...(options.auxMutators ?? [])];
