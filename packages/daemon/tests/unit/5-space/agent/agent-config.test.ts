@@ -86,6 +86,7 @@ describe('PRESET_AGENT_TOOLS', () => {
     expect(tools).toContain('Read');
     expect(tools).toContain('Write');
     expect(tools).toContain('Edit');
+    expect(tools).toContain('MultiEdit');
     expect(tools).toContain('Bash');
     expect(tools).toContain('Grep');
     expect(tools).toContain('Glob');
@@ -103,6 +104,7 @@ describe('PRESET_AGENT_TOOLS', () => {
     expect(tools).toContain('Read');
     expect(tools).toContain('Write');
     expect(tools).toContain('Edit');
+    expect(tools).toContain('MultiEdit');
     expect(tools).toContain('Bash');
     expect(tools).toContain('Grep');
     expect(tools).toContain('Glob');
@@ -267,50 +269,39 @@ describe('createCustomAgentInit — sub-session features', () => {
     expect(init.features).toEqual(SUB_SESSION_FEATURES);
   });
 
-  it('reviewer init uses agents pattern, restricting tools via disallowedTools', () => {
+  it('reviewer denies mutation tools only, leaving Bash available for a follow-up guard', () => {
     const config = makeConfig(PRESET_AGENT_TOOLS.reviewer);
     const init = createCustomAgentInit(config);
 
-    // When tools are specified, the agents pattern is used
-    expect(init.agent).toBeDefined();
-    expect(init.agents).toBeDefined();
-
-    // The agent definition must NOT set `tools` — an AgentDefinition.tools
-    // allowlist would exclude MCP tools. The built-in restriction is applied
-    // via `disallowedTools` instead.
-    const agentKey = init.agent as string;
-    const agentDef = init.agents![agentKey];
-    expect(agentDef.tools).toBeUndefined();
-    expect(agentDef.disallowedTools).toContain('Write');
-    expect(agentDef.disallowedTools).toContain('Edit');
+    expect(init.sdkToolsPreset).toBeUndefined();
+    expect(init.allowedTools).toEqual(['Task', 'TaskOutput', 'TaskStop']);
+    expect(init.agent).toBeUndefined();
+    expect(init.agents).toBeUndefined();
+    expect(init.disallowedTools).toEqual(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
+    expect(init.disallowedTools).not.toContain('Bash');
   });
 
-  it('qa init uses agents pattern, restricting tools via disallowedTools', () => {
+  it('qa denies mutation tools only, leaving Bash available for running tests', () => {
     const config = makeConfig(PRESET_AGENT_TOOLS.qa);
     const init = createCustomAgentInit(config);
 
-    expect(init.agent).toBeDefined();
-    expect(init.agents).toBeDefined();
-
-    const agentKey = init.agent as string;
-    const agentDef = init.agents![agentKey];
-    expect(agentDef.tools).toBeUndefined();
-    expect(agentDef.disallowedTools).toContain('Write');
-    expect(agentDef.disallowedTools).toContain('Edit');
+    expect(init.sdkToolsPreset).toBeUndefined();
+    expect(init.allowedTools).toBeUndefined();
+    expect(init.agent).toBeUndefined();
+    expect(init.agents).toBeUndefined();
+    expect(init.disallowedTools).toEqual(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
+    expect(init.disallowedTools).not.toContain('Bash');
   });
 
-  it('coder init uses agents pattern with full tools', () => {
+  it('coder is permissive and does not set SDK tool allowlists', () => {
     const config = makeConfig(PRESET_AGENT_TOOLS.coder);
     const init = createCustomAgentInit(config);
 
-    expect(init.agent).toBeDefined();
-    expect(init.agents).toBeDefined();
-
-    const agentKey = init.agent as string;
-    const agentDef = init.agents![agentKey];
-    expect(agentDef.tools).toBeUndefined();
-    expect(agentDef.disallowedTools).not.toContain('Write');
-    expect(agentDef.disallowedTools).not.toContain('Edit');
+    expect(init.agent).toBeUndefined();
+    expect(init.agents).toBeUndefined();
+    expect(init.sdkToolsPreset).toBeUndefined();
+    expect(init.allowedTools).toBeUndefined();
+    expect(init.disallowedTools).toBeUndefined();
   });
 
   it('agent without tools uses simple preset path (no agent key)', () => {
@@ -332,12 +323,7 @@ describe('createCustomAgentInit — sub-session features', () => {
     };
     const init = createCustomAgentInit(config);
 
-    // tools path — check agent prompt contains expanded text
-    if (init.agent && init.agents) {
-      const agentKey = init.agent as string;
-      const agentDef = init.agents![agentKey];
-      expect(agentDef.prompt).toBe('Base prompt\n\nSlot expansion');
-    }
+    expect(init.systemPrompt?.append).toBe('Base prompt\n\nSlot expansion');
   });
 
   it('applies customPrompt expansion in non-tools system prompt path', () => {

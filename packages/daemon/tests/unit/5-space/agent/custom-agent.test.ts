@@ -893,7 +893,7 @@ describe('buildCustomAgentTaskMessage', () => {
 });
 
 describe('createCustomAgentInit', () => {
-  it('uses the agent prompt outside workflow runs', () => {
+  it('uses permissive SDK tool defaults when no tool profile is configured', () => {
     const init = createCustomAgentInit(
       makeConfig({
         customAgent: makeAgent({ customPrompt: 'Agent-visible prompt' }),
@@ -902,6 +902,41 @@ describe('createCustomAgentInit', () => {
 
     expect(init.systemPrompt?.type).toBe('preset');
     expect(init.systemPrompt?.append).toBe('Agent-visible prompt');
+    expect(init.sdkToolsPreset).toBeUndefined();
+    expect(init.allowedTools).toBeUndefined();
+    expect(init.disallowedTools).toBeUndefined();
+    expect(init.agent).toBeUndefined();
+    expect(init.agents).toBeUndefined();
+  });
+
+  it('denies only omitted mutation tools for configured worker profiles', () => {
+    const init = createCustomAgentInit(
+      makeConfig({
+        customAgent: makeAgent({ tools: ['Read', 'Bash', 'Grep', 'Glob'] }),
+      })
+    );
+
+    expect(init.sdkToolsPreset).toBeUndefined();
+    expect(init.allowedTools).toBeUndefined();
+    expect(init.disallowedTools).toEqual(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
+    expect(init.disallowedTools).not.toContain('Bash');
+    expect(init.disallowedTools).not.toContain('WebFetch');
+  });
+
+  it('does not exclude MCP tools when applying a restricted profile', () => {
+    const init = createCustomAgentInit(
+      makeConfig({
+        customAgent: makeAgent({ tools: ['Read'] }),
+      })
+    );
+
+    expect(init.sdkToolsPreset).toBeUndefined();
+    expect(init.allowedTools).toBeUndefined();
+    expect(init.agent).toBeUndefined();
+    expect(init.agents).toBeUndefined();
+    expect(init.disallowedTools).toEqual(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
+    expect(init.disallowedTools).not.toContain('mcp__node-agent__send_message');
+    expect(init.disallowedTools).not.toContain('space-agent-tools__send_message');
   });
 
   it('expands slot customPrompt on top of agent customPrompt inside workflow runs', () => {
@@ -1019,7 +1054,7 @@ describe('createCustomAgentInit', () => {
     });
   });
 
-  it('uses tool-restricted agent mode when tools are configured', () => {
+  it('uses visible tool profiles as mutation-only deny policy', () => {
     const init = createCustomAgentInit(
       makeConfig({
         customAgent: makeAgent({
@@ -1030,26 +1065,17 @@ describe('createCustomAgentInit', () => {
       })
     );
 
-    expect(init.agent).toBe('restricted-agent');
-    expect(init.agents).toBeDefined();
-    expect(init.agents?.['restricted-agent']?.prompt).toBe('Visible prompt');
-    // The agent definition omits `tools` — an AgentDefinition.tools allowlist
-    // would exclude MCP tools. Built-ins are restricted via `disallowedTools`.
-    expect(init.agents?.['restricted-agent']?.tools).toBeUndefined();
-    expect(init.agents?.['restricted-agent']?.disallowedTools).toEqual(
-      expect.arrayContaining(['Write', 'Edit'])
-    );
-    expect(init.agents?.['restricted-agent']?.disallowedTools).not.toContain('Read');
-    expect(init.agents?.['restricted-agent']?.disallowedTools).not.toContain('Bash');
+    expect(init.agent).toBeUndefined();
+    expect(init.agents).toBeUndefined();
     expect(init.systemPrompt?.preset).toBe('claude_code');
-    expect(init.systemPrompt?.append).toBeUndefined();
-    expect(init.sdkToolsPreset).toEqual(['Read', 'Bash']);
-    expect(init.allowedTools).toEqual(['Read', 'Bash']);
-    expect(init.disallowedTools).toEqual(
-      expect.arrayContaining(['Write', 'Edit', 'Task', 'NotebookEdit', 'TodoWrite', 'Skill'])
-    );
+    expect(init.systemPrompt?.append).toBe('Visible prompt');
+    expect(init.sdkToolsPreset).toBeUndefined();
+    expect(init.allowedTools).toBeUndefined();
+    expect(init.disallowedTools).toEqual(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
     expect(init.disallowedTools).not.toContain('Read');
     expect(init.disallowedTools).not.toContain('Bash');
+    expect(init.disallowedTools).not.toContain('Task');
+    expect(init.disallowedTools).not.toContain('Skill');
   });
 
   it('leaves session-level tool restrictions unset when no tools are configured', () => {

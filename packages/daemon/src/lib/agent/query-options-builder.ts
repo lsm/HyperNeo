@@ -109,6 +109,7 @@ const FULL_BUILTIN_TOOL_LIST = [
   'Read',
   'Write',
   'Edit',
+  'MultiEdit',
   'Bash',
   'Grep',
   'Glob',
@@ -568,7 +569,7 @@ export class QueryOptionsBuilder {
         'TaskOutput',
         'TaskStop',
       ];
-      const spaceRestrictedBuiltinTools = ['Edit', 'Write', 'NotebookEdit'];
+      const spaceRestrictedBuiltinTools = ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'];
 
       // Space chat must not use Claude Code preset prompt.
       const systemPrompt = queryOptions.systemPrompt;

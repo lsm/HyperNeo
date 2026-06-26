@@ -8,7 +8,6 @@
 
 import type { AgentSessionInit, PromptProvenanceInit } from '../../agent/agent-session';
 import type {
-  AgentDefinition,
   DeclarativeToolGuard,
   McpServerConfig,
   EvolutionLesson,
@@ -22,7 +21,6 @@ import type {
   WorkflowNode,
 } from '@neokai/shared';
 import type { SkillEnablementOverride } from '@neokai/shared';
-import { KNOWN_TOOLS } from '@neokai/shared';
 import type {
   AgentMemoryCoreEntry,
   AgentMemorySearchResult,
@@ -31,20 +29,10 @@ import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import { inferProviderForModel } from '../../providers/registry';
 import { Logger } from '../../logger';
 import { SUB_SESSION_FEATURES } from './seed-agents';
+import { deriveWorkerDisallowedTools } from './tool-policy';
 import { formatGatedHandoffCall, getSendMessageTargets } from '../runtime/gated-handoff-guidance';
 
 const DEFAULT_CUSTOM_AGENT_MODEL = 'claude-sonnet-4-6';
-
-const CLAUDE_CODE_BUILTIN_TOOLS = [
-  ...KNOWN_TOOLS,
-  'NotebookEdit',
-  'TodoWrite',
-  'AskUserQuestion',
-  'EnterPlanMode',
-  'ExitPlanMode',
-  'Skill',
-  'ToolSearch',
-] as const;
 
 /**
  * Soft size budget for the initial user message. When exceeded, a warning is
@@ -639,21 +627,15 @@ function isGateWritableFromNode(
 export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionInit {
   const { customAgent, task, space, sessionId, workspacePath, slotOverrides } = config;
 
-  const customTools =
-    customAgent.tools && customAgent.tools.length > 0 ? customAgent.tools : undefined;
-  // Built-in tools the worker agent should NOT have (everything not in its
-  // configured tool list). Expressed as a denylist so MCP tools — which are
-  // never part of `customTools` — are not collaterally excluded.
-  const customDisallowedBuiltins = customTools
-    ? CLAUDE_CODE_BUILTIN_TOOLS.filter((tool) => !customTools.includes(tool))
-    : [];
-  const customToolPermissions = customTools
-    ? {
-        sdkToolsPreset: customTools,
-        allowedTools: customTools,
-        disallowedTools: customDisallowedBuiltins,
-      }
-    : {};
+  const customTools = customAgent.tools;
+  const customDisallowedBuiltins = deriveWorkerDisallowedTools(customTools);
+  const customAgentInvocationTools = customTools?.filter((tool) =>
+    ['Task', 'TaskOutput', 'TaskStop'].includes(tool)
+  );
+  const customToolPermissions = {
+    ...(customAgentInvocationTools?.length ? { allowedTools: customAgentInvocationTools } : {}),
+    ...(customDisallowedBuiltins.length > 0 ? { disallowedTools: customDisallowedBuiltins } : {}),
+  };
   const model =
     slotOverrides?.model ?? customAgent.model ?? space.defaultModel ?? DEFAULT_CUSTOM_AGENT_MODEL;
   const thinkingLevel = slotOverrides?.thinkingLevel ?? customAgent.thinkingLevel;
@@ -673,50 +655,6 @@ export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionIn
 
   const extraMcpServers = slotOverrides?.extraMcpServers;
   const toolGuards = slotOverrides?.toolGuards;
-
-  if (customTools) {
-    const agentKey = sanitizeAgentKey(customAgent.name);
-    const agentDef: AgentDefinition = {
-      description: customAgent.description ?? `Worker agent: ${customAgent.name}`,
-      // Do NOT set `tools`. An AgentDefinition's `tools` is a strict allowlist;
-      // since `customTools` only ever contains built-in tool names, setting it
-      // here silently excludes every MCP tool (node-agent, fetch-mcp, …) that is
-      // attached to the session — which is why workflow agents could not see
-      // mcp__node-agent__* tools. Omitting `tools` inherits all tools from the
-      // parent session; the built-in restriction is still enforced via
-      // `disallowedTools`, which never matches MCP tool names.
-      disallowedTools: customDisallowedBuiltins,
-      model: 'inherit',
-      prompt: visiblePrompt,
-    };
-
-    return {
-      sessionId,
-      workspacePath,
-      systemPrompt: {
-        type: 'preset',
-        preset: 'claude_code',
-      },
-      features: SUB_SESSION_FEATURES,
-      // Include taskId on the context so long-lived node-agent sub-sessions
-      // (type: 'worker') are recognised as orchestration-state carriers and
-      // their sdkSessionId is preserved across runtime-fingerprint changes.
-      // See `AgentSession.fromInit` for the preservation guard.
-      context: { spaceId: space.id, taskId: task.id },
-      type: 'worker',
-      promptProvenance,
-      model,
-      provider,
-      thinkingLevel,
-      agent: agentKey,
-      agents: { [agentKey]: agentDef },
-      ...customToolPermissions,
-      skillOverrides,
-      mcpServers: extraMcpServers,
-      toolGuards,
-      settingSources: customAgent.settingSources ?? space.settingSources,
-    };
-  }
 
   return {
     sessionId,
@@ -808,15 +746,5 @@ function emitPromptProvenance(event: string, provenance: PromptProvenanceInit): 
       `agentId=${provenance.agentId ?? 'unknown'} agentName=${provenance.agentName ?? 'unknown'} ` +
       `workflowRunId=${provenance.workflowRunId ?? 'none'} nodeId=${provenance.nodeId ?? 'none'} ` +
       `nodeName=${provenance.nodeName ?? 'none'}`
-  );
-}
-
-function sanitizeAgentKey(name: string): string {
-  return (
-    name
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '')
-      .slice(0, 40) || 'custom-agent'
   );
 }

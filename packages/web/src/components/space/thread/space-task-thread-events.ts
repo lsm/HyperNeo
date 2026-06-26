@@ -574,7 +574,7 @@ export function buildThreadEvents(parsedRows: ParsedThreadRow[]): SpaceTaskThrea
 export interface FileOperation {
   path: string;
   /** Last tool that touched this file */
-  tool: 'Write' | 'Edit';
+  tool: 'Write' | 'Edit' | 'MultiEdit';
   /** Write: full file content written */
   content?: string;
   /** Edit: the string that was replaced */
@@ -617,6 +617,17 @@ export function extractFileOperations(parsedRows: ParsedThreadRow[]): FileOperat
         const newString = typeof input.new_string === 'string' ? input.new_string : null;
         if (path && oldString !== null && newString !== null) {
           opsByFile.set(path, { path, tool: 'Edit', oldString, newString });
+        }
+      } else if (block.name === 'MultiEdit') {
+        const path = typeof input.file_path === 'string' ? input.file_path : null;
+        const edits = Array.isArray(input.edits) ? input.edits : [];
+        const firstEdit = edits.find(
+          (edit): edit is Record<string, unknown> => typeof edit === 'object' && edit !== null
+        );
+        const oldString = typeof firstEdit?.old_string === 'string' ? firstEdit.old_string : null;
+        const newString = typeof firstEdit?.new_string === 'string' ? firstEdit.new_string : null;
+        if (path && oldString !== null && newString !== null) {
+          opsByFile.set(path, { path, tool: 'MultiEdit', oldString, newString });
         }
       }
     }

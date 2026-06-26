@@ -21,7 +21,6 @@ import type {
   SpaceWorkflowRun,
   UpdateSpaceTaskParams,
 } from '@neokai/shared';
-import { KNOWN_TOOLS } from '@neokai/shared';
 import type { MessageRecord, ActorRef } from '../../../../../messaging/src/types';
 import { canonicalAgentHandle, SpaceActorRegistryAdapter } from '../actor-registry';
 import type { ExternalEventPublishedPayload } from '../../external-events/external-event-service';
@@ -76,6 +75,7 @@ import type { ExternalEventStore } from '../../external-events/external-event-st
 import type { ExternalEventService } from '../../external-events/external-event-service';
 import type { AgentMemoryRepository } from '../../../storage/repositories/agent-memory-repository';
 import type { SDKUserMessage } from '@neokai/shared/sdk';
+import { deriveWorkerDisallowedTools } from '../agents/tool-policy';
 import type { UUID } from 'crypto';
 
 const log = new Logger('space-runtime-service');
@@ -89,17 +89,6 @@ const LONG_TERM_AGENT_SESSION_FEATURES = {
 } as const;
 
 const DEFAULT_LONG_HORIZON_AGENT_MODEL = 'claude-sonnet-4-6';
-
-const CLAUDE_CODE_BUILTIN_TOOLS = [
-  ...KNOWN_TOOLS,
-  'NotebookEdit',
-  'TodoWrite',
-  'AskUserQuestion',
-  'EnterPlanMode',
-  'ExitPlanMode',
-  'Skill',
-  'ToolSearch',
-] as const;
 
 export interface SpaceRuntimeServiceConfig {
   db: BunDatabase;
@@ -519,13 +508,10 @@ export class SpaceRuntimeService {
     space: Space,
     agent: SpaceLongHorizonAgent
   ): Partial<Session['config']> {
-    const storedTools = Array.isArray(agent.toolPermissions.tools)
+    const customTools = Array.isArray(agent.toolPermissions.tools)
       ? (agent.toolPermissions.tools.filter((tool) => typeof tool === 'string') as string[])
-      : [];
-    const customTools = storedTools.length > 0 ? storedTools : undefined;
-    const customDisallowedBuiltins = customTools
-      ? CLAUDE_CODE_BUILTIN_TOOLS.filter((tool) => !customTools.includes(tool))
-      : [];
+      : undefined;
+    const customDisallowedBuiltins = deriveWorkerDisallowedTools(customTools);
     const agentKey = sanitizeLongTermAgentKey(agent.displayName);
 
     return {
@@ -541,20 +527,19 @@ export class SpaceRuntimeService {
         append: agent.instructions,
       },
       features: LONG_TERM_AGENT_SESSION_FEATURES,
-      sdkToolsPreset: customTools,
-      allowedTools: customTools,
-      disallowedTools: customTools ? customDisallowedBuiltins : undefined,
-      agent: customTools ? agentKey : undefined,
-      agents: customTools
-        ? {
-            [agentKey]: {
-              description: `Long-horizon Space agent: ${agent.displayName}`,
-              disallowedTools: customDisallowedBuiltins,
-              model: 'inherit',
-              prompt: agent.instructions,
-            } satisfies AgentDefinition,
-          }
-        : undefined,
+      disallowedTools: customDisallowedBuiltins.length > 0 ? customDisallowedBuiltins : undefined,
+      agent: customDisallowedBuiltins.length > 0 ? agentKey : undefined,
+      agents:
+        customDisallowedBuiltins.length > 0
+          ? {
+              [agentKey]: {
+                description: `Long-horizon Space agent: ${agent.displayName}`,
+                disallowedTools: customDisallowedBuiltins,
+                model: 'inherit',
+                prompt: agent.instructions,
+              } satisfies AgentDefinition,
+            }
+          : undefined,
       settingSources: agent.settingSources ?? space.settingSources,
     };
   }
@@ -654,52 +639,48 @@ export class SpaceRuntimeService {
     const sessionId = longTermAgentSessionId(actor.spaceId, agentId);
     let session = await sessionManager.getSessionAsync(sessionId);
     const created = !session;
+    const resolvedPrompt = resolveCustomAgentPrompt(agent, {
+      resolutionContext: { agentId: agent.id, agentName: agent.name },
+    });
+    const customTools = agent.tools;
+    const customDisallowedBuiltins = deriveWorkerDisallowedTools(customTools);
+    const agentKey = sanitizeLongTermAgentKey(agent.name);
+    const regularAgentConfig: Partial<Session['config']> = {
+      model: agent.model ?? space.defaultModel,
+      provider: agent.provider as Session['config']['provider'],
+      thinkingLevel: agent.thinkingLevel,
+      systemPrompt: {
+        type: 'preset',
+        preset: 'claude_code',
+        append: resolvedPrompt.value,
+      },
+      features: LONG_TERM_AGENT_SESSION_FEATURES,
+      sdkToolsPreset: undefined,
+      allowedTools: undefined,
+      disallowedTools: customDisallowedBuiltins.length > 0 ? customDisallowedBuiltins : undefined,
+      agent: customDisallowedBuiltins.length > 0 ? agentKey : undefined,
+      agents:
+        customDisallowedBuiltins.length > 0
+          ? {
+              [agentKey]: {
+                description: agent.description ?? `Space agent: ${agent.name}`,
+                disallowedTools: customDisallowedBuiltins,
+                model: 'inherit',
+                prompt: resolvedPrompt.value,
+              } satisfies AgentDefinition,
+            }
+          : undefined,
+      settingSources: agent.settingSources ?? space.settingSources,
+    };
     if (!session) {
-      const resolvedPrompt = resolveCustomAgentPrompt(agent, {
-        resolutionContext: { agentId: agent.id, agentName: agent.name },
-      });
-      const customTools = agent.tools && agent.tools.length > 0 ? agent.tools : undefined;
-      const customDisallowedBuiltins = customTools
-        ? CLAUDE_CODE_BUILTIN_TOOLS.filter((tool) => !customTools.includes(tool))
-        : [];
       try {
-        const agentKey = sanitizeLongTermAgentKey(agent.name);
         await sessionManager.createSession({
           sessionId,
           workspacePath: space.workspacePath,
           title: agent.name,
           spaceId: space.id,
           worktreeMode: 'direct',
-          config: {
-            model: agent.model ?? space.defaultModel,
-            provider: agent.provider as Session['config']['provider'],
-            thinkingLevel: agent.thinkingLevel,
-            systemPrompt: {
-              type: 'preset',
-              preset: 'claude_code',
-              append: resolvedPrompt.value,
-            },
-            features: LONG_TERM_AGENT_SESSION_FEATURES,
-            ...(customTools
-              ? {
-                  sdkToolsPreset: customTools,
-                  allowedTools: customTools,
-                  disallowedTools: customDisallowedBuiltins,
-                }
-              : {}),
-            agent: customTools ? agentKey : undefined,
-            agents: customTools
-              ? {
-                  [agentKey]: {
-                    description: agent.description ?? `Space agent: ${agent.name}`,
-                    disallowedTools: customDisallowedBuiltins,
-                    model: 'inherit',
-                    prompt: resolvedPrompt.value,
-                  } satisfies AgentDefinition,
-                }
-              : undefined,
-            settingSources: agent.settingSources ?? space.settingSources,
-          },
+          config: regularAgentConfig,
         });
       } catch (err) {
         session = await sessionManager.getSessionAsync(sessionId);
@@ -719,6 +700,9 @@ export class SpaceRuntimeService {
           },
         },
       });
+    } else {
+      await session.updateConfig(regularAgentConfig);
+      await session.resetQuery({ restartQuery: true });
     }
     if (created || this.missingLongTermAgentMcpServers(session)) {
       this.attachLongTermAgentMcpServers(session, space, agent.name, sessionId, agent);

@@ -7,6 +7,7 @@ export const testerAgent: AgentDefinition = {
     'Read',
     'Write',
     'Edit',
+    'MultiEdit',
     'Bash',
     'Grep',
     'Glob',
