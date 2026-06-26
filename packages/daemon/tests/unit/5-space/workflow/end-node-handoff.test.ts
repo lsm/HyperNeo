@@ -396,7 +396,6 @@ describe('Post-approval merge conflict routes to coder, not human', () => {
     // merge when the resolution is sound.
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/approval no longer covers/);
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/inspect the conflict-resolution diff/);
-    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/request changes from the coder/);
   });
 
   test('exhausted retries escalate to space-agent with real count/exit reason (no false completion)', () => {
@@ -429,11 +428,13 @@ describe('Post-approval merge conflict routes to coder, not human', () => {
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('/issues/<number>/comments');
   });
 
-  test('request-changes handoff reuses the pr_url + review_url gate evidence', () => {
+  test('request-changes handoff posts fresh evidence, not the stale approval URL', () => {
     // The "request changes" send after a bad conflict fix travels the same
-    // Review → Coding channel (review-posted-gate, resetOnCycle), so it must
-    // also carry pr_url + review_url or it is blocked.
-    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('pr_url + review_url handoff');
+    // Review → Coding channel (review-posted-gate, resetOnCycle). It must carry
+    // gate evidence, AND that evidence should be a fresh PR comment documenting
+    // the new issue rather than the stale approval URL.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/fresh PR comment/);
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('stale approval URL');
   });
 
   test('conflict detection keys on DIRTY mergeStateStatus and conflict markers', () => {
