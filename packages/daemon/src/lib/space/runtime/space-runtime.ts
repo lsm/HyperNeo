@@ -34,6 +34,7 @@ import type {
   WorkflowChannel,
   WorkflowNode,
 } from '@neokai/shared';
+import type { SDKMessage } from '@neokai/shared/sdk';
 import {
   computeGateDefaults,
   isChannelCyclic,
@@ -84,6 +85,14 @@ import {
 import { evaluateGate } from './gate-evaluator';
 import { executeGateScript } from './gate-script-executor';
 import { classifyLastMessageForIdleAgent } from './last-message-classifier';
+import {
+  COMPACT_RESULT_TIMEOUT_MS,
+  MAX_PROMPT_TOO_LONG_RECOVERY_ATTEMPTS,
+  buildPromptTooLongContinueNag,
+  createPromptTooLongRecoveryState,
+  isPromptTooLongResult,
+  type PromptTooLongRecoveryState,
+} from './prompt-too-long-recovery';
 import type { SelectWorkflowWithLlm } from './llm-workflow-selector';
 import type {
   InternalEventBus,
@@ -980,6 +989,13 @@ export class SpaceRuntime {
    * can be nudged/restarted without touching sibling agents.
    */
   private agentStuckRecovery = new Map<string, AgentStuckRecoveryState>();
+
+  /**
+   * Prompt-too-long recovery state keyed by `${runId}:${nodeExecutionId}`.
+   * Tracks compact-then-continue progress for executions that overflowed their
+   * context window and received a terminal `prompt_too_long` result.
+   */
+  private promptTooLongRecovery = new Map<string, PromptTooLongRecoveryState>();
   private readonly toolContinuationRepo: ToolContinuationRecoveryRepository;
   private readonly topicTrie = new TopicTrie<SubscriptionTarget>();
   private readonly pendingExternalEventQueue = new Map<string, PendingExternalEvent[]>();
@@ -5154,6 +5170,11 @@ export class SpaceRuntime {
         this.nonTerminalIdleStates.delete(key);
       }
     }
+    for (const key of this.promptTooLongRecovery.keys()) {
+      if (key.startsWith(runId + ':')) {
+        this.promptTooLongRecovery.delete(key);
+      }
+    }
   }
 
   private getAgentNoProgressThresholdMs(workflow: SpaceWorkflow, execution: NodeExecution): number {
@@ -5196,6 +5217,365 @@ export class SpaceRuntime {
       'Continue the same task from the current repository and workflow state. Inspect task/workflow status, recent messages, git state, PR state, and artifacts as needed before acting. Do not start from scratch blindly.',
       'If you are blocked, report the blocker clearly through the available workflow tools.',
     ].join('\n');
+  }
+
+  /**
+   * Compact-then-continue recovery for an idle execution that overflowed its
+   * context window (terminal `prompt_too_long` result).
+   *
+   * State machine (keyed by `${runId}:${executionId}`):
+   *  - prompt-too-long & awaitingContinue (compact in flight) & no result yet &
+   *    within timeout → wait.
+   *  - awaitingContinue & a `result` landed → clear the wait; if the result is
+   *    non-overflow, mark continueNagPending; if overflow, re-compact/escalate.
+   *  - awaitingContinue past COMPACT_RESULT_TIMEOUT_MS with no result → the
+   *    compact turn hung → escalate to blocked.
+   *  - prompt-too-long & not awaiting & attempts < MAX → inject `/compact`.
+   *  - prompt-too-long & attempts >= MAX → escalate to blocked.
+   *  - continueNagPending → deliver the resume nag; on success reset
+   *    compactAttempts (productive compaction) and clear; on failure retry,
+   *    bounded, then escalate.
+   *
+   * The wait clears ONLY on a `result` message (real turn completion) — not an
+   * intermediate `status: 'compacting'` row — so the resume nag is never sent
+   * mid-compaction. `compactAttempts` counts consecutive *unproductive*
+   * compactions and resets on a productive resume, so a long-running worker is
+   * not penalised for stale recovery history.
+   */
+  private async recoverPromptTooLongIdleExecution(
+    runId: string,
+    spaceId: string,
+    canonicalTask: SpaceTask,
+    execution: NodeExecution,
+    lastMessage: SDKMessage | null | undefined,
+    manager: TaskAgentManager | undefined
+  ): Promise<'handled' | 'blocked'> {
+    const key = `${runId}:${execution.id}`;
+    const sessionId = execution.agentSessionId;
+    const now = Date.now();
+    const state = this.promptTooLongRecovery.get(key) ?? createPromptTooLongRecoveryState();
+    this.promptTooLongRecovery.set(key, state);
+
+    const lastMessageDbId = (lastMessage as { dbId?: string } | null | undefined)?.dbId ?? null;
+    const lastMessageIsResult =
+      !!lastMessage && (lastMessage as { type?: string }).type === 'result';
+    const overflowed = isPromptTooLongResult(lastMessage);
+    const lastMessageIsSuccessResult =
+      lastMessageIsResult && !(lastMessage as { is_error?: boolean }).is_error;
+
+    // The `/compact` turn landed a RESULT (real completion — not an intermediate
+    // status/compact_boundary row). End the wait and re-evaluate.
+    let compactJustFailed = false;
+    if (
+      state.awaitingContinue &&
+      lastMessageIsResult &&
+      state.awaitingContinueAfterDbId !== null &&
+      lastMessageDbId !== state.awaitingContinueAfterDbId
+    ) {
+      state.awaitingContinue = false;
+      state.awaitingContinueAfterDbId = null;
+      state.awaitingContinueSince = null;
+      // Only a SUCCESS result proves compaction shrank the context — queue the
+      // resume nag and record this result as the resume anchor. A non-overflow
+      // ERROR result (model/auth/rate-limit) means compaction failed; route it to
+      // re-compact/escalate instead of resuming into an unchanged, still-over-limit
+      // context.
+      if (lastMessageIsSuccessResult) {
+        state.continueNagPending = true;
+        state.awaitingResumeAfterDbId = lastMessageDbId;
+      } else if (!overflowed) {
+        compactJustFailed = true;
+      }
+      // A fresh overflow result falls through with `overflowed` to re-compact.
+    }
+
+    // Resume-nag wait: after the continue nag is delivered it is an enqueued
+    // user message invisible to getLastSDKMessage, so the sweep keeps seeing the
+    // compact-success anchor until the resumed turn advances. Hold the recovery
+    // open (preventing the terminal-skip from clearing the state and resetting
+    // compactAttempts prematurely). When the resumed turn produces a RESULT:
+    //  - SUCCESS → productive, clear the recovery state (fresh next time);
+    //  - prompt-too-long → re-compact/escalate with attempts PRESERVED;
+    //  - non-overflow ERROR (auth/rate-limit/model) → route to re-compact/escalate
+    //    (not silently cleared as productive — the resume failed, and a persistent
+    //    error escalates to blocked at the cap rather than leaving the run idle).
+    //
+    // The wait is bounded by COMPACT_RESULT_TIMEOUT_MS: if the resumed turn never
+    // produces a result (provider hang / session died after consuming the nag),
+    // escalate — the execution is `idle`, so the alive-stuck sweep cannot rescue it.
+    //
+    // The wait clears ONLY on a RESULT from the resumed turn — not on the
+    // consumed continue nag itself (a user message), which getLastSDKMessage
+    // briefly returns before the resumed API call returns.
+    if (state.awaitingResume && state.awaitingResumeAfterDbId !== null) {
+      // Process a visible resumed-turn RESULT before the timeout — a turn that
+      // legitimately took longer than the window (e.g. tick loop paused) but
+      // did complete must not be mis-blocked. Timeout fires only when NO result
+      // has landed (mirrors the /compact wait's result-first ordering).
+      if (lastMessageIsResult && lastMessageDbId !== state.awaitingResumeAfterDbId) {
+        state.awaitingResume = false;
+        state.awaitingResumeAfterDbId = null;
+        state.awaitingResumeSince = null;
+        state.awaitingResumeLastProgressDbId = null;
+        if (lastMessageIsSuccessResult) {
+          // Productive — real progress. Clear the recovery state (fresh next time).
+          this.promptTooLongRecovery.delete(key);
+          return 'handled';
+        }
+        // Overflow (fall through with `overflowed`) OR non-overflow error: the
+        // resume did not make progress → re-compact/escalate with attempts preserved.
+        if (!overflowed) {
+          compactJustFailed = true;
+        }
+      } else {
+        // No resumed-turn result yet. Refresh the timeout clock ONLY when a NEW
+        // progress message appears (dbId differs from the anchor AND from the
+        // last progress dbId). Refreshing on every tick for an unchanged row
+        // would let a turn that hung after producing one message never time out.
+        if (
+          lastMessageDbId !== state.awaitingResumeAfterDbId &&
+          lastMessageDbId !== state.awaitingResumeLastProgressDbId &&
+          state.awaitingResumeSince !== null
+        ) {
+          state.awaitingResumeSince = now;
+          state.awaitingResumeLastProgressDbId = lastMessageDbId;
+        }
+        if (
+          state.awaitingResumeSince !== null &&
+          now - state.awaitingResumeSince > COMPACT_RESULT_TIMEOUT_MS
+        ) {
+          const reason = `Context-overflow recovery timed out: the resumed turn did not produce a result within ${COMPACT_RESULT_TIMEOUT_MS / 1000}s for agent ${execution.agentName}.`;
+          await this.escalatePromptTooLongBlocked(
+            runId,
+            spaceId,
+            canonicalTask,
+            execution,
+            now,
+            reason,
+            manager
+          );
+          return 'blocked';
+        }
+        return 'handled'; // nag enqueued/consumed but resumed turn hasn't produced a result
+      }
+    }
+
+    // Bound the post-compact wait: if the /compact turn produced no result
+    // within the timeout, it hung — escalate (the execution is `idle`, so the
+    // alive-stuck sweep cannot rescue it).
+    if (
+      state.awaitingContinue &&
+      state.awaitingContinueSince !== null &&
+      now - state.awaitingContinueSince > COMPACT_RESULT_TIMEOUT_MS
+    ) {
+      const reason = `Context-overflow recovery timed out: the /compact turn did not produce a result within ${COMPACT_RESULT_TIMEOUT_MS / 1000}s for agent ${execution.agentName}.`;
+      await this.escalatePromptTooLongBlocked(
+        runId,
+        spaceId,
+        canonicalTask,
+        execution,
+        now,
+        reason,
+        manager
+      );
+      return 'blocked';
+    }
+
+    // Re-compact/escalate on a fresh overflow OR a just-failed compaction
+    // (non-overflow error result). Both mean compaction did not shrink the
+    // context enough. Also re-enter on a pending retry after a previously failed
+    // injection (compactRetryPending) — a non-overflow-error last message
+    // wouldn't otherwise re-enter the gate.
+    if (overflowed || compactJustFailed || state.compactRetryPending) {
+      state.compactRetryPending = false;
+      // `/compact` still in flight — wait for the result.
+      if (state.awaitingContinue) {
+        return 'handled';
+      }
+      if (state.compactAttempts >= MAX_PROMPT_TOO_LONG_RECOVERY_ATTEMPTS) {
+        const reason =
+          compactJustFailed || state.compactRetryPending
+            ? `Context-overflow recovery: /compact failed (non-overflow error) after ${state.compactAttempts} attempt(s) for agent ${execution.agentName}.`
+            : `Context overflow ("prompt is too long") could not be resolved after ${state.compactAttempts} compaction attempt(s); agent ${execution.agentName} cannot make progress.`;
+        await this.escalatePromptTooLongBlocked(
+          runId,
+          spaceId,
+          canonicalTask,
+          execution,
+          now,
+          reason,
+          manager
+        );
+        return 'blocked';
+      }
+      // Compact FIRST, then continue on a later tick. Count the attempt toward
+      // the cap up front so a session that cannot receive the compact still
+      // escalates. Only mark awaiting after a successful injection.
+      state.compactAttempts += 1;
+      let injectedDbId: string | null = null;
+      try {
+        injectedDbId =
+          (await manager?.injectRuntimeRecoveryMessage(sessionId!, '/compact')) ?? null;
+      } catch (err) {
+        log.warn(
+          `SpaceRuntime: failed to inject /compact for overflowed execution ${execution.id} ` +
+            `(session ${sessionId}): ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+      if (injectedDbId !== null) {
+        state.awaitingContinue = true;
+        // Anchor the wait on the PRE-COMPACT last message (the overflow result),
+        // NOT the injected `/compact`. `getLastSDKMessage` excludes user messages
+        // saved with send_status='enqueued' (sdk-message-repository.ts:995), and
+        // injectRuntimeRecoveryMessage enqueues the `/compact` — so the injected
+        // row is invisible to getLastSDKMessage until the SDK consumes it. While
+        // the `/compact` is in flight, getLastSDKMessage keeps returning this
+        // pre-compact result; the wait clears only when a newer consumed/result
+        // row lands (the compacted turn's output).
+        state.awaitingContinueAfterDbId = lastMessageDbId;
+        state.awaitingContinueSince = now;
+        log.warn(
+          `SpaceRuntime: injected /compact for overflowed execution ${execution.id} ` +
+            `(agent ${execution.agentName}, session ${sessionId}, attempt ${state.compactAttempts}/${MAX_PROMPT_TOO_LONG_RECOVERY_ATTEMPTS})`
+        );
+      } else {
+        // Injection failed — preserve a retryable flag so the next tick re-enters
+        // (a non-overflow-error last message wouldn't re-enter the gate on its own).
+        state.compactRetryPending = true;
+        log.warn(
+          `SpaceRuntime: could not inject /compact for overflowed execution ${execution.id} ` +
+            `(session ${sessionId}); will retry or escalate on the next tick`
+        );
+      }
+      return 'handled';
+    }
+
+    // Not prompt-too-long. If a `/compact` is still in flight (no result yet),
+    // wait for the post-compact result.
+    if (state.awaitingContinue) {
+      return 'handled';
+    }
+
+    // Compaction succeeded — deliver the resume nag (retryable on failure so a
+    // transient/absent injection is not silently swallowed). On success the
+    // compaction was productive: reset compactAttempts so a long-running worker
+    // that legitimately re-fills context is not blocked by stale history.
+    if (state.continueNagPending) {
+      let nagDelivered = false;
+      try {
+        nagDelivered =
+          !!(await manager?.injectRuntimeRecoveryMessage(
+            sessionId!,
+            buildPromptTooLongContinueNag()
+          )) && !!manager;
+      } catch (err) {
+        log.warn(
+          `SpaceRuntime: failed to inject continue nag for execution ${execution.id} ` +
+            `(session ${sessionId}): ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+      if (nagDelivered) {
+        state.continueNagPending = false;
+        state.continueNagAttempts = 0;
+        // compactAttempts is NOT reset here (see awaitingResume handling above).
+        // The delivered nag is an enqueued user message invisible to
+        // getLastSDKMessage, so awaitingResume holds the recovery open until the
+        // resumed turn actually advances — preventing the terminal-skip from
+        // clearing the state (and resetting attempts) while the nag is in flight.
+        state.awaitingResume = true;
+        state.awaitingResumeSince = now;
+        log.warn(
+          `SpaceRuntime: injected continue nag after compaction for execution ${execution.id} (agent ${execution.agentName}, session ${sessionId})`
+        );
+      } else {
+        state.continueNagAttempts += 1;
+        if (state.continueNagAttempts >= MAX_PROMPT_TOO_LONG_RECOVERY_ATTEMPTS) {
+          const reason = `Context-overflow recovery could not deliver the resume nag to agent ${execution.agentName} after ${state.continueNagAttempts} attempts (session unavailable).`;
+          await this.escalatePromptTooLongBlocked(
+            runId,
+            spaceId,
+            canonicalTask,
+            execution,
+            now,
+            reason,
+            manager
+          );
+          return 'blocked';
+        }
+        log.warn(
+          `SpaceRuntime: continue nag delivery failed for execution ${execution.id} ` +
+            `(session ${sessionId}); will retry (attempt ${state.continueNagAttempts}/${MAX_PROMPT_TOO_LONG_RECOVERY_ATTEMPTS})`
+        );
+      }
+      return 'handled';
+    }
+
+    // No active recovery phase and not overflowing — nothing to recover.
+    this.promptTooLongRecovery.delete(key);
+    return 'handled';
+  }
+
+  /**
+   * Shared escalation: mark the execution + run `blocked`, notify, and clear the
+   * prompt-too-long recovery state.
+   */
+  private async escalatePromptTooLongBlocked(
+    runId: string,
+    spaceId: string,
+    canonicalTask: SpaceTask,
+    execution: NodeExecution,
+    now: number,
+    reason: string,
+    manager: TaskAgentManager | undefined
+  ): Promise<void> {
+    const key = `${runId}:${execution.id}`;
+    // Cancel the (possibly still-running) session before detaching. A timed-out
+    // /compact or resumed turn may still be processing; leaving it alive while the
+    // bounded blocked-run retry spawns a fresh agent would run two sessions
+    // concurrently for one execution.
+    if (execution.agentSessionId) {
+      try {
+        manager?.cancelBySessionId?.(execution.agentSessionId);
+      } catch (err) {
+        log.warn(
+          `SpaceRuntime: failed to cancel session ${execution.agentSessionId} during prompt-too-long escalation: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+    }
+    this.promptTooLongRecovery.delete(key);
+    this.config.nodeExecutionRepo.update(execution.id, {
+      status: 'blocked',
+      result: reason,
+      // Detach the overflowed session. Its context is exhausted, so reusing it
+      // would just re-overflow. Clearing the id lets the bounded blocked-run
+      // retry (attemptBlockedRunRecovery) spawn fresh on retry instead of
+      // resurrecting this terminal-overflow session into a stuck in_progress.
+      agentSessionId: null,
+    });
+    await this.transitionRunStatusAndEmit(runId, 'blocked');
+    await this.updateTaskAndEmit(spaceId, canonicalTask.id, {
+      status: 'blocked',
+      result: reason,
+      blockReason: 'execution_failed',
+      completedAt: null,
+    });
+    await this.safeNotify({
+      kind: 'task_blocked',
+      spaceId,
+      taskId: canonicalTask.id,
+      reason,
+      timestamp: new Date(now).toISOString(),
+    });
+    await this.safeNotify({
+      kind: 'workflow_run_blocked',
+      spaceId,
+      runId,
+      reason,
+      timestamp: new Date(now).toISOString(),
+    });
+    log.warn(
+      `SpaceRuntime: blocked execution ${execution.id} (agent ${execution.agentName}) — ${reason}`
+    );
   }
 
   private async handleAliveStuckExecutions(
@@ -6370,8 +6750,35 @@ export class SpaceRuntime {
       const lastMessage = this.getSdkMessageRepo().getLastSDKMessage(sessionId);
       const classification = classifyLastMessageForIdleAgent(lastMessage);
       const key = `${runId}:${execution.id}`;
+      // Prompt-too-long recovery takes priority over both the terminal-skip and
+      // the generic non-terminal idle path. It must fire for a terminal overflow
+      // result, while awaiting a post-compact result, and while a resume nag is
+      // pending (retryable) — regardless of whether the latest message is
+      // classified as terminal.
+      const ptlState = this.promptTooLongRecovery.get(key);
+      if (
+        isPromptTooLongResult(lastMessage) ||
+        ptlState?.awaitingContinue ||
+        ptlState?.continueNagPending ||
+        ptlState?.awaitingResume ||
+        ptlState?.compactRetryPending
+      ) {
+        const manager = tam ?? this.config.taskAgentManager;
+        const outcome = await this.recoverPromptTooLongIdleExecution(
+          runId,
+          spaceId,
+          canonicalTask,
+          execution,
+          lastMessage,
+          manager
+        );
+        if (outcome === 'blocked') return 'blocked';
+        preservedAny = true;
+        continue;
+      }
       if (classification.terminal) {
         this.nonTerminalIdleStates.delete(key);
+        this.promptTooLongRecovery.delete(key);
         continue;
       }
 
