@@ -7,6 +7,7 @@ export const coderAgent: AgentDefinition = {
     'Read',
     'Edit',
     'Write',
+    'MultiEdit',
     'Grep',
     'Glob',
     'Bash',

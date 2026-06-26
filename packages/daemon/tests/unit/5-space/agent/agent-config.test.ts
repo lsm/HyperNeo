@@ -274,7 +274,7 @@ describe('createCustomAgentInit — sub-session features', () => {
     const init = createCustomAgentInit(config);
 
     expect(init.sdkToolsPreset).toBeUndefined();
-    expect(init.allowedTools).toBeUndefined();
+    expect(init.allowedTools).toEqual(['Task', 'TaskOutput', 'TaskStop']);
     expect(init.agent).toBeUndefined();
     expect(init.agents).toBeUndefined();
     expect(init.disallowedTools).toEqual(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);

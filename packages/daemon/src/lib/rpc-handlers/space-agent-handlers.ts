@@ -67,6 +67,7 @@ function extractTools(session: Session): string[] | undefined {
     'Read',
     'Write',
     'Edit',
+    'MultiEdit',
     'Bash',
     'Grep',
     'Glob',

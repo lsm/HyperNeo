@@ -6,6 +6,7 @@ export const debuggerAgent: AgentDefinition = {
     'Read',
     'Write',
     'Edit',
+    'MultiEdit',
     'Grep',
     'Glob',
     'Bash',

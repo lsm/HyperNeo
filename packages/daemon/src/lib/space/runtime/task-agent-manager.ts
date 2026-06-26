@@ -47,6 +47,7 @@ import type {
   MessageOrigin,
   WorkflowNode,
   WorkflowNodeAgent,
+  Session,
 } from '@neokai/shared';
 import type { AppMcpLifecycleManager } from '../../mcp/app-mcp-lifecycle-manager';
 import type { SkillsManager } from '../../skills-manager';
@@ -981,6 +982,20 @@ export class TaskAgentManager {
                 });
               }
             }
+
+            await existing.updateConfig({
+              model: init.model,
+              provider: init.provider as Session['config']['provider'],
+              thinkingLevel: init.thinkingLevel,
+              systemPrompt: init.systemPrompt,
+              features: init.features,
+              sdkToolsPreset: init.sdkToolsPreset,
+              allowedTools: init.allowedTools,
+              disallowedTools: init.disallowedTools,
+              agent: init.agent,
+              agents: init.agents,
+              settingSources: init.settingSources,
+            });
 
             // P1-4: Rebuild the node-agent MCP server with the new node context.
             //

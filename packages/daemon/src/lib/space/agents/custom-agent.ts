@@ -629,8 +629,13 @@ export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionIn
 
   const customTools = customAgent.tools;
   const customDisallowedBuiltins = deriveWorkerDisallowedTools(customTools);
-  const customToolPermissions =
-    customDisallowedBuiltins.length > 0 ? { disallowedTools: customDisallowedBuiltins } : {};
+  const customAgentInvocationTools = customTools?.filter((tool) =>
+    ['Task', 'TaskOutput', 'TaskStop'].includes(tool)
+  );
+  const customToolPermissions = {
+    ...(customAgentInvocationTools?.length ? { allowedTools: customAgentInvocationTools } : {}),
+    ...(customDisallowedBuiltins.length > 0 ? { disallowedTools: customDisallowedBuiltins } : {}),
+  };
   const model =
     slotOverrides?.model ?? customAgent.model ?? space.defaultModel ?? DEFAULT_CUSTOM_AGENT_MODEL;
   const thinkingLevel = slotOverrides?.thinkingLevel ?? customAgent.thinkingLevel;

@@ -639,49 +639,48 @@ export class SpaceRuntimeService {
     const sessionId = longTermAgentSessionId(actor.spaceId, agentId);
     let session = await sessionManager.getSessionAsync(sessionId);
     const created = !session;
+    const resolvedPrompt = resolveCustomAgentPrompt(agent, {
+      resolutionContext: { agentId: agent.id, agentName: agent.name },
+    });
+    const customTools = agent.tools;
+    const customDisallowedBuiltins = deriveWorkerDisallowedTools(customTools);
+    const agentKey = sanitizeLongTermAgentKey(agent.name);
+    const regularAgentConfig: Partial<Session['config']> = {
+      model: agent.model ?? space.defaultModel,
+      provider: agent.provider as Session['config']['provider'],
+      thinkingLevel: agent.thinkingLevel,
+      systemPrompt: {
+        type: 'preset',
+        preset: 'claude_code',
+        append: resolvedPrompt.value,
+      },
+      features: LONG_TERM_AGENT_SESSION_FEATURES,
+      sdkToolsPreset: undefined,
+      allowedTools: undefined,
+      disallowedTools: customDisallowedBuiltins.length > 0 ? customDisallowedBuiltins : undefined,
+      agent: customDisallowedBuiltins.length > 0 ? agentKey : undefined,
+      agents:
+        customDisallowedBuiltins.length > 0
+          ? {
+              [agentKey]: {
+                description: agent.description ?? `Space agent: ${agent.name}`,
+                disallowedTools: customDisallowedBuiltins,
+                model: 'inherit',
+                prompt: resolvedPrompt.value,
+              } satisfies AgentDefinition,
+            }
+          : undefined,
+      settingSources: agent.settingSources ?? space.settingSources,
+    };
     if (!session) {
-      const resolvedPrompt = resolveCustomAgentPrompt(agent, {
-        resolutionContext: { agentId: agent.id, agentName: agent.name },
-      });
-      const customTools = agent.tools;
-      const customDisallowedBuiltins = deriveWorkerDisallowedTools(customTools);
       try {
-        const agentKey = sanitizeLongTermAgentKey(agent.name);
         await sessionManager.createSession({
           sessionId,
           workspacePath: space.workspacePath,
           title: agent.name,
           spaceId: space.id,
           worktreeMode: 'direct',
-          config: {
-            model: agent.model ?? space.defaultModel,
-            provider: agent.provider as Session['config']['provider'],
-            thinkingLevel: agent.thinkingLevel,
-            systemPrompt: {
-              type: 'preset',
-              preset: 'claude_code',
-              append: resolvedPrompt.value,
-            },
-            features: LONG_TERM_AGENT_SESSION_FEATURES,
-            ...(customDisallowedBuiltins.length > 0
-              ? {
-                  disallowedTools: customDisallowedBuiltins,
-                }
-              : {}),
-            agent: customDisallowedBuiltins.length > 0 ? agentKey : undefined,
-            agents:
-              customDisallowedBuiltins.length > 0
-                ? {
-                    [agentKey]: {
-                      description: agent.description ?? `Space agent: ${agent.name}`,
-                      disallowedTools: customDisallowedBuiltins,
-                      model: 'inherit',
-                      prompt: resolvedPrompt.value,
-                    } satisfies AgentDefinition,
-                  }
-                : undefined,
-            settingSources: agent.settingSources ?? space.settingSources,
-          },
+          config: regularAgentConfig,
         });
       } catch (err) {
         session = await sessionManager.getSessionAsync(sessionId);
@@ -701,6 +700,8 @@ export class SpaceRuntimeService {
           },
         },
       });
+    } else {
+      await session.updateConfig(regularAgentConfig);
     }
     if (created || this.missingLongTermAgentMcpServers(session)) {
       this.attachLongTermAgentMcpServers(session, space, agent.name, sessionId, agent);

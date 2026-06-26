@@ -44,6 +44,7 @@ const FULL_CODING_TOOLS: ToolName[] = [
   'Read',
   'Write',
   'Edit',
+  'MultiEdit',
   'Bash',
   'Grep',
   'Glob',
