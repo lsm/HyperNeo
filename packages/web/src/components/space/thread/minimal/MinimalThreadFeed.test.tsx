@@ -2767,9 +2767,10 @@ describe('MinimalThreadFeed', () => {
           label: 'Coder Agent',
           createdAt: t + 50,
           messageType: 'system',
-          message: operationalSystemMessage('s1', 'thinking_tokens', {
-            estimated_tokens: 5000,
-            estimated_tokens_delta: 100,
+          message: operationalSystemMessage('s1', 'model_refusal_fallback', {
+            content: 'Retried with fallback model',
+            original_model: 'claude-opus-4-5',
+            fallback_model: 'claude-sonnet-4-5',
           }),
         }),
         makeRow({
@@ -2796,14 +2797,20 @@ describe('MinimalThreadFeed', () => {
 
       render(<MinimalThreadFeed parsedRows={rows} />);
 
-      // The error bubble is visible with the red treatment.
-      const bubble = screen.getByTestId('minimal-thread-agent-bubble');
-      expect(bubble.getAttribute('data-result-error')).toBe('true');
-      // The tool_use survives the system-row split and appears in the roster
-      // with its folded task status.
-      const entry = screen.getByTestId('minimal-thread-roster-entry');
-      expect(entry.dataset.taskStatus).toBe('failed');
-      expect(entry.textContent).toContain('tests failed');
+      // The system-row split creates two completed turns in chronological
+      // order around the thinking_tokens card: a tool_use-only turn (kept by
+      // the roster-content filter from #2188) and the error turn.
+      const bubbles = screen.getAllByTestId('minimal-thread-agent-bubble');
+      expect(bubbles).toHaveLength(2);
+      // Turn 1 (tool_use): roster shows the folded task status.
+      const toolEntry = screen.getByTestId('minimal-thread-roster-entry');
+      expect(toolEntry.dataset.taskStatus).toBe('failed');
+      expect(toolEntry.textContent).toContain('tests failed');
+      // Turn 2 (error): red bubble + inline error summary.
+      const errorBubble = bubbles.find((b) => b.getAttribute('data-result-error') === 'true');
+      expect(errorBubble).toBeDefined();
+      const summary = screen.getByTestId('minimal-thread-result-error-summary');
+      expect(summary.textContent).toContain('something failed');
       // No standalone task_notification duplicating the roster.
       expect(screen.queryByText('Task failed')).toBeNull();
     });

@@ -1402,11 +1402,7 @@ function buildFeedTurns(
         subtype !== 'task_notification' &&
         buildOperationalSystemTurn(row, false, rosteredActiveToolUseIds)
       ) {
-        // Mirror the main loop: only flush text-bearing slices so tool_use-only
-        // fragments aren't orphaned before the result arrives.
-        if (extractLastAssistantText(pendingAgentRows).text.length > 0) {
-          flush();
-        }
+        flush();
         continue;
       }
       pendingAgentRows.push(row);
@@ -1506,14 +1502,7 @@ function buildFeedTurns(
         rosteredToolUseIds
       );
       if (operationalSystemTurn) {
-        // Don't orphan tool_use-only fragments: only flush when the pending
-        // slice has reply text. A tool_use-only slice would be dropped by the
-        // empty-body filter, losing its tools from the eventual error turn's
-        // roster. Keeping it pending lets the tool_use fold into whatever
-        // segment comes next (error result, more assistant rows, etc.).
-        if (extractLastAssistantText(pendingAgentRows).text.length > 0) {
-          flushAgent();
-        }
+        flushAgent();
         turns.push(operationalSystemTurn);
         continue;
       }
