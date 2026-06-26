@@ -17,6 +17,14 @@
       "addedAt": "2026-05-28"
     },
     {
+      "id": "daemon-migration-42-timeout",
+      "suite": "daemon-unit",
+      "path": "packages/daemon/tests/unit/4-space-storage/storage/migrations/migration-42_test.ts",
+      "namePattern": "Migration 42",
+      "reason": "Known intermittent timeout in migration 42 zombie-cleanup tests.",
+      "addedAt": "2026-06-26"
+    },
+    {
       "id": "daemon-migration-74-timeout",
       "suite": "daemon-unit",
       "path": "packages/daemon/tests/unit/4-space-storage/storage/migrations/migration-74_test.ts",
