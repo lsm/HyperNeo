@@ -758,7 +758,7 @@ function longHorizonSpaceIdFromWorkflowRunId(workflowRunId: string): string | nu
 }
 
 function isExternallyDeliverableRun(status: SpaceWorkflowRun['status']): boolean {
-  return status === 'in_progress' || status === 'blocked' || status === 'review';
+  return status === 'in_progress' || status === 'blocked' || status === 'done';
 }
 
 const EXTERNAL_EVENT_TARGET_TASK_TERMINAL_STATUSES: ReadonlySet<SpaceTaskStatus> = new Set([

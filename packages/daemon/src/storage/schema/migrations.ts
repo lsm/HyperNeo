@@ -9729,80 +9729,9 @@ function createSpaceAgentManagementTables(db: BunDatabase): void {
 }
 
 export function runMigration145(db: BunDatabase): void {
-  if (
-    tableExists(db, 'space_tasks') &&
-    !tableHasColumn(db, 'space_tasks', 'workflow_model_overrides')
-  ) {
+  if (!tableExists(db, 'space_tasks')) return;
+  if (!tableHasColumn(db, 'space_tasks', 'workflow_model_overrides')) {
     db.exec(`ALTER TABLE space_tasks ADD COLUMN workflow_model_overrides TEXT`);
-  }
-  widenWorkflowRunStatuses(db);
-}
-
-function widenWorkflowRunStatuses(db: BunDatabase): void {
-  if (!tableExists(db, 'space_workflow_runs')) return;
-  const createSql = tableCreateSql(db, 'space_workflow_runs');
-  if (createSql?.includes("'review'") && createSql.includes("'archived'")) return;
-
-  db.exec('PRAGMA foreign_keys = OFF');
-  db.exec('BEGIN');
-  try {
-    db.exec(`
-      CREATE TABLE space_workflow_runs_m145_new (
-        id TEXT PRIMARY KEY,
-        space_id TEXT NOT NULL,
-        workflow_id TEXT NOT NULL,
-        title TEXT NOT NULL,
-        description TEXT,
-        status TEXT NOT NULL DEFAULT 'pending'
-          CHECK(status IN ('pending', 'in_progress', 'review', 'done', 'blocked', 'cancelled', 'archived')),
-        failure_reason TEXT,
-        created_at INTEGER NOT NULL,
-        started_at INTEGER,
-        updated_at INTEGER NOT NULL,
-        completed_at INTEGER,
-        completion_actions_fired_at INTEGER,
-        FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
-      )
-    `);
-
-    const columns = tableColumnNames(db, 'space_workflow_runs');
-    const insertColumns = [
-      'id',
-      'space_id',
-      'workflow_id',
-      'title',
-      'description',
-      'status',
-      'failure_reason',
-      'created_at',
-      'started_at',
-      'updated_at',
-      'completed_at',
-      'completion_actions_fired_at',
-    ].filter((column) => columns.includes(column));
-
-    db.exec(`
-      INSERT INTO space_workflow_runs_m145_new (${insertColumns.join(', ')})
-      SELECT ${insertColumns.join(', ')}
-      FROM space_workflow_runs
-    `);
-    db.exec(`DROP TABLE space_workflow_runs`);
-    db.exec(`ALTER TABLE space_workflow_runs_m145_new RENAME TO space_workflow_runs`);
-    db.exec(
-      `CREATE INDEX IF NOT EXISTS idx_space_workflow_runs_space_id ON space_workflow_runs(space_id)`
-    );
-    db.exec(
-      `CREATE INDEX IF NOT EXISTS idx_space_workflow_runs_workflow_id ON space_workflow_runs(workflow_id)`
-    );
-    db.exec(
-      `CREATE INDEX IF NOT EXISTS idx_space_workflow_runs_status ON space_workflow_runs(status)`
-    );
-    db.exec('COMMIT');
-  } catch (err) {
-    db.exec('ROLLBACK');
-    throw err;
-  } finally {
-    db.exec('PRAGMA foreign_keys = ON');
   }
 }
 

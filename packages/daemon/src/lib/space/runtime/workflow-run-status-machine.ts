@@ -33,12 +33,10 @@ export const VALID_TRANSITIONS: Readonly<
   Record<WorkflowRunStatus, ReadonlySet<WorkflowRunStatus>>
 > = {
   pending: new Set<WorkflowRunStatus>(['in_progress', 'cancelled']),
-  in_progress: new Set<WorkflowRunStatus>(['review', 'done', 'blocked', 'cancelled']),
-  review: new Set<WorkflowRunStatus>(['in_progress', 'done', 'blocked', 'cancelled', 'archived']),
-  blocked: new Set<WorkflowRunStatus>(['in_progress', 'cancelled', 'archived']),
-  done: new Set<WorkflowRunStatus>(['in_progress', 'archived']),
-  cancelled: new Set<WorkflowRunStatus>(['in_progress', 'archived']),
-  archived: new Set<WorkflowRunStatus>([]),
+  in_progress: new Set<WorkflowRunStatus>(['done', 'blocked', 'cancelled']),
+  blocked: new Set<WorkflowRunStatus>(['in_progress', 'cancelled']),
+  done: new Set<WorkflowRunStatus>(['in_progress']),
+  cancelled: new Set<WorkflowRunStatus>(['in_progress']),
 };
 
 /**
