@@ -349,11 +349,14 @@ function buildCodexReviewBotScriptSource(timeoutSeconds: number): string {
     'fi',
     // Codex bot login matcher: case-insensitive substring "codex" so we accept
     // every GitHub Codex variant (codex[bot], chatgpt-codex-connector[bot], and
-    // any future rename) without code changes. The `type == "Bot"` guard blocks
-    // non-bot GitHub accounts whose login happens to contain "codex" from
-    // spoofing the +1 check — only GitHub App bots have type "Bot".
+    // any future rename) without code changes. The `endswith("[bot]")` guard
+    // blocks non-bot GitHub accounts whose login happens to contain "codex"
+    // (e.g. a human named "codex-fan") from spoofing the +1 check — only GitHub
+    // App bots carry the "[bot]" suffix. We check the login suffix rather than
+    // `user.type == "Bot"` because GitHub inconsistently reports App bots with
+    // `type: "User"` in reaction payloads (see chatgpt-codex-connector[bot]).
     // Check fresh +1 before timeout so a late +1 is reported as a pass, not a timeout.
-    'CODEX_PLUS_ONE_COUNT=$(jq \'[.[] | select(((.user.login // "") | test("codex"; "i")) and (.user.type // "") == "Bot" and .content == "+1")] | length\' <<< "$FRESH_REACTIONS")',
+    'CODEX_PLUS_ONE_COUNT=$(jq \'[.[] | select(((.user.login // "") | test("codex"; "i")) and ((.user.login // "") | endswith("[bot]")) and .content == "+1")] | length\' <<< "$FRESH_REACTIONS")',
     'if [ "$CODEX_PLUS_ONE_COUNT" != "0" ] && [ -n "$CODEX_PLUS_ONE_COUNT" ]; then',
     '  jq -n --arg url "$PR_URL" --arg sha "${HEAD_SHA}" \'{"pr_url":$url,"codex_bot_reaction":"+1","head_sha":$sha}\'',
     '  exit 0',
@@ -369,7 +372,7 @@ function buildCodexReviewBotScriptSource(timeoutSeconds: number): string {
     '    exit 0',
     '  fi',
     'fi',
-    'CODEX_EYES_COUNT=$(jq \'[.[] | select(((.user.login // "") | test("codex"; "i")) and (.user.type // "") == "Bot" and .content == "eyes")] | length\' <<< "$FRESH_REACTIONS")',
+    'CODEX_EYES_COUNT=$(jq \'[.[] | select(((.user.login // "") | test("codex"; "i")) and ((.user.login // "") | endswith("[bot]")) and .content == "eyes")] | length\' <<< "$FRESH_REACTIONS")',
     'if [ "$CODEX_EYES_COUNT" != "0" ] && [ -n "$CODEX_EYES_COUNT" ]; then',
     '  echo "codex review bot still in progress (eyes reaction present); wait for +1 on ${PR_URL}" >&2',
     'else',
@@ -441,7 +444,7 @@ function buildCodexReviewBotPollScriptSource(timeoutSeconds: number): string {
     'else',
     '  FRESH_REACTIONS="$REACTIONS_JSON"',
     'fi',
-    'CODEX_PLUS_ONE_COUNT=$(jq \'[.[] | select(((.user.login // "") | test("codex"; "i")) and (.user.type // "") == "Bot" and .content == "+1")] | length\' <<< "$FRESH_REACTIONS")',
+    'CODEX_PLUS_ONE_COUNT=$(jq \'[.[] | select(((.user.login // "") | test("codex"; "i")) and ((.user.login // "") | endswith("[bot]")) and .content == "+1")] | length\' <<< "$FRESH_REACTIONS")',
     'if [ "$CODEX_PLUS_ONE_COUNT" != "0" ] && [ -n "$CODEX_PLUS_ONE_COUNT" ]; then',
     '  jq -n --arg url "$PR_URL" --arg sha "${HEAD_SHA}" \'{"pr_url":$url,"codex_bot_reaction":"+1","head_sha":$sha}\'',
     '  exit 0',
@@ -454,7 +457,7 @@ function buildCodexReviewBotPollScriptSource(timeoutSeconds: number): string {
     '    exit 0',
     '  fi',
     'fi',
-    'CODEX_EYES_COUNT=$(jq \'[.[] | select(((.user.login // "") | test("codex"; "i")) and (.user.type // "") == "Bot" and .content == "eyes")] | length\' <<< "$FRESH_REACTIONS")',
+    'CODEX_EYES_COUNT=$(jq \'[.[] | select(((.user.login // "") | test("codex"; "i")) and ((.user.login // "") | endswith("[bot]")) and .content == "eyes")] | length\' <<< "$FRESH_REACTIONS")',
     'if [ "$CODEX_EYES_COUNT" != "0" ] && [ -n "$CODEX_EYES_COUNT" ]; then',
     '  echo "codex review bot still in progress (eyes reaction present); wait for +1 on ${PR_URL}"',
     'else',
