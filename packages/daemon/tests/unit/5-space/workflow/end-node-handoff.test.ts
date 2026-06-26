@@ -509,16 +509,21 @@ describe('Post-approval merge conflict routes to coder, not human', () => {
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/report back to Review/);
   });
 
-  test('retry is capped at 2 coder attempts before space-agent escalation', () => {
-    // Every coder round counts against the cap — conflicting re-merge OR a
-    // CHANGES_REQUESTED for a bad fix.
-    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/2-attempt cap/);
-    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/after 2 rounds/);
-    // Escalation target after the cap is space-agent, not a human.
+  test('conflict loops continue until merge succeeds; escalation only on non-conflict blocker or cycle cap', () => {
+    // Operator direction: there is NO fixed conflict-count cap. New conflicts
+    // after a rebase are normal, so the reviewer keeps routing rounds back to
+    // the coder until the merge succeeds. The backstop is the channel cycle
+    // budget or a genuine non-conflict blocker.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('2-attempt cap');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('after 2 rounds');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/NO fixed conflict-count/);
+    // Escalation target is space-agent, not a human, and only on a real
+    // non-conflict blocker or cycle-cap — NOT on conflict count.
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('send_message(target="space-agent"');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/NON-CONFLICT blocker/);
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('non_conflict_blocker');
     // The "do NOT escalate to a human" directive precedes the space-agent
-    // escalation — i.e. the first reaction to a conflict is coder routing,
-    // and space-agent escalation only appears later (after the retry cap).
+    // escalation — the first reaction to a conflict is coder routing.
     const noHumanIdx = PR_MERGE_POST_APPROVAL_INSTRUCTIONS.indexOf('do NOT escalate to a');
     const escalateIdx = PR_MERGE_POST_APPROVAL_INSTRUCTIONS.indexOf('escalate to space-agent');
     expect(noHumanIdx).toBeGreaterThan(-1);
