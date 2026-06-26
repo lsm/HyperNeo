@@ -510,7 +510,10 @@ describe('Post-approval merge conflict routes to coder, not human', () => {
   });
 
   test('retry is capped at 2 coder attempts before space-agent escalation', () => {
-    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/maximum 2 coder attempts/);
+    // Every coder round counts against the cap — conflicting re-merge OR a
+    // CHANGES_REQUESTED for a bad fix.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/2-attempt cap/);
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/after 2 rounds/);
     // Escalation target after the cap is space-agent, not a human.
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('send_message(target="space-agent"');
     // The "do NOT escalate to a human" directive precedes the space-agent
@@ -520,6 +523,17 @@ describe('Post-approval merge conflict routes to coder, not human', () => {
     const escalateIdx = PR_MERGE_POST_APPROVAL_INSTRUCTIONS.indexOf('escalate to space-agent');
     expect(noHumanIdx).toBeGreaterThan(-1);
     expect(escalateIdx).toBeGreaterThan(noHumanIdx);
+  });
+
+  test('cycle-cap and own-PR fallback handling is robust', () => {
+    // The cycle-cap is based on the ACTUAL upstream channel (Review → Coding or
+    // Review → Research), not hard-coded to Review → Coding.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/Review → Research/);
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('list_channels` reports');
+    // Re-approval has an own-PR fallback (GitHub blocks self-approval).
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/COMMENT review \/ PR comment/);
+    // Cleanup warnings must be a NON-result artifact (no mark_complete poisoning).
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('cleanup_warning');
   });
 
   test('each conflict attempt is recorded as a workflow artifact (not Forge evidence)', () => {
