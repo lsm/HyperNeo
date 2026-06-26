@@ -758,6 +758,182 @@ describe('SpaceRuntime external event subscriptions', () => {
     await runtime.stop();
   });
 
+  test('injects a lean external event essence with full body and handles', async () => {
+    const { run } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-essence',
+      startedAt: Date.now(),
+    });
+    tam.alive.add('session-essence');
+    const body = [
+      'First paragraph with the actionable review request.',
+      '',
+      'Second paragraph contains enough detail that a summary would be insufficient.',
+      '',
+      'Third paragraph must remain verbatim; no ellipsis should appear here.',
+    ].join('\n');
+
+    const event = makeEvent({
+      summary: 'PR #42 inline review comment by codex: First paragraph...',
+      payload: {
+        eventType: 'pull_request_review_comment',
+        action: 'created',
+        actor: 'codex',
+        repoOwner: 'lsm',
+        repoName: 'neokai',
+        prNumber: 42,
+        prUrl: 'https://github.com/lsm/neokai/pull/42',
+        body,
+        title: 'PR #42 inline review comment',
+        replyHandle: { kind: 'pull_request_review_comment', commentId: 123 },
+        resolveHandle: { kind: 'pull_request_review_thread', threadId: 'PRRT_kwDOExample' },
+        resolveThreadId: 'PRRT_kwDOExample',
+        commentId: 123,
+        commentNodeId: 'PRRC_kwDOExample',
+        path: 'packages/daemon/src/file.ts',
+        line: 17,
+        side: 'RIGHT',
+        inReplyToId: 99,
+        rawPayload: { giant: 'webhook payload' },
+      },
+    });
+    await eventService.publish(event);
+
+    expect(injected).toHaveLength(1);
+    const message = JSON.parse(injected[0]!.message);
+    expect(message).toMatchObject({
+      type: 'external_event',
+      eventId: event.id,
+      topic: event.topic,
+      eventType: 'pull_request_review_comment',
+      action: 'created',
+      actor: 'codex',
+      repo: 'lsm/neokai',
+      prNumber: 42,
+      prUrl: 'https://github.com/lsm/neokai/pull/42',
+      occurredAt: event.occurredAt,
+      body,
+      title: 'PR #42 inline review comment',
+      replyHandle: { kind: 'pull_request_review_comment', commentId: 123 },
+      resolveHandle: { kind: 'pull_request_review_thread', threadId: 'PRRT_kwDOExample' },
+      resolveThreadId: 'PRRT_kwDOExample',
+      commentId: 123,
+      path: 'packages/daemon/src/file.ts',
+      line: 17,
+      side: 'RIGHT',
+      inReplyToId: 99,
+    });
+    expect(message.body).toBe(body);
+    expect(JSON.stringify(message)).not.toContain('...');
+    expect(message.summary).toBeUndefined();
+    expect(message.payload).toBeUndefined();
+    expect(message.rawPayload).toBeUndefined();
+  });
+
+  test('injects per-type external event essence fields', async () => {
+    const { run } = await startRunWithSubscription('github/lsm/neokai/pull_request/42.*');
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-per-type-essence',
+      startedAt: Date.now(),
+    });
+    tam.alive.add('session-per-type-essence');
+    const cases = [
+      {
+        eventType: 'issue_comment',
+        action: 'comment_created',
+        topic: 'github/lsm/neokai/pull_request/42.comment_created',
+        payload: {
+          commentId: 201,
+          commentNodeId: 'IC_kwDOExample',
+          replyHandle: { kind: 'issue_comment', commentId: 201 },
+        },
+        expected: { commentId: 201, replyHandle: { kind: 'issue_comment', commentId: 201 } },
+      },
+      {
+        eventType: 'pull_request_review',
+        action: 'review_submitted',
+        topic: 'github/lsm/neokai/pull_request/42.review_submitted',
+        payload: {
+          reviewId: 301,
+          reviewNodeId: 'PRR_kwDOExample',
+          state: 'CHANGES_REQUESTED',
+          submittedAt: '2026-06-26T00:00:00Z',
+        },
+        expected: {
+          reviewId: 301,
+          state: 'CHANGES_REQUESTED',
+          submittedAt: '2026-06-26T00:00:00Z',
+        },
+      },
+      {
+        eventType: 'pull_request',
+        action: 'synchronize',
+        topic: 'github/lsm/neokai/pull_request/42.synchronize',
+        payload: { title: 'Update daemon', state: 'open', headSha: 'abc123', draft: false },
+        expected: { title: 'Update daemon', state: 'open', headSha: 'abc123', draft: false },
+      },
+      {
+        eventType: 'check_run',
+        action: 'check_failed',
+        topic: 'github/lsm/neokai/pull_request/42.check_failed',
+        payload: {
+          checkName: 'daemon unit tests',
+          conclusion: 'failure',
+          runUrl: 'https://github.com/lsm/neokai/actions/runs/1',
+          status: 'completed',
+        },
+        expected: {
+          checkName: 'daemon unit tests',
+          conclusion: 'failure',
+          runUrl: 'https://github.com/lsm/neokai/actions/runs/1',
+          status: 'completed',
+        },
+      },
+    ];
+
+    for (const [index, item] of cases.entries()) {
+      await eventService.publish(
+        makeEvent({
+          id: `evt-essence-type-${index}`,
+          dedupeKey: `dedupe-essence-type-${index}`,
+          topic: item.topic,
+          payload: {
+            eventType: item.eventType,
+            action: item.action,
+            actor: 'octocat',
+            repoOwner: 'lsm',
+            repoName: 'neokai',
+            prNumber: 42,
+            prUrl: 'https://github.com/lsm/neokai/pull/42',
+            body: `${item.eventType} body`,
+            ...item.payload,
+            rawPayload: { drop: true },
+          },
+        })
+      );
+    }
+
+    expect(injected).toHaveLength(cases.length);
+    for (const [index, item] of cases.entries()) {
+      const message = JSON.parse(injected[index]!.message);
+      expect(message).toMatchObject({
+        type: 'external_event',
+        topic: item.topic,
+        eventType: item.eventType,
+        repo: 'lsm/neokai',
+        body: `${item.eventType} body`,
+        ...item.expected,
+      });
+      expect(message.rawPayload).toBeUndefined();
+      expect(message.payload).toBeUndefined();
+      expect(message.summary).toBeUndefined();
+    }
+  });
+
   test('delivers matching events to a live node-agent session and marks delivery complete', async () => {
     const { workflow, run, task } = await startRunWithSubscription();
     const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;

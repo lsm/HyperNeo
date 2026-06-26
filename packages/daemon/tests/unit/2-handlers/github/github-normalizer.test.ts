@@ -220,6 +220,9 @@ describe('NormalizedGitHubEvent reply/resolve handles', () => {
       expect(normalized.commentId).toBe('4242');
       // nodeId still references the triggering (reply) comment, by design.
       expect(normalized.nodeId).toBe('PRRC_kwAAA_reply');
+      // external identity must stay keyed by the actual delivered comment id.
+      expect(normalized.externalId).toBe('review_comment:5000:created');
+      expect(normalized.dedupeKey).toBe('acme/widgets:review_comment:5000:created');
     });
 
     test('issue comment yields REST comment id + comment node_id', () => {
@@ -347,6 +350,33 @@ describe('NormalizedGitHubEvent reply/resolve handles', () => {
       expect(normalized.nodeId).toBe('PR_kwAAA_poll');
     });
 
+    test('pulls endpoint row derives merged status from merged_at', () => {
+      const merged = normalizeGitHubPollingRow(
+        watched,
+        {
+          ...makePullRow({ state: 'closed', merged_at: '2026-06-26T00:00:00Z' }),
+          node_id: 'PR_kwAAA_merged',
+        },
+        'pulls'
+      )!;
+      expect(merged.payload).toMatchObject({
+        state: 'closed',
+        merged: true,
+        mergedAt: '2026-06-26T00:00:00Z',
+      });
+
+      const closed = normalizeGitHubPollingRow(
+        watched,
+        {
+          ...makePullRow({ state: 'closed', merged_at: null }),
+          node_id: 'PR_kwAAA_closed',
+        },
+        'pulls'
+      )!;
+      expect(closed.payload).toMatchObject({ state: 'closed', merged: false });
+      expect(closed.payload?.mergedAt).toBeUndefined();
+    });
+
     test('missing node_id on polling rows still normalizes', () => {
       const row = {
         id: 4242,
@@ -436,6 +466,56 @@ describe('NormalizedGitHubEvent reply/resolve handles', () => {
       const event = toExternalEvent('space-1', normalized);
       expect(event.payload.commentId).toBe('');
       expect(event.payload.nodeId).toBe('');
+    });
+
+    describe('essence payload fields', () => {
+      test('preserves review comment body and documented inline fields', () => {
+        const payload = reviewCommentWebhook({
+          comment: {
+            id: 123,
+            node_id: 'PRRC_kwDOExample',
+            body: 'Line one\n\nLine two with details',
+            html_url: 'https://github.com/acme/widgets/pull/7#discussion_r123',
+            path: 'packages/daemon/src/file.ts',
+            line: 12,
+            side: 'RIGHT',
+            start_line: 10,
+            start_side: 'RIGHT',
+            original_line: 12,
+            original_side: 'RIGHT',
+            in_reply_to_id: 99,
+            pull_request_review_id: 456,
+            user: { login: 'codex', type: 'Bot' },
+            created_at: '2026-06-26T00:00:00Z',
+          },
+        });
+        const normalized = normalizeGitHubWebhook(
+          'pull_request_review_comment',
+          'delivery-1',
+          payload
+        )!;
+
+        expect(normalized.body).toBe('Line one\n\nLine two with details');
+        expect(normalized.payload).toMatchObject({
+          title: 'PR #7 inline review comment',
+          commentId: '99',
+          commentNodeId: 'PRRC_kwDOExample',
+          replyHandle: { kind: 'pull_request_review_comment', commentId: '99' },
+          path: 'packages/daemon/src/file.ts',
+          line: 12,
+          side: 'RIGHT',
+          startLine: 10,
+          startSide: 'RIGHT',
+          originalLine: 12,
+          originalSide: 'RIGHT',
+          inReplyToId: 99,
+          pullRequestReviewId: 456,
+        });
+
+        const event = toExternalEvent('space-1', normalized);
+        expect(event.payload.body).toBe(normalized.body);
+        expect(event.payload.rawPayload).toBe(payload);
+      });
     });
   });
 });

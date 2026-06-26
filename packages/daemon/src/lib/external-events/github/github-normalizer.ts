@@ -159,6 +159,7 @@ export function normalizeGitHubWebhook(
   let title = '';
   let commentId = '';
   let nodeId = '';
+  let extraPayload: Record<string, unknown> = {};
 
   if (eventType === 'issue_comment') {
     const issue = asObject(root.issue);
@@ -167,39 +168,46 @@ export function normalizeGitHubWebhook(
     actor = userFrom(comment.user ?? root.sender);
     prNumber = getNumber(issue.number);
     body = getString(comment.body);
-    externalId = `issue_comment:${getNumber(comment.id) || deliveryId}:${action}`;
+    commentId = idString(comment.id);
+    nodeId = getString(comment.node_id);
+    externalId = `issue_comment:${commentId || deliveryId}:${action}`;
     externalUrl = getString(comment.html_url, prUrl(repo.owner, repo.repo, prNumber));
     occurredAt = parseGitHubTimestamp(comment.updated_at ?? comment.created_at);
     title = `PR #${prNumber} comment`;
-    commentId = idString(comment.id);
-    nodeId = getString(comment.node_id);
+    extraPayload = {
+      title,
+      commentId,
+      commentNodeId: nodeId,
+      replyHandle: commentId ? { kind: 'issue_comment', commentId } : undefined,
+    };
   } else if (eventType === 'pull_request_review') {
     const pr = asObject(root.pull_request);
     const review = asObject(root.review);
     actor = userFrom(review.user ?? root.sender);
     prNumber = getNumber(pr.number);
     body = getString(review.body);
-    externalId = `review:${getNumber(review.id) || deliveryId}:${action}`;
+    const reviewId = idString(review.id);
+    nodeId = getString(review.node_id);
+    externalId = `review:${reviewId || deliveryId}:${action}`;
     externalUrl = getString(
       review.html_url,
       getString(pr.html_url, prUrl(repo.owner, repo.repo, prNumber))
     );
     occurredAt = parseGitHubTimestamp(review.submitted_at ?? review.updated_at);
     title = `PR #${prNumber} review ${getString(review.state, action)}`;
-    nodeId = getString(review.node_id);
+    extraPayload = {
+      title,
+      reviewId,
+      reviewNodeId: nodeId,
+      state: getString(review.state),
+      submittedAt: getString(review.submitted_at),
+    };
   } else if (eventType === 'pull_request_review_comment') {
     const pr = asObject(root.pull_request);
     const comment = asObject(root.comment);
     actor = userFrom(comment.user ?? root.sender);
     prNumber = getNumber(pr.number);
     body = getString(comment.body);
-    externalId = `review_comment:${getNumber(comment.id) || deliveryId}:${action}`;
-    externalUrl = getString(
-      comment.html_url,
-      getString(pr.html_url, prUrl(repo.owner, repo.repo, prNumber))
-    );
-    occurredAt = parseGitHubTimestamp(comment.updated_at ?? comment.created_at);
-    title = `PR #${prNumber} inline review comment`;
     // REST reply endpoint requires the ROOT review comment id, not the reply's
     // own id (docs: "This must be the ID of a top-level review comment, not a
     // reply to that comment."). Review threads are flat, so `in_reply_to_id`
@@ -207,6 +215,29 @@ export function normalizeGitHubWebhook(
     // top-level comments. See https://docs.github.com/rest/pulls/comments.
     commentId = idString(comment.in_reply_to_id ?? comment.id);
     nodeId = getString(comment.node_id);
+    const eventCommentId = idString(comment.id);
+    externalId = `review_comment:${eventCommentId || deliveryId}:${action}`;
+    externalUrl = getString(
+      comment.html_url,
+      getString(pr.html_url, prUrl(repo.owner, repo.repo, prNumber))
+    );
+    occurredAt = parseGitHubTimestamp(comment.updated_at ?? comment.created_at);
+    title = `PR #${prNumber} inline review comment`;
+    extraPayload = {
+      title,
+      commentId,
+      commentNodeId: nodeId,
+      replyHandle: commentId ? { kind: 'pull_request_review_comment', commentId } : undefined,
+      path: getString(comment.path),
+      line: getNumber(comment.line) || undefined,
+      side: getString(comment.side),
+      startLine: getNumber(comment.start_line) || undefined,
+      startSide: getString(comment.start_side),
+      originalLine: getNumber(comment.original_line) || undefined,
+      originalSide: getString(comment.original_side),
+      inReplyToId: getNumber(comment.in_reply_to_id) || undefined,
+      pullRequestReviewId: getNumber(comment.pull_request_review_id) || undefined,
+    };
   } else {
     const pr = asObject(root.pull_request);
     actor = userFrom(pr.user ?? root.sender);
@@ -217,6 +248,13 @@ export function normalizeGitHubWebhook(
     occurredAt = parseGitHubTimestamp(pr.updated_at ?? pr.created_at);
     title = `PR #${prNumber} ${action}`;
     nodeId = getString(pr.node_id);
+    extraPayload = {
+      title: getString(pr.title, title),
+      state: getString(pr.state),
+      headSha: getString(asObject(pr.head).sha),
+      merged: typeof pr.merged === 'boolean' ? pr.merged : undefined,
+      draft: typeof pr.draft === 'boolean' ? pr.draft : undefined,
+    };
   }
   if (!repo.owner || !repo.repo || !prNumber) return null;
   const canonicalOwner = repo.owner.toLowerCase();
@@ -242,6 +280,7 @@ export function normalizeGitHubWebhook(
     nodeId,
     occurredAt,
     rawPayload: payload,
+    payload: extraPayload,
   };
 }
 
@@ -320,7 +359,56 @@ export function normalizeGitHubPollingRow(
     nodeId,
     occurredAt: updatedAt,
     rawPayload: row,
+    payload: buildPollingPayload(eventType, obj),
   };
+}
+
+function buildPollingPayload(
+  eventType: GitHubEventKind,
+  obj: Record<string, unknown>
+): Record<string, unknown> {
+  if (eventType === 'issue_comment') {
+    const commentId = idString(obj.id);
+    return {
+      title: `PR comment`,
+      commentId,
+      commentNodeId: getString(obj.node_id),
+      replyHandle: commentId ? { kind: 'issue_comment', commentId } : undefined,
+    };
+  }
+  if (eventType === 'pull_request_review_comment') {
+    const commentId = idString(obj.in_reply_to_id ?? obj.id);
+    const nodeId = getString(obj.node_id);
+    return {
+      title: `Inline review comment`,
+      commentId,
+      commentNodeId: nodeId,
+      replyHandle: commentId ? { kind: 'pull_request_review_comment', commentId } : undefined,
+      path: getString(obj.path),
+      line: getNumber(obj.line) || undefined,
+      side: getString(obj.side),
+      startLine: getNumber(obj.start_line) || undefined,
+      startSide: getString(obj.start_side),
+      originalLine: getNumber(obj.original_line) || undefined,
+      originalSide: getString(obj.original_side),
+      inReplyToId: getNumber(obj.in_reply_to_id) || undefined,
+      pullRequestReviewId: getNumber(obj.pull_request_review_id) || undefined,
+    };
+  }
+  if (eventType === 'pull_request') {
+    return {
+      title: getString(obj.title),
+      state: getString(obj.state),
+      headSha: getString(asObject(obj.head).sha),
+      merged:
+        typeof obj.merged === 'boolean'
+          ? obj.merged
+          : typeof obj.merged_at === 'string' && obj.merged_at !== '',
+      mergedAt: getString(obj.merged_at) || undefined,
+      draft: typeof obj.draft === 'boolean' ? obj.draft : undefined,
+    };
+  }
+  return {};
 }
 
 export function normalizeGitHubCheckRun(params: {
