@@ -379,7 +379,7 @@ const REVIEW_THREAD_RESOLUTION_GUIDANCE =
   'as the REST `{comment_id}` for ' +
   '`gh api repos/{owner}/{repo}/pulls/{pull_number}/comments/{comment_id}/replies -f body="<ack>"`. ' +
   'Then resolve the thread with GraphQL ' +
-  '`gh api graphql -f query="mutation($threadId:ID!){resolveReviewThread(input:{threadId:$threadId}){thread{id isResolved}}}" -f threadId=<review-thread-node-id>`, ' +
+  "`gh api graphql -f query='mutation($threadId:ID!){resolveReviewThread(input:{threadId:$threadId}){thread{id isResolved}}}' -f threadId=<review-thread-node-id>`, " +
   'where `<review-thread-node-id>` is the `PullRequestReviewThread.id` found by querying ' +
   '`reviewThreads`; do not use the review comment `node_id`/`commentNodeId` as ' +
   '`threadId`. The PR-ready hook blocks on any unresolved thread, so leaving one ' +
@@ -1709,6 +1709,17 @@ const BUILT_IN_PROMPT_PATCH_VARIANTS = [
         'explaining what changed. One reply per comment creates a visible audit trail.\n',
       RETIRED_CODING_WORKFLOW_REPLY_STEP_PROMPT,
     ],
+  ],
+  [
+    [
+      '3. For valid items: make the fix, then reply to that specific thread. Prefer the ' +
+        '`external_event` essence handle: use `replyHandle.commentId` as the REST ' +
+        '`{comment_id}` in ' +
+        '`gh api repos/{owner}/{repo}/pulls/{pull_number}/comments/{comment_id}/replies -f body="<ack>"` ' +
+        'explaining what changed. One reply per comment creates a visible audit trail.\n',
+      RETIRED_CODING_WORKFLOW_REPLY_STEP_PROMPT,
+    ],
+    [REVIEW_THREAD_RESOLUTION_GUIDANCE, RETIRED_REVIEW_THREAD_RESOLUTION_GUIDANCE],
   ],
   // Pre-PR-dev Coding Workflow: PR step gained subscribe instruction, all other
   // steps unchanged. Existing seeded spaces have the old step-5 text without
