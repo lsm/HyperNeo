@@ -38,6 +38,11 @@ import {
 } from '../provider-anthropic-compat/translator.js';
 import { estimateAnthropicInputTokens } from '../provider-anthropic-compat/token-estimator.js';
 import { createAnthropicErrorBody, type AnthropicErrorType } from '../shared/error-envelope.js';
+import {
+  isJsonContentType,
+  isOpenAiTransientErrorType,
+  normalizeOpenAiUpstreamError,
+} from '../shared/normalize-upstream-error.js';
 import { Logger } from '../../logger.js';
 
 const logger = new Logger('openai-chat-bridge-server');
@@ -176,10 +181,29 @@ type OpenAIChatStreamChunk = {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function sendJsonError(status: number, type: AnthropicErrorType, message: string): Response {
+function sendJsonError(
+  status: number,
+  type: AnthropicErrorType,
+  message: string,
+  extraHeaders?: Record<string, string>
+): Response {
   return new Response(createAnthropicErrorBody(type, message), {
     status,
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...extraHeaders },
+  });
+}
+
+/**
+ * Emit a normalized retryable upstream error with `x-should-retry: true` so the
+ * Claude Agent SDK retries (it already retries on 429 / >=500 status).
+ */
+function sendRetryableUpstreamError(normalized: {
+  type: AnthropicErrorType;
+  status: number;
+  message: string;
+}): Response {
+  return sendJsonError(normalized.status, normalized.type, normalized.message, {
+    'x-should-retry': 'true',
   });
 }
 
@@ -527,6 +551,63 @@ async function* readChatStream(
 }
 
 /**
+ * Extract a serialized `{error: ...}` body from a chat-stream chunk, for both
+ * the standard nested `chunk.error` shape and a FLAT payload.
+ *
+ * `readChatStream` discards the SSE `event:` line, so a flat `event: error`
+ * block like `data: {"type":"server_error","message":"overloaded"}` reaches the
+ * loop with no `error` wrapper. Without this, the flat error chunk has no
+ * choices, is skipped, and the bridge ends with a normal `end_turn` instead of
+ * surfacing the (retryable) error. A flat chunk is only treated as an error
+ * when it has no choices and no usage but carries error-like top-level fields.
+ */
+function chatChunkErrorBody(chunk: OpenAIChatStreamChunk): string | undefined {
+  if (chunk.error) return JSON.stringify({ error: chunk.error });
+  if (!chunk.choices?.length && !chunk.usage) {
+    const flat = chunk as Record<string, unknown>;
+    const message = typeof flat.message === 'string' ? flat.message : undefined;
+    const detail = typeof flat.detail === 'string' ? flat.detail : undefined;
+    const type = typeof flat.type === 'string' ? flat.type : undefined;
+    // Accept numeric codes (some gateways send {"code":429}) and RFC 7807
+    // problem-detail fields (status→code, detail→message), coercing to strings
+    // so the normalizer can classify them.
+    const rawCode = flat.code;
+    const code =
+      typeof rawCode === 'string'
+        ? rawCode
+        : typeof rawCode === 'number' && Number.isFinite(rawCode)
+          ? String(rawCode)
+          : undefined;
+    const rawStatus = flat.status;
+    const status =
+      typeof rawStatus === 'string'
+        ? rawStatus
+        : typeof rawStatus === 'number' && Number.isFinite(rawStatus)
+          ? String(rawStatus)
+          : undefined;
+    // Require an actual error signal: a message/detail, a code/status, OR a
+    // `type` that is a recognized transient error type. A bare unknown `type`
+    // is treated as a heartbeat/metadata frame (e.g. `{"type":"ping"}`) and
+    // ignored so it doesn't abort a valid stream; a known type-only frame like
+    // `{"type":"server_error"}` is still admitted.
+    if (
+      message ||
+      detail ||
+      code ||
+      status ||
+      (type !== undefined && isOpenAiTransientErrorType(type))
+    ) {
+      const error: Record<string, unknown> = {};
+      if (message ?? detail) error.message = message ?? detail;
+      if (type) error.type = type;
+      if (code ?? status) error.code = code ?? status;
+      return JSON.stringify({ error });
+    }
+  }
+  return undefined;
+}
+
+/**
  * Translate the upstream OpenAI Chat Completions SSE stream into Anthropic
  * Messages SSE events. Handles incremental tool_calls accumulation.
  */
@@ -625,7 +706,25 @@ async function streamChatToAnthropic(params: {
     let sawAnyChunk = false;
     for await (const chunk of readChatStream(upstreamResponse.body)) {
       sawAnyChunk = true;
-      if (chunk.error?.message) throw new Error(chunk.error.message);
+      const errorBody = chatChunkErrorBody(chunk);
+      if (errorBody) {
+        // Carry the serialized error body so the catch handler can classify a
+        // transient mid-stream error (rate_limit / overloaded) instead of
+        // defaulting to a terminal api_error. The SDK cannot retry a stream it
+        // has already started, so the correct type also lets the query-runner
+        // (B4) recognise and re-issue the whole query. Handles both the nested
+        // `chunk.error` shape and flat payloads (see chatChunkErrorBody).
+        let errorMessage = 'OpenAI stream error';
+        try {
+          const err = (JSON.parse(errorBody).error ?? {}) as { message?: string };
+          if (typeof err.message === 'string' && err.message) errorMessage = err.message;
+        } catch {
+          // keep default
+        }
+        const streamErr = new Error(errorMessage);
+        (streamErr as { upstreamErrorBody?: string }).upstreamErrorBody = errorBody;
+        throw streamErr;
+      }
       if (chunk.usage) {
         finalPromptTokens = chunk.usage.prompt_tokens ?? finalPromptTokens;
         finalCompletionTokens = chunk.usage.completion_tokens ?? finalCompletionTokens;
@@ -743,8 +842,15 @@ async function streamChatToAnthropic(params: {
       'openai-chat-bridge: streaming failed:',
       error instanceof Error ? error.message : String(error)
     );
+    // Classify a transient mid-stream error body to the right Anthropic type so
+    // the SDK (and query-runner B4) can recognise it as retryable.
+    const upstreamErrorBody = (error as { upstreamErrorBody?: string }).upstreamErrorBody;
+    const normalized = upstreamErrorBody
+      ? normalizeOpenAiUpstreamError(upstreamErrorBody, 200)
+      : undefined;
+    const errorType: AnthropicErrorType = normalized?.type ?? 'api_error';
     try {
-      send(errorSSE('api_error', error instanceof Error ? error.message : 'OpenAI stream failed'));
+      send(errorSSE(errorType, error instanceof Error ? error.message : 'OpenAI stream failed'));
     } catch {
       // Controller already closed (client disconnect or upstream tear-down).
     }
@@ -881,11 +987,48 @@ export function createOpenAIChatBridgeServer(
 
       if (!upstreamResponse.ok) {
         const text = await upstreamResponse.text();
+        // Inspect the BODY for transient signals (rate_limit_exceeded /
+        // server_error / overload text) that the status alone misses — e.g. a
+        // 4xx carrying a rate-limit body, or a 5xx that should surface as
+        // overloaded_error. Reclassify so the SDK retries.
+        const normalized = normalizeOpenAiUpstreamError(text, upstreamResponse.status);
+        if (normalized) {
+          logger.warn(
+            `openai-chat-bridge: normalized upstream error to retryable ` +
+              `${normalized.type} (${normalized.status}): ${normalized.message.slice(0, 200)}`
+          );
+          return sendRetryableUpstreamError(normalized);
+        }
         return sendJsonError(
           upstreamResponse.status,
           mapUpstreamStatus(upstreamResponse.status),
           parseUpstreamError(upstreamResponse.status, text)
         );
+      }
+
+      // Some OpenAI-compatible proxies return 200 with a JSON error body instead
+      // of an SSE stream. Only pre-buffer when the content-type explicitly says
+      // JSON — gating on "not event-stream" would also buffer endpoints that
+      // stream valid SSE with a missing/mislabeled content-type, waiting for the
+      // whole body and breaking incremental output. A real SSE stream (any other
+      // content-type, or none) flows straight through to readChatStream.
+      const upstreamContentType = upstreamResponse.headers.get('content-type') ?? '';
+      if (isJsonContentType(upstreamContentType)) {
+        const bodyText = await upstreamResponse.text();
+        const normalized = normalizeOpenAiUpstreamError(bodyText, upstreamResponse.status);
+        if (normalized) {
+          logger.warn(
+            `openai-chat-bridge: normalized 200-with-body upstream error to retryable ` +
+              `${normalized.type} (${normalized.status}): ${normalized.message.slice(0, 200)}`
+          );
+          return sendRetryableUpstreamError(normalized);
+        }
+        // Non-transient: reconstruct the response so the streaming path handles
+        // the non-SSE body exactly as before (terminal api_error for the user).
+        upstreamResponse = new Response(bodyText, {
+          status: upstreamResponse.status,
+          headers: { 'Content-Type': upstreamContentType },
+        });
       }
 
       const stream = new ReadableStream<Uint8Array>({
