@@ -464,6 +464,9 @@ describe('Post-approval merge conflict routes to coder, not human', () => {
     // fallback is own-PR only. Evidence must be fresh, not the prior approval.
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/fresh formal CHANGES_REQUESTED/);
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/fresh PR comment/);
+    // The bad-fix handoff must repeat BOTH pr_url and review_url — the gate
+    // resets each cycle, so a payload carrying only review_url is blocked.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/repeat BOTH pr_url/);
   });
 
   test('conflict detection keys on DIRTY mergeStateStatus and conflict markers', () => {
