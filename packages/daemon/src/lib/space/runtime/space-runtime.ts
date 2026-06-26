@@ -2812,9 +2812,21 @@ export class SpaceRuntime {
     const occurredAtValues = items.map((item) => item.event.occurredAt);
     const oldest = new Date(Math.min(...occurredAtValues)).toISOString();
     const newest = new Date(Math.max(...occurredAtValues)).toISOString();
-    return `${items.length} events received for topics: ${topics.join(
-      ', '
-    )} (oldest: ${oldest}, newest: ${newest}). Use get_external_event(eventId) for full details.`;
+    // Include the coalesced event ids so the agent can actually call
+    // get_external_event(eventId) — without them the digest points at a tool
+    // the agent has no argument for. Cap the inline list to keep the injected
+    // message bounded when many events coalesce into one rate-limit digest.
+    const DIGEST_EVENT_ID_CAP = 10;
+    const eventIds = items.map((item) => item.event.eventId);
+    const shown = eventIds.slice(0, DIGEST_EVENT_ID_CAP);
+    const remaining = eventIds.length - shown.length;
+    const eventIdList = shown.join(', ') + (remaining > 0 ? `, … (${remaining} more)` : '');
+    return (
+      `${items.length} events received for topics: ${topics.join(', ')} ` +
+      `(oldest: ${oldest}, newest: ${newest}). ` +
+      `Event IDs: ${eventIdList}. ` +
+      `Use get_external_event(eventId) for full details.`
+    );
   }
 
   /**
