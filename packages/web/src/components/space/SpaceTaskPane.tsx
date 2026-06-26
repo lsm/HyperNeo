@@ -463,6 +463,35 @@ export function SpaceTaskPane({
     }
     return labels;
   }, [activityMembers]);
+  // Worker members in rate-limit cooldown / provider auth error, for the pinned
+  // banners above the feed. Derived from the same activity subscription that
+  // drives the live rails so the banners appear/disappear reactively as the
+  // session transitions in and out of cooldown / error state.
+  const cooldownBannerMembers = useMemo(
+    () =>
+      activityMembers
+        .filter((m) => m.rateLimitCooldown && m.sessionId)
+        .map((m) => ({
+          sessionId: m.sessionId,
+          label: m.label,
+          retryCount: m.rateLimitCooldown!.retryCount,
+          maxRetries: m.rateLimitCooldown!.maxRetries,
+          retryAt: m.rateLimitCooldown!.retryAt,
+        })),
+    [activityMembers]
+  );
+  const authErrorBannerMembers = useMemo(
+    () =>
+      activityMembers
+        .filter((m) => m.sessionId && m.sessionError?.category === 'provider_auth_error')
+        .map((m) => ({
+          sessionId: m.sessionId,
+          label: m.label,
+          message: m.sessionError?.message ?? '',
+          providerId: m.sessionError?.providerId ?? null,
+        })),
+    [activityMembers]
+  );
   const hasUnifiedWorkflowThread =
     !!task.workflowRunId || !!agentSessionId || activityMembers.length > 0;
   const showInlineComposer = !isTerminalTask;
@@ -1069,6 +1098,8 @@ export function SpaceTaskPane({
                   bottomInsetPx={taskComposerPaddingPx}
                   activeAgentLabels={activeAgentLabels}
                   overlayTaskId={task.id}
+                  cooldownBannerMembers={cooldownBannerMembers}
+                  authErrorBannerMembers={authErrorBannerMembers}
                   autoScrollEnabled={autoScrollEnabled}
                   onShowScrollButtonChange={setShowScrollButton}
                   onScrollToBottomChange={(scrollToBottom) => {

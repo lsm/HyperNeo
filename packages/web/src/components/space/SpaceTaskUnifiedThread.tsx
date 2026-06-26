@@ -1,8 +1,37 @@
 import { useEffect, useMemo, useRef } from 'preact/hooks';
 import { useAutoScroll } from '../../hooks/useAutoScroll';
 import { useSpaceTaskMessages } from '../../hooks/useSpaceTaskMessages';
+import { getProviderLabel } from '../../hooks/useModelSwitcher';
+import { navigateToSettings } from '../../lib/router';
 import { MinimalThreadFeed } from './thread/minimal/MinimalThreadFeed';
 import { parseThreadRow } from './thread/space-task-thread-events';
+import { RateLimitCooldownBanner } from '../sdk/RateLimitCooldownBanner';
+
+/**
+ * A worker whose session is in rate-limit cooldown. Surfaced as a pinned
+ * banner above the feed (countdown + Retry/Cancel) so the user can act on it
+ * without opening the session in the chat container. Mirrors the
+ * RateLimitCooldownBanner placement in ChatContainer.
+ */
+export interface CooldownBannerMember {
+  sessionId: string;
+  label: string;
+  retryCount: number;
+  maxRetries: number;
+  retryAt: number;
+}
+
+/**
+ * A worker whose session has an active provider auth error. Surfaced as a
+ * pinned banner above the feed with a re-authenticate affordance — same action
+ * wiring as ChatContainer's structured-error action button.
+ */
+export interface AuthErrorBannerMember {
+  sessionId: string;
+  label: string;
+  message: string;
+  providerId?: string | null;
+}
 
 interface SpaceTaskUnifiedThreadProps {
   taskId: string;
@@ -26,6 +55,16 @@ interface SpaceTaskUnifiedThreadProps {
   activeAgentLabels?: ReadonlySet<string>;
   /** Task id forwarded to overlay open affordances for node-agent send routing. */
   overlayTaskId?: string;
+  /**
+   * Worker members currently in rate-limit cooldown. Each renders a pinned
+   * countdown + Retry/Cancel banner above the feed.
+   */
+  cooldownBannerMembers?: CooldownBannerMember[];
+  /**
+   * Worker members with an active provider auth error. Each renders a pinned
+   * re-authenticate banner above the feed.
+   */
+  authErrorBannerMembers?: AuthErrorBannerMember[];
   autoScrollEnabled?: boolean;
   onShowScrollButtonChange?: (showScrollButton: boolean) => void;
   onScrollToBottomChange?: (scrollToBottom: ((smooth?: boolean) => void) | null) => void;
@@ -40,6 +79,8 @@ export function SpaceTaskUnifiedThread({
   topInsetClass = '',
   activeAgentLabels,
   overlayTaskId,
+  cooldownBannerMembers = [],
+  authErrorBannerMembers = [],
   autoScrollEnabled = true,
   onShowScrollButtonChange,
   onScrollToBottomChange,
@@ -114,8 +155,30 @@ export function SpaceTaskUnifiedThread({
   const bottomInsetClasses =
     bottomInsetPx === undefined ? `${bottomInsetClass} ${bottomScrollPaddingClass}` : '';
 
+  const hasBanners = cooldownBannerMembers.length > 0 || authErrorBannerMembers.length > 0;
+
   return (
     <div class="h-full min-h-0 flex flex-col relative" data-testid="space-task-unified-thread">
+      {hasBanners && (
+        <div class="flex-shrink-0 px-4 pt-3 space-y-2" data-testid="space-task-thread-banner-stack">
+          {cooldownBannerMembers.map((m) => (
+            <div key={`cooldown-${m.sessionId}`} data-testid="space-thread-cooldown-banner">
+              <div class="mb-1 text-[11px] font-medium uppercase tracking-wide text-amber-300/80">
+                {m.label}
+              </div>
+              <RateLimitCooldownBanner
+                sessionId={m.sessionId}
+                retryCount={m.retryCount}
+                maxRetries={m.maxRetries}
+                retryAt={m.retryAt}
+              />
+            </div>
+          ))}
+          {authErrorBannerMembers.map((m) => (
+            <ProviderAuthErrorBanner key={`auth-${m.sessionId}`} member={m} />
+          ))}
+        </div>
+      )}
       <div
         ref={containerRef}
         class={`flex-1 overflow-y-auto ${topInsetClass} ${bottomInsetClasses}`}
@@ -131,6 +194,50 @@ export function SpaceTaskUnifiedThread({
           <div ref={messagesEndRef} />
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Pinned provider auth-error banner for the Space task thread. Surfaces the
+ * agent label, the error message, and a "Re-authenticate {Provider}" action
+ * that routes to Settings → Providers — the same wiring ChatContainer uses
+ * for its structured-error action button.
+ */
+function ProviderAuthErrorBanner({ member }: { member: AuthErrorBannerMember }) {
+  const providerLabel = member.providerId ? getProviderLabel(member.providerId) : 'Provider';
+  return (
+    <div
+      class="flex items-center gap-2 px-3 py-2 rounded border bg-red-50 dark:bg-red-900/10 border-red-200 dark:border-red-800 text-red-900 dark:text-red-100"
+      data-testid="space-thread-auth-error-banner"
+    >
+      <svg
+        class="w-3.5 h-3.5 shrink-0 text-red-600 dark:text-red-400"
+        fill="none"
+        viewBox="0 0 24 24"
+        stroke="currentColor"
+        aria-hidden="true"
+      >
+        <path
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width={2}
+          d="M12 9v2m0 4h.01M5 19h14a2 2 0 001.84-2.75L13.74 4a2 2 0 00-3.48 0L3.16 16.25A2 2 0 005 19z"
+        />
+      </svg>
+      <span class="text-xs flex-1 min-w-0">
+        <span class="font-medium text-red-300/80 uppercase tracking-wide mr-1">{member.label}</span>
+        <span class="break-words">
+          {member.message || `${providerLabel} authentication failed.`}
+        </span>
+      </span>
+      <button
+        type="button"
+        onClick={() => navigateToSettings('providers')}
+        class="text-xs font-medium px-2 py-0.5 rounded bg-red-600 hover:bg-red-700 text-white transition-colors shrink-0"
+      >
+        Re-authenticate {providerLabel}
+      </button>
     </div>
   );
 }

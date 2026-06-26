@@ -323,16 +323,19 @@ describe('NAMED_QUERY_REGISTRY', () => {
       id: string,
       type: string,
       processingState: string,
-      sessionContext?: string
+      sessionContext?: string,
+      lastError?: string
     ): void {
       db.exec(`
 				INSERT INTO sessions (
 					id, title, workspace_path, created_at, last_active_at, status, config, metadata,
 					is_worktree, worktree_path, main_repo_path, worktree_branch, git_branch, sdk_session_id,
-					available_commands, processing_state, archived_at, type, session_context
+					available_commands, processing_state, last_error, archived_at, type, session_context
 				) VALUES (
 					'${id}', 'Session', '/tmp/test-space', '${nowIso}', '${nowIso}', 'active', '{}', '{}',
-					0, NULL, NULL, NULL, NULL, NULL, NULL, '${processingState}', NULL, '${type}', '${sessionContext ?? '{}'}'
+					0, NULL, NULL, NULL, NULL, NULL, NULL, '${processingState}', ${
+            lastError ? `'${lastError}'` : 'NULL'
+          }, NULL, '${type}', '${sessionContext ?? '{}'}'
 				)
 			`);
     }
@@ -445,6 +448,65 @@ describe('NAMED_QUERY_REGISTRY', () => {
       expect(row.messageCount).toBe(2);
       expect(row.taskId).toBe(taskId);
       expect(row.taskTitle).toBe('Ship UI review');
+    });
+
+    test('surfaces rate-limit cooldown details from processing_state', () => {
+      const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+      const retryAt = now + 60_000;
+      insertSession(
+        sessionId,
+        'space_task_agent',
+        `{"status":"rate_limit_cooldown","retryCount":2,"maxRetries":5,"retryAt":${retryAt}}`
+      );
+
+      const [row] = queryAndMap(taskId);
+      expect(row.processingStatus).toBe('rate_limit_cooldown');
+      expect(row.state).toBe('cooldown');
+      expect(row.rateLimitCooldown).toEqual({
+        retryCount: 2,
+        maxRetries: 5,
+        retryAt,
+      });
+      // Raw extracted keys are stripped from the mapped member shape.
+      expect(row.retryCount).toBeUndefined();
+      expect(row.maxRetries).toBeUndefined();
+      expect(row.retryAt).toBeUndefined();
+    });
+
+    test('rateLimitCooldown is null when cooldown fields are missing', () => {
+      const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+      // status is rate_limit_cooldown but the sibling fields are absent
+      insertSession(sessionId, 'space_task_agent', '{"status":"rate_limit_cooldown"}');
+
+      const [row] = queryAndMap(taskId);
+      expect(row.processingStatus).toBe('rate_limit_cooldown');
+      expect(row.rateLimitCooldown).toBeNull();
+    });
+
+    test('surfaces persisted provider auth error from sessions.last_error', () => {
+      const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+      insertSession(
+        sessionId,
+        'space_task_agent',
+        '{"status":"interrupted"}',
+        undefined,
+        '{"category":"provider_auth_error","message":"Anthropic authentication failed.","providerId":"anthropic"}'
+      );
+
+      const [row] = queryAndMap(taskId);
+      expect(row.sessionError).toEqual({
+        category: 'provider_auth_error',
+        message: 'Anthropic authentication failed.',
+        providerId: 'anthropic',
+      });
+    });
+
+    test('sessionError is null when last_error is absent', () => {
+      const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+      insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+
+      const [row] = queryAndMap(taskId);
+      expect(row.sessionError).toBeNull();
     });
 
     test('returns unified task message rows with label and task metadata', () => {

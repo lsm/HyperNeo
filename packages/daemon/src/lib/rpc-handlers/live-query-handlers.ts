@@ -418,9 +418,34 @@ function mapSpaceTaskActivityRow(row: Record<string, unknown>): Record<string, u
     typeof row.role === 'string' ? row.role : kind === 'task_agent' ? 'task-agent' : kind;
   const rawLabel = typeof row.label === 'string' ? row.label : rawRole;
 
+  // Rate-limit cooldown details. Only present when the session's
+  // processing_state.status is 'rate_limit_cooldown'; the three sibling fields
+  // are extracted from the same JSON column. Surface as a single object so the
+  // renderer can hand them straight to RateLimitCooldownBanner.
+  const rateLimitCooldown =
+    row.processingStatus === 'rate_limit_cooldown'
+      ? buildRateLimitCooldown(row.retryCount, row.maxRetries, row.retryAt)
+      : null;
+
+  // Persisted structured session error snapshot (see StateProjectionService).
+  const sessionError = parseSessionError(row.sessionError);
+
+  // Strip the raw extracted keys so the member shape stays clean — the grouped
+  // objects above are the canonical surface.
+  const {
+    retryCount: _retryCount,
+    maxRetries: _maxRetries,
+    retryAt: _retryAt,
+    sessionError: _sessionErrorRaw,
+    completionSummary: _completionSummary,
+    ...rest
+  } = row;
+
   return {
-    ...row,
+    ...rest,
     kind,
+    rateLimitCooldown,
+    sessionError,
     nodeExecution:
       kind === 'node_agent'
         ? {
@@ -440,6 +465,61 @@ function mapSpaceTaskActivityRow(row: Record<string, unknown>): Record<string, u
     role: rawRole,
     messageCount: Number(row.messageCount ?? 0),
   };
+}
+
+/**
+ * Build the `rateLimitCooldown` object from the raw JSON-extracted values.
+ * Returns null unless all three fields are present and parse to finite numbers
+ * — a partial snapshot (e.g. missing retryAt) can't drive the countdown UI and
+ * would only confuse the renderer. `json_extract` yields SQL NULL (→ JS null)
+ * for absent JSON keys, so an explicit null guard is required: `Number(null)`
+ * coerces to 0 which is otherwise indistinguishable from a real zero.
+ */
+function buildRateLimitCooldown(
+  retryCount: unknown,
+  maxRetries: unknown,
+  retryAt: unknown
+): { retryCount: number; maxRetries: number; retryAt: number } | null {
+  const rc = toFiniteNumber(retryCount);
+  const mr = toFiniteNumber(maxRetries);
+  const at = toFiniteNumber(retryAt);
+  if (rc === null || mr === null || at === null) return null;
+  return { retryCount: rc, maxRetries: mr, retryAt: at };
+}
+
+/** Coerce a `json_extract` result to a finite number, or null if absent/invalid. */
+function toFiniteNumber(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Parse the persisted `sessions.last_error` JSON snapshot into the member's
+ * `sessionError` object. Returns null for missing/unparseable rows so the
+ * renderer treats "no error" and "malformed error" identically.
+ */
+function parseSessionError(value: unknown): {
+  category: string;
+  message: string;
+  providerId?: string | null;
+} | null {
+  if (typeof value !== 'string' || value.length === 0) return null;
+  try {
+    const parsed = JSON.parse(value) as {
+      category?: unknown;
+      message?: unknown;
+      providerId?: unknown;
+    };
+    if (typeof parsed.category !== 'string' || !parsed.category) return null;
+    return {
+      category: parsed.category,
+      message: typeof parsed.message === 'string' ? parsed.message : '',
+      ...(typeof parsed.providerId === 'string' ? { providerId: parsed.providerId } : {}),
+    };
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -1122,6 +1202,10 @@ SELECT
   END AS state,
   json_extract(s.processing_state, '$.status') AS processingStatus,
   json_extract(s.processing_state, '$.phase') AS processingPhase,
+  json_extract(s.processing_state, '$.retryCount') AS retryCount,
+  json_extract(s.processing_state, '$.maxRetries') AS maxRetries,
+  json_extract(s.processing_state, '$.retryAt') AS retryAt,
+  s.last_error AS sessionError,
   COALESCE(ms.messageCount, 0) AS messageCount,
   ase.task_id AS taskId,
   ase.task_title AS taskTitle,
@@ -1131,7 +1215,6 @@ SELECT
   ase.agent_name AS agentName,
   ase.execution_result AS executionResult,
   ase.task_id AS currentStep,
-  NULL AS error,
   NULL AS completionSummary,
   CAST(
     MAX(
