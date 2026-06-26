@@ -363,7 +363,11 @@ describe('Shared merge template canonical content', () => {
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('headRefName');
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('git push origin --delete');
     // Forked PR heads live in the fork — guard deletion to same-repo heads.
+    // HEAD_REF and IS_FORK must be assigned (via --jq) before the delete, not
+    // left as unset shell variables.
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('isCrossRepository');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('HEAD_REF=$(gh pr view');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('IS_FORK=');
     // The delete step must come AFTER the merge command.
     const mergeIdx = PR_MERGE_POST_APPROVAL_INSTRUCTIONS.indexOf('gh pr merge {{pr_url}} --squash');
     const deleteIdx = PR_MERGE_POST_APPROVAL_INSTRUCTIONS.indexOf('git push origin --delete');
@@ -483,6 +487,9 @@ describe('Post-approval merge conflict routes to coder, not human', () => {
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('origin/dev');
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/resolve the listed conflicts/);
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/run the tests/);
+    // A rebase rewrites commits already on the remote PR branch, so a plain push
+    // is rejected — the coder must use --force-with-lease to publish the fix.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('--force-with-lease');
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/report back to Review/);
   });
 
@@ -509,6 +516,11 @@ describe('Post-approval merge conflict routes to coder, not human', () => {
     );
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('workflow artifact');
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('Forge evidence');
+    // The artifact records the approved head OID (the PR head at conflict time)
+    // so the reviewer has a reliable diff base after the coder pushes a fix,
+    // and the trial merge uses the PR head, not local HEAD.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('approved_head_oid');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('headRefOid');
   });
 
   test('pre-merge checks are re-run before retrying; cycle budget and cap handled', () => {
