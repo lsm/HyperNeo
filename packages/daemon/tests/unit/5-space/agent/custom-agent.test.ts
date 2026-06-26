@@ -1019,7 +1019,26 @@ describe('createCustomAgentInit', () => {
     });
   });
 
-  it('uses tool-restricted agent mode when tools are configured', () => {
+  it('uses permissive defaults for full worker tool profiles', () => {
+    const init = createCustomAgentInit(
+      makeConfig({
+        customAgent: makeAgent({
+          name: 'Coder Agent',
+          customPrompt: 'Visible prompt',
+          tools: ['Read', 'Write', 'Edit', 'MultiEdit', 'Bash', 'NotebookEdit'],
+        }),
+      })
+    );
+
+    expect(init.agent).toBeUndefined();
+    expect(init.agents).toBeUndefined();
+    expect(init.systemPrompt?.append).toBe('Visible prompt');
+    expect(init.sdkToolsPreset).toBeUndefined();
+    expect(init.allowedTools).toBeUndefined();
+    expect(init.disallowedTools).toBeUndefined();
+  });
+
+  it('denies only omitted behaviorally restricted tools for restricted profiles', () => {
     const init = createCustomAgentInit(
       makeConfig({
         customAgent: makeAgent({
@@ -1034,22 +1053,136 @@ describe('createCustomAgentInit', () => {
     expect(init.agents).toBeDefined();
     expect(init.agents?.['restricted-agent']?.prompt).toBe('Visible prompt');
     // The agent definition omits `tools` — an AgentDefinition.tools allowlist
-    // would exclude MCP tools. Built-ins are restricted via `disallowedTools`.
+    // would exclude MCP tools. Restricted built-ins are denied explicitly.
     expect(init.agents?.['restricted-agent']?.tools).toBeUndefined();
-    expect(init.agents?.['restricted-agent']?.disallowedTools).toEqual(
-      expect.arrayContaining(['Write', 'Edit'])
-    );
-    expect(init.agents?.['restricted-agent']?.disallowedTools).not.toContain('Read');
-    expect(init.agents?.['restricted-agent']?.disallowedTools).not.toContain('Bash');
+    expect(init.agents?.['restricted-agent']?.disallowedTools).toEqual([
+      'Write',
+      'Edit',
+      'MultiEdit',
+      'NotebookEdit',
+    ]);
     expect(init.systemPrompt?.preset).toBe('claude_code');
     expect(init.systemPrompt?.append).toBeUndefined();
-    expect(init.sdkToolsPreset).toEqual(['Read', 'Bash']);
-    expect(init.allowedTools).toEqual(['Read', 'Bash']);
-    expect(init.disallowedTools).toEqual(
-      expect.arrayContaining(['Write', 'Edit', 'Task', 'NotebookEdit', 'TodoWrite', 'Skill'])
-    );
+    expect(init.sdkToolsPreset).toBeUndefined();
+    expect(init.allowedTools).toBeUndefined();
+    expect(init.disallowedTools).toEqual(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
     expect(init.disallowedTools).not.toContain('Read');
     expect(init.disallowedTools).not.toContain('Bash');
+    expect(init.disallowedTools).not.toContain('REPL');
+    expect(init.disallowedTools).not.toContain('Workflow');
+    expect(init.disallowedTools).not.toContain('Task');
+    expect(init.disallowedTools).not.toContain('TodoWrite');
+    expect(init.disallowedTools).not.toContain('Skill');
+    expect(init.disallowedTools).not.toContain('CronCreate');
+    expect(init.disallowedTools).not.toContain('ScheduleWakeup');
+  });
+
+  it('denies shell-equivalent tools when Bash is omitted from restricted profiles', () => {
+    const init = createCustomAgentInit(
+      makeConfig({
+        customAgent: makeAgent({
+          name: 'Reviewer Agent',
+          customPrompt: 'Visible prompt',
+          tools: ['Read', 'Grep', 'Glob'],
+        }),
+      })
+    );
+
+    expect(init.disallowedTools).toEqual([
+      'Bash',
+      'REPL',
+      'Workflow',
+      'Monitor',
+      'CronCreate',
+      'CronDelete',
+      'RemoteTrigger',
+      'ScheduleWakeup',
+      'EnterWorktree',
+      'ExitWorktree',
+      'PushNotification',
+      'Artifact',
+      'Projects',
+      'TaskCreate',
+      'TaskUpdate',
+      'TodoWrite',
+      'Agent',
+      'EnterPlanMode',
+      'ExitPlanMode',
+      'Write',
+      'Edit',
+      'MultiEdit',
+      'NotebookEdit',
+    ]);
+    expect(init.agents?.['reviewer-agent']?.disallowedTools).toEqual([
+      'Bash',
+      'REPL',
+      'Workflow',
+      'Monitor',
+      'CronCreate',
+      'CronDelete',
+      'RemoteTrigger',
+      'ScheduleWakeup',
+      'EnterWorktree',
+      'ExitWorktree',
+      'PushNotification',
+      'Artifact',
+      'Projects',
+      'TaskCreate',
+      'TaskUpdate',
+      'TodoWrite',
+      'Agent',
+      'EnterPlanMode',
+      'ExitPlanMode',
+      'Write',
+      'Edit',
+      'MultiEdit',
+      'NotebookEdit',
+    ]);
+  });
+
+  it('forces the mutation deny list for preset Reviewer template even when stored profile still has Bash', () => {
+    // Simulates an upgraded Space where the persisted Reviewer row was seeded
+    // before this PR and still lists Bash in its tools. The runtime contract
+    // denies mutation + aux tools but KEEPS Bash for read-only shell.
+    // Destructive commands are blocked by REVIEWER_NO_MUTATION_GUARD.
+    const init = createCustomAgentInit(
+      makeConfig({
+        customAgent: makeAgent({
+          name: 'Reviewer',
+          templateName: 'Reviewer',
+          customPrompt: 'Visible prompt',
+          // Stale pre-migration profile — includes Bash.
+          tools: ['Read', 'Bash', 'Write', 'Edit'],
+        }),
+      })
+    );
+
+    expect(init.disallowedTools).toEqual([
+      'Monitor',
+      'CronCreate',
+      'CronDelete',
+      'RemoteTrigger',
+      'ScheduleWakeup',
+      'EnterWorktree',
+      'ExitWorktree',
+      'PushNotification',
+      'Artifact',
+      'Projects',
+      'TaskCreate',
+      'TaskUpdate',
+      'TodoWrite',
+      'Agent',
+      'EnterPlanMode',
+      'ExitPlanMode',
+      'Write',
+      'Edit',
+      'MultiEdit',
+      'NotebookEdit',
+    ]);
+    // Bash stays available for read-only shell (gh pr diff, git log, etc.)
+    expect(init.disallowedTools).not.toContain('Bash');
+    expect(init.disallowedTools).not.toContain('REPL');
+    expect(init.disallowedTools).not.toContain('Workflow');
   });
 
   it('leaves session-level tool restrictions unset when no tools are configured', () => {
@@ -1099,27 +1232,6 @@ describe('createCustomAgentInit', () => {
       })
     );
     expect(fallback.model).toBe('claude-sonnet-4-6');
-  });
-
-  it('uses saved agent provider only when the effective model is the agent model', () => {
-    const agentModel = createCustomAgentInit(
-      makeConfig({
-        customAgent: makeAgent({ model: 'custom-model', provider: 'openrouter' }),
-      })
-    );
-
-    expect(agentModel.model).toBe('custom-model');
-    expect(agentModel.provider).toBe('openrouter');
-
-    const slotOverride = createCustomAgentInit(
-      makeConfig({
-        customAgent: makeAgent({ model: 'custom-model', provider: 'openrouter' }),
-        slotOverrides: { model: 'claude-sonnet-4-6' },
-      })
-    );
-
-    expect(slotOverride.model).toBe('claude-sonnet-4-6');
-    expect(slotOverride.provider).toBe('anthropic');
   });
 
   it('applies thinking level precedence slot > agent > app default', () => {

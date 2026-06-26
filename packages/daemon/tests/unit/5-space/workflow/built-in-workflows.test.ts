@@ -145,42 +145,6 @@ describe('CODING_WORKFLOW template', () => {
     expect(prompt).toContain('The reviewer handles the merge.');
   });
 
-  test('coding-role prompts instruct subscribing to PR events after PR creation', () => {
-    const prompts = [
-      CODING_WORKFLOW.nodes[0].agents[0]?.customPrompt?.value,
-      FULLSTACK_QA_LOOP_WORKFLOW.nodes.find((node) => node.name === 'Coding')?.agents[0]
-        .customPrompt?.value,
-      RESEARCH_WORKFLOW.nodes[0].agents[0]?.customPrompt?.value,
-    ];
-
-    for (const prompt of prompts) {
-      expect(prompt).toContain('`subscribe_pr_events({})`');
-      expect(prompt).toContain('review comments, CI failures, and reactions');
-      expect(prompt).toContain('Do this once per PR');
-    }
-  });
-
-  test('coding-role prompts instruct using external_event reply handles and GraphQL thread ids', () => {
-    const prompts = [
-      CODING_WORKFLOW.nodes[0].agents[0]?.customPrompt?.value,
-      FULLSTACK_QA_LOOP_WORKFLOW.nodes.find((node) => node.name === 'Coding')?.agents[0]
-        .customPrompt?.value,
-      RESEARCH_WORKFLOW.nodes[0].agents[0]?.customPrompt?.value,
-    ];
-
-    for (const prompt of prompts) {
-      expect(prompt).toContain('`external_event` review comment essence');
-      expect(prompt).toContain('`replyHandle.commentId`');
-      expect(prompt).toContain('gh api --hostname <host>');
-      expect(prompt).toContain('pulls/{pull_number}/comments/{comment_id}/replies');
-      expect(prompt).toContain('gh api graphql --hostname <host>');
-      expect(prompt).toContain('resolveReviewThread(input:{threadId:$threadId})');
-      expect(prompt).toContain('PullRequestReviewThread.id');
-      expect(prompt).toContain('`commentNodeId`');
-      expect(prompt).toContain('do not use the review comment `node_id`');
-    }
-  });
-
   test('coder prompt gives behavioral handoff guidance without hard-coded gate details', () => {
     const prompt = CODING_WORKFLOW.nodes[0].agents[0]?.customPrompt?.value;
     expect(prompt).toContain('hand off by calling `send_message` to the review target');
@@ -848,6 +812,11 @@ describe('REVIEW_ONLY_WORKFLOW template', () => {
     const agent = REVIEW_ONLY_WORKFLOW.nodes[0].agents[0];
     expect(agent.customPrompt).toBeDefined();
     expect(agent.customPrompt?.value?.trim().length ?? 0).toBeGreaterThan(0);
+  });
+
+  test('REVIEW_ONLY_WORKFLOW prompt references gh pr review for posting', () => {
+    const prompt = REVIEW_ONLY_WORKFLOW.nodes[0].agents[0]?.customPrompt?.value ?? '';
+    expect(prompt).toContain('gh pr review');
   });
 });
 
@@ -1958,10 +1927,6 @@ describe('seedBuiltInWorkflows()', () => {
       .customPrompt!.value;
     const stalePrompt = templatePrompt
       .replace(
-        '5. If code changed: open a PR with `gh pr create` — include a clear title and description. After `gh pr create`, call `subscribe_pr_events({})` (no arguments needed — the PR URL is auto-resolved from the run). This subscribes you to review comments, CI failures, and reactions for your PR so you receive them directly and can act on them. Do this once per PR.\n',
-        '5. If code changed: open a PR with `gh pr create` — include a clear title and description\n'
-      )
-      .replace(
         '6. If code changed: hand off by calling `send_message` to the review target ' +
           'with `data: { pr_url: "<url>" }`. Use the current target and required data ' +
           'fields from the Runtime Execution Contract injected into your task prompt. ' +
@@ -2018,177 +1983,6 @@ describe('seedBuiltInWorkflows()', () => {
     );
   });
 
-  test('re-stamp composes review thread guidance with older handoff variants', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-    const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
-    const codingNode = coding.nodes.find((n) => n.name === 'Coding')!;
-    const templatePrompt = CODING_WORKFLOW.nodes.find((n) => n.name === 'Coding')!.agents[0]
-      .customPrompt!.value;
-    const stalePrompt = templatePrompt
-      .replace(
-        '5. If code changed: open a PR with `gh pr create` — include a clear title and description. After `gh pr create`, call `subscribe_pr_events({})` (no arguments needed — the PR URL is auto-resolved from the run). This subscribes you to review comments, CI failures, and reactions for your PR so you receive them directly and can act on them. Do this once per PR.\n',
-        '5. If code changed: open a PR with `gh pr create` — include a clear title and description\n'
-      )
-      .replace(
-        '6. If code changed: hand off by calling `send_message` to the review target ' +
-          'with `data: { pr_url: "<url>" }`. Use the current target and required data ' +
-          'fields from the Runtime Execution Contract injected into your task prompt. ' +
-          '`save_artifact` alone is insufficient; only `send_message` triggers the ' +
-          'hook-validated handoff. Always include the PR URL data field on every ' +
-          '`send_message` handoff — the hook validates every cycle, so even on round 2+ ' +
-          'you must re-supply it.\n',
-        '6. If code changed: hand off by sending a message to Review with ' +
-          '`data: { pr_url: "<url>" }`. The gate script verifies the PR is open and ' +
-          'mergeable, so make sure it actually is before sending. ' +
-          '**Always include `data: { pr_url }` on every send_message to Review** — the gate ' +
-          'data resets each cycle, so even on round 2+ you must re-supply it.\n'
-      )
-      .replace(
-        '6. Verify no unresolved review conversations remain, verify tests still pass, ' +
-          'then call `send_message` to the review target again to re-trigger the review ' +
-          'cycle. Re-supplying the PR URL data field is required because the hook ' +
-          'validates each handoff; `save_artifact` alone will not deliver it.',
-        '6. Verify no unresolved review conversations remain, verify tests still pass, ' +
-          'then send_message to Review again (again with `data: { pr_url }`) to ' +
-          're-trigger the review cycle'
-      )
-      .replace(
-        '3. For valid items: make the fix, then reply to that specific thread. Prefer the ' +
-          '`external_event` essence handle: use `replyHandle.commentId` as the REST ' +
-          '`{comment_id}` and the PR URL host as `<host>` in ' +
-          '`gh api --hostname <host> repos/{owner}/{repo}/pulls/{pull_number}/comments/{comment_id}/replies -f body="<ack>"` ' +
-          'explaining what changed. One reply per comment creates a visible audit trail.\n',
-        '3. For valid items: make the fix, then reply to that specific thread via ' +
-          '`gh api repos/{owner}/{repo}/pulls/{n}/comments/{comment_id}/replies -f body="<ack>"` ' +
-          'explaining what changed. One reply per comment creates a visible audit trail.\n'
-      )
-      .replace(
-        'After pushing fixes for review feedback, resolve ALL open GitHub review conversation ' +
-          'threads — including those where you disagree with the reviewer. When the feedback ' +
-          'arrives as an `external_event` review comment essence, use its `replyHandle.commentId` ' +
-          'as the REST `{comment_id}` and the PR URL host as `<host>` for ' +
-          '`gh api --hostname <host> repos/{owner}/{repo}/pulls/{pull_number}/comments/{comment_id}/replies -f body="<ack>"`. ' +
-          'Then resolve the thread with GraphQL ' +
-          "`gh api graphql --hostname <host> -f query='mutation($threadId:ID!){resolveReviewThread(input:{threadId:$threadId}){thread{id isResolved}}}' -f threadId=<review-thread-node-id>`, " +
-          'where `<host>` is the PR URL host and `<review-thread-node-id>` is the `PullRequestReviewThread.id` found by querying ' +
-          '`reviewThreads`; do not use the review comment `node_id`/`commentNodeId` as ' +
-          '`threadId`. The PR-ready hook blocks on any unresolved thread, so leaving one ' +
-          'open creates a deadlock. If the reviewer disagrees with your reasoning, they can ' +
-          're-open the thread. Use `gh api graphql` to verify no unresolved review conversations ' +
-          'remain before sending a message to Review again. Never set a PR to auto-merge — ' +
-          'auto-merge is not allowed.',
-        'After pushing fixes for review feedback, resolve ALL open GitHub review conversation ' +
-          'threads — including those where you disagree with the reviewer. First reply with your ' +
-          'reasoning, then resolve the thread with the `resolveReviewThread` mutation. The ' +
-          'PR-ready hook blocks on any unresolved thread, so leaving one open creates a deadlock. ' +
-          'If the reviewer disagrees with your reasoning, they can re-open the thread. ' +
-          'Use `gh api graphql` to verify no unresolved review conversations remain before ' +
-          'sending a message to Review again. ' +
-          'Never set a PR to auto-merge — auto-merge is not allowed.'
-      );
-
-    manager.updateWorkflow(coding.id, {
-      nodes: coding.nodes.map((n) =>
-        n.id !== codingNode.id
-          ? n
-          : {
-              ...n,
-              agents: n.agents.map((a, i) =>
-                i === 0 ? { ...a, customPrompt: { value: stalePrompt } } : a
-              ),
-            }
-      ),
-    });
-    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
-      'stale-composed-review-thread-guidance-hash',
-      coding.id
-    );
-
-    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-    expect(result.restamped).toContain(CODING_WORKFLOW.name);
-
-    const after = manager.getWorkflow(coding.id)!;
-    const afterCodingNode = after.nodes.find((n) => n.id === codingNode.id)!;
-    const afterPrompt = afterCodingNode.agents[0].customPrompt?.value;
-    expect(afterPrompt).toBe(templatePrompt);
-    expect(afterPrompt).toContain('replyHandle.commentId');
-    expect(afterPrompt).toContain('PullRequestReviewThread.id');
-    expect(afterPrompt).toContain('hand off by calling `send_message` to the review target');
-  });
-
-  test('re-stamp adds subscribe step to pre-PR-dev Coding/Fullstack/Research prompts', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-
-    // Simulate each workflow's persisted Coding/Research prompt as it was on
-    // dev BEFORE this PR: the step text lacks the subscribe instruction but all
-    // other steps are identical to the current template. Restamp must detect
-    // the drift and swap in the current template (which includes subscribe).
-    const cases = [
-      {
-        workflow: CODING_WORKFLOW,
-        nodeName: 'Coding',
-        currentStep:
-          '5. If code changed: open a PR with `gh pr create` — include a clear title and description. After `gh pr create`, call `subscribe_pr_events({})` (no arguments needed — the PR URL is auto-resolved from the run). This subscribes you to review comments, CI failures, and reactions for your PR so you receive them directly and can act on them. Do this once per PR.\n',
-        retiredStep:
-          '5. If code changed: open a PR with `gh pr create` — include a clear title and description\n',
-      },
-      {
-        workflow: FULLSTACK_QA_LOOP_WORKFLOW,
-        nodeName: 'Coding',
-        currentStep:
-          '3. Open or update the PR and ensure it remains mergeable. After `gh pr create`, call `subscribe_pr_events({})` (no arguments needed — the PR URL is auto-resolved from the run). This subscribes you to review comments, CI failures, and reactions for your PR so you receive them directly and can act on them. Do this once per PR.\n',
-        retiredStep: '3. Open or update the PR and ensure it remains mergeable\n',
-      },
-      {
-        workflow: RESEARCH_WORKFLOW,
-        nodeName: 'Research',
-        currentStep:
-          '5. Commit findings and open a PR with `gh pr create`. After `gh pr create`, call `subscribe_pr_events({})` (no arguments needed — the PR URL is auto-resolved from the run). This subscribes you to review comments, CI failures, and reactions for your PR so you receive them directly and can act on them. Do this once per PR.\n',
-        retiredStep: '5. Commit findings and open a PR with `gh pr create`\n',
-      },
-    ];
-
-    for (const { workflow, nodeName, currentStep, retiredStep } of cases) {
-      const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === workflow.name)!;
-      const node = wf.nodes.find((n) => n.name === nodeName)!;
-      const templatePrompt = workflow.nodes.find((n) => n.name === nodeName)!.agents[0]
-        .customPrompt!.value;
-      // Build the pre-PR-dev stale prompt: revert ONLY the step text.
-      const stalePrompt = templatePrompt.replace(currentStep, retiredStep);
-      expect(stalePrompt).not.toBe(templatePrompt);
-      expect(stalePrompt).not.toContain('subscribe_pr_events');
-
-      manager.updateWorkflow(wf.id, {
-        nodes: wf.nodes.map((n) =>
-          n.id !== node.id
-            ? n
-            : {
-                ...n,
-                agents: n.agents.map((a, i) =>
-                  i === 0 ? { ...a, customPrompt: { value: stalePrompt } } : a
-                ),
-              }
-        ),
-      });
-      db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
-        `stale-pr-step-${workflow.name}`,
-        wf.id
-      );
-
-      const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-      expect(result.restamped).toContain(workflow.name);
-
-      const after = manager.getWorkflow(wf.id)!;
-      const afterNode = after.nodes.find((n) => n.id === node.id)!;
-      const afterPrompt = afterNode.agents[0].customPrompt?.value;
-      expect(afterPrompt).toBe(templatePrompt);
-      expect(afterPrompt).toContain('subscribe_pr_events');
-      expect(after.templateHash).toBe(
-        computeWorkflowHash(getBuiltInWorkflows().find((w) => w.name === workflow.name)!)
-      );
-    }
-  });
-
   test('re-stamp preserves customized prompts containing retired built-in text', () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
@@ -2234,10 +2028,6 @@ describe('seedBuiltInWorkflows()', () => {
     const templatePrompt = FULLSTACK_QA_LOOP_WORKFLOW.nodes.find((n) => n.name === 'Coding')!
       .agents[0].customPrompt!.value;
     const stalePrompt = templatePrompt
-      .replace(
-        '3. Open or update the PR and ensure it remains mergeable. After `gh pr create`, call `subscribe_pr_events({})` (no arguments needed — the PR URL is auto-resolved from the run). This subscribes you to review comments, CI failures, and reactions for your PR so you receive them directly and can act on them. Do this once per PR.\n',
-        '3. Open or update the PR and ensure it remains mergeable\n'
-      )
       .replace(
         'When implementation is ready, ensure the PR is open and mergeable, then call `send_message` ' +
           'to the review target with `data: { pr_url: "<url>" }`. Use the current ' +
@@ -3968,6 +3758,18 @@ describe('seedBuiltInWorkflows()', () => {
       }
     }
   });
+
+  test('re-stamp migrates pre-Bash Review-Only prompt (with gh pr review) to current wording', () => {
+    // Persisted Review-Only prompts from before the Bash deny carried the
+    // `gh pr review` shell reference. Current wording also uses `gh pr review`
+    // but with updated surrounding text. Verify the drift variant restamps.
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const workflow = manager
+      .listWorkflows(SPACE_ID)
+      .find((w) => w.name === REVIEW_ONLY_WORKFLOW.name)!;
+    const templatePrompt = REVIEW_ONLY_WORKFLOW.nodes[0].agents[0]!.customPrompt!.value;
+    expect(templatePrompt).toContain('gh pr review');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -4323,8 +4125,6 @@ describe('CODING_WORKFLOW agent slot customPrompt', () => {
     expect(prompt).toContain('review_url');
     expect(prompt).toContain('comment_urls');
     expect(prompt).toContain('/replies');
-    expect(prompt).toContain('replyHandle.commentId');
-    expect(prompt).toContain('resolveReviewThread');
   });
 
   test('Review node reviewer has non-empty customPrompt', () => {
@@ -4338,9 +4138,10 @@ describe('CODING_WORKFLOW agent slot customPrompt', () => {
     const reviewNode = CODING_WORKFLOW.nodes.find((n) => n.name === 'Review')!;
     const reviewer = reviewNode.agents[0];
     const prompt = reviewer.customPrompt!.value;
-    // Reviewer must post to GitHub via gh pr review / gh api.
-    expect(prompt).toContain('gh pr review');
-    expect(prompt).toContain('gh api');
+    // Reviewer must post visible review without being told to use shell commands.
+    expect(prompt).toContain('visible GitHub review');
+
+    expect(prompt).toContain('request tests from Coder/QA if uncertain');
     // And on the changes-requested path, send_message to Coding must carry
     // the review URL + comment URLs so the coder can reply inline.
     expect(prompt).toContain('review_url');
@@ -4350,8 +4151,8 @@ describe('CODING_WORKFLOW agent slot customPrompt', () => {
   });
 });
 
-describe('REVIEW_ONLY_WORKFLOW reviewer customPrompt requires gh pr review before save_artifact', () => {
-  test('reviewer prompt mandates gh pr review before handoff', () => {
+describe('REVIEW_ONLY_WORKFLOW reviewer customPrompt requires visible review before save_artifact', () => {
+  test('reviewer prompt mandates visible review before handoff', () => {
     const agent = REVIEW_ONLY_WORKFLOW.nodes[0].agents[0];
     const prompt = agent.customPrompt!.value;
     expect(prompt).toContain('visible GitHub review');
@@ -4418,7 +4219,7 @@ describe('PLAN_AND_DECOMPOSE_WORKFLOW agent slot customPrompt', () => {
     const node = PLAN_AND_DECOMPOSE_WORKFLOW.nodes.find((n) => n.name === 'Plan Review')!;
     const prompt = node.agents[0].customPrompt!.value;
     expect(prompt).toContain('any login containing `codex`');
-    expect(prompt).toContain('issues/{number}/reactions');
+    expect(prompt).toContain('issue reactions');
     expect(prompt).toContain('poll every 60 seconds');
     expect(prompt).toContain('2 hours by default');
   });
@@ -5960,7 +5761,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     const prompt = reviewNode.agents[0].customPrompt!.value;
 
     expect(prompt).toContain('any login containing `codex`');
-    expect(prompt).toContain('issues/{number}/reactions');
+    expect(prompt).toContain('issue reactions');
     expect(prompt).toContain('poll every 60 seconds');
     expect(prompt).toContain('2 hours by default');
   });

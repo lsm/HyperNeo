@@ -262,11 +262,9 @@ describe('Review-Only end-node prompt loses verification boilerplate', () => {
     expect(prompt).not.toContain('before accepting completion');
   });
 
-  test('REVIEW_ONLY_WORKFLOW prompt still requires gh pr review before approve_task', () => {
+  test('REVIEW_ONLY_WORKFLOW prompt still requires visible GitHub review before approve_task', () => {
     const prompt = endNodePrompt(REVIEW_ONLY_WORKFLOW);
-    // Positive assertion: the core "post to GitHub first" guarantee is
-    // unchanged — this test guards against over-aggressive edits that
-    // strip the requirement along with the boilerplate.
+    expect(prompt).toContain('visible GitHub review');
     expect(prompt).toContain('gh pr review');
     expect(prompt).toContain('save_artifact');
     expect(prompt).toContain('approve_task()');

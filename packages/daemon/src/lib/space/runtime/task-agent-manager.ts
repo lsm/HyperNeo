@@ -55,6 +55,7 @@ import type { UUID } from 'crypto';
 import type { SDKUserMessage } from '@neokai/shared/sdk';
 import type { AgentSessionInit } from '../../../lib/agent/agent-session';
 import { AgentSession } from '../../../lib/agent/agent-session';
+import { buildPostApprovalInit } from './post-approval-init';
 import { validateImageSizes } from '../../session/message-persistence';
 import type { Database } from '../../../storage/database';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
@@ -303,6 +304,8 @@ export interface TaskAgentManagerConfig {
   pendingMessageRepo?: PendingAgentMessageRepository;
   /** Durable recovery store for pending Codex tool_result continuations. */
   toolContinuationRepo?: ToolContinuationRecoveryRepository;
+  /** External event service available to runtime subscribers and review-posting tools. */
+  externalEventStore?: import('../../external-events/external-event-store').ExternalEventStore;
   /**
    * Callback to inject a message into the Space Agent chat session for a space.
    * Used for Task Agent → Space Agent escalation via `send_message`.
@@ -347,12 +350,6 @@ export interface TaskAgentManagerConfig {
   goalService?: import('../goals/goal-service').SpaceGoalService;
   /** Evolution scope service for scoped lesson injection. */
   evolutionScopeService?: EvolutionScopeService;
-  /**
-   * External event store, plumbed into node-agent tools so sub-sessions can
-   * call `get_external_event` for on-demand raw event fetch. Optional — when
-   * absent, the tool is not registered on node-agent sessions.
-   */
-  externalEventStore?: import('../../external-events/external-event-store').ExternalEventStore;
 }
 
 // ---------------------------------------------------------------------------
@@ -913,7 +910,8 @@ export class TaskAgentManager {
     taskId: string,
     sessionId: string,
     init: AgentSessionInit,
-    memberInfo?: SubSessionMemberInfo
+    memberInfo?: SubSessionMemberInfo,
+    options?: { bypassReuse?: boolean }
   ): Promise<string> {
     // --- Session reuse: if this agent already has a live session, reuse it.
     // Each named agent gets exactly one AgentSession per task lifetime; subsequent
@@ -922,12 +920,21 @@ export class TaskAgentManager {
     // Primary state is in DB: query nodeExecutionRepo for the most recent session ID
     // for this agent, then check agentSessionIndex (fast path) or lazily rehydrate.
     //
+    // `options.bypassReuse` skips the reuse-lookup below so callers that need a
+    // fresh session with a different tool/prompt config (notably post-approval
+    // merge sessions, which must clear the Reviewer read-only restrictions even
+    // when reusing the reviewer slot) get a brand-new session instead of
+    // injecting into the existing read-only reviewer session. memberInfo is
+    // preserved so the NodeExecution write + restart rehydration still link the
+    // new session back to this task/node/agent.
+    const skipReuseLookup = options?.bypassReuse === true;
+    //
     // Eager-spawn fast path: when `eagerlySpawnWorkflowNodeAgents()` has
     // pre-created a session for this agent name at task-start time, no
     // NodeExecution row with `agentSessionId` exists yet. Resolve the
     // eager session directly from the in-memory index so the reuse logic
     // below picks it up instead of creating a second session.
-    if (memberInfo?.agentName) {
+    if (memberInfo?.agentName && !skipReuseLookup) {
       const parentTask = this.config.taskRepo.getTask(taskId);
       if (parentTask?.workflowRunId) {
         const eagerSessionId = this.eagerSubSessionIds.get(taskId)?.get(memberInfo.agentName);
@@ -1054,6 +1061,12 @@ export class TaskAgentManager {
                 `TaskAgentManager: flushPendingMessagesForTarget failed for ${memberInfo.agentName} (session ${existingSessionId}): ${err instanceof Error ? err.message : String(err)}`
               );
             });
+
+            // Tool-policy refresh: apply the current init's disallowedTools /
+            // agent / agents to the reused session so a persisted session from
+            // a pre-migration profile picks up the new permissive / read-only
+            // policy. Shared with the rehydrate path via applyWorkerToolPolicyRefresh.
+            await this.applyWorkerToolPolicyRefresh(existing, init);
 
             return existingSessionId;
           }
@@ -1211,8 +1224,7 @@ export class TaskAgentManager {
     const repo = this.config.pendingMessageRepo;
     if (!repo) return;
 
-    // Expire stale/overflow rows first so we don't deliver messages beyond retention limits.
-    repo.enforceRetention({ runId: workflowRunId });
+    // Expire stale rows first so we don't deliver messages that have exceeded their TTL.
     repo.expireStale(workflowRunId);
 
     const execution = this.config.nodeExecutionRepo.getByAgentSessionId(sessionId);
@@ -1226,7 +1238,7 @@ export class TaskAgentManager {
     const pending = queueTargetNames
       .flatMap((targetName) => repo.listPendingForTarget(workflowRunId, targetName))
       .filter((row) => row.targetKind === 'node_agent')
-      .sort((a, b) => a.createdAt - b.createdAt);
+      .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
     if (pending.length === 0) return;
 
     log.info(
@@ -1310,7 +1322,6 @@ export class TaskAgentManager {
     const inject = this.config.spaceAgentInjector;
     if (!repo || !inject) return;
 
-    repo.enforceRetention({ runId: workflowRunId });
     repo.expireStale(workflowRunId);
 
     const pending = repo
@@ -1685,16 +1696,6 @@ export class TaskAgentManager {
         internalEventBus: this.config.internalEventBus,
         onGatePendingApproval: (runId, gateId) =>
           this.config.spaceRuntimeService.handleGatePendingApproval(runId, gateId),
-        onGateDataChangedComplete: (runId, _gateId, activatedTasks, gateOpened) => {
-          // Same full post-eval chain as the service-level notifyGateDataChanged
-          // (sync + resume when gate opened) so the deferred-retry path picks
-          // up gate openings the same way as immediate invocations.
-          void this.config.spaceRuntimeService.handleGateDataChangedComplete(
-            runId,
-            activatedTasks,
-            gateOpened
-          );
-        },
         getPrUrlForRun: (runId) => this.resolvePrUrlForRun(runId),
       });
 
@@ -2821,6 +2822,26 @@ export class TaskAgentManager {
       agentSession.setRuntimeSystemPrompt(currentInit.systemPrompt);
     }
 
+    // Tool-policy refresh: after daemon restart, restored sessions keep stale
+    // sdkToolsPreset / allowedTools / disallowedTools from the persisted config.
+    // Apply the same refresh as the createSubSession reuse path so a restored
+    // Reviewer session picks up the read-only deny list before the next turn.
+    //
+    // Post-approval exception: when the persisted NodeExecution carries the
+    // `:post-approval:` agentName suffix, the session was spawned by
+    // spawnPostApprovalSubSession with stripped denies + the merge override
+    // prompt. resolveCurrentNodeAgentInitForExecution reconstructs the normal
+    // Reviewer init (with denylist + contract), which would overwrite the
+    // persisted post-approval config and strip the merge session's gh/git
+    // privileges mid-merge. Apply buildPostApprovalInit to the resolved init
+    // before refreshing so the post-approval privileges survive rehydrate.
+    if (currentInit) {
+      const initForRefresh = execution.agentName.includes(':post-approval:')
+        ? buildPostApprovalInit(currentInit)
+        : currentInit;
+      await this.applyWorkerToolPolicyRefresh(agentSession, initForRefresh);
+    }
+
     // --- Re-build and attach node-agent MCP server (runtime-only, not persisted)
     const nodeAgentMcpServer = this.buildNodeAgentMcpServerForSession(
       taskId,
@@ -3627,20 +3648,17 @@ export class TaskAgentManager {
       internalEventBus: this.config.internalEventBus,
       onGatePendingApproval: (runId, gateId) =>
         this.config.spaceRuntimeService.handleGatePendingApproval(runId, gateId),
-      onGateDataChangedComplete: (runId, _gateId, activatedTasks, gateOpened) => {
-        // Catches the deferred retry path: when a rate-limited gate eval
-        // schedules a refresh via gateRetryScheduler, the retry fires
-        // router.onGateDataChanged directly and bypasses the service-level
-        // post-hook wired in onGateDataChanged above. Route those retry
-        // completions through the same full post-eval chain (sync + resume
-        // when gate opened) so a deferred gate opening does not leave the
-        // workflow stuck in `blocked`.
-        void this.config.spaceRuntimeService.handleGateDataChangedComplete(
+      // Match the service-level path (SpaceRuntimeService.notifyGateDataChanged)
+      // so node-agent gate writes trigger the same deferred-retry + PR-event
+      // subscription sync as RPC-driven gate writes. Without this, blocked
+      // PR-ready/review gates after a node-agent handoff would not auto-subscribe
+      // to external PR events and could sit indefinitely.
+      onGateDataChangedComplete: (runId, _gateId, activatedTasks, gateOpened) =>
+        this.config.spaceRuntimeService.handleGateDataChangedComplete(
           runId,
           activatedTasks,
           gateOpened
-        );
-      },
+        ),
       getPrUrlForRun: (runId) => this.resolvePrUrlForRun(runId),
     });
     const agentMessageRouter = new AgentMessageRouter({
@@ -3853,6 +3871,7 @@ export class TaskAgentManager {
       );
       return jsonResult(result);
     };
+
     const onCreateStandaloneTask = async (args: {
       title: string;
       description: string;
@@ -3985,21 +4004,7 @@ export class TaskAgentManager {
       internalEventBus: this.config.internalEventBus,
       workflow,
       gateDataRepo: this.config.gateDataRepo,
-      onGateDataChanged: async (runId, gateId) => {
-        const activated = await nodeAgentChannelRouter.onGateDataChanged(runId, gateId);
-        // Mirror the service-level notifyGateDataChanged post-hook so agent-driven
-        // gate writes (write_gate MCP tool) trigger the same PR-event
-        // auto-subscription / cleanup as RPC-driven gate writes.
-        try {
-          await this.config.spaceRuntimeService.syncBlockedRunPrEventSubscription(runId, activated);
-        } catch (err) {
-          log.warn(
-            `TaskAgentManager: syncBlockedRunPrEventSubscription failed for run ${runId}: ` +
-              `${err instanceof Error ? err.message : String(err)}`
-          );
-        }
-        return activated;
-      },
+      onGateDataChanged: (runId, gateId) => nodeAgentChannelRouter.onGateDataChanged(runId, gateId),
       gateRetryScheduler: this.config.spaceRuntimeService.getGateRetryScheduler(),
       scriptExecutor: executeGateScript,
       // gateId is overridden per-gate by the handler ({ ...scriptContext, gateId }).
@@ -4023,7 +4028,6 @@ export class TaskAgentManager {
       artifactRepo: this.config.artifactRepo,
       taskRepo: this.config.taskRepo,
       auditLogRepo: this.auditLogRepo,
-      externalEventStore: this.config.externalEventStore,
       getSpaceAutonomyLevel: async (sid) => {
         const s = await spaceManager.getSpace(sid);
         return s?.autonomyLevel ?? 1;
@@ -4145,11 +4149,31 @@ export class TaskAgentManager {
       },
     };
 
-    const actualSessionId = await this.createSubSession(taskId, sessionId, init, {
-      agentId: matchedSlot.agentId,
-      agentName: matchedSlot.name,
-      nodeId: matchedNodeId,
-    });
+    // Post-approval sessions execute privileged workflows (e.g. PR merge via
+    // gh/git) and must not inherit the reviewer's read-only tool restrictions
+    // or the Reviewer system contract's "do not run Bash/scripts/shell" rule.
+    // Strip worker-derived denies on the session init and the active agent
+    // definition only, and append a prompt override that lifts the read-only
+    // rule for this session. Other agent definitions in init.agents are left
+    // untouched. Logic lives in the pure helper buildPostApprovalInit so it has
+    // direct unit coverage.
+    init = buildPostApprovalInit(init);
+
+    const actualSessionId = await this.createSubSession(
+      taskId,
+      sessionId,
+      init,
+      {
+        agentId: matchedSlot.agentId,
+        agentName: matchedSlot.name,
+        nodeId: matchedNodeId,
+      },
+      // Bypass reuse: post-approval needs a fresh session so the stripped
+      // disallowedTools + appended prompt override are actually applied. Without
+      // this, createSubSession would inject the merge kickoff into the existing
+      // read-only reviewer session that still has the worker denylist + contract.
+      { bypassReuse: true }
+    );
 
     const spawned = this.getSubSession(actualSessionId);
     if (!spawned) {
@@ -4169,12 +4193,98 @@ export class TaskAgentManager {
       phase: 'spawn',
     });
 
+    // Persist a fresh NodeExecution row pointing at the merge session. The
+    // reviewer slot's original NodeExecution still references the read-only
+    // reviewer session; without this row the merge session would be invisible
+    // to rehydrate() after a daemon restart because rehydrate walks
+    // node_executions to discover sessions to restore. Use a distinct agentName
+    // suffix so the merge row does not collide with the original reviewer exec
+    // on the (workflowRunId, workflowNodeId, agentName) lookup key.
+    if (workflowRunId) {
+      // Suffix with the session id short prefix so a respawn (same slot, same
+      // run) does not collide with the first merge row on the unique
+      // (workflowRunId, workflowNodeId, agentName) index. Without this the
+      // router's respawn path would insert-ignore and lose the new session id.
+      const mergeAgentName = `${matchedSlot.name}:post-approval:${actualSessionId.slice(-8)}`;
+      try {
+        // create() leaves startedAt null; the timeout scan ignores in-progress
+        // rows without startedAt, so a stalled merge session would never time
+        // out. create-then-update so the repository's status path stamps it.
+        const created = this.config.nodeExecutionRepo.create({
+          workflowRunId,
+          workflowNodeId: matchedNodeId,
+          agentName: mergeAgentName,
+          agentId: matchedSlot.agentId,
+          agentSessionId: actualSessionId,
+          status: 'in_progress',
+        });
+        this.config.nodeExecutionRepo.update(created.id, {
+          status: 'in_progress',
+          startedAt: Date.now(),
+        });
+        this.agentSessionIndex.set(actualSessionId, spawned);
+      } catch (err) {
+        log.warn(
+          `spawnPostApprovalSubSession: failed to persist NodeExecution row for merge session ${actualSessionId}: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        );
+      }
+    }
+
     await this.injectMessageIntoSession(spawned, kickoffMessage);
 
     log.info(
       `TaskAgentManager.spawnPostApprovalSubSession: spawned session ${actualSessionId} for agent "${matchedSlot.name}" (task ${taskId}, node ${matchedNodeId})`
     );
     return { sessionId: actualSessionId };
+  }
+
+  /**
+   * Apply the current tool-policy config slice to a session whose persisted
+   * config may predate the permissive worker policy migration. Shared by the
+   * createSubSession reuse path and the rehydrateSubSession restore path so
+   * both surfaces stay in sync. Detection covers stale sdkToolsPreset /
+   * allowedTools / disallowedTools / agent / agents. When drift is detected,
+   * calls updateConfig + resetQuery so the live SDK tool surface rebuilds.
+   * Failures are logged but do not block the session from being used.
+   */
+  private async applyWorkerToolPolicyRefresh(
+    session: AgentSession,
+    init: AgentSessionInit
+  ): Promise<void> {
+    try {
+      const sessionConfig = session.getSessionData().config;
+      // Include systemPrompt in the refresh because a permissive init may move
+      // the role prompt out of `agents[...]` into `systemPrompt.append`; if the
+      // refresh writes the cleared agent config but not systemPrompt, a reused
+      // Coder/Planner would restart with only the bare preset and lose its
+      // workflow role/handoff instructions after `resetQuery`.
+      const needsRefresh =
+        sessionConfig.sdkToolsPreset !== undefined ||
+        sessionConfig.allowedTools !== undefined ||
+        JSON.stringify(sessionConfig.disallowedTools ?? []) !==
+          JSON.stringify(init.disallowedTools ?? []) ||
+        sessionConfig.agent !== init.agent ||
+        JSON.stringify(sessionConfig.agents ?? {}) !== JSON.stringify(init.agents ?? {}) ||
+        JSON.stringify(sessionConfig.systemPrompt ?? null) !==
+          JSON.stringify(init.systemPrompt ?? null);
+      if (needsRefresh) {
+        await session.updateConfig({
+          sdkToolsPreset: undefined,
+          allowedTools: undefined,
+          disallowedTools: init.disallowedTools,
+          agent: init.agent,
+          agents: init.agents,
+          systemPrompt: init.systemPrompt,
+        } as Partial<typeof sessionConfig>);
+        await session.resetQuery({ restartQuery: true });
+      }
+    } catch (err) {
+      log.warn(
+        `TaskAgentManager.applyWorkerToolPolicyRefresh: tool-policy refresh failed: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
   }
 
   private resolvePrUrlForRun(runId: string): string {

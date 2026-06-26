@@ -84,15 +84,18 @@ describe('seedPresetAgents', () => {
     }
   });
 
-  it('reviewer has restricted tools (no Write or Edit)', async () => {
+  it('reviewer has restricted tools (no Write/Edit, keeps Bash for read shell)', async () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
     const reviewer = seeded.find((a) => a.name === 'Reviewer');
 
     expect(reviewer).toBeDefined();
     expect(reviewer?.tools).not.toContain('Write');
     expect(reviewer?.tools).not.toContain('Edit');
-    expect(reviewer?.tools).toContain('Read');
+    expect(reviewer?.tools).not.toContain('NotebookEdit');
+    // Reviewer keeps Bash for read-only shell (gh pr diff, git log, etc.).
+    // Destructive commands are blocked by REVIEWER_NO_MUTATION_GUARD.
     expect(reviewer?.tools).toContain('Bash');
+    expect(reviewer?.tools).toContain('Read');
   });
 
   it('Coordinator is the default long-horizon Space agent', async () => {
@@ -318,7 +321,7 @@ describe('seedPresetAgents', () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
     const reviewer = seeded.find((a) => a.name === 'Reviewer');
 
-    expect(reviewer?.customPrompt).toContain('own-PR fallback');
+    expect(reviewer?.customPrompt).toContain('Own-PR fallback');
     expect(reviewer?.customPrompt).toContain('COMMENT');
     expect(reviewer?.customPrompt).toContain('match your actual verdict');
   });
@@ -333,12 +336,14 @@ describe('seedPresetAgents', () => {
     expect(reviewer?.customPrompt?.toLowerCase()).toContain('over-engineering');
   });
 
-  it('Reviewer custom prompt captures the returned review URL via gh api --jq', async () => {
+  it('Reviewer custom prompt prohibits tests/scripts and requests evidence from Coder/QA', async () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
     const reviewer = seeded.find((a) => a.name === 'Reviewer');
 
-    expect(reviewer?.customPrompt).toContain('returned URL');
+    expect(reviewer?.customPrompt).toContain('Do not run tests, scripts, or builds yourself');
+    expect(reviewer?.customPrompt).toContain('request focused validation from Coder/QA');
     expect(reviewer?.customPrompt).toContain('GitHub review procedure');
+    expect(reviewer?.customPrompt).toContain('gh pr review');
   });
 
   it('Planner custom prompt mentions planning', async () => {
@@ -394,6 +399,7 @@ describe('preset agent exact definitions', () => {
     'Read',
     'Write',
     'Edit',
+    'MultiEdit',
     'Bash',
     'Grep',
     'Glob',
@@ -418,9 +424,19 @@ describe('preset agent exact definitions', () => {
     'Skill',
     'ToolSearch',
   ];
-  // Reviewer has the read-only toolset PLUS Task/TaskOutput/TaskStop so it
-  // can dispatch the built-in `general-purpose` sub-agent for exploration.
-  const EXPECTED_REVIEWER_TOOLS = [...EXPECTED_READONLY_TOOLS, 'Task', 'TaskOutput', 'TaskStop'];
+  const EXPECTED_REVIEWER_TOOLS = [
+    'Read',
+    'Bash',
+    'Grep',
+    'Glob',
+    'WebFetch',
+    'WebSearch',
+    'Skill',
+    'ToolSearch',
+    'Task',
+    'TaskOutput',
+    'TaskStop',
+  ];
 
   it('Coordinator has exact GENERAL_TOOLS (same as CODER_TOOLS)', async () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
@@ -528,35 +544,14 @@ describe('preset agent exact definitions', () => {
     expect(reviewer.customPrompt).toBe(reviewerTemplate.customPrompt);
   });
 
-  it('Reviewer custom prompt posts reviews via gh api and captures the returned URL', async () => {
+  it('Reviewer custom prompt posts reviews without shell commands and captures the returned URL', async () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
     const reviewer = seeded.find((a) => a.name === 'Reviewer')!;
     expect(reviewer.customPrompt).toContain('GitHub review procedure');
-    expect(reviewer.customPrompt).toContain('returned URL');
+    expect(reviewer.customPrompt).toContain('returned review URL');
     expect(reviewer.customPrompt).toContain('REVIEW_POSTED');
-  });
-
-  // Regression: the reviewer must never teach the `gh api ... -f body=@-`
-  // pattern. Lowercase -f (== --raw-field) is string-only and posts the @-value
-  // verbatim, so the heredoc body is discarded. The contract must instead show
-  // the command-substitution + quoted-heredoc form and warn about the trap.
-  it('Reviewer custom prompt warns against -f body=@- and teaches the heredoc command-substitution form', async () => {
-    const { seeded } = await seedPresetAgents('space-1', manager);
-    const reviewer = seeded.find((a) => a.name === 'Reviewer')!;
-    const prompt = reviewer.customPrompt!;
-    // Explicit warning so the model recognises and avoids the @- trap.
-    expect(prompt).toContain('Never use -f body=@-');
-    // Correct multi-line form: a quoted ('EOF') heredoc wrapped in $(...)
-    // passed to -f body="$(...)". Handles apostrophes/quotes in the body.
-    expect(prompt).toContain("-f body=\"$(cat <<'EOF'");
-    // The old inline single-quote body form (`-f body='## 🤖 Review ...`)
-    // broke on any apostrophe in the body — that fragility is what drove the
-    // reviewer to adopt the broken @- workaround. It must be gone.
-    expect(prompt).not.toContain("-f body='## 🤖 Review");
-    // Flag-naming accuracy: the typed flag that reads @<path>/@- is -F/--field.
-    // The contract must NOT mislabel -F as --raw-field (which is actually -f);
-    // such a mislabel would steer the agent back to the literal-path bug.
-    expect(prompt).not.toContain('-F/--raw-field');
+    expect(reviewer.customPrompt).not.toContain('```bash');
+    expect(reviewer.customPrompt).not.toContain('gh api');
   });
 
   it('QA has shared system contract prompt', async () => {
@@ -603,6 +598,7 @@ describe('PRESET_AGENT_TOOLS export', () => {
     'Read',
     'Write',
     'Edit',
+    'MultiEdit',
     'Bash',
     'Grep',
     'Glob',
@@ -627,9 +623,19 @@ describe('PRESET_AGENT_TOOLS export', () => {
     'Skill',
     'ToolSearch',
   ];
-  // Reviewer additionally carries Task/TaskOutput/TaskStop for built-in
-  // `general-purpose` sub-agent delegation.
-  const EXPECTED_REVIEWER_TOOLS = [...EXPECTED_READONLY_TOOLS, 'Task', 'TaskOutput', 'TaskStop'];
+  const EXPECTED_REVIEWER_TOOLS = [
+    'Read',
+    'Bash',
+    'Grep',
+    'Glob',
+    'WebFetch',
+    'WebSearch',
+    'Skill',
+    'ToolSearch',
+    'Task',
+    'TaskOutput',
+    'TaskStop',
+  ];
 
   it('has entries for all 7 preset roles', () => {
     expect(Object.keys(PRESET_AGENT_TOOLS).sort()).toEqual([

@@ -43,11 +43,12 @@ export const SUB_SESSION_FEATURES = {
 // Tool defaults per preset agent
 // ---------------------------------------------------------------------------
 
-/** Full coding toolset: read, write, shell, search, web */
+/** Full coding profile: read, write, shell, search, web. Not an exhaustive SDK allowlist. */
 const CODER_TOOLS: string[] = [
   'Read',
   'Write',
   'Edit',
+  'MultiEdit',
   'Bash',
   'Grep',
   'Glob',
@@ -72,11 +73,17 @@ const PLANNER_TOOLS = CODER_TOOLS;
 const RESEARCH_TOOLS = CODER_TOOLS;
 
 /**
- * Reviewers: read-only file access (no Write/Edit) plus the Task/TaskOutput/
- * TaskStop tools so the Reviewer can dispatch exploration to the built-in
- * `general-purpose` sub-agent that ships with the `claude_code` preset.
- * Custom reviewer-specific sub-agents (e.g. reviewer-explorer) are planned
- * but will live in workflow templates / SpaceAgent data, not code.
+ * Reviewers: read-only-shell/search/web/delegation profile. Includes `Bash`
+ * for evidence gathering (`gh pr diff`, `gh pr checks`, `git log`) but not
+ * Write/Edit/MultiEdit — file mutation is denied via tool-policy. Destructive
+ * shell commands (`gh pr merge`, `git push`, `git commit`) are blocked by
+ * `REVIEWER_NO_MUTATION_GUARD` in built-in workflows.
+ *
+ * Task/TaskOutput/TaskStop let Reviewer dispatch exploration to the built-in
+ * `general-purpose` sub-agent that ships with the `claude_code` preset. These
+ * are the SDK's sub-agent dispatch family, unrelated to `TaskCreate`/
+ * `TaskUpdate` (the SDK task-state mutation family, which is denied via
+ * WORKER_EXECUTABLE_AUXILIARY_TOOLS in tool-policy.ts).
  */
 const REVIEWER_TOOLS: string[] = [
   'Read',

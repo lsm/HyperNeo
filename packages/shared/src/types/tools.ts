@@ -9,6 +9,7 @@ export const KNOWN_TOOLS = [
   'Read',
   'Write',
   'Edit',
+  'MultiEdit',
   'Bash',
   'Grep',
   'Glob',
