@@ -371,8 +371,8 @@ export class AgentSession
     private getApiKey: () => Promise<string | null>,
     readonly skillsManager?: import('../skills-manager').SkillsManager,
     readonly appMcpServerRepo?: import('../../storage/repositories/app-mcp-server-repository').AppMcpServerRepository,
-    readonly skillOverrides?: SkillEnablementOverride[],
-    readonly toolGuards?: DeclarativeToolGuard[],
+    public skillOverrides?: SkillEnablementOverride[],
+    public toolGuards?: DeclarativeToolGuard[],
     private readonly runtimeOptions: AgentSessionRuntimeOptions = {}
   ) {
     this.errorManager = new ErrorManager(this.messageHub, this.internalEventBus);

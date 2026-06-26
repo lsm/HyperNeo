@@ -983,6 +983,8 @@ export class TaskAgentManager {
               }
             }
 
+            existing.skillOverrides = init.skillOverrides;
+            existing.toolGuards = init.toolGuards;
             await existing.updateConfig({
               model: init.model,
               provider: init.provider as Session['config']['provider'],
@@ -995,6 +997,7 @@ export class TaskAgentManager {
               agent: init.agent,
               agents: init.agents,
               settingSources: init.settingSources,
+              toolGuards: init.toolGuards,
             });
 
             // P1-4: Rebuild the node-agent MCP server with the new node context.

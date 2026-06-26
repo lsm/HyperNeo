@@ -702,6 +702,7 @@ export class SpaceRuntimeService {
       });
     } else {
       await session.updateConfig(regularAgentConfig);
+      await session.resetQuery({ restartQuery: true });
     }
     if (created || this.missingLongTermAgentMcpServers(session)) {
       this.attachLongTermAgentMcpServers(session, space, agent.name, sessionId, agent);

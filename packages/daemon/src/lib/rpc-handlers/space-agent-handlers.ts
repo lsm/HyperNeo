@@ -81,8 +81,12 @@ function extractTools(session: Session): string[] | undefined {
     'Skill',
     'ToolSearch',
   ];
+  const preservedAllowedTools =
+    session.config.allowedTools?.filter((tool) => known.has(tool)) ?? [];
   const disallowed = new Set(disallowedTools);
-  return defaultTools.filter((tool) => !disallowed.has(tool));
+  return [...new Set([...defaultTools, ...preservedAllowedTools])].filter(
+    (tool) => !disallowed.has(tool)
+  );
 }
 
 function extractSettingSources(session: Session): SettingSource[] | undefined {

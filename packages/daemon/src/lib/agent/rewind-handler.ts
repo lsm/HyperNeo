@@ -48,7 +48,7 @@ export type RewindCase = 'sdk-native' | 'diff-based' | 'hybrid';
  * Represents a file operation (Edit or Write tool call)
  */
 export interface FileOperation {
-  type: 'edit' | 'write';
+  type: 'edit' | 'write' | 'multiEdit';
   filePath: string;
   // For edit operations
   oldString?: string;
@@ -439,6 +439,18 @@ export class RewindHandler {
             filePath: input.file_path as string,
             content: input.content as string,
           });
+        } else if (name === 'MultiEdit') {
+          const edits = Array.isArray(input.edits) ? input.edits : [];
+          for (const edit of edits) {
+            if (!edit || typeof edit !== 'object') continue;
+            const item = edit as Record<string, unknown>;
+            operations.push({
+              type: 'multiEdit',
+              filePath: input.file_path as string,
+              oldString: item.old_string as string,
+              newString: item.new_string as string,
+            });
+          }
         }
       }
     }
