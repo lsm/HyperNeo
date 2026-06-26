@@ -21,7 +21,6 @@ import type {
   SpaceWorkflowRun,
   UpdateSpaceTaskParams,
 } from '@neokai/shared';
-import { KNOWN_TOOLS } from '@neokai/shared';
 import type { MessageRecord, ActorRef } from '../../../../../messaging/src/types';
 import { canonicalAgentHandle, SpaceActorRegistryAdapter } from '../actor-registry';
 import type { ExternalEventPublishedPayload } from '../../external-events/external-event-service';
@@ -76,6 +75,7 @@ import type { ExternalEventStore } from '../../external-events/external-event-st
 import type { ExternalEventService } from '../../external-events/external-event-service';
 import type { AgentMemoryRepository } from '../../../storage/repositories/agent-memory-repository';
 import type { SDKUserMessage } from '@neokai/shared/sdk';
+import { deriveWorkerDisallowedTools } from '../agents/tool-policy';
 import type { UUID } from 'crypto';
 
 const log = new Logger('space-runtime-service');
@@ -89,17 +89,6 @@ const LONG_TERM_AGENT_SESSION_FEATURES = {
 } as const;
 
 const DEFAULT_LONG_HORIZON_AGENT_MODEL = 'claude-sonnet-4-6';
-
-const CLAUDE_CODE_BUILTIN_TOOLS = [
-  ...KNOWN_TOOLS,
-  'NotebookEdit',
-  'TodoWrite',
-  'AskUserQuestion',
-  'EnterPlanMode',
-  'ExitPlanMode',
-  'Skill',
-  'ToolSearch',
-] as const;
 
 export interface SpaceRuntimeServiceConfig {
   db: BunDatabase;
@@ -519,13 +508,10 @@ export class SpaceRuntimeService {
     space: Space,
     agent: SpaceLongHorizonAgent
   ): Partial<Session['config']> {
-    const storedTools = Array.isArray(agent.toolPermissions.tools)
+    const customTools = Array.isArray(agent.toolPermissions.tools)
       ? (agent.toolPermissions.tools.filter((tool) => typeof tool === 'string') as string[])
-      : [];
-    const customTools = storedTools.length > 0 ? storedTools : undefined;
-    const customDisallowedBuiltins = customTools
-      ? CLAUDE_CODE_BUILTIN_TOOLS.filter((tool) => !customTools.includes(tool))
-      : [];
+      : undefined;
+    const customDisallowedBuiltins = deriveWorkerDisallowedTools(customTools);
     const agentKey = sanitizeLongTermAgentKey(agent.displayName);
 
     return {
@@ -541,20 +527,19 @@ export class SpaceRuntimeService {
         append: agent.instructions,
       },
       features: LONG_TERM_AGENT_SESSION_FEATURES,
-      sdkToolsPreset: customTools,
-      allowedTools: customTools,
-      disallowedTools: customTools ? customDisallowedBuiltins : undefined,
-      agent: customTools ? agentKey : undefined,
-      agents: customTools
-        ? {
-            [agentKey]: {
-              description: `Long-horizon Space agent: ${agent.displayName}`,
-              disallowedTools: customDisallowedBuiltins,
-              model: 'inherit',
-              prompt: agent.instructions,
-            } satisfies AgentDefinition,
-          }
-        : undefined,
+      disallowedTools: customDisallowedBuiltins.length > 0 ? customDisallowedBuiltins : undefined,
+      agent: customDisallowedBuiltins.length > 0 ? agentKey : undefined,
+      agents:
+        customDisallowedBuiltins.length > 0
+          ? {
+              [agentKey]: {
+                description: `Long-horizon Space agent: ${agent.displayName}`,
+                disallowedTools: customDisallowedBuiltins,
+                model: 'inherit',
+                prompt: agent.instructions,
+              } satisfies AgentDefinition,
+            }
+          : undefined,
       settingSources: agent.settingSources ?? space.settingSources,
     };
   }
@@ -570,8 +555,6 @@ export class SpaceRuntimeService {
       thinkingLevel: config.thinkingLevel,
       systemPrompt: config.systemPrompt,
       features: config.features,
-      sdkToolsPreset: config.sdkToolsPreset,
-      allowedTools: config.allowedTools,
       disallowedTools: config.disallowedTools,
       agent: config.agent,
       agents: config.agents,
@@ -658,10 +641,8 @@ export class SpaceRuntimeService {
       const resolvedPrompt = resolveCustomAgentPrompt(agent, {
         resolutionContext: { agentId: agent.id, agentName: agent.name },
       });
-      const customTools = agent.tools && agent.tools.length > 0 ? agent.tools : undefined;
-      const customDisallowedBuiltins = customTools
-        ? CLAUDE_CODE_BUILTIN_TOOLS.filter((tool) => !customTools.includes(tool))
-        : [];
+      const customTools = agent.tools;
+      const customDisallowedBuiltins = deriveWorkerDisallowedTools(customTools);
       try {
         const agentKey = sanitizeLongTermAgentKey(agent.name);
         await sessionManager.createSession({
@@ -680,24 +661,23 @@ export class SpaceRuntimeService {
               append: resolvedPrompt.value,
             },
             features: LONG_TERM_AGENT_SESSION_FEATURES,
-            ...(customTools
+            ...(customDisallowedBuiltins.length > 0
               ? {
-                  sdkToolsPreset: customTools,
-                  allowedTools: customTools,
                   disallowedTools: customDisallowedBuiltins,
                 }
               : {}),
-            agent: customTools ? agentKey : undefined,
-            agents: customTools
-              ? {
-                  [agentKey]: {
-                    description: agent.description ?? `Space agent: ${agent.name}`,
-                    disallowedTools: customDisallowedBuiltins,
-                    model: 'inherit',
-                    prompt: resolvedPrompt.value,
-                  } satisfies AgentDefinition,
-                }
-              : undefined,
+            agent: customDisallowedBuiltins.length > 0 ? agentKey : undefined,
+            agents:
+              customDisallowedBuiltins.length > 0
+                ? {
+                    [agentKey]: {
+                      description: agent.description ?? `Space agent: ${agent.name}`,
+                      disallowedTools: customDisallowedBuiltins,
+                      model: 'inherit',
+                      prompt: resolvedPrompt.value,
+                    } satisfies AgentDefinition,
+                  }
+                : undefined,
             settingSources: agent.settingSources ?? space.settingSources,
           },
         });

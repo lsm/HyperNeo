@@ -48,6 +48,7 @@ const CODER_TOOLS: string[] = [
   'Read',
   'Write',
   'Edit',
+  'MultiEdit',
   'Bash',
   'Grep',
   'Glob',
@@ -72,7 +73,7 @@ const PLANNER_TOOLS = CODER_TOOLS;
 const RESEARCH_TOOLS = CODER_TOOLS;
 
 /**
- * Reviewers: read-only file access (no Write/Edit) plus the Task/TaskOutput/
+ * Reviewers: read-only file access (no Write/Edit/MultiEdit/NotebookEdit) plus the Task/TaskOutput/
  * TaskStop tools so the Reviewer can dispatch exploration to the built-in
  * `general-purpose` sub-agent that ships with the `claude_code` preset.
  * Custom reviewer-specific sub-agents (e.g. reviewer-explorer) are planned
