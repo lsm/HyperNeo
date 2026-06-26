@@ -75,6 +75,7 @@ import { canTransition } from '../runtime/workflow-run-status-machine';
 import type { ToolResult } from './tool-result';
 import { jsonResult } from './tool-result';
 import { validateGlobPattern } from '../../external-events/topic-validator';
+import type { ExternalEventStore } from '../../external-events/external-event-store';
 import { getAvailableModels, getModelInfoUnfiltered, isValidModel } from '../../model-service';
 import { normalizeMeaningfulTaskResult } from '../task-result-utils';
 import { RESERVED_SPACE_AGENT_HANDLES, slugifyWithinLimit } from '../slug';
@@ -439,6 +440,12 @@ export interface SpaceAgentToolsConfig {
       message: MessageRecord
     ) => Promise<string | null | undefined>;
   };
+  /**
+   * External event store for the `get_external_event` on-demand fetch tool.
+   * Optional — when absent, the tool is not registered. Reads are scoped to
+   * the current space so events never leak across spaces.
+   */
+  externalEventStore?: ExternalEventStore;
 }
 
 // ---------------------------------------------------------------------------
@@ -1461,6 +1468,32 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         const message = err instanceof Error ? err.message : String(err);
         return jsonResult({ success: false, error: message });
       }
+    },
+
+    /**
+     * Fetch the full raw record for a single external event by id.
+     *
+     * On-demand counterpart to the lean "essence" injected into sessions as a
+     * message: use this for the rare deep-dive case where the digested summary
+     * is not enough and you need the complete payload (incl. `rawPayload`,
+     * `body`, `actor`, `eventType`, source-native fields, etc.).
+     *
+     * Returns a clear not-found result for unknown ids. Reads are scoped to the
+     * current space — an id that resolves to an event in another space is
+     * treated as not-found so events never leak across spaces.
+     */
+    async get_external_event(args: { eventId: string }): Promise<ToolResult> {
+      const store = config.externalEventStore;
+      if (!store) {
+        return jsonResult({ success: false, error: 'External event lookup is not available.' });
+      }
+      const record = store.getById(args.eventId);
+      // Scope by space: getById resolves by id only, so an id belonging to
+      // another space must be treated as not-found.
+      if (!record || record.event.spaceId !== spaceId) {
+        return jsonResult({ success: false, error: `External event not found: ${args.eventId}` });
+      }
+      return jsonResult({ success: true, event: record.event, state: record.state });
     },
 
     /**
@@ -4116,6 +4149,22 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
         'List external-event subscriptions for a long-horizon Space agent.',
         { agent_id: z.string().describe('Long-horizon agent ID') },
         (args) => handlers.list_agent_event_subscriptions(args)
+      )
+    );
+  }
+
+  // External event on-demand fetch — only registered when the store is provided.
+  if (config.externalEventStore) {
+    tools.push(
+      tool(
+        'get_external_event',
+        'Fetch the full raw record for a single external event by id — the on-demand deep-dive counterpart to ' +
+          'the lean event summary injected into a session as a message. Use this for the rare case where the summary ' +
+          'is not enough and you need the complete payload (incl. `rawPayload`, `body`, `actor`, `eventType`, ' +
+          'source-native fields such as review `state`, check-run `conclusion`, diff `path`/`line`, etc.). ' +
+          'Returns a not-found result for unknown ids.',
+        { eventId: z.string().min(1).describe('The id of the external event to fetch') },
+        (args) => handlers.get_external_event(args)
       )
     );
   }

@@ -2828,9 +2828,20 @@ export class SpaceRuntime {
     const occurredAtValues = items.map((item) => item.event.occurredAt);
     const oldest = new Date(Math.min(...occurredAtValues)).toISOString();
     const newest = new Date(Math.max(...occurredAtValues)).toISOString();
-    return `${items.length} events received for topics: ${topics.join(
-      ', '
-    )} (oldest: ${oldest}, newest: ${newest}). Use subscribe_external_event to get details.`;
+    // Include every coalesced event id so the agent can fetch any of them via
+    // get_external_event(eventId). deliverDigestToSession marks ALL coalesced
+    // deliveries as delivered after injecting this single message, so hiding
+    // any id (e.g. via a cap) would leave delivered-but-unreachable events.
+    // Rate-limit digests are small in practice, and even a large burst stays
+    // well within an injected-message budget (UUIDs are compact), so we list
+    // all ids rather than truncate.
+    const eventIds = items.map((item) => item.event.eventId).join(', ');
+    return (
+      `${items.length} events received for topics: ${topics.join(', ')} ` +
+      `(oldest: ${oldest}, newest: ${newest}). ` +
+      `Event IDs: ${eventIds}. ` +
+      `Use get_external_event(eventId) for full details.`
+    );
   }
 
   /**

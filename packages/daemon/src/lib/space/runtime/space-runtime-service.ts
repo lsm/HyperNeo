@@ -876,6 +876,7 @@ export class SpaceRuntimeService {
       replyRoutingRegistry: this.config.replyRoutingRegistry,
       messageResolver: this.createMessageResolver(space.id),
       longTermAgentDelivery: this.longTermAgentDeliveryCallbacks(),
+      externalEventStore: this.config.externalEventStore,
     });
   }
 
@@ -1505,6 +1506,7 @@ export class SpaceRuntimeService {
       replyRoutingRegistry: this.config.replyRoutingRegistry,
       messageResolver: this.createMessageResolver(space.id),
       longTermAgentDelivery: this.longTermAgentDeliveryCallbacks(),
+      externalEventStore: this.config.externalEventStore,
     });
 
     const additional: Record<string, McpServerConfig> = {
@@ -1634,6 +1636,7 @@ export class SpaceRuntimeService {
       replyRoutingRegistry: this.config.replyRoutingRegistry,
       messageResolver: this.createMessageResolver(space.id),
       longTermAgentDelivery: this.longTermAgentDeliveryCallbacks(),
+      externalEventStore: this.config.externalEventStore,
     });
 
     // Create a space-scoped db-query server if dbPath is configured.

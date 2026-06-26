@@ -1163,9 +1163,20 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(injected.slice(0, 10).map((item) => JSON.parse(item.message).eventId)).toEqual(
       events.slice(0, 10).map((event) => event.id)
     );
-    expect(injected[10]!.message).toBe(
-      '5 events received for topics: github/lsm/neokai/pull_request/42.review_comment, github/lsm/neokai/pull_request/42.review_submitted (oldest: 2023-11-14T22:13:20.010Z, newest: 2023-11-14T22:13:20.014Z). Use subscribe_external_event to get details.'
+    expect(injected[10]!.message).toContain(
+      '5 events received for topics: github/lsm/neokai/pull_request/42.review_comment, github/lsm/neokai/pull_request/42.review_submitted'
     );
+    expect(injected[10]!.message).toContain(
+      '(oldest: 2023-11-14T22:13:20.010Z, newest: 2023-11-14T22:13:20.014Z)'
+    );
+    expect(injected[10]!.message).toContain('Use get_external_event(eventId) for full details.');
+    // The digest must carry the coalesced event ids so the agent can fetch the
+    // full record via get_external_event(eventId) — otherwise the pointer is
+    // unusable. The 5 coalesced events are evt-rate-limit-10..14.
+    for (const id of ['evt-rate-limit-10', 'evt-rate-limit-14']) {
+      expect(injected[10]!.message).toContain(`Event IDs: `);
+      expect(injected[10]!.message).toContain(id);
+    }
     for (const event of events) {
       expect(eventStore.getById(event.id)?.state).toBe('delivered');
       expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
@@ -2134,6 +2145,12 @@ describe('SpaceRuntime external event subscriptions', () => {
       '40 events received for topics: github/lsm/neokai/pull_request/42.review_submitted'
     );
     expect(injected.some((item) => item.message.includes(events[0]!.id))).toBe(false);
+    // The digest must list EVERY coalesced id (no cap/truncation) so every
+    // delivered event remains fetchable via get_external_event(eventId).
+    // events[1..40] are in the digest; verify an id well past the old 10-cap.
+    expect(injected[10]!.message).toContain(events[30]!.id);
+    expect(injected[10]!.message).toContain(events[40]!.id);
+    expect(injected[10]!.message).not.toContain('more)`');
   });
 
   test('persists pending delivery when target execution is not active', async () => {

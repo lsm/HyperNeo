@@ -992,6 +992,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     memoryRepo: deps.db.agentMemory,
     goalService: spaceGoalService,
     evolutionScopeService,
+    externalEventStore: deps.externalEventStore,
   });
 
   deps.commandBus.register('agent.message.inject', async (command) => {
