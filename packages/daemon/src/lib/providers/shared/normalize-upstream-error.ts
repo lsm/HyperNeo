@@ -229,10 +229,15 @@ export function normalizeOpenAiUpstreamError(
   if (!body) return null;
 
   const parsed = tryParseJsonObject(body);
+  const errorValue = parsed?.error;
   const errorObj =
-    parsed?.error && typeof parsed.error === 'object' && !Array.isArray(parsed.error)
-      ? (parsed.error as Record<string, unknown>)
+    errorValue && typeof errorValue === 'object' && !Array.isArray(errorValue)
+      ? (errorValue as Record<string, unknown>)
       : undefined;
+  // Some proxies return a STRING `error` value, e.g. `{"error":"Too Many
+  // Requests"}` or `{"error":"rate_limit_exceeded"}`. Treat it as message
+  // evidence, and — when it is a recognized transient type — as code evidence.
+  const errorString = typeof errorValue === 'string' ? errorValue : undefined;
   // Read structured fields from the nested `error` object, falling back to the
   // top-level body — some upstreams emit a FLAT body like
   // `{"code":"rate_limit_exceeded","message":"slow down"}` with no `error`
@@ -247,15 +252,17 @@ export function normalizeOpenAiUpstreamError(
     readStringField(errorObj, 'code') ??
     readStringField(parsed, 'code') ??
     readStringField(errorObj, 'status') ??
-    readStringField(parsed, 'status')
+    readStringField(parsed, 'status') ??
+    errorString
   )?.toLowerCase();
   // Message for substring matching — use ONLY the extracted error/top-level
-  // message (or problem+json `detail`), NOT the raw body.
+  // message (or problem+json `detail` / a string `error` value), NOT the raw body.
   const messageForMatching =
     readStringField(errorObj, 'message') ??
     readStringField(parsed, 'message') ??
     readStringField(errorObj, 'detail') ??
-    readStringField(parsed, 'detail');
+    readStringField(parsed, 'detail') ??
+    errorString;
   // Result message falls back to the body so the surfaced error has context.
   const messageField = messageForMatching ?? body;
 

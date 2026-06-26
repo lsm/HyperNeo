@@ -282,6 +282,24 @@ describe('normalizeOpenAiUpstreamError', () => {
     expect(result?.type).toBe('overloaded_error');
   });
 
+  it('treats a string error value as message evidence', () => {
+    // {"error":"Too Many Requests"} — the error value is a plain string, not
+    // an object. It must be read as the message so the rate-limit pattern matches.
+    const body = JSON.stringify({ error: 'Too Many Requests' });
+    const result = normalizeOpenAiUpstreamError(body, 200);
+    expect(result?.type).toBe('rate_limit_error');
+    expect(result?.status).toBe(429);
+  });
+
+  it('treats a string error value that is a known type as code evidence', () => {
+    // {"error":"rate_limit_exceeded"} — the string is a recognized transient
+    // type, so it must count as structured evidence (passes the hard-4xx guard).
+    const body = JSON.stringify({ error: 'rate_limit_exceeded' });
+    const result = normalizeOpenAiUpstreamError(body, 400);
+    expect(result?.type).toBe('rate_limit_error');
+    expect(result?.status).toBe(429);
+  });
+
   it('returns null for a normal invalid_request error', () => {
     const body = JSON.stringify({
       error: { type: 'invalid_request_error', message: 'bad model id' },

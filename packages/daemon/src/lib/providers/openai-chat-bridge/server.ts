@@ -566,8 +566,10 @@ function chatChunkErrorBody(chunk: OpenAIChatStreamChunk): string | undefined {
   if (!chunk.choices?.length && !chunk.usage) {
     const flat = chunk as Record<string, unknown>;
     const message = typeof flat.message === 'string' ? flat.message : undefined;
+    const detail = typeof flat.detail === 'string' ? flat.detail : undefined;
     const type = typeof flat.type === 'string' ? flat.type : undefined;
-    // Accept numeric codes (some gateways send {"code":429}) — coerce to string
+    // Accept numeric codes (some gateways send {"code":429}) and RFC 7807
+    // problem-detail fields (status→code, detail→message), coercing to strings
     // so the normalizer can classify them.
     const rawCode = flat.code;
     const code =
@@ -576,16 +578,29 @@ function chatChunkErrorBody(chunk: OpenAIChatStreamChunk): string | undefined {
         : typeof rawCode === 'number' && Number.isFinite(rawCode)
           ? String(rawCode)
           : undefined;
-    // Require an actual error signal: a message, a code, OR a `type` that is a
-    // recognized transient error type. A bare unknown `type` is treated as a
-    // heartbeat/metadata frame (e.g. `{"type":"ping"}`) and ignored so it
-    // doesn't abort a valid stream; a known type-only frame like
+    const rawStatus = flat.status;
+    const status =
+      typeof rawStatus === 'string'
+        ? rawStatus
+        : typeof rawStatus === 'number' && Number.isFinite(rawStatus)
+          ? String(rawStatus)
+          : undefined;
+    // Require an actual error signal: a message/detail, a code/status, OR a
+    // `type` that is a recognized transient error type. A bare unknown `type`
+    // is treated as a heartbeat/metadata frame (e.g. `{"type":"ping"}`) and
+    // ignored so it doesn't abort a valid stream; a known type-only frame like
     // `{"type":"server_error"}` is still admitted.
-    if (message || code || (type !== undefined && isOpenAiTransientErrorType(type))) {
+    if (
+      message ||
+      detail ||
+      code ||
+      status ||
+      (type !== undefined && isOpenAiTransientErrorType(type))
+    ) {
       const error: Record<string, unknown> = {};
-      if (message) error.message = message;
+      if (message ?? detail) error.message = message ?? detail;
       if (type) error.type = type;
-      if (code) error.code = code;
+      if (code ?? status) error.code = code ?? status;
       return JSON.stringify({ error });
     }
   }

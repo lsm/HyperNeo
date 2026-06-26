@@ -177,6 +177,24 @@ describe('openai-responses-bridge: body-embedded / mid-stream error normalizatio
     );
   });
 
+  it('classifies a flat RFC 7807 problem-detail error frame (status/detail)', async () => {
+    // A flat `event: error` frame whose data is {"status":429,"detail":"Too Many
+    // Requests"} — status→code and detail→message must be mapped before
+    // normalization so the retryable 429 classification is recovered.
+    const sse = 'event: error\n' + 'data: {"status":429,"detail":"Too Many Requests"}\n\n';
+    server = makeServer(
+      async () =>
+        new Response(sse, { status: 200, headers: { 'Content-Type': 'text/event-stream' } })
+    );
+
+    const res = await postMessages(server.port);
+    expect(res.status).toBe(200);
+    const events = await readSSEEvents(res.body);
+    const errorEvent = events.find((e) => e.event === 'error');
+    expect(errorEvent).toBeDefined();
+    expect((errorEvent?.data as { error: { type: string } }).error.type).toBe('rate_limit_error');
+  });
+
   it('classifies a flat error frame whose data type differs from the SSE event name', async () => {
     // parseSSEBlock lets the payload `type` overwrite the SSE `event:` name, so
     // a flat `event: error` block like data: {"type":"server_error",...} has

@@ -1169,12 +1169,20 @@ async function streamResponsesToAnthropic({
             : undefined;
         const flatEvent = event as Record<string, unknown>;
         const topLevelError: Record<string, unknown> = {};
-        // Accept numeric codes (e.g. {"code":429}) — coerce to string.
+        // Accept numeric codes (e.g. {"code":429}) and RFC 7807 problem-detail
+        // fields (status→code, detail→message), coercing to strings.
         const rawCode = flatEvent.code;
         if (typeof rawCode === 'string') topLevelError.code = rawCode;
         else if (typeof rawCode === 'number' && Number.isFinite(rawCode))
           topLevelError.code = String(rawCode);
+        else {
+          const rawStatus = flatEvent.status;
+          if (typeof rawStatus === 'string') topLevelError.code = rawStatus;
+          else if (typeof rawStatus === 'number' && Number.isFinite(rawStatus))
+            topLevelError.code = String(rawStatus);
+        }
         if (typeof flatEvent.message === 'string') topLevelError.message = flatEvent.message;
+        else if (typeof flatEvent.detail === 'string') topLevelError.message = flatEvent.detail;
         // The payload `type` is the error category when it is not the literal
         // event discriminator ("error" / "response.failed").
         if (
