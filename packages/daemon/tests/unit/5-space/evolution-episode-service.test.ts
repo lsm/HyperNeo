@@ -758,7 +758,7 @@ describe('EvolutionEpisodeService', () => {
     expect(prompt).not.toContain('x'.repeat(1300));
   });
 
-  it('includes existing active lessons and open proposals in the judge prompt', () => {
+  it('includes existing active/candidate lessons and open proposals in the judge prompt', () => {
     const scope = evolutionRepo.createScope({
       spaceId,
       kind: 'custom',
@@ -790,6 +790,14 @@ describe('EvolutionEpisodeService', () => {
       why: 'Manual notes alone produce generic findings',
       confidence: 0.85,
     });
+    evolutionRepo.createLesson({
+      scopeId: scope.id,
+      status: 'candidate',
+      appliesTo: ['tool'],
+      rule: 'Prefer trace evidence over manual notes for episode generation',
+      why: 'Trace evidence carries concrete tool failure data',
+      confidence: 0.6,
+    });
     evolutionRepo.createTaskProposal({
       scopeId: scope.id,
       title: 'Add conversation friction dashboard',
@@ -797,6 +805,31 @@ describe('EvolutionEpisodeService', () => {
       reason: 'Friction evidence is captured but not visible to operators',
       priority: 'normal',
       status: 'proposed',
+    });
+    evolutionRepo.createTaskProposal({
+      scopeId: scope.id,
+      title: 'Add verification triage automation',
+      description: 'Auto-trigger verification after repeated failures',
+      reason: 'Verification failures are a leading friction source',
+      priority: 'high',
+      status: 'accepted',
+    });
+    // Dismissed items should NOT appear in the prompt
+    evolutionRepo.createLesson({
+      scopeId: scope.id,
+      status: 'dismissed',
+      appliesTo: ['workflow'],
+      rule: 'Dismissed lesson should not appear',
+      why: 'Rejected by operator',
+      confidence: 0.1,
+    });
+    evolutionRepo.createTaskProposal({
+      scopeId: scope.id,
+      title: 'Dismissed proposal should not appear',
+      description: 'Should be filtered out',
+      reason: 'Dismissed',
+      priority: 'low',
+      status: 'dismissed',
     });
     const service = new EvolutionEpisodeService({
       evolutionRepo,
@@ -808,18 +841,38 @@ describe('EvolutionEpisodeService', () => {
     const input = service.buildEpisodeInput({ scopeId: scope.id, evidenceIds: [evidence.id] });
     const prompt = buildEpisodeJudgePrompt(input);
 
-    expect(input.existingLessons).toHaveLength(1);
-    expect(input.existingLessons[0]?.rule).toBe(
-      'Always run evidence-quality preflight before judging an episode'
-    );
-    expect(input.existingProposals).toHaveLength(1);
-    expect(input.existingProposals[0]?.title).toBe('Add conversation friction dashboard');
-    expect(prompt).toContain('Existing accepted lessons in this scope');
+    // Active + candidate lessons included; dismissed excluded
+    expect(input.existingLessons).toHaveLength(2);
+    expect(
+      input.existingLessons.some(
+        (l) => l.rule === 'Always run evidence-quality preflight before judging an episode'
+      )
+    ).toBe(true);
+    expect(
+      input.existingLessons.some(
+        (l) => l.rule === 'Prefer trace evidence over manual notes for episode generation'
+      )
+    ).toBe(true);
+    // Proposed + accepted proposals included; dismissed excluded
+    expect(input.existingProposals).toHaveLength(2);
+    expect(
+      input.existingProposals.some((p) => p.title === 'Add conversation friction dashboard')
+    ).toBe(true);
+    expect(
+      input.existingProposals.some((p) => p.title === 'Add verification triage automation')
+    ).toBe(true);
+    // Prompt surfaces lesson and proposal details
+    expect(prompt).toContain('Existing accepted and candidate lessons in this scope');
     expect(prompt).toContain('Always run evidence-quality preflight before judging an episode');
     expect(prompt).toContain('Open proposals in this scope');
     expect(prompt).toContain('Add conversation friction dashboard');
+    expect(prompt).toContain('Surface friction patterns in the Forge UI');
+    expect(prompt).toContain('Friction evidence is captured but not visible to operators');
+    // Dismissed items are excluded
+    expect(prompt).not.toContain('Dismissed');
+    // Instruction says "omit" (no refine since there is no update path)
     expect(prompt).toContain(
-      'skip any that duplicate or substantially overlap with the items above'
+      'omit any that duplicate or substantially overlap with the items above'
     );
   });
 
