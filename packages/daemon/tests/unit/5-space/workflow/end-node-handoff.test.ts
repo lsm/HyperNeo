@@ -409,6 +409,11 @@ describe('Post-approval merge conflict routes to coder, not human', () => {
     // The PR head object must be fetched (refs/pull/<number>/head), not just
     // the OID — otherwise merge-tree/diff hit an unknown object after a restart.
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('refs/pull/<number>/head');
+    // The OLD approved head must also be fetched before the diff — it may no
+    // longer be local after a restart/cache miss.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain(
+      '"$APPROVED_HEAD_OID" "refs/pull/<number>/head"'
+    );
     // A request-changes on a bad fix posts a formal CHANGES_REQUESTED review for
     // non-own PRs (the gate requires it); PR-comment fallback is own-PR only.
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('CHANGES_REQUESTED');
