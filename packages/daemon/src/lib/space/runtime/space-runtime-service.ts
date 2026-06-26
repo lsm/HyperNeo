@@ -21,7 +21,6 @@ import type {
   SpaceWorkflowRun,
   UpdateSpaceTaskParams,
 } from '@neokai/shared';
-import { KNOWN_TOOLS } from '@neokai/shared';
 import type { MessageRecord, ActorRef } from '../../../../../messaging/src/types';
 import { canonicalAgentHandle, SpaceActorRegistryAdapter } from '../actor-registry';
 import type { ExternalEventPublishedPayload } from '../../external-events/external-event-service';
@@ -59,6 +58,12 @@ import { createSpaceAgentMcpServer } from '../tools/space-agent-tools';
 import type { ReplyRoutingRegistry } from './reply-routing-registry';
 import { buildSpaceChatSystemPrompt } from '../agents/space-chat-agent';
 import { resolveCustomAgentPrompt } from '../agents/custom-agent';
+import { deriveWorkerDisallowedTools } from '../agents/tool-policy';
+import {
+  buildLongTermAgentDesiredConfig,
+  longTermAgentSessionNeedsRefresh,
+} from './long-term-agent-config-refresh';
+import { applyReviewerContractMigrationOverride } from '../agents/reviewer-contract-migration';
 import { Logger } from '../../logger';
 import { createDbQueryMcpServer, type DbQueryMcpServer } from '../../db-query/tools';
 import { createAgentMemoryMcpServer } from '../tools/agent-memory-tools';
@@ -89,17 +94,6 @@ const LONG_TERM_AGENT_SESSION_FEATURES = {
 } as const;
 
 const DEFAULT_LONG_HORIZON_AGENT_MODEL = 'claude-sonnet-4-6';
-
-const CLAUDE_CODE_BUILTIN_TOOLS = [
-  ...KNOWN_TOOLS,
-  'NotebookEdit',
-  'TodoWrite',
-  'AskUserQuestion',
-  'EnterPlanMode',
-  'ExitPlanMode',
-  'Skill',
-  'ToolSearch',
-] as const;
 
 export interface SpaceRuntimeServiceConfig {
   db: BunDatabase;
@@ -522,10 +516,7 @@ export class SpaceRuntimeService {
     const storedTools = Array.isArray(agent.toolPermissions.tools)
       ? (agent.toolPermissions.tools.filter((tool) => typeof tool === 'string') as string[])
       : [];
-    const customTools = storedTools.length > 0 ? storedTools : undefined;
-    const customDisallowedBuiltins = customTools
-      ? CLAUDE_CODE_BUILTIN_TOOLS.filter((tool) => !customTools.includes(tool))
-      : [];
+    const customDisallowedTools = deriveWorkerDisallowedTools(storedTools);
     const agentKey = sanitizeLongTermAgentKey(agent.displayName);
 
     return {
@@ -541,20 +532,19 @@ export class SpaceRuntimeService {
         append: agent.instructions,
       },
       features: LONG_TERM_AGENT_SESSION_FEATURES,
-      sdkToolsPreset: customTools,
-      allowedTools: customTools,
-      disallowedTools: customTools ? customDisallowedBuiltins : undefined,
-      agent: customTools ? agentKey : undefined,
-      agents: customTools
-        ? {
-            [agentKey]: {
-              description: `Long-horizon Space agent: ${agent.displayName}`,
-              disallowedTools: customDisallowedBuiltins,
-              model: 'inherit',
-              prompt: agent.instructions,
-            } satisfies AgentDefinition,
-          }
-        : undefined,
+      disallowedTools: customDisallowedTools.length > 0 ? customDisallowedTools : undefined,
+      agent: customDisallowedTools.length > 0 ? agentKey : undefined,
+      agents:
+        customDisallowedTools.length > 0
+          ? {
+              [agentKey]: {
+                description: `Long-horizon Space agent: ${agent.displayName}`,
+                disallowedTools: customDisallowedTools,
+                model: 'inherit',
+                prompt: agent.instructions,
+              } satisfies AgentDefinition,
+            }
+          : undefined,
       settingSources: agent.settingSources ?? space.settingSources,
     };
   }
@@ -658,10 +648,18 @@ export class SpaceRuntimeService {
       const resolvedPrompt = resolveCustomAgentPrompt(agent, {
         resolutionContext: { agentId: agent.id, agentName: agent.name },
       });
-      const customTools = agent.tools && agent.tools.length > 0 ? agent.tools : undefined;
-      const customDisallowedBuiltins = customTools
-        ? CLAUDE_CODE_BUILTIN_TOOLS.filter((tool) => !customTools.includes(tool))
-        : [];
+      // Apply the Reviewer contract migration override at creation too — the
+      // refresh path runs only under `if (!created)`, so without this a newly
+      // created long-term Reviewer session with a stale preset row would get
+      // the Bash deny list but the old shell-based prompt, leaving the model
+      // instructed to call `gh pr review` / `gh pr diff` while Bash is blocked.
+      const migratedPrompt = applyReviewerContractMigrationOverride(
+        resolvedPrompt.value,
+        agent.templateName
+      );
+      const customDisallowedTools = deriveWorkerDisallowedTools(agent.tools, {
+        templateName: agent.templateName,
+      });
       try {
         const agentKey = sanitizeLongTermAgentKey(agent.name);
         await sessionManager.createSession({
@@ -677,27 +675,22 @@ export class SpaceRuntimeService {
             systemPrompt: {
               type: 'preset',
               preset: 'claude_code',
-              append: resolvedPrompt.value,
+              append: migratedPrompt,
             },
             features: LONG_TERM_AGENT_SESSION_FEATURES,
-            ...(customTools
-              ? {
-                  sdkToolsPreset: customTools,
-                  allowedTools: customTools,
-                  disallowedTools: customDisallowedBuiltins,
-                }
-              : {}),
-            agent: customTools ? agentKey : undefined,
-            agents: customTools
-              ? {
-                  [agentKey]: {
-                    description: agent.description ?? `Space agent: ${agent.name}`,
-                    disallowedTools: customDisallowedBuiltins,
-                    model: 'inherit',
-                    prompt: resolvedPrompt.value,
-                  } satisfies AgentDefinition,
-                }
-              : undefined,
+            ...(customDisallowedTools.length > 0 ? { disallowedTools: customDisallowedTools } : {}),
+            agent: customDisallowedTools.length > 0 ? agentKey : undefined,
+            agents:
+              customDisallowedTools.length > 0
+                ? {
+                    [agentKey]: {
+                      description: agent.description ?? `Space agent: ${agent.name}`,
+                      disallowedTools: customDisallowedTools,
+                      model: 'inherit',
+                      prompt: migratedPrompt,
+                    } satisfies AgentDefinition,
+                  }
+                : undefined,
             settingSources: agent.settingSources ?? space.settingSources,
           },
         });
@@ -723,6 +716,45 @@ export class SpaceRuntimeService {
     if (created || this.missingLongTermAgentMcpServers(session)) {
       this.attachLongTermAgentMcpServers(session, space, agent.name, sessionId, agent);
     }
+
+    // Refresh existing sessions so they pick up the current permissive tool
+    // policy. Sessions created before the worker-policy migration keep stale
+    // sdkToolsPreset / allowedTools / exhaustive disallowedTools in their
+    // persisted config; without this refresh they continue to miss inherited
+    // SDK tools (scheduler/skill/new built-ins) until manually deleted.
+    if (!created) {
+      const desired = buildLongTermAgentDesiredConfig(agent);
+      const sessionConfig = session.getSessionData().config;
+      if (longTermAgentSessionNeedsRefresh(sessionConfig, desired)) {
+        try {
+          await session.updateConfig({
+            sdkToolsPreset: desired.sdkToolsPreset,
+            allowedTools: desired.allowedTools,
+            disallowedTools: desired.disallowedTools,
+            agent: desired.agent,
+            agents: desired.agents,
+            // Refresh the top-level systemPrompt.append alongside the agents
+            // entry so a stale Reviewer session does not keep receiving the
+            // old shell-based procedure from the system prompt after the
+            // agents entry is updated. QueryOptionsBuilder ships both.
+            systemPrompt: desired.systemPrompt,
+          } as Partial<Session['config']>);
+          // updateConfig persists the new config but does not rebuild the
+          // live SDK tool surface. Restart the in-flight query so the next
+          // turn picks up the refreshed tool policy. Without this an already-
+          // running long-term session keeps the stale sdkToolsPreset /
+          // denylist until manual reset.
+          await session.resetQuery({ restartQuery: true });
+        } catch (err) {
+          log.warn(
+            `ensureLongTermAgentSession: config refresh failed for ${sessionId}: ${
+              err instanceof Error ? err.message : String(err)
+            }`
+          );
+        }
+      }
+    }
+
     return session;
   }
 
@@ -876,7 +908,6 @@ export class SpaceRuntimeService {
       replyRoutingRegistry: this.config.replyRoutingRegistry,
       messageResolver: this.createMessageResolver(space.id),
       longTermAgentDelivery: this.longTermAgentDeliveryCallbacks(),
-      externalEventStore: this.config.externalEventStore,
     });
   }
 
@@ -1506,7 +1537,6 @@ export class SpaceRuntimeService {
       replyRoutingRegistry: this.config.replyRoutingRegistry,
       messageResolver: this.createMessageResolver(space.id),
       longTermAgentDelivery: this.longTermAgentDeliveryCallbacks(),
-      externalEventStore: this.config.externalEventStore,
     });
 
     const additional: Record<string, McpServerConfig> = {
@@ -1636,7 +1666,6 @@ export class SpaceRuntimeService {
       replyRoutingRegistry: this.config.replyRoutingRegistry,
       messageResolver: this.createMessageResolver(space.id),
       longTermAgentDelivery: this.longTermAgentDeliveryCallbacks(),
-      externalEventStore: this.config.externalEventStore,
     });
 
     // Create a space-scoped db-query server if dbPath is configured.
@@ -2216,7 +2245,6 @@ export class SpaceRuntimeService {
     }
     return rehydrated;
   }
-
   /**
    * Reset any `blocked` node executions for a run back to `pending` so the
    * tick loop's executor will re-drive them. Called by
@@ -2534,7 +2562,7 @@ function generateRuntimeMessageId(): string {
   return `msg_${Date.now()}_${Math.random().toString(36).slice(2)}`;
 }
 
-function sanitizeLongTermAgentKey(name: string): string {
+export function sanitizeLongTermAgentKey(name: string): string {
   return (
     name
       .toLowerCase()

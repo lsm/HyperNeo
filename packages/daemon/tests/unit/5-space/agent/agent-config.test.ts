@@ -114,12 +114,15 @@ describe('PRESET_AGENT_TOOLS', () => {
     expect(tools).not.toContain('Edit');
   });
 
-  it('reviewer has read-only tools', () => {
+  it('reviewer has read-only/search/delegation tools including Bash for evidence gathering', () => {
     const tools = PRESET_AGENT_TOOLS.reviewer;
     expect(tools).toContain('Read');
     expect(tools).toContain('Bash');
     expect(tools).toContain('Grep');
     expect(tools).toContain('Glob');
+    expect(tools).toContain('Task');
+    expect(tools).toContain('TaskOutput');
+    expect(tools).toContain('TaskStop');
   });
 
   it('qa cannot Write or Edit', () => {
@@ -267,13 +270,19 @@ describe('createCustomAgentInit — sub-session features', () => {
     expect(init.features).toEqual(SUB_SESSION_FEATURES);
   });
 
-  it('reviewer init uses agents pattern, restricting tools via disallowedTools', () => {
+  it('reviewer init uses agents pattern and denies mutation tools (keeps Bash for read shell)', () => {
     const config = makeConfig(PRESET_AGENT_TOOLS.reviewer);
+    config.customAgent = makeAgent({
+      tools: PRESET_AGENT_TOOLS.reviewer,
+      name: 'Reviewer',
+      templateName: 'Reviewer',
+    });
     const init = createCustomAgentInit(config);
 
-    // When tools are specified, the agents pattern is used
     expect(init.agent).toBeDefined();
     expect(init.agents).toBeDefined();
+    expect(init.sdkToolsPreset).toBeUndefined();
+    expect(init.allowedTools).toBeUndefined();
 
     // The agent definition must NOT set `tools` — an AgentDefinition.tools
     // allowlist would exclude MCP tools. The built-in restriction is applied
@@ -281,36 +290,118 @@ describe('createCustomAgentInit — sub-session features', () => {
     const agentKey = init.agent as string;
     const agentDef = init.agents![agentKey];
     expect(agentDef.tools).toBeUndefined();
-    expect(agentDef.disallowedTools).toContain('Write');
-    expect(agentDef.disallowedTools).toContain('Edit');
+    // Reviewer keeps Bash for read-only shell (gh pr diff, git log, etc.) —
+    // destructive commands are blocked by REVIEWER_NO_MUTATION_GUARD, not by
+    // denying the Bash tool. Only mutation + state-mutating aux tools are denied.
+    expect(agentDef.disallowedTools).toEqual([
+      'Monitor',
+      'CronCreate',
+      'CronDelete',
+      'RemoteTrigger',
+      'ScheduleWakeup',
+      'EnterWorktree',
+      'ExitWorktree',
+      'PushNotification',
+      'Artifact',
+      'Projects',
+      'TaskCreate',
+      'TaskUpdate',
+      'TodoWrite',
+      'Agent',
+      'EnterPlanMode',
+      'ExitPlanMode',
+      'Write',
+      'Edit',
+      'MultiEdit',
+      'NotebookEdit',
+    ]);
+    expect(agentDef.disallowedTools).not.toContain('Bash');
+    expect(agentDef.disallowedTools).not.toContain('REPL');
+    expect(agentDef.disallowedTools).not.toContain('Workflow');
+    expect(init.disallowedTools).toEqual([
+      'Monitor',
+      'CronCreate',
+      'CronDelete',
+      'RemoteTrigger',
+      'ScheduleWakeup',
+      'EnterWorktree',
+      'ExitWorktree',
+      'PushNotification',
+      'Artifact',
+      'Projects',
+      'TaskCreate',
+      'TaskUpdate',
+      'TodoWrite',
+      'Agent',
+      'EnterPlanMode',
+      'ExitPlanMode',
+      'Write',
+      'Edit',
+      'MultiEdit',
+      'NotebookEdit',
+    ]);
   });
 
-  it('qa init uses agents pattern, restricting tools via disallowedTools', () => {
+  it('qa init denies mutation tools but keeps Bash available for validation', () => {
     const config = makeConfig(PRESET_AGENT_TOOLS.qa);
     const init = createCustomAgentInit(config);
 
     expect(init.agent).toBeDefined();
     expect(init.agents).toBeDefined();
+    expect(init.sdkToolsPreset).toBeUndefined();
+    expect(init.allowedTools).toBeUndefined();
 
     const agentKey = init.agent as string;
     const agentDef = init.agents![agentKey];
     expect(agentDef.tools).toBeUndefined();
-    expect(agentDef.disallowedTools).toContain('Write');
-    expect(agentDef.disallowedTools).toContain('Edit');
+    expect(agentDef.disallowedTools).toEqual(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
+    expect(agentDef.disallowedTools).not.toContain('Bash');
+    expect(agentDef.disallowedTools).not.toContain('REPL');
+    expect(agentDef.disallowedTools).not.toContain('Workflow');
   });
 
-  it('coder init uses agents pattern with full tools', () => {
+  it('qa template preset denies auxiliary mutators even though Bash is present', () => {
+    // QA keeps Bash for running tests, but its visible profile omits
+    // Projects/TaskCreate/TaskUpdate/TodoWrite/Agent/Artifact/worktree/
+    // scheduler mutators. The RESTRICTED_AUX_PRESET_TEMPLATE_NAMES override
+    // ensures those are denied even though Bash is present, so
+    // FULL_BUILTIN_TOOL_LIST expansion on non-native providers does not
+    // surface them to a prompt-injected QA agent.
+    const config: CustomAgentConfig = {
+      customAgent: makeAgent({
+        tools: PRESET_AGENT_TOOLS.qa,
+        name: 'QA',
+        templateName: 'QA',
+      }),
+      task: makeTask(),
+      workflowRun: null,
+      space: makeSpace(),
+      sessionId: 'session-test',
+      workspacePath: '/workspace/project',
+    };
+    const init = createCustomAgentInit(config);
+
+    const agentKey = init.agent as string;
+    const agentDef = init.agents![agentKey];
+    expect(agentDef.disallowedTools).toContain('Projects');
+    expect(agentDef.disallowedTools).toContain('TaskCreate');
+    expect(agentDef.disallowedTools).toContain('TaskUpdate');
+    expect(agentDef.disallowedTools).toContain('TodoWrite');
+    expect(agentDef.disallowedTools).toContain('Agent');
+    expect(agentDef.disallowedTools).toContain('Artifact');
+    // Bash stays available for running tests.
+    expect(agentDef.disallowedTools).not.toContain('Bash');
+  });
+
+  it('coder init uses permissive config with no generated SDK allowlist', () => {
     const config = makeConfig(PRESET_AGENT_TOOLS.coder);
     const init = createCustomAgentInit(config);
 
-    expect(init.agent).toBeDefined();
-    expect(init.agents).toBeDefined();
-
-    const agentKey = init.agent as string;
-    const agentDef = init.agents![agentKey];
-    expect(agentDef.tools).toBeUndefined();
-    expect(agentDef.disallowedTools).not.toContain('Write');
-    expect(agentDef.disallowedTools).not.toContain('Edit');
+    expect(init.agent).toBeUndefined();
+    expect(init.agents).toBeUndefined();
+    expect(init.sdkToolsPreset).toBeUndefined();
+    expect(init.allowedTools).toBeUndefined();
+    expect(init.disallowedTools).toBeUndefined();
   });
 
   it('agent without tools uses simple preset path (no agent key)', () => {
@@ -321,7 +412,7 @@ describe('createCustomAgentInit — sub-session features', () => {
     expect(init.agents).toBeUndefined();
   });
 
-  it('applies customPrompt slot expansion in system prompt', () => {
+  it('applies customPrompt slot expansion in permissive system prompt path', () => {
     const config = makeConfig(PRESET_AGENT_TOOLS.coder);
     config.customAgent = makeAgent({
       customPrompt: 'Base prompt',
@@ -332,12 +423,7 @@ describe('createCustomAgentInit — sub-session features', () => {
     };
     const init = createCustomAgentInit(config);
 
-    // tools path — check agent prompt contains expanded text
-    if (init.agent && init.agents) {
-      const agentKey = init.agent as string;
-      const agentDef = init.agents![agentKey];
-      expect(agentDef.prompt).toBe('Base prompt\n\nSlot expansion');
-    }
+    expect(init.systemPrompt?.append).toBe('Base prompt\n\nSlot expansion');
   });
 
   it('applies customPrompt expansion in non-tools system prompt path', () => {

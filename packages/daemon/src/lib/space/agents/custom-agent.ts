@@ -22,7 +22,6 @@ import type {
   WorkflowNode,
 } from '@neokai/shared';
 import type { SkillEnablementOverride } from '@neokai/shared';
-import { KNOWN_TOOLS } from '@neokai/shared';
 import type {
   AgentMemoryCoreEntry,
   AgentMemorySearchResult,
@@ -31,20 +30,11 @@ import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import { inferProviderForModel } from '../../providers/registry';
 import { Logger } from '../../logger';
 import { SUB_SESSION_FEATURES } from './seed-agents';
+import { applyReviewerContractMigrationOverride } from './reviewer-contract-migration';
+import { deriveWorkerDisallowedTools } from './tool-policy';
 import { formatGatedHandoffCall, getSendMessageTargets } from '../runtime/gated-handoff-guidance';
 
 const DEFAULT_CUSTOM_AGENT_MODEL = 'claude-sonnet-4-6';
-
-const CLAUDE_CODE_BUILTIN_TOOLS = [
-  ...KNOWN_TOOLS,
-  'NotebookEdit',
-  'TodoWrite',
-  'AskUserQuestion',
-  'EnterPlanMode',
-  'ExitPlanMode',
-  'Skill',
-  'ToolSearch',
-] as const;
 
 /**
  * Soft size budget for the initial user message. When exceeded, a warning is
@@ -639,30 +629,26 @@ function isGateWritableFromNode(
 export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionInit {
   const { customAgent, task, space, sessionId, workspacePath, slotOverrides } = config;
 
-  const customTools =
-    customAgent.tools && customAgent.tools.length > 0 ? customAgent.tools : undefined;
-  // Built-in tools the worker agent should NOT have (everything not in its
-  // configured tool list). Expressed as a denylist so MCP tools — which are
-  // never part of `customTools` — are not collaterally excluded.
-  const customDisallowedBuiltins = customTools
-    ? CLAUDE_CODE_BUILTIN_TOOLS.filter((tool) => !customTools.includes(tool))
-    : [];
-  const customToolPermissions = customTools
-    ? {
-        sdkToolsPreset: customTools,
-        allowedTools: customTools,
-        disallowedTools: customDisallowedBuiltins,
-      }
-    : {};
+  const customDisallowedTools = deriveWorkerDisallowedTools(customAgent.tools, {
+    templateName: customAgent.templateName,
+  });
+  const customToolPermissions =
+    customDisallowedTools.length > 0 ? { disallowedTools: customDisallowedTools } : {};
   const model =
     slotOverrides?.model ?? customAgent.model ?? space.defaultModel ?? DEFAULT_CUSTOM_AGENT_MODEL;
   const thinkingLevel = slotOverrides?.thinkingLevel ?? customAgent.thinkingLevel;
-  const provider = slotOverrides?.model
-    ? inferProviderForModel(model)
-    : (customAgent.provider ?? inferProviderForModel(model));
+  const provider = inferProviderForModel(model);
 
   const resolvedPrompt = resolveCustomAgentPrompt(customAgent, slotOverrides);
-  const visiblePrompt = resolvedPrompt.value;
+  // Preset Reviewer rows seeded before this PR still carry the old shell-based
+  // review procedure in their stored customPrompt. Append the current contract
+  // as a migration override so the model sees the no-shell instructions even
+  // when the persisted row has not been synced. Shared with the long-term
+  // refresh path via applyReviewerContractMigrationOverride.
+  const visiblePrompt = applyReviewerContractMigrationOverride(
+    resolvedPrompt.value,
+    customAgent.templateName
+  );
   const promptProvenance = buildPromptProvenance(resolvedPrompt, customAgent, slotOverrides);
   emitPromptProvenance('createCustomAgentInit', promptProvenance);
 
@@ -674,18 +660,15 @@ export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionIn
   const extraMcpServers = slotOverrides?.extraMcpServers;
   const toolGuards = slotOverrides?.toolGuards;
 
-  if (customTools) {
+  if (customDisallowedTools.length > 0) {
     const agentKey = sanitizeAgentKey(customAgent.name);
     const agentDef: AgentDefinition = {
       description: customAgent.description ?? `Worker agent: ${customAgent.name}`,
-      // Do NOT set `tools`. An AgentDefinition's `tools` is a strict allowlist;
-      // since `customTools` only ever contains built-in tool names, setting it
-      // here silently excludes every MCP tool (node-agent, fetch-mcp, …) that is
-      // attached to the session — which is why workflow agents could not see
-      // mcp__node-agent__* tools. Omitting `tools` inherits all tools from the
-      // parent session; the built-in restriction is still enforced via
-      // `disallowedTools`, which never matches MCP tool names.
-      disallowedTools: customDisallowedBuiltins,
+      // Do NOT set `tools`. An AgentDefinition's `tools` is a strict allowlist
+      // that would exclude MCP tools. Worker profiles are permissive by default;
+      // only behaviorally restricted built-ins omitted from the visible profile
+      // are denied here.
+      disallowedTools: customDisallowedTools,
       model: 'inherit',
       prompt: visiblePrompt,
     };

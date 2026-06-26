@@ -8,7 +8,7 @@
  * - Name (required, unique within space)
  * - Description (optional)
  * - Model (dropdown override, optional for default model inheritance)
- * - Tools (multi-select checkboxes from KNOWN_TOOLS)
+ * - Tools (visible profile checkboxes from KNOWN_TOOLS; not exhaustive SDK allowlist)
  * - Custom Prompt (monospace textarea with line numbers; appended after NeoKai contract)
  *
  * Tool presets: "Full Coding" · "Read Only" · "Custom"

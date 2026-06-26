@@ -109,6 +109,7 @@ const FULL_BUILTIN_TOOL_LIST = [
   'Read',
   'Write',
   'Edit',
+  'MultiEdit',
   'Bash',
   'Grep',
   'Glob',

@@ -894,24 +894,65 @@ describe('SpaceRuntimeService', () => {
       });
 
       expect(result).toEqual({ delivered: true });
-      expect(sessionManager.createSession).toHaveBeenCalledWith(
-        expect.objectContaining({
-          config: expect.objectContaining({
-            provider: 'openrouter',
-            settingSources: ['project'],
-            sdkToolsPreset: ['Read', 'Edit'],
-            allowedTools: ['Read', 'Edit'],
-            disallowedTools: expect.arrayContaining(['Bash']),
-            agent: 'restricted-agent',
-            agents: {
-              'restricted-agent': expect.objectContaining({
-                disallowedTools: expect.arrayContaining(['Bash']),
-                prompt: 'Use limited tools.',
-              }),
-            },
-          }),
-        })
-      );
+      const createSessionArg = (
+        sessionManager.createSession as Mock<typeof sessionManager.createSession>
+      ).mock.calls[0]![0] as { config: Partial<Session['config']> };
+      expect(createSessionArg.config.provider).toBe('openrouter');
+      expect(createSessionArg.config.settingSources).toEqual(['project']);
+      expect(createSessionArg.config.sdkToolsPreset).toBeUndefined();
+      expect(createSessionArg.config.allowedTools).toBeUndefined();
+      expect(createSessionArg.config.disallowedTools).toEqual([
+        'Bash',
+        'REPL',
+        'Workflow',
+        'Monitor',
+        'CronCreate',
+        'CronDelete',
+        'RemoteTrigger',
+        'ScheduleWakeup',
+        'EnterWorktree',
+        'ExitWorktree',
+        'PushNotification',
+        'Artifact',
+        'Projects',
+        'TaskCreate',
+        'TaskUpdate',
+        'TodoWrite',
+        'Agent',
+        'EnterPlanMode',
+        'ExitPlanMode',
+        'Write',
+        'MultiEdit',
+        'NotebookEdit',
+      ]);
+      expect(createSessionArg.config.agent).toBe('restricted-agent');
+      expect(createSessionArg.config.agents?.['restricted-agent']).toMatchObject({
+        disallowedTools: [
+          'Bash',
+          'REPL',
+          'Workflow',
+          'Monitor',
+          'CronCreate',
+          'CronDelete',
+          'RemoteTrigger',
+          'ScheduleWakeup',
+          'EnterWorktree',
+          'ExitWorktree',
+          'PushNotification',
+          'Artifact',
+          'Projects',
+          'TaskCreate',
+          'TaskUpdate',
+          'TodoWrite',
+          'Agent',
+          'EnterPlanMode',
+          'ExitPlanMode',
+          'Write',
+          'MultiEdit',
+          'NotebookEdit',
+        ],
+        prompt: 'Use limited tools.',
+      });
       expect(createdSession.messageQueue.enqueueWithId).toHaveBeenCalledWith(
         'delivery-1',
         'event payload'
@@ -998,8 +1039,8 @@ describe('SpaceRuntimeService', () => {
             preset: 'claude_code' as const,
             append: 'Old instructions.',
           },
-          sdkToolsPreset: ['Read'],
-          allowedTools: ['Read'],
+          sdkToolsPreset: undefined,
+          allowedTools: undefined,
           disallowedTools: ['Edit'],
         },
       } as Session;
@@ -1059,9 +1100,32 @@ describe('SpaceRuntimeService', () => {
           provider: 'openrouter',
           settingSources: ['project'],
           systemPrompt: expect.objectContaining({ append: 'Use updated tools.' }),
-          sdkToolsPreset: ['Read', 'Edit'],
-          allowedTools: ['Read', 'Edit'],
-          disallowedTools: expect.arrayContaining(['Bash']),
+          sdkToolsPreset: undefined,
+          allowedTools: undefined,
+          disallowedTools: [
+            'Bash',
+            'REPL',
+            'Workflow',
+            'Monitor',
+            'CronCreate',
+            'CronDelete',
+            'RemoteTrigger',
+            'ScheduleWakeup',
+            'EnterWorktree',
+            'ExitWorktree',
+            'PushNotification',
+            'Artifact',
+            'Projects',
+            'TaskCreate',
+            'TaskUpdate',
+            'TodoWrite',
+            'Agent',
+            'EnterPlanMode',
+            'ExitPlanMode',
+            'Write',
+            'MultiEdit',
+            'NotebookEdit',
+          ],
           agent: 'restricted-agent',
           agents: {
             'restricted-agent': expect.objectContaining({ prompt: 'Use updated tools.' }),

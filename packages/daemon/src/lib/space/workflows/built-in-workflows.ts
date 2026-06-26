@@ -62,6 +62,25 @@ const CODER_NO_MERGE_GUARD: DeclarativeToolGuard = {
 };
 
 // ---------------------------------------------------------------------------
+// Declarative tool guard: prevent reviewer agents from mutating repo state
+// ---------------------------------------------------------------------------
+
+const REVIEWER_NO_MUTATION_GUARD: DeclarativeToolGuard = {
+  matcher: 'Bash',
+  // Matches destructive repository-mutation commands in common shell forms.
+  // Same shell-aware prefix as CODER_NO_MERGE_GUARD (separators, subshells,
+  // env prefixes, command builtin, line continuations) extended to cover:
+  // - gh pr merge (same as coder guard — reviewer must not merge either)
+  // - git push (any form: git push, git push origin, git push --force)
+  // - git commit (creates commits — reviewer must not modify history)
+  pattern:
+    '(?:^|[;&|()\\n`])\\s*(?:(?:env\\s+)?(?:[A-Za-z_][A-Za-z0-9_]*=[^\\s;&|()`]+|command)\\s+)*(?:gh[\\s\\\\]+pr[\\s\\\\]+merge|git[\\s\\\\]+(?:push|commit))\\b',
+  decision: 'deny',
+  reason:
+    'Reviewer must not merge, push, or commit. Post reviews via gh pr review; gather evidence via read-only shell (gh pr diff, gh pr checks, git log).',
+};
+
+// ---------------------------------------------------------------------------
 // Gate writer validation
 // ---------------------------------------------------------------------------
 
@@ -282,13 +301,15 @@ const PD_PLANNING_PROMPT =
 
 const CODEX_REACTION_APPROVAL_GUIDANCE =
   'After posting your approval review, verify the Codex review bot reaction status ' +
-  'before closing or handing off. Use `gh api repos/{owner}/{repo}/issues/{number}/reactions` ' +
-  'and inspect reactions from any login containing `codex` (case-insensitive — GitHub ' +
+  'before closing or handing off. Use `gh api repos/{owner}/{repo}/issues/{n}/reactions` ' +
+  'to inspect ' +
+  'issue reactions from any login containing `codex` (case-insensitive — GitHub ' +
   'ships multiple variants such as `codex[bot]` and `chatgpt-codex-connector[bot]`, and ' +
   'the matcher accepts any of them): content `+1` means Codex passed, content `eyes` ' +
   'means Codex is still reviewing, and no such reaction means it has not started or has ' +
-  'not reported yet. If no codex login has reacted at all, comment `@codex review` on ' +
-  'the PR to trigger its review, then wait for an `eyes` or `+1` reaction. ' +
+  'not reported yet. If no codex login has reacted at all, post a COMMENT via ' +
+  '`gh pr review --comment --body "@codex review"` to trigger its review, then wait for ' +
+  'an `eyes` or `+1` reaction. ' +
   'Only a +1 newer than the current PR head commit counts — after a revision push, ' +
   'an older +1 from a previous cycle is stale and will not satisfy the hook. If the +1 ' +
   'looks old, retrigger Codex with a fresh `@codex review` comment. ' +
@@ -307,7 +328,8 @@ const PD_PLAN_REVIEW_PROMPT =
   'lens findings; otherwise vote rejected and send actionable feedback to Planning.\n\n' +
   CODEX_REACTION_APPROVAL_GUIDANCE +
   '\n\n' +
-  'Procedure: read `gh pr diff`/`gh pr view`, post a visible PR review comment, then ' +
+  'Procedure: read the plan PR diff and metadata via `gh pr diff`/`gh pr view`, then ' +
+  'post a visible PR review comment via `gh pr review`, then ' +
   'send_message(target="Task Dispatcher", message: "<short summary>", data: { approvals: { "<your lens>": "approved" }, ' +
   'pr_url: "<plan PR url>" }). Early approvals normally get a hook-blocked response; ' +
   'the hook records each vote until all four approvals are present. On rejection, send ' +
@@ -374,26 +396,20 @@ const PD_TASK_DISPATCHER_PROMPT =
 
 const REVIEW_THREAD_RESOLUTION_GUIDANCE =
   'After pushing fixes for review feedback, resolve ALL open GitHub review conversation ' +
-  'threads — including those where you disagree with the reviewer. When the feedback ' +
-  'arrives as an `external_event` review comment essence, use its `replyHandle.commentId` ' +
-  'as the REST `{comment_id}` and the PR URL host as `<host>` for ' +
-  '`gh api --hostname <host> repos/{owner}/{repo}/pulls/{pull_number}/comments/{comment_id}/replies -f body="<ack>"`. ' +
-  'Then resolve the thread with GraphQL ' +
-  "`gh api graphql --hostname <host> -f query='mutation($threadId:ID!){resolveReviewThread(input:{threadId:$threadId}){thread{id isResolved}}}' -f threadId=<review-thread-node-id>`, " +
-  'where `<host>` is the PR URL host and `<review-thread-node-id>` is the `PullRequestReviewThread.id` found by querying ' +
-  '`reviewThreads`; do not use the review comment `node_id`/`commentNodeId` as ' +
-  '`threadId`. The PR-ready hook blocks on any unresolved thread, so leaving one ' +
-  'open creates a deadlock. If the reviewer disagrees with your reasoning, they can ' +
-  're-open the thread. Use `gh api graphql` to verify no unresolved review conversations ' +
-  'remain before sending a message to Review again. Never set a PR to auto-merge — ' +
-  'auto-merge is not allowed.';
+  'threads — including those where you disagree with the reviewer. First reply with your ' +
+  'reasoning, then resolve the thread with the `resolveReviewThread` mutation. The ' +
+  'PR-ready hook blocks on any unresolved thread, so leaving one open creates a deadlock. ' +
+  'If the reviewer disagrees with your reasoning, they can re-open the thread. ' +
+  'Use `gh api graphql` to verify no unresolved review conversations remain before ' +
+  'sending a message to Review again. ' +
+  'Never set a PR to auto-merge — auto-merge is not allowed.';
 
 const REVIEW_THREAD_APPROVAL_CHECK_GUIDANCE =
   'Verify the PR is still open, mergeable, and has no unresolved GitHub review ' +
-  'conversations. Use `gh api graphql` to inspect `reviewThreads` and confirm every ' +
-  'thread has `isResolved: true`; if unresolved conversations remain, request the ' +
-  'author to resolve them instead of approving. Never set a PR to auto-merge — ' +
-  'auto-merge is not allowed.';
+  'conversations. Use available review/GitHub integration tools to inspect ' +
+  '`reviewThreads` and confirm every thread has `isResolved: true`; if unresolved ' +
+  'conversations remain, request the author to resolve them instead of approving. ' +
+  'Never set a PR to auto-merge — auto-merge is not allowed.';
 
 const FULLSTACK_CODING_PROMPT =
   'You are the Coder in a Fullstack QA Loop workflow. You implement backend + frontend changes, ' +
@@ -409,7 +425,7 @@ const FULLSTACK_CODING_PROMPT =
 const FULLSTACK_REVIEW_PROMPT =
   'You are the Reviewer in a Fullstack QA Loop workflow. Review the PR for correctness, ' +
   'maintainability, and coverage before QA. Follow the Reviewer System Contract for ' +
-  'review quality and severity.\n\n' +
+  'review quality and severity. Do not run tests or scripts yourself; ask Coder/QA for validation evidence when needed. You may use read-only shell (gh pr diff, gh pr checks, git log) to gather evidence.\n\n' +
   'Review is not the end node: approve_task/submit_for_approval are unavailable. Your ' +
   'terminal hand-off is sending `data: { approved: true, pr_url: "<url>" }` to QA after an ' +
   'APPROVE verdict with zero P0-P3 findings. Send the handoff to start the Codex review ' +
@@ -474,7 +490,7 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
               '2. Implement the changes with logical, well-described commits\n' +
               '3. Write or update tests to cover new behavior\n' +
               '4. Run the test suite and fix any failures\n' +
-              '5. If code changed: open a PR with `gh pr create` — include a clear title and description. After `gh pr create`, call `subscribe_pr_events({})` (no arguments needed — the PR URL is auto-resolved from the run). This subscribes you to review comments, CI failures, and reactions for your PR so you receive them directly and can act on them. Do this once per PR.\n' +
+              '5. If code changed: open a PR with `gh pr create` — include a clear title and description\n' +
               '6. If code changed: hand off by calling `send_message` to the review target ' +
               'with `data: { pr_url: "<url>" }`. Use the current target and required data ' +
               'fields from the Runtime Execution Contract injected into your task prompt. ' +
@@ -492,10 +508,8 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
               'a summary.\n' +
               '2. For each comment: evaluate critically — do not blindly accept feedback. Verify ' +
               'against the code and the task requirements. The Reviewer can be wrong.\n' +
-              '3. For valid items: make the fix, then reply to that specific thread. Prefer the ' +
-              '`external_event` essence handle: use `replyHandle.commentId` as the REST ' +
-              '`{comment_id}` and the PR URL host as `<host>` in ' +
-              '`gh api --hostname <host> repos/{owner}/{repo}/pulls/{pull_number}/comments/{comment_id}/replies -f body="<ack>"` ' +
+              '3. For valid items: make the fix, then reply to that specific thread via ' +
+              '`gh api repos/{owner}/{repo}/pulls/{n}/comments/{comment_id}/replies -f body="<ack>"` ' +
               'explaining what changed. One reply per comment creates a visible audit trail.\n' +
               '4. For items you disagree with: reply on the same thread explaining why, with ' +
               'evidence from the code or tests. Do not change code you believe is correct.\n' +
@@ -544,17 +558,18 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
               '- All feedback MUST be posted to the PR on GitHub — not just summarized in your ' +
               'response. Use the Reviewer System Contract GitHub review procedure.\n' +
               '- The Review → Coding handoff runs a hook that checks GitHub for a fresh review ' +
-              'before releasing your message. If you skip `gh pr review`, the hook will block ' +
-              'and the coder will never hear from you.\n\n' +
+              'before releasing your message. If you skip the visible GitHub review, the hook ' +
+              'will block and the coder will never hear from you.\n\n' +
               reviewerFeedbackProcedure('Coding') +
               'Use save_artifact every cycle. Nest pr_url inside artifact data for post-approval dispatch.\n\n' +
-              'Review checklist: inspect PR diff and related worktree context, run tests if uncertain, ' +
+              'Review checklist: inspect PR diff and related worktree context, request tests from Coder/QA if uncertain, ' +
               'post visible GitHub review before sending feedback. If changes needed, include pr_url, ' +
               'review_url, and comment_urls when messaging Coding. If approved, ' +
               REVIEW_THREAD_APPROVAL_CHECK_GUIDANCE +
               ' Call save_artifact({ type: "result", data: { pr_url: "<url>" } }) then approve_task() or submit_for_approval. ' +
               'Do NOT attempt to merge the PR yourself. Do not set auto-merge.',
           },
+          toolGuards: [REVIEWER_NO_MUTATION_GUARD],
         },
       ],
       // After this node approves, spawn a fresh reviewer session that runs
@@ -715,7 +730,7 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
               '2. Investigate using web search, code exploration, and available documentation\n' +
               '3. Write findings to well-structured markdown file(s)\n' +
               '4. Include sources, evidence, and clear conclusions\n' +
-              '5. Commit findings and open a PR with `gh pr create`. After `gh pr create`, call `subscribe_pr_events({})` (no arguments needed — the PR URL is auto-resolved from the run). This subscribes you to review comments, CI failures, and reactions for your PR so you receive them directly and can act on them. Do this once per PR.\n' +
+              '5. Commit findings and open a PR with `gh pr create`\n' +
               '6. Hand off to Review by calling `send_message(target="Review", message="<short summary>", data: { pr_url: "<PR url>" })`. ' +
               'The hook validates the PR is open and mergeable before Review activates. ' +
               'Always re-supply `data: { pr_url }` on every send — the hook runs on every send.\n\n' +
@@ -746,6 +761,7 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
               ' Call save_artifact({ type: "result", data: { pr_url: "<url>" } }) then approve_task() or submit_for_approval. ' +
               'Do NOT attempt to merge the PR yourself. Do not set auto-merge.',
           },
+          toolGuards: [REVIEWER_NO_MUTATION_GUARD],
         },
       ],
       // After this node approves, spawn a fresh reviewer session that runs
@@ -825,6 +841,7 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
               'call save_artifact({ type: "result", data: { pr_url: "<url>" } }) to save a result artifact, then approve_task() or submit_for_approval only on APPROVE, otherwise stop. ' +
               'Do NOT attempt to merge the PR yourself. Never set a PR to auto-merge.',
           },
+          toolGuards: [REVIEWER_NO_MUTATION_GUARD],
         },
       ],
     },
@@ -922,6 +939,7 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
               '`data: { approvals: { architecture: "approved" }, pr_url: "<plan PR url>" }` ' +
               'to Task Dispatcher when approving. Send rejected votes with findings to Planning.',
           },
+          toolGuards: [REVIEWER_NO_MUTATION_GUARD],
         },
         {
           agentId: 'Reviewer',
@@ -938,6 +956,7 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
               '`data: { approvals: { security: "approved" }, pr_url: "<plan PR url>" }` ' +
               'to Task Dispatcher when approving. Send rejected votes with findings to Planning.',
           },
+          toolGuards: [REVIEWER_NO_MUTATION_GUARD],
         },
         {
           agentId: 'Reviewer',
@@ -954,6 +973,7 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
               '`data: { approvals: { correctness: "approved" }, pr_url: "<plan PR url>" }` ' +
               'to Task Dispatcher when approving. Send rejected votes with findings to Planning.',
           },
+          toolGuards: [REVIEWER_NO_MUTATION_GUARD],
         },
         {
           agentId: 'Reviewer',
@@ -970,6 +990,7 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
               '`data: { approvals: { ux: "approved" }, pr_url: "<plan PR url>" }` ' +
               'to Task Dispatcher when approving. Send rejected votes with findings to Planning.',
           },
+          toolGuards: [REVIEWER_NO_MUTATION_GUARD],
         },
       ],
     },
@@ -1104,7 +1125,7 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
               'Steps:\n' +
               '1. Implement backend and frontend changes with focused commits\n' +
               '2. Add/update unit, integration, and UI tests as needed\n' +
-              '3. Open or update the PR and ensure it remains mergeable. After `gh pr create`, call `subscribe_pr_events({})` (no arguments needed — the PR URL is auto-resolved from the run). This subscribes you to review comments, CI failures, and reactions for your PR so you receive them directly and can act on them. Do this once per PR.\n' +
+              '3. Open or update the PR and ensure it remains mergeable\n' +
               '4. Hand off by calling `send_message` to the review target with ' +
               '`data: { pr_url: "<url>" }`; `save_artifact` alone will not deliver the handoff\n' +
               '5. Share blockers clearly with Reviewer/QA when needed',
@@ -1132,6 +1153,7 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
               '2. If approved: send_message to QA with data: { approved: true, pr_url: "<url>" } to start the Codex review timeout window (2 hours by default), then wait for a Codex bot +1 reaction or the timeout\n' +
               '3. If changes needed: send clear feedback to Coding',
           },
+          toolGuards: [REVIEWER_NO_MUTATION_GUARD],
         },
       ],
     },
@@ -1563,18 +1585,6 @@ function migrateCodexFeatureToNodeToggle(
   return { nodes: migratedNodes, gates: migratedGates };
 }
 
-const CURRENT_CODING_WORKFLOW_PR_STEP_PROMPT =
-  '5. If code changed: open a PR with `gh pr create` — include a clear title and description. After `gh pr create`, call `subscribe_pr_events({})` (no arguments needed — the PR URL is auto-resolved from the run). This subscribes you to review comments, CI failures, and reactions for your PR so you receive them directly and can act on them. Do this once per PR.\n';
-const RETIRED_CODING_WORKFLOW_PR_STEP_PROMPT =
-  '5. If code changed: open a PR with `gh pr create` — include a clear title and description\n';
-const CURRENT_FULLSTACK_CODING_PR_STEP_PROMPT =
-  '3. Open or update the PR and ensure it remains mergeable. After `gh pr create`, call `subscribe_pr_events({})` (no arguments needed — the PR URL is auto-resolved from the run). This subscribes you to review comments, CI failures, and reactions for your PR so you receive them directly and can act on them. Do this once per PR.\n';
-const RETIRED_FULLSTACK_CODING_PR_STEP_PROMPT =
-  '3. Open or update the PR and ensure it remains mergeable\n';
-const CURRENT_RESEARCH_PR_STEP_PROMPT =
-  '5. Commit findings and open a PR with `gh pr create`. After `gh pr create`, call `subscribe_pr_events({})` (no arguments needed — the PR URL is auto-resolved from the run). This subscribes you to review comments, CI failures, and reactions for your PR so you receive them directly and can act on them. Do this once per PR.\n';
-const RETIRED_RESEARCH_PR_STEP_PROMPT = '5. Commit findings and open a PR with `gh pr create`\n';
-
 const CURRENT_CODING_WORKFLOW_HANDOFF_PROMPT =
   '6. If code changed: hand off by calling `send_message` to the review target ' +
   'with `data: { pr_url: "<url>" }`. Use the current target and required data ' +
@@ -1597,20 +1607,6 @@ const RETIRED_HARDCODED_CODING_WORKFLOW_HANDOFF_PROMPT =
   'only `send_message` delivers the gated handoff. ' +
   '**Always include `data: { pr_url }` on every send_message to Review** — the gate ' +
   'data resets each cycle, so even on round 2+ you must re-supply it.\n';
-const RETIRED_REVIEW_THREAD_RESOLUTION_GUIDANCE =
-  'After pushing fixes for review feedback, resolve ALL open GitHub review conversation ' +
-  'threads — including those where you disagree with the reviewer. First reply with your ' +
-  'reasoning, then resolve the thread with the `resolveReviewThread` mutation. The ' +
-  'PR-ready hook blocks on any unresolved thread, so leaving one open creates a deadlock. ' +
-  'If the reviewer disagrees with your reasoning, they can re-open the thread. ' +
-  'Use `gh api graphql` to verify no unresolved review conversations remain before ' +
-  'sending a message to Review again. ' +
-  'Never set a PR to auto-merge — auto-merge is not allowed.';
-const RETIRED_CODING_WORKFLOW_REPLY_STEP_PROMPT =
-  '3. For valid items: make the fix, then reply to that specific thread via ' +
-  '`gh api repos/{owner}/{repo}/pulls/{n}/comments/{comment_id}/replies -f body="<ack>"` ' +
-  'explaining what changed. One reply per comment creates a visible audit trail.\n';
-
 const CURRENT_CODING_WORKFLOW_REHANDOFF_PROMPT =
   '6. Verify no unresolved review conversations remain, verify tests still pass, ' +
   'then call `send_message` to the review target again to re-trigger the review ' +
@@ -1675,6 +1671,36 @@ const RETIRED_HARDCODED_FULLSTACK_CODING_STEP_PROMPT =
   '`send_message(target="Review", message="<short summary>", data: { pr_url: "<url>" })`; ' +
   '`save_artifact` alone will not open `code-pr-gate`\n';
 
+// Retired shared guidance variants from the immediately-preceding PR (before
+// Reviewer Bash was denied). Persisted Fullstack/Review prompts from that
+// window instructed reviewers to inspect review threads and Codex reactions
+// via `gh api`. patchKnownBuiltInPromptDrift swaps these to the current
+// no-shell wording during restamp.
+const RETIRED_PRE_BASH_REVIEW_THREAD_APPROVAL_CHECK_GUIDANCE =
+  'Verify the PR is still open, mergeable, and has no unresolved GitHub review ' +
+  'conversations. Use `gh api graphql` to inspect `reviewThreads` and confirm every ' +
+  'thread has `isResolved: true`; if unresolved conversations remain, request the ' +
+  'author to resolve them instead of approving. Never set a PR to auto-merge — ' +
+  'auto-merge is not allowed.';
+const RETIRED_PRE_BASH_CODEX_REACTION_APPROVAL_GUIDANCE =
+  'After posting your approval review, verify the Codex review bot reaction status ' +
+  'before closing or handing off. Use `gh api repos/{owner}/{repo}/issues/{number}/reactions` ' +
+  'and inspect reactions from any login containing `codex` (case-insensitive — GitHub ' +
+  'ships multiple variants such as `codex[bot]` and `chatgpt-codex-connector[bot]`, and ' +
+  'the matcher accepts any of them): content `+1` means Codex passed, content `eyes` ' +
+  'means Codex is still reviewing, and no such reaction means it has not started or has ' +
+  'not reported yet. If no codex login has reacted at all, comment `@codex review` on ' +
+  'the PR to trigger its review, then wait for an `eyes` or `+1` reaction. ' +
+  'Only a +1 newer than the current PR head commit counts — after a revision push, ' +
+  'an older +1 from a previous cycle is stale and will not satisfy the hook. If the +1 ' +
+  'looks old, retrigger Codex with a fresh `@codex review` comment. ' +
+  'Send the approval handoff to start the Codex timeout window (2 hours by default; ' +
+  'configurable per workflow node). If the hook blocks because Codex has not yet posted ' +
+  '`+1`, poll every 60 seconds and retry the handoff. If the bot still has not posted ' +
+  '`+1` after the timeout window elapses, proceed only with a warning recorded in your ' +
+  'result artifact. Do not close the task before the Codex bot has `+1` unless that ' +
+  'timeout window has elapsed.';
+
 // Retired shared Codex approval guidance (pre codex-bot-rename + 2h timeout
 // fix). Used by patchKnownBuiltInPromptDrift to recognize persisted Plan
 // Review and Fullstack Review agent prompts that still cite `codex[bot]` and
@@ -1699,60 +1725,22 @@ const RETIRED_CODEX_REACTION_APPROVAL_GUIDANCE =
   'before codex[bot] has `+1` unless that timeout has elapsed.';
 
 const BUILT_IN_PROMPT_PATCH_VARIANTS = [
-  [[REVIEW_THREAD_RESOLUTION_GUIDANCE, RETIRED_REVIEW_THREAD_RESOLUTION_GUIDANCE]],
   [
-    [
-      '3. For valid items: make the fix, then reply to that specific thread. Prefer the ' +
-        '`external_event` essence handle: use `replyHandle.commentId` as the REST ' +
-        '`{comment_id}` and the PR URL host as `<host>` in ' +
-        '`gh api --hostname <host> repos/{owner}/{repo}/pulls/{pull_number}/comments/{comment_id}/replies -f body="<ack>"` ' +
-        'explaining what changed. One reply per comment creates a visible audit trail.\n',
-      RETIRED_CODING_WORKFLOW_REPLY_STEP_PROMPT,
-    ],
-  ],
-  [
-    [
-      '3. For valid items: make the fix, then reply to that specific thread. Prefer the ' +
-        '`external_event` essence handle: use `replyHandle.commentId` as the REST ' +
-        '`{comment_id}` and the PR URL host as `<host>` in ' +
-        '`gh api --hostname <host> repos/{owner}/{repo}/pulls/{pull_number}/comments/{comment_id}/replies -f body="<ack>"` ' +
-        'explaining what changed. One reply per comment creates a visible audit trail.\n',
-      RETIRED_CODING_WORKFLOW_REPLY_STEP_PROMPT,
-    ],
-    [REVIEW_THREAD_RESOLUTION_GUIDANCE, RETIRED_REVIEW_THREAD_RESOLUTION_GUIDANCE],
-  ],
-  // Pre-PR-dev Coding Workflow: PR step gained subscribe instruction, all other
-  // steps unchanged. Existing seeded spaces have the old step-5 text without
-  // subscribe — swap the step text only.
-  [[CURRENT_CODING_WORKFLOW_PR_STEP_PROMPT, RETIRED_CODING_WORKFLOW_PR_STEP_PROMPT]],
-  // Gate-era Coding Workflow: PR step + handoff + rehandoff all differ.
-  [
-    [CURRENT_CODING_WORKFLOW_PR_STEP_PROMPT, RETIRED_CODING_WORKFLOW_PR_STEP_PROMPT],
     [CURRENT_CODING_WORKFLOW_HANDOFF_PROMPT, RETIRED_CODING_WORKFLOW_HANDOFF_PROMPT],
     [CURRENT_CODING_WORKFLOW_REHANDOFF_PROMPT, RETIRED_CODING_WORKFLOW_REHANDOFF_PROMPT],
   ],
-  // Hardcoded-era Coding Workflow: PR step + hardcoded handoff + rehandoff.
   [
-    [CURRENT_CODING_WORKFLOW_PR_STEP_PROMPT, RETIRED_CODING_WORKFLOW_PR_STEP_PROMPT],
     [CURRENT_CODING_WORKFLOW_HANDOFF_PROMPT, RETIRED_HARDCODED_CODING_WORKFLOW_HANDOFF_PROMPT],
     [CURRENT_CODING_WORKFLOW_REHANDOFF_PROMPT, RETIRED_HARDCODED_CODING_WORKFLOW_REHANDOFF_PROMPT],
   ],
-  // Pre-PR-dev Fullstack Coding: PR step gained subscribe, rest unchanged.
-  [[CURRENT_FULLSTACK_CODING_PR_STEP_PROMPT, RETIRED_FULLSTACK_CODING_PR_STEP_PROMPT]],
-  // Gate-era Fullstack Coding: PR step + ready prompt + step-4 handoff.
   [
-    [CURRENT_FULLSTACK_CODING_PR_STEP_PROMPT, RETIRED_FULLSTACK_CODING_PR_STEP_PROMPT],
     [CURRENT_FULLSTACK_CODING_READY_PROMPT, RETIRED_FULLSTACK_CODING_READY_PROMPT],
     [CURRENT_FULLSTACK_CODING_STEP_PROMPT, RETIRED_FULLSTACK_CODING_STEP_PROMPT],
   ],
-  // Hardcoded-era Fullstack Coding: PR step + hardcoded ready + step-4 handoff.
   [
-    [CURRENT_FULLSTACK_CODING_PR_STEP_PROMPT, RETIRED_FULLSTACK_CODING_PR_STEP_PROMPT],
     [CURRENT_FULLSTACK_CODING_READY_PROMPT, RETIRED_HARDCODED_FULLSTACK_CODING_READY_PROMPT],
     [CURRENT_FULLSTACK_CODING_STEP_PROMPT, RETIRED_HARDCODED_FULLSTACK_CODING_STEP_PROMPT],
   ],
-  // Pre-PR-dev Research: PR step gained subscribe, handoff unchanged.
-  [[CURRENT_RESEARCH_PR_STEP_PROMPT, RETIRED_RESEARCH_PR_STEP_PROMPT]],
   [[CURRENT_FULLSTACK_REVIEW_HANDOFF_PROMPT, RETIRED_FULLSTACK_REVIEW_HANDOFF_PROMPT]],
   [[CURRENT_FULLSTACK_REVIEW_HANDOFF_PROMPT, RETIRED_HARDCODED_FULLSTACK_REVIEW_HANDOFF_PROMPT]],
   // Guidance-only swap: covers PD_PLAN_REVIEW_PROMPT and any other persisted
@@ -1780,6 +1768,69 @@ const BUILT_IN_PROMPT_PATCH_VARIANTS = [
   // Handoff-only swap for the pre-fix variant (covers the rare case where
   // guidance was already patched but handoff was not).
   [[CURRENT_FULLSTACK_REVIEW_HANDOFF_PROMPT, RETIRED_PRE_FIX_FULLSTACK_REVIEW_HANDOFF_PROMPT]],
+  // Pre-Bash-restriction variant: persisted Fullstack/Review prompts seeded
+  // immediately before this PR told reviewers to inspect review threads with
+  // `gh api graphql` and to inspect Codex reactions with `gh api .../reactions`.
+  // Cover both so restamp swaps them to the current no-shell wording.
+  [
+    [REVIEW_THREAD_APPROVAL_CHECK_GUIDANCE, RETIRED_PRE_BASH_REVIEW_THREAD_APPROVAL_CHECK_GUIDANCE],
+    [CODEX_REACTION_APPROVAL_GUIDANCE, RETIRED_PRE_BASH_CODEX_REACTION_APPROVAL_GUIDANCE],
+  ],
+  // Single-swap fallbacks for spaces that patched only one half.
+  [[REVIEW_THREAD_APPROVAL_CHECK_GUIDANCE, RETIRED_PRE_BASH_REVIEW_THREAD_APPROVAL_CHECK_GUIDANCE]],
+  [[CODEX_REACTION_APPROVAL_GUIDANCE, RETIRED_PRE_BASH_CODEX_REACTION_APPROVAL_GUIDANCE]],
+  // Pre-Bash-restriction Coding Review handoff: persisted Reviewer prompts seeded
+  // immediately before this PR told reviewers to skip `gh pr review` (now: "skip
+  // the visible GitHub review") and to "run tests if uncertain" (now: "request
+  // tests from Coder/QA if uncertain"). Both fragments changed; swap each.
+  [
+    [
+      'before releasing your message. If you skip the visible GitHub review, the hook ' +
+        'will block and the coder will never hear from you.',
+      'before releasing your message. If you skip `gh pr review`, the hook will block ' +
+        'and the coder will never hear from you.',
+    ],
+    [
+      'Review checklist: inspect PR diff and related worktree context, request tests from Coder/QA if uncertain, ' +
+        'post visible GitHub review before sending feedback.',
+      'Review checklist: inspect PR diff and related worktree context, run tests if uncertain, ' +
+        'post visible GitHub review before sending feedback.',
+    ],
+  ],
+  // Pre-Bash-restriction Fullstack Review: persisted Fullstack QA Loop Review
+  // prompts seeded immediately before this PR lack the new "Do not run tests,
+  // scripts..." sentence AND carry the retired Codex `gh api .../reactions`
+  // guidance. Swap both fragments so those seeds restamp to the no-shell
+  // wording in a single patchKnownBuiltInPromptDrift pass.
+  [
+    [
+      'review quality and severity. Do not run tests, scripts, commands, shell checks, or Bash; ask Coder/QA for validation evidence when needed.\n\n',
+      'review quality and severity.\n\n',
+    ],
+    [CODEX_REACTION_APPROVAL_GUIDANCE, RETIRED_PRE_BASH_CODEX_REACTION_APPROVAL_GUIDANCE],
+  ],
+  // Combined Coding Review variant: persisted prompts from the same pre-Bash
+  // window also embed the old REVIEW_THREAD_APPROVAL_CHECK_GUIDANCE
+  // (`gh api graphql`). The single-swap variants above cover only the two
+  // handoff fragments, and the standalone review-thread variant covers only
+  // the guidance, so a prompt containing all three retired fragments matches
+  // neither. This entry swaps all three in a single
+  // patchKnownBuiltInPromptDrift pass so those seeds restamp cleanly.
+  [
+    [REVIEW_THREAD_APPROVAL_CHECK_GUIDANCE, RETIRED_PRE_BASH_REVIEW_THREAD_APPROVAL_CHECK_GUIDANCE],
+    [
+      'before releasing your message. If you skip the visible GitHub review, the hook ' +
+        'will block and the coder will never hear from you.',
+      'before releasing your message. If you skip `gh pr review`, the hook will block ' +
+        'and the coder will never hear from you.',
+    ],
+    [
+      'Review checklist: inspect PR diff and related worktree context, request tests from Coder/QA if uncertain, ' +
+        'post visible GitHub review before sending feedback.',
+      'Review checklist: inspect PR diff and related worktree context, run tests if uncertain, ' +
+        'post visible GitHub review before sending feedback.',
+    ],
+  ],
 ] as const;
 
 function patchKnownBuiltInPromptDrift<T extends WorkflowNodeAgentOverride | undefined>(
@@ -1798,29 +1849,19 @@ function isExactRetiredBuiltInPrompt(existingValue: string, templateValue: strin
 }
 
 function buildRetiredBuiltInPromptValues(templateValue: string): string[] {
-  const values = new Set<string>();
-  let candidates = new Set([templateValue]);
-
+  const values: string[] = [];
   for (const replacements of BUILT_IN_PROMPT_PATCH_VARIANTS) {
-    const nextCandidates = new Set(candidates);
-    for (const candidate of candidates) {
-      let value = candidate;
-      for (const [currentText, retiredText] of replacements) {
-        if (!value.includes(currentText)) {
-          value = candidate;
-          break;
-        }
-        value = value.replace(currentText, retiredText);
+    let value = templateValue;
+    for (const [currentText, retiredText] of replacements) {
+      if (!value.includes(currentText)) {
+        value = templateValue;
+        break;
       }
-      if (value !== candidate) {
-        values.add(value);
-        nextCandidates.add(value);
-      }
+      value = value.replace(currentText, retiredText);
     }
-    candidates = nextCandidates;
+    if (value !== templateValue) values.push(value);
   }
-
-  return [...values];
+  return values;
 }
 
 function nodeReferences(node: WorkflowNode): Set<string> {
