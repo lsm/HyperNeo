@@ -1020,6 +1020,7 @@ export class SpaceRuntime {
     }
     this.subscribeExternalEventPublished();
     this.subscribeSdkToolUseCreated();
+    this.config.spaceManager.onSpaceResumedRegister?.((spaceId) => this.onSpaceResumed(spaceId));
   }
 
   private subscribeSdkToolUseCreated(): void {
@@ -1586,39 +1587,10 @@ export class SpaceRuntime {
     return false;
   }
 
-  flushPendingNodeQueue(target: WorkflowSubscriptionTarget): void {
-    if (!target.sessionId) return;
-    const targetWithExecution = this.resolveSubscriptionTarget(target);
-    const key = this.buildQueueKey(target);
-    const queued = this.pendingExternalEventQueue.get(key);
-    const inMemoryDeliveryKeys = new Set(queued?.map((item) => item.deliveryKey) ?? []);
-
-    // Collect dispatchable items from both in-memory queue and DB-persisted
-    // pending deliveries into a single list so they can be sorted and
-    // dispatched in chronological order.
-    const dispatchable: PendingExternalEvent[] = [];
-
-    if (queued) {
-      this.pendingExternalEventQueue.delete(key);
-      const now = Date.now();
-      for (const item of queued) {
-        if (this.isQueuedExternalEventExpired(item, now)) {
-          this.failQueuedDeliveryForTtl(item, key);
-          continue;
-        }
-        dispatchable.push(item);
-      }
-    }
-
-    this.collectPersistedPendingDeliveries(targetWithExecution, inMemoryDeliveryKeys, dispatchable);
-
-    if (dispatchable.length === 0) return;
-
-    // Sort by createdAt so events from both sources are dispatched in
-    // chronological order regardless of which queue held them. Uses stable
-    // sort (default in modern JS engines) so items with the same createdAt
-    // preserve their insertion order (FIFO from the in-memory queue).
-    dispatchable.sort((a, b) => a.createdAt - b.createdAt);
+  flushPendingNodeQueue(target: WorkflowSubscriptionTarget, excludeDeliveryKey?: string): void {
+    const prepared = this.preparePendingNodeQueueDispatchable(target, excludeDeliveryKey);
+    if (!prepared) return;
+    const { targetWithExecution, dispatchable } = prepared;
 
     for (const item of dispatchable) {
       this.clearExternalEventRetry(item.deliveryKey);
@@ -1633,10 +1605,81 @@ export class SpaceRuntime {
     }
   }
 
+  private async flushPendingNodeQueueAsync(
+    target: WorkflowSubscriptionTarget,
+    excludeDeliveryKey?: string
+  ): Promise<void> {
+    const prepared = this.preparePendingNodeQueueDispatchable(target, excludeDeliveryKey);
+    if (!prepared) return;
+    const { targetWithExecution, dispatchable } = prepared;
+
+    for (const item of dispatchable) {
+      this.clearExternalEventRetry(item.deliveryKey);
+      await this.enqueueDeliverableExternalEvent(
+        targetWithExecution,
+        item.event,
+        item.deliveryKey,
+        item.deliveryMode,
+        item.createdAt,
+        true
+      );
+    }
+  }
+
+  private preparePendingNodeQueueDispatchable(
+    target: WorkflowSubscriptionTarget,
+    excludeDeliveryKey?: string
+  ): {
+    targetWithExecution: WorkflowSubscriptionTarget;
+    dispatchable: PendingExternalEvent[];
+  } | null {
+    if (!target.sessionId) return null;
+    const targetWithExecution = this.resolveSubscriptionTarget(target);
+    const key = this.buildQueueKey(target);
+    const queued = this.pendingExternalEventQueue.get(key);
+    const inMemoryDeliveryKeys = new Set(queued?.map((item) => item.deliveryKey) ?? []);
+
+    // Collect dispatchable items from both in-memory queue and DB-persisted
+    // pending deliveries into a single list so they can be sorted and
+    // dispatched in chronological order.
+    const dispatchable: PendingExternalEvent[] = [];
+
+    if (queued) {
+      this.pendingExternalEventQueue.delete(key);
+      const now = Date.now();
+      for (const item of queued) {
+        if (item.deliveryKey === excludeDeliveryKey) continue;
+        if (this.isQueuedExternalEventExpired(item, now)) {
+          this.failQueuedDeliveryForTtl(item, key);
+          continue;
+        }
+        dispatchable.push(item);
+      }
+    }
+
+    this.collectPersistedPendingDeliveries(
+      targetWithExecution,
+      inMemoryDeliveryKeys,
+      dispatchable,
+      excludeDeliveryKey
+    );
+
+    if (dispatchable.length === 0) return { targetWithExecution, dispatchable };
+
+    // Sort by createdAt so events from both sources are dispatched in
+    // chronological order regardless of which queue held them. Uses stable
+    // sort (default in modern JS engines) so items with the same createdAt
+    // preserve their insertion order (FIFO from the in-memory queue).
+    dispatchable.sort((a, b) => a.createdAt - b.createdAt);
+
+    return { targetWithExecution, dispatchable };
+  }
+
   private collectPersistedPendingDeliveries(
     target: WorkflowSubscriptionTarget,
     skipDeliveryKeys: Set<string>,
-    dispatchable: PendingExternalEvent[]
+    dispatchable: PendingExternalEvent[],
+    excludeDeliveryKey?: string
   ): void {
     const store = this.config.externalEventStore;
     if (!store || !target.sessionId) return;
@@ -1648,6 +1691,7 @@ export class SpaceRuntime {
           delivery.taskId === target.taskId &&
           delivery.nodeId === target.nodeId &&
           delivery.agentName === target.agentName &&
+          delivery.deliveryKey !== excludeDeliveryKey &&
           !skipDeliveryKeys.has(delivery.deliveryKey) &&
           // Only flush deliveries that carry an explicit retryable
           // failureReason (e.g. `node_execution_not_active`). A `pending` row
@@ -1891,7 +1935,7 @@ export class SpaceRuntime {
             continue;
           }
           if (activatedTarget?.sessionId && this.isTargetSessionLive(activatedTarget.sessionId)) {
-            this.flushPendingNodeQueue(activatedTarget);
+            await this.flushPendingNodeQueueAsync(activatedTarget, deliveryKey);
             await this.enqueueDeliverableExternalEvent(
               activatedTarget,
               payload,
@@ -1899,7 +1943,7 @@ export class SpaceRuntime {
               'immediate'
             );
           } else if (activatedTarget?.sessionId) {
-            this.flushPendingNodeQueue(activatedTarget);
+            await this.flushPendingNodeQueueAsync(activatedTarget, deliveryKey);
             await this.enqueueDeliverableExternalEvent(
               activatedTarget,
               payload,
@@ -4495,7 +4539,55 @@ export class SpaceRuntime {
           delivery.failureReason ?? `deliveryMode:${mode}; retry requeued after runtime rehydrate`,
           { preserveAttemptCount: true, createdAt: eventRecord.createdAt }
         );
+      } else {
+        // Sessionless pending rows (e.g. activation timeout/empty result) need
+        // an activation retry rather than a normal delivery retry, because
+        // delivery requires the node agent to be activated first.
+        this.scheduleActivationRetry(
+          target,
+          eventPayload,
+          delivery.deliveryKey,
+          delivery.failureReason ?? 'node_execution_not_active'
+        );
       }
+    }
+  }
+
+  /**
+   * Called when a paused/stopped space resumes. Re-schedules activation retries
+   * for sessionless pending deliveries in that space so idle subscribed targets
+   * are not stranded until an unrelated activation or restart happens.
+   */
+  onSpaceResumed(spaceId: string): void {
+    const store = this.config.externalEventStore;
+    if (!store) return;
+
+    for (const delivery of store.listPendingDeliveries()) {
+      const task = this.config.taskRepo.getTask(delivery.taskId);
+      if (!task || task.spaceId !== spaceId) continue;
+
+      const target = {
+        workflowRunId: delivery.workflowRunId,
+        taskId: delivery.taskId,
+        nodeId: delivery.nodeId,
+        agentName: delivery.agentName,
+      };
+      // Only wake deliveries that still need activation. If a live session is
+      // already resolved, the normal delivery retry path already handles it.
+      const resolved = this.resolveSubscriptionTarget(target);
+      if (resolved.sessionId) continue;
+
+      const eventRecord = store.getById(delivery.eventId);
+      if (!eventRecord || eventRecord.state !== 'published') continue;
+      if (!this.isTargetStillSubscribed(target, eventRecord.event.topic)) continue;
+
+      const eventPayload = this.externalEventPayloadFromRecord(eventRecord.event);
+      this.scheduleActivationRetry(
+        target,
+        eventPayload,
+        delivery.deliveryKey,
+        delivery.failureReason ?? 'node_execution_not_active'
+      );
     }
   }
 

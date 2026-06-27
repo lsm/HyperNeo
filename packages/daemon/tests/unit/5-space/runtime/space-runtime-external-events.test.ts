@@ -169,6 +169,7 @@ describe('SpaceRuntime external event subscriptions', () => {
   let longHorizonMessages: Array<{ agentId: string; message: string; idempotencyKey?: string }>;
   let tam: MockTaskAgentManager;
   let bus: ReturnType<typeof createDaemonInternalEventBus>;
+  let spaceManager: SpaceManager;
 
   function createWorkflow(
     nodeId = 'code',
@@ -245,9 +246,10 @@ describe('SpaceRuntime external event subscriptions', () => {
     });
     tam = new MockTaskAgentManager();
     artifactRepo = new WorkflowRunArtifactRepository(db);
+    spaceManager = new SpaceManager(db);
     runtime = new SpaceRuntime({
       db,
-      spaceManager: new SpaceManager(db),
+      spaceManager,
       spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
       spaceWorkflowManager: workflowManager,
       workflowRunRepo,
@@ -4969,6 +4971,237 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(eventStore.getById(older.id)?.state).toBe('delivered');
     expect(eventStore.getById(newer.id)?.state).toBe('delivered');
     expect(eventStore.getById(current.id)?.state).toBe('delivered');
+  });
+
+  test('awaits queued flush before delivering activating event', async () => {
+    const { run, task } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'idle',
+      agentSessionId: null,
+      completedAt: Date.now(),
+    });
+    tam.activationResult = [];
+
+    const older = makeEvent({
+      id: 'evt-older-async-flush',
+      dedupeKey: 'dedupe-older-async-flush',
+      occurredAt: 1_700_000_000_000,
+    });
+    await eventService.publish(older);
+    expect(eventStore.listDeliveries(older.id)[0]!.state).toBe('pending');
+
+    // Rebuild runtime with an awaitable inject so we can observe ordering.
+    await runtime.stop();
+    let releaseFirstInject!: () => void;
+    const firstInjectStarted = Promise.withResolvers<void>();
+    const commandBus = createInternalCommandBus();
+    commandBus.register('agent.message.inject', async (command) => {
+      injected.push({
+        sessionId: command.sessionId,
+        message: command.message,
+        deliveryMode: command.deliveryMode,
+      });
+      if (injected.length === 1) {
+        firstInjectStarted.resolve();
+        await new Promise<void>((resolve) => {
+          releaseFirstInject = resolve;
+        });
+      }
+      return { ok: true };
+    });
+    runtime = new SpaceRuntime({
+      db,
+      spaceManager,
+      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+      spaceWorkflowManager: workflowManager,
+      workflowRunRepo,
+      taskRepo,
+      nodeExecutionRepo,
+      internalEventBus: bus,
+      commandBus,
+      externalEventStore: eventStore,
+      taskAgentManager: tam as never,
+    });
+    runtime.registerSubscription(run.id, task.id, 'code', 'coder', DEFAULT_TOPIC);
+
+    // Activate the node: the next event triggers a flush of the older pending
+    // delivery, then delivers itself. The async flush must complete the older
+    // inject before the current event is injected.
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: null,
+      completedAt: null,
+    });
+    tam.activationResult = [{ agentName: 'coder', sessionId: 'session-async-flush' }];
+    tam.alive.add('session-async-flush');
+    tam.onActivate = () => {
+      nodeExecutionRepo.update(execution.id, {
+        agentSessionId: 'session-async-flush',
+      });
+    };
+
+    const current = makeEvent({
+      id: 'evt-current-async-flush',
+      dedupeKey: 'dedupe-current-async-flush',
+      occurredAt: 1_700_000_000_100,
+    });
+    const publishPromise = eventService.publish(current);
+    await firstInjectStarted.promise;
+    expect(injected).toHaveLength(1);
+    expect(JSON.parse(injected[0]!.message).eventId).toBe(older.id);
+    releaseFirstInject();
+    await publishPromise;
+
+    expect(injected.map((item) => JSON.parse(item.message).eventId)).toEqual([
+      older.id,
+      current.id,
+    ]);
+    expect(eventStore.getById(older.id)?.state).toBe('delivered');
+    expect(eventStore.getById(current.id)?.state).toBe('delivered');
+  });
+
+  test('reschedules paused-space deliveries after resume', async () => {
+    const { run, task } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'idle',
+      agentSessionId: null,
+      completedAt: Date.now(),
+    });
+    db.prepare(`UPDATE spaces SET paused = 1 WHERE id = ?`).run(SPACE_ID);
+
+    tam.activationResult = [];
+    const event = makeEvent({ id: 'evt-paused-resume' });
+    await eventService.publish(event);
+
+    expect(tam.activationCalls).toHaveLength(0);
+    const pending = eventStore.listDeliveries(event.id)[0]!;
+    expect(pending.state).toBe('pending');
+    expect(pending.failureReason).toBe('node_execution_not_active');
+
+    // Resume the space. The runtime's onSpaceResumed hook must schedule an
+    // activation retry for the sessionless pending delivery.
+    db.prepare(`UPDATE spaces SET paused = 0 WHERE id = ?`).run(SPACE_ID);
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: null,
+      completedAt: null,
+    });
+    tam.activationResult = [{ agentName: 'coder', sessionId: 'session-resume' }];
+    tam.alive.add('session-resume');
+    tam.onActivate = () => {
+      nodeExecutionRepo.update(execution.id, {
+        agentSessionId: 'session-resume',
+      });
+    };
+    runtime.start();
+    await spaceManager.resumeSpace(SPACE_ID);
+
+    await new Promise((resolve) => setTimeout(resolve, 1_200));
+    expect(tam.activationCalls.length).toBeGreaterThanOrEqual(1);
+    expect(injected).toHaveLength(1);
+    expect(injected[0]!.sessionId).toBe('session-resume');
+    expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
+  });
+
+  test('excludes retried delivery from activation flush drain', async () => {
+    const { run, task } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'idle',
+      agentSessionId: null,
+      completedAt: Date.now(),
+    });
+    tam.activationResult = [];
+
+    const event = makeEvent({ id: 'evt-exclude-retry' });
+    await eventService.publish(event);
+    expect(eventStore.listDeliveries(event.id)[0]!.failureReason).toBe('node_execution_not_active');
+
+    // Before the activation retry fires, make activation succeed. The retry
+    // calls flushPendingNodeQueueAsync with the current deliveryKey excluded;
+    // without that exclusion the DB-persisted pending row would be delivered
+    // twice (once by the flush and once by the post-flush enqueue).
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: null,
+      completedAt: null,
+    });
+    tam.activationResult = [{ agentName: 'coder', sessionId: 'session-exclude-retry' }];
+    tam.alive.add('session-exclude-retry');
+    tam.onActivate = () => {
+      nodeExecutionRepo.update(execution.id, {
+        agentSessionId: 'session-exclude-retry',
+      });
+    };
+
+    await new Promise((resolve) => setTimeout(resolve, 1_200));
+    expect(injected).toHaveLength(1);
+    expect(JSON.parse(injected[0]!.message).eventId).toBe(event.id);
+    expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
+  });
+
+  test('rehydrates sessionless activation retries after restart', async () => {
+    const { run, task } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'idle',
+      agentSessionId: null,
+      completedAt: Date.now(),
+    });
+    tam.activationResult = [];
+
+    const event = makeEvent({ id: 'evt-sessionless-rehydrate' });
+    await eventService.publish(event);
+    expect(eventStore.listDeliveries(event.id)[0]!.failureReason).toBe('node_execution_not_active');
+    await runtime.stop();
+
+    const commandBus = createInternalCommandBus();
+    commandBus.register('agent.message.inject', async (command) => {
+      injected.push({
+        sessionId: command.sessionId,
+        message: command.message,
+        deliveryMode: command.deliveryMode,
+      });
+      return { ok: true };
+    });
+    runtime = new SpaceRuntime({
+      db,
+      spaceManager,
+      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+      spaceWorkflowManager: workflowManager,
+      workflowRunRepo,
+      taskRepo,
+      nodeExecutionRepo,
+      internalEventBus: bus,
+      commandBus,
+      externalEventStore: eventStore,
+      taskAgentManager: tam as never,
+    });
+    runtime.registerSubscription(run.id, task.id, 'code', 'coder', DEFAULT_TOPIC);
+
+    // Activation should succeed when the rehydrated retry fires.
+    tam.activationResult = [{ agentName: 'coder', sessionId: 'session-rehydrated-retry' }];
+    tam.alive.add('session-rehydrated-retry');
+    tam.onActivate = () => {
+      nodeExecutionRepo.update(execution.id, {
+        agentSessionId: 'session-rehydrated-retry',
+      });
+    };
+
+    // Reset call tracking so we only measure what happens after rehydrate.
+    tam.activationCalls = [];
+    injected = [];
+
+    await runtime.rehydrateExecutors();
+    expect(tam.activationCalls).toHaveLength(0);
+
+    await new Promise((resolve) => setTimeout(resolve, 1_200));
+    expect(tam.activationCalls.length).toBeGreaterThanOrEqual(1);
+    expect(injected).toHaveLength(1);
+    expect(injected[0]!.sessionId).toBe('session-rehydrated-retry');
+    expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
   });
 });
 
