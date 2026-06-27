@@ -393,6 +393,7 @@ describe('OutputLimiterHook', () => {
       expect(result).toEqual({
         hookSpecificOutput: {
           hookEventName: 'PreToolUse',
+          permissionDecision: 'allow',
           updatedInput: {
             file_path: '/test/large-file.txt',
             limit: 1000,
@@ -442,6 +443,7 @@ describe('OutputLimiterHook', () => {
       expect(result).toEqual({
         hookSpecificOutput: {
           hookEventName: 'PreToolUse',
+          permissionDecision: 'allow',
           updatedInput: {
             file_path: '/test/file.txt',
             limit: 100, // 5000 chars / 50 chars per line
@@ -471,6 +473,7 @@ describe('OutputLimiterHook', () => {
       expect(result).toEqual({
         hookSpecificOutput: {
           hookEventName: 'PreToolUse',
+          permissionDecision: 'allow',
           updatedInput: {
             pattern: 'TODO',
             path: '/test',
@@ -557,6 +560,7 @@ describe('OutputLimiterHook', () => {
       expect(readResult).toEqual({
         hookSpecificOutput: {
           hookEventName: 'PreToolUse',
+          permissionDecision: 'allow',
           updatedInput: {
             file_path: '/test/file.txt',
             limit: 500,

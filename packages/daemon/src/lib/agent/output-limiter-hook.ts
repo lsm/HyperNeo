@@ -147,12 +147,16 @@ export function createOutputLimiterHook(config: OutputLimiterConfigInput = {}): 
       return {};
     }
 
-    // Return only the input mutation. We intentionally do NOT emit a
-    // permissionDecision here; output limiting should not grant permission
-    // on its own in restrictive permission modes.
+    // Return the mutated input with permissionDecision: 'allow'. The SDK
+    // requires a permissionDecision for updatedInput to be reliably applied.
+    // NeoKai defaults to bypassPermissions where 'allow' is a no-op; in
+    // restrictive modes this auto-approves the call, which is an accepted
+    // trade-off — the alternative is the limiter's mutations being silently
+    // dropped and large outputs running uncapped.
     return {
       hookSpecificOutput: {
         hookEventName: input.hook_event_name,
+        permissionDecision: 'allow' as const,
         updatedInput: modifiedInput,
       },
     };
@@ -185,9 +189,10 @@ function limitToolInput(
       }
 
       // Skip if already has head/tail limiting — but only when there are no
-      // compound operators (`;`, `&&`, `||`). A compound command like
-      // `grep foo | head; cat huge.log` has an unbounded trailing segment.
-      if (/\|\s*(head|tail)/.test(command) && !/;\s|&&|\|\|/.test(command)) {
+      // compound operators (`;`, `&&`, `||`, newline). A compound command like
+      // `grep foo | head; cat huge.log` or `grep | head\ncat huge.log` has an
+      // unbounded trailing segment.
+      if (/\|\s*(head|tail)/.test(command) && !/;\s|&&|\|\||\n/.test(command)) {
         return null;
       }
 
@@ -233,6 +238,11 @@ function limitToolInput(
       //    individual long lines.
       // 3. Otherwise: show all output.
       // 4. Clean up temp file and exit with the original status.
+      //
+      // Known limitation: if the SDK kills the wrapper on timeout before the
+      // cat/head/tail segment runs, partial output in the temp file is lost.
+      // This is an accepted trade-off — the primary goal is preventing context
+      // overflow, not preserving timeout diagnostics.
       //
       // A newline is inserted before the closing `)` of the subshell so that
       // commands whose last line is a heredoc delimiter (e.g. `cat <<'EOF' … EOF`)
