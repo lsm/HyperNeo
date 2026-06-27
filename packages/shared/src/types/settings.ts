@@ -102,7 +102,7 @@ export interface FileOnlySettings {
       maxLines?: number; // Max lines to read (default: 1000)
     };
     grep?: {
-      maxMatches?: number; // Max search matches (default: 500)
+      maxMatches?: number; // Max search matches (default: 250)
     };
     excludeTools?: string[]; // Tools to exclude from limiting
   };
