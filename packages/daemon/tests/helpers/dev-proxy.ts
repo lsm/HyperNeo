@@ -226,11 +226,12 @@ export function createDevProxyController(options: DevProxyOptions = {}): DevProx
     fs.mkdirSync(devProxyDir, { recursive: true });
   }
 
-  // Create default devproxyrc.json if it doesn't exist
-  const defaultConfigPath = path.join(devProxyDir, 'devproxyrc.json');
-  if (!fs.existsSync(defaultConfigPath)) {
+  // Create devproxyrc.json at the requested config path if it doesn't exist.
+  // This lets callers supply a custom configPath (e.g. to load a different mock
+  // file) without having to create the file themselves.
+  if (!fs.existsSync(configPath)) {
     fs.writeFileSync(
-      defaultConfigPath,
+      configPath,
       JSON.stringify(
         {
           plugins: [
@@ -369,8 +370,8 @@ export function createDevProxyController(options: DevProxyOptions = {}): DevProx
     // tests with fake TCP servers; they should always be adopted as-is.
     if (port !== 8000) return null;
 
-    // The devproxy REST API listens on port 8897 by default (not the proxy port).
-    const apiPort = 8897;
+    // The devproxy REST API listens on a port derived from the proxy port.
+    const apiPort = 8897 + (port - 8000);
     try {
       const response = await fetch(`http://127.0.0.1:${apiPort}/proxy`, {
         signal: AbortSignal.timeout(2000),
@@ -506,6 +507,10 @@ export function createDevProxyController(options: DevProxyOptions = {}): DevProx
           'false',
           '--port',
           String(port),
+          '--api-port',
+          String(8897 + (port - 8000)),
+          '--config-file',
+          configPath,
           '--log-level',
           logLevel,
           '--record',

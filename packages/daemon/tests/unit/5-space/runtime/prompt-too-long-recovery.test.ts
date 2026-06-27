@@ -791,6 +791,34 @@ describe('SpaceRuntime — prompt-too-long recovery', () => {
     expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
   });
 
+  test('clears awaitingResume and re-compacts when the resumed turn re-overflows as a Kimi user message', async () => {
+    // Bonus: a resumed turn that itself overflows via the Kimi stderr form must be
+    // treated like an overflow result — clear awaitingResume and re-compact with
+    // attempts preserved instead of waiting for a result that will never arrive.
+    const injections: Array<{ sessionId: string; message: string }> = [];
+    const rt = new SpaceRuntime(buildConfig(makeRecordingTam(injections)));
+    const sessionId = 'session:kimi-resume-reoverflow';
+    const { run, execution } = await setupIdleOverflowExecution(rt, sessionId, true);
+
+    await rt.executeTick(); // → /compact (attempt 1)
+    saveResultMessage(sessionId, { promptTooLong: false }); // compact success
+    await rt.executeTick(); // → continue nag (awaitingResume=true)
+
+    // The resumed turn itself hits the same Kimi overflow, surfaced as a user message.
+    saveUserMessage(
+      sessionId,
+      '<local-command-stderr>Prompt is too long: 205616 tokens > 200000 maximum</local-command-stderr>'
+    );
+
+    await rt.executeTick(); // → clears awaitingResume, re-compact (attempt 2)
+
+    expect(injections.filter((i) => i.message === '/compact').length).toBe(2);
+    expect(injections.filter((i) => i.message === buildPromptTooLongContinueNag()).length).toBe(1);
+    const state = promptTooLongRecoveryMap(rt).get(`${run.id}:${execution.id}`);
+    expect(state?.awaitingContinue).toBe(true);
+    expect(state?.awaitingResume).toBe(false);
+  });
+
   test('processes a resumed success past the timeout window instead of blocking', async () => {
     // Round-10: a visible resumed-turn RESULT is processed BEFORE the timeout —
     // a turn that took longer than the window but completed must not be mis-blocked.

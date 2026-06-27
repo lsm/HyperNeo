@@ -437,7 +437,7 @@ export class ProviderService {
       if (provider.id === 'anthropic' && process.env.NEOKAI_USE_DEV_PROXY === '1') {
         sdkConfig.envVars = {
           ...sdkConfig.envVars,
-          ANTHROPIC_BASE_URL: 'http://127.0.0.1:8000',
+          ANTHROPIC_BASE_URL: process.env.ANTHROPIC_BASE_URL || 'http://127.0.0.1:8000',
         };
       }
       return sdkConfigToEnvVars(sdkConfig);
@@ -483,7 +483,7 @@ export class ProviderService {
       if (provider.id === 'anthropic' && process.env.NEOKAI_USE_DEV_PROXY === '1') {
         sdkConfig.envVars = {
           ...sdkConfig.envVars,
-          ANTHROPIC_BASE_URL: 'http://127.0.0.1:8000',
+          ANTHROPIC_BASE_URL: process.env.ANTHROPIC_BASE_URL || 'http://127.0.0.1:8000',
         };
       }
       return sdkConfigToEnvVars(sdkConfig);
@@ -749,14 +749,17 @@ export class ProviderService {
       }
     }
 
-    // Preserve user's custom ANTHROPIC_BASE_URL from environment/settings.json
+    // Preserve user's custom ANTHROPIC_BASE_URL from environment/settings.json.
+    // Local Dev Proxy URLs are always preserved so that test mock routing is not
+    // deleted as a leaked provider override.
     if (process.env.ANTHROPIC_BASE_URL !== undefined) {
       original.ANTHROPIC_BASE_URL = process.env.ANTHROPIC_BASE_URL;
       changed = true;
       if (
-        !options.preserveUserSettings ||
-        userConfiguredBaseUrl === undefined ||
-        process.env.ANTHROPIC_BASE_URL !== userConfiguredBaseUrl
+        !isLocalDevProxyUrl(process.env.ANTHROPIC_BASE_URL) &&
+        (!options.preserveUserSettings ||
+          userConfiguredBaseUrl === undefined ||
+          process.env.ANTHROPIC_BASE_URL !== userConfiguredBaseUrl)
       ) {
         delete process.env.ANTHROPIC_BASE_URL;
       }
@@ -1019,6 +1022,25 @@ export function mergeProviderEnvVars(providerEnvVars: ProviderEnvVars): NodeJS.P
 // in Bun's test runner (different import paths can load the same module twice,
 // each with its own module-level let, breaking singleton guarantees).
 const PROVIDER_SERVICE_KEY = Symbol.for('neokai:providerServiceInstance');
+
+/**
+ * Detect whether an Anthropic base URL points at a local Dev Proxy instance.
+ * Local proxy URLs must be preserved when clearing provider-routing env vars so
+ * that test sessions route to the mock proxy instead of being deleted as a
+ * "leaked" provider override.
+ */
+function isLocalDevProxyUrl(url: string | undefined): boolean {
+  if (!url) return false;
+  try {
+    const parsed = new URL(url);
+    return (
+      parsed.protocol === 'http:' &&
+      (parsed.hostname === '127.0.0.1' || parsed.hostname === 'localhost')
+    );
+  } catch {
+    return false;
+  }
+}
 
 /**
  * User-configured env vars captured at module initialization.

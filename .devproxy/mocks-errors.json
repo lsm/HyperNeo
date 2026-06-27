@@ -5,13 +5,7 @@
       "request": {
         "url": "https://api.anthropic.com/v1/messages",
         "method": "POST",
-        "bodyFragment": {
-          "messages": [
-            {
-              "content": "trigger rate limit"
-            }
-          ]
-        }
+        "bodyFragment": "trigger rate limit"
       },
       "response": {
         "statusCode": 429,
@@ -54,13 +48,7 @@
       "request": {
         "url": "https://api.anthropic.com/v1/messages",
         "method": "POST",
-        "bodyFragment": {
-          "messages": [
-            {
-              "content": "trigger server error"
-            }
-          ]
-        }
+        "bodyFragment": "trigger server error"
       },
       "response": {
         "statusCode": 500,
@@ -87,13 +75,7 @@
       "request": {
         "url": "https://api.anthropic.com/v1/messages",
         "method": "POST",
-        "bodyFragment": {
-          "messages": [
-            {
-              "content": "trigger overloaded error"
-            }
-          ]
-        }
+        "bodyFragment": "trigger overloaded error"
       },
       "response": {
         "statusCode": 529,
@@ -124,13 +106,7 @@
       "request": {
         "url": "https://api.anthropic.com/v1/messages",
         "method": "POST",
-        "bodyFragment": {
-          "messages": [
-            {
-              "content": "trigger invalid request"
-            }
-          ]
-        }
+        "bodyFragment": "trigger invalid request"
       },
       "response": {
         "statusCode": 400,
@@ -157,13 +133,7 @@
       "request": {
         "url": "https://api.anthropic.com/v1/messages",
         "method": "POST",
-        "bodyFragment": {
-          "messages": [
-            {
-              "content": "trigger authentication error"
-            }
-          ]
-        }
+        "bodyFragment": "trigger authentication error"
       },
       "response": {
         "statusCode": 401,
@@ -190,13 +160,7 @@
       "request": {
         "url": "https://api.anthropic.com/v1/messages",
         "method": "POST",
-        "bodyFragment": {
-          "messages": [
-            {
-              "content": "trigger permission error"
-            }
-          ]
-        }
+        "bodyFragment": "trigger permission error"
       },
       "response": {
         "statusCode": 403,
@@ -223,13 +187,7 @@
       "request": {
         "url": "https://api.anthropic.com/v1/messages",
         "method": "POST",
-        "bodyFragment": {
-          "messages": [
-            {
-              "content": "trigger not found error"
-            }
-          ]
-        }
+        "bodyFragment": "trigger not found error"
       },
       "response": {
         "statusCode": 404,
@@ -256,13 +214,7 @@
       "request": {
         "url": "https://api.anthropic.com/v1/messages",
         "method": "POST",
-        "bodyFragment": {
-          "messages": [
-            {
-              "content": "trigger context length error"
-            }
-          ]
-        }
+        "bodyFragment": "trigger context length error"
       },
       "response": {
         "statusCode": 400,
@@ -289,13 +241,7 @@
       "request": {
         "url": "https://api.anthropic.com/v1/messages",
         "method": "POST",
-        "bodyFragment": {
-          "messages": [
-            {
-              "content": "trigger tool error"
-            }
-          ]
-        }
+        "bodyFragment": "trigger tool error"
       },
       "response": {
         "statusCode": 200,
@@ -336,13 +282,7 @@
       "request": {
         "url": "https://api.anthropic.com/v1/messages",
         "method": "POST",
-        "bodyFragment": {
-          "messages": [
-            {
-              "content": "trigger max turns error"
-            }
-          ]
-        }
+        "bodyFragment": "trigger max turns error"
       },
       "response": {
         "statusCode": 200,
@@ -372,6 +312,113 @@
           "usage": {
             "input_tokens": 25,
             "output_tokens": 30,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "service_tier": "standard"
+          }
+        }
+      }
+    },
+    {
+      "comment": "Kimi prompt-too-long 400 \u2014 detailed form with token counts.",
+      "request": {
+        "url": "*/v1/messages*",
+        "method": "POST",
+        "bodyFragment": "trigger kimi prompt too long",
+        "nth": 1
+      },
+      "response": {
+        "statusCode": 400,
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "x-mocked-by",
+            "value": "Dev Proxy MockResponsePlugin - mocks-errors.json (kimi prompt too long detailed)"
+          }
+        ],
+        "body": {
+          "type": "error",
+          "error": {
+            "type": "invalid_request_error",
+            "message": "Prompt is too long: 205616 tokens > 200000 maximum"
+          }
+        }
+      }
+    },
+    {
+      "comment": "Kimi prompt-too-long 400 \u2014 bare form without token counts.",
+      "request": {
+        "url": "*/v1/messages*",
+        "method": "POST",
+        "bodyFragment": "trigger kimi prompt too long bare",
+        "nth": 1
+      },
+      "response": {
+        "statusCode": 400,
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "x-mocked-by",
+            "value": "Dev Proxy MockResponsePlugin - mocks-errors.json (kimi prompt too long bare)"
+          }
+        ],
+        "body": {
+          "type": "error",
+          "error": {
+            "type": "invalid_request_error",
+            "message": "Prompt is too long"
+          }
+        }
+      }
+    },
+    {
+      "comment": "Catch-all for recovery flows so that injected /compact and continue-nag turns get a non-overflow success response rather than passing through to the real API.",
+      "request": {
+        "url": "*/v1/messages*",
+        "method": "POST"
+      },
+      "response": {
+        "statusCode": 200,
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "anthropic-ratelimit-requests-limit",
+            "value": "50"
+          },
+          {
+            "name": "anthropic-ratelimit-requests-remaining",
+            "value": "49"
+          },
+          {
+            "name": "x-mocked-by",
+            "value": "Dev Proxy MockResponsePlugin - mocks-errors.json (catch-all)"
+          }
+        ],
+        "body": {
+          "id": "msg_mock_default_errors",
+          "type": "message",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "[MOCKED ERRORS] Hello! I'm Claude, an AI assistant."
+            }
+          ],
+          "model": "claude-haiku-20250307",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 50,
+            "output_tokens": 20,
             "cache_creation_input_tokens": 0,
             "cache_read_input_tokens": 0,
             "service_tier": "standard"
