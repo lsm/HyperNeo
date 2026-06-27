@@ -92,7 +92,7 @@ import {
   MAX_PROMPT_TOO_LONG_RECOVERY_ATTEMPTS,
   buildPromptTooLongContinueNag,
   createPromptTooLongRecoveryState,
-  isPromptTooLongResult,
+  isPromptTooLongErrorMessage,
   type PromptTooLongRecoveryState,
 } from './prompt-too-long-recovery';
 import type { SelectWorkflowWithLlm } from './llm-workflow-selector';
@@ -5432,7 +5432,7 @@ export class SpaceRuntime {
     const lastMessageDbId = (lastMessage as { dbId?: string } | null | undefined)?.dbId ?? null;
     const lastMessageIsResult =
       !!lastMessage && (lastMessage as { type?: string }).type === 'result';
-    const overflowed = isPromptTooLongResult(lastMessage);
+    const overflowed = isPromptTooLongErrorMessage(lastMessage);
     const lastMessageIsSuccessResult =
       lastMessageIsResult && !(lastMessage as { is_error?: boolean }).is_error;
 
@@ -6948,7 +6948,7 @@ export class SpaceRuntime {
       // classified as terminal.
       const ptlState = this.promptTooLongRecovery.get(key);
       if (
-        isPromptTooLongResult(lastMessage) ||
+        isPromptTooLongErrorMessage(lastMessage) ||
         ptlState?.awaitingContinue ||
         ptlState?.continueNagPending ||
         ptlState?.awaitingResume ||

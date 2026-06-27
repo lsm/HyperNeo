@@ -110,6 +110,31 @@ export function createPromptTooLongRecoveryState(): PromptTooLongRecoveryState {
   };
 }
 
+const PROMPT_TOO_LONG_RE = /prompt is too long/i;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function extractUserMessageText(message: SDKMessage): string {
+  const user = message as { message?: { content?: unknown } };
+  const content = user.message?.content;
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((block) => {
+        if (typeof block === 'string') return block;
+        if (isRecord(block)) {
+          if (typeof block.text === 'string') return block.text;
+          if (typeof block.content === 'string') return block.content;
+        }
+        return '';
+      })
+      .join('');
+  }
+  return '';
+}
+
 /**
  * Detect the prompt-too-long signature on a result message.
  *
@@ -129,12 +154,35 @@ export function isPromptTooLongResult(message: SDKMessage | null | undefined): b
   if (msg.terminal_reason === 'prompt_too_long') return true;
   if (Array.isArray(msg.errors)) {
     for (const err of msg.errors) {
-      if (typeof err === 'string' && /prompt is too long/i.test(err)) {
+      if (typeof err === 'string' && PROMPT_TOO_LONG_RE.test(err)) {
         return true;
       }
     }
   }
   return false;
+}
+
+/**
+ * Detect the prompt-too-long signature injected as a user message.
+ *
+ * Some providers (e.g. Kimi) return the overflow as a 400 error that the SDK
+ * surfaces as a user message containing `<local-command-stderr>` text. We look
+ * for the same lenient phrase inside the message text/content.
+ */
+export function isPromptTooLongUserMessage(message: SDKMessage | null | undefined): boolean {
+  if (!message) return false;
+  if ((message as { type?: string }).type !== 'user') return false;
+  return PROMPT_TOO_LONG_RE.test(extractUserMessageText(message));
+}
+
+/**
+ * Detect the prompt-too-long signature on any SDK message type.
+ *
+ * Combines the result-message detection with the user-message stderr form so
+ * the recovery path fires regardless of how the provider reports the overflow.
+ */
+export function isPromptTooLongErrorMessage(message: SDKMessage | null | undefined): boolean {
+  return isPromptTooLongResult(message) || isPromptTooLongUserMessage(message);
 }
 
 /**
