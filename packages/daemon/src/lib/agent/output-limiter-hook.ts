@@ -191,8 +191,9 @@ function limitToolInput(
       // Skip if already has head/tail limiting — but only when there are no
       // compound operators (`;`, `&&`, `||`, newline). A compound command like
       // `grep foo | head; cat huge.log` or `grep | head\ncat huge.log` has an
-      // unbounded trailing segment.
-      if (/\|\s*(head|tail)/.test(command) && !/;\s|&&|\|\||\n/.test(command)) {
+      // unbounded trailing segment. Semicolons are matched regardless of
+      // trailing whitespace (`head;cat` is still compound).
+      if (/\|\s*(head|tail)/.test(command) && !/;|&&|\|\||\n/.test(command)) {
         return null;
       }
 
@@ -216,9 +217,15 @@ function limitToolInput(
       // Skip commands whose primary executable is explicitly excluded by the
       // user (e.g. via outputLimiter.bash.excludedCommandPrefixes, which may
       // be populated from sandbox.excludedCommands to preserve command-level
-      // sandbox exclusions for commands like `git`).
+      // sandbox exclusions for commands like `git`). Strip leading env var
+      // assignments and `env`/`command` prefixes so `GIT_SSH_COMMAND=... git`
+      // and `env git` are still recognised.
+      const effectiveCommand = trimmed.replace(
+        /^((?:env\s+)?(?:[A-Za-z_]\w*=\S+\s+|command\s+))*/,
+        ''
+      );
       for (const prefix of config.bash.excludedCommandPrefixes) {
-        if (trimmed === prefix || trimmed.startsWith(`${prefix} `)) {
+        if (effectiveCommand === prefix || effectiveCommand.startsWith(`${prefix} `)) {
           return null;
         }
       }

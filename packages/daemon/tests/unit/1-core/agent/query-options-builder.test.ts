@@ -1312,11 +1312,12 @@ describe('QueryOptionsBuilder', () => {
 
     it('should pass sandbox excluded commands to the limiter when sandbox is enabled', async () => {
       // When sandbox is enabled, wrapping git would hide it from the sandbox's
-      // command-level exclusion classifier. Pass excludedCommands so those
+      // command-level exclusion classifier. Pass excludedCommands from the
+      // SESSION sandbox config (same source the SDK receives) so those
       // commands are not wrapped.
+      mockSession.config.sandbox = { enabled: true, excludedCommands: ['git'] };
       mockSettingsManager.getGlobalSettings = mock(() => ({
         settingSources: ['user', 'project', 'local'],
-        sandbox: { enabled: true, excludedCommands: ['git'] },
         outputLimiter: {
           enabled: true,
           bash: { headLines: 100, tailLines: 200 },
@@ -1352,9 +1353,9 @@ describe('QueryOptionsBuilder', () => {
     it('should NOT pass sandbox excluded commands when sandbox is disabled', async () => {
       // In bypassPermissions mode the sandbox is inactive, so wrapping git is
       // safe and necessary for output limiting.
+      mockSession.config.sandbox = { enabled: false, excludedCommands: ['git'] };
       mockSettingsManager.getGlobalSettings = mock(() => ({
         settingSources: ['user', 'project', 'local'],
-        sandbox: { enabled: false, excludedCommands: ['git'] },
         outputLimiter: {
           enabled: true,
           bash: { headLines: 100, tailLines: 200 },

@@ -1262,11 +1262,14 @@ CRITICAL RULES:
     if (outputLimiterSettings) {
       const resolvedOutputLimiter = resolveConfig(outputLimiterSettings);
       if (resolvedOutputLimiter.enabled) {
+        // Derive excludedCommands from the session sandbox config only — this
+        // is the same config the SDK receives via `sandbox: config.sandbox`.
+        // Falling back to global defaults would create a mismatch: the limiter
+        // would skip wrapping git while the SDK's sandbox (which only sees
+        // session config) would not exclude it.
         const sessionSandbox = this.ctx.session.config.sandbox;
-        const sandboxEnabled = sessionSandbox?.enabled ?? globalSettings.sandbox?.enabled;
-        const sandboxExcluded = sandboxEnabled
-          ? (sessionSandbox?.excludedCommands ?? globalSettings.sandbox?.excludedCommands ?? [])
-          : [];
+        const sandboxEnabled = sessionSandbox?.enabled;
+        const sandboxExcluded = sandboxEnabled ? (sessionSandbox?.excludedCommands ?? []) : [];
         // Merge user-configured limiter exclusions with sandbox exclusions
         // instead of overwriting one with the other.
         const userExcluded = outputLimiterSettings.bash?.excludedCommandPrefixes ?? [];
