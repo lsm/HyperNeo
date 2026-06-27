@@ -21,7 +21,7 @@ const log = new Logger('SpaceManager');
 
 export class SpaceManager {
   private spaceRepo: SpaceRepository;
-  private onSpaceResumed: ((spaceId: string) => void) | null = null;
+  private onSpaceResumedCallbacks: Array<(spaceId: string) => void> = [];
 
   constructor(private db: BunDatabase) {
     this.spaceRepo = new SpaceRepository(db);
@@ -31,10 +31,17 @@ export class SpaceManager {
    * Register a callback invoked after a space transitions back to an active
    * runtime (resume from paused or start from stopped). Used to re-seed task
    * schedules whose fire jobs were skipped during the inactive window so they
-   * can resume firing without a daemon restart.
+   * can resume firing without a daemon restart. Multiple callbacks are allowed.
+   *
+   * Returns an unsubscribe function that removes the callback; runtimes should
+   * call it on stop() to avoid stale callbacks dispatching through a stopped
+   * instance.
    */
-  onSpaceResumedRegister(cb: (spaceId: string) => void): void {
-    this.onSpaceResumed = cb;
+  onSpaceResumedRegister(cb: (spaceId: string) => void): () => void {
+    this.onSpaceResumedCallbacks.push(cb);
+    return () => {
+      this.onSpaceResumedCallbacks = this.onSpaceResumedCallbacks.filter((c) => c !== cb);
+    };
   }
 
   /**
@@ -132,10 +139,12 @@ export class SpaceManager {
 
     // Re-seed any active schedules whose fire jobs were skipped while the
     // space was paused so they pick up forward progress.
-    try {
-      this.onSpaceResumed?.(id);
-    } catch (err) {
-      log.error('resumeSpace: schedule recovery hook failed (non-fatal)', err);
+    for (const cb of this.onSpaceResumedCallbacks) {
+      try {
+        cb(id);
+      } catch (err) {
+        log.error('resumeSpace: schedule recovery hook failed (non-fatal)', err);
+      }
     }
 
     return resumed;
@@ -174,10 +183,12 @@ export class SpaceManager {
       throw new Error(`Failed to start space: ${id}`);
     }
 
-    try {
-      this.onSpaceResumed?.(id);
-    } catch (err) {
-      log.error('startSpace: schedule recovery hook failed (non-fatal)', err);
+    for (const cb of this.onSpaceResumedCallbacks) {
+      try {
+        cb(id);
+      } catch (err) {
+        log.error('startSpace: schedule recovery hook failed (non-fatal)', err);
+      }
     }
 
     return started;
