@@ -1242,24 +1242,28 @@ CRITICAL RULES:
     // settings include outputLimiter (matching DEFAULT_GLOBAL_SETTINGS), and
     // stays off when settings omit the key entirely. The hook only mutates
     // input and does not emit a permission decision.
+    //
+    // We do NOT auto-populate bash.excludedCommandPrefixes from
+    // sandbox.excludedCommands — those control sandbox routing, not output
+    // limiting, and blanket-excluding git would leave high-volume commands
+    // like `git diff` uncapped. Users who need to exclude specific commands
+    // from output limiting can set outputLimiter.bash.excludedCommandPrefixes
+    // explicitly.
+    //
+    // Note on loop detection: the loop detector runs BEFORE this hook, so its
+    // PreToolUse fingerprint uses the original command. The PostToolUse event
+    // sees the wrapped command. The streak-based deny path (consecutive
+    // identical calls) is unaffected because it keys on the original command
+    // in the pre hook. The Bash failure-aware deny path correlates pre/post
+    // keys, so its ring may not accumulate for wrapped Bash commands; this is
+    // an accepted trade-off — the streak path still catches dead loops.
     const globalSettings = this.ctx.settingsManager.getGlobalSettings();
     const outputLimiterSettings = globalSettings.outputLimiter;
     if (outputLimiterSettings) {
       const resolvedOutputLimiter = resolveConfig(outputLimiterSettings);
       if (resolvedOutputLimiter.enabled) {
-        const sessionSandbox = this.ctx.session.config.sandbox;
-        const excludedCommandPrefixes =
-          sessionSandbox?.excludedCommands ?? globalSettings.sandbox?.excludedCommands;
         preToolUse.push({
-          hooks: [
-            createOutputLimiterHook({
-              ...outputLimiterSettings,
-              bash: {
-                ...outputLimiterSettings.bash,
-                excludedCommandPrefixes,
-              },
-            }),
-          ],
+          hooks: [createOutputLimiterHook(outputLimiterSettings)],
         });
       }
     }

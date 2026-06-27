@@ -173,14 +173,24 @@ function limitToolInput(
       }
 
       // Skip simple commands that are unlikely to produce large output
-      // (pwd, cd, echo simple strings, etc.)
-      const simpleCommands = /^(pwd|cd|echo\s+"[^"]{0,50}"|ls(\s+-\w+)?(\s+\S+)?|which|whoami)$/;
+      // (pwd, echo simple strings, ls, which, whoami).
+      const simpleCommands = /^(pwd|echo\s+"[^"]{0,50}"|ls(\s+-\w+)?(\s+\S+)?|which|whoami)$/;
       if (simpleCommands.test(command.trim())) {
         return null;
       }
 
-      // Skip commands whose primary executable is sandbox-excluded (e.g. git),
-      // so command-level sandbox exclusions still see the original command.
+      // Skip directory-changing commands. `cd <dir>` inside a subshell does
+      // not change the SDK's persistent cwd, so wrapping it would silently
+      // break relative-path commands that follow.
+      if (/^cd(\s|$)/.test(command.trim())) {
+        return null;
+      }
+
+      // Skip commands whose primary executable is explicitly excluded by the
+      // user (e.g. via outputLimiter.bash.excludedCommandPrefixes). This is
+      // NOT auto-populated from sandbox.excludedCommands — those are about
+      // sandbox routing, not output limiting, and blanket-excluding git would
+      // leave high-volume commands like `git diff` uncapped.
       const trimmed = command.trim();
       for (const prefix of config.bash.excludedCommandPrefixes) {
         if (trimmed === prefix || trimmed.startsWith(`${prefix} `)) {
@@ -190,17 +200,20 @@ function limitToolInput(
 
       const headLines = config.bash.headLines;
       const tailLines = config.bash.tailLines;
+      // Secondary byte cap so a single very long line (minified JSON, base64,
+      // progress with \r) doesn't bypass the line-based threshold.
+      const maxBytes = (headLines + tailLines) * 200;
 
       // Create smart truncation command:
       // 1. Save stdout AND stderr to temp file, preserving the original exit status.
-      // 2. If output exceeds limit: show first N + truncation message + last N.
+      // 2. If output exceeds the line OR byte limit: show first N + message + last N.
       // 3. Otherwise: show all output.
       // 4. Clean up temp file and exit with the original status.
       //
       // A newline is inserted before the closing `)` of the subshell so that
       // commands whose last line is a heredoc delimiter (e.g. `cat <<'EOF' … EOF`)
       // keep their delimiter on its own line and are parsed correctly.
-      const limitedCommand = `tmpfile=$(mktemp); (\n${command}\n) > "$tmpfile" 2>&1; exit_code=$?; total_lines=$(wc -l < "$tmpfile"); if [ "$total_lines" -gt ${headLines + tailLines} ]; then head -n ${headLines} "$tmpfile"; echo ""; echo "... [Truncated $(($total_lines - ${headLines + tailLines})) lines - showing first ${headLines} and last ${tailLines} lines] ..."; echo ""; tail -n ${tailLines} "$tmpfile"; else cat "$tmpfile"; fi; rm -f "$tmpfile"; exit $exit_code`;
+      const limitedCommand = `tmpfile=$(mktemp); (\n${command}\n) > "$tmpfile" 2>&1; exit_code=$?; total_lines=$(wc -l < "$tmpfile"); total_bytes=$(wc -c < "$tmpfile"); if [ "$total_lines" -gt ${headLines + tailLines} ] || [ "$total_bytes" -gt ${maxBytes} ]; then head -n ${headLines} "$tmpfile"; echo ""; echo "... [Truncated $(($total_lines - ${headLines + tailLines})) lines / $(($total_bytes - ${maxBytes})) bytes - showing first ${headLines} and last ${tailLines} lines] ..."; echo ""; tail -n ${tailLines} "$tmpfile"; else cat "$tmpfile"; fi; rm -f "$tmpfile"; exit $exit_code`;
 
       return {
         ...input,

@@ -144,6 +144,22 @@ describe('OutputLimiterHook', () => {
       expect(result).toEqual({});
     });
 
+    it('should not wrap directory-changing commands (cd breaks in subshell)', async () => {
+      const cdInput: PreToolUseHookInput = {
+        hook_event_name: 'PreToolUse',
+        tool_name: 'Bash',
+        tool_input: {
+          command: 'cd packages/daemon',
+        },
+        session_id: 'test-session',
+        transcript_path: '/test/path',
+        cwd: '/test/cwd',
+        tool_use_id: 'test-id',
+      };
+
+      expect(await hook(cdInput, 'test-id', { signal: mockSignal })).toEqual({});
+    });
+
     it('should not wrap commands matching excluded command prefixes', async () => {
       const gitHook = createOutputLimiterHook({
         enabled: true,
@@ -177,6 +193,30 @@ describe('OutputLimiterHook', () => {
       };
 
       const result = await gitHook(nonGitInput, 'test-id-2', { signal: mockSignal });
+      expect(result).toMatchObject({
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          updatedInput: {
+            command: expect.stringContaining('tmpfile=$(mktemp)'),
+          },
+        },
+      });
+    });
+
+    it('should wrap git commands by default (no sandbox exclusion auto-pass)', async () => {
+      const input: PreToolUseHookInput = {
+        hook_event_name: 'PreToolUse',
+        tool_name: 'Bash',
+        tool_input: {
+          command: 'git diff HEAD~1',
+        },
+        session_id: 'test-session',
+        transcript_path: '/test/path',
+        cwd: '/test/cwd',
+        tool_use_id: 'test-id',
+      };
+
+      const result = await hook(input, 'test-id', { signal: mockSignal });
       expect(result).toMatchObject({
         hookSpecificOutput: {
           hookEventName: 'PreToolUse',

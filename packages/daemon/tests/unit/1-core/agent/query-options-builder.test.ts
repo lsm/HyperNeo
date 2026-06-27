@@ -1306,7 +1306,9 @@ describe('QueryOptionsBuilder', () => {
       });
     });
 
-    it('should pass sandbox excluded commands to the output limiter', async () => {
+    it('should NOT auto-pass sandbox excluded commands to the output limiter', async () => {
+      // sandbox.excludedCommands controls sandbox routing, not output limiting.
+      // Auto-passing them would leave high-volume commands like `git diff` uncapped.
       mockSettingsManager.getGlobalSettings = mock(() => ({
         settingSources: ['user', 'project', 'local'],
         sandbox: { excludedCommands: ['git', 'docker'] },
@@ -1324,11 +1326,12 @@ describe('QueryOptionsBuilder', () => {
       const hook = outputLimiterEntry?.hooks[0];
       expect(hook).toBeDefined();
 
+      // git is sandbox-excluded but should still be wrapped for output limiting.
       const gitResult = await hook!(
         {
           hook_event_name: 'PreToolUse',
           tool_name: 'Bash',
-          tool_input: { command: 'git fetch origin' },
+          tool_input: { command: 'git diff HEAD~1' },
           tool_use_id: 'tool-1',
           session_id: 'session-1',
           transcript_path: '/tmp/transcript.jsonl',
@@ -1338,23 +1341,14 @@ describe('QueryOptionsBuilder', () => {
         { signal: new AbortController().signal }
       );
 
-      expect(gitResult).toEqual({});
-
-      const dockerResult = await hook!(
-        {
-          hook_event_name: 'PreToolUse',
-          tool_name: 'Bash',
-          tool_input: { command: 'docker ps' },
-          tool_use_id: 'tool-2',
-          session_id: 'session-1',
-          transcript_path: '/tmp/transcript.jsonl',
-          cwd: '/tmp/repo',
+      expect(gitResult).toMatchObject({
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          updatedInput: {
+            command: expect.stringContaining('tmpfile=$(mktemp)'),
+          },
         },
-        'tool-2',
-        { signal: new AbortController().signal }
-      );
-
-      expect(dockerResult).toEqual({});
+      });
     });
 
     it('installs paired PostToolUse and PostToolUseFailure observers for the Bash dead-loop detector', async () => {
