@@ -131,7 +131,7 @@ describe('OutputLimiterHook', () => {
         hook_event_name: 'PreToolUse',
         tool_name: 'Bash',
         tool_input: {
-          command: 'ls',
+          command: 'pwd',
         },
         session_id: 'test-session',
         transcript_path: '/test/path',
@@ -142,6 +142,54 @@ describe('OutputLimiterHook', () => {
       const result = await hook(input, 'test-id', { signal: mockSignal });
 
       expect(result).toEqual({});
+    });
+
+    it('should wrap ls commands (ls -R can produce large output)', async () => {
+      const input: PreToolUseHookInput = {
+        hook_event_name: 'PreToolUse',
+        tool_name: 'Bash',
+        tool_input: {
+          command: 'ls -R',
+        },
+        session_id: 'test-session',
+        transcript_path: '/test/path',
+        cwd: '/test/cwd',
+        tool_use_id: 'test-id',
+      };
+
+      const result = await hook(input, 'test-id', { signal: mockSignal });
+      expect(result).toMatchObject({
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          updatedInput: {
+            command: expect.stringContaining('tmpfile=$(mktemp)'),
+          },
+        },
+      });
+    });
+
+    it('should not skip compound commands that have a head pipe in one segment', async () => {
+      const input: PreToolUseHookInput = {
+        hook_event_name: 'PreToolUse',
+        tool_name: 'Bash',
+        tool_input: {
+          command: 'grep foo file | head -n 5; cat huge.log',
+        },
+        session_id: 'test-session',
+        transcript_path: '/test/path',
+        cwd: '/test/cwd',
+        tool_use_id: 'test-id',
+      };
+
+      const result = await hook(input, 'test-id', { signal: mockSignal });
+      expect(result).toMatchObject({
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          updatedInput: {
+            command: expect.stringContaining('tmpfile=$(mktemp)'),
+          },
+        },
+      });
     });
 
     it('should not wrap directory-changing commands (cd breaks in subshell)', async () => {
@@ -370,6 +418,36 @@ describe('OutputLimiterHook', () => {
       const result = await hook(input, 'test-id', { signal: mockSignal });
 
       expect(result).toEqual({});
+    });
+
+    it('should map legacy read.maxChars to maxLines', async () => {
+      const legacyHook = createOutputLimiterHook({
+        enabled: true,
+        read: { maxChars: 5000 },
+      });
+
+      const input: PreToolUseHookInput = {
+        hook_event_name: 'PreToolUse',
+        tool_name: 'Read',
+        tool_input: {
+          file_path: '/test/file.txt',
+        },
+        session_id: 'test-session',
+        transcript_path: '/test/path',
+        cwd: '/test/cwd',
+        tool_use_id: 'test-id',
+      };
+
+      const result = await legacyHook(input, 'test-id', { signal: mockSignal });
+      expect(result).toEqual({
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          updatedInput: {
+            file_path: '/test/file.txt',
+            limit: 100, // 5000 chars / 50 chars per line
+          },
+        },
+      });
     });
   });
 

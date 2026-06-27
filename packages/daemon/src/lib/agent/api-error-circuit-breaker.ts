@@ -382,11 +382,12 @@ export class ApiErrorCircuitBreaker {
 
 **What to do:**
 - Output limiting is now **enabled by default** to prevent this
-- If you still see this error, reduce limits further in .claude/settings.local.json:
+- If you still see this error, reduce the output limits in NeoKai's global
+  settings (Settings → Output Limiter):
   - outputLimiter.bash.headLines (default: 100)
   - outputLimiter.bash.tailLines (default: 200)
   - outputLimiter.read.maxLines (default: 1000)
-  - outputLimiter.grep.maxMatches (default: 500)
+  - outputLimiter.grep.maxMatches (default: 250)
 - Use filtering in tools (e.g., grep with patterns, head/tail for files)
 - Start a new session if context is too large
 - Use /compact to reduce conversation context`;

@@ -1264,16 +1264,20 @@ CRITICAL RULES:
       if (resolvedOutputLimiter.enabled) {
         const sessionSandbox = this.ctx.session.config.sandbox;
         const sandboxEnabled = sessionSandbox?.enabled ?? globalSettings.sandbox?.enabled;
-        const excludedCommandPrefixes = sandboxEnabled
-          ? (sessionSandbox?.excludedCommands ?? globalSettings.sandbox?.excludedCommands)
-          : undefined;
+        const sandboxExcluded = sandboxEnabled
+          ? (sessionSandbox?.excludedCommands ?? globalSettings.sandbox?.excludedCommands ?? [])
+          : [];
+        // Merge user-configured limiter exclusions with sandbox exclusions
+        // instead of overwriting one with the other.
+        const userExcluded = outputLimiterSettings.bash?.excludedCommandPrefixes ?? [];
+        const excludedCommandPrefixes = [...new Set([...userExcluded, ...sandboxExcluded])];
         preToolUse.push({
           hooks: [
             createOutputLimiterHook({
               ...outputLimiterSettings,
               bash: {
                 ...outputLimiterSettings.bash,
-                ...(excludedCommandPrefixes ? { excludedCommandPrefixes } : {}),
+                ...(excludedCommandPrefixes.length > 0 ? { excludedCommandPrefixes } : {}),
               },
             }),
           ],

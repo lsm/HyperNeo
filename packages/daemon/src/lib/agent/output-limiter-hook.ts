@@ -44,6 +44,8 @@ export interface OutputLimiterConfigInput {
   };
   read?: {
     maxLines?: number;
+    /** @deprecated Use maxLines instead. Legacy char-based limit from the pre-wiring schema. */
+    maxChars?: number;
   };
   grep?: {
     maxMatches?: number;
@@ -79,7 +81,13 @@ export function resolveConfig(input: OutputLimiterConfigInput = {}): OutputLimit
         input.bash?.excludedCommandPrefixes ?? DEFAULT_CONFIG.bash.excludedCommandPrefixes,
     },
     read: {
-      maxLines: input.read?.maxLines ?? DEFAULT_CONFIG.read.maxLines,
+      // Prefer maxLines; fall back to legacy maxChars (converted to lines at
+      // ~50 chars/line) so upgraded installations don't silently lose their cap.
+      maxLines:
+        input.read?.maxLines ??
+        (input.read?.maxChars !== undefined
+          ? Math.floor(input.read.maxChars / 50)
+          : DEFAULT_CONFIG.read.maxLines),
     },
     grep: {
       maxMatches: input.grep?.maxMatches ?? DEFAULT_CONFIG.grep.maxMatches,
@@ -176,14 +184,17 @@ function limitToolInput(
         return null;
       }
 
-      // Skip if already has head/tail limiting
-      if (/\|\s*(head|tail)/.test(command)) {
+      // Skip if already has head/tail limiting — but only when there are no
+      // compound operators (`;`, `&&`, `||`). A compound command like
+      // `grep foo | head; cat huge.log` has an unbounded trailing segment.
+      if (/\|\s*(head|tail)/.test(command) && !/;\s|&&|\|\|/.test(command)) {
         return null;
       }
 
       // Skip simple commands that are unlikely to produce large output
-      // (pwd, echo simple strings, ls, which, whoami).
-      const simpleCommands = /^(pwd|echo\s+"[^"]{0,50}"|ls(\s+-\w+)?(\s+\S+)?|which|whoami)$/;
+      // (pwd, echo simple strings, which, whoami). ls is NOT skipped because
+      // `ls -R` or `ls node_modules` can produce thousands of lines.
+      const simpleCommands = /^(pwd|echo\s+"[^"]{0,50}"|which|whoami)$/;
       if (simpleCommands.test(command.trim())) {
         return null;
       }
