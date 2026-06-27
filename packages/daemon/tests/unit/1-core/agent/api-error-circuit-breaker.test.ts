@@ -46,6 +46,29 @@ describe('ApiErrorCircuitBreaker', () => {
       expect(onTripMock).toHaveBeenCalled();
     });
 
+    it('should detect bare "Prompt is too long" errors (Kimi)', async () => {
+      const onTripMock = mock(async () => {});
+      circuitBreaker.setOnTripCallback(onTripMock);
+
+      const message = {
+        type: 'user',
+        message: {
+          content:
+            '<local-command-stderr>Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"Prompt is too long"}}</local-command-stderr>',
+        },
+      };
+
+      await circuitBreaker.checkMessage(message);
+      await circuitBreaker.checkMessage(message);
+      expect(circuitBreaker.isTripped()).toBe(false);
+
+      const tripped = await circuitBreaker.checkMessage(message);
+      expect(tripped).toBe(true);
+      expect(circuitBreaker.isTripped()).toBe(true);
+      expect(circuitBreaker.getState().tripReason).toBe('prompt_too_long');
+      expect(onTripMock).toHaveBeenCalled();
+    });
+
     it('should not trip on non-error messages', async () => {
       const message = {
         type: 'user',
@@ -207,6 +230,24 @@ describe('ApiErrorCircuitBreaker', () => {
       const tripMessage = circuitBreaker.getTripMessage();
       expect(tripMessage).toContain('Context limit exceeded');
       expect(tripMessage).toContain('200000');
+    });
+
+    it('should provide helpful message for bare prompt too long', async () => {
+      const message = {
+        type: 'user',
+        message: {
+          content:
+            '<local-command-stderr>Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"Prompt is too long"}}</local-command-stderr>',
+        },
+      };
+
+      await circuitBreaker.checkMessage(message);
+      await circuitBreaker.checkMessage(message);
+      await circuitBreaker.checkMessage(message);
+
+      const tripMessage = circuitBreaker.getTripMessage();
+      expect(tripMessage).toContain('Context limit exceeded');
+      expect(circuitBreaker.getState().tripReason).toBe('prompt_too_long');
     });
 
     it('should provide helpful message for rate limit', async () => {
