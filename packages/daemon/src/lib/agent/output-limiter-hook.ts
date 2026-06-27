@@ -206,10 +206,10 @@ function limitToolInput(
 
       // Skip pure directory-changing commands (no compound operators). `cd
       // <dir>` inside a subshell does not change the SDK's persistent cwd.
-      // Compound commands like `cd pkg && bun test` are still wrapped because
-      // the trailing command produces output.
+      // Compound commands like `cd pkg && bun test` or `cd pkg\nbun test` are
+      // still wrapped because the trailing command produces output.
       const trimmed = command.trim();
-      if (/^cd(\s|$)/.test(trimmed) && !/[;&|]/.test(trimmed)) {
+      if (/^cd(\s|$)/.test(trimmed) && !/[;&|\n]/.test(trimmed)) {
         return null;
       }
 
