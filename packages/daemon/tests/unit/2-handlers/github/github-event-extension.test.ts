@@ -3266,7 +3266,7 @@ describe('GitHubEventExtension', () => {
     }
   });
 
-  test('check-run polling covers newly discovered PRs while pulls backlog persists', async () => {
+  test('check-run polling resumes after cutoff clears resumed-page backlog', async () => {
     const db = setupDb();
     const { service, received } = setupExternalEventService(db);
     const extension = new GitHubEventExtension(db, 'token');
@@ -3290,6 +3290,7 @@ describe('GitHubEventExtension', () => {
       recentPullRequestNumbers: [7],
       recentPullRequestHeadShas: { 7: 'abc123' },
     });
+    let checkRunCallCount = 0;
     const fetchImpl = (async (url: string | URL | Request) => {
       const parsed = new URL(String(url));
       const path = parsed.pathname;
@@ -3298,40 +3299,52 @@ describe('GitHubEventExtension', () => {
       if (path.endsWith('/pulls')) {
         const page = parsed.searchParams.get('page');
         if (page === '2') {
-          // Fresh page that keeps the backlog alive, including the newly opened
-          // PR #2200 with a new head.
+          // Page 2 is entirely older than the watermark — cutoff fires and
+          // clears the backlog, but check-run polling is deferred this cycle
+          // because page 1 was not re-fetched.
           return pollingResponse(
-            Array.from({ length: 100 }, (_, index) =>
-              createPullRequestRow(index === 0 ? 2200 : 200 + index, {
-                updated_at: '2026-06-16T00:00:00Z',
-                head: { sha: index === 0 ? 'new-head' : 'bulk-head' },
+            Array.from({ length: 50 }, (_, index) =>
+              createPullRequestRow(100 + index, {
+                updated_at: '2026-06-14T00:00:00Z',
+                head: { sha: `old-sha-${index}` },
               })
             )
           );
         }
-        return pollingResponse([]);
+        // Page 1 on the next cycle: includes the newly opened PR #2200.
+        return pollingResponse([
+          createPullRequestRow(2200, {
+            updated_at: '2026-06-20T00:00:00Z',
+            head: { sha: 'new-head' },
+          }),
+        ]);
       }
       if (path.endsWith('/check-runs')) {
-        const headSha = decodeURIComponent(path.split('/commits/')[1].split('/check-runs')[0]);
-        if (headSha === 'new-head') {
-          return pollingResponse({
-            check_runs: [
-              createCheckRunRow({
-                id: 7200,
-                head_sha: 'new-head',
-                pull_requests: [{ number: 2200 }],
-              }),
-            ],
-          });
-        }
-        return pollingResponse({ check_runs: [] });
+        checkRunCallCount++;
+        return pollingResponse({
+          check_runs: [
+            createCheckRunRow({
+              id: 7200,
+              head_sha: 'new-head',
+              pull_requests: [{ number: 2200 }],
+            }),
+          ],
+        });
       }
       return pollingResponse([]);
     }) as typeof fetch;
     try {
+      // Cycle 1: cutoff clears the resumed page backlog. Check-run polling
+      // must NOT run because page 1 was not fetched.
       await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
-      const cursor = extension.repo.listPollingRepos()[0].pollCursor;
-      expect(cursor?.processedPages?.pulls).toBe(3);
+      expect(checkRunCallCount).toBe(0);
+      const cursor1AfterCutoff = extension.repo.listPollingRepos()[0].pollCursor;
+      expect(cursor1AfterCutoff?.processedPages?.pulls).toBe(1);
+
+      // Cycle 2: page 1 is fetched, PR #2200 is discovered, check-run polling
+      // runs and emits check_failed.
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      expect(checkRunCallCount).toBeGreaterThan(0);
       expect(
         received.some((item) => item.topic === 'github/acme/widgets/pull_request/2200.check_failed')
       ).toBe(true);
@@ -3471,7 +3484,7 @@ describe('GitHubEventExtension', () => {
     }
   });
 
-  test('pulls backlog skips check-run scan for stale cursor heads not on fetched page', async () => {
+  test('pulls backlog defers all check-run scans until page 1 is fetched', async () => {
     const db = setupDb();
     const { service, received } = setupExternalEventService(db);
     const extension = new GitHubEventExtension(db, 'token');
@@ -3495,7 +3508,7 @@ describe('GitHubEventExtension', () => {
       recentPullRequestNumbers: [7],
       recentPullRequestHeadShas: { 7: 'stale-sha' },
     });
-    const checkRunPaths: string[] = [];
+    let checkRunCallCount = 0;
     const fetchImpl = (async (url: string | URL | Request) => {
       const parsed = new URL(String(url));
       const path = parsed.pathname;
@@ -3503,7 +3516,7 @@ describe('GitHubEventExtension', () => {
       if (path.endsWith('/pulls/comments')) return pollingResponse([]);
       if (path.endsWith('/pulls')) {
         // Page 2 returns 100 unrelated PRs — backlog stays active. PR #7 is on
-        // an unfetched page, so its cursor head 'stale-sha' must not be scanned.
+        // an unfetched page, so its cursor head must not be scanned.
         return pollingResponse(
           Array.from({ length: 100 }, (_, index) =>
             createPullRequestRow(200 + index, {
@@ -3514,22 +3527,16 @@ describe('GitHubEventExtension', () => {
         );
       }
       if (path.endsWith('/check-runs')) {
-        checkRunPaths.push(path);
-        const headSha = decodeURIComponent(path.split('/commits/')[1].split('/check-runs')[0]);
-        if (headSha === 'stale-sha') {
-          return pollingResponse({
-            check_runs: [createCheckRunRow({ id: 7999, head_sha: 'stale-sha', pull_requests: [] })],
-          });
-        }
+        checkRunCallCount++;
         return pollingResponse({ check_runs: [] });
       }
       return pollingResponse([]);
     }) as typeof fetch;
     try {
       await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
-      // Stale head must not be queried for check runs.
-      expect(checkRunPaths).not.toContain('/repos/acme/widgets/commits/stale-sha/check-runs');
-      expect(received.some((item) => item.payload.checkRunId === 7999)).toBe(false);
+      // No check-run requests at all — polling is deferred until page 1.
+      expect(checkRunCallCount).toBe(0);
+      expect(received.some((item) => item.payload.eventType === 'check_run')).toBe(false);
     } finally {
       await extension.stop();
     }

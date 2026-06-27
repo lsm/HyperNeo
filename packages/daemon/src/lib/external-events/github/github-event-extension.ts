@@ -1239,11 +1239,6 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       { key: 'pulls', path: '/pulls', extra: 'state=all&sort=updated&direction=desc' },
     ];
     const pullRequestNumbersByHeadRef = new Map<string, number[]>();
-    // Head refs whose open-state/head-SHA were confirmed fresh by this cycle's
-    // /pulls fetch. During a pulls backlog only these heads are safe to scan
-    // for check runs; heads seeded from the cursor but not yet re-observed may
-    // be stale (closed/force-pushed on an unfetched later page).
-    const headsRefreshedThisCycle = new Set<string>();
     for (const [prNumber, headSha] of Object.entries(recentPullRequestHeadShas)) {
       const headRepo =
         recentPullRequestHeadRepos[Number(prNumber)] ?? gitHubRepoPath(watched.owner, watched.repo);
@@ -1256,10 +1251,16 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     }
     let partialScan = false;
     let latestRateLimit: GitHubRateLimitInfo | undefined;
+    // True when /pulls fetched any page beyond page 1 this cycle. The cutoff
+    // may reset processedPages.pulls to 1, but page 1 was not re-fetched, so
+    // cursor-seeded heads may be stale. Check-run polling is deferred until
+    // page 1 is actually fetched and all tracked heads are confirmed fresh.
+    let pullsFetchedResumedPage = false;
 
     const token = await this.resolveToken();
     for (const endpoint of endpoints) {
       const page = processedPages[endpoint.key] ?? 1;
+      if (endpoint.key === 'pulls' && page > 1) pullsFetchedResumedPage = true;
       const query = new URLSearchParams();
       if (endpoint.extra) {
         for (const part of endpoint.extra.split('&')) {
@@ -1424,7 +1425,6 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
             const headRef = headRefKey(headRepo, headSha);
             const previousHeadPrNumbers = [...(pullRequestNumbersByHeadRef.get(headRef) ?? [])];
             addPullRequestNumberByHeadSha(pullRequestNumbersByHeadRef, headRef, prNumber);
-            headsRefreshedThisCycle.add(headRef);
             if (!previousHeadPrNumbers.includes(prNumber)) {
               // A new PR joined this head: clear the ETag and reset the per-head
               // check-run watermark so older failed rows are re-evaluated for the
@@ -1513,9 +1513,15 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     }
 
     const hasBacklog = Object.values(processedPages).some((page) => page > 1);
-    const pullsBacklogActive = (processedPages.pulls ?? 1) > 1;
+    // pullsHasBacklog is true when /pulls still has unprocessed pages OR when a
+    // resumed page (> 1) was fetched this cycle — even if the cutoff cleared
+    // processedPages back to 1. In the cutoff case page 1 was not re-fetched,
+    // so cursor-seeded heads may be stale (closed/force-pushed). Deferring
+    // check-run polling until page 1 is fetched ensures all tracked heads are
+    // confirmed fresh before scanning.
+    const pullsHasBacklog = (processedPages.pulls ?? 1) > 1 || pullsFetchedResumedPage;
 
-    if (!partialScan) {
+    if (!partialScan && !pullsHasBacklog) {
       const checkRunEndpointKey = 'check_runs';
       let checkRunPermissionDenied = false;
       // Rate-limit / repo-wide denial stops the entire head loop. Transient
@@ -1529,12 +1535,6 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       const baseCheckRunWatermark = checkRunPollingEnabledAt ?? watermarks.committed;
       const watchedBaseRepoPath = gitHubRepoPath(watched.owner, watched.repo);
       for (const [headRef, prNumbers] of pullRequestNumbersByHeadRef) {
-        // During a /pulls backlog, only scan heads whose open-state and head
-        // SHA were confirmed fresh by this cycle's fetched page. Heads seeded
-        // from the cursor but on an unfetched page may be stale (closed or
-        // force-pushed); scanning them wastes API budget and could emit events
-        // for a superseded head before the later page refreshes it.
-        if (pullsBacklogActive && !headsRefreshedThisCycle.has(headRef)) continue;
         const { repoPath: headRepoPath, headSha } = parseHeadRefKey(headRef);
         const fallbackPrNumbers = prNumbers;
         const headWatermark =
