@@ -160,6 +160,73 @@ describe('OutputLimiterHook', () => {
       expect(await hook(cdInput, 'test-id', { signal: mockSignal })).toEqual({});
     });
 
+    it('should still wrap compound cd commands (cd pkg && bun test)', async () => {
+      const compoundInput: PreToolUseHookInput = {
+        hook_event_name: 'PreToolUse',
+        tool_name: 'Bash',
+        tool_input: {
+          command: 'cd packages/daemon && bun test',
+        },
+        session_id: 'test-session',
+        transcript_path: '/test/path',
+        cwd: '/test/cwd',
+        tool_use_id: 'test-id',
+      };
+
+      const result = await hook(compoundInput, 'test-id', { signal: mockSignal });
+      expect(result).toMatchObject({
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          updatedInput: {
+            command: expect.stringContaining('tmpfile=$(mktemp)'),
+          },
+        },
+      });
+    });
+
+    it('should not wrap background commands (run_in_background)', async () => {
+      const bgInput: PreToolUseHookInput = {
+        hook_event_name: 'PreToolUse',
+        tool_name: 'Bash',
+        tool_input: {
+          command: 'make dev',
+          run_in_background: true,
+        },
+        session_id: 'test-session',
+        transcript_path: '/test/path',
+        cwd: '/test/cwd',
+        tool_use_id: 'test-id',
+      };
+
+      expect(await hook(bgInput, 'test-id', { signal: mockSignal })).toEqual({});
+    });
+
+    it('should enforce byte caps on head/tail output', async () => {
+      const input: PreToolUseHookInput = {
+        hook_event_name: 'PreToolUse',
+        tool_name: 'Bash',
+        tool_input: {
+          command: 'cat large-file.json',
+        },
+        session_id: 'test-session',
+        transcript_path: '/test/path',
+        cwd: '/test/cwd',
+        tool_use_id: 'test-id',
+      };
+
+      const result = await hook(input, 'test-id', { signal: mockSignal });
+      if ('hookSpecificOutput' in result && result.hookSpecificOutput) {
+        const cmd = (result.hookSpecificOutput as { updatedInput: Record<string, unknown> })
+          .updatedInput.command as string;
+        // head portion is piped through head -c to cap bytes
+        expect(cmd).toContain('head -n 100 "$tmpfile" | head -c 20000');
+        // tail portion is piped through tail -c to cap bytes
+        expect(cmd).toContain('tail -n 200 "$tmpfile" | tail -c 40000');
+      } else {
+        throw new Error('Expected hookSpecificOutput in result');
+      }
+    });
+
     it('should not wrap commands matching excluded command prefixes', async () => {
       const gitHook = createOutputLimiterHook({
         enabled: true,
@@ -329,7 +396,7 @@ describe('OutputLimiterHook', () => {
           updatedInput: {
             pattern: 'TODO',
             path: '/test',
-            head_limit: 500,
+            head_limit: 250,
           },
         },
       });

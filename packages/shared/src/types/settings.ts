@@ -270,7 +270,7 @@ export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
       maxLines: 1000,
     },
     grep: {
-      maxMatches: 500,
+      maxMatches: 250,
     },
     excludeTools: [],
   },

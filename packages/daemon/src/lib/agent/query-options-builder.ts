@@ -1243,12 +1243,12 @@ CRITICAL RULES:
     // stays off when settings omit the key entirely. The hook only mutates
     // input and does not emit a permission decision.
     //
-    // We do NOT auto-populate bash.excludedCommandPrefixes from
-    // sandbox.excludedCommands — those control sandbox routing, not output
-    // limiting, and blanket-excluding git would leave high-volume commands
-    // like `git diff` uncapped. Users who need to exclude specific commands
-    // from output limiting can set outputLimiter.bash.excludedCommandPrefixes
-    // explicitly.
+    // sandbox.excludedCommands (e.g. ['git']) are passed as
+    // bash.excludedCommandPrefixes so wrapping does not hide the original
+    // command from the sandbox's command-level exclusion classifier — git
+    // over SSH/LFS still bypasses the sandbox as intended. Only done when
+    // sandbox is actually enabled; in bypassPermissions mode the sandbox is
+    // inactive and all commands (including git) are wrapped for limiting.
     //
     // Note on loop detection: the loop detector runs BEFORE this hook, so its
     // PreToolUse fingerprint uses the original command. The PostToolUse event
@@ -1262,8 +1262,21 @@ CRITICAL RULES:
     if (outputLimiterSettings) {
       const resolvedOutputLimiter = resolveConfig(outputLimiterSettings);
       if (resolvedOutputLimiter.enabled) {
+        const sessionSandbox = this.ctx.session.config.sandbox;
+        const sandboxEnabled = sessionSandbox?.enabled ?? globalSettings.sandbox?.enabled;
+        const excludedCommandPrefixes = sandboxEnabled
+          ? (sessionSandbox?.excludedCommands ?? globalSettings.sandbox?.excludedCommands)
+          : undefined;
         preToolUse.push({
-          hooks: [createOutputLimiterHook(outputLimiterSettings)],
+          hooks: [
+            createOutputLimiterHook({
+              ...outputLimiterSettings,
+              bash: {
+                ...outputLimiterSettings.bash,
+                ...(excludedCommandPrefixes ? { excludedCommandPrefixes } : {}),
+              },
+            }),
+          ],
         });
       }
     }

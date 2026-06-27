@@ -1306,17 +1306,18 @@ describe('QueryOptionsBuilder', () => {
       });
     });
 
-    it('should NOT auto-pass sandbox excluded commands to the output limiter', async () => {
-      // sandbox.excludedCommands controls sandbox routing, not output limiting.
-      // Auto-passing them would leave high-volume commands like `git diff` uncapped.
+    it('should pass sandbox excluded commands to the limiter when sandbox is enabled', async () => {
+      // When sandbox is enabled, wrapping git would hide it from the sandbox's
+      // command-level exclusion classifier. Pass excludedCommands so those
+      // commands are not wrapped.
       mockSettingsManager.getGlobalSettings = mock(() => ({
         settingSources: ['user', 'project', 'local'],
-        sandbox: { excludedCommands: ['git', 'docker'] },
+        sandbox: { enabled: true, excludedCommands: ['git'] },
         outputLimiter: {
           enabled: true,
           bash: { headLines: 100, tailLines: 200 },
           read: { maxLines: 1000 },
-          grep: { maxMatches: 500 },
+          grep: { maxMatches: 250 },
           excludeTools: [],
         },
       }));
@@ -1326,7 +1327,45 @@ describe('QueryOptionsBuilder', () => {
       const hook = outputLimiterEntry?.hooks[0];
       expect(hook).toBeDefined();
 
-      // git is sandbox-excluded but should still be wrapped for output limiting.
+      // git is sandbox-excluded and sandbox is enabled → git should NOT be wrapped.
+      const gitResult = await hook!(
+        {
+          hook_event_name: 'PreToolUse',
+          tool_name: 'Bash',
+          tool_input: { command: 'git fetch origin' },
+          tool_use_id: 'tool-1',
+          session_id: 'session-1',
+          transcript_path: '/tmp/transcript.jsonl',
+          cwd: '/tmp/repo',
+        },
+        'tool-1',
+        { signal: new AbortController().signal }
+      );
+
+      expect(gitResult).toEqual({});
+    });
+
+    it('should NOT pass sandbox excluded commands when sandbox is disabled', async () => {
+      // In bypassPermissions mode the sandbox is inactive, so wrapping git is
+      // safe and necessary for output limiting.
+      mockSettingsManager.getGlobalSettings = mock(() => ({
+        settingSources: ['user', 'project', 'local'],
+        sandbox: { enabled: false, excludedCommands: ['git'] },
+        outputLimiter: {
+          enabled: true,
+          bash: { headLines: 100, tailLines: 200 },
+          read: { maxLines: 1000 },
+          grep: { maxMatches: 250 },
+          excludeTools: [],
+        },
+      }));
+
+      const options = await new QueryOptionsBuilder(mockContext).build();
+      const outputLimiterEntry = options.hooks?.PreToolUse?.[1];
+      const hook = outputLimiterEntry?.hooks[0];
+      expect(hook).toBeDefined();
+
+      // Sandbox disabled → git IS wrapped for output limiting.
       const gitResult = await hook!(
         {
           hook_event_name: 'PreToolUse',
