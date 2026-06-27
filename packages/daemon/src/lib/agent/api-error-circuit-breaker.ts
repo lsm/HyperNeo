@@ -385,7 +385,7 @@ export class ApiErrorCircuitBreaker {
 - If you still see this error, reduce limits further in .claude/settings.local.json:
   - outputLimiter.bash.headLines (default: 100)
   - outputLimiter.bash.tailLines (default: 200)
-  - outputLimiter.read.maxChars (default: 50000)
+  - outputLimiter.read.maxLines (default: 1000)
   - outputLimiter.grep.maxMatches (default: 500)
 - Use filtering in tools (e.g., grep with patterns, head/tail for files)
 - Start a new session if context is too large
