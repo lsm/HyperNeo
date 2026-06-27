@@ -5523,6 +5523,76 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(delivery.failureReason).toBe('ttl_expired');
     expect(eventStore.getById(event.id)?.state).toBe('failed');
   });
+
+  test('terminalizes activation retry when run becomes undeliverable', async () => {
+    const { run, task } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'idle',
+      agentSessionId: null,
+      completedAt: Date.now(),
+    });
+    tam.activationResult = [];
+
+    const event = makeEvent({ id: 'evt-activation-run-shutdown' });
+    await eventService.publish(event);
+    expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
+
+    // Run becomes cancelled before the activation retry fires.
+    workflowRunRepo.updateRun(run.id, { status: 'cancelled' });
+
+    await new Promise((resolve) => setTimeout(resolve, 1_200));
+    const delivery = eventStore.listDeliveries(event.id)[0]!;
+    expect(delivery.state).toBe('failed');
+    expect(delivery.failureReason).toBe('run_not_externally_deliverable');
+    expect(eventStore.getById(event.id)?.state).toBe('failed');
+  });
+
+  test('ordered dispatch skips delivery terminalized while batch was prepared', async () => {
+    const { run, task } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'idle',
+      agentSessionId: null,
+      completedAt: Date.now(),
+    });
+
+    const earlier = makeEvent({ id: 'evt-terminalized-early' });
+    const later = makeEvent({ id: 'evt-terminalized-late' });
+    await eventService.publish(earlier);
+    await eventService.publish(later);
+    expect(eventStore.listDeliveries(earlier.id)[0]!.state).toBe('pending');
+    expect(eventStore.listDeliveries(later.id)[0]!.state).toBe('pending');
+
+    // Activate the node so the flush will dispatch both queued items.
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-terminalized-dispatch',
+      completedAt: null,
+    });
+    tam.alive.add('session-terminalized-dispatch');
+
+    // Simulate a concurrent cleanup terminalizing the earlier delivery before
+    // the ordered dispatch loop reaches it.
+    const earlierDelivery = eventStore.listDeliveries(earlier.id)[0]!;
+    eventStore.markDeliveryFailed(earlier.id, earlierDelivery.deliveryKey, {
+      terminal: true,
+      reason: 'subscription_no_longer_active',
+    });
+
+    runtime.flushPendingNodeQueue({
+      workflowRunId: run.id,
+      taskId: task.id,
+      nodeId: 'code',
+      agentName: 'coder',
+      sessionId: 'session-terminalized-dispatch',
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(injected.map((item) => JSON.parse(item.message).eventId)).toEqual([later.id]);
+    expect(eventStore.listDeliveries(earlier.id)[0]!.state).toBe('failed');
+    expect(eventStore.listDeliveries(later.id)[0]!.state).toBe('delivered');
+  });
 });
 
 describe('SpaceRuntime event-driven gate evaluation', () => {

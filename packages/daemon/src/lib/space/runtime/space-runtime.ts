@@ -1596,6 +1596,15 @@ export class SpaceRuntime {
     const { targetWithExecution, dispatchable } = prepared;
 
     for (const item of dispatchable) {
+      // A concurrent cleanup may have marked this delivery terminal while the
+      // batch was being prepared. Skip dispatch rather than injecting into a
+      // target that is no longer eligible.
+      if (
+        this.config.externalEventStore?.isDeliveryTerminal(item.event.eventId, item.deliveryKey)
+      ) {
+        this.clearExternalEventRetry(item.deliveryKey);
+        continue;
+      }
       this.clearExternalEventRetry(item.deliveryKey);
       void this.enqueueDeliverableExternalEvent(
         targetWithExecution,
@@ -1626,6 +1635,16 @@ export class SpaceRuntime {
     }
 
     for (const item of dispatchable) {
+      // A concurrent cleanup (unregisterExecution, subscription removal, or
+      // run terminalization) may have marked this delivery terminal while the
+      // ordered batch was being prepared. Skip dispatch rather than injecting
+      // an event into a target that is no longer eligible.
+      if (
+        this.config.externalEventStore?.isDeliveryTerminal(item.event.eventId, item.deliveryKey)
+      ) {
+        this.clearExternalEventRetry(item.deliveryKey);
+        continue;
+      }
       this.clearExternalEventRetry(item.deliveryKey);
       await this.enqueueDeliverableExternalEvent(
         targetWithExecution,
@@ -2578,6 +2597,24 @@ export class SpaceRuntime {
       };
       if (this.isQueuedExternalEventExpired(queuedItem)) {
         this.failQueuedDeliveryForTtl(queuedItem, this.buildQueueKey(target));
+        return;
+      }
+      // Re-check run deliverability before dispatching — activation retries
+      // bypass the normal retry-path guard, so a run that became cancelled,
+      // done, or blocked-without-active-execution while the timer was pending
+      // must be failed terminally instead of recording a non-terminal
+      // node_execution_not_active and leaving the delivery stranded.
+      const run = this.config.workflowRunRepo.getRun(target.workflowRunId);
+      const blockedNoExec = run?.status === 'blocked' && !this.hasActiveExecutionForRun(run.id);
+      const store = this.config.externalEventStore;
+      if (!run || !isExternallyDeliverableRun(run.status) || blockedNoExec) {
+        store?.markDeliveryFailed(event.eventId, deliveryKey, {
+          terminal: true,
+          reason: 'run_not_externally_deliverable',
+        });
+        this.clearExternalEventRetry(deliveryKey);
+        this.clearQueuedDelivery(target, deliveryKey);
+        store?.markEventFailedIfAllDeliveriesTerminal(event.eventId);
         return;
       }
       void this.deliverExternalEventToWorkflowTarget(target, event, deliveryKey);
