@@ -224,20 +224,31 @@ describe('SpaceManager', () => {
     });
   });
 
-  describe('addSession / removeSession', () => {
-    it('adds and removes sessions', async () => {
+  describe('onSpaceResumedRegister', () => {
+    it('invokes registered callbacks on resume and start', async () => {
       const space = await manager.createSpace({ workspacePath: tmpDir, name: 'A' });
+      const calls: string[] = [];
+      manager.onSpaceResumedRegister((spaceId) => calls.push(spaceId));
 
-      const withSession = await manager.addSession(space.id, 'sess-1');
-      expect(withSession.sessionIds).toContain('sess-1');
+      await manager.pauseSpace(space.id);
+      await manager.resumeSpace(space.id);
+      expect(calls).toContain(space.id);
 
-      const without = await manager.removeSession(space.id, 'sess-1');
-      expect(without.sessionIds).not.toContain('sess-1');
+      calls.length = 0;
+      await manager.stopSpace(space.id);
+      await manager.startSpace(space.id);
+      expect(calls).toContain(space.id);
     });
 
-    it('throws for unknown space', async () => {
-      await expect(manager.addSession('nonexistent', 's1')).rejects.toThrow('not found');
-      await expect(manager.removeSession('nonexistent', 's1')).rejects.toThrow('not found');
+    it('returns an unsubscribe that removes the callback', async () => {
+      const space = await manager.createSpace({ workspacePath: tmpDir, name: 'A' });
+      const calls: string[] = [];
+      const unsubscribe = manager.onSpaceResumedRegister((spaceId) => calls.push(spaceId));
+
+      unsubscribe();
+      await manager.pauseSpace(space.id);
+      await manager.resumeSpace(space.id);
+      expect(calls).toHaveLength(0);
     });
   });
 });

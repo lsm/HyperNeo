@@ -4277,21 +4277,28 @@ describe('SpaceRuntime external event subscriptions', () => {
     try {
       for (const event of events) {
         await eventService.publish(event);
-        fakeNow += 61_000;
+        fakeNow += 100;
       }
     } finally {
       Date.now = originalNow;
     }
 
-    const droppedDelivery = eventStore.listDeliveries(events[0]!.id)[0]!;
-    expect(droppedDelivery.state).toBe('failed');
-    expect(droppedDelivery.failureReason).toBe('pending_node_queue_overflow');
+    // Let the rate-limit digest timer flush; the batched digest items are
+    // requeued as pending deliveries, and the oldest one is dropped with the
+    // overflow reason once the queue reaches its limit.
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    const droppedDelivery = events
+      .map((event) => eventStore.listDeliveries(event.id)[0]!)
+      .find((delivery) => delivery.failureReason === 'pending_node_queue_overflow');
+    expect(droppedDelivery).toBeDefined();
+    expect(droppedDelivery!.state).toBe('failed');
     const retryState = runtime as unknown as {
       externalEventRetryTimers: Map<string, unknown>;
       externalEventRetryCounts: Map<string, number>;
     };
-    expect(retryState.externalEventRetryTimers.has(droppedDelivery.deliveryKey)).toBe(false);
-    expect(retryState.externalEventRetryCounts.has(droppedDelivery.deliveryKey)).toBe(false);
+    expect(retryState.externalEventRetryTimers.has(droppedDelivery!.deliveryKey)).toBe(false);
+    expect(retryState.externalEventRetryCounts.has(droppedDelivery!.deliveryKey)).toBe(false);
   });
 
   test('fails delivery terminally when injection command handler is missing', async () => {
@@ -5280,25 +5287,128 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(eventStore.getById(event.id)?.state).toBe('failed');
   });
 
-  test('does not activate subscribers while the workflow run is blocked', async () => {
+  test('unregisters space-resume hook on stop', async () => {
+    const manager = spaceManager;
+    const before = (manager as unknown as { onSpaceResumedCallbacks: unknown[] })
+      .onSpaceResumedCallbacks.length;
+    const runtime2 = new SpaceRuntime({
+      db,
+      spaceManager: manager,
+      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+      spaceWorkflowManager: workflowManager,
+      workflowRunRepo,
+      taskRepo,
+      nodeExecutionRepo,
+      internalEventBus: bus,
+      commandBus: (runtime as unknown as { config: { commandBus: unknown } }).config.commandBus,
+      externalEventStore: eventStore,
+      taskAgentManager: tam as never,
+    });
+    const afterRegister = (manager as unknown as { onSpaceResumedCallbacks: unknown[] })
+      .onSpaceResumedCallbacks.length;
+    expect(afterRegister).toBe(before + 1);
+
+    await runtime2.stop();
+    const afterStop = (manager as unknown as { onSpaceResumedCallbacks: unknown[] })
+      .onSpaceResumedCallbacks.length;
+    expect(afterStop).toBe(before);
+  });
+
+  test('rehydrates sessionless activation timers after stop-start', async () => {
     const { run, task } = await startRunWithSubscription();
     const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
-    // Blocked run with an active execution that has no live session.
+    nodeExecutionRepo.update(execution.id, {
+      status: 'idle',
+      agentSessionId: null,
+      completedAt: Date.now(),
+    });
+    tam.activationResult = [];
+
+    const event = makeEvent({ id: 'evt-stop-start-retry' });
+    await eventService.publish(event);
+    expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
+
+    await runtime.stop();
+
+    tam.activationResult = [{ agentName: 'coder', sessionId: 'session-stop-start' }];
+    tam.alive.add('session-stop-start');
     nodeExecutionRepo.update(execution.id, {
       status: 'in_progress',
-      agentSessionId: null,
+      agentSessionId: 'session-stop-start',
       startedAt: Date.now(),
+    });
+
+    runtime.start();
+    await new Promise((resolve) => setTimeout(resolve, 1_200));
+    expect(injected).toHaveLength(1);
+    expect(injected[0]!.sessionId).toBe('session-stop-start');
+    expect(eventStore.getById(event.id)?.state).toBe('delivered');
+
+    await runtime.stop();
+  });
+
+  test('keeps activation retries alive while spawn is pending', async () => {
+    const { run, task } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'pending',
+      agentSessionId: null,
       completedAt: null,
     });
-    workflowRunRepo.updateRun(run.id, { status: 'blocked', failureReason: 'agentCrash' });
 
-    const event = makeEvent({ id: 'evt-blocked-run' });
+    const event = makeEvent({ id: 'evt-pending-spawn' });
     await eventService.publish(event);
-
+    expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
     expect(tam.activationCalls).toHaveLength(0);
-    const delivery = eventStore.listDeliveries(event.id)[0]!;
-    expect(delivery.state).toBe('pending');
-    expect(delivery.failureReason).toBeNull();
+
+    // Simulate the background spawn completing before the retry fires.
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-pending-spawn',
+    });
+    tam.alive.add('session-pending-spawn');
+
+    await new Promise((resolve) => setTimeout(resolve, 1_200));
+    expect(injected).toHaveLength(1);
+    expect(injected[0]!.sessionId).toBe('session-pending-spawn');
+    expect(eventStore.getById(event.id)?.state).toBe('delivered');
+  });
+
+  test('drains older pending rows before live-session delivery', async () => {
+    const { run, task } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'idle',
+      agentSessionId: null,
+      completedAt: Date.now(),
+    });
+    tam.activationResult = [];
+
+    const older = makeEvent({
+      id: 'evt-older-pending-live',
+      dedupeKey: 'dedupe-older-pending-live',
+      occurredAt: 1_700_000_000_000,
+    });
+    await eventService.publish(older);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // Make the session live before the newer event arrives.
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-live-drain',
+    });
+    tam.alive.add('session-live-drain');
+
+    const newer = makeEvent({
+      id: 'evt-newer-pending-live',
+      dedupeKey: 'dedupe-newer-pending-live',
+      occurredAt: 1_700_000_000_100,
+    });
+    await eventService.publish(newer);
+
+    expect(injected.map((item) => JSON.parse(item.message).eventId)).toEqual([older.id, newer.id]);
+    expect(eventStore.getById(older.id)?.state).toBe('delivered');
+    expect(eventStore.getById(newer.id)?.state).toBe('delivered');
   });
 });
 

@@ -1008,6 +1008,7 @@ export class SpaceRuntime {
   private unsubscribeExternalEventPublished?: () => void;
   private unsubscribeSdkToolUseCreated?: () => void;
   private unsubscribeSdkToolUseConsumed?: () => void;
+  private unsubscribeSpaceResumed?: () => void;
   private acceptingExternalEvents = false;
 
   constructor(private config: SpaceRuntimeConfig) {
@@ -1020,7 +1021,9 @@ export class SpaceRuntime {
     }
     this.subscribeExternalEventPublished();
     this.subscribeSdkToolUseCreated();
-    this.config.spaceManager.onSpaceResumedRegister?.((spaceId) => this.onSpaceResumed(spaceId));
+    this.unsubscribeSpaceResumed = this.config.spaceManager.onSpaceResumedRegister?.((spaceId) =>
+      this.onSpaceResumed(spaceId)
+    );
   }
 
   private subscribeSdkToolUseCreated(): void {
@@ -1954,11 +1957,21 @@ export class SpaceRuntime {
         });
         store.markEventFailedIfAllDeliveriesTerminal(payload.eventId);
       } else if (resolved.sessionId && this.isTargetSessionLive(resolved.sessionId)) {
+        await this.flushPendingNodeQueueAsync(resolved, deliveryKey);
         await this.enqueueDeliverableExternalEvent(resolved, payload, deliveryKey, 'immediate');
       } else if (resolved.sessionId) {
+        await this.flushPendingNodeQueueAsync(resolved, deliveryKey);
         await this.enqueueDeliverableExternalEvent(resolved, payload, deliveryKey, 'defer');
       } else if (this.isPending(resolved)) {
         this.queueForPendingNode(resolved, payload, deliveryKey);
+        // The execution is already pending (e.g. activateNode reset it or a
+        // background spawn is still running). Keep a retry alive so the event
+        // is delivered as soon as the spawn completes, without burning the
+        // bounded attempt count while we are simply waiting.
+        this.scheduleActivationRetry(resolved, payload, deliveryKey, 'node_execution_pending', {
+          preserveAttemptCount: true,
+          markFailure: false,
+        });
       } else {
         let activatedTarget: WorkflowSubscriptionTarget | null = null;
         try {
@@ -2514,15 +2527,21 @@ export class SpaceRuntime {
     target: WorkflowSubscriptionTarget,
     event: ExternalEventPublishedPayload,
     deliveryKey: string,
-    failureReason: string
+    failureReason: string,
+    options: { preserveAttemptCount?: boolean; markFailure?: boolean } = {}
   ): void {
     if (this.externalEventRetryTimers.has(deliveryKey)) return;
-    const attempts = (this.externalEventRetryCounts.get(deliveryKey) ?? 0) + 1;
-    this.externalEventRetryCounts.set(deliveryKey, attempts);
-    this.config.externalEventStore?.markDeliveryFailed(event.eventId, deliveryKey, {
-      terminal: attempts > EXTERNAL_EVENT_RETRY_MAX_ATTEMPTS,
-      reason: failureReason,
-    });
+    let attempts = this.externalEventRetryCounts.get(deliveryKey) ?? 0;
+    if (!options.preserveAttemptCount) {
+      attempts += 1;
+      this.externalEventRetryCounts.set(deliveryKey, attempts);
+    }
+    if (options.markFailure !== false) {
+      this.config.externalEventStore?.markDeliveryFailed(event.eventId, deliveryKey, {
+        terminal: attempts > EXTERNAL_EVENT_RETRY_MAX_ATTEMPTS,
+        reason: failureReason,
+      });
+    }
     if (attempts > EXTERNAL_EVENT_RETRY_MAX_ATTEMPTS) {
       this.config.externalEventStore?.markEventFailedIfAllDeliveriesTerminal(event.eventId);
       this.clearExternalEventRetry(deliveryKey);
@@ -3897,6 +3916,12 @@ export class SpaceRuntime {
     this.subscribeSdkToolUseCreated();
     this.acceptingExternalEvents = this.rehydrated;
     this.rescheduleQueuedExternalEventRetries();
+    // Re-seed sessionless activation retries after a stop->start of the same
+    // runtime instance. On first start this is a no-op because rehydrate will
+    // run inside executeTick and call requeuePersistedPendingDeliveries.
+    if (this.rehydrated) {
+      this.requeuePersistedPendingDeliveries();
+    }
     // Sweep events that arrived while stopped. On first start this is a
     // no-op (sweep runs inside executeTick after rehydrate). On
     // stop→start of the same runtime instance, it catches events that
@@ -3932,6 +3957,8 @@ export class SpaceRuntime {
     this.unsubscribeSdkToolUseCreated = undefined;
     this.unsubscribeSdkToolUseConsumed?.();
     this.unsubscribeSdkToolUseConsumed = undefined;
+    this.unsubscribeSpaceResumed?.();
+    this.unsubscribeSpaceResumed = undefined;
     for (const timer of this.externalEventRetryTimers.values()) {
       clearTimeout(timer);
     }

@@ -32,9 +32,16 @@ export class SpaceManager {
    * runtime (resume from paused or start from stopped). Used to re-seed task
    * schedules whose fire jobs were skipped during the inactive window so they
    * can resume firing without a daemon restart. Multiple callbacks are allowed.
+   *
+   * Returns an unsubscribe function that removes the callback; runtimes should
+   * call it on stop() to avoid stale callbacks dispatching through a stopped
+   * instance.
    */
-  onSpaceResumedRegister(cb: (spaceId: string) => void): void {
+  onSpaceResumedRegister(cb: (spaceId: string) => void): () => void {
     this.onSpaceResumedCallbacks.push(cb);
+    return () => {
+      this.onSpaceResumedCallbacks = this.onSpaceResumedCallbacks.filter((c) => c !== cb);
+    };
   }
 
   /**
