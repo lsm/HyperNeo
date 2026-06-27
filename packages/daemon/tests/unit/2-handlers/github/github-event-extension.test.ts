@@ -3542,9 +3542,9 @@ describe('GitHubEventExtension', () => {
     }
   });
 
-  test('pulls cutoff clears backlog when partial page of rows is tied at watermark', async () => {
+  test('pulls watermark bump breaks tied-row starvation and allows check-run polling', async () => {
     const db = setupDb();
-    const { service } = setupExternalEventService(db);
+    const { service, received } = setupExternalEventService(db);
     const extension = new GitHubEventExtension(db, 'token');
     await extension.start({
       publisher: service,
@@ -3563,10 +3563,10 @@ describe('GitHubEventExtension', () => {
       lastSeenAt: watermark,
       endpointLastSeenAt: { pulls: watermark },
       processedPages: { pulls: 2 },
-      recentPullRequestNumbers: [1],
-      recentPullRequestHeadShas: { 1: 'old-sha' },
+      recentPullRequestNumbers: [7],
+      recentPullRequestHeadShas: { 7: 'abc123' },
     });
-    const pullsPages: Array<string | null> = [];
+    let checkRunCallCount = 0;
     const fetchImpl = (async (url: string | URL | Request) => {
       const parsed = new URL(String(url));
       const path = parsed.pathname;
@@ -3574,14 +3574,10 @@ describe('GitHubEventExtension', () => {
       if (path.endsWith('/pulls/comments')) return pollingResponse([]);
       if (path.endsWith('/pulls')) {
         const page = parsed.searchParams.get('page');
-        pullsPages.push(page);
         if (page === '2') {
-          // A partial page (< 100) of rows tied exactly at the watermark.
-          // GitHub's second-precision timestamps can produce this. The strict
-          // < cutoff would never fire, stalling pagination. The tied-boundary
-          // guard must clear the backlog instead.
+          // Full page of 100 tied rows — backlog continues to page 3.
           return pollingResponse(
-            Array.from({ length: 50 }, (_, index) =>
+            Array.from({ length: 100 }, (_, index) =>
               createPullRequestRow(100 + index, {
                 updated_at: '2026-06-15T00:00:00Z',
                 head: { sha: `tied-sha-${index}` },
@@ -3589,15 +3585,47 @@ describe('GitHubEventExtension', () => {
             )
           );
         }
-        return pollingResponse([]);
+        if (page === '3') {
+          // Partial page of tied rows — backlog clears. The 1ms bump fires
+          // because endpointPending === endpointWatermark.
+          return pollingResponse([
+            createPullRequestRow(7, {
+              updated_at: '2026-06-15T00:00:00Z',
+              head: { sha: 'abc123' },
+            }),
+          ]);
+        }
+        // Page 1 on subsequent cycles: the 1ms bump makes tied rows strictly
+        // older, so the < cutoff fires and clears the backlog.
+        return pollingResponse([
+          createPullRequestRow(7, {
+            updated_at: '2026-06-15T00:00:00Z',
+            head: { sha: 'abc123' },
+          }),
+        ]);
+      }
+      if (path.endsWith('/check-runs')) {
+        checkRunCallCount++;
+        return pollingResponse({ check_runs: [] });
       }
       return pollingResponse([]);
     }) as typeof fetch;
     try {
+      // Cycle 1: page 2 (100 tied rows). Backlog continues, check-runs deferred.
       await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
-      expect(pullsPages).toEqual(['2']);
+      expect(checkRunCallCount).toBe(0);
+
+      // Cycle 2: page 3 (1 tied row). Backlog clears. Bump fires because
+      // endpointPending === endpointWatermark.
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      expect(checkRunCallCount).toBe(0);
       const cursor = extension.repo.listPollingRepos()[0].pollCursor;
-      expect(cursor?.processedPages?.pulls).toBe(1);
+      expect(cursor?.endpointLastSeenAt?.pulls).toBe(watermark + 1);
+
+      // Cycle 3: page 1. The 1ms-bumped watermark makes tied rows strictly
+      // older → cutoff fires → backlog clears → check-runs run.
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      expect(checkRunCallCount).toBeGreaterThan(0);
     } finally {
       await extension.stop();
     }

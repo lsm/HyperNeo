@@ -1512,6 +1512,20 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       // complete. While pages remain, the next poll must keep using the old
       // watermark so remaining pages are not filtered out by `since`.
       if (processedPages[endpoint.key] === 1) {
+        if (
+          endpoint.key === 'pulls' &&
+          endpointPending > 0 &&
+          endpointPending === endpointWatermark
+        ) {
+          // The backlog cleared without the endpoint pending advancing past
+          // the watermark — every processed row was tied at the watermark
+          // (GitHub timestamps are second-precision). Without a bump, the next
+          // page-1 fetch would recreate the backlog from the same tied rows,
+          // permanently starving check-run polling. Advance by 1ms: no PR can
+          // have updated_at between watermark and watermark+1ms, so no events
+          // are missed, and the strict < cutoff fires on the next cycle.
+          endpointPending = endpointWatermark + 1;
+        }
         if (endpointPending > 0) {
           endpointLastSeenAt[endpoint.key] = endpointPending;
         } else {
