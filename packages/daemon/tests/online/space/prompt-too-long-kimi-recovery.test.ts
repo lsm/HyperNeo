@@ -9,7 +9,7 @@
  * This test exercises the full runtime recovery path against a real daemon and a
  * Dev Proxy-mocked API:
  *   1. Start a Space workflow run with a worker node and let its kickoff turn
- *      finish against the Dev Proxy catch-all mock.
+ *      finish against the default Dev Proxy catch-all mock.
  *   2. Park the execution as `idle` so the runtime sweep can enter recovery.
  *   3. Inject a Kimi-style user message containing `<local-command-stderr>` via
  *      `test.injectSDKMessage` (the SDK's own 400 path does not wrap mocked
@@ -22,23 +22,14 @@
  * Running:
  *   cd packages/daemon && NEOKAI_USE_DEV_PROXY=1 bun test \
  *     ./tests/online/space/prompt-too-long-kimi-recovery.test.ts
- *
- * The test switches the default Dev Proxy to `.devproxy/mocks-errors.json` before
- * each test and restores the default mock file afterwards.
  */
 
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
-import fs from 'fs';
-import path from 'path';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
 import { waitForIdle } from '../../helpers/daemon-actions';
 import type { NodeExecution, Space, SpaceAgent, SpaceWorkflow } from '@neokai/shared';
 import { buildPromptTooLongContinueNag } from '../../../src/lib/space/runtime/prompt-too-long-recovery';
-
-// Use a non-default port so switching mocks does not interfere with a shared
-// default proxy that other tests may be using.
-const DEV_PROXY_PORT = 8001;
 
 const IS_MOCK = !!process.env.NEOKAI_USE_DEV_PROXY;
 const IDLE_TIMEOUT = IS_MOCK ? 15_000 : 60_000;
@@ -48,45 +39,11 @@ const RECOVERY_TIMEOUT = IS_MOCK ? 30_000 : 90_000;
 
 const STEP_CODE_ID = 'step-code-kimi-recovery-001';
 
-const REPO_ROOT = path.resolve(__dirname, '../../../../..');
-const DEV_PROXY_DIR = path.join(REPO_ROOT, '.devproxy');
-const DEV_PROXY_RC = path.join(DEV_PROXY_DIR, 'devproxyrc.json');
-const ERRORS_MOCKS_FILE = 'mocks-errors.json';
-
-/**
- * Snapshot of the entire `devproxyrc.json` contents captured in `beforeAll`.
- *
- * The suite rewrites several fields (port, urlsToWatch, mocksFile) to point the
- * shared Dev Proxy at port 8001 with the errors mock file. Restoring the whole
- * file wholesale in `afterAll` (rather than per-field) guarantees the checkout
- * is left clean even if the rc schema gains new fields later, so subsequent
- * online suites that expect the default port 8000 configuration are not broken.
- */
-let originalDevProxyRc: string | null = null;
-
 type TestFixtures = {
   space: Space;
   coderAgent: SpaceAgent;
   workflow: SpaceWorkflow;
 };
-
-function writeMocksFileToRc(mocksFile: string): void {
-  const config = JSON.parse(fs.readFileSync(DEV_PROXY_RC, 'utf-8')) as Record<string, unknown>;
-  config.mockResponsePlugin = {
-    ...((config.mockResponsePlugin as Record<string, unknown>) ?? {}),
-    mocksFile,
-  };
-  fs.writeFileSync(DEV_PROXY_RC, JSON.stringify(config, null, 2));
-}
-
-function setDevProxyPortInRc(port: number): void {
-  const config = JSON.parse(fs.readFileSync(DEV_PROXY_RC, 'utf-8')) as Record<string, unknown>;
-  config.port = port;
-  config.urlsToWatch = ((config.urlsToWatch as string[]) ?? []).map((url) =>
-    url.replace(/:\d+\b/, `:${port}`)
-  );
-  fs.writeFileSync(DEV_PROXY_RC, JSON.stringify(config, null, 2));
-}
 
 async function createTestFixtures(daemon: DaemonServerContext): Promise<TestFixtures> {
   const space = (await daemon.messageHub.request('space.create', {
@@ -230,37 +187,10 @@ async function waitForUserMessageText(
 }
 
 describe('Kimi prompt-too-long recovery — online with Dev Proxy', () => {
-  beforeAll(() => {
-    // Force per-test Dev Proxy instances so switching mock files between tests
-    // does not race with the shared proxy controller's deferred stop.
-    process.env.NEOKAI_DEV_PROXY_REUSE = '0';
-    // Snapshot the entire rc file so afterAll can restore port + urlsToWatch +
-    // mocksFile in one shot, leaving the checkout clean for later online suites.
-    originalDevProxyRc = fs.existsSync(DEV_PROXY_RC)
-      ? fs.readFileSync(DEV_PROXY_RC, 'utf-8')
-      : null;
-  });
-
-  afterAll(() => {
-    // Restore the original devproxyrc.json wholesale so the port, urlsToWatch,
-    // and mocksFile all return to their pre-suite state.
-    if (originalDevProxyRc !== null) {
-      fs.writeFileSync(DEV_PROXY_RC, originalDevProxyRc);
-    }
-  });
-
   let daemon: DaemonServerContext;
 
   beforeEach(async () => {
-    // Configure the Dev Proxy to use the errors mock file before starting the
-    // daemon so that the very first API call (worker kickoff) is intercepted
-    // instead of passing through to the real API.
-    setDevProxyPortInRc(DEV_PROXY_PORT);
-    writeMocksFileToRc(ERRORS_MOCKS_FILE);
-    daemon = await createDaemonServer({
-      useDevProxy: true,
-      devProxy: { port: DEV_PROXY_PORT },
-    });
+    daemon = await createDaemonServer();
   }, SETUP_TIMEOUT);
 
   afterEach(async () => {

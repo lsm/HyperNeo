@@ -228,12 +228,9 @@ export function createDevProxyController(options: DevProxyOptions = {}): DevProx
 
   // Create devproxyrc.json at the requested config path if it doesn't exist.
   // This lets callers supply a custom configPath (e.g. to load a different mock
-  // file) without having to create the file themselves.
-  // `apiPort` is written alongside `port` so `devproxy stop` (which reads the
-  // config from the working directory) talks to the same API port used at start
-  // time — otherwise stop defaults to API port 8897 and fails to reach proxies
-  // started on non-default ports (e.g. 8001 → API 8898).
-  const apiPort = 8897 + (port - 8000);
+  // file) without having to create the file themselves. Only creates a new file
+  // when one does not already exist — we never mutate a tracked/existing config
+  // to avoid dirtying the checkout.
   if (!fs.existsSync(configPath)) {
     fs.writeFileSync(
       configPath,
@@ -257,26 +254,12 @@ export function createDevProxyController(options: DevProxyOptions = {}): DevProx
           },
           logLevel: 'information',
           port,
-          apiPort,
           labelMode: 'text',
         },
         null,
         2
       )
     );
-  } else {
-    // Ensure an existing config carries the correct apiPort for this controller
-    // so stop/logs commands reach the right API endpoint.
-    try {
-      const existing = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as Record<string, unknown>;
-      if (existing.apiPort !== apiPort) {
-        existing.apiPort = apiPort;
-        fs.writeFileSync(configPath, JSON.stringify(existing, null, 2));
-      }
-    } catch {
-      // If the config can't be parsed, leave it as-is; start() will pass the
-      // apiPort via CLI flag as a fallback.
-    }
   }
 
   // Create default mocks.json if it doesn't exist

@@ -320,6 +320,35 @@
       }
     },
     {
+      "comment": "Kimi prompt-too-long 400 \u2014 bare form without token counts. MUST precede the detailed mock: the bare trigger string contains the detailed trigger as a substring, so first-match ordering would route bare requests to the detailed mock if this came second.",
+      "request": {
+        "url": "*/v1/messages*",
+        "method": "POST",
+        "bodyFragment": "trigger kimi prompt too long bare",
+        "nth": 1
+      },
+      "response": {
+        "statusCode": 400,
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "x-mocked-by",
+            "value": "Dev Proxy MockResponsePlugin - mocks-errors.json (kimi prompt too long bare)"
+          }
+        ],
+        "body": {
+          "type": "error",
+          "error": {
+            "type": "invalid_request_error",
+            "message": "Prompt is too long"
+          }
+        }
+      }
+    },
+    {
       "comment": "Kimi prompt-too-long 400 \u2014 detailed form with token counts.",
       "request": {
         "url": "*/v1/messages*",
@@ -344,35 +373,6 @@
           "error": {
             "type": "invalid_request_error",
             "message": "Prompt is too long: 205616 tokens > 200000 maximum"
-          }
-        }
-      }
-    },
-    {
-      "comment": "Kimi prompt-too-long 400 \u2014 bare form without token counts.",
-      "request": {
-        "url": "*/v1/messages*",
-        "method": "POST",
-        "bodyFragment": "trigger kimi prompt too long bare",
-        "nth": 1
-      },
-      "response": {
-        "statusCode": 400,
-        "headers": [
-          {
-            "name": "content-type",
-            "value": "application/json"
-          },
-          {
-            "name": "x-mocked-by",
-            "value": "Dev Proxy MockResponsePlugin - mocks-errors.json (kimi prompt too long bare)"
-          }
-        ],
-        "body": {
-          "type": "error",
-          "error": {
-            "type": "invalid_request_error",
-            "message": "Prompt is too long"
           }
         }
       }

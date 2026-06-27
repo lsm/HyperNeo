@@ -310,6 +310,7 @@ jobs:
               tests/online/space/space-happy-path-qa-completion.test.ts
               tests/online/space/task-agent-lifecycle.test.ts
               tests/online/space/task-agent-skills.test.ts
+              tests/online/space/prompt-too-long-kimi-recovery.test.ts
             mock_sdk: true
           - module: websocket
             test_path: tests/online/websocket
