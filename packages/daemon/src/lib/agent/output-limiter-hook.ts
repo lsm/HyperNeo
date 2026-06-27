@@ -164,6 +164,22 @@ export function createOutputLimiterHook(config: OutputLimiterConfigInput = {}): 
 }
 
 /**
+ * Strip leading env var assignments and `env`/`command` prefixes from a
+ * command so the primary executable is visible for exclusion checks.
+ * Handles quoted values: `GIT_SSH_COMMAND='ssh -i key' git fetch` → `git fetch`.
+ */
+function stripEnvPrefixes(command: string): string {
+  // Match repeated groups of:
+  //   ENV_VAR=value   (value is \S+ or "..." or '...')
+  //   env             (bare env prefix)
+  //   command         (command bypass)
+  return command.replace(
+    /^((?:env\s+|command\s+)?(?:(?:[A-Za-z_]\w*=(?:[^\s'"\\]+|"[^"]*"|'[^']*'))\s+|env\s+|command\s+))*/,
+    ''
+  );
+}
+
+/**
  * Inject output limiting parameters into tool inputs
  * Returns modified input if changes were made, null otherwise
  */
@@ -188,19 +204,11 @@ function limitToolInput(
         return null;
       }
 
-      // Skip if already has head/tail limiting — but only when there are no
-      // compound operators (`;`, `&&`, `||`, newline). A compound command like
-      // `grep foo | head; cat huge.log` or `grep | head\ncat huge.log` has an
-      // unbounded trailing segment. Semicolons are matched regardless of
-      // trailing whitespace (`head;cat` is still compound).
-      if (/\|\s*(head|tail)/.test(command) && !/;|&&|\|\||\n/.test(command)) {
-        return null;
-      }
-
-      // Skip simple commands that are unlikely to produce large output
-      // (pwd, echo simple strings, which, whoami). ls is NOT skipped because
-      // `ls -R` or `ls node_modules` can produce thousands of lines.
-      const simpleCommands = /^(pwd|echo\s+"[^"]{0,50}"|which|whoami)$/;
+      // Skip simple commands that are unlikely to produce large output.
+      // ls is NOT skipped because `ls -R` or `ls node_modules` can produce
+      // thousands of lines. echo is NOT skipped because command substitution
+      // (`echo "$(cat huge.log)"`) can expand to large output.
+      const simpleCommands = /^(pwd|which|whoami)$/;
       if (simpleCommands.test(command.trim())) {
         return null;
       }
@@ -217,13 +225,8 @@ function limitToolInput(
       // Skip commands whose primary executable is explicitly excluded by the
       // user (e.g. via outputLimiter.bash.excludedCommandPrefixes, which may
       // be populated from sandbox.excludedCommands to preserve command-level
-      // sandbox exclusions for commands like `git`). Strip leading env var
-      // assignments and `env`/`command` prefixes so `GIT_SSH_COMMAND=... git`
-      // and `env git` are still recognised.
-      const effectiveCommand = trimmed.replace(
-        /^((?:env\s+)?(?:[A-Za-z_]\w*=\S+\s+|command\s+))*/,
-        ''
-      );
+      // sandbox exclusions for commands like `git`).
+      const effectiveCommand = stripEnvPrefixes(trimmed);
       for (const prefix of config.bash.excludedCommandPrefixes) {
         if (effectiveCommand === prefix || effectiveCommand.startsWith(`${prefix} `)) {
           return null;
@@ -239,24 +242,25 @@ function limitToolInput(
       const maxBytes = headBytes + tailBytes;
 
       // Create smart truncation command:
-      // 1. Save stdout AND stderr to temp file, preserving the original exit status.
-      // 2. If output exceeds the line OR byte limit: show first N + message + last N,
-      //    piping each through head -c / tail -c to enforce the byte cap on
-      //    individual long lines.
-      // 3. Otherwise: show all output.
-      // 4. Clean up temp file and exit with the original status.
       //
-      // A command group `{ ... }` is used instead of a subshell `(...)` so that
-      // side effects like `cd` persist to the SDK's shell — wrapping
-      // `cd pkg && bun test` in a subshell would leave the session cwd unchanged.
+      // A subshell `(...)` is used so that `exit` and `set -e` inside the
+      // user command only terminate the subshell, not the wrapper shell.
+      // This ensures the cat/head/tail/cleanup path always runs.
       //
-      // A newline is inserted before the closing `}` so that commands whose
-      // last line is a heredoc delimiter (e.g. `cat <<'EOF' … EOF`) keep their
-      // delimiter on its own line and are parsed correctly.
+      // To preserve cwd changes (which a subshell would normally discard),
+      // the subshell writes its final `pwd` to a temp file. After truncation,
+      // the wrapper replays the cwd change in the parent shell with `cd`.
+      // If the command calls `exit` early, `pwd` never runs and the cwd file
+      // is empty — matching the behavior of the unwrapped command.
+      //
+      // stderr is always captured: the subshell redirects both streams into
+      // the temp file (`> "$tmpfile" 2>&1`). Commands that already pipe
+      // stdout through `| head` are still wrapped because their stderr stream
+      // remains uncapped without the wrapper.
       //
       // Known limitation: if the SDK kills the wrapper on timeout before the
       // cat/head/tail segment runs, partial output in the temp file is lost.
-      const limitedCommand = `tmpfile=$(mktemp); {\n${command}\n} > "$tmpfile" 2>&1; exit_code=$?; total_lines=$(wc -l < "$tmpfile"); total_bytes=$(wc -c < "$tmpfile"); if [ "$total_lines" -gt ${headLines + tailLines} ] || [ "$total_bytes" -gt ${maxBytes} ]; then head -n ${headLines} "$tmpfile" | head -c ${headBytes}; echo ""; echo "... [Truncated $(($total_lines - ${headLines + tailLines})) lines / $(($total_bytes - ${maxBytes})) bytes - showing first ${headLines} and last ${tailLines} lines] ..."; echo ""; tail -n ${tailLines} "$tmpfile" | tail -c ${tailBytes}; else cat "$tmpfile"; fi; rm -f "$tmpfile"; exit $exit_code`;
+      const limitedCommand = `tmpfile=$(mktemp); cwdfile=$(mktemp); (\n${command}\npwd > "$cwdfile" 2>/dev/null\n) > "$tmpfile" 2>&1; exit_code=$?; total_lines=$(wc -l < "$tmpfile"); total_bytes=$(wc -c < "$tmpfile"); if [ "$total_lines" -gt ${headLines + tailLines} ] || [ "$total_bytes" -gt ${maxBytes} ]; then head -n ${headLines} "$tmpfile" | head -c ${headBytes}; echo ""; echo "... [Truncated $(($total_lines - ${headLines + tailLines})) lines / $(($total_bytes - ${maxBytes})) bytes - showing first ${headLines} and last ${tailLines} lines] ..."; echo ""; tail -n ${tailLines} "$tmpfile" | tail -c ${tailBytes}; else cat "$tmpfile"; fi; newcwd=$(cat "$cwdfile" 2>/dev/null); rm -f "$tmpfile" "$cwdfile"; [ -n "$newcwd" ] && cd "$newcwd" 2>/dev/null; exit $exit_code`;
 
       return {
         ...input,
@@ -268,8 +272,9 @@ function limitToolInput(
     case 'Read': {
       const maxLines = config.read.maxLines;
 
-      // If an explicit limit is already within the cap, leave it alone.
-      if (typeof input.limit === 'number' && input.limit <= maxLines) {
+      // If an explicit limit is already within the cap (and not 0 which the
+      // SDK treats as unlimited for some tools), leave it alone.
+      if (typeof input.limit === 'number' && input.limit > 0 && input.limit <= maxLines) {
         return null;
       }
 
@@ -283,8 +288,13 @@ function limitToolInput(
     case 'Grep': {
       const maxMatches = config.grep.maxMatches;
 
-      // If an explicit head_limit is already within the cap, leave it alone.
-      if (typeof input.head_limit === 'number' && input.head_limit <= maxMatches) {
+      // head_limit: 0 means unlimited in the SDK, so treat it as uncapped.
+      // Only skip when the explicit value is positive and within the cap.
+      if (
+        typeof input.head_limit === 'number' &&
+        input.head_limit > 0 &&
+        input.head_limit <= maxMatches
+      ) {
         return null;
       }
 
