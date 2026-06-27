@@ -1388,6 +1388,22 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         if (cutoffIndex !== -1) {
           rows = rows.slice(0, cutoffIndex);
           pullsBacklogClearedByCutoff = true;
+        } else if (
+          rows.length > 0 &&
+          rows.every((row) => {
+            const updatedAt = pullRequestUpdatedAt(row);
+            return updatedAt > 0 && updatedAt <= endpointWatermark;
+          })
+        ) {
+          // All rows on this page are at or before the watermark — GitHub's
+          // second-precision timestamps can produce full pages of tied rows
+          // that never satisfy the strict < cutoff. Clear the backlog so
+          // processedPages resets to 1 without dropping the rows (they are
+          // re-processed but store-level dedupe suppresses duplicate events).
+          // Without this, a full page of tied rows would leave
+          // processedPages.pulls at 2, and pullsFetchedResumedPage would
+          // defer check-run polling indefinitely.
+          pullsBacklogClearedByCutoff = true;
         }
       }
       if (endpoint.key === 'pulls') {
@@ -1909,10 +1925,20 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     }
     // After a partial scan, do not advance the shared watermark; skipped
     // endpoints would miss events between the old watermark and the new one.
-    // The processed endpoint's own watermark is recorded separately.
+    // The processed endpoint's own watermark is recorded separately. Also keep
+    // the shared cursor pending when check-run polling was deferred due to a
+    // resumed /pulls page (pullsFetchedResumedPage): advancing lastSeenAt would
+    // shift the check-run baseline for legacy cursors without
+    // checkRunPollingEnabledAt, skipping failures on heads first discovered on
+    // the cut-off page.
+    const pullsCheckRunDeferred = pullsFetchedResumedPage;
     const cursorPayload: PollCursor = {
-      lastSeenAt: partialScan || hasBacklog ? watermarks.committed : watermarks.pending,
-      pendingLastSeenAt: partialScan || hasBacklog ? watermarks.pending : undefined,
+      lastSeenAt:
+        partialScan || hasBacklog || pullsCheckRunDeferred
+          ? watermarks.committed
+          : watermarks.pending,
+      pendingLastSeenAt:
+        partialScan || hasBacklog || pullsCheckRunDeferred ? watermarks.pending : undefined,
       etags,
       processedPages,
       recentPullRequestNumbers,
