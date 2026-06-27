@@ -196,8 +196,8 @@ describe('ContextTracker', () => {
         percentUsed: 76,
         breakdown: {},
       });
-      // Kimi 262k threshold = 262144 - 33000 = 229144.
-      expect(tracker.shouldCompactAt(229_144)).toBe(false);
+      // Kimi 262k threshold = 262144 - 45000 = 217144.
+      expect(tracker.shouldCompactAt(217_144)).toBe(false);
     });
 
     it('returns true when totalUsed is at or above threshold', () => {
@@ -208,7 +208,7 @@ describe('ContextTracker', () => {
         percentUsed: 95,
         breakdown: {},
       });
-      expect(tracker.shouldCompactAt(229_144)).toBe(true);
+      expect(tracker.shouldCompactAt(217_144)).toBe(true);
     });
 
     it('returns false when cooldown has not elapsed', () => {
@@ -220,7 +220,7 @@ describe('ContextTracker', () => {
         breakdown: {},
       });
       tracker.markCompactionTriggered();
-      expect(tracker.shouldCompactAt(229_144, 60_000)).toBe(false);
+      expect(tracker.shouldCompactAt(217_144, 60_000)).toBe(false);
     });
 
     it('returns true after cooldown elapses', () => {
@@ -232,7 +232,7 @@ describe('ContextTracker', () => {
         breakdown: {},
       });
       tracker.markCompactionTriggered();
-      expect(tracker.shouldCompactAt(229_144, 0)).toBe(true);
+      expect(tracker.shouldCompactAt(217_144, 0)).toBe(true);
     });
 
     it('returns false for invalid threshold', () => {
@@ -260,27 +260,37 @@ describe('ContextTracker', () => {
       // SDK trigger = window - min(maxOutputTokens, 20000) - 13000 = window - 33000.
       // 200k window: threshold = 200k - 33k = 167k. Matches the SDK's own trigger.
       expect(reserveBasedThreshold(200_000)).toBe(167_000);
+      expect(reserveBasedThreshold(200_000, 'anthropic')).toBe(167_000);
+      expect(reserveBasedThreshold(200_000, 'glm')).toBe(167_000);
       // 1M window: threshold = 1M - 33k = 967k.
       expect(reserveBasedThreshold(1_000_000)).toBe(967_000);
     });
 
-    it('matches SDK trigger for Kimi 262k window', () => {
-      // Kimi: SDK auto-compact disabled, NeoKai is sole path. Use the same
-      // 33k buffer the SDK would have used so NeoKai fires at the same point.
+    it('uses the larger 45k reserve for Kimi to cover ~32k output + reasoning', () => {
+      // Kimi: SDK auto-compact disabled, NeoKai is sole path. Its ~32k max
+      // output plus mandatory reasoning requires a bigger buffer than the SDK
+      // default 33k. 262144 - 45000 = 217144.
+      expect(reserveBasedThreshold(262_144, 'kimi')).toBe(217_144);
+    });
+
+    it('keeps the default 33k reserve for non-Kimi providers even on a 262k window', () => {
+      expect(reserveBasedThreshold(262_144, 'openrouter')).toBe(229_144);
       expect(reserveBasedThreshold(262_144)).toBe(229_144);
     });
 
     it('clamps the threshold to at least 1 for windows at or below the buffer', () => {
-      // Windows smaller than the 33k buffer would produce 0 or negative; floor
+      // Windows smaller than the active reserve would produce 0 or negative; floor
       // at 1 so shouldCompactAt still fires.
       expect(reserveBasedThreshold(80_000)).toBe(47_000); // 80k - 33k = 47k
       expect(reserveBasedThreshold(8_000)).toBe(1); // below buffer → floored
       expect(reserveBasedThreshold(100)).toBe(1);
       expect(reserveBasedThreshold(1)).toBe(1);
+      // Kimi reserve is larger, so a 44k window floors to 1.
+      expect(reserveBasedThreshold(44_000, 'kimi')).toBe(1);
     });
 
     it('matches SDK trigger for GLM 1M window', () => {
-      expect(reserveBasedThreshold(1_000_000)).toBe(967_000);
+      expect(reserveBasedThreshold(1_000_000, 'glm')).toBe(967_000);
     });
   });
 });
