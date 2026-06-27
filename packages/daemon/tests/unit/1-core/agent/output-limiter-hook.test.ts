@@ -124,7 +124,7 @@ describe('OutputLimiterHook', () => {
         const cmd = (result.hookSpecificOutput as { updatedInput: Record<string, unknown> })
           .updatedInput.command as string;
         // Subshell writes pwd to cwdfile
-        expect(cmd).toContain('pwd > "$cwdfile"');
+        expect(cmd).toContain('pwd >| "$cwdfile"');
         // Wrapper replays cwd after truncation
         expect(cmd).toContain('newcwd=$(cat "$cwdfile"');
         expect(cmd).toContain('cd "$newcwd"');

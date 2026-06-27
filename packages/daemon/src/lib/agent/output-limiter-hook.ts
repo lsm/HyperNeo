@@ -90,13 +90,7 @@ export function resolveConfig(input: OutputLimiterConfigInput = {}): OutputLimit
           : DEFAULT_CONFIG.read.maxLines),
     },
     grep: {
-      // Normalize the legacy default (500) to the new default (250) so
-      // upgraded databases don't double Grep output. Users who explicitly
-      // want a different value can set it to anything other than 500.
-      maxMatches:
-        input.grep?.maxMatches === 500
-          ? DEFAULT_CONFIG.grep.maxMatches
-          : (input.grep?.maxMatches ?? DEFAULT_CONFIG.grep.maxMatches),
+      maxMatches: input.grep?.maxMatches ?? DEFAULT_CONFIG.grep.maxMatches,
     },
     excludeTools: input.excludeTools ?? DEFAULT_CONFIG.excludeTools,
   };
@@ -248,7 +242,14 @@ function limitToolInput(
       // command is a single invocation — a compound command like
       // `git status; cat huge.log` has a trailing non-excluded segment.
       const effectiveCommand = stripEnvPrefixes(trimmed);
-      if (!/[;&|\n]/.test(effectiveCommand)) {
+      // Check for compound operators outside quoted strings so commands like
+      // `git push origin 'HEAD:refs/heads/foo;bar'` are still recognised as
+      // single git invocations.
+      const effectiveNoQuotes = effectiveCommand
+        .replace(/'[^']*'/g, "''")
+        .replace(/"[^"]*"/g, '""')
+        .replace(/`[^`]*`/g, '``');
+      if (!/[;&|\n]/.test(effectiveNoQuotes)) {
         for (const prefix of config.bash.excludedCommandPrefixes) {
           if (effectiveCommand === prefix || effectiveCommand.startsWith(`${prefix} `)) {
             return null;
@@ -283,7 +284,7 @@ function limitToolInput(
       //
       // Known limitation: if the SDK kills the wrapper on timeout before the
       // cat/head/tail segment runs, partial output in the temp file is lost.
-      const limitedCommand = `tmpfile=$(mktemp); cwdfile=$(mktemp); (\n${command}\n__exit=$?\npwd > "$cwdfile" 2>/dev/null\nexit $__exit\n) > "$tmpfile" 2>&1; exit_code=$?; total_lines=$(wc -l < "$tmpfile"); total_bytes=$(wc -c < "$tmpfile"); if [ "$total_lines" -gt ${headLines + tailLines} ] || [ "$total_bytes" -gt ${maxBytes} ]; then head -n ${headLines} "$tmpfile" | head -c ${headBytes}; echo ""; echo "... [Truncated $(($total_lines - ${headLines + tailLines})) lines / $(($total_bytes - ${maxBytes})) bytes - showing first ${headLines} and last ${tailLines} lines] ..."; echo ""; tail -n ${tailLines} "$tmpfile" | tail -c ${tailBytes}; else cat "$tmpfile"; fi; newcwd=$(cat "$cwdfile" 2>/dev/null); rm -f "$tmpfile" "$cwdfile"; [ -n "$newcwd" ] && cd "$newcwd" 2>/dev/null; exit $exit_code`;
+      const limitedCommand = `tmpfile=$(mktemp); cwdfile=$(mktemp); (\n${command}\n__exit=$?\npwd >| "$cwdfile" 2>/dev/null\nexit $__exit\n) > "$tmpfile" 2>&1; exit_code=$?; total_lines=$(wc -l < "$tmpfile"); total_bytes=$(wc -c < "$tmpfile"); if [ "$total_lines" -gt ${headLines + tailLines} ] || [ "$total_bytes" -gt ${maxBytes} ]; then head -n ${headLines} "$tmpfile" | head -c ${headBytes}; echo ""; echo "... [Truncated $(($total_lines - ${headLines + tailLines})) lines / $(($total_bytes - ${maxBytes})) bytes - showing first ${headLines} and last ${tailLines} lines] ..."; echo ""; tail -n ${tailLines} "$tmpfile" | tail -c ${tailBytes}; else cat "$tmpfile"; fi; newcwd=$(cat "$cwdfile" 2>/dev/null); rm -f "$tmpfile" "$cwdfile"; [ -n "$newcwd" ] && cd "$newcwd" 2>/dev/null; exit $exit_code`;
 
       return {
         ...input,
