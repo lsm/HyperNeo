@@ -750,8 +750,10 @@ export class ProviderService {
     }
 
     // Preserve user's custom ANTHROPIC_BASE_URL from environment/settings.json.
-    // Local Dev Proxy URLs are always preserved so that test mock routing is not
-    // deleted as a leaked provider override.
+    // When the Dev Proxy test harness is active (NEOKAI_USE_DEV_PROXY=1), the
+    // localhost proxy URL is preserved so test mock routing survives provider-env
+    // clearing. Production localhost bridges (Ollama, Copilot, custom endpoints)
+    // are cleared normally on provider switches.
     if (process.env.ANTHROPIC_BASE_URL !== undefined) {
       original.ANTHROPIC_BASE_URL = process.env.ANTHROPIC_BASE_URL;
       changed = true;
@@ -1024,12 +1026,25 @@ export function mergeProviderEnvVars(providerEnvVars: ProviderEnvVars): NodeJS.P
 const PROVIDER_SERVICE_KEY = Symbol.for('neokai:providerServiceInstance');
 
 /**
- * Detect whether an Anthropic base URL points at a local Dev Proxy instance.
- * Local proxy URLs must be preserved when clearing provider-routing env vars so
- * that test sessions route to the mock proxy instead of being deleted as a
- * "leaked" provider override.
+ * Detect whether the Dev Proxy test harness is active.
+ *
+ * Only when `NEOKAI_USE_DEV_PROXY=1` is set do we treat a localhost
+ * `ANTHROPIC_BASE_URL` as a Dev Proxy URL that must survive provider-env
+ * clearing. Production bridge providers (Ollama, Copilot, custom endpoints)
+ * also use localhost base URLs, so preserving them unconditionally would leak
+ * stale bridge URLs into the next Anthropic turn.
+ */
+function isDevProxyActive(): boolean {
+  return process.env.NEOKAI_USE_DEV_PROXY === '1';
+}
+
+/**
+ * Detect whether an Anthropic base URL points at the local Dev Proxy instance.
+ * Gated on `NEOKAI_USE_DEV_PROXY` so production localhost bridges are cleared
+ * normally on provider switches.
  */
 function isLocalDevProxyUrl(url: string | undefined): boolean {
+  if (!isDevProxyActive()) return false;
   if (!url) return false;
   try {
     const parsed = new URL(url);

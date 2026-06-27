@@ -51,23 +51,24 @@ const STEP_CODE_ID = 'step-code-kimi-recovery-001';
 const REPO_ROOT = path.resolve(__dirname, '../../../../..');
 const DEV_PROXY_DIR = path.join(REPO_ROOT, '.devproxy');
 const DEV_PROXY_RC = path.join(DEV_PROXY_DIR, 'devproxyrc.json');
-const DEFAULT_MOCKS_FILE = 'mocks.json';
 const ERRORS_MOCKS_FILE = 'mocks-errors.json';
 
-let originalMocksFile: string | null = null;
+/**
+ * Snapshot of the entire `devproxyrc.json` contents captured in `beforeAll`.
+ *
+ * The suite rewrites several fields (port, urlsToWatch, mocksFile) to point the
+ * shared Dev Proxy at port 8001 with the errors mock file. Restoring the whole
+ * file wholesale in `afterAll` (rather than per-field) guarantees the checkout
+ * is left clean even if the rc schema gains new fields later, so subsequent
+ * online suites that expect the default port 8000 configuration are not broken.
+ */
+let originalDevProxyRc: string | null = null;
 
 type TestFixtures = {
   space: Space;
   coderAgent: SpaceAgent;
   workflow: SpaceWorkflow;
 };
-
-function readMocksFileFromRc(): string {
-  const config = JSON.parse(fs.readFileSync(DEV_PROXY_RC, 'utf-8')) as {
-    mockResponsePlugin?: { mocksFile?: string };
-  };
-  return config.mockResponsePlugin?.mocksFile ?? DEFAULT_MOCKS_FILE;
-}
 
 function writeMocksFileToRc(mocksFile: string): void {
   const config = JSON.parse(fs.readFileSync(DEV_PROXY_RC, 'utf-8')) as Record<string, unknown>;
@@ -233,12 +234,18 @@ describe('Kimi prompt-too-long recovery — online with Dev Proxy', () => {
     // Force per-test Dev Proxy instances so switching mock files between tests
     // does not race with the shared proxy controller's deferred stop.
     process.env.NEOKAI_DEV_PROXY_REUSE = '0';
-    originalMocksFile = readMocksFileFromRc();
+    // Snapshot the entire rc file so afterAll can restore port + urlsToWatch +
+    // mocksFile in one shot, leaving the checkout clean for later online suites.
+    originalDevProxyRc = fs.existsSync(DEV_PROXY_RC)
+      ? fs.readFileSync(DEV_PROXY_RC, 'utf-8')
+      : null;
   });
 
   afterAll(() => {
-    if (originalMocksFile !== null) {
-      writeMocksFileToRc(originalMocksFile);
+    // Restore the original devproxyrc.json wholesale so the port, urlsToWatch,
+    // and mocksFile all return to their pre-suite state.
+    if (originalDevProxyRc !== null) {
+      fs.writeFileSync(DEV_PROXY_RC, originalDevProxyRc);
     }
   });
 
