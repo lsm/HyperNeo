@@ -1362,11 +1362,19 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       const payload = await response.json();
       let rows = rowsFromPollingPayload(payload, endpoint.key);
       let pullsBacklogClearedByCutoff = false;
-      if (endpoint.key === 'pulls' && !pullsNeedsSeed) {
+      if (endpoint.key === 'pulls' && !pullsNeedsSeed && savedEndpointWatermark > 0) {
         // GitHub's /pulls endpoint ignores the `since` query param, so the only
         // reliable delta is a client-side cutoff. Rows are sorted by updated_at
         // descending; once a row is older than the endpoint watermark, every
         // subsequent row is older and can be skipped.
+        //
+        // Only apply the cutoff once a pulls-specific watermark exists. When
+        // the cursor falls back to the shared `lastSeenAt` (e.g. a legacy
+        // cursor with head SHAs but no endpointLastSeenAt.pulls), the shared
+        // watermark may have been advanced by comments/check runs past a PR's
+        // own updated_at. Skipping rows in that state would prevent the
+        // head/open-state refresh below from running, leaving stale heads in
+        // the cursor. Treat it as a seed fetch instead.
         const cutoffIndex = rows.findIndex((row) => {
           const updatedAt = pullRequestUpdatedAt(row);
           return updatedAt > 0 && updatedAt < endpointWatermark;

@@ -3410,6 +3410,67 @@ describe('GitHubEventExtension', () => {
     }
   });
 
+  test('pulls cutoff is skipped when no pulls-specific watermark exists', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    const repo = extension.repo.listPollingRepos()[0];
+    const sharedWatermark = Date.parse('2026-06-20T00:00:00Z');
+    extension.repo.updatePollCursor(repo.id, {
+      lastSeenAt: sharedWatermark,
+      // Legacy cursor: tracked heads exist but no pulls-specific watermark.
+      // The shared watermark may be newer than a PR's updated_at, so the
+      // cutoff must not drop the row before head/open-state refresh runs.
+      recentPullRequestNumbers: [7],
+      recentPullRequestHeadShas: { 7: 'old-sha' },
+    });
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls')) {
+        return pollingResponse([
+          createPullRequestRow(7, {
+            // Older than the shared watermark but newer than an unseeded pulls cursor.
+            updated_at: '2026-06-15T00:00:00Z',
+            head: { sha: 'new-sha' },
+          }),
+        ]);
+      }
+      if (path.endsWith('/check-runs')) {
+        const headSha = decodeURIComponent(path.split('/commits/')[1].split('/check-runs')[0]);
+        if (headSha === 'new-sha') {
+          return pollingResponse({
+            check_runs: [createCheckRunRow({ id: 7002, head_sha: 'new-sha', pull_requests: [] })],
+          });
+        }
+        return pollingResponse({ check_runs: [] });
+      }
+      return pollingResponse([]);
+    }) as typeof fetch;
+    try {
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      const cursor = extension.repo.listPollingRepos()[0].pollCursor;
+      expect(cursor?.recentPullRequestHeadShas?.[7]).toBe('new-sha');
+      expect(
+        received.some((item) => item.topic === 'github/acme/widgets/pull_request/7.check_failed')
+      ).toBe(true);
+    } finally {
+      await extension.stop();
+    }
+  });
+
   test('polling seeds the check-run cursor before the first scan', async () => {
     const db = setupDb();
     const { service, received } = setupExternalEventService(db);
