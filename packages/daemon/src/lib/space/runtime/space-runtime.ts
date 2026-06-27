@@ -5437,13 +5437,15 @@ export class SpaceRuntime {
       lastMessageIsResult && !(lastMessage as { is_error?: boolean }).is_error;
 
     // The `/compact` turn landed a RESULT (real completion — not an intermediate
-    // status/compact_boundary row). End the wait and re-evaluate.
+    // status/compact_boundary row) OR another prompt-too-long user message (e.g.
+    // Kimi returning the overflow as `<local-command-stderr>` stderr). End the
+    // wait and re-evaluate.
     let compactJustFailed = false;
     if (
       state.awaitingContinue &&
-      lastMessageIsResult &&
       state.awaitingContinueAfterDbId !== null &&
-      lastMessageDbId !== state.awaitingContinueAfterDbId
+      lastMessageDbId !== state.awaitingContinueAfterDbId &&
+      (lastMessageIsResult || overflowed)
     ) {
       state.awaitingContinue = false;
       state.awaitingContinueAfterDbId = null;
@@ -5485,7 +5487,12 @@ export class SpaceRuntime {
       // legitimately took longer than the window (e.g. tick loop paused) but
       // did complete must not be mis-blocked. Timeout fires only when NO result
       // has landed (mirrors the /compact wait's result-first ordering).
-      if (lastMessageIsResult && lastMessageDbId !== state.awaitingResumeAfterDbId) {
+      // A newer prompt-too-long user message (e.g. Kimi stderr) also completes
+      // the resumed turn, so treat it the same as an overflow result.
+      if (
+        lastMessageDbId !== state.awaitingResumeAfterDbId &&
+        (lastMessageIsResult || overflowed)
+      ) {
         state.awaitingResume = false;
         state.awaitingResumeAfterDbId = null;
         state.awaitingResumeSince = null;

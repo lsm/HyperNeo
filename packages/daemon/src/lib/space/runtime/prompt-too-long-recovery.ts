@@ -111,6 +111,7 @@ export function createPromptTooLongRecoveryState(): PromptTooLongRecoveryState {
 }
 
 const PROMPT_TOO_LONG_RE = /prompt is too long/i;
+const LOCAL_COMMAND_STDERR_RE = /<local-command-stderr>([\s\S]*?)<\/local-command-stderr>/gi;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -133,6 +134,16 @@ function extractUserMessageText(message: SDKMessage): string {
       .join('');
   }
   return '';
+}
+
+function extractStderrText(text: string): string {
+  const parts: string[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = LOCAL_COMMAND_STDERR_RE.exec(text)) !== null) {
+    parts.push(match[1]);
+  }
+  LOCAL_COMMAND_STDERR_RE.lastIndex = 0;
+  return parts.join('\n');
 }
 
 /**
@@ -172,7 +183,9 @@ export function isPromptTooLongResult(message: SDKMessage | null | undefined): b
 export function isPromptTooLongUserMessage(message: SDKMessage | null | undefined): boolean {
   if (!message) return false;
   if ((message as { type?: string }).type !== 'user') return false;
-  return PROMPT_TOO_LONG_RE.test(extractUserMessageText(message));
+  const text = extractUserMessageText(message);
+  const stderr = extractStderrText(text);
+  return stderr.length > 0 && PROMPT_TOO_LONG_RE.test(stderr);
 }
 
 /**

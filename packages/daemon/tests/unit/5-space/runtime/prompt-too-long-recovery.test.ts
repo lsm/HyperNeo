@@ -274,11 +274,25 @@ describe('isPromptTooLongUserMessage', () => {
       type: 'user',
       message: {
         role: 'user',
-        content: [{ type: 'text', text: 'Prompt is too long: 1234 tokens > 1000 maximum' }],
+        content: [
+          {
+            type: 'text',
+            text: '<local-command-stderr>Prompt is too long: 1234 tokens > 1000 maximum</local-command-stderr>',
+          },
+        ],
       },
       parent_tool_use_id: null,
     };
     expect(isPromptTooLongUserMessage(msg as never)).toBe(true);
+  });
+
+  test('rejects user message containing the phrase outside stderr tags', () => {
+    const msg = {
+      type: 'user',
+      message: { role: 'user', content: 'The model said Prompt is too long' },
+      parent_tool_use_id: null,
+    };
+    expect(isPromptTooLongUserMessage(msg as never)).toBe(false);
   });
 
   test('rejects unrelated user message', () => {
@@ -308,7 +322,10 @@ describe('isPromptTooLongErrorMessage', () => {
     };
     const userMsg = {
       type: 'user',
-      message: { role: 'user', content: 'Prompt is too long' },
+      message: {
+        role: 'user',
+        content: '<local-command-stderr>Prompt is too long</local-command-stderr>',
+      },
       parent_tool_use_id: null,
     };
     expect(isPromptTooLongErrorMessage(resultMsg as never)).toBe(true);
@@ -525,6 +542,32 @@ describe('SpaceRuntime — prompt-too-long recovery', () => {
     // Tick 3: continue nag after successful compaction.
     await rt.executeTick();
     expect(injections.map((i) => i.message)).toEqual(['/compact', buildPromptTooLongContinueNag()]);
+  });
+
+  test('re-compacts immediately when the /compact turn re-overflows as a Kimi user message', async () => {
+    // P2: a newer prompt-too-long user message must clear awaitingContinue and be
+    // treated as a completed overflow turn, not left to wait for COMPACT_RESULT_TIMEOUT_MS.
+    const injections: Array<{ sessionId: string; message: string }> = [];
+    const rt = new SpaceRuntime(buildConfig(makeRecordingTam(injections)));
+    const sessionId = 'session:kimi-reoverflow';
+    const { run, execution } = await setupIdleUserOverflowExecution(rt, sessionId);
+
+    await rt.executeTick(); // → /compact (attempt 1)
+    // The /compact turn itself hits the same Kimi overflow, surfaced as a user message.
+    saveUserMessage(
+      sessionId,
+      '<local-command-stderr>Prompt is too long: 205616 tokens > 200000 maximum</local-command-stderr>'
+    );
+    await rt.executeTick(); // → /compact (attempt 2), no timeout wait
+    saveUserMessage(
+      sessionId,
+      '<local-command-stderr>Prompt is too long: 205616 tokens > 200000 maximum</local-command-stderr>'
+    );
+    await rt.executeTick(); // attempts exhausted → blocked
+
+    expect(injections.map((i) => i.message)).toEqual(['/compact', '/compact']);
+    expect(nodeExecutionRepo.getById(execution.id)?.status).toBe('blocked');
+    expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
   });
 
   test('does not double-inject /compact while awaiting the compacted result', async () => {
