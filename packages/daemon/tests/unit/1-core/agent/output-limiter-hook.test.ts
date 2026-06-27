@@ -27,19 +27,10 @@ describe('OutputLimiterHook', () => {
 
       const result = await hook(input, 'test-id', { signal: mockSignal });
 
-      expect(result).toMatchObject({
-        hookSpecificOutput: {
-          hookEventName: 'PreToolUse',
-          permissionDecision: 'allow',
-        },
-      });
-
       // Verify the command has smart truncation
       if ('hookSpecificOutput' in result && result.hookSpecificOutput) {
         const updatedInput = (
-          result.hookSpecificOutput as unknown as {
-            updatedInput: Record<string, unknown>;
-          }
+          result.hookSpecificOutput as { updatedInput: Record<string, unknown> }
         ).updatedInput;
         expect(updatedInput.command).toContain('tmpfile=$(mktemp)');
         expect(updatedInput.command).toContain('head -n 100');
@@ -49,6 +40,69 @@ describe('OutputLimiterHook', () => {
 
         // Verify description
         expect(updatedInput.description).toContain('first 100 + last 200 lines');
+      } else {
+        throw new Error('Expected hookSpecificOutput in result');
+      }
+
+      expect(result).toMatchObject({
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+        },
+      });
+    });
+
+    it('should preserve the original exit status when wrapping Bash commands', async () => {
+      const input: PreToolUseHookInput = {
+        hook_event_name: 'PreToolUse',
+        tool_name: 'Bash',
+        tool_input: {
+          command: 'git diff HEAD~1',
+        },
+        session_id: 'test-session',
+        transcript_path: '/test/path',
+        cwd: '/test/cwd',
+        tool_use_id: 'test-id',
+      };
+
+      const result = await hook(input, 'test-id', { signal: mockSignal });
+
+      if ('hookSpecificOutput' in result && result.hookSpecificOutput) {
+        const updatedInput = (
+          result.hookSpecificOutput as unknown as {
+            updatedInput: Record<string, unknown>;
+          }
+        ).updatedInput;
+        expect(updatedInput.command).toContain('exit_code=$?');
+        expect(updatedInput.command).toContain('exit $exit_code');
+      } else {
+        throw new Error('Expected hookSpecificOutput in result');
+      }
+    });
+
+    it('should capture both stdout and stderr into the temp file', async () => {
+      const input: PreToolUseHookInput = {
+        hook_event_name: 'PreToolUse',
+        tool_name: 'Bash',
+        tool_input: {
+          command: 'git diff HEAD~1',
+        },
+        session_id: 'test-session',
+        transcript_path: '/test/path',
+        cwd: '/test/cwd',
+        tool_use_id: 'test-id',
+      };
+
+      const result = await hook(input, 'test-id', { signal: mockSignal });
+
+      if ('hookSpecificOutput' in result && result.hookSpecificOutput) {
+        const updatedInput = (
+          result.hookSpecificOutput as unknown as {
+            updatedInput: Record<string, unknown>;
+          }
+        ).updatedInput;
+        // Redirect both stdout and stderr into the temp file, not stderr to original stdout.
+        expect(updatedInput.command).toContain('> "$tmpfile" 2>&1');
+        expect(updatedInput.command).not.toMatch(/\)\s*2>&1\s*>\s*"\$tmpfile"/);
       } else {
         throw new Error('Expected hookSpecificOutput in result');
       }
@@ -89,6 +143,80 @@ describe('OutputLimiterHook', () => {
 
       expect(result).toEqual({});
     });
+
+    it('should not wrap commands matching excluded command prefixes', async () => {
+      const gitHook = createOutputLimiterHook({
+        enabled: true,
+        bash: { excludedCommandPrefixes: ['git'] },
+      });
+
+      const gitInput: PreToolUseHookInput = {
+        hook_event_name: 'PreToolUse',
+        tool_name: 'Bash',
+        tool_input: {
+          command: 'git fetch origin',
+        },
+        session_id: 'test-session',
+        transcript_path: '/test/path',
+        cwd: '/test/cwd',
+        tool_use_id: 'test-id',
+      };
+
+      expect(await gitHook(gitInput, 'test-id', { signal: mockSignal })).toEqual({});
+
+      const nonGitInput: PreToolUseHookInput = {
+        hook_event_name: 'PreToolUse',
+        tool_name: 'Bash',
+        tool_input: {
+          command: 'bun test',
+        },
+        session_id: 'test-session',
+        transcript_path: '/test/path',
+        cwd: '/test/cwd',
+        tool_use_id: 'test-id-2',
+      };
+
+      const result = await gitHook(nonGitInput, 'test-id-2', { signal: mockSignal });
+      expect(result).toMatchObject({
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          updatedInput: {
+            command: expect.stringContaining('tmpfile=$(mktemp)'),
+          },
+        },
+      });
+    });
+
+    it('should preserve heredoc delimiters by inserting a newline before the closing paren', async () => {
+      const heredocInput: PreToolUseHookInput = {
+        hook_event_name: 'PreToolUse',
+        tool_name: 'Bash',
+        tool_input: {
+          command: "cat <<'EOF'\nhello\nEOF",
+        },
+        session_id: 'test-session',
+        transcript_path: '/test/path',
+        cwd: '/test/cwd',
+        tool_use_id: 'test-id',
+      };
+
+      const result = await hook(heredocInput, 'test-id', { signal: mockSignal });
+
+      if ('hookSpecificOutput' in result && result.hookSpecificOutput) {
+        const updatedInput = (
+          result.hookSpecificOutput as { updatedInput: Record<string, unknown> }
+        ).updatedInput;
+        const cmd = updatedInput.command as string;
+        // The subshell opens with a newline after `(` and closes with a
+        // newline before `)` so a trailing `EOF` delimiter stays on its
+        // own line and is recognised by the shell.
+        expect(cmd).toContain('(\n');
+        expect(cmd).toContain('\n) > "$tmpfile"');
+        expect(cmd).toContain('\nEOF\n');
+      } else {
+        throw new Error('Expected hookSpecificOutput in result');
+      }
+    });
   });
 
   describe('Read tool limiting', () => {
@@ -107,13 +235,12 @@ describe('OutputLimiterHook', () => {
 
       const result = await hook(input, 'test-id', { signal: mockSignal });
 
-      expect(result).toMatchObject({
+      expect(result).toEqual({
         hookSpecificOutput: {
           hookEventName: 'PreToolUse',
-          permissionDecision: 'allow',
           updatedInput: {
             file_path: '/test/large-file.txt',
-            limit: 1000, // 50000 chars / 50 chars per line
+            limit: 1000,
           },
         },
       });
@@ -156,10 +283,9 @@ describe('OutputLimiterHook', () => {
 
       const result = await hook(input, 'test-id', { signal: mockSignal });
 
-      expect(result).toMatchObject({
+      expect(result).toEqual({
         hookSpecificOutput: {
           hookEventName: 'PreToolUse',
-          permissionDecision: 'allow',
           updatedInput: {
             pattern: 'TODO',
             path: '/test',
@@ -189,35 +315,6 @@ describe('OutputLimiterHook', () => {
     });
   });
 
-  describe('Glob tool limiting', () => {
-    it('should add head_limit to Glob calls', async () => {
-      const input: PreToolUseHookInput = {
-        hook_event_name: 'PreToolUse',
-        tool_name: 'Glob',
-        tool_input: {
-          pattern: '**/*.ts',
-        },
-        session_id: 'test-session',
-        transcript_path: '/test/path',
-        cwd: '/test/cwd',
-        tool_use_id: 'test-id',
-      };
-
-      const result = await hook(input, 'test-id', { signal: mockSignal });
-
-      expect(result).toMatchObject({
-        hookSpecificOutput: {
-          hookEventName: 'PreToolUse',
-          permissionDecision: 'allow',
-          updatedInput: {
-            pattern: '**/*.ts',
-            head_limit: 1000,
-          },
-        },
-      });
-    });
-  });
-
   describe('Configuration', () => {
     it('should respect custom limits', async () => {
       const customHook = createOutputLimiterHook({
@@ -227,13 +324,10 @@ describe('OutputLimiterHook', () => {
           tailLines: 250,
         },
         read: {
-          maxChars: 25000,
+          maxLines: 500,
         },
         grep: {
           maxMatches: 250,
-        },
-        glob: {
-          maxFiles: 500,
         },
         excludeTools: [],
       });
@@ -264,6 +358,26 @@ describe('OutputLimiterHook', () => {
       } else {
         throw new Error('Expected hookSpecificOutput in result');
       }
+
+      const readInput: PreToolUseHookInput = {
+        hook_event_name: 'PreToolUse',
+        tool_name: 'Read',
+        tool_input: { file_path: '/test/file.txt' },
+        session_id: 'test-session',
+        transcript_path: '/test/path',
+        cwd: '/test/cwd',
+        tool_use_id: 'test-id-2',
+      };
+      const readResult = await customHook(readInput, 'test-id-2', { signal: mockSignal });
+      expect(readResult).toEqual({
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          updatedInput: {
+            file_path: '/test/file.txt',
+            limit: 500,
+          },
+        },
+      });
     });
 
     it('should skip processing when disabled', async () => {
@@ -308,13 +422,6 @@ describe('OutputLimiterHook', () => {
 
       const result = await partialHook(input, 'test-id', { signal: mockSignal });
 
-      expect(result).toMatchObject({
-        hookSpecificOutput: {
-          hookEventName: 'PreToolUse',
-          permissionDecision: 'allow',
-        },
-      });
-
       if ('hookSpecificOutput' in result && result.hookSpecificOutput) {
         const updatedInput = (
           result.hookSpecificOutput as unknown as {
@@ -328,6 +435,12 @@ describe('OutputLimiterHook', () => {
       } else {
         throw new Error('Expected hookSpecificOutput in result');
       }
+
+      expect(result).toMatchObject({
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+        },
+      });
     });
 
     it('should exclude specified tools', async () => {

@@ -20,35 +20,33 @@ interface OutputLimiterConfig {
   bash: {
     headLines: number;
     tailLines: number;
+    // Command prefixes (e.g. ['git']) that should not be wrapped, so
+    // sandbox command-level exclusions still recognise the original tool.
+    excludedCommandPrefixes: string[];
   };
   read: {
-    maxChars: number;
+    maxLines: number;
   };
   grep: {
     maxMatches: number;
-  };
-  glob: {
-    maxFiles: number;
   };
   excludeTools: string[];
 }
 
 // Input shape: every nested value may be partial because global settings
 // can be updated one field at a time (e.g. only bash.headLines).
-interface OutputLimiterConfigInput {
+export interface OutputLimiterConfigInput {
   enabled?: boolean;
   bash?: {
     headLines?: number;
     tailLines?: number;
+    excludedCommandPrefixes?: string[];
   };
   read?: {
-    maxChars?: number;
+    maxLines?: number;
   };
   grep?: {
     maxMatches?: number;
-  };
-  glob?: {
-    maxFiles?: number;
   };
   excludeTools?: string[];
 }
@@ -58,34 +56,31 @@ const DEFAULT_CONFIG: OutputLimiterConfig = {
   bash: {
     headLines: 100,
     tailLines: 200,
+    excludedCommandPrefixes: [],
   },
   read: {
-    maxChars: 50000,
+    maxLines: 1000,
   },
   grep: {
     maxMatches: 500,
   },
-  glob: {
-    maxFiles: 1000,
-  },
   excludeTools: [],
 };
 
-function resolveConfig(input: OutputLimiterConfigInput = {}): OutputLimiterConfig {
+export function resolveConfig(input: OutputLimiterConfigInput = {}): OutputLimiterConfig {
   return {
     enabled: input.enabled ?? DEFAULT_CONFIG.enabled,
     bash: {
       headLines: input.bash?.headLines ?? DEFAULT_CONFIG.bash.headLines,
       tailLines: input.bash?.tailLines ?? DEFAULT_CONFIG.bash.tailLines,
+      excludedCommandPrefixes:
+        input.bash?.excludedCommandPrefixes ?? DEFAULT_CONFIG.bash.excludedCommandPrefixes,
     },
     read: {
-      maxChars: input.read?.maxChars ?? DEFAULT_CONFIG.read.maxChars,
+      maxLines: input.read?.maxLines ?? DEFAULT_CONFIG.read.maxLines,
     },
     grep: {
       maxMatches: input.grep?.maxMatches ?? DEFAULT_CONFIG.grep.maxMatches,
-    },
-    glob: {
-      maxFiles: input.glob?.maxFiles ?? DEFAULT_CONFIG.glob.maxFiles,
     },
     excludeTools: input.excludeTools ?? DEFAULT_CONFIG.excludeTools,
   };
@@ -102,7 +97,7 @@ function resolveConfig(input: OutputLimiterConfigInput = {}): OutputLimiterConfi
  * ```typescript
  * const hook = createOutputLimiterHook({
  *   enabled: true,
- *   limits: { BASH_MAX_LINES: 500 }
+ *   bash: { headLines: 100, tailLines: 200 },
  * });
  *
  * const options = {
@@ -142,11 +137,12 @@ export function createOutputLimiterHook(config: OutputLimiterConfigInput = {}): 
       return {};
     }
 
-    // Return modified input with allow decision
+    // Return only the input mutation. We intentionally do NOT emit a
+    // permissionDecision here; output limiting should not grant permission
+    // on its own in restrictive permission modes.
     return {
       hookSpecificOutput: {
         hookEventName: input.hook_event_name,
-        permissionDecision: 'allow' as const,
         updatedInput: modifiedInput,
       },
     };
@@ -183,15 +179,28 @@ function limitToolInput(
         return null;
       }
 
+      // Skip commands whose primary executable is sandbox-excluded (e.g. git),
+      // so command-level sandbox exclusions still see the original command.
+      const trimmed = command.trim();
+      for (const prefix of config.bash.excludedCommandPrefixes) {
+        if (trimmed === prefix || trimmed.startsWith(`${prefix} `)) {
+          return null;
+        }
+      }
+
       const headLines = config.bash.headLines;
       const tailLines = config.bash.tailLines;
 
       // Create smart truncation command:
-      // 1. Save output to temp file
-      // 2. If output exceeds limit: show first N + truncation message + last N
-      // 3. Otherwise: show all output
-      // 4. Clean up temp file
-      const limitedCommand = `tmpfile=$(mktemp); (${command}) 2>&1 > "$tmpfile"; total_lines=$(wc -l < "$tmpfile"); if [ "$total_lines" -gt ${headLines + tailLines} ]; then head -n ${headLines} "$tmpfile"; echo ""; echo "... [Truncated $(($total_lines - ${headLines + tailLines})) lines - showing first ${headLines} and last ${tailLines} lines] ..."; echo ""; tail -n ${tailLines} "$tmpfile"; else cat "$tmpfile"; fi; rm -f "$tmpfile"`;
+      // 1. Save stdout AND stderr to temp file, preserving the original exit status.
+      // 2. If output exceeds limit: show first N + truncation message + last N.
+      // 3. Otherwise: show all output.
+      // 4. Clean up temp file and exit with the original status.
+      //
+      // A newline is inserted before the closing `)` of the subshell so that
+      // commands whose last line is a heredoc delimiter (e.g. `cat <<'EOF' … EOF`)
+      // keep their delimiter on its own line and are parsed correctly.
+      const limitedCommand = `tmpfile=$(mktemp); (\n${command}\n) > "$tmpfile" 2>&1; exit_code=$?; total_lines=$(wc -l < "$tmpfile"); if [ "$total_lines" -gt ${headLines + tailLines} ]; then head -n ${headLines} "$tmpfile"; echo ""; echo "... [Truncated $(($total_lines - ${headLines + tailLines})) lines - showing first ${headLines} and last ${tailLines} lines] ..."; echo ""; tail -n ${tailLines} "$tmpfile"; else cat "$tmpfile"; fi; rm -f "$tmpfile"; exit $exit_code`;
 
       return {
         ...input,
@@ -206,12 +215,11 @@ function limitToolInput(
         return null; // Already has limit
       }
 
-      const maxChars = config.read.maxChars;
+      const maxLines = config.read.maxLines;
 
       return {
         ...input,
-        // Convert char limit to line limit (assume ~50 chars per line)
-        limit: Math.floor(maxChars / 50),
+        limit: maxLines,
       };
     }
 
@@ -226,22 +234,6 @@ function limitToolInput(
       return {
         ...input,
         head_limit: maxMatches,
-      };
-    }
-
-    case 'Glob': {
-      // Glob can return huge lists of files
-      // Add a reasonable limit if not present
-      const head_limit = input.head_limit as number | undefined;
-      if (typeof head_limit === 'number') {
-        return null;
-      }
-
-      const maxFiles = config.glob.maxFiles;
-
-      return {
-        ...input,
-        head_limit: maxFiles,
       };
     }
 

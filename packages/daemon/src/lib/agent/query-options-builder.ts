@@ -63,7 +63,7 @@ import {
 } from './builtin-skill-plugin-wrapper';
 import { getCoordinatorAgents } from './coordinator-agents';
 import { createLoopDetectorHooks } from './loop-detector-hook';
-import { createOutputLimiterHook } from './output-limiter-hook';
+import { createOutputLimiterHook, resolveConfig } from './output-limiter-hook';
 import { isRunningUnderBun, resolveSDKCliPath } from './sdk-cli-resolver.js';
 
 /**
@@ -1178,13 +1178,16 @@ CRITICAL RULES:
    * filters internally on `DEFAULT_LOOP_DETECTOR_CONFIG.thresholds` and the
    * Bash sub-config.
    *
-   * The output-limiter hook is added next when enabled in global settings;
-   * it mutates tool inputs (Bash/Read/Grep/Glob) to cap output size before
-   * the tool runs, preventing a single large output from overflowing the
-   * model context window.
+   * Workflow tool guards (declarative deny/allow rules) run next so they
+   * evaluate the original tool input, before the output-limiter hook mutates
+   * Bash commands into a truncation wrapper.
    *
-   * Tool guards from the workflow definition are appended on top of the
-   * PreToolUse chain.
+   * The output-limiter hook is added last in the PreToolUse chain when
+   * enabled in global settings. It mutates Bash/Read/Grep inputs to cap
+   * output size before the tool runs, preventing a single large output from
+   * overflowing the model context window. It only mutates input and does
+   * not emit a permission decision, so it cannot bypass restrictive
+   * permission modes.
    */
   private buildHooks(): Options['hooks'] {
     const hooks: NonNullable<Options['hooks']> = {};
@@ -1210,19 +1213,9 @@ CRITICAL RULES:
       hooks: [loopDetectorHooks.preToolUse],
     });
 
-    // Output limiter: cap the size of Bash/Read/Grep/Glob outputs before
-    // the tool runs. Loaded from global settings; only installed when
-    // explicitly enabled so existing sessions without the setting stay
-    // unchanged. The hook itself is a no-op for non-limited tools and for
-    // inputs that already specify limits.
-    const outputLimiterSettings = this.ctx.settingsManager.getGlobalSettings().outputLimiter;
-    if (outputLimiterSettings?.enabled) {
-      preToolUse.push({
-        hooks: [createOutputLimiterHook(outputLimiterSettings)],
-      });
-    }
-
-    // Workflow tool guards (declarative deny/allow rules) layered on top.
+    // Workflow tool guards (declarative deny/allow rules). These run
+    // before the output-limiter mutation so regexes match the original
+    // command shape (e.g. `^rm\s+-rf`).
     const guards = this.ctx.toolGuards;
     if (guards?.length) {
       // Group guards by matcher (tool name) to create one matcher entry per tool.
@@ -1240,6 +1233,33 @@ CRITICAL RULES:
         preToolUse.push({
           matcher,
           hooks: matcherGuards.map(compileToolGuard),
+        });
+      }
+    }
+
+    // Output limiter: cap the size of Bash/Read/Grep outputs before the
+    // tool runs. Loaded from global settings; defaults to enabled when
+    // settings include outputLimiter (matching DEFAULT_GLOBAL_SETTINGS), and
+    // stays off when settings omit the key entirely. The hook only mutates
+    // input and does not emit a permission decision.
+    const globalSettings = this.ctx.settingsManager.getGlobalSettings();
+    const outputLimiterSettings = globalSettings.outputLimiter;
+    if (outputLimiterSettings) {
+      const resolvedOutputLimiter = resolveConfig(outputLimiterSettings);
+      if (resolvedOutputLimiter.enabled) {
+        const sessionSandbox = this.ctx.session.config.sandbox;
+        const excludedCommandPrefixes =
+          sessionSandbox?.excludedCommands ?? globalSettings.sandbox?.excludedCommands;
+        preToolUse.push({
+          hooks: [
+            createOutputLimiterHook({
+              ...outputLimiterSettings,
+              bash: {
+                ...outputLimiterSettings.bash,
+                excludedCommandPrefixes,
+              },
+            }),
+          ],
         });
       }
     }
