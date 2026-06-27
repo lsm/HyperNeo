@@ -3,7 +3,7 @@
   "mocks": [
     {
       "request": {
-        "url": "https://api.anthropic.com/v1/messages",
+        "url": "*/v1/messages*",
         "method": "POST",
         "bodyFragment": "trigger rate limit"
       },
@@ -46,7 +46,7 @@
     },
     {
       "request": {
-        "url": "https://api.anthropic.com/v1/messages",
+        "url": "*/v1/messages*",
         "method": "POST",
         "bodyFragment": "trigger server error"
       },
@@ -73,7 +73,7 @@
     },
     {
       "request": {
-        "url": "https://api.anthropic.com/v1/messages",
+        "url": "*/v1/messages*",
         "method": "POST",
         "bodyFragment": "trigger overloaded error"
       },
@@ -104,7 +104,7 @@
     },
     {
       "request": {
-        "url": "https://api.anthropic.com/v1/messages",
+        "url": "*/v1/messages*",
         "method": "POST",
         "bodyFragment": "trigger invalid request"
       },
@@ -131,7 +131,7 @@
     },
     {
       "request": {
-        "url": "https://api.anthropic.com/v1/messages",
+        "url": "*/v1/messages*",
         "method": "POST",
         "bodyFragment": "trigger authentication error"
       },
@@ -158,7 +158,7 @@
     },
     {
       "request": {
-        "url": "https://api.anthropic.com/v1/messages",
+        "url": "*/v1/messages*",
         "method": "POST",
         "bodyFragment": "trigger permission error"
       },
@@ -185,7 +185,7 @@
     },
     {
       "request": {
-        "url": "https://api.anthropic.com/v1/messages",
+        "url": "*/v1/messages*",
         "method": "POST",
         "bodyFragment": "trigger not found error"
       },
@@ -212,7 +212,7 @@
     },
     {
       "request": {
-        "url": "https://api.anthropic.com/v1/messages",
+        "url": "*/v1/messages*",
         "method": "POST",
         "bodyFragment": "trigger context length error"
       },
@@ -239,7 +239,7 @@
     },
     {
       "request": {
-        "url": "https://api.anthropic.com/v1/messages",
+        "url": "*/v1/messages*",
         "method": "POST",
         "bodyFragment": "trigger tool error"
       },
@@ -280,7 +280,7 @@
     },
     {
       "request": {
-        "url": "https://api.anthropic.com/v1/messages",
+        "url": "*/v1/messages*",
         "method": "POST",
         "bodyFragment": "trigger max turns error"
       },

@@ -437,7 +437,7 @@ export class ProviderService {
       if (provider.id === 'anthropic' && process.env.NEOKAI_USE_DEV_PROXY === '1') {
         sdkConfig.envVars = {
           ...sdkConfig.envVars,
-          ANTHROPIC_BASE_URL: process.env.ANTHROPIC_BASE_URL || 'http://127.0.0.1:8000',
+          ANTHROPIC_BASE_URL: 'http://127.0.0.1:8000',
         };
       }
       return sdkConfigToEnvVars(sdkConfig);
@@ -483,7 +483,7 @@ export class ProviderService {
       if (provider.id === 'anthropic' && process.env.NEOKAI_USE_DEV_PROXY === '1') {
         sdkConfig.envVars = {
           ...sdkConfig.envVars,
-          ANTHROPIC_BASE_URL: process.env.ANTHROPIC_BASE_URL || 'http://127.0.0.1:8000',
+          ANTHROPIC_BASE_URL: 'http://127.0.0.1:8000',
         };
       }
       return sdkConfigToEnvVars(sdkConfig);
