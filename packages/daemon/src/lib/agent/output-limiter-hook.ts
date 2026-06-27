@@ -204,11 +204,11 @@ function limitToolInput(
         return null;
       }
 
-      // Skip shell-backgrounded commands (any `&` that's not part of `&&`).
-      // These run asynchronously and the wrapper would cat/remove the temp
-      // file before the background process finishes writing to it. Covers
-      // `cmd &`, `cmd & cleanup`, and `nohup cmd &`.
-      if (command.replace(/&&/g, '').includes('&')) {
+      // Skip shell-backgrounded commands (any `&` that's not part of `&&`,
+      // `>&`, `<&`, or `&>`). These run asynchronously and the wrapper would
+      // cat/remove the temp file before the background process finishes.
+      // Excludes fd redirects like `2>&1` and combined redirects like `&>`.
+      if (command.replace(/&&|>&|<&|&>/g, '').includes('&')) {
         return null;
       }
 
