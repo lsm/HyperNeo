@@ -5593,6 +5593,122 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(eventStore.listDeliveries(earlier.id)[0]!.state).toBe('failed');
     expect(eventStore.listDeliveries(later.id)[0]!.state).toBe('delivered');
   });
+
+  test('rebuilds blocked-run PR subscriptions on resume before terminalizing pending deliveries', async () => {
+    const { run, task } = await startRunWithSubscription();
+    workflowRunRepo.updateRun(run.id, { status: 'blocked', failureReason: 'manual block' });
+    artifactRepo.upsert({
+      id: 'art-resume-subscription',
+      runId: run.id,
+      nodeId: 'code',
+      artifactType: 'pr_url',
+      artifactKey: 'pr_url',
+      data: { prUrl: 'https://github.com/lsm/neokai/pull/99' },
+    });
+
+    // Establish the auto-subscription and create a pending PR delivery.
+    runtime.notifyRunBlocked(run.id);
+    const prTopic = 'github/lsm/neokai/pull_request/99.review_submitted';
+    const event = makeEvent({ id: 'evt-resume-subscription-rebuild', topic: prTopic });
+    await eventService.publish(event);
+    expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
+
+    // Simulate startup skipping the paused space: drop the auto-subscription
+    // from the trie without failing queued deliveries. Use the trie directly
+    // (not lookupSubscriptionTargets) because the latter also matches the
+    // legacy four-segment topic form and would still find the dynamic
+    // subscription registered by startRunWithSubscription.
+    const trie = (
+      runtime as unknown as {
+        topicTrie: {
+          remove: (predicate: (target: unknown) => boolean) => void;
+          lookup: (topic: string) => unknown[];
+        };
+      }
+    ).topicTrie;
+    trie.remove((target) => {
+      const t = target as { workflowRunId?: string; subscriptionKind?: string };
+      return t.workflowRunId === run.id && t.subscriptionKind === 'auto';
+    });
+    expect(
+      trie
+        .lookup(prTopic)
+        .filter((target) => (target as { subscriptionKind?: string }).subscriptionKind === 'auto')
+    ).toHaveLength(0);
+
+    // Resume the space. onSpaceResumed must rebuild the PR subscription before
+    // the subscription check, so the pending delivery is not terminalized.
+    runtime.onSpaceResumed(SPACE_ID);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(runtime.lookupSubscriptionTargets(prTopic).length).toBeGreaterThan(0);
+    const delivery = eventStore.listDeliveries(event.id)[0]!;
+    expect(delivery.state).not.toBe('failed');
+    expect(delivery.failureReason).not.toBe('subscription_no_longer_active');
+  });
+
+  test('preserves event age when requeueing activation retries for pending executions', async () => {
+    const { run, task } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'pending',
+      agentSessionId: null,
+      completedAt: null,
+    });
+
+    const event = makeEvent({ id: 'evt-pending-activation-age' });
+    await eventService.publish(event);
+    expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
+
+    // Backdate the event past the TTL window. The pending-execution queueing
+    // must carry the original createdAt so the activation retry TTL check
+    // expires the stale event instead of redispatching it after spawn.
+    db.prepare(`UPDATE space_external_events SET created_at = ? WHERE id = ?`).run(
+      Date.now() - 301_000,
+      event.id
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 1_200));
+    const delivery = eventStore.listDeliveries(event.id)[0]!;
+    expect(delivery.state).toBe('failed');
+    expect(delivery.failureReason).toBe('ttl_expired');
+    expect(eventStore.getById(event.id)?.state).toBe('failed');
+  });
+
+  test('preserves deferred mode when activation retry reaches a live session', async () => {
+    const { run, task } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'idle',
+      agentSessionId: null,
+      completedAt: Date.now(),
+    });
+    tam.activationResult = [];
+
+    const event = makeEvent({ id: 'evt-activation-defer-mode' });
+    await eventService.publish(event);
+    const delivery = eventStore.listDeliveries(event.id)[0]!;
+    expect(delivery.state).toBe('pending');
+
+    // Simulate a rehydrated/sessionless retry whose pending row encoded defer mode.
+    eventStore.markDeliveryFailed(event.id, delivery.deliveryKey, {
+      terminal: false,
+      reason: 'deliveryMode:defer; digest pending during session loss',
+    });
+
+    // Now make the session live and trigger the activation retry.
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-activation-defer',
+    });
+    tam.alive.add('session-activation-defer');
+
+    await new Promise((resolve) => setTimeout(resolve, 1_200));
+    expect(injected).toHaveLength(1);
+    expect(injected[0]!.sessionId).toBe('session-activation-defer');
+    expect(injected[0]!.deliveryMode).toBe('defer');
+    expect(eventStore.getById(event.id)?.state).toBe('delivered');
+  });
 });
 
 describe('SpaceRuntime event-driven gate evaluation', () => {

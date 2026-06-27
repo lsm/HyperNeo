@@ -1980,7 +1980,7 @@ export class SpaceRuntime {
         await this.flushPendingNodeQueueAsync(resolved, deliveryKey, {
           event: payload,
           deliveryKey,
-          deliveryMode: 'immediate',
+          deliveryMode: this.resolveIncludeCurrentDeliveryMode(resolved, payload, deliveryKey),
           createdAt: eventRecord?.createdAt ?? Date.now(),
         });
       } else if (resolved.sessionId) {
@@ -1992,7 +1992,14 @@ export class SpaceRuntime {
           createdAt: eventRecord?.createdAt ?? Date.now(),
         });
       } else if (this.isPending(resolved)) {
-        this.queueForPendingNode(resolved, payload, deliveryKey);
+        const eventRecord = store.getById(payload.eventId);
+        this.queueForPendingNode(
+          resolved,
+          payload,
+          deliveryKey,
+          'immediate',
+          eventRecord?.createdAt ?? Date.now()
+        );
         // The execution is already pending (e.g. activateNode reset it or a
         // background spawn is still running). Keep a retry alive so the event
         // is delivered as soon as the spawn completes, without burning the
@@ -2007,7 +2014,14 @@ export class SpaceRuntime {
           activatedTarget = await this.activateSubscribedTargetForExternalEvent(resolved);
         } catch (err) {
           const failureReason = err instanceof Error ? err.message : String(err);
-          this.queueForPendingNode(resolved, payload, deliveryKey);
+          const eventRecord = store.getById(payload.eventId);
+          this.queueForPendingNode(
+            resolved,
+            payload,
+            deliveryKey,
+            'immediate',
+            eventRecord?.createdAt ?? Date.now()
+          );
           this.scheduleActivationRetry(
             resolved,
             payload,
@@ -2021,7 +2035,11 @@ export class SpaceRuntime {
           await this.flushPendingNodeQueueAsync(activatedTarget, deliveryKey, {
             event: payload,
             deliveryKey,
-            deliveryMode: 'immediate',
+            deliveryMode: this.resolveIncludeCurrentDeliveryMode(
+              activatedTarget,
+              payload,
+              deliveryKey
+            ),
             createdAt: eventRecord?.createdAt ?? Date.now(),
           });
         } else if (activatedTarget?.sessionId) {
@@ -2589,14 +2607,22 @@ export class SpaceRuntime {
         this.clearExternalEventRetry(deliveryKey);
         return;
       }
+      const eventRecord = this.config.externalEventStore?.getById(event.eventId);
       const queuedItem = this.getQueuedDelivery(target, deliveryKey) ?? {
         event,
         deliveryKey,
         deliveryMode: 'immediate',
-        createdAt: this.config.externalEventStore?.getById(event.eventId)?.createdAt ?? Date.now(),
+        createdAt: eventRecord?.createdAt ?? Date.now(),
       };
-      if (this.isQueuedExternalEventExpired(queuedItem)) {
-        this.failQueuedDeliveryForTtl(queuedItem, this.buildQueueKey(target));
+      // The event record is the authoritative TTL anchor; a queued item created
+      // before the event was backdated (or with a stale clock) must still expire
+      // when the underlying event is older than the TTL window.
+      const ttlAnchor = eventRecord?.createdAt ?? queuedItem.createdAt;
+      if (this.isQueuedExternalEventExpired({ ...queuedItem, createdAt: ttlAnchor })) {
+        this.failQueuedDeliveryForTtl(
+          { ...queuedItem, createdAt: ttlAnchor },
+          this.buildQueueKey(target)
+        );
         return;
       }
       // Re-check run deliverability before dispatching — activation retries
@@ -2677,15 +2703,22 @@ export class SpaceRuntime {
         });
         return;
       }
+      const eventRecord = this.config.externalEventStore?.getById(event.eventId);
       const queued = this.getQueuedDelivery(target, deliveryKey);
       const queuedItem = queued ?? {
         event,
         deliveryKey,
         deliveryMode,
-        createdAt: options.createdAt ?? Date.now(),
+        createdAt: eventRecord?.createdAt ?? options.createdAt ?? Date.now(),
       };
-      if (this.isQueuedExternalEventExpired(queuedItem)) {
-        this.failQueuedDeliveryForTtl(queuedItem, this.buildQueueKey(target));
+      // The event record is the authoritative TTL anchor; prefer it over an
+      // in-memory queued item that may carry a stale queue-time timestamp.
+      const ttlAnchor = eventRecord?.createdAt ?? queuedItem.createdAt;
+      if (this.isQueuedExternalEventExpired({ ...queuedItem, createdAt: ttlAnchor })) {
+        this.failQueuedDeliveryForTtl(
+          { ...queuedItem, createdAt: ttlAnchor },
+          this.buildQueueKey(target)
+        );
         return;
       }
       // Re-check run deliverability before dispatching — the run may have
@@ -2744,6 +2777,25 @@ export class SpaceRuntime {
     return this.pendingExternalEventQueue
       .get(this.buildQueueKey(target))
       ?.find((item) => item.deliveryKey === deliveryKey);
+  }
+
+  /**
+   * Recover the delivery mode for the current event/deliveryKey when it is
+   * being included in an ordered pending-node drain. The in-memory queued item
+   * is authoritative; otherwise recover from the persisted delivery's failure
+   * reason; default to immediate for fresh deliveries.
+   */
+  private resolveIncludeCurrentDeliveryMode(
+    target: Pick<WorkflowSubscriptionTarget, 'workflowRunId' | 'taskId' | 'nodeId' | 'agentName'>,
+    event: ExternalEventPublishedPayload,
+    deliveryKey: string
+  ): 'immediate' | 'defer' {
+    const queued = this.getQueuedDelivery(target, deliveryKey);
+    if (queued) return queued.deliveryMode;
+    const store = this.config.externalEventStore;
+    if (!store) return 'immediate';
+    const delivery = store.getDelivery(event.eventId, deliveryKey);
+    return deliveryModeFromFailureReason(delivery?.failureReason);
   }
 
   private clearQueuedDelivery(target: WorkflowSubscriptionTarget, deliveryKey: string): void {
@@ -4697,6 +4749,24 @@ export class SpaceRuntime {
   onSpaceResumed(spaceId: string): void {
     const store = this.config.externalEventStore;
     if (!store) return;
+
+    // Rebuild PR auto-subscriptions for blocked runs in this space before
+    // evaluating pending deliveries. The startup rehydrate skips paused spaces,
+    // so a resumed space's blocked runs may have no trie entry yet; without
+    // rebuilding first, valid pending PR deliveries would be incorrectly
+    // terminalized as subscription_no_longer_active.
+    const blockedRuns = this.config.workflowRunRepo
+      .listBySpace(spaceId)
+      .filter((run) => run.status === 'blocked');
+    for (const run of blockedRuns) {
+      try {
+        this.notifyRunBlocked(run.id);
+      } catch (err) {
+        log.warn(
+          `SpaceRuntime: failed to rebuild PR subscription for blocked run ${run.id} on resume: ${formatCommandError(err)}`
+        );
+      }
+    }
 
     for (const delivery of store.listPendingDeliveries()) {
       const task = this.config.taskRepo.getTask(delivery.taskId);
