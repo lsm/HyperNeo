@@ -58,7 +58,10 @@ describe('QueryOptionsBuilder', () => {
     };
 
     mockSettingsManager = {
-      getGlobalSettings: mock(() => ({ settingSources: ['user', 'project', 'local'] })),
+      getGlobalSettings: mock(() => ({
+        settingSources: ['user', 'project', 'local'],
+        outputLimiter: { enabled: false },
+      })),
       prepareSDKOptions: mock(async () => ({})),
     } as unknown as SettingsManager;
 
@@ -1034,6 +1037,244 @@ describe('QueryOptionsBuilder', () => {
       // lives inside the hook itself.
       expect(options.hooks?.PreToolUse?.[0]?.matcher).toBeUndefined();
       expect(options.hooks?.PreToolUse?.[0]?.hooks).toHaveLength(1);
+    });
+
+    it('should install the output-limiter hook when enabled in global settings', async () => {
+      mockSettingsManager.getGlobalSettings = mock(() => ({
+        settingSources: ['user', 'project', 'local'],
+        outputLimiter: {
+          enabled: true,
+          bash: { headLines: 100, tailLines: 200 },
+          read: { maxChars: 50000 },
+          grep: { maxMatches: 500 },
+          glob: { maxFiles: 1000 },
+          excludeTools: [],
+        },
+      }));
+
+      const options = await new QueryOptionsBuilder(mockContext).build();
+
+      expect(options.hooks?.PreToolUse).toHaveLength(2);
+      expect(options.hooks?.PreToolUse?.[0]?.matcher).toBeUndefined();
+      // Output limiter is installed as the second no-matcher entry so it
+      // sees the original tool input and can mutate it before guards run.
+      expect(options.hooks?.PreToolUse?.[1]?.matcher).toBeUndefined();
+      expect(options.hooks?.PreToolUse?.[1]?.hooks).toHaveLength(1);
+    });
+
+    it('should not install the output-limiter hook when disabled in global settings', async () => {
+      mockSettingsManager.getGlobalSettings = mock(() => ({
+        settingSources: ['user', 'project', 'local'],
+        outputLimiter: { enabled: false },
+      }));
+
+      const options = await new QueryOptionsBuilder(mockContext).build();
+
+      expect(options.hooks?.PreToolUse).toHaveLength(1);
+      expect(options.hooks?.PreToolUse?.[0]?.hooks).toHaveLength(1);
+    });
+
+    it('should apply output limits to Bash commands via the built hook', async () => {
+      mockSettingsManager.getGlobalSettings = mock(() => ({
+        settingSources: ['user', 'project', 'local'],
+        outputLimiter: {
+          enabled: true,
+          bash: { headLines: 100, tailLines: 200 },
+          read: { maxChars: 50000 },
+          grep: { maxMatches: 500 },
+          glob: { maxFiles: 1000 },
+          excludeTools: [],
+        },
+      }));
+
+      const options = await new QueryOptionsBuilder(mockContext).build();
+      const outputLimiterEntry = options.hooks?.PreToolUse?.[1];
+      const hook = outputLimiterEntry?.hooks[0];
+      expect(hook).toBeDefined();
+
+      const result = await hook!(
+        {
+          hook_event_name: 'PreToolUse',
+          tool_name: 'Bash',
+          tool_input: { command: 'git diff HEAD~1', description: 'Show diff' },
+          tool_use_id: 'tool-1',
+          session_id: 'session-1',
+          transcript_path: '/tmp/transcript.jsonl',
+          cwd: '/tmp/repo',
+        },
+        'tool-1',
+        { signal: new AbortController().signal }
+      );
+
+      expect(result).toMatchObject({
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          permissionDecision: 'allow',
+        },
+      });
+      const updatedInput = (
+        result as {
+          hookSpecificOutput: { updatedInput: Record<string, unknown> };
+        }
+      ).hookSpecificOutput.updatedInput;
+      expect(updatedInput.command).toContain('tmpfile=$(mktemp)');
+      expect(updatedInput.command).toContain('head -n 100');
+      expect(updatedInput.command).toContain('tail -n 200');
+    });
+
+    it('should apply output limits to Read inputs via the built hook', async () => {
+      mockSettingsManager.getGlobalSettings = mock(() => ({
+        settingSources: ['user', 'project', 'local'],
+        outputLimiter: {
+          enabled: true,
+          bash: { headLines: 100, tailLines: 200 },
+          read: { maxChars: 25000 },
+          grep: { maxMatches: 500 },
+          glob: { maxFiles: 1000 },
+          excludeTools: [],
+        },
+      }));
+
+      const options = await new QueryOptionsBuilder(mockContext).build();
+      const outputLimiterEntry = options.hooks?.PreToolUse?.[1];
+      const hook = outputLimiterEntry?.hooks[0];
+      expect(hook).toBeDefined();
+
+      const result = await hook!(
+        {
+          hook_event_name: 'PreToolUse',
+          tool_name: 'Read',
+          tool_input: { file_path: '/tmp/large-file.ts' },
+          tool_use_id: 'tool-1',
+          session_id: 'session-1',
+          transcript_path: '/tmp/transcript.jsonl',
+          cwd: '/tmp/repo',
+        },
+        'tool-1',
+        { signal: new AbortController().signal }
+      );
+
+      expect(result).toEqual({
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          permissionDecision: 'allow',
+          updatedInput: {
+            file_path: '/tmp/large-file.ts',
+            limit: 500, // 25000 chars / 50 chars per line
+          },
+        },
+      });
+    });
+
+    it('should apply output limits to Grep and Glob inputs via the built hook', async () => {
+      mockSettingsManager.getGlobalSettings = mock(() => ({
+        settingSources: ['user', 'project', 'local'],
+        outputLimiter: {
+          enabled: true,
+          bash: { headLines: 100, tailLines: 200 },
+          read: { maxChars: 50000 },
+          grep: { maxMatches: 250 },
+          glob: { maxFiles: 500 },
+          excludeTools: [],
+        },
+      }));
+
+      const options = await new QueryOptionsBuilder(mockContext).build();
+      const outputLimiterEntry = options.hooks?.PreToolUse?.[1];
+      const hook = outputLimiterEntry?.hooks[0];
+      expect(hook).toBeDefined();
+
+      const grepResult = await hook!(
+        {
+          hook_event_name: 'PreToolUse',
+          tool_name: 'Grep',
+          tool_input: { pattern: 'TODO', path: '/tmp/repo' },
+          tool_use_id: 'tool-1',
+          session_id: 'session-1',
+          transcript_path: '/tmp/transcript.jsonl',
+          cwd: '/tmp/repo',
+        },
+        'tool-1',
+        { signal: new AbortController().signal }
+      );
+
+      expect(grepResult).toEqual({
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          permissionDecision: 'allow',
+          updatedInput: {
+            pattern: 'TODO',
+            path: '/tmp/repo',
+            head_limit: 250,
+          },
+        },
+      });
+
+      const globResult = await hook!(
+        {
+          hook_event_name: 'PreToolUse',
+          tool_name: 'Glob',
+          tool_input: { pattern: '**/*.ts' },
+          tool_use_id: 'tool-2',
+          session_id: 'session-1',
+          transcript_path: '/tmp/transcript.jsonl',
+          cwd: '/tmp/repo',
+        },
+        'tool-2',
+        { signal: new AbortController().signal }
+      );
+
+      expect(globResult).toEqual({
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          permissionDecision: 'allow',
+          updatedInput: {
+            pattern: '**/*.ts',
+            head_limit: 500,
+          },
+        },
+      });
+    });
+
+    it('should apply custom output-limiter limits from global settings', async () => {
+      mockSettingsManager.getGlobalSettings = mock(() => ({
+        settingSources: ['user', 'project', 'local'],
+        outputLimiter: {
+          enabled: true,
+          bash: { headLines: 250, tailLines: 250 },
+          read: { maxChars: 10000 },
+          grep: { maxMatches: 100 },
+          glob: { maxFiles: 250 },
+          excludeTools: [],
+        },
+      }));
+
+      const options = await new QueryOptionsBuilder(mockContext).build();
+      const outputLimiterEntry = options.hooks?.PreToolUse?.[1];
+      const hook = outputLimiterEntry?.hooks[0];
+      expect(hook).toBeDefined();
+
+      const result = await hook!(
+        {
+          hook_event_name: 'PreToolUse',
+          tool_name: 'Bash',
+          tool_input: { command: 'git log --oneline', description: 'Show log' },
+          tool_use_id: 'tool-1',
+          session_id: 'session-1',
+          transcript_path: '/tmp/transcript.jsonl',
+          cwd: '/tmp/repo',
+        },
+        'tool-1',
+        { signal: new AbortController().signal }
+      );
+
+      const updatedInput = (
+        result as {
+          hookSpecificOutput: { updatedInput: Record<string, unknown> };
+        }
+      ).hookSpecificOutput.updatedInput;
+      expect(updatedInput.command).toContain('head -n 250');
+      expect(updatedInput.command).toContain('tail -n 250');
     });
 
     it('installs paired PostToolUse and PostToolUseFailure observers for the Bash dead-loop detector', async () => {

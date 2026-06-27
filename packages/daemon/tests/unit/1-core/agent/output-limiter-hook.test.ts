@@ -288,6 +288,48 @@ describe('OutputLimiterHook', () => {
       expect(result).toEqual({});
     });
 
+    it('should deep-merge partial config with defaults', async () => {
+      const partialHook = createOutputLimiterHook({
+        enabled: true,
+        bash: { headLines: 50 },
+      });
+
+      const input: PreToolUseHookInput = {
+        hook_event_name: 'PreToolUse',
+        tool_name: 'Bash',
+        tool_input: {
+          command: 'git log --oneline',
+        },
+        session_id: 'test-session',
+        transcript_path: '/test/path',
+        cwd: '/test/cwd',
+        tool_use_id: 'test-id',
+      };
+
+      const result = await partialHook(input, 'test-id', { signal: mockSignal });
+
+      expect(result).toMatchObject({
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          permissionDecision: 'allow',
+        },
+      });
+
+      if ('hookSpecificOutput' in result && result.hookSpecificOutput) {
+        const updatedInput = (
+          result.hookSpecificOutput as unknown as {
+            updatedInput: Record<string, unknown>;
+          }
+        ).updatedInput;
+        // custom headLines wins
+        expect(updatedInput.command).toContain('head -n 50');
+        // tailLines falls back to default
+        expect(updatedInput.command).toContain('tail -n 200');
+      } else {
+        throw new Error('Expected hookSpecificOutput in result');
+      }
+    });
+
     it('should exclude specified tools', async () => {
       const excludeHook = createOutputLimiterHook({
         enabled: true,

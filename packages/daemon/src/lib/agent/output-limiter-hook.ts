@@ -14,7 +14,7 @@
 import type { HookCallback, PreToolUseHookInput } from '@anthropic-ai/claude-agent-sdk';
 import { Logger } from '../logger';
 
-// Output limiter configuration
+// Output limiter configuration (resolved values used internally)
 interface OutputLimiterConfig {
   enabled: boolean;
   bash: {
@@ -31,6 +31,26 @@ interface OutputLimiterConfig {
     maxFiles: number;
   };
   excludeTools: string[];
+}
+
+// Input shape: every nested value may be partial because global settings
+// can be updated one field at a time (e.g. only bash.headLines).
+interface OutputLimiterConfigInput {
+  enabled?: boolean;
+  bash?: {
+    headLines?: number;
+    tailLines?: number;
+  };
+  read?: {
+    maxChars?: number;
+  };
+  grep?: {
+    maxMatches?: number;
+  };
+  glob?: {
+    maxFiles?: number;
+  };
+  excludeTools?: string[];
 }
 
 const DEFAULT_CONFIG: OutputLimiterConfig = {
@@ -50,6 +70,26 @@ const DEFAULT_CONFIG: OutputLimiterConfig = {
   },
   excludeTools: [],
 };
+
+function resolveConfig(input: OutputLimiterConfigInput = {}): OutputLimiterConfig {
+  return {
+    enabled: input.enabled ?? DEFAULT_CONFIG.enabled,
+    bash: {
+      headLines: input.bash?.headLines ?? DEFAULT_CONFIG.bash.headLines,
+      tailLines: input.bash?.tailLines ?? DEFAULT_CONFIG.bash.tailLines,
+    },
+    read: {
+      maxChars: input.read?.maxChars ?? DEFAULT_CONFIG.read.maxChars,
+    },
+    grep: {
+      maxMatches: input.grep?.maxMatches ?? DEFAULT_CONFIG.grep.maxMatches,
+    },
+    glob: {
+      maxFiles: input.glob?.maxFiles ?? DEFAULT_CONFIG.glob.maxFiles,
+    },
+    excludeTools: input.excludeTools ?? DEFAULT_CONFIG.excludeTools,
+  };
+}
 
 /**
  * Creates a PreToolUse hook that injects output limiting parameters
@@ -72,8 +112,8 @@ const DEFAULT_CONFIG: OutputLimiterConfig = {
  * };
  * ```
  */
-export function createOutputLimiterHook(config: Partial<OutputLimiterConfig> = {}): HookCallback {
-  const finalConfig = { ...DEFAULT_CONFIG, ...config };
+export function createOutputLimiterHook(config: OutputLimiterConfigInput = {}): HookCallback {
+  const finalConfig = resolveConfig(config);
   const logger = new Logger('OutputLimiterHook');
 
   return async (input, _toolUseID, { signal: _signal }) => {

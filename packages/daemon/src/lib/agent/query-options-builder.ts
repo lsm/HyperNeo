@@ -63,6 +63,7 @@ import {
 } from './builtin-skill-plugin-wrapper';
 import { getCoordinatorAgents } from './coordinator-agents';
 import { createLoopDetectorHooks } from './loop-detector-hook';
+import { createOutputLimiterHook } from './output-limiter-hook';
 import { isRunningUnderBun, resolveSDKCliPath } from './sdk-cli-resolver.js';
 
 /**
@@ -1175,8 +1176,15 @@ CRITICAL RULES:
    * The PostToolUse + PostToolUseFailure hooks observe Bash outcomes for
    * the failure-aware Bash dead-loop detector. The PreToolUse hook itself
    * filters internally on `DEFAULT_LOOP_DETECTOR_CONFIG.thresholds` and the
-   * Bash sub-config. Tool guards from the workflow definition are appended
-   * on top of the PreToolUse chain.
+   * Bash sub-config.
+   *
+   * The output-limiter hook is added next when enabled in global settings;
+   * it mutates tool inputs (Bash/Read/Grep/Glob) to cap output size before
+   * the tool runs, preventing a single large output from overflowing the
+   * model context window.
+   *
+   * Tool guards from the workflow definition are appended on top of the
+   * PreToolUse chain.
    */
   private buildHooks(): Options['hooks'] {
     const hooks: NonNullable<Options['hooks']> = {};
@@ -1201,6 +1209,18 @@ CRITICAL RULES:
     preToolUse.push({
       hooks: [loopDetectorHooks.preToolUse],
     });
+
+    // Output limiter: cap the size of Bash/Read/Grep/Glob outputs before
+    // the tool runs. Loaded from global settings; only installed when
+    // explicitly enabled so existing sessions without the setting stay
+    // unchanged. The hook itself is a no-op for non-limited tools and for
+    // inputs that already specify limits.
+    const outputLimiterSettings = this.ctx.settingsManager.getGlobalSettings().outputLimiter;
+    if (outputLimiterSettings?.enabled) {
+      preToolUse.push({
+        hooks: [createOutputLimiterHook(outputLimiterSettings)],
+      });
+    }
 
     // Workflow tool guards (declarative deny/allow rules) layered on top.
     const guards = this.ctx.toolGuards;
