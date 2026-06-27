@@ -246,15 +246,17 @@ function limitToolInput(
       // 3. Otherwise: show all output.
       // 4. Clean up temp file and exit with the original status.
       //
+      // A command group `{ ... }` is used instead of a subshell `(...)` so that
+      // side effects like `cd` persist to the SDK's shell — wrapping
+      // `cd pkg && bun test` in a subshell would leave the session cwd unchanged.
+      //
+      // A newline is inserted before the closing `}` so that commands whose
+      // last line is a heredoc delimiter (e.g. `cat <<'EOF' … EOF`) keep their
+      // delimiter on its own line and are parsed correctly.
+      //
       // Known limitation: if the SDK kills the wrapper on timeout before the
       // cat/head/tail segment runs, partial output in the temp file is lost.
-      // This is an accepted trade-off — the primary goal is preventing context
-      // overflow, not preserving timeout diagnostics.
-      //
-      // A newline is inserted before the closing `)` of the subshell so that
-      // commands whose last line is a heredoc delimiter (e.g. `cat <<'EOF' … EOF`)
-      // keep their delimiter on its own line and are parsed correctly.
-      const limitedCommand = `tmpfile=$(mktemp); (\n${command}\n) > "$tmpfile" 2>&1; exit_code=$?; total_lines=$(wc -l < "$tmpfile"); total_bytes=$(wc -c < "$tmpfile"); if [ "$total_lines" -gt ${headLines + tailLines} ] || [ "$total_bytes" -gt ${maxBytes} ]; then head -n ${headLines} "$tmpfile" | head -c ${headBytes}; echo ""; echo "... [Truncated $(($total_lines - ${headLines + tailLines})) lines / $(($total_bytes - ${maxBytes})) bytes - showing first ${headLines} and last ${tailLines} lines] ..."; echo ""; tail -n ${tailLines} "$tmpfile" | tail -c ${tailBytes}; else cat "$tmpfile"; fi; rm -f "$tmpfile"; exit $exit_code`;
+      const limitedCommand = `tmpfile=$(mktemp); {\n${command}\n} > "$tmpfile" 2>&1; exit_code=$?; total_lines=$(wc -l < "$tmpfile"); total_bytes=$(wc -c < "$tmpfile"); if [ "$total_lines" -gt ${headLines + tailLines} ] || [ "$total_bytes" -gt ${maxBytes} ]; then head -n ${headLines} "$tmpfile" | head -c ${headBytes}; echo ""; echo "... [Truncated $(($total_lines - ${headLines + tailLines})) lines / $(($total_bytes - ${maxBytes})) bytes - showing first ${headLines} and last ${tailLines} lines] ..."; echo ""; tail -n ${tailLines} "$tmpfile" | tail -c ${tailBytes}; else cat "$tmpfile"; fi; rm -f "$tmpfile"; exit $exit_code`;
 
       return {
         ...input,
@@ -264,13 +266,14 @@ function limitToolInput(
     }
 
     case 'Read': {
-      // Inject limit parameter if not present
-      if (typeof input.limit === 'number') {
-        return null; // Already has limit
-      }
-
       const maxLines = config.read.maxLines;
 
+      // If an explicit limit is already within the cap, leave it alone.
+      if (typeof input.limit === 'number' && input.limit <= maxLines) {
+        return null;
+      }
+
+      // Otherwise inject or clamp to the configured cap.
       return {
         ...input,
         limit: maxLines,
@@ -278,12 +281,12 @@ function limitToolInput(
     }
 
     case 'Grep': {
-      // Inject head_limit parameter if not present
-      if (typeof input.head_limit === 'number') {
-        return null; // Already has limit
-      }
-
       const maxMatches = config.grep.maxMatches;
+
+      // If an explicit head_limit is already within the cap, leave it alone.
+      if (typeof input.head_limit === 'number' && input.head_limit <= maxMatches) {
+        return null;
+      }
 
       return {
         ...input,

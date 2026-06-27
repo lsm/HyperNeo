@@ -362,11 +362,11 @@ describe('OutputLimiterHook', () => {
           result.hookSpecificOutput as { updatedInput: Record<string, unknown> }
         ).updatedInput;
         const cmd = updatedInput.command as string;
-        // The subshell opens with a newline after `(` and closes with a
-        // newline before `)` so a trailing `EOF` delimiter stays on its
-        // own line and is recognised by the shell.
-        expect(cmd).toContain('(\n');
-        expect(cmd).toContain('\n) > "$tmpfile"');
+        // The command group opens with a newline after `{` and closes with a
+        // newline before `}` so a trailing `EOF` delimiter stays on its own
+        // line and is recognised by the shell.
+        expect(cmd).toContain('{\n');
+        expect(cmd).toContain('\n} > "$tmpfile"');
         expect(cmd).toContain('\nEOF\n');
       } else {
         throw new Error('Expected hookSpecificOutput in result');
