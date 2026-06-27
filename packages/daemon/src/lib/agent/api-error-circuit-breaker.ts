@@ -68,7 +68,9 @@ const DEFAULT_CONFIG: CircuitBreakerConfig = {
  */
 const FATAL_ERROR_PATTERNS = [
   // Context exceeded - SDK should NOT retry this
-  /prompt is too long:\s*\d+\s*tokens?\s*>\s*\d+\s*maximum/i,
+  // Detailed form: "prompt is too long: N tokens > M maximum"
+  // Bare form:     "Prompt is too long" (e.g. Kimi)
+  /prompt is too long(?::\s*(\d+)\s*tokens?\s*>\s*(\d+)\s*maximum)?/i,
   // Invalid request that won't succeed on retry
   /invalid_request_error/i,
   // Connection errors - indicate network/API unavailability
@@ -143,12 +145,14 @@ export class ApiErrorCircuitBreaker {
       // Check for fatal error patterns
       for (const pattern of FATAL_ERROR_PATTERNS) {
         if (pattern.test(errorContent)) {
-          // Extract a normalized pattern for grouping
+          // Extract a normalized pattern for grouping. Capture the max-token
+          // context when available; fall back to a generic key for bare messages.
           const promptTooLongMatch = errorContent.match(
-            /prompt is too long:\s*(\d+)\s*tokens?\s*>\s*(\d+)\s*maximum/i
+            /prompt is too long(?::\s*(\d+)\s*tokens?\s*>\s*(\d+)\s*maximum)?/i
           );
           if (promptTooLongMatch) {
-            return `prompt_too_long:${promptTooLongMatch[2]}`; // Normalize by max tokens
+            const maxTokens = promptTooLongMatch[2];
+            return maxTokens ? `prompt_too_long:${maxTokens}` : 'prompt_too_long';
           }
 
           // Connection error
@@ -372,9 +376,12 @@ export class ApiErrorCircuitBreaker {
 - Consider starting a new session if the problem continues`;
     }
 
-    if (this.state.tripReason.startsWith('prompt_too_long:')) {
+    if (this.state.tripReason.startsWith('prompt_too_long')) {
       const maxTokens = this.state.tripReason.split(':')[1];
-      return `Context limit exceeded (${maxTokens} tokens maximum).
+      const header = maxTokens
+        ? `Context limit exceeded (${maxTokens} tokens maximum).`
+        : 'Context limit exceeded.';
+      return `${header}
 
 **Possible causes:**
 - A single tool output was extremely large (e.g., huge file, massive diff)
