@@ -5647,6 +5647,38 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(delivery.failureReason).not.toBe('subscription_no_longer_active');
   });
 
+  test('does not clear existing PR auto-subscription deliveries on resume', async () => {
+    const { run, task } = await startRunWithSubscription();
+    workflowRunRepo.updateRun(run.id, { status: 'blocked', failureReason: 'manual block' });
+    artifactRepo.upsert({
+      id: 'art-resume-existing',
+      runId: run.id,
+      nodeId: 'code',
+      artifactType: 'pr_url',
+      artifactKey: 'pr_url',
+      data: { prUrl: 'https://github.com/lsm/neokai/pull/99' },
+    });
+
+    // Establish the auto-subscription and create a pending PR delivery.
+    runtime.notifyRunBlocked(run.id);
+    const prTopic = 'github/lsm/neokai/pull_request/99.review_submitted';
+    const event = makeEvent({ id: 'evt-resume-existing-subscription', topic: prTopic });
+    await eventService.publish(event);
+    expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
+
+    // Resume the space. onSpaceResumed must not re-enter
+    // registerPrEventSubscriptionForRun for a run that already has an auto
+    // subscription, because that would clear the existing subscription and
+    // terminally fail the pending delivery as auto_pr_subscription_cleared.
+    runtime.onSpaceResumed(SPACE_ID);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(runtime.lookupSubscriptionTargets(prTopic).length).toBeGreaterThan(0);
+    const delivery = eventStore.listDeliveries(event.id)[0]!;
+    expect(delivery.state).not.toBe('failed');
+    expect(delivery.failureReason).not.toBe('auto_pr_subscription_cleared');
+  });
+
   test('preserves event age when requeueing activation retries for pending executions', async () => {
     const { run, task } = await startRunWithSubscription();
     const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;

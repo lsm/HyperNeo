@@ -4755,10 +4755,24 @@ export class SpaceRuntime {
     // so a resumed space's blocked runs may have no trie entry yet; without
     // rebuilding first, valid pending PR deliveries would be incorrectly
     // terminalized as subscription_no_longer_active.
+    //
+    // Only rebuild missing auto subscriptions: if the run already has one,
+    // re-entering registerPrEventSubscriptionForRun would clear it and
+    // failQueuedDeliveriesForTarget would terminally mark the pending PR
+    // delivery as auto_pr_subscription_cleared before the same subscription
+    // is reinserted.
     const blockedRuns = this.config.workflowRunRepo
       .listBySpace(spaceId)
       .filter((run) => run.status === 'blocked');
     for (const run of blockedRuns) {
+      const hasAutoSubscription =
+        this.topicTrie.count(
+          (target) =>
+            isWorkflowSubscriptionTarget(target) &&
+            target.workflowRunId === run.id &&
+            target.subscriptionKind === 'auto'
+        ) > 0;
+      if (hasAutoSubscription) continue;
       try {
         this.notifyRunBlocked(run.id);
       } catch (err) {
