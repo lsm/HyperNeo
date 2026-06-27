@@ -224,6 +224,23 @@ describe('SpaceManager', () => {
     });
   });
 
+  describe('addSession / removeSession', () => {
+    it('adds and removes sessions', async () => {
+      const space = await manager.createSpace({ workspacePath: tmpDir, name: 'A' });
+
+      const withSession = await manager.addSession(space.id, 'sess-1');
+      expect(withSession.sessionIds).toContain('sess-1');
+
+      const without = await manager.removeSession(space.id, 'sess-1');
+      expect(without.sessionIds).not.toContain('sess-1');
+    });
+
+    it('throws for unknown space', async () => {
+      await expect(manager.addSession('nonexistent', 's1')).rejects.toThrow('not found');
+      await expect(manager.removeSession('nonexistent', 's1')).rejects.toThrow('not found');
+    });
+  });
+
   describe('onSpaceResumedRegister', () => {
     it('invokes registered callbacks on resume and start', async () => {
       const space = await manager.createSpace({ workspacePath: tmpDir, name: 'A' });

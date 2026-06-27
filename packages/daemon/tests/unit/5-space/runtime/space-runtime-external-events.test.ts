@@ -5374,7 +5374,7 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(eventStore.getById(event.id)?.state).toBe('delivered');
   });
 
-  test('drains older pending rows before live-session delivery', async () => {
+  test('orders older retry before newer pending rows in resolved-session drain', async () => {
     const { run, task } = await startRunWithSubscription();
     const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
     nodeExecutionRepo.update(execution.id, {
@@ -5385,30 +5385,143 @@ describe('SpaceRuntime external event subscriptions', () => {
     tam.activationResult = [];
 
     const older = makeEvent({
-      id: 'evt-older-pending-live',
-      dedupeKey: 'dedupe-older-pending-live',
+      id: 'evt-older-retry-live',
+      dedupeKey: 'dedupe-older-retry-live',
       occurredAt: 1_700_000_000_000,
     });
-    await eventService.publish(older);
-    await new Promise((resolve) => setTimeout(resolve, 10));
-
-    // Make the session live before the newer event arrives.
-    nodeExecutionRepo.update(execution.id, {
-      status: 'in_progress',
-      agentSessionId: 'session-live-drain',
-    });
-    tam.alive.add('session-live-drain');
-
     const newer = makeEvent({
-      id: 'evt-newer-pending-live',
-      dedupeKey: 'dedupe-newer-pending-live',
+      id: 'evt-newer-retry-live',
+      dedupeKey: 'dedupe-newer-retry-live',
       occurredAt: 1_700_000_000_100,
     });
+
+    await eventService.publish(older);
+    await new Promise((resolve) => setTimeout(resolve, 10));
     await eventService.publish(newer);
 
+    expect(eventStore.listDeliveries(older.id)[0]!.state).toBe('pending');
+    expect(eventStore.listDeliveries(newer.id)[0]!.state).toBe('pending');
+
+    // Make the session live; the older retry fires first and the drain must
+    // include the current (older) event in the sorted batch so A is delivered
+    // before B, even though B is already persisted as a pending row.
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-retry-drain-order',
+    });
+    tam.alive.add('session-retry-drain-order');
+
+    await new Promise((resolve) => setTimeout(resolve, 1_200));
     expect(injected.map((item) => JSON.parse(item.message).eventId)).toEqual([older.id, newer.id]);
     expect(eventStore.getById(older.id)?.state).toBe('delivered');
     expect(eventStore.getById(newer.id)?.state).toBe('delivered');
+  });
+
+  test('re-registers space-resume hook on start after stop', async () => {
+    const manager = spaceManager;
+    const before = (manager as unknown as { onSpaceResumedCallbacks: unknown[] })
+      .onSpaceResumedCallbacks.length;
+    const runtime2 = new SpaceRuntime({
+      db,
+      spaceManager: manager,
+      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+      spaceWorkflowManager: workflowManager,
+      workflowRunRepo,
+      taskRepo,
+      nodeExecutionRepo,
+      internalEventBus: bus,
+      commandBus: (runtime as unknown as { config: { commandBus: unknown } }).config.commandBus,
+      externalEventStore: eventStore,
+      taskAgentManager: tam as never,
+    });
+    const afterRegister = (manager as unknown as { onSpaceResumedCallbacks: unknown[] })
+      .onSpaceResumedCallbacks.length;
+    expect(afterRegister).toBe(before + 1);
+
+    await runtime2.stop();
+    expect(
+      (manager as unknown as { onSpaceResumedCallbacks: unknown[] }).onSpaceResumedCallbacks
+    ).toHaveLength(before);
+
+    runtime2.start();
+    expect(
+      (manager as unknown as { onSpaceResumedCallbacks: unknown[] }).onSpaceResumedCallbacks
+    ).toHaveLength(before + 1);
+
+    await runtime2.stop();
+  });
+
+  test('terminalizes resumed deliveries whose subscription was removed', async () => {
+    const { run, task } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'idle',
+      agentSessionId: null,
+      completedAt: Date.now(),
+    });
+    tam.activationResult = [];
+
+    const event = makeEvent({ id: 'evt-resume-subscription-removed' });
+    await eventService.publish(event);
+    expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
+
+    await spaceManager.pauseSpace(SPACE_ID);
+    runtime.unregisterSubscription(run.id, task.id, 'code', 'coder', DEFAULT_TOPIC);
+    await spaceManager.resumeSpace(SPACE_ID);
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const delivery = eventStore.listDeliveries(event.id)[0]!;
+    expect(delivery.state).toBe('failed');
+    expect(delivery.failureReason).toBe('subscription_no_longer_active');
+    expect(eventStore.getById(event.id)?.state).toBe('failed');
+  });
+
+  test('does not activate blocked executions so they stay on the blocked-run recovery path', async () => {
+    const { run, task } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'blocked',
+      agentSessionId: null,
+      startedAt: null,
+      completedAt: null,
+    });
+
+    const event = makeEvent({ id: 'evt-blocked-exec' });
+    await eventService.publish(event);
+
+    // Activation should not have been attempted for a blocked execution.
+    expect(tam.activationCalls).toHaveLength(0);
+    // The delivery stays pending/queued for the recovery path rather than
+    // being terminally failed.
+    const delivery = eventStore.listDeliveries(event.id)[0]!;
+    expect(delivery.state).toBe('pending');
+  });
+
+  test('expires activation retry instead of redispatching stale event', async () => {
+    const { run, task } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'idle',
+      agentSessionId: null,
+      completedAt: Date.now(),
+    });
+    tam.activationResult = [];
+
+    const event = makeEvent({ id: 'evt-activation-ttl' });
+    await eventService.publish(event);
+    expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
+
+    // Backdate the event past the TTL window before the activation retry fires.
+    db.prepare(`UPDATE space_external_events SET created_at = ? WHERE id = ?`).run(
+      Date.now() - 301_000,
+      event.id
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 1_200));
+    const delivery = eventStore.listDeliveries(event.id)[0]!;
+    expect(delivery.state).toBe('failed');
+    expect(delivery.failureReason).toBe('ttl_expired');
+    expect(eventStore.getById(event.id)?.state).toBe('failed');
   });
 });
 

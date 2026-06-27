@@ -1957,11 +1957,21 @@ export class SpaceRuntime {
         });
         store.markEventFailedIfAllDeliveriesTerminal(payload.eventId);
       } else if (resolved.sessionId && this.isTargetSessionLive(resolved.sessionId)) {
-        await this.flushPendingNodeQueueAsync(resolved, deliveryKey);
-        await this.enqueueDeliverableExternalEvent(resolved, payload, deliveryKey, 'immediate');
+        const eventRecord = store.getById(payload.eventId);
+        await this.flushPendingNodeQueueAsync(resolved, deliveryKey, {
+          event: payload,
+          deliveryKey,
+          deliveryMode: 'immediate',
+          createdAt: eventRecord?.createdAt ?? Date.now(),
+        });
       } else if (resolved.sessionId) {
-        await this.flushPendingNodeQueueAsync(resolved, deliveryKey);
-        await this.enqueueDeliverableExternalEvent(resolved, payload, deliveryKey, 'defer');
+        const eventRecord = store.getById(payload.eventId);
+        await this.flushPendingNodeQueueAsync(resolved, deliveryKey, {
+          event: payload,
+          deliveryKey,
+          deliveryMode: 'defer',
+          createdAt: eventRecord?.createdAt ?? Date.now(),
+        });
       } else if (this.isPending(resolved)) {
         this.queueForPendingNode(resolved, payload, deliveryKey);
         // The execution is already pending (e.g. activateNode reset it or a
@@ -2117,6 +2127,12 @@ export class SpaceRuntime {
   ): Promise<WorkflowSubscriptionTarget | null> {
     if (this.isTargetTaskTerminal(target.taskId)) return null;
     if (this.hasTerminalExecutionForTarget(target)) return null;
+    const currentExecution = this.getCurrentQueueableOrActiveExecution(target);
+    if (currentExecution?.status === 'blocked') {
+      // Blocked executions are recovered through the blocked-run external-event
+      // hook, not by subscriber activation. Keep them on that path.
+      return null;
+    }
     const run = this.config.workflowRunRepo.getRun(target.workflowRunId);
     // Blocked runs have their own gate/recovery path; do not spawn subscribers
     // directly while the run is blocked.
@@ -2552,6 +2568,16 @@ export class SpaceRuntime {
       this.externalEventRetryTimers.delete(deliveryKey);
       if (this.config.externalEventStore?.isDeliveryTerminal(event.eventId, deliveryKey)) {
         this.clearExternalEventRetry(deliveryKey);
+        return;
+      }
+      const queuedItem = this.getQueuedDelivery(target, deliveryKey) ?? {
+        event,
+        deliveryKey,
+        deliveryMode: 'immediate',
+        createdAt: this.config.externalEventStore?.getById(event.eventId)?.createdAt ?? Date.now(),
+      };
+      if (this.isQueuedExternalEventExpired(queuedItem)) {
+        this.failQueuedDeliveryForTtl(queuedItem, this.buildQueueKey(target));
         return;
       }
       void this.deliverExternalEventToWorkflowTarget(target, event, deliveryKey);
@@ -3914,6 +3940,11 @@ export class SpaceRuntime {
 
     this.subscribeExternalEventPublished();
     this.subscribeSdkToolUseCreated();
+    // Re-register the space-resume hook after a stop->start cycle; stop()
+    // unsubscribes it to avoid stale callbacks, so start() must restore it.
+    this.unsubscribeSpaceResumed ??= this.config.spaceManager.onSpaceResumedRegister?.((spaceId) =>
+      this.onSpaceResumed(spaceId)
+    );
     this.acceptingExternalEvents = this.rehydrated;
     this.rescheduleQueuedExternalEventRetries();
     // Re-seed sessionless activation retries after a stop->start of the same
@@ -4647,7 +4678,14 @@ export class SpaceRuntime {
 
       const eventRecord = store.getById(delivery.eventId);
       if (!eventRecord || eventRecord.state !== 'published') continue;
-      if (!this.isTargetStillSubscribed(target, eventRecord.event.topic)) continue;
+      if (!this.isTargetStillSubscribed(target, eventRecord.event.topic)) {
+        store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, {
+          terminal: true,
+          reason: 'subscription_no_longer_active',
+        });
+        store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
+        continue;
+      }
 
       const eventPayload = this.externalEventPayloadFromRecord(eventRecord.event);
       this.scheduleActivationRetry(
