@@ -320,11 +320,11 @@
       }
     },
     {
-      "comment": "Kimi prompt-too-long 400 \u2014 bare form without token counts. MUST precede the detailed mock: the bare trigger string contains the detailed trigger as a substring, so first-match ordering would route bare requests to the detailed mock if this came second.",
+      "comment": "Kimi prompt-too-long 400 \u2014 bare form without token counts. Trigger strings for bare and detailed mocks are disjoint (neither is a substring of the other) so nth exhaustion on one does not cause the other to match follow-up /compact requests that still carry the original transcript.",
       "request": {
         "url": "*/v1/messages*",
         "method": "POST",
-        "bodyFragment": "trigger kimi prompt too long bare",
+        "bodyFragment": "trigger kimi overflow bare",
         "nth": 1
       },
       "response": {
@@ -353,7 +353,7 @@
       "request": {
         "url": "*/v1/messages*",
         "method": "POST",
-        "bodyFragment": "trigger kimi prompt too long",
+        "bodyFragment": "trigger kimi overflow detailed",
         "nth": 1
       },
       "response": {

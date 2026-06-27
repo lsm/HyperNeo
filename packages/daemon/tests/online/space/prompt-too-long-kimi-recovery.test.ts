@@ -32,10 +32,13 @@ import type { NodeExecution, Space, SpaceAgent, SpaceWorkflow } from '@neokai/sh
 import { buildPromptTooLongContinueNag } from '../../../src/lib/space/runtime/prompt-too-long-recovery';
 
 const IS_MOCK = !!process.env.NEOKAI_USE_DEV_PROXY;
-const IDLE_TIMEOUT = IS_MOCK ? 15_000 : 60_000;
+const IDLE_TIMEOUT = IS_MOCK ? 20_000 : 60_000;
 const SETUP_TIMEOUT = IS_MOCK ? 45_000 : 90_000;
-const TEST_TIMEOUT = IS_MOCK ? 120_000 : 300_000;
-const RECOVERY_TIMEOUT = IS_MOCK ? 30_000 : 90_000;
+const TEST_TIMEOUT = IS_MOCK ? 180_000 : 300_000;
+// Recovery polling must tolerate the 5s tick-loop interval on slower CI runners
+// (Linux). Each poll waits for the tick to detect the overflow and inject
+// /compact or the continue nag — allow at least two tick periods plus overhead.
+const RECOVERY_TIMEOUT = IS_MOCK ? 60_000 : 90_000;
 
 const STEP_CODE_ID = 'step-code-kimi-recovery-001';
 
@@ -144,6 +147,25 @@ async function waitForSdkMessageText(
   throw new Error('Timed out waiting for SDK message matching predicate');
 }
 
+async function waitForSdkMessageType(
+  daemon: DaemonServerContext,
+  sessionId: string,
+  messageType: string,
+  timeout: number
+): Promise<void> {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    const { sdkMessages } = (await daemon.messageHub.request('message.sdkMessages', {
+      sessionId,
+      limit: 100,
+    })) as { sdkMessages: Array<Record<string, unknown>> };
+
+    if (sdkMessages.some((m) => m.type === messageType)) return;
+    await new Promise((resolve) => setTimeout(resolve, 300));
+  }
+  throw new Error(`Timed out waiting for SDK message type "${messageType}"`);
+}
+
 function extractSdkMessageText(msg: Record<string, unknown>): string {
   const message = msg.message as { content?: unknown } | undefined;
   if (!message) return '';
@@ -231,12 +253,18 @@ describe('Kimi prompt-too-long recovery — online with Dev Proxy', () => {
       space.id,
       runId,
       execution.id,
-      IS_MOCK ? 15_000 : 45_000
+      IS_MOCK ? 30_000 : 45_000
     );
     daemon.trackSession(sessionId);
 
-    // Let the initial kickoff turn finish before injecting the overflow.
+    // Let the initial kickoff turn fully complete before injecting the overflow.
+    // We must wait for the RESULT message (not just idle) because the
+    // task-agent-manager injects the kickoff user message asynchronously after
+    // spawning the session — if we inject the stderr before the kickoff is
+    // delivered, the kickoff becomes the last SDK message and the tick loop
+    // never detects the overflow.
     await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
+    await waitForSdkMessageType(daemon, sessionId, 'result', IDLE_TIMEOUT);
 
     // Park the execution as idle so the runtime sweep enters recovery.
     await daemon.messageHub.request('nodeExecution.update', {
