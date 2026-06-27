@@ -5203,6 +5203,103 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(injected[0]!.sessionId).toBe('session-rehydrated-retry');
     expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
   });
+
+  test('preserves chronological order when older activation retry activates first', async () => {
+    const { run, task } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'idle',
+      agentSessionId: null,
+      completedAt: Date.now(),
+    });
+    tam.activationResult = [];
+
+    const older = makeEvent({
+      id: 'evt-older-retry-first',
+      dedupeKey: 'dedupe-older-retry-first',
+      occurredAt: 1_700_000_000_000,
+    });
+    const newer = makeEvent({
+      id: 'evt-newer-retry-first',
+      dedupeKey: 'dedupe-newer-retry-first',
+      occurredAt: 1_700_000_000_100,
+    });
+    await eventService.publish(older);
+    // Stagger ingestion so the DB `created_at` ordering matches the intended
+    // chronological order; without a gap both rows may share the same ms.
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await eventService.publish(newer);
+    expect(eventStore.listDeliveries(older.id)[0]!.state).toBe('pending');
+    expect(eventStore.listDeliveries(newer.id)[0]!.state).toBe('pending');
+
+    // The older event's retry fires first and activates the agent. The drain
+    // includes the older event in the sorted batch so it is delivered before
+    // the newer pending row, regardless of which retry timer fires first.
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: null,
+      completedAt: null,
+    });
+    tam.activationResult = [{ agentName: 'coder', sessionId: 'session-retry-order' }];
+    tam.alive.add('session-retry-order');
+    tam.onActivate = () => {
+      nodeExecutionRepo.update(execution.id, {
+        agentSessionId: 'session-retry-order',
+      });
+    };
+
+    await new Promise((resolve) => setTimeout(resolve, 1_200));
+    expect(injected.map((item) => JSON.parse(item.message).eventId)).toEqual([older.id, newer.id]);
+    expect(eventStore.getById(older.id)?.state).toBe('delivered');
+    expect(eventStore.getById(newer.id)?.state).toBe('delivered');
+  });
+
+  test('scopes activation retry to original delivery when subscription is removed', async () => {
+    const { run, task } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'idle',
+      agentSessionId: null,
+      completedAt: Date.now(),
+    });
+    tam.activationResult = [];
+
+    const event = makeEvent({ id: 'evt-subscription-removed' });
+    await eventService.publish(event);
+    expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
+
+    // Remove the subscription before the retry fires.
+    runtime.unregisterSubscription(run.id, task.id, 'code', 'coder', DEFAULT_TOPIC);
+
+    await new Promise((resolve) => setTimeout(resolve, 1_200));
+    // The retry targets the specific delivery and terminalizes it, instead of
+    // replaying the whole event and marking it ignored while the row stays pending.
+    const delivery = eventStore.listDeliveries(event.id)[0]!;
+    expect(delivery.state).toBe('failed');
+    expect(delivery.failureReason).toBe('subscription_no_longer_active');
+    expect(eventStore.getById(event.id)?.state).toBe('failed');
+  });
+
+  test('does not activate subscribers while the workflow run is blocked', async () => {
+    const { run, task } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    // Blocked run with an active execution that has no live session.
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: null,
+      startedAt: Date.now(),
+      completedAt: null,
+    });
+    workflowRunRepo.updateRun(run.id, { status: 'blocked', failureReason: 'agentCrash' });
+
+    const event = makeEvent({ id: 'evt-blocked-run' });
+    await eventService.publish(event);
+
+    expect(tam.activationCalls).toHaveLength(0);
+    const delivery = eventStore.listDeliveries(event.id)[0]!;
+    expect(delivery.state).toBe('pending');
+    expect(delivery.failureReason).toBeNull();
+  });
 });
 
 describe('SpaceRuntime event-driven gate evaluation', () => {

@@ -1607,11 +1607,20 @@ export class SpaceRuntime {
 
   private async flushPendingNodeQueueAsync(
     target: WorkflowSubscriptionTarget,
-    excludeDeliveryKey?: string
+    excludeDeliveryKey?: string,
+    includeCurrent?: PendingExternalEvent
   ): Promise<void> {
     const prepared = this.preparePendingNodeQueueDispatchable(target, excludeDeliveryKey);
     if (!prepared) return;
     const { targetWithExecution, dispatchable } = prepared;
+
+    if (includeCurrent) {
+      dispatchable.push(includeCurrent);
+    }
+
+    if (dispatchable.length > 1) {
+      dispatchable.sort((a, b) => a.createdAt - b.createdAt);
+    }
 
     for (const item of dispatchable) {
       this.clearExternalEventRetry(item.deliveryKey);
@@ -1899,93 +1908,123 @@ export class SpaceRuntime {
     }
 
     for (const { target, deliveryKey } of workflowDeliveries.values()) {
-      try {
-        if (
-          store.isDeliveryTerminal(payload.eventId, deliveryKey) ||
-          this.externalEventDeliveriesInFlight.has(deliveryKey)
-        ) {
-          continue;
-        }
+      await this.deliverExternalEventToWorkflowTarget(target, payload, deliveryKey);
+    }
+  }
 
-        if (this.isTargetTaskTerminal(target.taskId)) {
-          store.markDeliveryFailed(payload.eventId, deliveryKey, {
-            terminal: true,
-            reason: 'target_task_terminal',
-          });
-          store.markEventFailedIfAllDeliveriesTerminal(payload.eventId);
-        } else if (target.sessionId && this.isTargetSessionLive(target.sessionId)) {
-          await this.enqueueDeliverableExternalEvent(target, payload, deliveryKey, 'immediate');
-        } else if (target.sessionId) {
-          await this.enqueueDeliverableExternalEvent(target, payload, deliveryKey, 'defer');
-        } else if (this.isPending(target)) {
-          this.queueForPendingNode(target, payload, deliveryKey);
-        } else {
-          let activatedTarget: WorkflowSubscriptionTarget | null = null;
-          try {
-            activatedTarget = await this.activateSubscribedTargetForExternalEvent(target);
-          } catch (err) {
-            const failureReason = err instanceof Error ? err.message : String(err);
-            this.queueForPendingNode(target, payload, deliveryKey);
-            this.scheduleActivationRetry(
-              target,
-              payload,
-              deliveryKey,
-              `activation_failed; ${failureReason}`
-            );
-            continue;
-          }
-          if (activatedTarget?.sessionId && this.isTargetSessionLive(activatedTarget.sessionId)) {
-            await this.flushPendingNodeQueueAsync(activatedTarget, deliveryKey);
-            await this.enqueueDeliverableExternalEvent(
-              activatedTarget,
-              payload,
-              deliveryKey,
-              'immediate'
-            );
-          } else if (activatedTarget?.sessionId) {
-            await this.flushPendingNodeQueueAsync(activatedTarget, deliveryKey);
-            await this.enqueueDeliverableExternalEvent(
-              activatedTarget,
-              payload,
-              deliveryKey,
-              'defer'
-            );
-          } else if (activatedTarget) {
-            store.markDeliveryFailed(payload.eventId, deliveryKey, {
-              terminal: false,
-              reason: 'node_execution_not_active',
-            });
-            // The persisted retryable delivery plus the activation retry timer
-            // are sufficient; do not duplicate it in the in-memory queue.
-            // In-memory items use queue-time ordering, which would break the
-            // chronological ordering between persisted pending deliveries.
-            if (!(await this.isTargetSpacePausedOrStopped(activatedTarget))) {
-              this.scheduleActivationRetry(
-                activatedTarget,
-                payload,
-                deliveryKey,
-                'node_execution_not_active'
-              );
-            }
-          } else if (
-            this.hasActiveExecutionForRun(target.workflowRunId) &&
-            !this.hasTerminalExecutionForTarget(target)
-          ) {
-            this.queueForPendingNode(target, payload, deliveryKey);
-          } else {
-            this.clearExternalEventRetry(deliveryKey);
-            store.markDeliveryFailed(payload.eventId, deliveryKey, {
-              terminal: false,
-              reason: 'node_execution_not_active',
-            });
-          }
-        }
-      } catch (err) {
-        log.warn(
-          `SpaceRuntime: failed to process external event ${payload.eventId} for ` +
-            `${target.workflowRunId}/${target.nodeId}/${target.agentName}: ${formatCommandError(err)}`
-        );
+  /**
+   * Deliver (or queue/retry) a single external-event payload to a specific
+   * workflow subscription target. This is the per-target logic extracted from
+   * handleExternalEvent so activation retries can be scoped to the original
+   * delivery instead of replaying the entire event and re-computing matches.
+   */
+  private async deliverExternalEventToWorkflowTarget(
+    target: WorkflowSubscriptionTarget,
+    payload: ExternalEventPublishedPayload,
+    deliveryKey: string
+  ): Promise<void> {
+    const store = this.config.externalEventStore;
+    if (!store) return;
+    // Re-resolve the target at retry/delivery time so a session that appeared
+    // since the delivery was registered is picked up.
+    const resolved = this.resolveSubscriptionTarget(target);
+    try {
+      if (
+        store.isDeliveryTerminal(payload.eventId, deliveryKey) ||
+        this.externalEventDeliveriesInFlight.has(deliveryKey)
+      ) {
+        return;
       }
+
+      if (!this.isTargetStillSubscribed(resolved, payload.topic)) {
+        store.markDeliveryFailed(payload.eventId, deliveryKey, {
+          terminal: true,
+          reason: 'subscription_no_longer_active',
+        });
+        store.markEventFailedIfAllDeliveriesTerminal(payload.eventId);
+        this.clearExternalEventRetry(deliveryKey);
+        this.clearQueuedDelivery(resolved, deliveryKey);
+        return;
+      }
+
+      if (this.isTargetTaskTerminal(resolved.taskId)) {
+        store.markDeliveryFailed(payload.eventId, deliveryKey, {
+          terminal: true,
+          reason: 'target_task_terminal',
+        });
+        store.markEventFailedIfAllDeliveriesTerminal(payload.eventId);
+      } else if (resolved.sessionId && this.isTargetSessionLive(resolved.sessionId)) {
+        await this.enqueueDeliverableExternalEvent(resolved, payload, deliveryKey, 'immediate');
+      } else if (resolved.sessionId) {
+        await this.enqueueDeliverableExternalEvent(resolved, payload, deliveryKey, 'defer');
+      } else if (this.isPending(resolved)) {
+        this.queueForPendingNode(resolved, payload, deliveryKey);
+      } else {
+        let activatedTarget: WorkflowSubscriptionTarget | null = null;
+        try {
+          activatedTarget = await this.activateSubscribedTargetForExternalEvent(resolved);
+        } catch (err) {
+          const failureReason = err instanceof Error ? err.message : String(err);
+          this.queueForPendingNode(resolved, payload, deliveryKey);
+          this.scheduleActivationRetry(
+            resolved,
+            payload,
+            deliveryKey,
+            `activation_failed; ${failureReason}`
+          );
+          return;
+        }
+        if (activatedTarget?.sessionId && this.isTargetSessionLive(activatedTarget.sessionId)) {
+          const eventRecord = store.getById(payload.eventId);
+          await this.flushPendingNodeQueueAsync(activatedTarget, deliveryKey, {
+            event: payload,
+            deliveryKey,
+            deliveryMode: 'immediate',
+            createdAt: eventRecord?.createdAt ?? Date.now(),
+          });
+        } else if (activatedTarget?.sessionId) {
+          const eventRecord = store.getById(payload.eventId);
+          await this.flushPendingNodeQueueAsync(activatedTarget, deliveryKey, {
+            event: payload,
+            deliveryKey,
+            deliveryMode: 'defer',
+            createdAt: eventRecord?.createdAt ?? Date.now(),
+          });
+        } else if (activatedTarget) {
+          store.markDeliveryFailed(payload.eventId, deliveryKey, {
+            terminal: false,
+            reason: 'node_execution_not_active',
+          });
+          // The persisted retryable delivery plus the activation retry timer
+          // are sufficient; do not duplicate it in the in-memory queue.
+          // In-memory items use queue-time ordering, which would break the
+          // chronological ordering between persisted pending deliveries.
+          if (!(await this.isTargetSpacePausedOrStopped(activatedTarget))) {
+            this.scheduleActivationRetry(
+              activatedTarget,
+              payload,
+              deliveryKey,
+              'node_execution_not_active'
+            );
+          }
+        } else if (
+          this.hasActiveExecutionForRun(resolved.workflowRunId) &&
+          !this.hasTerminalExecutionForTarget(resolved)
+        ) {
+          this.queueForPendingNode(resolved, payload, deliveryKey);
+        } else {
+          this.clearExternalEventRetry(deliveryKey);
+          store.markDeliveryFailed(payload.eventId, deliveryKey, {
+            terminal: false,
+            reason: 'node_execution_not_active',
+          });
+        }
+      }
+    } catch (err) {
+      log.warn(
+        `SpaceRuntime: failed to process external event ${payload.eventId} for ` +
+          `${resolved.workflowRunId}/${resolved.nodeId}/${resolved.agentName}: ${formatCommandError(err)}`
+      );
     }
   }
 
@@ -2066,7 +2105,9 @@ export class SpaceRuntime {
     if (this.isTargetTaskTerminal(target.taskId)) return null;
     if (this.hasTerminalExecutionForTarget(target)) return null;
     const run = this.config.workflowRunRepo.getRun(target.workflowRunId);
-    if (!run || !isExternallyDeliverableRun(run.status)) return null;
+    // Blocked runs have their own gate/recovery path; do not spawn subscribers
+    // directly while the run is blocked.
+    if (!run || run.status !== 'in_progress') return null;
     const task = this.config.taskRepo.getTask(target.taskId);
     if (!task) return null;
     // Static subscriptions can match workflow agents that have not been spawned
@@ -2494,7 +2535,7 @@ export class SpaceRuntime {
         this.clearExternalEventRetry(deliveryKey);
         return;
       }
-      void this.handleExternalEvent(event);
+      void this.deliverExternalEventToWorkflowTarget(target, event, deliveryKey);
     }, EXTERNAL_EVENT_RETRY_DELAY_MS);
     this.externalEventRetryTimers.set(deliveryKey, timer);
   }
