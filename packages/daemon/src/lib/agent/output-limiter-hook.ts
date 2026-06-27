@@ -204,6 +204,14 @@ function limitToolInput(
         return null;
       }
 
+      // Skip shell-backgrounded commands (trailing `&` that's not `&&`).
+      // These run asynchronously and the wrapper would cat/remove the temp
+      // file before the background process finishes writing to it.
+      const trimmedCmd = command.trim();
+      if (trimmedCmd.endsWith('&') && !trimmedCmd.endsWith('&&')) {
+        return null;
+      }
+
       // Skip simple commands that are unlikely to produce large output.
       // ls is NOT skipped because `ls -R` or `ls node_modules` can produce
       // thousands of lines. echo is NOT skipped because command substitution
