@@ -3340,6 +3340,76 @@ describe('GitHubEventExtension', () => {
     }
   });
 
+  test('pulls cutoff processes mixed-age pages and discards older tail', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    const repo = extension.repo.listPollingRepos()[0];
+    const watermark = Date.parse('2026-06-15T00:00:00Z');
+    extension.repo.updatePollCursor(repo.id, {
+      lastSeenAt: watermark,
+      endpointLastSeenAt: { pulls: watermark },
+      processedPages: { pulls: 2 },
+      recentPullRequestNumbers: [1],
+      recentPullRequestHeadShas: { 1: 'old-sha' },
+    });
+    const pullsPages: Array<string | null> = [];
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const parsed = new URL(String(url));
+      const path = parsed.pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls')) {
+        const page = parsed.searchParams.get('page');
+        pullsPages.push(page);
+        if (page === '2') {
+          // First 3 rows are newer than the watermark; the rest are older.
+          return pollingResponse(
+            Array.from({ length: 20 }, (_, index) =>
+              createPullRequestRow(200 + index, {
+                updated_at: index < 3 ? '2026-06-16T00:00:00Z' : '2026-06-14T00:00:00Z',
+                head: { sha: `mixed-sha-${index}` },
+              })
+            )
+          );
+        }
+        return pollingResponse([]);
+      }
+      if (path.endsWith('/check-runs')) return pollingResponse({ check_runs: [] });
+      return pollingResponse([]);
+    }) as typeof fetch;
+    try {
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      expect(pullsPages).toEqual(['2']);
+      const cursor = extension.repo.listPollingRepos()[0].pollCursor;
+      expect(cursor?.processedPages?.pulls).toBe(1);
+      // Newer rows are head-tracked and published.
+      expect(cursor?.recentPullRequestHeadShas?.[200]).toBe('mixed-sha-0');
+      expect(cursor?.recentPullRequestHeadShas?.[201]).toBe('mixed-sha-1');
+      expect(cursor?.recentPullRequestHeadShas?.[202]).toBe('mixed-sha-2');
+      expect(cursor?.recentPullRequestHeadShas?.[203]).toBeUndefined();
+      const pullRequestEvents = received.filter(
+        (item) => item.payload.eventType === 'pull_request'
+      );
+      expect(pullRequestEvents.map((item) => item.payload.prNumber).sort()).toEqual([
+        200, 201, 202,
+      ]);
+    } finally {
+      await extension.stop();
+    }
+  });
+
   test('polling seeds the check-run cursor before the first scan', async () => {
     const db = setupDb();
     const { service, received } = setupExternalEventService(db);
