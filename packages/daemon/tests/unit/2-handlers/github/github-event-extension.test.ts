@@ -3471,6 +3471,70 @@ describe('GitHubEventExtension', () => {
     }
   });
 
+  test('pulls backlog skips check-run scan for stale cursor heads not on fetched page', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    const repo = extension.repo.listPollingRepos()[0];
+    const watermark = Date.parse('2026-06-15T00:00:00Z');
+    extension.repo.updatePollCursor(repo.id, {
+      lastSeenAt: watermark,
+      endpointLastSeenAt: { pulls: watermark },
+      processedPages: { pulls: 2 },
+      recentPullRequestNumbers: [7],
+      recentPullRequestHeadShas: { 7: 'stale-sha' },
+    });
+    const checkRunPaths: string[] = [];
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const parsed = new URL(String(url));
+      const path = parsed.pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls')) {
+        // Page 2 returns 100 unrelated PRs — backlog stays active. PR #7 is on
+        // an unfetched page, so its cursor head 'stale-sha' must not be scanned.
+        return pollingResponse(
+          Array.from({ length: 100 }, (_, index) =>
+            createPullRequestRow(200 + index, {
+              updated_at: '2026-06-16T00:00:00Z',
+              head: { sha: `bulk-sha-${index}` },
+            })
+          )
+        );
+      }
+      if (path.endsWith('/check-runs')) {
+        checkRunPaths.push(path);
+        const headSha = decodeURIComponent(path.split('/commits/')[1].split('/check-runs')[0]);
+        if (headSha === 'stale-sha') {
+          return pollingResponse({
+            check_runs: [createCheckRunRow({ id: 7999, head_sha: 'stale-sha', pull_requests: [] })],
+          });
+        }
+        return pollingResponse({ check_runs: [] });
+      }
+      return pollingResponse([]);
+    }) as typeof fetch;
+    try {
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      // Stale head must not be queried for check runs.
+      expect(checkRunPaths).not.toContain('/repos/acme/widgets/commits/stale-sha/check-runs');
+      expect(received.some((item) => item.payload.checkRunId === 7999)).toBe(false);
+    } finally {
+      await extension.stop();
+    }
+  });
+
   test('polling seeds the check-run cursor before the first scan', async () => {
     const db = setupDb();
     const { service, received } = setupExternalEventService(db);
