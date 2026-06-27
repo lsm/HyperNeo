@@ -90,7 +90,13 @@ export function resolveConfig(input: OutputLimiterConfigInput = {}): OutputLimit
           : DEFAULT_CONFIG.read.maxLines),
     },
     grep: {
-      maxMatches: input.grep?.maxMatches ?? DEFAULT_CONFIG.grep.maxMatches,
+      // Normalize the legacy default (500) to the new default (250) so
+      // upgraded databases don't double Grep output. Users who explicitly
+      // want a different value can set it to anything other than 500.
+      maxMatches:
+        input.grep?.maxMatches === 500
+          ? DEFAULT_CONFIG.grep.maxMatches
+          : (input.grep?.maxMatches ?? DEFAULT_CONFIG.grep.maxMatches),
     },
     excludeTools: input.excludeTools ?? DEFAULT_CONFIG.excludeTools,
   };
@@ -207,8 +213,13 @@ function limitToolInput(
       // Skip shell-backgrounded commands (any `&` that's not part of `&&`,
       // `>&`, `<&`, or `&>`). These run asynchronously and the wrapper would
       // cat/remove the temp file before the background process finishes.
-      // Excludes fd redirects like `2>&1` and combined redirects like `&>`.
-      if (command.replace(/&&|>&|<&|&>/g, '').includes('&')) {
+      // Quoted strings are stripped first so `&` inside URLs or grep patterns
+      // (e.g. `curl 'https://host?a=1&b=2'`) doesn't trigger a false positive.
+      const withoutQuotes = command
+        .replace(/'[^']*'/g, "''")
+        .replace(/"[^"]*"/g, '""')
+        .replace(/`[^`]*`/g, '``');
+      if (withoutQuotes.replace(/&&|>&|<&|&>/g, '').includes('&')) {
         return null;
       }
 
