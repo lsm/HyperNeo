@@ -1390,20 +1390,20 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
           pullsBacklogClearedByCutoff = true;
         } else if (
           rows.length > 0 &&
+          rows.length < 100 &&
           rows.every((row) => {
             const updatedAt = pullRequestUpdatedAt(row);
             return updatedAt > 0 && updatedAt <= endpointWatermark;
           })
         ) {
-          // All rows on this page are at or before the watermark — GitHub's
-          // second-precision timestamps can produce full pages of tied rows
+          // All rows on this partial page are at or before the watermark —
+          // GitHub's second-precision timestamps can produce pages of tied rows
           // that never satisfy the strict < cutoff. Clear the backlog so
           // processedPages resets to 1 without dropping the rows (they are
           // re-processed but store-level dedupe suppresses duplicate events).
-          // Without this, a full page of tied rows would leave
-          // processedPages.pulls at 2, and pullsFetchedResumedPage would
-          // defer check-run polling indefinitely.
-          pullsBacklogClearedByCutoff = true;
+          // Only fire on partial pages (< 100 rows): a full page may be
+          // followed by another tied page whose rows still need fetching for
+          // head/open-state refresh.
         }
       }
       if (endpoint.key === 'pulls') {

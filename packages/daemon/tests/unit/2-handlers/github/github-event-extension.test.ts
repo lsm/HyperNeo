@@ -3542,7 +3542,7 @@ describe('GitHubEventExtension', () => {
     }
   });
 
-  test('pulls cutoff clears backlog when full page of rows is tied at watermark', async () => {
+  test('pulls cutoff clears backlog when partial page of rows is tied at watermark', async () => {
     const db = setupDb();
     const { service } = setupExternalEventService(db);
     const extension = new GitHubEventExtension(db, 'token');
@@ -3576,12 +3576,12 @@ describe('GitHubEventExtension', () => {
         const page = parsed.searchParams.get('page');
         pullsPages.push(page);
         if (page === '2') {
-          // Every row has updated_at exactly equal to the watermark — GitHub's
-          // second-precision timestamps can produce this. The strict < cutoff
-          // would never fire, stalling pagination. The tied-boundary guard
-          // must clear the backlog instead.
+          // A partial page (< 100) of rows tied exactly at the watermark.
+          // GitHub's second-precision timestamps can produce this. The strict
+          // < cutoff would never fire, stalling pagination. The tied-boundary
+          // guard must clear the backlog instead.
           return pollingResponse(
-            Array.from({ length: 100 }, (_, index) =>
+            Array.from({ length: 50 }, (_, index) =>
               createPullRequestRow(100 + index, {
                 updated_at: '2026-06-15T00:00:00Z',
                 head: { sha: `tied-sha-${index}` },
