@@ -3206,6 +3206,140 @@ describe('GitHubEventExtension', () => {
     }
   });
 
+  test('pulls pagination stops at client-side watermark cutoff and clears backlog', async () => {
+    const db = setupDb();
+    const { service } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    const repo = extension.repo.listPollingRepos()[0];
+    const watermark = Date.parse('2026-06-15T00:00:00Z');
+    extension.repo.updatePollCursor(repo.id, {
+      lastSeenAt: watermark,
+      endpointLastSeenAt: { pulls: watermark },
+      processedPages: { pulls: 2 },
+      recentPullRequestNumbers: [1],
+      recentPullRequestHeadShas: { 1: 'old-sha' },
+    });
+    const pullsPages: Array<string | null> = [];
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const parsed = new URL(String(url));
+      const path = parsed.pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls')) {
+        const page = parsed.searchParams.get('page');
+        pullsPages.push(page);
+        if (page === '2') {
+          // Page 2 is entirely older than the watermark — the cutoff must stop
+          // pagination here and clear the backlog.
+          return pollingResponse(
+            Array.from({ length: 50 }, (_, index) =>
+              createPullRequestRow(100 + index, {
+                updated_at: '2026-06-14T00:00:00Z',
+                head: { sha: `sha-${100 + index}` },
+              })
+            )
+          );
+        }
+        return pollingResponse([]);
+      }
+      return pollingResponse([]);
+    }) as typeof fetch;
+    try {
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      expect(pullsPages).toEqual(['2']);
+      const cursor = extension.repo.listPollingRepos()[0].pollCursor;
+      expect(cursor?.processedPages?.pulls).toBe(1);
+      expect(cursor?.endpointPendingLastSeenAt?.pulls).toBeUndefined();
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('check-run polling covers newly discovered PRs while pulls backlog persists', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    const repo = extension.repo.listPollingRepos()[0];
+    const watermark = Date.parse('2026-06-15T00:00:00Z');
+    extension.repo.updatePollCursor(repo.id, {
+      lastSeenAt: watermark,
+      endpointLastSeenAt: { pulls: watermark },
+      processedPages: { pulls: 2 },
+      recentPullRequestNumbers: [7],
+      recentPullRequestHeadShas: { 7: 'abc123' },
+    });
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const parsed = new URL(String(url));
+      const path = parsed.pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls')) {
+        const page = parsed.searchParams.get('page');
+        if (page === '2') {
+          // Fresh page that keeps the backlog alive, including the newly opened
+          // PR #2200 with a new head.
+          return pollingResponse(
+            Array.from({ length: 100 }, (_, index) =>
+              createPullRequestRow(index === 0 ? 2200 : 200 + index, {
+                updated_at: '2026-06-16T00:00:00Z',
+                head: { sha: index === 0 ? 'new-head' : 'bulk-head' },
+              })
+            )
+          );
+        }
+        return pollingResponse([]);
+      }
+      if (path.endsWith('/check-runs')) {
+        const headSha = decodeURIComponent(path.split('/commits/')[1].split('/check-runs')[0]);
+        if (headSha === 'new-head') {
+          return pollingResponse({
+            check_runs: [
+              createCheckRunRow({
+                id: 7200,
+                head_sha: 'new-head',
+                pull_requests: [{ number: 2200 }],
+              }),
+            ],
+          });
+        }
+        return pollingResponse({ check_runs: [] });
+      }
+      return pollingResponse([]);
+    }) as typeof fetch;
+    try {
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      const cursor = extension.repo.listPollingRepos()[0].pollCursor;
+      expect(cursor?.processedPages?.pulls).toBe(3);
+      expect(
+        received.some((item) => item.topic === 'github/acme/widgets/pull_request/2200.check_failed')
+      ).toBe(true);
+    } finally {
+      await extension.stop();
+    }
+  });
+
   test('polling seeds the check-run cursor before the first scan', async () => {
     const db = setupDb();
     const { service, received } = setupExternalEventService(db);

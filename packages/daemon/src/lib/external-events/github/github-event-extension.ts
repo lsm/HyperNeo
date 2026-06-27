@@ -1360,7 +1360,22 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       const etag = response.headers.get('ETag');
       if (etag && page === 1) etags[endpoint.key] = etag;
       const payload = await response.json();
-      const rows = rowsFromPollingPayload(payload, endpoint.key);
+      let rows = rowsFromPollingPayload(payload, endpoint.key);
+      let pullsBacklogClearedByCutoff = false;
+      if (endpoint.key === 'pulls' && !pullsNeedsSeed) {
+        // GitHub's /pulls endpoint ignores the `since` query param, so the only
+        // reliable delta is a client-side cutoff. Rows are sorted by updated_at
+        // descending; once a row is older than the endpoint watermark, every
+        // subsequent row is older and can be skipped.
+        const cutoffIndex = rows.findIndex((row) => {
+          const updatedAt = pullRequestUpdatedAt(row);
+          return updatedAt > 0 && updatedAt < endpointWatermark;
+        });
+        if (cutoffIndex !== -1) {
+          rows = rows.slice(0, cutoffIndex);
+          pullsBacklogClearedByCutoff = true;
+        }
+      }
       if (endpoint.key === 'pulls') {
         for (const row of rows) {
           const headSha = headShaFromPullRequest(row);
@@ -1456,7 +1471,11 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
           count++;
         }
       }
-      processedPages[endpoint.key] = rows.length >= 100 ? page + 1 : 1;
+      processedPages[endpoint.key] = pullsBacklogClearedByCutoff
+        ? 1
+        : rows.length >= 100
+          ? page + 1
+          : 1;
       if (endpoint.key === 'pulls')
         nextPullsSeedInProgress = pullsNeedsSeed && processedPages.pulls > 1;
       // Only advance the per-endpoint watermark once the endpoint's backlog is
@@ -1480,9 +1499,8 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     }
 
     const hasBacklog = Object.values(processedPages).some((page) => page > 1);
-    const pullsHasBacklog = (processedPages.pulls ?? 1) > 1;
 
-    if (!partialScan && !pullsHasBacklog) {
+    if (!partialScan) {
       const checkRunEndpointKey = 'check_runs';
       let checkRunPermissionDenied = false;
       // Rate-limit / repo-wide denial stops the entire head loop. Transient
@@ -2016,6 +2034,11 @@ function pullRequestNumberFrom(row: unknown): number {
   if (!row || typeof row !== 'object') return 0;
   const number = (row as { number?: unknown }).number;
   return typeof number === 'number' ? number : 0;
+}
+
+function pullRequestUpdatedAt(row: unknown): number {
+  if (!row || typeof row !== 'object') return 0;
+  return parseGitHubTimestamp((row as { updated_at?: unknown }).updated_at);
 }
 
 function isPullRequestOpen(row: unknown): boolean {
