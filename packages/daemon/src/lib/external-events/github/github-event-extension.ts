@@ -1251,10 +1251,16 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     }
     let partialScan = false;
     let latestRateLimit: GitHubRateLimitInfo | undefined;
+    // True when /pulls fetched any page beyond page 1 this cycle. The cutoff
+    // may reset processedPages.pulls to 1, but page 1 was not re-fetched, so
+    // cursor-seeded heads may be stale. Check-run polling is deferred until
+    // page 1 is actually fetched and all tracked heads are confirmed fresh.
+    let pullsFetchedResumedPage = false;
 
     const token = await this.resolveToken();
     for (const endpoint of endpoints) {
       const page = processedPages[endpoint.key] ?? 1;
+      if (endpoint.key === 'pulls' && page > 1) pullsFetchedResumedPage = true;
       const query = new URLSearchParams();
       if (endpoint.extra) {
         for (const part of endpoint.extra.split('&')) {
@@ -1360,7 +1366,46 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       const etag = response.headers.get('ETag');
       if (etag && page === 1) etags[endpoint.key] = etag;
       const payload = await response.json();
-      const rows = rowsFromPollingPayload(payload, endpoint.key);
+      let rows = rowsFromPollingPayload(payload, endpoint.key);
+      let pullsBacklogClearedByCutoff = false;
+      if (endpoint.key === 'pulls' && !pullsNeedsSeed && savedEndpointWatermark > 0) {
+        // GitHub's /pulls endpoint ignores the `since` query param, so the only
+        // reliable delta is a client-side cutoff. Rows are sorted by updated_at
+        // descending; once a row is older than the endpoint watermark, every
+        // subsequent row is older and can be skipped.
+        //
+        // Only apply the cutoff once a pulls-specific watermark exists. When
+        // the cursor falls back to the shared `lastSeenAt` (e.g. a legacy
+        // cursor with head SHAs but no endpointLastSeenAt.pulls), the shared
+        // watermark may have been advanced by comments/check runs past a PR's
+        // own updated_at. Skipping rows in that state would prevent the
+        // head/open-state refresh below from running, leaving stale heads in
+        // the cursor. Treat it as a seed fetch instead.
+        const cutoffIndex = rows.findIndex((row) => {
+          const updatedAt = pullRequestUpdatedAt(row);
+          return updatedAt > 0 && updatedAt < endpointWatermark;
+        });
+        if (cutoffIndex !== -1) {
+          rows = rows.slice(0, cutoffIndex);
+          pullsBacklogClearedByCutoff = true;
+        } else if (
+          rows.length > 0 &&
+          rows.length < 100 &&
+          rows.every((row) => {
+            const updatedAt = pullRequestUpdatedAt(row);
+            return updatedAt > 0 && updatedAt <= endpointWatermark;
+          })
+        ) {
+          // All rows on this partial page are at or before the watermark —
+          // GitHub's second-precision timestamps can produce pages of tied rows
+          // that never satisfy the strict < cutoff. Clear the backlog so
+          // processedPages resets to 1 without dropping the rows (they are
+          // re-processed but store-level dedupe suppresses duplicate events).
+          // Only fire on partial pages (< 100 rows): a full page may be
+          // followed by another tied page whose rows still need fetching for
+          // head/open-state refresh.
+        }
+      }
       if (endpoint.key === 'pulls') {
         for (const row of rows) {
           const headSha = headShaFromPullRequest(row);
@@ -1456,13 +1501,31 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
           count++;
         }
       }
-      processedPages[endpoint.key] = rows.length >= 100 ? page + 1 : 1;
+      processedPages[endpoint.key] = pullsBacklogClearedByCutoff
+        ? 1
+        : rows.length >= 100
+          ? page + 1
+          : 1;
       if (endpoint.key === 'pulls')
         nextPullsSeedInProgress = pullsNeedsSeed && processedPages.pulls > 1;
       // Only advance the per-endpoint watermark once the endpoint's backlog is
       // complete. While pages remain, the next poll must keep using the old
       // watermark so remaining pages are not filtered out by `since`.
       if (processedPages[endpoint.key] === 1) {
+        if (
+          endpoint.key === 'pulls' &&
+          endpointPending > 0 &&
+          endpointPending === endpointWatermark
+        ) {
+          // The backlog cleared without the endpoint pending advancing past
+          // the watermark — every processed row was tied at the watermark
+          // (GitHub timestamps are second-precision). Without a bump, the next
+          // page-1 fetch would recreate the backlog from the same tied rows,
+          // permanently starving check-run polling. Advance by 1ms: no PR can
+          // have updated_at between watermark and watermark+1ms, so no events
+          // are missed, and the strict < cutoff fires on the next cycle.
+          endpointPending = endpointWatermark + 1;
+        }
         if (endpointPending > 0) {
           endpointLastSeenAt[endpoint.key] = endpointPending;
         } else {
@@ -1480,7 +1543,13 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     }
 
     const hasBacklog = Object.values(processedPages).some((page) => page > 1);
-    const pullsHasBacklog = (processedPages.pulls ?? 1) > 1;
+    // pullsHasBacklog is true when /pulls still has unprocessed pages OR when a
+    // resumed page (> 1) was fetched this cycle — even if the cutoff cleared
+    // processedPages back to 1. In the cutoff case page 1 was not re-fetched,
+    // so cursor-seeded heads may be stale (closed/force-pushed). Deferring
+    // check-run polling until page 1 is fetched ensures all tracked heads are
+    // confirmed fresh before scanning.
+    const pullsHasBacklog = (processedPages.pulls ?? 1) > 1 || pullsFetchedResumedPage;
 
     if (!partialScan && !pullsHasBacklog) {
       const checkRunEndpointKey = 'check_runs';
@@ -1870,10 +1939,20 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     }
     // After a partial scan, do not advance the shared watermark; skipped
     // endpoints would miss events between the old watermark and the new one.
-    // The processed endpoint's own watermark is recorded separately.
+    // The processed endpoint's own watermark is recorded separately. Also keep
+    // the shared cursor pending when check-run polling was deferred due to a
+    // resumed /pulls page (pullsFetchedResumedPage): advancing lastSeenAt would
+    // shift the check-run baseline for legacy cursors without
+    // checkRunPollingEnabledAt, skipping failures on heads first discovered on
+    // the cut-off page.
+    const pullsCheckRunDeferred = pullsFetchedResumedPage;
     const cursorPayload: PollCursor = {
-      lastSeenAt: partialScan || hasBacklog ? watermarks.committed : watermarks.pending,
-      pendingLastSeenAt: partialScan || hasBacklog ? watermarks.pending : undefined,
+      lastSeenAt:
+        partialScan || hasBacklog || pullsCheckRunDeferred
+          ? watermarks.committed
+          : watermarks.pending,
+      pendingLastSeenAt:
+        partialScan || hasBacklog || pullsCheckRunDeferred ? watermarks.pending : undefined,
       etags,
       processedPages,
       recentPullRequestNumbers,
@@ -2016,6 +2095,11 @@ function pullRequestNumberFrom(row: unknown): number {
   if (!row || typeof row !== 'object') return 0;
   const number = (row as { number?: unknown }).number;
   return typeof number === 'number' ? number : 0;
+}
+
+function pullRequestUpdatedAt(row: unknown): number {
+  if (!row || typeof row !== 'object') return 0;
+  return parseGitHubTimestamp((row as { updated_at?: unknown }).updated_at);
 }
 
 function isPullRequestOpen(row: unknown): boolean {

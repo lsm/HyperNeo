@@ -82,6 +82,7 @@ SPACE_FILES=(
   space-happy-path-qa-completion.test.ts
   task-agent-lifecycle.test.ts
   task-agent-skills.test.ts
+  prompt-too-long-kimi-recovery.test.ts
 )
 
 check_workflow_references() {

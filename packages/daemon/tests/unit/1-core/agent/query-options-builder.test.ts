@@ -307,7 +307,8 @@ describe('QueryOptionsBuilder', () => {
       // (kimi-k2.7-code) qualifies, so CLAUDE_CODE_AUTO_COMPACT_WINDOW is
       // clamped to min(200k, 262144) = 200k and the SDK would fire compaction
       // ~62k early. Route both regions through NeoKai's fallback, which compacts
-      // at the real metadata window (reserveBasedThreshold(262144) = 229144).
+      // at the real metadata window using a Kimi-specific reserve
+      // (reserveBasedThreshold(262144, 'kimi') = 217144).
       expect(buildProviderSettings('kimi')).toEqual({
         autoCompactEnabled: false,
       });

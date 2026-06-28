@@ -27,20 +27,33 @@ export const COMPACTION_THRESHOLD = 0.85;
  * keeps below the window is `min(maxOutputTokens, 20000) + 13000`. Every modern
  * model has a default max output ≥ 20000, so the first term caps at 20000 and
  * the buffer is a flat 33_000. NeoKai's fallback uses the same buffer so it
- * fires at the same point the SDK would have — for Kimi (and any provider in
- * `PROVIDER_NO_SDK_AUTO_COMPACT`) the SDK never fires, so NeoKai is the sole
- * compaction path and matching the SDK's threshold gives consistent behaviour.
+ * fires at the same point the SDK would have — for most providers this is a
+ * safe default.
  */
 const SDK_AUTO_COMPACT_RESERVE_TOKENS = 33_000;
 
 /**
- * Compute the NeoKai fallback threshold for a context window: the point at
- * which the SDK's own auto-compact would have fired (`window − 33_000`), floored
- * at 1 so tiny windows still produce a positive threshold.
+ * Kimi-specific reserve buffer.
+ *
+ * Kimi K2.7-Code and kimi-for-coding are documented with a ~32k max output and
+ * mandatory reasoning that counts toward the context window. If the SDK allows
+ * close to 32k output, a 33k total reserve leaves the context headroom too
+ * tight. Use `32_000 + 13_000 = 45_000` so NeoKai compacts earlier and keeps
+ * room for a full Kimi response plus reasoning.
  */
-export function reserveBasedThreshold(contextWindow: number): number {
+const KIMI_RESERVE_TOKENS = 45_000;
+
+/**
+ * Compute the NeoKai fallback threshold for a context window: the point below
+ * the window at which NeoKai should trigger compaction. The default reserve
+ * matches the SDK's own 33k buffer; Kimi uses a larger 45k reserve to account
+ * for its ~32k max output and mandatory reasoning tokens. Result is floored at
+ * 1 so tiny windows still produce a positive threshold.
+ */
+export function reserveBasedThreshold(contextWindow: number, providerId?: string): number {
   if (!Number.isFinite(contextWindow) || contextWindow <= 0) return 0;
-  return Math.max(1, contextWindow - SDK_AUTO_COMPACT_RESERVE_TOKENS);
+  const reserve = providerId === 'kimi' ? KIMI_RESERVE_TOKENS : SDK_AUTO_COMPACT_RESERVE_TOKENS;
+  return Math.max(1, contextWindow - reserve);
 }
 
 export class ContextTracker {

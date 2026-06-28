@@ -1298,13 +1298,24 @@ export class TaskAgentManager {
    * is left intact for the next activation (e.g. when `createSubSession` spawns/reuses
    * the session and calls `flushPendingMessagesForTarget`).
    */
-  async tryResumeNodeAgentSession(workflowRunId: string, agentName: string): Promise<void> {
+  async tryResumeNodeAgentSession(
+    workflowRunId: string,
+    agentName: string,
+    workflowNodeId?: string
+  ): Promise<void> {
     const repo = this.config.pendingMessageRepo;
     if (!repo) return;
 
     const executions = this.config.nodeExecutionRepo.listByWorkflowRun(workflowRunId);
-    const exec = executions.filter((e) => e.agentName === agentName && e.agentSessionId).at(-1);
-    if (!exec?.agentSessionId) return; // No known session for this agent — wait for spawn.
+    const exec = executions
+      .filter(
+        (e) =>
+          e.agentName === agentName &&
+          e.agentSessionId &&
+          (!workflowNodeId || e.workflowNodeId === workflowNodeId)
+      )
+      .at(-1);
+    if (!exec?.agentSessionId) return; // No known session for this agent/node — wait for spawn.
 
     const sessionId = exec.agentSessionId;
 
@@ -1585,14 +1596,17 @@ export class TaskAgentManager {
     taskId: string,
     workflowRunId: string,
     agentName: string,
-    options?: { reopenReason?: string; reopenBy?: string }
+    options?: { reopenReason?: string; reopenBy?: string; workflowNodeId?: string }
   ): Promise<Array<{ agentName: string; sessionId: string }>> {
-    await this.tryResumeNodeAgentSession(workflowRunId, agentName);
+    await this.tryResumeNodeAgentSession(workflowRunId, agentName, options?.workflowNodeId);
+    const matchesNode = (workflowNodeId: string) =>
+      !options?.workflowNodeId || workflowNodeId === options.workflowNodeId;
     const existing = this.config.nodeExecutionRepo
       .listByWorkflowRun(workflowRunId)
       .filter(
         (execution) =>
           execution.agentName === agentName &&
+          matchesNode(execution.workflowNodeId) &&
           (execution.status === 'in_progress' || execution.status === 'blocked')
       )
       .at(-1);
@@ -1610,7 +1624,21 @@ export class TaskAgentManager {
       });
     }
 
-    await this.ensureWorkflowNodeActivationForAgent(taskId, agentName, options);
+    if (options?.workflowNodeId) {
+      const task = this.config.taskRepo.getTask(taskId);
+      if (task?.workflowRunId) {
+        const run = this.config.workflowRunRepo.getRun(task.workflowRunId);
+        if (run?.workflowId) {
+          const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+          const node = workflow?.nodes.find((candidate) => candidate.id === options.workflowNodeId);
+          const slots = node ? resolveNodeAgents(node) : [];
+          if (!slots.some((slot) => slot.name === agentName)) return [];
+        }
+      }
+      await this.ensureWorkflowNodeActivationForAgent(taskId, agentName, options);
+    } else {
+      await this.ensureWorkflowNodeActivationForAgent(taskId, agentName, options);
+    }
 
     const task = this.config.taskRepo.getTask(taskId);
     const run = this.config.workflowRunRepo.getRun(workflowRunId);
@@ -1622,7 +1650,9 @@ export class TaskAgentManager {
 
     const execution = this.config.nodeExecutionRepo
       .listByWorkflowRun(workflowRunId)
-      .find((candidate) => candidate.agentName === agentName);
+      .find(
+        (candidate) => candidate.agentName === agentName && matchesNode(candidate.workflowNodeId)
+      );
     if (!execution) return [];
 
     const spawnPromise = this.spawnWorkflowNodeAgentForExecution(
@@ -1649,7 +1679,7 @@ export class TaskAgentManager {
   async ensureWorkflowNodeActivationForAgent(
     taskId: string,
     agentName: string,
-    options?: { reopenReason?: string; reopenBy?: string }
+    options?: { reopenReason?: string; reopenBy?: string; workflowNodeId?: string }
   ): Promise<boolean> {
     try {
       const task = this.config.taskRepo.getTask(taskId);
@@ -1672,6 +1702,7 @@ export class TaskAgentManager {
           continue;
         }
         if (slots.some((slot) => slot.name === agentName)) {
+          if (options?.workflowNodeId && node.id !== options.workflowNodeId) continue;
           targetNodeId = node.id;
           break;
         }

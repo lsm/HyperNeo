@@ -1131,8 +1131,8 @@ export class SDKMessageHandler {
         //
         // Scoped to providers/model routes where SDK auto-compact uses the
         // wrong capacity. For these routes, SDK auto-compact is disabled via
-        // Options.settings; NeoKai is the sole compaction path and fires at
-        // the same threshold the SDK would have used (window - 33_000 — see
+        // Options.settings; NeoKai is the sole compaction path and fires at a
+        // provider-aware reserve threshold (33k default, 45k for Kimi — see
         // `reserveBasedThreshold`).
         //
         // For all other providers (Anthropic native, GLM, Codex, OpenRouter,
@@ -1151,7 +1151,7 @@ export class SDKMessageHandler {
         const shouldUseFallback = shouldUseNeoKaiCompactFallback(providerId);
         const actualContextWindow = modelInfo?.contextWindow;
         if (shouldUseFallback && actualContextWindow && actualContextWindow > 0) {
-          const neoKaiCompactThreshold = reserveBasedThreshold(actualContextWindow);
+          const neoKaiCompactThreshold = reserveBasedThreshold(actualContextWindow, providerId);
           if (
             contextInfo.totalUsed >= neoKaiCompactThreshold &&
             contextTracker.shouldCompactAt(neoKaiCompactThreshold)
