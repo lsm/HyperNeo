@@ -37,7 +37,7 @@ describe('OutputLimiterHook', () => {
       expect(result).toEqual({
         hookSpecificOutput: {
           hookEventName: 'PreToolUse',
-          permissionDecision: 'ask',
+          permissionDecision: 'allow',
           updatedInput: { file_path: '/test/file.txt', limit: 1000 },
         },
       });
@@ -123,7 +123,7 @@ describe('OutputLimiterHook', () => {
       expect(result).toEqual({
         hookSpecificOutput: {
           hookEventName: 'PreToolUse',
-          permissionDecision: 'ask',
+          permissionDecision: 'allow',
           updatedInput: { pattern: 'TODO', path: '/src', head_limit: 250 },
         },
       });

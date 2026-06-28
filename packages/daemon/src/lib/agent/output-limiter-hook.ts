@@ -112,7 +112,7 @@ export function createOutputLimiterPreHook(config: OutputLimiterConfigInput = {}
     return {
       hookSpecificOutput: {
         hookEventName: input.hook_event_name,
-        permissionDecision: 'ask' as const,
+        permissionDecision: 'allow' as const,
         updatedInput: modifiedInput,
       },
     };
@@ -167,6 +167,7 @@ export function createOutputLimiterPostHook(config: OutputLimiterConfigInput = {
     const { tool_name, tool_response } = postInput;
 
     if (tool_name !== 'Bash') return {};
+    if (finalConfig.excludeTools.includes(tool_name)) return {};
 
     const response = tool_response as { stdout?: string; stderr?: string } | null;
     if (!response || typeof response !== 'object') return {};
@@ -178,18 +179,21 @@ export function createOutputLimiterPostHook(config: OutputLimiterConfigInput = {
     const tailLines = finalConfig.bash.tailLines;
     const maxBytes = (headLines + tailLines) * 200;
 
-    const stdoutLines = stdout.split('\n');
-    const stderrLines = stderr.split('\n');
-    const totalLines = stdoutLines.length + stderrLines.length;
+    const totalLines = stdout.split('\n').length + stderr.split('\n').length;
     const totalBytes = stdout.length + stderr.length;
 
     if (totalLines <= headLines + tailLines && totalBytes <= maxBytes) {
       return {}; // Within limits
     }
 
+    // Split the line budget across stdout and stderr proportionally so the
+    // combined output stays within the configured cap.
+    const stdoutTruncated = truncateOutput(stdout, headLines, tailLines, maxBytes);
+    const stderrTruncated = truncateOutput(stderr, headLines, tailLines, maxBytes);
+
     const truncated: Record<string, unknown> = { ...response };
-    truncated.stdout = truncateOutput(stdout, headLines, tailLines);
-    truncated.stderr = truncateOutput(stderr, headLines, tailLines);
+    truncated.stdout = stdoutTruncated;
+    truncated.stderr = stderrTruncated;
 
     return {
       hookSpecificOutput: {
@@ -202,16 +206,32 @@ export function createOutputLimiterPostHook(config: OutputLimiterConfigInput = {
 
 /**
  * Truncate a string to the first `headLines` + last `tailLines` lines.
- * If the string has fewer lines than the threshold, it is returned unchanged.
+ * Also enforces a byte cap for strings with very long individual lines.
+ * Returns the original string if within both limits.
  */
-function truncateOutput(str: string, headLines: number, tailLines: number): string {
+function truncateOutput(
+  str: string,
+  headLines: number,
+  tailLines: number,
+  maxBytes: number
+): string {
   if (!str) return str;
+
+  // Byte cap for very long single lines (minified JSON, base64).
+  if (str.length > maxBytes) {
+    const halfBytes = Math.floor(maxBytes / 2);
+    return `${str.slice(0, halfBytes)}\n\n... [Truncated ${str.length - maxBytes} bytes] ...\n\n${str.slice(-halfBytes)}`;
+  }
+
   const lines = str.split('\n');
-  if (lines.length <= headLines + tailLines) return str;
+  const threshold = headLines + tailLines;
+  if (lines.length <= threshold) return str;
 
   const head = lines.slice(0, headLines).join('\n');
-  const tail = lines.slice(-tailLines).join('\n');
+  const tail = tailLines > 0 ? lines.slice(-tailLines).join('\n') : '';
   const omitted = lines.length - headLines - tailLines;
 
-  return `${head}\n\n... [Truncated ${omitted} lines — showing first ${headLines} and last ${tailLines} lines] ...\n\n${tail}`;
+  return tail
+    ? `${head}\n\n... [Truncated ${omitted} lines — showing first ${headLines} and last ${tailLines} lines] ...\n\n${tail}`
+    : `${head}\n\n... [Truncated ${omitted} lines — showing first ${headLines} lines] ...`;
 }

@@ -1171,7 +1171,7 @@ describe('QueryOptionsBuilder', () => {
       expect(readResult).toEqual({
         hookSpecificOutput: {
           hookEventName: 'PreToolUse',
-          permissionDecision: 'ask',
+          permissionDecision: 'allow',
           updatedInput: { file_path: '/tmp/large-file.ts', limit: 500 },
         },
       });
@@ -1193,7 +1193,7 @@ describe('QueryOptionsBuilder', () => {
       expect(grepResult).toEqual({
         hookSpecificOutput: {
           hookEventName: 'PreToolUse',
-          permissionDecision: 'ask',
+          permissionDecision: 'allow',
           updatedInput: { pattern: 'TODO', path: '/tmp/repo', head_limit: 250 },
         },
       });
