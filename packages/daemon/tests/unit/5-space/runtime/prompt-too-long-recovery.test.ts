@@ -27,6 +27,8 @@ import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space
 import type { SpaceWorkflow } from '@neokai/shared';
 import {
   isPromptTooLongResult,
+  isPromptTooLongUserMessage,
+  isPromptTooLongErrorMessage,
   buildPromptTooLongContinueNag,
   COMPACT_RESULT_TIMEOUT_MS,
   MAX_PROMPT_TOO_LONG_RECOVERY_ATTEMPTS,
@@ -241,6 +243,97 @@ describe('isPromptTooLongResult', () => {
   });
 });
 
+describe('isPromptTooLongUserMessage', () => {
+  test('matches bare "Prompt is too long" inside user message text', () => {
+    const msg = {
+      type: 'user',
+      message: {
+        role: 'user',
+        content: '<local-command-stderr>Prompt is too long</local-command-stderr>',
+      },
+      parent_tool_use_id: null,
+    };
+    expect(isPromptTooLongUserMessage(msg as never)).toBe(true);
+  });
+
+  test('matches detailed "N tokens > M maximum" form', () => {
+    const msg = {
+      type: 'user',
+      message: {
+        role: 'user',
+        content:
+          '<local-command-stderr>Error: prompt is too long: 205616 tokens > 200000 maximum</local-command-stderr>',
+      },
+      parent_tool_use_id: null,
+    };
+    expect(isPromptTooLongUserMessage(msg as never)).toBe(true);
+  });
+
+  test('matches prompt-too-long in array content blocks', () => {
+    const msg = {
+      type: 'user',
+      message: {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: '<local-command-stderr>Prompt is too long: 1234 tokens > 1000 maximum</local-command-stderr>',
+          },
+        ],
+      },
+      parent_tool_use_id: null,
+    };
+    expect(isPromptTooLongUserMessage(msg as never)).toBe(true);
+  });
+
+  test('rejects user message containing the phrase outside stderr tags', () => {
+    const msg = {
+      type: 'user',
+      message: { role: 'user', content: 'The model said Prompt is too long' },
+      parent_tool_use_id: null,
+    };
+    expect(isPromptTooLongUserMessage(msg as never)).toBe(false);
+  });
+
+  test('rejects unrelated user message', () => {
+    const msg = {
+      type: 'user',
+      message: { role: 'user', content: 'Please continue the task' },
+      parent_tool_use_id: null,
+    };
+    expect(isPromptTooLongUserMessage(msg as never)).toBe(false);
+  });
+
+  test('rejects result messages and null', () => {
+    expect(
+      isPromptTooLongUserMessage({ type: 'result', terminal_reason: 'prompt_too_long' } as never)
+    ).toBe(false);
+    expect(isPromptTooLongUserMessage(null)).toBe(false);
+    expect(isPromptTooLongUserMessage(undefined)).toBe(false);
+  });
+});
+
+describe('isPromptTooLongErrorMessage', () => {
+  test('matches result and user-message overflow forms', () => {
+    const resultMsg = {
+      type: 'result',
+      terminal_reason: 'prompt_too_long',
+      errors: [],
+    };
+    const userMsg = {
+      type: 'user',
+      message: {
+        role: 'user',
+        content: '<local-command-stderr>Prompt is too long</local-command-stderr>',
+      },
+      parent_tool_use_id: null,
+    };
+    expect(isPromptTooLongErrorMessage(resultMsg as never)).toBe(true);
+    expect(isPromptTooLongErrorMessage(userMsg as never)).toBe(true);
+    expect(isPromptTooLongErrorMessage({ type: 'assistant' } as never)).toBe(false);
+  });
+});
+
 describe('SpaceRuntime — prompt-too-long recovery', () => {
   let db: BunDatabase;
   let workflowRunRepo: SpaceWorkflowRunRepository;
@@ -321,6 +414,22 @@ describe('SpaceRuntime — prompt-too-long recovery', () => {
     db.prepare(`UPDATE sdk_messages SET timestamp = ? WHERE session_id = ?`).run(ts, sessionId);
   }
 
+  /** Save a user SDK message as the last message for a session. */
+  function saveUserMessage(
+    sessionId: string,
+    content: string,
+    opts: { minutesAgo?: number } = {}
+  ): void {
+    sdkMessageRepo.saveSDKMessage(sessionId, {
+      type: 'user',
+      message: { role: 'user', content },
+      parent_tool_use_id: null,
+    } as never);
+    const minutesAgo = opts.minutesAgo ?? 20;
+    const ts = new Date(Date.now() - minutesAgo * 60_000).toISOString();
+    db.prepare(`UPDATE sdk_messages SET timestamp = ? WHERE session_id = ?`).run(ts, sessionId);
+  }
+
   function promptTooLongRecoveryMap(
     rt: SpaceRuntime
   ): Map<string, { compactAttempts: number; awaitingContinue: boolean }> {
@@ -368,6 +477,21 @@ describe('SpaceRuntime — prompt-too-long recovery', () => {
     return { run, execution };
   }
 
+  async function setupIdleUserOverflowExecution(
+    rt: SpaceRuntime,
+    sessionId: string,
+    content = '<local-command-stderr>Prompt is too long: 205616 tokens > 200000 maximum</local-command-stderr>'
+  ): Promise<{ run: { id: string }; execution: { id: string } }> {
+    const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+      { id: STEP_A, name: 'Work', agentId: AGENT },
+    ]);
+    const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+    const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+    nodeExecutionRepo.update(execution.id, { status: 'idle', agentSessionId: sessionId });
+    saveUserMessage(sessionId, content);
+    return { run, execution };
+  }
+
   test('compacts then continues when an idle execution overflows', async () => {
     const injections: Array<{ sessionId: string; message: string }> = [];
     const rt = new SpaceRuntime(buildConfig(makeRecordingTam(injections)));
@@ -393,6 +517,57 @@ describe('SpaceRuntime — prompt-too-long recovery', () => {
     // Tick 3: last message advanced past /compact and is non-overflow → continue nag.
     await rt.executeTick();
     expect(injections.map((i) => i.message)).toEqual(['/compact', buildPromptTooLongContinueNag()]);
+  });
+
+  test('compacts then continues when the overflow is reported as a Kimi user-message stderr', async () => {
+    const injections: Array<{ sessionId: string; message: string }> = [];
+    const rt = new SpaceRuntime(buildConfig(makeRecordingTam(injections)));
+    const sessionId = 'session:kimi-overflow';
+    const { run, execution } = await setupIdleUserOverflowExecution(rt, sessionId);
+
+    // Tick 1: user-message overflow detected → inject /compact FIRST.
+    await rt.executeTick();
+    expect(injections.map((i) => i.message)).toEqual(['/compact']);
+    const state = promptTooLongRecoveryMap(rt).get(`${run.id}:${execution.id}`);
+    expect(state?.compactAttempts).toBe(1);
+    expect(state?.awaitingContinue).toBe(true);
+
+    // Tick 2: the injected /compact is invisible; recovery waits, not re-injects.
+    await rt.executeTick();
+    expect(injections.map((i) => i.message)).toEqual(['/compact']);
+
+    // Simulate compaction completing: a success result lands.
+    saveResultMessage(sessionId, { promptTooLong: false });
+
+    // Tick 3: continue nag after successful compaction.
+    await rt.executeTick();
+    expect(injections.map((i) => i.message)).toEqual(['/compact', buildPromptTooLongContinueNag()]);
+  });
+
+  test('re-compacts immediately when the /compact turn re-overflows as a Kimi user message', async () => {
+    // P2: a newer prompt-too-long user message must clear awaitingContinue and be
+    // treated as a completed overflow turn, not left to wait for COMPACT_RESULT_TIMEOUT_MS.
+    const injections: Array<{ sessionId: string; message: string }> = [];
+    const rt = new SpaceRuntime(buildConfig(makeRecordingTam(injections)));
+    const sessionId = 'session:kimi-reoverflow';
+    const { run, execution } = await setupIdleUserOverflowExecution(rt, sessionId);
+
+    await rt.executeTick(); // → /compact (attempt 1)
+    // The /compact turn itself hits the same Kimi overflow, surfaced as a user message.
+    saveUserMessage(
+      sessionId,
+      '<local-command-stderr>Prompt is too long: 205616 tokens > 200000 maximum</local-command-stderr>'
+    );
+    await rt.executeTick(); // → /compact (attempt 2), no timeout wait
+    saveUserMessage(
+      sessionId,
+      '<local-command-stderr>Prompt is too long: 205616 tokens > 200000 maximum</local-command-stderr>'
+    );
+    await rt.executeTick(); // attempts exhausted → blocked
+
+    expect(injections.map((i) => i.message)).toEqual(['/compact', '/compact']);
+    expect(nodeExecutionRepo.getById(execution.id)?.status).toBe('blocked');
+    expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
   });
 
   test('does not double-inject /compact while awaiting the compacted result', async () => {
@@ -614,6 +789,34 @@ describe('SpaceRuntime — prompt-too-long recovery', () => {
     await rt.executeTick(); // → resume-wait timeout → blocked
     expect(nodeExecutionRepo.getById(execution.id)?.status).toBe('blocked');
     expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
+  });
+
+  test('clears awaitingResume and re-compacts when the resumed turn re-overflows as a Kimi user message', async () => {
+    // Bonus: a resumed turn that itself overflows via the Kimi stderr form must be
+    // treated like an overflow result — clear awaitingResume and re-compact with
+    // attempts preserved instead of waiting for a result that will never arrive.
+    const injections: Array<{ sessionId: string; message: string }> = [];
+    const rt = new SpaceRuntime(buildConfig(makeRecordingTam(injections)));
+    const sessionId = 'session:kimi-resume-reoverflow';
+    const { run, execution } = await setupIdleOverflowExecution(rt, sessionId, true);
+
+    await rt.executeTick(); // → /compact (attempt 1)
+    saveResultMessage(sessionId, { promptTooLong: false }); // compact success
+    await rt.executeTick(); // → continue nag (awaitingResume=true)
+
+    // The resumed turn itself hits the same Kimi overflow, surfaced as a user message.
+    saveUserMessage(
+      sessionId,
+      '<local-command-stderr>Prompt is too long: 205616 tokens > 200000 maximum</local-command-stderr>'
+    );
+
+    await rt.executeTick(); // → clears awaitingResume, re-compact (attempt 2)
+
+    expect(injections.filter((i) => i.message === '/compact').length).toBe(2);
+    expect(injections.filter((i) => i.message === buildPromptTooLongContinueNag()).length).toBe(1);
+    const state = promptTooLongRecoveryMap(rt).get(`${run.id}:${execution.id}`);
+    expect(state?.awaitingContinue).toBe(true);
+    expect(state?.awaitingResume).toBe(false);
   });
 
   test('processes a resumed success past the timeout window instead of blocking', async () => {
