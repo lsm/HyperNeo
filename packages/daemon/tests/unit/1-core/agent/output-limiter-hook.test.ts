@@ -373,7 +373,7 @@ describe('OutputLimiterHook', () => {
       expect(result).toEqual({
         hookSpecificOutput: {
           hookEventName: 'PreToolUse',
-          permissionDecision: 'allow',
+          permissionDecision: 'ask',
           updatedInput: { file_path: '/test/large-file.txt', limit: 1000 },
         },
       });
@@ -408,7 +408,7 @@ describe('OutputLimiterHook', () => {
       expect(result).toEqual({
         hookSpecificOutput: {
           hookEventName: 'PreToolUse',
-          permissionDecision: 'allow',
+          permissionDecision: 'ask',
           updatedInput: { file_path: '/test/file.txt', limit: 1000 },
         },
       });
@@ -434,7 +434,7 @@ describe('OutputLimiterHook', () => {
       expect(result).toEqual({
         hookSpecificOutput: {
           hookEventName: 'PreToolUse',
-          permissionDecision: 'allow',
+          permissionDecision: 'ask',
           updatedInput: { file_path: '/test/file.txt', limit: 100 },
         },
       });
@@ -458,7 +458,7 @@ describe('OutputLimiterHook', () => {
       expect(result).toEqual({
         hookSpecificOutput: {
           hookEventName: 'PreToolUse',
-          permissionDecision: 'allow',
+          permissionDecision: 'ask',
           updatedInput: { pattern: 'TODO', path: '/test', head_limit: 250 },
         },
       });
@@ -493,7 +493,7 @@ describe('OutputLimiterHook', () => {
       expect(result).toEqual({
         hookSpecificOutput: {
           hookEventName: 'PreToolUse',
-          permissionDecision: 'allow',
+          permissionDecision: 'ask',
           updatedInput: { pattern: 'TODO', head_limit: 250 },
         },
       });
@@ -514,7 +514,7 @@ describe('OutputLimiterHook', () => {
       expect(result).toEqual({
         hookSpecificOutput: {
           hookEventName: 'PreToolUse',
-          permissionDecision: 'allow',
+          permissionDecision: 'ask',
           updatedInput: { pattern: 'TODO', head_limit: 250 },
         },
       });

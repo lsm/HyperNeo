@@ -1135,9 +1135,9 @@ describe('QueryOptionsBuilder', () => {
       expect(updatedInput.command).toContain('tail -n 200');
       expect(updatedInput.command).toContain('exit $exit_code');
       // The hook should not grant permission on its own.
-      // The hook must include permissionDecision: 'allow' for updatedInput to
+      // The hook must include permissionDecision: 'ask' for updatedInput to
       // be reliably applied by the SDK.
-      expect(result.hookSpecificOutput).toMatchObject({ permissionDecision: 'allow' });
+      expect(result.hookSpecificOutput).toMatchObject({ permissionDecision: 'ask' });
 
       expect(result).toMatchObject({
         hookSpecificOutput: {
@@ -1181,7 +1181,7 @@ describe('QueryOptionsBuilder', () => {
       expect(readResult).toEqual({
         hookSpecificOutput: {
           hookEventName: 'PreToolUse',
-          permissionDecision: 'allow',
+          permissionDecision: 'ask',
           updatedInput: {
             file_path: '/tmp/large-file.ts',
             limit: 500,
@@ -1206,7 +1206,7 @@ describe('QueryOptionsBuilder', () => {
       expect(grepResult).toEqual({
         hookSpecificOutput: {
           hookEventName: 'PreToolUse',
-          permissionDecision: 'allow',
+          permissionDecision: 'ask',
           updatedInput: {
             pattern: 'TODO',
             path: '/tmp/repo',

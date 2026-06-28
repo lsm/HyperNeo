@@ -147,16 +147,16 @@ export function createOutputLimiterHook(config: OutputLimiterConfigInput = {}): 
       return {};
     }
 
-    // Return the mutated input with permissionDecision: 'allow'. The SDK
+    // Return the mutated input with permissionDecision: 'ask'. The SDK
     // requires a permissionDecision for updatedInput to be reliably applied.
-    // NeoKai defaults to bypassPermissions where 'allow' is a no-op; in
-    // restrictive modes this auto-approves the call, which is an accepted
-    // trade-off — the alternative is the limiter's mutations being silently
-    // dropped and large outputs running uncapped.
+    // 'ask' routes through the normal permission flow (canUseTool / prompt)
+    // so restrictive modes (acceptEdits, dontAsk, etc.) still prompt the user.
+    // In bypassPermissions mode (NeoKai default), 'ask' is a no-op — the SDK
+    // skips all prompts regardless.
     return {
       hookSpecificOutput: {
         hookEventName: input.hook_event_name,
-        permissionDecision: 'allow' as const,
+        permissionDecision: 'ask' as const,
         updatedInput: modifiedInput,
       },
     };
