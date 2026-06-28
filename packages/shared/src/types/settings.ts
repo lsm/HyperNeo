@@ -96,15 +96,13 @@ export interface FileOnlySettings {
     bash?: {
       headLines?: number; // First N lines to show (default: 100)
       tailLines?: number; // Last N lines to show (default: 200)
+      excludedCommandPrefixes?: string[]; // Prefixes not to wrap (default: [])
     };
     read?: {
-      maxChars?: number; // Max characters to read (default: 50000)
+      maxLines?: number; // Max lines to read (default: 1000)
     };
     grep?: {
-      maxMatches?: number; // Max search matches (default: 500)
-    };
-    glob?: {
-      maxFiles?: number; // Max files to list (default: 1000)
+      maxMatches?: number; // Max search matches (default: 250)
     };
     excludeTools?: string[]; // Tools to exclude from limiting
   };
@@ -266,15 +264,13 @@ export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
     bash: {
       headLines: 100,
       tailLines: 200,
+      excludedCommandPrefixes: [],
     },
     read: {
-      maxChars: 50000,
+      maxLines: 1000,
     },
     grep: {
-      maxMatches: 500,
-    },
-    glob: {
-      maxFiles: 1000,
+      maxMatches: 250,
     },
     excludeTools: [],
   },

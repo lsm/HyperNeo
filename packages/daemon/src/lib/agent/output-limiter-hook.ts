@@ -1,20 +1,24 @@
 /**
- * Output Limiter Hook (Experimental)
+ * Output Limiter Hook
  *
- * Prevents large tool outputs by injecting output limiting parameters
- * before tools execute, avoiding "prompt too long" API errors.
+ * Prevents large tool outputs from overflowing the model context window.
  *
- * Strategy: Use PreToolUse hooks to modify tool inputs and add output limits.
- * This prevents large outputs from being generated in the first place.
- *
- * Note: PostToolUse hooks CANNOT modify tool_response - they can only add
- * additionalContext. Therefore, we must limit outputs at the input stage.
+ * Strategy:
+ * - PreToolUse: inject limit parameters for Read (line limit) and Grep
+ *   (head_limit) so the tools fetch less data in the first place.
+ * - PostToolUse: truncate Bash stdout/stderr via updatedToolOutput if the
+ *   output exceeds line or byte thresholds. The command runs unwrapped,
+ *   so exit codes, heredocs, cwd, sandbox, and background behavior are
+ *   all preserved naturally.
  */
 
-import type { HookCallback, PreToolUseHookInput } from '@anthropic-ai/claude-agent-sdk';
-import { Logger } from '../logger';
+import type {
+  HookCallback,
+  PostToolUseHookInput,
+  PreToolUseHookInput,
+} from '@anthropic-ai/claude-agent-sdk';
 
-// Output limiter configuration
+// Resolved configuration (all fields populated)
 interface OutputLimiterConfig {
   enabled: boolean;
   bash: {
@@ -22,15 +26,30 @@ interface OutputLimiterConfig {
     tailLines: number;
   };
   read: {
-    maxChars: number;
+    maxLines: number;
   };
   grep: {
     maxMatches: number;
   };
-  glob: {
-    maxFiles: number;
-  };
   excludeTools: string[];
+}
+
+// Input shape: nested values may be partial (settings update path)
+export interface OutputLimiterConfigInput {
+  enabled?: boolean;
+  bash?: {
+    headLines?: number;
+    tailLines?: number;
+  };
+  read?: {
+    maxLines?: number;
+    /** @deprecated Use maxLines instead. Legacy char-based limit. */
+    maxChars?: number;
+  };
+  grep?: {
+    maxMatches?: number;
+  };
+  excludeTools?: string[];
 }
 
 const DEFAULT_CONFIG: OutputLimiterConfig = {
@@ -40,69 +59,56 @@ const DEFAULT_CONFIG: OutputLimiterConfig = {
     tailLines: 200,
   },
   read: {
-    maxChars: 50000,
+    maxLines: 1000,
   },
   grep: {
-    maxMatches: 500,
-  },
-  glob: {
-    maxFiles: 1000,
+    // Match the SDK's built-in default so injecting head_limit never expands
+    // output beyond what the SDK would have returned on its own.
+    maxMatches: 250,
   },
   excludeTools: [],
 };
 
-/**
- * Creates a PreToolUse hook that injects output limiting parameters
- * into tool inputs to prevent excessively large outputs.
- *
- * @param config - Configuration for output limiting behavior
- * @returns Hook callback function
- *
- * @example
- * ```typescript
- * const hook = createOutputLimiterHook({
- *   enabled: true,
- *   limits: { BASH_MAX_LINES: 500 }
- * });
- *
- * const options = {
- *   hooks: {
- *     PreToolUse: [{ hooks: [hook] }]
- *   }
- * };
- * ```
- */
-export function createOutputLimiterHook(config: Partial<OutputLimiterConfig> = {}): HookCallback {
-  const finalConfig = { ...DEFAULT_CONFIG, ...config };
-  const logger = new Logger('OutputLimiterHook');
+export function resolveConfig(input: OutputLimiterConfigInput = {}): OutputLimiterConfig {
+  return {
+    enabled: input.enabled ?? DEFAULT_CONFIG.enabled,
+    bash: {
+      headLines: input.bash?.headLines ?? DEFAULT_CONFIG.bash.headLines,
+      tailLines: input.bash?.tailLines ?? DEFAULT_CONFIG.bash.tailLines,
+    },
+    read: {
+      maxLines:
+        input.read?.maxLines ??
+        (input.read?.maxChars !== undefined
+          ? Math.floor(input.read.maxChars / 50)
+          : DEFAULT_CONFIG.read.maxLines),
+    },
+    grep: {
+      maxMatches: input.grep?.maxMatches ?? DEFAULT_CONFIG.grep.maxMatches,
+    },
+    excludeTools: input.excludeTools ?? DEFAULT_CONFIG.excludeTools,
+  };
+}
 
-  return async (input, _toolUseID, { signal: _signal }) => {
-    if (!finalConfig.enabled) {
-      return {};
-    }
+// ---------------------------------------------------------------------------
+// PreToolUse hook: inject limit parameters for Read and Grep
+// ---------------------------------------------------------------------------
 
-    // Only process PreToolUse events
-    if (input.hook_event_name !== 'PreToolUse') {
-      return {};
-    }
+export function createOutputLimiterPreHook(config: OutputLimiterConfigInput = {}): HookCallback {
+  const finalConfig = resolveConfig(config);
+
+  return async (input) => {
+    if (!finalConfig.enabled) return {};
+    if (input.hook_event_name !== 'PreToolUse') return {};
 
     const preInput = input as PreToolUseHookInput;
     const { tool_name, tool_input } = preInput;
 
-    // Skip excluded tools
-    if (finalConfig.excludeTools.includes(tool_name)) {
-      return {};
-    }
+    if (finalConfig.excludeTools.includes(tool_name)) return {};
 
-    // Modify tool inputs based on tool type
-    const modifiedInput = limitToolInput(tool_name, tool_input, finalConfig, logger);
+    const modifiedInput = injectReadOrGrepLimit(tool_name, tool_input, finalConfig);
+    if (!modifiedInput) return {};
 
-    if (!modifiedInput) {
-      // No changes needed
-      return {};
-    }
-
-    // Return modified input with allow decision
     return {
       hookSpecificOutput: {
         hookEventName: input.hook_event_name,
@@ -113,100 +119,119 @@ export function createOutputLimiterHook(config: Partial<OutputLimiterConfig> = {
   };
 }
 
-/**
- * Inject output limiting parameters into tool inputs
- * Returns modified input if changes were made, null otherwise
- */
-function limitToolInput(
+function injectReadOrGrepLimit(
   toolName: string,
   toolInput: unknown,
-  config: OutputLimiterConfig,
-  _logger: Logger
+  config: OutputLimiterConfig
 ): Record<string, unknown> | null {
   const input = toolInput as Record<string, unknown>;
 
   switch (toolName) {
-    case 'Bash': {
-      // Smart output limiting: capture both start and end of output
-      const command = input.command as string | undefined;
-      if (!command) return null;
-
-      // Skip if already has head/tail limiting
-      if (/\|\s*(head|tail)/.test(command)) {
-        return null;
-      }
-
-      // Skip simple commands that are unlikely to produce large output
-      // (pwd, cd, echo simple strings, etc.)
-      const simpleCommands = /^(pwd|cd|echo\s+"[^"]{0,50}"|ls(\s+-\w+)?(\s+\S+)?|which|whoami)$/;
-      if (simpleCommands.test(command.trim())) {
-        return null;
-      }
-
-      const headLines = config.bash.headLines;
-      const tailLines = config.bash.tailLines;
-
-      // Create smart truncation command:
-      // 1. Save output to temp file
-      // 2. If output exceeds limit: show first N + truncation message + last N
-      // 3. Otherwise: show all output
-      // 4. Clean up temp file
-      const limitedCommand = `tmpfile=$(mktemp); (${command}) 2>&1 > "$tmpfile"; total_lines=$(wc -l < "$tmpfile"); if [ "$total_lines" -gt ${headLines + tailLines} ]; then head -n ${headLines} "$tmpfile"; echo ""; echo "... [Truncated $(($total_lines - ${headLines + tailLines})) lines - showing first ${headLines} and last ${tailLines} lines] ..."; echo ""; tail -n ${tailLines} "$tmpfile"; else cat "$tmpfile"; fi; rm -f "$tmpfile"`;
-
-      return {
-        ...input,
-        command: limitedCommand,
-        description: `${input.description || 'Execute command'} (output: first ${headLines} + last ${tailLines} lines)`,
-      };
-    }
-
     case 'Read': {
-      // Inject limit parameter if not present
-      if (typeof input.limit === 'number') {
-        return null; // Already has limit
+      const maxLines = config.read.maxLines;
+      if (typeof input.limit === 'number' && input.limit > 0 && input.limit <= maxLines) {
+        return null;
       }
-
-      const maxChars = config.read.maxChars;
-
-      return {
-        ...input,
-        // Convert char limit to line limit (assume ~50 chars per line)
-        limit: Math.floor(maxChars / 50),
-      };
+      return { ...input, limit: maxLines };
     }
 
     case 'Grep': {
-      // Inject head_limit parameter if not present
-      if (typeof input.head_limit === 'number') {
-        return null; // Already has limit
-      }
-
       const maxMatches = config.grep.maxMatches;
-
-      return {
-        ...input,
-        head_limit: maxMatches,
-      };
-    }
-
-    case 'Glob': {
-      // Glob can return huge lists of files
-      // Add a reasonable limit if not present
-      const head_limit = input.head_limit as number | undefined;
-      if (typeof head_limit === 'number') {
+      if (
+        typeof input.head_limit === 'number' &&
+        input.head_limit > 0 &&
+        input.head_limit <= maxMatches
+      ) {
         return null;
       }
-
-      const maxFiles = config.glob.maxFiles;
-
-      return {
-        ...input,
-        head_limit: maxFiles,
-      };
+      return { ...input, head_limit: maxMatches };
     }
 
     default:
-      // No limiting strategy for this tool
       return null;
   }
+}
+
+// ---------------------------------------------------------------------------
+// PostToolUse hook: truncate large Bash output via updatedToolOutput
+// ---------------------------------------------------------------------------
+
+export function createOutputLimiterPostHook(config: OutputLimiterConfigInput = {}): HookCallback {
+  const finalConfig = resolveConfig(config);
+
+  return async (input) => {
+    if (!finalConfig.enabled) return {};
+    if (input.hook_event_name !== 'PostToolUse') return {};
+
+    const postInput = input as PostToolUseHookInput;
+    const { tool_name, tool_response } = postInput;
+
+    if (tool_name !== 'Bash') return {};
+    if (finalConfig.excludeTools.includes(tool_name)) return {};
+
+    const response = tool_response as { stdout?: string; stderr?: string } | null;
+    if (!response || typeof response !== 'object') return {};
+
+    const stdout = typeof response.stdout === 'string' ? response.stdout : '';
+    const stderr = typeof response.stderr === 'string' ? response.stderr : '';
+
+    const headLines = finalConfig.bash.headLines;
+    const tailLines = finalConfig.bash.tailLines;
+    const maxBytes = (headLines + tailLines) * 200;
+
+    const totalLines = stdout.split('\n').length + stderr.split('\n').length;
+    const totalBytes = stdout.length + stderr.length;
+
+    if (totalLines <= headLines + tailLines && totalBytes <= maxBytes) {
+      return {}; // Within limits
+    }
+
+    // Split the line budget across stdout and stderr proportionally so the
+    // combined output stays within the configured cap.
+    const stdoutTruncated = truncateOutput(stdout, headLines, tailLines, maxBytes);
+    const stderrTruncated = truncateOutput(stderr, headLines, tailLines, maxBytes);
+
+    const truncated: Record<string, unknown> = { ...response };
+    truncated.stdout = stdoutTruncated;
+    truncated.stderr = stderrTruncated;
+
+    return {
+      hookSpecificOutput: {
+        hookEventName: input.hook_event_name,
+        updatedToolOutput: truncated,
+      },
+    };
+  };
+}
+
+/**
+ * Truncate a string to the first `headLines` + last `tailLines` lines.
+ * Also enforces a byte cap for strings with very long individual lines.
+ * Returns the original string if within both limits.
+ */
+function truncateOutput(
+  str: string,
+  headLines: number,
+  tailLines: number,
+  maxBytes: number
+): string {
+  if (!str) return str;
+
+  // Byte cap for very long single lines (minified JSON, base64).
+  if (str.length > maxBytes) {
+    const halfBytes = Math.floor(maxBytes / 2);
+    return `${str.slice(0, halfBytes)}\n\n... [Truncated ${str.length - maxBytes} bytes] ...\n\n${str.slice(-halfBytes)}`;
+  }
+
+  const lines = str.split('\n');
+  const threshold = headLines + tailLines;
+  if (lines.length <= threshold) return str;
+
+  const head = lines.slice(0, headLines).join('\n');
+  const tail = tailLines > 0 ? lines.slice(-tailLines).join('\n') : '';
+  const omitted = lines.length - headLines - tailLines;
+
+  return tail
+    ? `${head}\n\n... [Truncated ${omitted} lines — showing first ${headLines} and last ${tailLines} lines] ...\n\n${tail}`
+    : `${head}\n\n... [Truncated ${omitted} lines — showing first ${headLines} lines] ...`;
 }

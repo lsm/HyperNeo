@@ -63,6 +63,11 @@ import {
 } from './builtin-skill-plugin-wrapper';
 import { getCoordinatorAgents } from './coordinator-agents';
 import { createLoopDetectorHooks } from './loop-detector-hook';
+import {
+  createOutputLimiterPostHook,
+  createOutputLimiterPreHook,
+  resolveConfig,
+} from './output-limiter-hook';
 import { isRunningUnderBun, resolveSDKCliPath } from './sdk-cli-resolver.js';
 
 /**
@@ -1175,8 +1180,18 @@ CRITICAL RULES:
    * The PostToolUse + PostToolUseFailure hooks observe Bash outcomes for
    * the failure-aware Bash dead-loop detector. The PreToolUse hook itself
    * filters internally on `DEFAULT_LOOP_DETECTOR_CONFIG.thresholds` and the
-   * Bash sub-config. Tool guards from the workflow definition are appended
-   * on top of the PreToolUse chain.
+   * Bash sub-config.
+   *
+   * Workflow tool guards (declarative deny/allow rules) run next so they
+   * evaluate the original tool input, before the output-limiter hook mutates
+   * Bash commands into a truncation wrapper.
+   *
+   * The output-limiter hook is added last in the PreToolUse chain when
+   * enabled in global settings. It mutates Bash/Read/Grep inputs to cap
+   * output size before the tool runs, preventing a single large output from
+   * overflowing the model context window. It only mutates input and does
+   * not emit a permission decision, so it cannot bypass restrictive
+   * permission modes.
    */
   private buildHooks(): Options['hooks'] {
     const hooks: NonNullable<Options['hooks']> = {};
@@ -1202,7 +1217,9 @@ CRITICAL RULES:
       hooks: [loopDetectorHooks.preToolUse],
     });
 
-    // Workflow tool guards (declarative deny/allow rules) layered on top.
+    // Workflow tool guards (declarative deny/allow rules). These run
+    // before the output-limiter mutation so regexes match the original
+    // command shape (e.g. `^rm\s+-rf`).
     const guards = this.ctx.toolGuards;
     if (guards?.length) {
       // Group guards by matcher (tool name) to create one matcher entry per tool.
@@ -1224,13 +1241,35 @@ CRITICAL RULES:
       }
     }
 
+    // Output limiter (PreToolUse): inject limit parameters for Read and Grep
+    // so the tools fetch less data. Bash is NOT handled here — it is truncated
+    // post-execution via updatedToolOutput in the PostToolUse hook below.
+    const globalSettings = this.ctx.settingsManager.getGlobalSettings();
+    const outputLimiterSettings = globalSettings.outputLimiter;
+    const outputLimiterEnabled =
+      outputLimiterSettings && resolveConfig(outputLimiterSettings).enabled;
+    if (outputLimiterEnabled) {
+      preToolUse.push({
+        hooks: [createOutputLimiterPreHook(outputLimiterSettings)],
+      });
+    }
+
     if (preToolUse.length > 0) {
       hooks.PreToolUse = preToolUse;
     }
-    // PostToolUse + PostToolUseFailure observers feed the Bash detector's
-    // outcome ring. Installed unconditionally — they early-out on
-    // non-Bash tools and when bash.enabled is false.
-    hooks.PostToolUse = [{ hooks: [loopDetectorHooks.postToolUse] }];
+
+    // PostToolUse: loop detector (failure ring) + output limiter (Bash
+    // truncation via updatedToolOutput). Commands run unwrapped, so exit
+    // codes, heredocs, cwd, and sandbox behavior are all preserved.
+    const postHooks: NonNullable<Options['hooks']>['PostToolUse'] = [
+      { hooks: [loopDetectorHooks.postToolUse] },
+    ];
+    if (outputLimiterEnabled) {
+      postHooks.push({ hooks: [createOutputLimiterPostHook(outputLimiterSettings)] });
+    }
+    hooks.PostToolUse = postHooks;
+
+    // PostToolUseFailure observer feeds the Bash detector's outcome ring.
     hooks.PostToolUseFailure = [{ hooks: [loopDetectorHooks.postToolUseFailure] }];
     return hooks;
   }
