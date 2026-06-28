@@ -23,7 +23,7 @@ import { render, fireEvent, cleanup } from '@testing-library/preact';
 import { useState } from 'preact/hooks';
 import { WorkflowNode } from '../WorkflowNode';
 import type { WorkflowNodeProps } from '../WorkflowNode';
-import type { SpaceAgent } from '@neokai/shared';
+import type { SpaceWorkerAgent } from '@neokai/shared';
 import type { AgentTaskState } from '../../WorkflowNodeCard';
 import type { Point } from '../types';
 
@@ -66,7 +66,7 @@ function windowMouseUp() {
 // Test fixtures
 // ============================================================================
 
-const AGENT_A: SpaceAgent = {
+const AGENT_A: SpaceWorkerAgent = {
   id: 'agent-1',
   spaceId: 'space-1',
   name: 'Alpha Agent',
@@ -76,7 +76,7 @@ const AGENT_A: SpaceAgent = {
   updatedAt: 0,
 };
 
-const AGENT_B: SpaceAgent = {
+const AGENT_B: SpaceWorkerAgent = {
   id: 'agent-2',
   spaceId: 'space-1',
   name: 'Beta Agent',

@@ -16,8 +16,8 @@ import type {
   MessageHub,
   Session,
   SettingSource,
-  SpaceAgent,
-  SpaceAgentPromotionDraft,
+  SpaceWorkerAgent,
+  SpaceWorkerAgentPromotionDraft,
   ThinkingLevel,
 } from '@neokai/shared';
 import { KNOWN_TOOLS } from '@neokai/shared';
@@ -95,7 +95,7 @@ function extractSettingSources(session: Session): SettingSource[] | undefined {
   return toolSources !== undefined ? toolSources : undefined;
 }
 
-function buildPromotionDraft(session: Session, db: Database): SpaceAgentPromotionDraft {
+function buildPromotionDraft(session: Session, db: Database): SpaceWorkerAgentPromotionDraft {
   const messages = db.getRenderableTextMessages(session.id, PROMOTION_MESSAGE_LIMIT);
   const context = messages.length
     ? messages
@@ -148,7 +148,7 @@ function buildPromotionDraft(session: Session, db: Database): SpaceAgentPromotio
 
 async function publishAgentCreated(
   internalEventBus: InternalEventBus<DaemonInternalEventMap>,
-  agent: SpaceAgent
+  agent: SpaceWorkerAgent
 ): Promise<void> {
   await internalEventBus
     .publish('spaceAgent.created', {

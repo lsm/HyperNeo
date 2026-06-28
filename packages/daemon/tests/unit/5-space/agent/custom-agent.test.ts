@@ -2,7 +2,7 @@ import { describe, expect, it, mock } from 'bun:test';
 import type {
   EvolutionLesson,
   Space,
-  SpaceAgent,
+  SpaceWorkerAgent,
   SpaceGoal,
   SpaceTask,
   SpaceWorkflow,
@@ -21,7 +21,7 @@ import {
 } from '../../../../src/lib/space/agents/custom-agent';
 import { CODING_WORKFLOW } from '../../../../src/lib/space/workflows/built-in-workflows.ts';
 
-function makeAgent(overrides?: Partial<SpaceAgent>): SpaceAgent {
+function makeAgent(overrides?: Partial<SpaceWorkerAgent>): SpaceWorkerAgent {
   return {
     id: 'agent-1',
     spaceId: 'space-1',

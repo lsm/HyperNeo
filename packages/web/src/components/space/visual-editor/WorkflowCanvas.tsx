@@ -148,7 +148,7 @@ function GhostEdge({ from, to }: { from: Point; to: Point }): JSX.Element | null
  * - Inter-node channels are resolved to actual node IDs and returned as
  *   ResolvedWorkflowChannel objects.
  * - Channels resolve agent roles to their containing node IDs using the
- *   SpaceAgent.agents array, which has slot name information.
+ *   SpaceWorkerAgent.agents array, which has slot name information.
  */
 export function computeChannelEdges(nodes: WorkflowNodeData[]): ResolvedWorkflowChannel[] {
   const result: ResolvedWorkflowChannel[] = [];
@@ -160,7 +160,7 @@ export function computeChannelEdges(nodes: WorkflowNodeData[]): ResolvedWorkflow
   // This is used to resolve channel endpoints that reference agent slot names
   const agentSlotNameToNodeId = new Map<string, string>();
   for (const node of nodes) {
-    // node.agents is SpaceAgent[] which has .name
+    // node.agents is SpaceWorkerAgent[] which has .name
     if (node.agents) {
       for (const agent of node.agents) {
         agentSlotNameToNodeId.set(agent.name, node.step.localId);

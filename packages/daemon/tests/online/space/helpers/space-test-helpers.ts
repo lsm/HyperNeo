@@ -30,7 +30,7 @@ import type {
   NodeExecution,
   NodeExecutionStatus,
   Space,
-  SpaceAgent,
+  SpaceWorkerAgent,
   SpaceWorkflow,
   SpaceWorkflowRun,
   SpaceTask,
@@ -44,7 +44,7 @@ import type {
 export interface TestSpaceFixture {
   space: Space;
   /** All agents seeded into the space */
-  agents: SpaceAgent[];
+  agents: SpaceWorkerAgent[];
   /** Deterministic full-cycle workflow fixture used by online space tests */
   workflow: SpaceWorkflow;
 }
@@ -281,7 +281,7 @@ export async function createTestSpace(daemon: DaemonServerContext): Promise<Test
 
   const { agents } = (await daemon.messageHub.request('spaceAgent.list', {
     spaceId: space.id,
-  })) as { agents: SpaceAgent[] };
+  })) as { agents: SpaceWorkerAgent[] };
 
   const agentByName = new Map(agents.map((agent) => [agent.name, agent.id]));
   const requireAgentId = (name: string): string => {

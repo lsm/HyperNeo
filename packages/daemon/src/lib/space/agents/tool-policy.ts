@@ -1,7 +1,7 @@
 /**
  * Worker tool policy helpers.
  *
- * SpaceAgent.tools is a visible profile, not an exhaustive SDK allowlist.
+ * SpaceWorkerAgent.tools is a visible profile, not an exhaustive SDK allowlist.
  * Worker sessions inherit SDK defaults and MCP tools; this helper only denies
  * behaviorally restricted mutators that are absent from a configured profile.
  */

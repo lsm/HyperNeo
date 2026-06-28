@@ -1,7 +1,7 @@
 /**
  * Worker Agent Factory
  *
- * Creates `AgentSessionInit` from a visible `SpaceAgent` + workflow slot configuration.
+ * Creates `AgentSessionInit` from a visible `SpaceWorkerAgent` + workflow slot configuration.
  * Runtime behavior must be WYSIWYG: code provides structure and context, while agent
  * behavior comes only from visible prompt fields on the agent or workflow node.
  */
@@ -12,7 +12,7 @@ import type {
   McpServerConfig,
   EvolutionLesson,
   Space,
-  SpaceAgent,
+  SpaceWorkerAgent,
   SpaceGoal,
   SpaceTask,
   SpaceWorkflow,
@@ -47,7 +47,7 @@ const log = new Logger('custom-agent');
 
 /**
  * Per-slot overrides from a `WorkflowNodeAgent` entry.
- * Applied on top of the base `SpaceAgent` config when spawning a specific slot.
+ * Applied on top of the base `SpaceWorkerAgent` config when spawning a specific slot.
  *
  * Semantics:
  * - `customPrompt` is always appended (expanded) after the agent's `customPrompt`.
@@ -75,7 +75,7 @@ export interface SlotOverrides {
   /** Override the agent's default model for this slot */
   model?: string;
   /** Override the agent's default thinking level for this slot */
-  thinkingLevel?: SpaceAgent['thinkingLevel'];
+  thinkingLevel?: SpaceWorkerAgent['thinkingLevel'];
   /** Expansion text appended to the agent's customPrompt for this slot */
   customPrompt?: string;
   /** IDs of globally-enabled skills to disable for this slot */
@@ -120,7 +120,7 @@ export interface GateDataSnapshot {
 
 export interface CustomAgentConfig {
   /** The Space agent definition */
-  customAgent: SpaceAgent;
+  customAgent: SpaceWorkerAgent;
   /** The task being executed */
   task: SpaceTask;
   /** The workflow run context (null when running outside a workflow) */
@@ -173,14 +173,14 @@ export interface CustomAgentConfig {
  * User content always comes after the contract and cannot override it.
  */
 export function buildCustomAgentSystemPrompt(
-  customAgent: SpaceAgent,
+  customAgent: SpaceWorkerAgent,
   slotOverrides?: SlotOverrides
 ): string {
   return resolveCustomAgentPrompt(customAgent, slotOverrides).value;
 }
 
 export function resolveCustomAgentPrompt(
-  customAgent: SpaceAgent,
+  customAgent: SpaceWorkerAgent,
   slotOverrides?: SlotOverrides
 ): ResolvedAgentPrompt {
   const basePrompt = customAgent.customPrompt?.trim() ?? '';
@@ -196,7 +196,7 @@ export function resolveCustomAgentPrompt(
 
 function buildPromptProvenance(
   resolved: ResolvedAgentPrompt,
-  customAgent: SpaceAgent,
+  customAgent: SpaceWorkerAgent,
   slotOverrides?: SlotOverrides
 ): PromptProvenanceInit {
   const ctx = slotOverrides?.resolutionContext;
@@ -706,7 +706,7 @@ export interface ResolveAgentInitConfig {
 }
 
 /**
- * Resolve the session init for a Space task by loading its assigned `SpaceAgent`.
+ * Resolve the session init for a Space task by loading its assigned `SpaceWorkerAgent`.
  */
 export function resolveAgentInit(config: ResolveAgentInitConfig): AgentSessionInit {
   const {

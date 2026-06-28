@@ -11,7 +11,7 @@
  */
 
 import type {
-  SpaceAgent,
+  SpaceWorkerAgent,
   SpaceTaskStatus,
   SpaceWorkflow,
   WorkflowChannel,
@@ -140,10 +140,10 @@ export function findChannel(
  * - No `'*'` mixed with explicit names in an array `to`.
  *
  * @param workflow - The workflow to validate.
- * @param agents   - All `SpaceAgent` records in the Space (used to verify agentId existence).
+ * @param agents   - All `SpaceWorkerAgent` records in the Space (used to verify agentId existence).
  * @returns Array of human-readable error strings. Empty array means no errors.
  */
-export function validateChannels(workflow: SpaceWorkflow, agents: SpaceAgent[]): string[] {
+export function validateChannels(workflow: SpaceWorkflow, agents: SpaceWorkerAgent[]): string[] {
   const errors: string[] = [];
 
   const agentIdSet = new Set(agents.map((a) => a.id));

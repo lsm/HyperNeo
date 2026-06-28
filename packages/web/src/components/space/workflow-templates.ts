@@ -8,7 +8,7 @@
  */
 
 import type {
-  SpaceAgent,
+  SpaceWorkerAgent,
   SpaceWorkflow,
   WorkflowChannel,
   Gate,
@@ -122,9 +122,9 @@ const TEMPLATE_FALLBACK_USAGE_KEY = '__template-fallback__';
 
 function resolveTemplateAgent(
   roleOrName: string,
-  agents: SpaceAgent[],
+  agents: SpaceWorkerAgent[],
   usageByRole: Map<string, number>
-): SpaceAgent | undefined {
+): SpaceWorkerAgent | undefined {
   const key = normalizeAgentLookup(roleOrName);
   if (!key) return undefined;
 
@@ -185,7 +185,7 @@ function extractInstructionText(
  * 'leader' (case-insensitive). The 'leader' role is reserved for the
  * orchestration layer and must not be assigned to workflow steps.
  */
-export function filterAgents(agents: SpaceAgent[]): SpaceAgent[] {
+export function filterAgents(agents: SpaceWorkerAgent[]): SpaceWorkerAgent[] {
   return agents.filter((a) => a.name.toLowerCase() !== 'leader');
 }
 
@@ -259,7 +259,10 @@ export function getAvailableTemplates(workflows: SpaceWorkflow[]): WorkflowTempl
  * Build workflow node drafts from a template definition.
  * Supports both legacy single-agent stepRoles and multi-agent steps.
  */
-export function buildTemplateNodes(template: WorkflowTemplate, agents: SpaceAgent[]): NodeDraft[] {
+export function buildTemplateNodes(
+  template: WorkflowTemplate,
+  agents: SpaceWorkerAgent[]
+): NodeDraft[] {
   const usageByRole = new Map<string, number>();
   const stepDefs = getTemplateStepDefs(template);
 

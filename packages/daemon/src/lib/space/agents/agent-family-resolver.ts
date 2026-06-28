@@ -1,4 +1,4 @@
-import type { SpaceAgent, SpaceLongHorizonAgent } from '@neokai/shared';
+import type { SpaceWorkerAgent, SpaceLongHorizonAgent } from '@neokai/shared';
 import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
 
@@ -18,7 +18,7 @@ export interface AgentFamilyResolution {
   ok: boolean;
   error?: string;
   sharedId: boolean;
-  workerAgent: SpaceAgent | null;
+  workerAgent: SpaceWorkerAgent | null;
   longHorizonAgent: SpaceLongHorizonAgent | null;
 }
 
@@ -66,7 +66,7 @@ export function requireAgentFamily(params: ResolveAgentFamilyParams): AgentFamil
 }
 
 function classifyAgentFamily(params: {
-  workerAgent: SpaceAgent | null;
+  workerAgent: SpaceWorkerAgent | null;
   longHorizonAgent: SpaceLongHorizonAgent | null;
   workerInSpace: boolean;
   longHorizonInSpace: boolean;

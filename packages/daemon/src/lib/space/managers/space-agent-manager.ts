@@ -11,11 +11,11 @@
  */
 
 import type {
-  SpaceAgent,
-  CreateSpaceAgentParams,
-  UpdateSpaceAgentParams,
-  AgentDriftEntry,
-  AgentDriftReport,
+  SpaceWorkerAgent,
+  CreateSpaceWorkerAgentParams,
+  UpdateSpaceWorkerAgentParams,
+  SpaceWorkerAgentDriftEntry,
+  SpaceWorkerAgentDriftReport,
 } from '@neokai/shared';
 import { KNOWN_TOOLS } from '@neokai/shared';
 import type { SpaceAgentRepository } from '../../../storage/repositories/space-agent-repository';
@@ -47,7 +47,7 @@ export class SpaceAgentManager {
   /**
    * Create a new agent within a Space.
    */
-  async create(params: CreateSpaceAgentParams): Promise<SpaceAgentResult<SpaceAgent>> {
+  async create(params: CreateSpaceWorkerAgentParams): Promise<SpaceAgentResult<SpaceWorkerAgent>> {
     // Validate name uniqueness (DB-level, case-insensitive)
     if (this.repo.isNameTaken(params.spaceId, params.name)) {
       return {
@@ -80,7 +80,10 @@ export class SpaceAgentManager {
   /**
    * Update an existing agent.
    */
-  async update(id: string, params: UpdateSpaceAgentParams): Promise<SpaceAgentResult<SpaceAgent>> {
+  async update(
+    id: string,
+    params: UpdateSpaceWorkerAgentParams
+  ): Promise<SpaceAgentResult<SpaceWorkerAgent>> {
     const existing = this.repo.getById(id);
     if (!existing) return { ok: false, error: `Agent not found: ${id}` };
 
@@ -146,28 +149,28 @@ export class SpaceAgentManager {
   /**
    * Get a single agent by ID.
    */
-  getById(id: string): SpaceAgent | null {
+  getById(id: string): SpaceWorkerAgent | null {
     return this.repo.getById(id);
   }
 
   /**
    * List all agents for a space.
    */
-  listBySpaceId(spaceId: string): SpaceAgent[] {
+  listBySpaceId(spaceId: string): SpaceWorkerAgent[] {
     return this.repo.getBySpaceId(spaceId);
   }
 
   /**
    * Batch-fetch agents by IDs.
    */
-  getAgentsByIds(ids: string[]): SpaceAgent[] {
+  getAgentsByIds(ids: string[]): SpaceWorkerAgent[] {
     return this.repo.getAgentsByIds(ids);
   }
 
   /**
    * Build a drift report for every preset-tracked agent in a space.
    *
-   * For each `SpaceAgent` row that has a non-null `templateName`, this
+   * For each `SpaceWorkerAgent` row that has a non-null `templateName`, this
    * recomputes the current preset's hash from `getPresetAgentTemplates()`
    * and compares it to the stored `templateHash`. Rows whose `templateName`
    * doesn't match any current preset (e.g. a preset was deleted in code) are
@@ -176,11 +179,11 @@ export class SpaceAgentManager {
    * User-created agents (`templateName === null`) are NOT included in the
    * report at all; the UI relies on this to decide which cards get a badge.
    */
-  getAgentDriftReport(spaceId: string): AgentDriftReport {
+  getAgentDriftReport(spaceId: string): SpaceWorkerAgentDriftReport {
     const agents = this.repo.getBySpaceId(spaceId);
     const presetByName = new Map(getPresetAgentTemplates().map((p) => [p.name.toLowerCase(), p]));
 
-    const entries: AgentDriftEntry[] = [];
+    const entries: SpaceWorkerAgentDriftEntry[] = [];
     for (const agent of agents) {
       if (!agent.templateName) continue;
       const preset = presetByName.get(agent.templateName.toLowerCase());
@@ -212,7 +215,7 @@ export class SpaceAgentManager {
    * preserved — only the fields that participate in the fingerprint are
    * overwritten.
    */
-  async syncFromTemplate(agentId: string): Promise<SpaceAgentResult<SpaceAgent>> {
+  async syncFromTemplate(agentId: string): Promise<SpaceAgentResult<SpaceWorkerAgent>> {
     const existing = this.repo.getById(agentId);
     if (!existing) return { ok: false, error: `Agent not found: ${agentId}` };
     if (!existing.templateName) {

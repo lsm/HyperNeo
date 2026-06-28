@@ -16,13 +16,13 @@ import {
   type SlotOverrides,
   type CustomAgentConfig,
 } from '../../../../src/lib/space/agents/custom-agent';
-import type { SpaceAgent, Space, SpaceTask } from '@neokai/shared';
+import type { SpaceWorkerAgent, Space, SpaceTask } from '@neokai/shared';
 
 // ============================================================================
 // Test fixtures
 // ============================================================================
 
-function makeAgent(overrides?: Partial<SpaceAgent>): SpaceAgent {
+function makeAgent(overrides?: Partial<SpaceWorkerAgent>): SpaceWorkerAgent {
   return {
     id: 'agent-1',
     spaceId: 'space-1',

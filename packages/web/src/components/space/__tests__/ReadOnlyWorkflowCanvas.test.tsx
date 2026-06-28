@@ -14,12 +14,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, cleanup, fireEvent, waitFor } from '@testing-library/preact';
 import { signal } from '@preact/signals';
-import type { SpaceAgent, SpaceTask, SpaceWorkflow } from '@neokai/shared';
+import type { SpaceWorkerAgent, SpaceTask, SpaceWorkflow } from '@neokai/shared';
 
 // ---- Signals for mocking ----
 
 let mockWorkflows = signal<SpaceWorkflow[]>([]);
-let mockAgents = signal<SpaceAgent[]>([]);
+let mockAgents = signal<SpaceWorkerAgent[]>([]);
 let mockTasks = signal<SpaceTask[]>([]);
 let mockNodeExecutionsByNodeId = signal(new Map());
 
@@ -109,7 +109,7 @@ vi.mock('../visual-editor/CanvasToolbar', () => ({
 
 // Re-initialize signals after hoisting
 mockWorkflows = signal<SpaceWorkflow[]>([]);
-mockAgents = signal<SpaceAgent[]>([]);
+mockAgents = signal<SpaceWorkerAgent[]>([]);
 mockTasks = signal<SpaceTask[]>([]);
 mockNodeExecutionsByNodeId = signal(new Map());
 

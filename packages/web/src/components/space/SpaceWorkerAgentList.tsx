@@ -12,18 +12,18 @@ import { useEffect, useMemo, useState } from 'preact/hooks';
 import { spaceStore } from '../../lib/space-store';
 import { Button } from '../ui/Button';
 import { ConfirmModal } from '../ui/ConfirmModal';
-import type { AgentDriftReport, SpaceAgent } from '@neokai/shared';
+import type { SpaceWorkerAgentDriftReport, SpaceWorkerAgent } from '@neokai/shared';
 import { SpaceAgentEditor } from './SpaceAgentEditor';
 import { connectionManager } from '../../lib/connection-manager';
 import { toast } from '../../lib/toast';
 
 interface AgentCardProps {
-  agent: SpaceAgent;
+  agent: SpaceWorkerAgent;
   drifted: boolean;
   syncing: boolean;
-  onEdit: (agent: SpaceAgent) => void;
-  onDelete: (agent: SpaceAgent) => void;
-  onSync: (agent: SpaceAgent) => void;
+  onEdit: (agent: SpaceWorkerAgent) => void;
+  onDelete: (agent: SpaceWorkerAgent) => void;
+  onSync: (agent: SpaceWorkerAgent) => void;
 }
 
 function AgentCard({ agent, drifted, syncing, onEdit, onDelete, onSync }: AgentCardProps) {
@@ -151,11 +151,11 @@ export function SpaceWorkerAgentList() {
   const spaceId = spaceStore.spaceId.value;
 
   const [editorOpen, setEditorOpen] = useState(false);
-  const [editingAgent, setEditingAgent] = useState<SpaceAgent | null>(null);
-  const [deletingAgent, setDeletingAgent] = useState<SpaceAgent | null>(null);
+  const [editingAgent, setEditingAgent] = useState<SpaceWorkerAgent | null>(null);
+  const [deletingAgent, setDeletingAgent] = useState<SpaceWorkerAgent | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
-  const [syncingAgent, setSyncingAgent] = useState<SpaceAgent | null>(null);
+  const [syncingAgent, setSyncingAgent] = useState<SpaceWorkerAgent | null>(null);
 
   // Drift detection: set of agent IDs that have drifted from their preset.
   // Empty until the first successful drift report fetch — agents not in the
@@ -187,7 +187,7 @@ export function SpaceWorkerAgentList() {
 
     let cancelled = false;
     hub
-      .request<{ report: AgentDriftReport }>('spaceAgent.getDriftReport', { spaceId })
+      .request<{ report: SpaceWorkerAgentDriftReport }>('spaceAgent.getDriftReport', { spaceId })
       .then((result) => {
         if (cancelled) return;
         const ids = new Set<string>();
@@ -230,7 +230,7 @@ export function SpaceWorkerAgentList() {
     }
   };
 
-  const handleEdit = (agent: SpaceAgent) => {
+  const handleEdit = (agent: SpaceWorkerAgent) => {
     setEditingAgent(agent);
     setEditorOpen(true);
   };
@@ -245,7 +245,7 @@ export function SpaceWorkerAgentList() {
     setEditingAgent(null);
   };
 
-  const handleDeleteClick = (agent: SpaceAgent) => {
+  const handleDeleteClick = (agent: SpaceWorkerAgent) => {
     setDeletingAgent(agent);
     setDeleteError(null);
   };

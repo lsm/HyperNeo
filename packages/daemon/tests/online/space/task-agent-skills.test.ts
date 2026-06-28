@@ -39,7 +39,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
-import type { NodeExecution, Space, SpaceAgent, SpaceWorkflow } from '@neokai/shared';
+import type { NodeExecution, Space, SpaceWorkerAgent, SpaceWorkflow } from '@neokai/shared';
 
 const IS_MOCK = !!process.env.NEOKAI_USE_DEV_PROXY;
 const SETUP_TIMEOUT = IS_MOCK ? 20_000 : 60_000;
@@ -52,7 +52,7 @@ const TASK_AGENT_SPAWN_TIMEOUT = IS_MOCK ? 15_000 : 45_000;
 
 type TestFixtures = {
   space: Space;
-  coderAgent: SpaceAgent;
+  coderAgent: SpaceWorkerAgent;
   workflow: SpaceWorkflow;
 };
 
@@ -66,7 +66,7 @@ async function createTestFixtures(daemon: DaemonServerContext): Promise<TestFixt
 
   const { agents } = (await daemon.messageHub.request('spaceAgent.list', {
     spaceId: space.id,
-  })) as { agents: SpaceAgent[] };
+  })) as { agents: SpaceWorkerAgent[] };
 
   const coderAgent = agents.find((a) => a.name === 'Coder');
   if (!coderAgent) throw new Error('Pre-seeded Coder agent not found');

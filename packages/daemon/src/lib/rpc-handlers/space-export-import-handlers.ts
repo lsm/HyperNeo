@@ -44,14 +44,14 @@ import { generateUUID } from '@neokai/shared';
 import type {
   MessageHub,
   Space,
-  SpaceAgent,
+  SpaceWorkerAgent,
   SpaceWorkflow,
-  CreateSpaceAgentParams,
-  UpdateSpaceAgentParams,
+  CreateSpaceWorkerAgentParams,
+  UpdateSpaceWorkerAgentParams,
   CreateSpaceWorkflowParams,
   WorkflowNodeInput,
   SpaceExportBundle,
-  ExportedSpaceAgent,
+  ExportedSpaceWorkerAgent,
   ExportedSpaceWorkflow,
 } from '@neokai/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
@@ -134,10 +134,10 @@ function generateUniqueName(baseName: string, existingNames: Set<string>): strin
 function buildAgentCreateParams(
   spaceId: string,
   name: string,
-  exported: ExportedSpaceAgent,
+  exported: ExportedSpaceWorkerAgent,
   usedAgentHandles?: Set<string>
-): CreateSpaceAgentParams {
-  const params: CreateSpaceAgentParams = { spaceId, name };
+): CreateSpaceWorkerAgentParams {
+  const params: CreateSpaceWorkerAgentParams = { spaceId, name };
   if (shouldPreserveAgentHandle(exported.handle, usedAgentHandles)) {
     params.handle = exported.handle;
   } else if (usedAgentHandles) {
@@ -160,7 +160,7 @@ function shouldPreserveAgentHandle(
 }
 
 function warnOnAgentHandleRewrite(
-  exported: ExportedSpaceAgent,
+  exported: ExportedSpaceWorkerAgent,
   finalName: string,
   usedAgentHandles: Set<string>,
   warnings: string[],
@@ -180,7 +180,7 @@ function warnOnAgentHandleRewrite(
 }
 
 function generateAgentFallbackHandle(
-  existing: SpaceAgent,
+  existing: SpaceWorkerAgent,
   usedAgentHandles: Set<string>,
   fallbackBaseHandles: Set<string>
 ): string {
@@ -195,8 +195,8 @@ function generateAgentFallbackHandle(
 }
 
 function applyExportedAgentFields(
-  params: UpdateSpaceAgentParams,
-  exported: ExportedSpaceAgent
+  params: UpdateSpaceWorkerAgentParams,
+  exported: ExportedSpaceWorkerAgent
 ): void {
   if (exported.description !== undefined) params.description = exported.description;
   if (exported.model !== undefined) params.model = exported.model;
@@ -410,7 +410,7 @@ export function setupSpaceExportImportHandlers(
     const params = data as { spaceId: string; agentIds?: string[] };
     const space = await requireSpace(spaceManager, params.spaceId);
 
-    let agents: SpaceAgent[] = agentRepo.getBySpaceId(params.spaceId);
+    let agents: SpaceWorkerAgent[] = agentRepo.getBySpaceId(params.spaceId);
     if (params.agentIds?.length) {
       const idSet = new Set(params.agentIds);
       agents = agents.filter((a) => idSet.has(a.id));
@@ -592,7 +592,7 @@ export function setupSpaceExportImportHandlers(
         // Freeing all replaced handles upfront lets two replaced agents swap handles
         // within one import batch. Tracking new preserved handles upfront prevents
         // create/rename imports earlier in the bundle from claiming them first.
-        const replacedAgentByName = new Map<string, SpaceAgent>();
+        const replacedAgentByName = new Map<string, SpaceWorkerAgent>();
         const preservedReplaceHandleByName = new Map<string, string>();
         const fallbackReplaceHandleByName = new Map<string, string>();
         const fallbackBaseHandles = new Set<string>();
@@ -677,7 +677,7 @@ export function setupSpaceExportImportHandlers(
             const replaceParts = [exportedAgent.systemPrompt, exportedAgent.instructions].filter(
               (s): s is string => typeof s === 'string' && s.length > 0
             );
-            const updateParams: UpdateSpaceAgentParams = {
+            const updateParams: UpdateSpaceWorkerAgentParams = {
               description: exportedAgent.description ?? null,
               model: exportedAgent.model ?? null,
               thinkingLevel: exportedAgent.thinkingLevel ?? null,
@@ -836,7 +836,7 @@ export function setupSpaceExportImportHandlers(
 
     for (const item of importResult.agents) {
       if (item.action === 'skipped') continue;
-      const agent: SpaceAgent | null = agentRepo.getById(item.id);
+      const agent: SpaceWorkerAgent | null = agentRepo.getById(item.id);
       if (!agent) continue;
       const eventName = item.action === 'replaced' ? 'spaceAgent.updated' : 'spaceAgent.created';
       internalEventBus

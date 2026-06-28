@@ -29,7 +29,7 @@ import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.t
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import { resolveNodeAgents } from '@neokai/shared';
-import type { SpaceAgent, WorkflowNode } from '@neokai/shared';
+import type { SpaceWorkerAgent, WorkflowNode } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
 // DB helpers
@@ -63,7 +63,7 @@ function seedAgent(db: BunDatabase, agentId: string, spaceId: string, name: stri
 // Shared agent fixtures for resolveNodeChannels tests
 // ---------------------------------------------------------------------------
 
-function makeSpaceAgent(id: string, name: string): SpaceAgent {
+function makeSpaceAgent(id: string, name: string): SpaceWorkerAgent {
   return {
     id,
     spaceId: 'space-1',

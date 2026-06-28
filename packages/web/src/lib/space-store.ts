@@ -12,7 +12,7 @@
  * - space: Space metadata
  * - tasks: SpaceTask list for the space
  * - workflowRuns: SpaceWorkflowRun list for the space
- * - agents: SpaceAgent list for the space
+ * - agents: SpaceWorkerAgent list for the space
  * - agentTemplates: Built-in agent templates from daemon seeding source
  * - workflows: SpaceWorkflow list for the space
  * - workflowTemplates: Built-in workflow templates from daemon seeding source
@@ -24,7 +24,7 @@
  */
 
 import type {
-  CreateSpaceAgentParams,
+  CreateSpaceWorkerAgentParams,
   CreateSpaceGoalParams,
   CreateSpaceTaskParams,
   CreateSpaceWorkflowParams,
@@ -37,8 +37,8 @@ import type {
   PaginatedSpaceTaskResult,
   RuntimeState,
   Space,
-  SpaceAgent,
-  SpaceAgentPromotionDraft,
+  SpaceWorkerAgent,
+  SpaceWorkerAgentPromotionDraft,
   SpaceBlockReason,
   SpaceGoal,
   SpaceGoalEvent,
@@ -57,7 +57,7 @@ import type {
   TaskSchedule,
   TaskScheduleStatus,
   TaskScheduleTriggerType,
-  UpdateSpaceAgentParams,
+  UpdateSpaceWorkerAgentParams,
   UpdateSpaceLongHorizonAgentParams,
   UpdateSpaceLongHorizonAgentSubscriptionParams,
   UpdateSpaceGoalParams,
@@ -118,7 +118,7 @@ export interface SpaceExternalEventDeliveryLogRecord {
   eventUpdatedAt: number;
 }
 
-export interface SpaceAgentTemplate {
+export interface SpaceWorkerAgentTemplate {
   name: string;
   description: string;
   tools: string[];
@@ -173,10 +173,10 @@ class SpaceStore {
   readonly workflowRuns = signal<SpaceWorkflowRun[]>([]);
 
   /** Agents configured for this space */
-  readonly agents = signal<SpaceAgent[]>([]);
+  readonly agents = signal<SpaceWorkerAgent[]>([]);
 
   /** Built-in agent templates sourced from daemon seeding definitions */
-  readonly agentTemplates = signal<SpaceAgentTemplate[]>([]);
+  readonly agentTemplates = signal<SpaceWorkerAgentTemplate[]>([]);
 
   /** Long-horizon agents for this space */
   readonly longHorizonAgents = signal<SpaceLongHorizonAgent[]>([]);
@@ -847,7 +847,7 @@ class SpaceStore {
     const unsubAgentCreated = hub.onEvent<{
       sessionId: string;
       spaceId: string;
-      agent: SpaceAgent;
+      agent: SpaceWorkerAgent;
     }>('spaceAgent.created', (event) => {
       if (event.spaceId === spaceId) {
         const exists = this.agents.value.some((a) => a.id === event.agent.id);
@@ -862,7 +862,7 @@ class SpaceStore {
     const unsubAgentUpdated = hub.onEvent<{
       sessionId: string;
       spaceId: string;
-      agent: SpaceAgent;
+      agent: SpaceWorkerAgent;
     }>('spaceAgent.updated', (event) => {
       if (event.spaceId === spaceId) {
         const idx = this.agents.value.findIndex((a) => a.id === event.agent.id);
@@ -1054,7 +1054,7 @@ class SpaceStore {
     spaceId: string
   ): Promise<void> {
     try {
-      const result = await hub.request<{ agents: SpaceAgent[] }>('spaceAgent.list', {
+      const result = await hub.request<{ agents: SpaceWorkerAgent[] }>('spaceAgent.list', {
         spaceId,
       });
       if (this.spaceId.value !== spaceId) return;
@@ -1104,7 +1104,7 @@ class SpaceStore {
     spaceId: string
   ): Promise<void> {
     try {
-      const result = await hub.request<{ templates: SpaceAgentTemplate[] }>(
+      const result = await hub.request<{ templates: SpaceWorkerAgentTemplate[] }>(
         'spaceAgent.listBuiltInTemplates',
         {
           spaceId,
@@ -2540,7 +2540,7 @@ class SpaceStore {
   // Agent Methods
   // ========================================
 
-  private upsertAgent(agent: SpaceAgent, expectedSpaceId?: string): void {
+  private upsertAgent(agent: SpaceWorkerAgent, expectedSpaceId?: string): void {
     const activeSpaceId = this.spaceId.value;
     const agentSpaceId = agent.spaceId;
     if (expectedSpaceId && activeSpaceId !== expectedSpaceId) return;
@@ -2555,14 +2555,16 @@ class SpaceStore {
   /**
    * Create a new agent in the space
    */
-  async createAgent(params: Omit<CreateSpaceAgentParams, 'spaceId'>): Promise<SpaceAgent> {
+  async createAgent(
+    params: Omit<CreateSpaceWorkerAgentParams, 'spaceId'>
+  ): Promise<SpaceWorkerAgent> {
     const spaceId = this.spaceId.value;
     if (!spaceId) throw new Error('No space selected');
 
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
 
-    const { agent } = await hub.request<{ agent: SpaceAgent }>('spaceAgent.create', {
+    const { agent } = await hub.request<{ agent: SpaceWorkerAgent }>('spaceAgent.create', {
       ...params,
       spaceId,
     });
@@ -2573,14 +2575,14 @@ class SpaceStore {
   /**
    * Update an agent
    */
-  async getAgentPromotionDraft(sessionId: string): Promise<SpaceAgentPromotionDraft> {
+  async getAgentPromotionDraft(sessionId: string): Promise<SpaceWorkerAgentPromotionDraft> {
     const spaceId = this.spaceId.value;
     if (!spaceId) throw new Error('No space selected');
 
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
 
-    const { draft } = await hub.request<{ draft: SpaceAgentPromotionDraft }>(
+    const { draft } = await hub.request<{ draft: SpaceWorkerAgentPromotionDraft }>(
       'spaceAgent.getPromotionDraft',
       { spaceId, sessionId }
     );
@@ -2589,15 +2591,15 @@ class SpaceStore {
 
   async promoteSessionToAgent(
     sessionId: string,
-    params: Omit<CreateSpaceAgentParams, 'spaceId'>
-  ): Promise<SpaceAgent> {
+    params: Omit<CreateSpaceWorkerAgentParams, 'spaceId'>
+  ): Promise<SpaceWorkerAgent> {
     const spaceId = this.spaceId.value;
     if (!spaceId) throw new Error('No space selected');
 
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
 
-    const { agent } = await hub.request<{ agent: SpaceAgent }>('spaceAgent.promoteSession', {
+    const { agent } = await hub.request<{ agent: SpaceWorkerAgent }>('spaceAgent.promoteSession', {
       ...params,
       spaceId,
       sessionId,
@@ -2606,14 +2608,17 @@ class SpaceStore {
     return agent;
   }
 
-  async updateAgent(agentId: string, params: UpdateSpaceAgentParams): Promise<SpaceAgent> {
+  async updateAgent(
+    agentId: string,
+    params: UpdateSpaceWorkerAgentParams
+  ): Promise<SpaceWorkerAgent> {
     const spaceId = this.spaceId.value;
     if (!spaceId) throw new Error('No space selected');
 
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
 
-    const { agent } = await hub.request<{ agent: SpaceAgent }>('spaceAgent.update', {
+    const { agent } = await hub.request<{ agent: SpaceWorkerAgent }>('spaceAgent.update', {
       id: agentId,
       spaceId,
       ...params,
@@ -2622,17 +2627,20 @@ class SpaceStore {
     return agent;
   }
 
-  async syncAgentFromTemplate(agentId: string): Promise<SpaceAgent> {
+  async syncAgentFromTemplate(agentId: string): Promise<SpaceWorkerAgent> {
     const spaceId = this.spaceId.value;
     if (!spaceId) throw new Error('No space selected');
 
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
 
-    const { agent } = await hub.request<{ agent: SpaceAgent }>('spaceAgent.syncFromTemplate', {
-      spaceId,
-      agentId,
-    });
+    const { agent } = await hub.request<{ agent: SpaceWorkerAgent }>(
+      'spaceAgent.syncFromTemplate',
+      {
+        spaceId,
+        agentId,
+      }
+    );
     this.upsertAgent(agent, spaceId);
     return agent;
   }

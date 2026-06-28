@@ -7,14 +7,14 @@
  */
 
 import { describe, test, expect } from 'bun:test';
-import type { SpaceAgent, SpaceWorkflow, WorkflowNode } from '@neokai/shared';
+import type { SpaceWorkerAgent, SpaceWorkflow, WorkflowNode } from '@neokai/shared';
 import { validateChannels } from '@neokai/shared';
 
 // ============================================================================
 // Test fixtures
 // ============================================================================
 
-function makeAgent(id: string, name = id): SpaceAgent {
+function makeAgent(id: string, name = id): SpaceWorkerAgent {
   return { id, spaceId: 'space-1', name, instructions: null, createdAt: 0, updatedAt: 0 };
 }
 

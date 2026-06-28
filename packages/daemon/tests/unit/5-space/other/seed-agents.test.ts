@@ -1,7 +1,7 @@
 /**
  * seedPresetAgents Unit Tests
  *
- * Verifies that the seven preset SpaceAgent records are created with correct
+ * Verifies that the seven preset SpaceWorkerAgent records are created with correct
  * defaults (role, tools, description) and that seeding is idempotent (errors
  * on name collision are captured but do not abort remaining seeds).
  */

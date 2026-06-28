@@ -79,7 +79,7 @@ import type { SpaceWorktreeManager } from '../managers/space-worktree-manager';
 import { SpaceTaskManager } from '../managers/space-task-manager';
 /** Agent identity metadata for sub-session creation. */
 export interface SubSessionMemberInfo {
-  /** ID of the SpaceAgent config this sub-session uses */
+  /** ID of the SpaceWorkerAgent config this sub-session uses */
   agentId?: string;
   /** Agent slot name from WorkflowNodeAgent.name (e.g. 'coder', 'reviewer') */
   agentName?: string;

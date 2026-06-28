@@ -169,7 +169,7 @@ export function setupSpaceHandlers(
     }
 
     // Seed built-in workflow templates after preset agents are available.
-    // Resolves role names ('planner', 'coder', 'general') to SpaceAgent UUIDs.
+    // Resolves role names ('planner', 'coder', 'general') to SpaceWorkerAgent UUIDs.
     try {
       const agents = spaceAgentManager.listBySpaceId(space.id);
       const workflowSeedResult = seedBuiltInWorkflows(

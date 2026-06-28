@@ -15,7 +15,7 @@ import type {
   McpServerConfig,
   Session,
   Space,
-  SpaceAgent,
+  SpaceWorkerAgent,
   SpaceLongHorizonAgent,
   SpaceTask,
   SpaceWorkflowRun,
@@ -760,7 +760,7 @@ export class SpaceRuntimeService {
     space: Space,
     agentName: string,
     sessionId: string,
-    agent: SpaceAgent | null,
+    agent: SpaceWorkerAgent | null,
     agentHandleAliases?: string[]
   ): void {
     const mcpServers: Record<string, McpServerConfig> = {
@@ -812,7 +812,7 @@ export class SpaceRuntimeService {
     space: Space,
     agentName: string,
     sessionId: string,
-    agent: SpaceAgent | null,
+    agent: SpaceWorkerAgent | null,
     agentHandleAliases?: string[]
   ) {
     const agents = this.config.spaceAgentManager.listBySpaceId(space.id);

@@ -22,7 +22,7 @@ import {
   validateExportBundle,
 } from '../../../../src/lib/space/export-format.ts';
 import { buildWorkflowCreateParams } from '../../../../src/lib/rpc-handlers/space-export-import-handlers.ts';
-import type { SpaceAgent, SpaceWorkflow, ExportedSpaceWorkflow } from '@neokai/shared';
+import type { SpaceWorkerAgent, SpaceWorkflow, ExportedSpaceWorkflow } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
 // DB setup helpers
@@ -56,7 +56,11 @@ function seedAgent(db: BunDatabase, agentId: string, spaceId: string, name: stri
 // Test fixtures
 // ---------------------------------------------------------------------------
 
-function makeTestAgent(id: string, name: string, overrides: Partial<SpaceAgent> = {}): SpaceAgent {
+function makeTestAgent(
+  id: string,
+  name: string,
+  overrides: Partial<SpaceWorkerAgent> = {}
+): SpaceWorkerAgent {
   return {
     id,
     spaceId: 'space-1',

@@ -32,11 +32,11 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, cleanup, act } from '@testing-library/preact';
 import { signal, type Signal } from '@preact/signals';
-import type { SpaceAgent, SpaceWorkflow, WorkflowNode } from '@neokai/shared';
+import type { SpaceWorkerAgent, SpaceWorkflow, WorkflowNode } from '@neokai/shared';
 
 // ---- Mocks ----
 
-const mockAgents: Signal<SpaceAgent[]> = signal([
+const mockAgents: Signal<SpaceWorkerAgent[]> = signal([
   {
     id: 'agent-1',
     spaceId: 'space-1',

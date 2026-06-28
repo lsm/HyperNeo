@@ -1,6 +1,6 @@
 // @ts-nocheck
 
-import type { SpaceAgent, SpaceLongHorizonAgent } from '@neokai/shared';
+import type { SpaceWorkerAgent, SpaceLongHorizonAgent } from '@neokai/shared';
 import { cleanup, fireEvent, render } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -18,7 +18,7 @@ const {
   }
   return {
     mockLongHorizonAgents: makeSignal<SpaceLongHorizonAgent[]>([]),
-    mockSpaceAgents: makeSignal<SpaceAgent[]>([]),
+    mockSpaceAgents: makeSignal<SpaceWorkerAgent[]>([]),
     mockTemplates: makeSignal([]),
     mockConfigDataLoaded: makeSignal(true),
     mockEnsureConfigData: vi.fn().mockResolvedValue(undefined),
@@ -88,7 +88,7 @@ function makeLongHorizonAgent(
   };
 }
 
-function makeSpaceAgent(overrides: Partial<SpaceAgent> = {}): SpaceAgent {
+function makeSpaceAgent(overrides: Partial<SpaceWorkerAgent> = {}): SpaceWorkerAgent {
   return {
     id: 'agent-1',
     spaceId: 'space-1',
@@ -118,7 +118,7 @@ describe('SpaceLongHorizonAgents', () => {
     cleanup();
   });
 
-  it('prefers configured SpaceAgent details when handles overlap', () => {
+  it('prefers configured SpaceWorkerAgent details when handles overlap', () => {
     mockLongHorizonAgents.value = [makeLongHorizonAgent()];
     mockSpaceAgents.value = [makeSpaceAgent()];
 

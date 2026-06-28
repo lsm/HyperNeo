@@ -3,7 +3,7 @@ import type {
   NodeExecution,
   Session,
   Space,
-  SpaceAgent,
+  SpaceWorkerAgent,
   SpaceLongHorizonAgent,
   SpaceWorkflow,
 } from '@neokai/shared';
@@ -193,14 +193,14 @@ function sessionActorForSession(session: Session, spaceId: string): ActorRef | n
 }
 
 export function canonicalAgentHandle(
-  _agents: SpaceAgent[],
-  agent: SpaceAgent,
+  _agents: SpaceWorkerAgent[],
+  agent: SpaceWorkerAgent,
   _reserved: string[] = reservedHandles()
 ): string {
   return `@${agent.handle}`;
 }
 
-function agentActor(agent: SpaceAgent, session: Session | null): ActorRef {
+function agentActor(agent: SpaceWorkerAgent, session: Session | null): ActorRef {
   const handle = canonicalAgentHandle([], agent);
   return {
     actorId: `agent:${encodeActorIdComponent(agent.id)}`,

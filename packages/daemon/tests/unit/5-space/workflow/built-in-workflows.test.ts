@@ -20,7 +20,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { SpaceAgent, SpaceWorkflow, WorkflowHook, WorkflowNode } from '@neokai/shared';
+import type { SpaceWorkerAgent, SpaceWorkflow, WorkflowHook, WorkflowNode } from '@neokai/shared';
 import {
   exportWorkflow,
   validateExportedWorkflow,
@@ -3489,7 +3489,7 @@ describe('seedBuiltInWorkflows()', () => {
     const brokenResolver = (_role: string): string | undefined => undefined;
 
     expect(() => seedBuiltInWorkflows(SPACE_ID, manager, brokenResolver)).toThrow(
-      'no SpaceAgent found with name'
+      'no SpaceWorkerAgent found with name'
     );
   });
 
@@ -3996,8 +3996,8 @@ describe('Coding Workflow export/import round-trip', () => {
   };
   const resolveAgentId = (role: string): string | undefined => roleMap[role.toLowerCase()];
 
-  /** Mock SpaceAgent records for exportWorkflow's agent name resolution. */
-  const mockAgents: SpaceAgent[] = [
+  /** Mock SpaceWorkerAgent records for exportWorkflow's agent name resolution. */
+  const mockAgents: SpaceWorkerAgent[] = [
     {
       id: CODER_ID,
       spaceId: SPACE_ID,

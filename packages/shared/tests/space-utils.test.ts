@@ -1,6 +1,6 @@
 import { describe, test, expect } from 'bun:test';
 import type {
-  SpaceAgent,
+  SpaceWorkerAgent,
   SpaceWorkflow,
   WorkflowChannel,
   WorkflowNode,
@@ -18,7 +18,7 @@ import {
 // Test fixtures
 // ============================================================================
 
-function makeAgent(id: string, name: string): SpaceAgent {
+function makeAgent(id: string, name: string): SpaceWorkerAgent {
   return {
     id,
     spaceId: 'space-1',
@@ -66,7 +66,7 @@ function makeWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
 const agentCoder = makeAgent('agent-coder-id', 'coder agent');
 const agentReviewer = makeAgent('agent-reviewer-id', 'reviewer agent');
 const agentSecurity = makeAgent('agent-security-id', 'security agent');
-const allAgents: SpaceAgent[] = [agentCoder, agentReviewer, agentSecurity];
+const allAgents: SpaceWorkerAgent[] = [agentCoder, agentReviewer, agentSecurity];
 
 // ============================================================================
 // resolveNodeAgents

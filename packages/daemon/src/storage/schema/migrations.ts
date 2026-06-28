@@ -3351,7 +3351,7 @@ function runMigration39(db: BunDatabase): void {
  *
  * space_session_group_members:
  *   - Drop the CHECK constraint on `role` so it accepts any freeform string
- *   - Add `agent_id TEXT` (nullable) — references SpaceAgent config
+ *   - Add `agent_id TEXT` (nullable) — references SpaceWorkerAgent config
  *   - Add `status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','completed','failed'))`
  *
  * SQLite cannot drop CHECK constraints via ALTER TABLE, so space_session_group_members

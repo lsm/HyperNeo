@@ -23,7 +23,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, waitFor, cleanup } from '@testing-library/preact';
 import { KNOWN_TOOLS } from '@neokai/shared';
-import type { SpaceAgent } from '@neokai/shared';
+import type { SpaceWorkerAgent } from '@neokai/shared';
 
 // ── Mocks ────────────────────────────────────────────────────────────────────
 
@@ -137,7 +137,7 @@ const DEFAULT_PROPS = {
   onCancel: vi.fn(),
 };
 
-function makeAgent(overrides: Partial<SpaceAgent> = {}): SpaceAgent {
+function makeAgent(overrides: Partial<SpaceWorkerAgent> = {}): SpaceWorkerAgent {
   return {
     id: 'agent-1',
     spaceId: 'space-1',

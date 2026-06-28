@@ -1,8 +1,8 @@
 /**
  * Space Preset Agent Seeding
  *
- * Seeds the seven default SpaceAgent records when a new Space is created.
- * Preset agents are regular SpaceAgent rows — fully editable by users — that
+ * Seeds the seven default SpaceWorkerAgent records when a new Space is created.
+ * Preset agents are regular SpaceWorkerAgent rows — fully editable by users — that
  * have sensible defaults for tools and model.
  * SpaceRuntime resolves all agents by ID at runtime; there is no special
  * builtin code path.
@@ -17,7 +17,7 @@
  *   - QA          — quality assurance specialist
  */
 
-import type { SpaceAgent } from '@neokai/shared';
+import type { SpaceWorkerAgent } from '@neokai/shared';
 import type { SpaceAgentManager, SpaceAgentResult } from '../managers/space-agent-manager';
 import { computeAgentTemplateHash } from './agent-template-hash';
 import { QA_SYSTEM_CONTRACT, REVIEWER_SYSTEM_CONTRACT } from './system-contracts';
@@ -77,7 +77,7 @@ const RESEARCH_TOOLS = CODER_TOOLS;
  * TaskStop tools so the Reviewer can dispatch exploration to the built-in
  * `general-purpose` sub-agent that ships with the `claude_code` preset.
  * Custom reviewer-specific sub-agents (e.g. reviewer-explorer) are planned
- * but will live in workflow templates / SpaceAgent data, not code.
+ * but will live in workflow templates / SpaceWorkerAgent data, not code.
  */
 const REVIEWER_TOOLS: string[] = [
   'Read',
@@ -147,7 +147,7 @@ interface PresetDefinition {
  * sub-agent shipped with the `claude_code` preset. Custom reviewer-specific
  * sub-agents (e.g. `reviewer-explorer`, `reviewer-fact-checker` in the Room
  * SDK) are a planned follow-up and will live in workflow templates /
- * SpaceAgent data, not in code.
+ * SpaceWorkerAgent data, not in code.
  */
 export const LEGACY_REVIEWER_PROMPT = `You are a code reviewer. Your job is to review code changes for correctness, quality, security, and alignment with the original goal.
 
@@ -261,7 +261,7 @@ export function getPresetAgentTemplates(): PresetAgentTemplate[] {
 
 export interface SeedPresetAgentsResult {
   /** Agents that were successfully created */
-  seeded: SpaceAgent[];
+  seeded: SpaceWorkerAgent[];
   /** Errors for agents that failed to seed (e.g. name already taken) */
   errors: Array<{ name: string; error: string }>;
 }
@@ -281,7 +281,7 @@ export async function seedPresetAgents(
   spaceId: string,
   agentManager: SpaceAgentManager
 ): Promise<SeedPresetAgentsResult> {
-  const seeded: SpaceAgent[] = [];
+  const seeded: SpaceWorkerAgent[] = [];
   const errors: Array<{ name: string; error: string }> = [];
 
   for (const preset of PRESET_AGENTS) {
@@ -289,7 +289,7 @@ export async function seedPresetAgents(
     // sync from day one. Hash is computed from the same canonical
     // fingerprint that drift detection re-derives later.
     const templateHash = computeAgentTemplateHash(preset);
-    const result: SpaceAgentResult<SpaceAgent> = await agentManager.create({
+    const result: SpaceAgentResult<SpaceWorkerAgent> = await agentManager.create({
       spaceId,
       name: preset.name,
       handle: preset.handle,

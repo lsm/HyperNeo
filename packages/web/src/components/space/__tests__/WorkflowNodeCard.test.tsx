@@ -19,7 +19,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup, act } from '@testing-library/preact';
 import { useState } from 'preact/hooks';
-import type { SpaceAgent, WorkflowNodeAgentOverride } from '@neokai/shared';
+import type { SpaceWorkerAgent, WorkflowNodeAgentOverride } from '@neokai/shared';
 import { WorkflowNodeCard } from '../WorkflowNodeCard';
 import type { NodeDraft, AgentTaskState } from '../WorkflowNodeCard';
 import { extractOverrideValue, buildOverride } from '../WorkflowNodeCard';
@@ -28,7 +28,7 @@ vi.mock('../../../lib/utils', () => ({
   cn: (...args: unknown[]) => args.filter(Boolean).join(' '),
 }));
 
-function makeAgent(id: string, name: string, _role = 'coder'): SpaceAgent {
+function makeAgent(id: string, name: string, _role = 'coder'): SpaceWorkerAgent {
   return {
     id,
     spaceId: 'space-1',
@@ -49,7 +49,7 @@ function makeStep(overrides: Partial<NodeDraft> = {}): NodeDraft {
   };
 }
 
-const defaultAgents: SpaceAgent[] = [
+const defaultAgents: SpaceWorkerAgent[] = [
   makeAgent('agent-1', 'planner', 'planner'),
   makeAgent('agent-2', 'coder', 'coder'),
   makeAgent('agent-3', 'general', 'general'),

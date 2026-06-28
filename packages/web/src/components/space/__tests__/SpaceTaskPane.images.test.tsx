@@ -10,7 +10,7 @@
 
 import type {
   NodeExecution,
-  SpaceAgent,
+  SpaceWorkerAgent,
   SpaceTask,
   SpaceTaskActivityMember,
   SpaceWorkflow,
@@ -76,7 +76,7 @@ vi.mock('../../../lib/signals', async (importOriginal) => {
 });
 
 let mockTasks: ReturnType<typeof signal<SpaceTask[]>>;
-let mockAgents: ReturnType<typeof signal<SpaceAgent[]>>;
+let mockAgents: ReturnType<typeof signal<SpaceWorkerAgent[]>>;
 let mockWorkflows: ReturnType<typeof signal<SpaceWorkflow[]>>;
 let mockWorkflowRuns: ReturnType<typeof signal<SpaceWorkflowRun[]>>;
 let mockTaskActivity: ReturnType<typeof signal<Map<string, SpaceTaskActivityMember[]>>>;
@@ -124,7 +124,7 @@ vi.mock('../../../lib/utils', () => ({
 }));
 
 mockTasks = signal<SpaceTask[]>([]);
-mockAgents = signal<SpaceAgent[]>([]);
+mockAgents = signal<SpaceWorkerAgent[]>([]);
 mockWorkflows = signal<SpaceWorkflow[]>([]);
 mockWorkflowRuns = signal<SpaceWorkflowRun[]>([]);
 mockTaskActivity = signal<Map<string, SpaceTaskActivityMember[]>>(new Map());

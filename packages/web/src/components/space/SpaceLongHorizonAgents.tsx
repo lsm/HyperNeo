@@ -1,5 +1,5 @@
 import type {
-  SpaceAgent,
+  SpaceWorkerAgent,
   SpaceLongHorizonAgent,
   SpaceLongHorizonAgentTemplate,
   ThinkingLevel,
@@ -35,7 +35,7 @@ function isCoordinator(agent: SpaceLongHorizonAgent): boolean {
 
 type SelectedAgentDetail =
   | { source: 'long-horizon'; agent: SpaceLongHorizonAgent }
-  | { source: 'space-agent'; agent: SpaceAgent };
+  | { source: 'space-agent'; agent: SpaceWorkerAgent };
 
 function selectedAgentName(detail: SelectedAgentDetail): string {
   return detail.source === 'long-horizon' ? detail.agent.displayName : detail.agent.name;

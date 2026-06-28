@@ -29,7 +29,7 @@ import type { TransitionLike } from '../useConnectionDrag';
 import type { ViewportState } from '../types';
 import { WorkflowCanvas } from '../WorkflowCanvas';
 import type { WorkflowNodeData, WorkflowCanvasProps } from '../WorkflowCanvas';
-import type { SpaceAgent } from '@neokai/shared';
+import type { SpaceWorkerAgent } from '@neokai/shared';
 import type { NodeDraft } from '../../WorkflowNodeCard';
 
 vi.mock('../../../../lib/utils', () => ({
@@ -44,7 +44,7 @@ afterEach(() => cleanup());
 
 const VP: ViewportState = { offsetX: 0, offsetY: 0, scale: 1 };
 
-function makeAgent(id: string, name = 'Agent'): SpaceAgent {
+function makeAgent(id: string, name = 'Agent'): SpaceWorkerAgent {
   return {
     id,
     spaceId: 'space-1',
