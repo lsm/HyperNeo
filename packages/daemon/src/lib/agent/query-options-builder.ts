@@ -63,7 +63,11 @@ import {
 } from './builtin-skill-plugin-wrapper';
 import { getCoordinatorAgents } from './coordinator-agents';
 import { createLoopDetectorHooks } from './loop-detector-hook';
-import { createOutputLimiterHook, resolveConfig } from './output-limiter-hook';
+import {
+  createOutputLimiterPostHook,
+  createOutputLimiterPreHook,
+  resolveConfig,
+} from './output-limiter-hook';
 import { isRunningUnderBun, resolveSDKCliPath } from './sdk-cli-resolver.js';
 
 /**
@@ -1237,64 +1241,35 @@ CRITICAL RULES:
       }
     }
 
-    // Output limiter: cap the size of Bash/Read/Grep outputs before the
-    // tool runs. Loaded from global settings; defaults to enabled when
-    // settings include outputLimiter (matching DEFAULT_GLOBAL_SETTINGS), and
-    // stays off when settings omit the key entirely. The hook only mutates
-    // input and does not emit a permission decision.
-    //
-    // sandbox.excludedCommands (e.g. ['git']) are passed as
-    // bash.excludedCommandPrefixes so wrapping does not hide the original
-    // command from the sandbox's command-level exclusion classifier — git
-    // over SSH/LFS still bypasses the sandbox as intended. Only done when
-    // sandbox is actually enabled; in bypassPermissions mode the sandbox is
-    // inactive and all commands (including git) are wrapped for limiting.
-    //
-    // Note on loop detection: the loop detector runs BEFORE this hook, so its
-    // PreToolUse fingerprint uses the original command. The PostToolUse event
-    // sees the wrapped command. The streak-based deny path (consecutive
-    // identical calls) is unaffected because it keys on the original command
-    // in the pre hook. The Bash failure-aware deny path correlates pre/post
-    // keys, so its ring may not accumulate for wrapped Bash commands; this is
-    // an accepted trade-off — the streak path still catches dead loops.
+    // Output limiter (PreToolUse): inject limit parameters for Read and Grep
+    // so the tools fetch less data. Bash is NOT handled here — it is truncated
+    // post-execution via updatedToolOutput in the PostToolUse hook below.
     const globalSettings = this.ctx.settingsManager.getGlobalSettings();
     const outputLimiterSettings = globalSettings.outputLimiter;
-    if (outputLimiterSettings) {
-      const resolvedOutputLimiter = resolveConfig(outputLimiterSettings);
-      if (resolvedOutputLimiter.enabled) {
-        // Derive excludedCommands from the session sandbox config only — this
-        // is the same config the SDK receives via `sandbox: config.sandbox`.
-        // Falling back to global defaults would create a mismatch: the limiter
-        // would skip wrapping git while the SDK's sandbox (which only sees
-        // session config) would not exclude it.
-        const sessionSandbox = this.ctx.session.config.sandbox;
-        const sandboxEnabled = sessionSandbox?.enabled;
-        const sandboxExcluded = sandboxEnabled ? (sessionSandbox?.excludedCommands ?? []) : [];
-        // Merge user-configured limiter exclusions with sandbox exclusions
-        // instead of overwriting one with the other.
-        const userExcluded = outputLimiterSettings.bash?.excludedCommandPrefixes ?? [];
-        const excludedCommandPrefixes = [...new Set([...userExcluded, ...sandboxExcluded])];
-        preToolUse.push({
-          hooks: [
-            createOutputLimiterHook({
-              ...outputLimiterSettings,
-              bash: {
-                ...outputLimiterSettings.bash,
-                ...(excludedCommandPrefixes.length > 0 ? { excludedCommandPrefixes } : {}),
-              },
-            }),
-          ],
-        });
-      }
+    const outputLimiterEnabled =
+      outputLimiterSettings && resolveConfig(outputLimiterSettings).enabled;
+    if (outputLimiterEnabled) {
+      preToolUse.push({
+        hooks: [createOutputLimiterPreHook(outputLimiterSettings)],
+      });
     }
 
     if (preToolUse.length > 0) {
       hooks.PreToolUse = preToolUse;
     }
-    // PostToolUse + PostToolUseFailure observers feed the Bash detector's
-    // outcome ring. Installed unconditionally — they early-out on
-    // non-Bash tools and when bash.enabled is false.
-    hooks.PostToolUse = [{ hooks: [loopDetectorHooks.postToolUse] }];
+
+    // PostToolUse: loop detector (failure ring) + output limiter (Bash
+    // truncation via updatedToolOutput). Commands run unwrapped, so exit
+    // codes, heredocs, cwd, and sandbox behavior are all preserved.
+    const postHooks: NonNullable<Options['hooks']>['PostToolUse'] = [
+      { hooks: [loopDetectorHooks.postToolUse] },
+    ];
+    if (outputLimiterEnabled) {
+      postHooks.push({ hooks: [createOutputLimiterPostHook(outputLimiterSettings)] });
+    }
+    hooks.PostToolUse = postHooks;
+
+    // PostToolUseFailure observer feeds the Bash detector's outcome ring.
     hooks.PostToolUseFailure = [{ hooks: [loopDetectorHooks.postToolUseFailure] }];
     return hooks;
   }
