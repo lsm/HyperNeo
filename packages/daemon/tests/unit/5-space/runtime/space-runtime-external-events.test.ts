@@ -1322,6 +1322,45 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(eventStore.getById('evt-linked-pr-expired')?.state).toBe('failed');
   });
 
+  test('keeps PR events linked to a run published when run URL has a suffix', async () => {
+    const { run } = await startRunWithSubscription(DEFAULT_TOPIC);
+    await runtime.executeTick();
+    const gateDataRepo = new GateDataRepository(db);
+    gateDataRepo.set(run.id, 'pr', { prUrl: 'https://github.com/lsm/neokai/pull/42/files' });
+
+    const event = makeEvent({ topic: 'github/lsm/neokai/pull_request/42.comment_created' });
+    await eventService.publish(event);
+
+    expect(injected).toHaveLength(0);
+    expect(eventStore.getById(event.id)?.state).toBe('published');
+    expect(eventStore.listDeliveries(event.id)).toHaveLength(0);
+  });
+
+  test('fails linked-PR events past TTL via periodic executeTick sweep', async () => {
+    const { run } = await startRunWithSubscription(DEFAULT_TOPIC);
+    await runtime.executeTick();
+    const gateDataRepo = new GateDataRepository(db);
+    gateDataRepo.set(run.id, 'pr', { prUrl: 'https://github.com/lsm/neokai/pull/42' });
+
+    const event = makeEvent({
+      id: 'evt-linked-pr-expired-sweep',
+      topic: 'github/lsm/neokai/pull_request/42.comment_created',
+    });
+    await eventService.publish(event);
+    expect(eventStore.getById(event.id)?.state).toBe('published');
+
+    const originalNow = Date.now;
+    Date.now = () => originalNow() + 300_001;
+    try {
+      await runtime.executeTick();
+    } finally {
+      Date.now = originalNow;
+    }
+
+    expect(eventStore.listDeliveries('evt-linked-pr-expired-sweep')).toHaveLength(0);
+    expect(eventStore.getById('evt-linked-pr-expired-sweep')?.state).toBe('failed');
+  });
+
   test('fails queued deliveries when an execution is unregistered', async () => {
     const { workflow, run, task } = await startRunWithSubscription();
     const event = makeEvent();
