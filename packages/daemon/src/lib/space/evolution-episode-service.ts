@@ -57,7 +57,7 @@ const PROPOSAL_STATUSES: TaskProposalStatus[] = ['proposed', 'accepted', 'dismis
 const PRIORITIES: SpaceTaskPriority[] = ['low', 'normal', 'high', 'urgent'];
 const MAX_TEXT = 1200;
 const MAX_ARTIFACTS_PER_RUN = 8;
-const TERMINAL_TASK_STATUSES = new Set<SpaceTaskStatus>(['done', 'archived']);
+const TERMINAL_TASK_STATUSES = new Set<SpaceTaskStatus>(['done']);
 
 export interface CreateEpisodeFromEvidenceParams {
   scopeId: string;
@@ -463,7 +463,6 @@ export class EvolutionEpisodeService {
       processedTaskIds.add(task.id);
       const runId = task.workflowRunId;
       if (!runId) return;
-      if (task.status === 'archived' && task.reportedStatus === 'cancelled') return;
       if (!TERMINAL_TASK_STATUSES.has(task.status)) return;
       if (normalizeMeaningfulTaskResult(task.result) !== null) return;
 

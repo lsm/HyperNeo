@@ -2482,11 +2482,10 @@ describe('EvolutionEpisodeService', () => {
       description: 'Archived after cancellation',
       evolutionScopeId: scope.id,
       workflowRunId: run.id,
-      status: 'done',
+      status: 'cancelled',
     });
     taskRepo.updateTask(task.id, {
       result: null,
-      reportedStatus: 'cancelled',
       status: 'archived',
     });
     const taskEvidence = evolutionRepo.createEvidence({
