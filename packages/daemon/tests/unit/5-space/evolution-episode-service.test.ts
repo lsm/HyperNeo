@@ -2072,4 +2072,82 @@ describe('EvolutionEpisodeService', () => {
 
     expect(result.episode.findings).toHaveLength(0);
   });
+
+  it('detects a result-artifact gap when the result artifact is outside the truncated run context', async () => {
+    const scope = evolutionRepo.createScope({
+      spaceId,
+      kind: 'custom',
+      name: 'Truncated run context',
+      objective: 'Detect gaps beyond MAX_ARTIFACTS_PER_RUN',
+    });
+    const workflow = workflowRepo.createWorkflow({ spaceId, name: 'Release' });
+    const run = workflowRunRepo.createRun({
+      spaceId,
+      workflowId: workflow.id,
+      title: 'Release run',
+    });
+    for (let i = 0; i < 8; i++) {
+      artifactRepo.upsert({
+        id: `progress-artifact-${i}`,
+        runId: run.id,
+        nodeId: 'coder',
+        artifactType: 'progress',
+        artifactKey: `progress-${i}`,
+        data: { step: i },
+      });
+    }
+    artifactRepo.upsert({
+      id: 'result-artifact-truncated',
+      runId: run.id,
+      nodeId: 'coder',
+      artifactType: 'result',
+      artifactKey: 'final',
+      data: { summary: 'PR merged' },
+    });
+    const task = taskRepo.createTask({
+      spaceId,
+      title: 'Task with truncated result artifact',
+      description: 'Result artifact exists beyond the 8-artifact cap',
+      evolutionScopeId: scope.id,
+      workflowRunId: run.id,
+    });
+    taskRepo.updateTask(task.id, { result: null });
+    const taskEvidence = evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'task_result',
+      sourceId: task.id,
+      summary: 'Task completed',
+    });
+    const runEvidence = evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'workflow_run',
+      sourceId: run.id,
+      summary: 'Workflow run completed',
+    });
+
+    const service = new EvolutionEpisodeService({
+      evolutionRepo,
+      taskRepo,
+      workflowRunRepo,
+      artifactRepo,
+      judgeEpisode: async () => ({
+        title: 'Episode',
+        outcomeSummary: '',
+        findings: [],
+      }),
+    });
+
+    const result = await service.createFromEvidence({
+      scopeId: scope.id,
+      evidenceIds: [taskEvidence.id, runEvidence.id],
+      confirmLowConfidence: true,
+    });
+
+    expect(result.episode.findings).toHaveLength(1);
+    expect(result.episode.findings[0]).toMatchObject({
+      domain: 'neokai_product',
+      kind: 'bug',
+      evidence: expect.arrayContaining([taskEvidence.id, runEvidence.id]),
+    });
+  });
 });

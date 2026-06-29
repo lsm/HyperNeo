@@ -461,17 +461,8 @@ export class EvolutionEpisodeService {
 
       let hasResultArtifact = runHasResultArtifact.get(runId);
       if (hasResultArtifact === undefined) {
-        const runContext = input.workflowRuns.find((wr) => wr.run.id === runId);
-        if (runContext) {
-          hasResultArtifact = runContext.artifacts.some(
-            (artifact) => artifact.artifactType === 'result'
-          );
-        } else if (this.deps.artifactRepo) {
-          hasResultArtifact =
-            this.deps.artifactRepo.listByRun(runId, { artifactType: 'result' }).length > 0;
-        } else {
-          hasResultArtifact = false;
-        }
+        hasResultArtifact =
+          this.deps.artifactRepo.listByRun(runId, { artifactType: 'result' }).length > 0;
         runHasResultArtifact.set(runId, hasResultArtifact);
       }
       if (!hasResultArtifact) continue;
