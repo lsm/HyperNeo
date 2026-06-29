@@ -17,6 +17,7 @@ import type {
   MetricSnapshot,
   SpaceGoal,
   SpaceTask,
+  SpaceTaskStatus,
   TaskProposal,
   TaskProposalStatus,
   UpdateEvolutionEpisodeParams,
@@ -55,6 +56,12 @@ const PROPOSAL_STATUSES: TaskProposalStatus[] = ['proposed', 'accepted', 'dismis
 const PRIORITIES: SpaceTaskPriority[] = ['low', 'normal', 'high', 'urgent'];
 const MAX_TEXT = 1200;
 const MAX_ARTIFACTS_PER_RUN = 8;
+const TERMINAL_TASK_STATUSES = new Set<SpaceTaskStatus>([
+  'done',
+  'approved',
+  'cancelled',
+  'archived',
+]);
 
 export interface CreateEpisodeFromEvidenceParams {
   scopeId: string;
@@ -456,6 +463,7 @@ export class EvolutionEpisodeService {
     for (const { evidenceId: taskEvidenceId, task } of input.tasks) {
       const runId = task.workflowRunId;
       if (!runId) continue;
+      if (!TERMINAL_TASK_STATUSES.has(task.status)) continue;
       if (typeof task.result === 'string' && task.result.trim().length > 0) continue;
 
       let hasResultArtifact = runHasResultArtifact.get(runId);

@@ -1860,6 +1860,7 @@ describe('EvolutionEpisodeService', () => {
       description: 'Result artifact exists but task.result is empty',
       evolutionScopeId: scope.id,
       workflowRunId: run.id,
+      status: 'done',
     });
     taskRepo.updateTask(task.id, { result: null, reportedSummary: 'Fallback summary' });
     const taskEvidence = evolutionRepo.createEvidence({
@@ -1931,6 +1932,7 @@ describe('EvolutionEpisodeService', () => {
       description: 'Result artifact exists but task.result is empty',
       evolutionScopeId: scope.id,
       workflowRunId: run.id,
+      status: 'done',
     });
     taskRepo.updateTask(task.id, { result: null });
     const taskEvidence = evolutionRepo.createEvidence({
@@ -1994,6 +1996,7 @@ describe('EvolutionEpisodeService', () => {
       description: 'Task.result is populated',
       evolutionScopeId: scope.id,
       workflowRunId: run.id,
+      status: 'done',
     });
     taskRepo.updateTask(task.id, { result: 'PR merged', reportedSummary: 'Done' });
     const taskEvidence = evolutionRepo.createEvidence({
@@ -2043,6 +2046,7 @@ describe('EvolutionEpisodeService', () => {
       description: 'No result artifact exists',
       evolutionScopeId: scope.id,
       workflowRunId: run.id,
+      status: 'done',
     });
     taskRepo.updateTask(task.id, { result: null });
     const taskEvidence = evolutionRepo.createEvidence({
@@ -2110,6 +2114,7 @@ describe('EvolutionEpisodeService', () => {
       description: 'Result artifact exists beyond the 8-artifact cap',
       evolutionScopeId: scope.id,
       workflowRunId: run.id,
+      status: 'done',
     });
     taskRepo.updateTask(task.id, { result: null });
     const taskEvidence = evolutionRepo.createEvidence({
@@ -2149,5 +2154,63 @@ describe('EvolutionEpisodeService', () => {
       kind: 'bug',
       evidence: expect.arrayContaining([taskEvidence.id, runEvidence.id]),
     });
+  });
+
+  it('does not emit a result-artifact gap finding for non-terminal tasks', async () => {
+    const scope = evolutionRepo.createScope({
+      spaceId,
+      kind: 'custom',
+      name: 'In-progress task',
+      objective: 'Skip tasks that are not yet terminal',
+    });
+    const workflow = workflowRepo.createWorkflow({ spaceId, name: 'Release' });
+    const run = workflowRunRepo.createRun({
+      spaceId,
+      workflowId: workflow.id,
+      title: 'Release run',
+    });
+    artifactRepo.upsert({
+      id: 'result-artifact-in-progress',
+      runId: run.id,
+      nodeId: 'coder',
+      artifactType: 'result',
+      artifactKey: 'final',
+      data: { summary: 'PR merged' },
+    });
+    const task = taskRepo.createTask({
+      spaceId,
+      title: 'Task still in progress',
+      description: 'Result artifact exists but task is not terminal',
+      evolutionScopeId: scope.id,
+      workflowRunId: run.id,
+      status: 'in_progress',
+    });
+    taskRepo.updateTask(task.id, { result: null });
+    const taskEvidence = evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'task_result',
+      sourceId: task.id,
+      summary: 'Task in progress',
+    });
+
+    const service = new EvolutionEpisodeService({
+      evolutionRepo,
+      taskRepo,
+      workflowRunRepo,
+      artifactRepo,
+      judgeEpisode: async () => ({
+        title: 'Episode',
+        outcomeSummary: '',
+        findings: [],
+      }),
+    });
+
+    const result = await service.createFromEvidence({
+      scopeId: scope.id,
+      evidenceIds: [taskEvidence.id],
+      confirmLowConfidence: true,
+    });
+
+    expect(result.episode.findings).toHaveLength(0);
   });
 });
