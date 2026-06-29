@@ -455,12 +455,17 @@ export class EvolutionEpisodeService {
 
   private detectResultArtifactGaps(input: EpisodeJudgePromptInput): EvolutionFinding[] {
     const gaps: EvolutionFinding[] = [];
+    const processedTaskIds = new Set<string>();
     const runHasResultArtifact = new Map<string, boolean>();
-    for (const { evidenceId: taskEvidenceId, task } of input.tasks) {
+
+    const processTask = (task: SpaceTask, taskEvidenceId?: string) => {
+      if (processedTaskIds.has(task.id)) return;
+      processedTaskIds.add(task.id);
       const runId = task.workflowRunId;
-      if (!runId) continue;
-      if (!TERMINAL_TASK_STATUSES.has(task.status)) continue;
-      if (normalizeMeaningfulTaskResult(task.result) !== null) continue;
+      if (!runId) return;
+      if (task.status === 'archived' && task.reportedStatus === 'cancelled') return;
+      if (!TERMINAL_TASK_STATUSES.has(task.status)) return;
+      if (normalizeMeaningfulTaskResult(task.result) !== null) return;
 
       let hasResultArtifact = runHasResultArtifact.get(runId);
       if (hasResultArtifact === undefined) {
@@ -473,11 +478,13 @@ export class EvolutionEpisodeService {
         );
         runHasResultArtifact.set(runId, hasResultArtifact);
       }
-      if (!hasResultArtifact) continue;
+      if (!hasResultArtifact) return;
 
       const runContext = input.workflowRuns.find((wr) => wr.run.id === runId);
-      const evidence = [taskEvidenceId];
-      if (runContext) evidence.push(runContext.evidenceId);
+      const evidence = taskEvidenceId ? [taskEvidenceId] : [];
+      if (runContext && runContext.evidenceId !== taskEvidenceId) {
+        evidence.push(runContext.evidenceId);
+      }
       gaps.push({
         domain: 'neokai_product',
         kind: 'bug',
@@ -486,6 +493,15 @@ export class EvolutionEpisodeService {
         evidence,
         proposedAction: `Backfill task.result for "${task.title}" from the result artifact on workflow run ${runId}; the artifact exists but the task record has no result.`,
       });
+    };
+
+    for (const { evidenceId: taskEvidenceId, task } of input.tasks) {
+      processTask(task, taskEvidenceId);
+    }
+    for (const { tasks, evidenceId: runEvidenceId } of input.workflowRuns) {
+      for (const task of tasks) {
+        processTask(task, runEvidenceId);
+      }
     }
     return gaps;
   }
