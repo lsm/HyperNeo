@@ -119,7 +119,7 @@ export class KimiProvider implements Provider {
   static readonly MODELS: ModelInfo[] = [
     {
       id: 'kimi-for-coding',
-      name: 'Kimi For Coding',
+      name: 'Kimi K2.7',
       alias: 'kimi',
       family: 'kimi',
       provider: 'kimi',

@@ -12,6 +12,7 @@ import type {
   MessageImage,
   ModelInfo,
   ReferenceMention,
+  SessionFeatures,
   SessionType,
 } from '@neokai/shared';
 import type { ComponentChildren } from 'preact';
@@ -95,6 +96,16 @@ interface MessageInputProps {
    * active.
    */
   registerDropTarget?: RegisterFileDropTarget;
+  /** Coordinator mode toggle (rendered in the + menu) */
+  coordinatorMode?: boolean;
+  coordinatorSwitching?: boolean;
+  onCoordinatorModeChange?: (enabled: boolean) => void;
+  /** Sandbox mode toggle (rendered in the + menu) */
+  sandboxEnabled?: boolean;
+  sandboxSwitching?: boolean;
+  onSandboxModeChange?: (enabled: boolean) => void;
+  /** Feature flags gating the coordinator/sandbox menu items */
+  features?: SessionFeatures;
 }
 
 export default function MessageInput({
@@ -105,6 +116,13 @@ export default function MessageInput({
   autoScroll,
   onAutoScrollChange,
   onOpenTools,
+  coordinatorMode = false,
+  coordinatorSwitching = false,
+  onCoordinatorModeChange,
+  sandboxEnabled = false,
+  sandboxSwitching = false,
+  onSandboxModeChange,
+  features,
   agentMentionCandidates,
   placeholder: placeholderProp,
   leadingElement,
@@ -646,6 +664,13 @@ export default function MessageInput({
               onAutoScrollChange={(enabled) => onAutoScrollChange?.(enabled)}
               onOpenTools={() => onOpenTools?.()}
               onAttachFile={openFilePicker}
+              coordinatorMode={coordinatorMode}
+              coordinatorSwitching={coordinatorSwitching}
+              onCoordinatorModeChange={onCoordinatorModeChange}
+              sandboxEnabled={sandboxEnabled}
+              sandboxSwitching={sandboxSwitching}
+              onSandboxModeChange={onSandboxModeChange}
+              features={features}
               disabled={disabled}
             />
 

@@ -129,7 +129,6 @@ export function ChatComposer({
           streamingPhase={streamingPhase}
           contextUsage={contextUsage}
           maxContextTokens={currentModelInfo?.contextWindow}
-          features={features}
           currentModel={currentModel}
           currentModelInfo={currentModelInfo}
           availableModels={availableModels}
@@ -138,14 +137,9 @@ export function ChatComposer({
           onModelSwitch={onModelSwitch}
           autoScroll={autoScroll}
           onAutoScrollChange={onAutoScrollChange}
-          coordinatorMode={coordinatorMode}
-          coordinatorSwitching={coordinatorSwitching}
-          onCoordinatorModeChange={onCoordinatorModeChange}
-          sandboxEnabled={sandboxEnabled}
-          sandboxSwitching={sandboxSwitching}
-          onSandboxModeChange={onSandboxModeChange}
           thinkingLevel={thinkingLevel}
           onThinkingLevelChange={onThinkingLevelChange}
+          coordinatorSwitching={coordinatorSwitching}
         />
 
         {sessionStatus === 'archived' ? (
@@ -195,6 +189,13 @@ export function ChatComposer({
               onDraftActiveChange={onDraftActiveChange}
               isProcessing={isProcessing}
               registerDropTarget={registerDropTarget}
+              coordinatorMode={coordinatorMode}
+              coordinatorSwitching={coordinatorSwitching}
+              onCoordinatorModeChange={onCoordinatorModeChange}
+              sandboxEnabled={sandboxEnabled}
+              sandboxSwitching={sandboxSwitching}
+              onSandboxModeChange={onSandboxModeChange}
+              features={features}
             />
           )
         )}

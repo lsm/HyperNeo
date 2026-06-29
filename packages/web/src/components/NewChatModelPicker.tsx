@@ -2,7 +2,6 @@ import type { ModelInfo } from '@neokai/shared';
 import type { ProviderAuthStatus } from '@neokai/shared/provider';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import {
-  getModelFamilyIcon,
   getProviderLabel,
   groupModelsByProvider,
   useClickOutside,
@@ -11,6 +10,13 @@ import {
 } from '../hooks';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { connectionState } from '../lib/state.ts';
+import {
+  providerPillStyle,
+  providerLogoColor,
+  providerHeaderStyle,
+  shortenModelName,
+} from '../lib/provider-brand.ts';
+import { ProviderLogo } from './ProviderLogo.tsx';
 import { Spinner } from './ui/Spinner.tsx';
 
 interface NewChatModelPickerProps {
@@ -82,7 +88,10 @@ export function NewChatModelPicker({
   const activeModelKey = activeModelInfo
     ? `${activeModelInfo.provider}:${activeModelInfo.id}`
     : null;
-  const activeIcon = activeModelInfo ? getModelFamilyIcon(activeModelInfo.family) : '💎';
+  const activeProvider = activeModelInfo?.provider;
+  const activeLabel = activeModelInfo
+    ? shortenModelName(activeModelInfo.name, activeProvider)
+    : activeModelLabel;
 
   const modelCountLabel = useMemo(() => {
     if (loading) return 'Loading models';
@@ -98,23 +107,17 @@ export function NewChatModelPicker({
         disabled={loading && availableModels.length === 0}
         title="Choose model"
         aria-label="Choose model"
-        class="flex h-8 max-w-[240px] items-center gap-2 rounded-full px-2.5 text-xs text-gray-300 transition-colors hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-50"
+        class="flex h-8 max-w-[240px] items-center gap-1.5 rounded-full border px-2.5 text-xs text-gray-200 transition-colors hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+        style={activeModelInfo ? providerPillStyle(activeProvider) : undefined}
       >
         {loading && availableModels.length === 0 ? (
           <Spinner size="sm" />
-        ) : (
-          <span class="text-sm leading-none">{activeIcon}</span>
-        )}
-        <span class="min-w-0 truncate">{activeModelLabel}</span>
-        {activeModelInfo?.provider && (
-          <span
-            class={`h-1.5 w-1.5 flex-shrink-0 rounded-full ${providerDotClass(
-              providerAuthStatuses.get(activeModelInfo.provider)
-            )}`}
-            title={getProviderLabel(activeModelInfo.provider)}
-            aria-label={getProviderLabel(activeModelInfo.provider)}
-          />
-        )}
+        ) : activeModelInfo ? (
+          <span class="flex shrink-0" style={{ color: providerLogoColor(activeProvider) }}>
+            <ProviderLogo provider={activeProvider ?? 'anthropic'} class="h-4 w-4" />
+          </span>
+        ) : null}
+        <span class="min-w-0 truncate">{activeLabel}</span>
         <svg
           class="h-3.5 w-3.5 flex-shrink-0 text-gray-500"
           viewBox="0 0 20 20"
@@ -150,13 +153,19 @@ export function NewChatModelPicker({
               return (
                 <div key={provider}>
                   {groupIndex > 0 && <div class="mx-2 my-1 border-t border-dark-700" />}
-                  <div class="flex items-center gap-1.5 px-3 py-1">
+                  <div
+                    class="flex items-center gap-1.5 px-3 py-1.5"
+                    style={providerHeaderStyle(provider)}
+                  >
+                    <span class="flex h-3.5 w-3.5 shrink-0">
+                      <ProviderLogo provider={provider} class="h-3.5 w-3.5" />
+                    </span>
+                    <span class="text-[11px] font-bold uppercase tracking-wider">
+                      {getProviderLabel(provider)}
+                    </span>
                     <span
                       class={`h-2 w-2 flex-shrink-0 rounded-full ${providerDotClass(authStatus)}`}
                     />
-                    <span class="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
-                      {getProviderLabel(provider)}
-                    </span>
                     {authStatus?.needsRefresh && (
                       <span class="text-[10px] text-yellow-400" title="Token expiring soon">
                         !
@@ -177,8 +186,9 @@ export function NewChatModelPicker({
                           dropdown.close();
                         }}
                       >
-                        <span class="text-base">{getModelFamilyIcon(model.family)}</span>
-                        <span class="min-w-0 flex-1 truncate">{model.name}</span>
+                        <span class="min-w-0 flex-1 truncate">
+                          {shortenModelName(model.name, model.provider)}
+                        </span>
                         {isActive && <span class="text-[10px] text-blue-400">✓</span>}
                       </button>
                     );
