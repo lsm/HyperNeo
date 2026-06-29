@@ -13,6 +13,7 @@ import {
   parsePositiveIntegerEnv,
   SpaceRuntime,
 } from '../../../../src/lib/space/runtime/space-runtime';
+import { GateDataRepository } from '../../../../src/storage/repositories/gate-data-repository';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
@@ -1189,6 +1190,136 @@ describe('SpaceRuntime external event subscriptions', () => {
 
     expect(injected).toHaveLength(0);
     expect(eventStore.getById(event.id)?.state).toBe('ignored');
+  });
+
+  test('keeps PR events linked to a run published when no subscription matches', async () => {
+    const { run } = await startRunWithSubscription(DEFAULT_TOPIC);
+    await runtime.executeTick();
+    const gateDataRepo = new GateDataRepository(db);
+    gateDataRepo.set(run.id, 'pr', { prUrl: 'https://github.com/lsm/neokai/pull/42' });
+
+    const event = makeEvent({ topic: 'github/lsm/neokai/pull_request/42.comment_created' });
+    await eventService.publish(event);
+
+    expect(injected).toHaveLength(0);
+    expect(eventStore.getById(event.id)?.state).toBe('published');
+    expect(eventStore.listDeliveries(event.id)).toHaveLength(0);
+  });
+
+  test('delivers a linked-PR event after a matching subscription registers', async () => {
+    const { workflow, run, task } = await startRunWithSubscription(DEFAULT_TOPIC);
+    await runtime.executeTick();
+    const gateDataRepo = new GateDataRepository(db);
+    gateDataRepo.set(run.id, 'pr', { prUrl: 'https://github.com/lsm/neokai/pull/42' });
+
+    await runtime.stop();
+    eventStore.store(
+      makeEvent({
+        id: 'evt-linked-pr-redeliver',
+        topic: 'github/lsm/neokai/pull_request/42.comment_created',
+      })
+    );
+
+    const commandBus = createInternalCommandBus();
+    commandBus.register('agent.message.inject', async (command) => {
+      injected.push({
+        sessionId: command.sessionId,
+        message: command.message,
+        deliveryMode: command.deliveryMode,
+      });
+      return { ok: true };
+    });
+
+    runtime = new SpaceRuntime({
+      db,
+      spaceManager: new SpaceManager(db),
+      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+      spaceWorkflowManager: workflowManager,
+      workflowRunRepo,
+      taskRepo,
+      nodeExecutionRepo,
+      internalEventBus: bus,
+      commandBus,
+      externalEventStore: eventStore,
+      taskAgentManager: tam as never,
+    });
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-linked-pr-redeliver',
+      startedAt: Date.now(),
+    });
+    tam.alive.add('session-linked-pr-redeliver');
+    runtime.registerSubscription(
+      run.id,
+      task.id,
+      'code',
+      'coder',
+      'github/*/*/pull_request/*.comment_created'
+    );
+
+    await runtime.executeTick();
+
+    expect(eventStore.listDeliveries('evt-linked-pr-redeliver')).toHaveLength(1);
+    const delivery = eventStore.listDeliveries('evt-linked-pr-redeliver')[0]!;
+    expect(delivery.state).toBe('delivered');
+    expect(delivery.taskId).toBe(task.id);
+    expect(eventStore.getById('evt-linked-pr-redeliver')?.state).toBe('delivered');
+    expect(injected).toHaveLength(1);
+    expect(injected[0]!.sessionId).toBe('session-linked-pr-redeliver');
+  });
+
+  test('ignores PR events not linked to any run in the space', async () => {
+    const { run } = await startRunWithSubscription(DEFAULT_TOPIC);
+    await runtime.executeTick();
+    const gateDataRepo = new GateDataRepository(db);
+    gateDataRepo.set(run.id, 'pr', { prUrl: 'https://github.com/lsm/neokai/pull/99' });
+
+    const event = makeEvent({ topic: 'github/lsm/neokai/pull_request/42.comment_created' });
+    await eventService.publish(event);
+
+    expect(injected).toHaveLength(0);
+    expect(eventStore.getById(event.id)?.state).toBe('ignored');
+  });
+
+  test('fails linked-PR events that stay unmatched past the TTL', async () => {
+    const { run } = await startRunWithSubscription(DEFAULT_TOPIC);
+    await runtime.executeTick();
+    const gateDataRepo = new GateDataRepository(db);
+    gateDataRepo.set(run.id, 'pr', { prUrl: 'https://github.com/lsm/neokai/pull/42' });
+
+    await runtime.stop();
+    eventStore.store(
+      makeEvent({
+        id: 'evt-linked-pr-expired',
+        topic: 'github/lsm/neokai/pull_request/42.comment_created',
+      })
+    );
+
+    runtime = new SpaceRuntime({
+      db,
+      spaceManager: new SpaceManager(db),
+      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+      spaceWorkflowManager: workflowManager,
+      workflowRunRepo,
+      taskRepo,
+      nodeExecutionRepo,
+      internalEventBus: bus,
+      commandBus: createInternalCommandBus(),
+      externalEventStore: eventStore,
+      taskAgentManager: tam as never,
+    });
+
+    const originalNow = Date.now;
+    Date.now = () => originalNow() + 300_001;
+    try {
+      await runtime.executeTick();
+    } finally {
+      Date.now = originalNow;
+    }
+
+    expect(eventStore.listDeliveries('evt-linked-pr-expired')).toHaveLength(0);
+    expect(eventStore.getById('evt-linked-pr-expired')?.state).toBe('failed');
   });
 
   test('fails queued deliveries when an execution is unregistered', async () => {
