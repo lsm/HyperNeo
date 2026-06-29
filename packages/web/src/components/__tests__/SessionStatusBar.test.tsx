@@ -12,7 +12,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup, act } from '@testing-library/preact';
 import type { ContextInfo, ModelInfo } from '@neokai/shared';
 import SessionStatusBar from '../SessionStatusBar';
-import { getProviderLabel } from '../../hooks';
 
 // Configurable hub mock — defaults to null (no connection) so existing tests are unaffected.
 // Individual tests can call mockGetHubIfConnected.mockReturnValue({ request: ... }) to
@@ -29,8 +28,6 @@ vi.mock('../../lib/connection-manager', () => ({
 describe('SessionStatusBar', () => {
   const mockOnModelSwitch = vi.fn(() => Promise.resolve());
   const mockOnAutoScrollChange = vi.fn(() => {});
-  const mockOnCoordinatorModeChange = vi.fn(() => {});
-  const mockOnSandboxModeChange = vi.fn(() => {});
 
   const mockModelInfo: ModelInfo = {
     id: 'sonnet',
@@ -90,19 +87,12 @@ describe('SessionStatusBar', () => {
     onModelSwitch: mockOnModelSwitch,
     autoScroll: true,
     onAutoScrollChange: mockOnAutoScrollChange,
-    coordinatorMode: true,
-    coordinatorSwitching: false,
-    onCoordinatorModeChange: mockOnCoordinatorModeChange,
-    sandboxEnabled: false,
-    onSandboxModeChange: mockOnSandboxModeChange,
   };
 
   beforeEach(() => {
     cleanup();
     mockOnModelSwitch.mockClear();
     mockOnAutoScrollChange.mockClear();
-    mockOnCoordinatorModeChange.mockClear();
-    mockOnSandboxModeChange.mockClear();
     // Reset hub to null (no connection) between tests — individual tests can override
     mockGetHubIfConnected.mockReturnValue(null);
   });
@@ -229,11 +219,14 @@ describe('SessionStatusBar', () => {
   });
 
   describe('Model Switcher', () => {
-    it('should show current model icon', () => {
+    it('should render the brand-tinted model pill with logo + tier label', () => {
       const { container } = render(<SessionStatusBar {...defaultProps} />);
 
-      // Sonnet icon should be visible
-      expect(container.textContent).toContain('💎');
+      const pill = container.querySelector('[data-testid="model-pill"]');
+      expect(pill).toBeTruthy();
+      // provider logo (svg) + tier label are both present
+      expect(pill?.querySelector('svg')).toBeTruthy();
+      expect(pill?.textContent).toContain('Sonnet 4.5');
     });
 
     it('should disable model button when loading', () => {
@@ -435,9 +428,12 @@ describe('SessionStatusBar', () => {
       const searchInput = container.querySelector('input[aria-label="Search models"]')!;
       fireEvent.input(searchInput, { target: { value: 'opus' } });
 
-      expect(container.textContent).toContain('Opus 4.5');
-      expect(container.textContent).not.toContain('Sonnet 4.5');
-      expect(container.textContent).not.toContain('Haiku 4.5');
+      // Scope to the dropdown: the composer pill always shows the active model
+      // name, so the whole-container text would always include it.
+      const dropdown = container.querySelector('[data-testid="model-dropdown"]')!;
+      expect(dropdown.textContent).toContain('Opus 4.5');
+      expect(dropdown.textContent).not.toContain('Sonnet 4.5');
+      expect(dropdown.textContent).not.toContain('Haiku 4.5');
     });
 
     it('should show current model indicator', () => {
@@ -731,8 +727,8 @@ describe('SessionStatusBar', () => {
     });
   });
 
-  describe('Model Family Icons', () => {
-    it('should show opus icon for opus model', () => {
+  describe('Model Pill — tier label', () => {
+    it('should show the tier label with brand prefix stripped for an opus model', () => {
       const opusModelInfo: ModelInfo = {
         id: 'opus',
         name: 'Claude Opus 4',
@@ -744,11 +740,13 @@ describe('SessionStatusBar', () => {
         <SessionStatusBar {...defaultProps} currentModelInfo={opusModelInfo} />
       );
 
-      // Opus icon should be visible
-      expect(container.textContent).toContain('🧠');
+      const pill = container.querySelector('[data-testid="model-pill"]');
+      // "Claude " prefix is dropped — the logo already conveys Anthropic
+      expect(pill?.textContent).toContain('Opus 4');
+      expect(pill?.querySelector('svg')).toBeTruthy();
     });
 
-    it('should show haiku icon for haiku model', () => {
+    it('should show the tier label for a haiku model', () => {
       const haikuModelInfo: ModelInfo = {
         id: 'haiku',
         name: 'Claude Haiku 3',
@@ -760,245 +758,72 @@ describe('SessionStatusBar', () => {
         <SessionStatusBar {...defaultProps} currentModelInfo={haikuModelInfo} />
       );
 
-      // Haiku icon should be visible
-      expect(container.textContent).toContain('⚡');
+      const pill = container.querySelector('[data-testid="model-pill"]');
+      expect(pill?.textContent).toContain('Haiku 3');
     });
 
-    it('should show default icon when no model info', () => {
+    it('should show a placeholder when no model info', () => {
       const { container } = render(<SessionStatusBar {...defaultProps} currentModelInfo={null} />);
 
-      // Default gem icon should be visible
-      expect(container.textContent).toContain('💎');
+      const pill = container.querySelector('[data-testid="model-pill"]');
+      expect(pill?.textContent).toContain('Select model');
     });
   });
 
-  describe('Coordinator Mode Toggle', () => {
-    it('should show spinner when coordinator is switching', () => {
-      const { container } = render(
-        <SessionStatusBar {...defaultProps} coordinatorSwitching={true} />
-      );
-      const buttons = Array.from(container.querySelectorAll('.control-btn'));
-      const coordinatorButton = buttons.find(
-        (btn) => btn.getAttribute('title')?.includes('Coordinator Mode') || false
-      );
-      const spinner = coordinatorButton?.querySelector('[class*="animate-spin"]');
-      expect(spinner).toBeTruthy();
-    });
+  describe('Model Pill — provider identity', () => {
+    // jsdom drops `color-mix(...)` from inline styles, so the tint can't be
+    // asserted via style here. The pill stamps its provider on data-provider;
+    // the brand-color mapping itself is covered by provider-brand.test.ts.
+    const pillProvider = (container: { querySelector: (sel: string) => Element | null }) =>
+      container.querySelector('[data-testid="model-pill"]')?.getAttribute('data-provider');
 
-    it('should disable coordinator button when coordinator is switching', () => {
-      const { container } = render(
-        <SessionStatusBar {...defaultProps} coordinatorSwitching={true} />
-      );
-      const buttons = Array.from(container.querySelectorAll('.control-btn'));
-      const coordinatorButton = buttons.find(
-        (btn) => btn.getAttribute('title')?.includes('Coordinator Mode') || false
-      ) as HTMLButtonElement;
-      expect(coordinatorButton?.disabled).toBe(true);
-    });
+    const cases: Array<[string, string]> = [
+      ['anthropic', 'anthropic'],
+      ['anthropic-copilot', 'anthropic-copilot'],
+      ['anthropic-codex', 'anthropic-codex'],
+      ['glm', 'glm'],
+      ['kimi', 'kimi'],
+      ['minimax', 'minimax'],
+    ];
 
-    it('should disable coordinator button when model is switching', () => {
-      const { container } = render(<SessionStatusBar {...defaultProps} modelSwitching={true} />);
-      const buttons = Array.from(container.querySelectorAll('.control-btn'));
-      const coordinatorButton = buttons.find(
-        (btn) => btn.getAttribute('title')?.includes('Coordinator Mode') || false
-      ) as HTMLButtonElement;
-      expect(coordinatorButton?.disabled).toBe(true);
-    });
-
-    it('should disable model button when coordinator is switching', () => {
-      const { container } = render(
-        <SessionStatusBar {...defaultProps} coordinatorSwitching={true} />
-      );
-      const modelButton = container.querySelector(
-        '.control-btn[title*="Switch Model"]'
-      ) as HTMLButtonElement;
-      expect(modelButton?.disabled).toBe(true);
-    });
-
-    it('should call onCoordinatorModeChange when clicked', () => {
-      const { container } = render(<SessionStatusBar {...defaultProps} coordinatorMode={true} />);
-      const buttons = Array.from(container.querySelectorAll('.control-btn'));
-      const coordinatorButton = buttons.find(
-        (btn) => btn.getAttribute('title')?.includes('Coordinator Mode') || false
-      )!;
-      fireEvent.click(coordinatorButton);
-      expect(mockOnCoordinatorModeChange).toHaveBeenCalledWith(false);
-    });
-
-    it('should show purple border when coordinator mode is enabled', () => {
-      const { container } = render(<SessionStatusBar {...defaultProps} coordinatorMode={true} />);
-      const buttons = Array.from(container.querySelectorAll('.control-btn'));
-      const coordinatorButton = buttons.find(
-        (btn) => btn.getAttribute('title')?.includes('Coordinator Mode') || false
-      );
-      expect(coordinatorButton?.className).toContain('border-purple-500');
-    });
-
-    it('should show neutral border when coordinator mode is disabled', () => {
-      const { container } = render(<SessionStatusBar {...defaultProps} coordinatorMode={false} />);
-      const buttons = Array.from(container.querySelectorAll('.control-btn'));
-      const coordinatorButton = buttons.find(
-        (btn) => btn.getAttribute('title')?.includes('Coordinator Mode') || false
-      );
-      expect(coordinatorButton?.className).toContain('border-dark-600/80');
-    });
-  });
-
-  describe('Provider Badge (colored dot)', () => {
-    it('should show orange dot for Anthropic provider', () => {
-      const anthropicModelInfo: ModelInfo = {
-        ...mockModelInfo,
-        provider: 'anthropic',
-      };
-      const { container } = render(
-        <SessionStatusBar {...defaultProps} currentModelInfo={anthropicModelInfo} />
-      );
-      const badge = container.querySelector('[data-testid="provider-badge"]');
-      expect(badge).toBeTruthy();
-      expect(badge?.getAttribute('title')).toBe('Anthropic');
-      expect(badge?.getAttribute('aria-label')).toBe('Anthropic');
-      expect((badge as HTMLElement)?.style.backgroundColor).toBe('#D97757');
-    });
-
-    it('should not show provider badge when provider is undefined', () => {
-      const noProviderModelInfo: ModelInfo = {
-        ...mockModelInfo,
-        provider: undefined,
-      };
-      const { container } = render(
-        <SessionStatusBar {...defaultProps} currentModelInfo={noProviderModelInfo} />
-      );
-      const badge = container.querySelector('[data-testid="provider-badge"]');
-      expect(badge).toBeNull();
-    });
-
-    it('should show purple dot for anthropic-copilot provider', () => {
-      const copilotModelInfo: ModelInfo = {
-        ...mockModelInfo,
-        provider: 'anthropic-copilot',
-      };
-      const { container } = render(
-        <SessionStatusBar {...defaultProps} currentModelInfo={copilotModelInfo} />
-      );
-      const badge = container.querySelector('[data-testid="provider-badge"]');
-      expect(badge).toBeTruthy();
-      expect(badge?.getAttribute('title')).toBe('Copilot');
-      expect(badge?.getAttribute('aria-label')).toBe('Copilot');
-      expect((badge as HTMLElement)?.style.backgroundColor).toBe('#8957E5');
-    });
-
-    it('should show white dot with ring for anthropic-codex provider', () => {
-      const codexModelInfo: ModelInfo = {
-        ...mockModelInfo,
-        provider: 'anthropic-codex',
-      };
-      const { container } = render(
-        <SessionStatusBar {...defaultProps} currentModelInfo={codexModelInfo} />
-      );
-      const badge = container.querySelector('[data-testid="provider-badge"]');
-      expect(badge).toBeTruthy();
-      expect(badge?.getAttribute('title')).toBe('Codex');
-      expect(badge?.getAttribute('aria-label')).toBe('Codex');
-      expect((badge as HTMLElement)?.style.backgroundColor).toBe('#FFFFFF');
-      expect(badge?.className).toContain('ring-1');
-    });
-
-    it('should show light blue dot for glm provider', () => {
-      const glmModelInfo: ModelInfo = {
-        ...mockModelInfo,
-        provider: 'glm',
-      };
-      const { container } = render(
-        <SessionStatusBar {...defaultProps} currentModelInfo={glmModelInfo} />
-      );
-      const badge = container.querySelector('[data-testid="provider-badge"]');
-      expect(badge).toBeTruthy();
-      expect(badge?.getAttribute('title')).toBe('GLM');
-      expect(badge?.getAttribute('aria-label')).toBe('GLM');
-      expect((badge as HTMLElement)?.style.backgroundColor).toBe('#7DD3FC');
-    });
-
-    it('should show light red dot for minimax provider', () => {
-      const minimaxModelInfo: ModelInfo = {
-        ...mockModelInfo,
-        provider: 'minimax',
-      };
-      const { container } = render(
-        <SessionStatusBar {...defaultProps} currentModelInfo={minimaxModelInfo} />
-      );
-      const badge = container.querySelector('[data-testid="provider-badge"]');
-      expect(badge).toBeTruthy();
-      expect(badge?.getAttribute('title')).toBe('MiniMax');
-      expect(badge?.getAttribute('aria-label')).toBe('MiniMax');
-      expect((badge as HTMLElement)?.style.backgroundColor).toBe('#FCA5A5');
-    });
-
-    it('should show lavender dot for kimi provider', () => {
-      const kimiModelInfo: ModelInfo = {
-        ...mockModelInfo,
-        provider: 'kimi',
-      };
-      const { container } = render(
-        <SessionStatusBar {...defaultProps} currentModelInfo={kimiModelInfo} />
-      );
-      const badge = container.querySelector('[data-testid="provider-badge"]');
-      expect(badge).toBeTruthy();
-      expect(badge?.getAttribute('title')).toBe('Kimi');
-      expect(badge?.getAttribute('aria-label')).toBe('Kimi');
-      expect((badge as HTMLElement)?.style.backgroundColor).toBe('#B197FC');
-    });
-
-    it('should show gray dot for unknown provider using getProviderLabel fallback', () => {
-      const unknownProvider = 'some-unknown-provider';
-      const unknownModelInfo: ModelInfo = {
-        ...mockModelInfo,
-        provider: unknownProvider,
-      };
-      const { container } = render(
-        <SessionStatusBar {...defaultProps} currentModelInfo={unknownModelInfo} />
-      );
-      const badge = container.querySelector('[data-testid="provider-badge"]');
-      const expectedLabel = getProviderLabel(unknownProvider);
-      expect(badge).toBeTruthy();
-      expect(badge?.getAttribute('title')).toBe(expectedLabel);
-      expect(badge?.getAttribute('aria-label')).toBe(expectedLabel);
-      expect((badge as HTMLElement)?.style.backgroundColor).toBe('#9CA3AF');
-    });
-
-    it('should have explicit dot color for every known provider', () => {
-      const knownProviders = [
-        'anthropic',
-        'anthropic-copilot',
-        'anthropic-codex',
-        'glm',
-        'kimi',
-        'minimax',
-      ];
-      for (const provider of knownProviders) {
-        const modelInfo: ModelInfo = { ...mockModelInfo, provider };
-        const { container, unmount } = render(
-          <SessionStatusBar {...defaultProps} currentModelInfo={modelInfo} />
+    for (const [provider] of cases) {
+      it(`should stamp the pill with the ${provider} provider`, () => {
+        const { container } = render(
+          <SessionStatusBar {...defaultProps} currentModelInfo={{ ...mockModelInfo, provider }} />
         );
-        const badge = container.querySelector('[data-testid="provider-badge"]');
-        expect(
-          (badge as HTMLElement)?.style.backgroundColor,
-          `${provider} should have explicit brand color, not fallback gray`
-        ).not.toBe('#9CA3AF');
-        unmount();
-      }
+        expect(pillProvider(container)).toBe(provider);
+      });
+    }
+
+    it('should stamp an unknown provider as-is', () => {
+      const { container } = render(
+        <SessionStatusBar
+          {...defaultProps}
+          currentModelInfo={{ ...mockModelInfo, provider: 'some-unknown-provider' }}
+        />
+      );
+      expect(pillProvider(container)).toBe('some-unknown-provider');
     });
 
-    it('should render as a dot with no text content', () => {
-      const copilotModelInfo: ModelInfo = {
-        ...mockModelInfo,
-        provider: 'anthropic-copilot',
-      };
+    it('should leave data-provider empty when provider is undefined', () => {
       const { container } = render(
-        <SessionStatusBar {...defaultProps} currentModelInfo={copilotModelInfo} />
+        <SessionStatusBar
+          {...defaultProps}
+          currentModelInfo={{ ...mockModelInfo, provider: undefined }}
+        />
       );
-      const badge = container.querySelector('[data-testid="provider-badge"]');
-      expect(badge?.textContent).toBe('');
-      expect(badge?.className).toContain('rounded-full');
+      expect(pillProvider(container)).toBe('');
+    });
+
+    it('should render a provider logo inside the pill', () => {
+      const { container } = render(
+        <SessionStatusBar
+          {...defaultProps}
+          currentModelInfo={{ ...mockModelInfo, provider: 'anthropic-copilot' }}
+        />
+      );
+      const pill = container.querySelector('[data-testid="model-pill"]');
+      expect(pill?.querySelector('svg')).toBeTruthy();
     });
   });
 

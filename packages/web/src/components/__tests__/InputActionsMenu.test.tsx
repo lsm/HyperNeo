@@ -209,6 +209,76 @@ describe('InputActionsMenu', () => {
     });
   });
 
+  describe('Coordinator & Sandbox Toggles', () => {
+    const featuresOn = { coordinator: true, worktree: true };
+
+    it('should show coordinator + sandbox items when features are enabled', () => {
+      const { container } = render(
+        <InputActionsMenu {...defaultProps} isOpen={true} features={featuresOn} />
+      );
+      const text = container.textContent;
+      expect(text).toContain('Coordinator Mode');
+      expect(text).toContain('Sandbox Mode');
+    });
+
+    it('should hide coordinator + sandbox items when features are disabled', () => {
+      const { container } = render(
+        <InputActionsMenu
+          {...defaultProps}
+          isOpen={true}
+          features={{ coordinator: false, worktree: false }}
+        />
+      );
+      const text = container.textContent;
+      expect(text).not.toContain('Coordinator Mode');
+      expect(text).not.toContain('Sandbox Mode');
+    });
+
+    it('should call onCoordinatorModeChange and close on click', () => {
+      const onCoordinatorModeChange = vi.fn(() => {});
+      const onClose = vi.fn(() => {});
+      const { container } = render(
+        <InputActionsMenu
+          {...defaultProps}
+          isOpen={true}
+          features={featuresOn}
+          coordinatorMode={true}
+          onCoordinatorModeChange={onCoordinatorModeChange}
+          onClose={onClose}
+        />
+      );
+      const buttons = container.querySelectorAll('button');
+      const coordinatorButton = Array.from(buttons).find((b) =>
+        b.textContent?.includes('Coordinator Mode')
+      );
+      coordinatorButton?.click();
+      expect(onCoordinatorModeChange).toHaveBeenCalledWith(false);
+      expect(onClose).toHaveBeenCalled();
+    });
+
+    it('should call onSandboxModeChange and close on click', () => {
+      const onSandboxModeChange = vi.fn(() => {});
+      const onClose = vi.fn(() => {});
+      const { container } = render(
+        <InputActionsMenu
+          {...defaultProps}
+          isOpen={true}
+          features={featuresOn}
+          sandboxEnabled={false}
+          onSandboxModeChange={onSandboxModeChange}
+          onClose={onClose}
+        />
+      );
+      const buttons = container.querySelectorAll('button');
+      const sandboxButton = Array.from(buttons).find((b) =>
+        b.textContent?.includes('Sandbox Mode')
+      );
+      sandboxButton?.click();
+      expect(onSandboxModeChange).toHaveBeenCalledWith(true);
+      expect(onClose).toHaveBeenCalled();
+    });
+  });
+
   describe('Accessibility', () => {
     it('should have title on button', () => {
       const { container } = render(<InputActionsMenu {...defaultProps} />);

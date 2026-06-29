@@ -8,7 +8,8 @@
 
 import type { RefObject } from 'preact';
 import { useRef } from 'preact/hooks';
-import type { ModelInfo } from '@neokai/shared';
+import type { ModelInfo, SessionFeatures } from '@neokai/shared';
+import { DEFAULT_WORKER_FEATURES } from '@neokai/shared';
 import { cn } from '../lib/utils';
 import { borderColors } from '../lib/design-tokens';
 import { useClickOutside } from '../hooks/useClickOutside';
@@ -34,6 +35,16 @@ export interface InputActionsMenuProps {
   onOpenTools: () => void;
   /** Trigger file input */
   onAttachFile: () => void;
+  /** Coordinator mode toggle (moved here from the status bar) */
+  coordinatorMode?: boolean;
+  coordinatorSwitching?: boolean;
+  onCoordinatorModeChange?: (enabled: boolean) => void;
+  /** Sandbox mode toggle (moved here from the status bar) */
+  sandboxEnabled?: boolean;
+  sandboxSwitching?: boolean;
+  onSandboxModeChange?: (enabled: boolean) => void;
+  /** Feature flags gating the toggles above */
+  features?: SessionFeatures;
   /** Whether actions are disabled */
   disabled?: boolean;
   /** Ref to the plus button for click-outside detection */
@@ -54,6 +65,13 @@ export function InputActionsMenu({
   onAutoScrollChange,
   onOpenTools,
   onAttachFile,
+  coordinatorMode = false,
+  coordinatorSwitching = false,
+  onCoordinatorModeChange,
+  sandboxEnabled = false,
+  sandboxSwitching = false,
+  onSandboxModeChange,
+  features = DEFAULT_WORKER_FEATURES,
   disabled = false,
   buttonRef: externalButtonRef,
 }: InputActionsMenuProps) {
@@ -66,6 +84,16 @@ export function InputActionsMenu({
 
   const handleAutoScrollToggle = () => {
     onAutoScrollChange(!autoScroll);
+    onClose();
+  };
+
+  const handleCoordinatorToggle = () => {
+    onCoordinatorModeChange?.(!coordinatorMode);
+    onClose();
+  };
+
+  const handleSandboxToggle = () => {
+    onSandboxModeChange?.(!sandboxEnabled);
     onClose();
   };
 
@@ -156,6 +184,92 @@ export function InputActionsMenu({
               </svg>
             )}
           </button>
+
+          {/* Coordinator Mode */}
+          {features.coordinator && (
+            <button
+              type="button"
+              onClick={handleCoordinatorToggle}
+              disabled={coordinatorSwitching}
+              class="w-full px-4 py-3 text-left flex items-center justify-between transition-colors text-gray-200 hover:bg-dark-700/50 disabled:opacity-50"
+            >
+              <span class="flex items-center gap-3">
+                <svg
+                  class={cn('w-5 h-5', coordinatorMode ? 'text-purple-400' : 'text-gray-400')}
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width={2}
+                    d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"
+                  />
+                </svg>
+                <span class="text-sm">Coordinator Mode</span>
+              </span>
+              {coordinatorMode && (
+                <svg
+                  class="w-4 h-4 text-purple-400"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width={2.5}
+                    d="M5 13l4 4L19 7"
+                  />
+                </svg>
+              )}
+            </button>
+          )}
+
+          {/* Sandbox Mode */}
+          {features.worktree && (
+            <button
+              type="button"
+              onClick={handleSandboxToggle}
+              disabled={sandboxSwitching}
+              class="w-full px-4 py-3 text-left flex items-center justify-between transition-colors text-gray-200 hover:bg-dark-700/50 disabled:opacity-50"
+            >
+              <span class="flex items-center gap-3">
+                <svg
+                  class={cn('w-5 h-5', sandboxEnabled ? 'text-green-400' : 'text-gray-400')}
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width={2}
+                    d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"
+                  />
+                </svg>
+                <span class="text-sm">Sandbox Mode</span>
+              </span>
+              {sandboxEnabled && (
+                <svg
+                  class="w-4 h-4 text-green-400"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width={2.5}
+                    d="M5 13l4 4L19 7"
+                  />
+                </svg>
+              )}
+            </button>
+          )}
+
+          <div class="h-px bg-dark-600" />
 
           {/* Tools */}
           <button

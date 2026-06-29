@@ -14,13 +14,9 @@
 
 import { useSignalEffect } from '@preact/signals';
 import { useState, useCallback, useEffect, useRef } from 'preact/hooks';
-import type { ContextInfo, ModelInfo, ThinkingLevel, SessionFeatures } from '@neokai/shared';
+import type { ContextInfo, ModelInfo, ThinkingLevel } from '@neokai/shared';
 import type { ProviderAuthStatus } from '@neokai/shared/provider';
-import {
-  DEFAULT_WORKER_FEATURES,
-  THINKING_LEVEL_LABELS,
-  getThinkingOptionsForProvider,
-} from '@neokai/shared';
+import { THINKING_LEVEL_LABELS, getThinkingOptionsForProvider } from '@neokai/shared';
 import { connectionState, type ConnectionState } from '../lib/state.ts';
 import { connectionManager } from '../lib/connection-manager.ts';
 import ConnectionStatus from './ConnectionStatus.tsx';
@@ -29,7 +25,6 @@ import { ContentContainer } from './ui/ContentContainer.tsx';
 import {
   useModal,
   useClickOutside,
-  getModelFamilyIcon,
   getProviderLabel,
   groupModelsByProvider,
   useFilteredModelsForPicker,
@@ -38,44 +33,16 @@ import {
 import { Spinner } from './ui/Spinner.tsx';
 import { Tooltip } from './ui/Tooltip.tsx';
 import { borderColors } from '../lib/design-tokens.ts';
+import { ProviderLogo } from './ProviderLogo.tsx';
+import {
+  providerPillStyle,
+  providerLogoColor,
+  providerHeaderStyle,
+  shortenModelName,
+} from '../lib/provider-brand.ts';
 
-/**
- * Brand-accurate provider dot colors (hex values outside Tailwind's palette).
- * Keep in sync with PROVIDER_LABELS in packages/web/src/hooks/useModelSwitcher.ts —
- * when a new provider is added there, add a matching entry here.
- */
-const PROVIDER_DOT_COLORS: Record<string, { color: string; ring?: boolean }> = {
-  anthropic: { color: '#D97757' }, // Anthropic brand orange
-  'anthropic-copilot': { color: '#8957E5' }, // GitHub Copilot purple
-  'anthropic-codex': { color: '#FFFFFF', ring: true }, // OpenAI white (ring for visibility)
-  openrouter: { color: '#007CF0' }, // OpenRouter blue
-  glm: { color: '#7DD3FC' }, // ChatGLM light blue
-  kimi: { color: '#B197FC' }, // Kimi/Moonshot lavender
-  minimax: { color: '#FCA5A5' }, // MiniMax light red
-};
-
-/**
- * ProviderBadge - Small colored dot indicating the provider next to the model name.
- * Shows for all providers including Anthropic (orange dot).
- * Returns null only when provider is undefined/unknown.
- * The dot's title/aria-label provide the provider name for accessibility.
- */
-function ProviderBadge({ provider }: { provider: string | undefined }) {
-  if (!provider) return null;
-  const config = PROVIDER_DOT_COLORS[provider];
-  const backgroundColor = config?.color ?? '#9CA3AF'; // gray-400 fallback
-  const label = getProviderLabel(provider);
-  return (
-    <span
-      class={`inline-block w-2 h-2 rounded-full flex-shrink-0${config?.ring ? ' ring-1 ring-gray-300' : ''}`}
-      style={{ backgroundColor }}
-      title={label}
-      aria-label={label}
-      role="img"
-      data-testid="provider-badge"
-    />
-  );
-}
+// Provider brand colors + logos live in lib/provider-brand.ts and
+// components/ProviderLogo.tsx (shared with the model picker).
 
 /**
  * ThinkingLevelIcon - Lightbulb icon with progressive lighting based on thinking level
@@ -210,8 +177,6 @@ interface SessionStatusBarProps {
   streamingPhase?: 'initializing' | 'thinking' | 'streaming' | 'finalizing' | null;
   contextUsage?: ContextInfo;
   maxContextTokens?: number;
-  // Feature flags (for unified session architecture)
-  features?: SessionFeatures;
   // Model switcher
   currentModel: string;
   currentModelInfo: ModelInfo | null;
@@ -222,14 +187,6 @@ interface SessionStatusBarProps {
   // Auto-scroll
   autoScroll: boolean;
   onAutoScrollChange: (enabled: boolean) => void;
-  // Coordinator mode
-  coordinatorMode: boolean;
-  coordinatorSwitching?: boolean;
-  onCoordinatorModeChange: (enabled: boolean) => void;
-  // Sandbox mode
-  sandboxEnabled: boolean;
-  sandboxSwitching?: boolean;
-  onSandboxModeChange: (enabled: boolean) => void;
   // Thinking level
   thinkingLevel?: ThinkingLevel;
   onThinkingLevelChange?: (level: ThinkingLevel) => Promise<void> | void;
@@ -242,7 +199,6 @@ export default function SessionStatusBar({
   streamingPhase,
   contextUsage,
   maxContextTokens,
-  features = DEFAULT_WORKER_FEATURES,
   currentModel: _currentModel,
   currentModelInfo,
   availableModels,
@@ -251,12 +207,6 @@ export default function SessionStatusBar({
   onModelSwitch,
   autoScroll,
   onAutoScrollChange,
-  coordinatorMode,
-  coordinatorSwitching = false,
-  onCoordinatorModeChange,
-  sandboxEnabled,
-  sandboxSwitching = false,
-  onSandboxModeChange,
   thinkingLevel: thinkingLevelProp,
   onThinkingLevelChange,
 }: SessionStatusBarProps) {
@@ -362,16 +312,6 @@ export default function SessionStatusBar({
     onAutoScrollChange(!autoScroll);
   }, [autoScroll, onAutoScrollChange]);
 
-  // Coordinator mode toggle handler
-  const handleCoordinatorModeToggle = useCallback(() => {
-    onCoordinatorModeChange(!coordinatorMode);
-  }, [coordinatorMode, onCoordinatorModeChange]);
-
-  // Sandbox mode toggle handler
-  const handleSandboxModeToggle = useCallback(() => {
-    onSandboxModeChange(!sandboxEnabled);
-  }, [sandboxEnabled, onSandboxModeChange]);
-
   // Model switch handler
   const handleModelSwitch = useCallback(
     async (model: ModelInfo) => {
@@ -408,8 +348,12 @@ export default function SessionStatusBar({
     [_sessionId, callIfConnected, thinkingDropdown, onThinkingLevelChange]
   );
 
-  // Get current model icon
-  const currentModelIcon = currentModelInfo ? getModelFamilyIcon(currentModelInfo.family) : '💎';
+  // Brand-tinted model pill: the provider logo carries identity (color + mark),
+  // the tier label carries the model. The separate identity dot is gone — the
+  // logo IS the provider now.
+  const activeProvider = currentModelInfo?.provider;
+  const pillStyle = providerPillStyle(activeProvider);
+  const tierLabel = currentModelInfo ? shortenModelName(currentModelInfo.name, activeProvider) : '';
   const filteredModels = useFilteredModelsForPicker(
     availableModels,
     providerAuthStatuses,
@@ -431,81 +375,9 @@ export default function SessionStatusBar({
       />
 
       {/* Right: Interactive controls and context usage */}
-      <div class="flex items-center gap-3 sm:gap-4">
-        {/* Coordinator Mode Toggle - only show if feature is enabled */}
-        {features.coordinator && (
-          <Tooltip
-            content={`Coordinator Mode (${coordinatorMode ? 'enabled' : 'disabled'})`}
-            position="top"
-            delay={300}
-          >
-            <button
-              class={`${glassControlButtonBaseClass} ${
-                coordinatorMode ? 'border-2 border-purple-500' : 'border border-dark-600/80'
-              }`}
-              onClick={handleCoordinatorModeToggle}
-              disabled={coordinatorSwitching || modelSwitching}
-              title={`Coordinator Mode (${coordinatorMode ? 'enabled' : 'disabled'})`}
-            >
-              {coordinatorSwitching ? (
-                <Spinner size="sm" />
-              ) : (
-                <svg
-                  class={`w-4 h-4 transition-colors ${coordinatorMode ? 'text-purple-400' : 'text-gray-500'}`}
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width="2"
-                    d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"
-                  />
-                </svg>
-              )}
-            </button>
-          </Tooltip>
-        )}
-
-        {/* Sandbox Mode Toggle - only show if feature is enabled */}
-        {features.worktree && (
-          <Tooltip
-            content={`Sandbox Mode (${sandboxEnabled ? 'enabled' : 'disabled'})`}
-            position="top"
-            delay={300}
-          >
-            <button
-              class={`${glassControlButtonBaseClass} ${
-                sandboxEnabled ? 'border-2 border-green-500' : 'border border-dark-600/80'
-              }`}
-              onClick={handleSandboxModeToggle}
-              disabled={sandboxSwitching || modelSwitching}
-              title={`Sandbox Mode (${sandboxEnabled ? 'enabled' : 'disabled'})`}
-            >
-              {sandboxSwitching ? (
-                <Spinner size="sm" />
-              ) : (
-                <svg
-                  class={`w-4 h-4 transition-colors ${sandboxEnabled ? 'text-green-400' : 'text-gray-500'}`}
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width="2"
-                    d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"
-                  />
-                </svg>
-              )}
-            </button>
-          </Tooltip>
-        )}
-
+      <div class="flex min-w-0 items-center gap-3 sm:gap-4">
         {/* Model Switcher + Provider Badge */}
-        <div class="flex items-center gap-1.5">
+        <div class="flex min-w-0 items-center gap-1.5">
           <div class="relative" ref={modelDropdownRef}>
             <Tooltip
               content={currentModelInfo ? `Model: ${currentModelInfo.name}` : 'Switch Model'}
@@ -513,14 +385,45 @@ export default function SessionStatusBar({
               delay={300}
             >
               <button
-                class={`${glassControlButtonBaseClass} border border-dark-600/80 text-lg`}
+                data-testid="model-pill"
+                data-provider={activeProvider ?? ''}
+                class="control-btn inline-flex h-8 min-w-0 items-center gap-1.5 rounded-full border pl-2 pr-2.5 text-xs text-gray-200 transition-colors hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+                style={pillStyle}
                 onClick={toggleModelDropdown}
-                disabled={modelLoading || modelSwitching || coordinatorSwitching}
+                disabled={modelLoading || modelSwitching}
                 title={
                   currentModelInfo ? `Switch Model (${currentModelInfo.name})` : 'Switch Model'
                 }
               >
-                {modelSwitching ? <Spinner size="sm" /> : currentModelIcon}
+                {modelSwitching ? (
+                  <Spinner size="sm" />
+                ) : currentModelInfo ? (
+                  <>
+                    <span
+                      class="flex shrink-0"
+                      style={{ color: providerLogoColor(activeProvider) }}
+                    >
+                      <ProviderLogo provider={activeProvider ?? 'anthropic'} class="h-4 w-4" />
+                    </span>
+                    <span class="min-w-0 max-w-[88px] sm:max-w-[150px] truncate font-medium">
+                      {tierLabel || currentModelInfo.name}
+                    </span>
+                    <svg
+                      class="h-3 w-3 shrink-0 text-gray-500"
+                      viewBox="0 0 20 20"
+                      fill="currentColor"
+                      aria-hidden="true"
+                    >
+                      <path
+                        fill-rule="evenodd"
+                        d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z"
+                        clip-rule="evenodd"
+                      />
+                    </svg>
+                  </>
+                ) : (
+                  <span class="px-1 text-gray-400">Select model</span>
+                )}
               </button>
             </Tooltip>
 
@@ -559,14 +462,20 @@ export default function SessionStatusBar({
                       return (
                         <div key={provider} data-testid="provider-section">
                           {groupIndex > 0 && <div class="mx-2 my-1 border-t border-gray-700" />}
-                          <div class="px-3 py-1 flex items-center gap-1.5">
-                            <span class={`w-2 h-2 rounded-full flex-shrink-0 ${dotClass}`} />
+                          <div
+                            class="flex items-center gap-1.5 px-3 py-1.5"
+                            style={providerHeaderStyle(provider)}
+                          >
+                            <span class="flex h-3.5 w-3.5 shrink-0">
+                              <ProviderLogo provider={provider} class="h-3.5 w-3.5" />
+                            </span>
                             <span
                               data-testid="provider-group-header"
-                              class="text-[10px] font-semibold text-gray-400 uppercase tracking-wide"
+                              class="text-[11px] font-bold uppercase tracking-wider"
                             >
                               {getProviderLabel(provider)}
                             </span>
+                            <span class={`w-2 h-2 rounded-full flex-shrink-0 ${dotClass}`} />
                             {needsRefresh && (
                               <span class="text-yellow-400 text-[10px]" title="Token expiring soon">
                                 ⚠
@@ -586,8 +495,9 @@ export default function SessionStatusBar({
                                 onClick={() => handleModelSwitch(model)}
                                 disabled={modelSwitching}
                               >
-                                <span class="text-base">{getModelFamilyIcon(model.family)}</span>
-                                <span class="flex-1 truncate">{model.name}</span>
+                                <span class="flex-1 truncate">
+                                  {shortenModelName(model.name, model.provider)}
+                                </span>
                                 {isCurrent && <span class="text-blue-400 text-[10px]">✓</span>}
                                 {needsRefresh && (
                                   <span class="text-yellow-400 text-[10px]" title="Token expiring">
@@ -610,7 +520,6 @@ export default function SessionStatusBar({
               </div>
             )}
           </div>
-          <ProviderBadge provider={currentModelInfo?.provider} />
         </div>
 
         {/* Thinking Level — hidden when provider doesn't support thinking */}
