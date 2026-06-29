@@ -6,6 +6,7 @@ import { ExternalEventStore } from '../../../../src/lib/external-events/external
 import type { ExternalEvent } from '../../../../src/lib/external-events/types';
 import { createInternalCommandBus } from '../../../../src/lib/internal-command-bus';
 import { createDaemonInternalEventBus } from '../../../../src/lib/internal-event-bus';
+import { GateDataRepository } from '../../../../src/storage/repositories/gate-data-repository';
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager';
@@ -6611,6 +6612,77 @@ describe('SpaceRuntime event-driven gate evaluation', () => {
     const event = makePrEvent();
     await eventService.publish(event);
     expect(injected).toHaveLength(0);
+  });
+
+  test('review_comment during the first in_progress window is delivered to the coder node', async () => {
+    const gateDataRepo = new GateDataRepository(db);
+    const localCommandBus = createInternalCommandBus();
+    const localInjected: Array<{ sessionId: string; message: string; deliveryMode?: string }> = [];
+    localCommandBus.register('agent.message.inject', async (command) => {
+      localInjected.push({
+        sessionId: command.sessionId,
+        message: command.message,
+        deliveryMode: command.deliveryMode,
+      });
+      return { ok: true };
+    });
+
+    const localRuntime = new SpaceRuntime({
+      db,
+      spaceManager: new SpaceManager(db),
+      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+      spaceWorkflowManager: workflowManager,
+      workflowRunRepo,
+      taskRepo,
+      nodeExecutionRepo,
+      gateDataRepo,
+      internalEventBus: bus,
+      commandBus: localCommandBus,
+      externalEventStore: eventStore,
+      taskAgentManager: tam as never,
+      deliverLongHorizonExternalEvent: async () => ({ delivered: true }),
+    });
+
+    const workflow = workflowManager.createWorkflow({
+      spaceId: SPACE_ID,
+      name: 'Workflow with gate',
+      description: '',
+      nodes: [{ id: 'code', name: 'Code', agents: [{ agentId: AGENT_ID, name: 'coder' }] }],
+      transitions: [],
+      startNodeId: 'code',
+      rules: [],
+      tags: [],
+      gates: [
+        {
+          id: 'approval',
+          fields: [{ name: 'pr_url', type: 'string', writers: ['coder'], check: { op: 'exists' } }],
+        },
+      ],
+    });
+
+    const { run } = await localRuntime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    const coderSessionId = `session-coder-${run.id}`;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: coderSessionId,
+      startedAt: Date.now(),
+    });
+    tam.alive.add(coderSessionId);
+
+    // PR URL becomes known after the run has already entered in_progress.
+    gateDataRepo.merge(run.id, 'approval', { pr_url: PR_URL });
+
+    // The tick sweep resolves the new PR URL and registers the auto-subscription.
+    await localRuntime.executeTick();
+
+    const event = makeEvent({
+      topic: 'github/lsm/neokai/pull_request/42.review_comment_created',
+    });
+    await eventService.publish(event);
+
+    expect(localInjected).toHaveLength(1);
+    expect(localInjected[0]!.sessionId).toBe(coderSessionId);
   });
 
   test('onBlockedRunExternalEvent fires once per matching blocked run when event delivered', async () => {

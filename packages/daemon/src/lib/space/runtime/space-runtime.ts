@@ -1505,30 +1505,80 @@ export class SpaceRuntime {
     }
   }
 
+  private hasAutoPrSubscriptionForRun(workflowRunId: string): boolean {
+    return (
+      this.topicTrie.count(
+        (target) =>
+          isWorkflowSubscriptionTarget(target) &&
+          target.workflowRunId === workflowRunId &&
+          target.subscriptionKind === 'auto'
+      ) > 0
+    );
+  }
+
   /**
-   * Sync the PR-event auto-subscription for a run that just transitioned to
-   * `blocked` via direct `workflowRunRepo.transitionStatus(...)` paths that
-   * bypass {@link transitionRunStatusAndEmit} (markFailed RPC, gate rejection
-   * in space-agent-tools, etc.).
-   *
-   * Resolves the PR URL from gate data / artifacts (same resolver used at
-   * runtime) and calls {@link registerPrEventSubscriptionForRun}. No-op when
-   * the run is not actually blocked or no PR URL can be resolved. Idempotent.
+   * Ensure a workflow run has an auto PR-event subscription when a resolvable
+   * PR URL exists. Idempotent: skips runs that already have an auto
+   * subscription so a re-subscribe does not clear and re-insert the same
+   * pattern, which would terminally fail any queued PR deliveries.
    */
-  notifyRunBlocked(workflowRunId: string): { subscribed: boolean; reason?: string } {
-    const run = this.config.workflowRunRepo.getRun(workflowRunId);
-    if (!run || run.status !== 'blocked') {
-      return { subscribed: false, reason: `run status is ${run?.status ?? 'unknown'}` };
-    }
+  private ensurePrEventSubscriptionForRun(workflowRunId: string): {
+    subscribed: boolean;
+    reason?: string;
+  } {
     const prUrl = this.resolvePrUrlForRun(workflowRunId);
     if (!prUrl) {
       return { subscribed: false, reason: 'no resolvable PR URL' };
+    }
+    if (this.hasAutoPrSubscriptionForRun(workflowRunId)) {
+      return { subscribed: false, reason: 'already has auto PR-event subscription' };
     }
     const result = this.registerPrEventSubscriptionForRun(workflowRunId, prUrl);
     if (!result.success) {
       return { subscribed: false, reason: result.error };
     }
     return { subscribed: true };
+  }
+
+  /**
+   * Idempotent sweep that ensures every active run (in_progress or blocked)
+   * with a resolvable PR URL has an auto PR-event subscription. Runs inside
+   * executeTick before the first redispatch so crash-pending PR events find a
+   * target after restart, and on every tick to catch runs whose PR URL becomes
+   * known mid-flight.
+   */
+  private async ensurePrEventSubscriptionsForActiveRuns(): Promise<void> {
+    try {
+      const spaces = await this.config.spaceManager.listSpaces(false);
+      for (const space of spaces) {
+        if (space.paused || space.stopped) continue;
+        for (const run of this.config.workflowRunRepo.listBySpace(space.id)) {
+          if (run.status !== 'in_progress' && run.status !== 'blocked') continue;
+          if (this.hasAutoPrSubscriptionForRun(run.id)) continue;
+          const prUrl = this.resolvePrUrlForRun(run.id);
+          if (!prUrl) continue;
+          this.registerPrEventSubscriptionForRun(run.id, prUrl);
+        }
+      }
+    } catch (err) {
+      log.warn(
+        `SpaceRuntime: ensurePrEventSubscriptionsForActiveRuns failed: ${formatCommandError(err)}`
+      );
+    }
+  }
+
+  /**
+   * Fallback path for runs that transition to `blocked` outside of the normal
+   * in_progress registration / tick sweep (markFailed RPC, gate rejection in
+   * space-agent-tools, etc.). Delegates to {@link ensurePrEventSubscriptionForRun}
+   * so it is a no-op when the run already has an auto subscription.
+   */
+  notifyRunBlocked(workflowRunId: string): { subscribed: boolean; reason?: string } {
+    const run = this.config.workflowRunRepo.getRun(workflowRunId);
+    if (!run || run.status !== 'blocked') {
+      return { subscribed: false, reason: `run status is ${run?.status ?? 'unknown'}` };
+    }
+    return this.ensurePrEventSubscriptionForRun(workflowRunId);
   }
 
   /**
@@ -3989,6 +4039,9 @@ export class SpaceRuntime {
     if (nextStatus === 'blocked') {
       this.fireRunBlockedHook(runId);
     }
+    if (nextStatus === 'in_progress') {
+      this.ensurePrEventSubscriptionForRun(runId);
+    }
     // Terminal transitions drop the auto-registered PR event subscription so
     // a finished run does not keep receiving PR events. Non-terminal moves
     // out of `blocked` (resume / recovery / RPC) now preserve the sub so
@@ -4359,6 +4412,7 @@ export class SpaceRuntime {
         this.toolContinuationRepo.markExpired();
       }
 
+      const justRehydrated = !this.rehydrated;
       if (!this.rehydrated) {
         // Give the service a chance to rebuild in-memory subscriptions
         // (e.g. PR-event auto-subs for blocked runs) BEFORE rehydrateExecutors
@@ -4388,6 +4442,16 @@ export class SpaceRuntime {
         await this.recoverStalledRuns();
         this.rehydrated = true;
         this.acceptingExternalEvents = true;
+      }
+
+      // Idempotent sweep: every active run (in_progress or blocked) with a
+      // resolvable PR URL and no existing auto subscription gets registered.
+      // Runs on the first tick before redispatch so crash-pending PR events
+      // find a target after restart, and on every subsequent tick to catch
+      // runs whose PR URL becomes known mid-flight.
+      await this.ensurePrEventSubscriptionsForActiveRuns();
+
+      if (justRehydrated) {
         this.redispatchPublishedEventsWithoutDeliveries();
       }
 
@@ -4532,6 +4596,11 @@ export class SpaceRuntime {
       await this.transitionRunStatusAndEmit(run.id, 'cancelled');
       throw err;
     }
+
+    // Best-effort: register a PR-event auto-subscription if the run already
+    // resolves a PR URL. The start node may not be active yet, so the tick
+    // sweep will retry on the next cycle if this is a no-op.
+    this.ensurePrEventSubscriptionForRun(run.id);
 
     // Resolve channel topology for the start node and store in run config.
     // TODO: Milestone 6: pass resolvedChannels to session group creation in
