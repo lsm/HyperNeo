@@ -74,8 +74,14 @@ describe('provider-brand', () => {
   });
 
   describe('shortenModelName', () => {
-    it('strips aggregator vendor prefixes', () => {
+    it('strips aggregator vendor prefixes for known aggregator providers', () => {
       expect(shortenModelName('OpenAI: GPT-5', 'openrouter')).toBe('GPT-5');
+    });
+
+    it('preserves colon prefixes for custom or unknown providers', () => {
+      expect(shortenModelName('Prod: Llama 3.1', 'custom:my-model')).toBe('Prod: Llama 3.1');
+      expect(shortenModelName('Staging: Llama 3.1', 'unknown-provider')).toBe('Staging: Llama 3.1');
+      expect(shortenModelName('Prod: Llama 3.1', 'anthropic')).toBe('Prod: Llama 3.1');
     });
 
     it('strips the Kimi brand prefix only for the dedicated Kimi provider', () => {

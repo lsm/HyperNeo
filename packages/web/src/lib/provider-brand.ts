@@ -76,7 +76,10 @@ const REDUNDANT_BRAND_PREFIXES: Record<string, RegExp> = {
 };
 
 // Aggregator vendor prefix, e.g. "MoonshotAI: Kimi K2.7" (OpenRouter style).
+// Only stripped for providers known to use aggregator naming, so custom or
+// user-configured deployments like "Prod: Llama 3.1" keep their prefix.
 const VENDOR_PREFIX = /^[A-Za-z][A-Za-z0-9_.-]*:\s+/;
+const AGGREGATOR_PROVIDERS = new Set(['openrouter']);
 // Trailing provider tag, e.g. "Haiku 4.5 (Copilot)". Only strips tags whose
 // content is a known provider label, preserving capability qualifiers like
 // "(free)", "(preview)", or "(1M context)" that disambiguate models.
@@ -107,7 +110,10 @@ const TRAILING_PROVIDER_TAG = new RegExp(
 export function shortenModelName(name: string, provider?: string): string {
   let s = (name || '').trim();
   if (!s) return '';
-  s = s.replace(VENDOR_PREFIX, '').replace(TRAILING_PROVIDER_TAG, '').trim();
+  if (provider && AGGREGATOR_PROVIDERS.has(provider)) {
+    s = s.replace(VENDOR_PREFIX, '').trim();
+  }
+  s = s.replace(TRAILING_PROVIDER_TAG, '').trim();
   const re = provider ? REDUNDANT_BRAND_PREFIXES[provider] : undefined;
   if (re) s = s.replace(re, '').trim();
   return s;
