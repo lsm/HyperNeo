@@ -139,6 +139,7 @@ export function ChatComposer({
           onAutoScrollChange={onAutoScrollChange}
           thinkingLevel={thinkingLevel}
           onThinkingLevelChange={onThinkingLevelChange}
+          coordinatorSwitching={coordinatorSwitching}
         />
 
         {sessionStatus === 'archived' ? (

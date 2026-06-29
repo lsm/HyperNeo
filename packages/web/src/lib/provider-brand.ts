@@ -77,8 +77,22 @@ const REDUNDANT_BRAND_PREFIXES: Record<string, RegExp> = {
 
 // Aggregator vendor prefix, e.g. "MoonshotAI: Kimi K2.7" (OpenRouter style).
 const VENDOR_PREFIX = /^[A-Za-z][A-Za-z0-9_.-]*:\s+/;
-// Trailing provider tag, e.g. "Haiku 4.5 (Copilot)".
-const TRAILING_PROVIDER_TAG = /\s*\([^)]*\)\s*$/;
+// Trailing provider tag, e.g. "Haiku 4.5 (Copilot)". Only strips tags whose
+// content is a known provider label, preserving capability qualifiers like
+// "(free)", "(preview)", or "(1M context)" that disambiguate models.
+const KNOWN_PROVIDER_LABELS = [
+  'Anthropic',
+  'GLM',
+  'Kimi',
+  'MiniMax',
+  'OpenRouter',
+  'Copilot',
+  'Codex',
+];
+const TRAILING_PROVIDER_TAG = new RegExp(
+  `\\s*\\((?:${KNOWN_PROVIDER_LABELS.join('|')})\\)\\s*$`,
+  'i'
+);
 
 /**
  * Shorten a model display name for compact surfaces (composer pill, picker

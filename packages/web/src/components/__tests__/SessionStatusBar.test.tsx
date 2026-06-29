@@ -247,6 +247,17 @@ describe('SessionStatusBar', () => {
       expect(modelButton?.disabled).toBe(true);
     });
 
+    it('should disable model button while coordinator mode is changing', () => {
+      const { container } = render(
+        <SessionStatusBar {...defaultProps} coordinatorSwitching={true} />
+      );
+
+      const modelButton = container.querySelector(
+        '.control-btn[title*="Switch Model"]'
+      ) as HTMLButtonElement;
+      expect(modelButton?.disabled).toBe(true);
+    });
+
     it('should show spinner when switching models', () => {
       const { container } = render(<SessionStatusBar {...defaultProps} modelSwitching={true} />);
 

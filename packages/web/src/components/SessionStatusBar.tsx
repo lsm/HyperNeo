@@ -190,6 +190,8 @@ interface SessionStatusBarProps {
   // Thinking level
   thinkingLevel?: ThinkingLevel;
   onThinkingLevelChange?: (level: ThinkingLevel) => Promise<void> | void;
+  // Coordinator switching guard for the model pill
+  coordinatorSwitching?: boolean;
 }
 
 export default function SessionStatusBar({
@@ -209,6 +211,7 @@ export default function SessionStatusBar({
   onAutoScrollChange,
   thinkingLevel: thinkingLevelProp,
   onThinkingLevelChange,
+  coordinatorSwitching = false,
 }: SessionStatusBarProps) {
   // Use useState + useSignalEffect to ensure component re-renders on signal change
   // This is more explicit than relying on implicit signal tracking
@@ -390,7 +393,7 @@ export default function SessionStatusBar({
                 class="control-btn inline-flex h-8 min-w-0 items-center gap-1.5 rounded-full border pl-2 pr-2.5 text-xs text-gray-200 transition-colors hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
                 style={pillStyle}
                 onClick={toggleModelDropdown}
-                disabled={modelLoading || modelSwitching}
+                disabled={modelLoading || modelSwitching || coordinatorSwitching}
                 title={
                   currentModelInfo ? `Switch Model (${currentModelInfo.name})` : 'Switch Model'
                 }

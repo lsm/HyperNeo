@@ -107,8 +107,13 @@ describe('provider-brand', () => {
       expect(shortenModelName('Claude Haiku 4.5', 'anthropic-copilot')).toBe('Claude Haiku 4.5');
     });
 
-    it('strips vendor prefix + trailing tag together', () => {
-      expect(shortenModelName('MoonshotAI: Kimi K2.6 (free)', 'openrouter')).toBe('Kimi K2.6');
+    it('strips vendor prefix + known provider tag together', () => {
+      expect(shortenModelName('MoonshotAI: Kimi K2.6 (Copilot)', 'openrouter')).toBe('Kimi K2.6');
+    });
+
+    it('preserves non-provider qualifiers like (free) and (preview)', () => {
+      expect(shortenModelName('Qwen3.6 (free)', 'openrouter')).toBe('Qwen3.6 (free)');
+      expect(shortenModelName('DeepSeek V4 (preview)', 'openrouter')).toBe('DeepSeek V4 (preview)');
     });
 
     it('leaves short / family-named models intact', () => {
