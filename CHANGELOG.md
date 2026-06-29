@@ -2,6 +2,54 @@
 
 All notable changes to NeoKai will be documented in this file.
 
+## [0.38.0] - 2026-06-28
+
+ACP query runner activation with provider registration and MCP tool proxying, Kimi provider hardened with local bridge for 262k context and multi-region support, Codex SDK aliasing removed in favor of real model IDs, workflow hooks migrated from gate-poll loops with event-driven gate evaluation, external GitHub event system expanded with PR/check-run/reaction polling and per-node subscriptions, Forge friction-digest evidence capture, Space runtime auto-continue on terminal errors, and provider resilience improvements (5xx/overloaded retry, auto-compact on prompt-too-long). 115 commits since v0.37.0.
+
+### Added
+
+- **ACP query runner activation**: ACP provider registration, query runner activation, message polish and config option switching, Space MCP tool proxying for ACP, Space session MCP tools
+- **Kimi provider multi-region support**: Region selection (China vs Global), local bridge routing for 262k context window, context reserve buffer matching Kimi's ~32k max output, NeoKai compaction fallback for both regions, prompt-too-long detection in user-message stderr with recovery, official Claude Code config alignment
+- **Workflow hooks system**: Built-in workflows migrated to hooks; gate-poll runtime loops retired; event-driven gate evaluation for blocked runs; workflow hook UI exposure; hook events rendered in chat (roster-only in task threads); PR-ready gates migrated to send_message hooks
+- **External event expansions**: `get_external_event` MCP tool for on-demand raw event fetch; `subscribe_pr_events` node-agent tool; worker nodes auto-subscribe to PR events on `pr_url`; PR event subscription contract step; GitHub reply/resolve handle capture in event normalizer; GitHub PR reaction polling for review approvals; check-run failure polling delivered to PR workers; GitHub polling interval setting with rate-limit-aware polling and gate-hook retry; PAT storage in keychain with token/polling config UI
+- **Forge friction digest**: Repeated tool-use errors broken with `conversation_friction` evidence; `verification_triage` evidence after repeated verification failures; friction digest for repeated tool failures; existing lessons and proposals fed into episode judge prompt; artifact selection diagnostics in episode preflight; scope lessons ranked by task relevance before prompt injection
+- **Space runtime improvements**: Auto-continue on terminal error results; terminal result errors surfaced inline in MinimalThreadFeed; reviewer merge conflicts routed to coder (not human); rate-limit cooldown and re-auth banners in task thread; external events delivered to review runs and idle node subscribers; activation pending flush guarded with run deliverability check; pending event deliveries flushed when a worker node activates; lean external event essence injected; review thread workflow contracts updated
+- **Provider resilience**: Bounded 5xx/overloaded retry path in query-runner with backoff; auto-compact + continue on 'prompt is too long' overflow; circuit breaker prompt-too-long regex broadened for bare Kimi error; HTTP 529 mapped to `overloaded_error` in all provider bridges; body-embedded/mid-stream provider errors normalized (GLM); GLM 1305 overload classified as retryable via `isRetryableProviderError`; OpenAI Chat bridge `chat_template_kwargs` injection
+- **UI/UX**: Running tool indicators (border, live task progress); task status persisted in roster; whole content column as image drop zone; red error bubble for assistant error messages; API retries shown in minimal roster; hook events rendered in chat; compact boundaries rendered in task threads; worker agents shown in space config; worker agent configure tab restored
+- **Credentials**: `DatabaseCredentialStore` fallback when macOS Keychain unavailable; keychain error UX with encrypted file fallback for screen/SSH
+- **Agent SDK**: Claude Agent SDK upgraded from 0.2.141 to 0.3.179; agent-memory embedding model prefetched on daemon startup
+- **GLM-5.2 context support**: New GLM model with aligned context window display and compaction
+- **SDK system-message rendering matrix**: Complete coverage (render 5, hide 9, conditional 2)
+- **Event-driven external delivery**: Pending external event deliveries persisted for inactive workers; pending delivery queue retention bounded; GitHub comment poll watermarks seeded; PR metadata deduped on head sha (not updated_at)
+
+### Changed
+
+- **Codex SDK aliasing removed**: Real Codex model IDs used instead of Anthropic SDK aliases; stable Codex bridge key across OAuth token refresh; GPT-5.5 context routing test coverage
+- **Kimi/Codex compaction**: SDK compaction used for Kimi and Codex; SDK compaction trigger fixed for provider contexts; context metadata resolved from SDK model
+- **Worker tool profiles**: Made permissive to reduce false denials
+- **Persistent thinking/api_retry**: Stopped persisting `thinking_tokens` deltas; `api_retry` messages persisted; api_retry/thinking_tokens/task_notification rendered roster-only in minimal feed; retry folding aligned in minimal thread feed; background task notifications folded onto tool cards; task_notification folded onto the tool card; hidden subtype SQL filters narrowed
+- **Codex bridge diagnostics**: 4xx request bodies logged; tool output stringified; reasoning 400s self-healed
+
+### Fixed
+
+- **Kimi 1M → 200K fallback**: Stripped trailing `[1m]` suffixes from GLM model IDs to prevent compaction-threshold collapse
+- **Provider env precedence**: Corrected env precedence between provider-stored and process env
+- **Codex OAuth probe**: Correct validation flow
+- **Provider test connection**: Now actually verifies API credentials instead of returning a false positive
+- **Context window display**: Aligned for GLM/Kimi with compaction thresholds
+- **Daemon startup regression**: Fixed startup path broken by earlier refactor
+- **SDK message visibility performance**: No transcript scan on session open
+- **Task-agent thinking token counts**: Correct accounting
+- **OpenAI Chat bridge**: Guarded catch-block `send()` against closed controller
+- **Reviewer gh api review-body contract**: Forbade `-f body=@-` form
+- **Worker session supersession**: Activation flush guards against superseded worker sessions
+- **Concurrent flush**: Guarded against double-dispatching persisted deliveries
+- **Codex bot login matcher**: Corrected with cycle-anchored gate timeout
+- **Synthetic user messages**: Toolbar now shows on synthetic user messages
+- **Terminal results**: Input unlocked after terminal results
+- **Bash task notification folding**: Test coverage added
+- **GLM strip suffix**: All trailing `[1m]` suffixes stripped from GLM model IDs
+
 ## [0.37.0] - 2026-06-09
 
 ACP protocol client with query adapter and message translator, runtime hook engine with MCP action integration, ACP protocol type definitions with JSON-RPC stdio transport, workflow hook schema storage with validation and persistence, separation of worker and long-horizon agent types, provider context window fix for non-native models, and terminology sweep with boundary tests. 7 commits since v0.36.0.
