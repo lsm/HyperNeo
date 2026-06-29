@@ -2213,4 +2213,245 @@ describe('EvolutionEpisodeService', () => {
 
     expect(result.episode.findings).toHaveLength(0);
   });
+
+  it('does not emit a result-artifact gap finding when the result artifact lacks a summary', async () => {
+    const scope = evolutionRepo.createScope({
+      spaceId,
+      kind: 'custom',
+      name: 'No summary artifact',
+      objective: 'Skip result artifacts without readable summary',
+    });
+    const workflow = workflowRepo.createWorkflow({ spaceId, name: 'Release' });
+    const run = workflowRunRepo.createRun({
+      spaceId,
+      workflowId: workflow.id,
+      title: 'Release run',
+    });
+    artifactRepo.upsert({
+      id: 'result-artifact-no-summary',
+      runId: run.id,
+      nodeId: 'coder',
+      artifactType: 'result',
+      artifactKey: 'final',
+      data: { prUrl: 'https://github.com/lsm/neokai/pull/123' },
+    });
+    const task = taskRepo.createTask({
+      spaceId,
+      title: 'Task with metadata-only result artifact',
+      description: 'Result artifact has no summary to backfill',
+      evolutionScopeId: scope.id,
+      workflowRunId: run.id,
+      status: 'done',
+    });
+    taskRepo.updateTask(task.id, { result: null });
+    const taskEvidence = evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'task_result',
+      sourceId: task.id,
+      summary: 'Task completed',
+    });
+
+    const service = new EvolutionEpisodeService({
+      evolutionRepo,
+      taskRepo,
+      workflowRunRepo,
+      artifactRepo,
+      judgeEpisode: async () => ({
+        title: 'Episode',
+        outcomeSummary: '',
+        findings: [],
+      }),
+    });
+
+    const result = await service.createFromEvidence({
+      scopeId: scope.id,
+      evidenceIds: [taskEvidence.id],
+      confirmLowConfidence: true,
+    });
+
+    expect(result.episode.findings).toHaveLength(0);
+  });
+
+  it('emits a result-artifact gap finding when task.result is the generic fallback string', async () => {
+    const scope = evolutionRepo.createScope({
+      spaceId,
+      kind: 'custom',
+      name: 'Generic result fallback',
+      objective: 'Treat generic fallback result as missing',
+    });
+    const workflow = workflowRepo.createWorkflow({ spaceId, name: 'Release' });
+    const run = workflowRunRepo.createRun({
+      spaceId,
+      workflowId: workflow.id,
+      title: 'Release run',
+    });
+    artifactRepo.upsert({
+      id: 'result-artifact-generic',
+      runId: run.id,
+      nodeId: 'coder',
+      artifactType: 'result',
+      artifactKey: 'final',
+      data: { summary: 'PR merged' },
+    });
+    const task = taskRepo.createTask({
+      spaceId,
+      title: 'Task with generic result',
+      description: 'task.result is the generic fallback string',
+      evolutionScopeId: scope.id,
+      workflowRunId: run.id,
+      status: 'done',
+    });
+    taskRepo.updateTask(task.id, {
+      result:
+        'An unexpected error occurred. Please try again or contact support if the issue persists.',
+    });
+    const taskEvidence = evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'task_result',
+      sourceId: task.id,
+      summary: 'Task completed',
+    });
+
+    const service = new EvolutionEpisodeService({
+      evolutionRepo,
+      taskRepo,
+      workflowRunRepo,
+      artifactRepo,
+      judgeEpisode: async () => ({
+        title: 'Episode',
+        outcomeSummary: '',
+        findings: [],
+      }),
+    });
+
+    const result = await service.createFromEvidence({
+      scopeId: scope.id,
+      evidenceIds: [taskEvidence.id],
+      confirmLowConfidence: true,
+    });
+
+    expect(result.episode.findings).toHaveLength(1);
+    expect(result.episode.findings[0]).toMatchObject({
+      domain: 'neokai_product',
+      kind: 'bug',
+      evidence: [taskEvidence.id],
+      proposedAction: expect.stringContaining('Backfill task.result'),
+    });
+  });
+
+  it('does not emit a result-artifact gap finding for approved tasks', async () => {
+    const scope = evolutionRepo.createScope({
+      spaceId,
+      kind: 'custom',
+      name: 'Approved task',
+      objective: 'Skip approved tasks that have not reached done',
+    });
+    const workflow = workflowRepo.createWorkflow({ spaceId, name: 'Release' });
+    const run = workflowRunRepo.createRun({
+      spaceId,
+      workflowId: workflow.id,
+      title: 'Release run',
+    });
+    artifactRepo.upsert({
+      id: 'result-artifact-approved',
+      runId: run.id,
+      nodeId: 'coder',
+      artifactType: 'result',
+      artifactKey: 'final',
+      data: { summary: 'PR merged' },
+    });
+    const task = taskRepo.createTask({
+      spaceId,
+      title: 'Approved task without result',
+      description: 'Approved tasks may lack result until mark_complete',
+      evolutionScopeId: scope.id,
+      workflowRunId: run.id,
+      status: 'approved',
+    });
+    taskRepo.updateTask(task.id, { result: null });
+    const taskEvidence = evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'task_result',
+      sourceId: task.id,
+      summary: 'Task approved',
+    });
+
+    const service = new EvolutionEpisodeService({
+      evolutionRepo,
+      taskRepo,
+      workflowRunRepo,
+      artifactRepo,
+      judgeEpisode: async () => ({
+        title: 'Episode',
+        outcomeSummary: '',
+        findings: [],
+      }),
+    });
+
+    const result = await service.createFromEvidence({
+      scopeId: scope.id,
+      evidenceIds: [taskEvidence.id],
+      confirmLowConfidence: true,
+    });
+
+    expect(result.episode.findings).toHaveLength(0);
+  });
+
+  it('does not emit a result-artifact gap finding for cancelled tasks', async () => {
+    const scope = evolutionRepo.createScope({
+      spaceId,
+      kind: 'custom',
+      name: 'Cancelled task',
+      objective: 'Skip cancelled tasks',
+    });
+    const workflow = workflowRepo.createWorkflow({ spaceId, name: 'Release' });
+    const run = workflowRunRepo.createRun({
+      spaceId,
+      workflowId: workflow.id,
+      title: 'Release run',
+    });
+    artifactRepo.upsert({
+      id: 'result-artifact-cancelled',
+      runId: run.id,
+      nodeId: 'coder',
+      artifactType: 'result',
+      artifactKey: 'final',
+      data: { summary: 'Partial work before cancellation' },
+    });
+    const task = taskRepo.createTask({
+      spaceId,
+      title: 'Cancelled task without result',
+      description: 'Cancelled tasks do not require a result backfill',
+      evolutionScopeId: scope.id,
+      workflowRunId: run.id,
+      status: 'cancelled',
+    });
+    taskRepo.updateTask(task.id, { result: null });
+    const taskEvidence = evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'task_result',
+      sourceId: task.id,
+      summary: 'Task cancelled',
+    });
+
+    const service = new EvolutionEpisodeService({
+      evolutionRepo,
+      taskRepo,
+      workflowRunRepo,
+      artifactRepo,
+      judgeEpisode: async () => ({
+        title: 'Episode',
+        outcomeSummary: '',
+        findings: [],
+      }),
+    });
+
+    const result = await service.createFromEvidence({
+      scopeId: scope.id,
+      evidenceIds: [taskEvidence.id],
+      confirmLowConfidence: true,
+    });
+
+    expect(result.episode.findings).toHaveLength(0);
+  });
 });
