@@ -165,8 +165,7 @@ export class EvolutionEpisodeService {
       ? await this.deps.judgeEpisode(input)
       : await judgeEpisodeWithModel(input, this.deps.spaceRepo);
     const gapFindings = this.detectResultArtifactGaps(input);
-    const findings =
-      gapFindings.length > 0 ? [...judged.findings, ...gapFindings] : judged.findings;
+    const findings = [...judged.findings, ...gapFindings];
     const episode = this.deps.evolutionRepo.createEpisode({
       scopeId: input.scope.id,
       status: 'draft',
