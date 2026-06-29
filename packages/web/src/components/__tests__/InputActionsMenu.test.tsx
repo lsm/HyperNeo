@@ -234,6 +234,38 @@ describe('InputActionsMenu', () => {
       expect(text).not.toContain('Sandbox Mode');
     });
 
+    it('should disable coordinator toggle while a model switch is in progress', () => {
+      const { container } = render(
+        <InputActionsMenu
+          {...defaultProps}
+          isOpen={true}
+          features={featuresOn}
+          modelSwitching={true}
+        />
+      );
+      const buttons = container.querySelectorAll('button');
+      const coordinatorButton = Array.from(buttons).find((b) =>
+        b.textContent?.includes('Coordinator Mode')
+      ) as HTMLButtonElement;
+      expect(coordinatorButton?.disabled).toBe(true);
+    });
+
+    it('should disable sandbox toggle while a model switch is in progress', () => {
+      const { container } = render(
+        <InputActionsMenu
+          {...defaultProps}
+          isOpen={true}
+          features={featuresOn}
+          modelSwitching={true}
+        />
+      );
+      const buttons = container.querySelectorAll('button');
+      const sandboxButton = Array.from(buttons).find((b) =>
+        b.textContent?.includes('Sandbox Mode')
+      ) as HTMLButtonElement;
+      expect(sandboxButton?.disabled).toBe(true);
+    });
+
     it('should call onCoordinatorModeChange and close on click', () => {
       const onCoordinatorModeChange = vi.fn(() => {});
       const onClose = vi.fn(() => {});

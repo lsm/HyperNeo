@@ -58,7 +58,7 @@ export function InputActionsMenu({
   currentModel: _currentModel,
   currentModelInfo: _currentModelInfo,
   availableModels: _availableModels,
-  modelSwitching: _modelSwitching,
+  modelSwitching,
   modelLoading: _modelLoading,
   onModelSwitch: _onModelSwitch,
   autoScroll,
@@ -190,7 +190,7 @@ export function InputActionsMenu({
             <button
               type="button"
               onClick={handleCoordinatorToggle}
-              disabled={coordinatorSwitching}
+              disabled={coordinatorSwitching || modelSwitching}
               class="w-full px-4 py-3 text-left flex items-center justify-between transition-colors text-gray-200 hover:bg-dark-700/50 disabled:opacity-50"
             >
               <span class="flex items-center gap-3">
@@ -232,7 +232,7 @@ export function InputActionsMenu({
             <button
               type="button"
               onClick={handleSandboxToggle}
-              disabled={sandboxSwitching}
+              disabled={sandboxSwitching || modelSwitching}
               class="w-full px-4 py-3 text-left flex items-center justify-between transition-colors text-gray-200 hover:bg-dark-700/50 disabled:opacity-50"
             >
               <span class="flex items-center gap-3">
