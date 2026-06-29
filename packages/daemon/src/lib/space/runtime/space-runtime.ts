@@ -3942,7 +3942,6 @@ export class SpaceRuntime {
     runId: string,
     nextStatus: SpaceWorkflowRun['status']
   ): Promise<SpaceWorkflowRun> {
-    const previousStatus = this.config.workflowRunRepo.getRun(runId)?.status;
     const updated = this.config.workflowRunRepo.transitionStatus(runId, nextStatus);
     if (nextStatus === 'cancelled') {
       this.clearRunInterests(runId);
@@ -3950,12 +3949,11 @@ export class SpaceRuntime {
     if (nextStatus === 'blocked') {
       this.fireRunBlockedHook(runId);
     }
-    // When a run leaves `blocked` (via resume / recovery / RPC), drop the
-    // auto-registered PR event subscription so subsequent PR events are not
-    // delivered to an agent that is no longer waiting on a gate. The
-    // gate-open path already clears via syncBlockedRunPrEventSubscription,
-    // but manual resume paths bypass it — this sweep covers them.
-    if (previousStatus === 'blocked' && nextStatus !== 'blocked') {
+    // Terminal transitions drop the auto-registered PR event subscription so
+    // a finished run does not keep receiving PR events. Non-terminal moves
+    // out of `blocked` (resume / recovery / RPC) now preserve the sub so
+    // in_progress runs can still receive events.
+    if (nextStatus === 'done' || nextStatus === 'cancelled') {
       this.clearPrEventSubscriptionsForRun(runId);
     }
     await this.safeOnWorkflowRunUpdated(updated.spaceId, updated);

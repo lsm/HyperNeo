@@ -942,7 +942,7 @@ describe('SpaceRuntimeService event-driven gate evaluation', () => {
     expect(updated?.pendingCheckpointType ?? null).toBeNull();
   });
 
-  test('transitionRunStatusAndEmit clears PR auto-subs when run leaves blocked via resume RPC path', async () => {
+  test('transitionRunStatusAndEmit preserves PR auto-subscription when run leaves blocked for in_progress', async () => {
     const ctx = await setup({
       gates: [
         {
@@ -953,46 +953,30 @@ describe('SpaceRuntimeService event-driven gate evaluation', () => {
       channels: [{ id: 'ch-code-to-review', from: 'coder', to: 'reviewer', gateId: 'approval' }],
     });
     const workflow = ctx.workflowManager.listWorkflows(SPACE_ID)[0]!;
-    const { runId } = await seedBlockedRunWithPr(ctx, workflow.id);
-    // Auto-subscribe via the blocked hook.
+    const { runId, coderSessionId } = await seedBlockedRunWithPr(ctx, workflow.id);
     await ctx.service.notifyRunBlocked(runId);
 
-    // Simulate the resume RPC: direct transitionStatus call bypassing the
-    // event-driven path. The transition hook must sweep the auto-subscription.
-    ctx.workflowRunRepo.transitionStatus(runId, 'in_progress');
-    // Manually fire the runtime's transition hook by calling the public
-    // notifyRunBlocked path's opposite — since transitionStatus is direct,
-    // we exercise the in-runtime transitionRunStatusAndEmit by invoking
-    // runtime.cancelWorkflowRun-style flow indirectly. Instead, simulate
-    // the production path: any blocked→in_progress transition through
-    // transitionRunStatusAndEmit sweeps the auto-sub.
-    // Use the runtime's internal helper via a tiny workflow: mark blocked
-    // again, then call the service's transitionBlockedRunToInProgress by
-    // driving handleBlockedRunExternalEvent (which uses the runtime path
-    // indirectly via notifyGateDataChanged → router → transitionRunStatusAndEmit).
-    ctx.workflowRunRepo.transitionStatus(runId, 'blocked');
-    ctx.gateDataRepo.merge(runId, 'approval', { approved: true, approvedAt: Date.now() });
-    await ctx.service.handleBlockedRunExternalEvent({
-      runId,
-      event: {
-        namespaceId: SPACE_ID,
-        spaceId: SPACE_ID,
-        eventId: `evt-clear-subs-${Math.random().toString(36).slice(2)}`,
-        source: 'github',
-        topic: PR_EVENT_TOPIC,
-        dedupeKey: `dedupe-clear-subs-${Math.random().toString(36).slice(2)}`,
-        summary: 'Codex approved',
-        payload: {},
-        occurredAt: Date.now(),
-        ingestedAt: Date.now(),
-      },
-    });
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    const runtime = await ctx.service.createOrGetRuntime(SPACE_ID);
+    await (
+      runtime as unknown as {
+        transitionRunStatusAndEmit(runId: string, nextStatus: 'in_progress'): Promise<unknown>;
+      }
+    ).transitionRunStatusAndEmit(runId, 'in_progress');
 
-    // After resume, the auto-subscription must be gone — a subsequent PR
-    // event should not deliver.
+    const targets = (
+      runtime as unknown as {
+        lookupSubscriptionTargets(topic: string): Array<{
+          workflowRunId?: string;
+          subscriptionKind?: string;
+        }>;
+      }
+    ).lookupSubscriptionTargets(PR_EVENT_TOPIC);
+    expect(targets.some((t) => t.workflowRunId === runId && t.subscriptionKind === 'auto')).toBe(
+      true
+    );
+
     ctx.injected.length = 0;
-    const followUp: ExternalEvent = {
+    const event: ExternalEvent = {
       id: `evt-after-resume-${Math.random().toString(36).slice(2)}`,
       spaceId: SPACE_ID,
       source: 'github',
@@ -1000,11 +984,82 @@ describe('SpaceRuntimeService event-driven gate evaluation', () => {
       occurredAt: Date.now(),
       ingestedAt: Date.now(),
       dedupeKey: `dedupe-after-resume-${Math.random().toString(36).slice(2)}`,
-      summary: 'stale after resume',
+      summary: 'review comment while in_progress',
       payload: {},
     };
-    await ctx.eventService.publish(followUp);
-    expect(ctx.injected).toHaveLength(0);
+    await ctx.eventService.publish(event);
+    expect(ctx.injected).toHaveLength(1);
+    expect(ctx.injected[0]!.sessionId).toBe(coderSessionId);
+  });
+
+  test('transitionRunStatusAndEmit clears PR auto-subscription on terminal transitions', async () => {
+    const ctx = await setup({
+      gates: [
+        {
+          id: 'approval',
+          fields: [approvedField, prUrlField],
+        },
+      ],
+      channels: [{ id: 'ch-code-to-review', from: 'coder', to: 'reviewer', gateId: 'approval' }],
+    });
+    const workflow = ctx.workflowManager.listWorkflows(SPACE_ID)[0]!;
+    const runtime = await ctx.service.createOrGetRuntime(SPACE_ID);
+
+    for (const terminalStatus of ['cancelled', 'done'] as const) {
+      const { runId } = await seedBlockedRunWithPr(ctx, workflow.id);
+      const task = ctx.taskRepo.listByWorkflowRun(runId)[0]!;
+      await ctx.service.notifyRunBlocked(runId);
+
+      if (terminalStatus === 'done') {
+        await (
+          runtime as unknown as {
+            transitionRunStatusAndEmit(runId: string, nextStatus: 'in_progress'): Promise<unknown>;
+          }
+        ).transitionRunStatusAndEmit(runId, 'in_progress');
+        // Block the task so reconcileTerminalRunTasks skips dispatchPostApproval
+        // while still allowing clearRunInterests to run.
+        ctx.taskRepo.updateTask(task.id, { status: 'blocked' });
+      }
+      await (
+        runtime as unknown as {
+          transitionRunStatusAndEmit(
+            runId: string,
+            nextStatus: 'cancelled' | 'done'
+          ): Promise<unknown>;
+        }
+      ).transitionRunStatusAndEmit(runId, terminalStatus);
+
+      if (terminalStatus === 'done') {
+        await runtime.executeTick();
+      }
+
+      const targets = (
+        runtime as unknown as {
+          lookupSubscriptionTargets(topic: string): Array<{
+            workflowRunId?: string;
+            subscriptionKind?: string;
+          }>;
+        }
+      ).lookupSubscriptionTargets(PR_EVENT_TOPIC);
+      expect(targets.some((t) => t.workflowRunId === runId && t.subscriptionKind === 'auto')).toBe(
+        false
+      );
+
+      ctx.injected.length = 0;
+      const event: ExternalEvent = {
+        id: `evt-after-${terminalStatus}-${Math.random().toString(36).slice(2)}`,
+        spaceId: SPACE_ID,
+        source: 'github',
+        topic: PR_EVENT_TOPIC,
+        occurredAt: Date.now(),
+        ingestedAt: Date.now(),
+        dedupeKey: `dedupe-after-${terminalStatus}-${Math.random().toString(36).slice(2)}`,
+        summary: `stale event after ${terminalStatus}`,
+        payload: {},
+      };
+      await ctx.eventService.publish(event);
+      expect(ctx.injected).toHaveLength(0);
+    }
   });
 
   test('handleBlockedRunExternalEvent does not treat a previously-open unrelated gate as newly opened', async () => {
