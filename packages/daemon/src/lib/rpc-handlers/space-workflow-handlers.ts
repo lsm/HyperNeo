@@ -100,7 +100,7 @@ function buildTemplateUpdateParams(
       const resolvedId = resolveAgentId(a.agentId);
       if (!resolvedId) {
         throw new Error(
-          `Cannot ${errorVerb}: no SpaceAgent found with name "${a.agentId}" in space "${spaceId}".`
+          `Cannot ${errorVerb}: no SpaceWorkerAgent found with name "${a.agentId}" in space "${spaceId}".`
         );
       }
       return { ...a, agentId: resolvedId };
@@ -706,7 +706,7 @@ export function setupSpaceWorkflowHandlers(
   // ─── spaceWorkflow.resyncDuplicates ──────────────────────────────────────
   // Resolves a duplicate-drift group by:
   //   1. Building the template overwrite params (validates that every agent
-  //      role in the template resolves to a SpaceAgent in this space — throws
+  //      role in the template resolves to a SpaceWorkerAgent in this space — throws
   //      BEFORE any row is mutated if validation fails).
   //   2. Overwriting the kept row (newest by createdAt) with the canonical
   //      built-in template, matching `spaceWorkflow.syncFromTemplate`.

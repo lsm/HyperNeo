@@ -15,7 +15,7 @@
  */
 
 import { useEffect, useCallback, useRef } from 'preact/hooks';
-import type { SpaceAgent, WorkflowChannel } from '@neokai/shared';
+import type { SpaceWorkerAgent, WorkflowChannel } from '@neokai/shared';
 import type { NodeDraft, AgentTaskState } from '../WorkflowNodeCard';
 import { isMultiAgentNode, AgentStatusIcon } from '../WorkflowNodeCard';
 import type { Point } from './types';
@@ -35,7 +35,7 @@ export interface WorkflowNodeProps {
   /** Absolute position in canvas coordinates */
   position: Point;
   /** Full agents list — used to resolve the agent name from step.agentId */
-  agents: SpaceAgent[];
+  agents: SpaceWorkerAgent[];
   /** Workflow-level channels (kept for canvas compatibility; not rendered inside node cards). */
   workflowChannels?: WorkflowChannel[];
   isSelected?: boolean;

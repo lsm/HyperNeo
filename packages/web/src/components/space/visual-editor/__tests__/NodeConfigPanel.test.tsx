@@ -23,7 +23,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, fireEvent, cleanup, act, waitFor } from '@testing-library/preact';
 import { useState } from 'preact/hooks';
-import type { SpaceAgent, WorkflowHook } from '@neokai/shared';
+import type { SpaceWorkerAgent, WorkflowHook } from '@neokai/shared';
 
 const mockModels = [
   {
@@ -98,7 +98,7 @@ afterEach(() => {
 // Fixtures
 // ============================================================================
 
-function makeAgent(id: string, name: string, _role = 'coder'): SpaceAgent {
+function makeAgent(id: string, name: string, _role = 'coder'): SpaceWorkerAgent {
   return {
     id,
     spaceId: 'space-1',
@@ -119,7 +119,7 @@ function makeStep(overrides: Partial<NodeDraft> = {}): NodeDraft {
   };
 }
 
-const defaultAgents: SpaceAgent[] = [
+const defaultAgents: SpaceWorkerAgent[] = [
   makeAgent('agent-1', 'Planner', 'planner'),
   makeAgent('agent-2', 'Coder', 'coder'),
 ];

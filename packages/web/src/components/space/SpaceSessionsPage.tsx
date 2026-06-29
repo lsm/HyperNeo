@@ -10,7 +10,7 @@
  */
 
 import { useMemo, useRef, useState } from 'preact/hooks';
-import type { SpaceAgentPromotionDraft } from '@neokai/shared';
+import type { SpaceWorkerAgentPromotionDraft } from '@neokai/shared';
 import { spaceStore } from '../../lib/space-store';
 import { navigateToSpaceSession } from '../../lib/router';
 import { getRelativeTime } from '../../lib/utils';
@@ -231,7 +231,7 @@ export function SpaceSessionsPage({ spaceId, navigationSpaceId }: SpaceSessionsP
   const routeSpaceId = navigationSpaceId ?? spaceId;
   const storeSessions = spaceStore.sessions.value;
   const agents = spaceStore.agents.value;
-  const [promotionDraft, setPromotionDraft] = useState<SpaceAgentPromotionDraft | null>(null);
+  const [promotionDraft, setPromotionDraft] = useState<SpaceWorkerAgentPromotionDraft | null>(null);
   const promotionRequestId = useRef(0);
 
   const sessions = useMemo(() => {

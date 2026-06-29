@@ -8,11 +8,11 @@
  * - Leader is always implicit in SpaceRuntime — never a workflow node.
  * - Templates use placeholder `id` / `spaceId` (empty strings) and role names
  *   as `agentId` placeholders ('planner', 'coder', 'general'). These are
- *   replaced with real SpaceAgent UUIDs by `seedBuiltInWorkflows`.
+ *   replaced with real SpaceWorkerAgent UUIDs by `seedBuiltInWorkflows`.
  * - Workflows use gated channels for inter-agent communication (agent-centric
  *   model). Transitions are empty for agent-centric workflows; completion is
  *   detected when all agents report done.
- * - At Space creation time, preset SpaceAgent records are seeded for each
+ * - At Space creation time, preset SpaceWorkerAgent records are seeded for each
  *   BuiltinAgentRole. `seedBuiltInWorkflows` must be called after those agents
  *   exist so that the `agentId` values resolve correctly.
  * - Channels use node names (e.g. 'Plan', 'Coding') in `from`/`to` so they
@@ -2125,7 +2125,7 @@ const RESTAMP_FIELDS = [
  * Seeds all built-in workflow templates into the given space.
  *
  * Each template node agent's `agentId` placeholder (e.g., `'Planner'`, `'Coder'`,
- * `'General'`) is resolved to a real SpaceAgent UUID via `resolveAgentId`.
+ * `'General'`) is resolved to a real SpaceWorkerAgent UUID via `resolveAgentId`.
  * If any name cannot be resolved, this function throws — persisting a
  * placeholder string as an `agentId` would create broken workflow data.
  *
@@ -2144,7 +2144,7 @@ const RESTAMP_FIELDS = [
  * Individual workflow creation / re-stamp errors are captured per-workflow
  * and do not abort the remaining operations.
  *
- * NOTE: This function must be called after preset SpaceAgent records have been
+ * NOTE: This function must be called after preset SpaceWorkerAgent records have been
  * seeded (inside the `space.create` RPC handler).
  *
  * Example call site:
@@ -2262,7 +2262,7 @@ export function seedBuiltInWorkflows(
     const agentId = resolveAgentId(agentName);
     if (!agentId) {
       throw new Error(
-        `seedBuiltInWorkflows: no SpaceAgent found with name '${agentName}' in space '${spaceId}'. ` +
+        `seedBuiltInWorkflows: no SpaceWorkerAgent found with name '${agentName}' in space '${spaceId}'. ` +
           `Preset agents must be seeded before calling seedBuiltInWorkflows.`
       );
     }

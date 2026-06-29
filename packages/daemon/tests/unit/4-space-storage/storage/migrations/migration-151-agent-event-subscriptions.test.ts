@@ -134,7 +134,7 @@ describe('Migration 151: consolidate agent event subscriptions', () => {
     db.close();
   });
 
-  test('maps legacy SpaceAgent subscription rows and drops legacy table', () => {
+  test('maps legacy SpaceWorkerAgent subscription rows and drops legacy table', () => {
     db.prepare(
       `INSERT INTO space_agent_event_subscriptions (space_id, agent_id, topic_pattern, label, created_at)
        VALUES (?, ?, ?, ?, ?)`

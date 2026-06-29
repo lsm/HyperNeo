@@ -42,7 +42,7 @@ import { sendMessage, waitForIdle, waitForSdkMessages } from '../../helpers/daem
 import type {
   NodeExecution,
   Space,
-  SpaceAgent,
+  SpaceWorkerAgent,
   SpaceWorkflow,
   SpaceWorkflowRun,
 } from '@neokai/shared';
@@ -66,7 +66,7 @@ const STEP_CODE_ID = 'step-code-lifecycle-001';
 
 type TestFixtures = {
   space: Space;
-  coderAgent: SpaceAgent;
+  coderAgent: SpaceWorkerAgent;
   workflow: SpaceWorkflow;
 };
 
@@ -88,7 +88,7 @@ async function createTestFixtures(daemon: DaemonServerContext): Promise<TestFixt
   // space.create auto-seeds preset agents — look up Coder by role
   const { agents } = (await daemon.messageHub.request('spaceAgent.list', {
     spaceId: space.id,
-  })) as { agents: SpaceAgent[] };
+  })) as { agents: SpaceWorkerAgent[] };
 
   const coderAgent = agents.find((a) => a.name === 'Coder');
   if (!coderAgent) throw new Error('Pre-seeded Coder agent not found');

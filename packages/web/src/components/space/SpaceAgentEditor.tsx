@@ -17,14 +17,14 @@
  */
 
 import type {
-  SpaceAgent,
-  SpaceAgentPromotionDraft,
+  SpaceWorkerAgent,
+  SpaceWorkerAgentPromotionDraft,
   ThinkingLevel,
   SettingSource,
 } from '@neokai/shared';
 import { KNOWN_TOOLS, normalizeThinkingLevel } from '@neokai/shared';
 import { useState } from 'preact/hooks';
-import type { SpaceAgentTemplate } from '../../lib/space-store';
+import type { SpaceWorkerAgentTemplate } from '../../lib/space-store';
 import { spaceStore } from '../../lib/space-store';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
@@ -143,9 +143,9 @@ function LineNumberedTextarea({
 
 export interface SpaceAgentEditorProps {
   /** Existing agent to edit. Null = create mode. */
-  agent: SpaceAgent | null;
+  agent: SpaceWorkerAgent | null;
   /** Draft generated from an ad-hoc Space session. */
-  promotionDraft?: SpaceAgentPromotionDraft | null;
+  promotionDraft?: SpaceWorkerAgentPromotionDraft | null;
   /** Names of other agents in this space (for uniqueness validation) */
   existingAgentNames: string[];
   /** Called after a successful save */
@@ -216,7 +216,7 @@ export function SpaceAgentEditor({
     }
   };
 
-  const applyTemplate = (template: SpaceAgentTemplate) => {
+  const applyTemplate = (template: SpaceWorkerAgentTemplate) => {
     if (!isEdit && !name.trim()) {
       setName(template.name);
     }

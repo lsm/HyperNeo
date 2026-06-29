@@ -73,7 +73,7 @@ export function isReservedWorkflowAgentName(name: string): boolean {
  * worker agent references in workflow nodes.
  */
 export interface SpaceAgentLookup {
-  /** Returns the SpaceAgent with the given UUID in the given space, or null if not found. */
+  /** Returns the SpaceWorkerAgent with the given UUID in the given space, or null if not found. */
   getAgentById(spaceId: string, id: string): { id: string; name: string } | null;
 }
 
@@ -714,7 +714,9 @@ export class SpaceWorkflowManager {
       const entry = node.agents[j];
       const loc = `node[${index}].agents[${j}]`;
       if (!entry.agentId || !entry.agentId.trim()) {
-        throw new WorkflowValidationError(`${loc}: agentId must be a non-empty SpaceAgent UUID`);
+        throw new WorkflowValidationError(
+          `${loc}: agentId must be a non-empty SpaceWorkerAgent UUID`
+        );
       }
       if (!entry.name || !entry.name.trim()) {
         throw new WorkflowValidationError(`${loc}: name must be a non-empty string`);
@@ -739,7 +741,7 @@ export class SpaceWorkflowManager {
         const agent = this.agentLookup.getAgentById(spaceId, entry.agentId);
         if (!agent) {
           throw new WorkflowValidationError(
-            `node[${index}].agents[${j}]: agentId "${entry.agentId}" does not match any SpaceAgent in this space`
+            `node[${index}].agents[${j}]: agentId "${entry.agentId}" does not match any SpaceWorkerAgent in this space`
           );
         }
       }

@@ -14,7 +14,7 @@
 import type {
   NodeExecution,
   Space,
-  SpaceAgent,
+  SpaceWorkerAgent,
   SpaceGoal,
   SpaceGoalEvent,
   SpaceLongHorizonAgent,
@@ -154,7 +154,7 @@ function makeRun(id: string, status = 'pending'): SpaceWorkflowRun {
   };
 }
 
-function makeAgent(id: string): SpaceAgent {
+function makeAgent(id: string): SpaceWorkerAgent {
   return {
     id,
     spaceId: 'space-1',
@@ -477,10 +477,10 @@ describe('SpaceStore — space selection', () => {
 
   it('discards stale agent list results after a space switch', async () => {
     await spaceStore.selectSpace('space-1');
-    let resolveList: (value: { agents: SpaceAgent[] }) => void = () => {};
+    let resolveList: (value: { agents: SpaceWorkerAgent[] }) => void = () => {};
     mockHub.request.mockImplementation((method: string, params?: Record<string, unknown>) => {
       if (method === 'spaceAgent.list' && params?.spaceId === 'space-1') {
-        return new Promise<{ agents: SpaceAgent[] }>((resolve) => {
+        return new Promise<{ agents: SpaceWorkerAgent[] }>((resolve) => {
           resolveList = resolve;
         });
       }
@@ -1982,7 +1982,7 @@ describe('SpaceStore — CRUD methods', () => {
 
   it('ignores returned agent when the active space changes before the request resolves', async () => {
     await spaceStore.selectSpace('space-1');
-    let resolveRequest: (value: { agent: SpaceAgent }) => void = () => {};
+    let resolveRequest: (value: { agent: SpaceWorkerAgent }) => void = () => {};
     mockHub.request.mockImplementationOnce(
       () =>
         new Promise((resolve) => {

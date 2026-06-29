@@ -12,7 +12,7 @@
 
 import { describe, it, expect, beforeEach, mock } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import type { MessageHub, SpaceAgent, SpaceWorkflow } from '@neokai/shared';
+import type { MessageHub, SpaceWorkerAgent, SpaceWorkflow } from '@neokai/shared';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager';
@@ -2108,7 +2108,7 @@ function makeSingleAgentBundle(agentName: string, _agentRole: string, stepName: 
 // ─── Full export→import round-trip tests ────────────────────────────────────
 //
 // These tests use exportBundle() to produce a real exported bundle from
-// SpaceAgent/SpaceWorkflow objects and then feed it into spaceImport.execute,
+// SpaceWorkerAgent/SpaceWorkflow objects and then feed it into spaceImport.execute,
 // verifying that the imported workflow is equivalent to the original.
 
 describe('full export→import round-trip', () => {
@@ -2158,7 +2158,7 @@ describe('full export→import round-trip', () => {
 
   it('single-agent workflow round-trip: export → import produces equivalent workflow', async () => {
     // Build source agents and workflow
-    const coderAgent: SpaceAgent = {
+    const coderAgent: SpaceWorkerAgent = {
       id: 'src-agent-1',
       spaceId: 'other-space',
       name: 'My Coder',
@@ -2229,7 +2229,7 @@ describe('full export→import round-trip', () => {
   });
 
   it('multi-agent step round-trip: export → import preserves agents array, channels, and hooks', async () => {
-    const coderAgent: SpaceAgent = {
+    const coderAgent: SpaceWorkerAgent = {
       id: 'src-coder',
       spaceId: 'other-space',
       name: 'Senior Coder',
@@ -2237,7 +2237,7 @@ describe('full export→import round-trip', () => {
       createdAt: 1000,
       updatedAt: 2000,
     };
-    const reviewerAgent: SpaceAgent = {
+    const reviewerAgent: SpaceWorkerAgent = {
       id: 'src-reviewer',
       spaceId: 'other-space',
       name: 'Code Reviewer',
@@ -2394,7 +2394,7 @@ describe('full export→import round-trip', () => {
   });
 
   it('channel topology round-trip: one-way channel preserved', async () => {
-    const agentA: SpaceAgent = {
+    const agentA: SpaceWorkerAgent = {
       id: 'src-a',
       spaceId: 'other-space',
       name: 'Agent Alpha',
@@ -2402,7 +2402,7 @@ describe('full export→import round-trip', () => {
       createdAt: 1000,
       updatedAt: 2000,
     };
-    const agentB: SpaceAgent = {
+    const agentB: SpaceWorkerAgent = {
       id: 'src-b',
       spaceId: 'other-space',
       name: 'Agent Beta',
@@ -2453,7 +2453,7 @@ describe('full export→import round-trip', () => {
   });
 
   it('channel topology round-trip: fan-out (array `to`) preserved', async () => {
-    const hub: SpaceAgent = {
+    const hub: SpaceWorkerAgent = {
       id: 'src-hub',
       spaceId: 'other-space',
       name: 'Hub Agent',
@@ -2461,7 +2461,7 @@ describe('full export→import round-trip', () => {
       createdAt: 1000,
       updatedAt: 2000,
     };
-    const spoke1: SpaceAgent = {
+    const spoke1: SpaceWorkerAgent = {
       id: 'src-spoke1',
       spaceId: 'other-space',
       name: 'Spoke One',
@@ -2469,7 +2469,7 @@ describe('full export→import round-trip', () => {
       createdAt: 1000,
       updatedAt: 2000,
     };
-    const spoke2: SpaceAgent = {
+    const spoke2: SpaceWorkerAgent = {
       id: 'src-spoke2',
       spaceId: 'other-space',
       name: 'Spoke Two',
@@ -2521,7 +2521,7 @@ describe('full export→import round-trip', () => {
   });
 
   it('channel topology round-trip: wildcard (*) preserved', async () => {
-    const a: SpaceAgent = {
+    const a: SpaceWorkerAgent = {
       id: 'src-wa',
       spaceId: 'other-space',
       name: 'Wild Agent',
@@ -2564,7 +2564,7 @@ describe('full export→import round-trip', () => {
   });
 
   it('mixed single/multi-agent workflow round-trip preserves both step types', async () => {
-    const plannerAgent: SpaceAgent = {
+    const plannerAgent: SpaceWorkerAgent = {
       id: 'src-planner',
       spaceId: 'other-space',
       name: 'Planner',
@@ -2572,7 +2572,7 @@ describe('full export→import round-trip', () => {
       createdAt: 1000,
       updatedAt: 2000,
     };
-    const coderAgent2: SpaceAgent = {
+    const coderAgent2: SpaceWorkerAgent = {
       id: 'src-coder2',
       spaceId: 'other-space',
       name: 'Coder2',
@@ -2580,7 +2580,7 @@ describe('full export→import round-trip', () => {
       createdAt: 1000,
       updatedAt: 2000,
     };
-    const reviewAgent: SpaceAgent = {
+    const reviewAgent: SpaceWorkerAgent = {
       id: 'src-review',
       spaceId: 'other-space',
       name: 'Reviewer2',
@@ -2653,7 +2653,7 @@ describe('full export→import round-trip', () => {
 
   it('single-agent workflow export → import via exportBundle', async () => {
     // Simulates exporting a single-agent workflow using exportBundle and importing it back
-    const agentSrc: SpaceAgent = {
+    const agentSrc: SpaceWorkerAgent = {
       id: 'src-legacy',
       spaceId: 'other-space',
       name: 'Legacy Coder',
@@ -2688,7 +2688,7 @@ describe('full export→import round-trip', () => {
   });
 
   it('disabled workflow export → import round-trip preserves disabled flag', async () => {
-    const agentSrc: SpaceAgent = {
+    const agentSrc: SpaceWorkerAgent = {
       id: 'src-dis',
       spaceId: 'other-space',
       name: 'Dis Agent',
@@ -2719,7 +2719,7 @@ describe('full export→import round-trip', () => {
   });
 
   it('error: import with unknown agentRef in multi-agent step throws and rolls back', async () => {
-    const agentSrc: SpaceAgent = {
+    const agentSrc: SpaceWorkerAgent = {
       id: 'src-known',
       spaceId: 'other-space',
       name: 'Known Agent',
@@ -2786,7 +2786,7 @@ describe('full export→import round-trip', () => {
     db.prepare(`UPDATE space_workflows SET handle = 'taken-handle' WHERE id = ?`).run(existing.id);
 
     // Build an import bundle whose workflow uses the same handle.
-    const bundleAgent: SpaceAgent = {
+    const bundleAgent: SpaceWorkerAgent = {
       id: 'bundle-agent',
       spaceId: 'src-space',
       name: 'Existing Coder',

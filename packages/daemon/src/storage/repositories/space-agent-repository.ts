@@ -4,17 +4,21 @@
  * CRUD operations for space_agents table.
  *
  * Column mapping:
- *   SpaceAgent.customPrompt   ↔  custom_prompt column (nullable text)
- *   SpaceAgent.tools          ↔  tools column (JSON string array; '[]' or null → undefined)
- *   SpaceAgent.thinkingLevel  ↔  thinking_level column (nullable text)
- *   SpaceAgent.templateName   ↔  template_name column (nullable text; null for user-created agents)
- *   SpaceAgent.templateHash   ↔  template_hash column (nullable text; null for user-created agents)
+ *   SpaceWorkerAgent.customPrompt   ↔  custom_prompt column (nullable text)
+ *   SpaceWorkerAgent.tools          ↔  tools column (JSON string array; '[]' or null → undefined)
+ *   SpaceWorkerAgent.thinkingLevel  ↔  thinking_level column (nullable text)
+ *   SpaceWorkerAgent.templateName   ↔  template_name column (nullable text; null for user-created agents)
+ *   SpaceWorkerAgent.templateHash   ↔  template_hash column (nullable text; null for user-created agents)
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
 import { RESERVED_SPACE_AGENT_HANDLES, slugify, slugifyWithinLimit } from '../../lib/space/slug';
 import { generateUUID } from '@neokai/shared';
-import type { SpaceAgent, CreateSpaceAgentParams, UpdateSpaceAgentParams } from '@neokai/shared';
+import type {
+  SpaceWorkerAgent,
+  CreateSpaceWorkerAgentParams,
+  UpdateSpaceWorkerAgentParams,
+} from '@neokai/shared';
 import type { SQLiteValue } from '../types';
 
 export class SpaceAgentRepository {
@@ -23,7 +27,7 @@ export class SpaceAgentRepository {
   /**
    * Create a new space agent
    */
-  create(params: CreateSpaceAgentParams): SpaceAgent {
+  create(params: CreateSpaceWorkerAgentParams): SpaceWorkerAgent {
     const id = generateUUID();
     const now = Date.now();
     const handle = params.handle ?? this.generateUniqueHandle(params.spaceId, params.name);
@@ -60,7 +64,7 @@ export class SpaceAgentRepository {
   /**
    * Get a single agent by ID
    */
-  getById(id: string): SpaceAgent | null {
+  getById(id: string): SpaceWorkerAgent | null {
     const row = this.db.prepare(`SELECT * FROM space_agents WHERE id = ?`).get(id) as
       | Record<string, unknown>
       | undefined;
@@ -71,7 +75,7 @@ export class SpaceAgentRepository {
   /**
    * Get all agents for a space
    */
-  getBySpaceId(spaceId: string): SpaceAgent[] {
+  getBySpaceId(spaceId: string): SpaceWorkerAgent[] {
     const rows = this.db
       .prepare(`SELECT * FROM space_agents WHERE space_id = ? ORDER BY created_at ASC`)
       .all(spaceId) as Record<string, unknown>[];
@@ -81,7 +85,7 @@ export class SpaceAgentRepository {
   /**
    * Batch lookup agents by IDs. Returns only found agents (no error on missing).
    */
-  getAgentsByIds(ids: string[]): SpaceAgent[] {
+  getAgentsByIds(ids: string[]): SpaceWorkerAgent[] {
     if (ids.length === 0) return [];
     const placeholders = ids.map(() => '?').join(', ');
     const rows = this.db
@@ -136,7 +140,7 @@ export class SpaceAgentRepository {
   /**
    * Update an agent with partial updates. Returns the updated agent or null if not found.
    */
-  update(id: string, params: UpdateSpaceAgentParams): SpaceAgent | null {
+  update(id: string, params: UpdateSpaceWorkerAgentParams): SpaceWorkerAgent | null {
     const fields: string[] = [];
     const values: SQLiteValue[] = [];
 
@@ -238,7 +242,7 @@ export class SpaceAgentRepository {
     ]);
   }
 
-  private rowToAgent(row: Record<string, unknown>): SpaceAgent {
+  private rowToAgent(row: Record<string, unknown>): SpaceWorkerAgent {
     // Parse tools: '[]' or null → undefined; non-empty JSON array → string[]
     let tools: string[] | undefined;
     if (row.tools) {
@@ -247,9 +251,11 @@ export class SpaceAgentRepository {
     }
 
     // Parse settingSources: null or missing → undefined
-    let settingSources: SpaceAgent['settingSources'];
+    let settingSources: SpaceWorkerAgent['settingSources'];
     if (row.setting_sources) {
-      settingSources = JSON.parse(row.setting_sources as string) as SpaceAgent['settingSources'];
+      settingSources = JSON.parse(
+        row.setting_sources as string
+      ) as SpaceWorkerAgent['settingSources'];
     }
 
     return {
@@ -257,11 +263,11 @@ export class SpaceAgentRepository {
       spaceId: row.space_id as string,
       name: row.name as string,
       handle: (row.handle as string | null | undefined) ?? slugify(row.name as string),
-      status: (row.status as SpaceAgent['status'] | null | undefined) ?? 'active',
+      status: (row.status as SpaceWorkerAgent['status'] | null | undefined) ?? 'active',
       description: (row.description as string) || undefined,
       model: (row.model as string | null) ?? undefined,
       thinkingLevel:
-        (row.thinking_level as SpaceAgent['thinkingLevel'] | null | undefined) ?? undefined,
+        (row.thinking_level as SpaceWorkerAgent['thinkingLevel'] | null | undefined) ?? undefined,
       provider: (row.provider as string | null) ?? undefined,
       customPrompt: (row.custom_prompt as string | null) ?? null,
       tools,

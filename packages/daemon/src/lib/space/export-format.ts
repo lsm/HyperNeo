@@ -1,7 +1,7 @@
 /**
  * Space Export/Import Format
  *
- * Functions for serializing SpaceAgent and SpaceWorkflow instances to a
+ * Functions for serializing SpaceWorkerAgent and SpaceWorkflow instances to a
  * portable JSON format and validating imported data with Zod schemas.
  *
  * Key remappings performed during export:
@@ -20,9 +20,9 @@
 import { z } from 'zod';
 import { validateGlobPattern } from '../external-events/topic-validator';
 import type {
-  SpaceAgent,
+  SpaceWorkerAgent,
   SpaceWorkflow,
-  ExportedSpaceAgent,
+  ExportedSpaceWorkerAgent,
   ExportedSpaceWorkflow,
   ExportedWorkflowChannel,
   ExportedWorkflowNode,
@@ -310,11 +310,11 @@ export function normalizeOverride(
 // ============================================================================
 
 /**
- * Convert a SpaceAgent to the portable export format.
+ * Convert a SpaceWorkerAgent to the portable export format.
  * Strips `id`, `spaceId`, `createdAt`, `updatedAt`.
  */
-export function exportAgent(agent: SpaceAgent): ExportedSpaceAgent {
-  const exported: ExportedSpaceAgent = {
+export function exportAgent(agent: SpaceWorkerAgent): ExportedSpaceWorkerAgent {
+  const exported: ExportedSpaceWorkerAgent = {
     version: 1,
     type: 'agent',
     name: agent.name,
@@ -347,7 +347,7 @@ export function exportAgent(agent: SpaceAgent): ExportedSpaceAgent {
  */
 export function exportWorkflow(
   workflow: SpaceWorkflow,
-  agents: SpaceAgent[]
+  agents: SpaceWorkerAgent[]
 ): ExportedSpaceWorkflow {
   // Support both `nodes` (new) and `steps` (legacy, during migration) for backward compat
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -442,7 +442,7 @@ export function exportWorkflow(
  * Create a SpaceExportBundle from a set of agents and workflows.
  */
 export function exportBundle(
-  agents: SpaceAgent[],
+  agents: SpaceWorkerAgent[],
   workflows: SpaceWorkflow[],
   name: string,
   options?: { description?: string; exportedFrom?: string }
@@ -467,14 +467,14 @@ export function exportBundle(
 // ============================================================================
 
 /**
- * Validate an unknown value as an ExportedSpaceAgent.
+ * Validate an unknown value as an ExportedSpaceWorkerAgent.
  *
  * Version handling:
  * - version === 1 → accepted
  * - version > 1 → error: "requires newer version: ..."
  * - version < 1 or missing/non-integer → error: "invalid: ..."
  */
-export function validateExportedAgent(data: unknown): ValidationResult<ExportedSpaceAgent> {
+export function validateExportedAgent(data: unknown): ValidationResult<ExportedSpaceWorkerAgent> {
   if (typeof data !== 'object' || data === null) {
     return { ok: false, error: 'invalid: expected an object' };
   }

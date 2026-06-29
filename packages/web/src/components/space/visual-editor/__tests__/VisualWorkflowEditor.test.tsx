@@ -58,12 +58,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup, waitFor, act } from '@testing-library/preact';
 import { signal, type Signal } from '@preact/signals';
-import type { SpaceAgent, SpaceWorkflow } from '@neokai/shared';
+import type { SpaceWorkerAgent, SpaceWorkflow } from '@neokai/shared';
 import { makeBuiltInTemplateWorkflows } from '../../__tests__/fixtures/builtInTemplateWorkflows';
 
 // ---- Mocks ----
 
-const mockAgents: Signal<SpaceAgent[]> = signal([]);
+const mockAgents: Signal<SpaceWorkerAgent[]> = signal([]);
 const mockWorkflows: Signal<SpaceWorkflow[]> = signal([]);
 const mockWorkflowTemplates: Signal<SpaceWorkflow[]> = signal([]);
 const mockNodeExecutionsByNodeId = signal(new Map<string, unknown[]>());
@@ -125,7 +125,7 @@ import type { VisualWorkflowEditorProps } from '../VisualWorkflowEditor';
 // Fixtures
 // ============================================================================
 
-function makeAgent(id: string, name: string, _role = 'coder'): SpaceAgent {
+function makeAgent(id: string, name: string, _role = 'coder'): SpaceWorkerAgent {
   return {
     id,
     spaceId: 'space-1',

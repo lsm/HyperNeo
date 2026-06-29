@@ -10,7 +10,7 @@
 
 import type {
   NodeExecutionStatus,
-  SpaceAgent,
+  SpaceWorkerAgent,
   ThinkingLevel,
   WorkflowChannel,
   WorkflowNodeAgent,
@@ -227,7 +227,7 @@ export function buildOverride(value: string): WorkflowNodeAgentOverride | undefi
 
 interface MultiAgentSectionProps {
   node: NodeDraft;
-  agents: SpaceAgent[];
+  agents: SpaceWorkerAgent[];
   onUpdate: (node: NodeDraft) => void;
 }
 
@@ -472,7 +472,7 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
 
 interface ChannelsSectionProps {
   node: NodeDraft;
-  agents: SpaceAgent[];
+  agents: SpaceWorkerAgent[];
   onUpdate: (node: NodeDraft) => void;
 }
 
@@ -641,7 +641,7 @@ interface WorkflowNodeCardProps {
   isLast: boolean;
   expanded: boolean;
   /** All space agents, excluding 'leader' */
-  agents: SpaceAgent[];
+  agents: SpaceWorkerAgent[];
   onToggleExpand: () => void;
   onUpdate: (node: NodeDraft) => void;
   onMoveUp: () => void;

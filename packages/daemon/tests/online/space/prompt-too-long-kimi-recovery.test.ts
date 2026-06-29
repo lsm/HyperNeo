@@ -28,7 +28,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
 import { waitForIdle } from '../../helpers/daemon-actions';
-import type { NodeExecution, Space, SpaceAgent, SpaceWorkflow } from '@neokai/shared';
+import type { NodeExecution, Space, SpaceWorkerAgent, SpaceWorkflow } from '@neokai/shared';
 import { buildPromptTooLongContinueNag } from '../../../src/lib/space/runtime/prompt-too-long-recovery';
 
 const IS_MOCK = !!process.env.NEOKAI_USE_DEV_PROXY;
@@ -44,7 +44,7 @@ const STEP_CODE_ID = 'step-code-kimi-recovery-001';
 
 type TestFixtures = {
   space: Space;
-  coderAgent: SpaceAgent;
+  coderAgent: SpaceWorkerAgent;
   workflow: SpaceWorkflow;
 };
 
@@ -58,7 +58,7 @@ async function createTestFixtures(daemon: DaemonServerContext): Promise<TestFixt
 
   const { agents } = (await daemon.messageHub.request('spaceAgent.list', {
     spaceId: space.id,
-  })) as { agents: SpaceAgent[] };
+  })) as { agents: SpaceWorkerAgent[] };
 
   const coderAgent = agents.find((a) => a.name === 'Coder');
   if (!coderAgent) throw new Error('Pre-seeded Coder agent not found');

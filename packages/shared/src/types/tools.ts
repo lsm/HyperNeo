@@ -2,7 +2,7 @@
  * Known Tools
  *
  * Single source of truth for tool names available to Space agents.
- * Any tool name used in SpaceAgent.tools must be drawn from this list.
+ * Any tool name used in SpaceWorkerAgent.tools must be drawn from this list.
  */
 
 export const KNOWN_TOOLS = [

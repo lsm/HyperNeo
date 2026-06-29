@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/preact';
 import { signal } from '@preact/signals';
 import type {
-  SpaceAgent,
+  SpaceWorkerAgent,
   NodeExecution,
   SpaceTask,
   SpaceTaskActivityMember,
@@ -39,7 +39,7 @@ vi.mock('../../../lib/signals', async (importOriginal) => {
 });
 
 let mockTasks: ReturnType<typeof signal<SpaceTask[]>>;
-let mockAgents: ReturnType<typeof signal<SpaceAgent[]>>;
+let mockAgents: ReturnType<typeof signal<SpaceWorkerAgent[]>>;
 let mockWorkflows: ReturnType<typeof signal<SpaceWorkflow[]>>;
 let mockWorkflowRuns: ReturnType<typeof signal<SpaceWorkflowRun[]>>;
 let mockNodeExecutions: ReturnType<typeof signal<NodeExecution[]>>;
@@ -104,7 +104,7 @@ vi.mock('../../../lib/design-tokens', () => ({
 }));
 
 mockTasks = signal<SpaceTask[]>([]);
-mockAgents = signal<SpaceAgent[]>([]);
+mockAgents = signal<SpaceWorkerAgent[]>([]);
 mockWorkflows = signal<SpaceWorkflow[]>([]);
 mockWorkflowRuns = signal<SpaceWorkflowRun[]>([]);
 mockNodeExecutions = signal<NodeExecution[]>([]);

@@ -226,7 +226,7 @@ export interface SpaceConfig {
 /**
  * Per-space overrides for the built-in Task Agent.
  *
- * The Task Agent is not a seeded SpaceAgent — it has no row in the `space_agents`
+ * The Task Agent is not a seeded SpaceWorkerAgent — it has no row in the `space_agents`
  * table. Its prompt is generated in code at `task-agent.ts`. This config allows
  * per-space customization of model and prompt additions without mutating code.
  */
@@ -235,7 +235,7 @@ export interface TaskAgentConfig {
   model?: string;
   /** Thinking-level override for the Task Agent. Falls back to the app default when unset. */
   thinkingLevel?: ThinkingLevel;
-  /** Custom prompt additions appended after the contract sections (similar to SpaceAgent.customPrompt). */
+  /** Custom prompt additions appended after the contract sections (similar to SpaceWorkerAgent.customPrompt). */
   customPrompt?: string;
   /**
    * Setting sources to load for the Task Agent.
@@ -1091,7 +1091,7 @@ export interface NodeExecution {
   workflowNodeId: string;
   /** Agent slot name (`WorkflowNodeAgent.name`) — channel routing address */
   agentName: string;
-  /** ID of the SpaceAgent assigned to this slot; null when the agent has been deleted */
+  /** ID of the SpaceWorkerAgent assigned to this slot; null when the agent has been deleted */
   agentId: string | null;
   /** Agent sub-session ID for liveness tracking; null until session is created */
   agentSessionId: string | null;
@@ -1196,16 +1196,16 @@ export interface CreateWorkflowRunParams {
 }
 
 // ============================================================================
-// SpaceAgent Types (M2)
+// SpaceWorkerAgent Types (M2)
 // ============================================================================
 
 /**
  * A named agent configuration within a Space.
  * SpaceAgents can be referenced by name in SpaceWorkflow nodes.
  */
-export type SpaceAgentStatus = 'active' | 'paused' | 'archived';
+export type SpaceWorkerAgentStatus = 'active' | 'paused' | 'archived';
 
-export interface SpaceAgent {
+export interface SpaceWorkerAgent {
   /** Unique identifier */
   id: string;
   /** Space this agent belongs to */
@@ -1215,7 +1215,7 @@ export interface SpaceAgent {
   /** URL-safe handle (unique within a space), used for @mentions and agent URLs */
   handle: string;
   /** Long-horizon agent lifecycle state */
-  status?: SpaceAgentStatus;
+  status?: SpaceWorkerAgentStatus;
   /** Optional description of this agent's specialization */
   description?: string;
   /** Model ID override (e.g., 'claude-haiku-4-5') — uses space default if unset */
@@ -1260,9 +1260,9 @@ export interface SpaceAgent {
 }
 
 /**
- * Parameters for creating a new SpaceAgent
+ * Parameters for creating a new SpaceWorkerAgent
  */
-export interface SpaceAgentPromotionProfile {
+export interface SpaceWorkerAgentPromotionProfile {
   responsibility: string;
   standingInstructions: string;
   autonomy: string;
@@ -1273,7 +1273,7 @@ export interface SpaceAgentPromotionProfile {
   standingContext: string;
 }
 
-export interface SpaceAgentPromotionDraft {
+export interface SpaceWorkerAgentPromotionDraft {
   sourceSessionId: string;
   sourceSessionTitle: string;
   name: string;
@@ -1284,15 +1284,15 @@ export interface SpaceAgentPromotionDraft {
   customPrompt: string;
   tools?: string[];
   settingSources?: SettingSource[];
-  profile: SpaceAgentPromotionProfile;
+  profile: SpaceWorkerAgentPromotionProfile;
 }
 
-export interface CreateSpaceAgentParams {
+export interface CreateSpaceWorkerAgentParams {
   spaceId: string;
   name: string;
   /** Optional explicit handle. When omitted, backend auto-generates one from name. */
   handle?: string;
-  status?: SpaceAgentStatus;
+  status?: SpaceWorkerAgentStatus;
   description?: string;
   model?: string;
   thinkingLevel?: ThinkingLevel;
@@ -1321,13 +1321,13 @@ export interface CreateSpaceAgentParams {
 }
 
 /**
- * Parameters for updating a SpaceAgent
+ * Parameters for updating a SpaceWorkerAgent
  */
-export interface UpdateSpaceAgentParams {
+export interface UpdateSpaceWorkerAgentParams {
   name?: string;
   /** Update the URL-safe handle. Omit to leave unchanged. */
   handle?: string;
-  status?: SpaceAgentStatus;
+  status?: SpaceWorkerAgentStatus;
   description?: string | null;
   model?: string | null;
   thinkingLevel?: ThinkingLevel | null;
@@ -1355,16 +1355,16 @@ export interface UpdateSpaceAgentParams {
 }
 
 /**
- * Single entry in an {@link AgentDriftReport}.
+ * Single entry in an {@link SpaceWorkerAgentDriftReport}.
  *
- * Each entry corresponds to one preset-seeded `SpaceAgent` row in a space.
+ * Each entry corresponds to one preset-seeded `SpaceWorkerAgent` row in a space.
  * Rows for user-created agents (no `templateName`) are not included in the
  * report at all.
  */
-export interface AgentDriftEntry {
+export interface SpaceWorkerAgentDriftEntry {
   /** Agent UUID. */
   agentId: string;
-  /** Human-readable agent name (matches `SpaceAgent.name`). */
+  /** Human-readable agent name (matches `SpaceWorkerAgent.name`). */
   agentName: string;
   /** Preset template name this agent was seeded from. */
   templateName: string;
@@ -1386,11 +1386,11 @@ export interface AgentDriftEntry {
  * current preset definition. Callers typically filter by `drifted === true`
  * to surface a UI badge / sync button.
  */
-export interface AgentDriftReport {
+export interface SpaceWorkerAgentDriftReport {
   /** Space the report was generated for. */
   spaceId: string;
-  /** Per-agent drift entries — one row per preset-tracked SpaceAgent. */
-  agents: AgentDriftEntry[];
+  /** Per-agent drift entries — one row per preset-tracked SpaceWorkerAgent. */
+  agents: SpaceWorkerAgentDriftEntry[];
 }
 
 // ============================================================================
@@ -1858,26 +1858,26 @@ export interface EventInterest {
 
 /**
  * A single agent entry within a multi-agent workflow node.
- * References a SpaceAgent by ID with an optional per-slot configuration override.
+ * References a SpaceWorkerAgent by ID with an optional per-slot configuration override.
  */
 export interface WorkflowNodeAgent {
-  /** ID of the SpaceAgent assigned to this slot */
+  /** ID of the SpaceWorkerAgent assigned to this slot */
   agentId: string;
   /**
    * Agent slot label — must be unique within the node.
-   * Derived from the SpaceAgent name. When the same agent is added to a node
+   * Derived from the SpaceWorkerAgent name. When the same agent is added to a node
    * multiple times, a numeric suffix is appended (e.g. `"Reviewer"` → `"Reviewer-2"`).
    * Used for gate `writers` lists and `node_executions.agent_name`.
    */
   name: string;
   /**
    * Optional model override for this agent slot.
-   * When absent, the assigned SpaceAgent model is used.
+   * When absent, the assigned SpaceWorkerAgent model is used.
    */
   model?: string;
   /**
    * Optional thinking-level override for this agent slot.
-   * When absent, the assigned SpaceAgent thinking level is used.
+   * When absent, the assigned SpaceWorkerAgent thinking level is used.
    */
   thinkingLevel?: ThinkingLevel;
   /**
@@ -2431,7 +2431,7 @@ export interface ExportedWorkflowChannel {
  * Mirrors `WorkflowNodeAgent` but uses a portable `agentRef` name instead of a UUID.
  */
 export interface ExportedWorkflowNodeAgent {
-  /** Name of the SpaceAgent (portable, not a UUID) */
+  /** Name of the SpaceWorkerAgent (portable, not a UUID) */
   agentRef: string;
   /**
    * Unique identifier for this agent slot within the node.
@@ -2527,7 +2527,7 @@ export interface ExportedWorkflowNode {
  * A Space agent in the portable export format.
  * Space-specific fields (`id`, `spaceId`, `createdAt`, `updatedAt`) are stripped.
  */
-export interface ExportedSpaceAgent {
+export interface ExportedSpaceWorkerAgent {
   /** Format version — always 1 for this revision */
   version: 1;
   /** Discriminator for the exported entity type */
@@ -2548,19 +2548,19 @@ export interface ExportedSpaceAgent {
   systemPrompt?: string;
   /**
    * Default operating procedure — describes HOW the agent performs its work.
-   * Mirrors `SpaceAgent.instructions`.
+   * Mirrors `SpaceWorkerAgent.instructions`.
    */
   instructions?: string;
   /**
    * Tool name overrides — list of tool names from KNOWN_TOOLS this agent may use.
    * When absent, defaults apply on import.
-   * Mirrors `SpaceAgent.tools`.
+   * Mirrors `SpaceWorkerAgent.tools`.
    */
   tools?: string[];
   /**
    * Setting sources override — which on-disk settings files this agent loads.
    * When absent, the agent inherits from its parent Space on import.
-   * Mirrors `SpaceAgent.settingSources`.
+   * Mirrors `SpaceWorkerAgent.settingSources`.
    */
   settingSources?: import('./settings').SettingSource[];
 }
@@ -2630,7 +2630,7 @@ export interface SpaceExportBundle {
   /** Optional description of the bundle's purpose */
   description?: string;
   /** Exported agents (may be empty) */
-  agents: ExportedSpaceAgent[];
+  agents: ExportedSpaceWorkerAgent[];
   /** Exported workflows (may be empty) */
   workflows: ExportedSpaceWorkflow[];
   /** Export timestamp (milliseconds since epoch) */

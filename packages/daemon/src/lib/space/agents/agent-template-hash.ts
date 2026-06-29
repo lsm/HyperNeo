@@ -4,7 +4,7 @@
  * Computes a deterministic canonical hash of a preset agent's template
  * fingerprint for drift detection. Mirrors the workflow `template-hash.ts`
  * utility, but for the small handful of fields that are seeded onto preset
- * `SpaceAgent` rows by `seedPresetAgents()`.
+ * `SpaceWorkerAgent` rows by `seedPresetAgents()`.
  *
  * The fingerprint covers `name` (lowercased, trimmed), `description`, the
  * `tools` array (sorted), and `customPrompt`. Runtime/identity fields like

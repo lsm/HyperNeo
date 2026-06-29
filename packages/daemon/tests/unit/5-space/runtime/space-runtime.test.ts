@@ -2483,7 +2483,7 @@ describe('SpaceRuntime', () => {
       expect(result.errors).toHaveLength(0);
       expect(result.seeded.length).toBeGreaterThan(0);
 
-      // Seed workflows using name resolver (role removed from CreateSpaceAgentParams in M71;
+      // Seed workflows using name resolver (role removed from CreateSpaceWorkerAgentParams in M71;
       // built-in templates use capitalized placeholder names matching agent names)
       const agents = agentManager.listBySpaceId(newSpaceId);
       expect(() =>
@@ -2511,7 +2511,7 @@ describe('SpaceRuntime', () => {
 
       await seedPresetAgents(newSpaceId, agentManager);
       const agents = agentManager.listBySpaceId(newSpaceId);
-      // role removed from CreateSpaceAgentParams in M71; use name lookup instead
+      // role removed from CreateSpaceWorkerAgentParams in M71; use name lookup instead
       const resolver = (name: string) => agents.find((a) => a.name === name)?.id;
 
       seedBuiltInWorkflows(newSpaceId, workflowManager, resolver);

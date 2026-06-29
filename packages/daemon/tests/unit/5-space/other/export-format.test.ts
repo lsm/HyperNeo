@@ -24,13 +24,13 @@ import {
   validateExportBundle,
   normalizeOverride,
 } from '../../../../src/lib/space/export-format.ts';
-import type { SpaceAgent, SpaceWorkflow } from '@neokai/shared';
+import type { SpaceWorkerAgent, SpaceWorkflow } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
 // Test fixtures
 // ---------------------------------------------------------------------------
 
-function makeAgent(overrides: Partial<SpaceAgent> = {}): SpaceAgent {
+function makeAgent(overrides: Partial<SpaceWorkerAgent> = {}): SpaceWorkerAgent {
   return {
     id: 'agent-uuid-1',
     spaceId: 'space-uuid-1',
@@ -46,7 +46,7 @@ function makeAgent(overrides: Partial<SpaceAgent> = {}): SpaceAgent {
   };
 }
 
-function makeMinimalAgent(overrides: Partial<SpaceAgent> = {}): SpaceAgent {
+function makeMinimalAgent(overrides: Partial<SpaceWorkerAgent> = {}): SpaceWorkerAgent {
   return {
     id: 'agent-uuid-2',
     spaceId: 'space-uuid-1',
@@ -58,7 +58,7 @@ function makeMinimalAgent(overrides: Partial<SpaceAgent> = {}): SpaceAgent {
   };
 }
 
-function makeReviewerAgent(overrides: Partial<SpaceAgent> = {}): SpaceAgent {
+function makeReviewerAgent(overrides: Partial<SpaceWorkerAgent> = {}): SpaceWorkerAgent {
   return {
     id: 'agent-uuid-3',
     spaceId: 'space-uuid-1',
@@ -114,7 +114,7 @@ describe('exportAgent', () => {
     expect(exported.version).toBe(1);
     expect(exported.type).toBe('agent');
     expect(exported.name).toBe('My Coder');
-    // role field was removed from SpaceAgent in M71
+    // role field was removed from SpaceWorkerAgent in M71
     expect((exported as Record<string, unknown>).role).toBeUndefined();
     expect(exported.description).toBe('Writes code');
     expect(exported.model).toBe('claude-sonnet-4-6');
@@ -646,7 +646,7 @@ describe('round-trip: export → JSON → validate', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.value.name).toBe(agent.name);
-      // role was removed from SpaceAgent in M71; not exported or round-tripped
+      // role was removed from SpaceWorkerAgent in M71; not exported or round-tripped
       expect((result.value as Record<string, unknown>).role).toBeUndefined();
       expect(result.value.model).toBe(agent.model);
       expect(result.value.tools).toEqual(['bash', 'read_file']);
@@ -661,7 +661,7 @@ describe('round-trip: export → JSON → validate', () => {
     const result = validateExportedAgent(parsed);
     expect(result.ok).toBe(true);
     if (result.ok) {
-      // role was removed from SpaceAgent in M71; not exported or round-tripped
+      // role was removed from SpaceWorkerAgent in M71; not exported or round-tripped
       expect((result.value as Record<string, unknown>).role).toBeUndefined();
       expect(result.value.name).toBe('Reviewer');
     }

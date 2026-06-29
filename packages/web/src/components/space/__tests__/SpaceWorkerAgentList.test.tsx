@@ -1,14 +1,14 @@
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/preact';
 import { signal } from '@preact/signals';
 import type {
-  SpaceAgent,
+  SpaceWorkerAgent,
   SpaceAutonomyLevel,
   SpaceLongHorizonAgent,
   SpaceWorkflow,
 } from '@neokai/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-let mockAgents: ReturnType<typeof signal<SpaceAgent[]>>;
+let mockAgents: ReturnType<typeof signal<SpaceWorkerAgent[]>>;
 let mockLongHorizonAgents: ReturnType<typeof signal<SpaceLongHorizonAgent[]>>;
 let mockWorkflows: ReturnType<typeof signal<unknown[]>>;
 let mockWorkflowDetails: ReturnType<typeof signal<SpaceWorkflow[]>>;
@@ -45,7 +45,7 @@ vi.mock('../../../lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 
-mockAgents = signal<SpaceAgent[]>([]);
+mockAgents = signal<SpaceWorkerAgent[]>([]);
 mockLongHorizonAgents = signal<SpaceLongHorizonAgent[]>([]);
 mockWorkflows = signal<unknown[]>([]);
 mockWorkflowDetails = signal<SpaceWorkflow[]>([]);
@@ -55,7 +55,7 @@ mockSpaceId = signal('space-1');
 
 import { SpaceWorkerAgentList } from '../SpaceWorkerAgentList';
 
-function makeAgent(id: string, overrides: Partial<SpaceAgent> = {}): SpaceAgent {
+function makeAgent(id: string, overrides: Partial<SpaceWorkerAgent> = {}): SpaceWorkerAgent {
   return {
     id,
     spaceId: 'space-1',

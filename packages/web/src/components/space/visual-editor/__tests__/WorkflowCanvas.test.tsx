@@ -19,7 +19,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, fireEvent, cleanup } from '@testing-library/preact';
 import { useState } from 'preact/hooks';
-import type { SpaceAgent } from '@neokai/shared';
+import type { SpaceWorkerAgent } from '@neokai/shared';
 import type { VisualTransition } from '../types';
 import { WorkflowCanvas } from '../WorkflowCanvas';
 import type { WorkflowNodeData, WorkflowCanvasProps } from '../WorkflowCanvas';
@@ -36,7 +36,7 @@ afterEach(() => cleanup());
 
 const VP: ViewportState = { offsetX: 0, offsetY: 0, scale: 1 };
 
-function makeAgent(id: string, name: string): SpaceAgent {
+function makeAgent(id: string, name: string): SpaceWorkerAgent {
   return {
     id,
     spaceId: 'space-1',
@@ -52,7 +52,7 @@ function makeStep(localId: string, name: string): NodeDraft {
   return { localId, name, agentId: 'agent-1' };
 }
 
-const AGENTS: SpaceAgent[] = [makeAgent('agent-1', 'Coder')];
+const AGENTS: SpaceWorkerAgent[] = [makeAgent('agent-1', 'Coder')];
 
 const NODES: WorkflowNodeData[] = [
   {
@@ -479,7 +479,7 @@ import { computeChannelEdges } from '../WorkflowCanvas';
 import type { WorkflowChannel } from '@neokai/shared';
 
 describe('computeChannelEdges', () => {
-  function makeAgentWithRole(id: string, role: string): SpaceAgent {
+  function makeAgentWithRole(id: string, role: string): SpaceWorkerAgent {
     return {
       id,
       spaceId: 'space-1',
@@ -494,7 +494,7 @@ describe('computeChannelEdges', () => {
   function makeNodeWithAgentsAndChannels(
     localId: string,
     name: string,
-    agents: SpaceAgent[],
+    agents: SpaceWorkerAgent[],
     channels?: WorkflowChannel[]
   ) {
     return {

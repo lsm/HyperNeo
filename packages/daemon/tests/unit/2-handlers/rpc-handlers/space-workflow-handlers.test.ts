@@ -527,7 +527,7 @@ describe('space-workflow-handlers', () => {
     it('propagates step validation error (unknown agentId)', async () => {
       (workflowManager.updateWorkflow as ReturnType<typeof mock>).mockImplementation(() => {
         throw new WorkflowValidationError(
-          'step[0]: agentId "unknown-uuid" does not match any SpaceAgent in this space'
+          'step[0]: agentId "unknown-uuid" does not match any SpaceWorkerAgent in this space'
         );
       });
 
@@ -536,7 +536,7 @@ describe('space-workflow-handlers', () => {
           id: 'wf-1',
           nodes: [{ id: 's1', name: 'Lead', agentId: 'unknown-uuid', order: 0 }],
         })
-      ).rejects.toThrow('does not match any SpaceAgent in this space');
+      ).rejects.toThrow('does not match any SpaceWorkerAgent in this space');
     });
   });
 
@@ -897,14 +897,14 @@ describe('space-workflow-handlers', () => {
       ).rejects.toThrow('Built-in template "Unknown Template" not found');
     });
 
-    it('throws when a required agent role cannot be resolved to a SpaceAgent', async () => {
+    it('throws when a required agent role cannot be resolved to a SpaceWorkerAgent', async () => {
       const [template] = getBuiltInWorkflows();
       const wfLinked: SpaceWorkflow = { ...mockWorkflow, templateName: template.name };
       // Empty agents list — none of the role names can resolve
       setup(mockSpace, wfLinked, []);
       await expect(
         call('spaceWorkflow.syncFromTemplate', { id: 'wf-1', spaceId: 'space-1' })
-      ).rejects.toThrow('Cannot sync: no SpaceAgent found with name');
+      ).rejects.toThrow('Cannot sync: no SpaceWorkerAgent found with name');
     });
   });
 
@@ -1276,7 +1276,7 @@ describe('space-workflow-handlers', () => {
       expect(workflowManager.updateWorkflow).toHaveBeenCalledTimes(1);
     });
 
-    it('throws when no SpaceAgent resolves a required role — and does NOT delete any duplicates or mutate the kept row', async () => {
+    it('throws when no SpaceWorkerAgent resolves a required role — and does NOT delete any duplicates or mutate the kept row', async () => {
       // Regression: previously resyncDuplicates deleted the older rows
       // before validating agent resolution. If agent resolution threw,
       // duplicates were permanently lost with no resync performed. The
@@ -1304,7 +1304,7 @@ describe('space-workflow-handlers', () => {
           spaceId: 'space-1',
           templateName: template.name,
         })
-      ).rejects.toThrow('Cannot resync: no SpaceAgent found with name');
+      ).rejects.toThrow('Cannot resync: no SpaceWorkerAgent found with name');
 
       // Crucially: no destructive work happened.
       expect(workflowManager.deleteWorkflow).not.toHaveBeenCalled();

@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import type { SpaceAgent, SpaceWorkflow } from '@neokai/shared';
+import type { SpaceWorkerAgent, SpaceWorkflow } from '@neokai/shared';
 import {
   filterAgents,
   buildTemplateNodes,
@@ -17,7 +17,7 @@ import {
   workflowToTemplate,
 } from '../workflow-templates';
 
-function makeAgent(id: string, name: string): SpaceAgent {
+function makeAgent(id: string, name: string): SpaceWorkerAgent {
   return {
     id,
     spaceId: 'space-1',

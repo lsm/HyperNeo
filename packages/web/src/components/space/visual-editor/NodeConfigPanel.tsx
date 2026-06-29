@@ -20,7 +20,7 @@ import { useState, useEffect, useCallback } from 'preact/hooks';
 import { useComputed } from '@preact/signals';
 import type {
   Gate,
-  SpaceAgent,
+  SpaceWorkerAgent,
   ThinkingLevel,
   WorkflowChannel,
   WorkflowNodeAgent,
@@ -36,7 +36,7 @@ import { HookEditorPanel } from './HookEditorPanel';
 import { skillsStore } from '../../../lib/skills-store';
 import { normalizeThinkingLevel } from '@neokai/shared';
 
-function isCoordinatorAgent(agent: SpaceAgent): boolean {
+function isCoordinatorAgent(agent: SpaceWorkerAgent): boolean {
   return agent.name.toLowerCase() === 'coordinator' || agent.templateName === 'Coordinator';
 }
 
@@ -102,7 +102,7 @@ export interface NodeChannelLink {
 
 export interface NodeConfigPanelProps {
   step: NodeDraft;
-  agents: SpaceAgent[];
+  agents: SpaceWorkerAgent[];
   isStartNode: boolean;
   isEndNode: boolean;
   onUpdate: (step: NodeDraft) => void;
@@ -193,7 +193,7 @@ function SlotSkillsToggle({ disabledSkillIds, onChange }: SlotSkillsToggleProps)
 
 interface AgentsSectionProps {
   step: NodeDraft;
-  agents: SpaceAgent[];
+  agents: SpaceWorkerAgent[];
   onUpdate: (step: NodeDraft) => void;
   onEditSlotPrompts?: (role: string) => void;
   onEditSinglePrompts?: () => void;
