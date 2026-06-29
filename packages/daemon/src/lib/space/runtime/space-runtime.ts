@@ -8424,14 +8424,22 @@ export class SpaceRuntime {
     const eventPrUrl = this.resolvePrUrlFromExternalEventPayload(payload);
     const eventParsed = eventPrUrl ? parsePrUrl(eventPrUrl) : null;
     if (!eventParsed) return false;
+    // Compare the parsed identity case-insensitively: GitHub owner/repo are
+    // case-insensitive (the canonical form is returned on redirect), so a
+    // run storing `.../LSM/NeoKai/pull/42` must still match an event for
+    // `.../lsm/neokai/pull/42`.
+    const eventHost = eventParsed.host.toLowerCase();
+    const eventOwner = eventParsed.owner.toLowerCase();
+    const eventRepo = eventParsed.repo.toLowerCase();
+    const eventNumber = eventParsed.number;
     for (const run of this.config.workflowRunRepo.listBySpace(payload.spaceId)) {
       const runParsed = parsePrUrl(this.resolvePrUrlForRun(run.id));
       if (
         runParsed &&
-        runParsed.host === eventParsed.host &&
-        runParsed.owner === eventParsed.owner &&
-        runParsed.repo === eventParsed.repo &&
-        runParsed.number === eventParsed.number
+        runParsed.host.toLowerCase() === eventHost &&
+        runParsed.owner.toLowerCase() === eventOwner &&
+        runParsed.repo.toLowerCase() === eventRepo &&
+        runParsed.number === eventNumber
       ) {
         return true;
       }

@@ -1336,6 +1336,20 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(eventStore.listDeliveries(event.id)).toHaveLength(0);
   });
 
+  test('matches linked PR events case-insensitively across owner and repo', async () => {
+    const { run } = await startRunWithSubscription(DEFAULT_TOPIC);
+    await runtime.executeTick();
+    const gateDataRepo = new GateDataRepository(db);
+    gateDataRepo.set(run.id, 'pr', { prUrl: 'https://github.com/LSM/NeoKai/pull/42' });
+
+    const event = makeEvent({ topic: 'github/lsm/neokai/pull_request/42.comment_created' });
+    await eventService.publish(event);
+
+    expect(injected).toHaveLength(0);
+    expect(eventStore.getById(event.id)?.state).toBe('published');
+    expect(eventStore.listDeliveries(event.id)).toHaveLength(0);
+  });
+
   test('fails linked-PR events past TTL via periodic executeTick sweep', async () => {
     const { run } = await startRunWithSubscription(DEFAULT_TOPIC);
     await runtime.executeTick();
@@ -1359,6 +1373,50 @@ describe('SpaceRuntime external event subscriptions', () => {
 
     expect(eventStore.listDeliveries('evt-linked-pr-expired-sweep')).toHaveLength(0);
     expect(eventStore.getById('evt-linked-pr-expired-sweep')?.state).toBe('failed');
+  });
+
+  test('fails PR-linked events when blocked-run hook fires but opens no gate', async () => {
+    // Rebuild the runtime with a blocked-run hook that reports no gate opened.
+    const hookRunIds: string[] = [];
+    runtime = new SpaceRuntime({
+      db,
+      spaceManager,
+      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+      spaceWorkflowManager: workflowManager,
+      workflowRunRepo,
+      taskRepo,
+      nodeExecutionRepo,
+      artifactRepo,
+      internalEventBus: bus,
+      commandBus: createInternalCommandBus(),
+      externalEventStore: eventStore,
+      taskAgentManager: tam as never,
+      onBlockedRunExternalEvent: ({ runId }) => {
+        hookRunIds.push(runId);
+        return false;
+      },
+    });
+    const { run, task } = await startRunWithSubscription(DEFAULT_TOPIC);
+    await runtime.executeTick();
+    const gateDataRepo = new GateDataRepository(db);
+    gateDataRepo.set(run.id, 'pr', { prUrl: 'https://github.com/lsm/neokai/pull/42' });
+
+    // Cancel the only node execution so hasActiveExecutionForRun() is false —
+    // the post-hook matches filter then drops the blocked run, leaving
+    // matches.length === 0 while the subscription still drives the hook.
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'cancelled',
+      completedAt: Date.now(),
+    });
+    workflowRunRepo.updateRun(run.id, { status: 'blocked', failureReason: 'agentCrash' });
+
+    const event = makeEvent();
+    await eventService.publish(event);
+
+    expect(hookRunIds).toContain(run.id);
+    expect(eventStore.getById(event.id)?.state).toBe('failed');
+    expect(eventStore.listDeliveries(event.id)).toHaveLength(0);
   });
 
   test('fails queued deliveries when an execution is unregistered', async () => {
