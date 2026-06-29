@@ -164,6 +164,9 @@ export class EvolutionEpisodeService {
     const judged = this.deps.judgeEpisode
       ? await this.deps.judgeEpisode(input)
       : await judgeEpisodeWithModel(input, this.deps.spaceRepo);
+    const gapFindings = this.detectResultArtifactGaps(input);
+    const findings =
+      gapFindings.length > 0 ? [...judged.findings, ...gapFindings] : judged.findings;
     const episode = this.deps.evolutionRepo.createEpisode({
       scopeId: input.scope.id,
       status: 'draft',
@@ -171,7 +174,7 @@ export class EvolutionEpisodeService {
       timeWindow: input.timeWindow,
       evidenceIds: input.evidence.map((item) => item.id),
       outcomeSummary: judged.outcomeSummary,
-      findings: judged.findings,
+      findings,
     });
     const lessons = (judged.candidateLessons ?? []).map((lesson) =>
       this.deps.evolutionRepo.createLesson({
@@ -446,6 +449,46 @@ export class EvolutionEpisodeService {
         },
       ];
     });
+  }
+
+  private detectResultArtifactGaps(input: EpisodeJudgePromptInput): EvolutionFinding[] {
+    const gaps: EvolutionFinding[] = [];
+    const runHasResultArtifact = new Map<string, boolean>();
+    for (const { evidenceId: taskEvidenceId, task } of input.tasks) {
+      const runId = task.workflowRunId;
+      if (!runId) continue;
+      if (typeof task.result === 'string' && task.result.trim().length > 0) continue;
+
+      let hasResultArtifact = runHasResultArtifact.get(runId);
+      if (hasResultArtifact === undefined) {
+        const runContext = input.workflowRuns.find((wr) => wr.run.id === runId);
+        if (runContext) {
+          hasResultArtifact = runContext.artifacts.some(
+            (artifact) => artifact.artifactType === 'result'
+          );
+        } else if (this.deps.artifactRepo) {
+          hasResultArtifact =
+            this.deps.artifactRepo.listByRun(runId, { artifactType: 'result' }).length > 0;
+        } else {
+          hasResultArtifact = false;
+        }
+        runHasResultArtifact.set(runId, hasResultArtifact);
+      }
+      if (!hasResultArtifact) continue;
+
+      const runContext = input.workflowRuns.find((wr) => wr.run.id === runId);
+      const evidence = [taskEvidenceId];
+      if (runContext) evidence.push(runContext.evidenceId);
+      gaps.push({
+        domain: 'neokai_product',
+        kind: 'bug',
+        impact: 'medium',
+        confidence: 0.9,
+        evidence,
+        proposedAction: `Backfill task.result for "${task.title}" from the result artifact on workflow run ${runId}; the artifact exists but the task record has no result.`,
+      });
+    }
+    return gaps;
   }
 
   private requireScope(scopeId: string): EvolutionScope {
