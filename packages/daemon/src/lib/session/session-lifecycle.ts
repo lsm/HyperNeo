@@ -942,6 +942,11 @@ export class SessionLifecycle {
 
     const session = agentSession.getSessionData();
 
+    // Respect a user-set title: never overwrite a manual rename with auto-gen.
+    if (session.metadata.titleSetBy === 'user') {
+      return { title: session.title, isFallback: false };
+    }
+
     // Check if title already generated
     if (session.metadata.titleGenerated) {
       return { title: session.title, isFallback: false };

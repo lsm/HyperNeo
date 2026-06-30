@@ -557,6 +557,40 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
     expect(result.title).toBe('Create a login form');
   });
 
+  it('should skip auto-title generation when a user has manually renamed the session', async () => {
+    // titleSetBy === 'user' guards a manual rename from being clobbered by the
+    // auto-gen job: the model is never queried and the session record is untouched.
+    const { mockAgentSession, mockSessionCache: sessionCache } = makeSessionCache();
+    mockAgentSession.getSessionData = mock(() => ({
+      id: 'test-id',
+      title: 'My Renamed Title',
+      workspacePath: '/test',
+      status: 'active',
+      metadata: { titleGenerated: false, titleSetBy: 'user' },
+      config: { model: 'claude-sonnet-4-20250514', provider: 'anthropic' },
+      worktree: undefined,
+    }));
+    lifecycle = new SessionLifecycleCtor(
+      mockDb,
+      mockWorktreeManager,
+      sessionCache,
+      mockInternalEventBus,
+      mockMessageHub,
+      config,
+      mockToolsConfigManager,
+      mockAgentSessionFactory
+    );
+
+    const result = await lifecycle.generateTitleAndRenameBranch('test-id', 'Create a login form');
+
+    expect(result.title).toBe('My Renamed Title');
+    expect(result.isFallback).toBe(false);
+    // The model was never queried for a title...
+    expect(lastTitleQueryOptions).toBeUndefined();
+    // ...and the session record was not written.
+    expect(mockDb.updateSession).not.toHaveBeenCalled();
+  });
+
   it('should generate titles using stored credentials when env vars are absent', async () => {
     delete process.env.ANTHROPIC_API_KEY;
     delete process.env.CLAUDE_CODE_OAUTH_TOKEN;

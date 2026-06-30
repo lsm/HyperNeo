@@ -592,6 +592,8 @@ export interface SessionMetadata {
   totalCost: number;
   toolCallCount: number;
   titleGenerated?: boolean; // Flag to track if title has been auto-generated
+  /** Set when a user manually renames; auto-title generation skips these. */
+  titleSetBy?: 'user' | 'auto';
   workspaceInitialized?: boolean; // Flag to track if workspace (title + worktree) has been initialized
   lastContextInfo?: ContextInfo | null; // Last known context info (persisted)
   inputDraft?: string | null; // Draft input text (null to clear; persisted across sessions and devices)
