@@ -1508,12 +1508,17 @@ export class SpaceRuntime {
   private hasCurrentAutoPrSubscriptionForRun(workflowRunId: string, prUrl: string): boolean {
     const parsed = parsePrUrl(prUrl);
     if (!parsed) return false;
+    const slot = this.resolveActiveExecutionSlotForRun(workflowRunId);
+    if (!slot) return false;
     const expectedTopic = buildPrEventTopicPattern(parsed).toLowerCase();
     return (
       this.topicTrie.count(
         (target) =>
           isWorkflowSubscriptionTarget(target) &&
           target.workflowRunId === workflowRunId &&
+          target.taskId === slot.taskId &&
+          target.nodeId === slot.nodeId &&
+          target.agentName === slot.agentName &&
           target.subscriptionKind === 'auto' &&
           target.topic?.toLowerCase() === expectedTopic
       ) > 0
@@ -1683,9 +1688,13 @@ export class SpaceRuntime {
     for (const item of dispatchable) {
       // A concurrent cleanup may have marked this delivery terminal while the
       // batch was being prepared. Skip dispatch rather than injecting into a
-      // target that is no longer eligible.
+      // target that is no longer eligible. Also re-check the current trie: the
+      // persisted delivery row can still be non-terminal if another identical
+      // interest remains, but a queued in-memory item for this target must not
+      // flush after its specific subscription was removed.
       if (
-        this.config.externalEventStore?.isDeliveryTerminal(item.event.eventId, item.deliveryKey)
+        this.config.externalEventStore?.isDeliveryTerminal(item.event.eventId, item.deliveryKey) ||
+        !this.isTargetStillSubscribed(target, item.event.topic)
       ) {
         this.clearExternalEventRetry(item.deliveryKey);
         continue;
@@ -1725,7 +1734,8 @@ export class SpaceRuntime {
       // ordered batch was being prepared. Skip dispatch rather than injecting
       // an event into a target that is no longer eligible.
       if (
-        this.config.externalEventStore?.isDeliveryTerminal(item.event.eventId, item.deliveryKey)
+        this.config.externalEventStore?.isDeliveryTerminal(item.event.eventId, item.deliveryKey) ||
+        !this.isTargetStillSubscribed(target, item.event.topic)
       ) {
         this.clearExternalEventRetry(item.deliveryKey);
         continue;
@@ -4432,6 +4442,7 @@ export class SpaceRuntime {
           }
         }
         await this.rehydrateExecutors();
+        await this.ensurePrEventSubscriptionsForActiveRuns();
         // Run a stalled-run recovery pass right after rehydrate so the
         // first tick that processes runs already sees a clean slate
         // (orphan in_progress executions reset to pending, terminally

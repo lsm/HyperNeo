@@ -1187,7 +1187,7 @@ describe('SpaceRuntimeService event-driven gate evaluation', () => {
     expect(runtimeNotifications).toHaveLength(0);
   });
 
-  test('clearPrEventSubscriptionsForRun purges queued deliveries for the auto target', async () => {
+  test('clearPrEventSubscriptionsForRun removes in-memory queued deliveries for the auto target', async () => {
     const ctx = await setup({
       gates: [
         {
@@ -1229,14 +1229,21 @@ describe('SpaceRuntimeService event-driven gate evaluation', () => {
       payload: {},
     };
     await ctx.eventService.publish(event);
+    expect(ctx.eventStore.listDeliveries(event.id)).toHaveLength(1);
+
+    const pendingQueues = ctx.service.runtime as unknown as {
+      pendingExternalEventQueue: Map<string, unknown[]>;
+    };
 
     // Now clear the auto subscription. Queued deliveries for the auto target
     // must be purged so a later session spawn does not flush a stale
     // delivery for a subscription that no longer exists.
     ctx.service.runtime.clearPrEventSubscriptionsForRun(runId);
+    expect(pendingQueues.pendingExternalEventQueue.size).toBe(0);
 
-    // Re-attach a live session — no delivery should fire because the auto
-    // subscription (and its queued deliveries) were purged.
+    // Re-attach a live session. The preserved persisted delivery can still
+    // flush because an identical current auto subscription remains, but the
+    // cleared target did not leave a duplicate in-memory queued item behind.
     ctx.tam.alive.add(`session-queued-${runId}`);
     ctx.service.runtime.flushPendingNodeQueue({
       workflowRunId: runId,
@@ -1246,7 +1253,7 @@ describe('SpaceRuntimeService event-driven gate evaluation', () => {
       sessionId: `session-queued-${runId}`,
     });
     await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(ctx.injected).toHaveLength(0);
+    expect(ctx.injected).toHaveLength(1);
   });
 
   test('P1 regression: approve gate then reject clears the gate-open cache so deliverMessage does not bypass', async () => {
@@ -1329,7 +1336,7 @@ describe('SpaceRuntimeService event-driven gate evaluation', () => {
     expect(ctx.runtimeNotifications).toHaveLength(0);
   });
 
-  test('P2-2: PR event delivered during blocked hook does not re-deliver after auto-sub clear', async () => {
+  test('P2-2: PR event delivered during blocked hook is delivered once after gate opens', async () => {
     const ctx = await setup({
       gates: [
         {
@@ -1358,9 +1365,10 @@ describe('SpaceRuntimeService event-driven gate evaluation', () => {
     await ctx.eventService.publish(event);
     await new Promise((resolve) => setTimeout(resolve, 10));
 
-    // The hook cleared the auto-sub and transitioned the run to in_progress.
-    // The stale allMatches snapshot would have delivered to the now-removed
-    // auto target — assert no delivery happened for this event.
-    expect(ctx.injected).toHaveLength(0);
+    // The hook preserved/refreshed the auto-sub and transitioned the run to
+    // in_progress. The event should be delivered once to the active slot, not
+    // dropped as a stale auto-target snapshot.
+    expect(ctx.injected).toHaveLength(1);
+    expect(ctx.eventStore.getById(event.id)?.state).toBe('delivered');
   });
 });

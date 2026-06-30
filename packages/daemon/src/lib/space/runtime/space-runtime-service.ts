@@ -2180,10 +2180,8 @@ export class SpaceRuntimeService {
         .listBySpace(spaceId)
         .filter((run) => run.status === 'blocked' || run.status === 'in_progress');
       for (const run of activeRuns) {
-        const prUrl = this.resolvePrUrlForRun(run.id);
-        if (!prUrl) continue;
-        const result = this.runtime.registerPrEventSubscriptionForRun(run.id, prUrl);
-        if (result.success) rehydrated++;
+        const result = this.runtime.ensurePrEventSubscriptionForRun(run.id);
+        if (result.subscribed) rehydrated++;
       }
       if (rehydrated > 0) {
         log.info(
