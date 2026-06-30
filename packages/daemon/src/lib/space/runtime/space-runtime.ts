@@ -1886,7 +1886,30 @@ export class SpaceRuntime {
 
     if (matches.length === 0) {
       if (blockedHookOutcome.firedRunIds.size === 0) {
-        // No blocked-run hook fired — safe to terminally mark ignored.
+        // No blocked-run hook fired and no subscriptions matched. Don't
+        // terminally drop GitHub PR events that are linked to a workflow run in
+        // this space just because no subscription exists yet. Keep the event
+        // `published` so the redispatch sweep can deliver it once a subscription
+        // appears (e.g. a blocked-run auto-subscription or a deliberate agent
+        // subscription). Events for PRs not linked to any run are still ignored,
+        // and linked events that stay unmatched past EXTERNAL_EVENT_QUEUE_TTL_MS
+        // are marked failed to prevent unbounded `space_external_events` growth.
+        if (this.isPrEventLinkedToRun(payload)) {
+          if (this.acceptingExternalEvents && this.isPublishedExternalEventExpired(payload)) {
+            try {
+              store.markEventFailed(payload.eventId, {
+                terminal: true,
+                reason: 'ttl_expired',
+              });
+            } catch (err) {
+              log.warn(
+                `SpaceRuntime: markEventFailed for ${payload.eventId} failed: ${err instanceof Error ? err.message : String(err)}`
+              );
+            }
+          }
+          return;
+        }
+
         if (this.acceptingExternalEvents) {
           store.markEventIgnored(payload.eventId, 'no_matching_subscriptions');
         }
@@ -2925,6 +2948,23 @@ export class SpaceRuntime {
    */
   private isQueuedExternalEventExpired(item: PendingExternalEvent, now = Date.now()): boolean {
     return now - item.createdAt > EXTERNAL_EVENT_QUEUE_TTL_MS;
+  }
+
+  /**
+   * TTL check for a published source event that has no registered deliveries.
+   * Mirrors `isQueuedExternalEventExpired`: the anchor is the source event's
+   * ingestion time (`space_external_events.created_at`), not the current
+   * handling time. Used to bound how long a PR event can stay `published`
+   * waiting for a subscription to appear.
+   */
+  private isPublishedExternalEventExpired(
+    payload: ExternalEventPublishedPayload,
+    now = Date.now()
+  ): boolean {
+    const store = this.config.externalEventStore;
+    const createdAt = store?.getById(payload.eventId)?.createdAt;
+    if (createdAt === undefined) return false;
+    return now - createdAt > EXTERNAL_EVENT_QUEUE_TTL_MS;
   }
 
   private failQueuedDeliveryForTtl(item: PendingExternalEvent, queueKey: string): void {
@@ -4356,6 +4396,11 @@ export class SpaceRuntime {
       await this.cleanupTerminalExecutors();
       await this.reconcileTerminalRunsWithoutExecutors();
       await this.checkStandaloneTasks();
+
+      // Bound published events without deliveries (e.g. retained PR-linked
+      // events waiting for a subscription) so they do not last forever when no
+      // matching subscription, duplicate webhook, or restart occurs.
+      this.expirePublishedExternalEventsPastTtl();
     } finally {
       this.tickInFlight = false;
     }
@@ -4988,6 +5033,31 @@ export class SpaceRuntime {
     if (!store) return;
     for (const eventRecord of store.listPublishedEventsWithoutDeliveries()) {
       void this.handleExternalEvent(this.externalEventPayloadFromRecord(eventRecord.event));
+    }
+  }
+
+  /**
+   * Periodic TTL sweep for source events that are still `published` and have
+   * no delivery rows. This bounds events that the runtime intentionally keeps
+   * published waiting for a subscription (e.g. PR-linked events) so they do not
+   * remain in `space_external_events` indefinitely when no matching subscription,
+   * duplicate webhook, or restart occurs.
+   */
+  private expirePublishedExternalEventsPastTtl(now = Date.now()): void {
+    const store = this.config.externalEventStore;
+    if (!store) return;
+    for (const eventRecord of store.listPublishedEventsWithoutDeliveries()) {
+      if (now - eventRecord.createdAt <= EXTERNAL_EVENT_QUEUE_TTL_MS) continue;
+      try {
+        store.markEventFailed(eventRecord.event.id, {
+          terminal: true,
+          reason: 'ttl_expired',
+        });
+      } catch (err) {
+        log.warn(
+          `SpaceRuntime: TTL sweep failed for ${eventRecord.event.id}: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
     }
   }
 
@@ -8300,6 +8370,79 @@ export class SpaceRuntime {
     }
 
     return '';
+  }
+
+  /**
+   * Extract a GitHub PR URL from an external-event payload.
+   *
+   * Prefers the explicit `prUrl` in the source payload (set by the GitHub
+   * normalizer), falls back to `externalUrl` when it parses as a PR URL, and
+   * finally derives a canonical `github.com` URL from a five-segment PR topic
+   * (`github/owner/repo/pull_request/N.action`). Returns `null` for non-PR
+   * events or legacy four-segment topics without an explicit URL.
+   */
+  private resolvePrUrlFromExternalEventPayload(
+    payload: ExternalEventPublishedPayload
+  ): string | null {
+    const payloadPrUrl = payload.payload?.prUrl;
+    if (typeof payloadPrUrl === 'string') {
+      const parsed = parsePrUrl(payloadPrUrl);
+      if (parsed) return payloadPrUrl;
+    }
+    const payloadPrUrlSnake = payload.payload?.pr_url;
+    if (typeof payloadPrUrlSnake === 'string') {
+      const parsed = parsePrUrl(payloadPrUrlSnake);
+      if (parsed) return payloadPrUrlSnake;
+    }
+    if (typeof payload.externalUrl === 'string') {
+      const parsed = parsePrUrl(payload.externalUrl);
+      if (parsed) return payload.externalUrl;
+    }
+    const topicParts = payload.topic.split('/');
+    if (topicParts.length >= 5 && topicParts[0] === 'github' && topicParts[3] === 'pull_request') {
+      const owner = topicParts[1];
+      const repo = topicParts[2];
+      const number = topicParts[4]!.split('.')[0];
+      if (owner && repo && number) {
+        return `https://github.com/${owner}/${repo}/pull/${number}`;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Whether a GitHub PR event is associated with any workflow run in its space.
+   *
+   * The link is derived at runtime by comparing the event's PR URL to the PR
+   * URL resolved for each run in the space (gate data / hook state / artifacts).
+   * There is no stored PR→run index; this keeps the bounding decision consistent
+   * with the existing `resolvePrUrlForRun` path used by blocked-run auto-subscriptions.
+   */
+  private isPrEventLinkedToRun(payload: ExternalEventPublishedPayload): boolean {
+    const eventPrUrl = this.resolvePrUrlFromExternalEventPayload(payload);
+    const eventParsed = eventPrUrl ? parsePrUrl(eventPrUrl) : null;
+    if (!eventParsed) return false;
+    // Compare the parsed identity case-insensitively: GitHub owner/repo are
+    // case-insensitive (the canonical form is returned on redirect), so a
+    // run storing `.../LSM/NeoKai/pull/42` must still match an event for
+    // `.../lsm/neokai/pull/42`.
+    const eventHost = eventParsed.host.toLowerCase();
+    const eventOwner = eventParsed.owner.toLowerCase();
+    const eventRepo = eventParsed.repo.toLowerCase();
+    const eventNumber = eventParsed.number;
+    for (const run of this.config.workflowRunRepo.listBySpace(payload.spaceId)) {
+      const runParsed = parsePrUrl(this.resolvePrUrlForRun(run.id));
+      if (
+        runParsed &&
+        runParsed.host.toLowerCase() === eventHost &&
+        runParsed.owner.toLowerCase() === eventOwner &&
+        runParsed.repo.toLowerCase() === eventRepo &&
+        runParsed.number === eventNumber
+      ) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private resolvePrimaryResultArtifactSummary(runId: string): string | undefined {
