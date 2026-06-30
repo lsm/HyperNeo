@@ -220,6 +220,58 @@ describe('isPromptTooLongResult', () => {
     expect(isPromptTooLongResult(msg as never)).toBe(true);
   });
 
+  test('matches Kimi blocking_limit result with phrase in result text (no errors[], no prompt_too_long reason)', () => {
+    // Exact shape observed in the live DB: the overflow phrase lives in the
+    // `result` field, terminal_reason is `blocking_limit`, errors is null.
+    const msg = {
+      type: 'result',
+      subtype: 'success',
+      is_error: true,
+      result: 'Prompt is too long',
+      terminal_reason: 'blocking_limit',
+      errors: null,
+      stop_reason: 'stop_sequence',
+      api_error_status: null,
+    };
+    expect(isPromptTooLongResult(msg as never)).toBe(true);
+  });
+
+  test('matches detailed "N tokens > M maximum" phrase in result text', () => {
+    const msg = {
+      type: 'result',
+      subtype: 'error_during_execution',
+      is_error: true,
+      result: 'Error: prompt is too long: 205616 tokens > 200000 maximum',
+      terminal_reason: 'blocking_limit',
+      errors: null,
+    };
+    expect(isPromptTooLongResult(msg as never)).toBe(true);
+  });
+
+  test('rejects blocking_limit result whose result text is not prompt-too-long', () => {
+    const msg = {
+      type: 'result',
+      subtype: 'error_during_execution',
+      is_error: true,
+      result: 'Rate limit exceeded, please retry',
+      terminal_reason: 'blocking_limit',
+      errors: null,
+    };
+    expect(isPromptTooLongResult(msg as never)).toBe(false);
+  });
+
+  test('rejects non-error result whose text happens to contain the phrase', () => {
+    const msg = {
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      result: 'Noted the model said prompt is too long earlier',
+      terminal_reason: 'completed',
+      errors: null,
+    };
+    expect(isPromptTooLongResult(msg as never)).toBe(false);
+  });
+
   test('rejects success result', () => {
     const msg = { type: 'result', subtype: 'success', is_error: false, errors: [] };
     expect(isPromptTooLongResult(msg as never)).toBe(false);
@@ -331,6 +383,20 @@ describe('isPromptTooLongErrorMessage', () => {
     expect(isPromptTooLongErrorMessage(resultMsg as never)).toBe(true);
     expect(isPromptTooLongErrorMessage(userMsg as never)).toBe(true);
     expect(isPromptTooLongErrorMessage({ type: 'assistant' } as never)).toBe(false);
+  });
+
+  test('matches Kimi blocking_limit result with phrase in result text', () => {
+    const kimiMsg = {
+      type: 'result',
+      subtype: 'success',
+      is_error: true,
+      result: 'Prompt is too long',
+      terminal_reason: 'blocking_limit',
+      errors: null,
+      stop_reason: 'stop_sequence',
+      api_error_status: null,
+    };
+    expect(isPromptTooLongErrorMessage(kimiMsg as never)).toBe(true);
   });
 });
 

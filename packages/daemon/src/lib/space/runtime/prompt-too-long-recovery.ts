@@ -153,6 +153,13 @@ function extractStderrText(text: string): string {
  * `errors[]` array carries the API message. We accept both, and use a lenient
  * `/prompt is too long/i` for the errors body since not every provider includes
  * the `N tokens > M maximum` form.
+ *
+ * Kimi additionally surfaces the overflow as a `result`-field error string with
+ * NEITHER the `prompt_too_long` terminal reason NOR an `errors[]` entry — the
+ * message is `{ type: 'result', is_error: true, result: 'Prompt is too long',
+ * terminal_reason: 'blocking_limit', errors: null }`. Detect it via the same
+ * lenient phrase in the `result` text so the compact-then-continue recovery
+ * fires regardless of how the provider labels the overflow.
  */
 export function isPromptTooLongResult(message: SDKMessage | null | undefined): boolean {
   if (!message) return false;
@@ -160,6 +167,8 @@ export function isPromptTooLongResult(message: SDKMessage | null | undefined): b
     type?: string;
     terminal_reason?: string;
     errors?: unknown;
+    is_error?: boolean;
+    result?: unknown;
   };
   if (msg.type !== 'result') return false;
   if (msg.terminal_reason === 'prompt_too_long') return true;
@@ -169,6 +178,15 @@ export function isPromptTooLongResult(message: SDKMessage | null | undefined): b
         return true;
       }
     }
+  }
+  // Kimi's blocking_limit form: the overflow phrase lives in the `result` text
+  // rather than `errors[]`, and the terminal reason is `blocking_limit`.
+  if (
+    msg.is_error === true &&
+    typeof msg.result === 'string' &&
+    PROMPT_TOO_LONG_RE.test(msg.result)
+  ) {
+    return true;
   }
   return false;
 }
