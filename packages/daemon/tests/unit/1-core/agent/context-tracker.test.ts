@@ -191,13 +191,13 @@ describe('ContextTracker', () => {
     it('returns false when totalUsed is below threshold', () => {
       tracker.updateWithDetailedBreakdown({
         model: 'kimi-for-coding',
-        totalUsed: 200_000,
+        totalUsed: 100_000,
         totalCapacity: 262_144,
-        percentUsed: 76,
+        percentUsed: 38,
         breakdown: {},
       });
-      // Kimi 262k threshold = 262144 - 45000 = 217144.
-      expect(tracker.shouldCompactAt(217_144)).toBe(false);
+      // Kimi 262k threshold = 262144 - 112000 = 150144.
+      expect(tracker.shouldCompactAt(150_144)).toBe(false);
     });
 
     it('returns true when totalUsed is at or above threshold', () => {
@@ -208,7 +208,7 @@ describe('ContextTracker', () => {
         percentUsed: 95,
         breakdown: {},
       });
-      expect(tracker.shouldCompactAt(217_144)).toBe(true);
+      expect(tracker.shouldCompactAt(150_144)).toBe(true);
     });
 
     it('returns false when cooldown has not elapsed', () => {
@@ -220,7 +220,7 @@ describe('ContextTracker', () => {
         breakdown: {},
       });
       tracker.markCompactionTriggered();
-      expect(tracker.shouldCompactAt(217_144, 60_000)).toBe(false);
+      expect(tracker.shouldCompactAt(150_144, 60_000)).toBe(false);
     });
 
     it('returns true after cooldown elapses', () => {
@@ -232,7 +232,7 @@ describe('ContextTracker', () => {
         breakdown: {},
       });
       tracker.markCompactionTriggered();
-      expect(tracker.shouldCompactAt(217_144, 0)).toBe(true);
+      expect(tracker.shouldCompactAt(150_144, 0)).toBe(true);
     });
 
     it('returns false for invalid threshold', () => {
@@ -266,11 +266,29 @@ describe('ContextTracker', () => {
       expect(reserveBasedThreshold(1_000_000)).toBe(967_000);
     });
 
-    it('uses the larger 45k reserve for Kimi to cover ~32k output + reasoning', () => {
-      // Kimi: SDK auto-compact disabled, NeoKai is sole path. Its ~32k max
-      // output plus mandatory reasoning requires a bigger buffer than the SDK
-      // default 33k. 262144 - 45000 = 217144.
-      expect(reserveBasedThreshold(262_144, 'kimi')).toBe(217_144);
+    it('uses the larger 112k reserve for Kimi so the trigger fires below the SDK gate', () => {
+      // Kimi: SDK auto-compact disabled, NeoKai is the sole compaction path.
+      // The SDK client-side rejects ("Prompt is too long") at ~176k against its
+      // clamped 200k window, so the reserve must be larger than the SDK's 33k
+      // buffer. 262144 - 112000 = 150144.
+      expect(reserveBasedThreshold(262_144, 'kimi')).toBe(150_144);
+    });
+
+    it('fires the Kimi trigger below the SDK prompt-too-long gate (DB evidence)', () => {
+      // daemon.db evidence (kimi-for-coding, 2026-06): the SDK's client-side
+      // "Prompt is too long" short-circuit fires once context nears ~176k
+      // (its clamped 200k window minus an output reserve); rejections clustered
+      // at 170-177k total context, the lowest right after a 170,374-token turn.
+      // The trigger uses the same SDK totalTokens metric as the gate, so it must
+      // precede that band with headroom for within-turn growth before /compact.
+      const threshold = reserveBasedThreshold(262_144, 'kimi');
+      const sdkGateLow = 170_374; // lowest observed context at the SDK gate
+      const sdkGateBulk = 176_840; // typical context at the SDK gate
+      expect(threshold).toBeLessThan(sdkGateLow);
+      expect(threshold).toBeLessThan(sdkGateBulk);
+      // Still leaves positive headroom and is meaningfully above zero.
+      expect(threshold).toBeGreaterThan(0);
+      expect(262_144 - threshold).toBeGreaterThan(100_000);
     });
 
     it('keeps the default 33k reserve for non-Kimi providers even on a 262k window', () => {

@@ -35,20 +35,35 @@ const SDK_AUTO_COMPACT_RESERVE_TOKENS = 33_000;
 /**
  * Kimi-specific reserve buffer.
  *
- * Kimi K2.7-Code and kimi-for-coding are documented with a ~32k max output and
- * mandatory reasoning that counts toward the context window. If the SDK allows
- * close to 32k output, a 33k total reserve leaves the context headroom too
- * tight. Use `32_000 + 13_000 = 45_000` so NeoKai compacts earlier and keeps
- * room for a full Kimi response plus reasoning.
+ * Kimi's "Prompt is too long" is the Claude Agent SDK's CLIENT-SIDE pre-flight
+ * check, not a Moonshot server response. No Kimi route (China `kimi-for-coding`
+ * or Global `kimi-k2.7-code`) is recognised by the SDK's context-window
+ * resolver, so the SDK falls back to its 200k window and clamps
+ * CLAUDE_CODE_AUTO_COMPACT_WINDOW to 200k. Its pre-flight check then
+ * short-circuits with the bare "Prompt is too long" (duration_ms 3–7 — no
+ * network round-trip is possible in that time) once its context estimate nears
+ * ~176k (200k minus an output reserve). The detailed "N tokens > M maximum"
+ * form, by contrast, is the server (Anthropic). The SDK clamps the window
+ * itself, so NeoKai cannot make it gate higher — the only lever is to compact
+ * before that ~176k gate.
+ *
+ * Reserve 112k so the trigger fires at 262144 − 112000 = 150144. The trigger
+ * compares the SDK's own `totalTokens` (via contextInfo.totalUsed) — the same
+ * metric the SDK gate checks — so 150144 reliably precedes ~176k, with ~26k of
+ * headroom for within-turn growth between the trigger firing (every 5 events +
+ * turn-end) and /compact running. (daemon.db, kimi-for-coding, 2026-06:
+ * rejections clustered at 170–177k total context; the previous 45k reserve
+ * gated at 217k, above the SDK gate, so it never fired.)
  */
-const KIMI_RESERVE_TOKENS = 45_000;
+const KIMI_RESERVE_TOKENS = 112_000;
 
 /**
  * Compute the NeoKai fallback threshold for a context window: the point below
  * the window at which NeoKai should trigger compaction. The default reserve
- * matches the SDK's own 33k buffer; Kimi uses a larger 45k reserve to account
- * for its ~32k max output and mandatory reasoning tokens. Result is floored at
- * 1 so tiny windows still produce a positive threshold.
+ * matches the SDK's own 33k buffer; Kimi uses a larger 112k reserve because
+ * the SDK client-side rejects at ~176k against its clamped 200k window (see
+ * KIMI_RESERVE_TOKENS). Result is floored at 1 so tiny windows still produce a
+ * positive threshold.
  */
 export function reserveBasedThreshold(contextWindow: number, providerId?: string): number {
   if (!Number.isFinite(contextWindow) || contextWindow <= 0) return 0;

@@ -2208,7 +2208,7 @@ describe('SDKMessageHandler', () => {
         // context-window resolver, so the SDK reports 200k and clamps
         // CLAUDE_CODE_AUTO_COMPACT_WINDOW to min(200k, 262144). Route it through
         // NeoKai's fallback so compaction fires at the real 262k metadata window
-        // (reserveBasedThreshold(262144, 'kimi') = 217144), not the SDK's clamped 200k.
+        // (reserveBasedThreshold(262144, 'kimi') = 150144), not the SDK's clamped 200k.
         setModelsCache(
           new Map([
             [
@@ -2267,7 +2267,7 @@ describe('SDKMessageHandler', () => {
         await new Promise((resolve) => setTimeout(resolve, 0));
 
         expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
-        expect(mockContextTracker.shouldCompactAt).toHaveBeenCalledWith(217_144);
+        expect(mockContextTracker.shouldCompactAt).toHaveBeenCalledWith(150_144);
         expect(mockContextTracker.markCompactionTriggered).toHaveBeenCalledTimes(1);
         expect(enqueueMessageSpy).toHaveBeenCalledWith('/compact', true);
       });
@@ -2331,7 +2331,7 @@ describe('SDKMessageHandler', () => {
         await new Promise((resolve) => setTimeout(resolve, 0));
 
         expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
-        expect(mockContextTracker.shouldCompactAt).toHaveBeenCalledWith(217_144);
+        expect(mockContextTracker.shouldCompactAt).toHaveBeenCalledWith(150_144);
         expect(mockContextTracker.markCompactionTriggered).toHaveBeenCalledTimes(1);
         expect(enqueueMessageSpy).toHaveBeenCalledWith('/compact', true);
       });
