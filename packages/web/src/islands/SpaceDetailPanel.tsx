@@ -8,7 +8,9 @@
 import type { ComponentChildren } from 'preact';
 import { useCallback, useEffect, useMemo, useState } from 'preact/hooks';
 import { CollapsibleSection } from '../components/ui/CollapsibleSection';
+import { RenameIcon } from '../components/icons/RenameIcon';
 import { createSession } from '../lib/api-helpers';
+import { useSessionRename } from '../hooks/useSessionRename';
 import {
   navigateToSpace,
   navigateToSpaceAgent,
@@ -36,6 +38,72 @@ const sessionStatusColors: Record<string, string> = {
   paused: 'bg-amber-500',
   ended: 'bg-gray-500',
 };
+
+/**
+ * Session row in the Space detail panel sessions list. Supports inline rename
+ * (hover pencil or double-click the title) alongside click-to-open.
+ */
+function SpaceDetailSessionRow({
+  session,
+  isSelected,
+  onClick,
+}: {
+  session: { id: string; title: string; status: string };
+  isSelected: boolean;
+  onClick: (sessionId: string) => void;
+}) {
+  const { isEditing, startEditing, inputProps } = useSessionRename(session.id, session.title);
+
+  if (isEditing) {
+    return (
+      <input
+        type="text"
+        data-testid="space-session-rename-input"
+        {...inputProps}
+        class="w-full mx-3 my-0.5 px-2 py-1 text-sm bg-white/10 rounded-md text-gray-100 outline-none ring-1 ring-blue-500/60"
+      />
+    );
+  }
+
+  return (
+    <div
+      class={cn(
+        'group/row relative w-full flex items-center gap-2.5 px-3 py-2 rounded-lg transition-colors',
+        isSelected ? 'bg-white/10' : 'hover:bg-white/5'
+      )}
+    >
+      <div
+        class={cn(
+          'w-2 h-2 rounded-full flex-shrink-0',
+          sessionStatusColors[session.status] ?? 'bg-gray-500'
+        )}
+      />
+      <button
+        type="button"
+        class="flex-1 min-w-0 flex items-center text-left"
+        onClick={() => onClick(session.id)}
+      >
+        <span
+          class="flex-1 text-sm text-gray-300 truncate"
+          onDblClick={startEditing}
+          title="Double-click to rename"
+        >
+          {session.title || 'Untitled'}
+        </span>
+      </button>
+      <button
+        type="button"
+        data-testid="space-session-rename"
+        onClick={startEditing}
+        title="Rename session"
+        aria-label={`Rename ${session.title || 'session'}`}
+        class="opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100 p-1 rounded text-gray-500 transition-colors hover:text-gray-100 hover:bg-white/10"
+      >
+        <RenameIcon className="w-3.5 h-3.5" />
+      </button>
+    </div>
+  );
+}
 
 const taskStatusColors: Record<string, string> = {
   open: 'bg-gray-500',
@@ -521,23 +589,12 @@ export function SpaceDetailPanel({
             <div class="px-4 py-2 text-xs text-gray-400">No sessions</div>
           ) : (
             sessions.map((session) => (
-              <button
+              <SpaceDetailSessionRow
                 key={session.id}
-                type="button"
-                onClick={() => handleSessionClick(session.id)}
-                class={cn(
-                  'w-full px-3 py-2 flex items-center gap-2.5 rounded-lg transition-colors',
-                  selectedSessionId === session.id ? 'bg-white/10' : 'hover:bg-white/5'
-                )}
-              >
-                <div
-                  class={cn(
-                    'w-2 h-2 rounded-full flex-shrink-0',
-                    sessionStatusColors[session.status] ?? 'bg-gray-500'
-                  )}
-                />
-                <span class="flex-1 text-sm text-gray-300 truncate text-left">{session.title}</span>
-              </button>
+                session={session}
+                isSelected={selectedSessionId === session.id}
+                onClick={handleSessionClick}
+              />
             ))
           )}
         </CollapsibleSection>

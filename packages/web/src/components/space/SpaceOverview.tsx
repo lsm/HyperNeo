@@ -23,6 +23,8 @@ import {
   navigateToSpaceTasks,
 } from '../../lib/router';
 import { createSession } from '../../lib/api-helpers';
+import { useSessionRename } from '../../hooks/useSessionRename';
+import { RenameIcon } from '../icons/RenameIcon';
 import { cn, getRelativeTime } from '../../lib/utils';
 import { toast } from '../../lib/toast';
 import { AUTONOMY_LABELS } from '../../lib/space-constants';
@@ -563,22 +565,11 @@ export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: Spac
             </div>
             <div class="rounded-xl border border-dark-700 bg-dark-900/50 divide-y divide-dark-700/50 overflow-hidden">
               {recentSessions.map((session) => (
-                <button
+                <RecentSessionRow
                   key={session.id}
-                  type="button"
-                  onClick={() => navigateToSpaceSession(routeSpaceId, session.id)}
-                  class="w-full flex items-center gap-3 px-4 py-3 rounded-lg hover:bg-dark-800/60 transition-colors text-left group"
-                >
-                  <div class="w-2 h-2 rounded-full flex-shrink-0 bg-indigo-400" />
-                  <div class="flex-1 min-w-0">
-                    <span class="text-sm text-gray-200 group-hover:text-gray-100 truncate block">
-                      {session.title || 'Untitled Session'}
-                    </span>
-                  </div>
-                  <span class="text-xs text-gray-400 flex-shrink-0 tabular-nums">
-                    {getRelativeTime(session.lastActiveAt)}
-                  </span>
-                </button>
+                  session={session}
+                  onOpen={() => navigateToSpaceSession(routeSpaceId, session.id)}
+                />
               ))}
             </div>
           </div>
@@ -595,6 +586,65 @@ export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: Spac
           isLoading={actionLoading}
         />
       </div>
+    </div>
+  );
+}
+
+/**
+ * Recent-session row on the Space overview. Supports inline rename (hover pencil
+ * or double-click the title) alongside click-to-open.
+ */
+function RecentSessionRow({
+  session,
+  onOpen,
+}: {
+  session: { id: string; title: string; lastActiveAt: number };
+  onOpen: () => void;
+}) {
+  const { isEditing, startEditing, inputProps } = useSessionRename(session.id, session.title);
+
+  if (isEditing) {
+    return (
+      <input
+        type="text"
+        data-testid="space-session-rename-input"
+        {...inputProps}
+        class="w-full mx-4 my-1 px-2 py-2 text-sm bg-white/10 rounded-lg text-gray-100 outline-none ring-1 ring-blue-500/60"
+      />
+    );
+  }
+
+  return (
+    <div
+      class="group/row relative w-full flex items-center gap-3 px-4 py-3 rounded-lg hover:bg-dark-800/60 transition-colors text-left cursor-pointer"
+      onClick={onOpen}
+    >
+      <div class="w-2 h-2 rounded-full flex-shrink-0 bg-indigo-400" />
+      <div class="flex-1 min-w-0">
+        <span
+          class="text-sm text-gray-200 truncate block"
+          onDblClick={startEditing}
+          title="Double-click to rename"
+        >
+          {session.title || 'Untitled Session'}
+        </span>
+      </div>
+      <span class="text-xs text-gray-400 flex-shrink-0 tabular-nums">
+        {getRelativeTime(session.lastActiveAt)}
+      </span>
+      <button
+        type="button"
+        data-testid="space-session-rename"
+        onClick={(event) => {
+          event.stopPropagation();
+          startEditing();
+        }}
+        title="Rename session"
+        aria-label={`Rename ${session.title || 'session'}`}
+        class="opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100 p-1 rounded text-gray-500 transition-colors hover:text-gray-100 hover:bg-white/10"
+      >
+        <RenameIcon className="w-3.5 h-3.5" />
+      </button>
     </div>
   );
 }
