@@ -1228,6 +1228,7 @@ describe('SpaceRuntimeService event-driven gate evaluation', () => {
       summary: 'Queued delivery',
       payload: {},
     };
+    ctx.service.runtime.ensurePrEventSubscriptionForRun(runId);
     await ctx.eventService.publish(event);
     expect(ctx.eventStore.listDeliveries(event.id)).toHaveLength(1);
 

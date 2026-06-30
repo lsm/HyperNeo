@@ -1555,14 +1555,15 @@ export class SpaceRuntime {
    * target after restart, and on every tick to catch runs whose PR URL becomes
    * known mid-flight.
    */
-  private async ensurePrEventSubscriptionsForActiveRuns(): Promise<void> {
+  private async ensurePrEventSubscriptionsForActiveRuns(): Promise<number> {
+    let subscribed = 0;
     try {
       const spaces = await this.config.spaceManager.listSpaces(false);
       for (const space of spaces) {
         if (space.paused || space.stopped) continue;
         for (const run of this.config.workflowRunRepo.listBySpace(space.id)) {
           if (run.status !== 'in_progress' && run.status !== 'blocked') continue;
-          this.ensurePrEventSubscriptionForRun(run.id);
+          if (this.ensurePrEventSubscriptionForRun(run.id).subscribed) subscribed++;
         }
       }
     } catch (err) {
@@ -1570,6 +1571,7 @@ export class SpaceRuntime {
         `SpaceRuntime: ensurePrEventSubscriptionsForActiveRuns failed: ${formatCommandError(err)}`
       );
     }
+    return subscribed;
   }
 
   /**
@@ -4482,9 +4484,9 @@ export class SpaceRuntime {
       // Runs on the first tick before redispatch so crash-pending PR events
       // find a target after restart, and on every subsequent tick to catch
       // runs whose PR URL becomes known mid-flight.
-      await this.ensurePrEventSubscriptionsForActiveRuns();
+      const subscribedPrRuns = await this.ensurePrEventSubscriptionsForActiveRuns();
 
-      if (justRehydrated) {
+      if (justRehydrated || subscribedPrRuns > 0) {
         this.redispatchPublishedEventsWithoutDeliveries();
       }
 
@@ -5062,34 +5064,20 @@ export class SpaceRuntime {
     const store = this.config.externalEventStore;
     if (!store) return;
 
-    // Rebuild PR auto-subscriptions for blocked runs in this space before
+    // Rebuild PR auto-subscriptions for active runs in this space before
     // evaluating pending deliveries. The startup rehydrate skips paused spaces,
-    // so a resumed space's blocked runs may have no trie entry yet; without
+    // so a resumed space's active runs may have no trie entry yet; without
     // rebuilding first, valid pending PR deliveries would be incorrectly
     // terminalized as subscription_no_longer_active.
-    //
-    // Only rebuild missing auto subscriptions: if the run already has one,
-    // re-entering registerPrEventSubscriptionForRun would clear it and
-    // failQueuedDeliveriesForTarget would terminally mark the pending PR
-    // delivery as auto_pr_subscription_cleared before the same subscription
-    // is reinserted.
-    const blockedRuns = this.config.workflowRunRepo
+    const activeRuns = this.config.workflowRunRepo
       .listBySpace(spaceId)
-      .filter((run) => run.status === 'blocked');
-    for (const run of blockedRuns) {
-      const hasAutoSubscription =
-        this.topicTrie.count(
-          (target) =>
-            isWorkflowSubscriptionTarget(target) &&
-            target.workflowRunId === run.id &&
-            target.subscriptionKind === 'auto'
-        ) > 0;
-      if (hasAutoSubscription) continue;
+      .filter((run) => run.status === 'blocked' || run.status === 'in_progress');
+    for (const run of activeRuns) {
       try {
-        this.notifyRunBlocked(run.id);
+        this.ensurePrEventSubscriptionForRun(run.id);
       } catch (err) {
         log.warn(
-          `SpaceRuntime: failed to rebuild PR subscription for blocked run ${run.id} on resume: ${formatCommandError(err)}`
+          `SpaceRuntime: failed to rebuild PR subscription for active run ${run.id} on resume: ${formatCommandError(err)}`
         );
       }
     }
