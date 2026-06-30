@@ -1505,24 +1505,27 @@ export class SpaceRuntime {
     }
   }
 
-  private hasAutoPrSubscriptionForRun(workflowRunId: string): boolean {
+  private hasCurrentAutoPrSubscriptionForRun(workflowRunId: string, prUrl: string): boolean {
+    const parsed = parsePrUrl(prUrl);
+    if (!parsed) return false;
+    const expectedTopic = buildPrEventTopicPattern(parsed).toLowerCase();
     return (
       this.topicTrie.count(
         (target) =>
           isWorkflowSubscriptionTarget(target) &&
           target.workflowRunId === workflowRunId &&
-          target.subscriptionKind === 'auto'
+          target.subscriptionKind === 'auto' &&
+          target.topic?.toLowerCase() === expectedTopic
       ) > 0
     );
   }
 
   /**
    * Ensure a workflow run has an auto PR-event subscription when a resolvable
-   * PR URL exists. Idempotent: skips runs that already have an auto
-   * subscription so a re-subscribe does not clear and re-insert the same
-   * pattern, which would terminally fail any queued PR deliveries.
+   * PR URL exists. Idempotent for the current PR URL, but refreshes stale auto
+   * subscriptions when the resolved PR changes.
    */
-  private ensurePrEventSubscriptionForRun(workflowRunId: string): {
+  ensurePrEventSubscriptionForRun(workflowRunId: string): {
     subscribed: boolean;
     reason?: string;
   } {
@@ -1530,8 +1533,8 @@ export class SpaceRuntime {
     if (!prUrl) {
       return { subscribed: false, reason: 'no resolvable PR URL' };
     }
-    if (this.hasAutoPrSubscriptionForRun(workflowRunId)) {
-      return { subscribed: false, reason: 'already has auto PR-event subscription' };
+    if (this.hasCurrentAutoPrSubscriptionForRun(workflowRunId, prUrl)) {
+      return { subscribed: false, reason: 'already has current auto PR-event subscription' };
     }
     const result = this.registerPrEventSubscriptionForRun(workflowRunId, prUrl);
     if (!result.success) {
@@ -1554,10 +1557,7 @@ export class SpaceRuntime {
         if (space.paused || space.stopped) continue;
         for (const run of this.config.workflowRunRepo.listBySpace(space.id)) {
           if (run.status !== 'in_progress' && run.status !== 'blocked') continue;
-          if (this.hasAutoPrSubscriptionForRun(run.id)) continue;
-          const prUrl = this.resolvePrUrlForRun(run.id);
-          if (!prUrl) continue;
-          this.registerPrEventSubscriptionForRun(run.id, prUrl);
+          this.ensurePrEventSubscriptionForRun(run.id);
         }
       }
     } catch (err) {

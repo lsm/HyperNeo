@@ -1657,6 +1657,29 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(eventStore.getById(event.id)?.state).toBe('delivered');
   });
 
+  test('sweep refreshes stale PR auto-subscription when the resolved PR URL changes', async () => {
+    const workflow = createWorkflow();
+    const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-pr-refresh',
+      startedAt: Date.now(),
+    });
+    tam.alive.add('session-pr-refresh');
+
+    const gateDataRepo = new GateDataRepository(db);
+    gateDataRepo.merge(run.id, 'pr-gate', { pr_url: 'https://github.com/lsm/neokai/pull/41' });
+    runtime.registerPrEventSubscriptionForRun(run.id, 'https://github.com/lsm/neokai/pull/41');
+    gateDataRepo.merge(run.id, 'pr-gate', { pr_url: 'https://github.com/lsm/neokai/pull/42' });
+
+    await runtime.executeTick();
+
+    await eventService.publish(makeEvent());
+    expect(injected).toHaveLength(1);
+    expect(injected[0]!.sessionId).toBe('session-pr-refresh');
+  });
+
   test('fails queued deliveries during terminal run cleanup', async () => {
     const { workflow, run, task } = await startRunWithSubscription();
     const event = makeEvent();

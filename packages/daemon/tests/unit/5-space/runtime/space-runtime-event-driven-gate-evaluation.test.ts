@@ -327,7 +327,8 @@ describe('SpaceRuntimeService event-driven gate evaluation', () => {
     expect(ctx.runtimeNotifications.length).toBeGreaterThanOrEqual(1);
     expect(ctx.runtimeNotifications[0]).toMatch(/gate re-evaluation triggered by external event/i);
 
-    // After the gate opens, subsequent PR events should not deliver (subscription cleared).
+    // After the gate opens, subsequent PR events should still deliver while the
+    // run is in_progress.
     ctx.injected.length = 0;
     const followUp: ExternalEvent = {
       id: `evt-followup-${Math.random().toString(36).slice(2)}`,
@@ -337,11 +338,11 @@ describe('SpaceRuntimeService event-driven gate evaluation', () => {
       occurredAt: Date.now(),
       ingestedAt: Date.now(),
       dedupeKey: `dedupe-followup-${Math.random().toString(36).slice(2)}`,
-      summary: 'Stale event after gate opened',
+      summary: 'Follow-up event after gate opened',
       payload: { action: 'review_submitted' },
     };
     await ctx.eventService.publish(followUp);
-    expect(ctx.injected).toHaveLength(0);
+    expect(ctx.injected).toHaveLength(1);
   });
 
   test('handleBlockedRunExternalEvent no-ops for non-blocked runs', async () => {
