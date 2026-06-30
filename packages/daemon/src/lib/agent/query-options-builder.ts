@@ -264,7 +264,9 @@ export function shouldUseNeoKaiCompactFallback(providerId: string): boolean {
   // compaction at the wrong (too-low) threshold. Kimi's real window is 262k
   // and no Kimi route (China `kimi-for-coding` or Global `kimi-k2.7-code`) is
   // recognised by the resolver, so every Kimi session is routed here and
-  // NeoKai compacts at the metadata window (262k − 13k reserve) instead.
+  // NeoKai compacts at the metadata window minus a Kimi-specific reserve
+  // (262144 − 112000 = 150144, below the SDK's ~176k client-side gate — see
+  // `KIMI_RESERVE_TOKENS`) instead.
   if (providerId === 'kimi') {
     return true;
   }

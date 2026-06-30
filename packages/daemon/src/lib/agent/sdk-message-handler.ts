@@ -1132,7 +1132,7 @@ export class SDKMessageHandler {
         // Scoped to providers/model routes where SDK auto-compact uses the
         // wrong capacity. For these routes, SDK auto-compact is disabled via
         // Options.settings; NeoKai is the sole compaction path and fires at a
-        // provider-aware reserve threshold (33k default, 45k for Kimi — see
+        // provider-aware reserve threshold (33k default, 112k for Kimi — see
         // `reserveBasedThreshold`).
         //
         // For all other providers (Anthropic native, GLM, Codex, OpenRouter,
