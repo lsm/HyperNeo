@@ -1319,7 +1319,9 @@ describe('SpaceRuntime external event subscriptions', () => {
       Date.now = originalNow;
     }
 
-    expect(eventStore.listDeliveries('evt-linked-pr-expired')).toHaveLength(0);
+    const delivery = eventStore.listDeliveries('evt-linked-pr-expired')[0]!;
+    expect(delivery.state).toBe('failed');
+    expect(delivery.failureReason).toBe('ttl_expired');
     expect(eventStore.getById('evt-linked-pr-expired')?.state).toBe('failed');
   });
 

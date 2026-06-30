@@ -1692,10 +1692,21 @@ export class SpaceRuntime {
       // persisted delivery row can still be non-terminal if another identical
       // interest remains, but a queued in-memory item for this target must not
       // flush after its specific subscription was removed.
-      if (
-        this.config.externalEventStore?.isDeliveryTerminal(item.event.eventId, item.deliveryKey) ||
-        !this.isTargetStillSubscribed(target, item.event.topic)
-      ) {
+      const deliveryTerminal = this.config.externalEventStore?.isDeliveryTerminal(
+        item.event.eventId,
+        item.deliveryKey
+      );
+      const targetStillSubscribed = this.isTargetStillSubscribed(target, item.event.topic);
+      if (deliveryTerminal || !targetStillSubscribed) {
+        if (!deliveryTerminal && !targetStillSubscribed) {
+          this.config.externalEventStore?.markDeliveryFailed(item.event.eventId, item.deliveryKey, {
+            terminal: true,
+            reason: 'subscription_no_longer_active',
+          });
+          this.config.externalEventStore?.markEventFailedIfAllDeliveriesTerminal(
+            item.event.eventId
+          );
+        }
         this.clearExternalEventRetry(item.deliveryKey);
         continue;
       }
@@ -1733,10 +1744,21 @@ export class SpaceRuntime {
       // run terminalization) may have marked this delivery terminal while the
       // ordered batch was being prepared. Skip dispatch rather than injecting
       // an event into a target that is no longer eligible.
-      if (
-        this.config.externalEventStore?.isDeliveryTerminal(item.event.eventId, item.deliveryKey) ||
-        !this.isTargetStillSubscribed(target, item.event.topic)
-      ) {
+      const deliveryTerminal = this.config.externalEventStore?.isDeliveryTerminal(
+        item.event.eventId,
+        item.deliveryKey
+      );
+      const targetStillSubscribed = this.isTargetStillSubscribed(target, item.event.topic);
+      if (deliveryTerminal || !targetStillSubscribed) {
+        if (!deliveryTerminal && !targetStillSubscribed) {
+          this.config.externalEventStore?.markDeliveryFailed(item.event.eventId, item.deliveryKey, {
+            terminal: true,
+            reason: 'subscription_no_longer_active',
+          });
+          this.config.externalEventStore?.markEventFailedIfAllDeliveriesTerminal(
+            item.event.eventId
+          );
+        }
         this.clearExternalEventRetry(item.deliveryKey);
         continue;
       }
