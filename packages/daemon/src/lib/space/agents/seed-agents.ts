@@ -43,45 +43,39 @@ export const SUB_SESSION_FEATURES = {
 // Tool defaults per preset agent
 // ---------------------------------------------------------------------------
 
-/** Full coding toolset: read, write, shell, search, web */
-const CODER_TOOLS: string[] = [
-  'Read',
-  'Write',
-  'Edit',
-  'MultiEdit',
-  'Bash',
-  'Grep',
-  'Glob',
-  'WebFetch',
-  'WebSearch',
-  'NotebookEdit',
-  'TodoWrite',
-  'AskUserQuestion',
-  'EnterPlanMode',
-  'ExitPlanMode',
-  'Skill',
-  'ToolSearch',
-];
+/**
+ * Permissive worker preset: empty tool profile.
+ *
+ * SpaceWorkerAgent.tools is a visible override, not an exhaustive SDK allowlist.
+ * An empty profile means the worker inherits all SDK built-ins and MCP tools
+ * at runtime (see deriveWorkerDisallowedTools). The UI shows this as
+ * "Inherit defaults" / "Full Coding".
+ */
+const PERMISSIVE_TOOLS: string[] = [];
 
-/** General-purpose worker: full coding toolset */
-const GENERAL_TOOLS = CODER_TOOLS;
+/** Coder inherits all SDK defaults so it can use any built-in tool. */
+const CODER_TOOLS = PERMISSIVE_TOOLS;
 
-/** Planner uses the same toolset as coder (orchestration patterns reserved for future) */
-const PLANNER_TOOLS = CODER_TOOLS;
+/** General-purpose worker inherits all SDK defaults. */
+const GENERAL_TOOLS = PERMISSIVE_TOOLS;
 
-/** Research uses the same toolset as coder (needs write access to commit findings and open PRs) */
-const RESEARCH_TOOLS = CODER_TOOLS;
+/** Planner inherits all SDK defaults. */
+const PLANNER_TOOLS = PERMISSIVE_TOOLS;
+
+/** Research inherits all SDK defaults (it needs write access to commit findings and open PRs). */
+const RESEARCH_TOOLS = PERMISSIVE_TOOLS;
 
 /**
- * Reviewers: read-only file access (no Write/Edit/MultiEdit/NotebookEdit) plus the Task/TaskOutput/
- * TaskStop tools so the Reviewer can dispatch exploration to the built-in
- * `general-purpose` sub-agent that ships with the `claude_code` preset.
- * Custom reviewer-specific sub-agents (e.g. reviewer-explorer) are planned
- * but will live in workflow templates / SpaceWorkerAgent data, not code.
+ * Reviewers: explicit non-mutating profile.
+ *
+ * The runtime denies Bash/Write/Edit/MultiEdit/NotebookEdit whenever a
+ * non-empty tool profile omits them. All other SDK built-ins (read, web/search,
+ * delegation, etc.) are still inherited. The Task/* tools let the Reviewer
+ * dispatch exploration to the built-in `general-purpose` sub-agent that ships
+ * with the `claude_code` preset.
  */
 const REVIEWER_TOOLS: string[] = [
   'Read',
-  'Bash',
   'Grep',
   'Glob',
   'WebFetch',
@@ -93,7 +87,7 @@ const REVIEWER_TOOLS: string[] = [
   'TaskStop',
 ];
 
-/** QA: read-only + bash for running tests — no Write or Edit */
+/** QA: read/search/web + bash for running tests — no Write/Edit/MultiEdit/NotebookEdit. */
 const QA_TOOLS: string[] = [
   'Read',
   'Bash',

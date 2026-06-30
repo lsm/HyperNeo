@@ -80,19 +80,18 @@ describe('seedPresetAgents', () => {
 
     for (const agent of seeded) {
       expect(Array.isArray(agent.tools)).toBe(true);
-      expect((agent.tools?.length ?? 0) > 0).toBe(true);
     }
   });
 
-  it('reviewer has restricted tools (no Write or Edit)', async () => {
+  it('reviewer has restricted tools (no Bash, Write, or Edit)', async () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
     const reviewer = seeded.find((a) => a.name === 'Reviewer');
 
     expect(reviewer).toBeDefined();
+    expect(reviewer?.tools).not.toContain('Bash');
     expect(reviewer?.tools).not.toContain('Write');
     expect(reviewer?.tools).not.toContain('Edit');
     expect(reviewer?.tools).toContain('Read');
-    expect(reviewer?.tools).toContain('Bash');
   });
 
   it('Coordinator is the default long-horizon Space agent', async () => {
@@ -105,32 +104,24 @@ describe('seedPresetAgents', () => {
     expect(coordinator?.customPrompt).toContain('long-horizon context');
     expect(coordinator?.customPrompt).toContain('managed goals');
     expect(coordinator?.customPrompt).toContain('Forge scopes');
-    expect(coordinator?.tools).toContain('Read');
-    expect(coordinator?.tools).toContain('Write');
-    expect(coordinator?.tools).toContain('Bash');
+    expect(coordinator?.tools).toEqual([]);
   });
 
-  it('coder has full coding toolset and explicit no-merge prompt', async () => {
+  it('coder inherits all SDK built-ins and has explicit no-merge prompt', async () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
     const coder = seeded.find((a) => a.name === 'Coder');
 
-    expect(coder?.tools).toContain('Read');
-    expect(coder?.tools).toContain('Write');
-    expect(coder?.tools).toContain('Edit');
-    expect(coder?.tools).toContain('Bash');
+    expect(coder?.tools).toEqual([]);
     expect(coder?.customPrompt).toContain('Do NOT merge PRs. Your job is implementation only.');
     expect(coder?.customPrompt).toContain('When the reviewer approves, your work is done.');
     expect(coder?.customPrompt).toContain('The reviewer handles the merge.');
   });
 
-  it('research agent has full coding toolset (Write + Edit for committing findings)', async () => {
+  it('research agent inherits all SDK built-ins (Write + Edit for committing findings)', async () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
     const research = seeded.find((a) => a.name === 'Research');
 
-    expect(research?.tools).toContain('Read');
-    expect(research?.tools).toContain('Write');
-    expect(research?.tools).toContain('Edit');
-    expect(research?.tools).toContain('Bash');
+    expect(research?.tools).toEqual([]);
   });
 
   it('sets descriptions on all preset agents', async () => {
@@ -192,17 +183,12 @@ describe('seedPresetAgents', () => {
     expect(result.errors[0].name).toBe('Coder');
   });
 
-  it('General agent has full coding toolset', async () => {
+  it('General agent inherits all SDK built-ins', async () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
     const general = seeded.find((a) => a.name === 'General');
 
     expect(general).toBeDefined();
-    expect(general?.tools).toContain('Read');
-    expect(general?.tools).toContain('Write');
-    expect(general?.tools).toContain('Edit');
-    expect(general?.tools).toContain('Bash');
-    expect(general?.tools).toContain('Grep');
-    expect(general?.tools).toContain('Glob');
+    expect(general?.tools).toEqual([]);
   });
 
   it('QA agent has restricted tools (no Write or Edit)', async () => {
@@ -390,26 +376,19 @@ describe('preset agent exact definitions', () => {
 
   // --- Exact tool sets ---
 
-  const EXPECTED_CODER_TOOLS = [
+  /** Permissive presets inherit all SDK built-ins; the seeded profile is empty. */
+  const EXPECTED_CODER_TOOLS: string[] = [];
+
+  const EXPECTED_REVIEWER_BASE_TOOLS = [
     'Read',
-    'Write',
-    'Edit',
-    'MultiEdit',
-    'Bash',
     'Grep',
     'Glob',
     'WebFetch',
     'WebSearch',
-    'NotebookEdit',
-    'TodoWrite',
-    'AskUserQuestion',
-    'EnterPlanMode',
-    'ExitPlanMode',
     'Skill',
     'ToolSearch',
   ];
-
-  const EXPECTED_READONLY_TOOLS = [
+  const EXPECTED_QA_TOOLS = [
     'Read',
     'Bash',
     'Grep',
@@ -421,41 +400,38 @@ describe('preset agent exact definitions', () => {
   ];
   // Reviewer has the read-only toolset PLUS Task/TaskOutput/TaskStop so it
   // can dispatch the built-in `general-purpose` sub-agent for exploration.
-  const EXPECTED_REVIEWER_TOOLS = [...EXPECTED_READONLY_TOOLS, 'Task', 'TaskOutput', 'TaskStop'];
+  const EXPECTED_REVIEWER_TOOLS = [
+    ...EXPECTED_REVIEWER_BASE_TOOLS,
+    'Task',
+    'TaskOutput',
+    'TaskStop',
+  ];
 
-  it('Coordinator has exact GENERAL_TOOLS (same as CODER_TOOLS)', async () => {
+  it('Coordinator inherits all SDK built-ins (empty permissive profile)', async () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
     const coordinator = seeded.find((a) => a.name === 'Coordinator')!;
     expect(coordinator.tools).toEqual(EXPECTED_CODER_TOOLS);
   });
 
-  it('Coder has exact CODER_TOOLS (KNOWN_TOOLS minus Task/TaskOutput/TaskStop)', async () => {
+  it('Coder inherits all SDK built-ins (empty permissive profile)', async () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
     const coder = seeded.find((a) => a.name === 'Coder')!;
     expect(coder.tools).toEqual(EXPECTED_CODER_TOOLS);
   });
 
-  it('Coder tools exclude Task, TaskOutput, TaskStop', async () => {
-    const { seeded } = await seedPresetAgents('space-1', manager);
-    const coder = seeded.find((a) => a.name === 'Coder')!;
-    expect(coder.tools).not.toContain('Task');
-    expect(coder.tools).not.toContain('TaskOutput');
-    expect(coder.tools).not.toContain('TaskStop');
-  });
-
-  it('General has exact GENERAL_TOOLS (same as CODER_TOOLS)', async () => {
+  it('General inherits all SDK built-ins (empty permissive profile)', async () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
     const general = seeded.find((a) => a.name === 'General')!;
     expect(general.tools).toEqual(EXPECTED_CODER_TOOLS);
   });
 
-  it('Planner has exact PLANNER_TOOLS (same as CODER_TOOLS)', async () => {
+  it('Planner inherits all SDK built-ins (empty permissive profile)', async () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
     const planner = seeded.find((a) => a.name === 'Planner')!;
     expect(planner.tools).toEqual(EXPECTED_CODER_TOOLS);
   });
 
-  it('Research has exact RESEARCH_TOOLS (same as CODER_TOOLS)', async () => {
+  it('Research inherits all SDK built-ins (empty permissive profile)', async () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
     const research = seeded.find((a) => a.name === 'Research')!;
     expect(research.tools).toEqual(EXPECTED_CODER_TOOLS);
@@ -470,7 +446,7 @@ describe('preset agent exact definitions', () => {
   it('QA has exact QA_TOOLS', async () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
     const qa = seeded.find((a) => a.name === 'QA')!;
-    expect(qa.tools).toEqual(EXPECTED_READONLY_TOOLS);
+    expect(qa.tools).toEqual(EXPECTED_QA_TOOLS);
   });
 
   // --- Exact custom prompts ---
@@ -600,26 +576,19 @@ describe('preset agent exact definitions', () => {
 // ---------------------------------------------------------------------------
 
 describe('PRESET_AGENT_TOOLS export', () => {
-  const EXPECTED_CODER_TOOLS = [
+  /** Permissive presets have an empty visible profile; they inherit all SDK built-ins. */
+  const EXPECTED_CODER_TOOLS: string[] = [];
+
+  const EXPECTED_REVIEWER_BASE_TOOLS = [
     'Read',
-    'Write',
-    'Edit',
-    'MultiEdit',
-    'Bash',
     'Grep',
     'Glob',
     'WebFetch',
     'WebSearch',
-    'NotebookEdit',
-    'TodoWrite',
-    'AskUserQuestion',
-    'EnterPlanMode',
-    'ExitPlanMode',
     'Skill',
     'ToolSearch',
   ];
-
-  const EXPECTED_READONLY_TOOLS = [
+  const EXPECTED_QA_TOOLS = [
     'Read',
     'Bash',
     'Grep',
@@ -631,7 +600,12 @@ describe('PRESET_AGENT_TOOLS export', () => {
   ];
   // Reviewer additionally carries Task/TaskOutput/TaskStop for built-in
   // `general-purpose` sub-agent delegation.
-  const EXPECTED_REVIEWER_TOOLS = [...EXPECTED_READONLY_TOOLS, 'Task', 'TaskOutput', 'TaskStop'];
+  const EXPECTED_REVIEWER_TOOLS = [
+    ...EXPECTED_REVIEWER_BASE_TOOLS,
+    'Task',
+    'TaskOutput',
+    'TaskStop',
+  ];
 
   it('has entries for all 7 preset roles', () => {
     expect(Object.keys(PRESET_AGENT_TOOLS).sort()).toEqual([
@@ -645,23 +619,23 @@ describe('PRESET_AGENT_TOOLS export', () => {
     ]);
   });
 
-  it('coordinator role maps to GENERAL_TOOLS (same as CODER_TOOLS)', () => {
+  it('coordinator role maps to GENERAL_TOOLS (empty permissive profile)', () => {
     expect(PRESET_AGENT_TOOLS.coordinator).toEqual(EXPECTED_CODER_TOOLS);
   });
 
-  it('coder role maps to CODER_TOOLS', () => {
+  it('coder role maps to empty permissive profile', () => {
     expect(PRESET_AGENT_TOOLS.coder).toEqual(EXPECTED_CODER_TOOLS);
   });
 
-  it('general role maps to GENERAL_TOOLS (same as CODER_TOOLS)', () => {
+  it('general role maps to GENERAL_TOOLS (empty permissive profile)', () => {
     expect(PRESET_AGENT_TOOLS.general).toEqual(EXPECTED_CODER_TOOLS);
   });
 
-  it('planner role maps to PLANNER_TOOLS (same as CODER_TOOLS)', () => {
+  it('planner role maps to PLANNER_TOOLS (empty permissive profile)', () => {
     expect(PRESET_AGENT_TOOLS.planner).toEqual(EXPECTED_CODER_TOOLS);
   });
 
-  it('research role maps to RESEARCH_TOOLS (same as CODER_TOOLS)', () => {
+  it('research role maps to RESEARCH_TOOLS (empty permissive profile)', () => {
     expect(PRESET_AGENT_TOOLS.research).toEqual(EXPECTED_CODER_TOOLS);
   });
 
@@ -670,7 +644,7 @@ describe('PRESET_AGENT_TOOLS export', () => {
   });
 
   it('qa role maps to QA_TOOLS', () => {
-    expect(PRESET_AGENT_TOOLS.qa).toEqual(EXPECTED_READONLY_TOOLS);
+    expect(PRESET_AGENT_TOOLS.qa).toEqual(EXPECTED_QA_TOOLS);
   });
 
   it('PRESET_AGENT_TOOLS matches what seedPresetAgents actually seeds', async () => {
@@ -748,7 +722,6 @@ describe('getPresetAgentTemplates', () => {
       expect(typeof t.description).toBe('string');
       expect(t.description.length).toBeGreaterThan(0);
       expect(Array.isArray(t.tools)).toBe(true);
-      expect(t.tools.length).toBeGreaterThan(0);
       expect(typeof t.customPrompt).toBe('string');
       expect(t.customPrompt.length).toBeGreaterThan(0);
     }

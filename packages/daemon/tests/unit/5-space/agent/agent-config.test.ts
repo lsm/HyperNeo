@@ -81,33 +81,21 @@ function makeConfig(tools?: string[]): CustomAgentConfig {
 // ============================================================================
 
 describe('PRESET_AGENT_TOOLS', () => {
-  it('coder has full tool access (Read, Write, Edit, Bash, Grep, Glob)', () => {
+  it('coder has an empty permissive profile (inherits all SDK built-ins)', () => {
     const tools = PRESET_AGENT_TOOLS.coder;
-    expect(tools).toContain('Read');
-    expect(tools).toContain('Write');
-    expect(tools).toContain('Edit');
-    expect(tools).toContain('MultiEdit');
-    expect(tools).toContain('Bash');
-    expect(tools).toContain('Grep');
-    expect(tools).toContain('Glob');
+    expect(tools).toEqual([]);
   });
 
-  it('coder does not have Task/TaskOutput/TaskStop', () => {
+  it('coder does not have Task/TaskOutput/TaskStop in its explicit profile', () => {
     const tools = PRESET_AGENT_TOOLS.coder;
     expect(tools).not.toContain('Task');
     expect(tools).not.toContain('TaskOutput');
     expect(tools).not.toContain('TaskStop');
   });
 
-  it('planner has full tool access', () => {
+  it('planner has an empty permissive profile (inherits all SDK built-ins)', () => {
     const tools = PRESET_AGENT_TOOLS.planner;
-    expect(tools).toContain('Read');
-    expect(tools).toContain('Write');
-    expect(tools).toContain('Edit');
-    expect(tools).toContain('MultiEdit');
-    expect(tools).toContain('Bash');
-    expect(tools).toContain('Grep');
-    expect(tools).toContain('Glob');
+    expect(tools).toEqual([]);
   });
 
   it('reviewer cannot Write or Edit', () => {
@@ -116,12 +104,13 @@ describe('PRESET_AGENT_TOOLS', () => {
     expect(tools).not.toContain('Edit');
   });
 
-  it('reviewer has read-only tools', () => {
+  it('reviewer has read/search/delegation tools without Bash', () => {
     const tools = PRESET_AGENT_TOOLS.reviewer;
     expect(tools).toContain('Read');
-    expect(tools).toContain('Bash');
     expect(tools).toContain('Grep');
     expect(tools).toContain('Glob');
+    expect(tools).toContain('Task');
+    expect(tools).not.toContain('Bash');
   });
 
   it('qa cannot Write or Edit', () => {
@@ -138,14 +127,9 @@ describe('PRESET_AGENT_TOOLS', () => {
     expect(tools).toContain('Glob');
   });
 
-  it('general has full coding toolset', () => {
+  it('general has an empty permissive profile (inherits all SDK built-ins)', () => {
     const tools = PRESET_AGENT_TOOLS.general;
-    expect(tools).toContain('Write');
-    expect(tools).toContain('Edit');
-    expect(tools).toContain('Read');
-    expect(tools).toContain('Bash');
-    expect(tools).toContain('Grep');
-    expect(tools).toContain('Glob');
+    expect(tools).toEqual([]);
   });
 });
 
@@ -269,7 +253,7 @@ describe('createCustomAgentInit — sub-session features', () => {
     expect(init.features).toEqual(SUB_SESSION_FEATURES);
   });
 
-  it('reviewer denies mutation tools only, leaving Bash available for a follow-up guard', () => {
+  it('reviewer denies mutation tools including Bash when omitted from the profile', () => {
     const config = makeConfig(PRESET_AGENT_TOOLS.reviewer);
     const init = createCustomAgentInit(config);
 
@@ -277,8 +261,7 @@ describe('createCustomAgentInit — sub-session features', () => {
     expect(init.allowedTools).toEqual(['Task', 'TaskOutput', 'TaskStop']);
     expect(init.agent).toBeUndefined();
     expect(init.agents).toBeUndefined();
-    expect(init.disallowedTools).toEqual(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
-    expect(init.disallowedTools).not.toContain('Bash');
+    expect(init.disallowedTools).toEqual(['Bash', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
   });
 
   it('qa denies mutation tools only, leaving Bash available for running tests', () => {
