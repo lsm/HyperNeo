@@ -17,6 +17,7 @@ import type {
   MetricSnapshot,
   SpaceGoal,
   SpaceTask,
+  SpaceTaskStatus,
   TaskProposal,
   TaskProposalStatus,
   UpdateEvolutionEpisodeParams,
@@ -36,6 +37,7 @@ import type { SpaceGoalService } from './goals/goal-service';
 import { isRunningUnderBun, resolveSDKCliPath } from '../agent/sdk-cli-resolver';
 import { Logger } from '../logger';
 import { getProviderService, mergeProviderEnvVars } from '../provider-service';
+import { normalizeMeaningfulTaskResult } from './task-result-utils';
 import { getAvailableModels } from '../model-service';
 import { inferProviderForModel } from '../providers/registry';
 
@@ -55,6 +57,7 @@ const PROPOSAL_STATUSES: TaskProposalStatus[] = ['proposed', 'accepted', 'dismis
 const PRIORITIES: SpaceTaskPriority[] = ['low', 'normal', 'high', 'urgent'];
 const MAX_TEXT = 1200;
 const MAX_ARTIFACTS_PER_RUN = 8;
+const TERMINAL_TASK_STATUSES = new Set<SpaceTaskStatus>(['done']);
 
 export interface CreateEpisodeFromEvidenceParams {
   scopeId: string;
@@ -164,6 +167,8 @@ export class EvolutionEpisodeService {
     const judged = this.deps.judgeEpisode
       ? await this.deps.judgeEpisode(input)
       : await judgeEpisodeWithModel(input, this.deps.spaceRepo);
+    const gapFindings = this.detectResultArtifactGaps(input);
+    const findings = [...judged.findings, ...gapFindings];
     const episode = this.deps.evolutionRepo.createEpisode({
       scopeId: input.scope.id,
       status: 'draft',
@@ -171,7 +176,7 @@ export class EvolutionEpisodeService {
       timeWindow: input.timeWindow,
       evidenceIds: input.evidence.map((item) => item.id),
       outcomeSummary: judged.outcomeSummary,
-      findings: judged.findings,
+      findings,
     });
     const lessons = (judged.candidateLessons ?? []).map((lesson) =>
       this.deps.evolutionRepo.createLesson({
@@ -446,6 +451,58 @@ export class EvolutionEpisodeService {
         },
       ];
     });
+  }
+
+  private detectResultArtifactGaps(input: EpisodeJudgePromptInput): EvolutionFinding[] {
+    const gaps: EvolutionFinding[] = [];
+    const processedTaskIds = new Set<string>();
+    const runHasResultArtifact = new Map<string, boolean>();
+
+    const processTask = (task: SpaceTask, taskEvidenceId?: string) => {
+      if (processedTaskIds.has(task.id)) return;
+      processedTaskIds.add(task.id);
+      const runId = task.workflowRunId;
+      if (!runId) return;
+      if (!TERMINAL_TASK_STATUSES.has(task.status)) return;
+      if (normalizeMeaningfulTaskResult(task.result) !== null) return;
+
+      let hasResultArtifact = runHasResultArtifact.get(runId);
+      if (hasResultArtifact === undefined) {
+        const resultArtifacts = this.deps.artifactRepo.listByRun(runId, {
+          artifactType: 'result',
+        });
+        hasResultArtifact = resultArtifacts.some(
+          (artifact) =>
+            typeof artifact.data.summary === 'string' && artifact.data.summary.trim().length > 0
+        );
+        runHasResultArtifact.set(runId, hasResultArtifact);
+      }
+      if (!hasResultArtifact) return;
+
+      const runContext = input.workflowRuns.find((wr) => wr.run.id === runId);
+      const evidence = taskEvidenceId ? [taskEvidenceId] : [];
+      if (runContext && runContext.evidenceId !== taskEvidenceId) {
+        evidence.push(runContext.evidenceId);
+      }
+      gaps.push({
+        domain: 'neokai_product',
+        kind: 'bug',
+        impact: 'medium',
+        confidence: 0.9,
+        evidence,
+        proposedAction: `Backfill task.result for "${task.title}" from the result artifact on workflow run ${runId}; the artifact exists but the task record has no result.`,
+      });
+    };
+
+    for (const { evidenceId: taskEvidenceId, task } of input.tasks) {
+      processTask(task, taskEvidenceId);
+    }
+    for (const { tasks, evidenceId: runEvidenceId } of input.workflowRuns) {
+      for (const task of tasks) {
+        processTask(task, runEvidenceId);
+      }
+    }
+    return gaps;
   }
 
   private requireScope(scopeId: string): EvolutionScope {
