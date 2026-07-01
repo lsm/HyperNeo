@@ -808,6 +808,11 @@ export class SDKMessageHandler {
     // stopped turn so they cannot undercount the new query's first block.
     if (isSDKSystemInit(message)) {
       this.resetThinkingTokenTracking();
+      // A new query invalidates any in-flight prompt-too-long recovery (e.g. an
+      // interrupt/restart aborted a /compact mid-turn). The whole compact→nag
+      // sequence runs within a single query, so init only fires before recovery
+      // begins — this only ever clears stale state from a prior query.
+      this.promptTooLongRecovery?.reset();
     }
 
     // Capture SDK's internal session ID if we don't have it yet

@@ -2543,5 +2543,27 @@ describe('SDKMessageHandler', () => {
       // No /compact (or any) recovery injection for space-managed sessions.
       expect(spaceEnqueueWithId).not.toHaveBeenCalled();
     });
+
+    it('clears in-flight recovery when a new query starts (system:init)', async () => {
+      const enqueueWithId = mockMessageQueue.enqueueWithId as ReturnType<typeof mock>;
+
+      // Prime recovery: Kimi result → /compact injected (awaiting_compact).
+      await handler.handleMessage(kimiResult);
+      expect(enqueueWithId.mock.calls.at(-1)?.[1]).toBe('/compact');
+
+      // A new query (interrupt/restart) emits system:init → recovery resets, so a
+      // stale awaiting_compact phase cannot inject a stray continue nag later.
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'init',
+        session_id: 'sdk-session-1',
+        slash_commands: [],
+      } as unknown as SDKMessage);
+
+      enqueueWithId.mockClear();
+      await handler.handleMessage(successResult); // would inject the nag if phase were stale
+
+      expect(enqueueWithId).not.toHaveBeenCalled();
+    });
   });
 });

@@ -13,7 +13,7 @@ import { describe, expect, it, beforeEach, mock } from 'bun:test';
 import type { SDKMessage } from '@neokai/shared/sdk';
 import { PromptTooLongSessionRecovery } from '../../../../src/lib/agent/prompt-too-long-session-recovery';
 import type { Database } from '../../../../src/storage/database';
-import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
+import { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import {
   MAX_PROMPT_TOO_LONG_RECOVERY_ATTEMPTS,
   buildPromptTooLongContinueNag,
@@ -186,6 +186,77 @@ describe('PromptTooLongSessionRecovery', () => {
       expect(throwingSave).toHaveBeenCalledTimes(1);
       expect(failingEnqueue).not.toHaveBeenCalled();
       expect(failing.isActive()).toBe(false);
+    });
+  });
+
+  describe('consumption (live message queue)', () => {
+    function userMessageText(content: unknown): string {
+      if (typeof content === 'string') return content;
+      if (Array.isArray(content)) {
+        return content
+          .map((block) =>
+            block &&
+            typeof block === 'object' &&
+            'text' in block &&
+            typeof (block as { text: unknown }).text === 'string'
+              ? (block as { text: string }).text
+              : ''
+          )
+          .join('');
+      }
+      return '';
+    }
+
+    // The SDK runs in streaming-input mode (query({ prompt: AsyncIterable<SDKUserMessage> })),
+    // so a single query stays open across turns and the message generator keeps yielding
+    // enqueued user messages as the next turn. This reproduces that contract with a REAL
+    // MessageQueue + an active consumer and proves the injected /compact is consumed by the
+    // live generator (it drives a new turn) rather than stranded in a stopped queue.
+    it('the injected /compact is consumed by the live message generator', async () => {
+      const mq = new MessageQueue();
+      mq.start();
+      const consumed: string[] = [];
+      const consumer = (async () => {
+        for await (const { message, onSent } of mq.messageGenerator('chat-sess')) {
+          const text = userMessageText(message.message?.content);
+          consumed.push(text);
+          onSent();
+          if (text === '/compact') break;
+        }
+      })();
+
+      const recovery = new PromptTooLongSessionRecovery({
+        sessionId: 'chat-sess',
+        db: {
+          saveUserMessage: mock(() => 'id') as Database['saveUserMessage'],
+        } as unknown as Database,
+        messageQueue: mq,
+      });
+
+      recovery.handleResultMessage(kimiPromptTooLongResult());
+
+      await consumer;
+
+      expect(consumed).toContain('/compact');
+    });
+
+    it('aborts in-flight recovery when the enqueued message is rejected (interrupt/clear)', async () => {
+      const rejectingEnqueue = mock(() => Promise.reject(new Error('Interrupted by user')));
+      const recovery = new PromptTooLongSessionRecovery({
+        sessionId: 'chat-sess',
+        db: {
+          saveUserMessage: mock(() => 'id') as Database['saveUserMessage'],
+        } as unknown as Database,
+        messageQueue: { enqueueWithId: rejectingEnqueue } as unknown as MessageQueue,
+      });
+
+      recovery.handleResultMessage(kimiPromptTooLongResult());
+      expect(recovery.isActive()).toBe(true); // phase set before the rejection lands
+
+      // Drain the microtask queue so the rejected enqueue's .catch resets the phase.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(recovery.isActive()).toBe(false);
     });
   });
 });

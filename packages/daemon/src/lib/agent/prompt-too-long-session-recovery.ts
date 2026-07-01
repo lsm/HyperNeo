@@ -25,7 +25,6 @@
  * consistent. Only the driver loop is specific to the general session.
  */
 
-import type { UUID } from 'crypto';
 import { generateUUID } from '@neokai/shared';
 import type { SDKMessage, SDKUserMessage } from '@neokai/shared/sdk';
 import type { Database } from '../../storage/database';
@@ -143,23 +142,24 @@ export class PromptTooLongSessionRecovery {
    * The enqueue is fire-and-forget: this runs inside the SDK for-await loop, so
    * awaiting consumption would stall the loop until the next turn is pulled.
    * Returns false only when persistence fails (the message never reached the
-   * queue); an async consumption failure is logged but not surfaced, matching
-   * the existing recovery-injection pattern.
+   * queue). A consumption rejection (the queue is cleared/stopped — e.g. an
+   * interrupt — or the 30s timeout fires) aborts the in-flight recovery so a
+   * stale phase cannot inject a stray nag later.
    */
   private injectMessage(text: string): boolean {
     const { sessionId, db, messageQueue } = this.ctx;
-    const messageId = generateUUID() as UUID;
-    const userMessage: SDKUserMessage = {
-      type: 'user',
+    const messageId = generateUUID();
+    const userMessage = {
+      type: 'user' as const,
       uuid: messageId,
       session_id: sessionId,
       parent_tool_use_id: null,
       isSynthetic: true,
       message: {
-        role: 'user',
-        content: [{ type: 'text', text }],
+        role: 'user' as const,
+        content: [{ type: 'text' as const, text }],
       },
-    } as SDKUserMessage;
+    } as unknown as SDKUserMessage;
     try {
       db.saveUserMessage(sessionId, userMessage, 'enqueued', 'system');
     } catch (err) {
@@ -170,9 +170,10 @@ export class PromptTooLongSessionRecovery {
     }
     void messageQueue.enqueueWithId(messageId, text).catch((err) => {
       this.logger.warn(
-        `Recovery message ${messageId} was not consumed: ` +
-          `${err instanceof Error ? err.message : String(err)}`
+        `Recovery message ${messageId} was not consumed (queue cleared/stopped or timed ` +
+          `out); aborting in-flight recovery: ${err instanceof Error ? err.message : String(err)}`
       );
+      this.reset();
     });
     return true;
   }
