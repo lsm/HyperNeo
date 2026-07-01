@@ -1716,13 +1716,13 @@ describe('openai-responses-bridge server', () => {
         rejectionLogs[0]!.message.indexOf('requestBodySummary=') + 'requestBodySummary='.length
       );
       const summary = JSON.parse(summaryJson) as Record<string, unknown>;
-      // Item types are enumerated so the rejected item can be identified.
-      expect(summary.inputItemTypes).toEqual([
-        'message',
-        'message',
-        'function_call',
-        'function_call_output',
-      ]);
+      // Item types are reported as a histogram (counts per type), not an array,
+      // so a long session can't balloon the log line.
+      expect(summary.inputItemTypeCounts).toEqual({
+        message: 2,
+        function_call: 1,
+        function_call_output: 1,
+      });
       // Shapes most likely to trigger "Unsupported content type" are captured.
       const input = summary.input as Array<Record<string, unknown>>;
       const fnOutput = input.find((i) => i.type === 'function_call_output');
@@ -1804,7 +1804,7 @@ describe('openai-responses-bridge server', () => {
         rejectionLogs[0]!.message.indexOf('requestBodySummary=') + 'requestBodySummary='.length
       );
       const summary = JSON.parse(summaryJson) as Record<string, unknown>;
-      expect(summary.inputItemTypes).toContain('reasoning');
+      expect(summary.inputItemTypeCounts).toHaveProperty('reasoning');
       const reasoning = (summary.input as Array<Record<string, unknown>>).find(
         (i) => i.type === 'reasoning'
       );
@@ -1837,6 +1837,134 @@ describe('openai-responses-bridge server', () => {
       expect(resp.status).toBe(503);
       // 5xx is server-side — no request-body summary is logged.
       expect(logEvents.some((e) => e.message.includes('requestBodySummary='))).toBe(false);
+    });
+
+    describe('summarizeResponsesRequestFor4xx (direct)', () => {
+      const { summarizeResponsesRequestFor4xx } = _openAIResponsesBridgeServerTesting;
+      type Body = Parameters<typeof summarizeResponsesRequestFor4xx>[0];
+
+      it('reports item and content-block types as histograms, not arrays', () => {
+        const body: Body = {
+          model: 'gpt-5.3-codex',
+          store: false,
+          stream: true,
+          input: [
+            {
+              type: 'message',
+              role: 'user',
+              content: [
+                { type: 'input_text', text: 'a' },
+                { type: 'input_text', text: 'b' },
+              ],
+            },
+            {
+              type: 'message',
+              role: 'assistant',
+              content: [{ type: 'output_text', text: 'c', annotations: [] }],
+            },
+            { type: 'function_call', call_id: 'c1', name: 'foo', arguments: '{}' },
+            { type: 'function_call_output', call_id: 'c1', output: '{}' },
+            { type: 'reasoning', encrypted_content: 'enc' },
+          ],
+        };
+
+        const summary = summarizeResponsesRequestFor4xx(body);
+
+        // Top-level input item types collapse to a histogram.
+        expect(summary.inputItemTypeCounts).toEqual({
+          message: 2,
+          function_call: 1,
+          function_call_output: 1,
+          reasoning: 1,
+        });
+        expect(Array.isArray(summary.inputItemTypeCounts)).toBe(false);
+        expect(summary).not.toHaveProperty('inputItemTypes');
+
+        // Per-message content blocks are a histogram too.
+        const messages = (summary.input as Array<Record<string, unknown>>).filter(
+          (i) => i.type === 'message'
+        );
+        expect(messages[0]).not.toHaveProperty('contentBlockTypes');
+        expect(messages[0]?.contentBlockTypeCounts).toEqual({ input_text: 2 });
+      });
+
+      it('keeps the histogram compact for a large input (1000+ items)', () => {
+        const input: Body['input'] = [];
+        for (let i = 0; i < 600; i++) {
+          input.push({ type: 'function_call', call_id: `c${i}`, name: 'tool', arguments: '{}' });
+          input.push({ type: 'function_call_output', call_id: `c${i}`, output: '{}' });
+        }
+        const body: Body = { model: 'gpt-5.3-codex', store: false, stream: true, input };
+
+        const summary = summarizeResponsesRequestFor4xx(body);
+
+        expect(summary.inputItemCount).toBe(1200);
+        // 1200 input items collapse to a 2-key histogram — the old code would
+        // have emitted a 1200-entry inputItemTypes array here.
+        expect(summary.inputItemTypeCounts).toEqual({
+          function_call: 600,
+          function_call_output: 600,
+        });
+        expect(JSON.stringify(summary.inputItemTypeCounts).length).toBeLessThan(100);
+      });
+    });
+
+    describe('logUpstream4xx (direct)', () => {
+      const { logUpstream4xx } = _openAIResponsesBridgeServerTesting;
+      type Body = Parameters<
+        (typeof _openAIResponsesBridgeServerTesting)['summarizeResponsesRequestFor4xx']
+      >[0];
+
+      const minimalBody: Body = {
+        model: 'gpt-5.3-codex',
+        store: false,
+        stream: true,
+        input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hi' }] }],
+      };
+
+      it('logs a short line (no request body summary) for 429 rate limits', () => {
+        logUpstream4xx(429, minimalBody, 'usage_limit_reached');
+        expect(logEvents.length).toBe(1);
+        expect(logEvents[0]!.message).toContain('upstream rejected (HTTP 429)');
+        expect(logEvents[0]!.message).not.toContain('requestBodySummary=');
+      });
+
+      it('logs a short line for 401/403 auth errors (no request body summary)', () => {
+        logUpstream4xx(401, minimalBody, 'unauthorized');
+        logUpstream4xx(403, minimalBody, 'forbidden');
+        expect(logEvents.length).toBe(2);
+        for (const evt of logEvents) {
+          expect(evt.message).not.toContain('requestBodySummary=');
+        }
+        expect(logEvents[0]!.message).toContain('HTTP 401');
+        expect(logEvents[1]!.message).toContain('HTTP 403');
+      });
+
+      it('logs the full request body summary for 400, capped at 1000 chars', () => {
+        // 50 function_call items make the untruncated summary well over 1000 chars.
+        const input: Body['input'] = [];
+        for (let i = 0; i < 50; i++) {
+          input.push({ type: 'function_call', call_id: `c${i}`, name: 'tool', arguments: '{}' });
+        }
+        const body: Body = { model: 'gpt-5.3-codex', store: false, stream: true, input };
+
+        logUpstream4xx(400, body, 'Unsupported content type');
+
+        expect(logEvents.length).toBe(1);
+        const msg = logEvents[0]!.message;
+        expect(msg).toContain('upstream rejected request (HTTP 400)');
+        expect(msg).toContain('requestBodySummary=');
+        // 50 function_call items would otherwise produce a multi-KB line; the
+        // whole log line is capped (the structured logger bounds every message
+        // at 1000 chars, and the summary itself is sliced before formatting).
+        expect(msg.length).toBe(1000);
+      });
+
+      it('does not log for 5xx (server-side errors)', () => {
+        logUpstream4xx(500, minimalBody, 'internal');
+        logUpstream4xx(503, minimalBody, 'unavailable');
+        expect(logEvents.length).toBe(0);
+      });
     });
   });
 
