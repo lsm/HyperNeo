@@ -1909,11 +1909,12 @@ export class SpaceRuntimeService {
   ): Promise<void> {
     const run = this.config.workflowRunRepo.getRun(runId);
     if (!run || (run.status !== 'blocked' && run.status !== 'in_progress')) return;
-    // replay:false — callers run this before the run transitions back to
-    // in_progress; replaying a retained PR event against a still-blocked run can
-    // drop it (blocked_run_gate_not_opened). The gate-open resume path replays
-    // explicitly after the transition.
-    const result = this.runtime.ensurePrEventSubscriptionForRun(runId, { replay: false });
+    // For a still-blocked run, defer replay — the gate-open resume path
+    // (handleGateDataChangedComplete) replays after transitionBlockedRunToInProgress
+    // to avoid delivering against a still-blocked run. For a run already
+    // in_progress there is no pending transition to replay, so replay now.
+    const replay = run.status === 'in_progress';
+    const result = this.runtime.ensurePrEventSubscriptionForRun(runId, { replay });
     if (
       !result.subscribed &&
       result.reason &&

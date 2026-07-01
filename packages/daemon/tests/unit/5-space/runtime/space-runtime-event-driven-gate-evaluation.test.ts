@@ -280,6 +280,52 @@ describe('SpaceRuntimeService event-driven gate evaluation', () => {
     expect(ctx.eventStore.getById(event.id)?.state).toBe('delivered');
   });
 
+  test('notifyGateDataChanged replays a retained PR event for an already in_progress run', async () => {
+    const ctx = await setup({
+      gates: [{ id: 'approval', fields: [approvedField, prUrlField] }],
+      channels: [{ id: 'ch-code-to-review', from: 'coder', to: 'reviewer', gateId: 'approval' }],
+    });
+    const workflow = ctx.workflowManager.listWorkflows(SPACE_ID)[0]!;
+    const runtime = await ctx.service.createOrGetRuntime(SPACE_ID);
+    const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+    const execution = ctx.nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    const coderSessionId = `session-coder-${run.id}`;
+    ctx.nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: coderSessionId,
+      startedAt: Date.now(),
+    });
+    ctx.tam.alive.add(coderSessionId);
+    ctx.gateDataRepo.merge(run.id, 'approval', { pr_url: PR_URL });
+
+    // Halt the tick loop and clear any auto-sub the sweep created, so the next
+    // published PR event is genuinely retained (published, no delivery rows).
+    await runtime.stop();
+    runtime.clearPrEventSubscriptionsForRun(run.id);
+
+    const event: ExternalEvent = {
+      id: `evt-retained-inprogress-${Math.random().toString(36).slice(2)}`,
+      spaceId: SPACE_ID,
+      source: 'github',
+      topic: PR_EVENT_TOPIC,
+      occurredAt: Date.now(),
+      ingestedAt: Date.now(),
+      dedupeKey: `dedupe-retained-inprogress-${Math.random().toString(36).slice(2)}`,
+      summary: 'review',
+      payload: { action: 'review_submitted' },
+    };
+    await ctx.eventService.publish(event);
+    expect(ctx.eventStore.listDeliveries(event.id)).toHaveLength(0);
+    expect(ctx.eventStore.getById(event.id)?.state).toBe('published');
+
+    // A gate-data write on the already in_progress run must create the sub AND
+    // replay the retained event — no transition will replay it.
+    await ctx.service.notifyGateDataChanged(run.id, 'approval');
+
+    expect(ctx.injected.length).toBeGreaterThanOrEqual(1);
+    expect(ctx.eventStore.getById(event.id)?.state).toBe('delivered');
+  });
+
   test('handleBlockedRunExternalEvent re-evaluates gates and clears auto-subscription when a gate opens', async () => {
     const ctx = await setup({
       gates: [
