@@ -1708,6 +1708,17 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(injected).toHaveLength(0);
   });
 
+  test('resetBlockedExecutionsForRun resets blocked node executions to pending', async () => {
+    const { run } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, { status: 'blocked', completedAt: null });
+
+    runtime.resetBlockedExecutionsForRun(run.id);
+
+    const updated = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    expect(updated.status).toBe('pending');
+  });
+
   test('delivers a retained PR event when a direct ensure creates the auto subscription', async () => {
     const workflow = createWorkflow();
     const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');

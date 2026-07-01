@@ -2230,20 +2230,8 @@ export class SpaceRuntimeService {
    * Best-effort — errors are logged and swallowed.
    */
   private resetBlockedExecutionsForRun(runId: string): void {
-    try {
-      const executions = this.nodeExecutionRepo.listByWorkflowRun(runId);
-      for (const execution of executions) {
-        if (execution.status !== 'blocked') continue;
-        this.nodeExecutionRepo.update(execution.id, {
-          status: 'pending',
-          completedAt: null,
-        });
-      }
-    } catch (err) {
-      log.warn(
-        `SpaceRuntimeService: resetBlockedExecutionsForRun failed for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
-      );
-    }
+    // Delegate to the runtime's single source of truth.
+    this.runtime.resetBlockedExecutionsForRun(runId);
   }
 
   private promoteCanonicalTaskAfterRunResume(runId: string): void {
