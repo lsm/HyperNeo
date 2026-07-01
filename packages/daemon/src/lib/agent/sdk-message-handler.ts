@@ -50,6 +50,7 @@ import { ApiErrorCircuitBreaker } from './api-error-circuit-breaker';
 import type { MessageQueue } from './message-queue';
 import type { QueryLifecycleManager } from './query-lifecycle-manager';
 import { RepeatedToolErrorGuardrail } from './repeated-tool-error-guardrail';
+import { PromptTooLongSessionRecovery } from './prompt-too-long-session-recovery';
 import { getSessionModelInfo } from '../model-service';
 import { shouldUseNeoKaiCompactFallback } from './query-options-builder.js';
 import { reserveBasedThreshold } from './context-tracker.js';
@@ -96,6 +97,12 @@ export class SDKMessageHandler {
   private logger: Logger;
   private contextFetcher: ContextFetcher;
   private circuitBreaker: ApiErrorCircuitBreaker;
+  /**
+   * Compact-then-continue recovery for regular (non-space) chat sessions that
+   * overflow their context window. Undefined for space-managed sessions, which
+   * keep their own sweep-driven recovery in the space runtime.
+   */
+  private promptTooLongRecovery: PromptTooLongSessionRecovery | null;
   private acknowledgedPersistedUserThisTurn: boolean = false;
   private usesSessionStateChangedTurnEnd: boolean = false;
   private expectsSessionStateIdleAfterResult: boolean = false;
@@ -126,6 +133,18 @@ export class SDKMessageHandler {
     this.logger = new Logger(`SDKMessageHandler ${session.id}`);
     this.contextFetcher = new ContextFetcher(session.id);
     this.circuitBreaker = new ApiErrorCircuitBreaker(session.id);
+
+    // Prompt-too-long compact+continue recovery, only for regular (non-space)
+    // chat sessions. Space-managed sessions (spaceId set, space session types,
+    // or workflow-worker execution sub-sessions) keep their own recovery in the
+    // space runtime — enabling it here would double-recover those sessions.
+    this.promptTooLongRecovery = this.isGeneralChatSession(session)
+      ? new PromptTooLongSessionRecovery({
+          sessionId: session.id,
+          db: ctx.db,
+          messageQueue: ctx.messageQueue,
+        })
+      : null;
 
     // Set up circuit breaker callback - fully internalized
     this.circuitBreaker.setOnTripCallback(async (reason, _errorCount) => {
@@ -203,6 +222,26 @@ export class SDKMessageHandler {
   }
 
   /**
+   * Whether this session should use the general-path prompt-too-long recovery.
+   *
+   * Returns true only for plain (non-space) chat sessions. Space-managed sessions
+   * are excluded because the space runtime owns their recovery: workflow-worker
+   * execution sub-sessions get the idle-sweep compact+continue, and the
+   * space-scoped session types are governed there. Enabling this driver for them
+   * would double-recover (two `/compact` injections per overflow).
+   *
+   * Uses only session shape (no DB lookup) so it is safe to call at construction.
+   * The `:exec:` marker matches the workflow-worker sub-session id shape
+   * `space:<spaceId>:task:<taskId>:exec:<executionId>`.
+   */
+  private isGeneralChatSession(session: Session): boolean {
+    if (session.context?.spaceId) return false;
+    if (session.type === 'space_chat' || session.type === 'space_task_agent') return false;
+    if (session.id.includes(':exec:')) return false;
+    return true;
+  }
+
+  /**
    * Mark successful API interaction (resets error tracking)
    */
   markApiSuccess(): void {
@@ -233,6 +272,9 @@ export class SDKMessageHandler {
       // Clear state before stopping
       messageQueue.clear();
       this.resetCircuitBreaker();
+      // Abort any in-flight prompt-too-long recovery so a stale phase cannot
+      // inject a stray `/compact` after the loop is already stopped.
+      this.promptTooLongRecovery?.reset();
       await internalEventBus.publish('session.errorClear', {
         sessionId: session.id,
       });
@@ -736,6 +778,14 @@ export class SDKMessageHandler {
     // triggers a fetch, so short turns still update context once.
     // The 5-event tick below is deduped via pendingContextRefresh.
     if (isSDKResultMessage(message)) {
+      // Prompt-too-long recovery for regular (non-space) chat sessions: detect
+      // an overflow result (terminal prompt_too_long, Kimi blocking_limit
+      // result-field form) and inject compact→continue so the session recovers
+      // instead of ending the turn idle on an exhausted context. No-op for
+      // space-managed sessions (promptTooLongRecovery is null) and for ordinary
+      // results. Runs after setIdle so the injected `/compact` cleanly starts a
+      // fresh turn when the open query pulls the next message.
+      this.promptTooLongRecovery?.handleResultMessage(message);
       void this.refreshContextUsage('turn-end');
       return;
     }

@@ -126,6 +126,9 @@ describe('SDKMessageHandler', () => {
     updateMessageStatusSpy = mock(() => {});
     mockDb = {
       saveSDKMessage: saveSDKMessageSpy,
+      // Used by the prompt-too-long recovery driver to persist injected
+      // /compact and continue-nag user messages.
+      saveUserMessage: mock(() => 'recovery-db-id'),
       updateSession: updateSessionSpy,
       getMessagesByStatus: getMessagesByStatusSpy,
       getMessageByStatusAndUuid: getMessageByStatusAndUuidSpy,
@@ -2465,6 +2468,80 @@ describe('SDKMessageHandler', () => {
 
       // Should have tripped again
       expect(lifecycleStopSpy).toHaveBeenCalled();
+    });
+  });
+
+  describe('prompt-too-long recovery (general session path)', () => {
+    const kimiResult: SDKMessage = {
+      type: 'result',
+      subtype: 'success',
+      is_error: true,
+      result: 'Prompt is too long',
+      terminal_reason: 'blocking_limit',
+      errors: null,
+    } as unknown as SDKMessage;
+
+    const successResult: SDKMessage = {
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      result: 'done',
+      terminal_reason: 'completed',
+      errors: null,
+    } as unknown as SDKMessage;
+
+    /** The default mockSession is a plain chat session (no spaceId, no :exec:). */
+    it('injects /compact when a non-space chat session hits a Kimi prompt-too-long result', async () => {
+      const enqueueWithId = mockMessageQueue.enqueueWithId as ReturnType<typeof mock>;
+      const saveUserMessage = mockDb.saveUserMessage as ReturnType<typeof mock>;
+      enqueueWithId.mockClear();
+      saveUserMessage.mockClear();
+
+      await handler.handleMessage(kimiResult);
+
+      // Recovery persisted an enqueued system-origin user message and queued /compact.
+      expect(saveUserMessage).toHaveBeenCalledTimes(1);
+      expect(saveUserMessage.mock.calls[0][2]).toBe('enqueued');
+      expect(saveUserMessage.mock.calls[0][3]).toBe('system');
+      expect(enqueueWithId).toHaveBeenCalledTimes(1);
+      expect(enqueueWithId.mock.calls[0][1]).toBe('/compact');
+    });
+
+    it('drives compact then continue across result messages', async () => {
+      const enqueueWithId = mockMessageQueue.enqueueWithId as ReturnType<typeof mock>;
+
+      await handler.handleMessage(kimiResult); // → /compact
+      expect(enqueueWithId.mock.calls.at(-1)?.[1]).toBe('/compact');
+
+      await handler.handleMessage(successResult); // compaction succeeded → continue nag
+      expect(enqueueWithId.mock.calls.at(-1)?.[1]).toBe(
+        '[Runtime recovery notice]\n\nYour conversation context exceeded the model window and was automatically compacted.\nThe context has been reduced. Continue your assigned work from the current state.\nIf work is complete, report completion through the workflow tools.\nIf you are blocked, report the blocker clearly through the available tools. Do not wait silently.'
+      );
+    });
+
+    it('does not recover for a space-managed session', async () => {
+      // Workflow-worker execution sub-session shape → gated out (space runtime owns recovery).
+      const spaceSession = {
+        ...mockSession,
+        id: 'space:sp1:task:t1:exec:e1',
+        context: { spaceId: 'sp1' },
+      } as unknown as Session;
+      const spaceEnqueueWithId = mock(async () => {});
+      const spaceMessageQueue = {
+        enqueue: mock(async () => 'id'),
+        enqueueWithId: spaceEnqueueWithId,
+        clear: mock(() => {}),
+      } as unknown as MessageQueue;
+      const spaceHandler = new SDKMessageHandler({
+        ...mockContext,
+        session: spaceSession,
+        messageQueue: spaceMessageQueue,
+      });
+
+      await spaceHandler.handleMessage(kimiResult);
+
+      // No /compact (or any) recovery injection for space-managed sessions.
+      expect(spaceEnqueueWithId).not.toHaveBeenCalled();
     });
   });
 });
