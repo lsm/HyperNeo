@@ -15,12 +15,16 @@ import { renderHook, act } from '@testing-library/preact';
 const mocks = vi.hoisted(() => ({
   updateSession: vi.fn(),
   globalStoreUpdate: vi.fn(),
+  spaceStoreUpdate: vi.fn(),
   toastError: vi.fn(),
 }));
 
 vi.mock('../../lib/api-helpers', () => ({ updateSession: mocks.updateSession }));
 vi.mock('../../lib/global-store', () => ({
   globalStore: { updateSession: mocks.globalStoreUpdate },
+}));
+vi.mock('../../lib/space-store', () => ({
+  spaceStore: { updateSession: mocks.spaceStoreUpdate },
 }));
 vi.mock('../../lib/toast', () => ({ toast: { error: mocks.toastError } }));
 
@@ -34,6 +38,7 @@ describe('useSessionRename', () => {
   beforeEach(() => {
     mocks.updateSession.mockReset();
     mocks.globalStoreUpdate.mockReset();
+    mocks.spaceStoreUpdate.mockReset();
     mocks.toastError.mockReset();
     mocks.updateSession.mockResolvedValue(undefined);
   });
@@ -69,6 +74,9 @@ describe('useSessionRename', () => {
     // Optimistic store update carries the new title only (metadata is merged on
     // the backend; the store shallow-merges and would drop counts otherwise).
     expect(mocks.globalStoreUpdate).toHaveBeenCalledWith('session-1', { title: 'New Title' });
+    // Both stores update optimistically: chat rows read globalStore, space rows
+    // read spaceStore (which is otherwise fed only by the LiveQuery).
+    expect(mocks.spaceStoreUpdate).toHaveBeenCalledWith('session-1', { title: 'New Title' });
     expect(mocks.updateSession).toHaveBeenCalledWith('session-1', {
       title: 'New Title',
       metadata: { titleSetBy: 'user' },
@@ -184,11 +192,17 @@ describe('useSessionRename', () => {
     });
 
     expect(result.current.isEditing).toBe(false);
-    // Optimistic write, then rollback to the original title.
+    // Optimistic write, then rollback to the original title — in both stores.
     expect(mocks.globalStoreUpdate).toHaveBeenNthCalledWith(1, 'session-1', {
       title: 'New Title',
     });
     expect(mocks.globalStoreUpdate).toHaveBeenNthCalledWith(2, 'session-1', {
+      title: 'Original',
+    });
+    expect(mocks.spaceStoreUpdate).toHaveBeenNthCalledWith(1, 'session-1', {
+      title: 'New Title',
+    });
+    expect(mocks.spaceStoreUpdate).toHaveBeenNthCalledWith(2, 'session-1', {
       title: 'Original',
     });
     expect(mocks.toastError).toHaveBeenCalledWith('Failed to rename');

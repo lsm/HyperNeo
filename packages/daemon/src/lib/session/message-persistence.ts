@@ -273,7 +273,10 @@ export class MessagePersistence {
           messageId,
           messageContent,
           userMessageText: content, // Original content (before expansion)
-          needsWorkspaceInit: !session.metadata.titleGenerated,
+          // Auto-title init is needed only when no title has been settled yet —
+          // either auto-generated or manually set by the user (titleSetBy).
+          needsWorkspaceInit:
+            !session.metadata.titleGenerated && session.metadata.titleSetBy !== 'user',
           hasDraftToClear: session.metadata?.inputDraft === content.trim(),
           sendStatus,
           deliveryMode: effectiveDeliveryMode,

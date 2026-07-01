@@ -633,11 +633,7 @@ function RecentSessionRow({
     >
       <div class="w-2 h-2 rounded-full flex-shrink-0 bg-indigo-400" />
       <div class="flex-1 min-w-0">
-        <span
-          class="text-sm text-gray-200 truncate block"
-          onDblClick={startEditing}
-          title="Double-click to rename"
-        >
+        <span class="text-sm text-gray-200 truncate block">
           {session.title || 'Untitled Session'}
         </span>
       </div>

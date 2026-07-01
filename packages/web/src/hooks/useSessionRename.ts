@@ -25,6 +25,7 @@
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import type { JSX } from 'preact';
 import { globalStore } from '../lib/global-store';
+import { spaceStore } from '../lib/space-store';
 import { updateSession } from '../lib/api-helpers';
 import { toast } from '../lib/toast';
 
@@ -85,12 +86,15 @@ export function useSessionRename(sessionId: string, currentTitle: string): UseSe
     // Title only — globalStore.updateSession shallow-merges, so partial metadata
     // here would wipe token/cost counts. The titleSetBy guardrail flag is applied
     // by the backend call below (and persisted via its merged metadata write).
+    // Update both stores: chat rows read globalStore, space rows read spaceStore.
     globalStore.updateSession(sessionId, { title: trimmed });
+    spaceStore.updateSession(sessionId, { title: trimmed });
     try {
       await updateSession(sessionId, { title: trimmed, metadata: { titleSetBy: 'user' } });
     } catch {
       // Roll back to the prior title and surface the failure.
       globalStore.updateSession(sessionId, { title: currentTitle });
+      spaceStore.updateSession(sessionId, { title: currentTitle });
       toast.error('Failed to rename');
     }
   }, [draft, currentTitle, sessionId]);

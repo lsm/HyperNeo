@@ -208,13 +208,7 @@ function SessionItem({
     >
       <div class="flex items-start justify-between">
         <div class="flex-1 min-w-0">
-          <h4
-            class="text-sm font-medium text-gray-100 truncate"
-            onDblClick={startEditing}
-            title="Double-click to rename"
-          >
-            {session.title || session.id}
-          </h4>
+          <h4 class="text-sm font-medium text-gray-100 truncate">{session.title || session.id}</h4>
           <div class="flex items-center gap-2 mt-1">
             <span class="text-xs text-gray-400">
               {STATUS_LABEL[session.status] ?? session.status}

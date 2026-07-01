@@ -48,11 +48,15 @@ vi.mock('../../lib/signals.ts', () => ({
 const renameMocks = vi.hoisted(() => ({
   updateSession: vi.fn(),
   globalStoreUpdate: vi.fn(),
+  spaceStoreUpdate: vi.fn(),
   toastError: vi.fn(),
 }));
 vi.mock('../../lib/api-helpers', () => ({ updateSession: renameMocks.updateSession }));
 vi.mock('../../lib/global-store', () => ({
   globalStore: { updateSession: renameMocks.globalStoreUpdate },
+}));
+vi.mock('../../lib/space-store', () => ({
+  spaceStore: { updateSession: renameMocks.spaceStoreUpdate },
 }));
 vi.mock('../../lib/toast', () => ({ toast: { error: renameMocks.toastError } }));
 
@@ -519,6 +523,7 @@ describe('SessionListItem', () => {
     beforeEach(() => {
       renameMocks.updateSession.mockReset();
       renameMocks.globalStoreUpdate.mockReset();
+      renameMocks.spaceStoreUpdate.mockReset();
       renameMocks.toastError.mockReset();
       renameMocks.updateSession.mockResolvedValue(undefined);
     });

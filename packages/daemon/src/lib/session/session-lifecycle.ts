@@ -982,6 +982,16 @@ export class SessionLifecycle {
       }
 
       // Step 3: Update session record
+      // Re-check against fresh state: a user may have renamed during the async
+      // title generation + branch rename above. The `session` snapshot is from
+      // before those awaits, so without this guard we'd clobber a manual rename
+      // with the generated title. (Synchronous from here to the write below, so
+      // no further await can interleave.)
+      const latest = agentSession.getSessionData();
+      if (latest.metadata.titleSetBy === 'user') {
+        return { title: latest.title, isFallback: false };
+      }
+
       const updatedSession: Session = {
         ...session,
         title,

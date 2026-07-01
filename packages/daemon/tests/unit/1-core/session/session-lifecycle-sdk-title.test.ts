@@ -591,6 +591,58 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
     expect(mockDb.updateSession).not.toHaveBeenCalled();
   });
 
+  it('does not clobber a manual rename that lands during title generation', async () => {
+    // The top-of-function guard passes (not yet renamed), so the model is called.
+    // Mid-generation (inside the query override) the user renames; the post-await
+    // re-check must see titleSetBy='user' and discard the generated title.
+    const { mockAgentSession, mockSessionCache: sessionCache } = makeSessionCache();
+    mockAgentSession.getSessionData = mock(() => ({
+      id: 'test-id',
+      title: 'New Session',
+      workspacePath: '/test',
+      status: 'active',
+      metadata: { titleGenerated: false },
+      config: { model: 'claude-sonnet-4-20250514', provider: 'anthropic' },
+      worktree: undefined,
+    }));
+    const renameDuringQuery: SessionLifecycleConfig['titleGenerationQueryForTesting'] = (
+      params
+    ) => {
+      const opts = params.options ?? {};
+      if ('thinking' in opts) lastTitleQueryOptions = opts;
+      // Simulate the user renaming while the model call is in flight.
+      mockAgentSession.getSessionData = mock(() => ({
+        id: 'test-id',
+        title: 'My Manual Title',
+        workspacePath: '/test',
+        status: 'active',
+        metadata: { titleGenerated: false, titleSetBy: 'user' },
+        config: { model: 'claude-sonnet-4-20250514', provider: 'anthropic' },
+        worktree: undefined,
+      }));
+      return makeQueryMock(mockSdkMessages);
+    };
+    config.titleGenerationQueryForTesting = renameDuringQuery;
+    lifecycle = new SessionLifecycleCtor(
+      mockDb,
+      mockWorktreeManager,
+      sessionCache,
+      mockInternalEventBus,
+      mockMessageHub,
+      config,
+      mockToolsConfigManager,
+      mockAgentSessionFactory
+    );
+
+    const result = await lifecycle.generateTitleAndRenameBranch('test-id', 'Create a login form');
+
+    // Kept the manual title; the generated title ('My Generated Title') was discarded.
+    expect(result.title).toBe('My Manual Title');
+    expect(result.isFallback).toBe(false);
+    // The generated title was NOT written over the rename.
+    expect(mockDb.updateSession).not.toHaveBeenCalled();
+  });
+
   it('should generate titles using stored credentials when env vars are absent', async () => {
     delete process.env.ANTHROPIC_API_KEY;
     delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
