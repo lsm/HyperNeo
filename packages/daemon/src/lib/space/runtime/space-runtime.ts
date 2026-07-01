@@ -4590,8 +4590,11 @@ export class SpaceRuntime {
       const subscribedPrRuns = await this.ensurePrEventSubscriptionsForActiveRuns();
 
       if (justRehydrated || subscribedPrRuns > 0) {
-        this.expirePublishedExternalEventsPastTtl();
-        this.redispatchPublishedEventsWithoutDeliveries();
+        // Route through the re-entrancy-guarded helper: if a PR event is still
+        // mid-handling (awaiting gate re-eval, before its delivery rows exist),
+        // the raw redispatch would re-handle it; the guard defers to the
+        // post-handling flush instead.
+        this.redispatchRetainedExternalEvents();
       }
 
       await this.attachStandaloneTasksToWorkflows();
@@ -5206,8 +5209,9 @@ export class SpaceRuntime {
       }
     }
     if (subscribedPrRuns > 0) {
-      this.expirePublishedExternalEventsPastTtl();
-      this.redispatchPublishedEventsWithoutDeliveries();
+      // Re-entrancy-guarded: defer if a PR event is still mid-handling so the
+      // in-flight event is not re-handled before its delivery rows exist.
+      this.redispatchRetainedExternalEvents();
     }
 
     for (const delivery of store.listPendingDeliveries()) {
