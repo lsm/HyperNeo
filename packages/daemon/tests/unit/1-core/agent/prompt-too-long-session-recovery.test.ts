@@ -2,11 +2,12 @@
  * PromptTooLongSessionRecovery — general (non-space) session path.
  *
  * Covers the compact-then-continue state machine driven by discrete SDK result
- * messages: an overflow result injects `/compact`, a subsequent non-overflow
- * result injects the "continue your work" nag, the resumed turn's result
- * completes recovery, and repeated overflows are bounded by
- * MAX_PROMPT_TOO_LONG_RECOVERY_ATTEMPTS. Detection/nag/cap are shared with the
- * space-runtime path, so these tests pin the contract the two paths share.
+ * messages: an overflow result injects `/compact` (at the queue head), a
+ * subsequent successful result injects the continue nag, the resumed turn's
+ * success result completes recovery, and repeated overflows OR non-overflow
+ * errors are bounded by MAX_PROMPT_TOO_LONG_RECOVERY_ATTEMPTS. Detection and the
+ * attempt cap are shared with the space-runtime path; the resume nag is
+ * chat-specific.
  */
 
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
@@ -14,10 +15,7 @@ import type { SDKMessage } from '@neokai/shared/sdk';
 import { PromptTooLongSessionRecovery } from '../../../../src/lib/agent/prompt-too-long-session-recovery';
 import type { Database } from '../../../../src/storage/database';
 import { MessageQueue } from '../../../../src/lib/agent/message-queue';
-import {
-  MAX_PROMPT_TOO_LONG_RECOVERY_ATTEMPTS,
-  buildPromptTooLongContinueNag,
-} from '../../../../src/lib/space/runtime/prompt-too-long-recovery';
+import { MAX_PROMPT_TOO_LONG_RECOVERY_ATTEMPTS } from '../../../../src/lib/space/runtime/prompt-too-long-recovery';
 
 /** Kimi blocking_limit form: overflow phrase in the `result` field, no errors[]. */
 function kimiPromptTooLongResult(): SDKMessage {
@@ -53,42 +51,69 @@ function successResult(): SDKMessage {
   } as unknown as SDKMessage;
 }
 
+/** A non-overflow ERROR result (e.g. auth/rate-limit/model failure) after /compact. */
+function nonOverflowErrorResult(): SDKMessage {
+  return {
+    type: 'result',
+    subtype: 'error_during_execution',
+    is_error: true,
+    result: 'Rate limit exceeded',
+    terminal_reason: 'error_max_budget_usd',
+    errors: ['rate limited'],
+  } as unknown as SDKMessage;
+}
+
+const CHAT_CONTINUE_NAG =
+  '[Runtime recovery notice]\n\nYour conversation context exceeded the model window and was automatically compacted.\n' +
+  "The context has been reduced. Please continue what you were doing, or answer the user's last message from the current state.";
+
+interface RecoveryFixture {
+  recovery: PromptTooLongSessionRecovery;
+  enqueueWithId: ReturnType<typeof mock>;
+  updateMessageStatus: ReturnType<typeof mock>;
+  saveUserMessage: ReturnType<typeof mock>;
+}
+
 function makeRecovery(
-  saveUserMessage: Database['saveUserMessage'] = mock(() => 'db-id') as Database['saveUserMessage']
-): { recovery: PromptTooLongSessionRecovery; enqueueWithId: ReturnType<typeof mock> } {
-  const enqueueWithId = mock(async () => {});
-  const messageQueue = { enqueueWithId } as unknown as MessageQueue;
-  const db = { saveUserMessage } as unknown as Database;
+  saveUserMessage: ReturnType<typeof mock> = mock(() => 'db-id'),
+  enqueueWithId: ReturnType<typeof mock> = mock(async () => {})
+): RecoveryFixture {
+  const updateMessageStatus = mock(() => {});
+  const messageQueue = {
+    enqueueWithId,
+  } as unknown as import('../../../../src/lib/agent/message-queue').MessageQueue;
+  const db = { saveUserMessage, updateMessageStatus } as unknown as Database;
   const recovery = new PromptTooLongSessionRecovery({
     sessionId: 'chat-session-1',
     db,
     messageQueue,
   });
-  return { recovery, enqueueWithId };
+  return { recovery, enqueueWithId, updateMessageStatus, saveUserMessage };
 }
 
 describe('PromptTooLongSessionRecovery', () => {
   let recovery: PromptTooLongSessionRecovery;
   let enqueueWithId: ReturnType<typeof mock>;
+  let updateMessageStatus: ReturnType<typeof mock>;
   let saveUserMessage: ReturnType<typeof mock>;
 
   beforeEach(() => {
-    saveUserMessage = mock(() => 'db-id');
-    ({ recovery, enqueueWithId } = makeRecovery(saveUserMessage));
+    ({ recovery, enqueueWithId, updateMessageStatus, saveUserMessage } = makeRecovery());
   });
 
   describe('compact then continue', () => {
-    it('injects /compact (persisted + enqueued) on a Kimi blocking_limit result', () => {
+    it('injects /compact (persisted + enqueued at head) on a Kimi blocking_limit result', () => {
       expect(recovery.isActive()).toBe(false);
 
       recovery.handleResultMessage(kimiPromptTooLongResult());
 
-      // Persisted as an enqueued system-origin user message, then queued.
+      // Persisted as an enqueued system-origin user message, then queued at the HEAD.
       expect(saveUserMessage).toHaveBeenCalledTimes(1);
       expect(saveUserMessage.mock.calls[0][2]).toBe('enqueued');
       expect(saveUserMessage.mock.calls[0][3]).toBe('system');
       expect(enqueueWithId).toHaveBeenCalledTimes(1);
       expect(enqueueWithId.mock.calls[0][1]).toBe('/compact');
+      expect(enqueueWithId.mock.calls[0][3]).toBe(true); // atHead
       expect(recovery.isActive()).toBe(true);
     });
 
@@ -99,23 +124,23 @@ describe('PromptTooLongSessionRecovery', () => {
       expect(recovery.isActive()).toBe(true);
     });
 
-    it('injects the continue nag after a successful compact result', () => {
+    it('injects the chat continue nag after a successful compact result', () => {
       recovery.handleResultMessage(kimiPromptTooLongResult()); // → /compact
       enqueueWithId.mockClear();
 
       recovery.handleResultMessage(successResult()); // compaction succeeded
 
       expect(enqueueWithId).toHaveBeenCalledTimes(1);
-      expect(enqueueWithId.mock.calls[0][1]).toBe(buildPromptTooLongContinueNag());
+      expect(enqueueWithId.mock.calls[0][1]).toBe(CHAT_CONTINUE_NAG);
       expect(recovery.isActive()).toBe(true);
     });
 
-    it('completes (resets) once the resumed turn produces a non-overflow result', () => {
+    it('completes (resets) once the resumed turn produces a successful result', () => {
       recovery.handleResultMessage(kimiPromptTooLongResult()); // → /compact
       recovery.handleResultMessage(successResult()); // → continue nag
       enqueueWithId.mockClear();
 
-      recovery.handleResultMessage(successResult()); // resumed turn done
+      recovery.handleResultMessage(successResult()); // resumed turn succeeded
 
       expect(enqueueWithId).not.toHaveBeenCalled();
       expect(recovery.isActive()).toBe(false);
@@ -126,6 +151,31 @@ describe('PromptTooLongSessionRecovery', () => {
       expect(enqueueWithId).not.toHaveBeenCalled();
       expect(saveUserMessage).not.toHaveBeenCalled();
       expect(recovery.isActive()).toBe(false);
+    });
+  });
+
+  describe('non-overflow error handling', () => {
+    it('re-compacts (does not nag) when the compact turn ends with a non-overflow error', () => {
+      recovery.handleResultMessage(kimiPromptTooLongResult()); // → /compact
+      enqueueWithId.mockClear();
+
+      recovery.handleResultMessage(nonOverflowErrorResult()); // compaction failed
+
+      expect(enqueueWithId).toHaveBeenCalledTimes(1);
+      expect(enqueueWithId.mock.calls[0][1]).toBe('/compact'); // re-compact, not the nag
+      expect(recovery.isActive()).toBe(true);
+    });
+
+    it('re-compacts when the resumed turn ends with a non-overflow error', () => {
+      recovery.handleResultMessage(kimiPromptTooLongResult()); // → /compact
+      recovery.handleResultMessage(successResult()); // → continue nag
+      enqueueWithId.mockClear();
+
+      recovery.handleResultMessage(nonOverflowErrorResult()); // resume failed
+
+      expect(enqueueWithId).toHaveBeenCalledTimes(1);
+      expect(enqueueWithId.mock.calls[0][1]).toBe('/compact');
+      expect(recovery.isActive()).toBe(true);
     });
   });
 
@@ -156,6 +206,22 @@ describe('PromptTooLongSessionRecovery', () => {
       expect(enqueueWithId.mock.calls[0][1]).toBe('/compact');
       expect(recovery.isActive()).toBe(true);
     });
+
+    it('resets compactAttempts after a completed episode so a new overflow recovers fresh', () => {
+      // Complete a full episode.
+      recovery.handleResultMessage(kimiPromptTooLongResult()); // compact #1
+      recovery.handleResultMessage(successResult()); // → continue nag
+      recovery.handleResultMessage(successResult()); // resumed turn succeeded → complete → reset
+      expect(recovery.isActive()).toBe(false);
+
+      // A new overflow starts a fresh episode (compactAttempts reset, not a give-up).
+      enqueueWithId.mockClear();
+      recovery.handleResultMessage(kimiPromptTooLongResult());
+
+      expect(enqueueWithId).toHaveBeenCalledTimes(1);
+      expect(enqueueWithId.mock.calls[0][1]).toBe('/compact');
+      expect(recovery.isActive()).toBe(true);
+    });
   });
 
   describe('reset', () => {
@@ -177,15 +243,13 @@ describe('PromptTooLongSessionRecovery', () => {
       const throwingSave = mock(() => {
         throw new Error('database is locked');
       });
-      const { recovery: failing, enqueueWithId: failingEnqueue } = makeRecovery(
-        throwingSave as unknown as Database['saveUserMessage']
-      );
+      const failing = makeRecovery(throwingSave);
 
-      failing.handleResultMessage(kimiPromptTooLongResult());
+      failing.recovery.handleResultMessage(kimiPromptTooLongResult());
 
       expect(throwingSave).toHaveBeenCalledTimes(1);
-      expect(failingEnqueue).not.toHaveBeenCalled();
-      expect(failing.isActive()).toBe(false);
+      expect(failing.enqueueWithId).not.toHaveBeenCalled();
+      expect(failing.recovery.isActive()).toBe(false);
     });
   });
 
@@ -207,11 +271,21 @@ describe('PromptTooLongSessionRecovery', () => {
       return '';
     }
 
+    function makeLiveRecovery(mq: MessageQueue): PromptTooLongSessionRecovery {
+      return new PromptTooLongSessionRecovery({
+        sessionId: 'chat-sess',
+        db: {
+          saveUserMessage: mock(() => 'id') as Database['saveUserMessage'],
+          updateMessageStatus: mock(() => {}),
+        } as unknown as Database,
+        messageQueue: mq,
+      });
+    }
+
     // The SDK runs in streaming-input mode (query({ prompt: AsyncIterable<SDKUserMessage> })),
     // so a single query stays open across turns and the message generator keeps yielding
     // enqueued user messages as the next turn. This reproduces that contract with a REAL
-    // MessageQueue + an active consumer and proves the injected /compact is consumed by the
-    // live generator (it drives a new turn) rather than stranded in a stopped queue.
+    // MessageQueue + an active consumer.
     it('the injected /compact is consumed by the live message generator', async () => {
       const mq = new MessageQueue();
       mq.start();
@@ -225,38 +299,51 @@ describe('PromptTooLongSessionRecovery', () => {
         }
       })();
 
-      const recovery = new PromptTooLongSessionRecovery({
-        sessionId: 'chat-sess',
-        db: {
-          saveUserMessage: mock(() => 'id') as Database['saveUserMessage'],
-        } as unknown as Database,
-        messageQueue: mq,
-      });
-
-      recovery.handleResultMessage(kimiPromptTooLongResult());
+      makeLiveRecovery(mq).handleResultMessage(kimiPromptTooLongResult());
 
       await consumer;
-
       expect(consumed).toContain('/compact');
     });
 
-    it('aborts in-flight recovery when the enqueued message is rejected (interrupt/clear)', async () => {
+    it('injects /compact AHEAD of a message already in the queue (prepended)', async () => {
+      const mq = new MessageQueue();
+      mq.start();
+      // A user message is already queued (the user typed it during the overflow turn;
+      // the SDK is mid-turn and has not pulled it yet).
+      void mq.enqueue('user-followup');
+
+      // The overflow result arrives and recovery prepends /compact ahead of it.
+      makeLiveRecovery(mq).handleResultMessage(kimiPromptTooLongResult());
+
+      // Only now does the SDK pull the next message (the turn has ended).
+      const consumed: string[] = [];
+      for await (const { message, onSent } of mq.messageGenerator('chat-sess')) {
+        consumed.push(userMessageText(message.message?.content));
+        onSent();
+        if (consumed.length >= 2) break;
+      }
+
+      // /compact was prepended, so it is consumed before the already-queued user message.
+      expect(consumed[0]).toBe('/compact');
+      expect(consumed[1]).toBe('user-followup');
+    });
+  });
+
+  describe('aborted injection cleanup', () => {
+    it('resets recovery AND marks the persisted row failed when the enqueued message is rejected', async () => {
+      const save = mock(() => 'recovery-db-id');
       const rejectingEnqueue = mock(() => Promise.reject(new Error('Interrupted by user')));
-      const recovery = new PromptTooLongSessionRecovery({
-        sessionId: 'chat-sess',
-        db: {
-          saveUserMessage: mock(() => 'id') as Database['saveUserMessage'],
-        } as unknown as Database,
-        messageQueue: { enqueueWithId: rejectingEnqueue } as unknown as MessageQueue,
-      });
+      const fixture = makeRecovery(save, rejectingEnqueue);
 
-      recovery.handleResultMessage(kimiPromptTooLongResult());
-      expect(recovery.isActive()).toBe(true); // phase set before the rejection lands
+      fixture.recovery.handleResultMessage(kimiPromptTooLongResult());
+      expect(fixture.recovery.isActive()).toBe(true); // phase set before the rejection lands
 
-      // Drain the microtask queue so the rejected enqueue's .catch resets the phase.
+      // Drain the microtask queue so the rejected enqueue's .catch runs.
       await new Promise((resolve) => setTimeout(resolve, 0));
 
-      expect(recovery.isActive()).toBe(false);
+      expect(fixture.recovery.isActive()).toBe(false);
+      // The persisted row is marked 'failed' so sendEnqueuedMessagesOnTurnEnd won't replay it.
+      expect(fixture.updateMessageStatus).toHaveBeenCalledWith(['recovery-db-id'], 'failed');
     });
   });
 });

@@ -101,7 +101,8 @@ export class MessageQueue {
   async enqueueWithId(
     messageId: string,
     content: string | MessageContent[],
-    internal: boolean = false
+    internal: boolean = false,
+    atHead: boolean = false
   ): Promise<void> {
     return new Promise((resolve, reject) => {
       const queuedMessage: QueuedMessage = {
@@ -142,7 +143,15 @@ export class MessageQueue {
         }
       }, MESSAGE_QUEUE_TIMEOUT_MS);
 
-      this.queue.push(queuedMessage);
+      // atHead places the message ahead of already-queued input so it is consumed
+      // on the very next turn. Used by prompt-too-long recovery so the injected
+      // `/compact` runs before any user message queued during the overflow turn
+      // (and before turn-end deferred-message replay).
+      if (atHead) {
+        this.queue.unshift(queuedMessage);
+      } else {
+        this.queue.push(queuedMessage);
+      }
       this.onMessageEnqueued?.(queuedMessage.id, queuedMessage.queuedAt);
 
       // Wake up any waiting message generators

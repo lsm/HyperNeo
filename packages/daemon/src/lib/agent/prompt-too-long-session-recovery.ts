@@ -9,20 +9,25 @@
  * `/compact`. This driver gives those sessions the same compact-then-continue
  * recovery, driven by the discrete SDK result stream instead of a sweep.
  *
- * One query stays open across turns, so an enqueued user message becomes the
- * next turn. Flow:
- *   1. A prompt-too-long result lands while `idle` → inject `/compact`, advance
- *      to `awaiting_compact`.
+ * One query stays open across turns (streaming-input mode), so an enqueued user
+ * message becomes the next turn. Flow:
+ *   1. A prompt-too-long result lands while `idle` → inject `/compact` at the
+ *      HEAD of the queue, advance to `awaiting_compact`.
  *   2. The compacted turn's result lands:
- *        - still overflow → re-compact (bounded by MAX_PROMPT_TOO_LONG_RECOVERY_ATTEMPTS);
- *        - otherwise → inject the "continue your work" nag, advance to `awaiting_resume`.
+ *        - success → inject the continue nag, advance to `awaiting_resume`;
+ *        - overflow OR a non-overflow error → re-compact (a non-overflow error
+ *          means compaction did not produce a usable context), bounded by
+ *          MAX_PROMPT_TOO_LONG_RECOVERY_ATTEMPTS.
  *   3. The resumed turn's result lands:
- *        - overflow → re-compact (attempts preserved across the resume);
- *        - otherwise → recovery complete, reset.
+ *        - success → recovery complete, reset;
+ *        - overflow OR error → re-compact (attempts preserved across the resume).
  *
- * Detection, the nag text, and the attempt cap are shared with the space path
- * via `space/runtime/prompt-too-long-recovery.ts` so the two paths stay
- * consistent. Only the driver loop is specific to the general session.
+ * `/compact` is enqueued at the head so it runs before any user message already
+ * queued during the overflow turn, and before `finishTurn()`'s deferred-message
+ * replay on the Kimi `blocking_limit` (`subtype: 'success'`) form. Detection and
+ * the attempt cap are shared with the space path via
+ * `space/runtime/prompt-too-long-recovery.ts`; the resume nag is chat-specific
+ * (the space nag references workflow tools chat sessions do not have).
  */
 
 import { generateUUID } from '@neokai/shared';
@@ -31,7 +36,6 @@ import type { Database } from '../../storage/database';
 import { Logger } from '../logger';
 import {
   MAX_PROMPT_TOO_LONG_RECOVERY_ATTEMPTS,
-  buildPromptTooLongContinueNag,
   isPromptTooLongErrorMessage,
 } from '../space/runtime/prompt-too-long-recovery';
 import type { MessageQueue } from './message-queue';
@@ -43,6 +47,28 @@ export interface PromptTooLongSessionRecoveryContext {
 }
 
 type RecoveryPhase = 'idle' | 'awaiting_compact' | 'awaiting_resume';
+
+/**
+ * Resume notice for a regular (non-space) chat session after auto-compaction.
+ * Intentionally distinct from the space-runtime nag
+ * (`buildPromptTooLongContinueNag`): chat sessions have no workflow/task tools,
+ * so this avoids steering the model toward nonexistent tooling and simply asks
+ * it to continue or answer the user.
+ */
+function buildChatContinueNag(): string {
+  return [
+    '[Runtime recovery notice]',
+    '',
+    'Your conversation context exceeded the model window and was automatically compacted.',
+    "The context has been reduced. Please continue what you were doing, or answer the user's last message from the current state.",
+  ].join('\n');
+}
+
+/** A non-overflow SUCCESS result — the only outcome that proves compaction/resume worked. */
+function isSuccessfulResult(message: SDKMessage): boolean {
+  if ((message as { type?: string }).type !== 'result') return false;
+  return (message as { is_error?: boolean }).is_error !== true;
+}
 
 export class PromptTooLongSessionRecovery {
   private phase: RecoveryPhase = 'idle';
@@ -62,11 +88,18 @@ export class PromptTooLongSessionRecovery {
   /**
    * Drive recovery from an SDK result message. Called by SDKMessageHandler for
    * every result so the driver can react to an overflow result AND to the
-   * compacted/resumed results that follow it. No-ops on non-overflow results
-   * when no recovery is active.
+   * compacted/resumed results that follow it. No-ops on ordinary results when
+   * no recovery is active.
+   *
+   * Only a non-overflow SUCCESS result is treated as productive. A non-overflow
+   * ERROR result after `/compact` (auth/rate-limit/model failure) means no
+   * compacted context was produced, so the driver re-compacts (bounded) rather
+   * than resuming into an unchanged, still-over-limit context — matching the
+   * space-runtime path.
    */
   handleResultMessage(message: SDKMessage): void {
     const overflowed = isPromptTooLongErrorMessage(message);
+    const success = isSuccessfulResult(message);
 
     if (this.phase === 'idle') {
       if (overflowed) {
@@ -76,22 +109,21 @@ export class PromptTooLongSessionRecovery {
     }
 
     if (this.phase === 'awaiting_compact') {
-      if (overflowed) {
-        // Compaction could not shrink the context enough — re-compact up to the cap.
-        this.injectCompact('overflow-after-compact');
-      } else {
+      if (success) {
         this.injectContinueNag();
+      } else {
+        // Overflow again, or a non-overflow error → compaction did not yield a usable context.
+        this.injectCompact(overflowed ? 'overflow-after-compact' : 'compact-error');
       }
       return;
     }
 
     // awaiting_resume: the resumed turn produced a result.
-    if (overflowed) {
-      this.injectCompact('overflow-after-resume');
-    } else {
-      // Resume made progress — recovery complete.
+    if (success) {
       this.logger.warn('Prompt-too-long recovery complete; resuming normal operation.');
       this.reset();
+    } else {
+      this.injectCompact(overflowed ? 'overflow-after-resume' : 'resume-error');
     }
   }
 
@@ -111,7 +143,10 @@ export class PromptTooLongSessionRecovery {
       return;
     }
     this.compactAttempts += 1;
-    if (!this.injectMessage('/compact')) {
+    // Prepend so /compact is the very next turn — ahead of any user message
+    // queued during the overflow turn and ahead of finishTurn()'s deferred
+    // replay on the Kimi blocking_limit (subtype:'success') form.
+    if (!this.injectMessage('/compact', true)) {
       this.logger.warn(`Failed to inject /compact (${reason}); aborting recovery.`);
       this.reset();
       return;
@@ -124,7 +159,7 @@ export class PromptTooLongSessionRecovery {
   }
 
   private injectContinueNag(): void {
-    if (!this.injectMessage(buildPromptTooLongContinueNag())) {
+    if (!this.injectMessage(buildChatContinueNag(), false)) {
       this.logger.warn('Failed to inject continue nag; aborting recovery.');
       this.reset();
       return;
@@ -143,10 +178,11 @@ export class PromptTooLongSessionRecovery {
    * awaiting consumption would stall the loop until the next turn is pulled.
    * Returns false only when persistence fails (the message never reached the
    * queue). A consumption rejection (the queue is cleared/stopped — e.g. an
-   * interrupt — or the 30s timeout fires) aborts the in-flight recovery so a
-   * stale phase cannot inject a stray nag later.
+   * interrupt — or the 30s timeout fires) marks the persisted row `'failed'` so
+   * `sendEnqueuedMessagesOnTurnEnd` cannot replay it on the next query, and
+   * aborts the in-flight recovery so a stale phase cannot inject a stray nag.
    */
-  private injectMessage(text: string): boolean {
+  private injectMessage(text: string, atHead: boolean): boolean {
     const { sessionId, db, messageQueue } = this.ctx;
     const messageId = generateUUID();
     const userMessage = {
@@ -160,19 +196,29 @@ export class PromptTooLongSessionRecovery {
         content: [{ type: 'text' as const, text }],
       },
     } as unknown as SDKUserMessage;
+    let dbId: string;
     try {
-      db.saveUserMessage(sessionId, userMessage, 'enqueued', 'system');
+      dbId = db.saveUserMessage(sessionId, userMessage, 'enqueued', 'system');
     } catch (err) {
       this.logger.warn(
         `Failed to persist recovery message: ${err instanceof Error ? err.message : String(err)}`
       );
       return false;
     }
-    void messageQueue.enqueueWithId(messageId, text).catch((err) => {
+    void messageQueue.enqueueWithId(messageId, text, false, atHead).catch((err) => {
       this.logger.warn(
         `Recovery message ${messageId} was not consumed (queue cleared/stopped or timed ` +
           `out); aborting in-flight recovery: ${err instanceof Error ? err.message : String(err)}`
       );
+      // Mark the persisted row failed so it is not replayed on the next query.
+      try {
+        db.updateMessageStatus([dbId], 'failed');
+      } catch (markErr) {
+        this.logger.warn(
+          `Failed to mark aborted recovery message ${messageId} as failed: ` +
+            `${markErr instanceof Error ? markErr.message : String(markErr)}`
+        );
+      }
       this.reset();
     });
     return true;

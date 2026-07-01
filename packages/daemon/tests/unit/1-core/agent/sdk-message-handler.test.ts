@@ -2514,8 +2514,9 @@ describe('SDKMessageHandler', () => {
       expect(enqueueWithId.mock.calls.at(-1)?.[1]).toBe('/compact');
 
       await handler.handleMessage(successResult); // compaction succeeded → continue nag
+      // Chat-specific nag (no workflow-tool references — chat sessions lack those tools).
       expect(enqueueWithId.mock.calls.at(-1)?.[1]).toBe(
-        '[Runtime recovery notice]\n\nYour conversation context exceeded the model window and was automatically compacted.\nThe context has been reduced. Continue your assigned work from the current state.\nIf work is complete, report completion through the workflow tools.\nIf you are blocked, report the blocker clearly through the available tools. Do not wait silently.'
+        "[Runtime recovery notice]\n\nYour conversation context exceeded the model window and was automatically compacted.\nThe context has been reduced. Please continue what you were doing, or answer the user's last message from the current state."
       );
     });
 
