@@ -1601,7 +1601,12 @@ export class SpaceRuntime {
         if (space.paused || space.stopped) continue;
         for (const run of this.config.workflowRunRepo.listBySpace(space.id)) {
           if (run.status !== 'in_progress' && run.status !== 'blocked') continue;
-          if (this.ensurePrEventSubscriptionForRun(run.id).subscribed) subscribed++;
+          // replay:false — this is a sweep-style caller; executeTick performs a
+          // single post-sweep redispatch when subscribed > 0, so per-run replay
+          // here would race with it and double-handle retained PR events.
+          if (this.ensurePrEventSubscriptionForRun(run.id, { replay: false }).subscribed) {
+            subscribed++;
+          }
         }
       }
     } catch (err) {
@@ -4958,7 +4963,7 @@ export class SpaceRuntime {
    *
    * Runs that reference a missing workflow are skipped silently.
    */
-  private requeuePersistedPendingDeliveries(): void {
+  private requeuePersistedPendingDeliveries(pausedSpaceIds: Set<string> = new Set()): void {
     const store = this.config.externalEventStore;
     if (!store) return;
 
@@ -5025,6 +5030,12 @@ export class SpaceRuntime {
         nodeId: delivery.nodeId,
         agentName: delivery.agentName,
       };
+      // A paused/stopped space's auto sub is intentionally not rebuilt yet
+      // (rebuilt by onSpaceResumed). Leave its persisted pending deliveries
+      // pending instead of terminalizing them as subscription_no_longer_active.
+      if (run && pausedSpaceIds.has(run.spaceId)) {
+        continue;
+      }
       const canRequeue = run
         ? run.status === 'blocked'
           ? this.hasActiveExecutionForRun(run.id)
@@ -5262,6 +5273,7 @@ export class SpaceRuntime {
 
   async rehydrateExecutors(): Promise<void> {
     const spaces = await this.config.spaceManager.listSpaces(false);
+    const pausedSpaceIds = new Set<string>();
 
     for (const space of spaces) {
       // getRehydratableRuns returns 'in_progress' AND 'blocked' runs.
@@ -5304,7 +5316,13 @@ export class SpaceRuntime {
       // delivery as `auto_pr_subscription_cleared`. Replay is left to the
       // tick's post-rehydrate redispatch. Paused/stopped spaces are skipped —
       // their subs are rebuilt by `onSpaceResumed` when the space resumes.
-      if (space.paused || space.stopped) continue;
+      if (space.paused || space.stopped) {
+        // Skipped spaces get no auto-sub rebuild here (rebuilt by onSpaceResumed);
+        // collect their ids so the persisted-delivery replay below defers rather
+        // than terminalizes their pending PR deliveries.
+        pausedSpaceIds.add(space.id);
+        continue;
+      }
       for (const run of activeRuns) {
         try {
           this.ensurePrEventSubscriptionForRun(run.id, { replay: false });
@@ -5316,7 +5334,7 @@ export class SpaceRuntime {
       }
     }
 
-    this.requeuePersistedPendingDeliveries();
+    this.requeuePersistedPendingDeliveries(pausedSpaceIds);
 
     // Rehydrate Task Agent sessions after executors are ready.
     // Executors must be loaded first so Task Agents can use MCP tools

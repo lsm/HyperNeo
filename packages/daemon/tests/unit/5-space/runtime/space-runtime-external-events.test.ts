@@ -14,7 +14,6 @@ import {
   parsePositiveIntegerEnv,
   SpaceRuntime,
 } from '../../../../src/lib/space/runtime/space-runtime';
-import { GateDataRepository } from '../../../../src/storage/repositories/gate-data-repository';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
@@ -1735,6 +1734,50 @@ describe('SpaceRuntime external event subscriptions', () => {
     // persisted-delivery replay; otherwise the replay terminalizes the pending
     // delivery as `subscription_no_longer_active` (the trie is empty on cold
     // start until the rebuild runs).
+    await runtime.stop();
+    runtime = new SpaceRuntime({
+      db,
+      spaceManager: new SpaceManager(db),
+      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+      spaceWorkflowManager: workflowManager,
+      workflowRunRepo,
+      taskRepo,
+      nodeExecutionRepo,
+      artifactRepo,
+      internalEventBus: bus,
+      commandBus: createInternalCommandBus(),
+      externalEventStore: eventStore,
+      taskAgentManager: tam as never,
+    });
+    await runtime.executeTick();
+
+    const delivery = eventStore.listDeliveries(event.id)[0]!;
+    expect(delivery.state).not.toBe('failed');
+    expect(delivery.failureReason).not.toBe('subscription_no_longer_active');
+  });
+
+  test('defers persisted PR deliveries for a paused space instead of terminalizing them on restart', async () => {
+    const workflow = createWorkflow();
+    const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: null,
+      startedAt: Date.now(),
+    });
+
+    const gateDataRepo = new GateDataRepository(db);
+    gateDataRepo.merge(run.id, 'pr-gate', { pr_url: 'https://github.com/lsm/neokai/pull/42' });
+    runtime.registerPrEventSubscriptionForRun(run.id, 'https://github.com/lsm/neokai/pull/42');
+
+    const event = makeEvent({ id: 'evt-paused-replay', dedupeKey: 'dedupe-paused-replay' });
+    await eventService.publish(event);
+    expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
+
+    // Pause the space, then restart. The rebuild loop skips paused spaces, so
+    // the persisted-delivery replay must defer (leave pending) this delivery
+    // for onSpaceResumed instead of terminalizing it as subscription_no_longer_active.
+    db.prepare(`UPDATE spaces SET paused = 1 WHERE id = ?`).run(SPACE_ID);
     await runtime.stop();
     runtime = new SpaceRuntime({
       db,
