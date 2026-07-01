@@ -1242,9 +1242,11 @@ describe('SpaceRuntimeService event-driven gate evaluation', () => {
     ctx.service.runtime.clearPrEventSubscriptionsForRun(runId);
     expect(pendingQueues.pendingExternalEventQueue.size).toBe(0);
 
-    // Re-attach a live session. The preserved persisted delivery can still
-    // flush because an identical current auto subscription remains, but the
-    // cleared target did not leave a duplicate in-memory queued item behind.
+    // Re-attach a live session. The delivery for this event is no longer
+    // pending after the clear, so flushing the pending queue must not
+    // re-deliver it. Reset the captured injections so the assertion is scoped
+    // to the flush rather than the initial publish-time delivery.
+    ctx.injected.length = 0;
     ctx.tam.alive.add(`session-queued-${runId}`);
     ctx.service.runtime.flushPendingNodeQueue({
       workflowRunId: runId,
@@ -1254,7 +1256,7 @@ describe('SpaceRuntimeService event-driven gate evaluation', () => {
       sessionId: `session-queued-${runId}`,
     });
     await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(ctx.injected).toHaveLength(1);
+    expect(ctx.injected).toHaveLength(0);
   });
 
   test('P1 regression: approve gate then reject clears the gate-open cache so deliverMessage does not bypass', async () => {

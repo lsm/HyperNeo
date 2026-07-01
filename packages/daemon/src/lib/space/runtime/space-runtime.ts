@@ -4487,6 +4487,7 @@ export class SpaceRuntime {
       const subscribedPrRuns = await this.ensurePrEventSubscriptionsForActiveRuns();
 
       if (justRehydrated || subscribedPrRuns > 0) {
+        this.expirePublishedExternalEventsPastTtl();
         this.redispatchPublishedEventsWithoutDeliveries();
       }
 
@@ -5072,14 +5073,19 @@ export class SpaceRuntime {
     const activeRuns = this.config.workflowRunRepo
       .listBySpace(spaceId)
       .filter((run) => run.status === 'blocked' || run.status === 'in_progress');
+    let subscribedPrRuns = 0;
     for (const run of activeRuns) {
       try {
-        this.ensurePrEventSubscriptionForRun(run.id);
+        if (this.ensurePrEventSubscriptionForRun(run.id).subscribed) subscribedPrRuns++;
       } catch (err) {
         log.warn(
           `SpaceRuntime: failed to rebuild PR subscription for active run ${run.id} on resume: ${formatCommandError(err)}`
         );
       }
+    }
+    if (subscribedPrRuns > 0) {
+      this.expirePublishedExternalEventsPastTtl();
+      this.redispatchPublishedEventsWithoutDeliveries();
     }
 
     for (const delivery of store.listPendingDeliveries()) {
