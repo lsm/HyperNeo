@@ -2656,11 +2656,19 @@ export class SpaceRuntime {
     const store = this.config.externalEventStore;
     if (!store || items.length === 0) return;
     const target = this.resolveDigestDeliveryTarget(items[0]!);
-    if (!target.sessionId) {
+    // Don't inject a digest while the target's space is paused (digests
+    // scheduled before the pause bypass the fresh-delivery guard). Requeue the
+    // items as pending — onSpaceResumed requeues them when the space resumes.
+    const pausedRun = target.workflowRunId
+      ? this.config.workflowRunRepo.getRun(target.workflowRunId)
+      : null;
+    const spacePaused = !!(pausedRun && this.pausedSpaceIds.has(pausedRun.spaceId));
+    if (!target.sessionId || spacePaused) {
+      const reason = spacePaused ? 'space_paused' : 'session loss';
       for (const item of items) {
         store.markDeliveryFailed(item.event.eventId, item.deliveryKey, {
           terminal: false,
-          reason: `deliveryMode:${item.deliveryMode}; digest requeued after session loss`,
+          reason: `deliveryMode:${item.deliveryMode}; digest requeued after ${reason}`,
         });
         this.queueForPendingNode(
           item.target,
@@ -2780,6 +2788,12 @@ export class SpaceRuntime {
   ): Promise<void> {
     const store = this.config.externalEventStore;
     if (!store || !target.sessionId) return;
+    // Don't inject into a live session while the target's space is paused.
+    // This is the final injection point for retries/digests scheduled before a
+    // pause that bypass the fresh-delivery guard in deliverExternalEventToWorkflowTarget;
+    // leaving the persisted delivery pending lets onSpaceResumed requeue it.
+    const pausedRun = this.config.workflowRunRepo.getRun(target.workflowRunId);
+    if (pausedRun && this.pausedSpaceIds.has(pausedRun.spaceId)) return;
     this.externalEventDeliveriesInFlight.add(deliveryKey);
     try {
       if (!this.config.commandBus) {
@@ -4486,11 +4500,14 @@ export class SpaceRuntime {
           for (const space of await this.config.spaceManager.listSpaces(false)) {
             if (space.paused || space.stopped) {
               pausedSpaceIds.add(space.id);
-              // Seed the sync paused cache too — the pause callback was
-              // unsubscribed during stop(), so without this a live session
-              // retained across stop→start could inject into the paused space
-              // until a pause/resume callback updates the cache.
+              // Reconcile the sync paused cache with the DB: add currently
+              // paused/stopped ids (the pause callback was unsubscribed during
+              // stop()), and drop ids for spaces that are now active (e.g.
+              // resumed while this runtime's callbacks were detached) so the
+              // delivery hot path doesn't keep treating them as paused.
               this.pausedSpaceIds.add(space.id);
+            } else {
+              this.pausedSpaceIds.delete(space.id);
             }
           }
         } catch (err) {
@@ -5263,26 +5280,17 @@ export class SpaceRuntime {
     const activeRuns = this.config.workflowRunRepo
       .listBySpace(spaceId)
       .filter((run) => run.status === 'blocked' || run.status === 'in_progress');
-    let subscribedPrRuns = 0;
     for (const run of activeRuns) {
       try {
-        // replay:false — onSpaceResumed does a single post-loop redispatch when
-        // a subscription is created, so per-run replay here would race with it
-        // and double-handle retained PR events.
-        if (this.ensurePrEventSubscriptionForRun(run.id, { replay: false }).subscribed) {
-          subscribedPrRuns++;
-        }
+        // replay:false — onSpaceResumed does a single post-requeue replay below,
+        // so per-run replay here would race with it and double-handle retained
+        // PR events.
+        this.ensurePrEventSubscriptionForRun(run.id, { replay: false });
       } catch (err) {
         log.warn(
           `SpaceRuntime: failed to rebuild PR subscription for active run ${run.id} on resume: ${formatCommandError(err)}`
         );
       }
-    }
-    if (subscribedPrRuns > 0) {
-      // Defer the retained-event replay until after the persisted pending
-      // deliveries below are requeued, so an older persisted delivery for this
-      // run is scheduled before a newer retained event (preserving order).
-      // Re-entrancy-guarded: defers further if a PR event is still mid-handling.
     }
 
     for (const delivery of store.listPendingDeliveries()) {
@@ -5348,11 +5356,13 @@ export class SpaceRuntime {
       }
     }
 
-    if (subscribedPrRuns > 0) {
-      // Now that persisted pending deliveries are requeued, replay retained
-      // no-delivery PR events (newer than the persisted ones). Re-entrancy-guarded.
-      this.redispatchRetainedExternalEvents();
-    }
+    // Replay retained no-delivery PR events unconditionally (after the
+    // persisted pending deliveries above are requeued). A retained event may
+    // have been kept published during pause for a run whose auto-sub already
+    // existed (so subscribedPrRuns stayed 0); without this it would never be
+    // re-evaluated and would expire. Re-entrancy-guarded; no-op when nothing is
+    // retained.
+    this.redispatchRetainedExternalEvents();
   }
 
   private redispatchPublishedEventsWithoutDeliveries(): void {
