@@ -2043,16 +2043,19 @@ export class SpaceRuntime {
       }
     } finally {
       this.externalEventHandlingDepth -= 1;
-      if (this.externalEventHandlingDepth === 0 && this.retainedEventRedispatchPending) {
-        this.retainedEventRedispatchPending = false;
-        // Skip the immediate flush when any concurrent handler left an event
-        // published for a scheduled gate retry — re-handling it now would
-        // bypass the GateRetryScheduler and repeat gate evaluation. The
-        // scheduler (or a later tick) re-drives it.
+      if (this.externalEventHandlingDepth === 0) {
+        // Reset the depth-wide retry-pending flag at every outermost unwind so
+        // it can't strand a later unrelated handler's retained replay.
         const anyRetryPending = this.externalEventRetryPending;
         this.externalEventRetryPending = false;
-        if (!anyRetryPending) {
-          this.redispatchRetainedExternalEvents();
+        if (this.retainedEventRedispatchPending) {
+          this.retainedEventRedispatchPending = false;
+          // Skip the immediate flush when any concurrent handler left an event
+          // published for a scheduled gate retry — re-handling it now would
+          // bypass the GateRetryScheduler and repeat gate evaluation.
+          if (!anyRetryPending) {
+            this.redispatchRetainedExternalEvents();
+          }
         }
       }
     }
@@ -4469,7 +4472,6 @@ export class SpaceRuntime {
   start(): void {
     if (this.tickTimer !== null) return; // already running
 
-    this.subscribeExternalEventPublished();
     this.subscribeSdkToolUseCreated();
     // Re-register the space-resume hook after a stop->start cycle; stop()
     // unsubscribes it to avoid stale callbacks, so start() must restore it.
@@ -4516,6 +4518,10 @@ export class SpaceRuntime {
           );
         }
         this.requeuePersistedPendingDeliveries(pausedSpaceIds);
+        // Re-attach the live external-event subscriber AFTER the paused cache is
+        // reconciled so a webhook arriving in this window cannot be injected
+        // into a paused space's retained live session before the cache is seeded.
+        this.subscribeExternalEventPublished();
         this.redispatchRetainedExternalEvents();
         // Kick the first tick AFTER paused-space reconciliation so the sweep/
         // redispatch can't inject into a paused space before the cache is seeded.
@@ -4524,8 +4530,9 @@ export class SpaceRuntime {
         });
       })();
     } else {
-      // First start: sweep events that arrived before the subscriber attached.
-      // redispatchRetainedExternalEvents is re-entrancy-guarded.
+      // First start: subscribe + sweep events that arrived before the subscriber
+      // attached. redispatchRetainedExternalEvents is re-entrancy-guarded.
+      this.subscribeExternalEventPublished();
       this.redispatchRetainedExternalEvents();
       this.executeTick().catch((err: unknown) => {
         log.error('SpaceRuntime: initial tick failed:', err);
@@ -5177,12 +5184,6 @@ export class SpaceRuntime {
         nodeId: delivery.nodeId,
         agentName: delivery.agentName,
       };
-      // A paused/stopped space's auto sub is intentionally not rebuilt yet
-      // (rebuilt by onSpaceResumed). Leave its persisted pending deliveries
-      // pending instead of terminalizing them as subscription_no_longer_active.
-      if (run && pausedSpaceIds.has(run.spaceId)) {
-        continue;
-      }
       const canRequeue = run
         ? run.status === 'blocked'
           ? this.hasActiveExecutionForRun(run.id)
@@ -5194,6 +5195,14 @@ export class SpaceRuntime {
           reason: 'run_not_externally_deliverable',
         });
         store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
+        continue;
+      }
+      // A paused/stopped-but-still-deliverable space's auto sub is intentionally
+      // not rebuilt yet (rebuilt by onSpaceResumed). Leave its persisted pending
+      // deliveries pending instead of terminalizing them as
+      // subscription_no_longer_active. (Stopped spaces whose runs were cancelled
+      // already failed via canRequeue above.)
+      if (run && pausedSpaceIds.has(run.spaceId)) {
         continue;
       }
 
