@@ -1538,7 +1538,10 @@ export class SpaceRuntime {
    * PR URL exists. Idempotent for the current PR URL, but refreshes stale auto
    * subscriptions when the resolved PR changes.
    */
-  ensurePrEventSubscriptionForRun(workflowRunId: string): {
+  ensurePrEventSubscriptionForRun(
+    workflowRunId: string,
+    options: { replay?: boolean } = {}
+  ): {
     subscribed: boolean;
     reason?: string;
   } {
@@ -1557,8 +1560,14 @@ export class SpaceRuntime {
     // `published` with no delivery rows while no subscription existed. Direct
     // callers (gate-data change, resume, approval, run start) do not otherwise
     // trigger a redispatch, so replay (or TTL-expire) retained events now
-    // instead of stranding them until the next tick sweep. Defer when inside
-    // handleExternalEvent to avoid re-handling the in-flight event.
+    // instead of stranding them until the next tick sweep. Startup rebuild
+    // paths pass `replay: false` because rehydrate/recovery has not restored
+    // executors/sessions yet — they rely on the tick's post-rehydrate
+    // redispatch. Defer when inside handleExternalEvent to avoid re-handling
+    // the in-flight event.
+    if (options.replay === false) {
+      return { subscribed: true };
+    }
     if (this.externalEventHandlingDepth > 0) {
       this.retainedEventRedispatchPending = true;
     } else {
@@ -4491,13 +4500,9 @@ export class SpaceRuntime {
       const justRehydrated = !this.rehydrated;
       if (!this.rehydrated) {
         // Give the service a chance to rebuild in-memory subscriptions
-        // (e.g. PR-event auto-subs for blocked runs) BEFORE rehydrateExecutors
-        // runs its persisted-delivery replay, before the redispatch sweep,
-        // and before acceptingExternalEvents flips to true. Without this
-        // ordering, persisted delivery rows for the auto target are marked
-        // `subscription_no_longer_active` during requeue (because the trie
-        // is still empty) and crash-pending PR events are terminally
-        // ignored by the first redispatch.
+        // (e.g. PR-event auto-subs for active runs) BEFORE rehydrateExecutors
+        // runs its persisted-delivery replay. rehydrateExecutors also rebuilds
+        // these itself, so this hook is a belt-and-suspenders early pass.
         if (this.config.onBeforeRedispatch) {
           try {
             await this.config.onBeforeRedispatch();
@@ -5292,11 +5297,17 @@ export class SpaceRuntime {
       // empty either way), so without rebuilding here the replay at the end of
       // this method terminalizes persisted PR deliveries as
       // `subscription_no_longer_active` before any later sweep can run.
+      //
+      // Uses the idempotent ensure path with `replay: false`: a run whose
+      // executor already existed (skipped above) still has its current auto
+      // target, and force-registering would clear it and fail any queued
+      // delivery as `auto_pr_subscription_cleared`. Replay is left to the
+      // tick's post-rehydrate redispatch. Paused/stopped spaces are skipped —
+      // their subs are rebuilt by `onSpaceResumed` when the space resumes.
+      if (space.paused || space.stopped) continue;
       for (const run of activeRuns) {
-        const prUrl = this.resolvePrUrlForRun(run.id);
-        if (!prUrl) continue;
         try {
-          this.registerPrEventSubscriptionForRun(run.id, prUrl);
+          this.ensurePrEventSubscriptionForRun(run.id, { replay: false });
         } catch (err) {
           log.warn(
             `SpaceRuntime: failed to rebuild PR subscription for run ${run.id} during rehydrate: ${formatCommandError(err)}`

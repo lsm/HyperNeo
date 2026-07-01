@@ -306,8 +306,10 @@ export class SpaceRuntimeService {
       onBeforeRedispatch: async () => {
         // Rebuild PR auto-subs for active runs before rehydrate's persisted
         // delivery replay and before the first redispatch sweep so crash-pending
-        // PR events find a matching target instead of being terminalized.
-        await this.rehydrateActiveRunPrEventSubscriptions();
+        // PR events find a matching target instead of being terminalized. Pass
+        // replay:false — retained events are replayed by the tick's
+        // post-rehydrate redispatch after executors/sessions are restored.
+        await this.rehydrateActiveRunPrEventSubscriptions(false);
       },
     });
   }
@@ -2140,13 +2142,13 @@ export class SpaceRuntimeService {
    * spaces — those are recovered by {@link rehydrateActiveRunPrEventSubscriptionsForSpace}
    * when the space is resumed.
    */
-  async rehydrateActiveRunPrEventSubscriptions(): Promise<void> {
+  async rehydrateActiveRunPrEventSubscriptions(replay = true): Promise<void> {
     try {
       const spaces = await this.config.spaceManager.listSpaces(false);
       let rehydrated = 0;
       for (const space of spaces) {
         if (space.paused || space.stopped) continue;
-        rehydrated += this.rehydrateActiveRunPrEventSubscriptionsForSpace(space.id);
+        rehydrated += this.rehydrateActiveRunPrEventSubscriptionsForSpace(space.id, replay);
       }
       if (rehydrated > 0) {
         log.info(
@@ -2160,8 +2162,8 @@ export class SpaceRuntimeService {
     }
   }
 
-  async rehydrateBlockedRunPrEventSubscriptions(): Promise<void> {
-    await this.rehydrateActiveRunPrEventSubscriptions();
+  async rehydrateBlockedRunPrEventSubscriptions(replay = true): Promise<void> {
+    await this.rehydrateActiveRunPrEventSubscriptions(replay);
   }
 
   /**
@@ -2170,17 +2172,20 @@ export class SpaceRuntimeService {
    * used by the space-resume path (`resumeSpace` RPC) to rebuild subscriptions
    * for previously-paused spaces that were skipped at startup.
    *
-   * Returns the count of successfully re-registered subscriptions. Errors for
-   * individual runs are logged and swallowed.
+   * `replay` (default true) is forwarded to {@link SpaceRuntime.ensurePrEventSubscriptionForRun};
+   * the startup `onBeforeRedispatch` path passes false so retained events are
+   * not replayed before executors/sessions are restored. Returns the count of
+   * successfully re-registered subscriptions. Errors for individual runs are
+   * logged and swallowed.
    */
-  rehydrateActiveRunPrEventSubscriptionsForSpace(spaceId: string): number {
+  rehydrateActiveRunPrEventSubscriptionsForSpace(spaceId: string, replay = true): number {
     let rehydrated = 0;
     try {
       const activeRuns = this.config.workflowRunRepo
         .listBySpace(spaceId)
         .filter((run) => run.status === 'blocked' || run.status === 'in_progress');
       for (const run of activeRuns) {
-        const result = this.runtime.ensurePrEventSubscriptionForRun(run.id);
+        const result = this.runtime.ensurePrEventSubscriptionForRun(run.id, { replay });
         if (result.subscribed) rehydrated++;
       }
       if (rehydrated > 0) {
@@ -2196,8 +2201,8 @@ export class SpaceRuntimeService {
     return rehydrated;
   }
 
-  rehydrateBlockedRunPrEventSubscriptionsForSpace(spaceId: string): number {
-    return this.rehydrateActiveRunPrEventSubscriptionsForSpace(spaceId);
+  rehydrateBlockedRunPrEventSubscriptionsForSpace(spaceId: string, replay = true): number {
+    return this.rehydrateActiveRunPrEventSubscriptionsForSpace(spaceId, replay);
   }
 
   /**
