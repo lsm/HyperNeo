@@ -1047,6 +1047,13 @@ export class SpaceRuntime {
   private unsubscribeSpacePaused?: () => void;
   private acceptingExternalEvents = false;
   /**
+   * Incremented by stop(). start() captures the current value for its
+   * fire-and-forget restart IIFE to detect a stop() that landed during the
+   * IIFE's awaited space scan and abort before re-subscribing/ticking a
+   * stopped runtime.
+   */
+  private runtimeGeneration = 0;
+  /**
    * Sync cache of paused/stopped space ids, maintained via the space
    * pause/resume registers and seeded on rehydrate. Lets the delivery hot path
    * defer (not inject) events for paused spaces without an async lookup —
@@ -4472,6 +4479,10 @@ export class SpaceRuntime {
   start(): void {
     if (this.tickTimer !== null) return; // already running
 
+    // Capture the runtime generation so the fire-and-forget restart IIFE can
+    // detect a stop() that landed during its awaited space scan and abort
+    // instead of re-subscribing/ticking a stopped runtime.
+    const generation = this.runtimeGeneration;
     this.subscribeSdkToolUseCreated();
     // Re-register the space-resume hook after a stop->start cycle; stop()
     // unsubscribes it to avoid stale callbacks, so start() must restore it.
@@ -4517,6 +4528,9 @@ export class SpaceRuntime {
             `SpaceRuntime: start() could not list spaces for paused-deferral: ${formatCommandError(err)}`
           );
         }
+        // A stop() during the awaited space scan must abort the restart: don't
+        // re-subscribe, redispatch, or tick a stopped runtime.
+        if (generation !== this.runtimeGeneration) return;
         this.requeuePersistedPendingDeliveries(pausedSpaceIds);
         // Re-attach the live external-event subscriber AFTER the paused cache is
         // reconciled so a webhook arriving in this window cannot be injected
@@ -4557,6 +4571,9 @@ export class SpaceRuntime {
    * be resumed by calling start() again.
    */
   async stop(): Promise<void> {
+    // Invalidate any in-flight restart IIFE so it aborts before re-subscribing/
+    // ticking this now-stopped runtime.
+    this.runtimeGeneration += 1;
     this.unsubscribeExternalEventPublished?.();
     this.unsubscribeExternalEventPublished = undefined;
     this.unsubscribeSdkToolUseCreated?.();
