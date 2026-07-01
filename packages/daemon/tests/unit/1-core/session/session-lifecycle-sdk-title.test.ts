@@ -689,6 +689,59 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
     expect(mockDb.updateSession).not.toHaveBeenCalled();
   });
 
+  it('preserves a manual rename that lands during the branch rename', async () => {
+    // Worktree session: generation succeeds, then the user renames while the
+    // branch is being renamed (renameBranch returns true). The write must keep
+    // the user's title while still persisting the new branch name (no desync).
+    const { mockAgentSession, mockSessionCache: sessionCache } = makeSessionCache();
+    mockAgentSession.getSessionData = mock(() => ({
+      id: 'test-id',
+      title: 'New Session',
+      workspacePath: '/test',
+      status: 'active',
+      metadata: { titleGenerated: false },
+      config: { model: 'claude-sonnet-4-20250514', provider: 'anthropic' },
+      worktree: { path: '/w', branch: 'session/test-id', mainRepoPath: '/repo' },
+    }));
+    // renameBranch succeeds, and the user renames during it.
+    mockWorktreeManager.renameBranch = mock(async () => {
+      mockAgentSession.getSessionData = mock(() => ({
+        id: 'test-id',
+        title: 'My Manual Title',
+        workspacePath: '/test',
+        status: 'active',
+        metadata: { titleGenerated: false, titleSetBy: 'user' },
+        config: { model: 'claude-sonnet-4-20250514', provider: 'anthropic' },
+        worktree: { path: '/w', branch: 'session/test-id', mainRepoPath: '/repo' },
+      }));
+      return true;
+    });
+    lifecycle = new SessionLifecycleCtor(
+      mockDb,
+      mockWorktreeManager,
+      sessionCache,
+      mockInternalEventBus,
+      mockMessageHub,
+      config,
+      mockToolsConfigManager,
+      mockAgentSessionFactory
+    );
+
+    const result = await lifecycle.generateTitleAndRenameBranch('test-id', 'Create a login form');
+
+    // User's title kept; generated title discarded.
+    expect(result.title).toBe('My Manual Title');
+    expect(result.isFallback).toBe(false);
+    // The write happened once (persisting the branch rename)...
+    expect(mockDb.updateSession).toHaveBeenCalledTimes(1);
+    const [, written] = mockDb.updateSession.mock.calls[0];
+    // ...with the user's title, not the generated one...
+    expect(written.title).toBe('My Manual Title');
+    expect(written.metadata.titleSetBy).toBe('user');
+    // ...and the new branch name persisted (no metadata/branch desync).
+    expect(written.worktree?.branch).not.toBe('session/test-id');
+  });
+
   it('should generate titles using stored credentials when env vars are absent', async () => {
     delete process.env.ANTHROPIC_API_KEY;
     delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
