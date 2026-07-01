@@ -1585,6 +1585,29 @@ export class SpaceRuntime {
   }
 
   /**
+   * Reset any blocked node executions for a run back to pending. Called by
+   * direct resume paths (approve_gate) that bypass transitionBlockedRunToInProgress
+   * so the auto-sub targets the recovered slot, not the stale blocked one.
+   * Best-effort — errors are logged and swallowed.
+   */
+  resetBlockedExecutionsForRun(runId: string): void {
+    try {
+      const executions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
+      for (const execution of executions) {
+        if (execution.status !== 'blocked') continue;
+        this.config.nodeExecutionRepo.update(execution.id, {
+          status: 'pending',
+          completedAt: null,
+        });
+      }
+    } catch (err) {
+      log.warn(
+        `SpaceRuntime: resetBlockedExecutionsForRun failed for run ${runId}: ${formatCommandError(err)}`
+      );
+    }
+  }
+
+  /**
    * Ensure a workflow run has an auto PR-event subscription when a resolvable
    * PR URL exists. Idempotent for the current PR URL, but refreshes stale auto
    * subscriptions when the resolved PR changes.

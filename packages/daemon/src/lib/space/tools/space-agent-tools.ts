@@ -2543,6 +2543,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           currentRun = workflowRunRepo.transitionStatus(args.run_id, 'in_progress');
           currentRun =
             workflowRunRepo.updateRun(args.run_id, { failureReason: null }) ?? currentRun;
+          runtime.resetBlockedExecutionsForRun(args.run_id);
           runtime.ensurePrEventSubscriptionForRun(args.run_id);
         }
 
