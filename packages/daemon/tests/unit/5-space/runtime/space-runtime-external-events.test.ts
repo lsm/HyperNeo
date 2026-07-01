@@ -5848,6 +5848,44 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
   });
 
+  test('requeues paused-space deliveries that resolve to a live session on resume', async () => {
+    const { run, task } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'idle',
+      agentSessionId: null,
+      completedAt: Date.now(),
+    });
+    db.prepare(`UPDATE spaces SET paused = 1 WHERE id = ?`).run(SPACE_ID);
+
+    tam.activationResult = [];
+    const event = makeEvent({ id: 'evt-paused-resume-session' });
+    await eventService.publish(event);
+
+    expect(tam.activationCalls).toHaveLength(0);
+    expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
+
+    // Resume with a LIVE session already attached to the execution so the
+    // deferred delivery resolves via resolveSubscriptionTarget. The resume path
+    // must schedule a delivery retry (scheduleExternalEventRetry) — not an
+    // activation retry — and the event must be delivered without activation.
+    db.prepare(`UPDATE spaces SET paused = 0 WHERE id = ?`).run(SPACE_ID);
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-resume-live',
+      completedAt: null,
+    });
+    tam.alive.add('session-resume-live');
+    runtime.start();
+    await spaceManager.resumeSpace(SPACE_ID);
+
+    await new Promise((resolve) => setTimeout(resolve, 1_200));
+    expect(tam.activationCalls).toHaveLength(0);
+    expect(injected).toHaveLength(1);
+    expect(injected[0]!.sessionId).toBe('session-resume-live');
+    expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
+  });
+
   test('excludes retried delivery from activation flush drain', async () => {
     const { run, task } = await startRunWithSubscription();
     const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
