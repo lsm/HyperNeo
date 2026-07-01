@@ -225,10 +225,15 @@ export function SpaceAgentEditor({
   };
 
   const toggleTool = (tool: string) => {
-    setToolsOverridden(true);
     setTools((prev) => {
       const next = prev.includes(tool) ? prev.filter((t) => t !== tool) : [...prev, tool];
-      setActivePreset(detectPreset(next));
+      if (next.length === 0) {
+        setToolsOverridden(false);
+        setActivePreset('Inherited');
+      } else {
+        setToolsOverridden(true);
+        setActivePreset(detectPreset(next));
+      }
       return next;
     });
   };

@@ -8,7 +8,7 @@
  * - Form validation: name required
  * - Form validation: name uniqueness
  * - Model override is optional
- * - Form validation: at least one tool selected
+ * - Empty tool profile is valid; SDK defaults are inherited
  * - Tool presets: "Full Coding" selects correct tools
  * - Tool presets: "Read Only" selects correct tools
  * - Tool presets: toggling a tool manually switches to "Custom"
@@ -428,6 +428,26 @@ describe('SpaceAgentEditor', () => {
     // "Custom" preset button should now be active
     const customButton = getByText('Custom');
     expect(customButton.className).toContain('blue');
+  });
+
+  it('switches active preset indicator to "Inherited" when the last tool is unchecked', () => {
+    const { getByText, container } = render(<SpaceAgentEditor {...DEFAULT_PROPS} />);
+
+    // Start with Read Only preset, then uncheck all of its tools
+    fireEvent.click(getByText('Read Only'));
+    for (const toolName of ['Read', 'Grep', 'Glob']) {
+      const cb = Array.from(
+        container.querySelectorAll('.grid.grid-cols-3 input[type="checkbox"]')
+      ).find((input) => {
+        const label = (input as HTMLInputElement).closest('label');
+        return label?.textContent?.includes(toolName);
+      });
+      if (cb) fireEvent.click(cb.closest('label')!);
+    }
+
+    // "Inherit defaults" preset button should now be active
+    const inheritButton = getByText('Inherit defaults');
+    expect(inheritButton.className).toContain('blue');
   });
 
   it('uses direct system prompt edits without template buttons', () => {
