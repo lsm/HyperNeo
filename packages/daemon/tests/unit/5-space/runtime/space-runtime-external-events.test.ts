@@ -1679,6 +1679,35 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(injected[0]!.sessionId).toBe('session-pr-refresh');
   });
 
+  test('clears the stale auto subscription when the resolved PR URL becomes invalid', async () => {
+    const workflow = createWorkflow();
+    const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-invalid-url',
+      startedAt: Date.now(),
+    });
+    tam.alive.add('session-invalid-url');
+
+    const gateDataRepo = new GateDataRepository(db);
+    gateDataRepo.merge(run.id, 'pr-gate', { pr_url: 'https://github.com/lsm/neokai/pull/42' });
+    runtime.registerPrEventSubscriptionForRun(run.id, 'https://github.com/lsm/neokai/pull/42');
+
+    // A PR event for the registered PR delivers while the URL is valid.
+    await eventService.publish(makeEvent());
+    expect(injected).toHaveLength(1);
+
+    // Replace the URL with an unparsable value. ensure must drop the stale auto
+    // subscription so events for the previous PR stop matching the active slot.
+    injected.length = 0;
+    gateDataRepo.merge(run.id, 'pr-gate', { pr_url: 'not-a-github-url' });
+    runtime.ensurePrEventSubscriptionForRun(run.id);
+
+    await eventService.publish(makeEvent());
+    expect(injected).toHaveLength(0);
+  });
+
   test('delivers a retained PR event when a direct ensure creates the auto subscription', async () => {
     const workflow = createWorkflow();
     const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');

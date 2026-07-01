@@ -1571,6 +1571,12 @@ export class SpaceRuntime {
     }
     const result = this.registerPrEventSubscriptionForRun(workflowRunId, prUrl);
     if (!result.success) {
+      // The resolved URL is present but unparsable/non-GitHub, or no active
+      // slot exists. registerPr returns before clearing in the parse-failure
+      // case, so drop any stale auto subscription for the previous valid URL.
+      if (this.hasAnyAutoPrSubscriptionForRun(workflowRunId)) {
+        this.clearPrEventSubscriptionsForRun(workflowRunId);
+      }
       return { subscribed: false, reason: result.error };
     }
     // A newly-created auto subscription may match a retained PR event kept
@@ -4595,6 +4601,14 @@ export class SpaceRuntime {
       await this.cleanupTerminalExecutors();
       await this.reconcileTerminalRunsWithoutExecutors();
       await this.checkStandaloneTasks();
+
+      // Re-sweep after run advancement (processCompletedTasks/processRunTick may
+      // advance an in_progress run to a new node/agent). The pre-advancement
+      // sweep above would otherwise leave the auto-sub targeting the prior slot
+      // until the next tick, delivering PR events to the wrong slot. replay:false
+      // — this only refreshes the target slot; retained events are replayed by
+      // the start-of-tick sweep on the next tick.
+      await this.ensurePrEventSubscriptionsForActiveRuns();
 
       // Bound published events without deliveries (e.g. retained PR-linked
       // events waiting for a subscription) so they do not last forever when no

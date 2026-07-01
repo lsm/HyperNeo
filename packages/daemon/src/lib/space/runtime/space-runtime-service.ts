@@ -1909,10 +1909,11 @@ export class SpaceRuntimeService {
   ): Promise<void> {
     const run = this.config.workflowRunRepo.getRun(runId);
     if (!run || (run.status !== 'blocked' && run.status !== 'in_progress')) return;
-    // For a still-blocked run, defer replay — the gate-open resume path
-    // (handleGateDataChangedComplete) replays after transitionBlockedRunToInProgress
-    // to avoid delivering against a still-blocked run. For a run already
-    // in_progress there is no pending transition to replay, so replay now.
+    // For a run already in_progress there is no pending transition to replay a
+    // retained PR event, so replay now (this path is also invoked directly by
+    // notifyGateDataChanged, not only via handleGateDataChangedComplete). For a
+    // blocked run, defer — handleGateDataChangedComplete replays after any
+    // transition (gate-open resume) or when the gate stays closed.
     const replay = run.status === 'in_progress';
     const result = this.runtime.ensurePrEventSubscriptionForRun(runId, { replay });
     if (
@@ -1957,12 +1958,12 @@ export class SpaceRuntimeService {
       const run = this.config.workflowRunRepo.getRun(runId);
       if (run?.status === 'blocked') {
         this.transitionBlockedRunToInProgress(runId);
-        // Now that the run is in_progress, replay retained PR events that match
-        // the (re)created auto subscription. syncBlockedRunPrEventSubscription
-        // deferred replay above to avoid delivering against the still-blocked run.
-        this.runtime.redispatchRetainedExternalEvents();
       }
     }
+    // Replay retained PR events after any transition: for a gate-open resume
+    // the run is now in_progress so the event delivers to the resumed slot;
+    // when the gate stayed closed the replay re-evaluates the blocked gate.
+    this.runtime.redispatchRetainedExternalEvents();
   }
 
   /**
