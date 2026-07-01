@@ -1513,6 +1513,17 @@ export class SpaceRuntime {
     }
   }
 
+  private hasAnyAutoPrSubscriptionForRun(workflowRunId: string): boolean {
+    return (
+      this.topicTrie.count(
+        (target) =>
+          isWorkflowSubscriptionTarget(target) &&
+          target.workflowRunId === workflowRunId &&
+          target.subscriptionKind === 'auto'
+      ) > 0
+    );
+  }
+
   private hasCurrentAutoPrSubscriptionForRun(workflowRunId: string, prUrl: string): boolean {
     const parsed = parsePrUrl(prUrl);
     if (!parsed) return false;
@@ -1547,6 +1558,12 @@ export class SpaceRuntime {
   } {
     const prUrl = this.resolvePrUrlForRun(workflowRunId);
     if (!prUrl) {
+      // The PR URL was removed/reset (e.g. a gate resetOnCycle writing defaults
+      // without pr_url). Clear any stale auto subscription so events for the
+      // previous PR stop matching the run's active slot. No-op when none exists.
+      if (this.hasAnyAutoPrSubscriptionForRun(workflowRunId)) {
+        this.clearPrEventSubscriptionsForRun(workflowRunId);
+      }
       return { subscribed: false, reason: 'no resolvable PR URL' };
     }
     if (this.hasCurrentAutoPrSubscriptionForRun(workflowRunId, prUrl)) {
@@ -1581,7 +1598,13 @@ export class SpaceRuntime {
    * published events that still have no delivery rows so a newly-registered
    * subscription can pick them up. Idempotent and safe to call from any path.
    */
-  private redispatchRetainedExternalEvents(): void {
+  /**
+   * Expire retained published events past their TTL, then redispatch any
+   * published events that still have no delivery rows so a newly-registered
+   * subscription can pick them up. Public so the service can replay after a
+   * run transitions to in_progress (e.g. a gate-open resume). Idempotent.
+   */
+  redispatchRetainedExternalEvents(): void {
     this.expirePublishedExternalEventsPastTtl();
     this.redispatchPublishedEventsWithoutDeliveries();
   }
@@ -1628,7 +1651,13 @@ export class SpaceRuntime {
     if (!run || run.status !== 'blocked') {
       return { subscribed: false, reason: `run status is ${run?.status ?? 'unknown'}` };
     }
-    return this.ensurePrEventSubscriptionForRun(workflowRunId);
+    // During startup recovery (e.g. recoverStalledWorkflowRuns racing the first
+    // rehydrate), acceptingExternalEvents is still false and executors/sessions
+    // are not restored — defer retained-event replay to the post-rehydrate
+    // redispatch. At runtime a real blocked transition replays as a direct call.
+    return this.ensurePrEventSubscriptionForRun(workflowRunId, {
+      replay: this.acceptingExternalEvents,
+    });
   }
 
   /**
@@ -4388,7 +4417,23 @@ export class SpaceRuntime {
     // runtime instance. On first start this is a no-op because rehydrate will
     // run inside executeTick and call requeuePersistedPendingDeliveries.
     if (this.rehydrated) {
-      this.requeuePersistedPendingDeliveries();
+      // Fire-and-forget: start() is sync, and requeue only schedules retry
+      // timers (which fire later). Collect paused/stopped spaces first so the
+      // requeue defers (rather than terminalizes) their pending PR deliveries —
+      // onSpaceResumed rebuilds those subs when the space resumes.
+      void (async () => {
+        const pausedSpaceIds = new Set<string>();
+        try {
+          for (const space of await this.config.spaceManager.listSpaces(false)) {
+            if (space.paused || space.stopped) pausedSpaceIds.add(space.id);
+          }
+        } catch (err) {
+          log.warn(
+            `SpaceRuntime: start() could not list spaces for paused-deferral: ${formatCommandError(err)}`
+          );
+        }
+        this.requeuePersistedPendingDeliveries(pausedSpaceIds);
+      })();
     }
     // Sweep events that arrived while stopped. On first start this is a
     // no-op (sweep runs inside executeTick after rehydrate). On
@@ -5136,7 +5181,12 @@ export class SpaceRuntime {
     let subscribedPrRuns = 0;
     for (const run of activeRuns) {
       try {
-        if (this.ensurePrEventSubscriptionForRun(run.id).subscribed) subscribedPrRuns++;
+        // replay:false — onSpaceResumed does a single post-loop redispatch when
+        // a subscription is created, so per-run replay here would race with it
+        // and double-handle retained PR events.
+        if (this.ensurePrEventSubscriptionForRun(run.id, { replay: false }).subscribed) {
+          subscribedPrRuns++;
+        }
       } catch (err) {
         log.warn(
           `SpaceRuntime: failed to rebuild PR subscription for active run ${run.id} on resume: ${formatCommandError(err)}`
@@ -5160,6 +5210,21 @@ export class SpaceRuntime {
       };
       const eventRecord = store.getById(delivery.eventId);
       if (!eventRecord || eventRecord.state !== 'published') continue;
+      // A deferred delivery may have sat paused longer than the queue TTL.
+      // Apply the same event-age TTL guard as requeuePersistedPendingDeliveries
+      // before scheduling a retry so stale events are failed as ttl_expired
+      // instead of being injected on resume.
+      const mode = deliveryModeFromFailureReason(delivery.failureReason);
+      const ttlItem = {
+        event: this.externalEventPayloadFromRecord(eventRecord.event),
+        deliveryKey: delivery.deliveryKey,
+        deliveryMode: mode,
+        createdAt: eventRecord.createdAt,
+      };
+      if (this.isQueuedExternalEventExpired(ttlItem)) {
+        this.failQueuedDeliveryForTtl(ttlItem, this.buildQueueKey(target));
+        continue;
+      }
       if (!this.isTargetStillSubscribed(target, eventRecord.event.topic)) {
         store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, {
           terminal: true,
@@ -5337,6 +5402,10 @@ export class SpaceRuntime {
         continue;
       }
       for (const run of activeRuns) {
+        // activeRuns also includes review/approved (commonly done) runs; only
+        // in_progress/blocked runs should carry a PR auto-subscription so a
+        // restart does not wake a completed/review-awaiting workflow.
+        if (run.status !== 'in_progress' && run.status !== 'blocked') continue;
         try {
           this.ensurePrEventSubscriptionForRun(run.id, { replay: false });
         } catch (err) {
