@@ -5158,11 +5158,6 @@ export class SpaceRuntime {
         nodeId: delivery.nodeId,
         agentName: delivery.agentName,
       };
-      // Only wake deliveries that still need activation. If a live session is
-      // already resolved, the normal delivery retry path already handles it.
-      const resolved = this.resolveSubscriptionTarget(target);
-      if (resolved.sessionId) continue;
-
       const eventRecord = store.getById(delivery.eventId);
       if (!eventRecord || eventRecord.state !== 'published') continue;
       if (!this.isTargetStillSubscribed(target, eventRecord.event.topic)) {
@@ -5175,12 +5170,30 @@ export class SpaceRuntime {
       }
 
       const eventPayload = this.externalEventPayloadFromRecord(eventRecord.event);
-      this.scheduleActivationRetry(
-        target,
-        eventPayload,
-        delivery.deliveryKey,
-        delivery.failureReason ?? 'node_execution_not_active'
-      );
+      const resolved = this.resolveSubscriptionTarget(target);
+      // Restore the in-memory retry state for deferred deliveries. The startup
+      // requeue defers paused-space deliveries (both sessionless and those that
+      // already resolve to a session); resume must requeue both so neither is
+      // stranded. A live session gets a delivery retry; a sessionless target
+      // gets an activation retry.
+      if (resolved.sessionId) {
+        const mode = deliveryModeFromFailureReason(delivery.failureReason);
+        this.scheduleExternalEventRetry(
+          resolved,
+          eventPayload,
+          delivery.deliveryKey,
+          mode,
+          delivery.failureReason ?? `deliveryMode:${mode}; retry requeued after space resume`,
+          { preserveAttemptCount: true, createdAt: eventRecord.createdAt }
+        );
+      } else {
+        this.scheduleActivationRetry(
+          target,
+          eventPayload,
+          delivery.deliveryKey,
+          delivery.failureReason ?? 'node_execution_not_active'
+        );
+      }
     }
   }
 
