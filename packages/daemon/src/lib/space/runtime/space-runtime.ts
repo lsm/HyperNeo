@@ -1054,6 +1054,12 @@ export class SpaceRuntime {
    */
   private runtimeGeneration = 0;
   /**
+   * False during a stop→start paused-space reconciliation; executeTick returns
+   * early while false so interval ticks can't process events against a stale
+   * pausedSpaceIds before the reconciliation IIFE rebuilds it.
+   */
+  private reconciliationDone = true;
+  /**
    * Sync cache of paused/stopped space ids, maintained via the space
    * pause/resume registers and seeded on rehydrate. Lets the delivery hot path
    * defer (not inject) events for paused spaces without an async lookup —
@@ -4496,23 +4502,17 @@ export class SpaceRuntime {
     });
     this.acceptingExternalEvents = this.rehydrated;
     const interval = this.config.tickIntervalMs ?? 5_000;
-    const armTickLoop = (): void => {
-      this.tickTimer = setInterval(() => {
-        this.executeTick().catch((err: unknown) => {
-          log.error('SpaceRuntime: tick failed:', err);
-        });
-      }, interval);
-    };
-    // Re-seed sessionless activation retries after a stop->start of the same
-    // runtime instance. On first start this is a no-op because rehydrate will
-    // run inside executeTick and call requeuePersistedPendingDeliveries.
+    // Arm the tick loop synchronously so callers (and tests) observe tickTimer
+    // set immediately. executeTick gates on reconciliationDone so interval ticks
+    // that fire before the stop→start reconciliation completes are no-ops.
+    this.tickTimer = setInterval(() => {
+      this.executeTick().catch((err: unknown) => {
+        log.error('SpaceRuntime: tick failed:', err);
+      });
+    }, interval);
     if (this.rehydrated) {
-      // Fire-and-forget: start() is sync. Collect paused/stopped spaces first so
-      // the requeue defers (rather than terminalizes) their pending PR deliveries
-      // — onSpaceResumed rebuilds those subs when the space resumes. ALL post-
-      // reconciliation work (retry re-arming, requeue, subscribe, redispatch,
-      // first tick, interval) runs inside this block AFTER the cache is rebuilt
-      // so nothing can process events against a stale pausedSpaceIds.
+      // Defer all post-reconciliation work until the paused cache is rebuilt.
+      this.reconciliationDone = false;
       void (async () => {
         const pausedSpaceIds = new Set<string>();
         try {
@@ -4529,16 +4529,15 @@ export class SpaceRuntime {
             `SpaceRuntime: start() could not list spaces for paused-deferral: ${formatCommandError(err)}`
           );
         }
-        // A stop() during the awaited space scan must abort the restart.
         if (generation !== this.runtimeGeneration) return;
         this.rescheduleQueuedExternalEventRetries();
         this.requeuePersistedPendingDeliveries(pausedSpaceIds);
         this.subscribeExternalEventPublished();
+        this.reconciliationDone = true;
         this.redispatchRetainedExternalEvents();
         this.executeTick().catch((err: unknown) => {
           log.error('SpaceRuntime: initial tick failed:', err);
         });
-        armTickLoop();
       })();
     } else {
       // First start: no retained subs in the trie yet, so no injection risk.
@@ -4548,7 +4547,6 @@ export class SpaceRuntime {
       this.executeTick().catch((err: unknown) => {
         log.error('SpaceRuntime: initial tick failed:', err);
       });
-      armTickLoop();
     }
   }
 
@@ -4647,7 +4645,7 @@ export class SpaceRuntime {
    * 3. Checks standalone tasks (no workflowRunId) for blocked and timeout
    */
   async executeTick(): Promise<void> {
-    if (this.tickInFlight) return;
+    if (this.tickInFlight || !this.reconciliationDone) return;
     this.tickInFlight = true;
     try {
       if (hasSqlExec(this.config.db)) {
