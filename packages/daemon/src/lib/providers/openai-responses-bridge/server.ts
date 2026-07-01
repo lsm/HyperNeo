@@ -765,6 +765,16 @@ function parseOpenAIError(status: number, text: string): string {
   return text || `OpenAI API request failed with status ${status}`;
 }
 
+/** Count occurrences of each distinct value in an array, keyed by its string form. */
+function countBy<T>(arr: T[]): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const item of arr) {
+    const key = String(item);
+    counts[key] = (counts[key] ?? 0) + 1;
+  }
+  return counts;
+}
+
 /**
  * Build a compact, payload-free summary of a Responses request body for
  * diagnostic logging when the upstream rejects it (4xx).
@@ -775,6 +785,10 @@ function parseOpenAIError(status: number, text: string): string {
  * (function_call_output.output form, function_call.status presence, reasoning
  * encrypted_content, message content block types) — without dumping potentially
  * large or sensitive text payloads.
+ *
+ * Item and content-block types are reported as histograms (counts per type),
+ * not arrays, so a long session (hundreds of tool calls) can't balloon the log
+ * line.
  */
 function summarizeResponsesRequestFor4xx(body: ResponsesRequest): Record<string, unknown> {
   const input = body.input.map((item) => {
@@ -803,13 +817,13 @@ function summarizeResponsesRequestFor4xx(body: ResponsesRequest): Record<string,
     return {
       type: item.type,
       role: item.role,
-      contentBlockTypes: item.content.map((block) => block.type),
+      contentBlockTypeCounts: countBy(item.content.map((block) => block.type)),
     };
   });
   return {
     model: body.model,
     inputItemCount: body.input.length,
-    inputItemTypes: body.input.map((i) => i.type),
+    inputItemTypeCounts: countBy(body.input.map((i) => i.type)),
     input,
     ...(body.previous_response_id ? { previous_response_id: body.previous_response_id } : {}),
     ...(body.reasoning ? { reasoning: body.reasoning } : {}),
@@ -820,12 +834,23 @@ function summarizeResponsesRequestFor4xx(body: ResponsesRequest): Record<string,
 
 /** Log a 4xx upstream rejection with the translated request body summary. */
 function logUpstream4xx(status: number, requestBody: ResponsesRequest, errorText: string): void {
-  // 4xx = client-side request problem (the body we built is rejected). 5xx is
-  // server-side, so the request-body summary is noise there.
+  // 5xx is server-side, so the request-body summary is noise there.
   if (status < 400 || status >= 500) return;
+
+  // 429 / 401 / 403 = rate-limit / quota / auth — not a request-body problem.
+  // The full translated request structure is pure noise here; a short line is
+  // enough to surface that the upstream rejected us.
+  if (status === 429 || status === 401 || status === 403) {
+    logger.warn(`openai-responses: upstream rejected (HTTP ${status}): ${errorText.slice(0, 300)}`);
+    return;
+  }
+
+  // 400 / 422 / other 4xx = genuine body problem. The full summary is useful
+  // for diagnosing which item was rejected, capped to bound log line size.
   const summary = summarizeResponsesRequestFor4xx(requestBody);
+  const summaryJson = JSON.stringify(summary).slice(0, 1000);
   logger.warn(
-    `openai-responses: upstream rejected request (HTTP ${status}): ${errorText.slice(0, 500)} | requestBodySummary=${JSON.stringify(summary)}`
+    `openai-responses: upstream rejected request (HTTP ${status}): ${errorText.slice(0, 500)} | requestBodySummary=${summaryJson}`
   );
 }
 
@@ -1248,6 +1273,8 @@ async function streamResponsesToAnthropic({
 
 export const _openAIResponsesBridgeServerTesting = {
   streamResponsesToAnthropic,
+  summarizeResponsesRequestFor4xx,
+  logUpstream4xx,
 };
 
 function modelsListResponse(models: OpenAIResponsesBridgeModel[]): object {
