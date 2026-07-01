@@ -899,11 +899,11 @@ describe('SpaceRuntimeService', () => {
           config: expect.objectContaining({
             provider: 'openrouter',
             settingSources: ['project'],
-            disallowedTools: ['Write', 'MultiEdit', 'NotebookEdit'],
+            disallowedTools: ['Bash', 'Write', 'MultiEdit', 'NotebookEdit'],
             agent: 'restricted-agent',
             agents: {
               'restricted-agent': expect.objectContaining({
-                disallowedTools: ['Write', 'MultiEdit', 'NotebookEdit'],
+                disallowedTools: ['Bash', 'Write', 'MultiEdit', 'NotebookEdit'],
                 prompt: 'Use limited tools.',
               }),
             },
@@ -1057,11 +1057,11 @@ describe('SpaceRuntimeService', () => {
           provider: 'openrouter',
           settingSources: ['project'],
           systemPrompt: expect.objectContaining({ append: 'Use updated tools.' }),
-          disallowedTools: ['Write', 'MultiEdit', 'NotebookEdit'],
+          disallowedTools: ['Bash', 'Write', 'MultiEdit', 'NotebookEdit'],
           agent: 'restricted-agent',
           agents: {
             'restricted-agent': expect.objectContaining({
-              disallowedTools: ['Write', 'MultiEdit', 'NotebookEdit'],
+              disallowedTools: ['Bash', 'Write', 'MultiEdit', 'NotebookEdit'],
               prompt: 'Use updated tools.',
             }),
           },

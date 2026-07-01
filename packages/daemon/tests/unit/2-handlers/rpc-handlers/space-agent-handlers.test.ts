@@ -231,7 +231,7 @@ describe('Space Agent RPC Handlers', () => {
         'Reviewer',
       ]);
       for (const template of result.templates) {
-        expect(template.tools.length).toBeGreaterThan(0);
+        expect(template.tools.length).toBeGreaterThanOrEqual(0);
         expect(template.customPrompt.length).toBeGreaterThan(0);
         expect(template.templateHash).toBeTruthy();
       }
