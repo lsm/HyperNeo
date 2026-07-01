@@ -1060,6 +1060,13 @@ export class SpaceRuntime {
    */
   private reconciliationDone = true;
   /**
+   * Set true by stop(), false by start(). Guards retained-event replay so an
+   * in-flight handler past the stop point cannot re-set the deferred-flush flag
+   * and inject retained events after shutdown. Defaults false so pre-start
+   * callers (tests, direct ensure) are not blocked.
+   */
+  private isStopped = false;
+  /**
    * Sync cache of paused/stopped space ids, maintained via the space
    * pause/resume registers and seeded on rehydrate. Lets the delivery hot path
    * defer (not inject) events for paused spaces without an async lookup —
@@ -1638,13 +1645,12 @@ export class SpaceRuntime {
    * re-handled before its delivery rows are registered. Idempotent.
    */
   redispatchRetainedExternalEvents(): void {
-    // Don't process or defer retained events on a stopped runtime — stop()
-    // clears the flags and unsubscribes, but an in-flight handler past the stop
-    // point could still reach here and re-set the pending flag, causing the
-    // finally to flush after shutdown.
-    if (this.tickTimer === null) return;
     if (this.externalEventHandlingDepth > 0) {
-      this.retainedEventRedispatchPending = true;
+      // Don't set the deferred-flush flag on a stopped runtime — an in-flight
+      // handler past the stop point shouldn't trigger a post-shutdown flush.
+      if (!this.isStopped) {
+        this.retainedEventRedispatchPending = true;
+      }
       return;
     }
     this.expirePublishedExternalEventsPastTtl();
@@ -2071,7 +2077,7 @@ export class SpaceRuntime {
           // Skip the immediate flush when any concurrent handler left an event
           // published for a scheduled gate retry — re-handling it now would
           // bypass the GateRetryScheduler and repeat gate evaluation.
-          if (!anyRetryPending) {
+          if (!anyRetryPending && !this.isStopped) {
             this.redispatchRetainedExternalEvents();
           }
         }
@@ -4489,6 +4495,7 @@ export class SpaceRuntime {
    */
   start(): void {
     if (this.tickTimer !== null) return; // already running
+    this.isStopped = false;
 
     // Capture the runtime generation so the fire-and-forget restart IIFE can
     // detect a stop() that landed during its awaited space scan and abort
@@ -4568,6 +4575,7 @@ export class SpaceRuntime {
     // Invalidate any in-flight restart IIFE so it aborts before re-subscribing/
     // ticking this now-stopped runtime.
     this.runtimeGeneration += 1;
+    this.isStopped = true;
     // Cancel any deferred retained-event flush so an in-flight handleExternalEvent
     // finally doesn't process retained webhooks after shutdown.
     this.retainedEventRedispatchPending = false;
