@@ -4484,7 +4484,14 @@ export class SpaceRuntime {
         const pausedSpaceIds = new Set<string>();
         try {
           for (const space of await this.config.spaceManager.listSpaces(false)) {
-            if (space.paused || space.stopped) pausedSpaceIds.add(space.id);
+            if (space.paused || space.stopped) {
+              pausedSpaceIds.add(space.id);
+              // Seed the sync paused cache too — the pause callback was
+              // unsubscribed during stop(), so without this a live session
+              // retained across stop→start could inject into the paused space
+              // until a pause/resume callback updates the cache.
+              this.pausedSpaceIds.add(space.id);
+            }
           }
         } catch (err) {
           log.warn(
