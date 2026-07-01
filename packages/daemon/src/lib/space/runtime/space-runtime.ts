@@ -4495,29 +4495,30 @@ export class SpaceRuntime {
       this.pausedSpaceIds.add(spaceId);
     });
     this.acceptingExternalEvents = this.rehydrated;
-    this.rescheduleQueuedExternalEventRetries();
+    const interval = this.config.tickIntervalMs ?? 5_000;
+    const armTickLoop = (): void => {
+      this.tickTimer = setInterval(() => {
+        this.executeTick().catch((err: unknown) => {
+          log.error('SpaceRuntime: tick failed:', err);
+        });
+      }, interval);
+    };
     // Re-seed sessionless activation retries after a stop->start of the same
     // runtime instance. On first start this is a no-op because rehydrate will
     // run inside executeTick and call requeuePersistedPendingDeliveries.
     if (this.rehydrated) {
-      // Fire-and-forget: start() is sync, and requeue only schedules retry
-      // timers (which fire later). Collect paused/stopped spaces first so the
-      // requeue defers (rather than terminalizes) their pending PR deliveries —
-      // onSpaceResumed rebuilds those subs when the space resumes. The retained-
-      // event redispatch is routed through the re-entrancy guard INSIDE this
-      // async block (after the requeue) so older persisted pending deliveries
-      // are restored before newer retained events are replayed on stop→start.
+      // Fire-and-forget: start() is sync. Collect paused/stopped spaces first so
+      // the requeue defers (rather than terminalizes) their pending PR deliveries
+      // — onSpaceResumed rebuilds those subs when the space resumes. ALL post-
+      // reconciliation work (retry re-arming, requeue, subscribe, redispatch,
+      // first tick, interval) runs inside this block AFTER the cache is rebuilt
+      // so nothing can process events against a stale pausedSpaceIds.
       void (async () => {
         const pausedSpaceIds = new Set<string>();
         try {
           for (const space of await this.config.spaceManager.listSpaces(false)) {
             if (space.paused || space.stopped) {
               pausedSpaceIds.add(space.id);
-              // Reconcile the sync paused cache with the DB: add currently
-              // paused/stopped ids (the pause callback was unsubscribed during
-              // stop()), and drop ids for spaces that are now active (e.g.
-              // resumed while this runtime's callbacks were detached) so the
-              // delivery hot path doesn't keep treating them as paused.
               this.pausedSpaceIds.add(space.id);
             } else {
               this.pausedSpaceIds.delete(space.id);
@@ -4528,37 +4529,27 @@ export class SpaceRuntime {
             `SpaceRuntime: start() could not list spaces for paused-deferral: ${formatCommandError(err)}`
           );
         }
-        // A stop() during the awaited space scan must abort the restart: don't
-        // re-subscribe, redispatch, or tick a stopped runtime.
+        // A stop() during the awaited space scan must abort the restart.
         if (generation !== this.runtimeGeneration) return;
+        this.rescheduleQueuedExternalEventRetries();
         this.requeuePersistedPendingDeliveries(pausedSpaceIds);
-        // Re-attach the live external-event subscriber AFTER the paused cache is
-        // reconciled so a webhook arriving in this window cannot be injected
-        // into a paused space's retained live session before the cache is seeded.
         this.subscribeExternalEventPublished();
         this.redispatchRetainedExternalEvents();
-        // Kick the first tick AFTER paused-space reconciliation so the sweep/
-        // redispatch can't inject into a paused space before the cache is seeded.
         this.executeTick().catch((err: unknown) => {
           log.error('SpaceRuntime: initial tick failed:', err);
         });
+        armTickLoop();
       })();
     } else {
-      // First start: subscribe + sweep events that arrived before the subscriber
-      // attached. redispatchRetainedExternalEvents is re-entrancy-guarded.
+      // First start: no retained subs in the trie yet, so no injection risk.
+      this.rescheduleQueuedExternalEventRetries();
       this.subscribeExternalEventPublished();
       this.redispatchRetainedExternalEvents();
       this.executeTick().catch((err: unknown) => {
         log.error('SpaceRuntime: initial tick failed:', err);
       });
+      armTickLoop();
     }
-    const interval = this.config.tickIntervalMs ?? 5_000;
-
-    this.tickTimer = setInterval(() => {
-      this.executeTick().catch((err: unknown) => {
-        log.error('SpaceRuntime: tick failed:', err);
-      });
-    }, interval);
   }
 
   /**
@@ -4574,6 +4565,10 @@ export class SpaceRuntime {
     // Invalidate any in-flight restart IIFE so it aborts before re-subscribing/
     // ticking this now-stopped runtime.
     this.runtimeGeneration += 1;
+    // Cancel any deferred retained-event flush so an in-flight handleExternalEvent
+    // finally doesn't process retained webhooks after shutdown.
+    this.retainedEventRedispatchPending = false;
+    this.externalEventRetryPending = false;
     this.unsubscribeExternalEventPublished?.();
     this.unsubscribeExternalEventPublished = undefined;
     this.unsubscribeSdkToolUseCreated?.();
@@ -5360,11 +5355,8 @@ export class SpaceRuntime {
 
       const eventPayload = this.externalEventPayloadFromRecord(eventRecord.event);
       const resolved = this.resolveSubscriptionTarget(target);
-      // Restore the in-memory retry state for deferred deliveries. The startup
-      // requeue defers paused-space deliveries (both sessionless and those that
-      // already resolve to a session); resume must requeue both so neither is
-      // stranded. A live session gets a delivery retry; a sessionless target
-      // gets an activation retry.
+      // Restore the in-memory retry state for deferred deliveries. A live session
+      // gets a delivery retry; a sessionless target gets an activation retry.
       if (resolved.sessionId) {
         const mode = deliveryModeFromFailureReason(delivery.failureReason);
         this.scheduleExternalEventRetry(
