@@ -643,6 +643,52 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
     expect(mockDb.updateSession).not.toHaveBeenCalled();
   });
 
+  it('does not overwrite a manual rename when the fallback path runs', async () => {
+    // Generation succeeds but the branch rename throws, landing in the catch
+    // block — and the user has renamed in the meantime. The catch must re-check
+    // and keep the manual title rather than writing the fallback over it.
+    const { mockAgentSession, mockSessionCache: sessionCache } = makeSessionCache();
+    mockAgentSession.getSessionData = mock(() => ({
+      id: 'test-id',
+      title: 'New Session',
+      workspacePath: '/test',
+      status: 'active',
+      metadata: { titleGenerated: false },
+      config: { model: 'claude-sonnet-4-20250514', provider: 'anthropic' },
+      worktree: { path: '/w', branch: 'session/test-id', mainRepoPath: '/repo' },
+    }));
+    // Branch rename fails, and the user renames during that failure.
+    mockWorktreeManager.renameBranch = mock(async () => {
+      mockAgentSession.getSessionData = mock(() => ({
+        id: 'test-id',
+        title: 'My Manual Title',
+        workspacePath: '/test',
+        status: 'active',
+        metadata: { titleGenerated: false, titleSetBy: 'user' },
+        config: { model: 'claude-sonnet-4-20250514', provider: 'anthropic' },
+        worktree: { path: '/w', branch: 'session/test-id', mainRepoPath: '/repo' },
+      }));
+      throw new Error('git rename failed');
+    });
+    lifecycle = new SessionLifecycleCtor(
+      mockDb,
+      mockWorktreeManager,
+      sessionCache,
+      mockInternalEventBus,
+      mockMessageHub,
+      config,
+      mockToolsConfigManager,
+      mockAgentSessionFactory
+    );
+
+    const result = await lifecycle.generateTitleAndRenameBranch('test-id', 'Create a login form');
+
+    // Kept the manual title; the fallback ('Create a login form') was not written.
+    expect(result.title).toBe('My Manual Title');
+    expect(result.isFallback).toBe(false);
+    expect(mockDb.updateSession).not.toHaveBeenCalled();
+  });
+
   it('should generate titles using stored credentials when env vars are absent', async () => {
     delete process.env.ANTHROPIC_API_KEY;
     delete process.env.CLAUDE_CODE_OAUTH_TOKEN;

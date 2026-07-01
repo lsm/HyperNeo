@@ -961,6 +961,15 @@ export class SessionLifecycle {
         session.config.provider as string | undefined
       );
 
+      // Re-check against fresh state BEFORE any irreversible work: a user may
+      // have renamed during the generation await. Bail before renaming the
+      // branch so we neither clobber the title nor rename the git branch and
+      // then fail to persist it (which would desync metadata from the branch).
+      const latest = agentSession.getSessionData();
+      if (latest.metadata.titleSetBy === 'user') {
+        return { title: latest.title, isFallback: false };
+      }
+
       // Step 2: Rename branch if we have a worktree
       let newBranchName = session.worktree?.branch;
       if (session.worktree) {
@@ -982,16 +991,6 @@ export class SessionLifecycle {
       }
 
       // Step 3: Update session record
-      // Re-check against fresh state: a user may have renamed during the async
-      // title generation + branch rename above. The `session` snapshot is from
-      // before those awaits, so without this guard we'd clobber a manual rename
-      // with the generated title. (Synchronous from here to the write below, so
-      // no further await can interleave.)
-      const latest = agentSession.getSessionData();
-      if (latest.metadata.titleSetBy === 'user') {
-        return { title: latest.title, isFallback: false };
-      }
-
       const updatedSession: Session = {
         ...session,
         title,
@@ -1025,6 +1024,13 @@ export class SessionLifecycle {
       // Return result so caller can check if it was a fallback
       return { title, isFallback };
     } catch (error) {
+      // A user may have renamed during the (failed) generation; don't let the
+      // fallback title overwrite it. Mirrors the pre-branch-rename re-check.
+      const latest = agentSession.getSessionData();
+      if (latest.metadata.titleSetBy === 'user') {
+        return { title: latest.title, isFallback: false };
+      }
+
       this.logger.error('[SessionLifecycle] Failed to generate title:', error);
 
       // Fallback: Use first 50 chars of message as title
