@@ -2014,20 +2014,27 @@ export class SpaceRuntime {
 
   private async handleExternalEvent(payload: ExternalEventPublishedPayload): Promise<void> {
     this.externalEventHandlingDepth += 1;
+    let retryPending = false;
     try {
-      return await this.handleExternalEventImpl(payload);
+      retryPending = await this.handleExternalEventImpl(payload);
     } finally {
       this.externalEventHandlingDepth -= 1;
       if (this.externalEventHandlingDepth === 0 && this.retainedEventRedispatchPending) {
         this.retainedEventRedispatchPending = false;
-        this.redispatchRetainedExternalEvents();
+        // Skip the immediate flush when the in-flight event was deliberately
+        // left published for a scheduled gate retry (anyRetryScheduled) — re-
+        // handling it now would bypass the GateRetryScheduler and repeat gate
+        // evaluation. The scheduler (or a later tick) re-drives it.
+        if (!retryPending) {
+          this.redispatchRetainedExternalEvents();
+        }
       }
     }
   }
 
-  private async handleExternalEventImpl(payload: ExternalEventPublishedPayload): Promise<void> {
+  private async handleExternalEventImpl(payload: ExternalEventPublishedPayload): Promise<boolean> {
     const store = this.config.externalEventStore;
-    if (!store) return;
+    if (!store) return false;
     const allMatches = this.lookupSubscriptionTargets(payload.topic);
     // Trigger event-driven gate re-evaluation for blocked runs BEFORE the
     // delivery filter: a recovery-blocked run may have no live execution to
@@ -2080,7 +2087,7 @@ export class SpaceRuntime {
               );
             }
           }
-          return;
+          return false;
         }
 
         if (this.acceptingExternalEvents) {
@@ -2111,7 +2118,10 @@ export class SpaceRuntime {
       // If anyGateOpened is true, leave the event published — the gate
       // opening may produce downstream deliveries via a different path
       // (e.g. follow-up state changes) that this flow does not observe.
-      return;
+      // Return whether the event was left published for a scheduled gate retry
+      // (anyRetryScheduled) so the caller's deferred-redispatch flush can skip
+      // re-handling it before the GateRetryScheduler fires.
+      return blockedHookOutcome.anyRetryScheduled;
     }
 
     const workflowDeliveries = new Map<
@@ -2163,6 +2173,7 @@ export class SpaceRuntime {
     for (const { target, deliveryKey } of workflowDeliveries.values()) {
       await this.deliverExternalEventToWorkflowTarget(target, payload, deliveryKey);
     }
+    return false;
   }
 
   /**
@@ -4604,12 +4615,15 @@ export class SpaceRuntime {
       await this.checkStandaloneTasks();
 
       // Re-sweep after run advancement (processCompletedTasks/processRunTick may
-      // advance an in_progress run to a new node/agent). The pre-advancement
-      // sweep above would otherwise leave the auto-sub targeting the prior slot
-      // until the next tick, delivering PR events to the wrong slot. replay:false
-      // — this only refreshes the target slot; retained events are replayed by
-      // the start-of-tick sweep on the next tick.
-      await this.ensurePrEventSubscriptionsForActiveRuns();
+      // advance an in_progress run to a new node/agent, or make a PR URL newly
+      // resolvable). The pre-advancement sweep above would otherwise leave the
+      // auto-sub targeting the prior slot until the next tick. If this sweep
+      // creates a subscription, replay retained events (mirroring the
+      // start-of-tick sweep), routed through the re-entrancy guard.
+      const advancedPrRuns = await this.ensurePrEventSubscriptionsForActiveRuns();
+      if (advancedPrRuns > 0) {
+        this.redispatchRetainedExternalEvents();
+      }
 
       // Bound published events without deliveries (e.g. retained PR-linked
       // events waiting for a subscription) so they do not last forever when no
@@ -5209,9 +5223,10 @@ export class SpaceRuntime {
       }
     }
     if (subscribedPrRuns > 0) {
-      // Re-entrancy-guarded: defer if a PR event is still mid-handling so the
-      // in-flight event is not re-handled before its delivery rows exist.
-      this.redispatchRetainedExternalEvents();
+      // Defer the retained-event replay until after the persisted pending
+      // deliveries below are requeued, so an older persisted delivery for this
+      // run is scheduled before a newer retained event (preserving order).
+      // Re-entrancy-guarded: defers further if a PR event is still mid-handling.
     }
 
     for (const delivery of store.listPendingDeliveries()) {
@@ -5275,6 +5290,12 @@ export class SpaceRuntime {
           delivery.failureReason ?? 'node_execution_not_active'
         );
       }
+    }
+
+    if (subscribedPrRuns > 0) {
+      // Now that persisted pending deliveries are requeued, replay retained
+      // no-delivery PR events (newer than the persisted ones). Re-entrancy-guarded.
+      this.redispatchRetainedExternalEvents();
     }
   }
 
