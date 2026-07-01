@@ -203,7 +203,7 @@ function SessionItem({
 
   return (
     <div
-      class={`px-4 py-3 border-l-2 ${borderColor} cursor-pointer hover:bg-dark-800/50 transition-colors`}
+      class={`group/row relative px-4 py-3 border-l-2 ${borderColor} cursor-pointer hover:bg-dark-800/50 transition-colors`}
       onClick={() => navigateToSpaceSession(spaceId, session.id)}
     >
       <div class="flex items-start justify-between">
@@ -234,7 +234,7 @@ function SessionItem({
             }}
             title="Rename session"
             aria-label={`Rename ${session.title || 'session'}`}
-            class="rounded-md p-1 text-gray-500 transition-colors hover:text-gray-100 hover:bg-white/10"
+            class="opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100 rounded-md p-1 text-gray-500 transition-colors hover:text-gray-100 hover:bg-white/10"
           >
             <RenameIcon className="w-3.5 h-3.5" />
           </button>

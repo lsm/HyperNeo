@@ -614,10 +614,22 @@ function RecentSessionRow({
     );
   }
 
+  const handleKeyDown = (e: KeyboardEvent) => {
+    // Only activate when the row itself is focused, so Enter on the nested
+    // rename button doesn't also open the session.
+    if (e.currentTarget === e.target && (e.key === 'Enter' || e.key === ' ')) {
+      e.preventDefault();
+      onOpen();
+    }
+  };
+
   return (
     <div
       class="group/row relative w-full flex items-center gap-3 px-4 py-3 rounded-lg hover:bg-dark-800/60 transition-colors text-left cursor-pointer"
+      role="button"
+      tabIndex={0}
       onClick={onOpen}
+      onKeyDown={handleKeyDown}
     >
       <div class="w-2 h-2 rounded-full flex-shrink-0 bg-indigo-400" />
       <div class="flex-1 min-w-0">

@@ -65,12 +65,26 @@ function SpaceDetailSessionRow({
     );
   }
 
+  const openSession = () => onClick(session.id);
+  const handleKeyDown = (e: KeyboardEvent) => {
+    // Only activate when the row itself is focused, so Enter on the nested
+    // rename button doesn't also open the session.
+    if (e.currentTarget === e.target && (e.key === 'Enter' || e.key === ' ')) {
+      e.preventDefault();
+      openSession();
+    }
+  };
+
   return (
     <div
       class={cn(
-        'group/row relative w-full flex items-center gap-2.5 px-3 py-2 rounded-lg transition-colors',
+        'group/row relative w-full flex items-center gap-2.5 px-3 py-2 rounded-lg transition-colors cursor-pointer',
         isSelected ? 'bg-white/10' : 'hover:bg-white/5'
       )}
+      role="button"
+      tabIndex={0}
+      onClick={openSession}
+      onKeyDown={handleKeyDown}
     >
       <div
         class={cn(
@@ -78,23 +92,20 @@ function SpaceDetailSessionRow({
           sessionStatusColors[session.status] ?? 'bg-gray-500'
         )}
       />
-      <button
-        type="button"
-        class="flex-1 min-w-0 flex items-center text-left"
-        onClick={() => onClick(session.id)}
+      <span
+        class="flex-1 min-w-0 text-sm text-gray-300 truncate"
+        onDblClick={startEditing}
+        title="Double-click to rename"
       >
-        <span
-          class="flex-1 text-sm text-gray-300 truncate"
-          onDblClick={startEditing}
-          title="Double-click to rename"
-        >
-          {session.title || 'Untitled'}
-        </span>
-      </button>
+        {session.title || 'Untitled'}
+      </span>
       <button
         type="button"
         data-testid="space-session-rename"
-        onClick={startEditing}
+        onClick={(e) => {
+          e.stopPropagation();
+          startEditing();
+        }}
         title="Rename session"
         aria-label={`Rename ${session.title || 'session'}`}
         class="opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100 p-1 rounded text-gray-500 transition-colors hover:text-gray-100 hover:bg-white/10"
