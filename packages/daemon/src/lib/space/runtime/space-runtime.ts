@@ -1591,26 +1591,24 @@ export class SpaceRuntime {
     if (options.replay === false) {
       return { subscribed: true };
     }
-    if (this.externalEventHandlingDepth > 0) {
-      this.retainedEventRedispatchPending = true;
-    } else {
-      this.redispatchRetainedExternalEvents();
-    }
+    this.redispatchRetainedExternalEvents();
     return { subscribed: true };
   }
 
   /**
    * Expire retained published events past their TTL, then redispatch any
    * published events that still have no delivery rows so a newly-registered
-   * subscription can pick them up. Idempotent and safe to call from any path.
-   */
-  /**
-   * Expire retained published events past their TTL, then redispatch any
-   * published events that still have no delivery rows so a newly-registered
    * subscription can pick them up. Public so the service can replay after a
-   * run transitions to in_progress (e.g. a gate-open resume). Idempotent.
+   * run transitions to in_progress (e.g. a gate-open resume). Re-entrancy-safe:
+   * when called from inside handleExternalEvent (e.g. via the blocked-run gate
+   * hook), it defers to the post-handling flush so the in-flight event is not
+   * re-handled before its delivery rows are registered. Idempotent.
    */
   redispatchRetainedExternalEvents(): void {
+    if (this.externalEventHandlingDepth > 0) {
+      this.retainedEventRedispatchPending = true;
+      return;
+    }
     this.expirePublishedExternalEventsPastTtl();
     this.redispatchPublishedEventsWithoutDeliveries();
   }
