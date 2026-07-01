@@ -1680,6 +1680,83 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(injected[0]!.sessionId).toBe('session-pr-refresh');
   });
 
+  test('delivers a retained PR event when a direct ensure creates the auto subscription', async () => {
+    const workflow = createWorkflow();
+    const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-direct-ensure',
+      startedAt: Date.now(),
+    });
+    tam.alive.add('session-direct-ensure');
+
+    const gateDataRepo = new GateDataRepository(db);
+    gateDataRepo.merge(run.id, 'pr-gate', { pr_url: 'https://github.com/lsm/neokai/pull/42' });
+
+    // Publish a PR event BEFORE any auto subscription exists. It is linked to
+    // the run so it is retained as `published` with no delivery rows.
+    const event = makeEvent();
+    await eventService.publish(event);
+    expect(eventStore.listDeliveries(event.id)).toHaveLength(0);
+    expect(eventStore.getById(event.id)?.state).toBe('published');
+
+    // A direct subscription creation (e.g. notifyGateDataChanged / resume path)
+    // must replay the retained event instead of stranding it until the next tick.
+    runtime.ensurePrEventSubscriptionForRun(run.id);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    expect(injected).toHaveLength(1);
+    expect(injected[0]!.sessionId).toBe('session-direct-ensure');
+    expect(eventStore.getById(event.id)?.state).toBe('delivered');
+  });
+
+  test('rebuilds active-run PR auto-subscription before persisted delivery replay on restart', async () => {
+    const workflow = createWorkflow();
+    const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    // Pending execution (no live session) so the PR event queues a pending
+    // delivery rather than delivering immediately.
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: null,
+      startedAt: Date.now(),
+    });
+
+    const gateDataRepo = new GateDataRepository(db);
+    gateDataRepo.merge(run.id, 'pr-gate', { pr_url: 'https://github.com/lsm/neokai/pull/42' });
+    runtime.registerPrEventSubscriptionForRun(run.id, 'https://github.com/lsm/neokai/pull/42');
+
+    const event = makeEvent({ id: 'evt-restart-replay', dedupeKey: 'dedupe-restart-replay' });
+    await eventService.publish(event);
+    expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
+
+    // Restart. rehydrateExecutors must rebuild the auto subscription BEFORE its
+    // persisted-delivery replay; otherwise the replay terminalizes the pending
+    // delivery as `subscription_no_longer_active` (the trie is empty on cold
+    // start until the rebuild runs).
+    await runtime.stop();
+    runtime = new SpaceRuntime({
+      db,
+      spaceManager: new SpaceManager(db),
+      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+      spaceWorkflowManager: workflowManager,
+      workflowRunRepo,
+      taskRepo,
+      nodeExecutionRepo,
+      artifactRepo,
+      internalEventBus: bus,
+      commandBus: createInternalCommandBus(),
+      externalEventStore: eventStore,
+      taskAgentManager: tam as never,
+    });
+    await runtime.executeTick();
+
+    const delivery = eventStore.listDeliveries(event.id)[0]!;
+    expect(delivery.state).not.toBe('failed');
+    expect(delivery.failureReason).not.toBe('subscription_no_longer_active');
+  });
+
   test('fails queued deliveries during terminal run cleanup', async () => {
     const { workflow, run, task } = await startRunWithSubscription();
     const event = makeEvent();

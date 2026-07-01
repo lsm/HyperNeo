@@ -1045,6 +1045,14 @@ export class SpaceRuntime {
   private unsubscribeSdkToolUseConsumed?: () => void;
   private unsubscribeSpaceResumed?: () => void;
   private acceptingExternalEvents = false;
+  /**
+   * Re-entrancy depth for {@link handleExternalEvent}. When > 0, a newly-created
+   * PR auto-subscription must not synchronously redispatch retained events — it
+   * would re-handle the in-flight event. The redispatch is deferred via
+   * {@link retainedEventRedispatchPending} and flushed when depth returns to 0.
+   */
+  private externalEventHandlingDepth = 0;
+  private retainedEventRedispatchPending = false;
 
   constructor(private config: SpaceRuntimeConfig) {
     this.internalEventBus = config.internalEventBus;
@@ -1545,7 +1553,28 @@ export class SpaceRuntime {
     if (!result.success) {
       return { subscribed: false, reason: result.error };
     }
+    // A newly-created auto subscription may match a retained PR event kept
+    // `published` with no delivery rows while no subscription existed. Direct
+    // callers (gate-data change, resume, approval, run start) do not otherwise
+    // trigger a redispatch, so replay (or TTL-expire) retained events now
+    // instead of stranding them until the next tick sweep. Defer when inside
+    // handleExternalEvent to avoid re-handling the in-flight event.
+    if (this.externalEventHandlingDepth > 0) {
+      this.retainedEventRedispatchPending = true;
+    } else {
+      this.redispatchRetainedExternalEvents();
+    }
     return { subscribed: true };
+  }
+
+  /**
+   * Expire retained published events past their TTL, then redispatch any
+   * published events that still have no delivery rows so a newly-registered
+   * subscription can pick them up. Idempotent and safe to call from any path.
+   */
+  private redispatchRetainedExternalEvents(): void {
+    this.expirePublishedExternalEventsPastTtl();
+    this.redispatchPublishedEventsWithoutDeliveries();
   }
 
   /**
@@ -1937,6 +1966,19 @@ export class SpaceRuntime {
   }
 
   private async handleExternalEvent(payload: ExternalEventPublishedPayload): Promise<void> {
+    this.externalEventHandlingDepth += 1;
+    try {
+      return await this.handleExternalEventImpl(payload);
+    } finally {
+      this.externalEventHandlingDepth -= 1;
+      if (this.externalEventHandlingDepth === 0 && this.retainedEventRedispatchPending) {
+        this.retainedEventRedispatchPending = false;
+        this.redispatchRetainedExternalEvents();
+      }
+    }
+  }
+
+  private async handleExternalEventImpl(payload: ExternalEventPublishedPayload): Promise<void> {
     const store = this.config.externalEventStore;
     if (!store) return;
     const allMatches = this.lookupSubscriptionTargets(payload.topic);
@@ -4483,7 +4525,9 @@ export class SpaceRuntime {
       // resolvable PR URL and no existing auto subscription gets registered.
       // Runs on the first tick before redispatch so crash-pending PR events
       // find a target after restart, and on every subsequent tick to catch
-      // runs whose PR URL becomes known mid-flight.
+      // runs whose PR URL becomes known mid-flight. A newly-registered
+      // subscription also replays retained events itself (see
+      // ensurePrEventSubscriptionForRun).
       const subscribedPrRuns = await this.ensurePrEventSubscriptionsForActiveRuns();
 
       if (justRehydrated || subscribedPrRuns > 0) {
@@ -5242,6 +5286,23 @@ export class SpaceRuntime {
         await this.ensureExecutorRegistered(run, space);
       }
       this.rehydrateLongHorizonSubscriptions(space.id);
+      // Rebuild auto PR-event subscriptions for these runs BEFORE the
+      // persisted-delivery replay below. `ensureExecutorRegistered` just ran
+      // `registerRunInterestsFromWorkflow` (and on a cold start the trie is
+      // empty either way), so without rebuilding here the replay at the end of
+      // this method terminalizes persisted PR deliveries as
+      // `subscription_no_longer_active` before any later sweep can run.
+      for (const run of activeRuns) {
+        const prUrl = this.resolvePrUrlForRun(run.id);
+        if (!prUrl) continue;
+        try {
+          this.registerPrEventSubscriptionForRun(run.id, prUrl);
+        } catch (err) {
+          log.warn(
+            `SpaceRuntime: failed to rebuild PR subscription for run ${run.id} during rehydrate: ${formatCommandError(err)}`
+          );
+        }
+      }
     }
 
     this.requeuePersistedPendingDeliveries();
