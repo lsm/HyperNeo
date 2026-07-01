@@ -257,17 +257,35 @@ export const PROVIDER_NO_SDK_AUTO_COMPACT: ReadonlySet<string> = new Set();
  * and let NeoKai's fallback handle compaction.
  */
 export function shouldUseNeoKaiCompactFallback(providerId: string): boolean {
-  // The SDK's context-window resolver only grants >200k to `[1m]`-suffixed or
-  // first-party 1M model IDs; every other ID falls back to a hardcoded 200k.
-  // It then clamps `CLAUDE_CODE_AUTO_COMPACT_WINDOW` to `min(window, 200k)`,
-  // so for a model whose real window is neither 200k nor 1M the SDK fires
-  // compaction at the wrong (too-low) threshold. Kimi's real window is 262k
-  // and no Kimi route (China `kimi-for-coding` or Global `kimi-k2.7-code`) is
-  // recognised by the resolver, so every Kimi session is routed here and
-  // NeoKai compacts at the metadata window (262k − 13k reserve) instead.
-  if (providerId === 'kimi') {
-    return true;
-  }
+  // No provider should use the NeoKai async /compact fallback. Kept as an
+  // extension point only; `PROVIDER_NO_SDK_AUTO_COMPACT` is intentionally empty.
+  //
+  // History (do not re-special-case `kimi` here): Kimi's real window is 262k,
+  // but the SDK's resolver only knows its internal model DB + the `[1m]` suffix
+  // (→ 1M). Every other ID falls back to a hardcoded 200k. This was verified
+  // empirically against SDK 0.3.x: `settings.autoCompactWindow` AND the
+  // `CLAUDE_CODE_AUTO_COMPACT_WINDOW` env var are both CLAMPED to that resolved
+  // window (passing 262144 still yields maxTokens=200000, threshold=167000); the
+  // SDK never queries `/v1/models` for an Anthropic-compatible base; and injecting
+  // `usage.model_context_window` into the `message_start` SSE event has no effect.
+  // There is NO way to make the SDK believe 262k for Kimi.
+  //
+  // Previously Kimi was routed here and NeoKai disabled SDK auto-compact
+  // (`{ autoCompactEnabled: false }`) to chase the 262k headroom via an async
+  // post-turn `/compact` fallback. That fallback fires AFTER turns/events, so it
+  // cannot prevent overflow-within-a-turn or overflow-on-resume (the SDK pre-flights
+  // against its 200k belief and, with auto-compact off, emits a 0-token terminal
+  // "Prompt is too long" without ever calling Kimi). Result: Kimi overflowed at
+  // ~7.7% of sessions vs ~0.6–4.2% for providers that keep native auto-compact.
+  //
+  // Letting Kimi use the SDK's native synchronous auto-compact (the default path)
+  // arms it at 200k − 33k = 167k. Kimi's real window is 262k, so 167k is safely
+  // below the rejection point — the SDK keeps context < 167k and Kimi always
+  // accepts. The cost is compacting ~62k earlier than the unreachable 262k ideal;
+  // the win is no more overflow (runtime or resume). This is the same tradeoff
+  // every non-`[1m]` non-Anthropic model already accepts. Codex avoids it only
+  // because its bridge routes `gpt-5.5[1m]` — the `[1m]` suffix grants an honest
+  // 1M belief (gpt-5.5 truly supports ~1M). Kimi has no `[1m]` analog (262k ≠ 1M).
   return PROVIDER_NO_SDK_AUTO_COMPACT.has(providerId);
 }
 

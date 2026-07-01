@@ -2203,12 +2203,14 @@ describe('SDKMessageHandler', () => {
         expect(enqueueMessageSpy).not.toHaveBeenCalled();
       });
 
-      it('enqueues /compact for global Kimi (SDK clamps its window to 200k)', async () => {
-        // Global Kimi (kimi-k2.7-code) is NOT recognised by the SDK's
-        // context-window resolver, so the SDK reports 200k and clamps
-        // CLAUDE_CODE_AUTO_COMPACT_WINDOW to min(200k, 262144). Route it through
-        // NeoKai's fallback so compaction fires at the real 262k metadata window
-        // (reserveBasedThreshold(262144, 'kimi') = 217144), not the SDK's clamped 200k.
+      it('does NOT enqueue /compact for global Kimi (SDK native auto-compact handles it)', async () => {
+        // Global Kimi (kimi-k2.7-code) resolves to the SDK's 200k fallback (no
+        // `[1m]` analog, not in the SDK model DB). Empirically every window
+        // override is clamped to 200k, so the only safe compaction path is the
+        // SDK's own native auto-compact, armed at 200k − 33k = 167k — safely
+        // below Kimi's real 262k window. NeoKai's async fallback must stay inert
+        // for Kimi (it fires after turns and cannot prevent within-turn/resume
+        // overflow). See shouldUseNeoKaiCompactFallback history.
         setModelsCache(
           new Map([
             [
@@ -2266,13 +2268,15 @@ describe('SDKMessageHandler', () => {
         await h.handleMessage(resultMessage);
         await new Promise((resolve) => setTimeout(resolve, 0));
 
+        // Context is still tracked; the NeoKai fallback must NOT fire — Kimi uses
+        // SDK native auto-compact (200k belief, fires at 167k, safely < 262k real).
         expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
-        expect(mockContextTracker.shouldCompactAt).toHaveBeenCalledWith(217_144);
-        expect(mockContextTracker.markCompactionTriggered).toHaveBeenCalledTimes(1);
-        expect(enqueueMessageSpy).toHaveBeenCalledWith('/compact', true);
+        expect(mockContextTracker.shouldCompactAt).not.toHaveBeenCalled();
+        expect(mockContextTracker.markCompactionTriggered).not.toHaveBeenCalled();
+        expect(enqueueMessageSpy).not.toHaveBeenCalled();
       });
 
-      it('enqueues /compact for China Kimi when SDK reports the unknown-model window', async () => {
+      it('does NOT enqueue /compact for China Kimi (SDK native auto-compact handles it)', async () => {
         setModelsCache(
           new Map([
             [
@@ -2330,10 +2334,12 @@ describe('SDKMessageHandler', () => {
         await h.handleMessage(resultMessage);
         await new Promise((resolve) => setTimeout(resolve, 0));
 
+        // Context is still tracked; the NeoKai fallback must NOT fire — Kimi uses
+        // SDK native auto-compact (200k belief, fires at 167k, safely < 262k real).
         expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
-        expect(mockContextTracker.shouldCompactAt).toHaveBeenCalledWith(217_144);
-        expect(mockContextTracker.markCompactionTriggered).toHaveBeenCalledTimes(1);
-        expect(enqueueMessageSpy).toHaveBeenCalledWith('/compact', true);
+        expect(mockContextTracker.shouldCompactAt).not.toHaveBeenCalled();
+        expect(mockContextTracker.markCompactionTriggered).not.toHaveBeenCalled();
+        expect(enqueueMessageSpy).not.toHaveBeenCalled();
       });
     });
 
