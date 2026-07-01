@@ -1044,7 +1044,16 @@ export class SpaceRuntime {
   private unsubscribeSdkToolUseCreated?: () => void;
   private unsubscribeSdkToolUseConsumed?: () => void;
   private unsubscribeSpaceResumed?: () => void;
+  private unsubscribeSpacePaused?: () => void;
   private acceptingExternalEvents = false;
+  /**
+   * Sync cache of paused/stopped space ids, maintained via the space
+   * pause/resume registers and seeded on rehydrate. Lets the delivery hot path
+   * defer (not inject) events for paused spaces without an async lookup —
+   * pauseSpace does not terminate sessions, so a live in_progress session would
+   * otherwise be injected during pause.
+   */
+  private pausedSpaceIds = new Set<string>();
   /**
    * Re-entrancy depth for {@link handleExternalEvent}. When > 0, a newly-created
    * PR auto-subscription must not synchronously redispatch retained events — it
@@ -1053,6 +1062,14 @@ export class SpaceRuntime {
    */
   private externalEventHandlingDepth = 0;
   private retainedEventRedispatchPending = false;
+  /**
+   * Accumulates across concurrent handleExternalEvent calls: set true by any
+   * handler that left its event published for a scheduled gate retry. The
+   * outermost handler's finally checks it (instead of a per-call local) so a
+   * retry-pending event isn't flushed just because a later, non-retry handler
+   * was the last to unwind.
+   */
+  private externalEventRetryPending = false;
 
   constructor(private config: SpaceRuntimeConfig) {
     this.internalEventBus = config.internalEventBus;
@@ -1067,6 +1084,9 @@ export class SpaceRuntime {
     this.unsubscribeSpaceResumed = this.config.spaceManager.onSpaceResumedRegister?.((spaceId) =>
       this.onSpaceResumed(spaceId)
     );
+    this.unsubscribeSpacePaused = this.config.spaceManager.onSpacePausedRegister?.((spaceId) => {
+      this.pausedSpaceIds.add(spaceId);
+    });
   }
 
   private subscribeSdkToolUseCreated(): void {
@@ -2014,18 +2034,24 @@ export class SpaceRuntime {
 
   private async handleExternalEvent(payload: ExternalEventPublishedPayload): Promise<void> {
     this.externalEventHandlingDepth += 1;
-    let retryPending = false;
     try {
-      retryPending = await this.handleExternalEventImpl(payload);
+      const retryPending = await this.handleExternalEventImpl(payload);
+      // Accumulate into the depth-wide flag so the outermost handler's finally
+      // sees if ANY concurrent handler left an event retry-pending.
+      if (retryPending) {
+        this.externalEventRetryPending = true;
+      }
     } finally {
       this.externalEventHandlingDepth -= 1;
       if (this.externalEventHandlingDepth === 0 && this.retainedEventRedispatchPending) {
         this.retainedEventRedispatchPending = false;
-        // Skip the immediate flush when the in-flight event was deliberately
-        // left published for a scheduled gate retry (anyRetryScheduled) — re-
-        // handling it now would bypass the GateRetryScheduler and repeat gate
-        // evaluation. The scheduler (or a later tick) re-drives it.
-        if (!retryPending) {
+        // Skip the immediate flush when any concurrent handler left an event
+        // published for a scheduled gate retry — re-handling it now would
+        // bypass the GateRetryScheduler and repeat gate evaluation. The
+        // scheduler (or a later tick) re-drives it.
+        const anyRetryPending = this.externalEventRetryPending;
+        this.externalEventRetryPending = false;
+        if (!anyRetryPending) {
           this.redispatchRetainedExternalEvents();
         }
       }
@@ -2218,6 +2244,16 @@ export class SpaceRuntime {
         });
         store.markEventFailedIfAllDeliveriesTerminal(payload.eventId);
       } else if (resolved.sessionId && this.isTargetSessionLive(resolved.sessionId)) {
+        // pauseSpace does not terminate sessions, so a live in_progress session
+        // would otherwise be injected now, defeating the pause. Skip injection
+        // while the target's space is paused/stopped (sync cache updated via the
+        // space pause/resume registers) — the delivery stays pending and is
+        // requeued by onSpaceResumed. (Regressed by this PR's in_progress
+        // auto-subscription, which now matches PR events during pause.)
+        const targetRun = this.config.workflowRunRepo.getRun(resolved.workflowRunId);
+        if (targetRun && this.pausedSpaceIds.has(targetRun.spaceId)) {
+          return;
+        }
         const eventRecord = store.getById(payload.eventId);
         await this.flushPendingNodeQueueAsync(resolved, deliveryKey, {
           event: payload,
@@ -4426,6 +4462,11 @@ export class SpaceRuntime {
     this.unsubscribeSpaceResumed ??= this.config.spaceManager.onSpaceResumedRegister?.((spaceId) =>
       this.onSpaceResumed(spaceId)
     );
+    // Maintain the sync paused-space cache so the delivery hot path can defer
+    // (not inject) events for paused spaces without an async lookup.
+    this.unsubscribeSpacePaused ??= this.config.spaceManager.onSpacePausedRegister?.((spaceId) => {
+      this.pausedSpaceIds.add(spaceId);
+    });
     this.acceptingExternalEvents = this.rehydrated;
     this.rescheduleQueuedExternalEventRetries();
     // Re-seed sessionless activation retries after a stop->start of the same
@@ -4435,7 +4476,10 @@ export class SpaceRuntime {
       // Fire-and-forget: start() is sync, and requeue only schedules retry
       // timers (which fire later). Collect paused/stopped spaces first so the
       // requeue defers (rather than terminalizes) their pending PR deliveries —
-      // onSpaceResumed rebuilds those subs when the space resumes.
+      // onSpaceResumed rebuilds those subs when the space resumes. The retained-
+      // event redispatch is routed through the re-entrancy guard INSIDE this
+      // async block (after the requeue) so older persisted pending deliveries
+      // are restored before newer retained events are replayed on stop→start.
       void (async () => {
         const pausedSpaceIds = new Set<string>();
         try {
@@ -4448,13 +4492,13 @@ export class SpaceRuntime {
           );
         }
         this.requeuePersistedPendingDeliveries(pausedSpaceIds);
+        this.redispatchRetainedExternalEvents();
       })();
+    } else {
+      // First start: sweep events that arrived before the subscriber attached.
+      // redispatchRetainedExternalEvents is re-entrancy-guarded.
+      this.redispatchRetainedExternalEvents();
     }
-    // Sweep events that arrived while stopped. On first start this is a
-    // no-op (sweep runs inside executeTick after rehydrate). On
-    // stop→start of the same runtime instance, it catches events that
-    // were persisted while the external-event subscriber was detached.
-    this.redispatchPublishedEventsWithoutDeliveries();
     const interval = this.config.tickIntervalMs ?? 5_000;
 
     // Kick off the first tick immediately, then schedule the loop.
@@ -4487,6 +4531,8 @@ export class SpaceRuntime {
     this.unsubscribeSdkToolUseConsumed = undefined;
     this.unsubscribeSpaceResumed?.();
     this.unsubscribeSpaceResumed = undefined;
+    this.unsubscribeSpacePaused?.();
+    this.unsubscribeSpacePaused = undefined;
     for (const timer of this.externalEventRetryTimers.values()) {
       clearTimeout(timer);
     }
@@ -5197,6 +5243,9 @@ export class SpaceRuntime {
    */
   onSpaceResumed(spaceId: string): void {
     const store = this.config.externalEventStore;
+    // The space is active again — clear the sync paused cache so the delivery
+    // hot path resumes injecting into live sessions.
+    this.pausedSpaceIds.delete(spaceId);
     if (!store) return;
 
     // Rebuild PR auto-subscriptions for active runs in this space before
@@ -5434,8 +5483,10 @@ export class SpaceRuntime {
       if (space.paused || space.stopped) {
         // Skipped spaces get no auto-sub rebuild here (rebuilt by onSpaceResumed);
         // collect their ids so the persisted-delivery replay below defers rather
-        // than terminalizes their pending PR deliveries.
+        // than terminalizes their pending PR deliveries, and seed the sync
+        // paused cache used by the delivery hot path.
         pausedSpaceIds.add(space.id);
+        this.pausedSpaceIds.add(space.id);
         continue;
       }
       for (const run of activeRuns) {

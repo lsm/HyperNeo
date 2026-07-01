@@ -5915,6 +5915,37 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
   });
 
+  test('does not inject a matched PR event into a live session while the space is paused', async () => {
+    const workflow = createWorkflow();
+    const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-paused-inject',
+      startedAt: Date.now(),
+    });
+    tam.alive.add('session-paused-inject');
+    const gateDataRepo = new GateDataRepository(db);
+    gateDataRepo.merge(run.id, 'pr-gate', { pr_url: 'https://github.com/lsm/neokai/pull/42' });
+    runtime.registerPrEventSubscriptionForRun(run.id, 'https://github.com/lsm/neokai/pull/42');
+
+    // Pause the space via pauseSpace (fires the runtime's paused callback,
+    // seeding the sync paused cache). pauseSpace does not terminate sessions,
+    // so without the pause guard a matched PR event would inject into the
+    // still-live session.
+    await spaceManager.pauseSpace(SPACE_ID);
+    const event = makeEvent({ id: 'evt-paused-inject', dedupeKey: 'dedupe-paused-inject' });
+    await eventService.publish(event);
+    expect(injected).toHaveLength(0);
+    expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
+
+    // Resume -> the deferred delivery is delivered to the live session.
+    await spaceManager.resumeSpace(SPACE_ID);
+    await new Promise((resolve) => setTimeout(resolve, 1_200));
+    expect(injected).toHaveLength(1);
+    expect(injected[0]!.sessionId).toBe('session-paused-inject');
+  });
+
   test('excludes retried delivery from activation flush drain', async () => {
     const { run, task } = await startRunWithSubscription();
     const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;

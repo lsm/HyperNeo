@@ -838,8 +838,11 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     // Rebuild PR auto-subscriptions for any blocked runs in the resumed space.
     // The startup rehydrate skips paused spaces, so without this call the
     // resumed space's blocked runs would have no PR-event subscription until
-    // some other gate write happens.
-    spaceRuntimeService.rehydrateBlockedRunPrEventSubscriptionsForSpace(spaceId);
+    // some other gate write happens. replay:false — the runtime's onSpaceResumed
+    // hook performs the single post-requeue retained-event replay, so replaying
+    // here would race with it and reorder newer retained events ahead of older
+    // persisted pending deliveries.
+    spaceRuntimeService.rehydrateBlockedRunPrEventSubscriptionsForSpace(spaceId, false);
   });
 
   setupSpaceAgentHandlers(
