@@ -301,19 +301,27 @@ describe('QueryOptionsBuilder', () => {
       expect(buildProviderSettings('openrouter')).toBeUndefined();
     });
 
-    it('should use NeoKai fallback for both Kimi regions (SDK clamps every Kimi route to 200k)', () => {
-      // The SDK's context-window resolver only recognises [1m]-suffixed or
-      // first-party 1M model IDs. Neither China (kimi-for-coding) nor Global
-      // (kimi-k2.7-code) qualifies, so CLAUDE_CODE_AUTO_COMPACT_WINDOW is
-      // clamped to min(200k, 262144) = 200k and the SDK would fire compaction
-      // ~62k early. Route both regions through NeoKai's fallback, which compacts
-      // at the real metadata window using a Kimi-specific reserve
-      // (reserveBasedThreshold(262144, 'kimi') = 217144).
-      expect(buildProviderSettings('kimi')).toEqual({
-        autoCompactEnabled: false,
-      });
+    it('should keep SDK native auto-compact ON for Kimi (do not disable to chase 262k)', () => {
+      // The SDK's resolver only knows its internal model DB + the `[1m]` suffix
+      // (→ 1M); every other ID falls back to 200k. Kimi (262k, no `[1m]` analog)
+      // therefore resolves to 200k, and every override is clamped to that:
+      // `settings.autoCompactWindow` AND `CLAUDE_CODE_AUTO_COMPACT_WINDOW` both
+      // yield maxTokens=200000 / threshold=167000 (verified against SDK 0.3.x).
+      // The SDK also never queries `/v1/models` for an Anthropic-compatible base,
+      // and `message_start.usage.model_context_window` injection has no effect.
+      //
+      // There is NO way to make the SDK believe 262k. Previously Kimi disabled
+      // SDK auto-compact and used NeoKai's async post-turn fallback to chase the
+      // 262k headroom — but that fallback fires after turns, so it cannot prevent
+      // within-turn or resume overflow (Kimi overflowed ~7.7% of sessions).
+      //
+      // Keeping SDK native auto-compact ON arms it at 200k − 33k = 167k, safely
+      // below Kimi's real 262k window, so Kimi always accepts. The SDK clamps the
+      // 262144 window we pass down to its 200k belief; that is expected and safe.
+      expect(buildProviderSettings('kimi')).toBeUndefined();
       expect(buildProviderSettings('kimi', 262_144)).toEqual({
-        autoCompactEnabled: false,
+        autoCompactEnabled: true,
+        autoCompactWindow: 262_144,
       });
     });
 
