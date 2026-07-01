@@ -1638,6 +1638,11 @@ export class SpaceRuntime {
    * re-handled before its delivery rows are registered. Idempotent.
    */
   redispatchRetainedExternalEvents(): void {
+    // Don't process or defer retained events on a stopped runtime — stop()
+    // clears the flags and unsubscribes, but an in-flight handler past the stop
+    // point could still reach here and re-set the pending flag, causing the
+    // finally to flush after shutdown.
+    if (this.tickTimer === null) return;
     if (this.externalEventHandlingDepth > 0) {
       this.retainedEventRedispatchPending = true;
       return;
