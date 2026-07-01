@@ -2006,6 +2006,11 @@ export class SpaceRuntimeService {
    */
   notifyRunResumed(runId: string): void {
     try {
+      // Direct resume paths (spaceWorkflowRun.resume, approveGate after
+      // rejection) bypass transitionBlockedRunToInProgress, so reset any
+      // blocked executions BEFORE ensuring the auto-sub so the subscription
+      // targets the recovered slot, not the stale blocked one.
+      this.resetBlockedExecutionsForRun(runId);
       const result = this.runtime.ensurePrEventSubscriptionForRun(runId);
       if (
         !result.subscribed &&
