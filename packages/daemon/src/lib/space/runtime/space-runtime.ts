@@ -4517,18 +4517,21 @@ export class SpaceRuntime {
         }
         this.requeuePersistedPendingDeliveries(pausedSpaceIds);
         this.redispatchRetainedExternalEvents();
+        // Kick the first tick AFTER paused-space reconciliation so the sweep/
+        // redispatch can't inject into a paused space before the cache is seeded.
+        this.executeTick().catch((err: unknown) => {
+          log.error('SpaceRuntime: initial tick failed:', err);
+        });
       })();
     } else {
       // First start: sweep events that arrived before the subscriber attached.
       // redispatchRetainedExternalEvents is re-entrancy-guarded.
       this.redispatchRetainedExternalEvents();
+      this.executeTick().catch((err: unknown) => {
+        log.error('SpaceRuntime: initial tick failed:', err);
+      });
     }
     const interval = this.config.tickIntervalMs ?? 5_000;
-
-    // Kick off the first tick immediately, then schedule the loop.
-    this.executeTick().catch((err: unknown) => {
-      log.error('SpaceRuntime: initial tick failed:', err);
-    });
 
     this.tickTimer = setInterval(() => {
       this.executeTick().catch((err: unknown) => {
