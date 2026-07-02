@@ -14,7 +14,7 @@ import {
   printServerUrls,
 } from './cli-utils';
 
-const log = createLogger('kai:cli:prod-server');
+const log = createLogger('hyperneo:cli:prod-server');
 
 export async function startProdServer(config: Config) {
   log.info('🚀 Starting production server...');

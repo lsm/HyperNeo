@@ -60,7 +60,7 @@ for (const { target, os, cpu } of PLATFORMS) {
         cpu: [cpu],
         bin: { hyperneo: 'bin/hyperneo' },
         files: ['bin/'],
-        license: 'MIT',
+        license: 'Apache-2.0',
         repository: {
           type: 'git',
           url: 'https://github.com/lsm/neokai',
@@ -99,7 +99,7 @@ writeFileSync(
       bin: { hyperneo: 'bin/hyperneo.js' },
       optionalDependencies: optionalDeps,
       files: ['bin/'],
-      license: 'MIT',
+      license: 'Apache-2.0',
       repository: {
         type: 'git',
         url: 'https://github.com/lsm/neokai',

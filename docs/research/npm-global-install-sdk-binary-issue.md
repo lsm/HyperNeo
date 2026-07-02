@@ -8,7 +8,7 @@ Starting with `@anthropic-ai/claude-agent-sdk@0.2.141`, the SDK no longer ships 
 - `@anthropic-ai/claude-agent-sdk-darwin-arm64`
 - etc.
 
-When NeoKai is installed globally (`npm install -g neokai`), the SDK binary is not available at startup. The previous resolution path only triggered on first user query, causing a noticeable delay (download + extraction of ~200 MB binary).
+When HyperNeo is installed globally (`npm install -g hyperneo`), the SDK binary is not available at startup. The previous resolution path only triggered on first user query, causing a noticeable delay (download + extraction of ~200 MB binary).
 
 ## Solution: Startup Warmup
 
@@ -50,7 +50,7 @@ Or on first download:
 Mount a persistent volume at `~/.neokai/sdk/` to cache the binary across container restarts:
 
 ```dockerfile
-# In Dockerfile, after npm install -g neokai:
+# In Dockerfile, after npm install -g hyperneo:
 # The SDK binary is downloaded on first daemon startup and cached.
 # To avoid download on every container start, mount a volume:
 VOLUME /root/.neokai/sdk
@@ -61,7 +61,7 @@ Alternatively, pre-populate the cache in the image by running the daemon once:
 ```dockerfile
 # Start daemon briefly to trigger SDK binary download, then stop it.
 # Timeout must exceed resolver worst case: 15s (metadata) + 120s (download) + overhead.
-RUN timeout 180 kai --port 9999 || true
+RUN timeout 180 hyperneo --port 9999 || true
 ```
 
 The binary will be cached at `~/.neokai/sdk/claude-<version>-<platform>/claude` for subsequent starts.

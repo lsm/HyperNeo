@@ -14,7 +14,7 @@ import { readdir, readFile, writeFile, access, mkdir } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { createLogger } from '@neokai/shared';
 
-const log = createLogger('kai:cli:skill-utils');
+const log = createLogger('hyperneo:cli:skill-utils');
 
 /**
  * Recursively copy all files under `sourceDir` to `destDir`, preserving the
