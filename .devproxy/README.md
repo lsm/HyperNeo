@@ -1,6 +1,6 @@
 # Dev Proxy Mock Files
 
-This directory contains mock response files for the NeoKai test suite. These files are used by Dev Proxy to simulate Anthropic API responses without making real API calls.
+This directory contains mock response files for the HyperNeo test suite. These files are used by Dev Proxy to simulate Anthropic API responses without making real API calls.
 
 ## Quick Start
 
