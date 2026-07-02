@@ -773,6 +773,9 @@ export default function ChatContainer({
     messageCount: messages.length,
     isInitialLoad,
     loadingOlder,
+    // Treat each session as a fresh scroll context so a cached navigation
+    // that swaps messages in place still snaps to the latest message.
+    resetKey: sessionId,
   });
 
   // ========================================

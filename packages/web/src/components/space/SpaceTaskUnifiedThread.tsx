@@ -98,7 +98,19 @@ export function SpaceTaskUnifiedThread({
     containerRef,
     endRef: messagesEndRef,
     enabled: autoScrollEnabled,
-    messageCount: rows.length,
+    // While the placeholder is showing (loading/reconnecting), the scroller is
+    // unmounted (containerRef is null) but `rows` can still hold the PREVIOUS
+    // task until the subscription effect clears it. Passing that stale non-zero
+    // length with the new `resetKey` would consume the reset and latch the
+    // mount-scroll against the old count before the new thread DOM exists — so
+    // a same/fewer-row task then wouldn't snap to the bottom. Feed 0 during the
+    // placeholder so the real `0 → M` transition fires the mount-scroll when the
+    // scroller appears.
+    messageCount: isLoading || isReconnecting ? 0 : rows.length,
+    // This thread renders without a `key`, so switching tasks keeps the
+    // component mounted while rows swap in place. Treat each task as a fresh
+    // scroll context so it snaps to the latest thread row.
+    resetKey: taskId,
   });
 
   useEffect(() => {

@@ -8,12 +8,26 @@ let mockRows = [];
 let mockIsLoading = false;
 let mockIsReconnecting = false;
 
+// Capture the messageCount handed to useAutoScroll so we can assert the
+// loading/reconnecting placeholder doesn't feed it the previous task's stale
+// row count.
+let lastAutoScrollMessageCount;
+let lastAutoScrollResetKey;
+
 vi.mock('../../../hooks/useSpaceTaskMessages', () => ({
   useSpaceTaskMessages: () => ({
     rows: mockRows,
     isLoading: mockIsLoading,
     isReconnecting: mockIsReconnecting,
   }),
+}));
+
+vi.mock('../../../hooks/useAutoScroll', () => ({
+  useAutoScroll: (opts) => {
+    lastAutoScrollMessageCount = opts.messageCount;
+    lastAutoScrollResetKey = opts.resetKey;
+    return { showScrollButton: false, scrollToBottom: () => {}, isNearBottom: true };
+  },
 }));
 
 // MinimalThreadFeed pulls in MarkdownRenderer (lazy-loads marked). Stub it
@@ -137,6 +151,38 @@ describe('SpaceTaskUnifiedThread', () => {
     mockRows = [];
     render(<SpaceTaskUnifiedThread taskId="task-1" />);
     expect(screen.getByText('No task-agent activity yet.')).toBeTruthy();
+  });
+
+  describe('useAutoScroll messageCount during task switch', () => {
+    // Reproduces the loading-placeholder-consuming-the-reset scenario: on a
+    // task switch the component renders the loading placeholder (so the
+    // scroller/containerRef is null) while `rows` can still hold the PREVIOUS
+    // task. Feeding that stale non-zero length to useAutoScroll alongside the
+    // new resetKey would consume the reset and latch the mount-scroll against
+    // the old count before the new thread DOM exists. The component must pass
+    // 0 while the placeholder is showing.
+    it('passes messageCount 0 (not stale rows.length) while loading', () => {
+      mockIsLoading = true;
+      mockRows = makeMinimalRows(); // stale rows from the previous task
+      render(<SpaceTaskUnifiedThread taskId="task-2" />);
+      expect(lastAutoScrollMessageCount).toBe(0);
+      // resetKey still reflects the new task so the real 0→M transition fires
+      // the mount-scroll when the scroller appears.
+      expect(lastAutoScrollResetKey).toBe('task-2');
+    });
+
+    it('passes messageCount 0 while reconnecting', () => {
+      mockIsReconnecting = true;
+      mockRows = makeMinimalRows();
+      render(<SpaceTaskUnifiedThread taskId="task-1" />);
+      expect(lastAutoScrollMessageCount).toBe(0);
+    });
+
+    it('passes the real rows.length when not loading or reconnecting', () => {
+      mockRows = makeMinimalRows();
+      render(<SpaceTaskUnifiedThread taskId="task-1" />);
+      expect(lastAutoScrollMessageCount).toBe(mockRows.length);
+    });
   });
 
   describe('rate-limit cooldown banner', () => {

@@ -707,6 +707,129 @@ describe('useAutoScroll', () => {
       expect(containerRef.current!.scrollTop).toBe(1200);
       vi.useRealTimers();
     });
+
+    it('should reset to bottom when resetKey changes without messageCount dropping to 0', () => {
+      // Reproduces the cached-navigation bug: the component stays mounted
+      // across a `resetKey` (sessionId/taskId) change, and the store swaps the
+      // underlying messages directly (e.g. 40 → 25) with no intermediate
+      // empty state. Without `resetKey`, hasScrolledOnMountRef stays latched
+      // true from the previous context and the hook preserves the stale scroll
+      // position instead of snapping to the bottom of the new context.
+      const { containerRef, endRef } = createMockRefs();
+
+      const { rerender } = renderHook(
+        ({ messageCount, resetKey }) =>
+          useAutoScroll({
+            containerRef,
+            endRef,
+            enabled: true,
+            messageCount,
+            resetKey,
+          }),
+        {
+          initialProps: { messageCount: 40, resetKey: 'session-a' },
+        }
+      );
+
+      // Session A: initial mount-scroll fires.
+      expect(containerRef.current!.scrollTop).toBe(1000);
+
+      // User has scrolled up / a prior render left the container away from
+      // the bottom, then navigates to a cached session B whose messages swap
+      // in directly — messageCount changes 40 → 25, never passing through 0.
+      containerRef.current!.scrollTop = 250;
+      rerender({ messageCount: 25, resetKey: 'session-b' });
+
+      // resetKey change must be treated as a fresh visit: snap to bottom.
+      expect(containerRef.current!.scrollTop).toBe(1000);
+
+      // Subsequent new content in session B uses the normal hasNewContent path.
+      rerender({ messageCount: 26, resetKey: 'session-b' });
+      expect(containerRef.current!.scrollTop).toBe(1000);
+    });
+
+    it('should reset to bottom when resetKey changes but messageCount stays the same', () => {
+      // Edge case from review: when switching between two contexts that happen
+      // to have the same message count, resetKey is the ONLY hook input that
+      // changes. The reset effect clears the latch, but the auto-scroll effect
+      // must also re-run on resetKey so the cleared latch is acted upon —
+      // otherwise the old scroll position is preserved.
+      const { containerRef, endRef } = createMockRefs();
+
+      const { rerender } = renderHook(
+        ({ messageCount, resetKey }) =>
+          useAutoScroll({
+            containerRef,
+            endRef,
+            enabled: true,
+            messageCount,
+            resetKey,
+          }),
+        {
+          initialProps: { messageCount: 25, resetKey: 'session-a' },
+        }
+      );
+
+      // Session A: initial mount-scroll fires.
+      expect(containerRef.current!.scrollTop).toBe(1000);
+
+      // Navigate to session B which also has exactly 25 messages. messageCount
+      // is unchanged, so without resetKey in the auto-scroll dep array this
+      // render would not re-scroll.
+      containerRef.current!.scrollTop = 300;
+      rerender({ messageCount: 25, resetKey: 'session-b' });
+      expect(containerRef.current!.scrollTop).toBe(1000);
+    });
+
+    it('should re-pin to bottom on post-reset content growth after a same-count context switch', () => {
+      // Edge case from review: after a resetKey change with unchanged
+      // messageCount, lastScrollHeightRef must be refreshed too — otherwise it
+      // still describes the previous (e.g. taller) thread. When the new
+      // thread's markdown/images expand after the initial scroll, the
+      // ResizeObserver would compare against that stale height, `grew` stays
+      // false, and it never re-pins.
+      vi.useFakeTimers();
+      const { containerRef, endRef } = createMockRefs();
+
+      // Context A is tall (scrollHeight 1500). After mount, the scroll-
+      // detection effect snapshots lastScrollHeightRef = 1500.
+      containerRef.current!.scrollHeight = 1500;
+      const { rerender } = renderHook(
+        ({ messageCount, resetKey }) =>
+          useAutoScroll({ containerRef, endRef, enabled: true, messageCount, resetKey }),
+        { initialProps: { messageCount: 25, resetKey: 'a' } }
+      );
+      expect(containerRef.current!.scrollTop).toBe(1500);
+
+      // Switch to a shorter context B (same messageCount). Mutate the live
+      // scrollHeight to model B's smaller content.
+      containerRef.current!.scrollHeight = 800;
+      rerender({ messageCount: 25, resetKey: 'b' });
+      expect(containerRef.current!.scrollTop).toBe(800);
+
+      // Flush the mount-scroll's deferred rAF (scrollToBottomAfterLayout) NOW,
+      // while scrollHeight is still 800, so a later timer advance only fires
+      // the ResizeObserver rAF we are about to trigger (otherwise the deferred
+      // mount-scroll rAF would set scrollTop to whatever scrollHeight is at
+      // flush time and mask the re-pin-under-test).
+      act(() => {
+        vi.advanceTimersByTime(16);
+      });
+      expect(containerRef.current!.scrollTop).toBe(800);
+
+      // B's content grows after the initial scroll (markdown/images expand).
+      containerRef.current!.scrollHeight = 900;
+      act(() => {
+        resizeObserverInstances[0]?.triggerResize();
+        vi.advanceTimersByTime(16);
+      });
+
+      // With the snapshot refreshed, `grew` (900 > 800) is true and we re-pin
+      // to the new bottom. Without the refresh, grew (900 > stale 1500) is
+      // false and scrollTop stays 800.
+      expect(containerRef.current!.scrollTop).toBe(900);
+      vi.useRealTimers();
+    });
   });
 
   describe('scroll position detection', () => {
