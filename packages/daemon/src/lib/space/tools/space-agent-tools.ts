@@ -2543,10 +2543,8 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           currentRun = workflowRunRepo.transitionStatus(args.run_id, 'in_progress');
           currentRun =
             workflowRunRepo.updateRun(args.run_id, { failureReason: null }) ?? currentRun;
-          // Sweep any persisted PR-event auto-subscription on the resume so
-          // subsequent PR events do not keep re-evaluating gates for an
-          // active run that only needed the subscription while it was blocked.
-          runtime.clearPrEventSubscriptionsForRun(args.run_id);
+          runtime.resetBlockedExecutionsForRun(args.run_id);
+          runtime.ensurePrEventSubscriptionForRun(args.run_id);
         }
 
         if (internalEventBus) {

@@ -22,6 +22,7 @@ const log = new Logger('SpaceManager');
 export class SpaceManager {
   private spaceRepo: SpaceRepository;
   private onSpaceResumedCallbacks: Array<(spaceId: string) => void> = [];
+  private onSpacePausedCallbacks: Array<(spaceId: string) => void> = [];
 
   constructor(private db: BunDatabase) {
     this.spaceRepo = new SpaceRepository(db);
@@ -41,6 +42,18 @@ export class SpaceManager {
     this.onSpaceResumedCallbacks.push(cb);
     return () => {
       this.onSpaceResumedCallbacks = this.onSpaceResumedCallbacks.filter((c) => c !== cb);
+    };
+  }
+
+  /**
+   * Register a callback invoked after a space is paused. Used by the runtime to
+   * maintain a sync cache of paused spaces so it can defer (not inject) external
+   * events for paused spaces without an async lookup in the delivery hot path.
+   */
+  onSpacePausedRegister(cb: (spaceId: string) => void): () => void {
+    this.onSpacePausedCallbacks.push(cb);
+    return () => {
+      this.onSpacePausedCallbacks = this.onSpacePausedCallbacks.filter((c) => c !== cb);
     };
   }
 
@@ -117,6 +130,14 @@ export class SpaceManager {
     const paused = this.spaceRepo.pauseSpace(id);
     if (!paused) {
       throw new Error(`Failed to pause space: ${id}`);
+    }
+
+    for (const cb of this.onSpacePausedCallbacks) {
+      try {
+        cb(id);
+      } catch (err) {
+        log.error('pauseSpace: paused hook failed (non-fatal)', err);
+      }
     }
 
     return paused;

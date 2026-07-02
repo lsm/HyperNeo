@@ -1044,7 +1044,52 @@ export class SpaceRuntime {
   private unsubscribeSdkToolUseCreated?: () => void;
   private unsubscribeSdkToolUseConsumed?: () => void;
   private unsubscribeSpaceResumed?: () => void;
+  private unsubscribeSpacePaused?: () => void;
   private acceptingExternalEvents = false;
+  /**
+   * Incremented by stop(). start() captures the current value for its
+   * fire-and-forget restart IIFE to detect a stop() that landed during the
+   * IIFE's awaited space scan and abort before re-subscribing/ticking a
+   * stopped runtime.
+   */
+  private runtimeGeneration = 0;
+  /**
+   * False during a stop→start paused-space reconciliation; executeTick returns
+   * early while false so interval ticks can't process events against a stale
+   * pausedSpaceIds before the reconciliation IIFE rebuilds it.
+   */
+  private reconciliationDone = true;
+  /**
+   * Set true by stop(), false by start(). Guards retained-event replay so an
+   * in-flight handler past the stop point cannot re-set the deferred-flush flag
+   * and inject retained events after shutdown. Defaults false so pre-start
+   * callers (tests, direct ensure) are not blocked.
+   */
+  private isStopped = false;
+  /**
+   * Sync cache of paused/stopped space ids, maintained via the space
+   * pause/resume registers and seeded on rehydrate. Lets the delivery hot path
+   * defer (not inject) events for paused spaces without an async lookup —
+   * pauseSpace does not terminate sessions, so a live in_progress session would
+   * otherwise be injected during pause.
+   */
+  private pausedSpaceIds = new Set<string>();
+  /**
+   * Re-entrancy depth for {@link handleExternalEvent}. When > 0, a newly-created
+   * PR auto-subscription must not synchronously redispatch retained events — it
+   * would re-handle the in-flight event. The redispatch is deferred via
+   * {@link retainedEventRedispatchPending} and flushed when depth returns to 0.
+   */
+  private externalEventHandlingDepth = 0;
+  private retainedEventRedispatchPending = false;
+  /**
+   * Accumulates across concurrent handleExternalEvent calls: set true by any
+   * handler that left its event published for a scheduled gate retry. The
+   * outermost handler's finally checks it (instead of a per-call local) so a
+   * retry-pending event isn't flushed just because a later, non-retry handler
+   * was the last to unwind.
+   */
+  private externalEventRetryPending = false;
 
   constructor(private config: SpaceRuntimeConfig) {
     this.internalEventBus = config.internalEventBus;
@@ -1059,6 +1104,9 @@ export class SpaceRuntime {
     this.unsubscribeSpaceResumed = this.config.spaceManager.onSpaceResumedRegister?.((spaceId) =>
       this.onSpaceResumed(spaceId)
     );
+    this.unsubscribeSpacePaused = this.config.spaceManager.onSpacePausedRegister?.((spaceId) => {
+      this.pausedSpaceIds.add(spaceId);
+    });
   }
 
   private subscribeSdkToolUseCreated(): void {
@@ -1505,30 +1553,182 @@ export class SpaceRuntime {
     }
   }
 
+  private hasAnyAutoPrSubscriptionForRun(workflowRunId: string): boolean {
+    return (
+      this.topicTrie.count(
+        (target) =>
+          isWorkflowSubscriptionTarget(target) &&
+          target.workflowRunId === workflowRunId &&
+          target.subscriptionKind === 'auto'
+      ) > 0
+    );
+  }
+
+  private hasCurrentAutoPrSubscriptionForRun(workflowRunId: string, prUrl: string): boolean {
+    const parsed = parsePrUrl(prUrl);
+    if (!parsed) return false;
+    const slot = this.resolveActiveExecutionSlotForRun(workflowRunId);
+    if (!slot) return false;
+    const expectedTopic = buildPrEventTopicPattern(parsed).toLowerCase();
+    return (
+      this.topicTrie.count(
+        (target) =>
+          isWorkflowSubscriptionTarget(target) &&
+          target.workflowRunId === workflowRunId &&
+          target.taskId === slot.taskId &&
+          target.nodeId === slot.nodeId &&
+          target.agentName === slot.agentName &&
+          target.subscriptionKind === 'auto' &&
+          target.topic?.toLowerCase() === expectedTopic
+      ) > 0
+    );
+  }
+
   /**
-   * Sync the PR-event auto-subscription for a run that just transitioned to
-   * `blocked` via direct `workflowRunRepo.transitionStatus(...)` paths that
-   * bypass {@link transitionRunStatusAndEmit} (markFailed RPC, gate rejection
-   * in space-agent-tools, etc.).
-   *
-   * Resolves the PR URL from gate data / artifacts (same resolver used at
-   * runtime) and calls {@link registerPrEventSubscriptionForRun}. No-op when
-   * the run is not actually blocked or no PR URL can be resolved. Idempotent.
+   * Reset any blocked node executions for a run back to pending. Called by
+   * direct resume paths (approve_gate) that bypass transitionBlockedRunToInProgress
+   * so the auto-sub targets the recovered slot, not the stale blocked one.
+   * Best-effort — errors are logged and swallowed.
+   */
+  resetBlockedExecutionsForRun(runId: string): void {
+    try {
+      const executions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
+      for (const execution of executions) {
+        if (execution.status !== 'blocked') continue;
+        this.config.nodeExecutionRepo.update(execution.id, {
+          status: 'pending',
+          completedAt: null,
+        });
+      }
+    } catch (err) {
+      log.warn(
+        `SpaceRuntime: resetBlockedExecutionsForRun failed for run ${runId}: ${formatCommandError(err)}`
+      );
+    }
+  }
+
+  /**
+   * Ensure a workflow run has an auto PR-event subscription when a resolvable
+   * PR URL exists. Idempotent for the current PR URL, but refreshes stale auto
+   * subscriptions when the resolved PR changes.
+   */
+  ensurePrEventSubscriptionForRun(
+    workflowRunId: string,
+    options: { replay?: boolean } = {}
+  ): {
+    subscribed: boolean;
+    reason?: string;
+  } {
+    const prUrl = this.resolvePrUrlForRun(workflowRunId);
+    if (!prUrl) {
+      // The PR URL was removed/reset (e.g. a gate resetOnCycle writing defaults
+      // without pr_url). Clear any stale auto subscription so events for the
+      // previous PR stop matching the run's active slot. No-op when none exists.
+      if (this.hasAnyAutoPrSubscriptionForRun(workflowRunId)) {
+        this.clearPrEventSubscriptionsForRun(workflowRunId);
+      }
+      return { subscribed: false, reason: 'no resolvable PR URL' };
+    }
+    if (this.hasCurrentAutoPrSubscriptionForRun(workflowRunId, prUrl)) {
+      return { subscribed: false, reason: 'already has current auto PR-event subscription' };
+    }
+    const result = this.registerPrEventSubscriptionForRun(workflowRunId, prUrl);
+    if (!result.success) {
+      // The resolved URL is present but unparsable/non-GitHub, or no active
+      // slot exists. registerPr returns before clearing in the parse-failure
+      // case, so drop any stale auto subscription for the previous valid URL.
+      if (this.hasAnyAutoPrSubscriptionForRun(workflowRunId)) {
+        this.clearPrEventSubscriptionsForRun(workflowRunId);
+      }
+      return { subscribed: false, reason: result.error };
+    }
+    // A newly-created auto subscription may match a retained PR event kept
+    // `published` with no delivery rows while no subscription existed. Direct
+    // callers (gate-data change, resume, approval, run start) do not otherwise
+    // trigger a redispatch, so replay (or TTL-expire) retained events now
+    // instead of stranding them until the next tick sweep. Startup rebuild
+    // paths pass `replay: false` because rehydrate/recovery has not restored
+    // executors/sessions yet — they rely on the tick's post-rehydrate
+    // redispatch. Defer when inside handleExternalEvent to avoid re-handling
+    // the in-flight event.
+    if (options.replay === false) {
+      return { subscribed: true };
+    }
+    this.redispatchRetainedExternalEvents();
+    return { subscribed: true };
+  }
+
+  /**
+   * Expire retained published events past their TTL, then redispatch any
+   * published events that still have no delivery rows so a newly-registered
+   * subscription can pick them up. Public so the service can replay after a
+   * run transitions to in_progress (e.g. a gate-open resume). Re-entrancy-safe:
+   * when called from inside handleExternalEvent (e.g. via the blocked-run gate
+   * hook), it defers to the post-handling flush so the in-flight event is not
+   * re-handled before its delivery rows are registered. Idempotent.
+   */
+  redispatchRetainedExternalEvents(): void {
+    if (this.externalEventHandlingDepth > 0) {
+      // Don't set the deferred-flush flag on a stopped runtime — an in-flight
+      // handler past the stop point shouldn't trigger a post-shutdown flush.
+      if (!this.isStopped) {
+        this.retainedEventRedispatchPending = true;
+      }
+      return;
+    }
+    this.expirePublishedExternalEventsPastTtl();
+    this.redispatchPublishedEventsWithoutDeliveries();
+  }
+
+  /**
+   * Idempotent sweep that ensures every active run (in_progress or blocked)
+   * with a resolvable PR URL has an auto PR-event subscription. Runs inside
+   * executeTick before the first redispatch so crash-pending PR events find a
+   * target after restart, and on every tick to catch runs whose PR URL becomes
+   * known mid-flight.
+   */
+  private async ensurePrEventSubscriptionsForActiveRuns(): Promise<number> {
+    let subscribed = 0;
+    try {
+      const spaces = await this.config.spaceManager.listSpaces(false);
+      for (const space of spaces) {
+        if (space.paused || space.stopped) continue;
+        for (const run of this.config.workflowRunRepo.listBySpace(space.id)) {
+          if (run.status !== 'in_progress' && run.status !== 'blocked') continue;
+          // replay:false — this is a sweep-style caller; executeTick performs a
+          // single post-sweep redispatch when subscribed > 0, so per-run replay
+          // here would race with it and double-handle retained PR events.
+          if (this.ensurePrEventSubscriptionForRun(run.id, { replay: false }).subscribed) {
+            subscribed++;
+          }
+        }
+      }
+    } catch (err) {
+      log.warn(
+        `SpaceRuntime: ensurePrEventSubscriptionsForActiveRuns failed: ${formatCommandError(err)}`
+      );
+    }
+    return subscribed;
+  }
+
+  /**
+   * Fallback path for runs that transition to `blocked` outside of the normal
+   * in_progress registration / tick sweep (markFailed RPC, gate rejection in
+   * space-agent-tools, etc.). Delegates to {@link ensurePrEventSubscriptionForRun}
+   * so it is a no-op when the run already has an auto subscription.
    */
   notifyRunBlocked(workflowRunId: string): { subscribed: boolean; reason?: string } {
     const run = this.config.workflowRunRepo.getRun(workflowRunId);
     if (!run || run.status !== 'blocked') {
       return { subscribed: false, reason: `run status is ${run?.status ?? 'unknown'}` };
     }
-    const prUrl = this.resolvePrUrlForRun(workflowRunId);
-    if (!prUrl) {
-      return { subscribed: false, reason: 'no resolvable PR URL' };
-    }
-    const result = this.registerPrEventSubscriptionForRun(workflowRunId, prUrl);
-    if (!result.success) {
-      return { subscribed: false, reason: result.error };
-    }
-    return { subscribed: true };
+    // During startup recovery (e.g. recoverStalledWorkflowRuns racing the first
+    // rehydrate), acceptingExternalEvents is still false and executors/sessions
+    // are not restored — defer retained-event replay to the post-rehydrate
+    // redispatch. At runtime a real blocked transition replays as a direct call.
+    return this.ensurePrEventSubscriptionForRun(workflowRunId, {
+      replay: this.acceptingExternalEvents,
+    });
   }
 
   /**
@@ -1633,10 +1833,25 @@ export class SpaceRuntime {
     for (const item of dispatchable) {
       // A concurrent cleanup may have marked this delivery terminal while the
       // batch was being prepared. Skip dispatch rather than injecting into a
-      // target that is no longer eligible.
-      if (
-        this.config.externalEventStore?.isDeliveryTerminal(item.event.eventId, item.deliveryKey)
-      ) {
+      // target that is no longer eligible. Also re-check the current trie: the
+      // persisted delivery row can still be non-terminal if another identical
+      // interest remains, but a queued in-memory item for this target must not
+      // flush after its specific subscription was removed.
+      const deliveryTerminal = this.config.externalEventStore?.isDeliveryTerminal(
+        item.event.eventId,
+        item.deliveryKey
+      );
+      const targetStillSubscribed = this.isTargetStillSubscribed(target, item.event.topic);
+      if (deliveryTerminal || !targetStillSubscribed) {
+        if (!deliveryTerminal && !targetStillSubscribed) {
+          this.config.externalEventStore?.markDeliveryFailed(item.event.eventId, item.deliveryKey, {
+            terminal: true,
+            reason: 'subscription_no_longer_active',
+          });
+          this.config.externalEventStore?.markEventFailedIfAllDeliveriesTerminal(
+            item.event.eventId
+          );
+        }
         this.clearExternalEventRetry(item.deliveryKey);
         continue;
       }
@@ -1674,9 +1889,21 @@ export class SpaceRuntime {
       // run terminalization) may have marked this delivery terminal while the
       // ordered batch was being prepared. Skip dispatch rather than injecting
       // an event into a target that is no longer eligible.
-      if (
-        this.config.externalEventStore?.isDeliveryTerminal(item.event.eventId, item.deliveryKey)
-      ) {
+      const deliveryTerminal = this.config.externalEventStore?.isDeliveryTerminal(
+        item.event.eventId,
+        item.deliveryKey
+      );
+      const targetStillSubscribed = this.isTargetStillSubscribed(target, item.event.topic);
+      if (deliveryTerminal || !targetStillSubscribed) {
+        if (!deliveryTerminal && !targetStillSubscribed) {
+          this.config.externalEventStore?.markDeliveryFailed(item.event.eventId, item.deliveryKey, {
+            terminal: true,
+            reason: 'subscription_no_longer_active',
+          });
+          this.config.externalEventStore?.markEventFailedIfAllDeliveriesTerminal(
+            item.event.eventId
+          );
+        }
         this.clearExternalEventRetry(item.deliveryKey);
         continue;
       }
@@ -1853,8 +2080,37 @@ export class SpaceRuntime {
   }
 
   private async handleExternalEvent(payload: ExternalEventPublishedPayload): Promise<void> {
+    this.externalEventHandlingDepth += 1;
+    try {
+      const retryPending = await this.handleExternalEventImpl(payload);
+      // Accumulate into the depth-wide flag so the outermost handler's finally
+      // sees if ANY concurrent handler left an event retry-pending.
+      if (retryPending) {
+        this.externalEventRetryPending = true;
+      }
+    } finally {
+      this.externalEventHandlingDepth -= 1;
+      if (this.externalEventHandlingDepth === 0) {
+        // Reset the depth-wide retry-pending flag at every outermost unwind so
+        // it can't strand a later unrelated handler's retained replay.
+        const anyRetryPending = this.externalEventRetryPending;
+        this.externalEventRetryPending = false;
+        if (this.retainedEventRedispatchPending) {
+          this.retainedEventRedispatchPending = false;
+          // Skip the immediate flush when any concurrent handler left an event
+          // published for a scheduled gate retry — re-handling it now would
+          // bypass the GateRetryScheduler and repeat gate evaluation.
+          if (!anyRetryPending && !this.isStopped) {
+            this.redispatchRetainedExternalEvents();
+          }
+        }
+      }
+    }
+  }
+
+  private async handleExternalEventImpl(payload: ExternalEventPublishedPayload): Promise<boolean> {
     const store = this.config.externalEventStore;
-    if (!store) return;
+    if (!store) return false;
     const allMatches = this.lookupSubscriptionTargets(payload.topic);
     // Trigger event-driven gate re-evaluation for blocked runs BEFORE the
     // delivery filter: a recovery-blocked run may have no live execution to
@@ -1907,7 +2163,7 @@ export class SpaceRuntime {
               );
             }
           }
-          return;
+          return false;
         }
 
         if (this.acceptingExternalEvents) {
@@ -1938,7 +2194,10 @@ export class SpaceRuntime {
       // If anyGateOpened is true, leave the event published — the gate
       // opening may produce downstream deliveries via a different path
       // (e.g. follow-up state changes) that this flow does not observe.
-      return;
+      // Return whether the event was left published for a scheduled gate retry
+      // (anyRetryScheduled) so the caller's deferred-redispatch flush can skip
+      // re-handling it before the GateRetryScheduler fires.
+      return blockedHookOutcome.anyRetryScheduled;
     }
 
     const workflowDeliveries = new Map<
@@ -1990,6 +2249,7 @@ export class SpaceRuntime {
     for (const { target, deliveryKey } of workflowDeliveries.values()) {
       await this.deliverExternalEventToWorkflowTarget(target, payload, deliveryKey);
     }
+    return false;
   }
 
   /**
@@ -2034,6 +2294,16 @@ export class SpaceRuntime {
         });
         store.markEventFailedIfAllDeliveriesTerminal(payload.eventId);
       } else if (resolved.sessionId && this.isTargetSessionLive(resolved.sessionId)) {
+        // pauseSpace does not terminate sessions, so a live in_progress session
+        // would otherwise be injected now, defeating the pause. Skip injection
+        // while the target's space is paused/stopped (sync cache updated via the
+        // space pause/resume registers) — the delivery stays pending and is
+        // requeued by onSpaceResumed. (Regressed by this PR's in_progress
+        // auto-subscription, which now matches PR events during pause.)
+        const targetRun = this.config.workflowRunRepo.getRun(resolved.workflowRunId);
+        if (targetRun && this.pausedSpaceIds.has(targetRun.spaceId)) {
+          return;
+        }
         const eventRecord = store.getById(payload.eventId);
         await this.flushPendingNodeQueueAsync(resolved, deliveryKey, {
           event: payload,
@@ -2436,11 +2706,19 @@ export class SpaceRuntime {
     const store = this.config.externalEventStore;
     if (!store || items.length === 0) return;
     const target = this.resolveDigestDeliveryTarget(items[0]!);
-    if (!target.sessionId) {
+    // Don't inject a digest while the target's space is paused (digests
+    // scheduled before the pause bypass the fresh-delivery guard). Requeue the
+    // items as pending — onSpaceResumed requeues them when the space resumes.
+    const pausedRun = target.workflowRunId
+      ? this.config.workflowRunRepo.getRun(target.workflowRunId)
+      : null;
+    const spacePaused = !!(pausedRun && this.pausedSpaceIds.has(pausedRun.spaceId));
+    if (!target.sessionId || spacePaused) {
+      const reason = spacePaused ? 'space_paused' : 'session loss';
       for (const item of items) {
         store.markDeliveryFailed(item.event.eventId, item.deliveryKey, {
           terminal: false,
-          reason: `deliveryMode:${item.deliveryMode}; digest requeued after session loss`,
+          reason: `deliveryMode:${item.deliveryMode}; digest requeued after ${reason}`,
         });
         this.queueForPendingNode(
           item.target,
@@ -2560,6 +2838,12 @@ export class SpaceRuntime {
   ): Promise<void> {
     const store = this.config.externalEventStore;
     if (!store || !target.sessionId) return;
+    // Don't inject into a live session while the target's space is paused.
+    // This is the final injection point for retries/digests scheduled before a
+    // pause that bypass the fresh-delivery guard in deliverExternalEventToWorkflowTarget;
+    // leaving the persisted delivery pending lets onSpaceResumed requeue it.
+    const pausedRun = this.config.workflowRunRepo.getRun(target.workflowRunId);
+    if (pausedRun && this.pausedSpaceIds.has(pausedRun.spaceId)) return;
     this.externalEventDeliveriesInFlight.add(deliveryKey);
     try {
       if (!this.config.commandBus) {
@@ -3989,6 +4273,9 @@ export class SpaceRuntime {
     if (nextStatus === 'blocked') {
       this.fireRunBlockedHook(runId);
     }
+    if (nextStatus === 'in_progress') {
+      this.ensurePrEventSubscriptionForRun(runId);
+    }
     // Terminal transitions drop the auto-registered PR event subscription so
     // a finished run does not keep receiving PR events. Non-terminal moves
     // out of `blocked` (resume / recovery / RPC) now preserve the sub so
@@ -4231,39 +4518,71 @@ export class SpaceRuntime {
    */
   start(): void {
     if (this.tickTimer !== null) return; // already running
+    this.isStopped = false;
 
-    this.subscribeExternalEventPublished();
+    // Capture the runtime generation so the fire-and-forget restart IIFE can
+    // detect a stop() that landed during its awaited space scan and abort
+    // instead of re-subscribing/ticking a stopped runtime.
+    const generation = this.runtimeGeneration;
     this.subscribeSdkToolUseCreated();
     // Re-register the space-resume hook after a stop->start cycle; stop()
     // unsubscribes it to avoid stale callbacks, so start() must restore it.
     this.unsubscribeSpaceResumed ??= this.config.spaceManager.onSpaceResumedRegister?.((spaceId) =>
       this.onSpaceResumed(spaceId)
     );
-    this.acceptingExternalEvents = this.rehydrated;
-    this.rescheduleQueuedExternalEventRetries();
-    // Re-seed sessionless activation retries after a stop->start of the same
-    // runtime instance. On first start this is a no-op because rehydrate will
-    // run inside executeTick and call requeuePersistedPendingDeliveries.
-    if (this.rehydrated) {
-      this.requeuePersistedPendingDeliveries();
-    }
-    // Sweep events that arrived while stopped. On first start this is a
-    // no-op (sweep runs inside executeTick after rehydrate). On
-    // stop→start of the same runtime instance, it catches events that
-    // were persisted while the external-event subscriber was detached.
-    this.redispatchPublishedEventsWithoutDeliveries();
-    const interval = this.config.tickIntervalMs ?? 5_000;
-
-    // Kick off the first tick immediately, then schedule the loop.
-    this.executeTick().catch((err: unknown) => {
-      log.error('SpaceRuntime: initial tick failed:', err);
+    // Maintain the sync paused-space cache so the delivery hot path can defer
+    // (not inject) events for paused spaces without an async lookup.
+    this.unsubscribeSpacePaused ??= this.config.spaceManager.onSpacePausedRegister?.((spaceId) => {
+      this.pausedSpaceIds.add(spaceId);
     });
-
+    this.acceptingExternalEvents = this.rehydrated;
+    const interval = this.config.tickIntervalMs ?? 5_000;
+    // Arm the tick loop synchronously so callers (and tests) observe tickTimer
+    // set immediately. executeTick gates on reconciliationDone so interval ticks
+    // that fire before the stop→start reconciliation completes are no-ops.
     this.tickTimer = setInterval(() => {
       this.executeTick().catch((err: unknown) => {
         log.error('SpaceRuntime: tick failed:', err);
       });
     }, interval);
+    if (this.rehydrated) {
+      // Defer all post-reconciliation work until the paused cache is rebuilt.
+      this.reconciliationDone = false;
+      void (async () => {
+        const pausedSpaceIds = new Set<string>();
+        try {
+          for (const space of await this.config.spaceManager.listSpaces(false)) {
+            if (space.paused || space.stopped) {
+              pausedSpaceIds.add(space.id);
+              this.pausedSpaceIds.add(space.id);
+            } else {
+              this.pausedSpaceIds.delete(space.id);
+            }
+          }
+        } catch (err) {
+          log.warn(
+            `SpaceRuntime: start() could not list spaces for paused-deferral: ${formatCommandError(err)}`
+          );
+        }
+        if (generation !== this.runtimeGeneration) return;
+        this.rescheduleQueuedExternalEventRetries();
+        this.requeuePersistedPendingDeliveries(pausedSpaceIds);
+        this.subscribeExternalEventPublished();
+        this.reconciliationDone = true;
+        this.redispatchRetainedExternalEvents();
+        this.executeTick().catch((err: unknown) => {
+          log.error('SpaceRuntime: initial tick failed:', err);
+        });
+      })();
+    } else {
+      // First start: no retained subs in the trie yet, so no injection risk.
+      this.rescheduleQueuedExternalEventRetries();
+      this.subscribeExternalEventPublished();
+      this.redispatchRetainedExternalEvents();
+      this.executeTick().catch((err: unknown) => {
+        log.error('SpaceRuntime: initial tick failed:', err);
+      });
+    }
   }
 
   /**
@@ -4276,6 +4595,14 @@ export class SpaceRuntime {
    * be resumed by calling start() again.
    */
   async stop(): Promise<void> {
+    // Invalidate any in-flight restart IIFE so it aborts before re-subscribing/
+    // ticking this now-stopped runtime.
+    this.runtimeGeneration += 1;
+    this.isStopped = true;
+    // Cancel any deferred retained-event flush so an in-flight handleExternalEvent
+    // finally doesn't process retained webhooks after shutdown.
+    this.retainedEventRedispatchPending = false;
+    this.externalEventRetryPending = false;
     this.unsubscribeExternalEventPublished?.();
     this.unsubscribeExternalEventPublished = undefined;
     this.unsubscribeSdkToolUseCreated?.();
@@ -4284,6 +4611,8 @@ export class SpaceRuntime {
     this.unsubscribeSdkToolUseConsumed = undefined;
     this.unsubscribeSpaceResumed?.();
     this.unsubscribeSpaceResumed = undefined;
+    this.unsubscribeSpacePaused?.();
+    this.unsubscribeSpacePaused = undefined;
     for (const timer of this.externalEventRetryTimers.values()) {
       clearTimeout(timer);
     }
@@ -4352,22 +4681,19 @@ export class SpaceRuntime {
    * 3. Checks standalone tasks (no workflowRunId) for blocked and timeout
    */
   async executeTick(): Promise<void> {
-    if (this.tickInFlight) return;
+    if (this.tickInFlight || !this.reconciliationDone) return;
     this.tickInFlight = true;
     try {
       if (hasSqlExec(this.config.db)) {
         this.toolContinuationRepo.markExpired();
       }
 
+      const justRehydrated = !this.rehydrated;
       if (!this.rehydrated) {
         // Give the service a chance to rebuild in-memory subscriptions
-        // (e.g. PR-event auto-subs for blocked runs) BEFORE rehydrateExecutors
-        // runs its persisted-delivery replay, before the redispatch sweep,
-        // and before acceptingExternalEvents flips to true. Without this
-        // ordering, persisted delivery rows for the auto target are marked
-        // `subscription_no_longer_active` during requeue (because the trie
-        // is still empty) and crash-pending PR events are terminally
-        // ignored by the first redispatch.
+        // (e.g. PR-event auto-subs for active runs) BEFORE rehydrateExecutors
+        // runs its persisted-delivery replay. rehydrateExecutors also rebuilds
+        // these itself, so this hook is a belt-and-suspenders early pass.
         if (this.config.onBeforeRedispatch) {
           try {
             await this.config.onBeforeRedispatch();
@@ -4378,6 +4704,7 @@ export class SpaceRuntime {
           }
         }
         await this.rehydrateExecutors();
+        await this.ensurePrEventSubscriptionsForActiveRuns();
         // Run a stalled-run recovery pass right after rehydrate so the
         // first tick that processes runs already sees a clean slate
         // (orphan in_progress executions reset to pending, terminally
@@ -4388,7 +4715,23 @@ export class SpaceRuntime {
         await this.recoverStalledRuns();
         this.rehydrated = true;
         this.acceptingExternalEvents = true;
-        this.redispatchPublishedEventsWithoutDeliveries();
+      }
+
+      // Idempotent sweep: every active run (in_progress or blocked) with a
+      // resolvable PR URL and no existing auto subscription gets registered.
+      // Runs on the first tick before redispatch so crash-pending PR events
+      // find a target after restart, and on every subsequent tick to catch
+      // runs whose PR URL becomes known mid-flight. A newly-registered
+      // subscription also replays retained events itself (see
+      // ensurePrEventSubscriptionForRun).
+      const subscribedPrRuns = await this.ensurePrEventSubscriptionsForActiveRuns();
+
+      if (justRehydrated || subscribedPrRuns > 0) {
+        // Route through the re-entrancy-guarded helper: if a PR event is still
+        // mid-handling (awaiting gate re-eval, before its delivery rows exist),
+        // the raw redispatch would re-handle it; the guard defers to the
+        // post-handling flush instead.
+        this.redispatchRetainedExternalEvents();
       }
 
       await this.attachStandaloneTasksToWorkflows();
@@ -4396,6 +4739,17 @@ export class SpaceRuntime {
       await this.cleanupTerminalExecutors();
       await this.reconcileTerminalRunsWithoutExecutors();
       await this.checkStandaloneTasks();
+
+      // Re-sweep after run advancement (processCompletedTasks/processRunTick may
+      // advance an in_progress run to a new node/agent, or make a PR URL newly
+      // resolvable). The pre-advancement sweep above would otherwise leave the
+      // auto-sub targeting the prior slot until the next tick. If this sweep
+      // creates a subscription, replay retained events (mirroring the
+      // start-of-tick sweep), routed through the re-entrancy guard.
+      const advancedPrRuns = await this.ensurePrEventSubscriptionsForActiveRuns();
+      if (advancedPrRuns > 0) {
+        this.redispatchRetainedExternalEvents();
+      }
 
       // Bound published events without deliveries (e.g. retained PR-linked
       // events waiting for a subscription) so they do not last forever when no
@@ -4532,6 +4886,11 @@ export class SpaceRuntime {
       await this.transitionRunStatusAndEmit(run.id, 'cancelled');
       throw err;
     }
+
+    // Best-effort: register a PR-event auto-subscription if the run already
+    // resolves a PR URL. The start node may not be active yet, so the tick
+    // sweep will retry on the next cycle if this is a no-op.
+    this.ensurePrEventSubscriptionForRun(run.id);
 
     // Resolve channel topology for the start node and store in run config.
     // TODO: Milestone 6: pass resolvedChannels to session group creation in
@@ -4804,7 +5163,7 @@ export class SpaceRuntime {
    *
    * Runs that reference a missing workflow are skipped silently.
    */
-  private requeuePersistedPendingDeliveries(): void {
+  private requeuePersistedPendingDeliveries(pausedSpaceIds: Set<string> = new Set()): void {
     const store = this.config.externalEventStore;
     if (!store) return;
 
@@ -4884,6 +5243,14 @@ export class SpaceRuntime {
         store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
         continue;
       }
+      // A paused/stopped-but-still-deliverable space's auto sub is intentionally
+      // not rebuilt yet (rebuilt by onSpaceResumed). Leave its persisted pending
+      // deliveries pending instead of terminalizing them as
+      // subscription_no_longer_active. (Stopped spaces whose runs were cancelled
+      // already failed via canRequeue above.)
+      if (run && pausedSpaceIds.has(run.spaceId)) {
+        continue;
+      }
 
       if (this.isTargetTaskTerminal(target.taskId)) {
         store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, {
@@ -4958,36 +5325,28 @@ export class SpaceRuntime {
    */
   onSpaceResumed(spaceId: string): void {
     const store = this.config.externalEventStore;
+    // The space is active again — clear the sync paused cache so the delivery
+    // hot path resumes injecting into live sessions.
+    this.pausedSpaceIds.delete(spaceId);
     if (!store) return;
 
-    // Rebuild PR auto-subscriptions for blocked runs in this space before
+    // Rebuild PR auto-subscriptions for active runs in this space before
     // evaluating pending deliveries. The startup rehydrate skips paused spaces,
-    // so a resumed space's blocked runs may have no trie entry yet; without
+    // so a resumed space's active runs may have no trie entry yet; without
     // rebuilding first, valid pending PR deliveries would be incorrectly
     // terminalized as subscription_no_longer_active.
-    //
-    // Only rebuild missing auto subscriptions: if the run already has one,
-    // re-entering registerPrEventSubscriptionForRun would clear it and
-    // failQueuedDeliveriesForTarget would terminally mark the pending PR
-    // delivery as auto_pr_subscription_cleared before the same subscription
-    // is reinserted.
-    const blockedRuns = this.config.workflowRunRepo
+    const activeRuns = this.config.workflowRunRepo
       .listBySpace(spaceId)
-      .filter((run) => run.status === 'blocked');
-    for (const run of blockedRuns) {
-      const hasAutoSubscription =
-        this.topicTrie.count(
-          (target) =>
-            isWorkflowSubscriptionTarget(target) &&
-            target.workflowRunId === run.id &&
-            target.subscriptionKind === 'auto'
-        ) > 0;
-      if (hasAutoSubscription) continue;
+      .filter((run) => run.status === 'blocked' || run.status === 'in_progress');
+    for (const run of activeRuns) {
       try {
-        this.notifyRunBlocked(run.id);
+        // replay:false — onSpaceResumed does a single post-requeue replay below,
+        // so per-run replay here would race with it and double-handle retained
+        // PR events.
+        this.ensurePrEventSubscriptionForRun(run.id, { replay: false });
       } catch (err) {
         log.warn(
-          `SpaceRuntime: failed to rebuild PR subscription for blocked run ${run.id} on resume: ${formatCommandError(err)}`
+          `SpaceRuntime: failed to rebuild PR subscription for active run ${run.id} on resume: ${formatCommandError(err)}`
         );
       }
     }
@@ -5002,13 +5361,23 @@ export class SpaceRuntime {
         nodeId: delivery.nodeId,
         agentName: delivery.agentName,
       };
-      // Only wake deliveries that still need activation. If a live session is
-      // already resolved, the normal delivery retry path already handles it.
-      const resolved = this.resolveSubscriptionTarget(target);
-      if (resolved.sessionId) continue;
-
       const eventRecord = store.getById(delivery.eventId);
       if (!eventRecord || eventRecord.state !== 'published') continue;
+      // A deferred delivery may have sat paused longer than the queue TTL.
+      // Apply the same event-age TTL guard as requeuePersistedPendingDeliveries
+      // before scheduling a retry so stale events are failed as ttl_expired
+      // instead of being injected on resume.
+      const mode = deliveryModeFromFailureReason(delivery.failureReason);
+      const ttlItem = {
+        event: this.externalEventPayloadFromRecord(eventRecord.event),
+        deliveryKey: delivery.deliveryKey,
+        deliveryMode: mode,
+        createdAt: eventRecord.createdAt,
+      };
+      if (this.isQueuedExternalEventExpired(ttlItem)) {
+        this.failQueuedDeliveryForTtl(ttlItem, this.buildQueueKey(target));
+        continue;
+      }
       if (!this.isTargetStillSubscribed(target, eventRecord.event.topic)) {
         store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, {
           terminal: true,
@@ -5019,13 +5388,36 @@ export class SpaceRuntime {
       }
 
       const eventPayload = this.externalEventPayloadFromRecord(eventRecord.event);
-      this.scheduleActivationRetry(
-        target,
-        eventPayload,
-        delivery.deliveryKey,
-        delivery.failureReason ?? 'node_execution_not_active'
-      );
+      const resolved = this.resolveSubscriptionTarget(target);
+      // Restore the in-memory retry state for deferred deliveries. A live session
+      // gets a delivery retry; a sessionless target gets an activation retry.
+      if (resolved.sessionId) {
+        const mode = deliveryModeFromFailureReason(delivery.failureReason);
+        this.scheduleExternalEventRetry(
+          resolved,
+          eventPayload,
+          delivery.deliveryKey,
+          mode,
+          delivery.failureReason ?? `deliveryMode:${mode}; retry requeued after space resume`,
+          { preserveAttemptCount: true, createdAt: eventRecord.createdAt }
+        );
+      } else {
+        this.scheduleActivationRetry(
+          target,
+          eventPayload,
+          delivery.deliveryKey,
+          delivery.failureReason ?? 'node_execution_not_active'
+        );
+      }
     }
+
+    // Replay retained no-delivery PR events unconditionally (after the
+    // persisted pending deliveries above are requeued). A retained event may
+    // have been kept published during pause for a run whose auto-sub already
+    // existed (so subscribedPrRuns stayed 0); without this it would never be
+    // re-evaluated and would expire. Re-entrancy-guarded; no-op when nothing is
+    // retained.
+    this.redispatchRetainedExternalEvents();
   }
 
   private redispatchPublishedEventsWithoutDeliveries(): void {
@@ -5117,6 +5509,7 @@ export class SpaceRuntime {
 
   async rehydrateExecutors(): Promise<void> {
     const spaces = await this.config.spaceManager.listSpaces(false);
+    const pausedSpaceIds = new Set<string>();
 
     for (const space of spaces) {
       // getRehydratableRuns returns 'in_progress' AND 'blocked' runs.
@@ -5146,9 +5539,44 @@ export class SpaceRuntime {
         await this.ensureExecutorRegistered(run, space);
       }
       this.rehydrateLongHorizonSubscriptions(space.id);
+      // Rebuild auto PR-event subscriptions for these runs BEFORE the
+      // persisted-delivery replay below. `ensureExecutorRegistered` just ran
+      // `registerRunInterestsFromWorkflow` (and on a cold start the trie is
+      // empty either way), so without rebuilding here the replay at the end of
+      // this method terminalizes persisted PR deliveries as
+      // `subscription_no_longer_active` before any later sweep can run.
+      //
+      // Uses the idempotent ensure path with `replay: false`: a run whose
+      // executor already existed (skipped above) still has its current auto
+      // target, and force-registering would clear it and fail any queued
+      // delivery as `auto_pr_subscription_cleared`. Replay is left to the
+      // tick's post-rehydrate redispatch. Paused/stopped spaces are skipped —
+      // their subs are rebuilt by `onSpaceResumed` when the space resumes.
+      if (space.paused || space.stopped) {
+        // Skipped spaces get no auto-sub rebuild here (rebuilt by onSpaceResumed);
+        // collect their ids so the persisted-delivery replay below defers rather
+        // than terminalizes their pending PR deliveries, and seed the sync
+        // paused cache used by the delivery hot path.
+        pausedSpaceIds.add(space.id);
+        this.pausedSpaceIds.add(space.id);
+        continue;
+      }
+      for (const run of activeRuns) {
+        // activeRuns also includes review/approved (commonly done) runs; only
+        // in_progress/blocked runs should carry a PR auto-subscription so a
+        // restart does not wake a completed/review-awaiting workflow.
+        if (run.status !== 'in_progress' && run.status !== 'blocked') continue;
+        try {
+          this.ensurePrEventSubscriptionForRun(run.id, { replay: false });
+        } catch (err) {
+          log.warn(
+            `SpaceRuntime: failed to rebuild PR subscription for run ${run.id} during rehydrate: ${formatCommandError(err)}`
+          );
+        }
+      }
     }
 
-    this.requeuePersistedPendingDeliveries();
+    this.requeuePersistedPendingDeliveries(pausedSpaceIds);
 
     // Rehydrate Task Agent sessions after executors are ready.
     // Executors must be loaded first so Task Agents can use MCP tools

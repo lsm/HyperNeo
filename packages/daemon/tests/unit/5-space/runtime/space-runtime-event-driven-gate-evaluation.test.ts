@@ -280,6 +280,52 @@ describe('SpaceRuntimeService event-driven gate evaluation', () => {
     expect(ctx.eventStore.getById(event.id)?.state).toBe('delivered');
   });
 
+  test('notifyGateDataChanged replays a retained PR event for an already in_progress run', async () => {
+    const ctx = await setup({
+      gates: [{ id: 'approval', fields: [approvedField, prUrlField] }],
+      channels: [{ id: 'ch-code-to-review', from: 'coder', to: 'reviewer', gateId: 'approval' }],
+    });
+    const workflow = ctx.workflowManager.listWorkflows(SPACE_ID)[0]!;
+    const runtime = await ctx.service.createOrGetRuntime(SPACE_ID);
+    const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+    const execution = ctx.nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    const coderSessionId = `session-coder-${run.id}`;
+    ctx.nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: coderSessionId,
+      startedAt: Date.now(),
+    });
+    ctx.tam.alive.add(coderSessionId);
+    ctx.gateDataRepo.merge(run.id, 'approval', { pr_url: PR_URL });
+
+    // Halt the tick loop and clear any auto-sub the sweep created, so the next
+    // published PR event is genuinely retained (published, no delivery rows).
+    await runtime.stop();
+    runtime.clearPrEventSubscriptionsForRun(run.id);
+
+    const event: ExternalEvent = {
+      id: `evt-retained-inprogress-${Math.random().toString(36).slice(2)}`,
+      spaceId: SPACE_ID,
+      source: 'github',
+      topic: PR_EVENT_TOPIC,
+      occurredAt: Date.now(),
+      ingestedAt: Date.now(),
+      dedupeKey: `dedupe-retained-inprogress-${Math.random().toString(36).slice(2)}`,
+      summary: 'review',
+      payload: { action: 'review_submitted' },
+    };
+    await ctx.eventService.publish(event);
+    expect(ctx.eventStore.listDeliveries(event.id)).toHaveLength(0);
+    expect(ctx.eventStore.getById(event.id)?.state).toBe('published');
+
+    // A gate-data write on the already in_progress run must create the sub AND
+    // replay the retained event — no transition will replay it.
+    await ctx.service.notifyGateDataChanged(run.id, 'approval');
+
+    expect(ctx.injected.length).toBeGreaterThanOrEqual(1);
+    expect(ctx.eventStore.getById(event.id)?.state).toBe('delivered');
+  });
+
   test('handleBlockedRunExternalEvent re-evaluates gates and clears auto-subscription when a gate opens', async () => {
     const ctx = await setup({
       gates: [
@@ -327,7 +373,8 @@ describe('SpaceRuntimeService event-driven gate evaluation', () => {
     expect(ctx.runtimeNotifications.length).toBeGreaterThanOrEqual(1);
     expect(ctx.runtimeNotifications[0]).toMatch(/gate re-evaluation triggered by external event/i);
 
-    // After the gate opens, subsequent PR events should not deliver (subscription cleared).
+    // After the gate opens, subsequent PR events should still deliver while the
+    // run is in_progress.
     ctx.injected.length = 0;
     const followUp: ExternalEvent = {
       id: `evt-followup-${Math.random().toString(36).slice(2)}`,
@@ -337,11 +384,11 @@ describe('SpaceRuntimeService event-driven gate evaluation', () => {
       occurredAt: Date.now(),
       ingestedAt: Date.now(),
       dedupeKey: `dedupe-followup-${Math.random().toString(36).slice(2)}`,
-      summary: 'Stale event after gate opened',
+      summary: 'Follow-up event after gate opened',
       payload: { action: 'review_submitted' },
     };
     await ctx.eventService.publish(followUp);
-    expect(ctx.injected).toHaveLength(0);
+    expect(ctx.injected).toHaveLength(1);
   });
 
   test('handleBlockedRunExternalEvent no-ops for non-blocked runs', async () => {
@@ -1186,7 +1233,7 @@ describe('SpaceRuntimeService event-driven gate evaluation', () => {
     expect(runtimeNotifications).toHaveLength(0);
   });
 
-  test('clearPrEventSubscriptionsForRun purges queued deliveries for the auto target', async () => {
+  test('clearPrEventSubscriptionsForRun removes in-memory queued deliveries for the auto target', async () => {
     const ctx = await setup({
       gates: [
         {
@@ -1227,15 +1274,25 @@ describe('SpaceRuntimeService event-driven gate evaluation', () => {
       summary: 'Queued delivery',
       payload: {},
     };
+    ctx.service.runtime.ensurePrEventSubscriptionForRun(runId);
     await ctx.eventService.publish(event);
+    expect(ctx.eventStore.listDeliveries(event.id)).toHaveLength(1);
+
+    const pendingQueues = ctx.service.runtime as unknown as {
+      pendingExternalEventQueue: Map<string, unknown[]>;
+    };
 
     // Now clear the auto subscription. Queued deliveries for the auto target
     // must be purged so a later session spawn does not flush a stale
     // delivery for a subscription that no longer exists.
     ctx.service.runtime.clearPrEventSubscriptionsForRun(runId);
+    expect(pendingQueues.pendingExternalEventQueue.size).toBe(0);
 
-    // Re-attach a live session — no delivery should fire because the auto
-    // subscription (and its queued deliveries) were purged.
+    // Re-attach a live session. The delivery for this event is no longer
+    // pending after the clear, so flushing the pending queue must not
+    // re-deliver it. Reset the captured injections so the assertion is scoped
+    // to the flush rather than the initial publish-time delivery.
+    ctx.injected.length = 0;
     ctx.tam.alive.add(`session-queued-${runId}`);
     ctx.service.runtime.flushPendingNodeQueue({
       workflowRunId: runId,
@@ -1328,7 +1385,7 @@ describe('SpaceRuntimeService event-driven gate evaluation', () => {
     expect(ctx.runtimeNotifications).toHaveLength(0);
   });
 
-  test('P2-2: PR event delivered during blocked hook does not re-deliver after auto-sub clear', async () => {
+  test('P2-2: PR event delivered during blocked hook is delivered once after gate opens', async () => {
     const ctx = await setup({
       gates: [
         {
@@ -1357,9 +1414,10 @@ describe('SpaceRuntimeService event-driven gate evaluation', () => {
     await ctx.eventService.publish(event);
     await new Promise((resolve) => setTimeout(resolve, 10));
 
-    // The hook cleared the auto-sub and transitioned the run to in_progress.
-    // The stale allMatches snapshot would have delivered to the now-removed
-    // auto target — assert no delivery happened for this event.
-    expect(ctx.injected).toHaveLength(0);
+    // The hook preserved/refreshed the auto-sub and transitioned the run to
+    // in_progress. The event should be delivered once to the active slot, not
+    // dropped as a stale auto-target snapshot.
+    expect(ctx.injected).toHaveLength(1);
+    expect(ctx.eventStore.getById(event.id)?.state).toBe('delivered');
   });
 });

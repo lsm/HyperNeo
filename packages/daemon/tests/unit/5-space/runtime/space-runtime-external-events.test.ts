@@ -6,6 +6,7 @@ import { ExternalEventStore } from '../../../../src/lib/external-events/external
 import type { ExternalEvent } from '../../../../src/lib/external-events/types';
 import { createInternalCommandBus } from '../../../../src/lib/internal-command-bus';
 import { createDaemonInternalEventBus } from '../../../../src/lib/internal-event-bus';
+import { GateDataRepository } from '../../../../src/storage/repositories/gate-data-repository';
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager';
@@ -13,7 +14,6 @@ import {
   parsePositiveIntegerEnv,
   SpaceRuntime,
 } from '../../../../src/lib/space/runtime/space-runtime';
-import { GateDataRepository } from '../../../../src/storage/repositories/gate-data-repository';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
@@ -1654,6 +1654,190 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(injected).toHaveLength(1);
     expect(injected[0]!.sessionId).toBe(sessionId);
     expect(eventStore.getById(event.id)?.state).toBe('delivered');
+  });
+
+  test('sweep refreshes stale PR auto-subscription when the resolved PR URL changes', async () => {
+    const workflow = createWorkflow();
+    const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-pr-refresh',
+      startedAt: Date.now(),
+    });
+    tam.alive.add('session-pr-refresh');
+
+    const gateDataRepo = new GateDataRepository(db);
+    gateDataRepo.merge(run.id, 'pr-gate', { pr_url: 'https://github.com/lsm/neokai/pull/41' });
+    runtime.registerPrEventSubscriptionForRun(run.id, 'https://github.com/lsm/neokai/pull/41');
+    gateDataRepo.merge(run.id, 'pr-gate', { pr_url: 'https://github.com/lsm/neokai/pull/42' });
+
+    await runtime.executeTick();
+
+    await eventService.publish(makeEvent());
+    expect(injected).toHaveLength(1);
+    expect(injected[0]!.sessionId).toBe('session-pr-refresh');
+  });
+
+  test('clears the stale auto subscription when the resolved PR URL becomes invalid', async () => {
+    const workflow = createWorkflow();
+    const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-invalid-url',
+      startedAt: Date.now(),
+    });
+    tam.alive.add('session-invalid-url');
+
+    const gateDataRepo = new GateDataRepository(db);
+    gateDataRepo.merge(run.id, 'pr-gate', { pr_url: 'https://github.com/lsm/neokai/pull/42' });
+    runtime.registerPrEventSubscriptionForRun(run.id, 'https://github.com/lsm/neokai/pull/42');
+
+    // A PR event for the registered PR delivers while the URL is valid.
+    await eventService.publish(makeEvent());
+    expect(injected).toHaveLength(1);
+
+    // Replace the URL with an unparsable value. ensure must drop the stale auto
+    // subscription so events for the previous PR stop matching the active slot.
+    injected.length = 0;
+    gateDataRepo.merge(run.id, 'pr-gate', { pr_url: 'not-a-github-url' });
+    runtime.ensurePrEventSubscriptionForRun(run.id);
+
+    await eventService.publish(makeEvent());
+    expect(injected).toHaveLength(0);
+  });
+
+  test('resetBlockedExecutionsForRun resets blocked node executions to pending', async () => {
+    const { run } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, { status: 'blocked', completedAt: null });
+
+    runtime.resetBlockedExecutionsForRun(run.id);
+
+    const updated = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    expect(updated.status).toBe('pending');
+  });
+
+  test('delivers a retained PR event when a direct ensure creates the auto subscription', async () => {
+    const workflow = createWorkflow();
+    const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-direct-ensure',
+      startedAt: Date.now(),
+    });
+    tam.alive.add('session-direct-ensure');
+
+    const gateDataRepo = new GateDataRepository(db);
+    gateDataRepo.merge(run.id, 'pr-gate', { pr_url: 'https://github.com/lsm/neokai/pull/42' });
+
+    // Publish a PR event BEFORE any auto subscription exists. It is linked to
+    // the run so it is retained as `published` with no delivery rows.
+    const event = makeEvent();
+    await eventService.publish(event);
+    expect(eventStore.listDeliveries(event.id)).toHaveLength(0);
+    expect(eventStore.getById(event.id)?.state).toBe('published');
+
+    // A direct subscription creation (e.g. notifyGateDataChanged / resume path)
+    // must replay the retained event instead of stranding it until the next tick.
+    runtime.ensurePrEventSubscriptionForRun(run.id);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    expect(injected).toHaveLength(1);
+    expect(injected[0]!.sessionId).toBe('session-direct-ensure');
+    expect(eventStore.getById(event.id)?.state).toBe('delivered');
+  });
+
+  test('rebuilds active-run PR auto-subscription before persisted delivery replay on restart', async () => {
+    const workflow = createWorkflow();
+    const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    // Pending execution (no live session) so the PR event queues a pending
+    // delivery rather than delivering immediately.
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: null,
+      startedAt: Date.now(),
+    });
+
+    const gateDataRepo = new GateDataRepository(db);
+    gateDataRepo.merge(run.id, 'pr-gate', { pr_url: 'https://github.com/lsm/neokai/pull/42' });
+    runtime.registerPrEventSubscriptionForRun(run.id, 'https://github.com/lsm/neokai/pull/42');
+
+    const event = makeEvent({ id: 'evt-restart-replay', dedupeKey: 'dedupe-restart-replay' });
+    await eventService.publish(event);
+    expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
+
+    // Restart. rehydrateExecutors must rebuild the auto subscription BEFORE its
+    // persisted-delivery replay; otherwise the replay terminalizes the pending
+    // delivery as `subscription_no_longer_active` (the trie is empty on cold
+    // start until the rebuild runs).
+    await runtime.stop();
+    runtime = new SpaceRuntime({
+      db,
+      spaceManager: new SpaceManager(db),
+      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+      spaceWorkflowManager: workflowManager,
+      workflowRunRepo,
+      taskRepo,
+      nodeExecutionRepo,
+      artifactRepo,
+      internalEventBus: bus,
+      commandBus: createInternalCommandBus(),
+      externalEventStore: eventStore,
+      taskAgentManager: tam as never,
+    });
+    await runtime.executeTick();
+
+    const delivery = eventStore.listDeliveries(event.id)[0]!;
+    expect(delivery.state).not.toBe('failed');
+    expect(delivery.failureReason).not.toBe('subscription_no_longer_active');
+  });
+
+  test('defers persisted PR deliveries for a paused space instead of terminalizing them on restart', async () => {
+    const workflow = createWorkflow();
+    const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: null,
+      startedAt: Date.now(),
+    });
+
+    const gateDataRepo = new GateDataRepository(db);
+    gateDataRepo.merge(run.id, 'pr-gate', { pr_url: 'https://github.com/lsm/neokai/pull/42' });
+    runtime.registerPrEventSubscriptionForRun(run.id, 'https://github.com/lsm/neokai/pull/42');
+
+    const event = makeEvent({ id: 'evt-paused-replay', dedupeKey: 'dedupe-paused-replay' });
+    await eventService.publish(event);
+    expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
+
+    // Pause the space, then restart. The rebuild loop skips paused spaces, so
+    // the persisted-delivery replay must defer (leave pending) this delivery
+    // for onSpaceResumed instead of terminalizing it as subscription_no_longer_active.
+    db.prepare(`UPDATE spaces SET paused = 1 WHERE id = ?`).run(SPACE_ID);
+    await runtime.stop();
+    runtime = new SpaceRuntime({
+      db,
+      spaceManager: new SpaceManager(db),
+      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+      spaceWorkflowManager: workflowManager,
+      workflowRunRepo,
+      taskRepo,
+      nodeExecutionRepo,
+      artifactRepo,
+      internalEventBus: bus,
+      commandBus: createInternalCommandBus(),
+      externalEventStore: eventStore,
+      taskAgentManager: tam as never,
+    });
+    await runtime.executeTick();
+
+    const delivery = eventStore.listDeliveries(event.id)[0]!;
+    expect(delivery.state).not.toBe('failed');
+    expect(delivery.failureReason).not.toBe('subscription_no_longer_active');
   });
 
   test('fails queued deliveries during terminal run cleanup', async () => {
@@ -5704,6 +5888,75 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
   });
 
+  test('requeues paused-space deliveries that resolve to a live session on resume', async () => {
+    const { run, task } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'idle',
+      agentSessionId: null,
+      completedAt: Date.now(),
+    });
+    db.prepare(`UPDATE spaces SET paused = 1 WHERE id = ?`).run(SPACE_ID);
+
+    tam.activationResult = [];
+    const event = makeEvent({ id: 'evt-paused-resume-session' });
+    await eventService.publish(event);
+
+    expect(tam.activationCalls).toHaveLength(0);
+    expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
+
+    // Resume with a LIVE session already attached to the execution so the
+    // deferred delivery resolves via resolveSubscriptionTarget. The resume path
+    // must schedule a delivery retry (scheduleExternalEventRetry) — not an
+    // activation retry — and the event must be delivered without activation.
+    db.prepare(`UPDATE spaces SET paused = 0 WHERE id = ?`).run(SPACE_ID);
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-resume-live',
+      completedAt: null,
+    });
+    tam.alive.add('session-resume-live');
+    runtime.start();
+    await spaceManager.resumeSpace(SPACE_ID);
+
+    await new Promise((resolve) => setTimeout(resolve, 1_200));
+    expect(tam.activationCalls).toHaveLength(0);
+    expect(injected).toHaveLength(1);
+    expect(injected[0]!.sessionId).toBe('session-resume-live');
+    expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
+  });
+
+  test('does not inject a matched PR event into a live session while the space is paused', async () => {
+    const workflow = createWorkflow();
+    const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-paused-inject',
+      startedAt: Date.now(),
+    });
+    tam.alive.add('session-paused-inject');
+    const gateDataRepo = new GateDataRepository(db);
+    gateDataRepo.merge(run.id, 'pr-gate', { pr_url: 'https://github.com/lsm/neokai/pull/42' });
+    runtime.registerPrEventSubscriptionForRun(run.id, 'https://github.com/lsm/neokai/pull/42');
+
+    // Pause the space via pauseSpace (fires the runtime's paused callback,
+    // seeding the sync paused cache). pauseSpace does not terminate sessions,
+    // so without the pause guard a matched PR event would inject into the
+    // still-live session.
+    await spaceManager.pauseSpace(SPACE_ID);
+    const event = makeEvent({ id: 'evt-paused-inject', dedupeKey: 'dedupe-paused-inject' });
+    await eventService.publish(event);
+    expect(injected).toHaveLength(0);
+    expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
+
+    // Resume -> the deferred delivery is delivered to the live session.
+    await spaceManager.resumeSpace(SPACE_ID);
+    await new Promise((resolve) => setTimeout(resolve, 1_200));
+    expect(injected).toHaveLength(1);
+    expect(injected[0]!.sessionId).toBe('session-paused-inject');
+  });
+
   test('excludes retried delivery from activation flush drain', async () => {
     const { run, task } = await startRunWithSubscription();
     const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
@@ -6611,6 +6864,77 @@ describe('SpaceRuntime event-driven gate evaluation', () => {
     const event = makePrEvent();
     await eventService.publish(event);
     expect(injected).toHaveLength(0);
+  });
+
+  test('review_comment during the first in_progress window is delivered to the coder node', async () => {
+    const gateDataRepo = new GateDataRepository(db);
+    const localCommandBus = createInternalCommandBus();
+    const localInjected: Array<{ sessionId: string; message: string; deliveryMode?: string }> = [];
+    localCommandBus.register('agent.message.inject', async (command) => {
+      localInjected.push({
+        sessionId: command.sessionId,
+        message: command.message,
+        deliveryMode: command.deliveryMode,
+      });
+      return { ok: true };
+    });
+
+    const localRuntime = new SpaceRuntime({
+      db,
+      spaceManager: new SpaceManager(db),
+      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+      spaceWorkflowManager: workflowManager,
+      workflowRunRepo,
+      taskRepo,
+      nodeExecutionRepo,
+      gateDataRepo,
+      internalEventBus: bus,
+      commandBus: localCommandBus,
+      externalEventStore: eventStore,
+      taskAgentManager: tam as never,
+      deliverLongHorizonExternalEvent: async () => ({ delivered: true }),
+    });
+
+    const workflow = workflowManager.createWorkflow({
+      spaceId: SPACE_ID,
+      name: 'Workflow with gate',
+      description: '',
+      nodes: [{ id: 'code', name: 'Code', agents: [{ agentId: AGENT_ID, name: 'coder' }] }],
+      transitions: [],
+      startNodeId: 'code',
+      rules: [],
+      tags: [],
+      gates: [
+        {
+          id: 'approval',
+          fields: [{ name: 'pr_url', type: 'string', writers: ['coder'], check: { op: 'exists' } }],
+        },
+      ],
+    });
+
+    const { run } = await localRuntime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    const coderSessionId = `session-coder-${run.id}`;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: coderSessionId,
+      startedAt: Date.now(),
+    });
+    tam.alive.add(coderSessionId);
+
+    // PR URL becomes known after the run has already entered in_progress.
+    gateDataRepo.merge(run.id, 'approval', { pr_url: PR_URL });
+
+    // The tick sweep resolves the new PR URL and registers the auto-subscription.
+    await localRuntime.executeTick();
+
+    const event = makeEvent({
+      topic: 'github/lsm/neokai/pull_request/42.review_comment_created',
+    });
+    await eventService.publish(event);
+
+    expect(localInjected).toHaveLength(1);
+    expect(localInjected[0]!.sessionId).toBe(coderSessionId);
   });
 
   test('onBlockedRunExternalEvent fires once per matching blocked run when event delivered', async () => {
