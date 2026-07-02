@@ -17,6 +17,8 @@ export interface TaskComposerTarget {
   label: string;
   agentName?: string;
   nodeExecutionId?: string;
+  /** Live agentSessionId of the backing node execution (from nodeExecutions.byRun). */
+  nodeExecutionSessionId?: string;
   nodeName?: string;
   state?: string;
 }
@@ -112,29 +114,51 @@ export function useTargetSessionContext({
     () => resolveTargetSessionId(selectedTarget, activityMembers),
     [selectedTarget, activityMembers]
   );
-  // Latch key is scoped by (taskId, target, nodeExecutionId):
-  // - taskId: `SpaceTaskPane` stays mounted across task switches (no key=taskId
-  //   on its render site) and target ids are reused across tasks
+  // Latch the resolved session per (taskId, target) and hold it across a
+  // transient resolution gap — but invalidate it the moment the backing
+  // execution no longer reports that session as live.
+  //
+  // - taskId scoping: `SpaceTaskPane` stays mounted across task switches (no
+  //   key=taskId on its render site) and target ids are reused across tasks
   //   (`node:<nodeId>:<agentName>`), so without taskId the prior task's session
   //   would leak into a freshly-selected task whose activity hasn't loaded.
-  // - nodeExecutionId: stable during a transient activity-member desync — the
-  //   `nodeExecutions.byRun` query still has the execution (so the id is set on
-  //   the target) while `spaceTaskActivity.byTask` momentarily omits the member
-  //   — so including it keeps the latch valid through exactly the gap that
-  //   caused deleted text to be restored. It also DROPS when a worker is
-  //   detached: `detachSessionFromAllExecutions` clears agentSessionId and the
-  //   node_executions query filters `agent_session_id IS NOT NULL`, so the
-  //   execution leaves composerTargets and nodeExecutionId becomes undefined.
-  //   That key change clears the latch so a detached/recovering agent is treated
-  //   as not-started (preconfiguration enabled) instead of staying wired to a
-  //   canceled stale session until a fresh one spawns.
-  const latchedSessionRef = useRef<{ key: string; sessionId: string } | null>(null);
-  const latchKey = `${taskId}:${selectedTarget?.id ?? ''}:${selectedTarget?.nodeExecutionId ?? ''}`;
-  let targetSessionId = resolvedSessionId;
+  // - liveness via nodeExecutionSessionId: this is the execution's live
+  //   `agentSessionId` from `nodeExecutions.byRun`. That query is NOT filtered by
+  //   `agent_session_id IS NOT NULL`, so the execution (and nodeExecutionId)
+  //   stays in composerTargets even after a worker is detached — but
+  //   `detachSessionFromAllExecutions` sets the row's agentSessionId to null, so
+  //   nodeExecutionSessionId drops while `spaceTaskActivity.byTask` (which DOES
+  //   filter agent_session_id IS NOT NULL) drops the member. Holding the latch
+  //   only while nodeExecutionSessionId still matches the latched session rides
+  //   out the transient member desync (nodeExecutions.byRun still carries the
+  //   live session id) yet clears immediately on detach, so a recovering agent is
+  //   treated as not-started instead of staying wired to a canceled stale
+  //   session.
+  const latchedSessionRef = useRef<{
+    key: string;
+    sessionId: string;
+    execSessionId?: string;
+  } | null>(null);
+  const latchKey = `${taskId}:${selectedTarget?.id ?? ''}`;
+  const latched = latchedSessionRef.current;
+  // The latch is valid while the target is unchanged AND the backing execution
+  // still reports the latched session as live. `execSessionId` captured at latch
+  // time distinguishes the two undefined cases: if we latched WITHOUT an
+  // execution-level session signal (e.g. an agentName-only match), there is
+  // nothing to refute, so trust the latch; if we latched WITH one, a current
+  // nodeExecutionSessionId that no longer matches means the worker detached.
+  const latchValid =
+    latched?.key === latchKey &&
+    (latched.execSessionId === undefined ||
+      latched.execSessionId === selectedTarget?.nodeExecutionSessionId);
+  const latchedSessionId = resolvedSessionId ?? (latchValid ? latched!.sessionId : null);
+  let targetSessionId = latchedSessionId;
   if (resolvedSessionId) {
-    latchedSessionRef.current = { key: latchKey, sessionId: resolvedSessionId };
-  } else if (latchedSessionRef.current?.key === latchKey) {
-    targetSessionId = latchedSessionRef.current.sessionId;
+    latchedSessionRef.current = {
+      key: latchKey,
+      sessionId: resolvedSessionId,
+      execSessionId: selectedTarget?.nodeExecutionSessionId,
+    };
   }
   const isStarted = !!targetSessionId;
 

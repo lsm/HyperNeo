@@ -376,6 +376,7 @@ export function SpaceTaskPane({
             label: member?.label ?? spaceAgent?.name ?? formatAgentSlotLabel(agent.name),
             agentName: agent.name,
             nodeExecutionId: nodeExecution?.id,
+            nodeExecutionSessionId: nodeExecution?.agentSessionId ?? undefined,
             nodeName: node.name,
             state: member ? ACTIVITY_STATE_LABELS[member.state] : 'Not started',
           };
@@ -399,6 +400,7 @@ export function SpaceTaskPane({
           label: m.label,
           agentName: m.role,
           nodeExecutionId: m.nodeExecution?.nodeExecutionId,
+          nodeExecutionSessionId: m.sessionId ?? undefined,
           state: ACTIVITY_STATE_LABELS[m.state],
         });
       }

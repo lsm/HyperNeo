@@ -458,14 +458,16 @@ describe('useTargetSessionContext', () => {
     });
   });
 
-  it('clears the latch when the worker execution detaches (nodeExecutionId drops)', async () => {
+  it('clears the latch when the worker execution detaches (live agentSessionId gone)', async () => {
     // Regression: when a worker fails and is detached,
-    // detachSessionFromAllExecutions clears agentSessionId and the
-    // node_executions query filters `agent_session_id IS NOT NULL`, so the
-    // execution leaves composerTargets and the target's nodeExecutionId drops
-    // to undefined. The latch must clear so the composer treats the agent as
-    // not-started (preconfiguration enabled) instead of staying wired to the
-    // canceled stale session until recovery spawns a fresh one.
+    // detachSessionFromAllExecutions sets the node_execution row's
+    // agentSessionId to null. NODE_EXECUTIONS_BY_RUN_SQL is NOT filtered by
+    // `agent_session_id IS NOT NULL`, so the execution (and nodeExecutionId)
+    // STAYS in composerTargets — only nodeExecutionSessionId drops to
+    // undefined, while spaceTaskActivity.byTask (filtered) drops the member.
+    // resolvedSessionId becomes null but the latch must NOT keep returning the
+    // canceled session; the composer should treat the agent as not-started
+    // (preconfiguration enabled) until recovery spawns a fresh session.
     const attachedMember: SpaceTaskActivityMember = {
       id: 'm1',
       sessionId: 'coder-session',
@@ -488,6 +490,7 @@ describe('useTargetSessionContext', () => {
       label: string;
       agentName: string;
       nodeExecutionId?: string;
+      nodeExecutionSessionId?: string;
     };
     const attachedTarget: DetachTarget = {
       id: 'node:n1:coder',
@@ -495,13 +498,7 @@ describe('useTargetSessionContext', () => {
       label: 'Coder',
       agentName: 'coder',
       nodeExecutionId: 'ne-1',
-    };
-    const detachedTarget: DetachTarget = {
-      id: 'node:n1:coder',
-      kind: 'node_agent',
-      label: 'Coder',
-      agentName: 'coder',
-      // nodeExecutionId dropped — execution left composerTargets on detach.
+      nodeExecutionSessionId: 'coder-session',
     };
 
     const { result, rerender } = renderHook(
@@ -519,13 +516,18 @@ describe('useTargetSessionContext', () => {
       expect(result.current.targetSessionId).toBe('coder-session');
     });
 
-    // Worker detaches: execution leaves composerTargets and the member
-    // disappears (agent_session_id IS NULL). Latch must NOT hold the stale one.
-    rerender({ target: detachedTarget, members: [] });
+    // Worker detaches: nodeExecutionId stays (execution still in
+    // composerTargets) but its live agentSessionId is cleared, and the activity
+    // member disappears. The latch must drop the stale session.
+    rerender({
+      target: { ...attachedTarget, nodeExecutionSessionId: undefined },
+      members: [],
+    });
     expect(result.current.targetSessionId).toBeNull();
     expect(result.current.isStarted).toBe(false);
 
-    // Recovery spawns a fresh session under a new execution — resolves cleanly.
+    // Recovery spawns a fresh session under the same execution id — resolves
+    // cleanly to the new session, no stale leak.
     const recoveredMember: SpaceTaskActivityMember = {
       id: 'm2',
       sessionId: 'coder-session-2',
@@ -536,19 +538,80 @@ describe('useTargetSessionContext', () => {
       processingStatus: 'idle',
       messageCount: 0,
       nodeExecution: {
-        nodeExecutionId: 'ne-2',
+        nodeExecutionId: 'ne-1',
         nodeId: 'n1',
         agentName: 'coder',
         status: 'in_progress',
       },
     };
     rerender({
-      target: { ...detachedTarget, nodeExecutionId: 'ne-2' },
+      target: { ...attachedTarget, nodeExecutionSessionId: 'coder-session-2' },
       members: [recoveredMember],
     });
     await waitFor(() => {
       expect(result.current.targetSessionId).toBe('coder-session-2');
     });
+  });
+
+  it('holds the latch across a transient member gap while the live agentSessionId is unchanged', async () => {
+    // Complement to the detach case: a transient desync (member momentarily
+    // absent) must STILL hold the latch, because nodeExecutionSessionId keeps
+    // reporting the same live session. Only a real detach (live session gone)
+    // clears it. This is the deleted-text fix — without holding, the null flip
+    // would make useInputDraft restore deleted text.
+    const coderMember: SpaceTaskActivityMember = {
+      id: 'm1',
+      sessionId: 'coder-session',
+      kind: 'node_agent',
+      label: 'Coder',
+      role: 'coder',
+      state: 'active',
+      processingStatus: 'idle',
+      messageCount: 0,
+      nodeExecution: {
+        nodeExecutionId: 'ne-1',
+        nodeId: 'n1',
+        agentName: 'coder',
+        status: 'in_progress',
+      },
+    };
+    type LiveTarget = {
+      id: string;
+      kind: 'node_agent';
+      label: string;
+      agentName: string;
+      nodeExecutionId?: string;
+      nodeExecutionSessionId?: string;
+    };
+    const target: LiveTarget = {
+      id: 'node:n1:coder',
+      kind: 'node_agent',
+      label: 'Coder',
+      agentName: 'coder',
+      nodeExecutionId: 'ne-1',
+      nodeExecutionSessionId: 'coder-session',
+    };
+
+    const { result, rerender } = renderHook(
+      (props: { members: SpaceTaskActivityMember[] }) =>
+        useTargetSessionContext({
+          taskId: 'task-1',
+          targets: [target],
+          selectedTarget: target,
+          activityMembers: props.members,
+        }),
+      { initialProps: { members: [coderMember] } }
+    );
+
+    await waitFor(() => {
+      expect(result.current.targetSessionId).toBe('coder-session');
+    });
+
+    // Transient gap: member list momentarily empty, but nodeExecutionSessionId
+    // still reports the same live session. Latch must hold.
+    rerender({ members: [] });
+    expect(result.current.targetSessionId).toBe('coder-session');
+    expect(result.current.isStarted).toBe(true);
   });
 
   it('marks not-yet-started agent as isStarted=false', async () => {
