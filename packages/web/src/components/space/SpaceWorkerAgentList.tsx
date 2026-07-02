@@ -37,12 +37,6 @@ function AgentCard({ agent, drifted, syncing, onEdit, onDelete, onSync }: AgentC
         <div class="min-w-0 flex-1">
           <div class="flex min-w-0 flex-wrap items-center gap-2">
             <span class="truncate text-sm font-medium text-gray-100">{agent.name}</span>
-            {agent.handle && <span class="font-mono text-xs text-blue-300">{agent.handle}</span>}
-            {agent.templateName && (
-              <span class="inline-flex flex-shrink-0 rounded bg-blue-500/10 px-1.5 py-0.5 text-xs text-blue-200">
-                {agent.templateName}
-              </span>
-            )}
             {status !== 'active' && (
               <span class="inline-flex flex-shrink-0 rounded bg-white/5 px-1.5 py-0.5 text-xs text-gray-400">
                 {status}
@@ -57,6 +51,7 @@ function AgentCard({ agent, drifted, syncing, onEdit, onDelete, onSync }: AgentC
               </span>
             )}
           </div>
+          {agent.handle && <p class="mt-0.5 text-xs text-gray-600 font-mono">{agent.handle}</p>}
           {agent.description && (
             <p class="mt-1 line-clamp-2 text-xs leading-5 text-gray-500">{agent.description}</p>
           )}

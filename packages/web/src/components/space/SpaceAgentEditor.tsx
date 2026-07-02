@@ -616,33 +616,39 @@ export function SpaceAgentEditor({
 
           <div class="grid grid-cols-3 gap-1.5">
             {(KNOWN_TOOLS as readonly string[]).map((tool) => {
-              const checked = tools.includes(tool);
+              const inherited = !toolsOverridden;
+              const checked = inherited || tools.includes(tool);
               const denied =
                 toolsOverridden && tools.length > 0 && DENIABLE_TOOL_SET.has(tool) && !checked;
               return (
                 <label
                   key={tool}
-                  class={`flex items-center gap-2 px-3 py-1.5 rounded border cursor-pointer text-xs transition-colors ${
-                    checked
-                      ? 'border-blue-700/60 bg-blue-900/15 text-blue-200'
-                      : denied
-                        ? 'border-red-700/60 bg-red-900/15 text-red-200 hover:border-red-600'
-                        : 'border-dark-700 text-gray-400 hover:border-dark-600 hover:text-gray-300'
+                  class={`flex items-center gap-2 px-3 py-1.5 rounded border text-xs transition-colors ${
+                    inherited
+                      ? 'border-dark-600 bg-dark-800/40 text-gray-500 cursor-not-allowed'
+                      : checked
+                        ? 'border-blue-700/60 bg-blue-900/15 text-blue-200 cursor-pointer'
+                        : denied
+                          ? 'border-red-700/60 bg-red-900/15 text-red-200 hover:border-red-600 cursor-pointer'
+                          : 'border-dark-700 text-gray-400 hover:border-dark-600 hover:text-gray-300 cursor-pointer'
                   }`}
                 >
                   <input
                     type="checkbox"
                     checked={checked}
-                    onChange={() => toggleTool(tool)}
+                    disabled={inherited}
+                    onChange={() => !inherited && toggleTool(tool)}
                     class="sr-only"
                   />
                   <span
                     class={`w-3.5 h-3.5 rounded border flex-shrink-0 flex items-center justify-center ${
-                      checked
-                        ? 'bg-blue-600 border-blue-600'
-                        : denied
-                          ? 'border-red-500'
-                          : 'border-dark-500'
+                      inherited
+                        ? 'bg-dark-600 border-dark-500'
+                        : checked
+                          ? 'bg-blue-600 border-blue-600'
+                          : denied
+                            ? 'border-red-500'
+                            : 'border-dark-500'
                     }`}
                   >
                     {checked && (

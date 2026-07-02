@@ -450,6 +450,21 @@ describe('SpaceAgentEditor', () => {
     expect(inheritButton.className).toContain('blue');
   });
 
+  it('shows all tools as checked and disabled in inherited mode', () => {
+    const { container } = render(<SpaceAgentEditor {...DEFAULT_PROPS} />);
+
+    // Default create-mode preset is Full Coding / inherited, so all boxes should
+    // be checked and disabled to reflect inherited SDK defaults.
+    const checkboxes = Array.from(
+      container.querySelectorAll('.grid.grid-cols-3 input[type="checkbox"]')
+    ) as HTMLInputElement[];
+    expect(checkboxes.length).toBeGreaterThan(0);
+    for (const cb of checkboxes) {
+      expect(cb.checked).toBe(true);
+      expect(cb.disabled).toBe(true);
+    }
+  });
+
   it('uses direct system prompt edits without template buttons', () => {
     const { container, queryByText } = render(<SpaceAgentEditor {...DEFAULT_PROPS} />);
     const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
