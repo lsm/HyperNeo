@@ -780,6 +780,56 @@ describe('useAutoScroll', () => {
       rerender({ messageCount: 25, resetKey: 'session-b' });
       expect(containerRef.current!.scrollTop).toBe(1000);
     });
+
+    it('should re-pin to bottom on post-reset content growth after a same-count context switch', () => {
+      // Edge case from review: after a resetKey change with unchanged
+      // messageCount, lastScrollHeightRef must be refreshed too — otherwise it
+      // still describes the previous (e.g. taller) thread. When the new
+      // thread's markdown/images expand after the initial scroll, the
+      // ResizeObserver would compare against that stale height, `grew` stays
+      // false, and it never re-pins.
+      vi.useFakeTimers();
+      const { containerRef, endRef } = createMockRefs();
+
+      // Context A is tall (scrollHeight 1500). After mount, the scroll-
+      // detection effect snapshots lastScrollHeightRef = 1500.
+      containerRef.current!.scrollHeight = 1500;
+      const { rerender } = renderHook(
+        ({ messageCount, resetKey }) =>
+          useAutoScroll({ containerRef, endRef, enabled: true, messageCount, resetKey }),
+        { initialProps: { messageCount: 25, resetKey: 'a' } }
+      );
+      expect(containerRef.current!.scrollTop).toBe(1500);
+
+      // Switch to a shorter context B (same messageCount). Mutate the live
+      // scrollHeight to model B's smaller content.
+      containerRef.current!.scrollHeight = 800;
+      rerender({ messageCount: 25, resetKey: 'b' });
+      expect(containerRef.current!.scrollTop).toBe(800);
+
+      // Flush the mount-scroll's deferred rAF (scrollToBottomAfterLayout) NOW,
+      // while scrollHeight is still 800, so a later timer advance only fires
+      // the ResizeObserver rAF we are about to trigger (otherwise the deferred
+      // mount-scroll rAF would set scrollTop to whatever scrollHeight is at
+      // flush time and mask the re-pin-under-test).
+      act(() => {
+        vi.advanceTimersByTime(16);
+      });
+      expect(containerRef.current!.scrollTop).toBe(800);
+
+      // B's content grows after the initial scroll (markdown/images expand).
+      containerRef.current!.scrollHeight = 900;
+      act(() => {
+        resizeObserverInstances[0]?.triggerResize();
+        vi.advanceTimersByTime(16);
+      });
+
+      // With the snapshot refreshed, `grew` (900 > 800) is true and we re-pin
+      // to the new bottom. Without the refresh, grew (900 > stale 1500) is
+      // false and scrollTop stays 800.
+      expect(containerRef.current!.scrollTop).toBe(900);
+      vi.useRealTimers();
+    });
   });
 
   describe('scroll position detection', () => {

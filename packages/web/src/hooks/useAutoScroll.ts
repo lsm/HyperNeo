@@ -253,6 +253,14 @@ export function useAutoScroll({
       hasScrolledOnMountRef.current = false;
       prevMessageCountRef.current = 0;
       isNearBottomRef.current = true;
+      // Refresh the ResizeObserver height snapshot too. On a same-message-count
+      // context switch this effect (or the auto-scroll effect) is the only
+      // thing that runs — the scroll-detection effect above does not, so
+      // `lastScrollHeightRef` would otherwise still describe the PREVIOUS
+      // (e.g. taller) thread. The next content growth (markdown/images
+      // expanding after the initial scroll) would then compare against that
+      // stale height, `grew` stays false, and we never re-pin to the bottom.
+      lastScrollHeightRef.current = containerRef.current?.scrollHeight ?? 0;
     }
   }, [resetKey]);
 
