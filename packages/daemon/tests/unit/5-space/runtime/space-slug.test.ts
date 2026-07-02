@@ -214,7 +214,7 @@ describe('Migration 61 — slug backfill', () => {
     }>;
 
     expect(rows).toHaveLength(2);
-    expect(rows[0].slug).toBe('neokai-dev');
+    expect(rows[0].slug).toBe('hyperneo-dev');
     expect(rows[1].slug).toBe('my-project');
   });
 

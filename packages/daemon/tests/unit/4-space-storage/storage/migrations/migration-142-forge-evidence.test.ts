@@ -78,7 +78,7 @@ function seedForgeMvpTask(db: BunDatabase): void {
     'space-1',
     GOAL_ID,
     'mission',
-    'Build and harden HyperNeo Forge',
+    'Build and harden NeoKai Forge',
     'Improve Forge',
     null,
     '[]',

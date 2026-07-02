@@ -9819,7 +9819,7 @@ function backfillForgeMvpEvidence(db: BunDatabase): void {
     .get(
       'b2ff245a-98ef-4429-954a-3e7b96366cfa',
       '10612c8d-e412-4169-8429-b48fa4d3e234',
-      'Build and harden HyperNeo Forge',
+      'Build and harden NeoKai Forge',
       'b2ff245a-98ef-4429-954a-3e7b96366cfa'
     ) as { id: string; space_id: string } | undefined;
   if (!scope) return;

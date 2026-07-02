@@ -3,7 +3,7 @@ import { slugify, validateSlug } from '../../../../src/lib/space/slug';
 
 describe('slugify', () => {
   test('converts simple name to lowercase slug', () => {
-    expect(slugify('HyperNeo Dev')).toBe('neokai-dev');
+    expect(slugify('HyperNeo Dev')).toBe('hyperneo-dev');
   });
 
   test('replaces non-alphanumeric characters with hyphens', () => {
@@ -80,7 +80,7 @@ describe('slugify', () => {
 
 describe('validateSlug', () => {
   test('accepts valid slug', () => {
-    expect(validateSlug('neokai-dev')).toBeNull();
+    expect(validateSlug('hyperneo-dev')).toBeNull();
   });
 
   test('accepts single character slug', () => {
