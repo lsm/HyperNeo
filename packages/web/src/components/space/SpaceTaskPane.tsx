@@ -376,6 +376,7 @@ export function SpaceTaskPane({
             label: member?.label ?? spaceAgent?.name ?? formatAgentSlotLabel(agent.name),
             agentName: agent.name,
             nodeExecutionId: nodeExecution?.id,
+            nodeExecutionSessionId: nodeExecution?.agentSessionId ?? undefined,
             nodeName: node.name,
             state: member ? ACTIVITY_STATE_LABELS[member.state] : 'Not started',
           };
@@ -399,6 +400,7 @@ export function SpaceTaskPane({
           label: m.label,
           agentName: m.role,
           nodeExecutionId: m.nodeExecution?.nodeExecutionId,
+          nodeExecutionSessionId: m.sessionId ?? undefined,
           state: ACTIVITY_STATE_LABELS[m.state],
         });
       }
@@ -652,6 +654,16 @@ export function SpaceTaskPane({
       navigateToSpaceTask(navigationSpaceId, taskId, 'thread', true);
     }
   }, [activeView, canShowCanvasTab, navigationSpaceId, taskId]);
+
+  // Ensure node-execution liveness is loaded for thread-view workflow tasks, not
+  // only when the canvas is toggled. The composer target's nodeExecutionSessionId
+  // (the execution's live agentSessionId) is derived from this; without it the
+  // session latch can't detect a detached worker, so opening a task directly in
+  // thread would leave a stale session latched.
+  useEffect(() => {
+    if (!task?.workflowRunId) return;
+    spaceStore.ensureNodeExecutions().catch(() => {});
+  }, [task?.workflowRunId]);
 
   const handleCanvasToggle = useCallback(() => {
     if (!canShowCanvasTab) return;

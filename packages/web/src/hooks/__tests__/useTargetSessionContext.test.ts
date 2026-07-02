@@ -318,6 +318,524 @@ describe('useTargetSessionContext', () => {
     expect(result.current.isStarted).toBe(true);
   });
 
+  it('latches the resolved session across transient activity gaps', async () => {
+    // Regression: composerTargets (nodeExecutions.byRun) and activityMembers
+    // (spaceTaskActivity.byTask) are independent LiveQueries that can momentarily
+    // disagree — e.g. a re-snapshot landing with the node-agent member omitted for
+    // a tick. Without latching, targetSessionId flips to null, which makes
+    // useInputDraft clobber + reload the stale server draft, restoring text the
+    // user just deleted. The resolved session must stay latched until the target
+    // genuinely changes.
+    const coderMember: SpaceTaskActivityMember = {
+      id: 'm1',
+      sessionId: 'coder-session',
+      kind: 'node_agent',
+      label: 'Coder',
+      role: 'coder',
+      state: 'active',
+      processingStatus: 'idle',
+      messageCount: 0,
+      nodeExecution: {
+        nodeExecutionId: 'ne-1',
+        nodeId: 'n1',
+        agentName: 'coder',
+        status: 'in_progress',
+      },
+    };
+    const target = {
+      ...coderTarget,
+      nodeExecutionId: 'ne-1',
+      nodeExecutionSessionId: 'coder-session',
+    };
+
+    const { result, rerender } = renderHook(
+      (props: { members: SpaceTaskActivityMember[] }) =>
+        useTargetSessionContext({
+          taskId: 'task-1',
+          targets: [target],
+          selectedTarget: target,
+          activityMembers: props.members,
+        }),
+      { initialProps: { members: [coderMember] as SpaceTaskActivityMember[] } }
+    );
+
+    await waitFor(() => {
+      expect(result.current.targetSessionId).toBe('coder-session');
+    });
+
+    // Transient resolution gap — member list momentarily empty. Execution
+    // liveness (nodeExecutionSessionId) still reports the live session, so the
+    // latch holds and the composer doesn't clobber + reload the draft.
+    rerender({ members: [] });
+    expect(result.current.targetSessionId).toBe('coder-session');
+    expect(result.current.isStarted).toBe(true);
+
+    // Member reappears — still the same session, no spurious reload.
+    rerender({ members: [coderMember] });
+    expect(result.current.targetSessionId).toBe('coder-session');
+  });
+
+  it('does not latch before execution liveness loads (loading window)', async () => {
+    // If nodeExecutions hasn't loaded yet (e.g. the task thread was opened
+    // directly), nodeExecutionSessionId is undefined. The latch must not be set
+    // — it couldn't be refuted on detach — so when the activity member later
+    // drops the target resolves to null instead of resurrecting a stale session.
+    const coderMember: SpaceTaskActivityMember = {
+      id: 'm1',
+      sessionId: 'coder-session',
+      kind: 'node_agent',
+      label: 'Coder',
+      role: 'coder',
+      state: 'active',
+      processingStatus: 'idle',
+      messageCount: 0,
+    };
+
+    const { result, rerender } = renderHook(
+      (props: { members: SpaceTaskActivityMember[] }) =>
+        useTargetSessionContext({
+          taskId: 'task-1',
+          targets: [coderTarget],
+          selectedTarget: coderTarget,
+          activityMembers: props.members,
+        }),
+      { initialProps: { members: [coderMember] as SpaceTaskActivityMember[] } }
+    );
+
+    await waitFor(() => {
+      expect(result.current.targetSessionId).toBe('coder-session');
+    });
+
+    // Activity member drops before liveness loaded — nothing latched, resolves null.
+    rerender({ members: [] });
+    expect(result.current.targetSessionId).toBeNull();
+  });
+
+  it('treats the target as unresolved when activity lags the execution session', async () => {
+    // Recovery race: nodeExecutions.byRun already reports the fresh session B,
+    // but spaceTaskActivity.byTask still carries the stale member A. The stale A
+    // must not be returned as the target session on that render.
+    const memberA: SpaceTaskActivityMember = {
+      id: 'm1',
+      sessionId: 'coder-session',
+      kind: 'node_agent',
+      label: 'Coder',
+      role: 'coder',
+      state: 'active',
+      processingStatus: 'idle',
+      messageCount: 0,
+      nodeExecution: {
+        nodeExecutionId: 'ne-1',
+        nodeId: 'n1',
+        agentName: 'coder',
+        status: 'in_progress',
+      },
+    };
+    const target = {
+      ...coderTarget,
+      nodeExecutionId: 'ne-1',
+      nodeExecutionSessionId: 'coder-session-2',
+    };
+
+    const { result } = renderHook(() =>
+      useTargetSessionContext({
+        taskId: 'task-1',
+        targets: [target],
+        selectedTarget: target,
+        activityMembers: [memberA],
+      })
+    );
+
+    expect(result.current.targetSessionId).toBeNull();
+  });
+
+  it('treats a loaded execution with no live session as detached', async () => {
+    // nodeExecutionId present but nodeExecutionSessionId undefined means the
+    // execution row is loaded and reports no live agentSessionId — the worker
+    // detached. A stale activity member still present must NOT be treated as
+    // consistent (the trust signal is nodeExecutionLoaded, not execSessionId).
+    const staleMember: SpaceTaskActivityMember = {
+      id: 'm1',
+      sessionId: 'coder-session',
+      kind: 'node_agent',
+      label: 'Coder',
+      role: 'coder',
+      state: 'active',
+      processingStatus: 'idle',
+      messageCount: 0,
+      nodeExecution: {
+        nodeExecutionId: 'ne-1',
+        nodeId: 'n1',
+        agentName: 'coder',
+        status: 'in_progress',
+      },
+    };
+    const target = {
+      ...coderTarget,
+      nodeExecutionId: 'ne-1',
+      // nodeExecutionSessionId intentionally absent — loaded but detached.
+    };
+
+    const { result } = renderHook(() =>
+      useTargetSessionContext({
+        taskId: 'task-1',
+        targets: [target],
+        selectedTarget: target,
+        activityMembers: [staleMember],
+      })
+    );
+
+    expect(result.current.targetSessionId).toBeNull();
+    expect(result.current.isStarted).toBe(false);
+  });
+
+  it('resets the latch when switching to a genuinely different target', async () => {
+    const coderMember: SpaceTaskActivityMember = {
+      id: 'm1',
+      sessionId: 'coder-session',
+      kind: 'node_agent',
+      label: 'Coder',
+      role: 'coder',
+      state: 'active',
+      processingStatus: 'idle',
+      messageCount: 0,
+    };
+    const reviewerTarget = {
+      id: 'node:n1:reviewer',
+      kind: 'node_agent' as const,
+      label: 'Reviewer',
+      agentName: 'reviewer',
+    };
+
+    const { result, rerender } = renderHook(
+      (props: { target: typeof coderTarget | typeof reviewerTarget }) =>
+        useTargetSessionContext({
+          taskId: 'task-1',
+          targets: [coderTarget, reviewerTarget],
+          selectedTarget: props.target,
+          activityMembers: [coderMember],
+        }),
+      { initialProps: { target: coderTarget } }
+    );
+
+    await waitFor(() => {
+      expect(result.current.targetSessionId).toBe('coder-session');
+    });
+
+    // Switch to a different, not-yet-started target — must NOT inherit coder's
+    // latched session.
+    rerender({ target: reviewerTarget });
+    expect(result.current.targetSessionId).toBeNull();
+    expect(result.current.isStarted).toBe(false);
+  });
+
+  it('does not leak the latched session across a task switch with a reused target id', async () => {
+    // Regression: SpaceTaskPane stays mounted across task switches and workflow
+    // target ids are reused across tasks (node:<nodeId>:<agentName>). Without
+    // task-scoping the latch, selecting a second task whose activity hasn't
+    // loaded yet would inherit the first task's coder session — marking an
+    // unstarted agent as started and wiring its draft/model state to the wrong
+    // task's session.
+    const task1CoderMember: SpaceTaskActivityMember = {
+      id: 'm1',
+      sessionId: 'task1-coder-session',
+      kind: 'node_agent',
+      label: 'Coder',
+      role: 'coder',
+      state: 'active',
+      processingStatus: 'idle',
+      messageCount: 0,
+    };
+    const task2CoderMember: SpaceTaskActivityMember = {
+      id: 'm2',
+      sessionId: 'task2-coder-session',
+      kind: 'node_agent',
+      label: 'Coder',
+      role: 'coder',
+      state: 'active',
+      processingStatus: 'idle',
+      messageCount: 0,
+    };
+
+    const { result, rerender } = renderHook(
+      (props: { taskId: string; members: SpaceTaskActivityMember[] }) =>
+        useTargetSessionContext({
+          taskId: props.taskId,
+          targets: [coderTarget],
+          selectedTarget: coderTarget,
+          activityMembers: props.members,
+        }),
+      { initialProps: { taskId: 'task-1', members: [task1CoderMember] } }
+    );
+
+    await waitFor(() => {
+      expect(result.current.targetSessionId).toBe('task1-coder-session');
+    });
+
+    // Switch to task-2 — same reused target id, activity not loaded yet.
+    // Must NOT inherit task-1's latched session.
+    rerender({ taskId: 'task-2', members: [] });
+    expect(result.current.targetSessionId).toBeNull();
+    expect(result.current.isStarted).toBe(false);
+
+    // Task-2 activity arrives with its own session — resolves cleanly, no leak.
+    rerender({ taskId: 'task-2', members: [task2CoderMember] });
+    await waitFor(() => {
+      expect(result.current.targetSessionId).toBe('task2-coder-session');
+    });
+  });
+
+  it('clears the latch when the worker execution detaches (live agentSessionId gone)', async () => {
+    // Regression: when a worker fails and is detached,
+    // detachSessionFromAllExecutions sets the node_execution row's
+    // agentSessionId to null. NODE_EXECUTIONS_BY_RUN_SQL is NOT filtered by
+    // `agent_session_id IS NOT NULL`, so the execution (and nodeExecutionId)
+    // STAYS in composerTargets — only nodeExecutionSessionId drops to
+    // undefined, while spaceTaskActivity.byTask (filtered) drops the member.
+    // resolvedSessionId becomes null but the latch must NOT keep returning the
+    // canceled session; the composer should treat the agent as not-started
+    // (preconfiguration enabled) until recovery spawns a fresh session.
+    const attachedMember: SpaceTaskActivityMember = {
+      id: 'm1',
+      sessionId: 'coder-session',
+      kind: 'node_agent',
+      label: 'Coder',
+      role: 'coder',
+      state: 'active',
+      processingStatus: 'idle',
+      messageCount: 0,
+      nodeExecution: {
+        nodeExecutionId: 'ne-1',
+        nodeId: 'n1',
+        agentName: 'coder',
+        status: 'in_progress',
+      },
+    };
+    type DetachTarget = {
+      id: string;
+      kind: 'node_agent';
+      label: string;
+      agentName: string;
+      nodeExecutionId?: string;
+      nodeExecutionSessionId?: string;
+    };
+    const attachedTarget: DetachTarget = {
+      id: 'node:n1:coder',
+      kind: 'node_agent',
+      label: 'Coder',
+      agentName: 'coder',
+      nodeExecutionId: 'ne-1',
+      nodeExecutionSessionId: 'coder-session',
+    };
+
+    const { result, rerender } = renderHook(
+      (props: { target: DetachTarget; members: SpaceTaskActivityMember[] }) =>
+        useTargetSessionContext({
+          taskId: 'task-1',
+          targets: [props.target],
+          selectedTarget: props.target,
+          activityMembers: props.members,
+        }),
+      { initialProps: { target: attachedTarget, members: [attachedMember] } }
+    );
+
+    await waitFor(() => {
+      expect(result.current.targetSessionId).toBe('coder-session');
+    });
+
+    // Worker detaches: nodeExecutionId stays (execution still in
+    // composerTargets) but its live agentSessionId is cleared, and the activity
+    // member disappears. The latch must drop the stale session.
+    rerender({
+      target: { ...attachedTarget, nodeExecutionSessionId: undefined },
+      members: [],
+    });
+    expect(result.current.targetSessionId).toBeNull();
+    expect(result.current.isStarted).toBe(false);
+
+    // Recovery spawns a fresh session under the same execution id — resolves
+    // cleanly to the new session, no stale leak.
+    const recoveredMember: SpaceTaskActivityMember = {
+      id: 'm2',
+      sessionId: 'coder-session-2',
+      kind: 'node_agent',
+      label: 'Coder',
+      role: 'coder',
+      state: 'active',
+      processingStatus: 'idle',
+      messageCount: 0,
+      nodeExecution: {
+        nodeExecutionId: 'ne-1',
+        nodeId: 'n1',
+        agentName: 'coder',
+        status: 'in_progress',
+      },
+    };
+    rerender({
+      target: { ...attachedTarget, nodeExecutionSessionId: 'coder-session-2' },
+      members: [recoveredMember],
+    });
+    await waitFor(() => {
+      expect(result.current.targetSessionId).toBe('coder-session-2');
+    });
+  });
+
+  it('holds the latch across a transient member gap while the live agentSessionId is unchanged', async () => {
+    // Complement to the detach case: a transient desync (member momentarily
+    // absent) must STILL hold the latch, because nodeExecutionSessionId keeps
+    // reporting the same live session. Only a real detach (live session gone)
+    // clears it. This is the deleted-text fix — without holding, the null flip
+    // would make useInputDraft restore deleted text.
+    const coderMember: SpaceTaskActivityMember = {
+      id: 'm1',
+      sessionId: 'coder-session',
+      kind: 'node_agent',
+      label: 'Coder',
+      role: 'coder',
+      state: 'active',
+      processingStatus: 'idle',
+      messageCount: 0,
+      nodeExecution: {
+        nodeExecutionId: 'ne-1',
+        nodeId: 'n1',
+        agentName: 'coder',
+        status: 'in_progress',
+      },
+    };
+    type LiveTarget = {
+      id: string;
+      kind: 'node_agent';
+      label: string;
+      agentName: string;
+      nodeExecutionId?: string;
+      nodeExecutionSessionId?: string;
+    };
+    const target: LiveTarget = {
+      id: 'node:n1:coder',
+      kind: 'node_agent',
+      label: 'Coder',
+      agentName: 'coder',
+      nodeExecutionId: 'ne-1',
+      nodeExecutionSessionId: 'coder-session',
+    };
+
+    const { result, rerender } = renderHook(
+      (props: { members: SpaceTaskActivityMember[] }) =>
+        useTargetSessionContext({
+          taskId: 'task-1',
+          targets: [target],
+          selectedTarget: target,
+          activityMembers: props.members,
+        }),
+      { initialProps: { members: [coderMember] } }
+    );
+
+    await waitFor(() => {
+      expect(result.current.targetSessionId).toBe('coder-session');
+    });
+
+    // Transient gap: member list momentarily empty, but nodeExecutionSessionId
+    // still reports the same live session. Latch must hold.
+    rerender({ members: [] });
+    expect(result.current.targetSessionId).toBe('coder-session');
+    expect(result.current.isStarted).toBe(true);
+  });
+
+  it('does not latch a stale activity session during a worker-recovery race', async () => {
+    // Regression: nodeExecutions.byRun (lighter) can advance to the new session
+    // before the heavier spaceTaskActivity.byTask snapshot drops the old member,
+    // so resolvedSessionId can momentarily lag nodeExecutionSessionId. Latching
+    // the stale activity session would resurrect it on the next activity gap.
+    type RaceTarget = {
+      id: string;
+      kind: 'node_agent';
+      label: string;
+      agentName: string;
+      nodeExecutionId?: string;
+      nodeExecutionSessionId?: string;
+    };
+    const target: RaceTarget = {
+      id: 'node:n1:coder',
+      kind: 'node_agent',
+      label: 'Coder',
+      agentName: 'coder',
+      nodeExecutionId: 'ne-1',
+      nodeExecutionSessionId: 'coder-session',
+    };
+    const memberA: SpaceTaskActivityMember = {
+      id: 'm1',
+      sessionId: 'coder-session',
+      kind: 'node_agent',
+      label: 'Coder',
+      role: 'coder',
+      state: 'active',
+      processingStatus: 'idle',
+      messageCount: 0,
+      nodeExecution: {
+        nodeExecutionId: 'ne-1',
+        nodeId: 'n1',
+        agentName: 'coder',
+        status: 'in_progress',
+      },
+    };
+
+    const { result, rerender } = renderHook(
+      (props: { target: RaceTarget; members: SpaceTaskActivityMember[] }) =>
+        useTargetSessionContext({
+          taskId: 'task-1',
+          targets: [props.target],
+          selectedTarget: props.target,
+          activityMembers: props.members,
+        }),
+      { initialProps: { target, members: [memberA] } }
+    );
+
+    await waitFor(() => {
+      expect(result.current.targetSessionId).toBe('coder-session');
+    });
+
+    // Execution advances to the fresh session, but the activity snapshot still
+    // reports the stale member. The stale activity session must NOT be latched
+    // against the new execution session.
+    rerender({
+      target: { ...target, nodeExecutionSessionId: 'coder-session-2' },
+      members: [memberA],
+    });
+
+    // Stale member drops before the fresh one arrives. The latch must not
+    // resurrect the canceled 'coder-session'.
+    rerender({
+      target: { ...target, nodeExecutionSessionId: 'coder-session-2' },
+      members: [],
+    });
+    expect(result.current.targetSessionId).toBeNull();
+
+    // Fresh session's member arrives — resolves cleanly.
+    const memberB: SpaceTaskActivityMember = {
+      id: 'm2',
+      sessionId: 'coder-session-2',
+      kind: 'node_agent',
+      label: 'Coder',
+      role: 'coder',
+      state: 'active',
+      processingStatus: 'idle',
+      messageCount: 0,
+      nodeExecution: {
+        nodeExecutionId: 'ne-1',
+        nodeId: 'n1',
+        agentName: 'coder',
+        status: 'in_progress',
+      },
+    };
+    rerender({
+      target: { ...target, nodeExecutionSessionId: 'coder-session-2' },
+      members: [memberB],
+    });
+    await waitFor(() => {
+      expect(result.current.targetSessionId).toBe('coder-session-2');
+    });
+  });
+
   it('marks not-yet-started agent as isStarted=false', async () => {
     const notStartedTarget = {
       id: 'node:n1:reviewer',
@@ -891,6 +1409,100 @@ describe('useTargetSessionContext', () => {
 
     expect(mockRequest).toHaveBeenCalledWith('session.thinking.set', {
       sessionId: 'reviewer-session',
+      level: 'think16k',
+    });
+  });
+
+  it('does not auto-apply preconfiguration to a stale activity session', async () => {
+    // Recovery race / detach: the activity snapshot carries a stale member while
+    // the execution's live agentSessionId is gone (nodeExecutionId loaded but
+    // nodeExecutionSessionId undefined). Auto-apply must skip — no RPCs to the
+    // canceled session, and the target stays unmarked so the fresh session later
+    // receives the settings.
+    type StaleTarget = {
+      id: string;
+      kind: 'node_agent';
+      label: string;
+      agentName: string;
+      nodeExecutionId?: string;
+      nodeExecutionSessionId?: string;
+    };
+    const target: StaleTarget = {
+      id: 'node:n1:coder',
+      kind: 'node_agent',
+      label: 'Coder',
+      agentName: 'coder',
+      nodeExecutionId: 'ne-1',
+      // nodeExecutionSessionId absent — loaded but detached.
+    };
+    const model: ModelInfo = {
+      id: 'claude-opus-4-5',
+      name: 'Opus 4.5',
+      family: 'opus',
+      provider: 'anthropic',
+      alias: 'opus',
+      contextWindow: 200000,
+      description: '',
+      releaseDate: '',
+      available: true,
+    };
+
+    const { result, rerender } = renderHook(
+      (props: { target: StaleTarget; members: SpaceTaskActivityMember[] }) =>
+        useTargetSessionContext({
+          taskId: 'task-1',
+          targets: [props.target],
+          selectedTarget: props.target,
+          activityMembers: props.members,
+        }),
+      { initialProps: { target, members: [] as SpaceTaskActivityMember[] } }
+    );
+
+    // Pre-configure while the agent is not started.
+    await act(async () => {
+      await result.current.switchModel(model);
+    });
+    await act(async () => {
+      await result.current.setThinkingLevel('think16k');
+    });
+
+    // Stale member appears for a loaded-but-detached execution.
+    const staleMember: SpaceTaskActivityMember = {
+      id: 'm1',
+      sessionId: 'coder-session',
+      kind: 'node_agent',
+      label: 'Coder',
+      role: 'coder',
+      state: 'active',
+      processingStatus: 'idle',
+      messageCount: 0,
+      nodeExecution: {
+        nodeExecutionId: 'ne-1',
+        nodeId: 'n1',
+        agentName: 'coder',
+        status: 'in_progress',
+      },
+    };
+    rerender({ target, members: [staleMember] });
+
+    expect(mockRequest).not.toHaveBeenCalledWith('session.model.switch', expect.anything());
+    expect(mockRequest).not.toHaveBeenCalledWith('session.thinking.set', expect.anything());
+
+    // Once liveness lands and agrees with the live session, auto-apply fires —
+    // proving the target was not prematurely marked applied during the stale window.
+    rerender({
+      target: { ...target, nodeExecutionSessionId: 'coder-session' },
+      members: [staleMember],
+    });
+    await waitFor(() => {
+      expect(mockRequest).toHaveBeenCalledWith('session.model.switch', {
+        sessionId: 'coder-session',
+        model: 'claude-opus-4-5',
+        provider: 'anthropic',
+      });
+    });
+    expect(mockRequest).toHaveBeenCalledWith('session.thinking.set', {
+      sessionId: 'coder-session',
       level: 'think16k',
     });
   });

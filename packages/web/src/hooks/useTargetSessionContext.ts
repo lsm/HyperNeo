@@ -17,6 +17,8 @@ export interface TaskComposerTarget {
   label: string;
   agentName?: string;
   nodeExecutionId?: string;
+  /** Live agentSessionId of the backing node execution (from nodeExecutions.byRun). */
+  nodeExecutionSessionId?: string;
   nodeName?: string;
   state?: string;
 }
@@ -96,10 +98,79 @@ export function useTargetSessionContext({
   activityMembers: SpaceTaskActivityMember[];
   defaultAgentModels?: Map<string, string>;
 }): UseTargetSessionContextResult {
-  const targetSessionId = useMemo(
+  // Resolve the selected target to its backing session, then LATCH the result
+  // per target. `composerTargets` (from the `nodeExecutions.byRun` LiveQuery)
+  // and `activityMembers` (from `spaceTaskActivity.byTask`) are two independent
+  // queries that can land on different ticks; while one is momentarily ahead of
+  // the other — or during a re-snapshot that briefly omits the node-agent member
+  // — `resolveTargetSessionId` returns null even though the session still exists.
+  //
+  // Without latching, that null flip propagates to `useInputDraft`'s
+  // session-change effect, which clobbers the in-memory draft to '' and reloads
+  // the (now stale) server draft — restoring text the user just deleted, or
+  // leaving a stray fragment. Latching rides out the transient gap so the
+  // resolved session stays stable until the target genuinely changes.
+  const resolvedSessionId = useMemo(
     () => resolveTargetSessionId(selectedTarget, activityMembers),
     [selectedTarget, activityMembers]
   );
+  // Latch the resolved session per (taskId, target) and hold it across a
+  // transient resolution gap — but invalidate it the moment the backing
+  // execution no longer reports that session as live.
+  //
+  // - taskId scoping: `SpaceTaskPane` stays mounted across task switches (no
+  //   key=taskId on its render site) and target ids are reused across tasks
+  //   (`node:<nodeId>:<agentName>`), so without taskId the prior task's session
+  //   would leak into a freshly-selected task whose activity hasn't loaded.
+  // - liveness via nodeExecutionSessionId: this is the execution's live
+  //   `agentSessionId` from `nodeExecutions.byRun`. That query is NOT filtered by
+  //   `agent_session_id IS NOT NULL`, so the execution (and nodeExecutionId)
+  //   stays in composerTargets even after a worker is detached — but
+  //   `detachSessionFromAllExecutions` sets the row's agentSessionId to null, so
+  //   nodeExecutionSessionId drops while `spaceTaskActivity.byTask` (which DOES
+  //   filter agent_session_id IS NOT NULL) drops the member. Holding the latch
+  //   only while nodeExecutionSessionId still matches the latched session rides
+  //   out the transient member desync (nodeExecutions.byRun still carries the
+  //   live session id) yet clears immediately on detach, so a recovering agent is
+  //   treated as not-started instead of staying wired to a canceled stale
+  //   session.
+  const latchedSessionRef = useRef<{
+    key: string;
+    sessionId: string;
+    execSessionId?: string;
+  } | null>(null);
+  const latchKey = `${taskId}:${selectedTarget?.id ?? ''}`;
+  const latched = latchedSessionRef.current;
+  const execSessionId = selectedTarget?.nodeExecutionSessionId;
+  // The latch is valid while the target is unchanged AND the backing execution
+  // still reports the latched session as live. On detach,
+  // detachSessionFromAllExecutions nulls agentSessionId, so execSessionId drops
+  // (the activity member is already gone), breaking the match. taskId in the key
+  // prevents leaks across task switches — SpaceTaskPane stays mounted and target
+  // ids are reused across tasks.
+  const latchValid =
+    latched?.key === latchKey &&
+    (latched.execSessionId === undefined || latched.execSessionId === execSessionId);
+  const latchedSessionId = resolvedSessionId ?? (latchValid ? latched!.sessionId : null);
+  // A resolved activity session that disagrees with the execution's live session
+  // is stale: during a worker-recovery race nodeExecutions.byRun advances to the
+  // new session before the heavier spaceTaskActivity.byTask snapshot drops the old
+  // member, so resolvedSessionId momentarily lags execSessionId. Don't hand it to
+  // the composer — treat the target as unresolved instead of wiring draft/model
+  // state to the canceled session. The trust signal is nodeExecutionLoaded, not
+  // execSessionId: once the execution row is loaded, a missing execSessionId
+  // means the worker detached (agentSessionId cleared), not that liveness hasn't
+  // arrived — so a stale activity member must NOT be treated as consistent.
+  const nodeExecutionLoaded = selectedTarget?.nodeExecutionId !== undefined;
+  const resolvedConsistent = !nodeExecutionLoaded || execSessionId === resolvedSessionId;
+  let targetSessionId = resolvedSessionId && !resolvedConsistent ? null : latchedSessionId;
+  // Only latch when execution liveness is present (execSessionId defined), so the
+  // captured id can always refute the latch on detach. Latching before
+  // nodeExecutions loads would capture an undefined exec id that can never be
+  // contradicted, leaving a detached worker's stale session latched.
+  if (resolvedSessionId && resolvedConsistent && execSessionId !== undefined) {
+    latchedSessionRef.current = { key: latchKey, sessionId: resolvedSessionId, execSessionId };
+  }
   const isStarted = !!targetSessionId;
 
   // Use the shared model switcher for the target session.
@@ -311,6 +382,15 @@ export function useTargetSessionContext({
 
       const sessionId = resolveTargetSessionId(target, activityMembers);
       if (!sessionId) continue;
+      // Skip auto-apply when the resolved activity session is stale relative to
+      // the execution's live session (recovery race, or a loaded-but-detached
+      // execution): otherwise the RPCs go to the canceled session and the target
+      // is marked applied, so the fresh session never receives the settings.
+      const targetExecSessionId = target.nodeExecutionSessionId;
+      const targetNodeExecutionLoaded = target.nodeExecutionId !== undefined;
+      const targetResolvedConsistent =
+        !targetNodeExecutionLoaded || targetExecSessionId === sessionId;
+      if (!targetResolvedConsistent) continue;
 
       const promises: Promise<unknown>[] = [];
 
