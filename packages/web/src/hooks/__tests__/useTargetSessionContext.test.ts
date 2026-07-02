@@ -318,6 +318,90 @@ describe('useTargetSessionContext', () => {
     expect(result.current.isStarted).toBe(true);
   });
 
+  it('latches the resolved session across transient activity gaps', async () => {
+    // Regression: composerTargets (nodeExecutions.byRun) and activityMembers
+    // (spaceTaskActivity.byTask) are independent LiveQueries that can momentarily
+    // disagree — e.g. a re-snapshot landing with the node-agent member omitted for
+    // a tick. Without latching, targetSessionId flips to null, which makes
+    // useInputDraft clobber + reload the stale server draft, restoring text the
+    // user just deleted. The resolved session must stay latched until the target
+    // genuinely changes.
+    const coderMember: SpaceTaskActivityMember = {
+      id: 'm1',
+      sessionId: 'coder-session',
+      kind: 'node_agent',
+      label: 'Coder',
+      role: 'coder',
+      state: 'active',
+      processingStatus: 'idle',
+      messageCount: 0,
+    };
+
+    const { result, rerender } = renderHook(
+      (props: { members: SpaceTaskActivityMember[] }) =>
+        useTargetSessionContext({
+          taskId: 'task-1',
+          targets: [coderTarget],
+          selectedTarget: coderTarget,
+          activityMembers: props.members,
+        }),
+      { initialProps: { members: [coderMember] as SpaceTaskActivityMember[] } }
+    );
+
+    await waitFor(() => {
+      expect(result.current.targetSessionId).toBe('coder-session');
+    });
+
+    // Transient resolution gap — member list momentarily empty.
+    rerender({ members: [] });
+    expect(result.current.targetSessionId).toBe('coder-session');
+    expect(result.current.isStarted).toBe(true);
+
+    // Member reappears — still the same session, no spurious reload.
+    rerender({ members: [coderMember] });
+    expect(result.current.targetSessionId).toBe('coder-session');
+  });
+
+  it('resets the latch when switching to a genuinely different target', async () => {
+    const coderMember: SpaceTaskActivityMember = {
+      id: 'm1',
+      sessionId: 'coder-session',
+      kind: 'node_agent',
+      label: 'Coder',
+      role: 'coder',
+      state: 'active',
+      processingStatus: 'idle',
+      messageCount: 0,
+    };
+    const reviewerTarget = {
+      id: 'node:n1:reviewer',
+      kind: 'node_agent' as const,
+      label: 'Reviewer',
+      agentName: 'reviewer',
+    };
+
+    const { result, rerender } = renderHook(
+      (props: { target: typeof coderTarget | typeof reviewerTarget }) =>
+        useTargetSessionContext({
+          taskId: 'task-1',
+          targets: [coderTarget, reviewerTarget],
+          selectedTarget: props.target,
+          activityMembers: [coderMember],
+        }),
+      { initialProps: { target: coderTarget } }
+    );
+
+    await waitFor(() => {
+      expect(result.current.targetSessionId).toBe('coder-session');
+    });
+
+    // Switch to a different, not-yet-started target — must NOT inherit coder's
+    // latched session.
+    rerender({ target: reviewerTarget });
+    expect(result.current.targetSessionId).toBeNull();
+    expect(result.current.isStarted).toBe(false);
+  });
+
   it('marks not-yet-started agent as isStarted=false', async () => {
     const notStartedTarget = {
       id: 'node:n1:reviewer',

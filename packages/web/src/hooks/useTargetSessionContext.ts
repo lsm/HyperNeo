@@ -96,10 +96,30 @@ export function useTargetSessionContext({
   activityMembers: SpaceTaskActivityMember[];
   defaultAgentModels?: Map<string, string>;
 }): UseTargetSessionContextResult {
-  const targetSessionId = useMemo(
+  // Resolve the selected target to its backing session, then LATCH the result
+  // per target. `composerTargets` (from the `nodeExecutions.byRun` LiveQuery)
+  // and `activityMembers` (from `spaceTaskActivity.byTask`) are two independent
+  // queries that can land on different ticks; while one is momentarily ahead of
+  // the other — or during a re-snapshot that briefly omits the node-agent member
+  // — `resolveTargetSessionId` returns null even though the session still exists.
+  //
+  // Without latching, that null flip propagates to `useInputDraft`'s
+  // session-change effect, which clobbers the in-memory draft to '' and reloads
+  // the (now stale) server draft — restoring text the user just deleted, or
+  // leaving a stray fragment. Latching rides out the transient gap so the
+  // resolved session stays stable until the target genuinely changes.
+  const resolvedSessionId = useMemo(
     () => resolveTargetSessionId(selectedTarget, activityMembers),
     [selectedTarget, activityMembers]
   );
+  const latchedSessionRef = useRef<{ targetId: string; sessionId: string } | null>(null);
+  const targetKey = selectedTarget?.id ?? '';
+  let targetSessionId = resolvedSessionId;
+  if (resolvedSessionId) {
+    latchedSessionRef.current = { targetId: targetKey, sessionId: resolvedSessionId };
+  } else if (latchedSessionRef.current?.targetId === targetKey) {
+    targetSessionId = latchedSessionRef.current.sessionId;
+  }
   const isStarted = !!targetSessionId;
 
   // Use the shared model switcher for the target session.
