@@ -36,6 +36,17 @@ export interface UseAutoScrollOptions {
   isInitialLoad?: boolean;
   /** Whether older messages are being loaded (prevents scroll during load) */
   loadingOlder?: boolean;
+  /**
+   * Identity key for the scrollable context (e.g. `sessionId` or `taskId`).
+   * When this changes, the mount-scroll latch and message-count tracker are
+   * reset so the next non-empty render is treated as a fresh "visit" and
+   * scrolled to the bottom. Needed because a parent can swap the underlying
+   * data in place (cached session/task navigation) without unmounting this
+   * component and without the message count passing through 0 — in that case
+   * the hook would otherwise keep the previous context's stale scroll
+   * position instead of snapping to the latest messages.
+   */
+  resetKey?: string | null;
   /** Distance from bottom to consider "near bottom" (default: 200px) */
   nearBottomThreshold?: number;
 }
@@ -59,6 +70,7 @@ export function useAutoScroll({
   messageCount,
   isInitialLoad = false,
   loadingOlder = false,
+  resetKey,
   nearBottomThreshold = 200,
 }: UseAutoScrollOptions): UseAutoScrollResult {
   const [showScrollButton, setShowScrollButton] = useState(false);
@@ -224,6 +236,25 @@ export function useAutoScroll({
     }
     prevLoadingOlderRef.current = loadingOlder;
   }, [loadingOlder, messageCount]);
+
+  // Reset the mount-scroll latch and message-count tracker when the scrollable
+  // context changes (e.g. a parent swaps `sessionId`/`taskId` in place without
+  // remounting). Declared as a useLayoutEffect BEFORE the auto-scroll effect
+  // below so the refs are reset before that effect reads them on the same
+  // commit. Without this, cached navigation where `messageCount` jumps
+  // directly from one non-zero value to another (e.g. 40 → 25) without
+  // passing through 0 would leave `hasScrolledOnMountRef` latched true from
+  // the previous context, so the hook would preserve the stale scroll
+  // position instead of snapping to the bottom of the new context.
+  const prevResetKeyRef = useRef<string | null | undefined>(resetKey);
+  useLayoutEffect(() => {
+    if (prevResetKeyRef.current !== resetKey) {
+      prevResetKeyRef.current = resetKey;
+      hasScrolledOnMountRef.current = false;
+      prevMessageCountRef.current = 0;
+      isNearBottomRef.current = true;
+    }
+  }, [resetKey]);
 
   // Auto-scroll on new messages.
   //

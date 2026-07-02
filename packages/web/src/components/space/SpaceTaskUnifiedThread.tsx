@@ -99,6 +99,10 @@ export function SpaceTaskUnifiedThread({
     endRef: messagesEndRef,
     enabled: autoScrollEnabled,
     messageCount: rows.length,
+    // This thread renders without a `key`, so switching tasks keeps the
+    // component mounted while rows swap in place. Treat each task as a fresh
+    // scroll context so it snaps to the latest thread row.
+    resetKey: taskId,
   });
 
   useEffect(() => {

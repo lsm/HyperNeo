@@ -707,6 +707,46 @@ describe('useAutoScroll', () => {
       expect(containerRef.current!.scrollTop).toBe(1200);
       vi.useRealTimers();
     });
+
+    it('should reset to bottom when resetKey changes without messageCount dropping to 0', () => {
+      // Reproduces the cached-navigation bug: the component stays mounted
+      // across a `resetKey` (sessionId/taskId) change, and the store swaps the
+      // underlying messages directly (e.g. 40 → 25) with no intermediate
+      // empty state. Without `resetKey`, hasScrolledOnMountRef stays latched
+      // true from the previous context and the hook preserves the stale scroll
+      // position instead of snapping to the bottom of the new context.
+      const { containerRef, endRef } = createMockRefs();
+
+      const { rerender } = renderHook(
+        ({ messageCount, resetKey }) =>
+          useAutoScroll({
+            containerRef,
+            endRef,
+            enabled: true,
+            messageCount,
+            resetKey,
+          }),
+        {
+          initialProps: { messageCount: 40, resetKey: 'session-a' },
+        }
+      );
+
+      // Session A: initial mount-scroll fires.
+      expect(containerRef.current!.scrollTop).toBe(1000);
+
+      // User has scrolled up / a prior render left the container away from
+      // the bottom, then navigates to a cached session B whose messages swap
+      // in directly — messageCount changes 40 → 25, never passing through 0.
+      containerRef.current!.scrollTop = 250;
+      rerender({ messageCount: 25, resetKey: 'session-b' });
+
+      // resetKey change must be treated as a fresh visit: snap to bottom.
+      expect(containerRef.current!.scrollTop).toBe(1000);
+
+      // Subsequent new content in session B uses the normal hasNewContent path.
+      rerender({ messageCount: 26, resetKey: 'session-b' });
+      expect(containerRef.current!.scrollTop).toBe(1000);
+    });
   });
 
   describe('scroll position detection', () => {
