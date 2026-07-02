@@ -50,7 +50,7 @@ jobs:
           VERSION="${{ steps.version.outputs.version }}"
           echo "Checking package versions match tag version: $VERSION"
           MISMATCHES=()
-          for pkg in npm/neokai packages/cli packages/daemon packages/e2e packages/shared packages/web packages/desktop; do
+          for pkg in npm/hyperneo packages/cli packages/daemon packages/e2e packages/shared packages/web packages/desktop; do
             PKG_VERSION=$(node -p "require('./$pkg/package.json').version")
             if [ "$PKG_VERSION" != "$VERSION" ]; then
               MISMATCHES+=("$pkg/package.json: $PKG_VERSION (expected $VERSION)")
@@ -139,19 +139,19 @@ jobs:
         include:
           - runner: macos-latest
             target: bun-darwin-arm64
-            binary: kai-darwin-arm64
+            binary: hyperneo-darwin-arm64
             smoke: true
           - runner: macos-15-intel
             target: bun-darwin-x64
-            binary: kai-darwin-x64
+            binary: hyperneo-darwin-x64
             smoke: true
           - runner: ubuntu-latest
             target: bun-linux-x64
-            binary: kai-linux-x64
+            binary: hyperneo-linux-x64
             smoke: true
           - runner: ubuntu-latest
             target: bun-linux-arm64
-            binary: kai-linux-arm64
+            binary: hyperneo-linux-arm64
             smoke: false
 
     steps:
@@ -397,13 +397,13 @@ jobs:
       - name: Download release binary artifacts
         uses: actions/download-artifact@v8
         with:
-          pattern: kai-*
+          pattern: hyperneo-*
           path: dist/bin/
 
       - name: Move binaries to expected locations
         run: |
           mkdir -p dist/bin-flat
-          for dir in dist/bin/kai-*; do
+          for dir in dist/bin/hyperneo-*; do
             binary=$(basename "$dir")
             mv "$dir/$binary" "dist/bin-flat/$binary"
             chmod +x "dist/bin-flat/$binary"
@@ -476,15 +476,15 @@ jobs:
 
       - name: Publish main package
         run: |
-          if OUTPUT=$(cd dist/npm/neokai && npm publish --access public --provenance 2>&1); then
+          if OUTPUT=$(cd dist/npm/hyperneo && npm publish --access public --provenance 2>&1); then
             echo "$OUTPUT"
-            echo "neokai published successfully"
+            echo "hyperneo published successfully"
           else
             echo "$OUTPUT"
             if echo "$OUTPUT" | grep -qiE "previously published|cannot publish over|EPUBLISHCONFLICT"; then
-              echo "::warning::neokai already published, skipping"
+              echo "::warning::hyperneo already published, skipping"
             else
-              echo "::error::Failed to publish neokai"
+              echo "::error::Failed to publish hyperneo"
               exit 1
             fi
           fi

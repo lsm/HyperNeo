@@ -81,7 +81,7 @@ bun run build
 
 Under the hood this:
 
-1. Runs `bun run build:sidecar`, which calls `bun run scripts/build-binary.ts --target <bun-target>` from the monorepo root and copies the produced `dist/bin/kai-<arch>` into `src-tauri/binaries/neokai-<rust-target-triple>`.
+1. Runs `bun run build:sidecar`, which calls `bun run scripts/build-binary.ts --target <bun-target>` from the monorepo root and copies the produced `dist/bin/hyperneo-<arch>` into `src-tauri/binaries/neokai-<rust-target-triple>`.
 2. Runs `cargo tauri build`, which embeds that binary as the `externalBin` and produces an installable bundle for the host OS in `src-tauri/target/release/bundle/`.
 
 Cross-target builds use the `build:macos`, `build:macos-intel`, `build:macos-universal`, `build:windows`, `build:linux`, and `build:linux-arm` scripts. They each rebuild the sidecar for the matching bun target before invoking `cargo tauri build --target <triple>`.

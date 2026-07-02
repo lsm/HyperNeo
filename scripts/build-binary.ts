@@ -46,7 +46,7 @@ function run(cmd: string) {
 function outputFileForTarget(target: string): string {
   const platformArch = target.replace('bun-', '');
   const extension = target.includes('windows') ? '.exe' : '';
-  return join(OUTPUT_DIR, `kai-${platformArch}${extension}`);
+  return join(OUTPUT_DIR, `hyperneo-${platformArch}${extension}`);
 }
 
 function verifyBundledDependency(outputPath: string, needle: string): void {

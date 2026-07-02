@@ -52,7 +52,7 @@ bun run scripts/build-binary.ts --target "$BUN_TARGET"
 mkdir -p "$BINARIES_DIR"
 
 # Copy and rename the binary so Tauri's externalBin can find it.
-SOURCE="$NEOKAI_DIR/dist/bin/kai-${BUN_TARGET#bun-}${EXT:-}"
+SOURCE="$NEOKAI_DIR/dist/bin/hyperneo-${BUN_TARGET#bun-}${EXT:-}"
 DEST="$BINARIES_DIR/neokai-$TARGET${EXT:-}"
 
 cp "$SOURCE" "$DEST"

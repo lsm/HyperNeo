@@ -774,18 +774,18 @@ jobs:
         run: bun run scripts/generate-embedded-assets.ts
 
       - name: Compile binary
-        run: bun build --compile --target=bun-linux-x64 --outfile=dist/bin/kai-linux-x64 packages/cli/prod-entry.ts
+        run: bun build --compile --target=bun-linux-x64 --outfile=dist/bin/hyperneo-linux-x64 packages/cli/prod-entry.ts
 
       - name: Smoke test
-        run: bun run scripts/smoke-test.ts ./dist/bin/kai-linux-x64
+        run: bun run scripts/smoke-test.ts ./dist/bin/hyperneo-linux-x64
         env:
           GLM_API_KEY: smoke-test
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v7
         with:
-          name: kai-linux-x64-e2e
-          path: dist/bin/kai-linux-x64
+          name: hyperneo-linux-x64-e2e
+          path: dist/bin/hyperneo-linux-x64
 
   # ============================================
   # DISCOVER TESTS
@@ -917,12 +917,12 @@ jobs:
       - name: Download binary
         uses: actions/download-artifact@v8
         with:
-          name: kai-linux-x64-e2e
+          name: hyperneo-linux-x64-e2e
           path: dist/bin/
 
       - name: Run E2E test (${{ matrix.test.name }})
         run: |
-          chmod +x dist/bin/kai-linux-x64
+          chmod +x dist/bin/hyperneo-linux-x64
           WORKSPACE=$(mktemp -d)
 
           # Get a free port via a short-lived Python socket with SO_REUSEADDR.
@@ -931,7 +931,7 @@ jobs:
           PORT=$(python3 -c 'import socket; s=socket.socket(socket.AF_INET, socket.SOCK_STREAM); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind(("",0)); print(s.getsockname()[1])')
           echo "Reserved port $PORT for binary"
 
-          NEOKAI_WORKSPACE_ROOT="$WORKSPACE" ./dist/bin/kai-linux-x64 --port "$PORT" &
+          NEOKAI_WORKSPACE_ROOT="$WORKSPACE" ./dist/bin/hyperneo-linux-x64 --port "$PORT" &
           BINARY_PID=$!
           trap 'kill $BINARY_PID 2>/dev/null; rm -rf "$WORKSPACE"' EXIT
 

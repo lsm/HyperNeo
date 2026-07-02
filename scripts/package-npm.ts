@@ -30,15 +30,15 @@ console.log(`Packaging npm packages (version ${VERSION})...\n`);
 
 // 1. Create platform-specific packages
 for (const { target, os, cpu } of PLATFORMS) {
-  const pkgName = `@neokai/cli-${target}`;
+  const pkgName = `@hyperneo/cli-${target}`;
   const pkgDir = join(NPM_DIR, `cli-${target}`);
   const binDir = join(pkgDir, 'bin');
 
   mkdirSync(binDir, { recursive: true });
 
   // Copy binary
-  const srcBinary = join(BIN_DIR, `kai-${target}`);
-  const destBinary = join(binDir, 'kai');
+  const srcBinary = join(BIN_DIR, `hyperneo-${target}`);
+  const destBinary = join(binDir, 'hyperneo');
 
   try {
     copyFileSync(srcBinary, destBinary);
@@ -55,10 +55,10 @@ for (const { target, os, cpu } of PLATFORMS) {
       {
         name: pkgName,
         version: VERSION,
-        description: `NeoKai binary for ${os} ${cpu}`,
+        description: `HyperNeo binary for ${os} ${cpu}`,
         os: [os],
         cpu: [cpu],
-        bin: { kai: 'bin/kai' },
+        bin: { hyperneo: 'bin/hyperneo' },
         files: ['bin/'],
         license: 'MIT',
         repository: {
@@ -74,29 +74,29 @@ for (const { target, os, cpu } of PLATFORMS) {
   console.log(`  Created ${pkgName}`);
 }
 
-// 2. Create main neokai package
-const mainDir = join(NPM_DIR, 'neokai');
+// 2. Create main hyperneo package
+const mainDir = join(NPM_DIR, 'hyperneo');
 const mainBinDir = join(mainDir, 'bin');
 mkdirSync(mainBinDir, { recursive: true });
 
 // Copy launcher script
-copyFileSync(join(ROOT, 'npm', 'neokai', 'bin', 'kai.js'), join(mainBinDir, 'kai.js'));
-chmodSync(join(mainBinDir, 'kai.js'), 0o755);
+copyFileSync(join(ROOT, 'npm', 'hyperneo', 'bin', 'hyperneo.js'), join(mainBinDir, 'hyperneo.js'));
+chmodSync(join(mainBinDir, 'hyperneo.js'), 0o755);
 
 // Write main package.json
 const optionalDeps: Record<string, string> = {};
 for (const { target } of PLATFORMS) {
-  optionalDeps[`@neokai/cli-${target}`] = VERSION;
+  optionalDeps[`@hyperneo/cli-${target}`] = VERSION;
 }
 
 writeFileSync(
   join(mainDir, 'package.json'),
   JSON.stringify(
     {
-      name: 'neokai',
+      name: 'hyperneo',
       version: VERSION,
-      description: 'NeoKai - Claude Agent SDK Web Interface',
-      bin: { kai: 'bin/kai.js' },
+      description: 'HyperNeo - Claude Agent SDK Web Interface',
+      bin: { hyperneo: 'bin/hyperneo.js' },
       optionalDependencies: optionalDeps,
       files: ['bin/'],
       license: 'MIT',
@@ -110,10 +110,10 @@ writeFileSync(
   )
 );
 
-console.log(`  Created neokai (main wrapper)`);
+console.log(`  Created hyperneo (main wrapper)`);
 console.log(`\nAll packages created in ${NPM_DIR}`);
 console.log(`\nTo publish, run:`);
 for (const { target } of PLATFORMS) {
   console.log(`  cd dist/npm/cli-${target} && npm publish --access public`);
 }
-console.log(`  cd dist/npm/neokai && npm publish --access public`);
+console.log(`  cd dist/npm/hyperneo && npm publish --access public`);

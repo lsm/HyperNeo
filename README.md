@@ -1,4 +1,4 @@
-# NeoKai
+# HyperNeo
 
 [![CI](https://github.com/lsm/neokai/actions/workflows/main.yml/badge.svg?branch=dev)](https://github.com/lsm/neokai/actions/workflows/main.yml)
 [![Coverage Status](https://coveralls.io/repos/github/lsm/neokai/badge.svg?branch=dev)](https://coveralls.io/github/lsm/neokai?branch=dev)
@@ -9,8 +9,8 @@ Claude Code web UI for coding, life, and anything in between.
 
 <table>
   <tr>
-    <td><img src="docs/screenshot-desktop.png" alt="NeoKai Desktop UI" height="500"></td>
-    <td><img src="docs/screenshot-mobile.jpeg" alt="NeoKai Mobile UI" height="500"></td>
+    <td><img src="docs/screenshot-desktop.png" alt="HyperNeo Desktop UI" height="500"></td>
+    <td><img src="docs/screenshot-mobile.jpeg" alt="HyperNeo Mobile UI" height="500"></td>
   </tr>
 </table>
 
@@ -18,14 +18,14 @@ Claude Code web UI for coding, life, and anything in between.
   <em>Desktop and mobile interfaces showing coordinator mode with multi-agent workflow and task management</em>
 </p>
 
-Run `kai` in any directory to get a full-featured web interface for Claude right in your browser. Manage multiple conversations at once, switch models on the fly, and let the agent read, write, and run code in your project — all from a clean, responsive UI.
+Run `hyperneo` in any directory to get a full-featured web interface for Claude right in your browser. Manage multiple conversations at once, switch models on the fly, and let the agent read, write, and run code in your project — all from a clean, responsive UI.
 
 ## Quick start
 
 ```bash
-npm install -g neokai
+npm install -g hyperneo
 export ANTHROPIC_API_KEY=sk-ant-...
-kai
+hyperneo
 ```
 
 Open `http://localhost:9283` and start a conversation.
@@ -55,12 +55,12 @@ Set one of these environment variables before starting:
 
 OpenRouter models use `provider/model` IDs such as `anthropic/claude-sonnet-4.6` and `openrouter/auto`. See [OpenRouter setup](docs/providers/openrouter-setup.md) for provider details and compatibility notes.
 
-Ollama local and Ollama Cloud models use the native `/api/chat` and `/api/tags` APIs through NeoKai's provider bridge. See [Ollama setup](docs/providers/ollama-setup.md) for local and cloud configuration.
+Ollama local and Ollama Cloud models use the native `/api/chat` and `/api/tags` APIs through HyperNeo's provider bridge. See [Ollama setup](docs/providers/ollama-setup.md) for local and cloud configuration.
 
 ## Usage
 
 ```
-kai [path] [options]
+hyperneo [path] [options]
 ```
 
 | Option | Default | Description |

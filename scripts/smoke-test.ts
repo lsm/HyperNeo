@@ -2,7 +2,7 @@
  * Smoke test for compiled NeoKai binary.
  * Verifies the binary can start, serve web UI, and handle WebSocket RPC calls.
  *
- * Usage: bun run scripts/smoke-test.ts ./dist/bin/kai-darwin-x64
+ * Usage: bun run scripts/smoke-test.ts ./dist/bin/hyperneo-darwin-x64
  */
 
 import { spawn } from 'node:child_process';
@@ -125,7 +125,7 @@ const port = await new Promise<number>((resolve, reject) => {
 });
 
 // Create temp workspace
-const workspace = mkdtempSync(join(tmpdir(), 'neokai-smoke-'));
+const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-smoke-'));
 log(`Binary: ${binaryPath}`);
 log(`Port: ${port}`);
 log(`Workspace: ${workspace}`);

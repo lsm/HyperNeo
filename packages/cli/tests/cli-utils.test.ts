@@ -126,7 +126,7 @@ describe('parseArgs', () => {
 describe('getHelpText', () => {
   test('returns help text containing usage information', () => {
     const helpText = getHelpText();
-    expect(helpText).toContain('NeoKai');
+    expect(helpText).toContain('HyperNeo');
     expect(helpText).toContain('Usage:');
     expect(helpText).toContain('Options:');
   });
