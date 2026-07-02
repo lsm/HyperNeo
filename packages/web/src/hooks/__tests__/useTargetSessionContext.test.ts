@@ -402,6 +402,62 @@ describe('useTargetSessionContext', () => {
     expect(result.current.isStarted).toBe(false);
   });
 
+  it('does not leak the latched session across a task switch with a reused target id', async () => {
+    // Regression: SpaceTaskPane stays mounted across task switches and workflow
+    // target ids are reused across tasks (node:<nodeId>:<agentName>). Without
+    // task-scoping the latch, selecting a second task whose activity hasn't
+    // loaded yet would inherit the first task's coder session — marking an
+    // unstarted agent as started and wiring its draft/model state to the wrong
+    // task's session.
+    const task1CoderMember: SpaceTaskActivityMember = {
+      id: 'm1',
+      sessionId: 'task1-coder-session',
+      kind: 'node_agent',
+      label: 'Coder',
+      role: 'coder',
+      state: 'active',
+      processingStatus: 'idle',
+      messageCount: 0,
+    };
+    const task2CoderMember: SpaceTaskActivityMember = {
+      id: 'm2',
+      sessionId: 'task2-coder-session',
+      kind: 'node_agent',
+      label: 'Coder',
+      role: 'coder',
+      state: 'active',
+      processingStatus: 'idle',
+      messageCount: 0,
+    };
+
+    const { result, rerender } = renderHook(
+      (props: { taskId: string; members: SpaceTaskActivityMember[] }) =>
+        useTargetSessionContext({
+          taskId: props.taskId,
+          targets: [coderTarget],
+          selectedTarget: coderTarget,
+          activityMembers: props.members,
+        }),
+      { initialProps: { taskId: 'task-1', members: [task1CoderMember] } }
+    );
+
+    await waitFor(() => {
+      expect(result.current.targetSessionId).toBe('task1-coder-session');
+    });
+
+    // Switch to task-2 — same reused target id, activity not loaded yet.
+    // Must NOT inherit task-1's latched session.
+    rerender({ taskId: 'task-2', members: [] });
+    expect(result.current.targetSessionId).toBeNull();
+    expect(result.current.isStarted).toBe(false);
+
+    // Task-2 activity arrives with its own session — resolves cleanly, no leak.
+    rerender({ taskId: 'task-2', members: [task2CoderMember] });
+    await waitFor(() => {
+      expect(result.current.targetSessionId).toBe('task2-coder-session');
+    });
+  });
+
   it('marks not-yet-started agent as isStarted=false', async () => {
     const notStartedTarget = {
       id: 'node:n1:reviewer',

@@ -112,12 +112,20 @@ export function useTargetSessionContext({
     () => resolveTargetSessionId(selectedTarget, activityMembers),
     [selectedTarget, activityMembers]
   );
-  const latchedSessionRef = useRef<{ targetId: string; sessionId: string } | null>(null);
-  const targetKey = selectedTarget?.id ?? '';
+  // Latch key is scoped by (taskId, target) — NOT nodeExecutionId. `SpaceTaskPane`
+  // stays mounted across task switches (no key=taskId on its render site), and
+  // workflow target ids are reused across tasks (`node:<nodeId>:<agentName>`),
+  // so a latch keyed without taskId would hand the previous task's session to a
+  // freshly-selected task whose activity hasn't loaded yet — marking an unstarted
+  // agent as started and wiring its draft/model state to the wrong session.
+  // nodeExecutionId is deliberately excluded: a transient null during an
+  // execution-id transition is exactly the gap the latch exists to ride out.
+  const latchedSessionRef = useRef<{ key: string; sessionId: string } | null>(null);
+  const latchKey = `${taskId}:${selectedTarget?.id ?? ''}`;
   let targetSessionId = resolvedSessionId;
   if (resolvedSessionId) {
-    latchedSessionRef.current = { targetId: targetKey, sessionId: resolvedSessionId };
-  } else if (latchedSessionRef.current?.targetId === targetKey) {
+    latchedSessionRef.current = { key: latchKey, sessionId: resolvedSessionId };
+  } else if (latchedSessionRef.current?.key === latchKey) {
     targetSessionId = latchedSessionRef.current.sessionId;
   }
   const isStarted = !!targetSessionId;
