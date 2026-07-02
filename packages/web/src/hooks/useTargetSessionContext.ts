@@ -157,8 +157,12 @@ export function useTargetSessionContext({
   // new session before the heavier spaceTaskActivity.byTask snapshot drops the old
   // member, so resolvedSessionId momentarily lags execSessionId. Don't hand it to
   // the composer — treat the target as unresolved instead of wiring draft/model
-  // state to the canceled session.
-  const resolvedConsistent = execSessionId === undefined || execSessionId === resolvedSessionId;
+  // state to the canceled session. The trust signal is nodeExecutionLoaded, not
+  // execSessionId: once the execution row is loaded, a missing execSessionId
+  // means the worker detached (agentSessionId cleared), not that liveness hasn't
+  // arrived — so a stale activity member must NOT be treated as consistent.
+  const nodeExecutionLoaded = selectedTarget?.nodeExecutionId !== undefined;
+  const resolvedConsistent = !nodeExecutionLoaded || execSessionId === resolvedSessionId;
   let targetSessionId = resolvedSessionId && !resolvedConsistent ? null : latchedSessionId;
   // Only latch when execution liveness is present (execSessionId defined), so the
   // captured id can always refute the latch on detach. Latching before
@@ -378,6 +382,15 @@ export function useTargetSessionContext({
 
       const sessionId = resolveTargetSessionId(target, activityMembers);
       if (!sessionId) continue;
+      // Skip auto-apply when the resolved activity session is stale relative to
+      // the execution's live session (recovery race, or a loaded-but-detached
+      // execution): otherwise the RPCs go to the canceled session and the target
+      // is marked applied, so the fresh session never receives the settings.
+      const targetExecSessionId = target.nodeExecutionSessionId;
+      const targetNodeExecutionLoaded = target.nodeExecutionId !== undefined;
+      const targetResolvedConsistent =
+        !targetNodeExecutionLoaded || targetExecSessionId === sessionId;
+      if (!targetResolvedConsistent) continue;
 
       const promises: Promise<unknown>[] = [];
 

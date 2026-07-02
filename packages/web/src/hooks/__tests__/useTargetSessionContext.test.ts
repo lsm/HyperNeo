@@ -449,6 +449,46 @@ describe('useTargetSessionContext', () => {
     expect(result.current.targetSessionId).toBeNull();
   });
 
+  it('treats a loaded execution with no live session as detached', async () => {
+    // nodeExecutionId present but nodeExecutionSessionId undefined means the
+    // execution row is loaded and reports no live agentSessionId — the worker
+    // detached. A stale activity member still present must NOT be treated as
+    // consistent (the trust signal is nodeExecutionLoaded, not execSessionId).
+    const staleMember: SpaceTaskActivityMember = {
+      id: 'm1',
+      sessionId: 'coder-session',
+      kind: 'node_agent',
+      label: 'Coder',
+      role: 'coder',
+      state: 'active',
+      processingStatus: 'idle',
+      messageCount: 0,
+      nodeExecution: {
+        nodeExecutionId: 'ne-1',
+        nodeId: 'n1',
+        agentName: 'coder',
+        status: 'in_progress',
+      },
+    };
+    const target = {
+      ...coderTarget,
+      nodeExecutionId: 'ne-1',
+      // nodeExecutionSessionId intentionally absent — loaded but detached.
+    };
+
+    const { result } = renderHook(() =>
+      useTargetSessionContext({
+        taskId: 'task-1',
+        targets: [target],
+        selectedTarget: target,
+        activityMembers: [staleMember],
+      })
+    );
+
+    expect(result.current.targetSessionId).toBeNull();
+    expect(result.current.isStarted).toBe(false);
+  });
+
   it('resets the latch when switching to a genuinely different target', async () => {
     const coderMember: SpaceTaskActivityMember = {
       id: 'm1',
@@ -1369,6 +1409,100 @@ describe('useTargetSessionContext', () => {
 
     expect(mockRequest).toHaveBeenCalledWith('session.thinking.set', {
       sessionId: 'reviewer-session',
+      level: 'think16k',
+    });
+  });
+
+  it('does not auto-apply preconfiguration to a stale activity session', async () => {
+    // Recovery race / detach: the activity snapshot carries a stale member while
+    // the execution's live agentSessionId is gone (nodeExecutionId loaded but
+    // nodeExecutionSessionId undefined). Auto-apply must skip — no RPCs to the
+    // canceled session, and the target stays unmarked so the fresh session later
+    // receives the settings.
+    type StaleTarget = {
+      id: string;
+      kind: 'node_agent';
+      label: string;
+      agentName: string;
+      nodeExecutionId?: string;
+      nodeExecutionSessionId?: string;
+    };
+    const target: StaleTarget = {
+      id: 'node:n1:coder',
+      kind: 'node_agent',
+      label: 'Coder',
+      agentName: 'coder',
+      nodeExecutionId: 'ne-1',
+      // nodeExecutionSessionId absent — loaded but detached.
+    };
+    const model: ModelInfo = {
+      id: 'claude-opus-4-5',
+      name: 'Opus 4.5',
+      family: 'opus',
+      provider: 'anthropic',
+      alias: 'opus',
+      contextWindow: 200000,
+      description: '',
+      releaseDate: '',
+      available: true,
+    };
+
+    const { result, rerender } = renderHook(
+      (props: { target: StaleTarget; members: SpaceTaskActivityMember[] }) =>
+        useTargetSessionContext({
+          taskId: 'task-1',
+          targets: [props.target],
+          selectedTarget: props.target,
+          activityMembers: props.members,
+        }),
+      { initialProps: { target, members: [] as SpaceTaskActivityMember[] } }
+    );
+
+    // Pre-configure while the agent is not started.
+    await act(async () => {
+      await result.current.switchModel(model);
+    });
+    await act(async () => {
+      await result.current.setThinkingLevel('think16k');
+    });
+
+    // Stale member appears for a loaded-but-detached execution.
+    const staleMember: SpaceTaskActivityMember = {
+      id: 'm1',
+      sessionId: 'coder-session',
+      kind: 'node_agent',
+      label: 'Coder',
+      role: 'coder',
+      state: 'active',
+      processingStatus: 'idle',
+      messageCount: 0,
+      nodeExecution: {
+        nodeExecutionId: 'ne-1',
+        nodeId: 'n1',
+        agentName: 'coder',
+        status: 'in_progress',
+      },
+    };
+    rerender({ target, members: [staleMember] });
+
+    expect(mockRequest).not.toHaveBeenCalledWith('session.model.switch', expect.anything());
+    expect(mockRequest).not.toHaveBeenCalledWith('session.thinking.set', expect.anything());
+
+    // Once liveness lands and agrees with the live session, auto-apply fires —
+    // proving the target was not prematurely marked applied during the stale window.
+    rerender({
+      target: { ...target, nodeExecutionSessionId: 'coder-session' },
+      members: [staleMember],
+    });
+    await waitFor(() => {
+      expect(mockRequest).toHaveBeenCalledWith('session.model.switch', {
+        sessionId: 'coder-session',
+        model: 'claude-opus-4-5',
+        provider: 'anthropic',
+      });
+    });
+    expect(mockRequest).toHaveBeenCalledWith('session.thinking.set', {
+      sessionId: 'coder-session',
       level: 'think16k',
     });
   });
