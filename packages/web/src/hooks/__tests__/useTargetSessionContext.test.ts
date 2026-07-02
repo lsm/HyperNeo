@@ -335,6 +335,60 @@ describe('useTargetSessionContext', () => {
       state: 'active',
       processingStatus: 'idle',
       messageCount: 0,
+      nodeExecution: {
+        nodeExecutionId: 'ne-1',
+        nodeId: 'n1',
+        agentName: 'coder',
+        status: 'in_progress',
+      },
+    };
+    const target = {
+      ...coderTarget,
+      nodeExecutionId: 'ne-1',
+      nodeExecutionSessionId: 'coder-session',
+    };
+
+    const { result, rerender } = renderHook(
+      (props: { members: SpaceTaskActivityMember[] }) =>
+        useTargetSessionContext({
+          taskId: 'task-1',
+          targets: [target],
+          selectedTarget: target,
+          activityMembers: props.members,
+        }),
+      { initialProps: { members: [coderMember] as SpaceTaskActivityMember[] } }
+    );
+
+    await waitFor(() => {
+      expect(result.current.targetSessionId).toBe('coder-session');
+    });
+
+    // Transient resolution gap — member list momentarily empty. Execution
+    // liveness (nodeExecutionSessionId) still reports the live session, so the
+    // latch holds and the composer doesn't clobber + reload the draft.
+    rerender({ members: [] });
+    expect(result.current.targetSessionId).toBe('coder-session');
+    expect(result.current.isStarted).toBe(true);
+
+    // Member reappears — still the same session, no spurious reload.
+    rerender({ members: [coderMember] });
+    expect(result.current.targetSessionId).toBe('coder-session');
+  });
+
+  it('does not latch before execution liveness loads (loading window)', async () => {
+    // If nodeExecutions hasn't loaded yet (e.g. the task thread was opened
+    // directly), nodeExecutionSessionId is undefined. The latch must not be set
+    // — it couldn't be refuted on detach — so when the activity member later
+    // drops the target resolves to null instead of resurrecting a stale session.
+    const coderMember: SpaceTaskActivityMember = {
+      id: 'm1',
+      sessionId: 'coder-session',
+      kind: 'node_agent',
+      label: 'Coder',
+      role: 'coder',
+      state: 'active',
+      processingStatus: 'idle',
+      messageCount: 0,
     };
 
     const { result, rerender } = renderHook(
@@ -352,14 +406,47 @@ describe('useTargetSessionContext', () => {
       expect(result.current.targetSessionId).toBe('coder-session');
     });
 
-    // Transient resolution gap — member list momentarily empty.
+    // Activity member drops before liveness loaded — nothing latched, resolves null.
     rerender({ members: [] });
-    expect(result.current.targetSessionId).toBe('coder-session');
-    expect(result.current.isStarted).toBe(true);
+    expect(result.current.targetSessionId).toBeNull();
+  });
 
-    // Member reappears — still the same session, no spurious reload.
-    rerender({ members: [coderMember] });
-    expect(result.current.targetSessionId).toBe('coder-session');
+  it('treats the target as unresolved when activity lags the execution session', async () => {
+    // Recovery race: nodeExecutions.byRun already reports the fresh session B,
+    // but spaceTaskActivity.byTask still carries the stale member A. The stale A
+    // must not be returned as the target session on that render.
+    const memberA: SpaceTaskActivityMember = {
+      id: 'm1',
+      sessionId: 'coder-session',
+      kind: 'node_agent',
+      label: 'Coder',
+      role: 'coder',
+      state: 'active',
+      processingStatus: 'idle',
+      messageCount: 0,
+      nodeExecution: {
+        nodeExecutionId: 'ne-1',
+        nodeId: 'n1',
+        agentName: 'coder',
+        status: 'in_progress',
+      },
+    };
+    const target = {
+      ...coderTarget,
+      nodeExecutionId: 'ne-1',
+      nodeExecutionSessionId: 'coder-session-2',
+    };
+
+    const { result } = renderHook(() =>
+      useTargetSessionContext({
+        taskId: 'task-1',
+        targets: [target],
+        selectedTarget: target,
+        activityMembers: [memberA],
+      })
+    );
+
+    expect(result.current.targetSessionId).toBeNull();
   });
 
   it('resets the latch when switching to a genuinely different target', async () => {

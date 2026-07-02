@@ -143,23 +143,28 @@ export function useTargetSessionContext({
   const latched = latchedSessionRef.current;
   const execSessionId = selectedTarget?.nodeExecutionSessionId;
   // The latch is valid while the target is unchanged AND the backing execution
-  // still reports the latched session as live. `execSessionId` captured at latch
-  // time distinguishes the two undefined cases: if we latched WITHOUT an
-  // execution-level session signal (e.g. an agentName-only match), there is
-  // nothing to refute, so trust the latch; if we latched WITH one, a current
-  // nodeExecutionSessionId that no longer matches means the worker detached.
+  // still reports the latched session as live. On detach,
+  // detachSessionFromAllExecutions nulls agentSessionId, so execSessionId drops
+  // (the activity member is already gone), breaking the match. taskId in the key
+  // prevents leaks across task switches — SpaceTaskPane stays mounted and target
+  // ids are reused across tasks.
   const latchValid =
     latched?.key === latchKey &&
     (latched.execSessionId === undefined || latched.execSessionId === execSessionId);
   const latchedSessionId = resolvedSessionId ?? (latchValid ? latched!.sessionId : null);
-  let targetSessionId = latchedSessionId;
-  // Only latch a resolved session that agrees with the execution's live session.
-  // During a worker-recovery race nodeExecutions.byRun can advance to the new
-  // session before the heavier spaceTaskActivity.byTask snapshot drops the old
-  // member, so resolvedSessionId can momentarily lag execSessionId. Latching the
-  // stale activity session would resurrect it on the next activity gap.
+  // A resolved activity session that disagrees with the execution's live session
+  // is stale: during a worker-recovery race nodeExecutions.byRun advances to the
+  // new session before the heavier spaceTaskActivity.byTask snapshot drops the old
+  // member, so resolvedSessionId momentarily lags execSessionId. Don't hand it to
+  // the composer — treat the target as unresolved instead of wiring draft/model
+  // state to the canceled session.
   const resolvedConsistent = execSessionId === undefined || execSessionId === resolvedSessionId;
-  if (resolvedSessionId && resolvedConsistent) {
+  let targetSessionId = resolvedSessionId && !resolvedConsistent ? null : latchedSessionId;
+  // Only latch when execution liveness is present (execSessionId defined), so the
+  // captured id can always refute the latch on detach. Latching before
+  // nodeExecutions loads would capture an undefined exec id that can never be
+  // contradicted, leaving a detached worker's stale session latched.
+  if (resolvedSessionId && resolvedConsistent && execSessionId !== undefined) {
     latchedSessionRef.current = { key: latchKey, sessionId: resolvedSessionId, execSessionId };
   }
   const isStarted = !!targetSessionId;
