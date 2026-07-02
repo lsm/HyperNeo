@@ -102,6 +102,16 @@ describe('SpaceAgentRepository', () => {
     it('returns null for unknown id', () => {
       expect(repo.getById('nonexistent')).toBeNull();
     });
+
+    it('normalizes a legacy empty-string tools column to an inherit-all profile', () => {
+      // Upgraded DBs may store tools = '' (the m151 migration explicitly handles
+      // that value). rowToAgent must not call JSON.parse('') and throw.
+      const created = repo.create({ spaceId: 'space-1', name: 'Legacy' });
+      db.prepare(`UPDATE space_agents SET tools = '' WHERE id = ?`).run(created.id);
+
+      const agent = repo.getById(created.id);
+      expect(agent?.tools).toEqual([]);
+    });
   });
 
   describe('getBySpaceId', () => {

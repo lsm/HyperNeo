@@ -51,7 +51,7 @@ export const SUB_SESSION_FEATURES = {
  * SpaceWorkerAgent.tools is a visible override, not an exhaustive SDK allowlist.
  * An empty profile means the worker inherits all SDK built-ins and MCP tools
  * at runtime (see deriveWorkerDisallowedTools). The UI shows this as
- * "Inherit defaults" / "Full Coding".
+ * "Inherit defaults".
  */
 const PERMISSIVE_TOOLS: string[] = [];
 
@@ -68,13 +68,14 @@ const PLANNER_TOOLS = PERMISSIVE_TOOLS;
 const RESEARCH_TOOLS = PERMISSIVE_TOOLS;
 
 /**
- * Reviewers: explicit non-mutating profile.
+ * Reviewers: explicit non-mutating profile that keeps Bash.
  *
- * The runtime denies Bash/Write/Edit/MultiEdit/NotebookEdit whenever a
- * non-empty tool profile omits them. All other SDK built-ins (read, web/search,
- * delegation, etc.) are still inherited. The Task/* tools let the Reviewer
- * dispatch exploration to the built-in `general-purpose` sub-agent that ships
- * with the `claude_code` preset.
+ * The runtime denies Write/Edit/MultiEdit/NotebookEdit whenever a non-empty
+ * tool profile omits them. Bash is kept because the reviewer contract posts PR
+ * reviews and line comments via `gh api` before gate writes. All other SDK
+ * built-ins (read, web/search, delegation, etc.) are still inherited. The
+ * Task/* tools let the Reviewer dispatch exploration to the built-in
+ * `general-purpose` sub-agent that ships with the `claude_code` preset.
  */
 const REVIEWER_TOOLS: string[] = [
   'Read',
@@ -84,6 +85,7 @@ const REVIEWER_TOOLS: string[] = [
   'WebSearch',
   'Skill',
   'ToolSearch',
+  'Bash',
   'Task',
   'TaskOutput',
   'TaskStop',

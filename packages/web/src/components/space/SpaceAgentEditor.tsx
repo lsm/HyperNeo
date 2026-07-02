@@ -11,7 +11,7 @@
  * - Tools (explicit overrides from KNOWN_TOOLS; SDK defaults are always inherited)
  * - Custom Prompt (monospace textarea with line numbers; appended after NeoKai contract)
  *
- * Tool presets: "Full Coding" (inherit all) · "Read Only" (deny mutators) · "Custom"
+ * Tool presets: "Inherit defaults" (no overrides) · "Read Only" (deny mutators) · "Custom"
  *
  * Validation: name required + unique.
  */
@@ -43,11 +43,10 @@ type ToolName = (typeof KNOWN_TOOLS)[number];
  * Tool presets map preset name → explicit override list.
  *
  * SDK defaults are always inherited at runtime; these profiles only express
- * overrides. An empty profile means "inherit all" (Full Coding). Read Only
+ * overrides. An empty profile (no overrides) is "Inherit defaults". Read Only
  * lists non-mutating tools so the runtime denies Bash/Write/Edit/MultiEdit/NotebookEdit.
  */
 const TOOL_PRESETS: Record<string, ToolName[]> = {
-  'Full Coding': [],
   'Read Only': ['Read', 'Grep', 'Glob'],
 };
 const TOOL_PRESET_BUTTONS = ['Inherit defaults', ...Object.keys(TOOL_PRESETS), 'Custom'];
@@ -199,8 +198,18 @@ export function SpaceAgentEditor({
   const applyPreset = (presetName: string) => {
     setActivePreset(presetName);
     if (presetName in TOOL_PRESETS) {
-      setToolsOverridden(true);
-      setTools([...TOOL_PRESETS[presetName]]);
+      const presetTools = TOOL_PRESETS[presetName];
+      // An empty preset profile is inherit-all, so never mark it as an
+      // override (that would leave an editable empty list where one checkbox
+      // click persists a restrictive profile).
+      if (presetTools.length === 0) {
+        setToolsOverridden(false);
+        setActivePreset('Inherited');
+        setTools([]);
+      } else {
+        setToolsOverridden(true);
+        setTools([...presetTools]);
+      }
     }
   };
 
@@ -208,6 +217,17 @@ export function SpaceAgentEditor({
     setToolsOverridden(false);
     setActivePreset('Inherited');
     setTools([]);
+  };
+
+  const startCustom = () => {
+    // Enter override mode seeded with every known tool, so the user builds a
+    // custom profile by unchecking — in particular unchecking a mutator
+    // (Bash/Write/Edit/MultiEdit/NotebookEdit) denies it at runtime. Starting
+    // from an empty enabled list would otherwise read as "inherits all" while
+    // leaving every box unchecked.
+    setToolsOverridden(true);
+    setActivePreset('Custom');
+    setTools([...(KNOWN_TOOLS as readonly string[])]);
   };
 
   const applyTemplate = (template: SpaceWorkerAgentTemplate) => {
@@ -582,8 +602,8 @@ export function SpaceAgentEditor({
                     type="button"
                     onClick={() => {
                       if (preset === 'Inherit defaults') inheritTools();
-                      else if (preset !== 'Custom') applyPreset(preset);
-                      else setActivePreset('Custom');
+                      else if (preset === 'Custom') startCustom();
+                      else applyPreset(preset);
                     }}
                     class={`text-xs px-2.5 py-1 rounded border transition-colors ${
                       active

@@ -244,10 +244,16 @@ export class SpaceAgentRepository {
   }
 
   private rowToAgent(row: Record<string, unknown>): SpaceWorkerAgent {
-    // Parse tools: null/undefined → undefined; JSON array (including []) → string[]
+    // Parse tools: null/undefined → undefined; a JSON array (including '[]')
+    // → string[]. Legacy rows may store the empty string '' (the m151
+    // migration treats tools = '' as an empty profile); normalize those to []
+    // so JSON.parse never throws on them.
     let tools: string[] | undefined;
-    if (row.tools != null) {
-      tools = JSON.parse(row.tools as string) as string[];
+    const rawTools = row.tools as string | null | undefined;
+    if (rawTools === '') {
+      tools = [];
+    } else if (rawTools) {
+      tools = JSON.parse(rawTools) as string[];
     }
 
     // Parse settingSources: null or missing → undefined

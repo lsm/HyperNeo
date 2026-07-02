@@ -67,12 +67,12 @@ describe('seedPresetAgents', () => {
     }
   });
 
-  it('reviewer has restricted tools (no Bash, Write, or Edit)', async () => {
+  it('reviewer has restricted tools (keeps Bash for gh api, no Write or Edit)', async () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
     const reviewer = seeded.find((a) => a.name === 'Reviewer');
 
     expect(reviewer).toBeDefined();
-    expect(reviewer?.tools).not.toContain('Bash');
+    expect(reviewer?.tools).toContain('Bash');
     expect(reviewer?.tools).not.toContain('Write');
     expect(reviewer?.tools).not.toContain('Edit');
     expect(reviewer?.tools).toContain('Read');
@@ -369,10 +369,12 @@ describe('preset agent exact definitions', () => {
     'Skill',
     'ToolSearch',
   ];
-  // Reviewer has the read-only toolset PLUS Task/TaskOutput/TaskStop so it
-  // can dispatch the built-in `general-purpose` sub-agent for exploration.
+  // Reviewer has the read-only toolset PLUS Bash (to post reviews via gh api)
+  // and Task/TaskOutput/TaskStop so it can dispatch the built-in
+  // `general-purpose` sub-agent for exploration.
   const EXPECTED_REVIEWER_TOOLS = [
     ...EXPECTED_REVIEWER_BASE_TOOLS,
+    'Bash',
     'Task',
     'TaskOutput',
     'TaskStop',
@@ -408,7 +410,7 @@ describe('preset agent exact definitions', () => {
     expect(research.tools).toEqual(EXPECTED_CODER_TOOLS);
   });
 
-  it('Reviewer has exact REVIEWER_TOOLS (read-only + Task/TaskOutput/TaskStop)', async () => {
+  it('Reviewer has exact REVIEWER_TOOLS (read-only + Bash + Task/TaskOutput/TaskStop)', async () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
     const reviewer = seeded.find((a) => a.name === 'Reviewer')!;
     expect(reviewer.tools).toEqual(EXPECTED_REVIEWER_TOOLS);
@@ -567,10 +569,11 @@ describe('PRESET_AGENT_TOOLS export', () => {
     'Skill',
     'ToolSearch',
   ];
-  // Reviewer additionally carries Task/TaskOutput/TaskStop for built-in
-  // `general-purpose` sub-agent delegation.
+  // Reviewer additionally carries Bash (to post reviews via `gh api`) and
+  // Task/TaskOutput/TaskStop for built-in `general-purpose` sub-agent delegation.
   const EXPECTED_REVIEWER_TOOLS = [
     ...EXPECTED_REVIEWER_BASE_TOOLS,
+    'Bash',
     'Task',
     'TaskOutput',
     'TaskStop',
@@ -603,7 +606,7 @@ describe('PRESET_AGENT_TOOLS export', () => {
     expect(PRESET_AGENT_TOOLS.research).toEqual(EXPECTED_CODER_TOOLS);
   });
 
-  it('reviewer role maps to REVIEWER_TOOLS (read-only + Task/TaskOutput/TaskStop)', () => {
+  it('reviewer role maps to REVIEWER_TOOLS (read-only + Bash + Task/TaskOutput/TaskStop)', () => {
     expect(PRESET_AGENT_TOOLS.reviewer).toEqual(EXPECTED_REVIEWER_TOOLS);
   });
 
