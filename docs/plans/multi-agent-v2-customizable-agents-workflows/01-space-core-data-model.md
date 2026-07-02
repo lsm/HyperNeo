@@ -121,7 +121,7 @@ Create a new shared types file for all Space-related types. These are distinct f
 5. Export all types from `packages/shared/src/types/space.ts` and from the shared package barrel (`packages/shared/src/mod.ts`)
 
 **Acceptance criteria:**
-- All Space types are defined and exported from `@neokai/shared`
+- All Space types are defined and exported from `@hyperneo/shared`
 - Types include JSDoc documentation
 - `Space` has `workspacePath` as a required field
 - `SpaceTask` has `customAgentId`, `workflowRunId`, `workflowStepId` built in (not added via migration later)
@@ -391,7 +391,7 @@ Add RPC handlers for Space CRUD operations and register new event types in Daemo
    'space.workflowRun.created': { sessionId: string; spaceId: string; run: SpaceWorkflowRun };
    'space.workflowRun.updated': { sessionId: string; spaceId: string; run: SpaceWorkflowRun };
    ```
-   Import types from `@neokai/shared`.
+   Import types from `@hyperneo/shared`.
 
 2. Create `packages/daemon/src/lib/rpc-handlers/space-handlers.ts`:
    - `space.create { name, workspacePath, description?, ... }` → `{ space }`

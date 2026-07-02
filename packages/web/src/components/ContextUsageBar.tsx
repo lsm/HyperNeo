@@ -7,7 +7,7 @@
  */
 
 import { useState, useRef, useEffect, useCallback } from 'preact/hooks';
-import type { ContextInfo } from '@neokai/shared';
+import type { ContextInfo } from '@hyperneo/shared';
 import { borderColors } from '../lib/design-tokens.ts';
 import { formatTokens } from '../lib/utils.ts';
 

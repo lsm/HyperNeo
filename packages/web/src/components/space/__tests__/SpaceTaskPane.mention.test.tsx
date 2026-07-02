@@ -9,7 +9,7 @@ import type {
   SpaceTaskActivityMember,
   SpaceWorkflow,
   SpaceWorkflowRun,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 
 vi.mock('../../../lib/router', () => ({
   navigateToSpaceAgent: vi.fn(),

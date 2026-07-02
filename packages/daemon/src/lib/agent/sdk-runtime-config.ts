@@ -11,7 +11,7 @@
  * - updateToolsConfig - Update tools configuration with restart
  */
 
-import type { Session } from '@neokai/shared';
+import type { Session } from '@hyperneo/shared';
 import type { QueryLike } from './query-like';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { Database } from '../../storage/database';

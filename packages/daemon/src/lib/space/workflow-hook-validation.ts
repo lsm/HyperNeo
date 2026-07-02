@@ -3,7 +3,7 @@ import type {
   WorkflowHookAuthorizedCaller,
   WorkflowHookResult,
   WorkflowNodeInput,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 
 const VALID_METHODS = new Set([
   'send_message',

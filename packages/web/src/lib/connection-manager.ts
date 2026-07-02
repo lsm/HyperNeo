@@ -28,7 +28,7 @@
  * ```
  */
 
-import { MessageHub, WebSocketClientTransport } from '@neokai/shared';
+import { MessageHub, WebSocketClientTransport } from '@hyperneo/shared';
 import { appState, connectionState, reconnectAttemptCount } from './state';
 import { globalStore } from './global-store';
 import { sessionStore } from './session-store';

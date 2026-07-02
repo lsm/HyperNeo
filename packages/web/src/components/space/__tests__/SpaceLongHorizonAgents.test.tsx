@@ -1,6 +1,6 @@
 // @ts-nocheck
 
-import type { SpaceWorkerAgent, SpaceLongHorizonAgent } from '@neokai/shared';
+import type { SpaceWorkerAgent, SpaceLongHorizonAgent } from '@hyperneo/shared';
 import { cleanup, fireEvent, render } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 

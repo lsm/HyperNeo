@@ -94,7 +94,7 @@ const config: KnipConfig = {
 
   // Ignore specific dependencies (external tools, runtime only)
   ignoreDependencies: [
-    '@neokai/*', // Workspace dependencies
+    '@hyperneo/*', // Workspace dependencies
     '@anthropic-ai/sdk', // SDK peer/type anchor used through generated shared SDK declarations
     '@modelcontextprotocol/sdk', // MCP peer/type anchor used through generated shared SDK declarations
     '@testing-library/preact', // Used in tests

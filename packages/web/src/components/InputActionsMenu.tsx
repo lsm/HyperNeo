@@ -8,8 +8,8 @@
 
 import type { RefObject } from 'preact';
 import { useRef } from 'preact/hooks';
-import type { ModelInfo, SessionFeatures } from '@neokai/shared';
-import { DEFAULT_WORKER_FEATURES } from '@neokai/shared';
+import type { ModelInfo, SessionFeatures } from '@hyperneo/shared';
+import { DEFAULT_WORKER_FEATURES } from '@hyperneo/shared';
 import { cn } from '../lib/utils';
 import { borderColors } from '../lib/design-tokens';
 import { useClickOutside } from '../hooks/useClickOutside';

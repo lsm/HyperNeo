@@ -7,8 +7,8 @@
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { SettingsRepository } from '../../../../src/storage/repositories/settings-repository';
-import type { GlobalToolsConfig, GlobalSettings } from '@neokai/shared';
-import { DEFAULT_GLOBAL_TOOLS_CONFIG, DEFAULT_GLOBAL_SETTINGS } from '@neokai/shared';
+import type { GlobalToolsConfig, GlobalSettings } from '@hyperneo/shared';
+import { DEFAULT_GLOBAL_TOOLS_CONFIG, DEFAULT_GLOBAL_SETTINGS } from '@hyperneo/shared';
 
 describe('SettingsRepository', () => {
   let db: Database;

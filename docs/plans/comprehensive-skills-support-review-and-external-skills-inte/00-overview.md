@@ -19,7 +19,7 @@ HyperNeo currently has **no application-level Skills registry**. The term "Skill
 - **No Skills registry exists**: no CRUD UI, no config file, no RPC handlers for Skills management.
 - **MCP is the established extensibility mechanism**: `.mcp.json` in workspace, managed via `ToolsConfig.disabledMcpServers`.
 - **Settings pattern**: GlobalSettings → SettingsManager → SQLite → SDK options.
-- **Application config dir**: `~/.neokai/` (already in `additionalDirectories`).
+- **Application config dir**: `~/.hyperneo/` (already in `additionalDirectories`).
 
 ## High-Level Approach
 

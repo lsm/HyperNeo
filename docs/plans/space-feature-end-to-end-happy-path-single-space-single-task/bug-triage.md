@@ -134,7 +134,7 @@ The existing GLM SDK tests at `packages/daemon/tests/online/glm/glm-sdk-minimal.
 cd packages/daemon && bun test ./tests/unit
 
 # Daemon online tests (M7 tests — should pass)
-cd packages/daemon && NEOKAI_USE_DEV_PROXY=1 bun test ./tests/online/space
+cd packages/daemon && HYPERNEO_USE_DEV_PROXY=1 bun test ./tests/online/space
 
 # E2E tests (M8 tests — requires playwright)
 make run-e2e TEST=tests/features/space-happy-path-pipeline.e2e.ts

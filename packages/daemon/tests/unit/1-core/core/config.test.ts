@@ -23,7 +23,7 @@ describe('getConfig', () => {
   });
 
   test('returns default values when no overrides or env vars', () => {
-    delete process.env.NEOKAI_PORT;
+    delete process.env.HYPERNEO_PORT;
     delete process.env.HOST;
     delete process.env.DB_PATH;
     delete process.env.DEFAULT_MODEL;
@@ -36,7 +36,7 @@ describe('getConfig', () => {
 
     expect(config.port).toBe(9283);
     expect(config.host).toBe('0.0.0.0');
-    expect(config.dbPath).toBe(join(homedir(), '.neokai', 'data', 'daemon.db'));
+    expect(config.dbPath).toBe(join(homedir(), '.hyperneo', 'data', 'daemon.db'));
     // 'default' maps to Sonnet 4.5 in the SDK
     expect(config.defaultModel).toBe('default');
     expect(config.maxTokens).toBe(8192);
@@ -46,7 +46,7 @@ describe('getConfig', () => {
   });
 
   test('uses environment variables when set', () => {
-    process.env.NEOKAI_PORT = '8080';
+    process.env.HYPERNEO_PORT = '8080';
     process.env.HOST = '127.0.0.1';
     process.env.DB_PATH = '/custom/path/db.sqlite';
     process.env.DEFAULT_MODEL = 'claude-opus-4-20250514';
@@ -66,8 +66,8 @@ describe('getConfig', () => {
     expect(config.maxSessions).toBe(20);
   });
 
-  test('NEOKAI_PORT sets the port', () => {
-    process.env.NEOKAI_PORT = '9983';
+  test('HYPERNEO_PORT sets the port', () => {
+    process.env.HYPERNEO_PORT = '9983';
 
     const config = getConfig();
 
@@ -75,7 +75,7 @@ describe('getConfig', () => {
   });
 
   test('PORT env var is ignored (no longer a fallback)', () => {
-    delete process.env.NEOKAI_PORT;
+    delete process.env.HYPERNEO_PORT;
     process.env.PORT = '8080';
 
     const config = getConfig();
@@ -84,8 +84,8 @@ describe('getConfig', () => {
     expect(config.port).toBe(9283);
   });
 
-  test('CLI port override takes precedence over NEOKAI_PORT', () => {
-    process.env.NEOKAI_PORT = '7777';
+  test('CLI port override takes precedence over HYPERNEO_PORT', () => {
+    process.env.HYPERNEO_PORT = '7777';
 
     const config = getConfig({ port: 3000 });
 
@@ -109,7 +109,7 @@ describe('getConfig', () => {
   });
 
   test('CLI workspace override takes precedence over env var', () => {
-    process.env.NEOKAI_WORKSPACE_ROOT = '/env/workspace';
+    process.env.HYPERNEO_WORKSPACE_ROOT = '/env/workspace';
 
     const config = getConfig({ workspaceRoot: '/cli/workspace' });
 
@@ -124,13 +124,13 @@ describe('getConfig', () => {
     expect(config.dbPath).toBe('/custom/database.db');
   });
 
-  test('default database path is ~/.neokai/data/daemon.db', () => {
+  test('default database path is ~/.hyperneo/data/daemon.db', () => {
     delete process.env.DB_PATH;
     process.env.NODE_ENV = 'production';
 
     const config = getConfig();
 
-    expect(config.dbPath).toBe(join(homedir(), '.neokai', 'data', 'daemon.db'));
+    expect(config.dbPath).toBe(join(homedir(), '.hyperneo', 'data', 'daemon.db'));
   });
 
   test('reads API key from env var', () => {

@@ -10,7 +10,7 @@
 
 import { describe, test, expect } from 'bun:test';
 import { ChannelResolver } from '../../../../src/lib/space/runtime/channel-resolver.ts';
-import type { WorkflowChannel } from '@neokai/shared';
+import type { WorkflowChannel } from '@hyperneo/shared';
 
 // ---------------------------------------------------------------------------
 // Test data helpers

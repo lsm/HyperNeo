@@ -1,5 +1,5 @@
 import type { Database as BunDatabase } from 'bun:sqlite';
-import { generateUUID } from '@neokai/shared';
+import { generateUUID } from '@hyperneo/shared';
 import type {
   CreateEvidenceRefParams,
   CreateEvolutionEpisodeParams,
@@ -26,7 +26,7 @@ import type {
   UpdateEvolutionLessonParams,
   UpdateEvolutionScopeParams,
   UpdateTaskProposalParams,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import type { SQLiteValue } from '../types';
 
 export class EvolutionRepository {

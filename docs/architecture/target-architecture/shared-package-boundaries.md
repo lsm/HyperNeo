@@ -11,11 +11,11 @@
 
 ## 1. Overview
 
-`@neokai/shared` currently works as a global barrel for almost every cross-package concept: API request/response types, domain types, MessageHub runtime classes, provider contracts, SDK aliases, state-channel types, prompt templates, logger utilities, validators, Space workflow graph helpers, and Forge evolution types.
+`@hyperneo/shared` currently works as a global barrel for almost every cross-package concept: API request/response types, domain types, MessageHub runtime classes, provider contracts, SDK aliases, state-channel types, prompt templates, logger utilities, validators, Space workflow graph helpers, and Forge evolution types.
 
 That made early development fast, but it now hides architectural boundaries. Daemon code, web code, CLI code, and UI components can import almost anything from one package root. As MessageFabric, Space runtime decomposition, client read models, and Forge mature, the shared package needs explicit contract surfaces.
 
-This document defines target package boundaries and an incremental migration plan. The goal is not to create many packages immediately. The first step can be subpath exports inside `@neokai/shared`. The important change is that imports reveal ownership and stability.
+This document defines target package boundaries and an incremental migration plan. The goal is not to create many packages immediately. The first step can be subpath exports inside `@hyperneo/shared`. The important change is that imports reveal ownership and stability.
 
 ---
 
@@ -43,7 +43,7 @@ Large files carry mixed responsibilities:
 | `message-hub/*` | Protocol types plus concrete runtime/router/transport implementations. |
 | `state-types.ts` | Legacy state-channel snapshot/update types mixed with current client state shapes. |
 
-The package export map already supports a few subpaths (`./provider`, `./message-hub/*`, `./sdk/*`, `./types/*`), but most app code still imports from `@neokai/shared` directly.
+The package export map already supports a few subpaths (`./provider`, `./message-hub/*`, `./sdk/*`, `./types/*`), but most app code still imports from `@hyperneo/shared` directly.
 
 At the time of this review, direct root imports are substantially more common than subpath imports in the main packages. The root barrel is therefore the effective public API.
 
@@ -83,7 +83,7 @@ At the time of this review, direct root imports are substantially more common th
 
 ## 6. Target Export Surfaces
 
-The target can be implemented as subpath exports inside `@neokai/shared` first.
+The target can be implemented as subpath exports inside `@hyperneo/shared` first.
 
 ```json
 {
@@ -142,15 +142,15 @@ Contracts are the stable cross-boundary API. They define command, query, event, 
 Target path:
 
 ```text
-@neokai/shared/contracts
-@neokai/shared/contracts/space
-@neokai/shared/contracts/forge
-@neokai/shared/contracts/session
-@neokai/shared/contracts/config
-@neokai/shared/contracts/extensions
-@neokai/shared/contracts/prompt-policy
-@neokai/shared/contracts/provider
-@neokai/shared/contracts/settings
+@hyperneo/shared/contracts
+@hyperneo/shared/contracts/space
+@hyperneo/shared/contracts/forge
+@hyperneo/shared/contracts/session
+@hyperneo/shared/contracts/config
+@hyperneo/shared/contracts/extensions
+@hyperneo/shared/contracts/prompt-policy
+@hyperneo/shared/contracts/provider
+@hyperneo/shared/contracts/settings
 ```
 
 Rules:
@@ -194,13 +194,13 @@ Read models are UI/client-facing projections. They are not necessarily database 
 Target path:
 
 ```text
-@neokai/shared/read-models
-@neokai/shared/read-models/space
-@neokai/shared/read-models/forge
-@neokai/shared/read-models/session
-@neokai/shared/read-models/config
-@neokai/shared/read-models/extensions
-@neokai/shared/read-models/prompt-policy
+@hyperneo/shared/read-models
+@hyperneo/shared/read-models/space
+@hyperneo/shared/read-models/forge
+@hyperneo/shared/read-models/session
+@hyperneo/shared/read-models/config
+@hyperneo/shared/read-models/extensions
+@hyperneo/shared/read-models/prompt-policy
 ```
 
 Rules:
@@ -228,13 +228,13 @@ Domain types are canonical business entities, often close to persistence but sti
 Target paths:
 
 ```text
-@neokai/shared/domain/space
-@neokai/shared/domain/forge
-@neokai/shared/domain/session
-@neokai/shared/domain/settings
-@neokai/shared/domain/config
-@neokai/shared/domain/extensions
-@neokai/shared/domain/prompt-policy
+@hyperneo/shared/domain/space
+@hyperneo/shared/domain/forge
+@hyperneo/shared/domain/session
+@hyperneo/shared/domain/settings
+@hyperneo/shared/domain/config
+@hyperneo/shared/domain/extensions
+@hyperneo/shared/domain/prompt-policy
 ```
 
 Rules:
@@ -264,10 +264,10 @@ Messaging exports should distinguish stable protocol from compatibility implemen
 Target paths:
 
 ```text
-@neokai/shared/messaging/protocol
-@neokai/shared/messaging/client
-@neokai/shared/messaging/testing
-@neokai/shared/compat/message-hub/*
+@hyperneo/shared/messaging/protocol
+@hyperneo/shared/messaging/client
+@hyperneo/shared/messaging/testing
+@hyperneo/shared/compat/message-hub/*
 ```
 
 Rules:
@@ -280,7 +280,7 @@ Rules:
 
 ### 7.5 Provider Contracts
 
-Provider contracts are already partly isolated under `@neokai/shared/provider`.
+Provider contracts are already partly isolated under `@hyperneo/shared/provider`.
 
 Rules:
 
@@ -290,13 +290,13 @@ Rules:
 
 ### 7.6 SDK Types
 
-SDK `.d.ts` files remain available through `@neokai/shared/sdk/*`.
+SDK `.d.ts` files remain available through `@hyperneo/shared/sdk/*`.
 
 Rules:
 
 - SDK aliases should be imported from explicit SDK subpaths.
 - Root shared should not re-export all SDK surface.
-- Type guards may stay in `@neokai/shared/sdk/type-guards` if they are pure and used by both daemon and web.
+- Type guards may stay in `@hyperneo/shared/sdk/type-guards` if they are pure and used by both daemon and web.
 
 ### 7.7 Utilities And Logger
 
@@ -305,9 +305,9 @@ Utilities should be small and explicit.
 Target paths:
 
 ```text
-@neokai/shared/utils
-@neokai/shared/logger
-@neokai/shared/validation/workspace-path
+@hyperneo/shared/utils
+@hyperneo/shared/logger
+@hyperneo/shared/validation/workspace-path
 ```
 
 Rules:
@@ -334,9 +334,9 @@ Prompt policy types are shared contracts and domain/read-model shapes, but promp
 Target paths:
 
 ```text
-@neokai/shared/domain/prompt-policy
-@neokai/shared/contracts/prompt-policy
-@neokai/shared/read-models/prompt-policy
+@hyperneo/shared/domain/prompt-policy
+@hyperneo/shared/contracts/prompt-policy
+@hyperneo/shared/read-models/prompt-policy
 ```
 
 Rules:
@@ -354,12 +354,12 @@ Configuration and extension types describe effective settings, source chains, pa
 Target paths:
 
 ```text
-@neokai/shared/domain/config
-@neokai/shared/contracts/config
-@neokai/shared/read-models/config
-@neokai/shared/domain/extensions
-@neokai/shared/contracts/extensions
-@neokai/shared/read-models/extensions
+@hyperneo/shared/domain/config
+@hyperneo/shared/contracts/config
+@hyperneo/shared/read-models/config
+@hyperneo/shared/domain/extensions
+@hyperneo/shared/contracts/extensions
+@hyperneo/shared/read-models/extensions
 ```
 
 Rules:
@@ -448,12 +448,12 @@ Root import should become compatibility-only:
 
 ```typescript
 // Allowed temporarily.
-import type { SpaceTask } from '@neokai/shared';
+import type { SpaceTask } from '@hyperneo/shared';
 
 // Target.
-import type { SpaceTask } from '@neokai/shared/domain/space';
-import type { SpaceTaskUpdatedEvent } from '@neokai/shared/contracts/space';
-import type { SpaceTaskBoardReadModel } from '@neokai/shared/read-models/space';
+import type { SpaceTask } from '@hyperneo/shared/domain/space';
+import type { SpaceTaskUpdatedEvent } from '@hyperneo/shared/contracts/space';
+import type { SpaceTaskBoardReadModel } from '@hyperneo/shared/read-models/space';
 ```
 
 Policy:
@@ -467,7 +467,7 @@ Policy:
 Suggested check:
 
 ```text
-No new `from '@neokai/shared'` imports except in files listed in tools/shared-root-import-allowlist.json.
+No new `from '@hyperneo/shared'` imports except in files listed in tools/shared-root-import-allowlist.json.
 ```
 
 ---
@@ -700,7 +700,7 @@ Start with Forge and contracts because it aligns with the newest work.
 4. Update `package.json` exports for those subpaths.
 5. Verify package export-map parity so no exported path points to a missing file.
 6. Update `SpaceForge.tsx`, `evolution-handlers.ts`, `evolution-scope-service.ts`, and `evolution-episode-service.ts` imports where low-risk.
-7. Keep `@neokai/shared` root exports in place through `compat/root.ts`.
+7. Keep `@hyperneo/shared` root exports in place through `compat/root.ts`.
 8. Add a check preventing new root imports in newly touched Forge files.
 
 This gives immediate value without forcing a full Space type split.
@@ -712,7 +712,7 @@ This gives immediate value without forcing a full Space type split.
 1. New cross-boundary behavior starts in `contracts/*`.
 2. New UI data shapes start in `read-models/*`.
 3. Durable business entities live in `domain/*`.
-4. Root `@neokai/shared` imports are compatibility-only.
+4. Root `@hyperneo/shared` imports are compatibility-only.
 5. MessageHub runtime classes are compatibility internals, not the future public messaging API.
 6. Forge must use the same domain/contract/read-model split as Space.
 7. Prompt policy shared exports contain serializable records, contracts, and read models only; resolver/composer/renderer stay daemon-side.
@@ -726,7 +726,7 @@ This gives immediate value without forcing a full Space type split.
 
 ## 18. Open Questions
 
-1. Should subpath boundaries stay inside `@neokai/shared`, or should contracts/read-models become separate workspace packages later?
+1. Should subpath boundaries stay inside `@hyperneo/shared`, or should contracts/read-models become separate workspace packages later?
 2. Should Zod or another schema library define contract payloads at runtime, or do we start with TypeScript-only contracts?
 3. Should old `evolution.*` RPC names remain indefinitely as compatibility aliases for `forge.*` contracts?
 4. How strict should the no-root-import check be for tests during migration?

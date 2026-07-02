@@ -41,7 +41,7 @@ describe('prefetchAgentMemoryEmbeddingModel', () => {
   });
 
   function createCacheDir(): string {
-    return mkdtempSync(join(tmpdir(), 'neokai-embed-cache-'));
+    return mkdtempSync(join(tmpdir(), 'hyperneo-embed-cache-'));
   }
 
   function writeModelCache(cacheDir: string): void {

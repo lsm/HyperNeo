@@ -21,8 +21,8 @@ import {
   type QueryLifecycleManagerContext,
 } from '../../../../src/lib/agent/query-lifecycle-manager';
 import { MessageQueue } from '../../../../src/lib/agent/message-queue';
-import type { Session, ModelInfo } from '@neokai/shared';
-import type { MessageHub } from '@neokai/shared';
+import type { Session, ModelInfo } from '@hyperneo/shared';
+import type { MessageHub } from '@hyperneo/shared';
 import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { Database } from '../../../../src/storage/database';
@@ -34,7 +34,7 @@ import type { ErrorManager } from '../../../../src/lib/error-manager';
 import type { Logger } from '../../../../src/lib/logger';
 import type { SDKMessageHandler } from '../../../../src/lib/agent/sdk-message-handler';
 import type { InterruptHandler } from '../../../../src/lib/agent/interrupt-handler';
-import { generateUUID } from '@neokai/shared';
+import { generateUUID } from '@hyperneo/shared';
 import { resetProviderFactory, initializeProviders } from '../../../../src/lib/providers/factory';
 import { resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import { setModelsCache, clearModelsCache } from '../../../../src/lib/model-service';
@@ -174,7 +174,7 @@ describe('ModelSwitchHandler — session continuity (sdkSessionId)', () => {
 
     mockDb = {
       updateSession: updateSessionSpy,
-      saveNeokaiActionMessage: mock(() => {}),
+      saveHyperNeoActionMessage: mock(() => {}),
     } as unknown as Database;
 
     mockMessageHub = {
@@ -408,7 +408,7 @@ describe('QueryLifecycleManager restart() — session continuity (sdkSessionId)'
       messageQueue,
       db: {
         updateSession: updateSessionSpy,
-        saveNeokaiActionMessage: mock(() => {}),
+        saveHyperNeoActionMessage: mock(() => {}),
       } as unknown as Database,
       messageHub: {
         event: publishSpy,
@@ -511,7 +511,7 @@ describe('QueryLifecycleManager restart() — session continuity (sdkSessionId)'
 
       // sdkSessionId is preserved — user chooses via sdkResumeChoice prompt
       expect(mockContext.session.sdkSessionId).toBe(sdkId);
-      // A neokai_action message with sdk_resume_choice should be emitted
+      // A hyperneo_action message with sdk_resume_choice should be emitted
       expect(publishSpy).toHaveBeenCalledWith(
         'state.sdkMessages.delta',
         expect.objectContaining({

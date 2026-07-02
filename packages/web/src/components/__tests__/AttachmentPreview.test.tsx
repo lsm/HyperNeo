@@ -8,7 +8,7 @@ import { describe, it, expect, vi } from 'vitest';
  */
 
 import { render, fireEvent, cleanup } from '@testing-library/preact';
-import type { MessageImage } from '@neokai/shared/types';
+import type { MessageImage } from '@hyperneo/shared/types';
 import { AttachmentPreview } from '../AttachmentPreview';
 
 type AttachmentWithMeta = MessageImage & { name: string; size: number };

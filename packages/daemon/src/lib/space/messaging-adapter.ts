@@ -14,10 +14,10 @@ import type {
   UnresolvedTarget,
 } from '../../../../messaging/src/contracts';
 import type { PendingAgentMessageRecord } from '../../storage/repositories/pending-agent-message-repository';
-import type { NodeExecution } from '@neokai/shared';
+import type { NodeExecution } from '@hyperneo/shared';
 import type { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository';
 import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
-import type { SpaceWorkflow, WorkflowChannel, WorkflowNode } from '@neokai/shared';
+import type { SpaceWorkflow, WorkflowChannel, WorkflowNode } from '@hyperneo/shared';
 import { ChannelResolver } from './runtime/channel-resolver';
 import type { SpaceActorRegistryAdapter } from './actor-registry';
 

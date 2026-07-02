@@ -6,7 +6,7 @@ import type {
   SessionFeatures,
   SessionType,
   ThinkingLevel,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import type { ComponentChildren } from 'preact';
 import MessageInput from './MessageInput.tsx';
 import SessionStatusBar from './SessionStatusBar.tsx';

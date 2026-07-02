@@ -1,4 +1,4 @@
-import type { SpaceTaskStatus } from '@neokai/shared';
+import type { SpaceTaskStatus } from '@hyperneo/shared';
 
 /**
  * Valid status transitions mirroring the daemon's VALID_SPACE_TASK_TRANSITIONS.

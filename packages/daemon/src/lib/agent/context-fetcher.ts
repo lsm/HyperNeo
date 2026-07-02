@@ -20,7 +20,7 @@ import type {
   ContextMessageBreakdown,
   ContextAPIUsage,
   ModelInfo,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import { Logger } from '../logger';
 import { getModelInfo } from '../model-service.js';
 import {

@@ -1,4 +1,4 @@
-import type { AgentDefinition } from '@neokai/shared';
+import type { AgentDefinition } from '@hyperneo/shared';
 
 export const debuggerAgent: AgentDefinition = {
   description: 'Reproduce and diagnose bugs. Writes a failing test first, then traces root cause.',

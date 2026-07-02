@@ -24,7 +24,7 @@ import {
   validateExportBundle,
   normalizeOverride,
 } from '../../../../src/lib/space/export-format.ts';
-import type { SpaceWorkerAgent, SpaceWorkflow } from '@neokai/shared';
+import type { SpaceWorkerAgent, SpaceWorkflow } from '@hyperneo/shared';
 
 // ---------------------------------------------------------------------------
 // Test fixtures

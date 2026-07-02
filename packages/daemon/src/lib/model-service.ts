@@ -10,11 +10,11 @@
  * This file now acts as a facade over the provider registry.
  */
 
-import type { ModelInfo, Session } from '@neokai/shared';
+import type { ModelInfo, Session } from '@hyperneo/shared';
 import type { QueryLike } from './agent/query-like';
 import { initializeProviders, waitForOptionalProviderRegistration } from './providers/factory.js';
 import { getProviderRegistry } from './providers/registry.js';
-import type { Provider } from '@neokai/shared/provider';
+import type { Provider } from '@hyperneo/shared/provider';
 import { getCodexBridgeModelInfos, resolveCodexBridgeModelId } from './providers/codex-models.js';
 import { GlmProvider } from './providers/glm-provider.js';
 import { KimiProvider } from './providers/kimi-provider.js';

@@ -11,8 +11,8 @@
  */
 
 import { describe, expect, it, mock, beforeEach } from 'bun:test';
-import { MessageHub } from '@neokai/shared';
-import type { Space, SpaceWorkflow, SpaceWorkflowRun, SpaceTask } from '@neokai/shared';
+import { MessageHub } from '@hyperneo/shared';
+import type { Space, SpaceWorkflow, SpaceWorkflowRun, SpaceTask } from '@hyperneo/shared';
 import {
   setupSpaceWorkflowRunHandlers,
   type SpaceWorkflowRunTaskManagerFactory,

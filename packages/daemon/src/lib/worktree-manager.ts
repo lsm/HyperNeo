@@ -15,7 +15,7 @@ import type {
   GitPullRequestSummary,
   GitSessionStatusResponse,
   Session,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import { Logger } from './logger';
 import { getProjectShortKey, getWorktreeBaseDir } from './worktree-path-utils';
 
@@ -750,7 +750,7 @@ export class WorktreeManager {
     const git = this.getGit(gitRoot);
 
     // Create worktree base directory if it doesn't exist
-    // Format: ~/.neokai/projects/{shortKey}/worktrees/
+    // Format: ~/.hyperneo/projects/{shortKey}/worktrees/
     const worktreesDir = this.getWorktreeBaseDir(gitRoot);
     if (!existsSync(worktreesDir)) {
       mkdirSync(worktreesDir, { recursive: true });
@@ -955,11 +955,11 @@ export class WorktreeManager {
         }
 
         // Check if worktree is prunable (directory missing) or if it's a session worktree that doesn't exist
-        // Support session worktrees (both production .neokai/projects and test directories)
+        // Support session worktrees (both production .hyperneo/projects and test directories)
         const testBaseDir = process.env.TEST_WORKTREE_BASE_DIR;
         const isSessionWorktree = testBaseDir
           ? worktree.path.startsWith(testBaseDir)
-          : worktree.path.includes('.neokai/projects');
+          : worktree.path.includes('.hyperneo/projects');
 
         if (worktree.isPrunable || (!existsSync(worktree.path) && isSessionWorktree)) {
           try {

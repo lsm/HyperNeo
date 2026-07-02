@@ -16,7 +16,7 @@ import {
   computeWorkflowHash,
   workflowsMatchFingerprint,
 } from '../../../../src/lib/space/workflows/template-hash';
-import type { SpaceWorkflow } from '@neokai/shared';
+import type { SpaceWorkflow } from '@hyperneo/shared';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 

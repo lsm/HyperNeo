@@ -2,8 +2,8 @@ import { useEffect, useState } from 'preact/hooks';
 import { globalSettings } from '../../lib/state.ts';
 import { updateGlobalSettings } from '../../lib/api-helpers.ts';
 import { toast } from '../../lib/toast.ts';
-import type { PermissionMode, ThinkingLevel, SettingSource } from '@neokai/shared';
-import { MAX_GITHUB_POLLING_INTERVAL_SECONDS, normalizeThinkingLevel } from '@neokai/shared';
+import type { PermissionMode, ThinkingLevel, SettingSource } from '@hyperneo/shared';
+import { MAX_GITHUB_POLLING_INTERVAL_SECONDS, normalizeThinkingLevel } from '@hyperneo/shared';
 import {
   SettingsSection,
   SettingsRow,

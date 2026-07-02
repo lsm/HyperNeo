@@ -13,11 +13,11 @@
  */
 
 import { useState } from 'preact/hooks';
-import type { NeokaiActionMessage } from '@neokai/shared';
+import type { HyperNeoActionMessage } from '@hyperneo/shared';
 import { connectionManager } from '../../lib/connection-manager.ts';
 
 interface Props {
-  message: NeokaiActionMessage;
+  message: HyperNeoActionMessage;
   sessionId: string;
 }
 

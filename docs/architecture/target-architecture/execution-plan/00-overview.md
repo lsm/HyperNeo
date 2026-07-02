@@ -207,7 +207,7 @@ Detailed plan: [M1 Shared Boundaries](10-m1-shared-boundaries.md).
 
 | PR | Scope | Release safety | Acceptance |
 | --- | --- | --- | --- |
-| 1.1 | Add `@neokai/shared` export-map parity and subpath skeletons: `contracts`, `read-models`, `domain`, `messaging`, `compat`. | Re-export only; no behavior changes. | Existing imports keep working; new subpaths compile; exported paths do not point at missing files. |
+| 1.1 | Add `@hyperneo/shared` export-map parity and subpath skeletons: `contracts`, `read-models`, `domain`, `messaging`, `compat`. | Re-export only; no behavior changes. | Existing imports keep working; new subpaths compile; exported paths do not point at missing files. |
 | 1.2 | Add Forge domain/contract/read-model subpaths as the first real shared slice. | Re-export existing types first. | `SpaceForge` and low-risk Forge files can import from subpaths. |
 | 1.3 | Add prompt-policy shared domain/contract/read-model types. | Types only; no rendering path changes. | Types match the prompt policy spec and do not expose renderer internals. |
 | 1.4 | Add config and extension shared domain/contract/read-model types for effective previews. | Types only; no storage or runtime changes. | Types distinguish config keys, scopes, source chains, packages, contributions, skills, plugins, MCP, hooks, and prompt policy. |
@@ -306,7 +306,7 @@ This track may run beside M8, but it must not combine visual migration with read
 
 | PR | Scope | Release safety | Acceptance |
 | --- | --- | --- | --- |
-| UI.1 | Inventory current web UI components, `@neokai/ui` exports, product tokens, and protected SDK renderer islands. | Docs/inventory only. | `ToolResultCard`, `ToolProgressCard`, tool registry, SDK custom renderers, and output-removal UX are explicitly web-owned. |
+| UI.1 | Inventory current web UI components, `@hyperneo/ui` exports, product tokens, and protected SDK renderer islands. | Docs/inventory only. | `ToolResultCard`, `ToolProgressCard`, tool registry, SDK custom renderers, and output-removal UX are explicitly web-owned. |
 | UI.2 | Establish token authority and compatibility facade strategy. | No visual changes. | Current HyperNeo dark/dense look remains unchanged; before screenshots are attached. |
 | UI.3 | Migrate one low-risk surface with screenshot parity. | One contained surface only. | Tests, demo coverage, and before/after screenshots prove visual and interaction parity. |
 | UI.4 | Add advisory checks for new generic controls. | Advisory first. | New generic controls are not added to `packages/web/src/components/ui` unless product-specific or compatibility-only. |

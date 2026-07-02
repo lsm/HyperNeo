@@ -15,7 +15,7 @@ import type {
   DaemonInternalEventMap,
   InternalEventBus,
 } from '../../../../src/lib/internal-event-bus';
-import type { IClientEventGateway, EventChannel } from '@neokai/shared';
+import type { IClientEventGateway, EventChannel } from '@hyperneo/shared';
 
 describe('ClientEventBridge', () => {
   function buildFixture() {

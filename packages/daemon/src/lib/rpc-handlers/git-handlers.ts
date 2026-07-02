@@ -5,7 +5,7 @@
  * drive workspace / worktree / branch pickers.
  */
 
-import type { MessageHub } from '@neokai/shared';
+import type { MessageHub } from '@hyperneo/shared';
 import type { SessionManager } from '../session-manager';
 import type { WorktreeManager } from '../worktree-manager';
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import type { WorkflowChannel, WorkflowNode } from '@neokai/shared';
+import type { WorkflowChannel, WorkflowNode } from '@hyperneo/shared';
 import type { VisualTransition } from '../types';
 import { autoLayout } from '../layout';
 

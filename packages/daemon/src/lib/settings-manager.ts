@@ -9,8 +9,8 @@
 import { writeFileSync, readFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
-import type { GlobalSettings, SettingSource } from '@neokai/shared';
-import type { McpServerConfig } from '@neokai/shared/types/sdk-config';
+import type { GlobalSettings, SettingSource } from '@hyperneo/shared';
+import type { McpServerConfig } from '@hyperneo/shared/types/sdk-config';
 
 /**
  * MCP server info from a setting source

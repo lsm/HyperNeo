@@ -10,9 +10,9 @@
  * - Combining SDK commands with built-in commands
  */
 
-import type { Session } from '@neokai/shared';
+import type { Session } from '@hyperneo/shared';
 import type { QueryLike } from './query-like';
-import { flattenSDKSlashCommands, type SlashCommand } from '@neokai/shared/sdk';
+import { flattenSDKSlashCommands, type SlashCommand } from '@hyperneo/shared/sdk';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { Database } from '../../storage/database';
 import type { Logger } from '../logger';

@@ -13,7 +13,7 @@
 // @ts-nocheck
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/preact';
-import type { SpaceTask } from '@neokai/shared';
+import type { SpaceTask } from '@hyperneo/shared';
 
 const updateTaskMock: Mock = vi.fn();
 vi.mock('../../../lib/space-store', () => ({

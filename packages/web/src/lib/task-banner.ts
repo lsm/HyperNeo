@@ -26,7 +26,7 @@
  * side effects — safe to call inside render loops and unit tests.
  */
 
-import type { SpaceTask } from '@neokai/shared';
+import type { SpaceTask } from '@hyperneo/shared';
 
 /**
  * Minimum shape the helper needs from a task — a structural subset of

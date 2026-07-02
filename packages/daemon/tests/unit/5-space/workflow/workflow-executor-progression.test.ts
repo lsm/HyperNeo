@@ -49,7 +49,7 @@ import {
   evaluateFields,
 } from '../../../../src/lib/space/runtime/gate-evaluator.ts';
 import type { GateScriptExecutorFn } from '../../../../src/lib/space/runtime/gate-evaluator.ts';
-import type { SpaceWorkflow, SpaceWorkflowRun, Gate, GateField, Channel } from '@neokai/shared';
+import type { SpaceWorkflow, SpaceWorkflowRun, Gate, GateField, Channel } from '@hyperneo/shared';
 
 // ---------------------------------------------------------------------------
 // DB helpers

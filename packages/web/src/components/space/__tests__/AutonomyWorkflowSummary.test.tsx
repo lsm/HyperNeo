@@ -16,7 +16,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup } from '@testing-library/preact';
-import type { SpaceWorkflow } from '@neokai/shared';
+import type { SpaceWorkflow } from '@hyperneo/shared';
 import { AutonomyWorkflowSummary } from '../AutonomyWorkflowSummary';
 
 function makeWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {

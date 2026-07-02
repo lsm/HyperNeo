@@ -8,9 +8,9 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 import { render, cleanup, fireEvent, waitFor } from '@testing-library/preact';
 import { SDKAssistantMessage } from '../SDKAssistantMessage';
-import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
+import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 import type { UUID } from 'crypto';
-import type { PendingUserQuestion, ResolvedQuestion } from '@neokai/shared';
+import type { PendingUserQuestion, ResolvedQuestion } from '@hyperneo/shared';
 
 // Mock the utils module for copyToClipboard
 vi.mock('../../../lib/utils.ts', async (importOriginal) => {

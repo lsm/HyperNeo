@@ -7,7 +7,7 @@
  * API Documentation: https://platform.minimax.io/docs/guides/text-ai-coding-tools
  */
 
-import type { ModelInfo } from '@neokai/shared';
+import type { ModelInfo } from '@hyperneo/shared';
 import type {
   ModelTier,
   Provider,
@@ -16,7 +16,7 @@ import type {
   ProviderCredentials,
   ProviderSdkConfig,
   ProviderSessionConfig,
-} from '@neokai/shared/provider';
+} from '@hyperneo/shared/provider';
 import { probeAnthropicCompatCredentials } from './shared/credential-probe.js';
 
 /**

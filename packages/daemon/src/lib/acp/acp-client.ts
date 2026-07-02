@@ -43,7 +43,7 @@ import type {
   AcpMcpServerConfig,
   AcpContentBlock,
   AcpStopReason,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import { AcpTransport } from './acp-transport';
 import type { AcpTransportCallbacks } from './acp-transport';
 

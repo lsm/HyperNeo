@@ -58,16 +58,16 @@ Migration blockers:
 
 ## Shared Package Imports
 
-Current root `@neokai/shared` imports dominate package boundaries.
+Current root `@hyperneo/shared` imports dominate package boundaries.
 
 | Import style | Count |
 | --- | ---: |
-| Root `@neokai/shared` literal specs | 935 |
+| Root `@hyperneo/shared` literal specs | 935 |
 | Files with at least one root literal | 628 |
-| `@neokai/shared/sdk*` literal specs | 100 |
-| `@neokai/shared/provider*` literal specs | 45 |
-| `@neokai/shared/types*` import specs | 15 |
-| `@neokai/shared/message-hub*` literal specs | 7 |
+| `@hyperneo/shared/sdk*` literal specs | 100 |
+| `@hyperneo/shared/provider*` literal specs | 45 |
+| `@hyperneo/shared/types*` import specs | 15 |
+| `@hyperneo/shared/message-hub*` literal specs | 7 |
 
 Root literals by package:
 

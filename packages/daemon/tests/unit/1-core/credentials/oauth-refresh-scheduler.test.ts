@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import type { Provider } from '@neokai/shared/provider';
+import type { Provider } from '@hyperneo/shared/provider';
 import { ProviderRegistry } from '../../../../src/lib/providers/registry';
 import { OAuthRefreshScheduler } from '../../../../src/lib/credentials/oauth-refresh-scheduler';
 

@@ -1,16 +1,16 @@
-# Audit: @neokai/ui vs Tailwind Application UI v4 Reference
+# Audit: @hyperneo/ui vs Tailwind Application UI v4 Reference
 
 ## Executive Summary
 
-This audit compares the `@neokai/ui` headless component library (v0.8.0) against the Tailwind Application UI v4 React examples (364 files across 11 categories) and the Tailwind Catalyst UI Kit (27 styled components). The goal is to identify specific improvements and additions for `packages/ui` itself.
+This audit compares the `@hyperneo/ui` headless component library (v0.8.0) against the Tailwind Application UI v4 React examples (364 files across 11 categories) and the Tailwind Catalyst UI Kit (27 styled components). The goal is to identify specific improvements and additions for `packages/ui` itself.
 
-**Key finding:** `@neokai/ui` is a well-built headless library with 64 named exports (20 export statements) across 19 component families and 27 test files. The Tailwind v4 reference demonstrates 6 new headless primitives that should be added (Alert, Avatar, AvatarGroup, Badge, Progress, Stepper), 5 existing components that need API improvements (Toast, Field, Input, Menu, Button), and 3 composable patterns (Command Palette, Drawer, Notification variants) that can be built from existing primitives.
+**Key finding:** `@hyperneo/ui` is a well-built headless library with 64 named exports (20 export statements) across 19 component families and 27 test files. The Tailwind v4 reference demonstrates 6 new headless primitives that should be added (Alert, Avatar, AvatarGroup, Badge, Progress, Stepper), 5 existing components that need API improvements (Toast, Field, Input, Menu, Button), and 3 composable patterns (Command Palette, Drawer, Notification variants) that can be built from existing primitives.
 
-**Secondary finding:** The reference also demonstrates Catalyst-style CSS custom property theming (`--btn-bg`, `--btn-border`) and a TouchTarget accessibility pattern that @neokai/ui should adopt.
+**Secondary finding:** The reference also demonstrates Catalyst-style CSS custom property theming (`--btn-bg`, `--btn-border`) and a TouchTarget accessibility pattern that @hyperneo/ui should adopt.
 
 ---
 
-## 1. @neokai/ui Current State
+## 1. @hyperneo/ui Current State
 
 ### 1.1 Component Inventory
 
@@ -77,7 +77,7 @@ The reference contains **364 JSX example files** across **11 categories**:
 | overlays | drawers, modal-dialogs, notifications | 24 |
 | page-examples | detail-screens, home-screens, settings-screens | 6 |
 
-The reference uses `@headlessui/react` for interactive patterns -- the React equivalent of @neokai/ui's headless approach. The `data-*` attribute patterns match exactly: `data-enter`, `data-leave`, `data-closed`, `data-focus`, `data-hover`, `data-selected`.
+The reference uses `@headlessui/react` for interactive patterns -- the React equivalent of @hyperneo/ui's headless approach. The `data-*` attribute patterns match exactly: `data-enter`, `data-leave`, `data-closed`, `data-focus`, `data-hover`, `data-selected`.
 
 ---
 
@@ -405,7 +405,7 @@ Tooltip already supports configurable `showDelay` (default 500ms) and `hideDelay
 
 ## 5. Composable Patterns (No New Primitives)
 
-These patterns from the reference can be built entirely from existing @neokai/ui primitives. They need **convenience wrappers or demo examples**, not new headless components.
+These patterns from the reference can be built entirely from existing @hyperneo/ui primitives. They need **convenience wrappers or demo examples**, not new headless components.
 
 ### 5.1 Command Palette (9 reference examples)
 
@@ -419,7 +419,7 @@ The reference nests a `Combobox` inside a `DialogPanel` with these key settings:
 - Footer with keyboard shortcut hints via `<kbd>` elements
 - Empty state when no results match
 
-**@neokai/ui readiness:** All required primitives exist. No new code needed in `packages/ui` — this is a consumer-side composition pattern. A demo example in the @neokai/ui demo app would be valuable.
+**@hyperneo/ui readiness:** All required primitives exist. No new code needed in `packages/ui` — this is a consumer-side composition pattern. A demo example in the @hyperneo/ui demo app would be valuable.
 
 ### 5.2 Drawer / Slide-over (9 reference examples)
 
@@ -432,7 +432,7 @@ transition duration-500 ease-in-out data-closed:translate-x-full sm:duration-700
 
 Variants: overlay vs. no overlay, sizes (`max-w-md` through `max-w-2xl`), branded header, sticky footer.
 
-**@neokai/ui readiness:** All required primitives exist. The `Transition` system already provides `data-closed` / `data-enter` / `data-leave` attributes. A demo example is all that's needed. However, a thin `DrawerPanel` convenience wrapper could provide the correct default CSS class structure and size presets.
+**@hyperneo/ui readiness:** All required primitives exist. The `Transition` system already provides `data-closed` / `data-enter` / `data-leave` attributes. A demo example is all that's needed. However, a thin `DrawerPanel` convenience wrapper could provide the correct default CSS class structure and size presets.
 
 **One gap:** `TransitionChild` (for animating arbitrary children within a transitioning component, e.g., the outside close button in drawer file 03) exists in the source but is **not exported from `mod.ts`**. Exporting it would enable more complex composition patterns.
 
@@ -559,14 +559,14 @@ The Catalyst UI Kit demonstrates a `TouchTarget` component that expands hit area
 
 #### R6. Create Demo Examples for Composable Patterns
 
-**Why:** Command Palette, Drawer, and typed Notifications demonstrate the power of composing existing @neokai/ui primitives.
+**Why:** Command Palette, Drawer, and typed Notifications demonstrate the power of composing existing @hyperneo/ui primitives.
 
 **Task breakdown:**
 
 | # | Task | Acceptance Criteria |
 |---|---|---|
-| 6.1 | Create Command Palette demo in @neokai/ui demo app | `Dialog` + `Combobox` composition. Search filtering, grouped results, footer. |
-| 6.2 | Create Drawer demo in @neokai/ui demo app | `Dialog` + `DialogPanel` with `data-closed:translate-x-full` transition. Overlay and inline variants. |
+| 6.1 | Create Command Palette demo in @hyperneo/ui demo app | `Dialog` + `Combobox` composition. Search filtering, grouped results, footer. |
+| 6.2 | Create Drawer demo in @hyperneo/ui demo app | `Dialog` + `DialogPanel` with `data-closed:translate-x-full` transition. Overlay and inline variants. |
 | 6.3 | Create typed Notification demo | `Toast` with variant styling from R1. |
 
 **Estimated effort:** 1 session. Depends on R1 for task 6.3.
@@ -594,9 +594,9 @@ R1, R2, R4, R5, R6.1 can all run in parallel. R3 should run after R1 (Toast vari
 
 ## 8. Appendix: Component Comparison Matrix
 
-### @neokai/ui vs Tailwind v4 Reference vs Catalyst UI Kit
+### @hyperneo/ui vs Tailwind v4 Reference vs Catalyst UI Kit
 
-| Pattern | @neokai/ui | Tailwind v4 Reference | Catalyst | Action Needed |
+| Pattern | @hyperneo/ui | Tailwind v4 Reference | Catalyst | Action Needed |
 |---|---|---|---|---|
 | Button | Headless | 12 examples | Styled | Add ButtonGroup (R4) |
 | CloseButton | Headless | (part of Dialog) | (part of Dialog) | — |
@@ -638,7 +638,7 @@ R1, R2, R4, R5, R6.1 can all run in parallel. R3 should run after R1 (Toast vari
 
 ### Data Attribute Coverage
 
-| Attribute | @neokai/ui | Headless UI v2 Reference | Notes |
+| Attribute | @hyperneo/ui | Headless UI v2 Reference | Notes |
 |---|---|---|---|
 | `data-hover` | Yes | Yes | |
 | `data-focus` | Yes | Yes | |
@@ -649,4 +649,4 @@ R1, R2, R4, R5, R6.1 can all run in parallel. R3 should run after R1 (Toast vari
 | `data-selected` | Yes | Yes | |
 | `data-enter` | Yes | Yes | |
 | `data-leave` | Yes | Yes | |
-| `data-transition` | Yes (custom) | Not in current docs | @neokai/ui convenience attribute not in Headless UI v2.2.x |
+| `data-transition` | Yes (custom) | Not in current docs | @hyperneo/ui convenience attribute not in Headless UI v2.2.x |

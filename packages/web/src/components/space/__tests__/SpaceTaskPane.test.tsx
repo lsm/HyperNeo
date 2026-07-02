@@ -7,7 +7,7 @@ import type {
   SpaceTaskActivityMember,
   SpaceWorkflow,
   SpaceWorkflowRun,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import { signal } from '@preact/signals';
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';

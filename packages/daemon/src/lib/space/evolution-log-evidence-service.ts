@@ -3,7 +3,7 @@ import type {
   EvidenceRef,
   StructuredLogEvent,
   StructuredLogLevel,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import type { EvolutionRepository } from '../../storage/repositories/evolution-repository';
 import type { SpaceRepository } from '../../storage/repositories/space-repository';
 

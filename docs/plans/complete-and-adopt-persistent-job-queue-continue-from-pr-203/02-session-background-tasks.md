@@ -106,7 +106,7 @@ Replace the fire-and-forget `pendingBackgroundTasks` Set in `SessionManager` wit
    - The job is processed (status transitions: pending -> processing -> completed)
    - The session title is updated
 4. Test retry behavior: mock title generation to fail on first attempt, succeed on second
-5. Run with `NEOKAI_USE_DEV_PROXY=1` for mocked API calls
+5. Run with `HYPERNEO_USE_DEV_PROXY=1` for mocked API calls
 
 **Acceptance criteria:**
 - Online test verifies end-to-end title generation via job queue

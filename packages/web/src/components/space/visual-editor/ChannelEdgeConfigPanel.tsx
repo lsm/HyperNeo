@@ -1,5 +1,5 @@
-import { generateUUID } from '@neokai/shared';
-import type { Gate, GateField, WorkflowChannel } from '@neokai/shared';
+import { generateUUID } from '@hyperneo/shared';
+import type { Gate, GateField, WorkflowChannel } from '@hyperneo/shared';
 
 export interface ChannelEdgeConfigPanelProps {
   index: number;

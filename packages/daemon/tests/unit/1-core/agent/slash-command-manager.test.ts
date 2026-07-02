@@ -9,7 +9,7 @@ import {
   SlashCommandManager,
   type SlashCommandManagerContext,
 } from '../../../../src/lib/agent/slash-command-manager';
-import type { Session } from '@neokai/shared';
+import type { Session } from '@hyperneo/shared';
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';

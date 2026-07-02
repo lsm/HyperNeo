@@ -728,6 +728,11 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
   // Migration 161: Persist the active session error snapshot (sessions.last_error).
   run(migrationMarkerKey(161), () => runMigration161(db));
+
+  // Migration 162: Rename legacy `neokai_action` message type and `neokai_product`
+  // evolution-finding domain to their rebranded identifiers so persisted rows match
+  // the code after the HyperNeo rename.
+  run(migrationMarkerKey(162), () => runMigration162(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -9529,7 +9534,7 @@ function backfillMessageSearchFts(db: BunDatabase): void {
 				) || ' ' || COALESCE(
 					CASE
 						WHEN json_valid(sm.sdk_message)
-						 AND sm.message_type = 'neokai_action'
+						 AND sm.message_type = 'hyperneo_action'
 						THEN TRIM(COALESCE(json_extract(sm.sdk_message, '$.title'), '') || ' '
 							|| COALESCE(json_extract(sm.sdk_message, '$.message'), '') || ' '
 							|| COALESCE(json_extract(sm.sdk_message, '$.question'), '') || ' '
@@ -10899,5 +10904,49 @@ export function runMigration161(db: BunDatabase): void {
   if (!tableExists(db, 'sessions')) return;
   if (!tableHasColumn(db, 'sessions', 'last_error')) {
     db.exec(`ALTER TABLE sessions ADD COLUMN last_error TEXT`);
+  }
+}
+
+/**
+ * Migration 162: Rewrite persisted rows that reference the pre-rebrand
+ * `neokai_*` identifiers so they match the renamed code.
+ *
+ * - `sdk_messages.message_type = 'neokai_action'` → `'hyperneo_action'`. Without
+ *   this, legacy action messages would slip past the `type !== 'hyperneo_action'`
+ *   filter and be mis-processed as SDK messages.
+ * - The action-message discriminator also lives inside the `sdk_message` JSON
+ *   blob as `$.type`. `_getSDKMessagesImpl` returns that parsed type and the
+ *   frontend only recognises `'hyperneo_action'`, so the JSON field is rewritten
+ *   too — otherwise upgraded action prompts render as unknown SDK messages and
+ *   can no longer be resolved.
+ * - `evolution_episodes.findings_json` may embed `"domain":"neokai_product"`; the
+ *   REPLACE re-tags those findings so they continue to surface in the product
+ *   category.
+ *
+ * Idempotent: all statements are no-ops once no legacy rows remain.
+ */
+export function runMigration162(db: BunDatabase): void {
+  if (tableExists(db, 'sdk_messages')) {
+    db.prepare(
+      `UPDATE sdk_messages SET message_type = 'hyperneo_action' WHERE message_type = 'neokai_action'`
+    ).run();
+    // Rewrite the JSON discriminator inside the blob (not just the column).
+    if (tableHasColumn(db, 'sdk_messages', 'sdk_message')) {
+      db.prepare(
+        `UPDATE sdk_messages
+           SET sdk_message = json_set(sdk_message, '$.type', 'hyperneo_action')
+         WHERE json_valid(sdk_message) AND json_extract(sdk_message, '$.type') = 'neokai_action'`
+      ).run();
+    }
+  }
+  if (
+    tableExists(db, 'evolution_episodes') &&
+    tableHasColumn(db, 'evolution_episodes', 'findings_json')
+  ) {
+    db.prepare(
+      `UPDATE evolution_episodes
+         SET findings_json = REPLACE(findings_json, '"neokai_product"', '"hyperneo_product"')
+       WHERE findings_json LIKE '%"neokai_product"%'`
+    ).run();
   }
 }

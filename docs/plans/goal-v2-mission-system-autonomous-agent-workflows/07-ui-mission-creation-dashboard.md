@@ -16,7 +16,7 @@ Update all user-facing "Goal" text to "Mission" in the frontend. Add type-specif
 1. In `packages/web/src/components/room/GoalsEditor.tsx`:
    - Replace all user-visible text strings: `"Goals"` -> `"Missions"`, `"Create Goal"` -> `"Create Mission"`, `"Delete Goal"` -> `"Delete Mission"`, `"No goals yet"` -> `"No missions yet"`, `"Create your first goal"` -> `"Create your first mission"`, heading `"Goals"` -> `"Missions"`, etc.
    - Keep the component file name and internal signal/function names as-is (rename is UI copy only)
-   - Import the `Mission` type alias from `@neokai/shared` and use it in place of `RoomGoal` for the public props type where it makes the intent clearer (optional cosmetic improvement)
+   - Import the `Mission` type alias from `@hyperneo/shared` and use it in place of `RoomGoal` for the public props type where it makes the intent clearer (optional cosmetic improvement)
 
 2. In `packages/web/src/islands/Room.tsx`:
    - Tab label `'goals'` stays as the tab key (internal); the displayed tab label text changes from `"Goals"` to `"Missions"` in the tab bar render

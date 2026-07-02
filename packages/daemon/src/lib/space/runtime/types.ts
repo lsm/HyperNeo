@@ -5,7 +5,7 @@
  * to avoid duplication and drift.
  */
 
-import type { MessageDeliveryMode, MessageOrigin } from '@neokai/shared';
+import type { MessageDeliveryMode, MessageOrigin } from '@hyperneo/shared';
 
 /**
  * Minimal interface for injecting messages into a session.

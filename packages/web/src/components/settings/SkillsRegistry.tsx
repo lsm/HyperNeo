@@ -6,7 +6,7 @@
  */
 
 import { useState } from 'preact/hooks';
-import type { AppSkill } from '@neokai/shared';
+import type { AppSkill } from '@hyperneo/shared';
 import { useSkills } from '../../hooks/useSkills';
 import { skillsStore } from '../../lib/skills-store';
 import { toast } from '../../lib/toast';

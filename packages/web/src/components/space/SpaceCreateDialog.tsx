@@ -17,7 +17,7 @@ import {
   hasNativeFolderPicker,
   NATIVE_FOLDER_PICKER_TIMEOUT_MS,
 } from '../../lib/runtime-capabilities';
-import type { Space } from '@neokai/shared';
+import type { Space } from '@hyperneo/shared';
 
 interface SpaceCreateDialogProps {
   isOpen: boolean;

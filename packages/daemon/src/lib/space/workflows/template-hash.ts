@@ -17,7 +17,7 @@
  * Always use JSON.stringify on the relevant subset of each object.
  */
 
-import type { GateField, GateFieldCheck, SpaceWorkflow } from '@neokai/shared';
+import type { GateField, GateFieldCheck, SpaceWorkflow } from '@hyperneo/shared';
 
 /**
  * Canonical shape used for hashing — uses only template-portable fields.

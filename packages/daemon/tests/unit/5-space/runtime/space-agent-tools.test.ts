@@ -10,7 +10,7 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
-import type { ModelInfo } from '@neokai/shared';
+import type { ModelInfo } from '@hyperneo/shared';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
@@ -42,7 +42,7 @@ import {
 } from '../../../../src/lib/space/tools/space-agent-tools.ts';
 import { ExternalEventStore } from '../../../../src/lib/external-events/external-event-store.ts';
 import type { ExternalEvent } from '../../../../src/lib/external-events/types.ts';
-import type { SpaceTask, SpaceWorkflow } from '@neokai/shared';
+import type { SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
 import type { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import { formatAgentMessage } from '../../../../src/lib/space/agent-message-envelope.ts';
 import { getModelsCache, setModelsCache } from '../../../../src/lib/model-service.ts';

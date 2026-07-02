@@ -12,7 +12,7 @@
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
-import type { McpEnablementOverride, McpEnablementScopeType } from '@neokai/shared';
+import type { McpEnablementOverride, McpEnablementScopeType } from '@hyperneo/shared';
 import type { ReactiveDatabase } from '../reactive-database';
 
 // ---------------------------------------------------------------------------

@@ -12,7 +12,7 @@ import {
   type SessionLoader,
 } from '../../../../src/lib/session/session-cache';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session';
-import type { Session } from '@neokai/shared';
+import type { Session } from '@hyperneo/shared';
 
 describe('SessionCache', () => {
   let cache: SessionCache;

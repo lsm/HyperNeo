@@ -23,8 +23,8 @@ import type {
   UpdateEvolutionEpisodeParams,
   UpdateEvolutionLessonParams,
   UpdateTaskProposalParams,
-} from '@neokai/shared';
-import { generateUUID, scoreEvolutionEvidenceQuality } from '@neokai/shared';
+} from '@hyperneo/shared';
+import { generateUUID, scoreEvolutionEvidenceQuality } from '@hyperneo/shared';
 import type { EvolutionRepository } from '../../storage/repositories/evolution-repository';
 import type { SpaceRepository } from '../../storage/repositories/space-repository';
 import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository';
@@ -43,7 +43,11 @@ import { inferProviderForModel } from '../providers/registry';
 
 const log = new Logger('evolution-episode-service');
 
-const FINDING_DOMAINS: EvolutionFindingDomain[] = ['workflow', 'target_artifact', 'neokai_product'];
+const FINDING_DOMAINS: EvolutionFindingDomain[] = [
+  'workflow',
+  'target_artifact',
+  'hyperneo_product',
+];
 const FINDING_KINDS: EvolutionFindingKind[] = [
   'friction',
   'bug',
@@ -485,7 +489,7 @@ export class EvolutionEpisodeService {
         evidence.push(runContext.evidenceId);
       }
       gaps.push({
-        domain: 'neokai_product',
+        domain: 'hyperneo_product',
         kind: 'bug',
         impact: 'medium',
         confidence: 0.9,
@@ -542,7 +546,7 @@ Return ONLY valid JSON with this shape:
   "title": "short episode title",
   "outcomeSummary": "what happened and why it matters",
   "findings": [
-    { "domain": "workflow|target_artifact|neokai_product", "kind": "friction|bug|optimization|missing_capability|new_opportunity", "impact": "low|medium|high", "confidence": 0.0, "evidence": ["evidence id or summary"], "proposedAction": "specific action" }
+    { "domain": "workflow|target_artifact|hyperneo_product", "kind": "friction|bug|optimization|missing_capability|new_opportunity", "impact": "low|medium|high", "confidence": 0.0, "evidence": ["evidence id or summary"], "proposedAction": "specific action" }
   ],
   "candidateLessons": [
     { "appliesTo": ["workflow|prompt|tool|ui"], "rule": "lesson candidate", "why": "supporting reason", "confidence": 0.0 }
@@ -741,7 +745,7 @@ async function judgeEpisodeWithModel(
   const originalEnv = await providerService.applyEnvVarsToProcessForProvider(provider, modelId);
   try {
     const { query } = await import('@anthropic-ai/claude-agent-sdk');
-    const { isSDKAssistantMessage } = await import('@neokai/shared/sdk/type-guards');
+    const { isSDKAssistantMessage } = await import('@hyperneo/shared/sdk/type-guards');
     const agentQuery = query({
       prompt,
       options: {

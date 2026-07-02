@@ -25,7 +25,7 @@
  * internal-event / command / query architecture plan.
  */
 
-import type { GlobalSettings } from '@neokai/shared';
+import type { GlobalSettings } from '@hyperneo/shared';
 import type { ExternalEventPublishedPayload } from './external-events/external-event-service';
 
 export interface HandlerFailure {
@@ -322,7 +322,7 @@ export class InternalEventBus<TEventMap extends object = Record<string, Internal
  *
  * This is the entry point most daemon code should use:
  *
- *   import { createInternalEventBus } from '@neokai/daemon/lib/internal-event-bus';
+ *   import { createInternalEventBus } from '@hyperneo/daemon/lib/internal-event-bus';
  *   const bus = createInternalEventBus<MyEventMap>();
  */
 export function createInternalEventBus<
@@ -383,12 +383,12 @@ export interface SessionEvents {
     toolUseId: string;
     timestamp: number;
   };
-  'session.created': { sessionId: string; session: import('@neokai/shared').Session };
+  'session.created': { sessionId: string; session: import('@hyperneo/shared').Session };
   'session.updated': {
     sessionId: string;
     source?: string;
-    session?: Partial<import('@neokai/shared').Session>;
-    processingState?: import('@neokai/shared').AgentProcessingState;
+    session?: Partial<import('@hyperneo/shared').Session>;
+    processingState?: import('@hyperneo/shared').AgentProcessingState;
   };
   'session.deleted': { sessionId: string };
   'commands.updated': { sessionId: string; commands: string[] };
@@ -400,7 +400,7 @@ export interface SessionEvents {
  * API connection events.
  */
 export interface ApiConnectionEvents {
-  'api.connection': { sessionId: string } & import('@neokai/shared').ApiConnectionState;
+  'api.connection': { sessionId: string } & import('@hyperneo/shared').ApiConnectionState;
 }
 
 // ---------------------------------------------------------------------------
@@ -616,63 +616,63 @@ interface AgentControlEvents {
   'message.persisted': {
     sessionId: string;
     messageId: string;
-    messageContent: string | import('@neokai/shared').MessageContent[];
+    messageContent: string | import('@hyperneo/shared').MessageContent[];
     userMessageText: string;
     needsWorkspaceInit: boolean;
     hasDraftToClear: boolean;
     sendStatus: 'deferred' | 'enqueued' | 'consumed';
-    deliveryMode: import('@neokai/shared').MessageDeliveryMode;
+    deliveryMode: import('@hyperneo/shared').MessageDeliveryMode;
     skipQueryStart?: boolean;
   };
   'query.trigger': { sessionId: string };
   'query.sendEnqueuedOnTurnEnd': { sessionId: string };
-  'context.updated': { sessionId: string; contextInfo: import('@neokai/shared').ContextInfo };
+  'context.updated': { sessionId: string; contextInfo: import('@hyperneo/shared').ContextInfo };
 }
 
 interface ClientForwardingEvents {
   'auth.changed': {
     sessionId: string;
-    method: import('@neokai/shared').AuthMethod;
+    method: import('@hyperneo/shared').AuthMethod;
     isAuthenticated: boolean;
   };
-  'space.created': { sessionId: string; spaceId: string; space: import('@neokai/shared').Space };
+  'space.created': { sessionId: string; spaceId: string; space: import('@hyperneo/shared').Space };
   'space.updated': {
     sessionId: string;
     spaceId: string;
-    space?: Partial<import('@neokai/shared').Space>;
+    space?: Partial<import('@hyperneo/shared').Space>;
   };
-  'space.archived': { sessionId: string; spaceId: string; space: import('@neokai/shared').Space };
+  'space.archived': { sessionId: string; spaceId: string; space: import('@hyperneo/shared').Space };
   'space.deleted': { sessionId: string; spaceId: string };
   'space.task.created': {
     sessionId: string;
     spaceId: string;
     taskId: string;
-    task: import('@neokai/shared').SpaceTask;
+    task: import('@hyperneo/shared').SpaceTask;
   };
   'space.task.updated': {
     sessionId: string;
     spaceId: string;
     taskId: string;
-    task: import('@neokai/shared').SpaceTask;
+    task: import('@hyperneo/shared').SpaceTask;
     archiveSource?: 'user' | 'system_reconcile';
   };
   'space.schedule.updated': {
     sessionId: string;
     spaceId: string;
     scheduleId: string;
-    schedule: import('@neokai/shared').TaskSchedule;
+    schedule: import('@hyperneo/shared').TaskSchedule;
   };
   'space.workflowRun.created': {
     sessionId: string;
     spaceId: string;
     runId: string;
-    run: import('@neokai/shared').SpaceWorkflowRun;
+    run: import('@hyperneo/shared').SpaceWorkflowRun;
   };
   'space.workflowRun.updated': {
     sessionId: string;
     spaceId: string;
     runId: string;
-    run?: Partial<import('@neokai/shared').SpaceWorkflowRun>;
+    run?: Partial<import('@hyperneo/shared').SpaceWorkflowRun>;
   };
   'space.gateData.updated': {
     sessionId: string;
@@ -686,39 +686,39 @@ interface ClientForwardingEvents {
     spaceId: string;
     runId: string;
     hookId: string;
-    hookState: import('@neokai/shared').WorkflowHookStateSnapshot;
+    hookState: import('@hyperneo/shared').WorkflowHookStateSnapshot;
   };
   'spaceAgent.created': {
     sessionId: string;
     spaceId: string;
-    agent: import('@neokai/shared').SpaceWorkerAgent;
+    agent: import('@hyperneo/shared').SpaceWorkerAgent;
   };
   'spaceAgent.updated': {
     sessionId: string;
     spaceId: string;
-    agent: import('@neokai/shared').SpaceWorkerAgent;
+    agent: import('@hyperneo/shared').SpaceWorkerAgent;
   };
   'spaceAgent.deleted': { sessionId: string; spaceId: string; agentId: string };
   'spaceLongHorizonAgent.created': {
     sessionId: string;
     spaceId: string;
-    agent: import('@neokai/shared').SpaceLongHorizonAgent;
+    agent: import('@hyperneo/shared').SpaceLongHorizonAgent;
   };
   'spaceLongHorizonAgent.updated': {
     sessionId: string;
     spaceId: string;
-    agent: import('@neokai/shared').SpaceLongHorizonAgent;
+    agent: import('@hyperneo/shared').SpaceLongHorizonAgent;
   };
   'spaceLongHorizonAgent.deleted': { sessionId: string; spaceId: string; agentId: string };
   'spaceWorkflow.created': {
     sessionId: string;
     spaceId: string;
-    workflow: import('@neokai/shared').SpaceWorkflow;
+    workflow: import('@hyperneo/shared').SpaceWorkflow;
   };
   'spaceWorkflow.updated': {
     sessionId: string;
     spaceId: string;
-    workflow: import('@neokai/shared').SpaceWorkflow;
+    workflow: import('@hyperneo/shared').SpaceWorkflow;
   };
   'spaceWorkflow.deleted': { sessionId: string; spaceId: string; workflowId: string };
   'providers.changed': { sessionId: string };

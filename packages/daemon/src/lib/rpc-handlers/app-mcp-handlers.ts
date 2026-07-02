@@ -21,7 +21,7 @@
  *    but the historical `mcp.room.*` public API is no longer registered.
  */
 
-import type { MessageHub } from '@neokai/shared';
+import type { MessageHub } from '@hyperneo/shared';
 import type {
   AppMcpServer,
   CreateAppMcpServerRequest,
@@ -31,7 +31,7 @@ import type {
   SessionMcpListResponse,
   SessionMcpServerEntry,
   UpdateAppMcpServerRequest,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { AppMcpServerRepository } from '../../storage/repositories/app-mcp-server-repository';
 import type { Database } from '../../storage/database';
@@ -44,7 +44,7 @@ import type {
   McpEnablementListResponse,
   McpEnablementSetOverrideRequest,
   McpEnablementSetOverrideResponse,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import { scopeChainForSession } from '../mcp/resolve-mcp-servers';
 import { Logger } from '../logger';
 

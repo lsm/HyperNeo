@@ -5,10 +5,10 @@
  * All window properties exposed by the web app for testing should be declared here.
  */
 
-import type { MessageHub } from '@neokai/shared/message-hub/message-hub';
-import type { Session, ContextInfo, AgentProcessingState } from '@neokai/shared';
-import type { SDKMessage } from '@neokai/shared/sdk';
-import type { ConnectionState } from '@neokai/shared/message-hub/types';
+import type { MessageHub } from '@hyperneo/shared/message-hub/message-hub';
+import type { Session, ContextInfo, AgentProcessingState } from '@hyperneo/shared';
+import type { SDKMessage } from '@hyperneo/shared/sdk';
+import type { ConnectionState } from '@hyperneo/shared/message-hub/types';
 import type { Signal } from '@preact/signals';
 
 /**

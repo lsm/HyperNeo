@@ -6,8 +6,8 @@ import type {
   ProviderCredentials,
   ProviderSdkConfig,
   ProviderSessionConfig,
-} from '@neokai/shared/provider';
-import type { ModelInfo } from '@neokai/shared';
+} from '@hyperneo/shared/provider';
+import type { ModelInfo } from '@hyperneo/shared';
 import {
   createOllamaAnthropicBridgeServer,
   type OllamaBridgeServer,

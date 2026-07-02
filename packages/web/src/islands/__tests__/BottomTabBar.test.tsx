@@ -1,4 +1,4 @@
-import type { SpaceLongHorizonAgent } from '@neokai/shared';
+import type { SpaceLongHorizonAgent } from '@hyperneo/shared';
 import { cleanup, render, screen } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 

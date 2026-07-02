@@ -36,7 +36,7 @@ import type { ExternalEvent } from '../../../../src/lib/external-events/types.ts
 import { jsonResult } from '../../../../src/lib/space/tools/tool-result.ts';
 import type { SubscribeExternalEventInput } from '../../../../src/lib/space/tools/node-agent-tool-schemas.ts';
 import { registerGateFeature } from '../../../../src/lib/space/runtime/gate-features.ts';
-import type { SpaceWorkflow, Gate, WorkflowChannel } from '@neokai/shared';
+import type { SpaceWorkflow, Gate, WorkflowChannel } from '@hyperneo/shared';
 import type {
   DaemonInternalEventMap,
   InternalEventBus,
@@ -3259,7 +3259,7 @@ describe('node-agent-tools: async gate evaluation', () => {
 
     let receivedContext: { workspacePath: string; runId: string; gateId: string } | null = null;
     const mockExecutor = async (
-      _script: import('@neokai/shared').GateScript,
+      _script: import('@hyperneo/shared').GateScript,
       context: { workspacePath: string; runId: string; gateId: string }
     ) => {
       receivedContext = context;

@@ -17,7 +17,7 @@ import type {
   EnvironmentSettings,
   ValidationResult,
   ToolsPresetConfig,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 
 // ============================================================================
 // System Prompt Validation

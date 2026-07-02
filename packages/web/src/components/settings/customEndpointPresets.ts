@@ -11,7 +11,7 @@ import type {
   CustomEndpointConfig,
   CustomEndpointType,
   CustomEndpointModelCapabilities,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 
 export interface CustomEndpointPreset {
   /** Slug used in the "Add" menu and as preset identity. */

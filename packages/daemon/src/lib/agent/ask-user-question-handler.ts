@@ -46,7 +46,7 @@ import type {
   QuestionCancelReason,
   QuestionDraftResponse,
   Session,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { Database } from '../../storage/database';
 import type { CanUseTool, PermissionResult } from '@anthropic-ai/claude-agent-sdk';

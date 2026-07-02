@@ -36,14 +36,14 @@
  *
  * ## Running
  *
- *   cd packages/daemon && NEOKAI_USE_DEV_PROXY=1 bun test \
+ *   cd packages/daemon && HYPERNEO_USE_DEV_PROXY=1 bun test \
  *     ./tests/online/space/space-happy-path-full-pipeline.test.ts
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
-import type { SpaceWorkflowRun } from '@neokai/shared';
+import type { SpaceWorkflowRun } from '@hyperneo/shared';
 import {
   createTestSpace,
   startWorkflowRun,
@@ -62,7 +62,7 @@ import {
 // Timing constants
 // ---------------------------------------------------------------------------
 
-const IS_MOCK = !!process.env.NEOKAI_USE_DEV_PROXY;
+const IS_MOCK = !!process.env.HYPERNEO_USE_DEV_PROXY;
 
 const NODE_ACTIVATION_TIMEOUT = IS_MOCK ? 3_000 : 15_000;
 // Run completion requires a SpaceRuntime tick (default 5s interval), so we

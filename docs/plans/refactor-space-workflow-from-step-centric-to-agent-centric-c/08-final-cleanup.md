@@ -125,14 +125,14 @@ Clean up all remaining step-transition code and types that are no longer needed.
    - Test channel-based message delivery (within-node, cross-node, DM, fan-out)
    - Test completion detection
    - Test lazy node activation
-4. Follow the existing online test patterns (use `NEOKAI_USE_DEV_PROXY=1` for mocked API calls)
+4. Follow the existing online test patterns (use `HYPERNEO_USE_DEV_PROXY=1` for mocked API calls)
 
 **Acceptance Criteria**:
 - `make test-daemon` passes
 - `make test-web` passes
 - `bun run typecheck` passes
 - `bun run lint` passes
-- Online tests pass with `NEOKAI_USE_DEV_PROXY=1`
+- Online tests pass with `HYPERNEO_USE_DEV_PROXY=1`
 - Full workflow lifecycle is exercised end-to-end
 - No regressions in any test suite
 

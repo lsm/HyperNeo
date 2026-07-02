@@ -1,5 +1,5 @@
-import { hasEnabledGateFeature, resolveNodeAgents } from '@neokai/shared';
-import type { Gate, GatePoll, GateScript, SpaceWorkflow } from '@neokai/shared';
+import { hasEnabledGateFeature, resolveNodeAgents } from '@hyperneo/shared';
+import type { Gate, GatePoll, GateScript, SpaceWorkflow } from '@hyperneo/shared';
 
 export interface GateFeatureDefinition {
   script?: () => GateScript;
@@ -215,7 +215,7 @@ export const CODEX_REVIEW_BOT_FEATURE = 'codex_review_bot';
  * (10 min) default timed out before the bot posted its +1, which silently
  * re-opened approval gates. 7200s (2 hours) gives the bot room to finish
  * while still bounding the wait. Operators can override globally via
- * `NEOKAI_CODEX_REVIEW_BOT_TIMEOUT_SECONDS` or per workflow node via
+ * `HYPERNEO_CODEX_REVIEW_BOT_TIMEOUT_SECONDS` or per workflow node via
  * `WorkflowNode.codexTimeoutSeconds`.
  */
 const DEFAULT_CODEX_REVIEW_BOT_TIMEOUT_SECONDS = 7200;
@@ -243,12 +243,13 @@ export function resolveCodexTimeoutSeconds(
 }
 
 export const CODEX_REVIEW_BOT_TIMEOUT_SECONDS = resolveCodexTimeoutSeconds(
-  process.env.NEOKAI_CODEX_REVIEW_BOT_TIMEOUT_SECONDS,
+  process.env.HYPERNEO_CODEX_REVIEW_BOT_TIMEOUT_SECONDS ??
+    process.env.NEOKAI_CODEX_REVIEW_BOT_TIMEOUT_SECONDS,
   DEFAULT_CODEX_REVIEW_BOT_TIMEOUT_SECONDS
 );
 
 export const CODEX_REVIEW_BOT_POLL_INTERVAL_MS = resolveCodexPollIntervalMs(
-  process.env.NEOKAI_CODEX_POLL_INTERVAL_MS
+  process.env.HYPERNEO_CODEX_POLL_INTERVAL_MS ?? process.env.NEOKAI_CODEX_POLL_INTERVAL_MS
 );
 
 /**
@@ -268,13 +269,13 @@ export const CODEX_REVIEW_BOT_POLL_INTERVAL_MS = resolveCodexPollIntervalMs(
  * — means metadata writes (e.g. persisting `head_sha` from a prior run) no
  * longer reset the timeout window, and a cyclic reset re-arms the wait. For
  * gate-data records persisted before `cycle_start_at` shipped, we fall back to
- * `NEOKAI_GATE_DATA_UPDATED_ISO`. Workflow start is intentionally NOT used as a
+ * `HYPERNEO_GATE_DATA_UPDATED_ISO`. Workflow start is intentionally NOT used as a
  * timeout anchor — see the test "codex timeout does not trigger when only
  * workflowStartIso is old".
  */
 function buildCodexReviewBotScriptSource(timeoutSeconds: number): string {
   return [
-    'GATE_PR_URL=$(jq -r \'.pr_url // empty\' <<< "${NEOKAI_GATE_DATA_JSON:-{}}" 2>/dev/null || true)',
+    'GATE_PR_URL=$(jq -r \'.pr_url // empty\' <<< "${HYPERNEO_GATE_DATA_JSON:-{}}" 2>/dev/null || true)',
     'PR_URL="${GATE_PR_URL:-${PR_URL:-}}"',
     'if [ -z "$PR_URL" ]; then',
     '  PR_URL=$(gh pr view --json url -q .url 2>/dev/null || true)',
@@ -317,7 +318,7 @@ function buildCodexReviewBotScriptSource(timeoutSeconds: number): string {
     //     at run start and by reset() on every cyclic revision) filters out
     //     +1 / eyes reactions from prior review cycles. Falls back to workflow
     //     start when the gate has not been initialized yet.
-    //   - Timeout: NEOKAI_GATE_DATA_UPDATED_ISO (advanced when the reviewer
+    //   - Timeout: HYPERNEO_GATE_DATA_UPDATED_ISO (advanced when the reviewer
     //     writes approval data via the gate-data merge path; metadata writes
     //     such as persisting `head_sha` use mergePreserveTimestamp and do NOT
     //     advance it). This is the approval-handoff anchor.
@@ -326,13 +327,13 @@ function buildCodexReviewBotScriptSource(timeoutSeconds: number): string {
     // run start, so a long Coding/QA phase would let the window elapse before
     // the reviewer ever hands off — the first approval poll would immediately
     // emit the timeout result without giving Codex time to react.
-    'CYCLE_START_MS=$(jq -r \'.cycle_start_at // empty\' <<< "${NEOKAI_GATE_DATA_JSON:-{}}" 2>/dev/null || true)',
+    'CYCLE_START_MS=$(jq -r \'.cycle_start_at // empty\' <<< "${HYPERNEO_GATE_DATA_JSON:-{}}" 2>/dev/null || true)',
     'if [ -n "$CYCLE_START_MS" ]; then',
     `  FRESHNESS_ISO=$(bun -e 'const d=new Date(parseInt(process.argv[1])); if(Number.isNaN(d.getTime())) process.exit(1); console.log(d.toISOString());' "$CYCLE_START_MS" 2>/dev/null || true)`,
     'else',
-    '  FRESHNESS_ISO="${NEOKAI_WORKFLOW_START_ISO:-}"',
+    '  FRESHNESS_ISO="${HYPERNEO_WORKFLOW_START_ISO:-}"',
     'fi',
-    'TIMEOUT_ISO="${NEOKAI_GATE_DATA_UPDATED_ISO:-}"',
+    'TIMEOUT_ISO="${HYPERNEO_GATE_DATA_UPDATED_ISO:-}"',
     // GitHub created_at is second-precision; normalize JS millisecond ISO to match.
     'if [ -n "$FRESHNESS_ISO" ] && [[ "$FRESHNESS_ISO" =~ \\.[0-9]+Z$ ]]; then',
     '  FRESHNESS_ISO="${FRESHNESS_ISO%.*}Z"',
@@ -361,7 +362,7 @@ function buildCodexReviewBotScriptSource(timeoutSeconds: number): string {
     '  jq -n --arg url "$PR_URL" --arg sha "${HEAD_SHA}" \'{"pr_url":$url,"codex_bot_reaction":"+1","head_sha":$sha}\'',
     '  exit 0',
     'fi',
-    // Timeout anchored to NEOKAI_GATE_DATA_UPDATED_ISO (approval-handoff time).
+    // Timeout anchored to HYPERNEO_GATE_DATA_UPDATED_ISO (approval-handoff time).
     // No workflow-start fallback — see "codex timeout does not trigger when
     // only workflowStartIso is old".
     'if [ -n "$TIMEOUT_ISO" ]; then',
@@ -390,7 +391,7 @@ function buildCodexReviewBotScriptSource(timeoutSeconds: number): string {
  */
 function buildCodexReviewBotPollScriptSource(timeoutSeconds: number): string {
   return [
-    'GATE_PR_URL=$(jq -r \'.pr_url // empty\' <<< "${NEOKAI_GATE_DATA_JSON:-{}}" 2>/dev/null || true)',
+    'GATE_PR_URL=$(jq -r \'.pr_url // empty\' <<< "${HYPERNEO_GATE_DATA_JSON:-{}}" 2>/dev/null || true)',
     'PR_URL="${GATE_PR_URL:-${PR_URL:-}}"',
     'if [ -z "$PR_URL" ]; then',
     '  echo "No PR URL available to verify codex review bot reaction. Provide pr_url gate data or run from a PR branch."',
@@ -425,13 +426,13 @@ function buildCodexReviewBotPollScriptSource(timeoutSeconds: number): string {
     '  exit 0',
     'fi',
     'REACTIONS_JSON=$(jq -s \'add // []\' <<< "$REACTIONS_RAW")',
-    'CYCLE_START_MS=$(jq -r \'.cycle_start_at // empty\' <<< "${NEOKAI_GATE_DATA_JSON:-{}}" 2>/dev/null || true)',
+    'CYCLE_START_MS=$(jq -r \'.cycle_start_at // empty\' <<< "${HYPERNEO_GATE_DATA_JSON:-{}}" 2>/dev/null || true)',
     'if [ -n "$CYCLE_START_MS" ]; then',
     `  FRESHNESS_ISO=$(bun -e 'const d=new Date(parseInt(process.argv[1])); if(Number.isNaN(d.getTime())) process.exit(1); console.log(d.toISOString());' "$CYCLE_START_MS" 2>/dev/null || true)`,
     'else',
-    '  FRESHNESS_ISO="${NEOKAI_WORKFLOW_START_ISO:-}"',
+    '  FRESHNESS_ISO="${HYPERNEO_WORKFLOW_START_ISO:-}"',
     'fi',
-    'TIMEOUT_ISO="${NEOKAI_GATE_DATA_UPDATED_ISO:-}"',
+    'TIMEOUT_ISO="${HYPERNEO_GATE_DATA_UPDATED_ISO:-}"',
     'if [ -n "$FRESHNESS_ISO" ] && [[ "$FRESHNESS_ISO" =~ \\.[0-9]+Z$ ]]; then',
     '  FRESHNESS_ISO="${FRESHNESS_ISO%.*}Z"',
     'fi',

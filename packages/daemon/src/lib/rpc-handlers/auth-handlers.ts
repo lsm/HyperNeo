@@ -7,7 +7,7 @@
  * - Provider OAuth login/logout
  */
 
-import type { MessageHub } from '@neokai/shared';
+import type { MessageHub } from '@hyperneo/shared';
 import type {
   ProviderAuthStatus,
   ProviderAuthResponse,
@@ -18,7 +18,7 @@ import type {
   ProviderRefreshResponse,
   ListProviderAuthStatusResponse,
   ProviderCredentials,
-} from '@neokai/shared/provider';
+} from '@hyperneo/shared/provider';
 import type { AuthManager } from '../auth-manager';
 import type { ProviderCredentialManager } from '../credentials/provider-credential-manager';
 import {

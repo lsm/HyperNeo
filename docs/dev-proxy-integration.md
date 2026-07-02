@@ -13,10 +13,10 @@ Dev Proxy is a Microsoft tool that intercepts HTTP requests and can return mock 
 For daemon online tests, use:
 
 ```bash
-cd packages/daemon && NEOKAI_USE_DEV_PROXY=1 bun test ./tests/online/convo/multiturn-conversation.test.ts
+cd packages/daemon && HYPERNEO_USE_DEV_PROXY=1 bun test ./tests/online/convo/multiturn-conversation.test.ts
 ```
 
-When `NEOKAI_USE_DEV_PROXY=1` is enabled in the daemon test helper:
+When `HYPERNEO_USE_DEV_PROXY=1` is enabled in the daemon test helper:
 
 1. Dev Proxy is mandatory for the run; startup failure causes test setup failure.
 2. Real Anthropic credentials are blocked for the test process:
@@ -24,18 +24,18 @@ When `NEOKAI_USE_DEV_PROXY=1` is enabled in the daemon test helper:
    - `ANTHROPIC_AUTH_TOKEN=''`
    - `ANTHROPIC_API_KEY='sk-devproxy-test-key'`
 3. Requests are routed to local Dev Proxy URL (`http://127.0.0.1:8000`).
-4. Dev Proxy is reused across tests in the same process by default (`NEOKAI_DEV_PROXY_REUSE=1`).
+4. Dev Proxy is reused across tests in the same process by default (`HYPERNEO_DEV_PROXY_REUSE=1`).
 
 This prevents silent fallbacks to real credentialed Anthropic traffic.
 Reuse mode removes per-test Dev Proxy start/stop overhead and is recommended for CI.
 
-Set `NEOKAI_DEV_PROXY_REUSE=0` to force per-test Dev Proxy lifecycle behavior.
+Set `HYPERNEO_DEV_PROXY_REUSE=0` to force per-test Dev Proxy lifecycle behavior.
 
 To confirm requests were mocked:
 
 ```bash
 # Optional: persist logs to .devproxy/devproxy.log when helper stops proxy
-(cd packages/daemon && NEOKAI_DEV_PROXY_CAPTURE_LOGS=1 NEOKAI_USE_DEV_PROXY=1 bun test ./tests/online/convo/multiturn-conversation.test.ts)
+(cd packages/daemon && HYPERNEO_DEV_PROXY_CAPTURE_LOGS=1 HYPERNEO_USE_DEV_PROXY=1 bun test ./tests/online/convo/multiturn-conversation.test.ts)
 tail -n 120 .devproxy/devproxy.log
 
 # Or read directly from devproxy
@@ -288,12 +288,12 @@ export NODE_USE_ENV_PROXY=1
 export NODE_EXTRA_CA_CERTS=~/.proxy/rootCA.pem
 
 # Run tests
-cd packages/daemon && NEOKAI_TEST_ONLINE=true bun test ./tests/online/
+cd packages/daemon && HYPERNEO_TEST_ONLINE=true bun test ./tests/online/
 ```
 
-### Using NEOKAI_USE_DEV_PROXY Environment Variable
+### Using HYPERNEO_USE_DEV_PROXY Environment Variable
 
-The `NEOKAI_USE_DEV_PROXY=1` environment variable enables Dev Proxy integration with the test helper:
+The `HYPERNEO_USE_DEV_PROXY=1` environment variable enables Dev Proxy integration with the test helper:
 
 When set, the `createDaemonServer()` helper in `packages/daemon/tests/helpers/daemon-server.ts` will:
 
@@ -305,29 +305,29 @@ To use it:
 
 ```bash
 # Run tests with Dev Proxy (the helper starts/stops proxy automatically)
-cd packages/daemon && NEOKAI_USE_DEV_PROXY=1 bun test ./tests/online/agent/agent-session-sdk.test.ts
+cd packages/daemon && HYPERNEO_USE_DEV_PROXY=1 bun test ./tests/online/agent/agent-session-sdk.test.ts
 ```
 
 This approach is cleaner than manually setting `HTTP_PROXY` and `HTTPS_PROXY`.
 
 ### Mock Mode Detection
 
-Test files detect mock mode using either `NEOKAI_AGENT_SDK_MOCK` or `NEOKAI_USE_DEV_PROXY`:
+Test files detect mock mode using either `HYPERNEO_AGENT_SDK_MOCK` or `HYPERNEO_USE_DEV_PROXY`:
 
 ```typescript
 // Detect mock mode for faster timeouts (either in-process mock or Dev Proxy)
-const IS_MOCK = !!(process.env.NEOKAI_AGENT_SDK_MOCK || process.env.NEOKAI_USE_DEV_PROXY);
+const IS_MOCK = !!(process.env.HYPERNEO_AGENT_SDK_MOCK || process.env.HYPERNEO_USE_DEV_PROXY);
 ```
 
 Both modes use shorter timeouts for faster test execution.
 
 ### Backwards Compatibility
 
-The existing `NEOKAI_AGENT_SDK_MOCK=1` mode continues to work for backwards compatibility:
+The existing `HYPERNEO_AGENT_SDK_MOCK=1` mode continues to work for backwards compatibility:
 
 ```bash
 # Old approach (still works)
-cd packages/daemon && NEOKAI_AGENT_SDK_MOCK=1 bun test ./tests/online/agent/agent-session-sdk.test.ts
+cd packages/daemon && HYPERNEO_AGENT_SDK_MOCK=1 bun test ./tests/online/agent/agent-session-sdk.test.ts
 ```
 
 ### Integration with HyperNeo Codebase

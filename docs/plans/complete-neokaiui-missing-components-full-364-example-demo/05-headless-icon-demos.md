@@ -14,28 +14,28 @@ Port all 106 reference files that use BOTH headlessui AND heroicons. This is the
 ## Porting Checklist (per file)
 
 Everything from M2 + M3 checklists PLUS:
-1. Convert headlessui imports to @neokai/ui equivalents (see mapping table below)
+1. Convert headlessui imports to @hyperneo/ui equivalents (see mapping table below)
 2. Convert headlessui component names and APIs:
    - `Dialog` -> `Dialog`, `DialogBackdrop` -> `DialogBackdrop`, `DialogPanel` -> `DialogPanel`, `DialogTitle` -> `DialogTitle`, `DialogDescription` -> `DialogDescription`
    - `Transition` -> `Transition`, `Transition.Child` -> `TransitionChild`
-   - `Combobox`, `ComboboxInput`, `ComboboxOptions`, `ComboboxOption`, `ComboboxButton` -> same names from @neokai/ui
+   - `Combobox`, `ComboboxInput`, `ComboboxOptions`, `ComboboxOption`, `ComboboxButton` -> same names from @hyperneo/ui
    - `Listbox`, `ListboxButton`, `ListboxOptions`, `ListboxOption` -> same names
-   - `Menu`, `MenuButton`, `MenuItems`, `MenuItem` -> same names (note: reference uses `MenuItems`, @neokai/ui uses same)
+   - `Menu`, `MenuButton`, `MenuItems`, `MenuItem` -> same names (note: reference uses `MenuItems`, @hyperneo/ui uses same)
    - `Popover`, `PopoverButton`, `PopoverPanel`, `PopoverGroup` -> same names
    - `Disclosure`, `DisclosureButton`, `DisclosurePanel` -> same names
    - `Tab`, `TabGroup`, `TabList`, `TabPanel`, `TabPanels` -> same names
-   - `CloseButton` -> `CloseButton` (from @neokai/ui Dialog)
-   - `Label`, `Field`, `Description`, `FieldError` -> from @neokai/ui
+   - `CloseButton` -> `CloseButton` (from @hyperneo/ui Dialog)
+   - `Label`, `Field`, `Description`, `FieldError` -> from @hyperneo/ui
 3. Convert heroicon imports to lucide-preact using `icon-map.ts`
-4. Handle any headlessui-specific patterns not present in @neokai/ui:
+4. Handle any headlessui-specific patterns not present in @hyperneo/ui:
    - If a component is missing, note it and use a workaround (HTML element with appropriate data attributes)
-   - `Description` in headlessui maps to `DialogDescription` or `Description` from @neokai/ui (verify which is correct for the context)
+   - `Description` in headlessui maps to `DialogDescription` or `Description` from @hyperneo/ui (verify which is correct for the context)
 
 ## headlessui-to-neokai Import Mapping
 
-| headlessui import | @neokai/ui import |
+| headlessui import | @hyperneo/ui import |
 |-------------------|-------------------|
-| `@headlessui/react` Dialog components | `../../src/mod.ts` or `@neokai/ui` |
+| `@headlessui/react` Dialog components | `../../src/mod.ts` or `@hyperneo/ui` |
 | `@headlessui/react` Transition | Same pattern |
 | `@headlessui/react` Combobox* | Same pattern |
 | `@headlessui/react` Listbox* | Same pattern |
@@ -64,7 +64,7 @@ Everything from M2 + M3 checklists PLUS:
 - 2 new demo section files created (DrawersDemo, ModalDialogsDemo)
 - Existing NotificationDemo extended with 4 more variants (M4.1 must be merged first)
 - All 22 overlay reference examples render correctly
-- All headlessui imports replaced with @neokai/ui
+- All headlessui imports replaced with @hyperneo/ui
 - All heroicon imports replaced with lucide-preact
 - Drawer panels open/close with transition animations
 - Modal dialogs open/close with backdrop
@@ -121,13 +121,13 @@ Everything from M2 + M3 checklists PLUS:
 
 3. **Create `application-shells/stacked/StackedShellsDemo.tsx`** (9 files): With bottom border, on subtle background, with lighter page header, branded nav with compact lighter page header, with overlap, brand nav with overlap, brand nav with lighter page header, with compact lighter page header, two-row navigation with overlap. Uses Popover, Disclosure. Icons: various.
 
-4. **Create `forms/comboboxes/ComboboxesDemo.tsx`** (4 files): Simple, with status indicator, with avatar, with secondary text. Uses Combobox from @neokai/ui. Icons: `CheckIcon`, `ChevronUpDownIcon`.
+4. **Create `forms/comboboxes/ComboboxesDemo.tsx`** (4 files): Simple, with status indicator, with avatar, with secondary text. Uses Combobox from @hyperneo/ui. Icons: `CheckIcon`, `ChevronUpDownIcon`.
 
-5. **Create `forms/select-menus/CustomSelectMenusDemo.tsx`** (6 files): Simple custom, custom with check on left, custom with status indicator, custom with avatar, with secondary text, branded with supporting text. Uses Listbox from @neokai/ui. Icons: `CheckIcon`, `ChevronUpDownIcon`.
+5. **Create `forms/select-menus/CustomSelectMenusDemo.tsx`** (6 files): Simple custom, custom with check on left, custom with status indicator, custom with avatar, with secondary text, branded with supporting text. Uses Listbox from @hyperneo/ui. Icons: `CheckIcon`, `ChevronUpDownIcon`.
 
 6. **Update `forms/textareas/TextareasDemo.tsx`** -- add 4 headless+icon examples: with avatar and actions, with underline and actions, with title and pill actions, with preview button. Uses Popover for menus.
 
-7. **Create `elements/dropdowns/DropdownsDemo.tsx`** (5 files): Simple, with dividers, with icons, with minimal menu icon, with simple header. Uses Menu from @neokai/ui. Icons: `EllipsisVerticalIcon`, `PencilIcon`, `TrashIcon`, `ArchiveBoxIcon`, etc.
+7. **Create `elements/dropdowns/DropdownsDemo.tsx`** (5 files): Simple, with dividers, with icons, with minimal menu icon, with simple header. Uses Menu from @hyperneo/ui. Icons: `EllipsisVerticalIcon`, `PencilIcon`, `TrashIcon`, `ArchiveBoxIcon`, etc.
 
 8. **Update `elements/button-groups/ButtonGroupsDemo.tsx`** -- add 1 headless+icon example: with dropdown. Uses Menu.
 

@@ -1,5 +1,5 @@
 import type { Database as BunDatabase } from 'bun:sqlite';
-import { generateUUID } from '@neokai/shared';
+import { generateUUID } from '@hyperneo/shared';
 import type {
   CreateSpaceGoalEventParams,
   SpaceGoalEvent,
@@ -8,7 +8,7 @@ import type {
   SpaceGoalEventSnapshot,
   SpaceGoalEventSource,
   SpaceGoalEventType,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import type { ReactiveDatabase } from '../reactive-database';
 
 const DEFAULT_LIMIT = 20;

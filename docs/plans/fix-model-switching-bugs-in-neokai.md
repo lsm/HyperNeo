@@ -72,7 +72,7 @@ The root cause is that `session.model.switch` RPC handler in `session-handlers.t
    - Match on `msg.type === 'system' && msg.subtype === 'init'`
    - Clean up the event listener after resolving
 
-2. Write a test (using dev proxy via `NEOKAI_USE_DEV_PROXY=1`) that:
+2. Write a test (using dev proxy via `HYPERNEO_USE_DEV_PROXY=1`) that:
    - Creates a session and sends a message to start a query.
    - **Before sending**: call `waitForSystemInit(sessionId)` to capture the initial `model` field → `initialModel`. Wait for the query response to confirm the agent is working.
    - Calls `session.model.switch` with a different model (e.g., `claude-sonnet-4-20250514` → `claude-haiku-4-5-20251001`) and awaits completion. The `restart()` happens internally — the RPC returns after the old query is stopped.
@@ -93,7 +93,7 @@ The root cause is that `session.model.switch` RPC handler in `session-handlers.t
 - Test produces a clear pass/fail result.
 - The `system:init` `model` field is captured before and after the switch.
 - Results are documented (pass → model switching works; fail → `forkSession` or alternative approach needed).
-- Test passes with `NEOKAI_USE_DEV_PROXY=1`.
+- Test passes with `HYPERNEO_USE_DEV_PROXY=1`.
 
 **Dependencies**: None
 

@@ -21,7 +21,7 @@ import type {
   Space,
   SpaceMcpListResponse,
   McpImportsRefreshResponse,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import { createTables } from '../../../../src/storage/schema';
 import { createReactiveDatabase } from '../../../../src/storage/reactive-database';
 import { AppMcpServerRepository } from '../../../../src/storage/repositories/app-mcp-server-repository';

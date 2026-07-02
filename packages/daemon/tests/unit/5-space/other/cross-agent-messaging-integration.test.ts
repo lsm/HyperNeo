@@ -51,7 +51,7 @@ import {
 } from '../../../../src/lib/space/tools/node-agent-tools.ts';
 import { AgentMessageRouter } from '../../../../src/lib/space/runtime/agent-message-router.ts';
 import { ChannelResolver } from '../../../../src/lib/space/runtime/channel-resolver.ts';
-import type { WorkflowChannel } from '@neokai/shared';
+import type { WorkflowChannel } from '@hyperneo/shared';
 
 // ---------------------------------------------------------------------------
 // Constants

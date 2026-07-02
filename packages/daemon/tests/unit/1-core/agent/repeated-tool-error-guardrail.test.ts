@@ -4,7 +4,7 @@
 
 import { describe, expect, it, mock } from 'bun:test';
 import { RepeatedToolErrorGuardrail } from '../../../../src/lib/agent/repeated-tool-error-guardrail';
-import type { SpaceTask } from '@neokai/shared';
+import type { SpaceTask } from '@hyperneo/shared';
 
 function makeGuardrail(
   overrides: Partial<ConstructorParameters<typeof RepeatedToolErrorGuardrail>[0]> = {}

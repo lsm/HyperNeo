@@ -7,8 +7,8 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import type { Session } from '@neokai/shared';
-import { STATE_CHANNELS } from '@neokai/shared';
+import type { Session } from '@hyperneo/shared';
+import { STATE_CHANNELS } from '@hyperneo/shared';
 
 // Mock connection-manager module - must be at top level and use inline factory
 vi.mock('../connection-manager.js', () => {

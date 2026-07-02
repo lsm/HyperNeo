@@ -19,7 +19,7 @@ import {
  * background job through to the active session view.
  */
 
-const IS_MOCK = process.env.NEOKAI_USE_DEV_PROXY === '1';
+const IS_MOCK = process.env.HYPERNEO_USE_DEV_PROXY === '1';
 
 // Use the data-testid on the ChatHeader h2 for an unambiguous selector.
 // A plain class-based selector would also match ContextPanel.tsx's h2

@@ -37,7 +37,7 @@
 // Context types
 // ---------------------------------------------------------------------------
 
-import type { SpaceAutonomyLevel } from '@neokai/shared/types/space';
+import type { SpaceAutonomyLevel } from '@hyperneo/shared/types/space';
 
 /** Minimal workflow summary for prompt embedding (avoids exposing full node graph). */
 export interface WorkflowSummary {

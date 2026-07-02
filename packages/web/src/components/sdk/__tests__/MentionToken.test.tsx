@@ -8,7 +8,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup, waitFor } from '@testing-library/preact';
 import { MentionToken, parseTextWithReferences } from '../MentionToken';
-import type { ReferenceMetadata } from '@neokai/shared';
+import type { ReferenceMetadata } from '@hyperneo/shared';
 
 // ─── Mock useMessageHub ──────────────────────────────────────────────────────
 

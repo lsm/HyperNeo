@@ -16,12 +16,12 @@
 import { describe, test, expect, beforeEach, mock, afterEach } from 'bun:test';
 import { Database as BunDatabase } from 'bun:sqlite';
 import type { Database } from '../../../../src/storage/database';
-import type { SDKMessage } from '@neokai/shared/sdk';
-import { MessageHub } from '@neokai/shared';
+import type { SDKMessage } from '@hyperneo/shared/sdk';
+import { MessageHub } from '@hyperneo/shared';
 import { setupMessageHandlers } from '../../../../src/lib/rpc-handlers/message-handlers';
 import type { SessionManager } from '../../../../src/lib/session-manager';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session';
-import type { Session } from '@neokai/shared';
+import type { Session } from '@hyperneo/shared';
 
 // Type for captured request handlers
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;

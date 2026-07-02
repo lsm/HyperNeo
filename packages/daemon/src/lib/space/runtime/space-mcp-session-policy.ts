@@ -1,4 +1,4 @@
-import type { Session } from '@neokai/shared';
+import type { Session } from '@hyperneo/shared';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import { longTermAgentSessionId } from '../long-term-agent-session';

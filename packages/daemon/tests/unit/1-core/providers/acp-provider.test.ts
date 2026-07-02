@@ -18,8 +18,8 @@ describe('AcpProvider', () => {
 
   beforeEach(() => {
     originalEnv = { ...process.env };
-    delete process.env.NEOKAI_ACP_COMMAND;
-    delete process.env.NEOKAI_ACP_CONTEXT_WINDOW;
+    delete process.env.HYPERNEO_ACP_COMMAND;
+    delete process.env.HYPERNEO_ACP_CONTEXT_WINDOW;
     provider = new AcpProvider(process.env, noopProbe);
   });
 
@@ -45,31 +45,31 @@ describe('AcpProvider', () => {
     });
 
     it('should use configured context window in capabilities', () => {
-      process.env.NEOKAI_ACP_CONTEXT_WINDOW = '123456';
+      process.env.HYPERNEO_ACP_CONTEXT_WINDOW = '123456';
 
       expect(provider.capabilities.maxContextWindow).toBe(123456);
     });
   });
 
   describe('isAvailable', () => {
-    it('should return true when NEOKAI_ACP_COMMAND is set', () => {
-      process.env.NEOKAI_ACP_COMMAND = 'claude --acp';
+    it('should return true when HYPERNEO_ACP_COMMAND is set', () => {
+      process.env.HYPERNEO_ACP_COMMAND = 'claude --acp';
       expect(provider.isAvailable()).toBe(true);
     });
 
-    it('should return false when no NEOKAI_ACP_COMMAND is set', () => {
+    it('should return false when no HYPERNEO_ACP_COMMAND is set', () => {
       expect(provider.isAvailable()).toBe(false);
     });
 
-    it('should return false when NEOKAI_ACP_COMMAND is empty', () => {
-      process.env.NEOKAI_ACP_COMMAND = '';
+    it('should return false when HYPERNEO_ACP_COMMAND is empty', () => {
+      process.env.HYPERNEO_ACP_COMMAND = '';
       expect(provider.isAvailable()).toBe(false);
     });
   });
 
   describe('getAcpCommand', () => {
     it('should return the command from env', () => {
-      process.env.NEOKAI_ACP_COMMAND = 'devin';
+      process.env.HYPERNEO_ACP_COMMAND = 'devin';
       expect(provider.getAcpCommand()).toBe('devin');
     });
 
@@ -84,32 +84,32 @@ describe('AcpProvider', () => {
     });
 
     it('should return context window from env', () => {
-      process.env.NEOKAI_ACP_CONTEXT_WINDOW = '64000';
+      process.env.HYPERNEO_ACP_CONTEXT_WINDOW = '64000';
 
       expect(provider.getContextWindow()).toBe(64000);
     });
 
     it('should truncate fractional context window values', () => {
-      process.env.NEOKAI_ACP_CONTEXT_WINDOW = '64000.9';
+      process.env.HYPERNEO_ACP_CONTEXT_WINDOW = '64000.9';
 
       expect(provider.getContextWindow()).toBe(64000);
     });
 
     it('should return default context window for invalid env values', () => {
-      process.env.NEOKAI_ACP_CONTEXT_WINDOW = 'not-a-number';
+      process.env.HYPERNEO_ACP_CONTEXT_WINDOW = 'not-a-number';
       expect(provider.getContextWindow()).toBe(200000);
 
-      process.env.NEOKAI_ACP_CONTEXT_WINDOW = '0';
+      process.env.HYPERNEO_ACP_CONTEXT_WINDOW = '0';
       expect(provider.getContextWindow()).toBe(200000);
 
-      process.env.NEOKAI_ACP_CONTEXT_WINDOW = '-1';
+      process.env.HYPERNEO_ACP_CONTEXT_WINDOW = '-1';
       expect(provider.getContextWindow()).toBe(200000);
     });
   });
 
   describe('getModels', () => {
     it('should return default models when ACP command is available', async () => {
-      process.env.NEOKAI_ACP_COMMAND = 'claude --acp';
+      process.env.HYPERNEO_ACP_COMMAND = 'claude --acp';
 
       const models = await provider.getModels();
 
@@ -120,8 +120,8 @@ describe('AcpProvider', () => {
     });
 
     it('should use configured context window in default models', async () => {
-      process.env.NEOKAI_ACP_COMMAND = 'claude --acp';
-      process.env.NEOKAI_ACP_CONTEXT_WINDOW = '64000';
+      process.env.HYPERNEO_ACP_COMMAND = 'claude --acp';
+      process.env.HYPERNEO_ACP_CONTEXT_WINDOW = '64000';
 
       const models = await provider.getModels();
 
@@ -134,7 +134,7 @@ describe('AcpProvider', () => {
     });
 
     it('should discover cached models from model config option', async () => {
-      process.env.NEOKAI_ACP_COMMAND = 'claude --acp';
+      process.env.HYPERNEO_ACP_COMMAND = 'claude --acp';
       provider.setConfigOptions([
         {
           id: 'model',
@@ -156,7 +156,7 @@ describe('AcpProvider', () => {
     });
 
     it('should clear cached models when config options have no model selector', async () => {
-      process.env.NEOKAI_ACP_COMMAND = 'claude --acp';
+      process.env.HYPERNEO_ACP_COMMAND = 'claude --acp';
       provider.setConfigOptions([
         {
           id: 'model',
@@ -175,7 +175,7 @@ describe('AcpProvider', () => {
     });
 
     it('should return cached models when set', async () => {
-      process.env.NEOKAI_ACP_COMMAND = 'claude --acp';
+      process.env.HYPERNEO_ACP_COMMAND = 'claude --acp';
       const cached = [
         {
           id: 'acp-cached',
@@ -195,7 +195,7 @@ describe('AcpProvider', () => {
     });
 
     it('should fall back to defaults after clearing cache', async () => {
-      process.env.NEOKAI_ACP_COMMAND = 'claude --acp';
+      process.env.HYPERNEO_ACP_COMMAND = 'claude --acp';
       provider.setCachedModels([
         {
           id: 'cached',
@@ -214,7 +214,7 @@ describe('AcpProvider', () => {
     });
 
     it('probes the agent binary before returning default models', async () => {
-      process.env.NEOKAI_ACP_COMMAND = 'claude --acp';
+      process.env.HYPERNEO_ACP_COMMAND = 'claude --acp';
       let calls = 0;
       const probe = async (): Promise<void> => {
         calls++;
@@ -227,7 +227,7 @@ describe('AcpProvider', () => {
     });
 
     it('throws when the agent binary is not found', async () => {
-      process.env.NEOKAI_ACP_COMMAND = 'missing-binary';
+      process.env.HYPERNEO_ACP_COMMAND = 'missing-binary';
       const probe = async (): Promise<void> => {
         throw new Error("ACP command 'missing-binary' not found in PATH");
       };
@@ -237,7 +237,7 @@ describe('AcpProvider', () => {
     });
 
     it('caches successful probe so repeated calls do not re-spawn', async () => {
-      process.env.NEOKAI_ACP_COMMAND = 'claude --acp';
+      process.env.HYPERNEO_ACP_COMMAND = 'claude --acp';
       let calls = 0;
       const probe = async (): Promise<void> => {
         calls++;
@@ -325,7 +325,7 @@ describe('AcpProvider', () => {
 
   describe('getAuthStatus', () => {
     it('should return authenticated when command is set', async () => {
-      process.env.NEOKAI_ACP_COMMAND = 'claude --acp';
+      process.env.HYPERNEO_ACP_COMMAND = 'claude --acp';
       const status = await provider.getAuthStatus();
       expect(status.isAuthenticated).toBe(true);
       expect(status.error).toBeUndefined();
@@ -334,7 +334,7 @@ describe('AcpProvider', () => {
     it('should return not authenticated when no command', async () => {
       const status = await provider.getAuthStatus();
       expect(status.isAuthenticated).toBe(false);
-      expect(status.error).toContain('NEOKAI_ACP_COMMAND');
+      expect(status.error).toContain('HYPERNEO_ACP_COMMAND');
     });
   });
 

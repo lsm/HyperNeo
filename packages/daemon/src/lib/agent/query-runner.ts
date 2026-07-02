@@ -13,9 +13,9 @@
 import { spawn as nodeSpawn } from 'node:child_process';
 import type { Options, SpawnedProcess, SpawnOptions } from '@anthropic-ai/claude-agent-sdk';
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import type { MessageContent, MessageHub, Session } from '@neokai/shared';
-import { generateUUID } from '@neokai/shared';
-import type { SDKMessage } from '@neokai/shared/sdk';
+import type { MessageContent, MessageHub, Session } from '@hyperneo/shared';
+import { generateUUID } from '@hyperneo/shared';
+import type { SDKMessage } from '@hyperneo/shared/sdk';
 import type { UUID } from 'crypto';
 import { Database } from '../../storage/database';
 import { ErrorCategory, ErrorManager } from '../error-manager';
@@ -87,7 +87,8 @@ const DEFAULT_STARTUP_TIMEOUT_MS = 15000;
 const RETRY_EXIT_TIMEOUT_MS = 5000;
 
 function getStartupTimeoutMs(): number {
-  const raw = process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS;
+  const raw =
+    process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS ?? process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS;
   if (!raw) return DEFAULT_STARTUP_TIMEOUT_MS;
   const parsed = Number.parseInt(raw, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_STARTUP_TIMEOUT_MS;
@@ -104,21 +105,23 @@ const STARTUP_TIMEOUT_MS = getStartupTimeoutMs();
  * should be retried at the HyperNeo level with exponential backoff before going terminal.
  *
  * Read lazily (at call time, not module load) so tests can set
- * NEOKAI_PROVIDER_RETRY_BASE_DELAY_MS=0 in beforeEach to avoid real sleeps
- * and NEOKAI_PROVIDER_MAX_RETRIES to adjust the cap.
+ * HYPERNEO_PROVIDER_RETRY_BASE_DELAY_MS=0 in beforeEach to avoid real sleeps
+ * and HYPERNEO_PROVIDER_MAX_RETRIES to adjust the cap.
  */
 const DEFAULT_MAX_PROVIDER_RETRIES = 3;
 const DEFAULT_PROVIDER_RETRY_BASE_DELAY_MS = 2000;
 
 function getMaxProviderRetries(): number {
-  const raw = process.env.NEOKAI_PROVIDER_MAX_RETRIES;
+  const raw = process.env.HYPERNEO_PROVIDER_MAX_RETRIES ?? process.env.NEOKAI_PROVIDER_MAX_RETRIES;
   if (!raw) return DEFAULT_MAX_PROVIDER_RETRIES;
   const parsed = Number.parseInt(raw, 10);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_MAX_PROVIDER_RETRIES;
 }
 
 function getProviderRetryBaseDelayMs(): number {
-  const raw = process.env.NEOKAI_PROVIDER_RETRY_BASE_DELAY_MS;
+  const raw =
+    process.env.HYPERNEO_PROVIDER_RETRY_BASE_DELAY_MS ??
+    process.env.NEOKAI_PROVIDER_RETRY_BASE_DELAY_MS;
   if (!raw) return DEFAULT_PROVIDER_RETRY_BASE_DELAY_MS;
   const parsed = Number.parseInt(raw, 10);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_PROVIDER_RETRY_BASE_DELAY_MS;
@@ -234,7 +237,8 @@ export function refreshQueryEnvFromProcess(
     }
   }
   for (const [key, value] of Object.entries(processEnv)) {
-    if (value === undefined || key === 'PORT' || key === 'NEOKAI_PORT') continue;
+    if (value === undefined || key === 'PORT' || key === 'HYPERNEO_PORT' || key === 'NEOKAI_PORT')
+      continue;
     if (options.omitProviderManaged && providerManagedEnvVars.has(key)) {
       if (
         !options.omitProviderManagedPreserveAuth ||
@@ -718,7 +722,7 @@ export class QueryRunner {
         this.ctx.originalEnvVars = originalEnvVars;
       }
 
-      // Note: PORT and NEOKAI_PORT are cleared inside applyEnvVarsToProcess() above,
+      // Note: PORT and HYPERNEO_PORT are cleared inside applyEnvVarsToProcess() above,
       // so SDK subprocesses cannot inherit the daemon's listening port. Refresh
       // the full SDK env snapshot now so provider credentials applied to
       // process.env are included before SDK 0.3 treats options.env as complete.
@@ -769,7 +773,7 @@ export class QueryRunner {
               (isRootWorkspace
                 ? ' — running on root workspace (not a worktree); check for other Claude Code sessions using this path'
                 : '') +
-              ` (Hint: set NEOKAI_SDK_STARTUP_TIMEOUT_MS to increase timeout, currently ${STARTUP_TIMEOUT_MS}ms)`
+              ` (Hint: set HYPERNEO_SDK_STARTUP_TIMEOUT_MS to increase timeout, currently ${STARTUP_TIMEOUT_MS}ms)`
           );
 
           // Actively abort a stuck startup so finally{} cleanup runs and the
@@ -1313,7 +1317,7 @@ export class QueryRunner {
             !!(await this.ctx.onRateLimitExhausted?.(errorMessage, this._lastConsumedUserMessage));
 
           // For startup timeouts / resume failures, provide actionable recovery hints.
-          // Keep the hints distinct: NEOKAI_SDK_STARTUP_TIMEOUT_MS is irrelevant to a
+          // Keep the hints distinct: HYPERNEO_SDK_STARTUP_TIMEOUT_MS is irrelevant to a
           // missing/corrupt session file — sdkSessionId is intentionally preserved so
           // the user can choose via sdkResumeChoice prompt.
           const startupTimeoutUserMessage = isStartupTimeout
@@ -1322,7 +1326,7 @@ export class QueryRunner {
               `a stale lock file in .claude/, or the workspace is under heavy load. ` +
               `Try: closing other Claude sessions on this workspace, ` +
               `then resend your message. ` +
-              `You can also increase the timeout with NEOKAI_SDK_STARTUP_TIMEOUT_MS (current: ${STARTUP_TIMEOUT_MS}ms).`
+              `You can also increase the timeout with HYPERNEO_SDK_STARTUP_TIMEOUT_MS (current: ${STARTUP_TIMEOUT_MS}ms).`
             : isConversationNotFound
               ? `The AI session could not be resumed (workspace: ${session.workspacePath ?? 'unbound'}). ` +
                 `The previous session transcript was not found — this can happen after a provider switch, ` +

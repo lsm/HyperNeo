@@ -17,7 +17,7 @@
  *   - "-kai:transport" = exclude namespace
  *
  * Usage:
- *   import { createLogger, logger } from '@neokai/shared/logger';
+ *   import { createLogger, logger } from '@hyperneo/shared/logger';
  *
  *   // Use default logger
  *   logger.info('Application started');

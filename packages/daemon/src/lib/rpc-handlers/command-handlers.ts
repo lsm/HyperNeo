@@ -2,7 +2,7 @@
  * Command RPC Handlers
  */
 
-import type { MessageHub } from '@neokai/shared';
+import type { MessageHub } from '@hyperneo/shared';
 import type { SessionManager } from '../session-manager';
 
 export function setupCommandHandlers(messageHub: MessageHub, sessionManager: SessionManager): void {

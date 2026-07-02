@@ -8,20 +8,24 @@
  * - AskUserQuestion tool blocks with inline QuestionPrompt
  */
 
-import type { PendingUserQuestion, QuestionDraftResponse, ResolvedQuestion } from '@neokai/shared';
+import type {
+  PendingUserQuestion,
+  QuestionDraftResponse,
+  ResolvedQuestion,
+} from '@hyperneo/shared';
 import type {
   SDKMessage,
   SDKTaskNotificationMessage,
   SDKTaskProgressMessage,
-} from '@neokai/shared/sdk/sdk.d.ts';
-import type { AgentInput } from '@neokai/shared/sdk/sdk-tools.d.ts';
+} from '@hyperneo/shared/sdk/sdk.d.ts';
+import type { AgentInput } from '@hyperneo/shared/sdk/sdk-tools.d.ts';
 import {
   type ContentBlock,
   hasRenderableThinking,
   isTextBlock,
   isThinkingBlock,
   isToolUseBlock,
-} from '@neokai/shared/sdk/type-guards';
+} from '@hyperneo/shared/sdk/type-guards';
 import { useEffect, useState } from 'preact/hooks';
 import { toast } from '../../lib/toast.ts';
 import { borderRadius, messageColors, messageSpacing } from '../../lib/design-tokens.ts';

@@ -5,7 +5,7 @@ import type {
   SpaceAutonomyLevel,
   SpaceLongHorizonAgent,
   SpaceWorkflow,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 let mockAgents: ReturnType<typeof signal<SpaceWorkerAgent[]>>;

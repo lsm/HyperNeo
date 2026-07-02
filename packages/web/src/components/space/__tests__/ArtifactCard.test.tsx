@@ -9,7 +9,7 @@
 import { describe, it, expect } from 'vitest';
 import { render } from '@testing-library/preact';
 import { ArtifactCard } from '../ArtifactCard';
-import type { WorkflowRunArtifact } from '@neokai/shared';
+import type { WorkflowRunArtifact } from '@hyperneo/shared';
 
 function makeArtifact(
   overrides: Partial<WorkflowRunArtifact> & { data: Record<string, unknown> }

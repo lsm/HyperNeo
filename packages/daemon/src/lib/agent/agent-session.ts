@@ -83,19 +83,19 @@ import type {
   SystemPromptConfig,
   McpServerConfig,
   Provider,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import type {
   ChatMessage,
   MessageOrigin,
   SkillEnablementOverride,
   DeclarativeToolGuard,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import { Database } from '../../storage/database';
 import { ErrorManager } from '../error-manager';
 import { Logger } from '../logger';
 import { SettingsManager } from '../settings-manager';
-import { DEFAULT_WORKER_FEATURES as WORKER_FEATURES } from '@neokai/shared';
+import { DEFAULT_WORKER_FEATURES as WORKER_FEATURES } from '@hyperneo/shared';
 
 export const RECENTLY_EXITED_ROOT_PID_RETENTION_MS = 15 * 60 * 1000;
 
@@ -151,7 +151,7 @@ export interface AgentSessionInit {
   provider?: string;
 
   /** Thinking level for extended thinking — if omitted, global settings apply */
-  thinkingLevel?: import('@neokai/shared').ThinkingLevel;
+  thinkingLevel?: import('@hyperneo/shared').ThinkingLevel;
 
   /** Enable coordinator mode — main agent orchestrates specialist sub-agents */
   coordinatorMode?: boolean;
@@ -160,10 +160,10 @@ export interface AgentSessionInit {
   agent?: string;
 
   /** Custom sub-agent definitions (merged with built-in specialists in coordinator mode) */
-  agents?: Record<string, import('@neokai/shared').AgentDefinition>;
+  agents?: Record<string, import('@hyperneo/shared').AgentDefinition>;
 
   /** SDK tool selection for this session */
-  sdkToolsPreset?: import('@neokai/shared').ToolsPresetConfig;
+  sdkToolsPreset?: import('@hyperneo/shared').ToolsPresetConfig;
 
   /** Tools to auto-allow without permission prompts */
   allowedTools?: string[];
@@ -186,7 +186,7 @@ export interface AgentSessionInit {
    * Setting sources to load for this session (e.g., ['user', 'project', 'local']).
    * Falls back to global settings when unset.
    */
-  settingSources?: import('@neokai/shared').SettingSource[];
+  settingSources?: import('@hyperneo/shared').SettingSource[];
 }
 
 export interface AgentSessionRuntimeOptions {
@@ -1324,7 +1324,7 @@ export class AgentSession
     return this._isCleaningUp;
   }
 
-  async onSDKMessage(message: import('@neokai/shared/sdk').SDKMessage): Promise<void> {
+  async onSDKMessage(message: import('@hyperneo/shared/sdk').SDKMessage): Promise<void> {
     await this.messageHandler.handleMessage(message);
   }
 

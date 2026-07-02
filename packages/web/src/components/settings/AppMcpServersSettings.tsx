@@ -6,7 +6,7 @@
  */
 
 import { useEffect, useMemo, useState } from 'preact/hooks';
-import type { AppMcpServer, AppMcpServerSourceType } from '@neokai/shared';
+import type { AppMcpServer, AppMcpServerSourceType } from '@hyperneo/shared';
 import {
   createAppMcpServer,
   updateAppMcpServer,

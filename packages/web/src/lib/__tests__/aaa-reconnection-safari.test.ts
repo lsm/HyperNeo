@@ -14,7 +14,7 @@ import { ConnectionManager } from '../connection-manager';
 import { GlobalStore } from '../global-store';
 import { connectionManager } from '../connection-manager';
 import { StateChannel } from '../state-channel';
-import type { MessageHub } from '@neokai/shared';
+import type { MessageHub } from '@hyperneo/shared';
 
 describe('Safari Background Tab - Integration Tests', () => {
   describe('StateChannel Reconnection Behavior', () => {

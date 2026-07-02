@@ -4,7 +4,7 @@
  * Handles user responses to AskUserQuestion tool calls.
  */
 
-import type { MessageHub, QuestionDraftResponse } from '@neokai/shared';
+import type { MessageHub, QuestionDraftResponse } from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { SessionManager } from '../session-manager';
 import type { AgentSession } from '../agent/agent-session';

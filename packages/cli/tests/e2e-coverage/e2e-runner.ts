@@ -15,9 +15,9 @@ import { Hono } from 'hono';
 import { serveStatic } from 'hono/bun';
 
 // Import daemon components - instrumented by bun --coverage
-import { createDaemonApp } from '@neokai/daemon/app';
-import { getConfig } from '@neokai/daemon/config';
-import { createWebSocketHandlers } from '@neokai/daemon/routes/setup-websocket';
+import { createDaemonApp } from '@hyperneo/daemon/app';
+import { getConfig } from '@hyperneo/daemon/config';
+import { createWebSocketHandlers } from '@hyperneo/daemon/routes/setup-websocket';
 
 // Server state
 let server: ReturnType<typeof Bun.serve> | null = null;
@@ -49,7 +49,7 @@ async function startServer(): Promise<{ port: number; baseUrl: string }> {
   await Bun.$`mkdir -p ${workspace}`;
 
   // Configure
-  process.env.NEOKAI_WORKSPACE_PATH = workspace;
+  process.env.HYPERNEO_WORKSPACE_PATH = workspace;
   const config = getConfig();
   config.port = serverPort;
   config.dbPath = `${workspace}/daemon.db`;

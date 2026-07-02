@@ -6,10 +6,11 @@
 
 import { Database as BunDatabase } from 'bun:sqlite';
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
-import type { Session } from '@neokai/shared';
-import { generateUUID } from '@neokai/shared';
-import type { Provider } from '@neokai/shared/provider';
+import type { Session } from '@hyperneo/shared';
+import { generateUUID } from '@hyperneo/shared';
+import type { Provider } from '@hyperneo/shared/provider';
 import { homedir } from 'os';
+import { existsSync } from 'node:fs';
 import {
   buildProviderSettings,
   ensureAgentTools,
@@ -890,7 +891,7 @@ describe('QueryOptionsBuilder', () => {
   // ============================================================================
   // M5 (unify-mcp-config-model): strictMcpConfig is forced unconditionally;
   // settingSources defaults to global settings (['user', 'project', 'local']) but can be
-  // overridden per-session. The M1 `NEOKAI_LEGACY_MCP_AUTOLOAD` kill switch was
+  // overridden per-session. The M1 `HYPERNEO_LEGACY_MCP_AUTOLOAD` kill switch was
   // removed. These tests pin the post-M5 contract per session type so any
   // regression that re-introduces auto-loading is caught.
   // ============================================================================
@@ -938,14 +939,14 @@ describe('QueryOptionsBuilder', () => {
       expect(options.mcpServers).toEqual({ 'task-agent': { command: 'task-cmd' } });
     });
 
-    it('ignores NEOKAI_LEGACY_MCP_AUTOLOAD — the M1 kill switch was removed in M5', async () => {
+    it('ignores HYPERNEO_LEGACY_MCP_AUTOLOAD — the M1 kill switch was removed in M5', async () => {
       // Setting the legacy env var must have no effect; settingSources stays
       // at the global default and strictMcpConfig stays true regardless of
       // value or session type.
-      const previous = process.env.NEOKAI_LEGACY_MCP_AUTOLOAD;
+      const previous = process.env.HYPERNEO_LEGACY_MCP_AUTOLOAD;
       try {
         for (const val of ['1', 'true', 'yes']) {
-          process.env.NEOKAI_LEGACY_MCP_AUTOLOAD = val;
+          process.env.HYPERNEO_LEGACY_MCP_AUTOLOAD = val;
           mockSession.type = 'worker';
           const options = await builder.build();
           expect(options.strictMcpConfig).toBe(true);
@@ -953,9 +954,9 @@ describe('QueryOptionsBuilder', () => {
         }
       } finally {
         if (previous === undefined) {
-          delete process.env.NEOKAI_LEGACY_MCP_AUTOLOAD;
+          delete process.env.HYPERNEO_LEGACY_MCP_AUTOLOAD;
         } else {
-          process.env.NEOKAI_LEGACY_MCP_AUTOLOAD = previous;
+          process.env.HYPERNEO_LEGACY_MCP_AUTOLOAD = previous;
         }
       }
     });
@@ -975,21 +976,21 @@ describe('QueryOptionsBuilder', () => {
       const options = await newBuilder.build();
 
       // Should include home directories for settings/storage and temp directories for shell operations
-      expect(options.additionalDirectories).toEqual([
-        homedir() + '/.claude',
-        homedir() + '/.neokai',
-        '/tmp',
-        '/tmp/claude',
-        expect.stringContaining('/tmp/zsh-'),
-      ]);
+      const expected = [homedir() + '/.claude', homedir() + '/.hyperneo'];
+      // During the symlink transition the legacy ~/.neokai is also allow-listed
+      // when it exists on the host running the test.
+      const legacy = homedir() + '/.neokai';
+      if (existsSync(legacy)) expected.push(legacy);
+      expected.push('/tmp', '/tmp/claude', expect.stringContaining('/tmp/zsh-'));
+      expect(options.additionalDirectories).toEqual(expected);
     });
 
     it('should include home directories when no worktree', async () => {
       const options = await builder.build();
-      expect(options.additionalDirectories).toEqual([
-        homedir() + '/.claude',
-        homedir() + '/.neokai',
-      ]);
+      const expected = [homedir() + '/.claude', homedir() + '/.hyperneo'];
+      const legacy = homedir() + '/.neokai';
+      if (existsSync(legacy)) expected.push(legacy);
+      expect(options.additionalDirectories).toEqual(expected);
     });
   });
 
@@ -2152,17 +2153,17 @@ describe('QueryOptionsBuilder', () => {
 
       // Builtin skills are injected as local plugins so the SDK discovers their SKILL.md.
       // The path must point at the *wrapper* plugin directory
-      // (~/.neokai/skill-plugins/<commandName>), not the raw skill directory
-      // (~/.neokai/skills/<commandName>), because only the wrapper has the
+      // (~/.hyperneo/skill-plugins/<commandName>), not the raw skill directory
+      // (~/.hyperneo/skills/<commandName>), because only the wrapper has the
       // .claude-plugin/plugin.json manifest the SDK requires — otherwise the
       // SDK silently drops the plugin entry and `/<commandName>` never registers.
       expect(options.plugins).toBeDefined();
       expect(options.plugins).toHaveLength(1);
       expect(options.plugins![0]).toMatchObject({ type: 'local' });
       const pluginPath = (options.plugins![0] as { type: string; path: string }).path;
-      expect(pluginPath).toContain('.neokai/skill-plugins/playwright');
+      expect(pluginPath).toContain('.hyperneo/skill-plugins/playwright');
       // Must NOT point at the raw skill directory — that path lacks the plugin manifest.
-      expect(pluginPath).not.toMatch(/\.neokai\/skills\/playwright(?:$|\/)/);
+      expect(pluginPath).not.toMatch(/\.hyperneo\/skills\/playwright(?:$|\/)/);
       // Builtin skills do not contribute to mcpServers
       expect(options.mcpServers).toBeUndefined();
     });
@@ -2198,7 +2199,7 @@ describe('QueryOptionsBuilder', () => {
       expect(options.plugins).toBeDefined();
       expect(options.plugins).toHaveLength(1);
       const pluginPath = (options.plugins![0] as { type: string; path: string }).path;
-      expect(pluginPath).toContain('.neokai/skill-plugins/space-coordination');
+      expect(pluginPath).toContain('.hyperneo/skill-plugins/space-coordination');
     });
 
     it('should not inject a disabled builtin skill', async () => {

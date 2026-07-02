@@ -7,7 +7,7 @@
  * - nodeExecution.update - Updates an execution status/result (test infrastructure only)
  */
 
-import type { MessageHub, NodeExecutionStatus } from '@neokai/shared';
+import type { MessageHub, NodeExecutionStatus } from '@hyperneo/shared';
 import type { NodeExecutionRepository } from '../../storage/repositories/node-execution-repository';
 import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
 

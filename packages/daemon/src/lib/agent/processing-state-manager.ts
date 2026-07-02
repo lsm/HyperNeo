@@ -8,10 +8,10 @@
  * Now persists state to database for recovery after restarts.
  */
 
-import type { AgentProcessingState, PendingUserQuestion } from '@neokai/shared';
+import type { AgentProcessingState, PendingUserQuestion } from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
-import type { SDKAssistantMessage, SDKMessage } from '@neokai/shared/sdk';
-import { isToolUseBlock } from '@neokai/shared/sdk/type-guards';
+import type { SDKAssistantMessage, SDKMessage } from '@hyperneo/shared/sdk';
+import { isToolUseBlock } from '@hyperneo/shared/sdk/type-guards';
 import type { Database } from '../../storage/database';
 import { Logger } from '../logger';
 

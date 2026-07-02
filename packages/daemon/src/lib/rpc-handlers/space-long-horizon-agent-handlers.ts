@@ -15,7 +15,7 @@ import type {
   MessageHub,
   SpaceLongHorizonAgent,
   SpaceLongHorizonAgentEventSubscriptionStatus,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import {

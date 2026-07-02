@@ -8,8 +8,8 @@ import { describe, it, expect } from 'vitest';
 
 import { render, fireEvent, waitFor } from '@testing-library/preact';
 import { SubagentBlock } from '../SubagentBlock';
-import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
-import type { AgentInput } from '@neokai/shared/sdk/sdk-tools.d.ts';
+import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
+import type { AgentInput } from '@hyperneo/shared/sdk/sdk-tools.d.ts';
 import type { UUID } from 'crypto';
 
 // Helper to create a valid UUID

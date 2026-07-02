@@ -22,7 +22,7 @@ import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/sp
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
 import { AgentMessageRouter } from '../../../../src/lib/space/runtime/agent-message-router.ts';
 import type { AgentMessageRouterConfig } from '../../../../src/lib/space/runtime/agent-message-router.ts';
-import type { WorkflowChannel } from '@neokai/shared';
+import type { WorkflowChannel } from '@hyperneo/shared';
 
 // ---------------------------------------------------------------------------
 // DB helpers

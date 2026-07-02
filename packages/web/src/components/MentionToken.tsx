@@ -1,6 +1,6 @@
 import { useId, useState } from 'preact/hooks';
 import { cn } from '../lib/utils.ts';
-import type { ReferenceMention, ReferenceMetadata, ReferenceType } from '@neokai/shared';
+import type { ReferenceMention, ReferenceMetadata, ReferenceType } from '@hyperneo/shared';
 import ReferenceTypeIcon from './ReferenceTypeIcon.tsx';
 
 export interface MentionTokenProps {

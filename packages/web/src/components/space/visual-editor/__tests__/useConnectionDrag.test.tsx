@@ -29,7 +29,7 @@ import type { TransitionLike } from '../useConnectionDrag';
 import type { ViewportState } from '../types';
 import { WorkflowCanvas } from '../WorkflowCanvas';
 import type { WorkflowNodeData, WorkflowCanvasProps } from '../WorkflowCanvas';
-import type { SpaceWorkerAgent } from '@neokai/shared';
+import type { SpaceWorkerAgent } from '@hyperneo/shared';
 import type { NodeDraft } from '../../WorkflowNodeCard';
 
 vi.mock('../../../../lib/utils', () => ({

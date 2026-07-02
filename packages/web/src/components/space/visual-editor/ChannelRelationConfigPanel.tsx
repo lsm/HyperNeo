@@ -1,5 +1,5 @@
 import { useState } from 'preact/hooks';
-import type { Gate, WorkflowChannel } from '@neokai/shared';
+import type { Gate, WorkflowChannel } from '@hyperneo/shared';
 import { ChannelEdgeConfigPanel } from './ChannelEdgeConfigPanel';
 import { GateEditorPanel } from './GateEditorPanel';
 

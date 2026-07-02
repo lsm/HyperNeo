@@ -681,7 +681,7 @@ Output schema:
 	"outcomeSummary": "...",
 	"findings": [
 		{
-			"domain": "workflow|target_artifact|neokai_product",
+			"domain": "workflow|target_artifact|hyperneo_product",
 			"kind": "friction|bug|optimization|missing_capability|new_opportunity",
 			"impact": "low|medium|high",
 			"confidence": 0.0,

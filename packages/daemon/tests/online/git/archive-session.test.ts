@@ -11,10 +11,10 @@
  *
  * MODES:
  * - Real API (default): Requires CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY
- * - Dev Proxy: Set NEOKAI_USE_DEV_PROXY=1 for offline testing with mocked responses
+ * - Dev Proxy: Set HYPERNEO_USE_DEV_PROXY=1 for offline testing with mocked responses
  *
  * Run with Dev Proxy:
- *   cd packages/daemon && NEOKAI_USE_DEV_PROXY=1 bun test ./tests/online/git/archive-session.test.ts
+ *   cd packages/daemon && HYPERNEO_USE_DEV_PROXY=1 bun test ./tests/online/git/archive-session.test.ts
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
@@ -24,7 +24,7 @@ import { execSync } from 'child_process';
 import { createDaemonServer, type DaemonServerContext } from '../../helpers/daemon-server';
 
 // Detect mock mode for faster timeouts (Dev Proxy)
-const IS_MOCK = !!process.env.NEOKAI_USE_DEV_PROXY;
+const IS_MOCK = !!process.env.HYPERNEO_USE_DEV_PROXY;
 const SETUP_TIMEOUT = IS_MOCK ? 10000 : 30000;
 const TEST_TIMEOUT = IS_MOCK ? 30000 : 90000;
 

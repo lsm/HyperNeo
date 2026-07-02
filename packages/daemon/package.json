@@ -1,5 +1,5 @@
 {
-  "name": "@neokai/daemon",
+  "name": "@hyperneo/daemon",
   "version": "0.38.0",
   "type": "module",
   "license": "Apache-2.0",
@@ -10,6 +10,8 @@
     "./config": "./src/config.ts",
     "./routes/setup-websocket": "./src/routes/setup-websocket.ts",
     "./sdk-cli-resolver": "./src/lib/agent/sdk-cli-resolver.ts",
+    "./lib/agent/sdk-cli-resolver": "./src/lib/agent/sdk-cli-resolver.ts",
+    "./lib/data-dir": "./src/lib/data-dir.ts",
     "./lib/internal-event-bus": "./src/lib/internal-event-bus.ts",
     "./lib/internal-command-bus": "./src/lib/internal-command-bus.ts",
     "./lib/internal-query-bus": "./src/lib/internal-query-bus.ts",
@@ -31,7 +33,7 @@
     "@github/copilot-sdk": "0.3.0",
     "@huggingface/transformers": "4.2.0",
     "@modelcontextprotocol/sdk": "1.29.0",
-    "@neokai/shared": "workspace:*",
+    "@hyperneo/shared": "workspace:*",
     "croner": "10.0.1",
     "simple-git": "3.36.0",
     "zod": "4.4.3"

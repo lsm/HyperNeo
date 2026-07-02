@@ -6,8 +6,8 @@
  */
 
 import { describe, expect, test, mock } from 'bun:test';
-import type { AcpSessionUpdateNotification, AcpContentBlock } from '@neokai/shared';
-import type { SDKMessage } from '@neokai/shared/sdk';
+import type { AcpSessionUpdateNotification, AcpContentBlock } from '@hyperneo/shared';
+import type { SDKMessage } from '@hyperneo/shared/sdk';
 
 // ---------------------------------------------------------------------------
 // Mock AcpClient

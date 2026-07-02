@@ -95,7 +95,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
    - Verify the Task Agent can use `advance_workflow` to move to the next step
    - Verify the Task Agent can use `report_result` to complete the task
    - Verify the Space Agent receives a completion notification
-4. Use `NEOKAI_USE_DEV_PROXY=1` for mocked API calls following the test patterns in `packages/daemon/tests/online/`
+4. Use `HYPERNEO_USE_DEV_PROXY=1` for mocked API calls following the test patterns in `packages/daemon/tests/online/`
 5. Run the test and verify it passes
 
 **Acceptance Criteria:**

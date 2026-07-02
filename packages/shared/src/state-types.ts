@@ -4,12 +4,12 @@
  * Fine-grained state channels - each property has its own channel
  */
 
-import type { AuthStatus, SessionInfo, HealthStatus, NeokaiActionMessage } from './types.ts';
+import type { AuthStatus, SessionInfo, HealthStatus, HyperNeoActionMessage } from './types.ts';
 import type { SDKMessage } from './sdk/sdk.d.ts';
 import type { GlobalSettings } from './types/settings.ts';
 
 /** A message in the chat list — either a native SDK message or a HyperNeo action prompt. */
-export type ChatMessage = SDKMessage | NeokaiActionMessage;
+export type ChatMessage = SDKMessage | HyperNeoActionMessage;
 
 /**
  * Global State Channels

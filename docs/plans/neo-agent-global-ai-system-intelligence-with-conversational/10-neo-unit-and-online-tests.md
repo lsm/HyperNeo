@@ -59,7 +59,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
    - Perform several actions -> verify all logged correctly in activity table
 5. Write session persistence test:
    - Send messages -> restart daemon -> verify history preserved
-6. All tests use `NEOKAI_USE_DEV_PROXY=1` for mocked SDK responses
+6. All tests use `HYPERNEO_USE_DEV_PROXY=1` for mocked SDK responses
 
 **Acceptance Criteria**:
 - Conversation flows work end-to-end with mocked SDK

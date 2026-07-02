@@ -11,7 +11,7 @@
 
 import { renderHook } from '@testing-library/preact';
 import { useMessageMaps } from '../useMessageMaps.ts';
-import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
+import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 
 // UUID format for test data
 const uuid1 = '00000000-0000-0000-0000-000000000001';

@@ -29,7 +29,7 @@ import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts
 import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
 import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-bus.ts';
 import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
-import type { SpaceWorkflow } from '@neokai/shared';
+import type { SpaceWorkflow } from '@hyperneo/shared';
 
 // ---------------------------------------------------------------------------
 // DB helpers

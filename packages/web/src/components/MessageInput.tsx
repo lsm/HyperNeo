@@ -14,7 +14,7 @@ import type {
   ReferenceMention,
   SessionFeatures,
   SessionType,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import type { ComponentChildren } from 'preact';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import {

@@ -10,10 +10,10 @@
  * - State updates are broadcast via State Channels
  */
 
-import type { MessageHub } from '@neokai/shared';
+import type { MessageHub } from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { SessionManager } from '../session-manager';
-import type { RewindMode, SelectiveRewindRequest } from '@neokai/shared';
+import type { RewindMode, SelectiveRewindRequest } from '@hyperneo/shared';
 
 export function setupRewindHandlers(
   messageHub: MessageHub,

@@ -1560,7 +1560,7 @@ describe('db-query tools', () => {
     let tmpDir: string;
 
     beforeEach(() => {
-      tmpDir = mkdtempSync(join(tmpdir(), 'neokai-test-'));
+      tmpDir = mkdtempSync(join(tmpdir(), 'hyperneo-test-'));
     });
 
     afterEach(() => {

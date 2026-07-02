@@ -1,12 +1,12 @@
 /**
- * ProviderService.restoreEnvVars PORT / NEOKAI_PORT restoration tests
+ * ProviderService.restoreEnvVars PORT / HYPERNEO_PORT restoration tests
  *
- * Tests that restoreEnvVars correctly handles the PORT and NEOKAI_PORT keys in
+ * Tests that restoreEnvVars correctly handles the PORT and HYPERNEO_PORT keys in
  * OriginalEnvVars as part of the fix that clears both before SDK query to prevent
  * the kill-chain bug (daemon port leaked → lsof → kill parent process).
  *
  * Covers:
- * - OriginalEnvVars interface includes PORT and NEOKAI_PORT fields
+ * - OriginalEnvVars interface includes PORT and HYPERNEO_PORT fields
  * - restoreEnvVars restores both when the original values were defined
  * - restoreEnvVars deletes both when the original value was undefined (never set)
  * - restoreEnvVars does nothing when the key is absent from the original object
@@ -18,9 +18,9 @@ import { ProviderService } from '../../../src/lib/provider-service';
 
 // Capture the original values so tests can restore after themselves
 const ORIGINAL_PORT = process.env.PORT;
-const ORIGINAL_NEOKAI_PORT = process.env.NEOKAI_PORT;
+const ORIGINAL_HYPERNEO_PORT = process.env.HYPERNEO_PORT;
 
-describe('OriginalEnvVars interface — PORT and NEOKAI_PORT fields', () => {
+describe('OriginalEnvVars interface — PORT and HYPERNEO_PORT fields', () => {
   it('accepts PORT as an optional string field', () => {
     const vars: OriginalEnvVars = { PORT: '9283' };
     expect(vars.PORT).toBe('9283');
@@ -31,20 +31,20 @@ describe('OriginalEnvVars interface — PORT and NEOKAI_PORT fields', () => {
     expect(vars.PORT).toBeUndefined();
   });
 
-  it('accepts NEOKAI_PORT as an optional string field', () => {
-    const vars: OriginalEnvVars = { NEOKAI_PORT: '9983' };
-    expect(vars.NEOKAI_PORT).toBe('9983');
+  it('accepts HYPERNEO_PORT as an optional string field', () => {
+    const vars: OriginalEnvVars = { HYPERNEO_PORT: '9983' };
+    expect(vars.HYPERNEO_PORT).toBe('9983');
   });
 
-  it('accepts NEOKAI_PORT as undefined', () => {
-    const vars: OriginalEnvVars = { NEOKAI_PORT: undefined };
-    expect(vars.NEOKAI_PORT).toBeUndefined();
+  it('accepts HYPERNEO_PORT as undefined', () => {
+    const vars: OriginalEnvVars = { HYPERNEO_PORT: undefined };
+    expect(vars.HYPERNEO_PORT).toBeUndefined();
   });
 
-  it('accepts an object with no PORT or NEOKAI_PORT key', () => {
+  it('accepts an object with no PORT or HYPERNEO_PORT key', () => {
     const vars: OriginalEnvVars = {};
     expect(Object.prototype.hasOwnProperty.call(vars, 'PORT')).toBe(false);
-    expect(Object.prototype.hasOwnProperty.call(vars, 'NEOKAI_PORT')).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(vars, 'HYPERNEO_PORT')).toBe(false);
   });
 });
 
@@ -112,7 +112,7 @@ describe('ProviderService.restoreEnvVars — PORT restoration', () => {
   });
 });
 
-describe('ProviderService.restoreEnvVars — NEOKAI_PORT restoration', () => {
+describe('ProviderService.restoreEnvVars — HYPERNEO_PORT restoration', () => {
   let service: ProviderService;
 
   beforeEach(() => {
@@ -120,48 +120,48 @@ describe('ProviderService.restoreEnvVars — NEOKAI_PORT restoration', () => {
   });
 
   afterEach(() => {
-    if (ORIGINAL_NEOKAI_PORT !== undefined) {
-      process.env.NEOKAI_PORT = ORIGINAL_NEOKAI_PORT;
+    if (ORIGINAL_HYPERNEO_PORT !== undefined) {
+      process.env.HYPERNEO_PORT = ORIGINAL_HYPERNEO_PORT;
     } else {
-      delete process.env.NEOKAI_PORT;
+      delete process.env.HYPERNEO_PORT;
     }
   });
 
-  it('restores NEOKAI_PORT to the original value when original.NEOKAI_PORT was defined', () => {
-    process.env.NEOKAI_PORT = 'mutated-during-query';
+  it('restores HYPERNEO_PORT to the original value when original.HYPERNEO_PORT was defined', () => {
+    process.env.HYPERNEO_PORT = 'mutated-during-query';
 
-    const original: OriginalEnvVars = { NEOKAI_PORT: '9983' };
+    const original: OriginalEnvVars = { HYPERNEO_PORT: '9983' };
     service.restoreEnvVars(original);
 
-    expect(process.env.NEOKAI_PORT).toBe('9983');
+    expect(process.env.HYPERNEO_PORT).toBe('9983');
   });
 
-  it('deletes NEOKAI_PORT when original.NEOKAI_PORT was explicitly undefined', () => {
-    process.env.NEOKAI_PORT = 'leaked-neokai-port';
+  it('deletes HYPERNEO_PORT when original.HYPERNEO_PORT was explicitly undefined', () => {
+    process.env.HYPERNEO_PORT = 'leaked-hyperneo-port';
 
-    const original: OriginalEnvVars = { NEOKAI_PORT: undefined };
+    const original: OriginalEnvVars = { HYPERNEO_PORT: undefined };
     service.restoreEnvVars(original);
 
-    expect(process.env.NEOKAI_PORT).toBeUndefined();
+    expect(process.env.HYPERNEO_PORT).toBeUndefined();
   });
 
-  it('does NOT touch NEOKAI_PORT when the key is absent from the original object', () => {
-    process.env.NEOKAI_PORT = 'should-be-untouched';
+  it('does NOT touch HYPERNEO_PORT when the key is absent from the original object', () => {
+    process.env.HYPERNEO_PORT = 'should-be-untouched';
 
     const original: OriginalEnvVars = {};
     service.restoreEnvVars(original);
 
-    expect(process.env.NEOKAI_PORT).toBe('should-be-untouched');
+    expect(process.env.HYPERNEO_PORT).toBe('should-be-untouched');
   });
 
-  it('restores both PORT and NEOKAI_PORT together in one restoreEnvVars call', () => {
+  it('restores both PORT and HYPERNEO_PORT together in one restoreEnvVars call', () => {
     process.env.PORT = 'wrong-port';
-    process.env.NEOKAI_PORT = 'wrong-neokai-port';
+    process.env.HYPERNEO_PORT = 'wrong-hyperneo-port';
 
-    const original: OriginalEnvVars = { PORT: '8399', NEOKAI_PORT: '9983' };
+    const original: OriginalEnvVars = { PORT: '8399', HYPERNEO_PORT: '9983' };
     service.restoreEnvVars(original);
 
     expect(process.env.PORT).toBe('8399');
-    expect(process.env.NEOKAI_PORT).toBe('9983');
+    expect(process.env.HYPERNEO_PORT).toBe('9983');
   });
 });

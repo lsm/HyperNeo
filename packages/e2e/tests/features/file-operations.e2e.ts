@@ -6,7 +6,7 @@ import {
   waitForElement,
 } from '../helpers/wait-helpers';
 
-const IS_MOCK = process.env.NEOKAI_USE_DEV_PROXY === '1';
+const IS_MOCK = process.env.HYPERNEO_USE_DEV_PROXY === '1';
 
 /**
  * File Operations E2E Tests

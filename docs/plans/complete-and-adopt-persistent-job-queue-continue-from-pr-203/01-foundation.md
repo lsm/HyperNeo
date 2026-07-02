@@ -71,7 +71,7 @@ Make the persistent job queue operational by wiring `JobQueueProcessor` into the
    - After `liveQueries` creation (~line 101), instantiate:
      ```
      const jobQueue = new JobQueueRepository(db.getDatabase());
-     const maxConcurrent = Number(process.env.NEOKAI_JOB_QUEUE_MAX_CONCURRENT) || 5;
+     const maxConcurrent = Number(process.env.HYPERNEO_JOB_QUEUE_MAX_CONCURRENT) || 5;
      const jobProcessor = new JobQueueProcessor(jobQueue, { pollIntervalMs: 1000, maxConcurrent, staleThresholdMs: 5 * 60 * 1000 });
      ```
    - Call `jobProcessor.setChangeNotifier((table) => { reactiveDb.notifyChange(table); });`
@@ -87,7 +87,7 @@ Make the persistent job queue operational by wiring `JobQueueProcessor` into the
    - `maxConcurrent` is configurable via env var
 
 **Acceptance criteria:**
-- `JobQueueProcessor` is instantiated in `app.ts` with `maxConcurrent` defaulting to 5 (configurable via `NEOKAI_JOB_QUEUE_MAX_CONCURRENT`)
+- `JobQueueProcessor` is instantiated in `app.ts` with `maxConcurrent` defaulting to 5 (configurable via `HYPERNEO_JOB_QUEUE_MAX_CONCURRENT`)
 - Eager `reclaimStale()` called in `start()` before first poll tick
 - Change notifier wired to `reactiveDb.notifyChange`
 - `jobProcessor.start()` called AFTER all handler registrations

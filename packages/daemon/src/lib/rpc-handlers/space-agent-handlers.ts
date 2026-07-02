@@ -19,8 +19,8 @@ import type {
   SpaceWorkerAgent,
   SpaceWorkerAgentPromotionDraft,
   ThinkingLevel,
-} from '@neokai/shared';
-import { KNOWN_TOOLS } from '@neokai/shared';
+} from '@hyperneo/shared';
+import { KNOWN_TOOLS } from '@hyperneo/shared';
 import type { Database } from '../../storage';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { SpaceAgentManager } from '../space/managers/space-agent-manager';
@@ -196,11 +196,11 @@ export function setupSpaceAgentHandlers(
       handle?: string;
       description?: string;
       model?: string;
-      thinkingLevel?: import('@neokai/shared').ThinkingLevel;
+      thinkingLevel?: import('@hyperneo/shared').ThinkingLevel;
       provider?: string;
       customPrompt?: string | null;
       tools?: string[];
-      settingSources?: import('@neokai/shared').SettingSource[];
+      settingSources?: import('@hyperneo/shared').SettingSource[];
       templateName?: string | null;
       templateHash?: string | null;
     };
@@ -258,11 +258,11 @@ export function setupSpaceAgentHandlers(
       handle?: string;
       description?: string;
       model?: string;
-      thinkingLevel?: import('@neokai/shared').ThinkingLevel;
+      thinkingLevel?: import('@hyperneo/shared').ThinkingLevel;
       provider?: string;
       customPrompt?: string | null;
       tools?: string[];
-      settingSources?: import('@neokai/shared').SettingSource[];
+      settingSources?: import('@hyperneo/shared').SettingSource[];
       templateName?: string | null;
       templateHash?: string | null;
     };
@@ -330,11 +330,11 @@ export function setupSpaceAgentHandlers(
       handle?: string;
       description?: string | null;
       model?: string | null;
-      thinkingLevel?: import('@neokai/shared').ThinkingLevel | null;
+      thinkingLevel?: import('@hyperneo/shared').ThinkingLevel | null;
       provider?: string | null;
       customPrompt?: string | null;
       tools?: string[] | null;
-      settingSources?: import('@neokai/shared').SettingSource[] | null;
+      settingSources?: import('@hyperneo/shared').SettingSource[] | null;
       templateName?: string | null;
       templateHash?: string | null;
     };

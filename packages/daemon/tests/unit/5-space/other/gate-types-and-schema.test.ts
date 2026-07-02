@@ -24,8 +24,8 @@ import type {
   SpaceWorkflowRun,
   GateScript,
   GateField,
-} from '@neokai/shared';
-import { computeGateDefaults } from '@neokai/shared';
+} from '@hyperneo/shared';
+import { computeGateDefaults } from '@hyperneo/shared';
 import { evaluateGate, validateGate } from '../../../../src/lib/space/runtime/gate-evaluator.ts';
 
 // ---------------------------------------------------------------------------

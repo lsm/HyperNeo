@@ -11,7 +11,7 @@ import type {
   AcpAgentThoughtChunkUpdate,
   AcpToolCallUpdateNotification,
   AcpToolCallUpdateUpdate,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 
 describe('AcpMessageTranslator', () => {
   let translator: AcpMessageTranslator;

@@ -5,7 +5,7 @@ import type {
   GoalForgeAutomationPolicy,
   SpaceGoal,
   SpaceTask,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import { GOAL_AUTOMATION_EXECUTE } from '../../job-queue-constants';
 import type { ExternalEventPublishedPayload } from '../../external-events/external-event-service';
 import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository';

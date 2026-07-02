@@ -13,11 +13,11 @@ import type {
   RoomGitHubMapping,
   InboxItem,
   MessageOrigin,
-  NeokaiActionMessage,
+  HyperNeoActionMessage,
   ChatMessage,
-} from '@neokai/shared';
-import type { GoalStatus, RoomGoal } from '@neokai/shared/types/neo';
-import type { SDKMessage } from '@neokai/shared/sdk';
+} from '@hyperneo/shared';
+import type { GoalStatus, RoomGoal } from '@hyperneo/shared/types/neo';
+import type { SDKMessage } from '@hyperneo/shared/sdk';
 import { DatabaseCore } from './database-core';
 import { ShortIdAllocator } from '../lib/short-id-allocator';
 export { ShortIdAllocator } from '../lib/short-id-allocator';
@@ -94,7 +94,7 @@ export type {
   ProviderRecord,
   CreateProviderParams,
   UpdateProviderParams,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 
 /**
  * Database facade class that maintains backward compatibility with the original Database class.
@@ -333,20 +333,20 @@ export class Database {
     return this.sdkMessageRepo.countMessagesAfter(sessionId, afterTimestamp);
   }
 
-  saveNeokaiActionMessage(sessionId: string, message: NeokaiActionMessage): string {
-    return this.sdkMessageRepo.saveNeokaiActionMessage(sessionId, message);
+  saveHyperNeoActionMessage(sessionId: string, message: HyperNeoActionMessage): string {
+    return this.sdkMessageRepo.saveHyperNeoActionMessage(sessionId, message);
   }
 
-  updateNeokaiActionMessage(rowId: string, updated: NeokaiActionMessage): void {
-    this.sdkMessageRepo.updateNeokaiActionMessage(rowId, updated);
+  updateHyperNeoActionMessage(rowId: string, updated: HyperNeoActionMessage): void {
+    this.sdkMessageRepo.updateHyperNeoActionMessage(rowId, updated);
   }
 
-  updateNeokaiActionMessageByUuid(
+  updateHyperNeoActionMessageByUuid(
     sessionId: string,
     messageUuid: string,
-    updated: NeokaiActionMessage
+    updated: HyperNeoActionMessage
   ): void {
-    this.sdkMessageRepo.updateNeokaiActionMessageByUuid(sessionId, messageUuid, updated);
+    this.sdkMessageRepo.updateHyperNeoActionMessageByUuid(sessionId, messageUuid, updated);
   }
 
   // ============================================================================

@@ -36,7 +36,7 @@
 import { existsSync, readFileSync } from 'fs';
 import { homedir } from 'os';
 import { isAbsolute, join, resolve } from 'path';
-import type { AppMcpServer, CreateAppMcpServerRequest } from '@neokai/shared';
+import type { AppMcpServer, CreateAppMcpServerRequest } from '@hyperneo/shared';
 import type { Database } from '../../storage/database';
 import { Logger } from '../logger';
 

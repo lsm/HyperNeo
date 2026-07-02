@@ -21,12 +21,12 @@ import {
   type ToolsConfig,
   type GlobalToolsConfig,
   DEFAULT_GLOBAL_TOOLS_CONFIG,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import { registerMcpHandlers } from '../../../../src/lib/rpc-handlers/mcp-handlers';
 import type { SessionManager } from '../../../../src/lib/session-manager';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session';
 import type { AppMcpLifecycleManager } from '../../../../src/lib/mcp';
-import type { Session } from '@neokai/shared';
+import type { Session } from '@hyperneo/shared';
 
 // Type for captured request handlers
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;

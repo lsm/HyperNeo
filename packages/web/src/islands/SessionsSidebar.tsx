@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'preact/hooks';
-import type { Session, WorkspaceHistoryEntry, WorktreeCommitStatus } from '@neokai/shared';
+import type { Session, WorkspaceHistoryEntry, WorktreeCommitStatus } from '@hyperneo/shared';
 import { navigateToSession, navigateToSessions } from '../lib/router.ts';
 import { sessions } from '../lib/state.ts';
 import {

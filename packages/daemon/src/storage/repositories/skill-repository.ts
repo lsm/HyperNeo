@@ -13,7 +13,7 @@ import type {
   SkillSourceType,
   SkillValidationStatus,
   UpdateSkillParams,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import type { ReactiveDatabase } from '../reactive-database';
 
 // ---------------------------------------------------------------------------

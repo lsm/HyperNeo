@@ -14,7 +14,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import type { AppSkill, LiveQuerySnapshotEvent, LiveQueryDeltaEvent } from '@neokai/shared';
+import type { AppSkill, LiveQuerySnapshotEvent, LiveQueryDeltaEvent } from '@hyperneo/shared';
 
 // ---------------------------------------------------------------------------
 // Mocks

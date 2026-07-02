@@ -32,7 +32,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, cleanup, act } from '@testing-library/preact';
 import { signal, type Signal } from '@preact/signals';
-import type { SpaceWorkerAgent, SpaceWorkflow, WorkflowNode } from '@neokai/shared';
+import type { SpaceWorkerAgent, SpaceWorkflow, WorkflowNode } from '@hyperneo/shared';
 
 // ---- Mocks ----
 

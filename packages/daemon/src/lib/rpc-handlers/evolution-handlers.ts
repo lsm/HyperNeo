@@ -39,7 +39,7 @@ import type {
   EvolutionRollupApplyRequest,
   EvolutionRollupApplyResponse,
   MessageHub,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import type { EvolutionEpisodeService } from '../space/evolution-episode-service';
 import type {
   AddManualNoteEvidenceParams,

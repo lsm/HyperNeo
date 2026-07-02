@@ -5,10 +5,10 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import type { ProviderId, ProviderSessionConfig } from '@neokai/shared/provider';
-import type { Session } from '@neokai/shared';
-import type { ModelInfo } from '@neokai/shared';
-import type { Provider, ProviderSdkConfig } from '@neokai/shared/provider';
+import type { ProviderId, ProviderSessionConfig } from '@hyperneo/shared/provider';
+import type { Session } from '@hyperneo/shared';
+import type { ModelInfo } from '@hyperneo/shared';
+import type { Provider, ProviderSdkConfig } from '@hyperneo/shared/provider';
 import {
   ProviderService,
   getProviderService,
@@ -317,10 +317,10 @@ describe('ProviderService', () => {
       ANTHROPIC_DEFAULT_SONNET_MODEL: process.env.ANTHROPIC_DEFAULT_SONNET_MODEL,
       ANTHROPIC_DEFAULT_HAIKU_MODEL: process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL,
       ANTHROPIC_DEFAULT_OPUS_MODEL: process.env.ANTHROPIC_DEFAULT_OPUS_MODEL,
-      // PORT and NEOKAI_PORT are cleared by saveClearDaemonPortEnvVars inside
+      // PORT and HYPERNEO_PORT are cleared by saveClearDaemonPortEnvVars inside
       // applyEnvVarsToProcess; save them here so they are properly restored.
       PORT: process.env.PORT,
-      NEOKAI_PORT: process.env.NEOKAI_PORT,
+      HYPERNEO_PORT: process.env.HYPERNEO_PORT,
     };
 
     // Clear env vars for clean tests
@@ -343,7 +343,7 @@ describe('ProviderService', () => {
     delete process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL;
     delete process.env.ANTHROPIC_DEFAULT_OPUS_MODEL;
     delete process.env.PORT;
-    delete process.env.NEOKAI_PORT;
+    delete process.env.HYPERNEO_PORT;
 
     // Reset singletons
     resetProviderRegistry();
@@ -874,7 +874,7 @@ describe('ProviderService', () => {
           model: 'throwing-1',
           maxTokens: 8192,
           temperature: 1.0,
-          provider: 'throwing' as unknown as import('@neokai/shared/provider').ProviderId,
+          provider: 'throwing' as unknown as import('@hyperneo/shared/provider').ProviderId,
         },
         metadata: {
           messageCount: 0,
@@ -910,7 +910,7 @@ describe('ProviderService', () => {
           model: 'bridge-model',
           maxTokens: 8192,
           temperature: 1.0,
-          provider: 'session-aware' as unknown as import('@neokai/shared/provider').ProviderId,
+          provider: 'session-aware' as unknown as import('@hyperneo/shared/provider').ProviderId,
         },
         metadata: {
           messageCount: 0,
@@ -983,7 +983,7 @@ describe('ProviderService', () => {
           model: 'bridge-model',
           maxTokens: 8192,
           temperature: 1.0,
-          provider: 'session-aware' as unknown as import('@neokai/shared/provider').ProviderId,
+          provider: 'session-aware' as unknown as import('@hyperneo/shared/provider').ProviderId,
         },
         metadata: {
           messageCount: 0,
@@ -1172,33 +1172,33 @@ describe('ProviderService', () => {
       expect(process.env.PORT).toBe('9283'); // restored for the daemon process itself
     });
 
-    it('clears NEOKAI_PORT from process.env for Anthropic model and restores it afterward', async () => {
-      process.env.NEOKAI_PORT = '9983';
+    it('clears HYPERNEO_PORT from process.env for Anthropic model and restores it afterward', async () => {
+      process.env.HYPERNEO_PORT = '9983';
 
       const original = await service.applyEnvVarsToProcess('claude-3-opus', 'anthropic');
 
-      expect(process.env.NEOKAI_PORT).toBeUndefined();
-      expect(original.NEOKAI_PORT).toBe('9983');
+      expect(process.env.HYPERNEO_PORT).toBeUndefined();
+      expect(original.HYPERNEO_PORT).toBe('9983');
 
       service.restoreEnvVars(original);
-      expect(process.env.NEOKAI_PORT).toBe('9983');
+      expect(process.env.HYPERNEO_PORT).toBe('9983');
     });
 
-    it('clears PORT and NEOKAI_PORT from process.env for GLM model and restores them', async () => {
+    it('clears PORT and HYPERNEO_PORT from process.env for GLM model and restores them', async () => {
       // The kill-chain protection must apply regardless of provider
       process.env.PORT = '8399';
-      process.env.NEOKAI_PORT = '9983';
+      process.env.HYPERNEO_PORT = '9983';
 
       const original = await service.applyEnvVarsToProcess('glm-4', 'glm');
 
       expect(process.env.PORT).toBeUndefined();
-      expect(process.env.NEOKAI_PORT).toBeUndefined();
+      expect(process.env.HYPERNEO_PORT).toBeUndefined();
       expect(original.PORT).toBe('8399');
-      expect(original.NEOKAI_PORT).toBe('9983');
+      expect(original.HYPERNEO_PORT).toBe('9983');
 
       service.restoreEnvVars(original);
       expect(process.env.PORT).toBe('8399');
-      expect(process.env.NEOKAI_PORT).toBe('9983');
+      expect(process.env.HYPERNEO_PORT).toBe('9983');
     });
   });
 

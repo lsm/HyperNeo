@@ -5,11 +5,11 @@
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { MessageHub } from '@neokai/shared';
+import type { MessageHub } from '@hyperneo/shared';
 import type { SessionManager } from '../session-manager';
 import type { AuthManager } from '../auth-manager';
 import type { Config } from '../../config';
-import type { HealthStatus, DaemonConfig } from '@neokai/shared';
+import type { HealthStatus, DaemonConfig } from '@hyperneo/shared';
 
 const SDK_PACKAGE = '@anthropic-ai/claude-agent-sdk';
 

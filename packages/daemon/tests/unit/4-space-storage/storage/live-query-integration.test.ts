@@ -24,8 +24,8 @@ import { createReactiveDatabase } from '../../../../src/storage/reactive-databas
 import { LiveQueryEngine } from '../../../../src/storage/live-query';
 import type { ReactiveDatabase } from '../../../../src/storage/reactive-database';
 import type { QueryDiff } from '../../../../src/storage/live-query';
-import type { Session, SessionConfig, SessionMetadata } from '@neokai/shared';
-import type { SDKMessage } from '@neokai/shared/sdk';
+import type { Session, SessionConfig, SessionMetadata } from '@hyperneo/shared';
+import type { SDKMessage } from '@hyperneo/shared/sdk';
 
 // ---------------------------------------------------------------------------
 // Helpers

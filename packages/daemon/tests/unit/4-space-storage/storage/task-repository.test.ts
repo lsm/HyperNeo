@@ -14,7 +14,7 @@ import type {
   TaskStatus,
   TaskPriority,
   TaskFilter,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import { noOpReactiveDb } from '../../../helpers/reactive-database';
 
 describe('TaskRepository', () => {

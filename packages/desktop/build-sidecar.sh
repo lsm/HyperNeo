@@ -11,7 +11,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # Monorepo root is two levels up from packages/desktop.
-NEOKAI_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+HYPERNEO_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 BINARIES_DIR="$SCRIPT_DIR/src-tauri/binaries"
 
 # Get the current platform target triple
@@ -45,14 +45,14 @@ esac
 echo "Building neokai for $BUN_TARGET..."
 
 # Build the neokai binary using the existing monorepo pipeline.
-cd "$NEOKAI_DIR"
+cd "$HYPERNEO_DIR"
 bun run scripts/build-binary.ts --target "$BUN_TARGET"
 
 # Create binaries directory
 mkdir -p "$BINARIES_DIR"
 
 # Copy and rename the binary so Tauri's externalBin can find it.
-SOURCE="$NEOKAI_DIR/dist/bin/hyperneo-${BUN_TARGET#bun-}${EXT:-}"
+SOURCE="$HYPERNEO_DIR/dist/bin/hyperneo-${BUN_TARGET#bun-}${EXT:-}"
 DEST="$BINARIES_DIR/neokai-$TARGET${EXT:-}"
 
 cp "$SOURCE" "$DEST"

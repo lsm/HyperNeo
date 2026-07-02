@@ -1,4 +1,4 @@
-import type { Session } from '@neokai/shared';
+import type { Session } from '@hyperneo/shared';
 import SessionListItem from './SessionListItem.tsx';
 import { cn } from '../lib/utils.ts';
 

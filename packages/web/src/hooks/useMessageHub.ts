@@ -32,7 +32,7 @@ import { useComputed } from '@preact/signals';
 import { connectionManager } from '../lib/connection-manager';
 import { connectionState } from '../lib/state';
 import { ConnectionNotReadyError } from '../lib/errors';
-import type { MessageHub, ChannelEventHandler } from '@neokai/shared';
+import type { MessageHub, ChannelEventHandler } from '@hyperneo/shared';
 
 // Define SubscribeOptions locally (removed from shared types)
 interface SubscribeOptions {

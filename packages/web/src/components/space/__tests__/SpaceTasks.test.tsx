@@ -6,7 +6,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup, waitFor } from '@testing-library/preact';
 import { signal } from '@preact/signals';
-import type { SpaceTask, TaskSchedule } from '@neokai/shared';
+import type { SpaceTask, TaskSchedule } from '@hyperneo/shared';
 
 let mockTasks: ReturnType<typeof signal<SpaceTask[]>>;
 const mockSchedules = signal<unknown[]>([]);

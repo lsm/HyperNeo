@@ -6,8 +6,8 @@
  * when processing mentions like @ref{task:t-42} or @ref{file:src/lib/utils.ts}.
  */
 
-import type { ResolvedReference } from '@neokai/shared';
-import type { MissionMetric, NeoTask, RoomGoal } from '@neokai/shared/types/neo';
+import type { ResolvedReference } from '@hyperneo/shared';
+import type { MissionMetric, NeoTask, RoomGoal } from '@hyperneo/shared/types/neo';
 import { Logger } from '../logger';
 
 const log = new Logger('reference-context-builder');

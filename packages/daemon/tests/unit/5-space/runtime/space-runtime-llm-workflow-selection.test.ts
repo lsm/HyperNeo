@@ -28,7 +28,7 @@ import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.t
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import type { SelectWorkflowWithLlm } from '../../../../src/lib/space/runtime/llm-workflow-selector.ts';
-import type { SpaceWorkflow } from '@neokai/shared';
+import type { SpaceWorkflow } from '@hyperneo/shared';
 
 // ---------------------------------------------------------------------------
 // Fixtures — mirrors helpers in space-runtime.test.ts but scoped local

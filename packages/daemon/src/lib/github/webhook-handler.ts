@@ -7,7 +7,7 @@
  * - Response handling
  */
 
-import type { GitHubEvent } from '@neokai/shared';
+import type { GitHubEvent } from '@hyperneo/shared';
 import { Logger } from '../logger';
 import { normalizeWebhookEvent } from './event-normalizer';
 import type { WebhookParseResult } from './types';

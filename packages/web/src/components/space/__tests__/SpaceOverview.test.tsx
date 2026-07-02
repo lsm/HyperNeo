@@ -6,7 +6,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup } from '@testing-library/preact';
 import { signal } from '@preact/signals';
-import type { RuntimeState, Space, SpaceTask, SpaceWorkflow } from '@neokai/shared';
+import type { RuntimeState, Space, SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
 
 let mockSpace: ReturnType<typeof signal<Space | null>>;
 let mockLoading: ReturnType<typeof signal<boolean>>;

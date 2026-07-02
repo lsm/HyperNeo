@@ -20,7 +20,7 @@
  */
 
 import { useMemo, useRef } from 'preact/hooks';
-import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
+import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 import {
   parseGroupMessage,
   type ParsedGroupMessage,

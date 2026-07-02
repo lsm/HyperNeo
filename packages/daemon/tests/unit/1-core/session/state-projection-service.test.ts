@@ -11,8 +11,8 @@ import { Database as BunDatabase } from 'bun:sqlite';
 import { StateProjectionService } from '../../../../src/lib/state-projection-service';
 import type { Database } from '../../../../src/storage';
 import type { ReactiveDatabase } from '../../../../src/storage/reactive-database';
-import type { Session, GlobalSettings, AgentProcessingState } from '@neokai/shared';
-import { STATE_CHANNELS, DEFAULT_GLOBAL_SETTINGS } from '@neokai/shared';
+import type { Session, GlobalSettings, AgentProcessingState } from '@hyperneo/shared';
+import { STATE_CHANNELS, DEFAULT_GLOBAL_SETTINGS } from '@hyperneo/shared';
 import type {
   DaemonInternalEventMap,
   InternalEventBus,

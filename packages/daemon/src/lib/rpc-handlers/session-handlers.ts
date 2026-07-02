@@ -16,15 +16,15 @@ import type {
   MessageHub,
   MessageImage,
   Session,
-  NeokaiActionMessage,
+  HyperNeoActionMessage,
   RuntimeMcpServerEntry,
-} from '@neokai/shared';
-import { normalizeThinkingLevel } from '@neokai/shared';
+} from '@hyperneo/shared';
+import { normalizeThinkingLevel } from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
-import { generateUUID } from '@neokai/shared';
+import { generateUUID } from '@hyperneo/shared';
 import type { SessionManager } from '../session-manager';
-import type { CreateSessionRequest, UpdateSessionRequest } from '@neokai/shared';
-import { isSDKUserMessage } from '@neokai/shared/sdk/type-guards';
+import type { CreateSessionRequest, UpdateSessionRequest } from '@hyperneo/shared';
+import { isSDKUserMessage } from '@hyperneo/shared/sdk/type-guards';
 import { clearModelsCache } from '../model-service.js';
 import {
   archiveSDKSessionFiles,
@@ -1227,8 +1227,8 @@ export function setupSessionHandlers(
 
     // Mark the action message as resolved and re-broadcast it so the UI
     // can update the buttons to their "answered" state.
-    const resolvedMessage: NeokaiActionMessage = {
-      type: 'neokai_action',
+    const resolvedMessage: HyperNeoActionMessage = {
+      type: 'hyperneo_action',
       uuid: messageUuid,
       session_id: targetSessionId,
       action: 'sdk_resume_choice',
@@ -1238,8 +1238,8 @@ export function setupSessionHandlers(
     };
 
     // Update the persisted copy (we look up by uuid in sdk_message JSON).
-    // Use updateNeokaiActionMessageByUuid so we don't need to carry the rowId.
-    db.updateNeokaiActionMessageByUuid(targetSessionId, messageUuid, resolvedMessage);
+    // Use updateHyperNeoActionMessageByUuid so we don't need to carry the rowId.
+    db.updateHyperNeoActionMessageByUuid(targetSessionId, messageUuid, resolvedMessage);
 
     messageHub.event(
       'state.sdkMessages.delta',

@@ -4,7 +4,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { downloadBundle } from '../export-import-utils.ts';
-import type { SpaceExportBundle } from '@neokai/shared';
+import type { SpaceExportBundle } from '@hyperneo/shared';
 
 const makeBundle = (overrides: Partial<SpaceExportBundle> = {}): SpaceExportBundle => ({
   version: 1,
@@ -51,14 +51,14 @@ describe('downloadBundle', () => {
     createdAnchor = null;
   });
 
-  it('triggers a download with a .neokai.json filename', () => {
+  it('triggers a download with a .hyperneo.json filename', () => {
     const bundle = makeBundle({ name: 'My Bundle' });
     downloadBundle(bundle, 'My Space', 'bundle');
 
     expect(clickSpy as ReturnType<typeof vi.fn>).toHaveBeenCalledOnce();
     expect(createObjectURLSpy).toHaveBeenCalledOnce();
     expect(revokeObjectURLSpy).toHaveBeenCalledWith('blob:http://localhost/test');
-    expect(createdAnchor?.download).toMatch(/\.neokai\.json$/);
+    expect(createdAnchor?.download).toMatch(/\.hyperneo\.json$/);
     expect(createdAnchor?.download).toContain('bundle');
   });
 
@@ -67,7 +67,7 @@ describe('downloadBundle', () => {
     downloadBundle(bundle, 'My Fancy Space!', 'agents');
 
     expect(createdAnchor?.download).toMatch(
-      /^my-fancy-space--agents-\d{4}-\d{2}-\d{2}\.neokai\.json$/
+      /^my-fancy-space--agents-\d{4}-\d{2}-\d{2}\.hyperneo\.json$/
     );
   });
 

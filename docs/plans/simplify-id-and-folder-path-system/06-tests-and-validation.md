@@ -90,7 +90,7 @@ By this milestone, all coding work from Milestones 1–5 is complete. This miles
    - In `.github/workflows/` YAML (the online test matrix), add an entry for the new test file under the `room` module group
    - In `validate-online-test-matrix.sh` (if it exists), add `short-id-flow.test.ts` to the `ROOM_FILES` array so the validation script doesn't fail
    - **Note**: Check whether existing room online tests in the YAML matrix are commented out (they may be disabled due to resource usage). If so, add the new test as commented-out too — consistent with the team's decision to gate those tests. Document this in the test file header comment.
-4. Run with `cd packages/daemon && NEOKAI_USE_DEV_PROXY=1 bun test ./tests/online/room/short-id-flow.test.ts`
+4. Run with `cd packages/daemon && HYPERNEO_USE_DEV_PROXY=1 bun test ./tests/online/room/short-id-flow.test.ts`
 
 **Acceptance Criteria**:
 - Task `shortId` values are `t-1`, `t-2`, etc. in creation order per room

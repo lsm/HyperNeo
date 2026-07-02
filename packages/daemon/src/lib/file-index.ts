@@ -9,7 +9,7 @@
  * - Symbolic links are indexed (as file or folder depending on their target type)
  *   but symlinked directories are NOT recursed into, to prevent infinite loops.
  * - Calling setIgnorePatterns() immediately re-filters the cache.
- * - The polling interval is configurable via NEOKAI_FILE_INDEX_POLL_MS (default 60000 ms).
+ * - The polling interval is configurable via HYPERNEO_FILE_INDEX_POLL_MS (default 60000 ms).
  */
 
 import { join, normalize, relative } from 'node:path';
@@ -217,7 +217,11 @@ export class FileIndex {
     pollIntervalMs?: number
   ) {
     this.pollInterval =
-      pollIntervalMs ?? parseInt(process.env.NEOKAI_FILE_INDEX_POLL_MS ?? '60000', 10);
+      pollIntervalMs ??
+      parseInt(
+        process.env.HYPERNEO_FILE_INDEX_POLL_MS ?? process.env.NEOKAI_FILE_INDEX_POLL_MS ?? '60000',
+        10
+      );
   }
 
   /** Load .gitignore from workspace root if it exists. */

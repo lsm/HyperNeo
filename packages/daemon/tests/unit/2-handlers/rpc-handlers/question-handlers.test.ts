@@ -9,7 +9,7 @@
  */
 
 import { describe, expect, it, mock, beforeEach } from 'bun:test';
-import { MessageHub } from '@neokai/shared';
+import { MessageHub } from '@hyperneo/shared';
 import { setupQuestionHandlers } from '../../../../src/lib/rpc-handlers/question-handlers';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session';
 import type { SessionManager } from '../../../../src/lib/session-manager';

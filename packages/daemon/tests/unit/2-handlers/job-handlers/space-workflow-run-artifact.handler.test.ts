@@ -140,7 +140,7 @@ describe('space-workflow-run-artifact.handler', () => {
       'INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
     ).run(RUN_ID, SPACE_ID, 'wf-1', 'Run 1', now, now);
 
-    tempRoot = mkdtempSync(join(tmpdir(), 'neokai-artifact-handler-'));
+    tempRoot = mkdtempSync(join(tmpdir(), 'hyperneo-artifact-handler-'));
     repoPath = makeRepo(tempRoot);
     invalidateDiffBaseRef();
   });
@@ -178,7 +178,7 @@ describe('space-workflow-run-artifact.handler', () => {
     });
 
     it('writes an ok isGitRepo=false row when the worktree is not a git repo', async () => {
-      const nonGitDir = mkdtempSync(join(tmpdir(), 'neokai-not-git-'));
+      const nonGitDir = mkdtempSync(join(tmpdir(), 'hyperneo-not-git-'));
       try {
         const { deps, cacheRepo } = makeDeps({ worktreePath: nonGitDir, db });
         const result = await handleSyncGateArtifacts({ runId: RUN_ID }, deps);
@@ -230,7 +230,7 @@ describe('space-workflow-run-artifact.handler', () => {
     });
 
     it('writes isGitRepo=false when the worktree is not a repo', async () => {
-      const nonGitDir = mkdtempSync(join(tmpdir(), 'neokai-not-git-'));
+      const nonGitDir = mkdtempSync(join(tmpdir(), 'hyperneo-not-git-'));
       try {
         const { deps, cacheRepo } = makeDeps({ worktreePath: nonGitDir, db });
         await handleSyncCommits({ runId: RUN_ID }, deps);

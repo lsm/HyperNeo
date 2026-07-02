@@ -1,4 +1,4 @@
-import type { SpaceWorkerAgent, SpaceLongHorizonAgent } from '@neokai/shared';
+import type { SpaceWorkerAgent, SpaceLongHorizonAgent } from '@hyperneo/shared';
 import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
 

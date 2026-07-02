@@ -28,7 +28,7 @@ import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-w
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
-import type { SpaceWorkflow } from '@neokai/shared';
+import type { SpaceWorkflow } from '@hyperneo/shared';
 
 // ---------------------------------------------------------------------------
 // DB / seed helpers

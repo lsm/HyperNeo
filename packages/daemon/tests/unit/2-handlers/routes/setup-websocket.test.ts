@@ -7,7 +7,7 @@
 
 import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
 import { createWebSocketHandlers } from '../../../../src/routes/setup-websocket';
-import { MessageType } from '@neokai/shared';
+import { MessageType } from '@hyperneo/shared';
 
 // Mock types
 interface MockWebSocket {

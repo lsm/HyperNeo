@@ -9,7 +9,7 @@
  * - Get/set global tools configuration
  */
 
-import type { MessageHub, ToolsConfig, GlobalToolsConfig } from '@neokai/shared';
+import type { MessageHub, ToolsConfig, GlobalToolsConfig } from '@hyperneo/shared';
 import type { SessionManager } from '../session-manager';
 import type { AppMcpLifecycleManager } from '../mcp';
 import { readFile } from 'node:fs/promises';

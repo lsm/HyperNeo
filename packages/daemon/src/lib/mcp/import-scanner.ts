@@ -25,7 +25,7 @@ import type {
   AppMcpServerSourceType,
   CreateAppMcpServerRequest,
   UpdateAppMcpServerRequest,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import type { AppMcpServerRepository } from '../../storage/repositories/app-mcp-server-repository';
 import { Logger } from '../logger';
 

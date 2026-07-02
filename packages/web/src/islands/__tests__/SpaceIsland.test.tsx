@@ -17,7 +17,7 @@ import { render, fireEvent, cleanup, waitFor } from '@testing-library/preact';
 // happy path, since waitFor returns as soon as the assertion passes.
 const LAZY_LOAD_TIMEOUT = 5000;
 import { signal } from '@preact/signals';
-import type { SpaceWorkflow, SpaceWorkerAgent, Space } from '@neokai/shared';
+import type { SpaceWorkflow, SpaceWorkerAgent, Space } from '@hyperneo/shared';
 
 let mockLoading = signal(false);
 let mockError = signal<string | null>(null);

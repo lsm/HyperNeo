@@ -6,8 +6,8 @@
  * data to persisted messages as ReferenceMetadata.
  */
 
-import type { ReferenceMention, ReferenceMetadata, ResolvedReference } from '@neokai/shared';
-import { REFERENCE_PATTERN } from '@neokai/shared';
+import type { ReferenceMention, ReferenceMetadata, ResolvedReference } from '@hyperneo/shared';
+import { REFERENCE_PATTERN } from '@hyperneo/shared';
 import type {
   TaskRepoForReference,
   GoalRepoForReference,

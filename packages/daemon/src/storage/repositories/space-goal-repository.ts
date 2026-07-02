@@ -1,5 +1,5 @@
 import type { Database as BunDatabase } from 'bun:sqlite';
-import { generateUUID } from '@neokai/shared';
+import { generateUUID } from '@hyperneo/shared';
 import type {
   CreateSpaceGoalParams,
   SpaceGoal,
@@ -7,7 +7,7 @@ import type {
   SpaceGoalMetrics,
   SpaceGoalStatus,
   UpdateSpaceGoalParams,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import type { ReactiveDatabase } from '../reactive-database';
 import type { SQLiteValue } from '../types';
 

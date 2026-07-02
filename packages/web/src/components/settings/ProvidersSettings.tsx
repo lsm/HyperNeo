@@ -8,8 +8,8 @@
 
 import { useEffect, useState } from 'preact/hooks';
 import { useSignalEffect } from '@preact/signals';
-import type { ProviderRecord, CredentialStoreStatus } from '@neokai/shared';
-import type { ProviderAuthStatus } from '@neokai/shared/provider';
+import type { ProviderRecord, CredentialStoreStatus } from '@hyperneo/shared';
+import type { ProviderAuthStatus } from '@hyperneo/shared/provider';
 import {
   listProviders,
   deleteProvider,
@@ -298,7 +298,7 @@ export function ProvidersSettings() {
     try {
       const config = JSON.parse(
         provider.customEndpointConfigJson
-      ) as import('@neokai/shared').CustomEndpointConfig;
+      ) as import('@hyperneo/shared').CustomEndpointConfig;
       setCustomEditor(existingToEditor(config));
       setEditingCustomId(provider.id);
     } catch {

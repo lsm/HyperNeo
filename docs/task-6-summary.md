@@ -19,8 +19,8 @@ Use `ANTHROPIC_BASE_URL` to redirect SDK API calls to Dev Proxy. This approach w
 
 | Mode | Status | Tests Passing |
 |------|--------|---------------|
-| Mock SDK (`NEOKAI_AGENT_SDK_MOCK=1`) | ✅ Working | 3/4 |
-| Dev Proxy (`NEOKAI_USE_DEV_PROXY=1`) | ✅ Working | 4/4 |
+| Mock SDK (`HYPERNEO_AGENT_SDK_MOCK=1`) | ✅ Working | 3/4 |
+| Dev Proxy (`HYPERNEO_USE_DEV_PROXY=1`) | ✅ Working | 4/4 |
 
 ## Related PRs
 

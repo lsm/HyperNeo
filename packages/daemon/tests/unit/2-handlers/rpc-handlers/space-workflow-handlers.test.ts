@@ -21,15 +21,15 @@
  */
 
 import { describe, expect, it, mock, beforeEach } from 'bun:test';
-import { MessageHub } from '@neokai/shared';
-import type { Space, SpaceWorkflow } from '@neokai/shared';
+import { MessageHub } from '@hyperneo/shared';
+import type { Space, SpaceWorkflow } from '@hyperneo/shared';
 import {
   setupSpaceWorkflowHandlers,
   checkBuiltInWorkflowDriftOnStartup,
 } from '../../../../src/lib/rpc-handlers/space-workflow-handlers';
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
 import type { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager';
-import type { SpaceWorkflowSummary } from '@neokai/shared';
+import type { SpaceWorkflowSummary } from '@hyperneo/shared';
 import { WorkflowValidationError } from '../../../../src/lib/space/managers/space-workflow-manager';
 import type { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager';
 import type { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';

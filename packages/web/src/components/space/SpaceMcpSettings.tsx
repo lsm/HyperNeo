@@ -18,7 +18,7 @@
 
 import { useSignalEffect } from '@preact/signals';
 import { useMemo, useState } from 'preact/hooks';
-import type { McpImportsRefreshResponse, SpaceMcpEntry } from '@neokai/shared';
+import type { McpImportsRefreshResponse, SpaceMcpEntry } from '@hyperneo/shared';
 import { spaceMcpStore } from '../../lib/space-mcp-store.ts';
 import { connectionManager } from '../../lib/connection-manager.ts';
 import { toast } from '../../lib/toast.ts';

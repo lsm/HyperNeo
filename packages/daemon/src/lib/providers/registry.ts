@@ -9,9 +9,9 @@
  * - Plugin-style provider architecture
  */
 
-import { createLogger } from '@neokai/shared/logger';
-import type { Provider, ProviderId, ProviderInfo } from '@neokai/shared/provider';
-import type { Provider as ProviderIdStr } from '@neokai/shared';
+import { createLogger } from '@hyperneo/shared/logger';
+import type { Provider, ProviderId, ProviderInfo } from '@hyperneo/shared/provider';
+import type { Provider as ProviderIdStr } from '@hyperneo/shared';
 
 const log = createLogger('kai:providers:registry');
 

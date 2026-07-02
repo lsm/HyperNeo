@@ -13,8 +13,8 @@ import type {
   ProviderCredentials,
   ProviderSdkConfig,
   ModelTier,
-} from '@neokai/shared/provider';
-import type { ModelInfo } from '@neokai/shared';
+} from '@hyperneo/shared/provider';
+import type { ModelInfo } from '@hyperneo/shared';
 import { resolveSDKCliPath, isRunningUnderBun } from '../agent/sdk-cli-resolver.js';
 
 /**

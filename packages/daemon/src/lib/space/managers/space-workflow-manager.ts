@@ -20,9 +20,9 @@ import type {
   UpdateSpaceWorkflowParams,
   WorkflowChannel,
   Gate,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import { validateWorkflowHooks } from '../workflow-hook-validation';
-import { generateUUID } from '@neokai/shared';
+import { generateUUID } from '@hyperneo/shared';
 import type { SpaceWorkflowRepository } from '../../../storage/repositories/space-workflow-repository';
 import { validateGlobPattern } from '../../external-events/topic-validator';
 import { MAX_AGENT_SLOT_EVENT_INTERESTS } from '../export-format';

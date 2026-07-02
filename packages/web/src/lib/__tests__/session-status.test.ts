@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import type { Session, AgentProcessingState } from '@neokai/shared';
+import type { Session, AgentProcessingState } from '@hyperneo/shared';
 import type { Signal } from '@preact/signals';
 
 // Mock localStorage

@@ -11,7 +11,7 @@ import { cleanupTestSession, createSessionViaUI } from '../helpers/wait-helpers'
  * - Cleanup on session deletion
  *
  * Note: These tests require the workspace to be a git repository
- * Worktree path: ~/.neokai/worktrees/{repo-hash}/{sessionId}
+ * Worktree path: ~/.hyperneo/worktrees/{repo-hash}/{sessionId}
  * Branch naming: session/{slugified-title}-{shortId}
  */
 test.describe('Worktree Isolation', () => {

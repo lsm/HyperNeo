@@ -13,7 +13,7 @@ import {
   GitHubPollingService,
   createPollingService,
 } from '../../../../src/lib/github/polling-service';
-import type { GitHubEvent } from '@neokai/shared';
+import type { GitHubEvent } from '@hyperneo/shared';
 
 describe('GitHubPollingService', () => {
   let service: GitHubPollingService;

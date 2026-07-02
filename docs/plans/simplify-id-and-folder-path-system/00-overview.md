@@ -9,7 +9,7 @@ Replace opaque full UUIDs in user-facing surfaces (URLs, logs, CLI, UI) with sho
 HyperNeo currently uses full UUIDs everywhere:
 - Task IDs: `d8a578c6-d3cb-4c84-926b-958cbd433d32`
 - Room session IDs: `room:chat:04062505-780f-4881-a3be-9cb9062790fb`
-- Worktree paths: `~/.neokai/projects/-Users-lsm-focus-dev-neokai/worktrees/planner-04062505-780f-4881-a3be-9cb9062790fb-144eca1d-06fc-49e1-92f3-afa246aecc4d-2bb0b719`
+- Worktree paths: `~/.hyperneo/projects/-Users-lsm-focus-dev-neokai/worktrees/planner-04062505-780f-4881-a3be-9cb9062790fb-144eca1d-06fc-49e1-92f3-afa246aecc4d-2bb0b719`
 - Worker session IDs: `coder:04062505-780f-4881-a3be-9cb9062790fb:d8a578c6-d3cb-4c84-926b-958cbd433d32:abc12345`
 
 These make logs unreadable, URLs unmemorable, and directory paths excessively long.

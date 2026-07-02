@@ -52,7 +52,7 @@ import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.t
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import { PermanentSpawnError } from '../../../../src/lib/space/runtime/workflow-node-execution-validation.ts';
-import type { SpaceWorkflow, NodeExecutionStatus } from '@neokai/shared';
+import type { SpaceWorkflow, NodeExecutionStatus } from '@hyperneo/shared';
 import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
 import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-bus.ts';
 

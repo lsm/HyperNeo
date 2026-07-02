@@ -4,7 +4,7 @@ import { SKILL_VALIDATE } from '../../../../src/lib/job-queue-constants';
 import type { Job } from '../../../../src/storage/repositories/job-queue-repository';
 import type { SkillsManager } from '../../../../src/lib/skills-manager';
 import type { AppMcpServerRepository } from '../../../../src/storage/repositories/app-mcp-server-repository';
-import type { AppSkill } from '@neokai/shared';
+import type { AppSkill } from '@hyperneo/shared';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -114,7 +114,7 @@ describe('createSkillValidateHandler', () => {
 
   it('passes validation for plugin skill with accessible path', async () => {
     // Use a temp directory that is guaranteed to exist and be readable
-    const pluginPath = mkdtempSync(join(tmpdir(), 'neokai-test-'));
+    const pluginPath = mkdtempSync(join(tmpdir(), 'hyperneo-test-'));
     const skill = makeSkill({
       sourceType: 'plugin',
       config: { type: 'plugin', pluginPath },

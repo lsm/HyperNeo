@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test';
-import type { McpServerConfig } from '@neokai/shared';
+import type { McpServerConfig } from '@hyperneo/shared';
 import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 
 function makeManager(memoryRepo?: unknown): TaskAgentManager {

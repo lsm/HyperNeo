@@ -135,13 +135,13 @@ export default function SpaceIsland({
       />
     ) : null;
 
-  // Test hook: expose overlay controls on window.__neokai_space_overlay so E2E
+  // Test hook: expose overlay controls on window.__hyperneo_space_overlay so E2E
   // tests can trigger the overlay programmatically. Opening is purely
   // client-side signal manipulation — no security concern in exposing this.
   useEffect(() => {
     type OverlayApi = { open: (sessionId: string, agentName?: string) => void; close: () => void };
-    const w = window as typeof window & { __neokai_space_overlay?: OverlayApi };
-    w.__neokai_space_overlay = {
+    const w = window as typeof window & { __hyperneo_space_overlay?: OverlayApi };
+    w.__hyperneo_space_overlay = {
       open(sessionId, agentName) {
         pushOverlayHistory(sessionId, agentName);
       },
@@ -150,7 +150,7 @@ export default function SpaceIsland({
       },
     };
     return () => {
-      w.__neokai_space_overlay = undefined;
+      w.__hyperneo_space_overlay = undefined;
     };
   }, []);
 

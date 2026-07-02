@@ -17,7 +17,7 @@
  * status instead of brief flashes when tool_use blocks appear in assistant messages.
  */
 
-import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
+import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 
 /**
  * Streaming phase types

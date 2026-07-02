@@ -23,7 +23,7 @@
  */
 
 import { useCallback, useState } from 'preact/hooks';
-import type { SpaceTask } from '@neokai/shared';
+import type { SpaceTask } from '@hyperneo/shared';
 import { spaceStore } from '../../lib/space-store';
 import { InlineStatusBanner, type InlineStatusBannerAction } from './InlineStatusBanner';
 

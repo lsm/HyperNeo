@@ -28,7 +28,7 @@ The PR #264 was merged to the `dev` branch at `2026-03-08T14:00:04Z`.
    - No proxy env var inheritance issues
    - Simpler configuration
 
-3. **Test Results:** 4/4 tests pass with `NEOKAI_USE_DEV_PROXY=1`
+3. **Test Results:** 4/4 tests pass with `HYPERNEO_USE_DEV_PROXY=1`
 
 ### Why It Appeared "Stuck"
 
@@ -52,4 +52,4 @@ The Dev Proxy integration is working correctly with the `ANTHROPIC_BASE_URL` app
 
 1. The goal "use dev proxy for all online tests" can now be considered achieved
 2. All 6 tasks in the goal are complete
-3. Dev Proxy mode can be used in CI/CD with `NEOKAI_USE_DEV_PROXY=1`
+3. Dev Proxy mode can be used in CI/CD with `HYPERNEO_USE_DEV_PROXY=1`

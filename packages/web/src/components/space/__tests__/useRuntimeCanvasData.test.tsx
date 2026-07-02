@@ -16,7 +16,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, cleanup, waitFor } from '@testing-library/preact';
 import { signal, computed } from '@preact/signals';
-import type { SpaceWorkerAgent, SpaceWorkflow, NodeExecution, Gate } from '@neokai/shared';
+import type { SpaceWorkerAgent, SpaceWorkflow, NodeExecution, Gate } from '@hyperneo/shared';
 
 // ---- Signals for mocking ----
 

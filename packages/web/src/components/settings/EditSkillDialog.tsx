@@ -6,8 +6,8 @@
  */
 
 import { useState, useEffect } from 'preact/hooks';
-import type { AppSkill, AppSkillConfig } from '@neokai/shared';
-import type { AppMcpServer } from '@neokai/shared';
+import type { AppSkill, AppSkillConfig } from '@hyperneo/shared';
+import type { AppMcpServer } from '@hyperneo/shared';
 import { skillsStore } from '../../lib/skills-store';
 import { toast } from '../../lib/toast';
 import { Modal } from '../ui/Modal';

@@ -3,7 +3,7 @@
  */
 
 import type { JSX } from 'preact';
-import type { SDKTaskProgressMessage } from '@neokai/shared/sdk/sdk.d.ts';
+import type { SDKTaskProgressMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 
 /**
  * Display variant for tool components

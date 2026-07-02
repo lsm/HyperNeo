@@ -8,7 +8,7 @@ import { describe, it, expect } from 'vitest';
 
 import { render, fireEvent } from '@testing-library/preact';
 import { SDKResultMessage } from '../SDKResultMessage';
-import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
+import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 import type { UUID } from 'crypto';
 
 // Helper to create a valid UUID

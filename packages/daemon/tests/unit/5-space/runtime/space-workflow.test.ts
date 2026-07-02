@@ -22,7 +22,7 @@ import {
   WorkflowValidationError,
 } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import type { SpaceAgentLookup } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
-import type { WorkflowNodeInput } from '@neokai/shared';
+import type { WorkflowNodeInput } from '@hyperneo/shared';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -426,7 +426,7 @@ describe('SpaceWorkflowRepository', () => {
           id: 'step-1',
           name: 'Step',
           agentId: 'agent-1',
-        } as unknown as import('@neokai/shared').WorkflowNodeInput,
+        } as unknown as import('@hyperneo/shared').WorkflowNodeInput,
       ],
       completionAutonomyLevel: 3,
     });
@@ -465,7 +465,7 @@ describe('SpaceWorkflowRepository', () => {
           id: 'step-99',
           name: 'Step',
           agentId: 'agent-99',
-        } as unknown as import('@neokai/shared').WorkflowNodeInput,
+        } as unknown as import('@hyperneo/shared').WorkflowNodeInput,
       ],
       completionAutonomyLevel: 3,
     });

@@ -26,7 +26,7 @@ import {
   validateCommandName,
 } from '../../../src/lib/skills-manager';
 import { noOpReactiveDb } from '../../helpers/reactive-database';
-import type { AppSkill } from '@neokai/shared';
+import type { AppSkill } from '@hyperneo/shared';
 
 // ---------------------------------------------------------------------------
 // Setup helpers
@@ -1244,7 +1244,7 @@ describe('SkillsManager.installSkillFromGit', () => {
     };
   }
 
-  test('registers skill in DB and writes SKILL.md to ~/.neokai/skills/', async () => {
+  test('registers skill in DB and writes SKILL.md to ~/.hyperneo/skills/', async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = makeGitHubApiFetch() as typeof globalThis.fetch;
 

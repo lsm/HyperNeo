@@ -13,8 +13,8 @@
 
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import type { MessageHub } from '@neokai/shared';
-import { REFERENCE_PATTERN } from '@neokai/shared';
+import type { MessageHub } from '@hyperneo/shared';
+import { REFERENCE_PATTERN } from '@hyperneo/shared';
 import { setupReferenceHandlers } from '../../../src/lib/rpc-handlers/reference-handlers';
 import type { ReferenceHandlerDeps } from '../../../src/lib/rpc-handlers/reference-handlers';
 import type { FileIndex, FileIndexEntry } from '../../../src/lib/file-index';

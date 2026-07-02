@@ -9,7 +9,7 @@
  */
 
 import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
-import { MessageHub } from '@neokai/shared';
+import { MessageHub } from '@hyperneo/shared';
 import { mkdir, mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';

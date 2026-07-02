@@ -22,7 +22,7 @@ import type {
 } from '../../../../src/storage/reactive-database';
 import { LiveQueryEngine } from '../../../../src/storage/live-query';
 import type { QueryDiff } from '../../../../src/storage/live-query';
-import type { Session, SessionConfig, SessionMetadata } from '@neokai/shared';
+import type { Session, SessionConfig, SessionMetadata } from '@hyperneo/shared';
 
 // ---------------------------------------------------------------------------
 // Helpers

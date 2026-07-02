@@ -2,7 +2,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { cleanup, fireEvent, render } from '@testing-library/preact';
 import { afterEach } from 'vitest';
-import type { SpaceTaskStatus } from '@neokai/shared';
+import type { SpaceTaskStatus } from '@hyperneo/shared';
 import {
   TaskStatusActions,
   getTransitionActions,

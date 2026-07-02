@@ -10,7 +10,7 @@
  * matching the RoomTasks component style.
  */
 
-import type { SpaceBlockReason, SpaceTask, SpaceTaskStatus, TaskSchedule } from '@neokai/shared';
+import type { SpaceBlockReason, SpaceTask, SpaceTaskStatus, TaskSchedule } from '@hyperneo/shared';
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import { navigateToSpaceTasks } from '../../lib/router';
 import { currentSpaceTasksFilterTabSignal } from '../../lib/signals';

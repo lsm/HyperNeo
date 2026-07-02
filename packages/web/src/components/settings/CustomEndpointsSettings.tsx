@@ -14,7 +14,7 @@
  */
 
 import { useEffect, useState } from 'preact/hooks';
-import type { CustomEndpointConfig } from '@neokai/shared';
+import type { CustomEndpointConfig } from '@hyperneo/shared';
 import {
   listCustomEndpoints,
   addCustomEndpoint,

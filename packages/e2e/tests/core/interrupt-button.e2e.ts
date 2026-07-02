@@ -17,7 +17,7 @@ import {
 } from '../helpers/wait-helpers';
 
 // Check if devproxy mock mode is enabled
-const IS_MOCK = process.env.NEOKAI_USE_DEV_PROXY === '1';
+const IS_MOCK = process.env.HYPERNEO_USE_DEV_PROXY === '1';
 
 test.describe('Interrupt Button', () => {
   test.beforeEach(async ({ page }) => {

@@ -6,13 +6,13 @@
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
-import { generateUUID } from '@neokai/shared';
+import { generateUUID } from '@hyperneo/shared';
 import type {
   TaskSchedule,
   TaskScheduleStatus,
   TaskScheduleTriggerType,
   SpaceTaskPriority,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 
 export interface CreateTaskScheduleParams {
   spaceId: string;

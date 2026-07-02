@@ -6,7 +6,7 @@
 import { render, cleanup } from '@testing-library/preact';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { SessionInfoModal } from '../SessionInfoModal';
-import type { Session } from '@neokai/shared';
+import type { Session } from '@hyperneo/shared';
 
 // Mock CopyButton to simplify testing
 vi.mock('../ui/CopyButton', () => ({
@@ -328,7 +328,7 @@ describe('SessionInfoModal', () => {
     it('should display worktree section when worktree exists', () => {
       const session = createMockSession({
         worktree: {
-          worktreePath: '/Users/test/.neokai/worktrees/session-123',
+          worktreePath: '/Users/test/.hyperneo/worktrees/session-123',
           mainRepoPath: '/Users/test/project',
           branch: 'session/test-branch',
         },
@@ -343,7 +343,7 @@ describe('SessionInfoModal', () => {
       // Check for worktree path
       const copyButtons = document.body.querySelectorAll('[data-testid="copy-button"]');
       const worktreePathButton = Array.from(copyButtons).find(
-        (btn) => btn.getAttribute('data-text') === '/Users/test/.neokai/worktrees/session-123'
+        (btn) => btn.getAttribute('data-text') === '/Users/test/.hyperneo/worktrees/session-123'
       );
       expect(worktreePathButton).toBeTruthy();
     });

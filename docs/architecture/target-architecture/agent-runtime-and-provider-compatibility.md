@@ -469,7 +469,7 @@ export interface AgentRuntimeAdapter {
 
 ### 7.3 ProviderAdapter
 
-Provider adapters already exist conceptually in `@neokai/shared/provider` and `packages/daemon/src/lib/providers`.
+Provider adapters already exist conceptually in `@hyperneo/shared/provider` and `packages/daemon/src/lib/providers`.
 
 Target responsibilities:
 
@@ -577,7 +577,7 @@ export interface ModelIoCapabilities {
 }
 ```
 
-It does not have to be one runtime class on day one. The first implementation can keep logic inside existing bridge servers while moving shared types into `@neokai/shared/contracts/agent-runtime` or a similar subpath.
+It does not have to be one runtime class on day one. The first implementation can keep logic inside existing bridge servers while moving shared types into `@hyperneo/shared/contracts/agent-runtime` or a similar subpath.
 
 ### 7.6 CapabilityResolver
 
@@ -963,11 +963,11 @@ Warnings: thinking disabled, prompt caching disabled
 New shared subpaths should be explicit:
 
 ```text
-@neokai/shared/contracts/agent-runtime
-@neokai/shared/domain/agent-runtime
-@neokai/shared/read-models/agent-runtime
-@neokai/shared/provider
-@neokai/shared/sdk/*
+@hyperneo/shared/contracts/agent-runtime
+@hyperneo/shared/domain/agent-runtime
+@hyperneo/shared/read-models/agent-runtime
+@hyperneo/shared/provider
+@hyperneo/shared/sdk/*
 ```
 
 Rules:

@@ -6,7 +6,7 @@
  */
 
 import { getCurrentAction } from '../status-actions';
-import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
+import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 
 // Helper to create mock SDK messages
 function createToolProgressMessage(toolName: string, elapsedTime: number): SDKMessage {

@@ -122,9 +122,9 @@ Work lands in order; each milestone is independently shippable and reduces the s
 
 **Effect**: `.mcp.json` auto-load stops. Users who rely on `.mcp.json` entries will notice them disappearing from non-coordinator sessions — acceptable because M2 imports them back.
 
-**Risk**: `.mcp.json` auto-load disappears until the user explicitly accepts imported rows in M2. Gate behind a kill switch (`NEOKAI_LEGACY_MCP_AUTOLOAD=1`) for one release if needed.
+**Risk**: `.mcp.json` auto-load disappears until the user explicitly accepts imported rows in M2. Gate behind a kill switch (`HYPERNEO_LEGACY_MCP_AUTOLOAD=1`) for one release if needed.
 
-**Kill switch semantics.** When `NEOKAI_LEGACY_MCP_AUTOLOAD=1` is set, `QueryOptionsBuilder.build()` preserves the *pre-M1* asymmetry: coordinators (`space_chat`, `room_chat`) stay strict with empty `settingSources`; workers / task agents / ad-hoc sessions retain `settingSources: ['project', 'local']` and `strictMcpConfig: false`. The flag does NOT globally re-enable auto-load across all session types — that would regress the coordinator hardening we already have. Implementation: one conditional per session type inside `build()`, guarded by the env var.
+**Kill switch semantics.** When `HYPERNEO_LEGACY_MCP_AUTOLOAD=1` is set, `QueryOptionsBuilder.build()` preserves the *pre-M1* asymmetry: coordinators (`space_chat`, `room_chat`) stay strict with empty `settingSources`; workers / task agents / ad-hoc sessions retain `settingSources: ['project', 'local']` and `strictMcpConfig: false`. The flag does NOT globally re-enable auto-load across all session types — that would regress the coordinator hardening we already have. Implementation: one conditional per session type inside `build()`, guarded by the env var.
 
 **Tests**:
 - Daemon unit: `query-options-builder.test.ts` — all session types have `strictMcpConfig: true` and empty `settingSources`

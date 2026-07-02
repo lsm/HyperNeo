@@ -1,4 +1,4 @@
-import type { WorkflowHook } from '@neokai/shared';
+import type { WorkflowHook } from '@hyperneo/shared';
 import {
   isWorkflowHookCallerAuthorized,
   type WorkflowHookInvocationContext,

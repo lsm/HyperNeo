@@ -1,5 +1,5 @@
 /**
- * ImportPreviewDialog — modal shown after parsing a .neokai.json import file.
+ * ImportPreviewDialog — modal shown after parsing a .hyperneo.json import file.
  *
  * Displays:
  * - List of agents to import, with conflict resolution per conflicting item
@@ -11,7 +11,7 @@
 
 import { useState } from 'preact/hooks';
 import { Modal } from '../ui/Modal.tsx';
-import type { SpaceExportBundle } from '@neokai/shared';
+import type { SpaceExportBundle } from '@hyperneo/shared';
 
 export type ConflictResolutionStrategy = 'skip' | 'rename' | 'replace';
 

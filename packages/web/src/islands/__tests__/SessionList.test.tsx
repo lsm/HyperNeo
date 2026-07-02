@@ -3,7 +3,7 @@
  * Tests for the Codex-style sessions sidebar.
  */
 import { computed, signal } from '@preact/signals';
-import type { Session, WorkspaceHistoryEntry } from '@neokai/shared';
+import type { Session, WorkspaceHistoryEntry } from '@hyperneo/shared';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -157,14 +157,14 @@ describe('SessionsSidebar', () => {
 
   it('groups workspace sessions under projects and keeps loose sessions under Chats', () => {
     mockSessionsSignal.value = [
-      createMockSession('project-chat', 'Project Chat', '/workspace/neokai'),
+      createMockSession('project-chat', 'Project Chat', '/workspace/hyperneo'),
       createMockSession('loose-chat', 'Loose Chat'),
     ];
 
     render(<SessionsSidebar />);
 
     expect(screen.getByText('Projects')).toBeTruthy();
-    expect(screen.getByText('neokai')).toBeTruthy();
+    expect(screen.getByText('hyperneo')).toBeTruthy();
     expect(screen.getByText('Project Chat')).toBeTruthy();
     expect(screen.getByText('Chats')).toBeTruthy();
     expect(screen.getByText('Loose Chat')).toBeTruthy();
@@ -173,7 +173,7 @@ describe('SessionsSidebar', () => {
   it('navigates when a session row is selected', () => {
     const onSessionSelect = vi.fn();
     mockSessionsSignal.value = [
-      createMockSession('session-1', 'Project Chat', '/workspace/neokai'),
+      createMockSession('session-1', 'Project Chat', '/workspace/hyperneo'),
     ];
 
     render(<SessionsSidebar onSessionSelect={onSessionSelect} />);
@@ -195,7 +195,7 @@ describe('SessionsSidebar', () => {
 
   it('adds a project from a daemon-machine path', async () => {
     mockSessionsSignal.value = [
-      createMockSession('session-1', 'Project Chat', '/workspace/neokai'),
+      createMockSession('session-1', 'Project Chat', '/workspace/hyperneo'),
     ];
 
     render(<SessionsSidebar />);
@@ -213,7 +213,7 @@ describe('SessionsSidebar', () => {
 
   it('uses native browsing from the add-project control when available', async () => {
     mockSessionsSignal.value = [
-      createMockSession('session-1', 'Project Chat', '/workspace/neokai'),
+      createMockSession('session-1', 'Project Chat', '/workspace/hyperneo'),
     ];
     Object.defineProperty(window, 'isTauri', { value: true, configurable: true });
 
@@ -233,7 +233,9 @@ describe('SessionsSidebar', () => {
   });
 
   it('archives a chat after the inline confirmation click', async () => {
-    mockSessionsSignal.value = [createMockSession('session-1', 'Archivable', '/workspace/neokai')];
+    mockSessionsSignal.value = [
+      createMockSession('session-1', 'Archivable', '/workspace/hyperneo'),
+    ];
 
     render(<SessionsSidebar />);
     fireEvent.click(screen.getByTestId('session-archive'));

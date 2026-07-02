@@ -389,7 +389,7 @@ Each Space should define an evolution policy.
 type EvolutionDomain =
 	| 'workflow'
 	| 'target_artifact'
-	| 'neokai_product';
+	| 'hyperneo_product';
 
 type EvolutionMode =
 	| 'observe_only'
@@ -945,7 +945,7 @@ Flow:
 HyperNeo task runs in HyperNeo
 → workflow friction or product issue appears
 → Episode Judge records it
-→ finding routes to target_artifact and neokai_product
+→ finding routes to target_artifact and hyperneo_product
 → agent creates HyperNeo code patch
 → tests validate patch
 → run creates WorkflowLesson or WorkflowVariant

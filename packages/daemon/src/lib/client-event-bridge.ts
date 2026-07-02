@@ -37,8 +37,8 @@
  *   emitting events.
  */
 
-import type { IClientEventGateway, EventChannel } from '@neokai/shared';
-import { Channels } from '@neokai/shared';
+import type { IClientEventGateway, EventChannel } from '@hyperneo/shared';
+import { Channels } from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from './internal-event-bus';
 import { Logger } from './logger';
 

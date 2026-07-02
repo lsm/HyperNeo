@@ -20,8 +20,8 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
-import type { AppMcpServer } from '@neokai/shared';
-import type { AppSkill } from '@neokai/shared';
+import type { AppMcpServer } from '@hyperneo/shared';
+import type { AppSkill } from '@hyperneo/shared';
 
 const TMP_DIR = process.env.TMPDIR || '/tmp';
 
@@ -31,7 +31,7 @@ describe('AppMcpServer.enabled check — skills-based MCP injection', () => {
 
   beforeEach(async () => {
     daemon = await createDaemonServer();
-    workspacePath = join(TMP_DIR, `neokai-test-app-mcp-${Date.now()}`);
+    workspacePath = join(TMP_DIR, `hyperneo-test-app-mcp-${Date.now()}`);
     mkdirSync(workspacePath, { recursive: true });
   }, 30_000);
 

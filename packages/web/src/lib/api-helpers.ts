@@ -45,13 +45,13 @@ import type {
   ProviderRecord,
   CreateProviderParams,
   UpdateProviderParams,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import type {
   ProviderAuthResponse,
   ProviderLogoutResponse,
   ListProviderAuthStatusResponse,
   ProviderRefreshResponse,
-} from '@neokai/shared/provider';
+} from '@hyperneo/shared/provider';
 import { connectionManager } from './connection-manager.ts';
 import { ConnectionNotReadyError } from './errors.ts';
 
@@ -237,15 +237,15 @@ export async function testProvider(id: string): Promise<{ healthy: boolean; erro
 // ==================== Settings Operations ====================
 
 export async function updateGlobalSettings(
-  updates: Partial<import('@neokai/shared').GlobalSettings>
+  updates: Partial<import('@hyperneo/shared').GlobalSettings>
 ): Promise<{
   success: boolean;
-  settings: import('@neokai/shared').GlobalSettings;
+  settings: import('@hyperneo/shared').GlobalSettings;
 }> {
   const hub = await connectionManager.getHub();
   return await hub.request<{
     success: boolean;
-    settings: import('@neokai/shared').GlobalSettings;
+    settings: import('@hyperneo/shared').GlobalSettings;
   }>('settings.global.update', { updates });
 }
 
@@ -256,9 +256,9 @@ export async function updateGlobalSettings(
  */
 export async function listRuntimeMcpServers(
   sessionId: string
-): Promise<import('@neokai/shared').ListRuntimeMcpServersResponse> {
+): Promise<import('@hyperneo/shared').ListRuntimeMcpServersResponse> {
   const hub = await connectionManager.getHub();
-  return await hub.request<import('@neokai/shared').ListRuntimeMcpServersResponse>(
+  return await hub.request<import('@hyperneo/shared').ListRuntimeMcpServersResponse>(
     'session.listRuntimeMcpServers',
     { sessionId }
   );
@@ -280,21 +280,24 @@ export async function getRewindPoints(sessionId: string): Promise<{
 export async function previewRewind(
   sessionId: string,
   checkpointId: string
-): Promise<{ preview: import('@neokai/shared').RewindPreview }> {
+): Promise<{ preview: import('@hyperneo/shared').RewindPreview }> {
   const hub = getHubOrThrow();
-  return await hub.request<{ preview: import('@neokai/shared').RewindPreview }>('rewind.preview', {
-    sessionId,
-    checkpointId,
-  });
+  return await hub.request<{ preview: import('@hyperneo/shared').RewindPreview }>(
+    'rewind.preview',
+    {
+      sessionId,
+      checkpointId,
+    }
+  );
 }
 
 export async function executeRewind(
   sessionId: string,
   checkpointId: string,
-  mode: import('@neokai/shared').RewindMode = 'files'
-): Promise<{ result: import('@neokai/shared').RewindResult }> {
+  mode: import('@hyperneo/shared').RewindMode = 'files'
+): Promise<{ result: import('@hyperneo/shared').RewindResult }> {
   const hub = getHubOrThrow();
-  return await hub.request<{ result: import('@neokai/shared').RewindResult }>('rewind.execute', {
+  return await hub.request<{ result: import('@hyperneo/shared').RewindResult }>('rewind.execute', {
     sessionId,
     checkpointId,
     mode,
@@ -306,10 +309,10 @@ export async function executeRewind(
 export async function executeSelectiveRewind(
   sessionId: string,
   messageIds: string[],
-  mode: import('@neokai/shared').RewindMode = 'both'
-): Promise<{ result: import('@neokai/shared').SelectiveRewindResult }> {
+  mode: import('@hyperneo/shared').RewindMode = 'both'
+): Promise<{ result: import('@hyperneo/shared').SelectiveRewindResult }> {
   const hub = getHubOrThrow();
-  return await hub.request<{ result: import('@neokai/shared').SelectiveRewindResult }>(
+  return await hub.request<{ result: import('@hyperneo/shared').SelectiveRewindResult }>(
     'rewind.executeSelective',
     { sessionId, messageIds, mode }
   );
@@ -400,11 +403,11 @@ export async function setSessionWorkspace(
   sessionId: string,
   workspacePath: string,
   worktreeMode: 'worktree' | 'direct'
-): Promise<import('@neokai/shared').Session> {
+): Promise<import('@hyperneo/shared').Session> {
   const hub = getHubOrThrow();
   const { session } = await hub.request<{
     success: boolean;
-    session: import('@neokai/shared').Session;
+    session: import('@hyperneo/shared').Session;
   }>('session.setWorkspace', { sessionId, workspacePath, worktreeMode });
   return session;
 }
@@ -412,24 +415,24 @@ export async function setSessionWorkspace(
 // ==================== Custom Endpoints ====================
 
 export async function listCustomEndpoints(): Promise<{
-  endpoints: import('@neokai/shared').CustomEndpointConfig[];
+  endpoints: import('@hyperneo/shared').CustomEndpointConfig[];
 }> {
   const hub = getHubOrThrow();
-  return await hub.request<{ endpoints: import('@neokai/shared').CustomEndpointConfig[] }>(
+  return await hub.request<{ endpoints: import('@hyperneo/shared').CustomEndpointConfig[] }>(
     'customEndpoints.list'
   );
 }
 
 export async function addCustomEndpoint(
-  endpoint: import('@neokai/shared').CustomEndpointConfig
-): Promise<{ success: boolean; endpoint: import('@neokai/shared').CustomEndpointConfig }> {
+  endpoint: import('@hyperneo/shared').CustomEndpointConfig
+): Promise<{ success: boolean; endpoint: import('@hyperneo/shared').CustomEndpointConfig }> {
   const hub = getHubOrThrow();
   return await hub.request('customEndpoints.add', { endpoint });
 }
 
 export async function updateCustomEndpoint(
-  endpoint: import('@neokai/shared').CustomEndpointConfig
-): Promise<{ success: boolean; endpoint: import('@neokai/shared').CustomEndpointConfig }> {
+  endpoint: import('@hyperneo/shared').CustomEndpointConfig
+): Promise<{ success: boolean; endpoint: import('@hyperneo/shared').CustomEndpointConfig }> {
   const hub = getHubOrThrow();
   return await hub.request('customEndpoints.update', { endpoint });
 }

@@ -3,7 +3,7 @@ import {
   generateUUID,
   type WorkflowHookResult,
   type WorkflowHookStateSnapshot,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 
 interface HookStateRow {
   run_id: string;

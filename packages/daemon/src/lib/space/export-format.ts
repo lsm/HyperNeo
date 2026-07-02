@@ -28,7 +28,7 @@ import type {
   ExportedWorkflowNode,
   ExportedWorkflowNodeAgent,
   SpaceExportBundle,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import { validateSlug } from './slug';
 
 // ============================================================================
@@ -298,8 +298,8 @@ export type ValidationResult<T> = { ok: true; value: T } | { ok: false; error: s
  * - `undefined` → `undefined`
  */
 export function normalizeOverride(
-  value: import('@neokai/shared').WorkflowNodeAgentOverride | string | undefined
-): import('@neokai/shared').WorkflowNodeAgentOverride | undefined {
+  value: import('@hyperneo/shared').WorkflowNodeAgentOverride | string | undefined
+): import('@hyperneo/shared').WorkflowNodeAgentOverride | undefined {
   if (value === undefined) return undefined;
   if (typeof value === 'string') return { value };
   return value;

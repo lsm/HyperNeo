@@ -4,7 +4,7 @@
  * Manages git worktrees for Space tasks. One worktree per task, created from
  * the space's repository workspace path.
  *
- * Worktree location : ~/.neokai/projects/{shortKey}/worktrees/{slug}/
+ * Worktree location : ~/.hyperneo/projects/{shortKey}/worktrees/{slug}/
  * Branch naming     : space/{slug}
  *
  * Does NOT extend Room's WorktreeManager — uses execSync directly.
@@ -73,7 +73,7 @@ export class SpaceWorktreeManager {
     const existingSlugs = this.worktreeRepo.listSlugs(spaceId);
     const slug = worktreeSlug(taskTitle, taskNumber, existingSlugs);
 
-    // Resolve worktree base directory under ~/.neokai/projects/{shortKey}/worktrees/
+    // Resolve worktree base directory under ~/.hyperneo/projects/{shortKey}/worktrees/
     const worktreesDir = getWorktreeBaseDir(space.workspacePath, (msg) => this.logger.warn(msg));
     if (!existsSync(worktreesDir)) {
       mkdirSync(worktreesDir, { recursive: true });

@@ -14,7 +14,7 @@ import {
   syncCustomEndpointProviders,
 } from '../../../../src/lib/providers/factory';
 import { CustomEndpointProvider } from '../../../../src/lib/providers/custom-endpoint-provider';
-import type { CustomEndpointConfig } from '@neokai/shared';
+import type { CustomEndpointConfig } from '@hyperneo/shared';
 
 const baseConfig: CustomEndpointConfig = {
   id: 'lmstudio',

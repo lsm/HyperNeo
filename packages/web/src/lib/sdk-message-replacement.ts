@@ -1,4 +1,4 @@
-import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
+import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 
 export type MessageReplacementStatus = 'superseded' | 'retracted';
 

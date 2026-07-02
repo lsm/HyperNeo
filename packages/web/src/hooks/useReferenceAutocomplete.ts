@@ -18,7 +18,7 @@
 import { useState, useEffect, useCallback, useRef } from 'preact/hooks';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { sessionStore } from '../lib/session-store.ts';
-import type { ReferenceMention, ReferenceSearchResult } from '@neokai/shared';
+import type { ReferenceMention, ReferenceSearchResult } from '@hyperneo/shared';
 
 export interface UseReferenceAutocompleteOptions {
   content: string;

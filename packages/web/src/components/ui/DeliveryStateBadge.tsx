@@ -1,4 +1,4 @@
-import type { ActorMessageDeliveryState } from '@neokai/shared';
+import type { ActorMessageDeliveryState } from '@hyperneo/shared';
 import { cn } from '../../lib/utils';
 
 const DELIVERY_STATE_CLASSES: Record<ActorMessageDeliveryState, string> = {

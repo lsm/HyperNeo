@@ -7,8 +7,8 @@
 
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
 import { ContextTracker, reserveBasedThreshold } from '../../../../src/lib/agent/context-tracker';
-import type { ContextInfo } from '@neokai/shared';
-import { generateUUID } from '@neokai/shared';
+import type { ContextInfo } from '@hyperneo/shared';
+import { generateUUID } from '@hyperneo/shared';
 
 describe('ContextTracker', () => {
   let tracker: ContextTracker;

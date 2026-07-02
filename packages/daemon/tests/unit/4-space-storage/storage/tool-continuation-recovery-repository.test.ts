@@ -55,7 +55,7 @@ describe('ToolContinuationRecoveryRepository', () => {
   }
 
   it('persists tool_use ownership and queued continuation across database reopen', () => {
-    tempDir = mkdtempSync(join(tmpdir(), 'neokai-tool-continuation-'));
+    tempDir = mkdtempSync(join(tmpdir(), 'hyperneo-tool-continuation-'));
     const dbPath = join(tempDir, 'test.sqlite');
     db.close();
 

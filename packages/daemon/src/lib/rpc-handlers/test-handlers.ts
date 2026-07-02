@@ -5,9 +5,9 @@
  * to inject test data or simulate specific scenarios.
  */
 
-import type { MessageHub } from '@neokai/shared';
+import type { MessageHub } from '@hyperneo/shared';
 import type { Database } from '../../storage/database';
-import type { SDKMessage } from '@neokai/shared/sdk';
+import type { SDKMessage } from '@hyperneo/shared/sdk';
 
 export function setupTestHandlers(messageHub: MessageHub, db: Database): void {
   // Inject an SDK message directly into the database (bypasses normal message flow)

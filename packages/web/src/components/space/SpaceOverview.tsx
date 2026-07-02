@@ -14,8 +14,8 @@ import type {
   SpaceTask,
   SpaceAutonomyLevel,
   SpaceWorkflowSummary,
-} from '@neokai/shared';
-import { MAX_SPACE_CONCURRENT_TASKS, MIN_SPACE_CONCURRENT_TASKS } from '@neokai/shared';
+} from '@hyperneo/shared';
+import { MAX_SPACE_CONCURRENT_TASKS, MIN_SPACE_CONCURRENT_TASKS } from '@hyperneo/shared';
 import { spaceStore } from '../../lib/space-store';
 import {
   navigateToSpaceTask,

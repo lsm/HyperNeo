@@ -100,7 +100,7 @@ async function injectImportFile(page: Page, bundle: unknown): Promise<void> {
           (document as any).createElement = originalCreate;
 
           const json = JSON.stringify(b);
-          const file = new File([json], 'test.neokai.json', { type: 'application/json' });
+          const file = new File([json], 'test.hyperneo.json', { type: 'application/json' });
           const dt = new DataTransfer();
           dt.items.add(file);
           Object.defineProperty(input, 'files', { value: dt.files, writable: false });
@@ -140,7 +140,7 @@ test.describe('Space Export/Import', () => {
     spaceId = '';
   });
 
-  test('export single agent triggers download with .neokai.json filename', async ({ page }) => {
+  test('export single agent triggers download with .hyperneo.json filename', async ({ page }) => {
     await navigateToSpaceAgents(page, spaceId);
 
     // Hover over the agent row to reveal the Export button
@@ -154,7 +154,7 @@ test.describe('Space Export/Import', () => {
     // Intercept the download
     const [download] = await Promise.all([page.waitForEvent('download'), exportBtn.click()]);
 
-    expect(download.suggestedFilename()).toMatch(/\.neokai\.json$/);
+    expect(download.suggestedFilename()).toMatch(/\.hyperneo\.json$/);
     expect(download.suggestedFilename()).toContain('agents');
   });
 
@@ -168,7 +168,7 @@ test.describe('Space Export/Import', () => {
       page.locator('button:has-text("Export All")').click(),
     ]);
 
-    expect(download.suggestedFilename()).toMatch(/\.neokai\.json$/);
+    expect(download.suggestedFilename()).toMatch(/\.hyperneo\.json$/);
     expect(download.suggestedFilename()).toContain('agents');
 
     // Verify the downloaded JSON is valid

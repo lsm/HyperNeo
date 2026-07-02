@@ -17,7 +17,7 @@ import type {
   AppSkill,
   McpEffectiveEnablementSource,
   SessionMcpServerEntry,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 
 /**
  * Compute group-level toggle state for a list of items keyed only by an

@@ -8,9 +8,9 @@
  */
 
 import { Database as BunDatabase } from 'bun:sqlite';
-import type { MessageHub } from '@neokai/shared';
-import { createEventMessage, parseJson, parseJsonOptional } from '@neokai/shared';
-import { HIDDEN_SYSTEM_SUBTYPES } from '@neokai/shared/sdk/type-guards';
+import type { MessageHub } from '@hyperneo/shared';
+import { createEventMessage, parseJson, parseJsonOptional } from '@hyperneo/shared';
+import { HIDDEN_SYSTEM_SUBTYPES } from '@hyperneo/shared/sdk/type-guards';
 import type {
   LiveQuerySubscribeRequest,
   LiveQuerySubscribeResponse,
@@ -18,7 +18,7 @@ import type {
   LiveQueryUnsubscribeResponse,
   LiveQuerySnapshotEvent,
   LiveQueryDeltaEvent,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import type { LiveQueryEngine, LiveQueryHandle, QueryDiff } from '../../storage/live-query';
 import type { TableChangeScope } from '../../storage/reactive-database';
 import { Logger } from '../logger';

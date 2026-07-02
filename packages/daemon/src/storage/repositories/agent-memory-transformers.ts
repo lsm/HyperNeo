@@ -1,3 +1,4 @@
+import { getDataDir } from '../../lib/data-dir';
 import { createRequire } from 'node:module';
 import { access, constants, mkdir, readFile, rename, unlink } from 'node:fs/promises';
 import { createWriteStream } from 'node:fs';
@@ -5,7 +6,6 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { homedir } from 'node:os';
 import { withoutAuthorization } from './agent-memory-fetch-options';
 import type { AgentMemoryEmbedder } from './agent-memory-repository';
 
@@ -23,7 +23,7 @@ const MODEL_FILES = [
 const REMOTE_HOST = 'https://huggingface.co/';
 const REMOTE_PATH_TEMPLATE = '{model}/resolve/{revision}/';
 
-const DEFAULT_TRANSFORMERS_CACHE_DIR = join(homedir(), '.neokai', 'cache', 'transformers');
+const DEFAULT_TRANSFORMERS_CACHE_DIR = join(getDataDir(), 'cache', 'transformers');
 
 type TransformersModule = typeof import('@huggingface/transformers');
 type InitializedEmbedder = {

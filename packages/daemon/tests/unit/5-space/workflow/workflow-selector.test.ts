@@ -13,7 +13,7 @@
 import { describe, test, expect } from 'bun:test';
 import { selectWorkflow } from '../../../../src/lib/space/runtime/workflow-selector.ts';
 import type { WorkflowSelectionContext } from '../../../../src/lib/space/runtime/workflow-selector.ts';
-import type { SpaceWorkflow } from '@neokai/shared';
+import type { SpaceWorkflow } from '@hyperneo/shared';
 
 // ---------------------------------------------------------------------------
 // Fixture builders

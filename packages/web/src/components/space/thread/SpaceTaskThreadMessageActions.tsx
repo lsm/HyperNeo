@@ -1,4 +1,4 @@
-import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
+import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 import { useEffect, useState } from 'preact/hooks';
 import { copyToClipboard } from '../../../lib/utils';
 import { messageSpacing } from '../../../lib/design-tokens';

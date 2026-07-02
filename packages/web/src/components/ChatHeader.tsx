@@ -9,8 +9,8 @@
  * - Space sessions hide features that aren't applicable
  */
 
-import type { ChatMessage, Session, SessionFeatures } from '@neokai/shared';
-import { DEFAULT_WORKER_FEATURES } from '@neokai/shared';
+import type { ChatMessage, Session, SessionFeatures } from '@hyperneo/shared';
+import { DEFAULT_WORKER_FEATURES } from '@hyperneo/shared';
 import { rightPanelTargetSignal } from '../lib/signals.ts';
 import { connectionState } from '../lib/state';
 import { cn } from '../lib/utils.ts';

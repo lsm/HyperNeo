@@ -11,7 +11,7 @@
  * - DaemonHub: 'session.created'
  */
 
-import { TypedHub, type BaseEventData } from '@neokai/shared';
+import { TypedHub, type BaseEventData } from '@hyperneo/shared';
 import type {
   Session,
   AuthMethod,
@@ -25,9 +25,9 @@ import type {
   PendingUserQuestion,
   RewindMode,
   RewindResult,
-} from '@neokai/shared';
-import type { SDKMessage } from '@neokai/shared/sdk';
-import type { NeoTask, Room, RoomGoal, RuntimeState } from '@neokai/shared/types/neo';
+} from '@hyperneo/shared';
+import type { SDKMessage } from '@hyperneo/shared/sdk';
+import type { NeoTask, Room, RoomGoal, RuntimeState } from '@hyperneo/shared/types/neo';
 
 /**
  * Compaction trigger type
@@ -52,7 +52,7 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
   'session.deleted': { sessionId: string };
   'session.reset': { sessionId: string; session: Session; restartQuery: boolean };
 
-  // SDK events — message may carry a neokai-injected `timestamp` from the DB layer.
+  // SDK events — message may carry a hyperneo-injected `timestamp` from the DB layer.
   // The SDK defines timestamp?: string (ISO 8601) on user messages; the daemon overrides it
   // with a number (epoch ms) when replaying persisted messages. The intersection keeps both
   // possibilities visible to future subscribers so they know to handle either form.
@@ -303,7 +303,7 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
   'github.roomMappingUpdated': {
     sessionId: string;
     roomId: string;
-    mapping: import('@neokai/shared').RoomGitHubMapping;
+    mapping: import('@hyperneo/shared').RoomGitHubMapping;
   };
   'github.roomMappingDeleted': {
     sessionId: string;
@@ -311,7 +311,7 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
   };
   'github.inboxItemRouted': {
     sessionId: string;
-    item: import('@neokai/shared').InboxItem;
+    item: import('@hyperneo/shared').InboxItem;
     roomId: string;
   };
   'github.inboxItemDismissed': {
@@ -321,7 +321,7 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
   'github.filterConfigUpdated': {
     sessionId: string;
     repository?: string;
-    config: import('@neokai/shared').GitHubFilterConfig;
+    config: import('@hyperneo/shared').GitHubFilterConfig;
   };
   'github.eventReceived': {
     sessionId: string;
@@ -335,7 +335,7 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
   'github.eventSecurityFailed': {
     sessionId: string;
     eventId: string;
-    securityResult: import('@neokai/shared').SecurityCheckResult;
+    securityResult: import('@hyperneo/shared').SecurityCheckResult;
   };
   'github.eventRouted': {
     sessionId: string;
@@ -346,7 +346,7 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
   };
   'github.inboxItemAdded': {
     sessionId: string;
-    item: import('@neokai/shared').InboxItem;
+    item: import('@hyperneo/shared').InboxItem;
     reason: string;
   };
   'github.eventError': {
@@ -447,13 +447,13 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
   };
 
   // Space events (global events - use 'global' as sessionId)
-  'space.created': { sessionId: string; spaceId: string; space: import('@neokai/shared').Space };
+  'space.created': { sessionId: string; spaceId: string; space: import('@hyperneo/shared').Space };
   'space.updated': {
     sessionId: string;
     spaceId: string;
-    space?: Partial<import('@neokai/shared').Space>;
+    space?: Partial<import('@hyperneo/shared').Space>;
   };
-  'space.archived': { sessionId: string; spaceId: string; space: import('@neokai/shared').Space };
+  'space.archived': { sessionId: string; spaceId: string; space: import('@hyperneo/shared').Space };
   'space.deleted': { sessionId: string; spaceId: string };
 
   // Space task events (global events - use 'global' as sessionId)
@@ -461,13 +461,13 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
     sessionId: string;
     spaceId: string;
     taskId: string;
-    task: import('@neokai/shared').SpaceTask;
+    task: import('@hyperneo/shared').SpaceTask;
   };
   'space.task.updated': {
     sessionId: string;
     spaceId: string;
     taskId: string;
-    task: import('@neokai/shared').SpaceTask;
+    task: import('@hyperneo/shared').SpaceTask;
     /**
      * Task #85: origin marker for transitions that set `status='archived'`.
      * - `'user'` (or absent) — originates from a UI archive action; the
@@ -488,7 +488,7 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
     sessionId: string;
     spaceId: string;
     scheduleId: string;
-    schedule: import('@neokai/shared').TaskSchedule;
+    schedule: import('@hyperneo/shared').TaskSchedule;
   };
 
   // Space Task Agent completion events (use 'global' as sessionId)
@@ -521,13 +521,13 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
     sessionId: string;
     spaceId: string;
     runId: string;
-    run: import('@neokai/shared').SpaceWorkflowRun;
+    run: import('@hyperneo/shared').SpaceWorkflowRun;
   };
   'space.workflowRun.updated': {
     sessionId: string;
     spaceId: string;
     runId: string;
-    run?: Partial<import('@neokai/shared').SpaceWorkflowRun>;
+    run?: Partial<import('@hyperneo/shared').SpaceWorkflowRun>;
   };
   /** Emitted when gate data changes (agent write_gate, or human approveGate). */
   'space.gateData.updated': {
@@ -599,12 +599,12 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
   'spaceAgent.created': {
     sessionId: string;
     spaceId: string;
-    agent: import('@neokai/shared').SpaceWorkerAgent;
+    agent: import('@hyperneo/shared').SpaceWorkerAgent;
   };
   'spaceAgent.updated': {
     sessionId: string;
     spaceId: string;
-    agent: import('@neokai/shared').SpaceWorkerAgent;
+    agent: import('@hyperneo/shared').SpaceWorkerAgent;
   };
   'spaceAgent.deleted': {
     sessionId: string;
@@ -617,12 +617,12 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
   'spaceWorkflow.created': {
     sessionId: string;
     spaceId: string;
-    workflow: import('@neokai/shared').SpaceWorkflow;
+    workflow: import('@hyperneo/shared').SpaceWorkflow;
   };
   'spaceWorkflow.updated': {
     sessionId: string;
     spaceId: string;
-    workflow: import('@neokai/shared').SpaceWorkflow;
+    workflow: import('@hyperneo/shared').SpaceWorkflow;
   };
   'spaceWorkflow.deleted': {
     sessionId: string;

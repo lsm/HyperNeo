@@ -48,11 +48,11 @@ describe('builtin-skill-plugin-wrapper', () => {
   });
 
   describe('defaultBuiltinSkillPluginRoot', () => {
-    it('resolves under ~/.neokai/skill-plugins', () => {
+    it('resolves under ~/.hyperneo/skill-plugins', () => {
       const root = defaultBuiltinSkillPluginRoot();
-      // Must live beside ~/.neokai/skills (not inside it) so regenerating
+      // Must live beside ~/.hyperneo/skills (not inside it) so regenerating
       // wrappers never clobbers user-editable skill content.
-      expect(root.endsWith(join('.neokai', 'skill-plugins'))).toBe(true);
+      expect(root.endsWith(join('.hyperneo', 'skill-plugins'))).toBe(true);
     });
   });
 

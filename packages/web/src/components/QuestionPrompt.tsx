@@ -18,7 +18,7 @@ import type {
   PendingUserQuestion,
   QuestionCancelReason,
   QuestionDraftResponse,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import { useMessageHub } from '../hooks/useMessageHub.ts';
 import { Button } from './ui/Button.tsx';
 import { cn } from '../lib/utils.ts';

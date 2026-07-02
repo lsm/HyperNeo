@@ -14,7 +14,7 @@ import type {
   UpdateEvolutionScopeParams,
   EvolutionEvidenceListResponse,
   EvolutionPreflightTaskSummary,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import type { EvolutionRepository } from '../../storage/repositories/evolution-repository';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository';
 import type { SpaceGoalRepository } from '../../storage/repositories/space-goal-repository';

@@ -1,4 +1,4 @@
-import type { SpaceGoal, SpaceGoalStatus, SpaceTaskPriority } from '@neokai/shared';
+import type { SpaceGoal, SpaceGoalStatus, SpaceTaskPriority } from '@hyperneo/shared';
 import type { ComponentChildren } from 'preact';
 import { useState } from 'preact/hooks';
 import { navigateToSpaceTask } from '../../lib/router';

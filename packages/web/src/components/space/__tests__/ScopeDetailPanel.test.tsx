@@ -6,7 +6,7 @@ import type {
   MetricSnapshot,
   SpaceGoal,
   TaskProposal,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import type { Signal } from '@preact/signals';
 import { signal } from '@preact/signals';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
@@ -176,7 +176,7 @@ function makeEpisode(overrides: Partial<EvolutionEpisode> = {}): EvolutionEpisod
         proposedAction: 'Keep checklist before review',
       },
       {
-        domain: 'neokai_product',
+        domain: 'hyperneo_product',
         kind: 'friction',
         impact: 'high',
         confidence: 0.9,

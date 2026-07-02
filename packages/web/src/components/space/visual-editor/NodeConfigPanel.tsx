@@ -25,8 +25,8 @@ import type {
   WorkflowChannel,
   WorkflowNodeAgent,
   WorkflowHook,
-} from '@neokai/shared';
-import { generateUUID } from '@neokai/shared';
+} from '@hyperneo/shared';
+import { generateUUID } from '@hyperneo/shared';
 import type { NodeDraft } from '../WorkflowNodeCard';
 import { isMultiAgentNode, extractOverrideValue, buildOverride } from '../WorkflowNodeCard';
 import { WorkflowModelSelect } from './WorkflowModelSelect';
@@ -34,7 +34,7 @@ import { ChannelRelationConfigPanel } from './ChannelRelationConfigPanel';
 import { GateEditorPanel } from './GateEditorPanel';
 import { HookEditorPanel } from './HookEditorPanel';
 import { skillsStore } from '../../../lib/skills-store';
-import { normalizeThinkingLevel } from '@neokai/shared';
+import { normalizeThinkingLevel } from '@hyperneo/shared';
 
 function isCoordinatorAgent(agent: SpaceWorkerAgent): boolean {
   return agent.name.toLowerCase() === 'coordinator' || agent.templateName === 'Coordinator';

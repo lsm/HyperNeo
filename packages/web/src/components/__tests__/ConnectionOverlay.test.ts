@@ -13,7 +13,7 @@
  * - failed → "Unable to reconnect." + Retry button
  */
 
-import type { ConnectionState } from '@neokai/shared';
+import type { ConnectionState } from '@hyperneo/shared';
 import { getBannerLevel } from '../ConnectionOverlay';
 
 describe('ConnectionOverlay - getBannerLevel logic', () => {

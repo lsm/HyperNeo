@@ -1,4 +1,4 @@
-import type { EvolutionScope, SpaceGoal } from '@neokai/shared';
+import type { EvolutionScope, SpaceGoal } from '@hyperneo/shared';
 import type { Signal } from '@preact/signals';
 import { signal } from '@preact/signals';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';

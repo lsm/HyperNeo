@@ -1,8 +1,8 @@
 {
   "timestamp": "2026-05-25T16:01:31.872Z",
-  "neokaiCommit": "dc9512b9c50536dc5a179ba35a9daf5fe978f9ea",
+  "hyperneoCommit": "dc9512b9c50536dc5a179ba35a9daf5fe978f9ea",
   "model": "glm-5.1",
-  "worktreePath": "/Users/lsm/.neokai/projects/dev-neokai-ec0a1deb/worktrees/benchmark-codegraph-code-review-graph-and-graphify-on-task",
+  "worktreePath": "/Users/lsm/.hyperneo/projects/dev-neokai-ec0a1deb/worktrees/benchmark-codegraph-code-review-graph-and-graphify-on-task",
   "results": [
     {
       "caseName": "CodeGraph-v2",

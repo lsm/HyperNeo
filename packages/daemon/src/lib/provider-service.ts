@@ -45,8 +45,8 @@
  * that cannot be moved to the provider registry.
  */
 
-import type { Provider, ProviderInfo, Session } from '@neokai/shared';
-import type { ProviderInfo as NewProviderInfo, ProviderSdkConfig } from '@neokai/shared/provider';
+import type { Provider, ProviderInfo, Session } from '@hyperneo/shared';
+import type { ProviderInfo as NewProviderInfo, ProviderSdkConfig } from '@hyperneo/shared/provider';
 import { Logger } from './logger.js';
 import { initializeProviders, waitForOptionalProviderRegistration } from './providers/factory.js';
 
@@ -110,7 +110,9 @@ export interface OriginalEnvVars {
   CLAUDE_AGENT_SDK_CLIENT_APP?: string;
   /** Daemon's listening PORT — cleared from subprocess env to prevent kill-chain via lsof */
   PORT?: string;
-  /** Daemon's NEOKAI_PORT — also cleared to prevent subprocess env leakage */
+  /** Daemon's HYPERNEO_PORT — also cleared to prevent subprocess env leakage */
+  HYPERNEO_PORT?: string;
+  /** Legacy NEOKAI_PORT — also cleared during the rename transition */
   NEOKAI_PORT?: string;
 }
 
@@ -434,7 +436,10 @@ export class ProviderService {
 
     try {
       const sdkConfig = provider.buildSdkConfig(modelId);
-      if (provider.id === 'anthropic' && process.env.NEOKAI_USE_DEV_PROXY === '1') {
+      if (
+        provider.id === 'anthropic' &&
+        (process.env.HYPERNEO_USE_DEV_PROXY ?? process.env.NEOKAI_USE_DEV_PROXY) === '1'
+      ) {
         sdkConfig.envVars = {
           ...sdkConfig.envVars,
           ANTHROPIC_BASE_URL: 'http://127.0.0.1:8000',
@@ -480,7 +485,10 @@ export class ProviderService {
     const modelId = session.config.model || 'default';
     try {
       const sdkConfig = provider.buildSdkConfig(modelId, sessionConfig);
-      if (provider.id === 'anthropic' && process.env.NEOKAI_USE_DEV_PROXY === '1') {
+      if (
+        provider.id === 'anthropic' &&
+        (process.env.HYPERNEO_USE_DEV_PROXY ?? process.env.NEOKAI_USE_DEV_PROXY) === '1'
+      ) {
         sdkConfig.envVars = {
           ...sdkConfig.envVars,
           ANTHROPIC_BASE_URL: 'http://127.0.0.1:8000',
@@ -683,8 +691,9 @@ export class ProviderService {
       process.env.ANTHROPIC_DEFAULT_OPUS_MODEL = envVars.ANTHROPIC_DEFAULT_OPUS_MODEL;
     }
 
-    // Always clear PORT and NEOKAI_PORT so SDK subprocesses cannot inherit the
-    // daemon's listening port and trigger a kill-chain via `lsof -i :<port>`.
+    // Always clear PORT, HYPERNEO_PORT, and legacy NEOKAI_PORT so SDK subprocesses
+    // cannot inherit the daemon's listening port and trigger a kill-chain via
+    // `lsof -i :<port>`.
     this.saveClearDaemonPortEnvVars(original);
 
     return original;
@@ -750,7 +759,7 @@ export class ProviderService {
     }
 
     // Preserve user's custom ANTHROPIC_BASE_URL from environment/settings.json.
-    // When the Dev Proxy test harness is active (NEOKAI_USE_DEV_PROXY=1), the
+    // When the Dev Proxy test harness is active (HYPERNEO_USE_DEV_PROXY=1), the
     // localhost proxy URL is preserved so test mock routing survives provider-env
     // clearing. Production localhost bridges (Ollama, Copilot, custom endpoints)
     // are cleared normally on provider switches.
@@ -847,16 +856,21 @@ export class ProviderService {
       }
     }
 
-    // Always clear PORT and NEOKAI_PORT so SDK subprocesses cannot inherit the
-    // daemon's listening port and trigger a kill-chain via `lsof -i :<port>`.
+    // Always clear PORT, HYPERNEO_PORT, and legacy NEOKAI_PORT so SDK subprocesses
+    // cannot inherit the daemon's listening port and trigger a kill-chain via
+    // `lsof -i :<port>`.
     this.saveClearDaemonPortEnvVars(original);
-    changed = changed || original.PORT !== undefined || original.NEOKAI_PORT !== undefined;
+    changed =
+      changed ||
+      original.PORT !== undefined ||
+      original.HYPERNEO_PORT !== undefined ||
+      original.NEOKAI_PORT !== undefined;
 
     return changed ? original : {};
   }
 
   /**
-   * Save and delete PORT and NEOKAI_PORT from process.env.
+   * Save and delete PORT, HYPERNEO_PORT, and legacy NEOKAI_PORT from process.env.
    *
    * Called by every path that prepares env vars for an SDK subprocess so the
    * daemon's listening port is never visible to agent bash commands.
@@ -864,6 +878,8 @@ export class ProviderService {
   private saveClearDaemonPortEnvVars(original: OriginalEnvVars): void {
     original.PORT = process.env.PORT;
     delete process.env.PORT;
+    original.HYPERNEO_PORT = process.env.HYPERNEO_PORT;
+    delete process.env.HYPERNEO_PORT;
     original.NEOKAI_PORT = process.env.NEOKAI_PORT;
     delete process.env.NEOKAI_PORT;
   }
@@ -988,6 +1004,13 @@ export class ProviderService {
         delete process.env.PORT;
       }
     }
+    if (Object.prototype.hasOwnProperty.call(original, 'HYPERNEO_PORT')) {
+      if (original.HYPERNEO_PORT !== undefined) {
+        process.env.HYPERNEO_PORT = original.HYPERNEO_PORT;
+      } else {
+        delete process.env.HYPERNEO_PORT;
+      }
+    }
     if (Object.prototype.hasOwnProperty.call(original, 'NEOKAI_PORT')) {
       if (original.NEOKAI_PORT !== undefined) {
         process.env.NEOKAI_PORT = original.NEOKAI_PORT;
@@ -1023,24 +1046,24 @@ export function mergeProviderEnvVars(providerEnvVars: ProviderEnvVars): NodeJS.P
 // Singleton instance — stored on globalThis to survive ESM module duplication
 // in Bun's test runner (different import paths can load the same module twice,
 // each with its own module-level let, breaking singleton guarantees).
-const PROVIDER_SERVICE_KEY = Symbol.for('neokai:providerServiceInstance');
+const PROVIDER_SERVICE_KEY = Symbol.for('hyperneo:providerServiceInstance');
 
 /**
  * Detect whether the Dev Proxy test harness is active.
  *
- * Only when `NEOKAI_USE_DEV_PROXY=1` is set do we treat a localhost
+ * Only when `HYPERNEO_USE_DEV_PROXY=1` is set do we treat a localhost
  * `ANTHROPIC_BASE_URL` as a Dev Proxy URL that must survive provider-env
  * clearing. Production bridge providers (Ollama, Copilot, custom endpoints)
  * also use localhost base URLs, so preserving them unconditionally would leak
  * stale bridge URLs into the next Anthropic turn.
  */
 function isDevProxyActive(): boolean {
-  return process.env.NEOKAI_USE_DEV_PROXY === '1';
+  return (process.env.HYPERNEO_USE_DEV_PROXY ?? process.env.NEOKAI_USE_DEV_PROXY) === '1';
 }
 
 /**
  * Detect whether an Anthropic base URL points at the local Dev Proxy instance.
- * Gated on `NEOKAI_USE_DEV_PROXY` so production localhost bridges are cleared
+ * Gated on `HYPERNEO_USE_DEV_PROXY` so production localhost bridges are cleared
  * normally on provider switches.
  */
 function isLocalDevProxyUrl(url: string | undefined): boolean {

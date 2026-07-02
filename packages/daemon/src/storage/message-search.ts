@@ -1,4 +1,4 @@
-import type { SDKMessage } from '@neokai/shared/sdk';
+import type { SDKMessage } from '@hyperneo/shared/sdk';
 
 export interface MessageSearchParams {
   query: string;
@@ -59,7 +59,7 @@ export function extractVisibleSearchText(message: SDKMessage | Record<string, un
     parts.push(msg.result);
   }
 
-  if (msg.type === 'neokai_action') {
+  if (msg.type === 'hyperneo_action') {
     for (const key of ['title', 'message', 'question', 'prompt', 'action']) {
       const value = msg[key];
       if (typeof value === 'string') parts.push(value);

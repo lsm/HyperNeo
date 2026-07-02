@@ -5,11 +5,11 @@
  * Enforces input validation for security-sensitive fields before persisting.
  */
 
-import { homedir } from 'node:os';
+import { getDataDir } from './data-dir';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { access, cp, mkdir, writeFile } from 'node:fs/promises';
-import { generateUUID, isBuiltinSkillConfig } from '@neokai/shared';
+import { generateUUID, isBuiltinSkillConfig } from '@hyperneo/shared';
 import type {
   AppSkill,
   AppSkillConfig,
@@ -17,7 +17,7 @@ import type {
   UpdateSkillParams,
   SkillSourceType,
   SkillValidationStatus,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import type { SkillRepository } from '../storage/repositories/skill-repository';
 import type { AppMcpServerRepository } from '../storage/repositories/app-mcp-server-repository';
 import type { JobQueueRepository } from '../storage/repositories/job-queue-repository';
@@ -297,7 +297,7 @@ export class SkillsManager {
    *   https://github.com/openai/skills/tree/main/skills/.curated/playwright
    *
    * For GitHub tree URLs: fetches the entire skill directory via the GitHub API
-   * and stores all files at ~/.neokai/skills/{commandName}/ (preserving structure).
+   * and stores all files at ~/.hyperneo/skills/{commandName}/ (preserving structure).
    *
    * For other URLs (raw or fallback): fetches a single SKILL.md file.
    *
@@ -307,7 +307,7 @@ export class SkillsManager {
    * without re-fetching or overwriting any local files.
    *
    * @param _workspaceRoot - kept for API compatibility but no longer used;
-   *   skills are always installed to ~/.neokai/skills/
+   *   skills are always installed to ~/.hyperneo/skills/
    */
   async installSkillFromGit(
     repoUrl: string,
@@ -324,7 +324,7 @@ export class SkillsManager {
       return existing;
     }
 
-    const destDir = join(homedir(), '.neokai', 'skills', commandName);
+    const destDir = join(getDataDir(), 'skills', commandName);
 
     if (repoUrl.includes('github.com') && repoUrl.includes('/tree/')) {
       // Fetch full skill directory via GitHub API
@@ -402,7 +402,7 @@ export class SkillsManager {
     try {
       const response = await fetch(apiUrl, {
         signal: controller.signal,
-        headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'neokai' },
+        headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'hyperneo' },
       });
       if (!response.ok) {
         throw new Error(
@@ -585,7 +585,7 @@ export class SkillsManager {
    *
    * The Claude Agent SDK silently drops plugin paths that are not valid plugin
    * directories (i.e. have no `.claude-plugin/plugin.json`). Our skill
-   * directories at `~/.neokai/skills/<commandName>/` follow the agent-skills
+   * directories at `~/.hyperneo/skills/<commandName>/` follow the agent-skills
    * layout (SKILL.md at root) rather than the plugin layout, so the SDK needs
    * a wrapper that bridges the two. See `builtin-skill-plugin-wrapper.ts` for
    * the full rationale.
@@ -596,7 +596,7 @@ export class SkillsManager {
    */
   async ensureBuiltinPluginWrappers(
     wrappersRoot: string = defaultBuiltinSkillPluginRoot(),
-    skillsRoot: string = join(homedir(), '.neokai', 'skills')
+    skillsRoot: string = join(getDataDir(), 'skills')
   ): Promise<Map<string, string>> {
     // Narrow via the shared type guard so `skill.config.commandName` is a
     // proper typed access rather than a manual cast. The guard also pairs

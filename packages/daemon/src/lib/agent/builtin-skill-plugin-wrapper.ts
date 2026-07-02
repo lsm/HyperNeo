@@ -10,20 +10,20 @@
  * "Unknown command".)
  *
  * Our builtin skills, however, ship in the shape established by Anthropic's
- * agent-skills repo: `~/.neokai/skills/<commandName>/SKILL.md` plus any
+ * agent-skills repo: `~/.hyperneo/skills/<commandName>/SKILL.md` plus any
  * sibling assets. That's a skill directory, not a plugin directory. Pointing
  * the SDK at it directly fails.
  *
  * This module bridges the two conventions by generating a small wrapper
  * plugin for each builtin skill at a separate location:
  *
- *   ~/.neokai/skill-plugins/<commandName>/
+ *   ~/.hyperneo/skill-plugins/<commandName>/
  *   ├── .claude-plugin/plugin.json
- *   └── skills/<commandName>/    → symlink to ~/.neokai/skills/<commandName>/
+ *   └── skills/<commandName>/    → symlink to ~/.hyperneo/skills/<commandName>/
  *
  * The SDK plugin loader then discovers `skills/<commandName>/SKILL.md` via
  * the wrapper and exposes `/<commandName>` as a slash command. We keep the
- * user-visible skill directory (`~/.neokai/skills/<commandName>`) exactly
+ * user-visible skill directory (`~/.hyperneo/skills/<commandName>`) exactly
  * where it has always been so that manual edits still work.
  *
  * Wrapper generation is idempotent: the plugin.json is rewritten on every
@@ -33,6 +33,7 @@
  * so the wrapper still resolves.
  */
 
+import { getDataDir } from '../data-dir';
 import {
   access,
   copyFile,
@@ -47,18 +48,17 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { homedir } from 'node:os';
-import { createLogger } from '@neokai/shared';
+import { createLogger } from '@hyperneo/shared';
 
 const log = createLogger('kai:daemon:builtin-skill-plugin-wrapper');
 
 /**
  * Default root directory where wrapper plugin directories are materialised.
- * Keeping this separate from `~/.neokai/skills/` means regenerating wrappers
+ * Keeping this separate from `~/.hyperneo/skills/` means regenerating wrappers
  * never touches user-edited skill content.
  */
 export function defaultBuiltinSkillPluginRoot(): string {
-  return join(homedir(), '.neokai', 'skill-plugins');
+  return join(getDataDir(), 'skill-plugins');
 }
 
 /**

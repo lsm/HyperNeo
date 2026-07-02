@@ -231,7 +231,7 @@ CREATE TABLE room_skill_overrides (
 |-------------|-------------|---------|
 | `builtin` | Built-in HyperNeo skill (e.g., `merge-session`) | `command_name: "merge-session"` |
 | `local` | Local script in workspace | `source_path: "./skills/my-skill"` |
-| `npm` | npm package | `source_path: "@neokai/skill-pdf"` |
+| `npm` | npm package | `source_path: "@hyperneo/skill-pdf"` |
 | `python` | Python script via `uvx` | `source_path: "uvx:my-skill"` |
 
 ### 6.3 SkillsManager

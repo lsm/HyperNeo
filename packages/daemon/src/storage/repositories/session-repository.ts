@@ -8,7 +8,7 @@
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
-import type { Session, SessionType, SessionContext } from '@neokai/shared';
+import type { Session, SessionType, SessionContext } from '@hyperneo/shared';
 import type { SQLiteValue } from '../types';
 
 export class SessionRepository {

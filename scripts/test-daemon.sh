@@ -15,7 +15,7 @@ set -uo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 
-export NEOKAI_ALLOW_ROOT_TEST=1
+export HYPERNEO_ALLOW_ROOT_TEST=1
 
 SHARDS=(
 	0-shared-handlers-workflow

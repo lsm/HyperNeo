@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import type { Gate, GateField } from '@neokai/shared';
+import type { Gate, GateField } from '@hyperneo/shared';
 import {
   evaluateGateStatus,
   evalFieldStatus,

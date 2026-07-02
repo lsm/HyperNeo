@@ -11,11 +11,11 @@
     "types": ["bun"],
     "paths": {
       "@/*": ["./src/*"],
-      "@neokai/shared": ["../shared/src/mod.ts"],
-      "@neokai/shared/*": ["../shared/src/*"],
-      "@neokai/daemon": ["../daemon/main.ts"],
-      "@neokai/daemon/*": ["../daemon/src/*"],
-      "@neokai/neo": ["../neo/src/index.ts"]
+      "@hyperneo/shared": ["../shared/src/mod.ts"],
+      "@hyperneo/shared/*": ["../shared/src/*"],
+      "@hyperneo/daemon": ["../daemon/main.ts"],
+      "@hyperneo/daemon/*": ["../daemon/src/*"],
+      "@hyperneo/neo": ["../neo/src/index.ts"]
     }
   },
   "include": ["src/**/*", "main.ts", "prod-entry.ts"],

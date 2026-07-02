@@ -88,11 +88,11 @@ export {
 } from './export-format';
 export type { ValidationResult } from './export-format';
 
-// Types — re-exported from @neokai/shared for convenience
+// Types — re-exported from @hyperneo/shared for convenience
 export type {
   SpaceWorkflow,
   WorkflowNode,
   WorkflowNodeInput,
   CreateSpaceWorkflowParams,
   UpdateSpaceWorkflowParams,
-} from '@neokai/shared';
+} from '@hyperneo/shared';

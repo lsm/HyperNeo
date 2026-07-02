@@ -20,7 +20,7 @@
  * tests without reaching into the SDK.
  */
 
-import type { SpaceTask, SpaceWorkflow } from '@neokai/shared';
+import type { SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
 import { getProviderService } from '../../provider-service';
 import { resolveSDKCliPath, isRunningUnderBun } from '../../agent/sdk-cli-resolver';
 import { mergeProviderEnvVars } from '../../provider-service';
@@ -112,7 +112,7 @@ export async function selectWorkflowWithLlmDefault(
       },
     });
 
-    const { isSDKAssistantMessage } = await import('@neokai/shared/sdk/type-guards');
+    const { isSDKAssistantMessage } = await import('@hyperneo/shared/sdk/type-guards');
     let raw = '';
     for await (const message of agentQuery) {
       if (isSDKAssistantMessage(message)) {

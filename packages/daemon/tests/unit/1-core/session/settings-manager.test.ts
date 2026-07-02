@@ -21,8 +21,8 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { SettingsManager } from '../../../../src/lib/settings-manager';
 import type { Database } from '../../../../src/storage/database';
-import type { GlobalSettings, SettingSource } from '@neokai/shared';
-import { DEFAULT_GLOBAL_SETTINGS } from '@neokai/shared';
+import type { GlobalSettings, SettingSource } from '@hyperneo/shared';
+import { DEFAULT_GLOBAL_SETTINGS } from '@hyperneo/shared';
 
 describe('SettingsManager', () => {
   let settingsManager: SettingsManager;

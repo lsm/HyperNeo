@@ -2,7 +2,7 @@
  * Shared test utilities for database tests
  */
 
-import type { Session } from '@neokai/shared';
+import type { Session } from '@hyperneo/shared';
 import { mock } from 'bun:test';
 import { Database } from '../../src/storage/database';
 import { createReactiveDatabase } from '../../src/storage/reactive-database';

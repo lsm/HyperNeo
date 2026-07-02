@@ -7,7 +7,7 @@ import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { spaceStore } from '../../lib/space-store';
 import { toast } from '../../lib/toast';
-import type { SpaceTask, SpaceTaskPriority, TaskScheduleTriggerType } from '@neokai/shared';
+import type { SpaceTask, SpaceTaskPriority, TaskScheduleTriggerType } from '@hyperneo/shared';
 
 interface SpaceCreateTaskDialogProps {
   isOpen: boolean;

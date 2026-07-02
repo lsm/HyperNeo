@@ -22,7 +22,7 @@ import {
   type EditorState,
 } from './CustomEndpointEditor.tsx';
 import { useFetchModels } from './useFetchModels.ts';
-import type { ProviderAuthResponse } from '@neokai/shared/provider';
+import type { ProviderAuthResponse } from '@hyperneo/shared/provider';
 
 interface BuiltInProviderPreset {
   providerId: string;

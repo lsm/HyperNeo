@@ -6,7 +6,7 @@ import type {
   SDKControlGetContextUsageResponse,
   SDKMessage,
   SlashCommand,
-} from '@neokai/shared/sdk';
+} from '@hyperneo/shared/sdk';
 
 export type QueryLike = AsyncIterable<SDKMessage> & {
   interrupt(): Promise<void>;

@@ -41,7 +41,7 @@ const logger = new Logger('openai-responses-bridge-server');
 const DEFAULT_OPENAI_BASE_URL = 'https://api.openai.com/v1';
 const DEFAULT_CHATGPT_CODEX_BASE_URL = 'https://chatgpt.com/backend-api/codex';
 const DEFAULT_RESPONSE_CONTINUATION_TTL_MS = 5 * 60 * 1000;
-const SESSION_ROUTE_PREFIX = '/_neokai/session/';
+const SESSION_ROUTE_PREFIX = '/_hyperneo/session/';
 
 export type OpenAIResponsesBridgeAuth = {
   apiKey: string;

@@ -9,7 +9,7 @@
  */
 
 import { describe, expect, it, beforeEach, mock, afterEach, spyOn } from 'bun:test';
-import { MessageHub } from '@neokai/shared';
+import { MessageHub } from '@hyperneo/shared';
 import { setupDialogHandlers } from '../../../../src/lib/rpc-handlers/dialog-handlers';
 
 // Type for captured request handlers

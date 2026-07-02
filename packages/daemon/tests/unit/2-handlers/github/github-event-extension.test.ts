@@ -1,5 +1,5 @@
 import { Database as BunDatabase } from 'bun:sqlite';
-import { InProcessTransport, MessageHub } from '@neokai/shared';
+import { InProcessTransport, MessageHub } from '@hyperneo/shared';
 import { describe, expect, test } from 'bun:test';
 import { createTables, runMigrations } from '../../../../src/storage/schema';
 import {
@@ -760,8 +760,8 @@ describe('GitHubEventExtension', () => {
   });
 
   test('RPC autoConfigureWebhook encodes GitHub API repository path segments', async () => {
-    const previousPublicUrl = process.env.NEOKAI_PUBLIC_URL;
-    process.env.NEOKAI_PUBLIC_URL = 'https://example.com';
+    const previousPublicUrl = process.env.HYPERNEO_PUBLIC_URL;
+    process.env.HYPERNEO_PUBLIC_URL = 'https://example.com';
     const db = setupDb();
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     const extension = new GitHubEventExtension(db, 'token', {
@@ -804,14 +804,14 @@ describe('GitHubEventExtension', () => {
       expect(calls[0].url).toBe('https://api.github.com/repos/acme/..%2F..%2Forgs%2Facme/hooks');
     } finally {
       await extension.stop();
-      if (previousPublicUrl === undefined) delete process.env.NEOKAI_PUBLIC_URL;
-      else process.env.NEOKAI_PUBLIC_URL = previousPublicUrl;
+      if (previousPublicUrl === undefined) delete process.env.HYPERNEO_PUBLIC_URL;
+      else process.env.HYPERNEO_PUBLIC_URL = previousPublicUrl;
     }
   });
 
   test('RPC autoConfigureWebhook creates GitHub hook and stores masked metadata', async () => {
-    const previousPublicUrl = process.env.NEOKAI_PUBLIC_URL;
-    process.env.NEOKAI_PUBLIC_URL = 'https://example.com';
+    const previousPublicUrl = process.env.HYPERNEO_PUBLIC_URL;
+    process.env.HYPERNEO_PUBLIC_URL = 'https://example.com';
     const db = setupDb();
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     const extension = new GitHubEventExtension(db, 'token', {
@@ -882,14 +882,14 @@ describe('GitHubEventExtension', () => {
       expect(stored.webhookActive).toBe(true);
     } finally {
       await extension.stop();
-      if (previousPublicUrl === undefined) delete process.env.NEOKAI_PUBLIC_URL;
-      else process.env.NEOKAI_PUBLIC_URL = previousPublicUrl;
+      if (previousPublicUrl === undefined) delete process.env.HYPERNEO_PUBLIC_URL;
+      else process.env.HYPERNEO_PUBLIC_URL = previousPublicUrl;
     }
   });
 
   test('RPC autoConfigureWebhook updates existing auto-registered hook without deleting first', async () => {
-    const previousPublicUrl = process.env.NEOKAI_PUBLIC_URL;
-    process.env.NEOKAI_PUBLIC_URL = 'https://example.com';
+    const previousPublicUrl = process.env.HYPERNEO_PUBLIC_URL;
+    process.env.HYPERNEO_PUBLIC_URL = 'https://example.com';
     const db = setupDb();
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     const extension = new GitHubEventExtension(db, 'token', {
@@ -959,14 +959,14 @@ describe('GitHubEventExtension', () => {
       );
     } finally {
       await extension.stop();
-      if (previousPublicUrl === undefined) delete process.env.NEOKAI_PUBLIC_URL;
-      else process.env.NEOKAI_PUBLIC_URL = previousPublicUrl;
+      if (previousPublicUrl === undefined) delete process.env.HYPERNEO_PUBLIC_URL;
+      else process.env.HYPERNEO_PUBLIC_URL = previousPublicUrl;
     }
   });
 
   test('RPC autoConfigureWebhook rejects when webhook capability is disabled', async () => {
-    const previousPublicUrl = process.env.NEOKAI_PUBLIC_URL;
-    process.env.NEOKAI_PUBLIC_URL = 'https://example.com';
+    const previousPublicUrl = process.env.HYPERNEO_PUBLIC_URL;
+    process.env.HYPERNEO_PUBLIC_URL = 'https://example.com';
     const db = setupDb();
     let fetchCalled = false;
     const extension = new GitHubEventExtension(db, 'token', {
@@ -1001,14 +1001,14 @@ describe('GitHubEventExtension', () => {
       ).rejects.toThrow('GitHub webhook capability is disabled');
       expect(fetchCalled).toBe(false);
     } finally {
-      if (previousPublicUrl === undefined) delete process.env.NEOKAI_PUBLIC_URL;
-      else process.env.NEOKAI_PUBLIC_URL = previousPublicUrl;
+      if (previousPublicUrl === undefined) delete process.env.HYPERNEO_PUBLIC_URL;
+      else process.env.HYPERNEO_PUBLIC_URL = previousPublicUrl;
     }
   });
 
   test('RPC autoConfigureWebhook recreates stale auto-registered hooks', async () => {
-    const previousPublicUrl = process.env.NEOKAI_PUBLIC_URL;
-    process.env.NEOKAI_PUBLIC_URL = 'https://example.com';
+    const previousPublicUrl = process.env.HYPERNEO_PUBLIC_URL;
+    process.env.HYPERNEO_PUBLIC_URL = 'https://example.com';
     const db = setupDb();
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     const extension = new GitHubEventExtension(db, 'token', {
@@ -1075,14 +1075,14 @@ describe('GitHubEventExtension', () => {
       expect(stored.webhookSecret).not.toBe('old-secret');
     } finally {
       await extension.stop();
-      if (previousPublicUrl === undefined) delete process.env.NEOKAI_PUBLIC_URL;
-      else process.env.NEOKAI_PUBLIC_URL = previousPublicUrl;
+      if (previousPublicUrl === undefined) delete process.env.HYPERNEO_PUBLIC_URL;
+      else process.env.HYPERNEO_PUBLIC_URL = previousPublicUrl;
     }
   });
 
   test('RPC autoConfigureWebhook reuses existing repository hook across spaces', async () => {
-    const previousPublicUrl = process.env.NEOKAI_PUBLIC_URL;
-    process.env.NEOKAI_PUBLIC_URL = 'https://example.com';
+    const previousPublicUrl = process.env.HYPERNEO_PUBLIC_URL;
+    process.env.HYPERNEO_PUBLIC_URL = 'https://example.com';
     const db = setupDb();
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     const extension = new GitHubEventExtension(db, 'token', {
@@ -1142,14 +1142,14 @@ describe('GitHubEventExtension', () => {
       expect(stored.webhookSecret).toBe('shared-secret');
     } finally {
       await extension.stop();
-      if (previousPublicUrl === undefined) delete process.env.NEOKAI_PUBLIC_URL;
-      else process.env.NEOKAI_PUBLIC_URL = previousPublicUrl;
+      if (previousPublicUrl === undefined) delete process.env.HYPERNEO_PUBLIC_URL;
+      else process.env.HYPERNEO_PUBLIC_URL = previousPublicUrl;
     }
   });
 
   test('RPC autoConfigureWebhook keeps shared auto-hook secrets in sync', async () => {
-    const previousPublicUrl = process.env.NEOKAI_PUBLIC_URL;
-    process.env.NEOKAI_PUBLIC_URL = 'https://example.com';
+    const previousPublicUrl = process.env.HYPERNEO_PUBLIC_URL;
+    process.env.HYPERNEO_PUBLIC_URL = 'https://example.com';
     const db = setupDb();
     const extension = new GitHubEventExtension(db, 'token', {
       fetchImpl: (async () =>
@@ -1205,14 +1205,14 @@ describe('GitHubEventExtension', () => {
       expect(second.webhookSecret).toBe(first.webhookSecret);
     } finally {
       await extension.stop();
-      if (previousPublicUrl === undefined) delete process.env.NEOKAI_PUBLIC_URL;
-      else process.env.NEOKAI_PUBLIC_URL = previousPublicUrl;
+      if (previousPublicUrl === undefined) delete process.env.HYPERNEO_PUBLIC_URL;
+      else process.env.HYPERNEO_PUBLIC_URL = previousPublicUrl;
     }
   });
 
   test('RPC autoConfigureWebhook updates shared rows after recreating stale hooks', async () => {
-    const previousPublicUrl = process.env.NEOKAI_PUBLIC_URL;
-    process.env.NEOKAI_PUBLIC_URL = 'https://example.com';
+    const previousPublicUrl = process.env.HYPERNEO_PUBLIC_URL;
+    process.env.HYPERNEO_PUBLIC_URL = 'https://example.com';
     const db = setupDb();
     const extension = new GitHubEventExtension(db, 'token', {
       fetchImpl: (async (_url: string | URL | Request, init?: RequestInit) => {
@@ -1274,14 +1274,14 @@ describe('GitHubEventExtension', () => {
       expect(second.webhookSecret).toBe(first.webhookSecret);
     } finally {
       await extension.stop();
-      if (previousPublicUrl === undefined) delete process.env.NEOKAI_PUBLIC_URL;
-      else process.env.NEOKAI_PUBLIC_URL = previousPublicUrl;
+      if (previousPublicUrl === undefined) delete process.env.HYPERNEO_PUBLIC_URL;
+      else process.env.HYPERNEO_PUBLIC_URL = previousPublicUrl;
     }
   });
 
   test('RPC autoConfigureWebhook keeps existing hook when replacement update fails', async () => {
-    const previousPublicUrl = process.env.NEOKAI_PUBLIC_URL;
-    process.env.NEOKAI_PUBLIC_URL = 'https://example.com';
+    const previousPublicUrl = process.env.HYPERNEO_PUBLIC_URL;
+    process.env.HYPERNEO_PUBLIC_URL = 'https://example.com';
     const db = setupDb();
     const extension = new GitHubEventExtension(db, 'token', {
       fetchImpl: (async () =>
@@ -1331,8 +1331,8 @@ describe('GitHubEventExtension', () => {
       expect(stored.webhookActive).toBe(true);
     } finally {
       await extension.stop();
-      if (previousPublicUrl === undefined) delete process.env.NEOKAI_PUBLIC_URL;
-      else process.env.NEOKAI_PUBLIC_URL = previousPublicUrl;
+      if (previousPublicUrl === undefined) delete process.env.HYPERNEO_PUBLIC_URL;
+      else process.env.HYPERNEO_PUBLIC_URL = previousPublicUrl;
     }
   });
 
@@ -2281,8 +2281,8 @@ describe('GitHubEventExtension', () => {
       })
     ).rejects.toThrow('GITHUB_TOKEN is required to configure GitHub webhooks');
 
-    const previousPublicUrl = process.env.NEOKAI_PUBLIC_URL;
-    process.env.NEOKAI_PUBLIC_URL = 'https://example.com';
+    const previousPublicUrl = process.env.HYPERNEO_PUBLIC_URL;
+    process.env.HYPERNEO_PUBLIC_URL = 'https://example.com';
     const failingExtension = new GitHubEventExtension(db, 'token', {
       fetchImpl: (async () =>
         new Response(JSON.stringify({ message: 'Resource not accessible by token' }), {
@@ -2309,8 +2309,8 @@ describe('GitHubEventExtension', () => {
         'GitHub token lacks permission to manage repository webhooks: Resource not accessible by token'
       );
     } finally {
-      if (previousPublicUrl === undefined) delete process.env.NEOKAI_PUBLIC_URL;
-      else process.env.NEOKAI_PUBLIC_URL = previousPublicUrl;
+      if (previousPublicUrl === undefined) delete process.env.HYPERNEO_PUBLIC_URL;
+      else process.env.HYPERNEO_PUBLIC_URL = previousPublicUrl;
     }
   });
 
@@ -5737,8 +5737,8 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
     });
     const { clientHub, hub, ready } = setupHubPair();
     await ready;
-    const previousPublicUrl = process.env.NEOKAI_PUBLIC_URL;
-    process.env.NEOKAI_PUBLIC_URL = 'https://example.com';
+    const previousPublicUrl = process.env.HYPERNEO_PUBLIC_URL;
+    process.env.HYPERNEO_PUBLIC_URL = 'https://example.com';
     const context = {
       publisher: { publish: async () => {} },
       config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
@@ -5758,8 +5758,8 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
       expect(seenAuth).not.toContain('Bearer ghp_env_fallback');
     } finally {
       await extension.stop();
-      if (previousPublicUrl === undefined) delete process.env.NEOKAI_PUBLIC_URL;
-      else process.env.NEOKAI_PUBLIC_URL = previousPublicUrl;
+      if (previousPublicUrl === undefined) delete process.env.HYPERNEO_PUBLIC_URL;
+      else process.env.HYPERNEO_PUBLIC_URL = previousPublicUrl;
     }
   });
 

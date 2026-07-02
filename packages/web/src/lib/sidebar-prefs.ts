@@ -5,7 +5,7 @@
  * so the layout survives reloads.
  */
 
-const COLLAPSED_PROJECTS_KEY = 'neokai_sidebar_collapsed_projects';
+const COLLAPSED_PROJECTS_KEY = 'hyperneo_sidebar_collapsed_projects';
 
 /** Read the set of collapsed project paths. */
 export function getCollapsedProjects(): Set<string> {

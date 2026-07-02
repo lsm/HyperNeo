@@ -12,7 +12,7 @@
 
 import { describe, it, expect, beforeEach, mock } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import type { MessageHub, SpaceWorkerAgent, SpaceWorkflow } from '@neokai/shared';
+import type { MessageHub, SpaceWorkerAgent, SpaceWorkflow } from '@hyperneo/shared';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager';

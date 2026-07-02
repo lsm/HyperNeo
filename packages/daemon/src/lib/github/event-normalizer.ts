@@ -5,7 +5,7 @@
  * consistent GitHubEvent structure for unified processing.
  */
 
-import type { GitHubEvent, GitHubEventSource } from '@neokai/shared';
+import type { GitHubEvent, GitHubEventSource } from '@hyperneo/shared';
 import type {
   GitHubApiComment,
   GitHubApiIssue,

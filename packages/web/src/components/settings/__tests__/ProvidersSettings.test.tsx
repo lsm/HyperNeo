@@ -4,8 +4,8 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, cleanup, screen, waitFor, fireEvent } from '@testing-library/preact';
-import type { ProviderRecord } from '@neokai/shared';
-import type { ProviderAuthStatus } from '@neokai/shared/provider';
+import type { ProviderRecord } from '@hyperneo/shared';
+import type { ProviderAuthStatus } from '@hyperneo/shared/provider';
 
 const {
   mockListProviders,

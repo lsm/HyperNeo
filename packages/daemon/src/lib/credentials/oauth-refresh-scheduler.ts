@@ -1,4 +1,4 @@
-import type { Provider, ProviderCredentials } from '@neokai/shared/provider';
+import type { Provider, ProviderCredentials } from '@hyperneo/shared/provider';
 import { getProviderRegistry, type ProviderRegistry } from '../providers/registry.js';
 import type { ProviderCredentialManager } from './provider-credential-manager.js';
 

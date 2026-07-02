@@ -45,7 +45,7 @@ describe('discoverCredentials', () => {
     // Create temp directory for file-based tests
     tempDir = join(
       process.env.TMPDIR || '/tmp',
-      `neokai-cred-unit-${Date.now()}-${Math.random().toString(36).slice(2)}`
+      `hyperneo-cred-unit-${Date.now()}-${Math.random().toString(36).slice(2)}`
     );
     claudeDir = join(tempDir, '.claude');
     mkdirSync(claudeDir, { recursive: true });

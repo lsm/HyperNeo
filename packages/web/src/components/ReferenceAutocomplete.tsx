@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { cn } from '../lib/utils.ts';
 import { borderColors } from '../lib/design-tokens.ts';
-import type { ReferenceSearchResult, ReferenceType } from '@neokai/shared';
+import type { ReferenceSearchResult, ReferenceType } from '@hyperneo/shared';
 import ReferenceTypeIcon from './ReferenceTypeIcon.tsx';
 
 export interface ReferenceAutocompleteProps {

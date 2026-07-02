@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest';
-import type { SpaceTask } from '@neokai/shared';
+import type { SpaceTask } from '@hyperneo/shared';
 import {
   resolveActiveTaskBanner,
   type GateBannerSummary,

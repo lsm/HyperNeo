@@ -1,4 +1,4 @@
-import type { MessageHub } from '@neokai/shared/message-hub/message-hub.ts';
+import type { MessageHub } from '@hyperneo/shared/message-hub/message-hub.ts';
 import type {
   ExternalEventExtension,
   ExternalEventExtensionContext,

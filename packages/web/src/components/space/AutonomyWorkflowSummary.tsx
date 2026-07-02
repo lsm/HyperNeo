@@ -11,8 +11,8 @@
  */
 
 import { useMemo, useState } from 'preact/hooks';
-import type { SpaceAutonomyLevel, SpaceWorkflowSummary } from '@neokai/shared';
-import { isWorkflowAutoClosingAtLevel } from '@neokai/shared';
+import type { SpaceAutonomyLevel, SpaceWorkflowSummary } from '@hyperneo/shared';
+import { isWorkflowAutoClosingAtLevel } from '@hyperneo/shared';
 import { cn } from '../../lib/utils.ts';
 
 interface AutonomyWorkflowSummaryProps {

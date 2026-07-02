@@ -15,7 +15,7 @@ import {
   visualStateToUpdateParams,
 } from '../serialization.ts';
 import type { VisualEditorState } from '../serialization.ts';
-import type { SpaceWorkflow, WorkflowNode } from '@neokai/shared';
+import type { SpaceWorkflow, WorkflowNode } from '@hyperneo/shared';
 // ---------------------------------------------------------------------------
 // Stable UUID counter so tests are deterministic
 // ---------------------------------------------------------------------------

@@ -16,8 +16,8 @@ import type {
   UpdateSpaceWorkerAgentParams,
   SpaceWorkerAgentDriftEntry,
   SpaceWorkerAgentDriftReport,
-} from '@neokai/shared';
-import { KNOWN_TOOLS } from '@neokai/shared';
+} from '@hyperneo/shared';
+import { KNOWN_TOOLS } from '@hyperneo/shared';
 import type { SpaceAgentRepository } from '../../../storage/repositories/space-agent-repository';
 
 type LongHorizonAgentHandleSource = {

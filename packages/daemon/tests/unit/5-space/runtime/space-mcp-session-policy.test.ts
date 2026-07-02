@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { NodeExecution, Session, SpaceTask } from '@neokai/shared';
+import type { NodeExecution, Session, SpaceTask } from '@hyperneo/shared';
 import {
   missingMcpServers,
   resolveSpaceMcpSessionPolicy,

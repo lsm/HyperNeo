@@ -10,10 +10,10 @@
 
 import type { ServerWebSocket } from 'bun';
 import { Logger } from './logger';
-import type { HubMessage, IMessageTransport, ConnectionState } from '@neokai/shared';
-import type { HubMessageWithMetadata } from '@neokai/shared/message-hub/protocol';
-import type { MessageHubRouter, ClientConnection } from '@neokai/shared';
-import { generateUUID } from '@neokai/shared';
+import type { HubMessage, IMessageTransport, ConnectionState } from '@hyperneo/shared';
+import type { HubMessageWithMetadata } from '@hyperneo/shared/message-hub/protocol';
+import type { MessageHubRouter, ClientConnection } from '@hyperneo/shared';
+import { generateUUID } from '@hyperneo/shared';
 
 export interface WebSocketServerTransportOptions {
   name?: string;

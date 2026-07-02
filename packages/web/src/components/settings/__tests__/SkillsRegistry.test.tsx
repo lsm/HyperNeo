@@ -4,7 +4,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, cleanup, screen, waitFor, fireEvent } from '@testing-library/preact';
-import type { AppSkill } from '@neokai/shared';
+import type { AppSkill } from '@hyperneo/shared';
 
 // ---------------------------------------------------------------------------
 // Mocks — must use vi.hoisted for proper hoisting

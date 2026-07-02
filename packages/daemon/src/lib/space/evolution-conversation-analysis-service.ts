@@ -4,7 +4,7 @@ import type {
   EvidenceRef,
   EvolutionScope,
   SpaceTask,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import type { EvolutionRepository } from '../../storage/repositories/evolution-repository';
 import type { SpaceRepository } from '../../storage/repositories/space-repository';
 import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository';
@@ -296,7 +296,7 @@ async function analyzeConversationWithModel(
   const originalEnv = await providerService.applyEnvVarsToProcessForProvider(provider, modelId);
   try {
     const { query } = await import('@anthropic-ai/claude-agent-sdk');
-    const { isSDKAssistantMessage } = await import('@neokai/shared/sdk/type-guards');
+    const { isSDKAssistantMessage } = await import('@hyperneo/shared/sdk/type-guards');
     const agentQuery = query({
       prompt: buildConversationFrictionPrompt(input),
       options: {

@@ -4,7 +4,7 @@ import type {
   SessionState,
   SpaceTaskActivityMember,
   ThinkingLevel,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import { useState, useEffect, useMemo, useCallback, useRef } from 'preact/hooks';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { connectionState } from '../lib/state.ts';

@@ -21,8 +21,8 @@
  * point. `isChannelOpen()` remains synchronous (no script execution).
  */
 
-import type { Channel, Gate, GateField, GateFieldCheck, GateScript } from '@neokai/shared';
-import { hasEnabledGateFeature } from '@neokai/shared';
+import type { Channel, Gate, GateField, GateFieldCheck, GateScript } from '@hyperneo/shared';
+import { hasEnabledGateFeature } from '@hyperneo/shared';
 import {
   hasRegisteredGateFeatures,
   isRegisteredGateFeature,

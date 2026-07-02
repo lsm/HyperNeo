@@ -56,7 +56,7 @@ export function App() {
         <header class="px-8 pt-10 pb-4 border-b border-surface-border flex items-start justify-between">
           <div>
             <h1 class="text-3xl font-bold text-text-primary">
-              @neokai/ui — Component Library & Application UI Reference
+              @hyperneo/ui — Component Library & Application UI Reference
             </h1>
             <p class="mt-2 text-text-tertiary">
               364+ Tailwind Application UI examples · headless primitives · design tokens

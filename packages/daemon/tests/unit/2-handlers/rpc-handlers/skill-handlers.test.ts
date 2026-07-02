@@ -11,10 +11,10 @@
  */
 
 import { describe, expect, it, beforeEach, mock, afterEach } from 'bun:test';
-import { MessageHub } from '@neokai/shared';
+import { MessageHub } from '@hyperneo/shared';
 import { registerSkillHandlers } from '../../../../src/lib/rpc-handlers/skill-handlers';
 import type { SkillsManager } from '../../../../src/lib/skills-manager';
-import type { AppSkill, CreateSkillParams, UpdateSkillParams } from '@neokai/shared';
+import type { AppSkill, CreateSkillParams, UpdateSkillParams } from '@hyperneo/shared';
 
 // ---------------------------------------------------------------------------
 // Test fixtures

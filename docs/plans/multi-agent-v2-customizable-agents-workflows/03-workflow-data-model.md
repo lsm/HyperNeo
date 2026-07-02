@@ -147,7 +147,7 @@ Add workflow types to `packages/shared/src/types/space.ts` (alongside the Space/
 2. Export all types from shared package barrel (`packages/shared/src/mod.ts`)
 
 **Acceptance criteria:**
-- All workflow types defined and exported from `@neokai/shared` via `space.ts`
+- All workflow types defined and exported from `@hyperneo/shared` via `space.ts`
 - JSDoc on all interfaces with clear semantics for `maxRetries`, `expression` (for `condition` type), and `agentId` (SpaceAgent UUID)
 - `agentId` must reference an existing `SpaceAgent` in the same space; preset roles (`planner`, `coder`, `general`, `reviewer`) are regular `SpaceAgent` records
 - No modifications to `packages/shared/src/types/neo.ts`
@@ -227,7 +227,7 @@ Add RPC handlers for workflow CRUD using the `spaceWorkflow.*` namespace. Regist
    'spaceWorkflow.updated': { sessionId: string; spaceId: string; workflow: SpaceWorkflow };
    'spaceWorkflow.deleted': { sessionId: string; spaceId: string; workflowId: string };
    ```
-   Import `SpaceWorkflow` from `@neokai/shared`.
+   Import `SpaceWorkflow` from `@hyperneo/shared`.
 
 2. Create `packages/daemon/src/lib/rpc-handlers/space-workflow-handlers.ts`:
    - `spaceWorkflow.create { spaceId, name, description, steps, rules }` → `{ workflow }`

@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Pre-commit hook for Neokai
+# Pre-commit hook for HyperNeo
 # Runs lint, format check, type checking, and knip before allowing commit
 #
 

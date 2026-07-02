@@ -14,10 +14,10 @@ import type {
   SelectiveRewindResult,
   RewindMode,
   McpServerConfig,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import { AgentSession } from '../../../../src/lib/agent/agent-session';
 import type { Database } from '../../../../src/storage/database';
-import type { MessageHub } from '@neokai/shared';
+import type { MessageHub } from '@hyperneo/shared';
 
 // Test the AgentSession class indirectly through its components
 // since direct testing with mock.module() causes global mock pollution

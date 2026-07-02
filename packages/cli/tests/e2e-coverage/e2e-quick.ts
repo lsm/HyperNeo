@@ -26,9 +26,9 @@ import {
 } from './coverage-utils';
 
 // Import daemon components - these will be covered by bun --coverage
-import { createDaemonApp } from '@neokai/daemon/app';
-import { getConfig } from '@neokai/daemon/config';
-import { createWebSocketHandlers } from '@neokai/daemon/routes/setup-websocket';
+import { createDaemonApp } from '@hyperneo/daemon/app';
+import { getConfig } from '@hyperneo/daemon/config';
+import { createWebSocketHandlers } from '@hyperneo/daemon/routes/setup-websocket';
 
 // Test state
 let browser: Browser;
@@ -75,7 +75,7 @@ async function setup(): Promise<void> {
   await Bun.$`mkdir -p ${workspace}`;
 
   // Configure
-  process.env.NEOKAI_WORKSPACE_PATH = workspace;
+  process.env.HYPERNEO_WORKSPACE_PATH = workspace;
   const config = getConfig();
   config.port = serverPort;
   config.dbPath = `${workspace}/daemon.db`;

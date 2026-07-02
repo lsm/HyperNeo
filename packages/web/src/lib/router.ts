@@ -73,7 +73,7 @@ const routerState: RouterState = {
   isNavigating: false,
 };
 
-const IN_APP_HISTORY_DEPTH_KEY = '__neokaiInAppHistoryDepth';
+const IN_APP_HISTORY_DEPTH_KEY = '__hyperneoInAppHistoryDepth';
 
 function getInAppHistoryDepth(state = window.history.state): number {
   if (!state || typeof state !== 'object') return 0;

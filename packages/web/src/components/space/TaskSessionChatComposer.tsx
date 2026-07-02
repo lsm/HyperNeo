@@ -1,4 +1,4 @@
-import type { MessageDeliveryMode, MessageImage, SpaceTaskActivityMember } from '@neokai/shared';
+import type { MessageDeliveryMode, MessageImage, SpaceTaskActivityMember } from '@hyperneo/shared';
 import type { Ref } from 'preact';
 import { useMemo, useState } from 'preact/hooks';
 import { ChatComposer } from '../ChatComposer.tsx';

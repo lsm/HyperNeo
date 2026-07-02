@@ -36,7 +36,7 @@ import type {
   SessionMcpServerEntry,
   McpEnablementSetOverrideResponse,
   McpEnablementClearOverrideResponse,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import { listRuntimeMcpServers } from '../lib/api-helpers.ts';
 import { skillsStore } from '../lib/skills-store.ts';
 import { globalSettings } from '../lib/state.ts';
@@ -212,12 +212,12 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 
   // Advanced settings (hidden by default)
   const useClaudeCodePreset = useSignal(true);
-  const settingSources = useSignal<import('@neokai/shared').SettingSource[]>([
+  const settingSources = useSignal<import('@hyperneo/shared').SettingSource[]>([
     'user',
     'project',
     'local',
   ]);
-  const initialSettingSources = useSignal<import('@neokai/shared').SettingSource[]>([
+  const initialSettingSources = useSignal<import('@hyperneo/shared').SettingSource[]>([
     'user',
     'project',
     'local',

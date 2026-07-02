@@ -13,7 +13,7 @@ import type {
   QuestionDraftResponse,
   ResolvedQuestion,
   SessionState,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import { useMessageHub } from './useMessageHub';
 
 export interface SessionQuestionState {

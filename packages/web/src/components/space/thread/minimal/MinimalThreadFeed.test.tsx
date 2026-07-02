@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ActiveTurnSummary } from '@neokai/shared';
+import type { ActiveTurnSummary } from '@hyperneo/shared';
 import { parseThreadRow } from '../space-task-thread-events';
 import { MinimalThreadFeed } from './MinimalThreadFeed';
 

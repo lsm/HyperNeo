@@ -14,8 +14,8 @@ import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { Database } from '../../../../src/storage/database';
 import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
-import type { PendingUserQuestion, AgentProcessingState, Session } from '@neokai/shared';
-import { generateUUID } from '@neokai/shared';
+import type { PendingUserQuestion, AgentProcessingState, Session } from '@hyperneo/shared';
+import { generateUUID } from '@hyperneo/shared';
 
 describe('AskUserQuestionHandler', () => {
   let handler: AskUserQuestionHandler;

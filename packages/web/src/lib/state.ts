@@ -8,8 +8,8 @@
  */
 
 import { signal, computed, type Signal } from '@preact/signals';
-import type { MessageHub } from '@neokai/shared';
-import type { Session, AuthStatus, HealthStatus, ContextInfo } from '@neokai/shared';
+import type { MessageHub } from '@hyperneo/shared';
+import type { Session, AuthStatus, HealthStatus, ContextInfo } from '@hyperneo/shared';
 import type {
   SystemState,
   SessionState,
@@ -18,8 +18,8 @@ import type {
   SDKMessagesUpdate,
   ChatMessage,
   CredentialStoreStatus,
-} from '@neokai/shared';
-import { STATE_CHANNELS } from '@neokai/shared';
+} from '@hyperneo/shared';
+import { STATE_CHANNELS } from '@hyperneo/shared';
 import { StateChannel } from './state-channel';
 import { globalStore } from './global-store';
 
@@ -55,7 +55,7 @@ export function mergeSdkMessagesWithDedup(
   }
 
   // Add new messages (overwrites if UUID already exists — also handles
-  // neokai_action messages being updated when the user resolves the prompt)
+  // hyperneo_action messages being updated when the user resolves the prompt)
   for (const msg of added) {
     const msgWithUuid = msg as ChatMessage & { uuid?: string };
     if (msgWithUuid.uuid) {
@@ -373,7 +373,7 @@ export const healthStatus = computed<HealthStatus | null>(() => {
 });
 
 /** @public - Preact signal accessed via .value in components */
-export const apiConnectionStatus = computed<import('@neokai/shared').ApiConnectionState | null>(
+export const apiConnectionStatus = computed<import('@hyperneo/shared').ApiConnectionState | null>(
   () => {
     const system = systemState.value;
     return system?.apiConnection || null;
@@ -386,7 +386,7 @@ export const credentialStoreStatus = computed<CredentialStoreStatus | null>(() =
 });
 
 /** @public - Preact signal accessed via .value in components */
-export const globalSettings = computed<import('@neokai/shared').GlobalSettings | null>(() => {
+export const globalSettings = computed<import('@hyperneo/shared').GlobalSettings | null>(() => {
   return globalStore.settings.value;
 });
 

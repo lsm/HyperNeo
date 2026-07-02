@@ -20,10 +20,10 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 
 /** Resolve the repo root (5 levels up from this file). */
 export const WORKTREE =
-  process.env.NEOKAI_BENCHMARK_WORKTREE || join(import.meta.dir, '..', '..', '..', '..', '..');
+  process.env.HYPERNEO_BENCHMARK_WORKTREE || join(import.meta.dir, '..', '..', '..', '..', '..');
 
 /** GLM model to benchmark. Default: glm-5.1. */
-export const BENCHMARK_MODEL = process.env.NEOKAI_BENCHMARK_MODEL || 'glm-5.1';
+export const BENCHMARK_MODEL = process.env.HYPERNEO_BENCHMARK_MODEL || 'glm-5.1';
 
 /** Get git commit SHA. */
 export function resolveCommitSha(): string {
@@ -123,7 +123,7 @@ export interface BenchmarkResult {
 
 export interface BenchmarkOutput {
   timestamp: string;
-  neokaiCommit: string;
+  hyperneoCommit: string;
   model: string;
   worktreePath: string;
   results: BenchmarkResult[];
@@ -358,8 +358,8 @@ export function writeBenchmarkResults(
 ): string {
   const output: BenchmarkOutput = {
     timestamp: new Date().toISOString(),
-    neokaiCommit: commitSha ?? 'unknown',
-    model: model ?? process.env.NEOKAI_BENCHMARK_MODEL ?? 'glm-5.1',
+    hyperneoCommit: commitSha ?? 'unknown',
+    model: model ?? process.env.HYPERNEO_BENCHMARK_MODEL ?? 'glm-5.1',
     worktreePath,
     results,
   };

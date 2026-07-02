@@ -3,9 +3,9 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
-import type { ModelInfo } from '@neokai/shared';
-import { Logger } from '@neokai/shared/logger';
-import type { Provider, ProviderSdkConfig } from '@neokai/shared/provider';
+import type { ModelInfo } from '@hyperneo/shared';
+import { Logger } from '@hyperneo/shared/logger';
+import type { Provider, ProviderSdkConfig } from '@hyperneo/shared/provider';
 import {
   initializeProviders,
   resetProviderFactory,

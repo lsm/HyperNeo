@@ -19,7 +19,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, fireEvent, cleanup } from '@testing-library/preact';
 import { useState } from 'preact/hooks';
-import type { SpaceWorkerAgent } from '@neokai/shared';
+import type { SpaceWorkerAgent } from '@hyperneo/shared';
 import type { VisualTransition } from '../types';
 import { WorkflowCanvas } from '../WorkflowCanvas';
 import type { WorkflowNodeData, WorkflowCanvasProps } from '../WorkflowCanvas';
@@ -476,7 +476,7 @@ describe('WorkflowCanvas — edge delete', () => {
 // ---- Channel edges ----
 
 import { computeChannelEdges } from '../WorkflowCanvas';
-import type { WorkflowChannel } from '@neokai/shared';
+import type { WorkflowChannel } from '@hyperneo/shared';
 
 describe('computeChannelEdges', () => {
   function makeAgentWithRole(id: string, role: string): SpaceWorkerAgent {

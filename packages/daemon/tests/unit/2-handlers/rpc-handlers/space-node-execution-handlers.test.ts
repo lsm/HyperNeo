@@ -7,8 +7,8 @@
  */
 
 import { describe, expect, it, mock } from 'bun:test';
-import { MessageHub } from '@neokai/shared';
-import type { NodeExecution } from '@neokai/shared';
+import { MessageHub } from '@hyperneo/shared';
+import type { NodeExecution } from '@hyperneo/shared';
 import { setupNodeExecutionHandlers } from '../../../../src/lib/rpc-handlers/space-node-execution-handlers.ts';
 import type { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
 import type { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';

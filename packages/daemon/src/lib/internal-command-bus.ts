@@ -159,7 +159,7 @@ export class InternalCommandBus<TCommandMap extends object = Record<string, unkn
  *
  * This is the entry point most daemon code should use:
  *
- *   import { createInternalCommandBus } from '@neokai/daemon/lib/internal-command-bus';
+ *   import { createInternalCommandBus } from '@hyperneo/daemon/lib/internal-command-bus';
  *   const bus = createInternalCommandBus<MyCommandMap>();
  */
 export function createInternalCommandBus<

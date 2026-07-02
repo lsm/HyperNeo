@@ -12,8 +12,12 @@ import { AuthManager } from './lib/auth-manager';
 import { SettingsManager } from './lib/settings-manager';
 import { StateProjectionService } from './lib/state-projection-service';
 import { createClientEventBridge } from './lib/client-event-bridge';
-import { MAX_GITHUB_POLLING_INTERVAL_SECONDS, MessageHub, MessageHubRouter } from '@neokai/shared';
-import type { Provider } from '@neokai/shared/provider';
+import {
+  MAX_GITHUB_POLLING_INTERVAL_SECONDS,
+  MessageHub,
+  MessageHubRouter,
+} from '@hyperneo/shared';
+import type { Provider } from '@hyperneo/shared/provider';
 import {
   createDaemonInternalEventBus,
   type DaemonInternalEventMap,
@@ -313,7 +317,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     const jobQueue = new JobQueueRepository(db.getDatabase());
     const workflowHookStateRepository = new WorkflowHookStateRepository(db.getDatabase());
     const workflowHookRuntimeService = new WorkflowHookRuntimeService();
-    const maxConcurrent = Number(process.env.NEOKAI_JOB_QUEUE_MAX_CONCURRENT) || 5;
+    const maxConcurrent =
+      Number(
+        process.env.HYPERNEO_JOB_QUEUE_MAX_CONCURRENT ?? process.env.NEOKAI_JOB_QUEUE_MAX_CONCURRENT
+      ) || 5;
     const jobProcessor = new JobQueueProcessor(jobQueue, {
       pollIntervalMs: 1000,
       maxConcurrent,
@@ -379,13 +386,16 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     await authManager.initialize();
 
     // Initialize settings manager.
-    // When NEOKAI_WORKSPACE_PATH is set (e.g., in tests via createDaemonServer), use
+    // When HYPERNEO_WORKSPACE_PATH is set (e.g., in tests via createDaemonServer), use
     // that directory so each test instance writes file-only settings to its own temp
     // workspace, preventing state leakage across tests.
     // Otherwise fall back to homedir() so global MCP config (~/.claude/.mcp.json) is
     // discovered. Room-scoped sessions use their own defaultPath for project-level
     // MCP resolution and are not affected by this global instance.
-    const settingsManager = new SettingsManager(db, process.env.NEOKAI_WORKSPACE_PATH ?? homedir());
+    const settingsManager = new SettingsManager(
+      db,
+      process.env.HYPERNEO_WORKSPACE_PATH ?? process.env.NEOKAI_WORKSPACE_PATH ?? homedir()
+    );
     const getGitHubPollingIntervalSeconds = () => {
       const value = settingsManager.getGlobalSettings().githubPollingInterval;
       if (value === undefined || !Number.isFinite(value)) return 120;
@@ -528,7 +538,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
     // Materialise SDK-plugin wrappers for every builtin skill so the SDK
     // recognises them as plugins and exposes `/<commandName>` slash commands.
-    // Without this, `plugins: [{ type: 'local', path: '~/.neokai/skills/playwright' }]`
+    // Without this, `plugins: [{ type: 'local', path: '~/.hyperneo/skills/playwright' }]`
     // is silently dropped because the directory has no `.claude-plugin/plugin.json`
     // (it follows the agent-skills layout, not the plugin layout). See
     // `lib/agent/builtin-skill-plugin-wrapper.ts` for the full rationale.

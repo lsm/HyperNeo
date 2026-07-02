@@ -11,7 +11,7 @@
 
 import { describe, test, expect, beforeEach } from 'bun:test';
 import { GitHubEventFilter } from '../../../../src/lib/github/event-filter';
-import type { GitHubEvent, GitHubFilterConfig } from '@neokai/shared';
+import type { GitHubEvent, GitHubFilterConfig } from '@hyperneo/shared';
 
 // Helper to create a basic GitHub event for testing
 function createTestEvent(overrides: Partial<GitHubEvent> = {}): GitHubEvent {

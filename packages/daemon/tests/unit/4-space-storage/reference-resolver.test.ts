@@ -21,7 +21,7 @@ import type {
   GoalRepoLike,
   SpaceTaskRepoLike,
 } from '../../../src/lib/agent/reference-resolver';
-import type { ResolvedFileReference, ResolvedFolderReference } from '@neokai/shared';
+import type { ResolvedFileReference, ResolvedFolderReference } from '@hyperneo/shared';
 
 // ────────────────────────────────────────────────────────────────────────────
 // Helpers

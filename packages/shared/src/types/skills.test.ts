@@ -19,7 +19,7 @@ import type {
 const builtinConfig: BuiltinSkillConfig = { type: 'builtin', commandName: 'update-config' };
 const pluginConfig: PluginSkillConfig = {
   type: 'plugin',
-  pluginPath: '/home/user/.neokai/skills/my-skill',
+  pluginPath: '/home/user/.hyperneo/skills/my-skill',
 };
 const mcpConfig: McpServerSkillConfig = { type: 'mcp_server', appMcpServerId: 'mcp-uuid-1234' };
 
@@ -86,7 +86,7 @@ describe('AppSkillConfig discriminated union — type guards', () => {
 
   it('PluginSkillConfig has pluginPath', () => {
     if (isPluginSkillConfig(pluginConfig)) {
-      expect(pluginConfig.pluginPath).toBe('/home/user/.neokai/skills/my-skill');
+      expect(pluginConfig.pluginPath).toBe('/home/user/.hyperneo/skills/my-skill');
     } else {
       throw new Error('Expected PluginSkillConfig');
     }
@@ -151,7 +151,7 @@ describe('AppSkill', () => {
     };
     expect(skill.sourceType).toBe('plugin');
     if (isPluginSkillConfig(skill.config)) {
-      expect(skill.config.pluginPath).toBe('/home/user/.neokai/skills/my-skill');
+      expect(skill.config.pluginPath).toBe('/home/user/.hyperneo/skills/my-skill');
     } else {
       throw new Error('Expected PluginSkillConfig');
     }

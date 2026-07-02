@@ -13,7 +13,7 @@
  * - Send enqueued-on-turn-end subscription
  */
 
-import type { Session, MessageContent } from '@neokai/shared';
+import type { Session, MessageContent } from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { Logger } from '../logger';
 import { Logger as LoggerClass } from '../logger';

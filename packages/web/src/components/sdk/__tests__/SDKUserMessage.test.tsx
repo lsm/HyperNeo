@@ -8,7 +8,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 import { render, fireEvent, cleanup, waitFor } from '@testing-library/preact';
 import { SDKUserMessage } from '../SDKUserMessage';
-import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
+import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 import type { UUID } from 'crypto';
 
 // Mock useMessageHub — MentionToken uses it for hover preview RPC calls

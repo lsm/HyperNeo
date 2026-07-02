@@ -39,7 +39,7 @@ Build the UI for listing, creating, and editing custom agents within a Space.
      - **Role**: radio buttons (`worker`, `reviewer`, `orchestrator`) with tooltips
      - **Model**: model picker (reuse existing `ModelPicker` patterns)
      - **Provider**: auto-detected from model or manual override
-     - **Tools**: multi-select checklist from `KNOWN_TOOLS` constant (single source of truth from `@neokai/shared`)
+     - **Tools**: multi-select checklist from `KNOWN_TOOLS` constant (single source of truth from `@hyperneo/shared`)
      - **System Prompt**: monospace textarea with line numbers
    - Tool presets: "Full Coding" (all), "Read Only" (Read, Grep, Glob), "Custom"
    - System prompt templates: "Coder", "Reviewer", "Research", "Custom (blank)"

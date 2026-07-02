@@ -7,9 +7,9 @@
  * `internalEventBus`. See docs/plans/internal-event-command-query-architecture.md.
  */
 
-import type { MessageHub } from '@neokai/shared';
+import type { MessageHub } from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
-import type { GlobalSettings, SessionSettings } from '@neokai/shared';
+import type { GlobalSettings, SessionSettings } from '@hyperneo/shared';
 import type { SettingsManager } from '../settings-manager';
 import type { Database } from '../../storage/database';
 import type { McpImportService } from '../mcp';
@@ -24,7 +24,7 @@ export async function syncProviderModelAllowlists(
 
 export function applyProviderModelAllowlistsToEnv(allowlists?: Record<string, string[]>): void {
   if (!allowlists || Object.keys(allowlists).length === 0) {
-    delete process.env.NEOKAI_PROVIDER_MODEL_ALLOWLISTS;
+    delete process.env.HYPERNEO_PROVIDER_MODEL_ALLOWLISTS;
     return;
   }
 
@@ -36,9 +36,9 @@ export function applyProviderModelAllowlistsToEnv(allowlists?: Record<string, st
   );
 
   if (entries.length === 0) {
-    delete process.env.NEOKAI_PROVIDER_MODEL_ALLOWLISTS;
+    delete process.env.HYPERNEO_PROVIDER_MODEL_ALLOWLISTS;
   } else {
-    process.env.NEOKAI_PROVIDER_MODEL_ALLOWLISTS = entries.join('\n');
+    process.env.HYPERNEO_PROVIDER_MODEL_ALLOWLISTS = entries.join('\n');
   }
 }
 

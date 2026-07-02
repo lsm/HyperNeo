@@ -8,7 +8,7 @@
  * - Event type filtering (specific actions)
  */
 
-import type { GitHubEvent, GitHubFilterConfig, FilterResult } from '@neokai/shared';
+import type { GitHubEvent, GitHubFilterConfig, FilterResult } from '@hyperneo/shared';
 import { Logger } from '../logger';
 import type { FilterConfigManager } from './filter-config-manager';
 

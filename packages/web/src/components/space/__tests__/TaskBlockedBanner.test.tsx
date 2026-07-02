@@ -17,7 +17,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 import { render, cleanup, fireEvent, waitFor } from '@testing-library/preact';
-import type { SpaceTask } from '@neokai/shared';
+import type { SpaceTask } from '@hyperneo/shared';
 
 // ---- Mock space-store ----
 const mockListGateData: Mock = vi.fn();

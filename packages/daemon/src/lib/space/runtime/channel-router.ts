@@ -38,9 +38,9 @@ import type {
   SpaceWorkflow,
   WorkflowChannel,
   WorkflowNode,
-} from '@neokai/shared';
-import { resolveNodeAgents, isChannelCyclic, computeGateDefaults } from '@neokai/shared';
-import type { NodeExecution } from '@neokai/shared';
+} from '@hyperneo/shared';
+import { resolveNodeAgents, isChannelCyclic, computeGateDefaults } from '@hyperneo/shared';
+import type { NodeExecution } from '@hyperneo/shared';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
@@ -244,7 +244,7 @@ export interface ChannelRouterConfig {
   db?: BunDatabase;
   /**
    * Workspace root path for script execution (used as cwd and
-   * injected as `NEOKAI_WORKSPACE_PATH` into script environments).
+   * injected as `HYPERNEO_WORKSPACE_PATH` into script environments).
    * When omitted, script-based gates are evaluated without a workspace
    * context (scripts that depend on filesystem access will fail).
    */

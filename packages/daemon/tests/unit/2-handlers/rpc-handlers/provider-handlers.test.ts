@@ -3,15 +3,15 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
-import { MessageHub } from '@neokai/shared';
+import { MessageHub } from '@hyperneo/shared';
 import { setupProviderHandlers } from '../../../../src/lib/rpc-handlers/provider-handlers';
 import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import { resetProviderFactory } from '../../../../src/lib/providers/factory';
 import type { ProviderRepository } from '../../../../src/storage/repositories/provider-repository';
 import type { ProviderCredentialManager } from '../../../../src/lib/credentials/provider-credential-manager';
 import { KeychainUnavailableError } from '../../../../src/lib/credentials/credential-store';
-import type { ProviderRecord, CreateProviderParams } from '@neokai/shared';
-import type { Provider } from '@neokai/shared/provider';
+import type { ProviderRecord, CreateProviderParams } from '@hyperneo/shared';
+import type { Provider } from '@hyperneo/shared/provider';
 import type {
   DaemonInternalEventMap,
   InternalEventBus,

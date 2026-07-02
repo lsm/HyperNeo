@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { configureLogger, subscribeToStructuredLogs, LogLevel } from '@neokai/shared';
+import { configureLogger, subscribeToStructuredLogs, LogLevel } from '@hyperneo/shared';
 import {
   _openAIResponsesBridgeServerTesting,
   anthropicMessagesToResponsesInput,
@@ -1034,7 +1034,7 @@ describe('openai-responses-bridge server', () => {
 
     const sessionAUrl = server.baseUrlForSession?.('session-a') ?? '';
     const sessionBUrl = server.baseUrlForSession?.('session-b') ?? '';
-    expect(sessionAUrl).toContain('/_neokai/session/session-a');
+    expect(sessionAUrl).toContain('/_hyperneo/session/session-a');
 
     const first = await fetch(`${sessionAUrl}/v1/messages`, {
       method: 'POST',

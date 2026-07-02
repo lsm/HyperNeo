@@ -12,7 +12,7 @@
 
 import type { Database } from '../../storage/database';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
-import { MAX_GITHUB_POLLING_INTERVAL_SECONDS } from '@neokai/shared';
+import { MAX_GITHUB_POLLING_INTERVAL_SECONDS } from '@hyperneo/shared';
 import type { Config } from '../../config';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository';
 import type { JobQueueProcessor } from '../../storage/job-queue-processor';

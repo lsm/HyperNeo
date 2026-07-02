@@ -9,7 +9,7 @@
  */
 
 import { signal, type Signal, batch } from '@preact/signals';
-import type { MessageHub } from '@neokai/shared';
+import type { MessageHub } from '@hyperneo/shared';
 
 // Define UnsubscribeFn locally (removed from types.ts)
 type UnsubscribeFn = () => void;

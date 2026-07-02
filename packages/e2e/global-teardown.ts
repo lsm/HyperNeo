@@ -23,7 +23,7 @@ async function globalTeardown() {
   // ========================================
   console.log('🧹 Layer 1: Cleaning up isolated temp directories...');
 
-  const e2eTempBase = join(tmpdir(), 'neokai-e2e');
+  const e2eTempBase = join(tmpdir(), 'hyperneo-e2e');
 
   if (existsSync(e2eTempBase)) {
     try {

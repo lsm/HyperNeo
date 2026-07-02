@@ -7,8 +7,8 @@
 
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { shouldBlockForPendingQuestion } from '../ChatContainer.tsx';
-import type { AgentProcessingState } from '@neokai/shared';
-import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
+import type { AgentProcessingState } from '@hyperneo/shared';
+import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 // Vite-native raw import — works in both Node and browser-like test environments
 // (happy-dom) without reaching for Node built-ins like `fs`/`path`/`url`, which
 // are externalized by Vite and unavailable at runtime in the test environment.

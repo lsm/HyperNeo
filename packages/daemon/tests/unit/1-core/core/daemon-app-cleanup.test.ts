@@ -41,16 +41,16 @@ describe('Daemon App Cleanup', () => {
     originalAnthropicAuthToken = process.env.ANTHROPIC_AUTH_TOKEN;
     originalGlmApiKey = process.env.GLM_API_KEY;
     originalTestUserSettingsDir = process.env.TEST_USER_SETTINGS_DIR;
-    originalAcpCommand = process.env.NEOKAI_ACP_COMMAND;
+    originalAcpCommand = process.env.HYPERNEO_ACP_COMMAND;
     delete process.env.ANTHROPIC_API_KEY;
     delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
     delete process.env.ANTHROPIC_AUTH_TOKEN;
     delete process.env.GLM_API_KEY;
-    delete process.env.NEOKAI_ACP_COMMAND;
+    delete process.env.HYPERNEO_ACP_COMMAND;
 
     clearStructuredLogSubscribers();
 
-    process.env.TEST_USER_SETTINGS_DIR = join(tmpdir(), `neokai-test-settings-${Date.now()}`);
+    process.env.TEST_USER_SETTINGS_DIR = join(tmpdir(), `hyperneo-test-settings-${Date.now()}`);
 
     // Capture console output for verification
     originalConsoleLog = console.log;
@@ -109,9 +109,9 @@ describe('Daemon App Cleanup', () => {
       delete process.env.TEST_USER_SETTINGS_DIR;
     }
     if (originalAcpCommand !== undefined) {
-      process.env.NEOKAI_ACP_COMMAND = originalAcpCommand;
+      process.env.HYPERNEO_ACP_COMMAND = originalAcpCommand;
     } else {
-      delete process.env.NEOKAI_ACP_COMMAND;
+      delete process.env.HYPERNEO_ACP_COMMAND;
     }
 
     // Restore console
@@ -284,7 +284,7 @@ describe('Daemon App Cleanup', () => {
       delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
       delete process.env.ANTHROPIC_AUTH_TOKEN;
       delete process.env.GLM_API_KEY;
-      delete process.env.NEOKAI_ACP_COMMAND;
+      delete process.env.HYPERNEO_ACP_COMMAND;
     });
 
     afterEach(() => {
@@ -405,7 +405,7 @@ describe('Daemon App Cleanup', () => {
     beforeEach(() => {
       tmpDbDir = join(
         tmpdir(),
-        `neokai-cleanup-test-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        `hyperneo-cleanup-test-${Date.now()}-${Math.random().toString(36).slice(2)}`
       );
       mkdirSync(tmpDbDir, { recursive: true });
     });

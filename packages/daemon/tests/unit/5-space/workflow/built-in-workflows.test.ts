@@ -20,7 +20,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { SpaceWorkerAgent, SpaceWorkflow, WorkflowHook, WorkflowNode } from '@neokai/shared';
+import type { SpaceWorkerAgent, SpaceWorkflow, WorkflowHook, WorkflowNode } from '@hyperneo/shared';
 import {
   exportWorkflow,
   validateExportedWorkflow,
@@ -436,7 +436,7 @@ describe('CODING_WORKFLOW template', () => {
     expect(gate.script!.interpreter).toBe('bash');
     expect(gate.script!.timeoutMs).toBe(30000);
     // The script must consult the workflow start timestamp injected by the runner.
-    expect(gate.script!.source).toContain('NEOKAI_WORKFLOW_START_ISO');
+    expect(gate.script!.source).toContain('HYPERNEO_WORKFLOW_START_ISO');
     // Primary check: query GitHub for formal approval / changes-requested reviews.
     expect(gate.script!.source).toContain('gh pr view "$PR_URL" --json reviews,comments,author');
     expect(gate.script!.source).toContain('submittedAt');
@@ -462,7 +462,7 @@ describe('CODING_WORKFLOW template', () => {
     expect(src).toContain('COMMENTED');
     expect(src).toContain('createdAt');
     // Must also filter comments by workflow start timestamp.
-    expect(src).toContain('NEOKAI_WORKFLOW_START_ISO');
+    expect(src).toContain('HYPERNEO_WORKFLOW_START_ISO');
     // Gate passes via comments fallback — outputs the same pr_url/review_count shape.
     expect(src).toContain('pr_url');
     expect(src).toContain('review_count');
@@ -473,7 +473,7 @@ describe('CODING_WORKFLOW template', () => {
 
   test('review-posted-gate passes own-PR COMMENTED reviews', async () => {
     const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'review-posted-gate')!;
-    const workspace = mkdtempSync(join(tmpdir(), 'neokai-review-posted-gate-own-pr-'));
+    const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-review-posted-gate-own-pr-'));
     const binDir = join(workspace, 'bin');
     const ghPath = join(binDir, 'gh');
     const prUrl = 'https://github.com/test/repo/pull/42';
@@ -523,7 +523,7 @@ describe('CODING_WORKFLOW template', () => {
 
   test('review-posted-gate rejects comment-only evidence on non-own PRs', async () => {
     const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'review-posted-gate')!;
-    const workspace = mkdtempSync(join(tmpdir(), 'neokai-review-posted-gate-non-own-pr-'));
+    const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-review-posted-gate-non-own-pr-'));
     const binDir = join(workspace, 'bin');
     const ghPath = join(binDir, 'gh');
     const prUrl = 'https://github.com/test/repo/pull/42';
@@ -569,7 +569,7 @@ describe('CODING_WORKFLOW template', () => {
 
   test('review-posted-gate uses review_url gate data when pr_url is absent', async () => {
     const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'review-posted-gate')!;
-    const workspace = mkdtempSync(join(tmpdir(), 'neokai-review-posted-gate-'));
+    const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-review-posted-gate-'));
     const binDir = join(workspace, 'bin');
     const ghPath = join(binDir, 'gh');
     const logPath = join(workspace, 'gh-args.log');
@@ -620,7 +620,7 @@ describe('CODING_WORKFLOW template', () => {
 
   test('review-posted-gate prefers pr_url over review_url when both are in gate data', async () => {
     const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'review-posted-gate')!;
-    const workspace = mkdtempSync(join(tmpdir(), 'neokai-review-posted-gate-prefers-pr-url-'));
+    const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-review-posted-gate-prefers-pr-url-'));
     const binDir = join(workspace, 'bin');
     const ghPath = join(binDir, 'gh');
     const logPath = join(workspace, 'gh-args.log');
@@ -971,7 +971,7 @@ describe('PLAN_AND_DECOMPOSE_WORKFLOW template', () => {
     expect(approvalHook.validator).toMatchObject({ kind: 'script', interpreter: 'bash' });
     const approvalSource =
       approvalHook.validator.kind === 'script' ? approvalHook.validator.source : '';
-    expect(approvalSource).toContain('NEOKAI_HOOK_LOCAL_STATE_JSON');
+    expect(approvalSource).toContain('HYPERNEO_HOOK_LOCAL_STATE_JSON');
     expect(approvalSource).toContain('"approval_count":4');
     expect(resetHook).toMatchObject({
       enabled: true,
@@ -4246,12 +4246,12 @@ describe('getBuiltInGateScript()', () => {
     }
   });
 
-  test('review-posted-gate script includes NEOKAI_WORKFLOW_START_ISO usage', () => {
+  test('review-posted-gate script includes HYPERNEO_WORKFLOW_START_ISO usage', () => {
     const script = getBuiltInGateScript(CODING_WORKFLOW.name, 'review-posted-gate');
-    // The review-posted-gate script must use NEOKAI_WORKFLOW_START_ISO to filter
+    // The review-posted-gate script must use HYPERNEO_WORKFLOW_START_ISO to filter
     // reviews that were posted after the workflow started
     expect(script).toBeDefined();
-    expect(script?.source).toContain('NEOKAI_WORKFLOW_START_ISO');
+    expect(script?.source).toContain('HYPERNEO_WORKFLOW_START_ISO');
   });
 });
 
@@ -4581,7 +4581,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     expect(effectiveGate.script?.source).toContain("jq -s 'add // []'");
     expect(effectiveGate.script?.source).toContain('.content == "+1"');
     expect(effectiveGate.script?.source).toContain('bun -e');
-    expect(effectiveGate.script?.source).toContain('NEOKAI_GATE_DATA_UPDATED_ISO');
+    expect(effectiveGate.script?.source).toContain('HYPERNEO_GATE_DATA_UPDATED_ISO');
     expect(effectiveGate.script?.source).toContain('PR_URL="${GATE_PR_URL:-${PR_URL:-}}"');
     expect(effectiveGate.script?.source).toContain("comment '@codex review'");
     expect(effectiveGate.script?.source).not.toContain('node -e');
@@ -4735,7 +4735,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
 
   test('FULLSTACK_QA_LOOP_WORKFLOW review-approval-gate blocks without codex thumbs-up', async () => {
     const gate = getFullstackReviewApprovalGateWithCodex();
-    const workspace = mkdtempSync(join(tmpdir(), 'neokai-codex-gate-blocked-'));
+    const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-gate-blocked-'));
     const binDir = join(workspace, 'bin');
     const ghPath = join(binDir, 'gh');
     const prUrl = 'https://github.com/test/repo/pull/42';
@@ -4776,7 +4776,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
 
   test('FULLSTACK_QA_LOOP_WORKFLOW review-approval-gate passes with codex thumbs-up', async () => {
     const gate = getFullstackReviewApprovalGateWithCodex();
-    const workspace = mkdtempSync(join(tmpdir(), 'neokai-codex-gate-passed-'));
+    const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-gate-passed-'));
     const binDir = join(workspace, 'bin');
     const ghPath = join(binDir, 'gh');
     const prUrl = 'https://github.com/test/repo/pull/42';
@@ -4825,7 +4825,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
 
   test('FULLSTACK_QA_LOOP_WORKFLOW review-approval-gate still blocks before gate-data timeout even when workflow is old', async () => {
     const gate = getFullstackReviewApprovalGateWithCodex();
-    const workspace = mkdtempSync(join(tmpdir(), 'neokai-codex-gate-fresh-approval-'));
+    const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-gate-fresh-approval-'));
     const binDir = join(workspace, 'bin');
     const ghPath = join(binDir, 'gh');
     const prUrl = 'https://github.com/test/repo/pull/42';
@@ -4869,7 +4869,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
 
   test('FULLSTACK_QA_LOOP_WORKFLOW review-approval-gate passes after codex timeout', async () => {
     const gate = getFullstackReviewApprovalGateWithCodex();
-    const workspace = mkdtempSync(join(tmpdir(), 'neokai-codex-gate-timeout-'));
+    const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-gate-timeout-'));
     const binDir = join(workspace, 'bin');
     const ghPath = join(binDir, 'gh');
     const prUrl = 'https://github.com/test/repo/pull/42';
@@ -4921,7 +4921,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
 
   test('FULLSTACK_QA_LOOP_WORKFLOW review-approval-gate returns +1 even when timeout has elapsed', async () => {
     const gate = getFullstackReviewApprovalGateWithCodex();
-    const workspace = mkdtempSync(join(tmpdir(), 'neokai-codex-gate-timeout-plus-one-'));
+    const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-gate-timeout-plus-one-'));
     const binDir = join(workspace, 'bin');
     const ghPath = join(binDir, 'gh');
     const prUrl = 'https://github.com/test/repo/pull/42';
@@ -4973,7 +4973,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
 
   test('FULLSTACK_QA_LOOP_WORKFLOW review-approval-gate blocks +1 from before cycle_start_at', async () => {
     const gate = getFullstackReviewApprovalGateWithCodex();
-    const workspace = mkdtempSync(join(tmpdir(), 'neokai-codex-gate-stale-plus-one-'));
+    const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-gate-stale-plus-one-'));
     const binDir = join(workspace, 'bin');
     const ghPath = join(binDir, 'gh');
     const prUrl = 'https://github.com/test/repo/pull/42';
@@ -5023,7 +5023,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
 
   test('FULLSTACK_QA_LOOP_WORKFLOW review-approval-gate outputs head_sha on success', async () => {
     const gate = getFullstackReviewApprovalGateWithCodex();
-    const workspace = mkdtempSync(join(tmpdir(), 'neokai-codex-gate-head-sha-output-'));
+    const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-gate-head-sha-output-'));
     const binDir = join(workspace, 'bin');
     const ghPath = join(binDir, 'gh');
     const prUrl = 'https://github.com/test/repo/pull/42';
@@ -5069,7 +5069,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
 
   test('codex script accepts GitHub Enterprise PR URLs', async () => {
     const gate = getFullstackReviewApprovalGateWithCodex();
-    const workspace = mkdtempSync(join(tmpdir(), 'neokai-codex-gate-gh-enterprise-'));
+    const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-gate-gh-enterprise-'));
     const binDir = join(workspace, 'bin');
     const ghPath = join(binDir, 'gh');
     const prUrl = 'https://github.enterprise.example.com/test/repo/pull/42';
@@ -5119,7 +5119,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
 
   test('codex script fails closed when gh api reactions fetch fails', async () => {
     const gate = getFullstackReviewApprovalGateWithCodex();
-    const workspace = mkdtempSync(join(tmpdir(), 'neokai-codex-gate-pipefail-'));
+    const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-gate-pipefail-'));
     const binDir = join(workspace, 'bin');
     const ghPath = join(binDir, 'gh');
     const prUrl = 'https://github.com/test/repo/pull/42';
@@ -5160,7 +5160,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
 
   test('codex timeout does not trigger when only workflowStartIso is old', async () => {
     const gate = getFullstackReviewApprovalGateWithCodex();
-    const workspace = mkdtempSync(join(tmpdir(), 'neokai-codex-gate-timeout-suppressed-'));
+    const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-gate-timeout-suppressed-'));
     const binDir = join(workspace, 'bin');
     const ghPath = join(binDir, 'gh');
     const prUrl = 'https://github.com/test/repo/pull/42';
@@ -5205,7 +5205,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
 
   test('codex poll script exits 0 with pending status when no reaction exists', async () => {
     const gate = getFullstackReviewApprovalGateWithCodex();
-    const workspace = mkdtempSync(join(tmpdir(), 'neokai-codex-poll-pending-'));
+    const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-poll-pending-'));
     const binDir = join(workspace, 'bin');
     const ghPath = join(binDir, 'gh');
     const prUrl = 'https://github.com/test/repo/pull/42';
@@ -5262,7 +5262,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
 
     // Behavioral check: an unknown codex variant (e.g. a future rename to
     // `codex-cli[bot]`) is recognized as a +1 pass.
-    const workspace = mkdtempSync(join(tmpdir(), 'neokai-codex-matcher-substring-'));
+    const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-matcher-substring-'));
     const binDir = join(workspace, 'bin');
     const ghPath = join(binDir, 'gh');
     const prUrl = 'https://github.com/test/repo/pull/42';
@@ -5312,7 +5312,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     // Two anchors exist:
     //   - cycle_start_at: filters stale reactions; set by initializeForRun at
     //     workflow-run start (NOT the timeout anchor).
-    //   - NEOKAI_GATE_DATA_UPDATED_ISO: advances on the approval-handoff write;
+    //   - HYPERNEO_GATE_DATA_UPDATED_ISO: advances on the approval-handoff write;
     //     metadata writes (head_sha) use mergePreserveTimestamp so they do not
     //     advance it. This is the timeout anchor.
     // Why not cycle_start_at for the timeout: initializeForRun stamps it at
@@ -5323,7 +5323,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     // After the fix: an old cycle_start_at with a fresh approval-handoff
     // (updated_at) does NOT time out; an old approval-handoff does.
     const gate = getFullstackReviewApprovalGateWithCodex();
-    const workspace = mkdtempSync(join(tmpdir(), 'neokai-codex-timeout-anchor-'));
+    const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-timeout-anchor-'));
     const binDir = join(workspace, 'bin');
     const ghPath = join(binDir, 'gh');
     const prUrl = 'https://github.com/test/repo/pull/42';
@@ -5403,7 +5403,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     // large-PR reviews (20–30 min). After the fix, the default is 7200s, so a
     // 10-minute-old approval handoff is still within the window.
     const gate = getFullstackReviewApprovalGateWithCodex();
-    const workspace = mkdtempSync(join(tmpdir(), 'neokai-codex-timeout-2h-window-'));
+    const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-timeout-2h-window-'));
     const binDir = join(workspace, 'bin');
     const ghPath = join(binDir, 'gh');
     const prUrl = 'https://github.com/test/repo/pull/42';
@@ -5452,7 +5452,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     // satisfy the +1 check. The login must end with "[bot]" to count —
     // human accounts don't carry the "[bot]" suffix.
     const gate = getFullstackReviewApprovalGateWithCodex();
-    const workspace = mkdtempSync(join(tmpdir(), 'neokai-codex-matcher-bot-only-'));
+    const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-matcher-bot-only-'));
     const binDir = join(workspace, 'bin');
     const ghPath = join(binDir, 'gh');
     const prUrl = 'https://github.com/test/repo/pull/42';
@@ -5500,7 +5500,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     // user.type, so chatgpt-codex-connector[bot] with type "User" must still
     // pass the +1 check.
     const gate = getFullstackReviewApprovalGateWithCodex();
-    const workspace = mkdtempSync(join(tmpdir(), 'neokai-codex-matcher-user-type-'));
+    const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-matcher-user-type-'));
     const binDir = join(workspace, 'bin');
     const ghPath = join(binDir, 'gh');
     const prUrl = 'https://github.com/test/repo/pull/42';
@@ -5569,7 +5569,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     // (e.g. deleted account). Without coalescing, `null | test(...)` raises
     // in jq and aborts the matcher before reaching a later valid Codex +1.
     const gate = getFullstackReviewApprovalGateWithCodex();
-    const workspace = mkdtempSync(join(tmpdir(), 'neokai-codex-matcher-null-user-'));
+    const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-matcher-null-user-'));
     const binDir = join(workspace, 'bin');
     const ghPath = join(binDir, 'gh');
     const prUrl = 'https://github.com/test/repo/pull/42';

@@ -1,7 +1,7 @@
 import { describe, expect, it, beforeEach } from 'bun:test';
 import { InboxManager } from '../../../../src/lib/github/inbox-manager';
 import type { Database } from '../../../../src/storage/database';
-import type { GitHubEvent, InboxItem, SecurityCheckResult } from '@neokai/shared';
+import type { GitHubEvent, InboxItem, SecurityCheckResult } from '@hyperneo/shared';
 import { mock } from 'bun:test';
 
 // ============================================================================

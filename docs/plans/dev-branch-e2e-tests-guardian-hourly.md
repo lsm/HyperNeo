@@ -350,7 +350,7 @@ Use indented code blocks (4 spaces) inside the template to avoid nested triple-b
 
     Fix the test (or underlying product code) so it passes in CI. Verify locally with:
 
-        NEOKAI_USE_DEV_PROXY=1 make run-e2e TEST=tests/&lt;path&gt;.e2e.ts
+        HYPERNEO_USE_DEV_PROXY=1 make run-e2e TEST=tests/&lt;path&gt;.e2e.ts
 
     After fixing, commit on a feature branch and create a PR:
 

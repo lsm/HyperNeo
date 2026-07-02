@@ -6,7 +6,7 @@
  * `spaceTask.update` RPC handler. Available for non-terminal tasks only.
  */
 
-import type { SpaceTaskPriority } from '@neokai/shared';
+import type { SpaceTaskPriority } from '@hyperneo/shared';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { Modal } from '../ui/Modal.tsx';
 

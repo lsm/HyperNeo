@@ -145,7 +145,7 @@ Based on downloaded artifacts (run 22868755618):
 1. Add "Install Dev Proxy" step to e2e-llm job (similar to daemon online tests)
 2. Add "Start Dev Proxy" step before tests run
 3. Set environment variables:
-   - `NEOKAI_USE_DEV_PROXY=1` (enables devproxy mode)
+   - `HYPERNEO_USE_DEV_PROXY=1` (enables devproxy mode)
    - `ANTHROPIC_BASE_URL=http://127.0.0.1:8000`
    - `ANTHROPIC_API_KEY=sk-devproxy-test-key`
    - `ANTHROPIC_AUTH_TOKEN=""` (clear any real token)
@@ -154,7 +154,7 @@ Based on downloaded artifacts (run 22868755618):
 **Reference:** See daemon online test configuration in `main.yml` lines 263-314
 **Acceptance Criteria:**
 - Devproxy is installed and started in e2e-llm job before tests run
-- Binary is configured to use devproxy via ANTHROPIC_BASE_URL and NEOKAI_USE_DEV_PROXY=1
+- Binary is configured to use devproxy via ANTHROPIC_BASE_URL and HYPERNEO_USE_DEV_PROXY=1
 - Devproxy is stopped after tests complete
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
 
@@ -164,7 +164,7 @@ Based on downloaded artifacts (run 22868755618):
 **Current behavior:** Test sends "Reply with exactly: TEST_OK" and expects that exact response
 **Mock behavior:** Returns canned "[MOCKED] Hello! I'm Claude, an AI assistant."
 **Required changes:**
-- Add IS_MOCK check at top: `const IS_MOCK = !!process.env.NEOKAI_USE_DEV_PROXY;`
+- Add IS_MOCK check at top: `const IS_MOCK = !!process.env.HYPERNEO_USE_DEV_PROXY;`
 - Update line 63 assertion from:
   ```javascript
   await expect(page.locator('text=/TEST_OK|test_ok/i')).toBeVisible({ timeout: 60000 });
@@ -192,7 +192,7 @@ Based on downloaded artifacts (run 22868755618):
 **Current behavior:** Tests send messages like "Write a detailed essay about quantum computing" and verify stop button appears/can be clicked during processing
 **Mock behavior:** Returns instantly (milliseconds vs seconds for real API), so processing window is very short
 **Required changes:**
-- Add IS_MOCK check at top: `const IS_MOCK = !!process.env.NEOKAI_USE_DEV_PROXY;`
+- Add IS_MOCK check at top: `const IS_MOCK = !!process.env.HYPERNEO_USE_DEV_PROXY;`
 - Key timing issues:
   - Line 38: `await page.waitForTimeout(1000)` - reduce to `100` in mock mode
   - Line 65: `await page.waitForTimeout(1000)` - reduce to `100` in mock mode
@@ -217,7 +217,7 @@ Based on downloaded artifacts (run 22868755618):
 **Current behavior:** Test marked with `test.fixme()` - expects race condition bug to exist (line 32: `test.fixme('should allow sending messages immediately after interrupt without reset'...`)
 **Mock behavior:** Returns instantly, so the race condition may not manifest the same way
 **Required changes:**
-- Add IS_MOCK check at top: `const IS_MOCK = !!process.env.NEOKAI_USE_DEV_PROXY;`
+- Add IS_MOCK check at top: `const IS_MOCK = !!process.env.HYPERNEO_USE_DEV_PROXY;`
 - In mock mode, the test should likely be skipped or have different assertions because:
   - The bug being tested (race condition requiring reset) depends on slow API responses
   - With instant mock, the race doesn't occur the same way
@@ -253,7 +253,7 @@ Based on downloaded artifacts (run 22868755618):
 }
 ```
 **Required changes:**
-- Add IS_MOCK check at top: `const IS_MOCK = !!process.env.NEOKAI_USE_DEV_PROXY;`
+- Add IS_MOCK check at top: `const IS_MOCK = !!process.env.HYPERNEO_USE_DEV_PROXY;`
 - Verify mock returns usage data by checking `.devproxy/devproxy.log` after test run
 - The `waitForContextData()` helper already handles missing context data gracefully
 - In mock mode: the tests should PASS because mock includes usage data
@@ -348,7 +348,7 @@ Based on downloaded artifacts (run 22868755618):
 ## Notes
 
 - **Baseline results:** LLM tests (8/8) passed with real GLM API in baseline CI run - goal is to convert to devproxy for stability/cost
-- **IS_MOCK pattern reference:** Daemon tests use `const IS_MOCK = !!process.env.NEOKAI_USE_DEV_PROXY;` to detect mock mode
+- **IS_MOCK pattern reference:** Daemon tests use `const IS_MOCK = !!process.env.HYPERNEO_USE_DEV_PROXY;` to detect mock mode
 - **Mock response content:** Devproxy returns "[MOCKED] Hello! I'm Claude, an AI assistant." - tests expecting specific responses need updating
 - **Interrupt tests:** Mock responses return instantly - interrupt tests need timing adjustments
 - **CI job naming:** "e2e" → "e2e-no-llm" and "e2e-llm" remains as-is (already descriptive)

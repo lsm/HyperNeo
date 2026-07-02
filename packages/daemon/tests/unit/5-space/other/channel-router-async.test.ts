@@ -26,7 +26,7 @@ import {
   ChannelRouter,
   ChannelGateBlockedError,
 } from '../../../../src/lib/space/runtime/channel-router.ts';
-import type { Gate, WorkflowChannel } from '@neokai/shared';
+import type { Gate, WorkflowChannel } from '@hyperneo/shared';
 import { CODING_WORKFLOW } from '../../../../src/lib/space/workflows/built-in-workflows.ts';
 
 // ---------------------------------------------------------------------------
@@ -307,13 +307,13 @@ describe('ChannelRouter async gate evaluation', () => {
       expect(result.allowed).toBe(true);
     });
 
-    test('script gate with workspacePath injects NEOKAI_WORKSPACE_PATH', async () => {
+    test('script gate with workspacePath injects HYPERNEO_WORKSPACE_PATH', async () => {
       // Use node interpreter to read env vars reliably
       const gate: Gate = {
         id: 'script-gate',
         script: {
           interpreter: 'node',
-          source: 'console.log(JSON.stringify({ws: process.env.NEOKAI_WORKSPACE_PATH}))',
+          source: 'console.log(JSON.stringify({ws: process.env.HYPERNEO_WORKSPACE_PATH}))',
           timeoutMs: 5000,
         },
         fields: [
@@ -424,14 +424,14 @@ describe('ChannelRouter async gate evaluation', () => {
       );
     });
 
-    test('NEOKAI_GATE_ID and NEOKAI_WORKFLOW_RUN_ID are injected into script env', async () => {
+    test('HYPERNEO_GATE_ID and HYPERNEO_WORKFLOW_RUN_ID are injected into script env', async () => {
       // Use JavaScript (node) interpreter to read env vars, avoiding bash
       // variable expansion edge cases.
       const gate: Gate = {
         id: 'env-script-gate',
         script: {
           interpreter: 'node',
-          source: 'console.log(JSON.stringify({gateId: process.env.NEOKAI_GATE_ID}))',
+          source: 'console.log(JSON.stringify({gateId: process.env.HYPERNEO_GATE_ID}))',
           timeoutMs: 5000,
         },
         fields: [
@@ -462,7 +462,7 @@ describe('ChannelRouter async gate evaluation', () => {
         script: {
           interpreter: 'node',
           source:
-            'const raw = process.env.NEOKAI_GATE_DATA_JSON ?? "{}"; let parsed = {}; try { parsed = JSON.parse(raw); } catch {} console.log(JSON.stringify({ seenPrUrl: parsed.pr_url ?? null }));',
+            'const raw = process.env.HYPERNEO_GATE_DATA_JSON ?? "{}"; let parsed = {}; try { parsed = JSON.parse(raw); } catch {} console.log(JSON.stringify({ seenPrUrl: parsed.pr_url ?? null }));',
           timeoutMs: 5000,
         },
         fields: [

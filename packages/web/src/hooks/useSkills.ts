@@ -14,7 +14,7 @@
  */
 
 import { useState, useEffect } from 'preact/hooks';
-import type { AppSkill } from '@neokai/shared';
+import type { AppSkill } from '@hyperneo/shared';
 import { skillsStore } from '../lib/skills-store';
 
 interface UseSkillsResult {

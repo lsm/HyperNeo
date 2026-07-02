@@ -5,7 +5,7 @@
  * Extracted from ChatContainer.tsx for better separation of concerns.
  */
 
-import type { MessageDeliveryMode, MessageImage, Session } from '@neokai/shared';
+import type { MessageDeliveryMode, MessageImage, Session } from '@hyperneo/shared';
 import { useCallback, useRef } from 'preact/hooks';
 import { connectionManager } from '../lib/connection-manager';
 import { enqueueAction } from '../lib/outbound-queue';

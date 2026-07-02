@@ -26,22 +26,22 @@ export default defineConfig({
 
   resolve: {
     alias: [
-      // Handle subpath imports (e.g., @neokai/shared/sdk/type-guards)
+      // Handle subpath imports (e.g., @hyperneo/shared/sdk/type-guards)
       {
-        find: /^@neokai\/shared\/(.+)$/,
+        find: /^@hyperneo\/shared\/(.+)$/,
         replacement: resolve(__dirname, '../shared/src/$1'),
       },
       // Handle main package import
       {
-        find: '@neokai/shared',
+        find: '@hyperneo/shared',
         replacement: resolve(__dirname, '../shared/src/mod.ts'),
       },
       {
-        find: /^@neokai\/ui\/(.+)$/,
+        find: /^@hyperneo\/ui\/(.+)$/,
         replacement: resolve(__dirname, '../ui/src/$1'),
       },
       {
-        find: '@neokai/ui',
+        find: '@hyperneo/ui',
         replacement: resolve(__dirname, '../ui/src/mod.ts'),
       },
     ],

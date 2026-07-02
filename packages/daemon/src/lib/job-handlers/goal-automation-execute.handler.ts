@@ -1,5 +1,5 @@
 import type { Database as BunDatabase } from 'bun:sqlite';
-import type { EvidenceRef, GoalForgeAutomationTriggerKind, SpaceTask } from '@neokai/shared';
+import type { EvidenceRef, GoalForgeAutomationTriggerKind, SpaceTask } from '@hyperneo/shared';
 import type { Job, JobQueueRepository } from '../../storage/repositories/job-queue-repository';
 import type { EvolutionRepository } from '../../storage/repositories/evolution-repository';
 import type { GoalAutomationCursorRepository } from '../../storage/repositories/goal-automation-cursor-repository';

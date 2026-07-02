@@ -7,8 +7,8 @@
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
-import { generateUUID } from '@neokai/shared';
-import type { ProviderRecord, CreateProviderParams, UpdateProviderParams } from '@neokai/shared';
+import { generateUUID } from '@hyperneo/shared';
+import type { ProviderRecord, CreateProviderParams, UpdateProviderParams } from '@hyperneo/shared';
 import type { ReactiveDatabase } from '../reactive-database';
 import type { SQLiteValue } from '../types';
 

@@ -34,7 +34,7 @@ Define the shared types for the @ reference system, create backend RPC handlers 
 
 **Acceptance Criteria:**
 - Types compile without errors
-- Types are accessible via `@neokai/shared` import
+- Types are accessible via `@hyperneo/shared` import
 - `ReferenceType` is a union type, not an enum
 - `REFERENCE_PATTERN` correctly matches `@ref{task:t-42}` and rejects normal markdown links
 - Unit test in `packages/shared/src/types/__tests__/reference.test.ts` validates type shapes and regex pattern
@@ -68,7 +68,7 @@ Define the shared types for the @ reference system, create backend RPC handlers 
    - The refresh scan compares cached entries against current filesystem state using `readdir` with `withFileTypes` (fast, no stat calls needed)
    - Detects added/removed files and updates the cache incrementally
    - Debounce rapid changes: if a refresh is still running, skip the next scheduled tick
-   - The polling interval is configurable via the daemon's config or env var (`NEOKAI_FILE_INDEX_POLL_MS`, default 10000)
+   - The polling interval is configurable via the daemon's config or env var (`HYPERNEO_FILE_INDEX_POLL_MS`, default 10000)
    - Start polling on `init()`, stop on `dispose()`
 4. Filter ignored paths:
    - Parse `.gitignore` at workspace root (use a lightweight parser, no external dependency needed — support basic glob patterns: `*`, `**`, `!negation`, directory-only `/` suffix)

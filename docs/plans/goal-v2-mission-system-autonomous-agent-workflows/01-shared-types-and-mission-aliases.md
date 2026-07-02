@@ -95,7 +95,7 @@ Extend the `RoomGoal` interface and shared type system with all mission V2 metad
 13. Verify TypeScript compiles with zero new errors: `bun run typecheck`.
 
 **Acceptance Criteria**:
-- All new types are exported from `@neokai/shared`
+- All new types are exported from `@hyperneo/shared`
 - `type Mission = RoomGoal` alias compiles and is exported
 - `RoomGoal` interface includes all new optional V2 fields
 - `CreateGoalParams` and `UpdateGoalParams` accept the new fields

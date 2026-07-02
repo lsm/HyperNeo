@@ -15,8 +15,8 @@
  */
 
 import { describe, expect, it, mock, beforeEach } from 'bun:test';
-import { MessageHub } from '@neokai/shared';
-import type { Space, SpaceCreateResult, SpaceTask, SpaceWorkflowRun } from '@neokai/shared';
+import { MessageHub } from '@hyperneo/shared';
+import type { Space, SpaceCreateResult, SpaceTask, SpaceWorkflowRun } from '@hyperneo/shared';
 import { setupSpaceHandlers } from '../../../../src/lib/rpc-handlers/space-handlers';
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
 import type { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager';

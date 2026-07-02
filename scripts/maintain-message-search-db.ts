@@ -22,9 +22,12 @@ import {
 } from 'node:fs';
 import { createInterface } from 'node:readline/promises';
 import { dirname, join, resolve } from 'node:path';
-import { homedir } from 'node:os';
+// Relative import (the root scripts/ dir is not a consumer of @hyperneo/daemon,
+// so the package boundary can't be used here) — resolves the data dir through the
+// same migration/fallback path as the daemon.
+import { getDataDir } from '../packages/daemon/src/lib/data-dir.ts';
 
-const DEFAULT_DB_PATH = join(homedir(), '.neokai', 'data', 'daemon.db');
+const DEFAULT_DB_PATH = join(getDataDir(), 'data', 'daemon.db');
 const BACKUPS_TO_KEEP = 3;
 
 type Options = {

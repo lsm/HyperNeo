@@ -7,7 +7,7 @@
 import { describe, it, expect, vi } from 'vitest';
 
 import { render, cleanup, fireEvent } from '@testing-library/preact';
-import type { Session } from '@neokai/shared';
+import type { Session } from '@hyperneo/shared';
 import { ChatHeader } from '../ChatHeader';
 import { contextPanelOpenSignal } from '../../lib/signals';
 

@@ -23,8 +23,8 @@
  *   placement as the human bubble for visual consistency).
  */
 
-import type { ActorMessageDeliveryState } from '@neokai/shared';
-import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
+import type { ActorMessageDeliveryState } from '@hyperneo/shared';
+import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import MarkdownRenderer from '../chat/MarkdownRenderer.tsx';
 import { SpaceTaskThreadMessageActions } from '../space/thread/SpaceTaskThreadMessageActions.tsx';

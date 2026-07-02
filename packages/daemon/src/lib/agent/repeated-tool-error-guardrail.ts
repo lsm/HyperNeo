@@ -6,7 +6,7 @@
  * logged as `conversation_friction` evidence on the linked task's evolution scope.
  */
 
-import type { SpaceTask } from '@neokai/shared';
+import type { SpaceTask } from '@hyperneo/shared';
 import { Logger } from '../logger';
 
 export interface RepeatedToolErrorGuardrailDeps {

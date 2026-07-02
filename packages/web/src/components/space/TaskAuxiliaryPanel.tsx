@@ -6,7 +6,7 @@ import type {
   SpaceWorkflow,
   WorkflowNode,
   WorkflowNodeAgent,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import type { ComponentChildren } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { navigateToSpaceForge, navigateToSpaceGoals } from '../../lib/router';

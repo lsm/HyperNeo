@@ -10,7 +10,7 @@ import type {
   SpaceGoalListParams,
   SpaceTask,
   UpdateSpaceGoalParams,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import type { Database as BunDatabase } from 'bun:sqlite';
 import type { SpaceRepository } from '../../../storage/repositories/space-repository';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';

@@ -11,7 +11,7 @@ import type {
   ReferenceType,
   ReferenceSearchResult,
   ResolvedReference,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import type { SessionManager } from '../session-manager';
 import type { Database as BunDatabase } from 'bun:sqlite';
 import type { ReactiveDatabase } from '../../storage/reactive-database';

@@ -193,7 +193,7 @@ The three bugs share common dependencies. The plan addresses them in dependency 
 
   **Keep these items:**
   - The `sdkSessionId` clearing logic — still useful for the error message / fresh start on next user message.
-  - The `NEOKAI_SDK_STARTUP_TIMEOUT_MS` env var — this controls the timeout threshold, not recovery behavior.
+  - The `HYPERNEO_SDK_STARTUP_TIMEOUT_MS` env var — this controls the timeout threshold, not recovery behavior.
 
 **Subtasks**:
 1. Remove `onStartupTimeoutAutoRecover` from `QueryRunnerContext`.
@@ -285,7 +285,7 @@ The three bugs share common dependencies. The plan addresses them in dependency 
   4. Verify the error message contains actionable recovery hints.
   5. Verify the session state returns to idle after the error.
 
-**Important implementation note**: The startup timeout duration (`NEOKAI_SDK_STARTUP_TIMEOUT_MS`) is read at module load time in `query-runner.ts`. Setting the env var in a test after the module is loaded will have no effect. The test must use one of these approaches:
+**Important implementation note**: The startup timeout duration (`HYPERNEO_SDK_STARTUP_TIMEOUT_MS`) is read at module load time in `query-runner.ts`. Setting the env var in a test after the module is loaded will have no effect. The test must use one of these approaches:
 - **Option A (preferred)**: Import the daemon server fresh in the test (not from a shared module) so the env var is read after being set. Use `createDaemonServer()` which creates an isolated server instance.
 - **Option B**: Inject a custom `QueryRunner` subclass or override with an artificially short timeout via a test-only mechanism.
 - **Option C**: Use the dev proxy to simulate a slow SDK startup that exceeds the default timeout.
@@ -302,7 +302,7 @@ The implementer should choose the approach that works reliably with the existing
 **Acceptance criteria**:
 - The test verifies no retry occurs.
 - The error is surfaced via `errorManager.handleError`.
-- The test passes with `NEOKAI_USE_DEV_PROXY=1`.
+- The test passes with `HYPERNEO_USE_DEV_PROXY=1`.
 
 **Dependencies**: Task 2.3
 
@@ -334,7 +334,7 @@ The implementer should choose the approach that works reliably with the existing
 
 3. **`messageHub` still in config**: Keeping `messageHub` in `RoomRuntimeConfig` means the unused reference at the assignment remains. This is acceptable — the risk of removing it (touching 19 test files) outweighs the benefit of removing a single unused field.
 
-4. **Backward compatibility for `NEOKAI_SDK_STARTUP_RECOVERY_DELAY_MS` and `NEOKAI_SDK_STARTUP_MAX_RETRIES`**: These env vars will no longer have any effect after Milestone 2. This is acceptable because they were undocumented debugging knobs. The `NEOKAI_SDK_STARTUP_TIMEOUT_MS` env var is kept.
+4. **Backward compatibility for `HYPERNEO_SDK_STARTUP_RECOVERY_DELAY_MS` and `HYPERNEO_SDK_STARTUP_MAX_RETRIES`**: These env vars will no longer have any effect after Milestone 2. This is acceptable because they were undocumented debugging knobs. The `HYPERNEO_SDK_STARTUP_TIMEOUT_MS` env var is kept.
 
 5. **Online test reliability**: The startup timeout test (Task 2.4) depends on being able to trigger a timeout condition reliably. The module-level env var loading makes this tricky. The implementation note provides three approaches; the implementer should choose the one that works best.
 

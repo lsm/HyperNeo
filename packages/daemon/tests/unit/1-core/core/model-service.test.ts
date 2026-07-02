@@ -20,7 +20,7 @@ import {
   initializeModels,
   getSessionModelInfo,
 } from '../../../../src/lib/model-service';
-import type { ModelInfo } from '@neokai/shared';
+import type { ModelInfo } from '@hyperneo/shared';
 import { resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import { resetProviderFactory } from '../../../../src/lib/providers/factory';
 

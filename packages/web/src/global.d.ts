@@ -2,7 +2,7 @@
  * Global type augmentations for the web package
  */
 
-import type { MessageHub } from '@neokai/shared';
+import type { MessageHub } from '@hyperneo/shared';
 import type { Signal } from '@preact/signals';
 import type { ConnectionManager } from './lib/connection-manager';
 import type { AppState } from './lib/state';

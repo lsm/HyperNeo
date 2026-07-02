@@ -38,7 +38,7 @@ No existing data is migrated — short IDs are computed lazily on first access f
 - `parseShortId('t-0')` returns `null` (counter must be positive integer ≥ 1)
 - `isUUID('04062505-780f-4881-a3be-9cb9062790fb')` returns `true`
 - `isUUID('t-42')` returns `false`
-- All utilities are exported from `@neokai/shared`
+- All utilities are exported from `@hyperneo/shared`
 - `bun run check` passes (no Knip unused-export warnings)
 - Unit tests pass
 

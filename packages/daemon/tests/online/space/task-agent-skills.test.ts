@@ -29,19 +29,19 @@
  *
  * ## Running
  *
- *   cd packages/daemon && NEOKAI_USE_DEV_PROXY=1 bun test ./tests/online/space/task-agent-skills.test.ts
+ *   cd packages/daemon && HYPERNEO_USE_DEV_PROXY=1 bun test ./tests/online/space/task-agent-skills.test.ts
  *
  * MODES:
- * - Dev Proxy (recommended): Set NEOKAI_USE_DEV_PROXY=1 for offline testing
+ * - Dev Proxy (recommended): Set HYPERNEO_USE_DEV_PROXY=1 for offline testing
  * - Real API (default): Requires CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
-import type { NodeExecution, Space, SpaceWorkerAgent, SpaceWorkflow } from '@neokai/shared';
+import type { NodeExecution, Space, SpaceWorkerAgent, SpaceWorkflow } from '@hyperneo/shared';
 
-const IS_MOCK = !!process.env.NEOKAI_USE_DEV_PROXY;
+const IS_MOCK = !!process.env.HYPERNEO_USE_DEV_PROXY;
 const SETUP_TIMEOUT = IS_MOCK ? 20_000 : 60_000;
 const TEST_TIMEOUT = IS_MOCK ? 30_000 : 120_000;
 const TASK_AGENT_SPAWN_TIMEOUT = IS_MOCK ? 15_000 : 45_000;

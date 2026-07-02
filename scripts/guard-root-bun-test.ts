@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 const repoRoot = realpathSync(resolve(dirname(fileURLToPath(import.meta.url)), '..'));
 const currentDir = realpathSync(cwd());
 
-if (currentDir === repoRoot && env.NEOKAI_ALLOW_ROOT_TEST !== '1') {
+if (currentDir === repoRoot && env.HYPERNEO_ALLOW_ROOT_TEST !== '1') {
   console.error("Error: This is a monorepo. Do not run 'bun test' from the root.");
   console.error('');
   console.error('For daemon unit shards: ./scripts/test-daemon.sh');

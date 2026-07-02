@@ -16,10 +16,10 @@
  * runtime and channel layer.
  */
 
-import type { SpaceWorkflow, SpaceWorkflowRun } from '@neokai/shared';
+import type { SpaceWorkflow, SpaceWorkflowRun } from '@hyperneo/shared';
 
 // ---------------------------------------------------------------------------
-// Legacy condition types (removed from @neokai/shared, kept locally for
+// Legacy condition types (removed from @hyperneo/shared, kept locally for
 // backward-compatible evaluateCondition API)
 // ---------------------------------------------------------------------------
 

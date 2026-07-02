@@ -1,4 +1,4 @@
-import type { Gate, WorkflowChannel } from '@neokai/shared';
+import type { Gate, WorkflowChannel } from '@hyperneo/shared';
 import { getVisualNodeDimensions } from './nodeMetrics';
 import type { VisualNode } from './serialization';
 

@@ -1,4 +1,4 @@
-import type { SDKMessage } from '@neokai/shared/sdk';
+import type { SDKMessage } from '@hyperneo/shared/sdk';
 
 export type LastMessageClassification =
   | { terminal: true; reason: string }

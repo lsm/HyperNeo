@@ -24,8 +24,8 @@ import type {
   SpaceGoal,
   TaskProposal,
   TaskProposalStatus,
-} from '@neokai/shared';
-import { scoreEvolutionEvidenceQuality } from '@neokai/shared';
+} from '@hyperneo/shared';
+import { scoreEvolutionEvidenceQuality } from '@hyperneo/shared';
 import type { ComponentChild } from 'preact';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { useMessageHub } from '../../hooks/useMessageHub';
@@ -1381,7 +1381,7 @@ function groupFindingsByDomain(
   return {
     workflow: findings.filter((finding) => finding.domain === 'workflow'),
     target_artifact: findings.filter((finding) => finding.domain === 'target_artifact'),
-    neokai_product: findings.filter((finding) => finding.domain === 'neokai_product'),
+    hyperneo_product: findings.filter((finding) => finding.domain === 'hyperneo_product'),
   };
 }
 

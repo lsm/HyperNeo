@@ -10,7 +10,7 @@
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { createDaemonServer, type DaemonServerContext } from '../../helpers/daemon-server';
-import { STATE_CHANNELS } from '@neokai/shared';
+import { STATE_CHANNELS } from '@hyperneo/shared';
 
 describe('State Sync', () => {
   let daemon: DaemonServerContext;

@@ -26,10 +26,10 @@ import type {
   SessionState,
   LiveQuerySnapshotEvent,
   LiveQueryDeltaEvent,
-} from '@neokai/shared';
-import type { ChatMessage } from '@neokai/shared';
-import { Logger } from '@neokai/shared';
-import { flattenSDKSlashCommands, type SDKSlashCommand } from '@neokai/shared/sdk';
+} from '@hyperneo/shared';
+import type { ChatMessage } from '@hyperneo/shared';
+import { Logger } from '@hyperneo/shared';
+import { flattenSDKSlashCommands, type SDKSlashCommand } from '@hyperneo/shared/sdk';
 import { connectionManager } from './connection-manager';
 import { slashCommandsSignal } from './signals';
 import { toast } from './toast';
@@ -44,7 +44,7 @@ const LIVE_QUERY_MESSAGE_LIMIT = 200;
 
 const logger = new Logger('kai:web:sessionstore');
 
-const NEOKAI_BUILT_IN_COMMANDS = ['merge-session'];
+const HYPERNEO_BUILT_IN_COMMANDS = ['merge-session'];
 
 class SessionStore {
   // ========================================
@@ -658,7 +658,7 @@ class SessionStore {
     if (message.type !== 'system') return [];
     if (message.subtype === 'commands_changed' && Array.isArray(message.commands)) {
       return [
-        ...new Set([...flattenSDKSlashCommands(message.commands), ...NEOKAI_BUILT_IN_COMMANDS]),
+        ...new Set([...flattenSDKSlashCommands(message.commands), ...HYPERNEO_BUILT_IN_COMMANDS]),
       ];
     }
     if (

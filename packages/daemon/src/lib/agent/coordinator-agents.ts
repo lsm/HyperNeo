@@ -9,7 +9,7 @@
  * - SDK built-in types (Explore, Plan, Bash) remain available alongside
  */
 
-import type { AgentDefinition } from '@neokai/shared';
+import type { AgentDefinition } from '@hyperneo/shared';
 import { COORDINATOR_AGENT } from './coordinator/coordinator';
 import { coderAgent } from './coordinator/coder';
 import { debuggerAgent } from './coordinator/debugger';

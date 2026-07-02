@@ -20,7 +20,7 @@ import type {
   SpaceTask,
   SpaceWorkflowRun,
   UpdateSpaceTaskParams,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import type { MessageRecord, ActorRef } from '../../../../../messaging/src/types';
 import { canonicalAgentHandle, SpaceActorRegistryAdapter } from '../actor-registry';
 import type { ExternalEventPublishedPayload } from '../../external-events/external-event-service';
@@ -74,7 +74,7 @@ import type { DaemonCommandMap, InternalCommandBus } from '../../internal-comman
 import type { ExternalEventStore } from '../../external-events/external-event-store';
 import type { ExternalEventService } from '../../external-events/external-event-service';
 import type { AgentMemoryRepository } from '../../../storage/repositories/agent-memory-repository';
-import type { SDKUserMessage } from '@neokai/shared/sdk';
+import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import { deriveWorkerDisallowedTools } from '../agents/tool-policy';
 import type { UUID } from 'crypto';
 

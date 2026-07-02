@@ -23,7 +23,7 @@
  * legacy workflow-level route for older persisted workflows.
  */
 
-import type { PostApprovalRoute, WorkflowNode, WorkflowNodeInput } from '@neokai/shared';
+import type { PostApprovalRoute, WorkflowNode, WorkflowNodeInput } from '@hyperneo/shared';
 
 /**
  * Literal target name for the legacy Task Agent target.

@@ -195,10 +195,10 @@ describe('WorktreeManager', () => {
       const shortKey = shortKeyFor('/test/repo');
       existsSyncResults.set('/test/repo/.git', true);
       // project dir does not exist → triggers mkdirSync + writeFileSync
-      existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}`, false);
-      existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}/worktrees`, false);
+      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}`, false);
+      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}/worktrees`, false);
       existsSyncResults.set(
-        `/home/testuser/.neokai/projects/${shortKey}/worktrees/session-123`,
+        `/home/testuser/.hyperneo/projects/${shortKey}/worktrees/session-123`,
         false
       );
       mockGitRevparse.mockResolvedValue('.git');
@@ -217,11 +217,14 @@ describe('WorktreeManager', () => {
       const normalizedGitRoot = '/test/repo';
       existsSyncResults.set('/test/repo/.git', true);
       // project dir exists, sentinel exists, same repo — no collision
-      existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}`, true);
-      existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}/.neokai-repo-root`, true);
-      existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}/worktrees`, true);
+      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}`, true);
       existsSyncResults.set(
-        `/home/testuser/.neokai/projects/${shortKey}/worktrees/session-123`,
+        `/home/testuser/.hyperneo/projects/${shortKey}/.hyperneo-repo-root`,
+        true
+      );
+      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}/worktrees`, true);
+      existsSyncResults.set(
+        `/home/testuser/.hyperneo/projects/${shortKey}/worktrees/session-123`,
         true
       );
       mockGitRevparse.mockResolvedValue('.git');
@@ -238,11 +241,14 @@ describe('WorktreeManager', () => {
     it('should succeed with auto-generated branch name when no stale branch exists', async () => {
       const shortKey = shortKeyFor('/test/repo');
       existsSyncResults.set('/test/repo/.git', true);
-      existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}`, true);
-      existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}/.neokai-repo-root`, true);
-      existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}/worktrees`, true);
+      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}`, true);
       existsSyncResults.set(
-        `/home/testuser/.neokai/projects/${shortKey}/worktrees/session-123`,
+        `/home/testuser/.hyperneo/projects/${shortKey}/.hyperneo-repo-root`,
+        true
+      );
+      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}/worktrees`, true);
+      existsSyncResults.set(
+        `/home/testuser/.hyperneo/projects/${shortKey}/worktrees/session-123`,
         false
       );
       mockGitRevparse.mockResolvedValue('.git');
@@ -265,11 +271,14 @@ describe('WorktreeManager', () => {
     it('should delete stale custom branch and reuse original name', async () => {
       const shortKey = shortKeyFor('/test/repo');
       existsSyncResults.set('/test/repo/.git', true);
-      existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}`, true);
-      existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}/.neokai-repo-root`, true);
-      existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}/worktrees`, true);
+      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}`, true);
       existsSyncResults.set(
-        `/home/testuser/.neokai/projects/${shortKey}/worktrees/session-123`,
+        `/home/testuser/.hyperneo/projects/${shortKey}/.hyperneo-repo-root`,
+        true
+      );
+      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}/worktrees`, true);
+      existsSyncResults.set(
+        `/home/testuser/.hyperneo/projects/${shortKey}/worktrees/session-123`,
         false
       );
       mockGitRevparse.mockResolvedValue('.git');
@@ -294,11 +303,14 @@ describe('WorktreeManager', () => {
     it('should delete stale auto-generated branch and reuse original name', async () => {
       const shortKey = shortKeyFor('/test/repo');
       existsSyncResults.set('/test/repo/.git', true);
-      existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}`, true);
-      existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}/.neokai-repo-root`, true);
-      existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}/worktrees`, true);
+      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}`, true);
       existsSyncResults.set(
-        `/home/testuser/.neokai/projects/${shortKey}/worktrees/session-123`,
+        `/home/testuser/.hyperneo/projects/${shortKey}/.hyperneo-repo-root`,
+        true
+      );
+      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}/worktrees`, true);
+      existsSyncResults.set(
+        `/home/testuser/.hyperneo/projects/${shortKey}/worktrees/session-123`,
         false
       );
       mockGitRevparse.mockResolvedValue('.git');
@@ -322,11 +334,14 @@ describe('WorktreeManager', () => {
     it('should delete stale task branch and reuse task branch name', async () => {
       const shortKey = shortKeyFor('/test/repo');
       existsSyncResults.set('/test/repo/.git', true);
-      existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}`, true);
-      existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}/.neokai-repo-root`, true);
-      existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}/worktrees`, true);
+      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}`, true);
       existsSyncResults.set(
-        `/home/testuser/.neokai/projects/${shortKey}/worktrees/session-123`,
+        `/home/testuser/.hyperneo/projects/${shortKey}/.hyperneo-repo-root`,
+        true
+      );
+      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}/worktrees`, true);
+      existsSyncResults.set(
+        `/home/testuser/.hyperneo/projects/${shortKey}/worktrees/session-123`,
         false
       );
       mockGitRevparse.mockResolvedValue('.git');
@@ -349,11 +364,14 @@ describe('WorktreeManager', () => {
     it('should fall back to UUID branch name when branch -D is rejected (branch checked out elsewhere)', async () => {
       const shortKey = shortKeyFor('/test/repo');
       existsSyncResults.set('/test/repo/.git', true);
-      existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}`, true);
-      existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}/.neokai-repo-root`, true);
-      existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}/worktrees`, true);
+      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}`, true);
       existsSyncResults.set(
-        `/home/testuser/.neokai/projects/${shortKey}/worktrees/session-123`,
+        `/home/testuser/.hyperneo/projects/${shortKey}/.hyperneo-repo-root`,
+        true
+      );
+      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}/worktrees`, true);
+      existsSyncResults.set(
+        `/home/testuser/.hyperneo/projects/${shortKey}/worktrees/session-123`,
         false
       );
       mockGitRevparse.mockResolvedValue('.git');
@@ -379,11 +397,14 @@ describe('WorktreeManager', () => {
     it('should return WorktreeMetadata on success', async () => {
       const shortKey = shortKeyFor('/test/repo');
       existsSyncResults.set('/test/repo/.git', true);
-      existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}`, true);
-      existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}/.neokai-repo-root`, true);
-      existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}/worktrees`, true);
+      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}`, true);
       existsSyncResults.set(
-        `/home/testuser/.neokai/projects/${shortKey}/worktrees/session-123`,
+        `/home/testuser/.hyperneo/projects/${shortKey}/.hyperneo-repo-root`,
+        true
+      );
+      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}/worktrees`, true);
+      existsSyncResults.set(
+        `/home/testuser/.hyperneo/projects/${shortKey}/worktrees/session-123`,
         false
       );
       mockGitRevparse.mockResolvedValue('.git');
@@ -398,7 +419,7 @@ describe('WorktreeManager', () => {
 
       expect(result).toEqual({
         isWorktree: true,
-        worktreePath: `/home/testuser/.neokai/projects/${shortKey}/worktrees/session-123`,
+        worktreePath: `/home/testuser/.hyperneo/projects/${shortKey}/worktrees/session-123`,
         mainRepoPath: '/test/repo',
         branch: 'my-branch',
       });
@@ -407,11 +428,14 @@ describe('WorktreeManager', () => {
     it('should cleanup on failure', async () => {
       const shortKey = shortKeyFor('/test/repo');
       existsSyncResults.set('/test/repo/.git', true);
-      existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}`, true);
-      existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}/.neokai-repo-root`, true);
-      existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}/worktrees`, true);
+      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}`, true);
       existsSyncResults.set(
-        `/home/testuser/.neokai/projects/${shortKey}/worktrees/session-123`,
+        `/home/testuser/.hyperneo/projects/${shortKey}/.hyperneo-repo-root`,
+        true
+      );
+      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}/worktrees`, true);
+      existsSyncResults.set(
+        `/home/testuser/.hyperneo/projects/${shortKey}/worktrees/session-123`,
         false
       );
       mockGitRevparse.mockResolvedValue('.git');
@@ -424,7 +448,7 @@ describe('WorktreeManager', () => {
 
       // After failure, worktree dir exists (partially created)
       existsSyncResults.set(
-        `/home/testuser/.neokai/projects/${shortKey}/worktrees/session-123`,
+        `/home/testuser/.hyperneo/projects/${shortKey}/worktrees/session-123`,
         true
       );
 
@@ -657,19 +681,19 @@ describe('WorktreeManager', () => {
 
     it('should prune and remove orphaned worktrees', async () => {
       existsSyncResults.set('/test/repo/.git', true);
-      existsSyncResults.set('/test/repo/.neokai/worktrees/session-1', false); // Orphaned
+      existsSyncResults.set('/test/repo/.hyperneo/worktrees/session-1', false); // Orphaned
 
       mockGitRevparse.mockResolvedValue('.git');
       mockGitRaw
         .mockResolvedValueOnce('') // prune
         .mockResolvedValueOnce(
-          'worktree /test/repo\nHEAD abc123\n\nworktree /test/repo/.neokai/worktrees/session-1\nHEAD def456\nbranch refs/heads/session/session-1\nprunable\n'
+          'worktree /test/repo\nHEAD abc123\n\nworktree /test/repo/.hyperneo/worktrees/session-1\nHEAD def456\nbranch refs/heads/session/session-1\nprunable\n'
         ) // list
         .mockResolvedValue(''); // remove
 
       const result = await manager.cleanupOrphanedWorktrees('/test/repo');
 
-      expect(result).toContain('/test/repo/.neokai/worktrees/session-1');
+      expect(result).toContain('/test/repo/.hyperneo/worktrees/session-1');
     });
 
     it('should delete task/ branches for orphaned task worktrees', async () => {
@@ -679,13 +703,13 @@ describe('WorktreeManager', () => {
       mockGitRaw
         .mockResolvedValueOnce('') // prune
         .mockResolvedValueOnce(
-          'worktree /test/repo\nHEAD abc123\n\nworktree /test/repo/.neokai/worktrees/task-wt\nHEAD def456\nbranch refs/heads/task/task-42-implement-feature\nprunable\n'
+          'worktree /test/repo\nHEAD abc123\n\nworktree /test/repo/.hyperneo/worktrees/task-wt\nHEAD def456\nbranch refs/heads/task/task-42-implement-feature\nprunable\n'
         ) // list
         .mockResolvedValue(''); // remove
 
       const result = await manager.cleanupOrphanedWorktrees('/test/repo');
 
-      expect(result).toContain('/test/repo/.neokai/worktrees/task-wt');
+      expect(result).toContain('/test/repo/.hyperneo/worktrees/task-wt');
       // Should also delete the task/ branch
       expect(mockGitBranch).toHaveBeenCalledWith(['-D', 'task/task-42-implement-feature']);
     });
@@ -773,7 +797,7 @@ describe('WorktreeManager', () => {
     });
 
     it('uses TEST_WORKTREE_BASE_DIR as the root when set', async () => {
-      const testBaseDir = '/tmp/neokai-test-override';
+      const testBaseDir = '/tmp/hyperneo-test-override';
       process.env.TEST_WORKTREE_BASE_DIR = testBaseDir;
 
       const repoPath = '/test/repo';
@@ -792,12 +816,12 @@ describe('WorktreeManager', () => {
         repoPath,
       });
 
-      // Worktree path must use the override base dir, not ~/.neokai
+      // Worktree path must use the override base dir, not ~/.hyperneo
       expect(result?.worktreePath).toBe(`${testBaseDir}/${shortKey}/worktrees/sess-override`);
       expect(result?.worktreePath).not.toContain('/home/testuser');
     });
 
-    it('falls back to ~/.neokai when TEST_WORKTREE_BASE_DIR is not set', async () => {
+    it('falls back to ~/.hyperneo when TEST_WORKTREE_BASE_DIR is not set', async () => {
       delete process.env.TEST_WORKTREE_BASE_DIR;
 
       const repoPath = '/test/repo';
@@ -805,10 +829,10 @@ describe('WorktreeManager', () => {
 
       existsSyncResults.set('/test/repo/.git', true);
       mockGitRevparse.mockResolvedValue('.git');
-      existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}`, false);
-      existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}/worktrees`, false);
+      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}`, false);
+      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}/worktrees`, false);
       existsSyncResults.set(
-        `/home/testuser/.neokai/projects/${shortKey}/worktrees/sess-home`,
+        `/home/testuser/.hyperneo/projects/${shortKey}/worktrees/sess-home`,
         false
       );
       mockGitRaw.mockResolvedValue('');
@@ -819,7 +843,7 @@ describe('WorktreeManager', () => {
       });
 
       expect(result?.worktreePath).toBe(
-        `/home/testuser/.neokai/projects/${shortKey}/worktrees/sess-home`
+        `/home/testuser/.hyperneo/projects/${shortKey}/worktrees/sess-home`
       );
     });
   });
@@ -829,11 +853,11 @@ describe('WorktreeManager', () => {
   // ---------------------------------------------------------------------------
   describe('verifyWorktree old-format path compatibility', () => {
     it('recognizes a worktree stored with the old encoded path format', async () => {
-      // Old format: ~/.neokai/projects/-Users-alice-my-app/worktrees/session-abc
+      // Old format: ~/.hyperneo/projects/-Users-alice-my-app/worktrees/session-abc
       // verifyWorktree uses the DB-stored worktreePath directly, so old and new
       // path formats coexist in the DB indefinitely with no conflict.
       const oldFormatPath =
-        '/home/testuser/.neokai/projects/-Users-alice-my-app/worktrees/session-abc';
+        '/home/testuser/.hyperneo/projects/-Users-alice-my-app/worktrees/session-abc';
       const mainRepoPath = '/Users/alice/my-app';
 
       existsSyncResults.set(oldFormatPath, true);
@@ -856,7 +880,7 @@ describe('WorktreeManager', () => {
 
     it('returns false for old-format path when directory no longer exists', async () => {
       const oldFormatPath =
-        '/home/testuser/.neokai/projects/-Users-alice-my-app/worktrees/session-abc';
+        '/home/testuser/.hyperneo/projects/-Users-alice-my-app/worktrees/session-abc';
       const mainRepoPath = '/Users/alice/my-app';
 
       existsSyncResults.set(oldFormatPath, false);
@@ -897,10 +921,13 @@ describe('WorktreeManager', () => {
       mockGitRevparse.mockResolvedValue('.git');
 
       // project dir does NOT exist yet → triggers mkdirSync + writeFileSync
-      existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}`, false);
+      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}`, false);
       // worktrees dir also doesn't exist
-      existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}/worktrees`, false);
-      existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}/worktrees/sess-1`, false);
+      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}/worktrees`, false);
+      existsSyncResults.set(
+        `/home/testuser/.hyperneo/projects/${shortKey}/worktrees/sess-1`,
+        false
+      );
       mockGitRaw.mockResolvedValue('');
 
       const result = await manager.createWorktree({
@@ -910,11 +937,11 @@ describe('WorktreeManager', () => {
 
       // Worktree path uses the short key
       expect(result?.worktreePath).toBe(
-        `/home/testuser/.neokai/projects/${shortKey}/worktrees/sess-1`
+        `/home/testuser/.hyperneo/projects/${shortKey}/worktrees/sess-1`
       );
       // Sentinel was written
       expect(writeFileSyncSpy).toHaveBeenCalledWith(
-        `/home/testuser/.neokai/projects/${shortKey}/.neokai-repo-root`,
+        `/home/testuser/.hyperneo/projects/${shortKey}/.hyperneo-repo-root`,
         repoPath
       );
       // No collision warning
@@ -930,12 +957,18 @@ describe('WorktreeManager', () => {
       mockGitRevparse.mockResolvedValue('.git');
 
       // project dir EXISTS, sentinel EXISTS, sentinel contains the SAME repo path
-      existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}`, true);
-      existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}/.neokai-repo-root`, true);
+      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}`, true);
+      existsSyncResults.set(
+        `/home/testuser/.hyperneo/projects/${shortKey}/.hyperneo-repo-root`,
+        true
+      );
       readFileSyncSpy.mockReturnValue(repoPath as any);
 
-      existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}/worktrees`, false);
-      existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}/worktrees/sess-2`, false);
+      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}/worktrees`, false);
+      existsSyncResults.set(
+        `/home/testuser/.hyperneo/projects/${shortKey}/worktrees/sess-2`,
+        false
+      );
       mockGitRaw.mockResolvedValue('');
 
       const result = await manager.createWorktree({
@@ -945,7 +978,7 @@ describe('WorktreeManager', () => {
 
       // Same short-key path returned
       expect(result?.worktreePath).toBe(
-        `/home/testuser/.neokai/projects/${shortKey}/worktrees/sess-2`
+        `/home/testuser/.hyperneo/projects/${shortKey}/worktrees/sess-2`
       );
       // No collision warning
       expect(loggerWarnSpy).not.toHaveBeenCalledWith(expect.stringContaining('collision'));
@@ -962,15 +995,18 @@ describe('WorktreeManager', () => {
       mockGitRevparse.mockResolvedValue('.git');
 
       // project dir EXISTS with sentinel pointing to A (not B)
-      existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}`, true);
-      existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}/.neokai-repo-root`, true);
+      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}`, true);
+      existsSyncResults.set(
+        `/home/testuser/.hyperneo/projects/${shortKey}/.hyperneo-repo-root`,
+        true
+      );
       readFileSyncSpy.mockReturnValue(repoPathA as any);
 
       // Fallback encoded path for B: '-Users-carol-projects-app'
       const encodedB = '-Users-carol-projects-app';
-      existsSyncResults.set(`/home/testuser/.neokai/projects/${encodedB}/worktrees`, false);
+      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${encodedB}/worktrees`, false);
       existsSyncResults.set(
-        `/home/testuser/.neokai/projects/${encodedB}/worktrees/sess-collision`,
+        `/home/testuser/.hyperneo/projects/${encodedB}/worktrees/sess-collision`,
         false
       );
       mockGitRaw.mockResolvedValue('');
@@ -982,7 +1018,7 @@ describe('WorktreeManager', () => {
 
       // Should use the full encoded fallback, NOT the short key
       expect(result?.worktreePath).toBe(
-        `/home/testuser/.neokai/projects/${encodedB}/worktrees/sess-collision`
+        `/home/testuser/.hyperneo/projects/${encodedB}/worktrees/sess-collision`
       );
       expect(result?.worktreePath).not.toContain(shortKey);
 
@@ -1001,12 +1037,15 @@ describe('WorktreeManager', () => {
       mockGitRevparse.mockResolvedValue('.git');
 
       // project dir EXISTS but no sentinel file
-      existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}`, true);
-      existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}/.neokai-repo-root`, false);
-
-      existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}/worktrees`, false);
+      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}`, true);
       existsSyncResults.set(
-        `/home/testuser/.neokai/projects/${shortKey}/worktrees/sess-legacy`,
+        `/home/testuser/.hyperneo/projects/${shortKey}/.hyperneo-repo-root`,
+        false
+      );
+
+      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}/worktrees`, false);
+      existsSyncResults.set(
+        `/home/testuser/.hyperneo/projects/${shortKey}/worktrees/sess-legacy`,
         false
       );
       mockGitRaw.mockResolvedValue('');
@@ -1018,11 +1057,11 @@ describe('WorktreeManager', () => {
 
       // Short-key path is returned
       expect(result?.worktreePath).toBe(
-        `/home/testuser/.neokai/projects/${shortKey}/worktrees/sess-legacy`
+        `/home/testuser/.hyperneo/projects/${shortKey}/worktrees/sess-legacy`
       );
       // Sentinel was written (to "adopt" the existing dir)
       expect(writeFileSyncSpy).toHaveBeenCalledWith(
-        `/home/testuser/.neokai/projects/${shortKey}/.neokai-repo-root`,
+        `/home/testuser/.hyperneo/projects/${shortKey}/.hyperneo-repo-root`,
         repoPath
       );
     });

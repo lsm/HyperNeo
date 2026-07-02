@@ -13,7 +13,7 @@
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
-import { generateUUID } from '@neokai/shared';
+import { generateUUID } from '@hyperneo/shared';
 import { Logger } from '../../lib/logger';
 
 const log = new Logger('workflow-run-artifact-cache-repo');

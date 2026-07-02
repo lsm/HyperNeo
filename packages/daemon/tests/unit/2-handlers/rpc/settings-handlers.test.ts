@@ -24,7 +24,7 @@ import {
   type GlobalSettings,
   type SessionSettings,
   DEFAULT_GLOBAL_SETTINGS,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import {
   applyProviderModelAllowlistsToEnv,
   registerSettingsHandlers,
@@ -106,7 +106,7 @@ function createMockInternalEventBus(): {
   return { bus, publishAsyncMock };
 }
 
-// Default global settings (mirrors the unified shape in @neokai/shared)
+// Default global settings (mirrors the unified shape in @hyperneo/shared)
 const defaultGlobalSettings: GlobalSettings = {
   ...DEFAULT_GLOBAL_SETTINGS,
   showArchived: false,
@@ -221,7 +221,7 @@ describe('Settings RPC Handlers', () => {
   });
 
   afterEach(() => {
-    delete process.env.NEOKAI_PROVIDER_MODEL_ALLOWLISTS;
+    delete process.env.HYPERNEO_PROVIDER_MODEL_ALLOWLISTS;
     mock.restore();
   });
 
@@ -232,17 +232,17 @@ describe('Settings RPC Handlers', () => {
         anthropic: ['claude-sonnet-4.6'],
       });
 
-      expect(process.env.NEOKAI_PROVIDER_MODEL_ALLOWLISTS).toBe(
+      expect(process.env.HYPERNEO_PROVIDER_MODEL_ALLOWLISTS).toBe(
         'openrouter:xai/grok-4.3\nopenrouter:deepseek/deepseek-v4-pro\nanthropic:claude-sonnet-4.6'
       );
     });
 
     it('clears provider allowlist env when no persisted allowlists exist', () => {
-      process.env.NEOKAI_PROVIDER_MODEL_ALLOWLISTS = 'openrouter:xai/grok-4.3';
+      process.env.HYPERNEO_PROVIDER_MODEL_ALLOWLISTS = 'openrouter:xai/grok-4.3';
 
       applyProviderModelAllowlistsToEnv(undefined);
 
-      expect(process.env.NEOKAI_PROVIDER_MODEL_ALLOWLISTS).toBeUndefined();
+      expect(process.env.HYPERNEO_PROVIDER_MODEL_ALLOWLISTS).toBeUndefined();
     });
   });
 

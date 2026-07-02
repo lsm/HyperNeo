@@ -28,7 +28,7 @@ async function main() {
       dbPath: ':memory:',
       maxSessions: 10,
       nodeEnv: 'test',
-      workspaceRoot: `${process.env.TMPDIR || '/tmp'}/neokai-daemon-test-${Date.now()}`,
+      workspaceRoot: `${process.env.TMPDIR || '/tmp'}/hyperneo-daemon-test-${Date.now()}`,
       disableWorktrees: true,
     },
     standalone: true,

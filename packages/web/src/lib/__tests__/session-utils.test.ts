@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { getModelLabel, isUserSession } from '../session-utils';
-import type { Session } from '@neokai/shared';
+import type { Session } from '@hyperneo/shared';
 
 function makeSession(overrides: Partial<Session> = {}): Session {
   return {

@@ -4,7 +4,7 @@
  * Renders user messages from the SDK message stream
  */
 
-import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
+import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 import { useEffect, useState } from 'preact/hooks';
 import { toast } from '../../lib/toast.ts';
 import { borderRadius, messageColors, messageSpacing } from '../../lib/design-tokens.ts';
@@ -21,7 +21,7 @@ import { isHiddenCommandOutput, SlashCommandOutput } from './SlashCommandOutput.
 import { SyntheticMessageBlock } from './SyntheticMessageBlock.tsx';
 import type { JSX } from 'preact';
 import { Fragment } from 'preact';
-import type { ReferenceMetadata } from '@neokai/shared';
+import type { ReferenceMetadata } from '@hyperneo/shared';
 
 /**
  * Render text content, replacing @ref{type:id} tokens with styled MentionToken

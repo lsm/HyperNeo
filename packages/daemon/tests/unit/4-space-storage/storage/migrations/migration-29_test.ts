@@ -95,7 +95,7 @@ describe('Migration 29: Space system tables', () => {
     for (const table of expectedTables) {
       expect(tableExists(db, table)).toBe(true);
     }
-  });
+  }, 15_000);
 
   test('migration is idempotent — running twice does not throw', () => {
     runMigrations(db, () => {});

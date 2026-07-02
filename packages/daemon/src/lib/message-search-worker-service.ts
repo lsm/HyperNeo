@@ -1,4 +1,4 @@
-import { generateUUID } from '@neokai/shared';
+import { generateUUID } from '@hyperneo/shared';
 import type { MessageSearchParams, MessageSearchResponse } from '../storage/message-search';
 
 const DEFAULT_MESSAGE_SEARCH_TIMEOUT_MS = 2_000;

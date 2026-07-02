@@ -14,7 +14,7 @@
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
 import { ToolsConfigManager } from '../../../../src/lib/session/tools-config';
 import type { Database } from '../../../../src/storage/database';
-import type { GlobalToolsConfig } from '@neokai/shared';
+import type { GlobalToolsConfig } from '@hyperneo/shared';
 
 describe('ToolsConfigManager', () => {
   let mockDb: Database;

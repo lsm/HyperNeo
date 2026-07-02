@@ -12,8 +12,8 @@ import {
   type QueryRunnerContext,
 } from '../../../../src/lib/agent/query-runner';
 import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session';
-import type { Session, MessageHub } from '@neokai/shared';
-import type { SDKMessage } from '@neokai/shared/sdk';
+import type { Session, MessageHub } from '@hyperneo/shared';
+import type { SDKMessage } from '@hyperneo/shared/sdk';
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type { Database } from '../../../../src/storage/database';
 import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
@@ -1305,7 +1305,7 @@ describe('QueryRunner', () => {
         'test-session-id',
         expect.any(Error),
         expect.any(String), // category
-        expect.stringContaining('NEOKAI_SDK_STARTUP_TIMEOUT_MS'), // timeout hint for startup failure
+        expect.stringContaining('HYPERNEO_SDK_STARTUP_TIMEOUT_MS'), // timeout hint for startup failure
         expect.anything(),
         expect.objectContaining({ isRootWorkspace: expect.any(Boolean) })
       );
@@ -1338,9 +1338,9 @@ describe('QueryRunner', () => {
         expect.anything(),
         expect.objectContaining({ isRootWorkspace: expect.any(Boolean) })
       );
-      // NEOKAI_SDK_STARTUP_TIMEOUT_MS is irrelevant to a missing session file
+      // HYPERNEO_SDK_STARTUP_TIMEOUT_MS is irrelevant to a missing session file
       const userMessage = handleErrorSpy.mock.calls[0][3] as string;
-      expect(userMessage).not.toContain('NEOKAI_SDK_STARTUP_TIMEOUT_MS');
+      expect(userMessage).not.toContain('HYPERNEO_SDK_STARTUP_TIMEOUT_MS');
       // Should NOT contain retry count language
       expect(userMessage).not.toContain('attempt(s)');
     });
@@ -1931,11 +1931,11 @@ describe('QueryRunner', () => {
 
     beforeEach(() => {
       savedApiKey = process.env.ANTHROPIC_API_KEY;
-      savedBaseDelay = process.env.NEOKAI_PROVIDER_RETRY_BASE_DELAY_MS;
-      savedMaxRetries = process.env.NEOKAI_PROVIDER_MAX_RETRIES;
+      savedBaseDelay = process.env.HYPERNEO_PROVIDER_RETRY_BASE_DELAY_MS;
+      savedMaxRetries = process.env.HYPERNEO_PROVIDER_MAX_RETRIES;
       process.env.ANTHROPIC_API_KEY = 'sk-test-key';
       // Zero the backoff delay so retries fire immediately.
-      process.env.NEOKAI_PROVIDER_RETRY_BASE_DELAY_MS = '0';
+      process.env.HYPERNEO_PROVIDER_RETRY_BASE_DELAY_MS = '0';
       mockSession.workspacePath = tmpdir();
     });
 
@@ -1946,14 +1946,14 @@ describe('QueryRunner', () => {
         process.env.ANTHROPIC_API_KEY = savedApiKey;
       }
       if (savedBaseDelay === undefined) {
-        delete process.env.NEOKAI_PROVIDER_RETRY_BASE_DELAY_MS;
+        delete process.env.HYPERNEO_PROVIDER_RETRY_BASE_DELAY_MS;
       } else {
-        process.env.NEOKAI_PROVIDER_RETRY_BASE_DELAY_MS = savedBaseDelay;
+        process.env.HYPERNEO_PROVIDER_RETRY_BASE_DELAY_MS = savedBaseDelay;
       }
       if (savedMaxRetries === undefined) {
-        delete process.env.NEOKAI_PROVIDER_MAX_RETRIES;
+        delete process.env.HYPERNEO_PROVIDER_MAX_RETRIES;
       } else {
-        process.env.NEOKAI_PROVIDER_MAX_RETRIES = savedMaxRetries;
+        process.env.HYPERNEO_PROVIDER_MAX_RETRIES = savedMaxRetries;
       }
     });
 
@@ -2144,8 +2144,8 @@ describe('QueryRunner', () => {
       expect(setIdleSpy).toHaveBeenCalled();
     });
 
-    it('should respect NEOKAI_PROVIDER_MAX_RETRIES env override (1 retry)', async () => {
-      process.env.NEOKAI_PROVIDER_MAX_RETRIES = '1';
+    it('should respect HYPERNEO_PROVIDER_MAX_RETRIES env override (1 retry)', async () => {
+      process.env.HYPERNEO_PROVIDER_MAX_RETRIES = '1';
       buildSpy.mockRejectedValue(new Error('503 Service Unavailable'));
 
       const ctx = createContext();
@@ -2217,7 +2217,7 @@ describe('QueryRunner', () => {
 
     it('should not retry after backoff if interrupted during the backoff window', async () => {
       // Use a non-zero delay so the abort can fire DURING the sleep.
-      process.env.NEOKAI_PROVIDER_RETRY_BASE_DELAY_MS = '100';
+      process.env.HYPERNEO_PROVIDER_RETRY_BASE_DELAY_MS = '100';
       const abortController = new AbortController();
       buildSpy.mockRejectedValue(new Error('503 Service Unavailable'));
 
@@ -2237,7 +2237,7 @@ describe('QueryRunner', () => {
     });
 
     it('should not retry after backoff if a restart bumped the generation', async () => {
-      process.env.NEOKAI_PROVIDER_RETRY_BASE_DELAY_MS = '100';
+      process.env.HYPERNEO_PROVIDER_RETRY_BASE_DELAY_MS = '100';
       buildSpy.mockRejectedValue(new Error('503 Service Unavailable'));
 
       let gen = 0;
@@ -2298,7 +2298,7 @@ describe('QueryRunner', () => {
     it('should restore env vars even when retry is cancelled during backoff', async () => {
       // Env restore must run BEFORE the post-sleep re-check so a cancellation
       // return (e.g. restart bumping generation) doesn't skip the restore.
-      process.env.NEOKAI_PROVIDER_RETRY_BASE_DELAY_MS = '100';
+      process.env.HYPERNEO_PROVIDER_RETRY_BASE_DELAY_MS = '100';
       const abortController = new AbortController();
       buildSpy.mockRejectedValue(new Error('503 Service Unavailable'));
 
@@ -2323,7 +2323,7 @@ describe('QueryRunner', () => {
     it('should not retry after backoff if the queue was stopped (restart/stop)', async () => {
       // QueryLifecycleManager.stop() stops the queue without bumping generation
       // or marking interrupted — the re-check must catch it via isRunning().
-      process.env.NEOKAI_PROVIDER_RETRY_BASE_DELAY_MS = '100';
+      process.env.HYPERNEO_PROVIDER_RETRY_BASE_DELAY_MS = '100';
       buildSpy.mockRejectedValue(new Error('503 Service Unavailable'));
 
       const ctx = createContext();
@@ -2876,7 +2876,7 @@ describe('QueryRunner environment variable handling', () => {
         KEEP_SESSION: 'ambient',
         KEEP_PROCESS: 'process',
         PORT: '8484',
-        NEOKAI_PORT: '8484',
+        HYPERNEO_PORT: '8484',
       },
       {
         refreshAutoCompactWindow: true,
@@ -2894,7 +2894,7 @@ describe('QueryRunner environment variable handling', () => {
       KEEP_PROCESS: 'process',
     });
     expect(env).not.toHaveProperty('PORT');
-    expect(env).not.toHaveProperty('NEOKAI_PORT');
+    expect(env).not.toHaveProperty('HYPERNEO_PORT');
   });
 
   it('should preserve configured auto-compact env when provider does not refresh it', () => {

@@ -11,8 +11,8 @@ import {
   createErrorResponseMessage,
   MessageType,
   generateUUID,
-} from '@neokai/shared';
-import type { HubMessage } from '@neokai/shared/message-hub/protocol';
+} from '@hyperneo/shared';
+import type { HubMessage } from '@hyperneo/shared/message-hub/protocol';
 import type { WebSocketServerTransport } from '../lib/websocket-server-transport';
 import type { SessionManager } from '../lib/session-manager';
 

@@ -6,7 +6,7 @@
  * - space.task.activateNodeAgent — lazy-activate a workflow node agent
  */
 
-import type { MessageHub, MessageImage } from '@neokai/shared';
+import type { MessageHub, MessageImage } from '@hyperneo/shared';
 import { parseAddress } from '../../../../messaging/src/address';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { Database } from '../../storage/database';

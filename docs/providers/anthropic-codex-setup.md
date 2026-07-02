@@ -30,7 +30,7 @@ The `anthropic-codex` provider lets HyperNeo use Codex models such as `gpt-5.3-c
 The provider discovers OpenAI credentials in the following priority order:
 
 1. **`OPENAI_API_KEY`** — Environment variable for direct OpenAI Responses API calls
-2. **`~/.neokai/auth.json`** — Stored credentials from a previously completed HyperNeo OAuth flow
+2. **`~/.hyperneo/auth.json`** — Stored credentials from a previously completed HyperNeo OAuth flow
 3. **Legacy OAuth import** — One-time import from `~/.codex/auth.json` for users who previously ran `codex login`
 
 ### Option 1: OPENAI_API_KEY
@@ -54,7 +54,7 @@ The OAuth flow uses a PKCE + redirect flow with a callback server on port 1455. 
 
 ### Option 3: Legacy `codex login` Import
 
-Users who previously ran `codex login` may have credentials stored in `~/.codex/auth.json`. HyperNeo imports these credentials once into `~/.neokai/auth.json` for first-time use. Runtime requests do not depend on the Codex CLI or the legacy app-server adapter.
+Users who previously ran `codex login` may have credentials stored in `~/.codex/auth.json`. HyperNeo imports these credentials once into `~/.hyperneo/auth.json` for first-time use. Runtime requests do not depend on the Codex CLI or the legacy app-server adapter.
 
 ---
 

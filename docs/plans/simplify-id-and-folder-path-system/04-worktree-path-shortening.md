@@ -8,11 +8,11 @@ Shorten the worktree base directory path by replacing the full encoded repo path
 
 Current worktree path format:
 ```
-~/.neokai/projects/{full-encoded-repo-path}/worktrees/{safeSessionId}
+~/.hyperneo/projects/{full-encoded-repo-path}/worktrees/{safeSessionId}
 ```
 Example:
 ```
-/Users/lsm/.neokai/projects/-Users-lsm-focus-dev-neokai/worktrees/planner-04062505-...
+/Users/lsm/.hyperneo/projects/-Users-lsm-focus-dev-neokai/worktrees/planner-04062505-...
 ```
 
 The long encoded path comes from `WorktreeManager.encodeRepoPath()` in `packages/daemon/src/lib/worktree-manager.ts`. The `getWorktreeBaseDir()` method uses this encoding to produce the base directory.
@@ -39,9 +39,9 @@ The `WorktreeManager` does not store anything in the DB — it operates purely o
    - Sanitize `lastComponent`: replace characters invalid in directory names with `-` (keep alphanumeric, hyphens, underscores)
 2. Update `getWorktreeBaseDir(gitRoot: string)` to resolve the short key with collision detection (see subtask 3). **The method signature stays synchronous** (`private getWorktreeBaseDir(gitRoot: string): string`) — all file I/O in this method must use synchronous Node `fs` APIs (`existsSync`, `mkdirSync`, `readFileSync`, `writeFileSync`) consistent with the existing method body, to avoid cascading `async` changes to `createWorktree` and its callers.
 3. Implement collision detection in `getWorktreeBaseDir` using a sentinel file approach:
-   - After computing `shortKey`, determine the candidate base dir: `~/.neokai/projects/{shortKey}`
-   - **On first use** (directory doesn't exist yet): call `mkdirSync(candidateDir, { recursive: true })` and write a `.neokai-repo-root` sentinel file inside it containing the full normalized `gitRoot` path (use `writeFileSync`). Then return `candidateDir` as the base dir.
-   - **On subsequent use** (directory already exists): read the `.neokai-repo-root` sentinel file with `readFileSync` (if present) and compare its contents (trimmed) to the normalized `gitRoot`.
+   - After computing `shortKey`, determine the candidate base dir: `~/.hyperneo/projects/{shortKey}`
+   - **On first use** (directory doesn't exist yet): call `mkdirSync(candidateDir, { recursive: true })` and write a `.hyperneo-repo-root` sentinel file inside it containing the full normalized `gitRoot` path (use `writeFileSync`). Then return `candidateDir` as the base dir.
+   - **On subsequent use** (directory already exists): read the `.hyperneo-repo-root` sentinel file with `readFileSync` (if present) and compare its contents (trimmed) to the normalized `gitRoot`.
      - If they match (same repo): proceed normally, return the short-key base dir.
      - If they differ (collision — different repo mapped to same short key): use `this.logger.warn(...)` to log the collision (e.g., `this.logger.warn('Short key collision detected for "${shortKey}": expected "${storedPath}", got "${gitRoot}". Falling back to full encoding.')`) and fall back to `encodeRepoPath(gitRoot)` to produce the full-length base dir. **Do NOT use `console.warn`** — `no-console` is an error in `.oxlintrc.json` and `worktree-manager.ts` is not exempt; the file already uses `this.logger` (initialized at line ~24 as `private logger = new Logger('WorktreeManager')`).
    - If the directory exists but has no sentinel file (e.g., created by an older version of HyperNeo): write the sentinel for the current repo path using `writeFileSync` and proceed normally.
@@ -59,8 +59,8 @@ The `WorktreeManager` does not store anything in the DB — it operates purely o
 **Acceptance Criteria**:
 - `getProjectShortKey('/Users/alice/code/my-project')` returns a string like `my-project-a3b2c1d4`
 - The key is deterministic — calling twice with the same input returns the same result
-- New worktrees for a repo are created at `~/.neokai/projects/{shortKey}/worktrees/...` after the sentinel file is written
-- A `.neokai-repo-root` sentinel file is written into each short-key directory on first use, containing the full normalized repo path
+- New worktrees for a repo are created at `~/.hyperneo/projects/{shortKey}/worktrees/...` after the sentinel file is written
+- A `.hyperneo-repo-root` sentinel file is written into each short-key directory on first use, containing the full normalized repo path
 - When two different repo paths produce the same short key, the second repo logs a warning and falls back to the full `encodeRepoPath` directory — both repos operate on distinct directories with no data mixing
 - Old worktrees (with long paths) continue to work — `verifyWorktree` checks the `worktreePath` stored in DB, so existing records still point to the old path which still exists on disk
 - All unit tests pass (including the collision scenario test)

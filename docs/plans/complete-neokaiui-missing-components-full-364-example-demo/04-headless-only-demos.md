@@ -13,14 +13,14 @@ Port the 2 reference files that use headlessui but NOT heroicons. These are noti
 ## Porting Checklist (per file)
 
 Everything from M2 checklist PLUS:
-1. Convert headlessui imports to @neokai/ui equivalents:
+1. Convert headlessui imports to @hyperneo/ui equivalents:
    - Reference uses headlessui Dialog, DialogPanel, DialogBackdrop, DialogTitle, Transition, TransitionChild, etc.
-   - Map to @neokai/ui component imports from `../../src/mod.ts` (or relative path from demo sections)
+   - Map to @hyperneo/ui component imports from `../../src/mod.ts` (or relative path from demo sections)
 2. Convert headlessui component APIs:
    - `open` / `onClose` props map directly
    - Data attribute variants (`data-closed:`, `data-open:`, etc.) convert to bracketed form
-   - `Transition` and `TransitionChild` usage is identical between headlessui and @neokai/ui
-3. Handle any headlessui-specific patterns (e.g., `Transition.Child` -> `TransitionChild` in @neokai/ui)
+   - `Transition` and `TransitionChild` usage is identical between headlessui and @hyperneo/ui
+3. Handle any headlessui-specific patterns (e.g., `Transition.Child` -> `TransitionChild` in @hyperneo/ui)
 
 ## Tasks
 
@@ -34,13 +34,13 @@ Everything from M2 checklist PLUS:
    - `overlays/notifications/04-with-avatar.jsx`: Notification toast with avatar. Uses Dialog/Transition from headlessui.
    - `overlays/notifications/05-with-split-buttons.jsx`: Notification toast with split action buttons. Uses Dialog/Transition from headlessui.
 
-2. Convert headlessui imports to @neokai/ui imports. The existing NotificationDemo already imports from `../../src/mod.ts`, so follow the same pattern.
+2. Convert headlessui imports to @hyperneo/ui imports. The existing NotificationDemo already imports from `../../src/mod.ts`, so follow the same pattern.
 
 3. Verify the new notification examples integrate well with the existing toast system (Toaster + useToast).
 
 **Acceptance criteria**:
 - 2 new notification variants render correctly in the NotificationDemo section
-- All headlessui imports replaced with @neokai/ui imports
+- All headlessui imports replaced with @hyperneo/ui imports
 - No `@headlessui` imports remain
 - Toast system still works for all notification variants
 - `bun run dev` starts without errors

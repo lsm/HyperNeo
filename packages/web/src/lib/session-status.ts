@@ -17,7 +17,7 @@
  */
 
 import { signal, computed } from '@preact/signals';
-import type { AgentProcessingState } from '@neokai/shared';
+import type { AgentProcessingState } from '@hyperneo/shared';
 import { sessions } from './state.ts';
 import { currentSessionIdSignal } from './signals.ts';
 

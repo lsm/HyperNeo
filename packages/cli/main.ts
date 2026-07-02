@@ -1,12 +1,12 @@
 #!/usr/bin/env bun
 export {};
 
-if (process.argv[2] === '--neokai-acp-mcp-proxy') {
-  const { startAcpMcpProxy } = await import('@neokai/daemon/lib/acp/mcp-proxy-entry');
+if (process.argv[2] === '--hyperneo-acp-mcp-proxy') {
+  const { startAcpMcpProxy } = await import('@hyperneo/daemon/lib/acp/mcp-proxy-entry');
   startAcpMcpProxy(process.argv.slice(3));
 } else {
   const [{ getConfig }, { parseArgs, getHelpText }] = await Promise.all([
-    import('@neokai/daemon/config'),
+    import('@hyperneo/daemon/config'),
     import('./src/cli-utils'),
   ]);
   // Parse CLI arguments

@@ -1,5 +1,5 @@
 import type { Database as BunDatabase } from 'bun:sqlite';
-import type { MessageHub } from '@neokai/shared';
+import type { MessageHub } from '@hyperneo/shared';
 import { Logger } from '../../logger';
 import { isRateLimitError } from '../../space/runtime/rate-limit-detector';
 import { type CredentialStore } from '../../credentials/credential-store.js';
@@ -2257,19 +2257,21 @@ function reactionIdFrom(row: unknown): string {
 }
 
 function getConfiguredWebhookUrl(): string {
-  const baseUrl = process.env.NEOKAI_PUBLIC_URL ?? process.env.PUBLIC_URL;
+  // Fall back to the legacy NEOKAI_PUBLIC_URL during the rename transition.
+  const baseUrl =
+    process.env.HYPERNEO_PUBLIC_URL ?? process.env.NEOKAI_PUBLIC_URL ?? process.env.PUBLIC_URL;
   if (!baseUrl) {
-    throw new Error('NEOKAI_PUBLIC_URL is required to configure GitHub webhooks');
+    throw new Error('HYPERNEO_PUBLIC_URL is required to configure GitHub webhooks');
   }
 
   let url: URL;
   try {
     url = new URL(WEBHOOK_PATH, baseUrl);
   } catch {
-    throw new Error('NEOKAI_PUBLIC_URL must be a valid URL');
+    throw new Error('HYPERNEO_PUBLIC_URL must be a valid URL');
   }
   if (url.protocol !== 'https:' && url.hostname !== 'localhost' && url.hostname !== '127.0.0.1') {
-    throw new Error('NEOKAI_PUBLIC_URL must use HTTPS unless it points to localhost');
+    throw new Error('HYPERNEO_PUBLIC_URL must use HTTPS unless it points to localhost');
   }
   return url.toString();
 }

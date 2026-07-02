@@ -1,8 +1,8 @@
 /**
- * Utility for syncing built-in skill files to ~/.neokai/skills/.
+ * Utility for syncing built-in skill files to ~/.hyperneo/skills/.
  *
  * Used by the dev server to copy skill files from the packages/skills/ source
- * directory to ~/.neokai/skills/ on startup. Existing files are never overwritten
+ * directory to ~/.hyperneo/skills/ on startup. Existing files are never overwritten
  * so that user customizations are preserved.
  *
  * The prod (compiled binary) server uses a different path — it reads from Bun's
@@ -12,7 +12,7 @@
 
 import { readdir, readFile, writeFile, access, mkdir } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
-import { createLogger } from '@neokai/shared';
+import { createLogger } from '@hyperneo/shared';
 
 const log = createLogger('hyperneo:cli:skill-utils');
 

@@ -16,7 +16,7 @@ Independent code search found the legacy adapter under:
 - `packages/daemon/src/lib/providers/codex-anthropic-bridge/token-estimator.ts`
 - `packages/daemon/src/lib/providers/codex-anthropic-bridge/model-context-windows.ts`
 
-It was reachable from `AnthropicToCodexBridgeProvider` through the `NEOKAI_OPENAI_BRIDGE_ADAPTER=codex` fallback path and depended on the bundled `@openai/codex` package to spawn `codex app-server` subprocesses.
+It was reachable from `AnthropicToCodexBridgeProvider` through the `HYPERNEO_OPENAI_BRIDGE_ADAPTER=codex` fallback path and depended on the bundled `@openai/codex` package to spawn `codex app-server` subprocesses.
 
 ### OpenAI Responses bridge coverage
 
@@ -37,7 +37,7 @@ No session database columns require the legacy adapter. Existing sessions that u
 
 Removed legacy configuration/runtime dependencies:
 
-- `NEOKAI_OPENAI_BRIDGE_ADAPTER=codex` fallback path
+- `HYPERNEO_OPENAI_BRIDGE_ADAPTER=codex` fallback path
 - `CODEX_API_KEY` runtime env-var auth path
 - `@openai/codex` package dependency
 - Codex binary discovery and subprocess startup
@@ -49,7 +49,7 @@ Preserved compatibility:
 - Codex model IDs and aliases remain unchanged
 - `OPENAI_API_KEY` direct auth remains supported
 - HyperNeo OpenAI OAuth remains supported
-- One-time import from `~/.codex/auth.json` remains supported so existing Codex-login users can migrate credentials into `~/.neokai/auth.json`
+- One-time import from `~/.codex/auth.json` remains supported so existing Codex-login users can migrate credentials into `~/.hyperneo/auth.json`
 
 ## Changes Made
 

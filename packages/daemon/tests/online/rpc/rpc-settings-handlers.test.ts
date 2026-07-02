@@ -18,7 +18,7 @@
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { createDaemonServer, type DaemonServerContext } from '../../helpers/daemon-server';
-import type { GlobalSettings } from '@neokai/shared';
+import type { GlobalSettings } from '@hyperneo/shared';
 
 describe('Settings RPC Handlers', () => {
   let daemon: DaemonServerContext;

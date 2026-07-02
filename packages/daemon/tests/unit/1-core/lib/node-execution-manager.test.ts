@@ -49,7 +49,7 @@ import {
   isValidNodeExecutionTransition,
   isNodeExecutionTerminal,
 } from '../../../../src/lib/space/managers/node-execution-manager.ts';
-import type { NodeExecutionStatus } from '@neokai/shared';
+import type { NodeExecutionStatus } from '@hyperneo/shared';
 
 // ---------------------------------------------------------------------------
 // Helpers

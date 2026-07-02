@@ -6,15 +6,15 @@ import {
   THINKING_LEVEL_TOKENS,
   type MessageContent,
   type Session,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import type {
   AcpConfigOption,
   AcpContentBlock,
   AcpMcpServerConfig,
   AcpPermissionRequest,
   AcpPermissionResponseResult,
-} from '@neokai/shared/acp';
-import type { McpServerConfig, SDKMessage, SDKUserMessage } from '@neokai/shared/sdk';
+} from '@hyperneo/shared/acp';
+import type { McpServerConfig, SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
 import { ErrorCategory } from '../error-manager';
 import { getModelsCache, setModelsCache } from '../model-service';
 import { getProviderRegistry } from '../providers/factory';
@@ -38,7 +38,8 @@ const DEFAULT_STARTUP_TIMEOUT_MS = 15000;
 const RETRY_EXIT_TIMEOUT_MS = 5000;
 
 function getStartupTimeoutMs(): number {
-  const raw = process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS;
+  const raw =
+    process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS ?? process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS;
   if (!raw) return DEFAULT_STARTUP_TIMEOUT_MS;
   const parsed = Number.parseInt(raw, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_STARTUP_TIMEOUT_MS;
@@ -145,11 +146,11 @@ export function parseAcpCommand(commandLine: string): { command: string; args: s
 
   if (escaping) current += '\\';
   if (quote) {
-    throw new Error('Invalid NEOKAI_ACP_COMMAND: unmatched quote');
+    throw new Error('Invalid HYPERNEO_ACP_COMMAND: unmatched quote');
   }
   if (current) tokens.push(current);
   if (tokens.length === 0) {
-    throw new Error('Invalid NEOKAI_ACP_COMMAND: command is empty');
+    throw new Error('Invalid HYPERNEO_ACP_COMMAND: command is empty');
   }
 
   return { command: tokens[0], args: tokens.slice(1) };
@@ -227,7 +228,7 @@ export function convertMcpServersForAcp(
             command: process.execPath,
             args: [
               import.meta.url.includes('/$bunfs/root/')
-                ? '--neokai-acp-mcp-proxy'
+                ? '--hyperneo-acp-mcp-proxy'
                 : fileURLToPath(new URL('./mcp-proxy-server.ts', import.meta.url)),
               '--socketPath',
               proxyBridge.socketPath,
@@ -483,9 +484,10 @@ export class AcpQueryRunner {
       let queryOptions = await optionsBuilder.build();
       queryOptions = await this.ensureRequiredMcpServersForAcp(queryOptions);
 
-      const acpCommand = process.env.NEOKAI_ACP_COMMAND;
+      // Fall back to the legacy NEOKAI_ACP_COMMAND during the rename transition.
+      const acpCommand = process.env.HYPERNEO_ACP_COMMAND ?? process.env.NEOKAI_ACP_COMMAND;
       if (!acpCommand) {
-        throw new Error('Set NEOKAI_ACP_COMMAND to enable ACP agents.');
+        throw new Error('Set HYPERNEO_ACP_COMMAND to enable ACP agents.');
       }
       const { command, args } = parseAcpCommand(acpCommand);
       // Snapshot auth tokens BEFORE provider cleanup — clearProviderRoutingEnvVars()
@@ -538,7 +540,7 @@ export class AcpQueryRunner {
             logger.error(
               `ACP startup timeout: ACP agent did not respond within ${elapsed}ms. ` +
                 `Command: ${command}, workspace: ${cwd} ` +
-                `(Hint: set NEOKAI_SDK_STARTUP_TIMEOUT_MS to increase timeout, currently ${startupTimeoutMs}ms)`
+                `(Hint: set HYPERNEO_SDK_STARTUP_TIMEOUT_MS to increase timeout, currently ${startupTimeoutMs}ms)`
             );
             abortController.abort();
             this.ctx.queryObject?.close();
@@ -902,7 +904,7 @@ export class AcpQueryRunner {
         is429Error &&
         !!(await this.ctx.onRateLimitExhausted?.(errorMessage, this._lastConsumedUserMessage));
       const userMessage = isStartupTimeout
-        ? `The ACP agent failed to start (workspace: ${session.workspacePath ?? 'unbound'}). Check NEOKAI_ACP_COMMAND and resend your message.`
+        ? `The ACP agent failed to start (workspace: ${session.workspacePath ?? 'unbound'}). Check HYPERNEO_ACP_COMMAND and resend your message.`
         : errorMessage.includes('[MCP invariant]')
           ? errorMessage
           : undefined;

@@ -7,8 +7,8 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
-import { MessageHub } from '@neokai/shared';
-import type { CustomEndpointConfig, GlobalSettings } from '@neokai/shared';
+import { MessageHub } from '@hyperneo/shared';
+import type { CustomEndpointConfig, GlobalSettings } from '@hyperneo/shared';
 import { registerSettingsHandlers } from '../../../../src/lib/rpc-handlers/settings-handlers';
 import { registerCustomEndpointHandlers } from '../../../../src/lib/rpc-handlers/custom-endpoint-handlers';
 import type { SettingsManager } from '../../../../src/lib/settings-manager';

@@ -92,7 +92,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 2. Instantiate `NeoAgentManager` in `createDaemonApp()` after SettingsManager and before RPC handler setup
 3. Call `neoAgentManager.provision()` after session manager is ready (similar to `provisionGlobalSpacesAgent` placement)
 4. Add `neoAgentManager.cleanup()` to the shutdown sequence
-5. Skip provisioning in test mode unless `NEOKAI_ENABLE_NEO_AGENT=1` (matching the spaces agent pattern)
+5. Skip provisioning in test mode unless `HYPERNEO_ENABLE_NEO_AGENT=1` (matching the spaces agent pattern)
 6. Return `neoAgentManager` in the context object
 7. Add integration test verifying Neo session exists after daemon startup
 

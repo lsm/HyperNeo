@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import type { SpaceWorkerAgent, SpaceWorkflow } from '@neokai/shared';
+import type { SpaceWorkerAgent, SpaceWorkflow } from '@hyperneo/shared';
 import {
   filterAgents,
   buildTemplateNodes,

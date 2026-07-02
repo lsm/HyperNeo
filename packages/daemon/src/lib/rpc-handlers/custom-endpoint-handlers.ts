@@ -7,8 +7,8 @@
  * take effect immediately without a daemon restart.
  */
 
-import type { MessageHub } from '@neokai/shared';
-import type { CustomEndpointConfig, CustomEndpointType } from '@neokai/shared';
+import type { MessageHub } from '@hyperneo/shared';
+import type { CustomEndpointConfig, CustomEndpointType } from '@hyperneo/shared';
 import { customProviderIdFor } from '../providers/custom-endpoint-provider.js';
 import type { SettingsManager } from '../settings-manager';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';

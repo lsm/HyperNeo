@@ -473,7 +473,9 @@ describe('DaemonInternalEventMap — settings.updated end-to-end', () => {
 
     const result = await bus.publish('settings.updated', {
       namespaceId: 'global',
-      settings: { model: 'claude-sonnet-4' } as unknown as import('@neokai/shared').GlobalSettings,
+      settings: {
+        model: 'claude-sonnet-4',
+      } as unknown as import('@hyperneo/shared').GlobalSettings,
     });
 
     expect(result.delivered).toBe(1);
@@ -499,7 +501,7 @@ describe('DaemonInternalEventMap — settings.updated end-to-end', () => {
     const start = performance.now();
     bus.publishAsync('settings.updated', {
       namespaceId: 'global',
-      settings: {} as unknown as import('@neokai/shared').GlobalSettings,
+      settings: {} as unknown as import('@hyperneo/shared').GlobalSettings,
     });
     const elapsed = performance.now() - start;
 

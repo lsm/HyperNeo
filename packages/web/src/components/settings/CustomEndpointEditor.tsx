@@ -11,11 +11,11 @@ import type {
   CustomEndpointModel,
   CustomEndpointModelCapabilities,
   CustomEndpointType,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import {
   DEFAULT_CUSTOM_ENDPOINT_CAPABILITIES,
   CUSTOM_ENDPOINT_TYPE_CAPABILITY_DEFAULTS,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import { Button } from '../ui/Button.tsx';
 import { cn } from '../../lib/utils.ts';
 import {

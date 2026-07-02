@@ -18,8 +18,8 @@
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'preact/hooks';
-import type { ModelInfo } from '@neokai/shared';
-import type { ProviderAuthStatus } from '@neokai/shared/provider';
+import type { ModelInfo } from '@hyperneo/shared';
+import type { ProviderAuthStatus } from '@hyperneo/shared/provider';
 import { connectionManager } from '../lib/connection-manager';
 import { connectionState } from '../lib/state';
 import { toast } from '../lib/toast';

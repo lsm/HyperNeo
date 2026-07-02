@@ -14,12 +14,12 @@
 
 import type { Database as BunDatabase } from 'bun:sqlite';
 import { RESERVED_SPACE_AGENT_HANDLES, slugify, slugifyWithinLimit } from '../../lib/space/slug';
-import { generateUUID } from '@neokai/shared';
+import { generateUUID } from '@hyperneo/shared';
 import type {
   SpaceWorkerAgent,
   CreateSpaceWorkerAgentParams,
   UpdateSpaceWorkerAgentParams,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import type { SQLiteValue } from '../types';
 
 export class SpaceAgentRepository {
