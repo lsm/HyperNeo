@@ -1202,7 +1202,7 @@ post-approval session layer rather than at the `merge_pr` tool layer.
 - **Workflow schema (shared types):** removing `completionActions`,
   `CompletionAction`, `completionActionsFiredAt`, `pendingActionIndex`,
   `pendingCheckpointType: 'completion_action'` is a breaking change to
-  `@neokai/shared`. HyperNeo ships as a single repo; no external consumers.
+  `@hyperneo/shared`. HyperNeo ships as a single repo; no external consumers.
   Adding `postApproval` is an additive, non-breaking change.
 - **Task status `approved`:** additive; existing status values unchanged.
   No existing caller queries for `approved` tasks (it didn't exist). UI
@@ -1236,7 +1236,7 @@ post-approval session layer rather than at the `merge_pr` tool layer.
   `in_progress → approved`. Runtime emits `[TASK_APPROVED]` as an
   awareness-only event. Task Agent system prompt gets a short
   `## Post-Approval` section. Behind a feature flag
-  (`NEOKAI_TASK_AGENT_POST_APPROVAL_ROUTING`). ~750 LOC; depends on PR 1.
+  (`HYPERNEO_TASK_AGENT_POST_APPROVAL_ROUTING`). ~750 LOC; depends on PR 1.
 - **PR 3** — **End-node handoff + built-in workflow `postApproval`
   entries.** Update all 5 built-in workflow prompts. Populate `postApproval`
   on Coding, Research, QA. Flip the feature flag. ~500 LOC; depends on PR 2.
@@ -1272,7 +1272,7 @@ post-approval session layer rather than at the `merge_pr` tool layer.
   - `post-approval.route: spaceId=... taskId=... targetAgent=... mode=<spawn|inline|none> autonomyLevel=...`
   - `post-approval.complete: spaceId=... taskId=... outcome=done|blocked reason=... mode=<spawn|inline>`
   - `task.status-transition: taskId=... from=... to=... source=<approve_task|approvePendingCompletion|post-approval-router|...>`
-- Feature flag (`NEOKAI_TASK_AGENT_POST_APPROVAL_ROUTING`) allows a quick
+- Feature flag (`HYPERNEO_TASK_AGENT_POST_APPROVAL_ROUTING`) allows a quick
   disable. When disabled, tasks transition directly to `done` and no
   post-approval session spawns — identical to today's no-completion-actions
   behaviour for workflows without `postApproval`.

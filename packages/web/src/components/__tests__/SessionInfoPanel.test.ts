@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { extractBackgroundTasks } from '../../hooks/useRunningToolUseIds.ts';
-import type { ChatMessage } from '@neokai/shared';
+import type { ChatMessage } from '@hyperneo/shared';
 
 describe('SessionInfoPanel', () => {
   it('extracts paused background task updates from transcript messages', () => {

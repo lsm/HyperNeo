@@ -1,6 +1,6 @@
 import { describe, test, expect } from 'bun:test';
 import { buildCustomAgentTaskMessage } from '../../../../src/lib/space/agents/custom-agent.ts';
-import type { Space, SpaceWorkerAgent, SpaceTask } from '@neokai/shared';
+import type { Space, SpaceWorkerAgent, SpaceTask } from '@hyperneo/shared';
 import type { AgentMemorySearchResult } from '../../../../src/storage/repositories/agent-memory-repository.ts';
 
 const space: Space = {

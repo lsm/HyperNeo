@@ -12,7 +12,7 @@ This plan adds two capabilities:
 
 ### Part A: Customizable Badges (label + color on Gate)
 
-Add optional `label?: string` and `color?: string` fields to the `Gate` interface in `@neokai/shared`. When set, these override the heuristic-derived badge text and color on channel edges. When not set, the existing heuristic logic in `resolveSemanticGateType()` and `EdgeRenderer.tsx` continues to work unchanged.
+Add optional `label?: string` and `color?: string` fields to the `Gate` interface in `@hyperneo/shared`. When set, these override the heuristic-derived badge text and color on channel edges. When not set, the existing heuristic logic in `resolveSemanticGateType()` and `EdgeRenderer.tsx` continues to work unchanged.
 
 - `color` uses hex-only format (`#rrggbb`), validated via regex at the boundary
 - `label` is capped at 20 characters
@@ -84,7 +84,7 @@ Making `fields` optional on `Gate` introduces `undefined` at every `gate.fields`
 - `computeGateDefaults(undefined)` returns `{}`
 - `computeGateDefaults([])` returns `{}`
 - `computeGateDefaults(someFields)` returns the same result as before
-- `GateScript` type is exported from `@neokai/shared`
+- `GateScript` type is exported from `@hyperneo/shared`
 
 **Dependencies:** None
 **Agent type:** coder
@@ -202,7 +202,7 @@ Making `fields` optional on `Gate` introduces `undefined` at every `gate.fields`
    }
    ```
 2. Define `RESTRICTED_ENV_PATTERNS` — list of env var prefixes/keys to strip. **Threat model:** scripts are trusted (workspace-author-configured) but env is restricted as defense-in-depth:
-   - Prefixes: `ANTHROPIC_`, `CLAUDE_`, `GLM_`, `ZHIPU_`, `COPILOT_`, `NEOKAI_SECRET_`
+   - Prefixes: `ANTHROPIC_`, `CLAUDE_`, `GLM_`, `ZHIPU_`, `COPILOT_`, `HYPERNEO_SECRET_`
    - Pattern: any key matching `/SECRET|TOKEN|PASSWORD|CREDENTIAL|API_KEY/i`
    - Always allow: `PATH`, `HOME`, `USER`, `SHELL`, `LANG`, `TERM`, `TMPDIR`
 3. Implement `buildRestrictedEnv(): Record<string, string | undefined>`:
@@ -217,7 +217,7 @@ Making `fields` optional on `Gate` introduces `undefined` at every `gate.fields`
    - Trim whitespace, parse as JSON
    - Return null if parse fails or result is not a plain object
 6. Implement `executeGateScript(script: GateScript, context: { workspacePath: string; gateId: string; runId: string }): Promise<GateScriptResult>`:
-   - Build restricted env; inject `NEOKAI_GATE_ID`, `NEOKAI_WORKFLOW_RUN_ID`, `NEOKAI_WORKSPACE_PATH`
+   - Build restricted env; inject `HYPERNEO_GATE_ID`, `HYPERNEO_WORKFLOW_RUN_ID`, `HYPERNEO_WORKSPACE_PATH`
    - Set `cwd` to `context.workspacePath`
    - Determine interpreter binary: `bash` -> `['bash', '-c', script.source]`, `node` -> `['node', '-e', script.source]`, `python3` -> `['python3', '-c', script.source]`
    - Spawn with `Bun.spawn()`, capture stdout + stderr
@@ -254,8 +254,8 @@ Making `fields` optional on `Gate` introduces `undefined` at every `gate.fields`
 6. Test deep merge with depth limit
 7. Test prototype pollution prevention (`__proto__`, `constructor`, `prototype`)
 8. Test non-JSON stdout handling (returns empty data, no error)
-9. Test `workspacePath` is set as `cwd` and injected as `NEOKAI_WORKSPACE_PATH`
-10. Test `NEOKAI_GATE_ID` and `NEOKAI_WORKFLOW_RUN_ID` are injected
+9. Test `workspacePath` is set as `cwd` and injected as `HYPERNEO_WORKSPACE_PATH`
+10. Test `HYPERNEO_GATE_ID` and `HYPERNEO_WORKFLOW_RUN_ID` are injected
 
 **Acceptance criteria:**
 - All tests pass with `bun test`

@@ -22,8 +22,8 @@
  * init→result cycle).
  */
 
-import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
-import type { ActiveTurnSummary, ActivityEntry, ActorMessageDeliveryState } from '@neokai/shared';
+import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
+import type { ActiveTurnSummary, ActivityEntry, ActorMessageDeliveryState } from '@hyperneo/shared';
 import {
   isSDKAssistantMessage,
   isSDKCompactBoundary,
@@ -33,7 +33,7 @@ import {
   isSDKResultMessage,
   isSDKSystemInit,
   isToolUseBlock,
-} from '@neokai/shared/sdk/type-guards';
+} from '@hyperneo/shared/sdk/type-guards';
 
 type SystemInitMessage = Extract<SDKMessage, { type: 'system'; subtype: 'init' }>;
 type CompactBoundaryMessage = Extract<SDKMessage, { type: 'system'; subtype: 'compact_boundary' }>;
@@ -112,7 +112,7 @@ interface MinimalThreadFeedProps {
  *   - `user`     : `👤 You: please retry`                   (user glyph + body)
  *   - `handoff`  : `↪ Reviewer Agent: please verify`        (handoff glyph + body)
  *
- * Server-derived: shapes mirror `ActivityEntry` from `@neokai/shared` 1:1. The
+ * Server-derived: shapes mirror `ActivityEntry` from `@hyperneo/shared` 1:1. The
  * mapping happens in `rosterEntriesFromSummary` so the renderer stays decoupled
  * from the wire format.
  */

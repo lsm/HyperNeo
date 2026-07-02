@@ -8,8 +8,8 @@
  */
 
 import { signal, computed } from '@preact/signals';
-import type { Session, AuthStatus, HealthStatus, SystemState } from '@neokai/shared';
-import type { LiveQueryDeltaEvent, LiveQuerySnapshotEvent } from '@neokai/shared';
+import type { Session, AuthStatus, HealthStatus, SystemState } from '@hyperneo/shared';
+import type { LiveQueryDeltaEvent, LiveQuerySnapshotEvent } from '@hyperneo/shared';
 import { vi } from 'vitest';
 
 // Mock connection-manager before importing GlobalStore

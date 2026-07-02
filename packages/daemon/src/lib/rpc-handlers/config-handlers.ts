@@ -12,7 +12,7 @@
  * - State updates are broadcast via InternalEventBus<DaemonInternalEventMap> events
  */
 
-import type { MessageHub, Session } from '@neokai/shared';
+import type { MessageHub, Session } from '@hyperneo/shared';
 import type {
   GetModelSettingsRequest,
   UpdateModelSettingsRequest,
@@ -38,7 +38,7 @@ import type {
   UpdatePermissionsConfigRequest,
   GetAllConfigRequest,
   UpdateBulkConfigRequest,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import { Logger } from '../logger';
 import type { SessionManager } from '../session-manager';

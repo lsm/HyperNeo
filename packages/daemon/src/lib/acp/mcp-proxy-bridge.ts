@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { toJSONSchema, z } from 'zod';
-import type { McpServerConfig } from '@neokai/shared/sdk';
+import type { McpServerConfig } from '@hyperneo/shared/sdk';
 
 type RegisteredTool = {
   description?: string;
@@ -58,8 +58,8 @@ export class AcpMcpProxyBridge {
 
   constructor(mcpServers: Record<string, McpServerConfig>) {
     const uniqueName = randomUUID();
-    this.socketPath = join(tmpdir(), `neokai-acp-proxy-${uniqueName}.sock`);
-    this.toolsPath = join(tmpdir(), `neokai-acp-proxy-tools-${uniqueName}.json`);
+    this.socketPath = join(tmpdir(), `hyperneo-acp-proxy-${uniqueName}.sock`);
+    this.toolsPath = join(tmpdir(), `hyperneo-acp-proxy-tools-${uniqueName}.json`);
     this.tools = this.collectTools(mcpServers);
   }
 
@@ -75,7 +75,7 @@ export class AcpMcpProxyBridge {
 
   async start(): Promise<void> {
     if (this.server) return;
-    this.socketDir = await mkdtemp(join(tmpdir(), 'neokai-acp-proxy-'));
+    this.socketDir = await mkdtemp(join(tmpdir(), 'hyperneo-acp-proxy-'));
     await writeFile(this.toolsPath, JSON.stringify(this.tools), { mode: 0o600 });
     for (const serverName of new Set(
       [...this.toolsByName.values()].map((tool) => tool.serverName)
@@ -87,7 +87,7 @@ export class AcpMcpProxyBridge {
       this.toolsPathByServer.set(serverName, serverToolsPath);
     }
     if (process.platform === 'win32') {
-      this.socketPath = `\\\\.\\pipe\\neokai-acp-proxy-${randomUUID()}`;
+      this.socketPath = `\\\\.\\pipe\\hyperneo-acp-proxy-${randomUUID()}`;
     } else {
       this.socketPath = join(this.socketDir, 'proxy.sock');
     }

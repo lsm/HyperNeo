@@ -13,8 +13,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import type { AppMcpServer, LiveQuerySnapshotEvent, LiveQueryDeltaEvent } from '@neokai/shared';
-import { McpRegistryListResponse, McpRegistryCreateResponse } from '@neokai/shared';
+import type { AppMcpServer, LiveQuerySnapshotEvent, LiveQueryDeltaEvent } from '@hyperneo/shared';
+import { McpRegistryListResponse, McpRegistryCreateResponse } from '@hyperneo/shared';
 
 // ---------------------------------------------------------------------------
 // Mocks

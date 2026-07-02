@@ -81,7 +81,7 @@ import {
   POST_APPROVAL_ROUTING_FLAG_ENV,
 } from '../../../../src/lib/space/runtime/post-approval-router.ts';
 import { createMarkCompleteHandler } from '../../../../src/lib/space/tools/end-node-handlers.ts';
-import type { SpaceTask, SpaceWorkflow } from '@neokai/shared';
+import type { SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
 
 // ---------------------------------------------------------------------------
 // DB + seed helpers
@@ -490,7 +490,7 @@ describe('PR 3/5 integration — dispatchPostApproval → spawn → mark_complet
     expect(h.taskRepo.getTask(taskId)!.status).toBe('done');
   });
 
-  test('kill-switch: NEOKAI_TASK_AGENT_POST_APPROVAL_ROUTING=0 disables routing at the call site', () => {
+  test('kill-switch: HYPERNEO_TASK_AGENT_POST_APPROVAL_ROUTING=0 disables routing at the call site', () => {
     // The router itself does not consult the flag (its callers do — see the
     // doc comment at the top of post-approval-router.ts). PR 4/5 deleted the
     // legacy completion-actions pipeline, so the flag's only remaining

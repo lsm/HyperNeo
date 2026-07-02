@@ -5,8 +5,8 @@
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
-import { generateUUID } from '@neokai/shared';
-import type { InboxItem, InboxItemStatus, SecurityCheckResult } from '@neokai/shared';
+import { generateUUID } from '@hyperneo/shared';
+import type { InboxItem, InboxItemStatus, SecurityCheckResult } from '@hyperneo/shared';
 import type { SQLiteValue } from '../types';
 
 /**

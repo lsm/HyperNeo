@@ -21,7 +21,7 @@
  *   - Multi-turn conversation support so the human rejection reply is
  *     threaded back into the post-approval session.
  *   - Per-spec env override for
- *     `NEOKAI_TASK_AGENT_POST_APPROVAL_ROUTING`.
+ *     `HYPERNEO_TASK_AGENT_POST_APPROVAL_ROUTING`.
  *
  * See `post-approval-merge-autonomy-high.e2e.ts` for the full discussion.
  */

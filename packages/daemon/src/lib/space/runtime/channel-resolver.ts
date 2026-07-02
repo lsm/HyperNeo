@@ -10,7 +10,7 @@
  * When no channels are declared (empty array), all `canSend()` calls return `false`.
  */
 
-import type { WorkflowChannel } from '@neokai/shared';
+import type { WorkflowChannel } from '@hyperneo/shared';
 
 export class ChannelResolver {
   constructor(private readonly channels: WorkflowChannel[]) {}

@@ -12,8 +12,8 @@
  */
 
 import { useMemo, useState, useEffect, useRef, useCallback } from 'preact/hooks';
-import { isChannelCyclic } from '@neokai/shared';
-import type { Gate, SpaceWorkflow, WorkflowChannel } from '@neokai/shared';
+import { isChannelCyclic } from '@hyperneo/shared';
+import type { Gate, SpaceWorkflow, WorkflowChannel } from '@hyperneo/shared';
 import { spaceStore } from '../../lib/space-store';
 import { connectionManager } from '../../lib/connection-manager';
 import type { WorkflowNodeData } from './visual-editor/WorkflowCanvas';

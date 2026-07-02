@@ -7,7 +7,7 @@
 
 import { describe, it, expect, beforeEach } from 'bun:test';
 import { ErrorManager, ErrorCategory } from '../../../../src/lib/error-manager';
-import { MessageHub } from '@neokai/shared';
+import { MessageHub } from '@hyperneo/shared';
 import {
   createDaemonInternalEventBus,
   type InternalEventBus,

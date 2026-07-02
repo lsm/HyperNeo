@@ -4,7 +4,7 @@ import {
   InboxItemRepository,
   type CreateInboxItemParams,
 } from '../../../../src/storage/repositories/inbox-item-repository';
-import type { SecurityCheckResult, InboxItem } from '@neokai/shared';
+import type { SecurityCheckResult, InboxItem } from '@hyperneo/shared';
 
 // ============================================================================
 // Test Data Factories

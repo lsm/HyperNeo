@@ -442,7 +442,7 @@ flowchart TB
 
 ```mermaid
 flowchart TB
-  subgraph Shared["@neokai/shared"]
+  subgraph Shared["@hyperneo/shared"]
     Contracts["contracts<br/>commands, queries, events"]
     DomainTypes["domain/*<br/>Space, Forge, Session, Settings"]
     ReadModelTypes["read-models/*"]
@@ -653,14 +653,14 @@ The architecture cleanup is complete when the following gates pass. These are in
 
 ### 11.6 Shared Package Boundary Gate
 
-- New cross-boundary request/response/event types live under `@neokai/shared/contracts/*`.
-- New durable entity types live under `@neokai/shared/domain/*`.
-- New UI/query projection types live under `@neokai/shared/read-models/*`.
+- New cross-boundary request/response/event types live under `@hyperneo/shared/contracts/*`.
+- New durable entity types live under `@hyperneo/shared/domain/*`.
+- New UI/query projection types live under `@hyperneo/shared/read-models/*`.
 - Provider, agent-runtime, messaging protocol, SDK declarations, utilities, and compatibility exports are reachable through explicit subpaths.
-- Root `@neokai/shared` imports are compatibility-only and are not added in migrated code.
+- Root `@hyperneo/shared` imports are compatibility-only and are not added in migrated code.
 - Forge has the same domain/contract/read-model split as Space.
 - MessageHub runtime classes are under compatibility exports, not the public messaging API used by new code.
-- `@neokai/shared` package exports match the allowed public and compatibility surfaces; exported paths do not point at missing files.
+- `@hyperneo/shared` package exports match the allowed public and compatibility surfaces; exported paths do not point at missing files.
 - Boundary enforcement exists as either lint, dependency checks, or a documented import allowlist with CI coverage.
 
 ### 11.7 Observability And Recovery Gate
@@ -675,9 +675,9 @@ The architecture cleanup is complete when the following gates pass. These are in
 
 - `packages/ui` owns canonical reusable primitives, base components, shared tokens, and public demos.
 - `packages/web/src/components/ui` contains product-specific compositions and explicitly temporary compatibility wrappers, not new generic primitives.
-- New feature code imports generic controls from `@neokai/ui` or uses product UI compositions that wrap `@neokai/ui`.
-- `packages/web/src/lib/design-tokens.ts` is either a compatibility facade over `@neokai/ui` tokens or contains only product-specific tokens.
-- Public `@neokai/ui` components have tests and demo/reference coverage.
+- New feature code imports generic controls from `@hyperneo/ui` or uses product UI compositions that wrap `@hyperneo/ui`.
+- `packages/web/src/lib/design-tokens.ts` is either a compatibility facade over `@hyperneo/ui` tokens or contains only product-specific tokens.
+- Public `@hyperneo/ui` components have tests and demo/reference coverage.
 - Accessibility-sensitive primitives have keyboard, focus, escape, outside-click, and ARIA coverage.
 - SDK tool renderers, including `ToolResultCard`, `ToolProgressCard`, the tool registry, output deletion, and nested subagent tool rendering, remain protected web-owned renderers unless a dedicated redesign PR changes them.
 

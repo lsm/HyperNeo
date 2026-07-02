@@ -9,8 +9,8 @@
  * SDK options directly.
  */
 
-import type { Provider, ProviderContext } from '@neokai/shared/provider';
-import type { Session, ProviderId } from '@neokai/shared';
+import type { Provider, ProviderContext } from '@hyperneo/shared/provider';
+import type { Session, ProviderId } from '@hyperneo/shared';
 import type { ProviderRegistry } from './registry.js';
 
 /**

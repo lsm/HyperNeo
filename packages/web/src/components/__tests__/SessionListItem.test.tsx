@@ -9,7 +9,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup, act } from '@testing-library/preact';
 import { signal, computed } from '@preact/signals';
-import type { Session, AgentProcessingState } from '@neokai/shared';
+import type { Session, AgentProcessingState } from '@hyperneo/shared';
 
 // Define signals after imports - use getters in vi.mock to defer evaluation
 let mockStatuses: ReturnType<

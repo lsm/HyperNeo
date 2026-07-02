@@ -12,7 +12,7 @@ import { rmSync } from 'node:fs';
 import { Database } from '../../../../src/storage/index';
 import { createReactiveDatabase } from '../../../../src/storage/reactive-database';
 import type { ReactiveDatabase } from '../../../../src/storage/reactive-database';
-import type { Session, SessionConfig, SessionMetadata } from '@neokai/shared';
+import type { Session, SessionConfig, SessionMetadata } from '@hyperneo/shared';
 
 // ---------------------------------------------------------------------------
 // Helpers

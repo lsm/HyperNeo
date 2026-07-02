@@ -1,5 +1,5 @@
 {
-  "name": "@neokai/cli",
+  "name": "@hyperneo/cli",
   "version": "0.38.0",
   "type": "module",
   "license": "Apache-2.0",
@@ -11,8 +11,8 @@
     "start": "NODE_ENV=production bun run main.ts"
   },
   "dependencies": {
-    "@neokai/daemon": "workspace:*",
-    "@neokai/shared": "workspace:*",
+    "@hyperneo/daemon": "workspace:*",
+    "@hyperneo/shared": "workspace:*",
     "hono": "4.12.23",
     "vite": "8.0.14"
   },

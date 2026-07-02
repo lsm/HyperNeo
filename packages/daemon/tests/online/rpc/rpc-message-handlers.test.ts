@@ -8,7 +8,7 @@
  * - message.send error handling
  *
  * MODES:
- * - Dev Proxy (default in CI): Set NEOKAI_USE_DEV_PROXY=1 for mocked responses
+ * - Dev Proxy (default in CI): Set HYPERNEO_USE_DEV_PROXY=1 for mocked responses
  * - Real API: Requires CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY
  */
 
@@ -21,7 +21,7 @@ import { sendMessage, waitForIdle, waitForSdkMessages } from '../../helpers/daem
 
 // Tests that send messages to mock SDK need longer timeout on CI
 const TIMEOUT = 15000;
-const IS_DEV_PROXY = process.env.NEOKAI_USE_DEV_PROXY === '1';
+const IS_DEV_PROXY = process.env.HYPERNEO_USE_DEV_PROXY === '1';
 
 describe('Message RPC Handlers', () => {
   let daemon: DaemonServerContext;
@@ -36,7 +36,7 @@ describe('Message RPC Handlers', () => {
   }, 15_000);
 
   async function createSessionWithMessages(title?: string): Promise<string> {
-    const workspacePath = mkdtempSync(join(tmpdir(), 'neokai-rpc-message-'));
+    const workspacePath = mkdtempSync(join(tmpdir(), 'hyperneo-rpc-message-'));
     const { sessionId } = (await daemon.messageHub.request('session.create', {
       workspacePath,
       title,

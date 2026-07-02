@@ -2,7 +2,7 @@
 
 ## Purpose
 
-M1 makes `@neokai/shared` explicit enough that MessageFabric, UoW, config/extensions, Agent Runtime, Space Runtime, and client read-model work can depend on stable subpaths instead of the root barrel.
+M1 makes `@hyperneo/shared` explicit enough that MessageFabric, UoW, config/extensions, Agent Runtime, Space Runtime, and client read-model work can depend on stable subpaths instead of the root barrel.
 
 This milestone is mostly `foundation` phase work. It should not change runtime behavior, WebSocket/RPC behavior, database behavior, or UI visuals.
 
@@ -14,7 +14,7 @@ This milestone is mostly `foundation` phase work. It should not change runtime b
 
 Current facts:
 
-- `@neokai/shared` root literal specs: 941.
+- `@hyperneo/shared` root literal specs: 941.
 - Files with at least one root literal: 626.
 - Root literals by package: `packages/daemon` 597, `packages/web` 339, `packages/cli` 4, `packages/e2e` 1.
 - Current root barrel: `packages/shared/src/mod.ts`.
@@ -26,7 +26,7 @@ Current facts:
 M1 is complete when:
 
 - package export-map parity is checked by a script or targeted test;
-- every exported `@neokai/shared` subpath points to an existing file;
+- every exported `@hyperneo/shared` subpath points to an existing file;
 - skeleton subpaths exist for `contracts`, `read-models`, `domain`, `messaging`, and `compat`;
 - `compat/root.ts` exists as the named legacy root surface;
 - root exports remain available for existing consumers;
@@ -65,7 +65,7 @@ Scope:
 
 Release safety:
 
-- Existing root `@neokai/shared` imports still compile.
+- Existing root `@hyperneo/shared` imports still compile.
 - New subpaths are additive.
 - Removing missing export paths is safe only because the paths currently point to files that do not exist and no repo imports use them.
 
@@ -124,7 +124,7 @@ Likely files:
 Acceptance:
 
 - Existing Forge UI and daemon tests compile unchanged.
-- Touched Forge files do not import Forge types from root `@neokai/shared`.
+- Touched Forge files do not import Forge types from root `@hyperneo/shared`.
 - Root import count decreases in the touched Forge files.
 - No payload rename leaks to public RPC behavior.
 
@@ -233,7 +233,7 @@ Disallowed:
 - `domain -> read-models`
 - `contracts -> message-hub router/transports`
 - `read-models -> message-hub router/transports`
-- new architecture files -> root `@neokai/shared`
+- new architecture files -> root `@hyperneo/shared`
 - web code -> `compat/message-hub` server/router internals
 
 ## Validation Baseline

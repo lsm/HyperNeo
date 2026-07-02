@@ -23,7 +23,7 @@
 import type { Database as BunDatabase } from 'bun:sqlite';
 import type { SdkMcpToolDefinition } from '@anthropic-ai/claude-agent-sdk';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
-import { generateUUID, KNOWN_TOOLS } from '@neokai/shared';
+import { generateUUID, KNOWN_TOOLS } from '@hyperneo/shared';
 import type {
   CreateEvolutionEpisodeParams,
   EvolutionEpisodeStatus,
@@ -44,7 +44,7 @@ import type {
   TaskProposalStatus,
   TaskScheduleStatus,
   TaskScheduleTriggerType,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import { parseAddress } from '../../../../../messaging/src/address';
 import { z } from 'zod';
 import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';

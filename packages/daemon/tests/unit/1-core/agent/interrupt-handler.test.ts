@@ -10,7 +10,7 @@ import {
   type InterruptHandlerContext,
 } from '../../../../src/lib/agent/interrupt-handler';
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
-import type { Session, MessageHub } from '@neokai/shared';
+import type { Session, MessageHub } from '@hyperneo/shared';
 import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
 import type { Logger } from '../../../../src/lib/logger';

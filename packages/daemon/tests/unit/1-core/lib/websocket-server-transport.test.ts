@@ -6,7 +6,7 @@
 
 import { describe, expect, it, beforeEach, mock, afterEach } from 'bun:test';
 import { WebSocketServerTransport } from '../../../../src/lib/websocket-server-transport';
-import type { MessageHubRouter, ClientConnection, HubMessage } from '@neokai/shared';
+import type { MessageHubRouter, ClientConnection, HubMessage } from '@hyperneo/shared';
 
 describe('WebSocketServerTransport', () => {
   let transport: WebSocketServerTransport;

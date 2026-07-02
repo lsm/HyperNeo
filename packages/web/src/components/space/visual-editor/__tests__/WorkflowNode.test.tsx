@@ -23,7 +23,7 @@ import { render, fireEvent, cleanup } from '@testing-library/preact';
 import { useState } from 'preact/hooks';
 import { WorkflowNode } from '../WorkflowNode';
 import type { WorkflowNodeProps } from '../WorkflowNode';
-import type { SpaceWorkerAgent } from '@neokai/shared';
+import type { SpaceWorkerAgent } from '@hyperneo/shared';
 import type { AgentTaskState } from '../../WorkflowNodeCard';
 import type { Point } from '../types';
 

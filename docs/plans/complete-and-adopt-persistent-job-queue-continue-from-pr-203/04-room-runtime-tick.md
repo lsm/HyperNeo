@@ -16,7 +16,7 @@ Replace the `setInterval` + `scheduleTick()` + `scheduleTickAfterRateLimitReset(
 - Fix `stopRuntime()` to call `runtimes.delete(roomId)`
 - Add `stoppedRooms` tracking for liveness checks
 - Wire handler through `RoomRuntimeService`
-- Optional: feature flag `NEOKAI_USE_JOB_QUEUE_ROOM_TICK` for rollback safety
+- Optional: feature flag `HYPERNEO_USE_JOB_QUEUE_ROOM_TICK` for rollback safety
 
 ## Scheduling Call Sites — Complete Inventory
 
@@ -165,7 +165,7 @@ grep -n 'queueMicrotask.*this\.tick' room-runtime.ts
    - Add `jobQueue?: JobQueueRepository` to `RoomRuntimeConfig` interface
    - Store `jobQueue` in the constructor
    - Import `enqueueRoomTick`, `cancelPendingTickJobs` from the handler file
-   - **Optional feature flag:** Check `process.env.NEOKAI_USE_JOB_QUEUE_ROOM_TICK !== 'false'` to allow disabling the migration without a full revert. If `false`, fall back to the old `setInterval` behavior. (This is optional but recommended for rollback safety.)
+   - **Optional feature flag:** Check `process.env.HYPERNEO_USE_JOB_QUEUE_ROOM_TICK !== 'false'` to allow disabling the migration without a full revert. If `false`, fall back to the old `setInterval` behavior. (This is optional but recommended for rollback safety.)
 2. In `start()`: Remove `this.tickTimer = setInterval(...)`, replace with `enqueueRoomTick(this.roomId, this.jobQueue, 0)` for immediate first tick
 3. In `stop()`: Remove `clearInterval(this.tickTimer)` and `this.tickTimer = null`. Add `cancelPendingTickJobs(this.roomId, this.jobQueue)` to cancel any pending tick jobs.
 4. Remove the `tickTimer` field
@@ -257,7 +257,7 @@ grep -n 'queueMicrotask.*this\.tick' room-runtime.ts
    - **Resume enqueues fresh tick:** resume the runtime, verify a new tick job is enqueued
    - Stopping a room prevents further tick scheduling and cancels pending jobs
    - Restarting a room resumes tick scheduling
-4. Run with `NEOKAI_USE_DEV_PROXY=1`
+4. Run with `HYPERNEO_USE_DEV_PROXY=1`
 
 **Acceptance criteria:**
 - Online test verifies end-to-end room tick via job queue

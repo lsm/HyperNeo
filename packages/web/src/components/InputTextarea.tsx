@@ -32,8 +32,8 @@ import { borderColors } from '../lib/design-tokens.ts';
 import CommandAutocomplete from './CommandAutocomplete.tsx';
 import ReferenceAutocomplete from './ReferenceAutocomplete.tsx';
 import MentionAutocomplete from './space/MentionAutocomplete.tsx';
-import type { ReferenceSearchResult } from '@neokai/shared';
-import { REFERENCE_PATTERN } from '@neokai/shared';
+import type { ReferenceSearchResult } from '@hyperneo/shared';
+import { REFERENCE_PATTERN } from '@hyperneo/shared';
 
 export interface InputTextareaProps {
   content: string;

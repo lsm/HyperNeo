@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { z } from 'zod';
-import type { MessageContent, MessageHub, Session } from '@neokai/shared';
-import type { SDKMessage, SDKUserMessage } from '@neokai/shared/sdk';
+import type { MessageContent, MessageHub, Session } from '@hyperneo/shared';
+import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { Database } from '../../../../src/storage/database';
 import type { ErrorManager } from '../../../../src/lib/error-manager';
 import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
@@ -228,17 +228,17 @@ describe('AcpQueryRunner', () => {
   let originalClaudeCodeOauthToken: string | undefined;
 
   beforeEach(() => {
-    originalAcpCommand = process.env.NEOKAI_ACP_COMMAND;
+    originalAcpCommand = process.env.HYPERNEO_ACP_COMMAND;
     originalAnthropicAuthToken = process.env.ANTHROPIC_AUTH_TOKEN;
     originalClaudeCodeOauthToken = process.env.CLAUDE_CODE_OAUTH_TOKEN;
-    process.env.NEOKAI_ACP_COMMAND = 'mock-acp --stdio';
+    process.env.HYPERNEO_ACP_COMMAND = 'mock-acp --stdio';
     resetProviderRegistry();
     resetProviderFactory();
   });
 
   afterEach(() => {
-    if (originalAcpCommand === undefined) delete process.env.NEOKAI_ACP_COMMAND;
-    else process.env.NEOKAI_ACP_COMMAND = originalAcpCommand;
+    if (originalAcpCommand === undefined) delete process.env.HYPERNEO_ACP_COMMAND;
+    else process.env.HYPERNEO_ACP_COMMAND = originalAcpCommand;
     if (originalAnthropicAuthToken === undefined) delete process.env.ANTHROPIC_AUTH_TOKEN;
     else process.env.ANTHROPIC_AUTH_TOKEN = originalAnthropicAuthToken;
     if (originalClaudeCodeOauthToken === undefined) delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
@@ -803,8 +803,8 @@ describe('AcpQueryRunner', () => {
       },
     });
 
-    const previousTimeout = process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS;
-    process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS = '20';
+    const previousTimeout = process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
+    process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = '20';
     await runner.start();
     await new Promise((resolve) => setTimeout(resolve, 50));
 
@@ -813,8 +813,8 @@ describe('AcpQueryRunner', () => {
 
     releaseMessage?.();
     await ctx.queryPromise;
-    if (previousTimeout === undefined) delete process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS;
-    else process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS = previousTimeout;
+    if (previousTimeout === undefined) delete process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
+    else process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = previousTimeout;
 
     expect(client.sendPrompt).toHaveBeenCalled();
   }, 1000);
@@ -841,12 +841,12 @@ describe('AcpQueryRunner', () => {
     };
     const runner = new AcpQueryRunner(ctx, () => clients.shift() as unknown as AcpClient);
 
-    const previousTimeout = process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS;
-    process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS = '20';
+    const previousTimeout = process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
+    process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = '20';
     await runner.start();
     await ctx.queryPromise;
-    if (previousTimeout === undefined) delete process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS;
-    else process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS = previousTimeout;
+    if (previousTimeout === undefined) delete process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
+    else process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = previousTimeout;
 
     expect(previousOnMessageEnqueued).toHaveBeenCalledWith('user-message-1', expect.any(Number));
     expect(firstClient.close).toHaveBeenCalled();
@@ -869,12 +869,12 @@ describe('AcpQueryRunner', () => {
     const { ctx } = createRunnerFixture({ client: firstClient, queueSize: 1 });
     const runner = new AcpQueryRunner(ctx, () => clients.shift() as unknown as AcpClient);
 
-    const previousTimeout = process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS;
-    process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS = '20';
+    const previousTimeout = process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
+    process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = '20';
     await runner.start();
     await ctx.queryPromise;
-    if (previousTimeout === undefined) delete process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS;
-    else process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS = previousTimeout;
+    if (previousTimeout === undefined) delete process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
+    else process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = previousTimeout;
 
     expect(firstClient.close).toHaveBeenCalled();
     expect(secondClient.sendPrompt).toHaveBeenCalled();
@@ -909,12 +909,12 @@ describe('AcpQueryRunner', () => {
     });
     const runner = new AcpQueryRunner(ctx, () => clients.shift() as unknown as AcpClient);
 
-    const previousTimeout = process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS;
-    process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS = '20';
+    const previousTimeout = process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
+    process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = '20';
     await runner.start();
     await ctx.queryPromise;
-    if (previousTimeout === undefined) delete process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS;
-    else process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS = previousTimeout;
+    if (previousTimeout === undefined) delete process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
+    else process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = previousTimeout;
 
     expect(firstClient.close).toHaveBeenCalled();
     expect(messageQueue.enqueueWithId).toHaveBeenCalledWith('user-message-1', [
@@ -946,12 +946,12 @@ describe('AcpQueryRunner', () => {
     });
     const retryRunner = new AcpQueryRunner(ctx, createClient);
 
-    const previousTimeout = process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS;
-    process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS = '20';
+    const previousTimeout = process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
+    process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = '20';
     await retryRunner.start();
     await ctx.queryPromise;
-    if (previousTimeout === undefined) delete process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS;
-    else process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS = previousTimeout;
+    if (previousTimeout === undefined) delete process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
+    else process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = previousTimeout;
 
     expect(createClient).toHaveBeenCalledTimes(2);
     expect(firstClient.close).toHaveBeenCalled();
@@ -1035,7 +1035,7 @@ describe('AcpQueryRunner', () => {
   });
 
   test('surfaces provider auth failure without spawning ACP client', async () => {
-    delete process.env.NEOKAI_ACP_COMMAND;
+    delete process.env.HYPERNEO_ACP_COMMAND;
     resetProviderRegistry();
     resetProviderFactory();
     const createClient = mock(() => createMockClient() as unknown as AcpClient);

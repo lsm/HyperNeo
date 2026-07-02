@@ -65,7 +65,7 @@ The initial `maxConcurrent: 3` is conservative. With multiple active rooms, each
 - Start with `maxConcurrent: 5` instead of 3, based on expected workload (typically 1-3 active rooms + 1 GitHub poll + occasional title gen)
 - The processor's `dequeue` already handles priority via FIFO ordering; room ticks are short-lived and will cycle quickly
 - If contention appears in practice, the follow-up is per-queue concurrency limits (the ADR's open question on priority inversion)
-- Task 1.2 should make `maxConcurrent` configurable via environment variable (`NEOKAI_JOB_QUEUE_MAX_CONCURRENT`, default 5)
+- Task 1.2 should make `maxConcurrent` configurable via environment variable (`HYPERNEO_JOB_QUEUE_MAX_CONCURRENT`, default 5)
 
 ## Stale Job Reclamation Timing
 
@@ -81,7 +81,7 @@ Each milestone removes old scheduling code (`setInterval`, `pendingBackgroundTas
 2. Old jobs in the `job_queue` table for the reverted subsystem will go stale and be cleaned up by the cleanup job (or manually via `DELETE FROM job_queue WHERE queue = '...'`)
 3. The job queue infrastructure (Milestone 1) can remain in place even if individual migrations are reverted
 
-For the highest-risk migration (Milestone 4 — room tick), the implementer should ensure the PR is small enough to revert cleanly and should include a feature flag or environment variable (`NEOKAI_USE_JOB_QUEUE_ROOM_TICK=true`) that can disable the migration without a full revert.
+For the highest-risk migration (Milestone 4 — room tick), the implementer should ensure the PR is small enough to revert cleanly and should include a feature flag or environment variable (`HYPERNEO_USE_JOB_QUEUE_ROOM_TICK=true`) that can disable the migration without a full revert.
 
 ## Milestones
 

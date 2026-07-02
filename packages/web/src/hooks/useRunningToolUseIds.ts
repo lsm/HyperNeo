@@ -1,5 +1,5 @@
 import { useMemo } from 'preact/hooks';
-import type { ChatMessage } from '@neokai/shared';
+import type { ChatMessage } from '@hyperneo/shared';
 
 export type BackgroundTaskStatus =
   | 'pending'

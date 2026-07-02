@@ -10,7 +10,7 @@
  * computed signals, and unit tests.
  */
 
-import type { SpaceTask } from '@neokai/shared';
+import type { SpaceTask } from '@hyperneo/shared';
 
 /**
  * Minimum shape needed by `isActionRequired` — a structural subset of

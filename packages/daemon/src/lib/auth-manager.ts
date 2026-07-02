@@ -1,4 +1,4 @@
-import type { AuthStatus } from '@neokai/shared';
+import type { AuthStatus } from '@hyperneo/shared';
 import type { Config } from '../config';
 import type { Database } from '../storage/database';
 import { EnvManager } from './env-manager';

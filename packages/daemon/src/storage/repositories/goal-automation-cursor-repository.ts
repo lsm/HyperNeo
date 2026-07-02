@@ -1,6 +1,6 @@
 import type { Database as BunDatabase } from 'bun:sqlite';
-import { generateUUID } from '@neokai/shared';
-import type { GoalForgeAutomationTriggerKind } from '@neokai/shared';
+import { generateUUID } from '@hyperneo/shared';
+import type { GoalForgeAutomationTriggerKind } from '@hyperneo/shared';
 
 export interface GoalAutomationCursor {
   id: string;

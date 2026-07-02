@@ -1,4 +1,4 @@
-import type { ModelInfo } from '@neokai/shared';
+import type { ModelInfo } from '@hyperneo/shared';
 
 export const MODEL_CONTEXT_WINDOWS = {
   'gpt-5.3-codex': 272000,

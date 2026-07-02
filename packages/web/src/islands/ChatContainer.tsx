@@ -24,13 +24,13 @@ import type {
   QuestionDraftResponse,
   ResolvedQuestion,
   SessionFeatures,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import {
   DEFAULT_LOBBY_FEATURES,
   DEFAULT_WORKER_FEATURES,
   normalizeThinkingLevel,
-} from '@neokai/shared';
-import type { SDKMessage, SDKSystemMessage } from '@neokai/shared/sdk/sdk.d.ts';
+} from '@hyperneo/shared';
+import type { SDKMessage, SDKSystemMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 import { useSignalEffect } from '@preact/signals';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { ArchiveConfirmDialog } from '../components/ArchiveConfirmDialog.tsx';

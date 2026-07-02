@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test';
-import { formatShortId, parseShortId, isUUID } from '@neokai/shared';
+import { formatShortId, parseShortId, isUUID } from '@hyperneo/shared';
 
 describe('formatShortId', () => {
   test('formats prefix and counter', () => {

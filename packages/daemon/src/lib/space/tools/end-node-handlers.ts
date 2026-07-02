@@ -21,7 +21,7 @@
  *     fields so the UI banner can route a human to approve/reject.
  */
 
-import type { SpaceTask, SpaceWorkflow } from '@neokai/shared';
+import type { SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus';
 import { Logger } from '../../logger';

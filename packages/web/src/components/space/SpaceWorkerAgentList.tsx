@@ -12,7 +12,7 @@ import { useEffect, useMemo, useState } from 'preact/hooks';
 import { spaceStore } from '../../lib/space-store';
 import { Button } from '../ui/Button';
 import { ConfirmModal } from '../ui/ConfirmModal';
-import type { SpaceWorkerAgentDriftReport, SpaceWorkerAgent } from '@neokai/shared';
+import type { SpaceWorkerAgentDriftReport, SpaceWorkerAgent } from '@hyperneo/shared';
 import { SpaceAgentEditor } from './SpaceAgentEditor';
 import { connectionManager } from '../../lib/connection-manager';
 import { toast } from '../../lib/toast';

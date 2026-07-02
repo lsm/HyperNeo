@@ -5,20 +5,20 @@
 
 export {};
 
-if (process.argv[2] === '--neokai-acp-mcp-proxy') {
-  const { startAcpMcpProxy } = await import('@neokai/daemon/lib/acp/mcp-proxy-entry');
+if (process.argv[2] === '--hyperneo-acp-mcp-proxy') {
+  const { startAcpMcpProxy } = await import('@hyperneo/daemon/lib/acp/mcp-proxy-entry');
   startAcpMcpProxy(process.argv.slice(3));
 } else {
   const [{ getConfig }, { parseArgs, getHelpText }, { startProdServer }, { version }] =
     await Promise.all([
-      import('@neokai/daemon/config'),
+      import('@hyperneo/daemon/config'),
       import('./src/cli-utils'),
       import('./src/prod-server-embedded'),
       import('./package.json'),
     ]);
   // The SDK CLI binary is no longer embedded in the compiled binary.
   // Instead, the runtime resolver (sdk-cli-resolver.ts) downloads it
-  // on first use and caches it at ~/.neokai/sdk/. This keeps the
+  // on first use and caches it at ~/.hyperneo/sdk/. This keeps the
   // compiled binary ~66 MB instead of ~266 MB.
 
   // Handle uncaught errors to prevent silent crashes

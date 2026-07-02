@@ -2,9 +2,10 @@ import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir, platform } from 'node:os';
 import { execSync } from 'node:child_process';
+import { getDataDir } from './data-dir';
 import type { Database } from '../storage/database';
 import type { ProviderCredentialManager } from './credentials/provider-credential-manager';
-import type { GlobalSettings } from '@neokai/shared';
+import type { GlobalSettings } from '@hyperneo/shared';
 import { customProviderIdFor } from './providers/custom-endpoint-provider.js';
 
 export interface DiscoveryResult {
@@ -187,9 +188,9 @@ const BUILT_IN_PROVIDER_ENV_MAP: BuiltInProviderEnvMapping[] = [
   },
 ];
 
-function readNeokaiAuthJson(): Record<string, unknown> {
+function readHyperNeoAuthJson(): Record<string, unknown> {
   try {
-    const path = join(homedir(), '.neokai', 'auth.json');
+    const path = join(getDataDir(), 'auth.json');
     if (!existsSync(path)) return {};
     return JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
   } catch {
@@ -242,10 +243,10 @@ export async function migrateProvidersIfNeeded(
     }
   }
 
-  // 2. OAuth tokens from ~/.neokai/auth.json
-  const neokaiAuth = readNeokaiAuthJson();
-  if (neokaiAuth['openai']) {
-    const openaiCreds = neokaiAuth['openai'] as {
+  // 2. OAuth tokens from ~/.hyperneo/auth.json
+  const hyperneoAuth = readHyperNeoAuthJson();
+  if (hyperneoAuth['openai']) {
+    const openaiCreds = hyperneoAuth['openai'] as {
       access?: string;
       refresh?: string;
       expires?: number;
@@ -275,8 +276,8 @@ export async function migrateProvidersIfNeeded(
     }
   }
 
-  if (neokaiAuth['copilot']) {
-    const copilotCreds = neokaiAuth['copilot'] as { refresh?: string };
+  if (hyperneoAuth['copilot']) {
+    const copilotCreds = hyperneoAuth['copilot'] as { refresh?: string };
     if (copilotCreds.refresh) {
       const existing = db.providers.getProviderByProviderId('anthropic-copilot');
       if (!existing) {

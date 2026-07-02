@@ -52,8 +52,8 @@ import { RATE_LIMIT_MIN_BACKOFF_MS } from '../runtime/rate-limit-detector';
 import type { AgentMessageRouter } from '../runtime/agent-message-router';
 import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
-import type { SpaceWorkflow } from '@neokai/shared';
-import { computeGateDefaults, resolveNodeAgents } from '@neokai/shared';
+import type { SpaceWorkflow } from '@hyperneo/shared';
+import { computeGateDefaults, resolveNodeAgents } from '@hyperneo/shared';
 import { jsonResult } from './tool-result';
 import type { ToolResult } from './tool-result';
 import {
@@ -99,7 +99,7 @@ import type {
   GetExternalEventInput,
 } from './node-agent-tool-schemas';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
-import type { SpaceTask } from '@neokai/shared';
+import type { SpaceTask } from '@hyperneo/shared';
 import type { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository';
 import type { ExternalEventStore } from '../../external-events/external-event-store';
 import { parseAddress } from '../../../../../messaging/src/address';

@@ -20,8 +20,8 @@ import {
   customProviderIdFor,
   isCustomEndpointProviderId,
 } from './custom-endpoint-provider.js';
-import type { CustomEndpointConfig } from '@neokai/shared';
-import type { Provider } from '@neokai/shared/provider';
+import type { CustomEndpointConfig } from '@hyperneo/shared';
+import type { Provider } from '@hyperneo/shared/provider';
 import { getProviderRegistry, type ProviderRegistry } from './registry.js';
 export { getProviderRegistry };
 import { ProviderContextManager } from './context-manager.js';
@@ -114,7 +114,7 @@ export function initializeProviders(): ProviderRegistry {
   }
 
   // Register Anthropic-to-Codex bridge provider for OpenAI/Codex-backed models.
-  // Discovers credentials from env (OPENAI_API_KEY), ~/.neokai/auth.json,
+  // Discovers credentials from env (OPENAI_API_KEY), ~/.hyperneo/auth.json,
   // and one-time import from ~/.codex/auth.json.
   if (!disabledBuiltInProviderIds.has('anthropic-codex')) {
     registerIfMissing(registry, new AnthropicToCodexBridgeProvider());
@@ -412,4 +412,4 @@ export type {
   ProviderSdkConfig,
   ProviderSessionConfig,
   ModelTier,
-} from '@neokai/shared/provider';
+} from '@hyperneo/shared/provider';

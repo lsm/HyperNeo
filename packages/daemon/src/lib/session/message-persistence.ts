@@ -19,8 +19,8 @@ import type {
   MessageOrigin,
   ReferenceMetadata,
   Session,
-} from '@neokai/shared';
-import type { SDKUserMessage } from '@neokai/shared/sdk';
+} from '@hyperneo/shared';
+import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { UUID } from 'crypto';
 import type { Database } from '../../storage/database';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';

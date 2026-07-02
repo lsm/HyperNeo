@@ -50,7 +50,7 @@ vi.mock('../../../lib/connection-manager', () => ({
 import { CustomEndpointsSettings } from '../CustomEndpointsSettings.tsx';
 import { __test__, EditorModal } from '../CustomEndpointEditor.tsx';
 import { CUSTOM_ENDPOINT_PRESETS, findPreset } from '../customEndpointPresets.ts';
-import type { CustomEndpointConfig } from '@neokai/shared';
+import type { CustomEndpointConfig } from '@hyperneo/shared';
 
 describe('CustomEndpointsSettings — helpers', () => {
   it('resolveCapabilities applies type + global defaults', () => {

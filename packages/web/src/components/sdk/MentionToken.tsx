@@ -13,8 +13,8 @@ import { memo } from 'preact/compat';
 import { useState, useCallback, useRef } from 'preact/hooks';
 import { cn } from '../../lib/utils.ts';
 import { useMessageHub } from '../../hooks/useMessageHub.ts';
-import type { ReferenceType, ReferenceMetadata, ResolvedReference } from '@neokai/shared';
-import { REFERENCE_PATTERN } from '@neokai/shared';
+import type { ReferenceType, ReferenceMetadata, ResolvedReference } from '@hyperneo/shared';
+import { REFERENCE_PATTERN } from '@hyperneo/shared';
 
 // ─── Type-specific styles ────────────────────────────────────────────────────
 

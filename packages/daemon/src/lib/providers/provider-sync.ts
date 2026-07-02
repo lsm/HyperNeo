@@ -7,8 +7,8 @@
  * - removeProviderFromRegistry: shutdown + unregister
  */
 
-import type { ProviderRecord, CustomEndpointConfig } from '@neokai/shared';
-import type { ProviderCredentials } from '@neokai/shared/provider';
+import type { ProviderRecord, CustomEndpointConfig } from '@hyperneo/shared';
+import type { ProviderCredentials } from '@hyperneo/shared/provider';
 import { getProviderRegistry } from './registry.js';
 import { initializeProviders, registerBuiltInProvider } from './factory.js';
 import { CustomEndpointProvider, customProviderIdFor } from './custom-endpoint-provider.js';

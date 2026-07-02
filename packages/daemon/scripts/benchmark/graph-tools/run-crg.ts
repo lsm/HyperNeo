@@ -14,7 +14,7 @@ import {
   BENCHMARK_MODEL,
 } from './benchmark-helpers';
 
-const CRG_DATA_DIR = process.env.NEOKAI_BENCHMARK_CRG_DATA || '/tmp/neokai-benchmark-crg';
+const CRG_DATA_DIR = process.env.HYPERNEO_BENCHMARK_CRG_DATA || '/tmp/hyperneo-benchmark-crg';
 const CRG_TOOLS =
   'get_minimal_context_tool,get_review_context_tool,get_impact_radius_tool,query_graph_tool,semantic_search_nodes_tool,list_graph_stats_tool,detect_changes_tool';
 

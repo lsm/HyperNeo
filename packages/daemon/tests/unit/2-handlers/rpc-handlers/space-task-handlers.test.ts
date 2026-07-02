@@ -12,7 +12,7 @@
  */
 
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
-import type { MessageHub, Space, SpaceTask, SpaceWorkflow } from '@neokai/shared';
+import type { MessageHub, Space, SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
 import type {
   DaemonInternalEventMap,
   InternalEventBus,

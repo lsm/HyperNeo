@@ -1,5 +1,5 @@
-import type { Session } from '@neokai/shared';
-import { normalizeThinkingLevel } from '@neokai/shared';
+import type { Session } from '@hyperneo/shared';
+import { normalizeThinkingLevel } from '@hyperneo/shared';
 import { Modal } from './ui/Modal.tsx';
 import { CopyButton } from './ui/CopyButton.tsx';
 import { borderColors } from '../lib/design-tokens.ts';
@@ -44,7 +44,7 @@ function InfoSection({ title, children }: InfoSectionProps) {
 
 /**
  * Compute SDK project directory path from workspace path
- * SDK replaces both / and . with - (e.g., /.neokai/ -> --neokai-)
+ * SDK replaces both / and . with - (e.g., /.hyperneo/ -> --hyperneo-)
  */
 function getSDKProjectDir(workspacePath: string | null): string | undefined {
   if (!workspacePath) return undefined;

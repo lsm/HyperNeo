@@ -7,7 +7,7 @@
  */
 
 import { StateChannel, DeltaMergers } from '../state-channel';
-import type { MessageHub } from '@neokai/shared';
+import type { MessageHub } from '@hyperneo/shared';
 
 // Create mock MessageHub
 function createMockHub() {

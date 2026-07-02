@@ -2,7 +2,7 @@ import { access, constants } from 'node:fs/promises';
 import type { Job } from '../../storage/repositories/job-queue-repository';
 import type { SkillsManager } from '../skills-manager';
 import type { AppMcpServerRepository } from '../../storage/repositories/app-mcp-server-repository';
-import { isPluginSkillConfig, isMcpServerSkillConfig } from '@neokai/shared';
+import { isPluginSkillConfig, isMcpServerSkillConfig } from '@hyperneo/shared';
 
 export interface SkillValidateResult extends Record<string, unknown> {
   valid: boolean;

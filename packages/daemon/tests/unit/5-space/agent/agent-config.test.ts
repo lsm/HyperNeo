@@ -16,7 +16,7 @@ import {
   type SlotOverrides,
   type CustomAgentConfig,
 } from '../../../../src/lib/space/agents/custom-agent';
-import type { SpaceWorkerAgent, Space, SpaceTask } from '@neokai/shared';
+import type { SpaceWorkerAgent, Space, SpaceTask } from '@hyperneo/shared';
 
 // ============================================================================
 // Test fixtures

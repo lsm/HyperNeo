@@ -6,7 +6,7 @@
 import { render, fireEvent } from '@testing-library/preact';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import ReferenceAutocomplete from '../ReferenceAutocomplete';
-import type { ReferenceSearchResult } from '@neokai/shared';
+import type { ReferenceSearchResult } from '@hyperneo/shared';
 
 const taskResult: ReferenceSearchResult = {
   type: 'task',

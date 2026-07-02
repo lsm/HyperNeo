@@ -7,7 +7,7 @@
 
 import type { RefObject } from 'preact';
 import { useState, useCallback, useRef } from 'preact/hooks';
-import type { MessageImage } from '@neokai/shared';
+import type { MessageImage } from '@hyperneo/shared';
 import { toast } from '../lib/toast.ts';
 import { fileToBase64, validateImageFile, extractImagesFromClipboard } from '../lib/file-utils.ts';
 

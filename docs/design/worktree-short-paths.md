@@ -9,13 +9,13 @@ Room task worktree paths are excessively long (146 chars to worktree root, up to
 All path lengths in this document are **absolute paths from `/`**, measured with home dir `/Users/lsm` (11 chars including trailing `/`). Actual lengths vary by home directory; the relative savings between options are what matter.
 
 ```
-/Users/lsm/.neokai/projects/dev-neokai-ec0a1deb/worktrees/coder-04062505-780f-4881-a3be-9cb9062790fb-f23fddc6-fec3-4e19-9810-186f9aeebf22-3ca78c48
+/Users/lsm/.hyperneo/projects/dev-neokai-ec0a1deb/worktrees/coder-04062505-780f-4881-a3be-9cb9062790fb-f23fddc6-fec3-4e19-9810-186f9aeebf22-3ca78c48
 ```
 
 | Segment | Example | Chars | Notes |
 |---------|---------|-------|-------|
 | Home dir | `/Users/lsm/` | 11 | Fixed, varies per user |
-| Base dir | `.neokai/projects/` | 18 | Convention |
+| Base dir | `.hyperneo/projects/` | 18 | Convention |
 | Project key | `dev-neokai-ec0a1deb/` | 20 | Short key from PR #792 |
 | Worktrees segment | `worktrees/` | 10 | Literal |
 | **Session ID leaf** | `coder-04062505-...-3ca78c48` | **88** | **The problem** |
@@ -31,9 +31,9 @@ The session ID format for room tasks is `{role}:{roomId}:{taskId}:{8-char-uuid}`
 `config.ts` still uses the old `encodeRepoPath()` for the database path while `worktree-manager.ts` uses the newer `getProjectShortKey()`. These should be unified.
 
 ```
-DB (current):   /Users/lsm/.neokai/projects/-Users-lsm-focus-dev-neokai/database/daemon.db  (74 chars)
-DB (short key): /Users/lsm/.neokai/projects/dev-neokai-ec0a1deb/database/daemon.db           (66 chars)
-DB (short+db/): /Users/lsm/.neokai/projects/dev-neokai-ec0a1deb/db/daemon.db                 (60 chars)
+DB (current):   /Users/lsm/.hyperneo/projects/-Users-lsm-focus-dev-neokai/database/daemon.db  (74 chars)
+DB (short key): /Users/lsm/.hyperneo/projects/dev-neokai-ec0a1deb/database/daemon.db           (66 chars)
+DB (short+db/): /Users/lsm/.hyperneo/projects/dev-neokai-ec0a1deb/db/daemon.db                 (60 chars)
 ```
 
 ## What Information Needs to Be in the Path
@@ -59,7 +59,7 @@ If the directory name changes to a slug or hash, the worktree path must be **sto
 Replace session-ID leaf with a 12-char hash of the session ID.
 
 ```
-/Users/lsm/.neokai/projects/dev-neokai-ec0a1deb/wt/a3b2c1d4f5e6
+/Users/lsm/.hyperneo/projects/dev-neokai-ec0a1deb/wt/a3b2c1d4f5e6
 ```
 
 **Absolute path: 63 chars → 83 chars saved vs current 146**
@@ -75,7 +75,7 @@ Replace session-ID leaf with a 12-char hash of the session ID.
 Monotonically incrementing integer per project, persisted in a counter file.
 
 ```
-/Users/lsm/.neokai/projects/dev-neokai-ec0a1deb/wt/42
+/Users/lsm/.hyperneo/projects/dev-neokai-ec0a1deb/wt/42
 ```
 
 **Absolute path: 53 chars → 93 chars saved vs current 146**
@@ -91,7 +91,7 @@ Monotonically incrementing integer per project, persisted in a counter file.
 Derive from branch name (already computed from task title) + 4-char hash suffix.
 
 ```
-/Users/lsm/.neokai/projects/dev-neokai-ec0a1deb/wt/fix-login-button-a3b2
+/Users/lsm/.hyperneo/projects/dev-neokai-ec0a1deb/wt/fix-login-button-a3b2
 ```
 
 **Absolute path: 72 chars (typical) → 74 chars saved vs current 146**
@@ -109,7 +109,7 @@ Derive from branch name (already computed from task title) + 4-char hash suffix.
 Move all worktrees to a shared top-level dir, eliminate per-project nesting.
 
 ```
-/Users/lsm/.neokai/wt/nkai-a3b2c1d4
+/Users/lsm/.hyperneo/wt/nkai-a3b2c1d4
 ```
 
 **Absolute path: 35 chars → 111 chars saved vs current 146**
@@ -117,7 +117,7 @@ Move all worktrees to a shared top-level dir, eliminate per-project nesting.
 | Pros | Cons |
 |------|------|
 | Absolute shortest possible | All projects share one flat namespace |
-| Minimal nesting depth | Breaks `~/.neokai/projects/{key}/` convention |
+| Minimal nesting depth | Breaks `~/.hyperneo/projects/{key}/` convention |
 | | Harder to find worktrees per project |
 
 ### Option E: Slug + Hash Leaf ✅ SELECTED
@@ -125,8 +125,8 @@ Move all worktrees to a shared top-level dir, eliminate per-project nesting.
 Replace the session-ID leaf with a capped human-readable slug (from the task title) + 4-char hash suffix, keeping the existing `worktrees/` directory name. Also unify DB path to use short key.
 
 ```
-Worktree: /Users/lsm/.neokai/projects/dev-neokai-ec0a1deb/worktrees/fix-login-button-a3b2
-DB:       /Users/lsm/.neokai/projects/dev-neokai-ec0a1deb/db/daemon.db
+Worktree: /Users/lsm/.hyperneo/projects/dev-neokai-ec0a1deb/worktrees/fix-login-button-a3b2
+DB:       /Users/lsm/.hyperneo/projects/dev-neokai-ec0a1deb/db/daemon.db
 ```
 
 **Worktree path: 79 chars (typical), 93 chars (worst-case with 30-char slug) → 53-67 chars saved**
@@ -149,22 +149,22 @@ To make the difference tangible, here is the full absolute path each option woul
 
 ```
 Current (146 chars):
-/Users/lsm/.neokai/projects/dev-neokai-ec0a1deb/worktrees/coder-04062505-780f-4881-a3be-9cb9062790fb-f23fddc6-fec3-4e19-9810-186f9aeebf22-3ca78c48
+/Users/lsm/.hyperneo/projects/dev-neokai-ec0a1deb/worktrees/coder-04062505-780f-4881-a3be-9cb9062790fb-f23fddc6-fec3-4e19-9810-186f9aeebf22-3ca78c48
 
 Option A — Short Hash (63 chars):
-/Users/lsm/.neokai/projects/dev-neokai-ec0a1deb/wt/a3b2c1d4f5e6
+/Users/lsm/.hyperneo/projects/dev-neokai-ec0a1deb/wt/a3b2c1d4f5e6
 
 Option B — Sequential Counter (53 chars):
-/Users/lsm/.neokai/projects/dev-neokai-ec0a1deb/wt/42
+/Users/lsm/.hyperneo/projects/dev-neokai-ec0a1deb/wt/42
 
 Option C — Slug + Hash (72 chars):
-/Users/lsm/.neokai/projects/dev-neokai-ec0a1deb/wt/fix-login-button-a3b2
+/Users/lsm/.hyperneo/projects/dev-neokai-ec0a1deb/wt/fix-login-button-a3b2
 
 Option D — Flat Base (35 chars):
-/Users/lsm/.neokai/wt/nkai-a3b2c1d4
+/Users/lsm/.hyperneo/wt/nkai-a3b2c1d4
 
 Option E — Slug + Hash ✅ SELECTED (79 chars):
-/Users/lsm/.neokai/projects/dev-neokai-ec0a1deb/worktrees/fix-login-button-a3b2
+/Users/lsm/.hyperneo/projects/dev-neokai-ec0a1deb/worktrees/fix-login-button-a3b2
 ```
 
 ### Deepest source file (current deepest: 235 chars)
@@ -173,35 +173,35 @@ The deepest file in this repo is `packages/daemon/tests/online/cross-provider/co
 
 ```
 Current (235 chars):
-/Users/lsm/.neokai/projects/dev-neokai-ec0a1deb/worktrees/coder-04062505-780f-4881-a3be-9cb9062790fb-f23fddc6-fec3-4e19-9810-186f9aeebf22-3ca78c48/packages/daemon/tests/online/cross-provider/conversation-continuity-after-switch.test.ts
+/Users/lsm/.hyperneo/projects/dev-neokai-ec0a1deb/worktrees/coder-04062505-780f-4881-a3be-9cb9062790fb-f23fddc6-fec3-4e19-9810-186f9aeebf22-3ca78c48/packages/daemon/tests/online/cross-provider/conversation-continuity-after-switch.test.ts
 
 Option A — Short Hash (152 chars):
-/Users/lsm/.neokai/projects/dev-neokai-ec0a1deb/wt/a3b2c1d4f5e6/packages/daemon/tests/online/cross-provider/conversation-continuity-after-switch.test.ts
+/Users/lsm/.hyperneo/projects/dev-neokai-ec0a1deb/wt/a3b2c1d4f5e6/packages/daemon/tests/online/cross-provider/conversation-continuity-after-switch.test.ts
 
 Option B — Sequential Counter (142 chars):
-/Users/lsm/.neokai/projects/dev-neokai-ec0a1deb/wt/42/packages/daemon/tests/online/cross-provider/conversation-continuity-after-switch.test.ts
+/Users/lsm/.hyperneo/projects/dev-neokai-ec0a1deb/wt/42/packages/daemon/tests/online/cross-provider/conversation-continuity-after-switch.test.ts
 
 Option C — Slug + Hash (161 chars):
-/Users/lsm/.neokai/projects/dev-neokai-ec0a1deb/wt/fix-login-button-a3b2/packages/daemon/tests/online/cross-provider/conversation-continuity-after-switch.test.ts
+/Users/lsm/.hyperneo/projects/dev-neokai-ec0a1deb/wt/fix-login-button-a3b2/packages/daemon/tests/online/cross-provider/conversation-continuity-after-switch.test.ts
 
 Option D — Flat Base (124 chars):
-/Users/lsm/.neokai/wt/nkai-a3b2c1d4/packages/daemon/tests/online/cross-provider/conversation-continuity-after-switch.test.ts
+/Users/lsm/.hyperneo/wt/nkai-a3b2c1d4/packages/daemon/tests/online/cross-provider/conversation-continuity-after-switch.test.ts
 
 Option E — Slug + Hash ✅ SELECTED (168 chars):
-/Users/lsm/.neokai/projects/dev-neokai-ec0a1deb/worktrees/fix-login-button-a3b2/packages/daemon/tests/online/cross-provider/conversation-continuity-after-switch.test.ts
+/Users/lsm/.hyperneo/projects/dev-neokai-ec0a1deb/worktrees/fix-login-button-a3b2/packages/daemon/tests/online/cross-provider/conversation-continuity-after-switch.test.ts
 ```
 
 ### What `ls` looks like in the worktrees directory
 
 ```bash
 # Current — opaque UUID soup, impossible to tell tasks apart:
-$ ls ~/.neokai/projects/dev-neokai-ec0a1deb/worktrees/
+$ ls ~/.hyperneo/projects/dev-neokai-ec0a1deb/worktrees/
 coder-04062505-780f-4881-a3be-9cb9062790fb-001fd1e3-2a49-4c22-9f61-74eabce58623-ff2d09f2
 coder-04062505-780f-4881-a3be-9cb9062790fb-006b257f-26c7-4861-bcae-85d2182ff317-9f5b5820
 coder-04062505-780f-4881-a3be-9cb9062790fb-00cf17b9-b3e6-45d1-8e1a-8e7b18afba0f-38e261f8
 
 # Option E — immediately readable:
-$ ls ~/.neokai/projects/dev-neokai-ec0a1deb/worktrees/
+$ ls ~/.hyperneo/projects/dev-neokai-ec0a1deb/worktrees/
 fix-login-button-a3b2
 add-retry-logic-to-ws-7f1e
 refactor-session-cleanup-c9d0

@@ -7,7 +7,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import type { LiveQuerySnapshotEvent } from '@neokai/shared';
+import type { LiveQuerySnapshotEvent } from '@hyperneo/shared';
 import { createDaemonServer, type DaemonServerContext } from '../../helpers/daemon-server';
 
 const SNAPSHOT_WAIT_TIMEOUT_MS = 8_000;

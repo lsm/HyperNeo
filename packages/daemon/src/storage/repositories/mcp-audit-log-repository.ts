@@ -7,7 +7,7 @@
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
-import { generateUUID } from '@neokai/shared';
+import { generateUUID } from '@hyperneo/shared';
 
 export interface McpAuditLogEntry {
   id: string;

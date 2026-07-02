@@ -7,8 +7,8 @@
  */
 
 import { describe, test, expect } from 'bun:test';
-import type { SpaceWorkerAgent, SpaceWorkflow, WorkflowNode } from '@neokai/shared';
-import { validateChannels } from '@neokai/shared';
+import type { SpaceWorkerAgent, SpaceWorkflow, WorkflowNode } from '@hyperneo/shared';
+import { validateChannels } from '@hyperneo/shared';
 
 // ============================================================================
 // Test fixtures

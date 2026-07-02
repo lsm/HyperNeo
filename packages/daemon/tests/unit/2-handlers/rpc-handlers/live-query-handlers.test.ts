@@ -18,8 +18,8 @@ import {
   computeIsTerminal,
   extractParentToolUseId,
 } from '../../../../src/storage/repositories/sdk-message-repository';
-import type { SDKMessage } from '@neokai/shared/sdk';
-import type { NeoTask, RoomGoal } from '@neokai/shared';
+import type { SDKMessage } from '@hyperneo/shared/sdk';
+import type { NeoTask, RoomGoal } from '@hyperneo/shared';
 
 // ---------------------------------------------------------------------------
 // Setup

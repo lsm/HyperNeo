@@ -1,4 +1,4 @@
-import type { SpaceWorkflow, WorkflowNodeAgent } from '@neokai/shared';
+import type { SpaceWorkflow, WorkflowNodeAgent } from '@hyperneo/shared';
 
 type BuiltInTemplateFixtureOptions = {
   includeSystemPrompts?: boolean;

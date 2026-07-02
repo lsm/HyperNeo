@@ -49,7 +49,7 @@ Port the 6 full-page reference examples from `page-examples/`. These are complet
 - Sidebar navigation sections expand/collapse
 - Popover menus open/close
 - All heroicon imports replaced with lucide-preact
-- All headlessui imports replaced with @neokai/ui
+- All headlessui imports replaced with @hyperneo/ui
 - Page compositions are visually contained (not infinitely tall)
 - `bun run dev` starts without errors
 

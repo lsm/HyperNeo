@@ -1,4 +1,4 @@
-import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
+import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 import type { SessionGroupMessage } from '../hooks/useGroupMessages';
 
 export interface TaskMeta {

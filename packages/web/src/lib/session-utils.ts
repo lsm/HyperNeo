@@ -1,4 +1,4 @@
-import type { Session } from '@neokai/shared';
+import type { Session } from '@hyperneo/shared';
 
 /**
  * Session types created by users (not internal orchestration agents).

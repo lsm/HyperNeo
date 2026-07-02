@@ -16,7 +16,7 @@
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, cleanup } from '@testing-library/preact';
-import type { Gate, WorkflowChannel } from '@neokai/shared';
+import type { Gate, WorkflowChannel } from '@hyperneo/shared';
 import { ChannelEdgeConfigPanel } from '../visual-editor/ChannelEdgeConfigPanel';
 
 // ============================================================================

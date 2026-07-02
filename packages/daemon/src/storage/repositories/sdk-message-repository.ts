@@ -8,10 +8,10 @@
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
-import { generateUUID } from '@neokai/shared';
-import type { MessageOrigin, NeokaiActionMessage, ChatMessage } from '@neokai/shared';
-import type { SDKMessage } from '@neokai/shared/sdk';
-import { HIDDEN_SYSTEM_SUBTYPES } from '@neokai/shared/sdk/type-guards';
+import { generateUUID } from '@hyperneo/shared';
+import type { MessageOrigin, HyperNeoActionMessage, ChatMessage } from '@hyperneo/shared';
+import type { SDKMessage } from '@hyperneo/shared/sdk';
+import { HIDDEN_SYSTEM_SUBTYPES } from '@hyperneo/shared/sdk/type-guards';
 import { Logger } from '../../lib/logger';
 import {
   buildFtsQuery,
@@ -1588,12 +1588,12 @@ export class SDKMessageRepository {
    * Save a HyperNeo-native action message to the sdk_messages table.
    *
    * The message is stored in the same `sdk_message` JSON column as SDK messages,
-   * but with `message_type = 'neokai_action'` so it can be distinguished during
+   * but with `message_type = 'hyperneo_action'` so it can be distinguished during
    * fetch.  No `send_status` is needed because action messages are never queued.
    *
    * @returns The generated row ID (used later to update the resolved state).
    */
-  saveNeokaiActionMessage(sessionId: string, message: NeokaiActionMessage): string {
+  saveHyperNeoActionMessage(sessionId: string, message: HyperNeoActionMessage): string {
     const id = generateUUID();
     const timestamp = new Date(message.timestamp).toISOString();
 
@@ -1605,7 +1605,7 @@ export class SDKMessageRepository {
     stmt.run(
       id,
       sessionId,
-      'neokai_action',
+      'hyperneo_action',
       message.action,
       JSON.stringify(message),
       timestamp,
@@ -1619,10 +1619,10 @@ export class SDKMessageRepository {
    * Update a HyperNeo action message in-place (e.g. mark it resolved after the
    * user has made a choice).
    *
-   * @param rowId   The ID returned by saveNeokaiActionMessage.
+   * @param rowId   The ID returned by saveHyperNeoActionMessage.
    * @param updated The full updated message object (replaces the stored JSON).
    */
-  updateNeokaiActionMessage(rowId: string, updated: NeokaiActionMessage): void {
+  updateHyperNeoActionMessage(rowId: string, updated: HyperNeoActionMessage): void {
     const stmt = this.db.prepare(`UPDATE sdk_messages SET sdk_message = ? WHERE id = ?`);
     stmt.run(JSON.stringify(updated), rowId);
     this.upsertMessageSearchRow(rowId);
@@ -1634,23 +1634,23 @@ export class SDKMessageRepository {
    * This avoids having to carry the row ID through the RPC call.  The uuid is
    * unique per session (generated at emit time) so the lookup is unambiguous.
    */
-  updateNeokaiActionMessageByUuid(
+  updateHyperNeoActionMessageByUuid(
     sessionId: string,
     messageUuid: string,
-    updated: NeokaiActionMessage
+    updated: HyperNeoActionMessage
   ): void {
     const row = this.db
       .prepare(
         `SELECT id FROM sdk_messages
        WHERE session_id = ?
-         AND message_type = 'neokai_action'
+         AND message_type = 'hyperneo_action'
          AND json_extract(sdk_message, '$.uuid') = ?`
       )
       .get(sessionId, messageUuid) as { id: string } | undefined;
     const stmt = this.db.prepare(
       `UPDATE sdk_messages SET sdk_message = ?
        WHERE session_id = ?
-         AND message_type = 'neokai_action'
+         AND message_type = 'hyperneo_action'
          AND json_extract(sdk_message, '$.uuid') = ?`
     );
     stmt.run(JSON.stringify(updated), sessionId, messageUuid);

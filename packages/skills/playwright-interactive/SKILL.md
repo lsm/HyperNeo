@@ -10,7 +10,7 @@ Use a persistent `js_repl` Playwright session to debug local web or Electron app
 ## Preconditions
 
 - `js_repl` must be enabled for this skill.
-- If `js_repl` is missing, enable it in `~/.neokai/config.toml`:
+- If `js_repl` is missing, enable it in `~/.hyperneo/config.toml`:
 
 ```toml
 [features]

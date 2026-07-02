@@ -11,7 +11,7 @@
  * compact FIRST, then continue.
  */
 
-import type { SDKMessage } from '@neokai/shared/sdk';
+import type { SDKMessage } from '@hyperneo/shared/sdk';
 
 /**
  * Maximum consecutive *unproductive* `/compact` attempts before escalating to

@@ -1,5 +1,5 @@
 import { Database as BunDatabase } from 'bun:sqlite';
-import { MessageHub, type RequestHandler, generateUUID } from '@neokai/shared';
+import { MessageHub, type RequestHandler, generateUUID } from '@hyperneo/shared';
 import { beforeEach, describe, expect, test } from 'bun:test';
 import { ExternalEventService } from '../../../../src/lib/external-events/external-event-service';
 import { ExternalEventStore } from '../../../../src/lib/external-events/external-event-store';

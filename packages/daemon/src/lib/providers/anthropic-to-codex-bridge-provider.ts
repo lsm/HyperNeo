@@ -7,18 +7,19 @@
  *
  * Authentication discovery for API calls (priority order):
  *   1. OPENAI_API_KEY environment variable (daemon/test use only)
- *   2. ~/.neokai/auth.json  — HyperNeo's own auth store (key "openai")
- *   3. ~/.codex/auth.json   — imported once into ~/.neokai/auth.json (for users who ran `codex login`)
+ *   2. ~/.hyperneo/auth.json  — HyperNeo's own auth store (key "openai")
+ *   3. ~/.codex/auth.json   — imported once into ~/.hyperneo/auth.json (for users who ran `codex login`)
  *
- * UI authentication requires HyperNeo-managed OAuth credentials in ~/.neokai/auth.json.
+ * UI authentication requires HyperNeo-managed OAuth credentials in ~/.hyperneo/auth.json.
  * Env var credentials are used internally for API calls but not shown in the UI.
  * OAuth credentials obtained through HyperNeo's login flow are written to
- * ~/.neokai/auth.json so they persist across sessions.
+ * ~/.hyperneo/auth.json so they persist across sessions.
  *
  * Workspace isolation: each unique workspace path gets its own bridge server
  * so Codex is always rooted at the correct directory.
  */
 
+import { getDataDir } from '../data-dir';
 import type {
   Provider,
   ProviderCapabilities,
@@ -28,9 +29,9 @@ import type {
   ModelTier,
   ProviderAuthStatusInfo,
   ProviderOAuthFlowData,
-} from '@neokai/shared/provider';
-import type { ModelInfo } from '@neokai/shared';
-import { THINKING_LEVEL_TOKENS } from '@neokai/shared';
+} from '@hyperneo/shared/provider';
+import type { ModelInfo } from '@hyperneo/shared';
+import { THINKING_LEVEL_TOKENS } from '@hyperneo/shared';
 import {
   type OpenAIResponsesBridgeAuth,
   type OpenAIResponsesBridgeServer,
@@ -69,7 +70,7 @@ const OAUTH_CONFIG = {
 // Auth credential types
 // ---------------------------------------------------------------------------
 
-/** Shape stored in ~/.neokai/auth.json under the "openai" key. */
+/** Shape stored in ~/.hyperneo/auth.json under the "openai" key. */
 interface StoredCredentials {
   type: 'oauth' | 'api_key';
   access?: string;
@@ -230,7 +231,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     codexAuthDir?: string,
     private readonly fetchImpl: typeof fetch = fetch
   ) {
-    this.authPath = path.join(authDir ?? path.join(os.homedir(), '.neokai'), 'auth.json');
+    this.authPath = path.join(authDir ?? getDataDir(), 'auth.json');
     this.codexAuthPath = path.join(codexAuthDir ?? path.join(os.homedir(), '.codex'), 'auth.json');
   }
 
@@ -312,8 +313,8 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   /**
    * Return provider credentials, following discovery order:
    *   1. OPENAI_API_KEY env var
-   *   2. ~/.neokai/auth.json["openai"]
-   *   3. One-time migration from ~/.codex/auth.json into ~/.neokai/auth.json
+   *   2. ~/.hyperneo/auth.json["openai"]
+   *   3. One-time migration from ~/.codex/auth.json into ~/.hyperneo/auth.json
    */
   private async getBridgeAuth(): Promise<OpenAIResponsesBridgeAuth | undefined> {
     if (this.env.OPENAI_API_KEY) {
@@ -324,11 +325,11 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       return this.cachedBridgeAuth ?? undefined;
     }
 
-    const neokaiCreds = await this.loadCredentials();
-    if (neokaiCreds?.access) {
-      const auth = this.toBridgeAuth(neokaiCreds);
+    const hyperneoCreds = await this.loadCredentials();
+    if (hyperneoCreds?.access) {
+      const auth = this.toBridgeAuth(hyperneoCreds);
       this.cachedBridgeAuth = auth ?? null;
-      this.cachedApiKey = neokaiCreds.access;
+      this.cachedApiKey = hyperneoCreds.access;
       return auth;
     }
 
@@ -484,27 +485,27 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   async getAuthStatus(): Promise<ProviderAuthStatusInfo> {
     // Only HyperNeo-managed OAuth credentials are recognised in the UI.
     // OPENAI_API_KEY env vars are for daemon/test use only.
-    const neokaiCreds = await this.loadCredentials();
-    if (!neokaiCreds || neokaiCreds.type !== 'oauth') {
+    const hyperneoCreds = await this.loadCredentials();
+    if (!hyperneoCreds || hyperneoCreds.type !== 'oauth') {
       return {
         isAuthenticated: false,
-        error: neokaiCreds
+        error: hyperneoCreds
           ? 'API key credentials are not supported via the UI. Click Login to authenticate with OpenAI OAuth.'
           : 'Not logged in. Click Login to authenticate with OpenAI.',
       };
     }
 
-    if (neokaiCreds.expires) {
+    if (hyperneoCreds.expires) {
       const bufferMs = 5 * 60 * 1000;
-      if (Date.now() >= neokaiCreds.expires - bufferMs) {
+      if (Date.now() >= hyperneoCreds.expires - bufferMs) {
         return {
           isAuthenticated: true,
           method: 'oauth',
-          expiresAt: neokaiCreds.expires,
+          expiresAt: hyperneoCreds.expires,
           needsRefresh: true,
         };
       }
-      return { isAuthenticated: true, method: 'oauth', expiresAt: neokaiCreds.expires };
+      return { isAuthenticated: true, method: 'oauth', expiresAt: hyperneoCreds.expires };
     }
 
     return { isAuthenticated: true, method: 'oauth' };
@@ -829,6 +830,8 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     authUrl.searchParams.set('state', state);
     authUrl.searchParams.set('id_token_add_organizations', 'true');
     authUrl.searchParams.set('codex_cli_simplified_flow', 'true');
+    // 'originator' is retained as 'neokai' (external OAuth client identity) —
+    // renamed with the external rebrand alongside the GitHub repo URL.
     authUrl.searchParams.set('originator', 'neokai');
     return authUrl;
   }
@@ -1030,7 +1033,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 
   /**
    * One-time migration: read credentials from ~/.codex/auth.json, optionally
-   * refresh the access token, and write to ~/.neokai/auth.json.
+   * refresh the access token, and write to ~/.hyperneo/auth.json.
    */
   private async importFromCodexAuth(): Promise<void> {
     let codexData: CodexAuthFile;

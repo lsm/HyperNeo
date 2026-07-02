@@ -11,8 +11,8 @@
  * - Structured output (if present)
  */
 
-import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
-import { isSDKResultSuccess, isSDKResultError } from '@neokai/shared/sdk/type-guards';
+import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
+import { isSDKResultSuccess, isSDKResultError } from '@hyperneo/shared/sdk/type-guards';
 import { useState } from 'preact/hooks';
 
 type ResultMessage = Extract<SDKMessage, { type: 'result' }>;

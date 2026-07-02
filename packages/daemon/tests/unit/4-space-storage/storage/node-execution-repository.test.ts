@@ -63,7 +63,7 @@ describe('NodeExecutionRepository', () => {
 
   // Helper to create a node execution with defaults
   function createExecution(
-    overrides: Partial<import('@neokai/shared').CreateNodeExecutionParams> = {}
+    overrides: Partial<import('@hyperneo/shared').CreateNodeExecutionParams> = {}
   ) {
     return repo.create({
       workflowRunId,
@@ -76,7 +76,7 @@ describe('NodeExecutionRepository', () => {
 
   // Helper to create a node execution with an explicit created_at timestamp
   function createExecutionWithTimestamp(
-    overrides: Partial<import('@neokai/shared').CreateNodeExecutionParams> & { createdAt: number }
+    overrides: Partial<import('@hyperneo/shared').CreateNodeExecutionParams> & { createdAt: number }
   ) {
     const { createdAt, ...rest } = overrides;
     const id = crypto.randomUUID();

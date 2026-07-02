@@ -14,8 +14,8 @@ import type {
   SDKMessage,
   McpSetServersResult,
   RewindFilesResult,
-} from '@neokai/shared/sdk';
-import type { AcpConfigOption, AcpContentBlock } from '@neokai/shared';
+} from '@hyperneo/shared/sdk';
+import type { AcpConfigOption, AcpContentBlock } from '@hyperneo/shared';
 import { AcpClient } from './acp-client';
 import { AcpMessageTranslator } from './acp-message-translator';
 import type { QueryLike } from '../agent/query-like';

@@ -30,7 +30,7 @@
  */
 
 import { describe, test, expect } from 'bun:test';
-import type { SpaceWorkflow } from '@neokai/shared';
+import type { SpaceWorkflow } from '@hyperneo/shared';
 import {
   CODING_WORKFLOW,
   FULLSTACK_QA_LOOP_WORKFLOW,

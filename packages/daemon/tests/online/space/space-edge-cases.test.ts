@@ -20,11 +20,11 @@
  *
  * ## Running
  *
- *   cd packages/daemon && NEOKAI_USE_DEV_PROXY=1 bun test \
+ *   cd packages/daemon && HYPERNEO_USE_DEV_PROXY=1 bun test \
  *     ./tests/online/space/space-edge-cases.test.ts
  *
  * MODES:
- * - Dev Proxy (recommended): NEOKAI_USE_DEV_PROXY=1 — no real Anthropic calls needed
+ * - Dev Proxy (recommended): HYPERNEO_USE_DEV_PROXY=1 — no real Anthropic calls needed
  * - Real API (default): requires CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY
  *   (no LLM calls are made in this test — API key only needed for daemon startup)
  */
@@ -32,7 +32,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
-import type { SpaceTask, SpaceWorkflowRun } from '@neokai/shared';
+import type { SpaceTask, SpaceWorkflowRun } from '@hyperneo/shared';
 import {
   approveGate,
   createTestSpace,
@@ -50,7 +50,7 @@ import {
 // Timing constants
 // ---------------------------------------------------------------------------
 
-const IS_MOCK = !!process.env.NEOKAI_USE_DEV_PROXY;
+const IS_MOCK = !!process.env.HYPERNEO_USE_DEV_PROXY;
 
 const NODE_ACTIVATION_TIMEOUT = IS_MOCK ? 4_000 : 15_000;
 const RUN_STATUS_TIMEOUT = IS_MOCK ? 4_000 : 10_000;
@@ -296,7 +296,7 @@ describe('Space Workflow — Edge Cases', () => {
     async () => {
       // Use a pre-allocated workspace so daemon 1 does not delete it on exit
       // (passing workspacePath marks the workspace as externally owned).
-      const restartWorkspace = `/tmp/neokai-restart-gate-${Date.now()}`;
+      const restartWorkspace = `/tmp/hyperneo-restart-gate-${Date.now()}`;
       await Bun.$`mkdir -p ${restartWorkspace}`;
 
       try {
@@ -368,7 +368,7 @@ describe('Space Workflow — Edge Cases', () => {
     'Partial review votes persist across restart; 3rd vote opens gate and activates QA',
     async () => {
       // Pre-allocate workspace for restart (same pattern as the gate persistence test)
-      const restartWorkspace = `/tmp/neokai-restart-votes-${Date.now()}`;
+      const restartWorkspace = `/tmp/hyperneo-restart-votes-${Date.now()}`;
       await Bun.$`mkdir -p ${restartWorkspace}`;
 
       try {

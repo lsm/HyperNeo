@@ -2,9 +2,9 @@
  * File RPC Handlers
  */
 
-import type { MessageHub } from '@neokai/shared';
+import type { MessageHub } from '@hyperneo/shared';
 import type { SessionManager } from '../session-manager';
-import type { ReadFileRequest, ListFilesRequest, GetFileTreeRequest } from '@neokai/shared';
+import type { ReadFileRequest, ListFilesRequest, GetFileTreeRequest } from '@hyperneo/shared';
 import { FileManager } from '../file-manager';
 
 export function setupFileHandlers(messageHub: MessageHub, sessionManager: SessionManager): void {

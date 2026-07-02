@@ -14,8 +14,8 @@ import type {
   Gate,
   WorkflowNodeAgent,
   PostApprovalRoute,
-} from '@neokai/shared';
-import { generateUUID } from '@neokai/shared';
+} from '@hyperneo/shared';
+import { generateUUID } from '@hyperneo/shared';
 import type { NodeDraft } from './WorkflowNodeCard';
 
 // ============================================================================
@@ -38,7 +38,7 @@ export interface WorkflowTemplate {
   /** Optional first-class workflow gates to seed with the template. */
   gates?: Gate[];
   /** Optional workflow hooks to seed with the template. */
-  hooks?: import('@neokai/shared').WorkflowHook[];
+  hooks?: import('@hyperneo/shared').WorkflowHook[];
   /** Optional tags to seed with the template. */
   tags?: string[];
   /** Legacy workflow-level post-approval route; migrated onto the end node when loaded. */
@@ -59,7 +59,7 @@ export interface WorkflowTemplateStep {
   /** Optional model override for single-agent templates. */
   model?: string;
   /** Optional thinking-level override for single-agent templates. */
-  thinkingLevel?: import('@neokai/shared').ThinkingLevel;
+  thinkingLevel?: import('@hyperneo/shared').ThinkingLevel;
   /** Optional default node instructions. */
   instructions?: string;
   /** Optional post-approval route triggered when this node approves the task. */
@@ -82,7 +82,7 @@ export interface WorkflowTemplateAgentSlot {
   /** Optional model override for this slot. */
   model?: string;
   /** Optional thinking-level override for this slot. */
-  thinkingLevel?: import('@neokai/shared').ThinkingLevel;
+  thinkingLevel?: import('@hyperneo/shared').ThinkingLevel;
   /** Optional default slot system prompt. */
   systemPrompt?: string;
   /** Optional default slot instructions. */

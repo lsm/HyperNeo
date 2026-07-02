@@ -1,4 +1,4 @@
-import type { ActorMessageProjectionRow } from '@neokai/shared';
+import type { ActorMessageProjectionRow } from '@hyperneo/shared';
 import { useActorMessageProjections } from '../../../hooks/useActorMessageProjections';
 import { DeliveryStateBadge } from '../../ui/DeliveryStateBadge';
 

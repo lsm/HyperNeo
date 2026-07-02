@@ -17,11 +17,11 @@
  *   the first attempt is already running — both outcomes are valid.
  *
  * MODES:
- *   - Dev Proxy (preferred, offline): NEOKAI_USE_DEV_PROXY=1
+ *   - Dev Proxy (preferred, offline): HYPERNEO_USE_DEV_PROXY=1
  *   - Real API: requires CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY
  *
  * Run:
- *   cd packages/daemon && NEOKAI_USE_DEV_PROXY=1 bun test ./tests/online/convo/startup-timeout-no-retry.test.ts
+ *   cd packages/daemon && HYPERNEO_USE_DEV_PROXY=1 bun test ./tests/online/convo/startup-timeout-no-retry.test.ts
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
@@ -29,7 +29,7 @@ import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
 import { getProcessingState, waitForIdle } from '../../helpers/daemon-actions';
 
-const IS_MOCK = !!process.env.NEOKAI_USE_DEV_PROXY;
+const IS_MOCK = !!process.env.HYPERNEO_USE_DEV_PROXY;
 // Spawned daemon startup is slower than in-process; allow extra time.
 const SETUP_TIMEOUT = IS_MOCK ? 20000 : 40000;
 const TEST_TIMEOUT = IS_MOCK ? 30000 : 60000;
@@ -61,10 +61,10 @@ describe('Startup Timeout Error Surfacing', () => {
     // captured once when the process starts.  We must spawn a fresh child
     // process so the env var is read at its module-load time.
     const origSpawn = process.env.DAEMON_TEST_SPAWN;
-    const origTimeout = process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS;
+    const origTimeout = process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
 
     process.env.DAEMON_TEST_SPAWN = 'true';
-    process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS = FORCED_STARTUP_TIMEOUT_MS;
+    process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = FORCED_STARTUP_TIMEOUT_MS;
 
     try {
       daemon = await createDaemonServer();
@@ -77,9 +77,9 @@ describe('Startup Timeout Error Surfacing', () => {
         process.env.DAEMON_TEST_SPAWN = origSpawn;
       }
       if (origTimeout === undefined) {
-        delete process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS;
+        delete process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
       } else {
-        process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS = origTimeout;
+        process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = origTimeout;
       }
     }
   }, SETUP_TIMEOUT);
@@ -143,7 +143,7 @@ describe('Startup Timeout Error Surfacing', () => {
           const errorMsg = sessionError.message;
           expect(errorMsg).toContain('failed to start');
           expect(errorMsg).toContain('Common causes');
-          expect(errorMsg).toContain('NEOKAI_SDK_STARTUP_TIMEOUT_MS');
+          expect(errorMsg).toContain('HYPERNEO_SDK_STARTUP_TIMEOUT_MS');
         }
         // If sessionError is null, the retry succeeded — that's also valid.
       } finally {

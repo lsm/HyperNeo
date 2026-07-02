@@ -10,7 +10,7 @@ import {
   SDKMessageRepository,
   type SendStatus,
 } from '../../../../src/storage/repositories/sdk-message-repository';
-import type { SDKMessage } from '@neokai/shared/sdk';
+import type { SDKMessage } from '@hyperneo/shared/sdk';
 
 describe('SDKMessageRepository', () => {
   let db: Database;

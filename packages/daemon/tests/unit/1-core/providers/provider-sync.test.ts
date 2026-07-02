@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { resetProviderRegistry, getProviderRegistry } from '../../../../src/lib/providers/registry';
 import { resetProviderFactory } from '../../../../src/lib/providers/factory';
 import { removeProviderFromRegistry } from '../../../../src/lib/providers/provider-sync';
-import type { Provider } from '@neokai/shared/provider';
+import type { Provider } from '@hyperneo/shared/provider';
 
 function createMockProvider(overrides: Partial<Provider> = {}): Provider {
   return {

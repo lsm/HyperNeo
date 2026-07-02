@@ -8,7 +8,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { render } from '@testing-library/preact';
-import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
+import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 import { ResultInfoDropdown } from '../ResultInfoDropdown';
 
 type ResultMessage = Extract<SDKMessage, { type: 'result' }>;

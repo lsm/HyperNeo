@@ -25,7 +25,7 @@
 
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'preact/hooks';
 import { useMessageHub } from './useMessageHub';
-import type { LiveQuerySnapshotEvent, LiveQueryDeltaEvent } from '@neokai/shared';
+import type { LiveQuerySnapshotEvent, LiveQueryDeltaEvent } from '@hyperneo/shared';
 
 export interface SessionGroupMessage {
   id: number | string;

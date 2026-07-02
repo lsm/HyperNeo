@@ -1,4 +1,4 @@
-import type { SessionContext } from '@neokai/shared';
+import type { SessionContext } from '@hyperneo/shared';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 

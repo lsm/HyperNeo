@@ -10,7 +10,7 @@
  * Non-zero / timeout → gate blocked (stderr as reason)
  */
 
-import type { GateScript } from '@neokai/shared';
+import type { GateScript } from '@hyperneo/shared';
 import { isRateLimitError, RATE_LIMIT_MIN_BACKOFF_MS } from './rate-limit-detector';
 
 // ---------------------------------------------------------------------------
@@ -56,12 +56,12 @@ export interface GateScriptContext {
   runId: string;
   /**
    * Current gate runtime data used for evaluation.
-   * Exposed to scripts as NEOKAI_GATE_DATA_JSON.
+   * Exposed to scripts as HYPERNEO_GATE_DATA_JSON.
    */
   gateData?: Record<string, unknown>;
   /**
    * ISO8601 timestamp marking when the workflow run started (workflowRun.createdAt
-   * converted to ISO8601). Exposed to scripts as NEOKAI_WORKFLOW_START_ISO.
+   * converted to ISO8601). Exposed to scripts as HYPERNEO_WORKFLOW_START_ISO.
    * Gate scripts that compare against fresh activity (e.g. reviews submitted
    * since start) rely on this variable.
    * Undefined when the context wasn't able to resolve a run start time
@@ -70,7 +70,7 @@ export interface GateScriptContext {
   workflowStartIso?: string;
   /**
    * ISO8601 timestamp marking when the current gate data was last updated.
-   * Exposed as NEOKAI_GATE_DATA_UPDATED_ISO for checks whose timeout window
+   * Exposed as HYPERNEO_GATE_DATA_UPDATED_ISO for checks whose timeout window
    * starts when approval data is written, not when the workflow run starts.
    */
   gateDataUpdatedIso?: string;
@@ -97,13 +97,40 @@ export const MAX_BUFFER_BYTES = 1_048_576;
  * Environment variable prefixes that are stripped from the restricted env.
  * These carry credentials, auth tokens, and internal secrets.
  */
-const RESTRICTED_ENV_PREFIXES = ['ANTHROPIC_', 'CLAUDE_', 'GLM_', 'ZHIPU_', 'COPILOT_', 'NEOKAI_'];
+const RESTRICTED_ENV_PREFIXES = [
+  'ANTHROPIC_',
+  'CLAUDE_',
+  'GLM_',
+  'ZHIPU_',
+  'COPILOT_',
+  'HYPERNEO_',
+  'NEOKAI_',
+];
 
 /**
  * Environment variable keys matching this regex are stripped from the restricted env.
  * Catches keys like `MY_SECRET`, `API_TOKEN`, `DB_PASSWORD`, `AWS_CREDENTIAL`.
  */
 const RESTRICTED_ENV_KEY_PATTERN = /SECRET|TOKEN|PASSWORD|CREDENTIAL|API_KEY/i;
+
+/**
+ * Gate-specific env vars injected into every gate/hook script under the canonical
+ * `HYPERNEO_*` names (a legacy `NEOKAI_*` alias is mirrored alongside each).
+ */
+const GATE_INJECTED_ENV_KEYS = [
+  'HYPERNEO_GATE_ID',
+  'HYPERNEO_WORKFLOW_RUN_ID',
+  'HYPERNEO_WORKSPACE_PATH',
+  'HYPERNEO_GATE_DATA_JSON',
+  'HYPERNEO_WORKFLOW_START_ISO',
+  'HYPERNEO_GATE_DATA_UPDATED_ISO',
+] as const;
+
+/** True for a canonical or legacy gate-injected env key (user scriptEnv cannot override these). */
+function isGateInjectedEnvKey(key: string): boolean {
+  if ((GATE_INJECTED_ENV_KEYS as readonly string[]).includes(key)) return true;
+  return GATE_INJECTED_ENV_KEYS.some((k) => key === `NEOKAI_${k.slice('HYPERNEO_'.length)}`);
+}
 
 /**
  * Environment variables that are always allowed regardless of the prefix/key pattern.
@@ -121,7 +148,7 @@ const ALLOWED_ENV_KEYS = new Set([
   'GH_ENTERPRISE_TOKEN',
   'GITHUB_ENTERPRISE_TOKEN',
   'GH_HOST',
-  'NEOKAI_VALIDATION_BASE_REF',
+  'HYPERNEO_VALIDATION_BASE_REF',
 ]);
 
 /** Keys that are rejected during deep-merge to prevent prototype pollution. */
@@ -161,15 +188,15 @@ export function buildRestrictedEnv(
   }
 
   // Inject gate-specific environment variables
-  env['NEOKAI_GATE_ID'] = context.gateId;
-  env['NEOKAI_WORKFLOW_RUN_ID'] = context.runId;
-  env['NEOKAI_WORKSPACE_PATH'] = context.workspacePath;
+  env['HYPERNEO_GATE_ID'] = context.gateId;
+  env['HYPERNEO_WORKFLOW_RUN_ID'] = context.runId;
+  env['HYPERNEO_WORKSPACE_PATH'] = context.workspacePath;
 
   if (context.workflowStartIso) {
-    env['NEOKAI_WORKFLOW_START_ISO'] = context.workflowStartIso;
+    env['HYPERNEO_WORKFLOW_START_ISO'] = context.workflowStartIso;
   }
   if (context.gateDataUpdatedIso) {
-    env['NEOKAI_GATE_DATA_UPDATED_ISO'] = context.gateDataUpdatedIso;
+    env['HYPERNEO_GATE_DATA_UPDATED_ISO'] = context.gateDataUpdatedIso;
   }
 
   if (context.prUrl) {
@@ -178,23 +205,34 @@ export function buildRestrictedEnv(
 
   const gateData = context.gateData ?? {};
   try {
-    env['NEOKAI_GATE_DATA_JSON'] = JSON.stringify(gateData);
+    env['HYPERNEO_GATE_DATA_JSON'] = JSON.stringify(gateData);
   } catch {
-    env['NEOKAI_GATE_DATA_JSON'] = '{}';
+    env['HYPERNEO_GATE_DATA_JSON'] = '{}';
+  }
+
+  // Backward-compat: mirror the injected gate vars under legacy NEOKAI_* aliases
+  // so gate/hook scripts authored before the HyperNeo rename keep seeing values.
+  for (const hyperneoKey of GATE_INJECTED_ENV_KEYS) {
+    if (env[hyperneoKey] !== undefined) {
+      env[`NEOKAI_${hyperneoKey.slice('HYPERNEO_'.length)}`] = env[hyperneoKey];
+    }
+  }
+
+  // Resolve the validation base override from either name and expose both, so
+  // bundled scripts (HYPERNEO_VALIDATION_BASE_REF) and upgraded custom scripts
+  // still reading the legacy NEOKAI_VALIDATION_BASE_REF both see it.
+  const validationBaseRef =
+    env['HYPERNEO_VALIDATION_BASE_REF'] ?? process.env.NEOKAI_VALIDATION_BASE_REF;
+  if (validationBaseRef !== undefined) {
+    env['HYPERNEO_VALIDATION_BASE_REF'] = validationBaseRef;
+    env['NEOKAI_VALIDATION_BASE_REF'] = validationBaseRef;
   }
 
   // Merge user-specified env (applied after injected vars; cannot override gate-injected vars)
   if (scriptEnv) {
     for (const [key, value] of Object.entries(scriptEnv)) {
-      // User env cannot override gate-injected vars
-      if (
-        key === 'NEOKAI_GATE_ID' ||
-        key === 'NEOKAI_WORKFLOW_RUN_ID' ||
-        key === 'NEOKAI_WORKSPACE_PATH' ||
-        key === 'NEOKAI_GATE_DATA_JSON' ||
-        key === 'NEOKAI_WORKFLOW_START_ISO' ||
-        key === 'NEOKAI_GATE_DATA_UPDATED_ISO'
-      ) {
+      // User env cannot override gate-injected vars (HYPERNEO_* or legacy NEOKAI_* alias)
+      if (isGateInjectedEnvKey(key)) {
         continue;
       }
       if (!ALLOWED_ENV_KEYS.has(key)) {

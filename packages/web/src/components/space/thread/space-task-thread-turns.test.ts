@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
+import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 import { buildAgentTurns, isUserRow } from './space-task-thread-turns';
 import type { ParsedThreadRow } from './space-task-thread-events';
 

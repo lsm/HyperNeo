@@ -27,7 +27,7 @@ export type EvolutionEpisodeStatus = 'draft' | 'accepted' | 'dismissed';
 export type EvolutionLessonStatus = 'candidate' | 'active' | 'dismissed';
 export type TaskProposalStatus = 'proposed' | 'accepted' | 'dismissed' | 'created';
 export type MetricDirection = 'increase' | 'decrease' | 'target' | 'maintain';
-export type EvolutionFindingDomain = 'workflow' | 'target_artifact' | 'neokai_product';
+export type EvolutionFindingDomain = 'workflow' | 'target_artifact' | 'hyperneo_product';
 export type EvolutionFindingKind =
   | 'friction'
   | 'bug'

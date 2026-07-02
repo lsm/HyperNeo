@@ -244,7 +244,7 @@ describe('OpenRouterProvider', () => {
 
   it('parses UI-driven provider-prefixed OpenRouter allowlist', async () => {
     process.env.OPENROUTER_API_KEY = 'sk-or-test';
-    process.env.NEOKAI_PROVIDER_MODEL_ALLOWLISTS =
+    process.env.HYPERNEO_PROVIDER_MODEL_ALLOWLISTS =
       'openrouter:xai/grok-4.3\nanthropic:claude-sonnet-4.6\nopenrouter:qwen/qwen3.6-max-preview';
     const fetchMock = mock(
       async () =>

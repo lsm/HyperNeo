@@ -42,7 +42,7 @@ import {
   assertValidTransition,
   VALID_TRANSITIONS,
 } from '../../../../src/lib/space/runtime/workflow-run-status-machine.ts';
-import type { WorkflowRunStatus } from '@neokai/shared';
+import type { WorkflowRunStatus } from '@hyperneo/shared';
 
 // ---------------------------------------------------------------------------
 // DB helpers

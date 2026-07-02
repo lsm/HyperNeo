@@ -27,8 +27,8 @@ Add online integration tests and Playwright E2E tests to validate the full lifec
    - Test: Verify `task.list` excludes archived tasks by default, and includes them with `includeArchived: true`.
    - Test: Send a human message to a `completed` task, verify it auto-reactivates to `in_progress`.
    - Test: Send a human message to an `archived` task, verify it fails.
-3. Use `NEOKAI_USE_DEV_PROXY=1` for mocked SDK tests.
-4. Run: `NEOKAI_USE_DEV_PROXY=1 cd packages/daemon && bun test tests/online/rpc/rpc-task-lifecycle.test.ts`.
+3. Use `HYPERNEO_USE_DEV_PROXY=1` for mocked SDK tests.
+4. Run: `HYPERNEO_USE_DEV_PROXY=1 cd packages/daemon && bun test tests/online/rpc/rpc-task-lifecycle.test.ts`.
 5. Run `bun run lint` and `bun run format`.
 
 **Acceptance criteria:**

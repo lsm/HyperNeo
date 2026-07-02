@@ -17,7 +17,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup, waitFor } from '@testing-library/preact';
 import { signal, type Signal } from '@preact/signals';
-import type { SpaceWorkflowSummary, DuplicateDriftReport } from '@neokai/shared';
+import type { SpaceWorkflowSummary, DuplicateDriftReport } from '@hyperneo/shared';
 
 // ---- Mocks ----
 // Signals are initialized immediately so vi.mock's lazy getter can reference them safely.

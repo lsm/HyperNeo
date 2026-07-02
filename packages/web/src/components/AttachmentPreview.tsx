@@ -2,7 +2,7 @@
  * Component for previewing attached images before sending
  */
 
-import type { MessageImage } from '@neokai/shared/types';
+import type { MessageImage } from '@hyperneo/shared/types';
 import { formatFileSize } from '../lib/file-utils.ts';
 
 interface AttachmentPreviewProps {

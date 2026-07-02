@@ -8,7 +8,7 @@
  */
 
 import { describe, expect, it, beforeEach, mock, afterEach } from 'bun:test';
-import { MessageHub } from '@neokai/shared';
+import { MessageHub } from '@hyperneo/shared';
 import { setupSystemHandlers } from '../../../../src/lib/rpc-handlers/system-handlers';
 import type { SessionManager } from '../../../../src/lib/session-manager';
 import type { AuthManager } from '../../../../src/lib/auth-manager';

@@ -5,7 +5,7 @@ import {
   isCustomEndpointProviderId,
   resolveModelCapabilities,
 } from '../../../../src/lib/providers/custom-endpoint-provider';
-import type { CustomEndpointConfig } from '@neokai/shared';
+import type { CustomEndpointConfig } from '@hyperneo/shared';
 import type {
   OpenAIChatBridgeConfig,
   OpenAIChatBridgeServer,

@@ -16,14 +16,14 @@ Create dev-proxy-based online tests that verify the restructured agent orchestra
 
 **Subtasks:**
 1. Create `packages/daemon/tests/online/room/coder-agent-subagents.test.ts`
-2. Use dev-proxy mode (`NEOKAI_USE_DEV_PROXY=1`) for mocked responses
+2. Use dev-proxy mode (`HYPERNEO_USE_DEV_PROXY=1`) for mocked responses
 3. Test: create a coder session via `createCoderAgentInit()` and verify the resulting `Options` passed to SDK contain `agent: 'Coder'` and `agents` with `coder-explorer` and `coder-tester`
 4. Test: verify coder session without room-configured helpers still has built-in sub-agents
 5. Test: verify coder session with room-configured helpers has both built-ins and custom helpers
 6. Verify no test makes real API calls (check dev-proxy logs)
 
 **Acceptance Criteria:**
-- Tests pass with `NEOKAI_USE_DEV_PROXY=1`
+- Tests pass with `HYPERNEO_USE_DEV_PROXY=1`
 - Tests verify agent/agents configuration in SDK options
 - Tests cover both with and without room-configured helpers
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
@@ -52,7 +52,7 @@ Create dev-proxy-based online tests that verify the restructured agent orchestra
 8. Verify no test makes real API calls
 
 **Acceptance Criteria:**
-- Tests pass with `NEOKAI_USE_DEV_PROXY=1`
+- Tests pass with `HYPERNEO_USE_DEV_PROXY=1`
 - Tests verify 3-phase pipeline configuration
 - Tests verify plan-writer has no Task tools
 - Tests verify context is correctly threaded between phases
@@ -77,7 +77,7 @@ Create dev-proxy-based online tests that verify the restructured agent orchestra
 7. Test: verify leader always has `agent: 'Leader'` and `agents` map (no simple-path fallback)
 
 **Acceptance Criteria:**
-- Tests pass with `NEOKAI_USE_DEV_PROXY=1`
+- Tests pass with `HYPERNEO_USE_DEV_PROXY=1`
 - Tests verify reviewer sub-agent configuration
 - Tests verify leader always-on pattern
 - Tests cover both with and without reviewer configuration

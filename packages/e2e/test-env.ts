@@ -16,7 +16,7 @@ import { randomUUID } from 'crypto';
 
 // Compute workspace path once (Node.js caches this module)
 const testRunId = `e2e-${Date.now()}-${randomUUID().slice(0, 8)}`;
-export const e2eTempDir = join(tmpdir(), 'neokai-e2e', testRunId);
+export const e2eTempDir = join(tmpdir(), 'hyperneo-e2e', testRunId);
 export const e2eWorkspaceDir = join(e2eTempDir, 'workspace');
 export const e2eDatabaseDir = join(e2eTempDir, 'database');
 export const e2eDatabasePath = join(e2eDatabaseDir, 'daemon.db');

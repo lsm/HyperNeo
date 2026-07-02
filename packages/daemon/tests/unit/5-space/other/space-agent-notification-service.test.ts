@@ -3,7 +3,7 @@ import { SpaceAgentNotificationService } from '../../../../src/lib/space/runtime
 import type { SpaceAgentNotificationServiceConfig } from '../../../../src/lib/space/runtime/space-agent-notification-service';
 import { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-bus';
-import type { MessageDeliveryMode } from '@neokai/shared';
+import type { MessageDeliveryMode } from '@hyperneo/shared';
 import type { SessionFactory } from '../../../../src/lib/space/runtime/types';
 
 // ---------------------------------------------------------------------------

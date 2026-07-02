@@ -41,7 +41,7 @@
  *
  * As of PR 4/5 the completion-action pipeline has been deleted — the
  * PostApprovalRouter is the only approval path. The
- * `NEOKAI_TASK_AGENT_POST_APPROVAL_ROUTING` env var and
+ * `HYPERNEO_TASK_AGENT_POST_APPROVAL_ROUTING` env var and
  * `isPostApprovalRoutingEnabled()` helper are retained as an emergency kill
  * switch: production call sites no longer consult it (PR 4/5 removed the
  * branch), but operators can still inspect the flag state in diagnostics.
@@ -54,7 +54,7 @@ import type {
   SpaceApprovalSource,
   UpdateSpaceTaskParams,
   PostApprovalRoute,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import {
   interpolatePostApprovalTemplate,
@@ -70,7 +70,7 @@ const log = new Logger('post-approval-router');
  * it is truthy (`'1'` or `'true'`). Exported so tests can assert on it and
  * so the RPC handler + space-runtime share a single key.
  */
-export const POST_APPROVAL_ROUTING_FLAG_ENV = 'NEOKAI_TASK_AGENT_POST_APPROVAL_ROUTING';
+export const POST_APPROVAL_ROUTING_FLAG_ENV = 'HYPERNEO_TASK_AGENT_POST_APPROVAL_ROUTING';
 
 /**
  * Returns true when the feature flag indicates post-approval routing should

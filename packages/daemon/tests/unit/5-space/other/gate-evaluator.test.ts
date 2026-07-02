@@ -13,7 +13,7 @@
  */
 
 import { describe, expect, test } from 'bun:test';
-import type { Channel, Gate, GateField, GateScript } from '@neokai/shared';
+import type { Channel, Gate, GateField, GateScript } from '@hyperneo/shared';
 import {
   evaluateFieldCheck,
   evaluateFields,

@@ -4,8 +4,8 @@
 
 import type { ComponentChildren } from 'preact';
 import { useState, useEffect } from 'preact/hooks';
-import type { Space, SpaceExportBundle, SpaceAutonomyLevel, SettingSource } from '@neokai/shared';
-import { MAX_SPACE_CONCURRENT_TASKS, MIN_SPACE_CONCURRENT_TASKS } from '@neokai/shared';
+import type { Space, SpaceExportBundle, SpaceAutonomyLevel, SettingSource } from '@hyperneo/shared';
+import { MAX_SPACE_CONCURRENT_TASKS, MIN_SPACE_CONCURRENT_TASKS } from '@hyperneo/shared';
 import { connectionManager } from '../../lib/connection-manager.ts';
 import { globalSettings } from '../../lib/state.ts';
 import { spaceStore } from '../../lib/space-store.ts';
@@ -500,7 +500,7 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
             <div>
               <p class="text-sm text-gray-300">Portable Space bundle</p>
               <p class="mt-0.5 text-xs text-gray-400">
-                Download all agents and workflows as a <span class="font-mono">.neokai.json</span>{' '}
+                Download all agents and workflows as a <span class="font-mono">.hyperneo.json</span>{' '}
                 bundle.
               </p>
             </div>

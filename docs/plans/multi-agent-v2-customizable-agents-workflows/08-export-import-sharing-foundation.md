@@ -212,11 +212,11 @@ Add export and import actions to agent and workflow list views within the Space 
    - "Export" on individual agent/workflow cards (in `SpaceAgentList` and `WorkflowList`)
    - "Export All" on list views
    - "Export Bundle" in Space settings
-   - Downloads `.neokai.json` file: `{space-name}-{type}-{date}.neokai.json`
+   - Downloads `.hyperneo.json` file: `{space-name}-{type}-{date}.hyperneo.json`
 
 2. Import functionality:
    - "Import" button on list views
-   - File picker for `.json`/`.neokai.json`
+   - File picker for `.json`/`.hyperneo.json`
    - Preview dialog showing items, conflicts, cross-reference warnings
    - Conflict resolution per item (skip/rename/replace)
    - Success/error toast, version mismatch message

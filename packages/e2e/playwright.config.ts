@@ -225,7 +225,7 @@ export default defineConfig({
   /* Run your local test server before starting the tests */
   webServer: {
     // Build web package first, then start production-like server for E2E tests.
-    // When E2E_PORT is set (random port mode), the port is passed via NEOKAI_PORT.
+    // When E2E_PORT is set (random port mode), the port is passed via HYPERNEO_PORT.
     // This avoids HMR overhead and tests against production-like environment.
     command: `cd ../web && bun run build && cd ../cli && NODE_ENV=test bun run main.ts${e2ePort ? ` --port ${e2ePort}` : ''}`,
     url: baseURL,
@@ -239,15 +239,15 @@ export default defineConfig({
       NODE_ENV: 'test',
       DEFAULT_MODEL: 'sonnet', // Maps to GLM-4.7 for E2E tests
       // Isolated paths for this test run
-      NEOKAI_WORKSPACE_PATH: e2eWorkspaceDir,
-      NEOKAI_WORKSPACE_ROOT: e2eWorkspaceDir,
+      HYPERNEO_WORKSPACE_PATH: e2eWorkspaceDir,
+      HYPERNEO_WORKSPACE_ROOT: e2eWorkspaceDir,
       DB_PATH: e2eDatabasePath,
       // Disable automatic goal processing to prevent worktree creation spam in E2E tests
       // Goals can still be created/manually triggered via UI or RPC, but the daemon
       // won't automatically try to spawn planning groups that require worktrees.
-      NEOKAI_DISABLE_GOAL_PROCESSING: '1',
+      HYPERNEO_DISABLE_GOAL_PROCESSING: '1',
       // Pass random port to CLI when in E2E_PORT mode
-      ...(e2ePort ? { NEOKAI_PORT: e2ePort } : {}),
+      ...(e2ePort ? { HYPERNEO_PORT: e2ePort } : {}),
     },
   },
 });

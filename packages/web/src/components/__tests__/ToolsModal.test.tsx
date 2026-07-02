@@ -12,7 +12,7 @@
  * blocks at the bottom of this file.
  */
 import { describe, it, expect } from 'vitest';
-import type { AppMcpServer, AppSkill, SessionMcpServerEntry } from '@neokai/shared';
+import type { AppMcpServer, AppSkill, SessionMcpServerEntry } from '@hyperneo/shared';
 import {
   buildDisabledSkillsList,
   computeMcpServerSkillLinkage,

@@ -15,7 +15,7 @@ import type {
   WorkflowChannel,
   WorkflowNodeAgent,
   WorkflowNodeAgentOverride,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import { useCallback, useState } from 'preact/hooks';
 import { cn } from '../../lib/utils';
 
@@ -44,7 +44,7 @@ export interface NodeDraft {
   /** Directed messaging topology between agents. */
   channels?: WorkflowChannel[];
   /** Optional post-approval route scoped to this node. */
-  postApproval?: import('@neokai/shared').PostApprovalRoute;
+  postApproval?: import('@hyperneo/shared').PostApprovalRoute;
   /** Require codex[bot] +1 on approval gates for channels from this node. */
   requireCodexApproval?: boolean;
   /** Custom poll interval (ms) for the codex review bot. */

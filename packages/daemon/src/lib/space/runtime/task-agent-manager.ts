@@ -33,7 +33,7 @@
  * registered `onComplete` callbacks are fired.
  */
 
-import { generateUUID, resolveNodeAgents } from '@neokai/shared';
+import { generateUUID, resolveNodeAgents } from '@hyperneo/shared';
 import type {
   Space,
   SpaceTask,
@@ -48,12 +48,12 @@ import type {
   WorkflowNode,
   WorkflowNodeAgent,
   Session,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import type { AppMcpLifecycleManager } from '../../mcp/app-mcp-lifecycle-manager';
 import type { SkillsManager } from '../../skills-manager';
 import type { AppMcpServerRepository } from '../../../storage/repositories/app-mcp-server-repository';
 import type { UUID } from 'crypto';
-import type { SDKUserMessage } from '@neokai/shared/sdk';
+import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { AgentSessionInit } from '../../../lib/agent/agent-session';
 import { AgentSession } from '../../../lib/agent/agent-session';
 import { validateImageSizes } from '../../session/message-persistence';

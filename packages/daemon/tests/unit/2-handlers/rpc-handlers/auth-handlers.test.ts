@@ -9,10 +9,10 @@
  */
 
 import { describe, expect, it, beforeEach, mock, afterEach } from 'bun:test';
-import { MessageHub } from '@neokai/shared';
+import { MessageHub } from '@hyperneo/shared';
 import { setupAuthHandlers } from '../../../../src/lib/rpc-handlers/auth-handlers';
 import type { AuthManager } from '../../../../src/lib/auth-manager';
-import type { Provider } from '@neokai/shared/provider';
+import type { Provider } from '@hyperneo/shared/provider';
 import { resetProviderRegistry, getProviderRegistry } from '../../../../src/lib/providers/registry';
 import { resetProviderFactory } from '../../../../src/lib/providers/factory';
 import { KeychainUnavailableError } from '../../../../src/lib/credentials/credential-store';

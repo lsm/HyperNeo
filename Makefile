@@ -22,7 +22,7 @@ dev:
 	if [ -n "$(DB_PATH)" ]; then echo "   Database: $(DB_PATH)"; fi; \
 	echo "================================================"; \
 	echo ""; \
-	NODE_ENV=development NEOKAI_PORT=$$PORT bun run packages/cli/main.ts --port $$PORT $$DB_FLAGS
+	NODE_ENV=development HYPERNEO_PORT=$$PORT bun run packages/cli/main.ts --port $$PORT $$DB_FLAGS
 
 # Alias for dev-random (deprecated, use make dev)
 dev-random:
@@ -37,7 +37,7 @@ serve-random:
 
 # Self-developing mode - production build on port 9983
 self:
-	@NEOKAI_SELF_MODE=1 $(MAKE) run PORT=9983
+	@HYPERNEO_SELF_MODE=1 $(MAKE) run PORT=9983
 
 # Run E2E tests against the `make self` instance (requires `make self` to be running)
 # Usage: make self-test TEST=tests/core/navigation-3-column.e2e.ts

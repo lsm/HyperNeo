@@ -1563,7 +1563,7 @@ describe('EvolutionEpisodeService', () => {
         outcomeSummary: `Reviewed ${input.evidence.length} scoped evidence items.`,
         findings: [
           {
-            domain: 'neokai_product',
+            domain: 'hyperneo_product',
             kind: 'friction',
             impact: 'medium',
             confidence: 0.8,
@@ -1678,7 +1678,7 @@ describe('EvolutionEpisodeService', () => {
           outcomeSummary: 'Observation summarized',
           findings: [
             {
-              domain: 'neokai_product',
+              domain: 'hyperneo_product',
               kind: 'friction',
               impact: 'high',
               confidence: 0.9,
@@ -1896,7 +1896,7 @@ describe('EvolutionEpisodeService', () => {
 
     expect(result.episode.findings).toHaveLength(1);
     expect(result.episode.findings[0]).toMatchObject({
-      domain: 'neokai_product',
+      domain: 'hyperneo_product',
       kind: 'bug',
       impact: 'medium',
       confidence: 0.9,
@@ -1962,7 +1962,7 @@ describe('EvolutionEpisodeService', () => {
 
     expect(result.episode.findings).toHaveLength(1);
     expect(result.episode.findings[0]).toMatchObject({
-      domain: 'neokai_product',
+      domain: 'hyperneo_product',
       kind: 'bug',
       evidence: [taskEvidence.id],
       proposedAction: expect.stringContaining('Backfill task.result'),
@@ -2150,7 +2150,7 @@ describe('EvolutionEpisodeService', () => {
 
     expect(result.episode.findings).toHaveLength(1);
     expect(result.episode.findings[0]).toMatchObject({
-      domain: 'neokai_product',
+      domain: 'hyperneo_product',
       kind: 'bug',
       evidence: expect.arrayContaining([taskEvidence.id, runEvidence.id]),
     });
@@ -2332,7 +2332,7 @@ describe('EvolutionEpisodeService', () => {
 
     expect(result.episode.findings).toHaveLength(1);
     expect(result.episode.findings[0]).toMatchObject({
-      domain: 'neokai_product',
+      domain: 'hyperneo_product',
       kind: 'bug',
       evidence: [taskEvidence.id],
       proposedAction: expect.stringContaining('Backfill task.result'),
@@ -2573,7 +2573,7 @@ describe('EvolutionEpisodeService', () => {
 
     expect(result.episode.findings).toHaveLength(1);
     expect(result.episode.findings[0]).toMatchObject({
-      domain: 'neokai_product',
+      domain: 'hyperneo_product',
       kind: 'bug',
       evidence: [runEvidence.id],
       proposedAction: expect.stringContaining('Backfill task.result'),

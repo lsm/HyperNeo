@@ -15,12 +15,12 @@
  *   taskSchedule.delete  — cancel pending job + delete schedule row
  */
 
-import type { MessageHub } from '@neokai/shared';
+import type { MessageHub } from '@hyperneo/shared';
 import type {
   TaskScheduleStatus,
   TaskScheduleTriggerType,
   SpaceTaskPriority,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import { Logger } from '../logger';
 import type { ScheduleService } from '../space/schedule/schedule-service';
 import type { SpaceManager } from '../space/managers/space-manager';

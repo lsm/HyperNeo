@@ -9,7 +9,7 @@ import { createTables } from '../../../../src/storage/schema';
 import { NAMED_QUERY_REGISTRY } from '../../../../src/lib/rpc-handlers/live-query-handlers';
 import { SkillRepository } from '../../../../src/storage/repositories/skill-repository';
 import type { ReactiveDatabase } from '../../../../src/storage/reactive-database';
-import type { AppSkill } from '@neokai/shared';
+import type { AppSkill } from '@hyperneo/shared';
 
 // ---------------------------------------------------------------------------
 // Helpers

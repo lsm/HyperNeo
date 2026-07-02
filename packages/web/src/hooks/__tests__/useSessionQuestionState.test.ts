@@ -12,7 +12,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, cleanup, waitFor } from '@testing-library/preact';
-import type { SessionState } from '@neokai/shared';
+import type { SessionState } from '@hyperneo/shared';
 import { useSessionQuestionState } from '../useSessionQuestionState';
 
 // -------------------------------------------------------

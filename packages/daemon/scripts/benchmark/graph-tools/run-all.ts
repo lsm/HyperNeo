@@ -59,7 +59,7 @@ for (const script of ARMS) {
 console.log('\n\n=== Collecting Results ===');
 interface BenchmarkOutput {
   timestamp: string;
-  neokaiCommit: string;
+  hyperneoCommit: string;
   model: string;
   results: Array<{
     caseName: string;
@@ -82,7 +82,7 @@ for (const file of OUTPUT_FILES) {
   try {
     const data: BenchmarkOutput = JSON.parse(readFileSync(file, 'utf-8'));
     model = data.model;
-    commit = data.neokaiCommit;
+    commit = data.hyperneoCommit;
     allResults.push(...data.results);
     console.log(`  Loaded: ${data.results[0]?.caseName ?? 'unknown'}`);
   } catch (err) {

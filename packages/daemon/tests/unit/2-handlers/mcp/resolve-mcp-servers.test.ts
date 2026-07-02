@@ -12,7 +12,7 @@ import {
   resolveMcpServers,
   scopeChainForSession,
 } from '../../../../src/lib/mcp/resolve-mcp-servers';
-import type { AppMcpServer, McpEnablementOverride } from '@neokai/shared';
+import type { AppMcpServer, McpEnablementOverride } from '@hyperneo/shared';
 
 // ---------------------------------------------------------------------------
 // Tiny builders to keep each test concise

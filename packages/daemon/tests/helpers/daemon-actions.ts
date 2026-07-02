@@ -8,7 +8,7 @@
  */
 
 import type { DaemonServerContext } from './daemon-server';
-import type { MessageDeliveryMode } from '@neokai/shared';
+import type { MessageDeliveryMode } from '@hyperneo/shared';
 
 /**
  * Send a message via RPC and return the messageId
@@ -37,7 +37,7 @@ export async function sendMessage(
   // resolve against the pre-send idle state. In fast mock/proxy mode, state can
   // return to idle before we sample it, so also detect SDK message growth.
   const isFastMockMode =
-    process.env.NEOKAI_USE_DEV_PROXY === '1' || process.env.NEOKAI_AGENT_SDK_MOCK === '1';
+    process.env.HYPERNEO_USE_DEV_PROXY === '1' || process.env.HYPERNEO_AGENT_SDK_MOCK === '1';
   const maxStartWaitMs = isFastMockMode ? 1200 : 5000;
   const pollIntervalMs = isFastMockMode ? 20 : 10;
   const start = Date.now();
@@ -73,7 +73,7 @@ export async function sendMessage(
  * processing completes before the subscription is set up.
  *
  * NOTE: The state structure uses 'agentState' (not 'processingState').
- * See SessionState interface in @neokai/shared/src/state-types.ts
+ * See SessionState interface in @hyperneo/shared/src/state-types.ts
  */
 
 async function waitForProcessingState(

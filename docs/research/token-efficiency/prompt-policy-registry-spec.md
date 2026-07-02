@@ -121,15 +121,15 @@ Use reverse-DNS-like template IDs for built-ins:
 
 A scoped activation record still needs its own unique row ID so the same built-in can be enabled at many scopes. Example persisted record IDs:
 
-- `global.neokai.output-mode.compressed`
-- `space.<spaceId>.neokai.output-mode.compressed`
-- `workflow-node.<workflowId>.<nodeId>.<agentName>.neokai.output-mode.compressed`
+- `global.hyperneo.output-mode.compressed`
+- `space.<spaceId>.hyperneo.output-mode.compressed`
+- `workflow-node.<workflowId>.<nodeId>.<agentName>.hyperneo.output-mode.compressed`
 - `user.<uuid>` for user-authored content records
 
 Materialized built-in prompt content must use a separate ID namespace so activation rows and rendered built-in content never collide under duplicate-ID suppression. Recommended format:
 
 - `materialized.<activation-row-id>`
-- `materialized.space.<spaceId>.neokai.output-mode.compressed`
+- `materialized.space.<spaceId>.hyperneo.output-mode.compressed`
 
 The materialized record is a `content` record and must not keep `templateId`; provenance should link back to the activation row ID through `activationId` and source metadata.
 
@@ -253,7 +253,7 @@ Space default compressed output is stored as a `prompt_policy_records` row:
 
 ```sql
 -- Conceptual row; exact insert uses repository helpers.
-id = 'space.<space-id>.neokai.output-mode.compressed'
+id = 'space.<space-id>.hyperneo.output-mode.compressed'
 record_type = 'template'
 template_id = 'neokai.output-mode.compressed'
 scope_type = 'space'
@@ -490,9 +490,9 @@ Provider emits this only when resolver finds an enabled `neokai.output-mode.comp
 
 ```json
 {
-	"id": "materialized.space.<space-id>.neokai.output-mode.compressed",
+	"id": "materialized.space.<space-id>.hyperneo.output-mode.compressed",
 	"recordType": "content",
-	"activationId": "space.<space-id>.neokai.output-mode.compressed",
+	"activationId": "space.<space-id>.hyperneo.output-mode.compressed",
 	"channel": "system.append",
 	"priority": 650,
 	"enabled": true,

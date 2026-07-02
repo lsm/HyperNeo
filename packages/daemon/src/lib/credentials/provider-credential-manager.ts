@@ -1,6 +1,6 @@
 import type { Database } from 'bun:sqlite';
-import type { ProviderCredentials } from '@neokai/shared/provider';
-import type { CredentialStoreStatus } from '@neokai/shared/state-types';
+import type { ProviderCredentials } from '@hyperneo/shared/provider';
+import type { CredentialStoreStatus } from '@hyperneo/shared/state-types';
 import {
   createCredentialStore,
   credentialService,

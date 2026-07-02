@@ -15,5 +15,5 @@ See LICENSE.txt in this directory.
 
 Modifications:
 - Adapted for HyperNeo from the OpenAI skill collection.
-- Updated skill path references from $CODEX_HOME/.codex/skills to $NEOKAI_SKILLS_HOME (~/.neokai/skills).
+- Updated skill path references from $CODEX_HOME/.codex/skills to $HYPERNEO_SKILLS_HOME (~/.hyperneo/skills).
 - Added wrapper script and local reference guides.

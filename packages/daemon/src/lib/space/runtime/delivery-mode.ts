@@ -1,4 +1,4 @@
-import type { MessageDeliveryMode } from '@neokai/shared';
+import type { MessageDeliveryMode } from '@hyperneo/shared';
 
 /**
  * Prefix SpaceRuntime writes onto a parked external-event delivery's

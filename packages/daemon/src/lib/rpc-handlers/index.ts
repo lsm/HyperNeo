@@ -5,9 +5,9 @@
  * Organized by domain for better maintainability.
  */
 
-import type { EvolutionScope, MessageHub } from '@neokai/shared';
-import { generateUUID } from '@neokai/shared';
-import type { SDKUserMessage } from '@neokai/shared/sdk';
+import type { EvolutionScope, MessageHub } from '@hyperneo/shared';
+import { generateUUID } from '@hyperneo/shared';
+import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { UUID } from 'crypto';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { DaemonCommandMap, InternalCommandBus } from '../internal-command-bus';

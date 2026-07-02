@@ -28,10 +28,10 @@
  *
  * ## Running
  *
- *   cd packages/daemon && NEOKAI_USE_DEV_PROXY=1 bun test ./tests/online/space/task-agent-lifecycle.test.ts
+ *   cd packages/daemon && HYPERNEO_USE_DEV_PROXY=1 bun test ./tests/online/space/task-agent-lifecycle.test.ts
  *
  * MODES:
- * - Dev Proxy (recommended): Set NEOKAI_USE_DEV_PROXY=1 for offline testing
+ * - Dev Proxy (recommended): Set HYPERNEO_USE_DEV_PROXY=1 for offline testing
  * - Real API (default): Requires CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY
  */
 
@@ -45,10 +45,10 @@ import type {
   SpaceWorkerAgent,
   SpaceWorkflow,
   SpaceWorkflowRun,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 
 // Detect mock mode for faster timeouts
-const IS_MOCK = !!process.env.NEOKAI_USE_DEV_PROXY;
+const IS_MOCK = !!process.env.HYPERNEO_USE_DEV_PROXY;
 const IDLE_TIMEOUT = IS_MOCK ? 10_000 : 60_000;
 const SETUP_TIMEOUT = IS_MOCK ? 20_000 : 60_000;
 const TEST_TIMEOUT = IS_MOCK ? 60_000 : 240_000;

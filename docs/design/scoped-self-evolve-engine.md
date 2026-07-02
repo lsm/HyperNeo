@@ -150,12 +150,12 @@ A user creates a mission scope:
 
 ```ts
 const scope: EvolutionScope = {
-	id: 'scope_neokai_100k_stars',
+	id: 'scope_hyperneo_100k_stars',
 	kind: 'campaign',
 	name: 'Get HyperNeo to 100k GitHub stars',
 	objective:
 		'Grow HyperNeo GitHub repository to 100,000 stars through sustained product, content, community, and distribution work.',
-	parentScopeId: 'scope_neokai_product',
+	parentScopeId: 'scope_hyperneo_product',
 	childScopeIds: [],
 	metricDefinitions: [
 		{ key: 'github_stars', label: 'GitHub stars', direction: 'increase' },

@@ -89,7 +89,7 @@ vi.mock('../../ui/Button', () => ({
 }));
 
 import { SpaceSettings } from '../SpaceSettings';
-import type { Space } from '@neokai/shared';
+import type { Space } from '@hyperneo/shared';
 
 function makeSpace(overrides: Partial<Space> = {}): Space {
   return {

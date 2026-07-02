@@ -40,7 +40,7 @@ function probeBunSqlite(): boolean {
 const bunSqliteSupported = probeBunSqlite();
 
 // The expected wrapper directory path (must match the implementation)
-const WRAPPER_DIR = join(tmpdir(), 'neokai-bun-node-wrapper');
+const WRAPPER_DIR = join(tmpdir(), 'hyperneo-bun-node-wrapper');
 const NODE_LINK = join(WRAPPER_DIR, 'node');
 
 describe('ensureBunNodeWrapper (running under Bun in bun test)', () => {

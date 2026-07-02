@@ -14,9 +14,9 @@
 
 import { useSignalEffect } from '@preact/signals';
 import { useState, useCallback, useEffect, useRef } from 'preact/hooks';
-import type { ContextInfo, ModelInfo, ThinkingLevel } from '@neokai/shared';
-import type { ProviderAuthStatus } from '@neokai/shared/provider';
-import { THINKING_LEVEL_LABELS, getThinkingOptionsForProvider } from '@neokai/shared';
+import type { ContextInfo, ModelInfo, ThinkingLevel } from '@hyperneo/shared';
+import type { ProviderAuthStatus } from '@hyperneo/shared/provider';
+import { THINKING_LEVEL_LABELS, getThinkingOptionsForProvider } from '@hyperneo/shared';
 import { connectionState, type ConnectionState } from '../lib/state.ts';
 import { connectionManager } from '../lib/connection-manager.ts';
 import ConnectionStatus from './ConnectionStatus.tsx';

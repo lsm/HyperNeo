@@ -13,9 +13,9 @@
  * - Full reset with cost tracking, state management, and client notification
  */
 
-import type { MessageContent, Session, MessageHub, NeokaiActionMessage } from '@neokai/shared';
+import type { MessageContent, Session, MessageHub, HyperNeoActionMessage } from '@hyperneo/shared';
 import type { QueryLike } from './query-like';
-import { generateUUID } from '@neokai/shared';
+import { generateUUID } from '@hyperneo/shared';
 import type { MessageQueue } from './message-queue';
 import type { ProcessingStateManager } from './processing-state-manager';
 import type { SDKMessageHandler } from './sdk-message-handler';
@@ -544,8 +544,8 @@ export class QueryLifecycleManager {
   private async emitSdkResumeChoiceMessage(): Promise<void> {
     const { session, db, messageHub } = this.ctx;
 
-    const actionMessage: NeokaiActionMessage = {
-      type: 'neokai_action',
+    const actionMessage: HyperNeoActionMessage = {
+      type: 'hyperneo_action',
       uuid: generateUUID(),
       session_id: session.id,
       action: 'sdk_resume_choice',
@@ -553,7 +553,7 @@ export class QueryLifecycleManager {
       timestamp: Date.now(),
     };
 
-    db.saveNeokaiActionMessage(session.id, actionMessage);
+    db.saveHyperNeoActionMessage(session.id, actionMessage);
 
     messageHub.event(
       'state.sdkMessages.delta',

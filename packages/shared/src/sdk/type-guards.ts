@@ -20,7 +20,7 @@ import type {
   SDKThinkingTokensMessage,
   SDKToolProgressMessage,
 } from "./sdk.d.ts";
-import type { NeokaiActionMessage, SlashCommand } from "../types.ts";
+import type { HyperNeoActionMessage, SlashCommand } from "../types.ts";
 import type { ChatMessage } from "../state-types.ts";
 
 type SDKAssistantContentBlock = SDKAssistantMessage["message"]["content"][number];
@@ -547,6 +547,6 @@ export function isUserVisibleMessage(msg: SDKMessage): boolean {
  * between starting fresh or leaving a session as-is when the transcript file
  * cannot be found).
  */
-export function isNeokaiActionMessage(msg: ChatMessage): msg is NeokaiActionMessage {
-  return (msg as NeokaiActionMessage).type === 'neokai_action';
+export function isHyperNeoActionMessage(msg: ChatMessage): msg is HyperNeoActionMessage {
+  return (msg as HyperNeoActionMessage).type === 'hyperneo_action';
 }

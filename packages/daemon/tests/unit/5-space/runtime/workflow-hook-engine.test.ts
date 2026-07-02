@@ -21,7 +21,7 @@ import type {
   WorkflowHookResult,
   SpaceWorkflow,
   WorkflowRunStatus,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import type { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
 import type { WorkflowHookStateRepository } from '../../../../src/storage/repositories/workflow-hook-state-repository';
 import type { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository';

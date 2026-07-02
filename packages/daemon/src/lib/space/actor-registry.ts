@@ -6,7 +6,7 @@ import type {
   SpaceWorkerAgent,
   SpaceLongHorizonAgent,
   SpaceWorkflow,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import type { NodeExecutionRepository } from '../../storage/repositories/node-execution-repository';
 import type { PendingAgentMessageRepository } from '../../storage/repositories/pending-agent-message-repository';
 import type { SessionRepository } from '../../storage/repositories/session-repository';

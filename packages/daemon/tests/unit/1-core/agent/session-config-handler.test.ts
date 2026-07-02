@@ -9,12 +9,12 @@ import {
   SessionConfigHandler,
   type SessionConfigHandlerContext,
 } from '../../../../src/lib/agent/session-config-handler';
-import type { Session } from '@neokai/shared';
+import type { Session } from '@hyperneo/shared';
 import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { Database } from '../../../../src/storage/database';
 import { SettingsManager } from '../../../../src/lib/settings-manager';
-import { generateUUID } from '@neokai/shared';
+import { generateUUID } from '@hyperneo/shared';
 
 describe('SessionConfigHandler', () => {
   let handler: SessionConfigHandler;

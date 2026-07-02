@@ -24,11 +24,11 @@
  *
  * ## Running
  *
- *   cd packages/daemon && NEOKAI_USE_DEV_PROXY=1 bun test \
+ *   cd packages/daemon && HYPERNEO_USE_DEV_PROXY=1 bun test \
  *     ./tests/online/space/space-happy-path-plan-to-approve.test.ts
  *
  * MODES:
- * - Dev Proxy (recommended): NEOKAI_USE_DEV_PROXY=1 — no real Anthropic calls needed
+ * - Dev Proxy (recommended): HYPERNEO_USE_DEV_PROXY=1 — no real Anthropic calls needed
  * - Real API (default): requires CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY
  *   (no LLM calls are made in this test — API key only needed for daemon startup)
  */
@@ -52,7 +52,7 @@ import {
 // Timing constants — shorter for mock mode since no real I/O happens
 // ---------------------------------------------------------------------------
 
-const IS_MOCK = !!process.env.NEOKAI_USE_DEV_PROXY;
+const IS_MOCK = !!process.env.HYPERNEO_USE_DEV_PROXY;
 
 /** How long to wait for a node to appear after gate data is written */
 const NODE_ACTIVATION_TIMEOUT = IS_MOCK ? 3_000 : 15_000;
@@ -72,7 +72,7 @@ describe('Space Happy Path — Plan-to-Approve Flow', () => {
 
   beforeEach(async () => {
     // Fresh daemon with an empty in-memory SQLite DB per test — no cross-test state.
-    // Dev Proxy is not needed for the daemon itself (no LLM calls), but NEOKAI_USE_DEV_PROXY
+    // Dev Proxy is not needed for the daemon itself (no LLM calls), but HYPERNEO_USE_DEV_PROXY
     // is respected for the shared dev proxy lifecycle (start/stop once per process).
     daemon = await createDaemonServer();
   }, SETUP_TIMEOUT);

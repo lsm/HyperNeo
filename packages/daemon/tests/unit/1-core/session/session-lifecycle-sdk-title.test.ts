@@ -139,7 +139,7 @@ mock.module('../../../../src/lib/provider-service', () => ({
   mergeProviderEnvVars: (env: Record<string, string | undefined>) => ({ ...process.env, ...env }),
 }));
 
-mock.module('@neokai/shared/sdk/type-guards', () => ({
+mock.module('@hyperneo/shared/sdk/type-guards', () => ({
   isSDKAssistantMessage: (msg: { type: string }) => msg.type === 'assistant',
   isSDKUserMessage: (msg: { type: string; isReplay?: boolean }) =>
     msg.type === 'user' && (!('isReplay' in msg) || msg.isReplay === false),
@@ -181,8 +181,8 @@ import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { WorktreeManager } from '../../../../src/lib/worktree-manager';
 import type { SessionCache, AgentSessionFactory } from '../../../../src/lib/session/session-cache';
 import type { ToolsConfigManager } from '../../../../src/lib/session/tools-config';
-import type { MessageHub } from '@neokai/shared';
-import { DEFAULT_GLOBAL_SETTINGS } from '@neokai/shared';
+import type { MessageHub } from '@hyperneo/shared';
+import { DEFAULT_GLOBAL_SETTINGS } from '@hyperneo/shared';
 
 type TitleSdkInvoker = {
   generateTitleWithSdk(provider: string, modelId: string, messageText: string): Promise<string>;

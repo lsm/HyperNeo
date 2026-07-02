@@ -23,7 +23,7 @@
  */
 
 import { isAbsolute } from 'node:path';
-import type { MessageHub } from '@neokai/shared';
+import type { MessageHub } from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { SpaceManager } from '../space/managers/space-manager';
 import type { SpaceWorkflowManager } from '../space/managers/space-workflow-manager';
@@ -37,7 +37,7 @@ import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service
 import type { SpaceTaskManager } from '../space/managers/space-task-manager';
 import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository';
 import type { SpaceWorktreeManager } from '../space/managers/space-worktree-manager';
-import type { WorkflowRunFailureReason, WorkflowRunStatus } from '@neokai/shared';
+import type { WorkflowRunFailureReason, WorkflowRunStatus } from '@hyperneo/shared';
 import {
   QUEUED_RETRYABLE_ACTION_STATE_KEY,
   triggerRetryableHookAction,

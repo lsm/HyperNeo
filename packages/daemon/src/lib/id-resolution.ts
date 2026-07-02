@@ -1,4 +1,4 @@
-import { isUUID } from '@neokai/shared';
+import { isUUID } from '@hyperneo/shared';
 
 /**
  * Minimal interface for task short-ID lookup. Satisfied by TaskRepository.

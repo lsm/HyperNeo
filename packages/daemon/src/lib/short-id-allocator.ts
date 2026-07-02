@@ -1,5 +1,5 @@
 import type { Database as BunDatabase } from 'bun:sqlite';
-import { SHORT_ID_PREFIX, formatShortId } from '@neokai/shared';
+import { SHORT_ID_PREFIX, formatShortId } from '@hyperneo/shared';
 
 export class ShortIdAllocator {
   constructor(private db: BunDatabase) {}

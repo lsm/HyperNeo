@@ -8,8 +8,8 @@
  */
 
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
-import type { ModelInfo } from '@neokai/shared';
-import type { Provider, ProviderCapabilities, ProviderSdkConfig } from '@neokai/shared/provider';
+import type { ModelInfo } from '@hyperneo/shared';
+import type { Provider, ProviderCapabilities, ProviderSdkConfig } from '@hyperneo/shared/provider';
 import {
   getModelInfo,
   resolveModelAlias,

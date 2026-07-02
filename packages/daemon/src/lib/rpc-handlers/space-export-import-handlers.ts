@@ -40,7 +40,7 @@
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
-import { generateUUID } from '@neokai/shared';
+import { generateUUID } from '@hyperneo/shared';
 import type {
   MessageHub,
   Space,
@@ -53,7 +53,7 @@ import type {
   SpaceExportBundle,
   ExportedSpaceWorkerAgent,
   ExportedSpaceWorkflow,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { SpaceManager } from '../space/managers/space-manager';
 import type { SpaceWorkflowManager } from '../space/managers/space-workflow-manager';
@@ -255,13 +255,13 @@ export function buildWorkflowCreateParams(
         agentId: string;
         name: string;
         model?: string;
-        thinkingLevel?: import('@neokai/shared').ThinkingLevel;
-        customPrompt?: import('@neokai/shared').WorkflowNodeAgentOverride;
+        thinkingLevel?: import('@hyperneo/shared').ThinkingLevel;
+        customPrompt?: import('@hyperneo/shared').WorkflowNodeAgentOverride;
         disabledSkillIds?: string[];
-        extraMcpServers?: import('@neokai/shared').WorkflowNodeAgent['extraMcpServers'];
+        extraMcpServers?: import('@hyperneo/shared').WorkflowNodeAgent['extraMcpServers'];
         timeoutMs?: number;
-        toolGuards?: import('@neokai/shared').DeclarativeToolGuard[];
-        eventInterests?: import('@neokai/shared').EventInterest[];
+        toolGuards?: import('@hyperneo/shared').DeclarativeToolGuard[];
+        eventInterests?: import('@hyperneo/shared').EventInterest[];
       } = {
         agentId: agentId ?? '',
         name: a.name,
@@ -282,7 +282,7 @@ export function buildWorkflowCreateParams(
       if (a.extraMcpServers !== undefined)
         entry.extraMcpServers = a.extraMcpServers as Record<
           string,
-          import('@neokai/shared').McpServerConfig
+          import('@hyperneo/shared').McpServerConfig
         >;
       if (typeof a.timeoutMs === 'number') entry.timeoutMs = a.timeoutMs;
       if (a.toolGuards !== undefined) entry.toolGuards = a.toolGuards;

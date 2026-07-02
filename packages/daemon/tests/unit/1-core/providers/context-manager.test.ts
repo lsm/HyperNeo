@@ -5,9 +5,9 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import type { ProviderId } from '@neokai/shared/provider';
-import type { Session, ModelInfo } from '@neokai/shared';
-import type { Provider, ProviderSdkConfig } from '@neokai/shared/provider';
+import type { ProviderId } from '@hyperneo/shared/provider';
+import type { Session, ModelInfo } from '@hyperneo/shared';
+import type { Provider, ProviderSdkConfig } from '@hyperneo/shared/provider';
 import { ProviderContextManager } from '../../../../src/lib/providers/context-manager';
 import { ProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import { resetProviderFactory } from '../../../../src/lib/providers/factory';

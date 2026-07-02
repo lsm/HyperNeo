@@ -4,7 +4,7 @@ import type {
   WorkflowHookMcpMethod,
   WorkflowHookValidatorId,
   WorkflowHookExternalLookup,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 
 export interface HookEditorPanelProps {
   hook: WorkflowHook;

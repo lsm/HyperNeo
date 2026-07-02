@@ -10,7 +10,7 @@
  * 2. AI-based deep check for suspicious content (catches sophisticated attacks)
  */
 
-import type { SecurityCheckResult } from '@neokai/shared';
+import type { SecurityCheckResult } from '@hyperneo/shared';
 import type { SecurityClassification } from './prompts/security-prompt';
 import { SECURITY_AGENT_SYSTEM_PROMPT } from './prompts/security-prompt';
 import { Logger } from '../logger';

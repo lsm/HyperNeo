@@ -5,14 +5,14 @@
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
-import { generateUUID } from '@neokai/shared';
+import { generateUUID } from '@hyperneo/shared';
 import type {
   Space,
   SpaceAutonomyLevel,
   SpaceConfig,
   CreateSpaceParams,
   UpdateSpaceParams,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import type { SQLiteValue } from '../types';
 
 export class SpaceRepository {

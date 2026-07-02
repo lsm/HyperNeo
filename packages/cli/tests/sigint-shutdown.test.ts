@@ -102,7 +102,7 @@ describe.skipIf(!hasCredentials)('SIGINT Shutdown Integration', () => {
 
   beforeAll(async () => {
     testPort = await findAvailablePort();
-    testWorkspace = `${process.env.TMPDIR || '/tmp'}/neokai-sigint-test-${Date.now()}`;
+    testWorkspace = `${process.env.TMPDIR || '/tmp'}/hyperneo-sigint-test-${Date.now()}`;
   });
 
   afterAll(() => {

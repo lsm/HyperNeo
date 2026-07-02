@@ -14,7 +14,7 @@ import {
   computeIsTerminal,
   extractParentToolUseId,
 } from '../../../../src/storage/repositories/sdk-message-repository';
-import type { SDKMessage } from '@neokai/shared/sdk';
+import type { SDKMessage } from '@hyperneo/shared/sdk';
 
 // Cast helper: the production helpers accept SDKMessage but tests construct
 // minimal payloads that exercise specific branches.

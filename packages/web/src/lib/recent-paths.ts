@@ -10,7 +10,7 @@ interface RecentPath {
   usedAt: number; // Timestamp
 }
 
-const STORAGE_KEY = 'neokai_recent_paths';
+const STORAGE_KEY = 'hyperneo_recent_paths';
 const MAX_RECENT_PATHS = 10;
 
 /**

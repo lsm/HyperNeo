@@ -17,7 +17,7 @@ import {
 } from '../helpers/wait-helpers';
 
 // Detect mock mode (devproxy) - devproxy mock includes usage data so tests should pass
-const IS_MOCK = process.env.NEOKAI_USE_DEV_PROXY === '1';
+const IS_MOCK = process.env.HYPERNEO_USE_DEV_PROXY === '1';
 
 /**
  * Helper to wait for context data to become available after a message exchange.

@@ -3,7 +3,7 @@
  */
 
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
-import type { MessageHub, Session } from '@neokai/shared';
+import type { MessageHub, Session } from '@hyperneo/shared';
 import type { Database } from '../../../../src/storage/database';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import {

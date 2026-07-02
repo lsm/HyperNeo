@@ -3,7 +3,7 @@ import { Database } from 'bun:sqlite';
 import * as os from 'node:os';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { configureLogger, subscribeToStructuredLogs, LogLevel } from '@neokai/shared';
+import { configureLogger, subscribeToStructuredLogs, LogLevel } from '@hyperneo/shared';
 import {
   createCredentialStore,
   DatabaseCredentialStore,
@@ -65,9 +65,9 @@ describe('DatabaseCredentialStore', () => {
     }
   });
 
-  it('uses NEOKAI_PROVIDER_CREDENTIAL_KEY env var when set', async () => {
-    const prev = process.env.NEOKAI_PROVIDER_CREDENTIAL_KEY;
-    process.env.NEOKAI_PROVIDER_CREDENTIAL_KEY = 'env-derived-key';
+  it('uses HYPERNEO_PROVIDER_CREDENTIAL_KEY env var when set', async () => {
+    const prev = process.env.HYPERNEO_PROVIDER_CREDENTIAL_KEY;
+    process.env.HYPERNEO_PROVIDER_CREDENTIAL_KEY = 'env-derived-key';
     try {
       const { db, store } = createStore();
       try {
@@ -78,18 +78,18 @@ describe('DatabaseCredentialStore', () => {
       }
     } finally {
       if (prev === undefined) {
-        delete process.env.NEOKAI_PROVIDER_CREDENTIAL_KEY;
+        delete process.env.HYPERNEO_PROVIDER_CREDENTIAL_KEY;
       } else {
-        process.env.NEOKAI_PROVIDER_CREDENTIAL_KEY = prev;
+        process.env.HYPERNEO_PROVIDER_CREDENTIAL_KEY = prev;
       }
     }
   });
 
   it('generates and persists a random key when no secret is provided', async () => {
-    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'neokai-cred-test-'));
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'hyperneo-cred-test-'));
     const homedirSpy = spyOn(os, 'homedir').mockReturnValue(tmpHome);
-    const prevEnv = process.env.NEOKAI_PROVIDER_CREDENTIAL_KEY;
-    delete process.env.NEOKAI_PROVIDER_CREDENTIAL_KEY;
+    const prevEnv = process.env.HYPERNEO_PROVIDER_CREDENTIAL_KEY;
+    delete process.env.HYPERNEO_PROVIDER_CREDENTIAL_KEY;
     let db: Database | undefined;
 
     try {
@@ -98,7 +98,7 @@ describe('DatabaseCredentialStore', () => {
       await store.set('neokai.provider.test', 'default', 'secret-data');
       expect(await store.get('neokai.provider.test', 'default')).toBe('secret-data');
 
-      const keyPath = path.join(tmpHome, '.neokai', '.provider-credential-key');
+      const keyPath = path.join(tmpHome, '.hyperneo', '.provider-credential-key');
       expect(fs.existsSync(keyPath)).toBe(true);
       const key = fs.readFileSync(keyPath, 'utf-8').trim();
       expect(key.length).toBe(64); // 32 bytes hex-encoded
@@ -110,9 +110,9 @@ describe('DatabaseCredentialStore', () => {
       db?.close();
       homedirSpy.mockRestore();
       if (prevEnv === undefined) {
-        delete process.env.NEOKAI_PROVIDER_CREDENTIAL_KEY;
+        delete process.env.HYPERNEO_PROVIDER_CREDENTIAL_KEY;
       } else {
-        process.env.NEOKAI_PROVIDER_CREDENTIAL_KEY = prevEnv;
+        process.env.HYPERNEO_PROVIDER_CREDENTIAL_KEY = prevEnv;
       }
       fs.rmSync(tmpHome, { recursive: true, force: true });
     }

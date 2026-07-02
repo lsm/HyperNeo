@@ -21,8 +21,8 @@ import type {
   SpaceWorkerAgentPromotionDraft,
   ThinkingLevel,
   SettingSource,
-} from '@neokai/shared';
-import { KNOWN_TOOLS, normalizeThinkingLevel } from '@neokai/shared';
+} from '@hyperneo/shared';
+import { KNOWN_TOOLS, normalizeThinkingLevel } from '@hyperneo/shared';
 import { useState } from 'preact/hooks';
 import type { SpaceWorkerAgentTemplate } from '../../lib/space-store';
 import { spaceStore } from '../../lib/space-store';

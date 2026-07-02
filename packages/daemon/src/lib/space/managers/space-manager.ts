@@ -14,7 +14,7 @@ import type { Database as BunDatabase } from 'bun:sqlite';
 import { SpaceRepository } from '../../../storage/repositories/space-repository';
 import { Logger } from '../../logger';
 import { slugify, validateSlug } from '../slug';
-import type { Space, CreateSpaceParams, UpdateSpaceParams } from '@neokai/shared';
+import type { Space, CreateSpaceParams, UpdateSpaceParams } from '@hyperneo/shared';
 
 const execAsync = promisify(exec);
 const log = new Logger('SpaceManager');

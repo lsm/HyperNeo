@@ -1,4 +1,4 @@
-import type { SpaceGoal, SpaceTask } from '@neokai/shared';
+import type { SpaceGoal, SpaceTask } from '@hyperneo/shared';
 
 const RECENT_ACTIVITY_MS = 24 * 60 * 60 * 1000;
 

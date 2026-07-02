@@ -8,8 +8,8 @@
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
-import type { GlobalToolsConfig, GlobalSettings } from '@neokai/shared';
-import { DEFAULT_GLOBAL_TOOLS_CONFIG, DEFAULT_GLOBAL_SETTINGS } from '@neokai/shared';
+import type { GlobalToolsConfig, GlobalSettings } from '@hyperneo/shared';
+import { DEFAULT_GLOBAL_TOOLS_CONFIG, DEFAULT_GLOBAL_SETTINGS } from '@hyperneo/shared';
 
 export class SettingsRepository {
   constructor(private db: BunDatabase) {}

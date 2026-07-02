@@ -1,5 +1,5 @@
 import { join } from 'path';
-import { homedir } from 'os';
+import { getDataDir } from './lib/data-dir';
 
 // Bun automatically loads .env files from the current working directory at startup
 // Files loaded: .env, .env.local (later files override earlier)
@@ -25,7 +25,7 @@ export interface Config {
   temperature: number;
   maxSessions: number;
   nodeEnv: string;
-  workspaceRoot?: string; // Optional default workspace root (from NEOKAI_WORKSPACE_ROOT env)
+  workspaceRoot?: string; // Optional default workspace root (from HYPERNEO_WORKSPACE_ROOT env)
   disableWorktrees?: boolean; // For testing - disables git worktree creation
   disableGoalProcessing?: boolean; // For testing/CI - disables automatic goal processing (tick loop)
   // GitHub integration
@@ -40,16 +40,25 @@ export interface ConfigOverrides {
   workspaceRoot?: string;
 }
 
+/**
+ * Read a `HYPERNEO_<name>` env var, falling back to the legacy `NEOKAI_<name>`
+ * during the rename so upgraded deployments that still export the old name keep
+ * working (port, workspace root, disable flags, etc.).
+ */
+function hyperneoEnv(name: string): string | undefined {
+  return process.env[`HYPERNEO_${name}`] ?? process.env[`NEOKAI_${name}`];
+}
+
 export function getConfig(overrides?: ConfigOverrides): Config {
   const nodeEnv = process.env.NODE_ENV || 'development';
 
-  // Default database path: ~/.neokai/data/daemon.db
+  // Default database path: ~/.hyperneo/data/daemon.db
   // Use --db-path / DB_PATH env var to point to a different database
   // (e.g. per-project isolation or Docker volume mounts).
-  const defaultDbPath = join(homedir(), '.neokai', 'data', 'daemon.db');
+  const defaultDbPath = join(getDataDir(), 'data', 'daemon.db');
 
   return {
-    port: overrides?.port ?? parseInt(process.env.NEOKAI_PORT || '9283'),
+    port: overrides?.port ?? parseInt(hyperneoEnv('PORT') || '9283'),
     host: overrides?.host ?? (process.env.HOST || '0.0.0.0'),
     dbPath: overrides?.dbPath ?? (process.env.DB_PATH || defaultDbPath),
     anthropicApiKey: process.env.ANTHROPIC_API_KEY,
@@ -62,9 +71,9 @@ export function getConfig(overrides?: ConfigOverrides): Config {
     temperature: parseFloat(process.env.TEMPERATURE || '1.0'),
     maxSessions: parseInt(process.env.MAX_SESSIONS || '10'),
     nodeEnv,
-    workspaceRoot: overrides?.workspaceRoot ?? process.env.NEOKAI_WORKSPACE_ROOT,
-    disableWorktrees: process.env.NEOKAI_DISABLE_WORKTREES === '1',
-    disableGoalProcessing: process.env.NEOKAI_DISABLE_GOAL_PROCESSING === '1',
+    workspaceRoot: overrides?.workspaceRoot ?? hyperneoEnv('WORKSPACE_ROOT'),
+    disableWorktrees: hyperneoEnv('DISABLE_WORKTREES') === '1',
+    disableGoalProcessing: hyperneoEnv('DISABLE_GOAL_PROCESSING') === '1',
     // GitHub integration
     githubWebhookSecret: process.env.GITHUB_WEBHOOK_SECRET,
     githubDefaultFilter: process.env.GITHUB_DEFAULT_FILTER,

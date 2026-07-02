@@ -16,7 +16,7 @@ import {
   isSDKResultMessage,
   isSDKUserMessage,
   isSDKUserMessageReplay,
-} from '@neokai/shared/sdk/type-guards';
+} from '@hyperneo/shared/sdk/type-guards';
 import type { ParsedThreadRow } from './space-task-thread-events';
 
 /**

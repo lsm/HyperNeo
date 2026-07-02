@@ -449,7 +449,7 @@ describe('SDK Session File Manager', () => {
       const result = repairSDKSessionFile(
         testWorkspacePath,
         testSdkSessionId,
-        'neokai-session-1',
+        'hyperneo-session-1',
         mockDb
       );
 
@@ -487,7 +487,7 @@ describe('SDK Session File Manager', () => {
       const result = repairSDKSessionFile(
         testWorkspacePath,
         testSdkSessionId,
-        'neokai-session-1',
+        'hyperneo-session-1',
         mockDb
       );
 
@@ -535,7 +535,7 @@ describe('SDK Session File Manager', () => {
       const result = repairSDKSessionFile(
         testWorkspacePath,
         testSdkSessionId,
-        'neokai-session-1',
+        'hyperneo-session-1',
         mockDb
       );
 
@@ -580,7 +580,7 @@ describe('SDK Session File Manager', () => {
       const result = repairSDKSessionFile(
         testWorkspacePath,
         testSdkSessionId,
-        'neokai-session-1',
+        'hyperneo-session-1',
         mockDb
       );
 
@@ -614,7 +614,7 @@ describe('SDK Session File Manager', () => {
       const result = validateAndRepairSDKSession(
         testWorkspacePath,
         testSdkSessionId,
-        'neokai-session-1',
+        'hyperneo-session-1',
         mockDb
       );
 
@@ -656,7 +656,7 @@ describe('SDK Session File Manager', () => {
       const result = validateAndRepairSDKSession(
         testWorkspacePath,
         testSdkSessionId,
-        'neokai-session-1',
+        'hyperneo-session-1',
         mockDb
       );
 
@@ -684,7 +684,7 @@ describe('SDK Session File Manager', () => {
       const result = validateAndRepairSDKSession(
         testWorkspacePath,
         testSdkSessionId,
-        'neokai-session-1',
+        'hyperneo-session-1',
         mockDb
       );
 
@@ -701,7 +701,7 @@ describe('SDK Session File Manager', () => {
       const result = deleteSDKSessionFiles(
         '/nonexistent/workspace',
         'nonexistent-sdk-session',
-        'neokai-session-1'
+        'hyperneo-session-1'
       );
 
       expect(result.success).toBe(true);
@@ -721,7 +721,11 @@ describe('SDK Session File Manager', () => {
 
       expect(existsSync(testSessionFile)).toBe(true);
 
-      const result = deleteSDKSessionFiles(testWorkspacePath, testSdkSessionId, 'neokai-session-1');
+      const result = deleteSDKSessionFiles(
+        testWorkspacePath,
+        testSdkSessionId,
+        'hyperneo-session-1'
+      );
 
       expect(result.success).toBe(true);
       expect(result.deletedFiles).toHaveLength(1);
@@ -731,7 +735,7 @@ describe('SDK Session File Manager', () => {
     });
 
     test('should find and delete SDK files by kaiSessionId when sdkSessionId is null', () => {
-      const kaiSessionId = 'test-neokai-id-12345678';
+      const kaiSessionId = 'test-hyperneo-id-12345678';
 
       // Create a file that contains the HyperNeo session ID
       const content = JSON.stringify({
@@ -831,12 +835,12 @@ describe('SDK Session File Manager', () => {
 
       writeFileSync(
         file1,
-        JSON.stringify({ type: 'user', uuid: 'u1', sessionId: 'neokai-id-1' }) + '\n',
+        JSON.stringify({ type: 'user', uuid: 'u1', sessionId: 'hyperneo-id-1' }) + '\n',
         'utf-8'
       );
       writeFileSync(
         file2,
-        JSON.stringify({ type: 'user', uuid: 'u2', sessionId: 'neokai-id-2' }) + '\n',
+        JSON.stringify({ type: 'user', uuid: 'u2', sessionId: 'hyperneo-id-2' }) + '\n',
         'utf-8'
       );
 
@@ -1031,7 +1035,7 @@ describe('SDK Session File Manager', () => {
         testWorkspacePath,
         null,
         'message-uuid-123',
-        'nonexistent-neokai-session-id'
+        'nonexistent-hyperneo-session-id'
       );
 
       expect(result).toBe(false);
@@ -1129,7 +1133,7 @@ describe('SDK Session File Manager', () => {
     });
 
     test('should find file by kaiSessionId when sdkSessionId is null', () => {
-      const kaiSessionId = 'findable-neokai-session-id-12345678';
+      const kaiSessionId = 'findable-hyperneo-session-id-12345678';
 
       // Create a file containing the HyperNeo session ID
       const messages = [

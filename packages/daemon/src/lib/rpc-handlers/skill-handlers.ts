@@ -11,13 +11,13 @@
  * - skill.installFromGit — install a skill from a git repository URL, emit skills.changed
  */
 
-import type { MessageHub } from '@neokai/shared';
+import type { MessageHub } from '@hyperneo/shared';
 import type {
   AppSkill,
   CreateSkillParams,
   UpdateSkillParams,
   InstallSkillFromGitParams,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { SkillsManager } from '../skills-manager';
 import { Logger } from '../logger';

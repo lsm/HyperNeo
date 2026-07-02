@@ -79,7 +79,7 @@ Final integration pass: verify all 364 reference examples are ported and renderi
    - Consider adding a search/filter for sections (stretch goal -- only if time permits)
 
 2. **Update demo header**:
-   - Update the demo title from "@neokai/ui -- Kitchen Sink" to something more descriptive like "@neokai/ui -- Component Library & Application UI Reference"
+   - Update the demo title from "@hyperneo/ui -- Kitchen Sink" to something more descriptive like "@hyperneo/ui -- Component Library & Application UI Reference"
    - Update the subtitle to mention the count: "Visual demo of all headless UI components and 364+ Tailwind Application UI examples"
    - Add a link to the GitHub repository or documentation
 

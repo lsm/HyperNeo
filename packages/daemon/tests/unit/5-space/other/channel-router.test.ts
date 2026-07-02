@@ -46,8 +46,8 @@ import {
   ChannelGateBlockedError,
 } from '../../../../src/lib/space/runtime/channel-router.ts';
 import { PermanentSpawnError } from '../../../../src/lib/space/runtime/workflow-node-execution-validation.ts';
-import type { Gate, SpaceWorkflow, WorkflowChannel } from '@neokai/shared';
-import { computeGateDefaults } from '@neokai/shared';
+import type { Gate, SpaceWorkflow, WorkflowChannel } from '@hyperneo/shared';
+import { computeGateDefaults } from '@hyperneo/shared';
 import { registerGateFeature } from '../../../../src/lib/space/runtime/gate-features.ts';
 
 // ---------------------------------------------------------------------------

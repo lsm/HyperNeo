@@ -6,7 +6,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
-import type { Session } from '@neokai/shared';
+import type { Session } from '@hyperneo/shared';
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

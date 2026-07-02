@@ -16,7 +16,7 @@ import type {
   CommandRunner,
   ConditionContext,
 } from '../../../../src/lib/space/runtime/workflow-executor.ts';
-import type { SpaceWorkflow, SpaceWorkflowRun, WorkflowCondition } from '@neokai/shared';
+import type { SpaceWorkflow, SpaceWorkflowRun, WorkflowCondition } from '@hyperneo/shared';
 
 // ---------------------------------------------------------------------------
 // Test DB helpers

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import type { ChatMessage, Session, GitSessionStatusResponse } from '@neokai/shared';
+import type { ChatMessage, Session, GitSessionStatusResponse } from '@hyperneo/shared';
 import { extractBackgroundTasks, type BackgroundTask } from '../hooks/useRunningToolUseIds.ts';
 import { getGitSessionStatus } from '../lib/api-helpers.ts';
 import { cn } from '../lib/utils.ts';

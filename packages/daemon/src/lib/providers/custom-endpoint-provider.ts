@@ -30,8 +30,8 @@ import type {
   ProviderCapabilities,
   ProviderSdkConfig,
   ProviderSessionConfig,
-} from '@neokai/shared/provider';
-import type { ModelInfo } from '@neokai/shared';
+} from '@hyperneo/shared/provider';
+import type { ModelInfo } from '@hyperneo/shared';
 import {
   CUSTOM_ENDPOINT_TYPE_CAPABILITY_DEFAULTS,
   DEFAULT_CUSTOM_ENDPOINT_CAPABILITIES,
@@ -41,7 +41,7 @@ import {
   type CustomEndpointModel,
   type CustomEndpointModelCapabilities,
   type CustomEndpointType,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import {
   createOpenAIChatBridgeServer,
   type OpenAIChatBridgeConfig,

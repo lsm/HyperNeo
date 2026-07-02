@@ -15,7 +15,7 @@ import {
   MAX_SPACE_CONCURRENT_TASKS,
   MIN_SPACE_CONCURRENT_TASKS,
   type MessageHub,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import type {
   Space,
   SpaceCreateResult,
@@ -24,7 +24,7 @@ import type {
   UpdateSpaceParams,
   SpaceTask,
   SpaceWorkflowRun,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { SpaceManager } from '../space/managers/space-manager';
 import type { SpaceAgentManager } from '../space/managers/space-agent-manager';

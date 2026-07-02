@@ -13,7 +13,7 @@ import { cn } from '../../lib/utils';
 import { spaceStore } from '../../lib/space-store';
 import { FileDiffView } from './FileDiffView';
 import { ArtifactCard } from './ArtifactCard';
-import type { WorkflowRunArtifact } from '@neokai/shared';
+import type { WorkflowRunArtifact } from '@hyperneo/shared';
 import { useSpaceTaskMessages } from '../../hooks/useSpaceTaskMessages';
 import {
   parseThreadRow,

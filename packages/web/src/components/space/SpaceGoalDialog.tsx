@@ -1,4 +1,9 @@
-import type { SpaceGoal, SpaceGoalMetrics, SpaceGoalType, SpaceTaskPriority } from '@neokai/shared';
+import type {
+  SpaceGoal,
+  SpaceGoalMetrics,
+  SpaceGoalType,
+  SpaceTaskPriority,
+} from '@hyperneo/shared';
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import { spaceStore } from '../../lib/space-store';
 import { toast } from '../../lib/toast';

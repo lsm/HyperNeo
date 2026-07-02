@@ -18,7 +18,7 @@ import {
 import { currentSpaceAgentHandleSignal } from '../signals';
 
 function setPath(path: string) {
-  const url = new URL(path, 'https://neokai.test');
+  const url = new URL(path, 'https://hyperneo.test');
   Object.defineProperty(window, 'location', {
     value: { pathname: url.pathname, search: url.search },
     configurable: true,
@@ -38,7 +38,7 @@ describe('getSpaceIdFromPath — slug support', () => {
   });
 
   test('matches slug-based space route', () => {
-    expect(getSpaceIdFromPath('/space/neokai-dev')).toBe('neokai-dev');
+    expect(getSpaceIdFromPath('/space/hyperneo-dev')).toBe('hyperneo-dev');
   });
 
   test('matches single word slug', () => {
@@ -64,10 +64,10 @@ describe('getSpaceIdFromPath — slug support', () => {
 describe('getSpaceSessionIdFromPath — slug support', () => {
   test('matches slug-based space session route', () => {
     const result = getSpaceSessionIdFromPath(
-      '/space/neokai-dev/session/04062505-780f-4881-a3be-9cb9062790fb'
+      '/space/hyperneo-dev/session/04062505-780f-4881-a3be-9cb9062790fb'
     );
     expect(result).toEqual({
-      spaceId: 'neokai-dev',
+      spaceId: 'hyperneo-dev',
       sessionId: '04062505-780f-4881-a3be-9cb9062790fb',
     });
   });
@@ -84,10 +84,10 @@ describe('getSpaceSessionIdFromPath — slug support', () => {
 
   test('matches coordinator session ids with colons', () => {
     const result = getSpaceSessionIdFromPath(
-      '/space/neokai-dev/session/space:chat:b90171e4-1111-2222-3333-444444444444'
+      '/space/hyperneo-dev/session/space:chat:b90171e4-1111-2222-3333-444444444444'
     );
     expect(result).toEqual({
-      spaceId: 'neokai-dev',
+      spaceId: 'hyperneo-dev',
       sessionId: 'space:chat:b90171e4-1111-2222-3333-444444444444',
     });
   });
@@ -96,18 +96,18 @@ describe('getSpaceSessionIdFromPath — slug support', () => {
 describe('getSpaceTaskIdFromPath — slug support', () => {
   test('matches slug-based space task route with UUID task', () => {
     const result = getSpaceTaskIdFromPath(
-      '/space/neokai-dev/task/04062505-780f-4881-a3be-9cb9062790fb'
+      '/space/hyperneo-dev/task/04062505-780f-4881-a3be-9cb9062790fb'
     );
     expect(result).toEqual({
-      spaceId: 'neokai-dev',
+      spaceId: 'hyperneo-dev',
       taskId: '04062505-780f-4881-a3be-9cb9062790fb',
     });
   });
 
   test('matches slug-based space task route with short ID', () => {
-    const result = getSpaceTaskIdFromPath('/space/neokai-dev/task/t-42');
+    const result = getSpaceTaskIdFromPath('/space/hyperneo-dev/task/t-42');
     expect(result).toEqual({
-      spaceId: 'neokai-dev',
+      spaceId: 'hyperneo-dev',
       taskId: 't-42',
     });
   });
@@ -115,7 +115,7 @@ describe('getSpaceTaskIdFromPath — slug support', () => {
 
 describe('createSpacePath — works with slugs', () => {
   test('creates path with slug', () => {
-    expect(createSpacePath('neokai-dev')).toBe('/space/neokai-dev');
+    expect(createSpacePath('hyperneo-dev')).toBe('/space/hyperneo-dev');
   });
 
   test('creates path with UUID', () => {
@@ -127,28 +127,30 @@ describe('createSpacePath — works with slugs', () => {
 
 describe('createSpaceSessionPath — works with slugs', () => {
   test('creates path with slug', () => {
-    expect(createSpaceSessionPath('neokai-dev', 'sess-123')).toBe(
-      '/space/neokai-dev/session/sess-123'
+    expect(createSpaceSessionPath('hyperneo-dev', 'sess-123')).toBe(
+      '/space/hyperneo-dev/session/sess-123'
     );
   });
 });
 
 describe('createSpaceTaskPath — works with slugs', () => {
   test('creates path with slug', () => {
-    expect(createSpaceTaskPath('neokai-dev', 'task-456')).toBe('/space/neokai-dev/task/task-456');
+    expect(createSpaceTaskPath('hyperneo-dev', 'task-456')).toBe(
+      '/space/hyperneo-dev/task/task-456'
+    );
   });
 });
 
 describe('getSpaceAgentDetailFromPath — slug and handle support', () => {
   test('matches agent detail route', () => {
-    expect(getSpaceAgentDetailFromPath('/space/neokai-dev/agent/reviewer')).toEqual({
-      spaceId: 'neokai-dev',
+    expect(getSpaceAgentDetailFromPath('/space/hyperneo-dev/agent/reviewer')).toEqual({
+      spaceId: 'hyperneo-dev',
       handle: 'reviewer',
     });
   });
 
   test('initializes agent detail handle route state', () => {
-    setPath('/space/neokai-dev/agent/reviewer');
+    setPath('/space/hyperneo-dev/agent/reviewer');
 
     initializeRouter();
 

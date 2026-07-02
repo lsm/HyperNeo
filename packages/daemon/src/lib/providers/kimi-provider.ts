@@ -19,7 +19,7 @@
  * API Documentation: https://platform.kimi.ai/docs/guide/agent-support
  */
 
-import type { ModelInfo } from '@neokai/shared';
+import type { ModelInfo } from '@hyperneo/shared';
 import type {
   ModelTier,
   Provider,
@@ -28,7 +28,7 @@ import type {
   ProviderCredentials,
   ProviderSdkConfig,
   ProviderSessionConfig,
-} from '@neokai/shared/provider';
+} from '@hyperneo/shared/provider';
 import { probeAnthropicCompatCredentials } from './shared/credential-probe.js';
 
 function normalizeBaseUrl(url: string): string {

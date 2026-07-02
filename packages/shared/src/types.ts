@@ -706,8 +706,8 @@ export type MessageOrigin = 'human' | 'system';
  * The `type` field is intentionally distinct from all SDK message types so
  * the frontend can identify and route it without ambiguity.
  */
-export type NeokaiActionMessage = {
-  type: 'neokai_action';
+export type HyperNeoActionMessage = {
+  type: 'hyperneo_action';
   uuid: string;
   session_id: string;
   action: 'sdk_resume_choice';

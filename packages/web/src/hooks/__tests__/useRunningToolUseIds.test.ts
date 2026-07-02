@@ -1,6 +1,6 @@
 import { renderHook } from '@testing-library/preact';
 import { describe, expect, it } from 'vitest';
-import type { ChatMessage } from '@neokai/shared';
+import type { ChatMessage } from '@hyperneo/shared';
 import { extractRunningToolUseIds, useRunningToolUseIds } from '../useRunningToolUseIds.ts';
 
 function messagesWithTaskStatus(

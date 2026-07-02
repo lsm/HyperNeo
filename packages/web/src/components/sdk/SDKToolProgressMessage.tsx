@@ -5,7 +5,7 @@
  * Now uses the new ToolProgressCard component
  */
 
-import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
+import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 import { ToolProgressCard } from './tools/index.ts';
 
 type ToolProgressMessage = Extract<SDKMessage, { type: 'tool_progress' }>;

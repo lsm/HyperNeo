@@ -1,4 +1,4 @@
-import type { MessageHub } from '@neokai/shared';
+import type { MessageHub } from '@hyperneo/shared';
 import type { AgentMemoryRepository } from '../../storage/repositories/agent-memory-repository';
 
 export interface AgentMemoryHandlerDeps {

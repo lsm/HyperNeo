@@ -12,7 +12,7 @@
  * - Fires the retry by re-enqueueing the last user message and restarting the query
  */
 
-import type { MessageContent } from '@neokai/shared';
+import type { MessageContent } from '@hyperneo/shared';
 import type { ProcessingStateManager } from './processing-state-manager';
 import { Logger } from '../logger';
 

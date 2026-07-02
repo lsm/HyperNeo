@@ -23,7 +23,7 @@ export type {
   RoutingDecision,
   RoutingResult,
   FilterResult,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 
 // ============================================================================
 // Internal Types for Webhook Handling
@@ -56,7 +56,7 @@ export interface SignatureVerificationResult {
  */
 export interface WebhookParseResult {
   /** Parsed event or null if unsupported */
-  event: import('@neokai/shared').GitHubEvent | null;
+  event: import('@hyperneo/shared').GitHubEvent | null;
   /** Error message if parsing failed */
   error?: string;
 }

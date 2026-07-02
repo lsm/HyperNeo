@@ -12,7 +12,7 @@ import { describe, test, expect, beforeEach, afterEach, setDefaultTimeout } from
 import { createDaemonServer, type DaemonServerContext } from '../../helpers/daemon-server';
 
 setDefaultTimeout(15000);
-import { STATE_CHANNELS } from '@neokai/shared';
+import { STATE_CHANNELS } from '@hyperneo/shared';
 
 describe('End-to-End Session Workflow', () => {
   let daemon: DaemonServerContext;

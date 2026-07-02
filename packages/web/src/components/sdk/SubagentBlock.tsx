@@ -14,12 +14,12 @@ import { useState, useMemo } from 'preact/hooks';
 import { cn } from '../../lib/utils.ts';
 import { RunningBorder } from './RunningBorder.tsx';
 import MarkdownRenderer from '../chat/MarkdownRenderer.tsx';
-import type { AgentInput } from '@neokai/shared/sdk/sdk-tools.d.ts';
+import type { AgentInput } from '@hyperneo/shared/sdk/sdk-tools.d.ts';
 import type {
   SDKMessage,
   SDKTaskNotificationMessage,
   SDKTaskProgressMessage,
-} from '@neokai/shared/sdk/sdk.d.ts';
+} from '@hyperneo/shared/sdk/sdk.d.ts';
 import {
   hasRenderableThinking,
   isHiddenSystemSubtype,
@@ -28,7 +28,7 @@ import {
   isToolUseBlock,
   isThinkingBlock,
   type ContentBlock,
-} from '@neokai/shared/sdk/type-guards';
+} from '@hyperneo/shared/sdk/type-guards';
 import { TaskProgressLine } from './tools/TaskProgressLine.tsx';
 import { ToolResultCard } from './tools/index.ts';
 import { ThinkingBlock } from './ThinkingBlock.tsx';

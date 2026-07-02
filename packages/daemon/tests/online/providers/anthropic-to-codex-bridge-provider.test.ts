@@ -5,9 +5,9 @@
  *   AnthropicToCodexBridgeProvider.buildSdkConfig → HTTP bridge server → OpenAI Responses API
  *
  * REQUIREMENTS:
- * - OPENAI_API_KEY must be set, or OpenAI OAuth credentials must be available in ~/.neokai/auth.json
+ * - OPENAI_API_KEY must be set, or OpenAI OAuth credentials must be available in ~/.hyperneo/auth.json
  *
- * NOTE: Dev Proxy (NEOKAI_USE_DEV_PROXY=1) does NOT apply to these tests.
+ * NOTE: Dev Proxy (HYPERNEO_USE_DEV_PROXY=1) does NOT apply to these tests.
  * The bridge uses its own random-port HTTP server; Anthropic API traffic
  * interception at port 8000 has no effect here.  Tests always hit the real
  * OpenAI Responses API.

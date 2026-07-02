@@ -6,7 +6,7 @@
  * history folder. Shared so the sidebar and the empty-state composer agree.
  */
 
-import type { Session, WorkspaceHistoryEntry } from '@neokai/shared';
+import type { Session, WorkspaceHistoryEntry } from '@hyperneo/shared';
 
 /** The project root a session belongs to: the main repo for worktree sessions. */
 export function projectRootOf(session: Session): string | null {

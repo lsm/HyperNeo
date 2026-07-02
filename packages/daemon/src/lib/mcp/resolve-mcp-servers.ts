@@ -22,7 +22,7 @@
  *   - The resolver never triggers surprise DB reads in hot paths.
  */
 
-import type { AppMcpServer, McpEnablementOverride, Session } from '@neokai/shared';
+import type { AppMcpServer, McpEnablementOverride, Session } from '@hyperneo/shared';
 
 // ---------------------------------------------------------------------------
 // Public API

@@ -22,7 +22,7 @@ import type { ActorResolver } from '../../../../../messaging/src/contracts';
 import { SpaceDeliveryFacade } from '../messaging-adapter';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository';
-import type { WorkflowChannel } from '@neokai/shared';
+import type { WorkflowChannel } from '@hyperneo/shared';
 import { ChannelResolver } from './channel-resolver';
 import { formatAgentMessage } from '../agent-message-envelope';
 import { ActivationError, ChannelGateBlockedError, type ChannelRouter } from './channel-router';

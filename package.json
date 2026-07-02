@@ -1,5 +1,5 @@
 {
-  "name": "neokai",
+  "name": "hyperneo",
   "private": true,
   "license": "Apache-2.0",
   "type": "module",
@@ -19,7 +19,7 @@
     "knip:all": "knip",
     "check:session-guards": "./scripts/check-session-deletion-callers.sh",
     "check:space-task-handler-tests": "bun run scripts/check-space-task-handler-tests.ts",
-    "test:space-task-handler-gate": "NEOKAI_ALLOW_ROOT_TEST=1 bun test scripts/check-space-task-handler-tests.test.ts",
+    "test:space-task-handler-gate": "HYPERNEO_ALLOW_ROOT_TEST=1 bun test scripts/check-space-task-handler-tests.test.ts",
     "check:db-schema-parity": "bun scripts/check-db-schema-parity.ts",
     "check:test-quality": "bun scripts/check-test-quality.ts",
     "architecture:file-size-report": "bun run scripts/architecture-file-size-report.ts",

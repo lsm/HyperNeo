@@ -33,7 +33,7 @@ Comprehensive integration tests verifying crash-recovery, job resumption after r
    - **Cleanup job recovery:** Enqueue cleanup job, stop daemon before it runs, restart, verify cleanup runs
 5. Each test uses `createDaemonServer()` with explicit DB path, enqueues jobs, stops daemon, then creates a fresh daemon against the same database file
 6. Clean up temporary database files in `afterEach`/`afterAll`
-7. Run with `NEOKAI_USE_DEV_PROXY=1`
+7. Run with `HYPERNEO_USE_DEV_PROXY=1`
 
 **Acceptance criteria:**
 - All four crash-recovery scenarios pass

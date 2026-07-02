@@ -28,7 +28,7 @@ import {
   ChannelGateBlockedError,
 } from '../../../../src/lib/space/runtime/channel-router.ts';
 import { GateRetryScheduler } from '../../../../src/lib/space/runtime/gate-retry-scheduler.ts';
-import type { Gate, WorkflowChannel } from '@neokai/shared';
+import type { Gate, WorkflowChannel } from '@hyperneo/shared';
 import { RATE_LIMIT_MIN_BACKOFF_MS } from '../../../../src/lib/space/runtime/rate-limit-detector.ts';
 
 function makeDb(): BunDatabase {

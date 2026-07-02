@@ -19,7 +19,7 @@
  * not appear in the worker-agent preset list.
  */
 
-import type { SpaceWorkerAgent } from '@neokai/shared';
+import type { SpaceWorkerAgent } from '@hyperneo/shared';
 import type { SpaceAgentManager, SpaceAgentResult } from '../managers/space-agent-manager';
 import { computeAgentTemplateHash } from './agent-template-hash';
 import { QA_SYSTEM_CONTRACT, REVIEWER_SYSTEM_CONTRACT } from './system-contracts';
@@ -125,7 +125,7 @@ interface PresetDefinition {
   description: string;
   tools: string[];
   /** Thinking-level override for sessions created from this preset; unset inherits app default. */
-  thinkingLevel?: import('@neokai/shared').ThinkingLevel;
+  thinkingLevel?: import('@hyperneo/shared').ThinkingLevel;
   /** Combined operator-supplied prompt (persona + operating procedure). */
   customPrompt: string;
 }

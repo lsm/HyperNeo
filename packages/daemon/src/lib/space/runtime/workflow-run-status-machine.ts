@@ -20,7 +20,7 @@
  * archive check that guards reopen.
  */
 
-import type { WorkflowRunStatus } from '@neokai/shared';
+import type { WorkflowRunStatus } from '@hyperneo/shared';
 
 /**
  * Map from a source status to the set of allowed target statuses.

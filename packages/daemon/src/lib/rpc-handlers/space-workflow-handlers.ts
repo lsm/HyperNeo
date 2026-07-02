@@ -17,14 +17,14 @@
  * - spaceWorkflow.deleted
  */
 
-import type { MessageHub } from '@neokai/shared';
-import { generateUUID } from '@neokai/shared';
+import type { MessageHub } from '@hyperneo/shared';
+import { generateUUID } from '@hyperneo/shared';
 import type {
   CreateSpaceWorkflowParams,
   UpdateSpaceWorkflowParams,
   DuplicateDriftReport,
   SpaceWorkflow,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { SpaceManager } from '../space/managers/space-manager';
 import type { SpaceWorkflowManager } from '../space/managers/space-workflow-manager';

@@ -17,7 +17,7 @@ HyperNeo now resolves/downloads the SDK binary at daemon startup via `warmupSDKC
 ### Resolution Priority
 
 1. **node_modules** — binary already installed (dev mode, or global install with optional deps)
-2. **Cache** (`~/.neokai/sdk/claude-<version>-<platform>/claude`) — previously downloaded
+2. **Cache** (`~/.hyperneo/sdk/claude-<version>-<platform>/claude`) — previously downloaded
 3. **Download** — fetch platform package from npm registry, verify integrity (SHA-512), extract binary
 
 ### Behavior
@@ -30,11 +30,11 @@ HyperNeo now resolves/downloads the SDK binary at daemon startup via `warmupSDKC
 
 ### Logging
 
-Startup logs always visible (not gated by `NEOKAI_VERBOSE`):
+Startup logs always visible (not gated by `HYPERNEO_VERBOSE`):
 
 ```
 [SDK] Resolving Claude Code binary for @anthropic-ai/claude-agent-sdk-linux-x64 (SDK 0.2.141)
-[SDK] Claude Code binary ready from cache: ~/.neokai/sdk/claude-0.2.141-linux-x64/claude (190.7 MB)
+[SDK] Claude Code binary ready from cache: ~/.hyperneo/sdk/claude-0.2.141-linux-x64/claude (190.7 MB)
 ```
 
 Or on first download:
@@ -42,18 +42,18 @@ Or on first download:
 ```
 [SDK] Resolving Claude Code binary for @anthropic-ai/claude-agent-sdk-linux-x64 (SDK 0.2.141)
 [SDK] Downloading @anthropic-ai/claude-agent-sdk-linux-x64@0.2.141...
-[SDK] Claude Code binary ready: ~/.neokai/sdk/claude-0.2.141-linux-x64/claude (199.9 MB)
+[SDK] Claude Code binary ready: ~/.hyperneo/sdk/claude-0.2.141-linux-x64/claude (199.9 MB)
 ```
 
 ## Container/Docker Guidance
 
-Mount a persistent volume at `~/.neokai/sdk/` to cache the binary across container restarts:
+Mount a persistent volume at `~/.hyperneo/sdk/` to cache the binary across container restarts:
 
 ```dockerfile
 # In Dockerfile, after npm install -g hyperneo:
 # The SDK binary is downloaded on first daemon startup and cached.
 # To avoid download on every container start, mount a volume:
-VOLUME /root/.neokai/sdk
+VOLUME /root/.hyperneo/sdk
 ```
 
 Alternatively, pre-populate the cache in the image by running the daemon once:
@@ -64,4 +64,4 @@ Alternatively, pre-populate the cache in the image by running the daemon once:
 RUN timeout 180 hyperneo --port 9999 || true
 ```
 
-The binary will be cached at `~/.neokai/sdk/claude-<version>-<platform>/claude` for subsequent starts.
+The binary will be cached at `~/.hyperneo/sdk/claude-<version>-<platform>/claude` for subsequent starts.

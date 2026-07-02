@@ -5,7 +5,7 @@
  * to minimize API usage and respect rate limits.
  */
 
-import type { GitHubEvent } from '@neokai/shared';
+import type { GitHubEvent } from '@hyperneo/shared';
 import { Logger } from '../logger';
 import { normalizePollingEvent } from './event-normalizer';
 import type { GitHubApiComment, GitHubApiIssue, PollingConfig } from './types';

@@ -21,7 +21,7 @@ import {
   emitStructuredLogEvent,
   installConsoleLogCapture,
   withConsoleLogCaptureSuppressed,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 
 /**
  * Logger class - wraps the shared logger for daemon compatibility
@@ -81,4 +81,4 @@ export type {
   StructuredLogProcessMetadata,
   StructuredLogSource,
   StructuredLogSubscriber,
-} from '@neokai/shared';
+} from '@hyperneo/shared';

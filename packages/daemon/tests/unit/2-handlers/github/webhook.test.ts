@@ -14,7 +14,7 @@ import {
   parseWebhookEvent,
   handleGitHubWebhook,
 } from '../../../../src/lib/github/webhook-handler';
-import type { GitHubEvent } from '@neokai/shared';
+import type { GitHubEvent } from '@hyperneo/shared';
 
 // Test secret for webhook signatures
 const TEST_SECRET = 'test-webhook-secret-12345';

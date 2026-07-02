@@ -628,12 +628,12 @@ describe('Computed Signals', () => {
           id: '1',
           title: 'Session 1',
           status: 'active',
-        } as unknown as import('@neokai/shared').Session,
+        } as unknown as import('@hyperneo/shared').Session,
         {
           id: '2',
           title: 'Session 2',
           status: 'idle',
-        } as unknown as import('@neokai/shared').Session,
+        } as unknown as import('@hyperneo/shared').Session,
       ];
 
       expect(sessions.value).toHaveLength(2);
@@ -652,7 +652,7 @@ describe('Computed Signals', () => {
           id: '1',
           title: 'Active Session',
           status: 'active',
-        } as unknown as import('@neokai/shared').Session,
+        } as unknown as import('@hyperneo/shared').Session,
       ];
       globalStore.sessionsTotalCount.value = 5;
 
@@ -738,7 +738,7 @@ describe('Computed Signals', () => {
     it('should return settings from globalStore', () => {
       const mockSettings = { theme: 'dark' };
       globalStore.settings.value =
-        mockSettings as unknown as import('@neokai/shared').GlobalSettings;
+        mockSettings as unknown as import('@hyperneo/shared').GlobalSettings;
 
       expect(globalSettings.value).toBe(mockSettings);
     });
@@ -752,10 +752,10 @@ describe('Computed Signals', () => {
 
     it('should count only active sessions', () => {
       globalStore.sessions.value = [
-        { id: '1', status: 'active' } as unknown as import('@neokai/shared').Session,
-        { id: '2', status: 'idle' } as unknown as import('@neokai/shared').Session,
-        { id: '3', status: 'active' } as unknown as import('@neokai/shared').Session,
-        { id: '4', status: 'archived' } as unknown as import('@neokai/shared').Session,
+        { id: '1', status: 'active' } as unknown as import('@hyperneo/shared').Session,
+        { id: '2', status: 'idle' } as unknown as import('@hyperneo/shared').Session,
+        { id: '3', status: 'active' } as unknown as import('@hyperneo/shared').Session,
+        { id: '4', status: 'archived' } as unknown as import('@hyperneo/shared').Session,
       ];
 
       expect(activeSessions.value).toBe(2);
@@ -774,31 +774,31 @@ describe('Computed Signals', () => {
         {
           id: '1',
           lastActiveAt: new Date(now - 1000).toISOString(),
-        } as unknown as import('@neokai/shared').Session,
+        } as unknown as import('@hyperneo/shared').Session,
         {
           id: '2',
           lastActiveAt: new Date(now - 5000).toISOString(),
-        } as unknown as import('@neokai/shared').Session,
+        } as unknown as import('@hyperneo/shared').Session,
         {
           id: '3',
           lastActiveAt: new Date(now).toISOString(),
-        } as unknown as import('@neokai/shared').Session,
+        } as unknown as import('@hyperneo/shared').Session,
         {
           id: '4',
           lastActiveAt: new Date(now - 2000).toISOString(),
-        } as unknown as import('@neokai/shared').Session,
+        } as unknown as import('@hyperneo/shared').Session,
         {
           id: '5',
           lastActiveAt: new Date(now - 3000).toISOString(),
-        } as unknown as import('@neokai/shared').Session,
+        } as unknown as import('@hyperneo/shared').Session,
         {
           id: '6',
           lastActiveAt: new Date(now - 4000).toISOString(),
-        } as unknown as import('@neokai/shared').Session,
+        } as unknown as import('@hyperneo/shared').Session,
         {
           id: '7',
           lastActiveAt: new Date(now - 6000).toISOString(),
-        } as unknown as import('@neokai/shared').Session,
+        } as unknown as import('@hyperneo/shared').Session,
       ];
 
       const recent = recentSessions.value;

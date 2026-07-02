@@ -65,8 +65,8 @@ import type {
   UpdateSpaceTaskParams,
   UpdateSpaceWorkflowParams,
   WorkflowRunArtifact,
-} from '@neokai/shared';
-import { isUUID, Logger } from '@neokai/shared';
+} from '@hyperneo/shared';
+import { isUUID, Logger } from '@hyperneo/shared';
 import { computed, signal } from '@preact/signals';
 import { connectionManager } from './connection-manager';
 import { currentSpaceCanonicalIdSignal, currentSpaceIdSignal } from './signals';
@@ -2216,10 +2216,10 @@ class SpaceStore {
 
   async fetchEvolutionScope(
     scopeId: string
-  ): Promise<import('@neokai/shared').EvolutionScope | null> {
+  ): Promise<import('@hyperneo/shared').EvolutionScope | null> {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
-    const result = await hub.request<{ scope: import('@neokai/shared').EvolutionScope | null }>(
+    const result = await hub.request<{ scope: import('@hyperneo/shared').EvolutionScope | null }>(
       'evolution.scope.get',
       { id: scopeId }
     );
@@ -2482,13 +2482,13 @@ class SpaceStore {
    */
   async listHookStates(
     runId: string
-  ): Promise<import('@neokai/shared').WorkflowHookStateSnapshot[]> {
+  ): Promise<import('@hyperneo/shared').WorkflowHookStateSnapshot[]> {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
 
     const result = await hub.request<{
-      hookStates: import('@neokai/shared').WorkflowHookStateSnapshot[];
-      hooks: import('@neokai/shared').WorkflowHook[];
+      hookStates: import('@hyperneo/shared').WorkflowHookStateSnapshot[];
+      hooks: import('@hyperneo/shared').WorkflowHook[];
     }>('spaceWorkflowRun.listHookStates', { runId });
     return result?.hookStates ?? [];
   }
@@ -2501,12 +2501,12 @@ class SpaceStore {
     hookId: string,
     approved: boolean,
     reason?: string | null
-  ): Promise<import('@neokai/shared').WorkflowHookStateSnapshot> {
+  ): Promise<import('@hyperneo/shared').WorkflowHookStateSnapshot> {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
 
     const result = await hub.request<{
-      hookState: import('@neokai/shared').WorkflowHookStateSnapshot;
+      hookState: import('@hyperneo/shared').WorkflowHookStateSnapshot;
     }>('spaceWorkflowRun.approveHook', { runId, hookId, approved, reason: reason ?? null });
     return (
       result?.hookState ?? {
@@ -2528,12 +2528,12 @@ class SpaceStore {
   async retryHook(
     runId: string,
     hookId: string
-  ): Promise<import('@neokai/shared').WorkflowHookStateSnapshot> {
+  ): Promise<import('@hyperneo/shared').WorkflowHookStateSnapshot> {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
 
     const result = await hub.request<{
-      hookState: import('@neokai/shared').WorkflowHookStateSnapshot;
+      hookState: import('@hyperneo/shared').WorkflowHookStateSnapshot;
     }>('spaceWorkflowRun.retryHook', { runId, hookId });
     return (
       result?.hookState ?? {

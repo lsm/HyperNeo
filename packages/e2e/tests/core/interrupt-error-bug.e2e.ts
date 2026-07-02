@@ -27,7 +27,7 @@ import {
 // that this test reproduces will not occur. The bug is that handleInterrupt() returns
 // immediately without awaiting query cleanup - this only manifests when there's actual
 // processing delay from real API calls.
-const IS_MOCK = process.env.NEOKAI_USE_DEV_PROXY === '1';
+const IS_MOCK = process.env.HYPERNEO_USE_DEV_PROXY === '1';
 
 test.describe('Interrupt Error Bug', () => {
   test.beforeEach(async ({ page }) => {

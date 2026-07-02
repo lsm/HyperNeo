@@ -1,5 +1,5 @@
 import { useState } from 'preact/hooks';
-import type { Session } from '@neokai/shared';
+import type { Session } from '@hyperneo/shared';
 import { currentSessionIdSignal } from '../lib/signals.ts';
 import { allSessionStatuses, getProcessingPhaseColor } from '../lib/session-status.ts';
 import { useSessionRename } from '../hooks/useSessionRename';

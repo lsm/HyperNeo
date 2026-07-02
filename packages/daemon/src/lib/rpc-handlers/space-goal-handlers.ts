@@ -1,4 +1,4 @@
-import type { MessageHub, SpaceGoalStatus } from '@neokai/shared';
+import type { MessageHub, SpaceGoalStatus } from '@hyperneo/shared';
 import type { PublicSpaceGoalUpdateParams, SpaceGoalService } from '../space/goals/goal-service';
 import type { SpaceManager } from '../space/managers/space-manager';
 

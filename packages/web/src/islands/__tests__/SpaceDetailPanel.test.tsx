@@ -4,7 +4,7 @@
  * Covers overview/agent navigation, task tab defaults, counters, and sessions behavior.
  */
 
-import type { Space, SpaceTask } from '@neokai/shared';
+import type { Space, SpaceTask } from '@hyperneo/shared';
 import { type Signal, signal } from '@preact/signals';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';

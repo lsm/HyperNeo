@@ -23,7 +23,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, fireEvent, cleanup, act, waitFor } from '@testing-library/preact';
 import { useState } from 'preact/hooks';
-import type { SpaceWorkerAgent, WorkflowHook } from '@neokai/shared';
+import type { SpaceWorkerAgent, WorkflowHook } from '@hyperneo/shared';
 
 const mockModels = [
   {

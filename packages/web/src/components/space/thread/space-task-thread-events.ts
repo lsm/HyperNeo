@@ -1,4 +1,4 @@
-import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
+import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 import {
   type ContentBlock,
   hasRenderableThinking,
@@ -12,7 +12,7 @@ import {
   isTextBlock,
   isThinkingBlock,
   isToolUseBlock,
-} from '@neokai/shared/sdk/type-guards';
+} from '@hyperneo/shared/sdk/type-guards';
 import type { SpaceTaskThreadMessageRow } from '../../../hooks/useSpaceTaskMessages';
 import type { MessageReplacementStatus } from '../../../lib/sdk-message-replacement';
 

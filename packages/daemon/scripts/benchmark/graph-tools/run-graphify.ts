@@ -19,8 +19,8 @@ import {
   BENCHMARK_MODEL,
 } from './benchmark-helpers';
 
-const GRAPHIFY_BIN = process.env.NEOKAI_BENCHMARK_GRAPHIFY_BIN || 'graphify';
-const GRAPHIFY_BACKEND = process.env.NEOKAI_BENCHMARK_GRAPHIFY_BACKEND || 'ollama';
+const GRAPHIFY_BIN = process.env.HYPERNEO_BENCHMARK_GRAPHIFY_BIN || 'graphify';
+const GRAPHIFY_BACKEND = process.env.HYPERNEO_BENCHMARK_GRAPHIFY_BACKEND || 'ollama';
 
 /** Verify interpreter has graphify.serve (MCP extra). */
 function checkGraphifyServe(python: string): boolean {
@@ -34,11 +34,11 @@ function checkGraphifyServe(python: string): boolean {
 
 /** Discover the Python interpreter that has graphify + graphify.serve installed. */
 function resolveGraphifyPython(): string {
-  const env = process.env.NEOKAI_BENCHMARK_GRAPHIFY_PYTHON;
+  const env = process.env.HYPERNEO_BENCHMARK_GRAPHIFY_PYTHON;
   if (env) {
     if (!checkGraphifyServe(env)) {
       console.error(
-        `Error: NEOKAI_BENCHMARK_GRAPHIFY_PYTHON (${env}) does not have graphify.serve. ` +
+        `Error: HYPERNEO_BENCHMARK_GRAPHIFY_PYTHON (${env}) does not have graphify.serve. ` +
           'Install with: pip install "graphifyy[mcp]"'
       );
       process.exit(1);
@@ -78,7 +78,7 @@ function resolveGraphifyPython(): string {
   console.error(
     'Error: Could not find a Python interpreter with graphify.serve.\n' +
       'Install the MCP extra: pip install "graphifyy[mcp]"\n' +
-      'Or set NEOKAI_BENCHMARK_GRAPHIFY_PYTHON to the correct python path.'
+      'Or set HYPERNEO_BENCHMARK_GRAPHIFY_PYTHON to the correct python path.'
   );
   process.exit(1);
 }
@@ -87,8 +87,8 @@ const GRAPHIFY_PYTHON = resolveGraphifyPython();
 
 /** Cache dir includes worktree + backend so switching backends invalidates cache. */
 const GRAPHIFY_OUT =
-  process.env.NEOKAI_BENCHMARK_GRAPHIFY_OUT ||
-  `/tmp/neokai-benchmark-graphify/${createHash('sha256')
+  process.env.HYPERNEO_BENCHMARK_GRAPHIFY_OUT ||
+  `/tmp/hyperneo-benchmark-graphify/${createHash('sha256')
     .update(WORKTREE + '\0' + GRAPHIFY_BACKEND)
     .digest('hex')}`;
 

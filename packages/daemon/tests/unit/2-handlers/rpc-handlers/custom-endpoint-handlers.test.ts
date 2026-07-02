@@ -6,8 +6,8 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
-import { MessageHub } from '@neokai/shared';
-import type { CustomEndpointConfig, GlobalSettings } from '@neokai/shared';
+import { MessageHub } from '@hyperneo/shared';
+import type { CustomEndpointConfig, GlobalSettings } from '@hyperneo/shared';
 import {
   registerCustomEndpointHandlers,
   clearModelListCache,

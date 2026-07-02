@@ -10,7 +10,7 @@
  */
 
 import { join } from 'path';
-import type { MessageHub } from '@neokai/shared';
+import type { MessageHub } from '@hyperneo/shared';
 import type { McpImportService } from '../mcp';
 import { Logger } from '../logger';
 import { validateWorkspaceDirectory } from '../workspace-path';

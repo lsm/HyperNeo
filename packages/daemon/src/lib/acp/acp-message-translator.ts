@@ -16,9 +16,9 @@ import type {
   SDKResultMessage,
   SDKMessage,
   SDKUserMessage,
-} from '@neokai/shared/sdk';
-import type { ContentBlock } from '@neokai/shared/sdk';
-import { generateUUID } from '@neokai/shared';
+} from '@hyperneo/shared/sdk';
+import type { ContentBlock } from '@hyperneo/shared/sdk';
+import { generateUUID } from '@hyperneo/shared';
 import type {
   AcpAgentMessageChunkUpdate,
   AcpAgentThoughtChunkUpdate,
@@ -26,7 +26,7 @@ import type {
   AcpToolCallUpdateUpdate,
   AcpSessionUpdate,
   AcpStopReason,
-} from '@neokai/shared/acp';
+} from '@hyperneo/shared/acp';
 
 const TOKEN_CHARS = 4;
 

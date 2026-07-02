@@ -3,7 +3,7 @@
  * the sidebar Tasks badge in `SpaceDetailPanel`.
  */
 
-import type { SpaceTask, SpaceTaskStatus } from '@neokai/shared';
+import type { SpaceTask, SpaceTaskStatus } from '@hyperneo/shared';
 import { describe, expect, it } from 'vitest';
 import { isActionRequired, isActiveTask } from '../task-filters';
 

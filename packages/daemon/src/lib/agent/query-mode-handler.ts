@@ -9,8 +9,8 @@
  * - sendEnqueuedMessagesOnTurnEnd - auto-defer mode: send enqueued messages after turn
  */
 
-import type { MessageContent, Session } from '@neokai/shared';
-import { isSDKUserMessage } from '@neokai/shared/sdk/type-guards';
+import type { MessageContent, Session } from '@hyperneo/shared';
+import { isSDKUserMessage } from '@hyperneo/shared/sdk/type-guards';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { Database } from '../../storage/database';
 import type { Logger } from '../logger';

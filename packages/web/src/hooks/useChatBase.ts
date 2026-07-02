@@ -35,7 +35,7 @@
 import { useState, useCallback, useRef, useEffect } from 'preact/hooks';
 import type { RefObject } from 'preact';
 import type { Signal } from '@preact/signals';
-import type { MessageImage } from '@neokai/shared';
+import type { MessageImage } from '@hyperneo/shared';
 import { useFileAttachments, type AttachmentWithMetadata } from './useFileAttachments';
 import { useAutoScroll } from './useAutoScroll';
 

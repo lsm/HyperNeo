@@ -15,8 +15,8 @@ import type {
   ProviderSdkConfig,
   ProviderSessionConfig,
   ModelTier,
-} from '@neokai/shared/provider';
-import type { ModelInfo } from '@neokai/shared';
+} from '@hyperneo/shared/provider';
+import type { ModelInfo } from '@hyperneo/shared';
 import { probeAnthropicCompatCredentials } from './shared/credential-probe.js';
 
 /**

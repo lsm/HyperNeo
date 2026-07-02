@@ -29,7 +29,7 @@
  */
 
 import { describe, expect, it, beforeEach, mock, afterEach } from 'bun:test';
-import { MessageHub, type Session } from '@neokai/shared';
+import { MessageHub, type Session } from '@hyperneo/shared';
 import { setupConfigHandlers } from '../../../../src/lib/rpc-handlers/config-handlers';
 import type { SessionManager } from '../../../../src/lib/session-manager';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session';

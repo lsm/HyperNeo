@@ -9,9 +9,9 @@
  */
 
 import type { UUID } from 'crypto';
-import type { MessageContent, ToolResultContent } from '@neokai/shared';
-import type { SDKUserMessage } from '@neokai/shared/sdk';
-import { generateUUID } from '@neokai/shared';
+import type { MessageContent, ToolResultContent } from '@hyperneo/shared';
+import type { SDKUserMessage } from '@hyperneo/shared/sdk';
+import { generateUUID } from '@hyperneo/shared';
 
 /**
  * Check if content is a tool_result content block

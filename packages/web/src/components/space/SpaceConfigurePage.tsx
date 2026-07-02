@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { lazy, Suspense } from 'preact/compat';
-import type { Space, SpaceWorkflow } from '@neokai/shared';
-import { Tab, TabGroup, TabList, TabPanel, TabPanels } from '@neokai/ui';
+import type { Space, SpaceWorkflow } from '@hyperneo/shared';
+import { Tab, TabGroup, TabList, TabPanel, TabPanels } from '@hyperneo/ui';
 import { spaceStore } from '../../lib/space-store';
 import { currentSpaceConfigureTabSignal, currentSpaceIdSignal } from '../../lib/signals';
 import { navigateToSpaceConfigure } from '../../lib/router';

@@ -7,7 +7,7 @@
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
-import type { Session, SessionConfig, SessionMetadata, WorktreeMetadata } from '@neokai/shared';
+import type { Session, SessionConfig, SessionMetadata, WorktreeMetadata } from '@hyperneo/shared';
 
 describe('SessionRepository', () => {
   let db: Database;

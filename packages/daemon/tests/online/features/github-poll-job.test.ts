@@ -20,7 +20,7 @@
  * send any Claude messages, so no Anthropic calls are made either.
  *
  * Run:
- *   cd packages/daemon && NEOKAI_USE_DEV_PROXY=1 bun test ./tests/online/features/github-poll-job.test.ts
+ *   cd packages/daemon && HYPERNEO_USE_DEV_PROXY=1 bun test ./tests/online/features/github-poll-job.test.ts
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';

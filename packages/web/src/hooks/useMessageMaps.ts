@@ -25,8 +25,8 @@ import type {
   SDKSystemMessage,
   SDKTaskNotificationMessage,
   SDKTaskProgressMessage,
-} from '@neokai/shared/sdk/sdk.d.ts';
-import type { ChatMessage } from '@neokai/shared';
+} from '@hyperneo/shared/sdk/sdk.d.ts';
+import type { ChatMessage } from '@hyperneo/shared';
 import {
   buildMessageReplacementStatusMap,
   type MessageReplacementStatus,
@@ -83,7 +83,7 @@ export function useMessageMaps(
   removedOutputs: string[] = [],
   runningToolUseIds: Set<string> = new Set()
 ): UseMessageMapsResult {
-  // Cast to SDKMessage[] for duck-typed property access; NeokaiActionMessage will not match
+  // Cast to SDKMessage[] for duck-typed property access; HyperNeoActionMessage will not match
   // 'user'/'assistant'/'system' checks and will be safely skipped by all maps.
   const sdkMessages = messages as SDKMessage[];
 

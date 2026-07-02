@@ -13,7 +13,7 @@
  */
 
 import { useState, useEffect } from 'preact/hooks';
-import type { WorkspaceHistoryEntry } from '@neokai/shared';
+import type { WorkspaceHistoryEntry } from '@hyperneo/shared';
 import { connectionManager } from '../lib/connection-manager';
 import {
   getWorkspaceHistory,

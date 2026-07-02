@@ -2,11 +2,11 @@
  * Shared utilities for Space export/import UI actions.
  */
 
-import type { SpaceExportBundle } from '@neokai/shared';
+import type { SpaceExportBundle } from '@hyperneo/shared';
 
 /**
  * Triggers a browser file download for a JSON bundle.
- * Filename pattern: `{spaceName}-{type}-{date}.neokai.json`
+ * Filename pattern: `{spaceName}-{type}-{date}.hyperneo.json`
  */
 export function downloadBundle(
   bundle: SpaceExportBundle,
@@ -15,7 +15,7 @@ export function downloadBundle(
 ): void {
   const date = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
   const safeName = spaceName.replace(/[^a-z0-9_-]/gi, '-').toLowerCase();
-  const filename = `${safeName}-${type}-${date}.neokai.json`;
+  const filename = `${safeName}-${type}-${date}.hyperneo.json`;
 
   const json = JSON.stringify(bundle, null, 2);
   const blob = new Blob([json], { type: 'application/json' });
@@ -45,7 +45,7 @@ export function pickImportFile(): Promise<SpaceExportBundle | null> {
 
     const input = document.createElement('input');
     input.type = 'file';
-    input.accept = '.json,.neokai.json';
+    input.accept = '.json,.hyperneo.json';
 
     input.onchange = () => {
       const file = input.files?.[0];

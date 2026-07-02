@@ -220,7 +220,7 @@ Remove JobQueueProcessor instantiation and cleanup code.
 
 ```typescript
 // packages/daemon/src/lib/rpc-handlers/live-query-handlers.ts
-import type { MessageHub } from '@neokai/shared';
+import type { MessageHub } from '@hyperneo/shared';
 import type { LiveQueryEngine } from '../../storage/live-query';
 import type { QueryDiff } from '../../storage/live-query';
 
@@ -316,8 +316,8 @@ export interface LiveQueryDelta<T> {
 ```typescript
 // packages/web/src/lib/live-query-channel.ts
 import { signal, type Signal, batch } from '@preact/signals';
-import type { MessageHub } from '@neokai/shared';
-import type { QueryDiff } from '@neokai/shared';
+import type { MessageHub } from '@hyperneo/shared';
+import type { QueryDiff } from '@hyperneo/shared';
 
 export interface LiveQueryChannelOptions {
   sql: string;

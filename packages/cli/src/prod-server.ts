@@ -1,10 +1,10 @@
 import { Hono } from 'hono';
 import { serveStatic } from 'hono/bun';
-import { createDaemonApp } from '@neokai/daemon/app';
-import type { Config } from '@neokai/daemon/config';
-import { warmupSDKCliBinary } from '@neokai/daemon/lib/agent/sdk-cli-resolver';
+import { createDaemonApp } from '@hyperneo/daemon/app';
+import type { Config } from '@hyperneo/daemon/config';
+import { warmupSDKCliBinary } from '@hyperneo/daemon/lib/agent/sdk-cli-resolver';
 import { resolve } from 'path';
-import { createLogger } from '@neokai/shared';
+import { createLogger } from '@hyperneo/shared';
 import {
   createCorsPreflightResponse,
   isWebSocketPath,
@@ -89,7 +89,7 @@ export async function startProdServer(config: Config) {
   log.info(`📦 Serving static files from: ${distPath}`);
 
   // Get WebSocket handlers from daemon
-  const { createWebSocketHandlers } = await import('@neokai/daemon/routes/setup-websocket');
+  const { createWebSocketHandlers } = await import('@hyperneo/daemon/routes/setup-websocket');
   const wsHandlers = createWebSocketHandlers(daemonContext.transport, daemonContext.sessionManager);
 
   // Create Hono app for static file serving

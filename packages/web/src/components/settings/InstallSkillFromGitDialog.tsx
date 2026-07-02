@@ -167,7 +167,7 @@ export function InstallSkillFromGitDialog({ isOpen, onClose }: InstallSkillFromG
           <p class="text-xs text-gray-500 mt-1">
             Auto-derived from the URL. Used as the slash-command name (
             <code class="font-mono">/playwright</code>) and install directory (
-            <code class="font-mono">~/.neokai/skills/playwright/</code>).
+            <code class="font-mono">~/.hyperneo/skills/playwright/</code>).
           </p>
         </div>
 

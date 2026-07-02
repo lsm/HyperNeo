@@ -17,7 +17,7 @@
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
-import type { TaskSchedule } from '@neokai/shared';
+import type { TaskSchedule } from '@hyperneo/shared';
 import { TASK_SCHEDULE_FIRE } from '../job-queue-constants';
 import { readSelfNagScheduleScopeId } from '../rpc-handlers';
 import { Logger } from '../logger';

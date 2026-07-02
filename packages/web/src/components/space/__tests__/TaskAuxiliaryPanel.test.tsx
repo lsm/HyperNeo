@@ -1,5 +1,5 @@
 // @ts-nocheck
-import type { NodeExecution, Space, SpaceGoal, SpaceTask, SpaceWorkflow } from '@neokai/shared';
+import type { NodeExecution, Space, SpaceGoal, SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 

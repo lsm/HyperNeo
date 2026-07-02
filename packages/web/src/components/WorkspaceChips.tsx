@@ -1,5 +1,5 @@
 import { useState } from 'preact/hooks';
-import type { GitBranchesResponse } from '@neokai/shared';
+import type { GitBranchesResponse } from '@hyperneo/shared';
 import { Dropdown, type DropdownMenuItem } from './ui/Dropdown.tsx';
 import { GitBranchIcon } from './icons/GitBranchIcon.tsx';
 import { projectName } from '../lib/projects.ts';

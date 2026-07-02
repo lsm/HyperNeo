@@ -1,7 +1,7 @@
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { GitHubMappingRepository } from '../../../../src/storage/repositories/github-mapping-repository';
-import type { CreateRoomGitHubMappingParams, RepositoryMapping } from '@neokai/shared';
+import type { CreateRoomGitHubMappingParams, RepositoryMapping } from '@hyperneo/shared';
 
 // ============================================================================
 // Test Data Factories

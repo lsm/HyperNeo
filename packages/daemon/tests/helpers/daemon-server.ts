@@ -7,7 +7,7 @@
  *
  * ## Dev Proxy Integration
  *
- * When NEOKAI_USE_DEV_PROXY=1 is set, the helper will:
+ * When HYPERNEO_USE_DEV_PROXY=1 is set, the helper will:
  * 1. Start Dev Proxy before creating the daemon server
  * 2. Set ANTHROPIC_BASE_URL to point to Dev Proxy (e.g., http://127.0.0.1:8000)
  * 3. Stop Dev Proxy and restore ANTHROPIC_BASE_URL when the daemon server is cleaned up
@@ -20,7 +20,7 @@
 
 import { spawn, spawnSync } from 'child_process';
 import path from 'path';
-import { MessageHub, WebSocketClientTransport } from '@neokai/shared';
+import { MessageHub, WebSocketClientTransport } from '@hyperneo/shared';
 import { createDaemonApp, type DaemonAppContext } from '../../src/app';
 import { getConfig } from '../../src/config';
 import {
@@ -44,12 +44,12 @@ export interface DaemonServerOptions {
 
   /**
    * Dev Proxy options for mocking HTTP requests
-   * Only used when NEOKAI_USE_DEV_PROXY=1 is set
+   * Only used when HYPERNEO_USE_DEV_PROXY=1 is set
    */
   devProxy?: DevProxyOptions;
 
   /**
-   * Force enable Dev Proxy even without NEOKAI_USE_DEV_PROXY=1
+   * Force enable Dev Proxy even without HYPERNEO_USE_DEV_PROXY=1
    * Default: false
    */
   useDevProxy?: boolean;
@@ -100,7 +100,7 @@ export interface DaemonServerContext {
   cleanup: () => Promise<void>;
 
   /**
-   * Dev Proxy controller (only when NEOKAI_USE_DEV_PROXY=1 or useDevProxy=true).
+   * Dev Proxy controller (only when HYPERNEO_USE_DEV_PROXY=1 or useDevProxy=true).
    * Sets ANTHROPIC_BASE_URL to point to Dev Proxy for API mocking.
    */
   devProxy: DevProxyController | null;
@@ -131,13 +131,13 @@ let sharedDevProxyStopPromise: Promise<void> | null = null;
 
 function shouldReuseDevProxy(): boolean {
   // Reuse one Dev Proxy instance across tests in the same process by default.
-  // Set NEOKAI_DEV_PROXY_REUSE=0 to force per-test start/stop behavior.
-  return process.env.NEOKAI_DEV_PROXY_REUSE !== '0';
+  // Set HYPERNEO_DEV_PROXY_REUSE=0 to force per-test start/stop behavior.
+  return process.env.HYPERNEO_DEV_PROXY_REUSE !== '0';
 }
 
 function getSharedDevProxyIdleTtlMs(): number {
   // Keep proxy warm between test transitions, then auto-stop when idle.
-  const raw = process.env.NEOKAI_DEV_PROXY_IDLE_TTL_MS;
+  const raw = process.env.HYPERNEO_DEV_PROXY_IDLE_TTL_MS;
   if (!raw) {
     return 2000;
   }
@@ -337,7 +337,7 @@ async function spawnDaemonServer(options: DaemonServerOptions = {}): Promise<Dae
 
   // Start Dev Proxy if requested
   // Sets ANTHROPIC_BASE_URL to Dev Proxy URL for SDK to use mocked responses
-  const shouldUseDevProxy = useDevProxy || process.env.NEOKAI_USE_DEV_PROXY === '1';
+  const shouldUseDevProxy = useDevProxy || process.env.HYPERNEO_USE_DEV_PROXY === '1';
   const devProxyPort = getDevProxyPort(devProxyOptions);
   const devProxyBaseUrl = `http://127.0.0.1:${devProxyPort}`;
   const devProxyLease = await acquireDevProxyLease(shouldUseDevProxy, devProxyOptions);
@@ -350,14 +350,14 @@ async function spawnDaemonServer(options: DaemonServerOptions = {}): Promise<Dae
   const daemonEnv: Record<string, string> = {
     ...process.env,
     ...customEnv,
-    NEOKAI_USE_DEV_PROXY: shouldUseDevProxy ? '1' : process.env.NEOKAI_USE_DEV_PROXY,
+    HYPERNEO_USE_DEV_PROXY: shouldUseDevProxy ? '1' : process.env.HYPERNEO_USE_DEV_PROXY,
     ANTHROPIC_BASE_URL: shouldUseDevProxy ? devProxyBaseUrl : process.env.ANTHROPIC_BASE_URL,
     ANTHROPIC_API_KEY: shouldUseDevProxy ? 'sk-devproxy-test-key' : process.env.ANTHROPIC_API_KEY,
     ANTHROPIC_AUTH_TOKEN: shouldUseDevProxy ? '' : process.env.ANTHROPIC_AUTH_TOKEN,
     CLAUDE_CODE_OAUTH_TOKEN: shouldUseDevProxy ? '' : process.env.CLAUDE_CODE_OAUTH_TOKEN,
     PORT: userPort.toString(),
     NODE_ENV: 'test',
-    NEOKAI_SDK_STARTUP_TIMEOUT_MS: process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS || '30000',
+    HYPERNEO_SDK_STARTUP_TIMEOUT_MS: process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS || '30000',
   };
 
   // Note: Proxy env vars are inherited from parent process via ...process.env
@@ -493,7 +493,7 @@ async function createInProcessDaemonServer(
 
   // Start Dev Proxy if requested
   // Sets ANTHROPIC_BASE_URL to Dev Proxy URL for SDK to use mocked responses
-  const shouldUseDevProxy = useDevProxy || process.env.NEOKAI_USE_DEV_PROXY === '1';
+  const shouldUseDevProxy = useDevProxy || process.env.HYPERNEO_USE_DEV_PROXY === '1';
   const devProxyPort = getDevProxyPort(devProxyOptions);
   const devProxyBaseUrl = `http://127.0.0.1:${devProxyPort}`;
   const originalAnthropicBaseUrl = process.env.ANTHROPIC_BASE_URL;
@@ -523,8 +523,8 @@ async function createInProcessDaemonServer(
   // Online tests do real provider calls and often need longer startup windows in CI.
   // Keep production default unchanged; override only in test daemon helper.
   process.env.NODE_ENV = 'test';
-  if (!process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS) {
-    process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS = '30000';
+  if (!process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS) {
+    process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = '30000';
   }
 
   // Create temp workspace for this test (or reuse an existing one for restart scenarios)
@@ -536,13 +536,13 @@ async function createInProcessDaemonServer(
     await Bun.$`mkdir -p ${workspace}`;
   }
 
-  // Set worktree base dir to keep worktrees under /tmp (avoids ~/.neokai path issues in CI)
+  // Set worktree base dir to keep worktrees under /tmp (avoids ~/.hyperneo path issues in CI)
   if (!process.env.TEST_WORKTREE_BASE_DIR) {
     process.env.TEST_WORKTREE_BASE_DIR = `/tmp/daemon-worktrees-${Date.now()}`;
   }
 
   // Configure daemon
-  process.env.NEOKAI_WORKSPACE_PATH = workspace;
+  process.env.HYPERNEO_WORKSPACE_PATH = workspace;
   const config = getConfig();
   config.port = userPort;
   config.dbPath = `${workspace}/daemon.db`;
@@ -557,7 +557,7 @@ async function createInProcessDaemonServer(
   // Optional CI/test optimization: disable sandbox by default for sessions created
   // in online tests. This avoids requiring bubblewrap/socat on Linux runners for
   // test shards that only exercise message/query flows, not sandbox enforcement.
-  if (process.env.NEOKAI_TEST_DISABLE_SANDBOX === '1') {
+  if (process.env.HYPERNEO_TEST_DISABLE_SANDBOX === '1') {
     const current = daemonContext.settingsManager.getGlobalSettings();
     daemonContext.settingsManager.updateGlobalSettings({
       sandbox: {

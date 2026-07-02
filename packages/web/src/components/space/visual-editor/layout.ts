@@ -9,7 +9,7 @@
  *   horizontal space to make relationships clearer by default
  */
 
-import type { WorkflowChannel, WorkflowNode } from '@neokai/shared';
+import type { WorkflowChannel, WorkflowNode } from '@hyperneo/shared';
 import type { VisualTransition } from './types';
 
 /** A 2D point in canvas coordinates */

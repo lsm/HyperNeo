@@ -6,7 +6,7 @@
  * database so that tests are fully independent.
  *
  * TEST_WORKTREE_BASE_DIR is set so worktrees are created under the temp
- * directory instead of ~/.neokai.
+ * directory instead of ~/.hyperneo.
  *
  * Covered scenarios:
  * - createTaskWorktree: creates filesystem worktree + DB record
@@ -97,7 +97,7 @@ let manager: SpaceWorktreeManager;
 beforeEach(async () => {
   repoDir = await makeGitRepo('repo');
   // Set TEST_WORKTREE_BASE_DIR so worktrees go to a controlled temp location
-  testBaseDir = join(TMP_ROOT, `neokai-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  testBaseDir = join(TMP_ROOT, `hyperneo-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   mkdirSync(testBaseDir, { recursive: true });
   process.env.TEST_WORKTREE_BASE_DIR = testBaseDir;
 

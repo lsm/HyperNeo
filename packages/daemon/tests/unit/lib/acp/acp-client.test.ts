@@ -10,7 +10,7 @@ import type {
   AcpJsonRpcRequest,
   AcpJsonRpcResponse,
   AcpTransportOptions,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 
 // ---------------------------------------------------------------------------
 // Mock AcpTransport

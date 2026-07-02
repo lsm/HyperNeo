@@ -30,7 +30,7 @@ import type {
   SpaceMcpClearOverrideResponse,
   McpImportsRefreshRequest,
   McpImportsRefreshResponse,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import { homedir } from 'node:os';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { Database } from '../../storage/database';

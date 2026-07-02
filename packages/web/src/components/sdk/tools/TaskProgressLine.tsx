@@ -1,4 +1,4 @@
-import type { SDKTaskProgressMessage } from '@neokai/shared/sdk/sdk.d.ts';
+import type { SDKTaskProgressMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 
 function formatTokens(totalTokens: number): string {
   if (totalTokens >= 1000) {

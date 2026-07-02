@@ -10,7 +10,7 @@
  */
 
 import { useEffect, useRef } from 'preact/hooks';
-import type { MessageImage } from '@neokai/shared';
+import type { MessageImage } from '@hyperneo/shared';
 import { Portal } from '../ui/Portal';
 import { setupFocusTrap } from '../ui/Modal';
 import ChatContainer from '../../islands/ChatContainer';

@@ -1,4 +1,4 @@
-import type { SpaceAutonomyLevel } from '@neokai/shared';
+import type { SpaceAutonomyLevel } from '@hyperneo/shared';
 
 export const AUTONOMY_LEVELS: {
   level: SpaceAutonomyLevel;

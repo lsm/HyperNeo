@@ -2,8 +2,8 @@
  * Message RPC Handlers
  */
 
-import type { MessageHub, ChatMessage } from '@neokai/shared';
-import type { SDKMessage } from '@neokai/shared/sdk';
+import type { MessageHub, ChatMessage } from '@hyperneo/shared';
+import type { SDKMessage } from '@hyperneo/shared/sdk';
 import {
   isSDKAssistantMessage,
   isSDKUserMessage,
@@ -13,7 +13,7 @@ import {
   isToolUseBlock,
   isThinkingBlock,
   type ContentBlock,
-} from '@neokai/shared/sdk';
+} from '@hyperneo/shared/sdk';
 import type { SessionManager } from '../session-manager';
 import { removeToolResultFromSessionFile } from '../sdk-session-file-manager';
 import type { Database } from '../../storage/database';
@@ -245,7 +245,7 @@ function convertToMarkdown(
   messages: ChatMessage[]
 ): string {
   // Filter out HyperNeo-native action messages — they are UI prompts, not conversation content.
-  const sdkOnly = messages.filter((m) => m.type !== 'neokai_action') as SDKMessage[];
+  const sdkOnly = messages.filter((m) => m.type !== 'hyperneo_action') as SDKMessage[];
   const lines: string[] = [];
 
   // Header

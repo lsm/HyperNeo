@@ -7,7 +7,7 @@
  * context compaction.
  */
 
-import type { ContextInfo } from '@neokai/shared';
+import type { ContextInfo } from '@hyperneo/shared';
 
 /**
  * Default cooldown between HyperNeo-triggered compactions (ms).

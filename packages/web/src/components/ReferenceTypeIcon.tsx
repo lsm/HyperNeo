@@ -1,5 +1,5 @@
 import { cn } from '../lib/utils.ts';
-import type { ReferenceType } from '@neokai/shared';
+import type { ReferenceType } from '@hyperneo/shared';
 
 export interface ReferenceTypeIconProps {
   type: ReferenceType;

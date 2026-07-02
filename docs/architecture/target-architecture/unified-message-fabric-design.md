@@ -293,7 +293,7 @@ export interface QuerySubscriptionPolicy<TInput> {
 
 `subscription` is only valid for query contracts. It declares whether the query can be subscribed/live and which subject or read-model keys drive invalidation. Queries whose effective result inherits broader scopes may subscribe to multiple subjects.
 
-Initial contracts live under `@neokai/shared/contracts` to match the shared-boundaries plan and M1 execution plan. A future `@neokai/messaging` extraction may move the registry and envelopes later, but it must not create a second contract surface during migration.
+Initial contracts live under `@hyperneo/shared/contracts` to match the shared-boundaries plan and M1 execution plan. A future `@hyperneo/messaging` extraction may move the registry and envelopes later, but it must not create a second contract surface during migration.
 
 ```text
 packages/shared/src/contracts/
@@ -776,7 +776,7 @@ Handlers store and mutate `prompt_policy_records`; the Agent Runtime prompt poli
 ### Phase 0: Spec and Contracts
 
 - Add this design spec.
-- Define envelope, contract, subject, auth, and result types under `@neokai/shared/contracts`.
+- Define envelope, contract, subject, auth, and result types under `@hyperneo/shared/contracts`.
 - Add a small contract registry with no transport changes.
 - Add lint or review guidance: new cross-boundary APIs should define contracts.
 

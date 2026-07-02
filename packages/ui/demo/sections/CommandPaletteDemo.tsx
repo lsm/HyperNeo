@@ -307,7 +307,7 @@ function CommandPaletteDemo() {
                 </div>
                 <div class="flex items-center gap-1">
                   <CommandIcon />
-                  <span>Powered by @neokai/ui</span>
+                  <span>Powered by @hyperneo/ui</span>
                 </div>
               </div>
             </Combobox>

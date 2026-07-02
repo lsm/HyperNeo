@@ -20,7 +20,7 @@
  */
 
 import { useEffect, useState } from 'preact/hooks';
-import type { Gate } from '@neokai/shared';
+import type { Gate } from '@hyperneo/shared';
 import { connectionManager } from '../../lib/connection-manager';
 import { spaceStore } from '../../lib/space-store';
 import type { GateBannerSummary } from '../../lib/task-banner.ts';

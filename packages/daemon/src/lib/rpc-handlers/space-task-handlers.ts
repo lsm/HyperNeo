@@ -18,7 +18,7 @@ import {
   type SpaceTask,
   type SpaceTaskStatus,
   type UpdateSpaceTaskParams,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 
 const TERMINAL_TASK_STATUSES = new Set<SpaceTaskStatus>([
   'done',

@@ -6,7 +6,7 @@ import type {
   GitReviewFile,
   GitReviewSummary,
   GitSessionStatusResponse,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import { getGitSessionStatus } from '../lib/api-helpers.ts';
 import { cn } from '../lib/utils.ts';
 

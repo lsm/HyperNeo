@@ -22,8 +22,8 @@ import { NodeExecutionRepository } from '../../../../src/storage/repositories/no
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import { ChannelRouter } from '../../../../src/lib/space/runtime/channel-router.ts';
-import type { Gate, SpaceWorkflow, WorkflowChannel, SpaceAutonomyLevel } from '@neokai/shared';
-import { computeGateDefaults } from '@neokai/shared';
+import type { Gate, SpaceWorkflow, WorkflowChannel, SpaceAutonomyLevel } from '@hyperneo/shared';
+import { computeGateDefaults } from '@hyperneo/shared';
 
 // ---------------------------------------------------------------------------
 // DB helpers

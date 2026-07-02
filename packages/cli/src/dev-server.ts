@@ -1,11 +1,11 @@
-import { createDaemonApp } from '@neokai/daemon/app';
-import { warmupSDKCliBinary } from '@neokai/daemon/lib/agent/sdk-cli-resolver';
-import type { Config } from '@neokai/daemon/config';
+import { getDataDir } from '@hyperneo/daemon/lib/data-dir';
+import { createDaemonApp } from '@hyperneo/daemon/app';
+import { warmupSDKCliBinary } from '@hyperneo/daemon/lib/agent/sdk-cli-resolver';
+import type { Config } from '@hyperneo/daemon/config';
 import { createServer as createViteServer } from 'vite';
 import { resolve } from 'path';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
-import { createLogger } from '@neokai/shared';
+import { createLogger } from '@hyperneo/shared';
 import {
   findAvailablePort,
   createCorsPreflightResponse,
@@ -147,12 +147,12 @@ export async function startDevServer(config: Config) {
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('SIGTERM', () => shutdown('SIGTERM'));
 
-  // Sync built-in skill files from packages/skills/ to ~/.neokai/skills/.
+  // Sync built-in skill files from packages/skills/ to ~/.hyperneo/skills/.
   // In dev mode the source files live in the monorepo; in the compiled binary they
   // are embedded and extracted by prod-server-embedded.ts instead. Both end up at
-  // ~/.neokai/skills/{commandName}/ which QueryOptionsBuilder injects as SDK plugins.
+  // ~/.hyperneo/skills/{commandName}/ which QueryOptionsBuilder injects as SDK plugins.
   const skillsSourceDir = resolve(import.meta.dir, '../../skills');
-  const skillsDestDir = join(homedir(), '.neokai', 'skills');
+  const skillsDestDir = join(getDataDir(), 'skills');
   await ensureBuiltinSkills(skillsSourceDir, skillsDestDir);
 
   // Create daemon app in embedded mode (no root route)
@@ -190,7 +190,7 @@ export async function startDevServer(config: Config) {
   log.info(`✅ Vite dev server running on port ${vitePort}`);
 
   // Get WebSocket handlers from daemon
-  const { createWebSocketHandlers } = await import('@neokai/daemon/routes/setup-websocket');
+  const { createWebSocketHandlers } = await import('@hyperneo/daemon/routes/setup-websocket');
   const wsHandlers = createWebSocketHandlers(daemonContext.transport, daemonContext.sessionManager);
 
   // Create unified Bun server that combines daemon + Vite proxy

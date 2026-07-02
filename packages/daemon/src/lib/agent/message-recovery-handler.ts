@@ -7,9 +7,9 @@
  * - Marking those messages as 'failed' so they appear in the UI as undelivered
  */
 
-import type { Session } from '@neokai/shared';
-import type { SDKMessage, SDKUserMessage } from '@neokai/shared/sdk';
-import { isSDKUserMessage } from '@neokai/shared/sdk/type-guards';
+import type { Session } from '@hyperneo/shared';
+import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
+import { isSDKUserMessage } from '@hyperneo/shared/sdk/type-guards';
 import { Database } from '../../storage/database';
 import { Logger } from '../logger';
 

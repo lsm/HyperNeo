@@ -10,7 +10,7 @@
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../../src/storage';
 import { createReactiveDatabase } from '../../../../src/storage/reactive-database';
-import type { Session } from '@neokai/shared';
+import type { Session } from '@hyperneo/shared';
 
 // Factory function to create a test session
 function createTestSession(overrides: Partial<Session> = {}): Session {

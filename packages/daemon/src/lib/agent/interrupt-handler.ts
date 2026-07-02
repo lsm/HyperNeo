@@ -12,7 +12,7 @@
  * - State transitions during interrupt
  */
 
-import type { Session, MessageHub } from '@neokai/shared';
+import type { Session, MessageHub } from '@hyperneo/shared';
 import type { QueryLike } from './query-like';
 import type { Logger } from '../logger';
 import type { MessageQueue } from './message-queue';

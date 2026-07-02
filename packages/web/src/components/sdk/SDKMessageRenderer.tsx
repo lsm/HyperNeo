@@ -12,14 +12,14 @@ import type {
   SDKTaskNotificationMessage,
   SDKTaskProgressMessage,
   SDKToolProgressMessage as SDKToolProgressMessageType,
-} from '@neokai/shared/sdk/sdk.d.ts';
+} from '@hyperneo/shared/sdk/sdk.d.ts';
 import type {
   PendingUserQuestion,
   QuestionDraftResponse,
   ResolvedQuestion,
   ChatMessage,
-  NeokaiActionMessage,
-} from '@neokai/shared';
+  HyperNeoActionMessage,
+} from '@hyperneo/shared';
 import {
   isSDKAssistantMessage,
   isSDKResultMessage,
@@ -31,9 +31,9 @@ import {
   isSDKUserMessage,
   isSDKUserMessageReplay,
   isUserVisibleMessage,
-  isNeokaiActionMessage,
+  isHyperNeoActionMessage,
   isHiddenSystemSubtype,
-} from '@neokai/shared/sdk/type-guards';
+} from '@hyperneo/shared/sdk/type-guards';
 
 // Component imports
 import { SDKAssistantMessage } from './SDKAssistantMessage.tsx';
@@ -276,8 +276,8 @@ function SDKMessageRendererImpl({
   isLiveTail = false,
 }: Props) {
   // HyperNeo-native action messages are always shown and handled separately.
-  if (isNeokaiActionMessage(message)) {
-    const actionMsg = message as NeokaiActionMessage;
+  if (isHyperNeoActionMessage(message)) {
+    const actionMsg = message as HyperNeoActionMessage;
     if (actionMsg.action === 'sdk_resume_choice') {
       return (
         <SDKResumeChoiceMessage message={actionMsg} sessionId={sessionId ?? actionMsg.session_id} />

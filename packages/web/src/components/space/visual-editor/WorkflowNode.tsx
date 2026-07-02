@@ -15,7 +15,7 @@
  */
 
 import { useEffect, useCallback, useRef } from 'preact/hooks';
-import type { SpaceWorkerAgent, WorkflowChannel } from '@neokai/shared';
+import type { SpaceWorkerAgent, WorkflowChannel } from '@hyperneo/shared';
 import type { NodeDraft, AgentTaskState } from '../WorkflowNodeCard';
 import { isMultiAgentNode, AgentStatusIcon } from '../WorkflowNodeCard';
 import type { Point } from './types';

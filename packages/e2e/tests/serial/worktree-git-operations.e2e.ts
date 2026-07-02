@@ -16,7 +16,7 @@ test.use({
 test.describe
   .serial('Git Worktree Integration', () => {
     // Use system temp directory instead of process.cwd() to avoid worktree issues
-    const testRepoPath = join(tmpdir(), 'neokai-e2e-test-worktree-repo');
+    const testRepoPath = join(tmpdir(), 'hyperneo-e2e-test-worktree-repo');
 
     /**
      * Setup helper: Create a test git repository
@@ -91,7 +91,7 @@ test.describe
 test.describe
   .serial('Worktree Manual Cleanup', () => {
     // Use system temp directory instead of process.cwd() to avoid worktree issues
-    const testRepoPath = join(tmpdir(), 'neokai-e2e-test-cleanup-repo');
+    const testRepoPath = join(tmpdir(), 'hyperneo-e2e-test-cleanup-repo');
 
     async function createTestGitRepo() {
       if (existsSync(testRepoPath)) {

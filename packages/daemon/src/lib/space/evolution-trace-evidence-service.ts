@@ -1,5 +1,10 @@
 import type { Database as BunDatabase } from 'bun:sqlite';
-import type { CreateEvidenceRefParams, EvidenceKind, EvidenceRef, SpaceTask } from '@neokai/shared';
+import type {
+  CreateEvidenceRefParams,
+  EvidenceKind,
+  EvidenceRef,
+  SpaceTask,
+} from '@hyperneo/shared';
 import type { EvolutionRepository } from '../../storage/repositories/evolution-repository';
 import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository';
 

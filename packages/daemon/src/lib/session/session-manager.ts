@@ -18,8 +18,8 @@ import type {
   MessageDeliveryMode,
   MessageOrigin,
   MessageImage,
-} from '@neokai/shared';
-import { generateUUID } from '@neokai/shared';
+} from '@hyperneo/shared';
+import { generateUUID } from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { Database } from '../../storage/database';
 import {

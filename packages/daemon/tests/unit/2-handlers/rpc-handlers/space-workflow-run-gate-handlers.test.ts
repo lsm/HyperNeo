@@ -16,8 +16,8 @@
 process.env.NODE_ENV = 'test';
 
 import { describe, expect, it, mock, beforeEach, afterAll } from 'bun:test';
-import { MessageHub } from '@neokai/shared';
-import type { Space, SpaceWorkflow, SpaceWorkflowRun } from '@neokai/shared';
+import { MessageHub } from '@hyperneo/shared';
+import type { Space, SpaceWorkflow, SpaceWorkflowRun } from '@hyperneo/shared';
 import {
   setupSpaceWorkflowRunHandlers,
   type SpaceWorkflowRunTaskManagerFactory,

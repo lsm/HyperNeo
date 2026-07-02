@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/preact';
-import type { SpaceTaskActivityMember, ModelInfo } from '@neokai/shared';
+import type { SpaceTaskActivityMember, ModelInfo } from '@hyperneo/shared';
 
 const mockRequest = vi.fn();
 const mockGetHubIfConnected = vi.fn();

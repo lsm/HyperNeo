@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'preact/hooks';
-import { hasEnabledGateFeature, hasGateFeatures } from '@neokai/shared';
+import { hasEnabledGateFeature, hasGateFeatures } from '@hyperneo/shared';
 import type {
   Gate,
   GateField,
@@ -7,7 +7,7 @@ import type {
   GateFieldCheck,
   GateScript,
   GatePoll,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 
 export interface GateEditorPanelProps {
   gate: Gate;

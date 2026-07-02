@@ -1,4 +1,4 @@
-# @neokai/desktop
+# @hyperneo/desktop
 
 A self-contained desktop wrapper for HyperNeo built with [Tauri 2.x](https://v2.tauri.app/).
 
@@ -35,7 +35,7 @@ the webview to `http://localhost:9283` once the daemon is ready.
 
 ```
 packages/desktop/
-├── package.json              # @neokai/desktop, scripts that wrap cargo tauri
+├── package.json              # @hyperneo/desktop, scripts that wrap cargo tauri
 ├── build-sidecar.sh          # builds the daemon and copies it into src-tauri/binaries/
 ├── README.md
 └── src-tauri/

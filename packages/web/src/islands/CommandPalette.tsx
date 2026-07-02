@@ -6,8 +6,8 @@
  * global instead of page-local.
  */
 
-import type { Session, SpaceTask } from '@neokai/shared';
-import { Dialog, DialogBackdrop, DialogPanel } from '@neokai/ui';
+import type { Session, SpaceTask } from '@hyperneo/shared';
+import { Dialog, DialogBackdrop, DialogPanel } from '@hyperneo/ui';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { connectionManager } from '../lib/connection-manager.ts';
 import {

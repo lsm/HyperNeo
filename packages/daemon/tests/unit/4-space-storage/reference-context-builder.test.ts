@@ -8,7 +8,7 @@ import {
   prependContextToMessage,
   MAX_CONTEXT_BYTES,
 } from '../../../src/lib/agent/reference-context-builder';
-import type { ResolvedReference } from '@neokai/shared';
+import type { ResolvedReference } from '@hyperneo/shared';
 
 // ============================================================================
 // Test fixtures

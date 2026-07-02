@@ -3,7 +3,7 @@ import type {
   SpaceLongHorizonAgent,
   SpaceLongHorizonAgentTemplate,
   ThinkingLevel,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import { useEffect, useState } from 'preact/hooks';
 import { navigateToSpaceSession } from '../../lib/router';
 import { spaceStore } from '../../lib/space-store';

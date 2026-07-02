@@ -5,7 +5,7 @@ import {
   type SpaceTaskActivityState,
   type SpaceTaskPriority,
   type SpaceTaskStatus,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import type { ComponentChildren } from 'preact';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { TaskComposerTarget, FileDropHandler } from '../../hooks';
@@ -209,7 +209,7 @@ export function SpaceTaskPane({
   const [showEditTaskModal, setShowEditTaskModal] = useState(false);
   const [editTaskBusy, setEditTaskBusy] = useState(false);
   const [editTaskError, setEditTaskError] = useState<string | null>(null);
-  const [fullWorkflow, setFullWorkflow] = useState<import('@neokai/shared').SpaceWorkflow | null>(
+  const [fullWorkflow, setFullWorkflow] = useState<import('@hyperneo/shared').SpaceWorkflow | null>(
     null
   );
   const activeView = currentSpaceTaskViewTabSignal.value;
@@ -811,7 +811,7 @@ export function SpaceTaskPane({
     updates: Partial<{
       title: string;
       description: string;
-      priority: import('@neokai/shared').SpaceTaskPriority;
+      priority: import('@hyperneo/shared').SpaceTaskPriority;
     }>
   ) => {
     // Capture the current taskId before the async gap. After `await`,

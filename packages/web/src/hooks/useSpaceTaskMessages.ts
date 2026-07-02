@@ -4,7 +4,7 @@ import type {
   ActivityEntry,
   LiveQueryDeltaEvent,
   LiveQuerySnapshotEvent,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import { useMessageHub } from './useMessageHub';
 
 export interface SpaceTaskThreadMessageRow {

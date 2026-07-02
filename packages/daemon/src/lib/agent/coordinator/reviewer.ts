@@ -1,4 +1,4 @@
-import type { AgentDefinition } from '@neokai/shared';
+import type { AgentDefinition } from '@hyperneo/shared';
 
 export const reviewerAgent: AgentDefinition = {
   description:

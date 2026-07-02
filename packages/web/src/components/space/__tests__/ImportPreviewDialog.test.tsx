@@ -6,7 +6,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/preact';
 import { ImportPreviewDialog } from '../ImportPreviewDialog.tsx';
 import type { ImportPreviewResult, ImportConflictResolution } from '../ImportPreviewDialog.tsx';
-import type { SpaceExportBundle } from '@neokai/shared';
+import type { SpaceExportBundle } from '@hyperneo/shared';
 
 const makeBundle = (): SpaceExportBundle => ({
   version: 1,

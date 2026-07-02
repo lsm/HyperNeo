@@ -33,15 +33,15 @@ import type {
   UpdateSpaceTaskParams,
   WorkflowChannel,
   WorkflowNode,
-} from '@neokai/shared';
-import type { SDKMessage } from '@neokai/shared/sdk';
+} from '@hyperneo/shared';
+import type { SDKMessage } from '@hyperneo/shared/sdk';
 import {
   computeGateDefaults,
   isChannelCyclic,
   MAX_SPACE_CONCURRENT_TASKS,
   MIN_SPACE_CONCURRENT_TASKS,
   resolveNodeAgents,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import type { ExternalEventPublishedPayload } from '../../external-events/external-event-service';
 import type { ExternalEventStore } from '../../external-events/external-event-store';
@@ -60,7 +60,7 @@ import { ToolContinuationRecoveryRepository } from '../../../storage/repositorie
 import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
 import { Logger } from '../../logger';
-import { isSDKResultError } from '@neokai/shared/sdk';
+import { isSDKResultError } from '@hyperneo/shared/sdk';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import type { SpaceManager } from '../managers/space-manager';
 import { isValidSpaceTaskTransition, SpaceTaskManager } from '../managers/space-task-manager';
@@ -4010,7 +4010,7 @@ export class SpaceRuntime {
    * Returns active, non-paused, non-stopped spaces.
    * Used by tick-loop methods to skip paused and stopped spaces.
    */
-  private async listActiveSpaces(): Promise<import('@neokai/shared').Space[]> {
+  private async listActiveSpaces(): Promise<import('@hyperneo/shared').Space[]> {
     const spaces = await this.config.spaceManager.listSpaces(false);
     return spaces.filter((s) => !s.paused && !s.stopped);
   }

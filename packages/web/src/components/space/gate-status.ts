@@ -11,7 +11,7 @@
  * `waiting_human`; `true` → `open`, `false` → `blocked` (rejected).
  */
 
-import type { Gate, GateField } from '@neokai/shared';
+import type { Gate, GateField } from '@hyperneo/shared';
 
 export type GateStatus = 'open' | 'blocked' | 'waiting_human';
 

@@ -20,7 +20,7 @@
  *      against the catch-all mock.
  *
  * Running:
- *   cd packages/daemon && NEOKAI_USE_DEV_PROXY=1 bun test \
+ *   cd packages/daemon && HYPERNEO_USE_DEV_PROXY=1 bun test \
  *     ./tests/online/space/prompt-too-long-kimi-recovery.test.ts
  */
 
@@ -28,10 +28,10 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
 import { waitForIdle } from '../../helpers/daemon-actions';
-import type { NodeExecution, Space, SpaceWorkerAgent, SpaceWorkflow } from '@neokai/shared';
+import type { NodeExecution, Space, SpaceWorkerAgent, SpaceWorkflow } from '@hyperneo/shared';
 import { buildPromptTooLongContinueNag } from '../../../src/lib/space/runtime/prompt-too-long-recovery';
 
-const IS_MOCK = !!process.env.NEOKAI_USE_DEV_PROXY;
+const IS_MOCK = !!process.env.HYPERNEO_USE_DEV_PROXY;
 const IDLE_TIMEOUT = IS_MOCK ? 20_000 : 60_000;
 const SETUP_TIMEOUT = IS_MOCK ? 45_000 : 90_000;
 const TEST_TIMEOUT = IS_MOCK ? 180_000 : 300_000;

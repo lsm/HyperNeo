@@ -108,7 +108,7 @@ describe('sdk-cli-resolver', () => {
 
       lstatSyncSpy = spyOn(fs, 'lstatSync').mockImplementation((path: fs.PathLike) => {
         const p = String(path);
-        if (p.includes('.neokai/sdk') && p.endsWith(binaryName)) {
+        if (p.includes('.hyperneo/sdk') && p.endsWith(binaryName)) {
           return { isFile: () => true, size: 200000000 } as unknown as fs.Stats;
         }
         throw Object.assign(new Error('ENOENT'), { code: 'ENOENT', path: p });
@@ -121,7 +121,7 @@ describe('sdk-cli-resolver', () => {
         // Block system rg paths
         if (p.endsWith('/rg')) return false;
         // Simulate cached binary exists
-        if (p.includes('.neokai/sdk') && p.endsWith(binaryName)) return true;
+        if (p.includes('.hyperneo/sdk') && p.endsWith(binaryName)) return true;
         return originalExistsSync(p);
       });
 
@@ -132,7 +132,7 @@ describe('sdk-cli-resolver', () => {
       const result = resolveSDKCliPath();
 
       expect(result).toBeDefined();
-      expect(result!).toContain('.neokai/sdk');
+      expect(result!).toContain('.hyperneo/sdk');
     });
 
     it('skips cache when file is empty or zero-size', () => {
@@ -141,7 +141,7 @@ describe('sdk-cli-resolver', () => {
 
       lstatSyncSpy = spyOn(fs, 'lstatSync').mockImplementation((path: fs.PathLike) => {
         const p = String(path);
-        if (p.includes('.neokai/sdk') && p.endsWith(binaryName)) {
+        if (p.includes('.hyperneo/sdk') && p.endsWith(binaryName)) {
           return { isFile: () => true, size: 0 } as unknown as fs.Stats;
         }
         throw Object.assign(new Error('ENOENT'), { code: 'ENOENT', path: p });
@@ -151,7 +151,7 @@ describe('sdk-cli-resolver', () => {
         const p = String(path);
         if (p.includes('node_modules')) return false;
         if (p.endsWith('/rg')) return false;
-        if (p.includes('.neokai/sdk') && p.endsWith(binaryName)) return true;
+        if (p.includes('.hyperneo/sdk') && p.endsWith(binaryName)) return true;
         return originalExistsSync(p);
       });
 
@@ -179,7 +179,7 @@ describe('sdk-cli-resolver', () => {
         const p = String(path);
         if (p.includes('node_modules')) return false;
         if (p.endsWith('/rg')) return false;
-        if (p.includes('.neokai/sdk') && p.endsWith(binaryName)) return true;
+        if (p.includes('.hyperneo/sdk') && p.endsWith(binaryName)) return true;
         return originalExistsSync(p);
       });
 
@@ -237,7 +237,7 @@ describe('sdk-cli-resolver', () => {
       existsSyncSpy = spyOn(fs, 'existsSync').mockImplementation((path: fs.PathLike) => {
         const p = String(path);
         if (p.includes('node_modules')) return false;
-        if (p.includes('.neokai/sdk')) return false;
+        if (p.includes('.hyperneo/sdk')) return false;
         return originalExistsSync(p);
       });
 
@@ -276,7 +276,7 @@ describe('sdk-cli-resolver', () => {
       existsSyncSpy = spyOn(fs, 'existsSync').mockImplementation((path: fs.PathLike) => {
         const p = String(path);
         if (p.includes('node_modules')) return false;
-        if (p.includes('.neokai/sdk')) return false;
+        if (p.includes('.hyperneo/sdk')) return false;
         if (p.endsWith('.tgz')) return true;
         return originalExistsSync(p);
       });
@@ -333,7 +333,7 @@ describe('sdk-cli-resolver', () => {
       existsSyncSpy = spyOn(fs, 'existsSync').mockImplementation((path: fs.PathLike) => {
         const p = String(path);
         if (p.includes('node_modules')) return false;
-        if (p.includes('.neokai/sdk')) return false;
+        if (p.includes('.hyperneo/sdk')) return false;
         if (p.endsWith('.tgz')) return true;
         return originalExistsSync(p);
       });
@@ -348,7 +348,7 @@ describe('sdk-cli-resolver', () => {
       writeFileSyncSpy = spyOn(fs, 'writeFileSync').mockImplementation(
         (path: fs.PathLike, data: unknown) => {
           const p = String(path);
-          if (p.endsWith(binaryName) && !p.includes('.neokai')) {
+          if (p.endsWith(binaryName) && !p.includes('.hyperneo')) {
             extractedContent = Buffer.isBuffer(data) ? data : Buffer.from(data as Uint8Array);
           }
         }
@@ -377,7 +377,7 @@ describe('sdk-cli-resolver', () => {
       const result = resolveSDKCliPath();
 
       expect(result).toBeDefined();
-      expect(result!).toContain('.neokai/sdk');
+      expect(result!).toContain('.hyperneo/sdk');
     });
 
     it('fails when binary is missing from tarball', () => {
@@ -390,7 +390,7 @@ describe('sdk-cli-resolver', () => {
       existsSyncSpy = spyOn(fs, 'existsSync').mockImplementation((path: fs.PathLike) => {
         const p = String(path);
         if (p.includes('node_modules')) return false;
-        if (p.includes('.neokai/sdk')) return false;
+        if (p.includes('.hyperneo/sdk')) return false;
         if (p.endsWith('.tgz')) return true;
         return originalExistsSync(p);
       });
@@ -559,7 +559,7 @@ describe('warmupSDKCliBinary', () => {
 
     const lstatSyncSpy = spyOn(fs, 'lstatSync').mockImplementation((path: fs.PathLike) => {
       const p = String(path);
-      if (p.includes('.neokai/sdk') && p.endsWith(binaryName)) {
+      if (p.includes('.hyperneo/sdk') && p.endsWith(binaryName)) {
         return { isFile: () => true, size: 200000000 } as unknown as fs.Stats;
       }
       throw Object.assign(new Error('ENOENT'), { code: 'ENOENT', path: p });
@@ -569,7 +569,7 @@ describe('warmupSDKCliBinary', () => {
       const p = String(path);
       if (p.includes('node_modules')) return false;
       if (p.endsWith('/rg')) return false;
-      if (p.includes('.neokai/sdk') && p.endsWith(binaryName)) return true;
+      if (p.includes('.hyperneo/sdk') && p.endsWith(binaryName)) return true;
       return originalExistsSync(p);
     });
 
@@ -577,7 +577,7 @@ describe('warmupSDKCliBinary', () => {
 
     expect(result.status).toBe('ready');
     expect(result.source).toBe('cache');
-    expect(result.path).toContain('.neokai/sdk');
+    expect(result.path).toContain('.hyperneo/sdk');
 
     lstatSyncSpy.mockRestore();
   });
@@ -609,7 +609,7 @@ describe('warmupSDKCliBinary', () => {
     existsSyncSpy = spyOn(fs, 'existsSync').mockImplementation((path: fs.PathLike) => {
       const p = String(path);
       if (p.includes('node_modules')) return false;
-      if (p.includes('.neokai/sdk')) return false;
+      if (p.includes('.hyperneo/sdk')) return false;
       if (p.endsWith('.tgz')) return true;
       return originalExistsSync(p);
     });
@@ -642,12 +642,12 @@ describe('warmupSDKCliBinary', () => {
 
     expect(result.status).toBe('ready');
     expect(result.source).toBe('download');
-    expect(result.path).toContain('.neokai/sdk');
+    expect(result.path).toContain('.hyperneo/sdk');
   });
 
-  it('logs startup messages regardless of NEOKAI_VERBOSE', () => {
-    // Ensure NEOKAI_VERBOSE is NOT set
-    delete process.env.NEOKAI_VERBOSE;
+  it('logs startup messages regardless of HYPERNEO_VERBOSE', () => {
+    // Ensure HYPERNEO_VERBOSE is NOT set
+    delete process.env.HYPERNEO_VERBOSE;
 
     warmupSDKCliBinary();
 

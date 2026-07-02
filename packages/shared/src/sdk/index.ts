@@ -29,7 +29,7 @@ export {
   hasAskUserQuestion,
   getMessageTypeDescription,
   isUserVisibleMessage,
-  isNeokaiActionMessage,
+  isHyperNeoActionMessage,
   type ContentBlock,
   type SDKSlashCommand,
 } from "./type-guards.ts";

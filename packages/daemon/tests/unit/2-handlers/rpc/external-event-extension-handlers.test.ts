@@ -1,6 +1,6 @@
 import { Database } from 'bun:sqlite';
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
-import type { MessageHub } from '@neokai/shared';
+import type { MessageHub } from '@hyperneo/shared';
 import { ExternalEventExtensionConfigStore } from '../../../../src/lib/external-events/extension-config-store';
 import { ExternalEventExtensionManager } from '../../../../src/lib/external-events/extension-manager';
 import type {

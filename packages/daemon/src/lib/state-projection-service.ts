@@ -17,7 +17,7 @@
  * services. See docs/plans/internal-event-command-query-architecture.md.
  */
 
-import type { MessageHub, AgentProcessingState, IClientEventGateway } from '@neokai/shared';
+import type { MessageHub, AgentProcessingState, IClientEventGateway } from '@hyperneo/shared';
 import type { SessionManager } from './session-manager';
 import type { AuthManager } from './auth-manager';
 import type { SettingsManager } from './settings-manager';
@@ -35,9 +35,9 @@ import type {
   SessionState,
   SDKMessagesState,
   SDKMessagesUpdate,
-} from '@neokai/shared';
-import type { Session } from '@neokai/shared';
-import { ClientEventGateway, STATE_CHANNELS } from '@neokai/shared';
+} from '@hyperneo/shared';
+import type { Session } from '@hyperneo/shared';
+import { ClientEventGateway, STATE_CHANNELS } from '@hyperneo/shared';
 import { SDKMessageRepository } from '../storage/repositories/sdk-message-repository';
 import type { DaemonInternalEventMap, InternalEventBus } from './internal-event-bus';
 
@@ -66,7 +66,7 @@ export class StateProjectionService {
   private clientEvents: IClientEventGateway;
 
   // Track API connection state (updated via broadcasts from ErrorManager)
-  private apiConnectionState: import('@neokai/shared').ApiConnectionState = {
+  private apiConnectionState: import('@hyperneo/shared').ApiConnectionState = {
     status: 'connected',
     timestamp: Date.now(),
   };
@@ -134,7 +134,7 @@ export class StateProjectionService {
     this.internalEventBus.subscribe(
       'api.connection',
       (data) => {
-        this.apiConnectionState = data as import('@neokai/shared').ApiConnectionState;
+        this.apiConnectionState = data as import('@hyperneo/shared').ApiConnectionState;
       },
       { subscriberName: 'StateProjectionService.apiConnection' }
     );

@@ -22,7 +22,7 @@ import type {
   SessionConfig,
   CurrentModelInfo,
   MessageHub,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { Database } from '../../storage/database';
 import type { ErrorManager } from '../error-manager';

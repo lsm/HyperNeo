@@ -14,7 +14,7 @@
  *   The dedicated "View Agent Session" header button was removed (commit a019567d0)
  *   — agent sessions are now accessed via the compact-thread block headers which
  *   require live agent messages not available in this lightweight test setup.
- *   Instead, the overlay is opened via `window.__neokai_space_overlay.open()`, a
+ *   Instead, the overlay is opened via `window.__hyperneo_space_overlay.open()`, a
  *   test hook exposed by SpaceIsland. This is acceptable as test infrastructure
  *   because opening is purely client-side signal manipulation; all close/dismiss
  *   actions still go through the UI (clicks, keyboard).
@@ -36,7 +36,7 @@
  *   - All test actions go through the UI (clicks, navigation, keyboard).
  *   - All assertions check visible DOM state.
  *   - RPC is only used in beforeEach / afterEach for infrastructure setup / teardown.
- *   - window.__neokai_space_overlay.open() is used as a test-infrastructure trigger
+ *   - window.__hyperneo_space_overlay.open() is used as a test-infrastructure trigger
  *     (analogous to RPC setup calls) since no UI trigger is available in this
  *     lightweight setup.
  *
@@ -70,7 +70,7 @@ interface OverlayTestContext {
  * Create a space with a task and a standalone human session.
  *
  * The session is NOT linked to the task — it is only used as the sessionId
- * argument to `window.__neokai_space_overlay.open()` so that ChatContainer
+ * argument to `window.__hyperneo_space_overlay.open()` so that ChatContainer
  * has a valid session to load (enabling ChatHeader + back button to render).
  *
  * The task is set to `done` so the space runtime skips it entirely and cannot
@@ -132,7 +132,7 @@ async function deleteSessionViaRpc(
 /**
  * Open the agent overlay using the test hook exposed by SpaceIsland.
  *
- * The hook (`window.__neokai_space_overlay.open`) sets the client-side
+ * The hook (`window.__hyperneo_space_overlay.open`) sets the client-side
  * spaceOverlaySessionIdSignal / spaceOverlayAgentNameSignal which cause
  * SpaceIsland to render `<AgentOverlayChat>`. It is registered in SpaceIsland's
  * mount useEffect, so we wait for it to be available before calling.
@@ -143,13 +143,13 @@ async function openOverlay(
   agentName = 'Task Agent'
 ): Promise<void> {
   // Wait for SpaceIsland to mount and register the hook.
-  await page.waitForFunction(() => !!(window as Record<string, unknown>).__neokai_space_overlay, {
+  await page.waitForFunction(() => !!(window as Record<string, unknown>).__hyperneo_space_overlay, {
     timeout: 10000,
   });
   await page.evaluate(
     ({ sid, name }) => {
       type Api = { open: (s: string, n: string) => void };
-      const api = (window as Record<string, unknown>).__neokai_space_overlay as Api;
+      const api = (window as Record<string, unknown>).__hyperneo_space_overlay as Api;
       api.open(sid, name);
     },
     { sid: sessionId, name: agentName }

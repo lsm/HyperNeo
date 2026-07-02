@@ -57,7 +57,7 @@ Or set PLAYWRIGHT_BASE_URL explicitly:
     console.log(`\n🔧 Initializing workspace as git repo: ${e2eWorkspaceDir}`);
     try {
       execSync('git init', { cwd: e2eWorkspaceDir, stdio: 'inherit' });
-      execSync('git config user.email "e2e@neokai.test"', {
+      execSync('git config user.email "e2e@hyperneo.test"', {
         cwd: e2eWorkspaceDir,
         stdio: 'inherit',
       });

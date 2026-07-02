@@ -23,7 +23,7 @@ import type {
   McpSSEServerConfig,
   McpHttpServerConfig,
   ValidationResult,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import {
   resolveMcpServers,
   scopeChainForSession,
@@ -31,7 +31,7 @@ import {
 } from './resolve-mcp-servers';
 
 // Re-export so callers can import from this module without reaching into shared.
-export type { ValidationResult } from '@neokai/shared';
+export type { ValidationResult } from '@hyperneo/shared';
 
 // ---------------------------------------------------------------------------
 // Types

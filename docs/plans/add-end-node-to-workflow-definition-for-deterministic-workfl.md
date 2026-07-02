@@ -192,7 +192,7 @@ This replaces the old `resolveNodeAgents()` spreading behavior where `WorkflowNo
 
 **Acceptance criteria:**
 - `bun run typecheck` passes (expect many downstream errors initially — this task focuses on type definitions only; downstream fixes are in later tasks).
-- All new types are exported from `@neokai/shared`.
+- All new types are exported from `@hyperneo/shared`.
 - Old status values and removed fields are no longer in the type definitions.
 
 **Dependencies:** None

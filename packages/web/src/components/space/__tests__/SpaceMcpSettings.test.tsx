@@ -14,7 +14,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, cleanup, fireEvent, waitFor } from '@testing-library/preact';
-import type { SpaceMcpEntry } from '@neokai/shared';
+import type { SpaceMcpEntry } from '@hyperneo/shared';
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks

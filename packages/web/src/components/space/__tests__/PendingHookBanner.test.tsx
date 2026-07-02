@@ -16,7 +16,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/preact';
 import { signal } from '@preact/signals';
-import type { SpaceWorkflow, WorkflowHookStateSnapshot } from '@neokai/shared';
+import type { SpaceWorkflow, WorkflowHookStateSnapshot } from '@hyperneo/shared';
 
 // ---- Mock hub ----
 const mockRequest: Mock = vi.fn();

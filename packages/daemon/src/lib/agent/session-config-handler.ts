@@ -10,7 +10,7 @@
  * - SettingsManager recreation when workspace changes
  */
 
-import type { Session, McpServerConfig } from '@neokai/shared';
+import type { Session, McpServerConfig } from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { Database } from '../../storage/database';
 import { SettingsManager } from '../settings-manager';

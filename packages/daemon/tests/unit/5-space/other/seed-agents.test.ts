@@ -8,7 +8,7 @@
 
 import { Database } from 'bun:sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { KNOWN_TOOLS } from '@neokai/shared';
+import { KNOWN_TOOLS } from '@hyperneo/shared';
 import { setModelsCache } from '../../../../src/lib/model-service';
 import {
   getPresetAgentTemplates,

@@ -27,7 +27,7 @@ The `anthropic-copilot` provider exposes GitHub Copilot as an Anthropic-compatib
 
 The provider discovers GitHub credentials in the following order:
 
-1. **`~/.neokai/auth.json`** — Stored credentials from a previously completed HyperNeo GitHub OAuth device flow
+1. **`~/.hyperneo/auth.json`** — Stored credentials from a previously completed HyperNeo GitHub OAuth device flow
 2. **`COPILOT_GITHUB_TOKEN`** — Environment variable with a fine-grained PAT
 3. **`GH_TOKEN`** — Environment variable (fallback)
 4. **`gh auth token`** — CLI command output
@@ -48,7 +48,7 @@ HyperNeo includes a built-in GitHub OAuth device flow specifically for Copilot a
 6. Complete the GitHub authorization in your browser
 7. Return to HyperNeo — the connection should complete automatically
 
-The OAuth token is stored in `~/.neokai/auth.json` and automatically used on subsequent sessions.
+The OAuth token is stored in `~/.hyperneo/auth.json` and automatically used on subsequent sessions.
 
 ### Option 2: COPILOT_GITHUB_TOKEN Environment Variable
 

@@ -23,7 +23,7 @@ import type {
   WorkflowRunArtifact,
   WorkflowRunStatus,
   WorkflowHookStateSnapshot,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
 import type { WorkflowHookStateRepository } from '../../../storage/repositories/workflow-hook-state-repository';

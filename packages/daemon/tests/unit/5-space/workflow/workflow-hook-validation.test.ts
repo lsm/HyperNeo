@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test';
-import type { WorkflowHook, WorkflowNodeInput } from '@neokai/shared';
+import type { WorkflowHook, WorkflowNodeInput } from '@hyperneo/shared';
 import { validateWorkflowHooks } from '../../../../src/lib/space/workflow-hook-validation.ts';
 import { WorkflowHookRuntimeService } from '../../../../src/lib/space/workflow-hook-runtime-service.ts';
 

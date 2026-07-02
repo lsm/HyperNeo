@@ -18,7 +18,7 @@ import { join } from 'path';
 import { createTables } from '../../../../src/storage/schema';
 import { WorkspaceHistoryRepository } from '../../../../src/storage/repositories/workspace-history-repository';
 import { setupWorkspaceHandlers } from '../../../../src/lib/rpc-handlers/workspace-handlers';
-import type { MessageHub } from '@neokai/shared';
+import type { MessageHub } from '@hyperneo/shared';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -83,7 +83,7 @@ describe('workspace handlers', () => {
     const { hub, handlers: h } = createMockMessageHub();
     handlers = h;
     setupWorkspaceHandlers(hub, repo);
-    tempRoot = mkdtempSync(join(tmpdir(), 'neokai-workspace-handlers-'));
+    tempRoot = mkdtempSync(join(tmpdir(), 'hyperneo-workspace-handlers-'));
   });
 
   afterEach(() => {

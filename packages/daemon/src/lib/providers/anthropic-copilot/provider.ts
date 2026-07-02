@@ -20,7 +20,7 @@
  *
  * **Runtime availability** (`isAvailable()`, sources 1–5 via `resolveGitHubToken()`):
  * Controls whether models are listed and sessions can be created.
- *   1. `~/.neokai/auth.json` (explicitly stored HyperNeo credentials)
+ *   1. `~/.hyperneo/auth.json` (explicitly stored HyperNeo credentials)
  *   2. `COPILOT_GITHUB_TOKEN` env var (PAT with copilot_requests scope)
  *   3. `GH_TOKEN` env var
  *   4. `gh auth token` CLI output
@@ -29,7 +29,7 @@
  * calls without going through the HyperNeo login flow.
  *
  * **UI auth check** (`getAuthStatus()`, source 1 only):
- * `getAuthStatus()` checks only `~/.neokai/auth.json`. This is what drives the
+ * `getAuthStatus()` checks only `~/.hyperneo/auth.json`. This is what drives the
  * Login/Logout buttons. Env-var and external credentials return `isAuthenticated: false`
  * so the Logout button only appears when HyperNeo can actually remove the token.
  *
@@ -44,6 +44,7 @@
  * outside the host.
  */
 
+import { getDataDir } from '../../data-dir';
 import type {
   Provider,
   ProviderCapabilities,
@@ -53,8 +54,8 @@ import type {
   ProviderAuthStatusInfo,
   ProviderCredentials,
   ProviderOAuthFlowData,
-} from '@neokai/shared/provider';
-import type { ModelInfo } from '@neokai/shared';
+} from '@hyperneo/shared/provider';
+import type { ModelInfo } from '@hyperneo/shared';
 import { CopilotClient, type ModelInfo as CopilotSdkModelInfo } from '@github/copilot-sdk';
 import { startEmbeddedServer, type EmbeddedServer } from './server.js';
 import { execFile } from 'node:child_process';
@@ -211,7 +212,7 @@ const COPILOT_ANTHROPIC_MODELS: ModelInfo[] = [
 ];
 
 /**
- * Stored credentials format for GitHub Copilot in ~/.neokai/auth.json
+ * Stored credentials format for GitHub Copilot in ~/.hyperneo/auth.json
  */
 interface StoredCopilotCredentials {
   /** The GitHub OAuth access token (used as the Copilot session token). */
@@ -312,7 +313,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
     private readonly env: NodeJS.ProcessEnv = process.env,
     authDir?: string
   ) {
-    this.authPath = path.join(authDir || path.join(os.homedir(), '.neokai'), 'auth.json');
+    this.authPath = path.join(authDir || getDataDir(), 'auth.json');
   }
 
   setCredentials(credentials: ProviderCredentials): void {
@@ -521,7 +522,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
    * Start OAuth device flow for authentication.
    *
    * Returns immediately with user code and verification URL.
-   * The background polling stores the token in ~/.neokai/auth.json on success.
+   * The background polling stores the token in ~/.hyperneo/auth.json on success.
    */
   async startOAuthFlow(): Promise<ProviderOAuthFlowData> {
     if (this.activeOAuthFlow && !this.activeOAuthFlow.completed) {
@@ -567,7 +568,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
   }
 
   /**
-   * Logout — remove stored GitHub Copilot credentials from ~/.neokai/auth.json.
+   * Logout — remove stored GitHub Copilot credentials from ~/.hyperneo/auth.json.
    */
   async logout(): Promise<void> {
     // Invalidate token cache
@@ -637,7 +638,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
 
   /**
    * Resolve a GitHub OAuth token using this priority order:
-   *   1. ~/.neokai/auth.json (explicitly stored HyperNeo credentials)
+   *   1. ~/.hyperneo/auth.json (explicitly stored HyperNeo credentials)
    *   2. COPILOT_GITHUB_TOKEN env var (PAT with copilot_requests scope)
    *   3. GH_TOKEN env var
    *   4. `gh auth token` CLI command
@@ -664,7 +665,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
   }
 
   private async discoverGitHubToken(): Promise<string | undefined> {
-    // 1. ~/.neokai/auth.json
+    // 1. ~/.hyperneo/auth.json
     const stored = await this.loadStoredGitHubToken();
     if (stored) return stored;
 
@@ -691,7 +692,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
     return undefined;
   }
 
-  /** Read GitHub OAuth token from ~/.neokai/auth.json */
+  /** Read GitHub OAuth token from ~/.hyperneo/auth.json */
   private async loadStoredGitHubToken(): Promise<string | undefined> {
     try {
       const content = await fs.readFile(this.authPath, 'utf-8');

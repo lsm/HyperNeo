@@ -5,7 +5,7 @@
  * - dialog.pickFolder - Open native folder picker dialog
  */
 
-import type { MessageHub } from '@neokai/shared';
+import type { MessageHub } from '@hyperneo/shared';
 import { Logger } from '../logger';
 
 const log = new Logger('dialog-handlers');

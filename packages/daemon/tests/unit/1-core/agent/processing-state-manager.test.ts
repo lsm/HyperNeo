@@ -13,10 +13,10 @@
 
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
-import type { AgentProcessingState, PendingUserQuestion } from '@neokai/shared';
+import type { AgentProcessingState, PendingUserQuestion } from '@hyperneo/shared';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { Database } from '../../../../src/storage/database';
-import type { SDKMessage } from '@neokai/shared/sdk';
+import type { SDKMessage } from '@hyperneo/shared/sdk';
 
 describe('ProcessingStateManager', () => {
   let manager: ProcessingStateManager;

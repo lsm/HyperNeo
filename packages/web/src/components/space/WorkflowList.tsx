@@ -11,7 +11,11 @@
  */
 
 import { useState, useEffect } from 'preact/hooks';
-import type { SpaceWorkflowSummary, SpaceExportBundle, DuplicateDriftReport } from '@neokai/shared';
+import type {
+  SpaceWorkflowSummary,
+  SpaceExportBundle,
+  DuplicateDriftReport,
+} from '@hyperneo/shared';
 import { spaceStore } from '../../lib/space-store';
 
 type WorkflowConditionType = 'always' | 'human' | 'condition' | 'task_result';

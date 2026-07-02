@@ -5,7 +5,7 @@
  *
  * Resolution priority:
  * 1. node_modules (dev mode) — the SDK's platform-specific optional dep
- * 2. Cache directory (~/.neokai/sdk/) — previously downloaded binary
+ * 2. Cache directory (~/.hyperneo/sdk/) — previously downloaded binary
  * 3. Auto-download — fetch the platform package from npm, extract, and cache
  *
  * In compiled binary mode (bun build --compile), the CLI is NOT embedded
@@ -29,20 +29,22 @@ import { execFileSync, execSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { homedir, tmpdir } from 'node:os';
+import { tmpdir } from 'node:os';
+import { getDataDir } from '../data-dir';
 
-/** Verbose logging — enabled via NEOKAI_VERBOSE env var for diagnostics. */
+/** Verbose logging — enabled via HYPERNEO_VERBOSE (or legacy NEOKAI_VERBOSE) env var for diagnostics. */
+const isVerbose = process.env.HYPERNEO_VERBOSE ?? process.env.NEOKAI_VERBOSE;
 // oxlint-disable-next-line no-console
-const logWarn = process.env.NEOKAI_VERBOSE ? console.warn : () => {};
+const logWarn = isVerbose ? console.warn : () => {};
 
-/** Startup logging — always visible during daemon startup, never gated by NEOKAI_VERBOSE. */
+/** Startup logging — always visible during daemon startup, never gated by HYPERNEO_VERBOSE. */
 // oxlint-disable-next-line no-console
 const logStartup = (...args: unknown[]) => console.log(...args);
 
 const SDK_PACKAGE = '@anthropic-ai/claude-agent-sdk';
 
-/** Directory for cached SDK binaries: ~/.neokai/sdk/ */
-const SDK_CACHE_DIR = join(homedir(), '.neokai', 'sdk');
+/** Directory for cached SDK binaries: ~/.hyperneo/sdk/ */
+const SDK_CACHE_DIR = join(getDataDir(), 'sdk');
 
 /**
  * Detect whether the current Linux system uses musl libc (Alpine, etc.)
@@ -151,7 +153,7 @@ function getSdkVersion(): string {
 
 /**
  * Get the cache path for the SDK binary.
- * Format: ~/.neokai/sdk/claude-<version>-<os>-<arch>[-musl]
+ * Format: ~/.hyperneo/sdk/claude-<version>-<os>-<arch>[-musl]
  */
 function getCachePath(): string {
   const platformPkg = getPlatformPackageName();
@@ -455,7 +457,7 @@ function downloadSdkBinary(): string | undefined {
   let tmpDir: string | undefined;
   try {
     // Create a temp directory for the download
-    tmpDir = join(tmpdir(), `neokai-sdk-download-${process.pid}-${Date.now()}`);
+    tmpDir = join(tmpdir(), `hyperneo-sdk-download-${process.pid}-${Date.now()}`);
     mkdirSync(tmpDir, { recursive: true });
 
     // Step 1: Fetch package metadata (tarball URL + integrity hash) from npm
@@ -587,7 +589,7 @@ let warmupInProgress = false;
  * but always returns a structured result without throwing. Sets `cachedCliPath`
  * on success so subsequent `resolveSDKCliPath()` calls are instant.
  *
- * Logs progress at each step — never gated by NEOKAI_VERBOSE.
+ * Logs progress at each step — never gated by HYPERNEO_VERBOSE.
  */
 export function warmupSDKCliBinary(): WarmupResult {
   // Already resolved (e.g. a previous call or resolveSDKCliPath ran first)
@@ -691,7 +693,7 @@ function doWarmup(): WarmupResult {
 /** Determine source label from a resolved path. */
 function resolveSource(path: string): 'node_modules' | 'cache' | 'download' {
   if (path.includes('node_modules')) return 'node_modules';
-  if (path.includes('.neokai/sdk')) return 'cache';
+  if (path.includes('.hyperneo/sdk')) return 'cache';
   return 'download';
 }
 
@@ -726,7 +728,7 @@ export function _resetForTesting(): void {
  *
  * Resolution priority:
  * 1. node_modules (dev mode)
- * 2. Cache directory (~/.neokai/sdk/) — previously downloaded
+ * 2. Cache directory (~/.hyperneo/sdk/) — previously downloaded
  * 3. Auto-download from npm — fetch, extract, and cache
  *
  * Failed resolution is cached (empty string) to avoid repeated download

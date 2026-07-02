@@ -5,13 +5,13 @@
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
-import { generateUUID } from '@neokai/shared';
+import { generateUUID } from '@hyperneo/shared';
 import type {
   SpaceWorkflowRun,
   WorkflowRunStatus,
   CreateWorkflowRunParams,
   WorkflowRunFailureReason,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import type { SQLiteValue } from '../types';
 import { assertValidTransition } from '../../lib/space/runtime/workflow-run-status-machine';
 import type { GateOpenStateRepository } from './gate-open-state-repository';

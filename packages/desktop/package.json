@@ -1,5 +1,5 @@
 {
-  "name": "@neokai/desktop",
+  "name": "@hyperneo/desktop",
   "version": "0.38.0",
   "private": true,
   "description": "Kai Desktop App - Tauri wrapper bundling the neokai daemon as a sidecar",

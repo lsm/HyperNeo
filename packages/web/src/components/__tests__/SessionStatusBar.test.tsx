@@ -10,7 +10,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup, act } from '@testing-library/preact';
-import type { ContextInfo, ModelInfo } from '@neokai/shared';
+import type { ContextInfo, ModelInfo } from '@hyperneo/shared';
 import SessionStatusBar from '../SessionStatusBar';
 
 // Configurable hub mock — defaults to null (no connection) so existing tests are unaffected.

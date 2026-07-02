@@ -12,7 +12,7 @@
  * (e.g. internal bookkeeping) are silently ignored.
  */
 
-import type { SpaceAutonomyLevel } from '@neokai/shared/types/space';
+import type { SpaceAutonomyLevel } from '@hyperneo/shared/types/space';
 import type { InternalEventBus, DaemonInternalEventMap } from '../../internal-event-bus';
 import { Logger } from '../../logger';
 import type { SessionFactory } from './types';

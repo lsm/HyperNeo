@@ -9,9 +9,9 @@ import {
   SDKMessageHandler,
   type SDKMessageHandlerContext,
 } from '../../../../src/lib/agent/sdk-message-handler';
-import type { Session, MessageHub, ModelInfo } from '@neokai/shared';
-import type { Provider, ProviderSdkConfig } from '@neokai/shared/provider';
-import type { SDKMessage } from '@neokai/shared/sdk';
+import type { Session, MessageHub, ModelInfo } from '@hyperneo/shared';
+import type { Provider, ProviderSdkConfig } from '@hyperneo/shared/provider';
+import type { SDKMessage } from '@hyperneo/shared/sdk';
 import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import { resetProviderFactory } from '../../../../src/lib/providers/factory';
 import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';

@@ -28,8 +28,8 @@ packages/e2e      # Playwright tests
 ```
 
 `workspace:*` deps. Path aliases resolve to source (no build step):
-- `@neokai/shared` → `packages/shared/src/mod.ts`, `@neokai/shared/*` → `packages/shared/src/*`
-- `@neokai/daemon` → `packages/daemon/main.ts`, `@neokai/daemon/*` → `packages/daemon/src/*`
+- `@hyperneo/shared` → `packages/shared/src/mod.ts`, `@hyperneo/shared/*` → `packages/shared/src/*`
+- `@hyperneo/daemon` → `packages/daemon/main.ts`, `@hyperneo/daemon/*` → `packages/daemon/src/*`
 - `@/*` → package-local `./src/*`
 
 ## Commands
@@ -132,7 +132,7 @@ These guidelines are working if diffs have fewer unnecessary changes, fewer rewr
 
 ## Critical gotchas
 
-- **DB lock**: daemon uses file-backed SQLite with a PID lock at `~/.neokai/data/daemon.db.lock`. A second daemon on the same DB fails fast. In worktrees, always pass `DB_PATH=/tmp/...`.
+- **DB lock**: daemon uses file-backed SQLite with a PID lock at `~/.hyperneo/data/daemon.db.lock`. A second daemon on the same DB fails fast. In worktrees, always pass `DB_PATH=/tmp/...`.
 - **`process.env.CLAUDECODE` is deleted at daemon startup** so SDK subprocesses don't refuse to launch when the daemon itself runs inside a Claude Code session.
 - **Credential discovery order** (`packages/daemon/src/lib/config.ts`): env vars → `~/.claude/.credentials.json` → macOS Keychain → `~/.claude/settings.json` env block.
 - **Online tests with required credentials must hard-fail when secrets are missing** — do NOT add `if (!process.env.X) return` skip guards. CI is the contract.
@@ -183,12 +183,12 @@ Use "mission" in new UI/API names; the table remains `goals`. Recurring missions
 ## Test organization
 
 - `packages/daemon/tests/unit/` — preloads `setup.ts` which sets `NODE_ENV=test`, clears all provider keys, suppresses console. Unit tests never call real APIs.
-- `packages/daemon/tests/online/` — matrixized by module, mocks SDK by default, real API with `NEOKAI_TEST_ONLINE=true`.
+- `packages/daemon/tests/online/` — matrixized by module, mocks SDK by default, real API with `HYPERNEO_TEST_ONLINE=true`.
 - `packages/e2e/tests/` — Playwright.
 
 ### Dev Proxy for online tests
 
-`NEOKAI_USE_DEV_PROXY=1` requires the dev proxy (no silent fallback). Clears `CLAUDE_CODE_OAUTH_TOKEN` / `ANTHROPIC_AUTH_TOKEN`, replaces `ANTHROPIC_API_KEY` with a dummy. Reused across tests by default (`NEOKAI_DEV_PROXY_REUSE=1`). Verify with `tail .devproxy/devproxy.log` or `devproxy logs`.
+`HYPERNEO_USE_DEV_PROXY=1` requires the dev proxy (no silent fallback). Clears `CLAUDE_CODE_OAUTH_TOKEN` / `ANTHROPIC_AUTH_TOKEN`, replaces `ANTHROPIC_API_KEY` with a dummy. Reused across tests by default (`HYPERNEO_DEV_PROXY_REUSE=1`). Verify with `tail .devproxy/devproxy.log` or `devproxy logs`.
 
 ### E2E rules
 

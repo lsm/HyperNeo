@@ -36,7 +36,7 @@ Add the `app_mcp_servers` SQLite table and a repository class with CRUD operatio
 **Acceptance criteria:**
 - `app_mcp_servers` table is created on daemon start via the migration.
 - Repository CRUD operations pass all unit tests.
-- `AppMcpServer` type is exported from `@neokai/shared`.
+- `AppMcpServer` type is exported from `@hyperneo/shared`.
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create` targeting `dev`.
 
 **Depends on:** (none)

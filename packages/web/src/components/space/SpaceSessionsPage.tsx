@@ -10,7 +10,7 @@
  */
 
 import { useMemo, useRef, useState } from 'preact/hooks';
-import type { SpaceWorkerAgentPromotionDraft } from '@neokai/shared';
+import type { SpaceWorkerAgentPromotionDraft } from '@hyperneo/shared';
 import { spaceStore } from '../../lib/space-store';
 import { navigateToSpaceSession } from '../../lib/router';
 import { getRelativeTime } from '../../lib/utils';

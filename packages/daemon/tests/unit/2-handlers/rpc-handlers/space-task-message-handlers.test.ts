@@ -10,9 +10,9 @@
 
 import { describe, expect, it, mock, beforeEach } from 'bun:test';
 import { Database as BunDatabase } from 'bun:sqlite';
-import { MessageHub } from '@neokai/shared';
-import type { SpaceTask } from '@neokai/shared';
-import type { SDKMessage } from '@neokai/shared/sdk';
+import { MessageHub } from '@hyperneo/shared';
+import type { SpaceTask } from '@hyperneo/shared';
+import type { SDKMessage } from '@hyperneo/shared/sdk';
 import {
   setupSpaceTaskMessageHandlers,
   parseMentions,

@@ -48,7 +48,7 @@ function bunSupportsNodeSqlite(): boolean {
  */
 export function ensureBunNodeWrapper(): string | undefined {
   if (!isRunningUnderBun()) return undefined;
-  const wrapperDir = join(tmpdir(), 'neokai-bun-node-wrapper');
+  const wrapperDir = join(tmpdir(), 'hyperneo-bun-node-wrapper');
   const nodePath = join(wrapperDir, 'node');
   const bunPath = process.execPath;
   try {

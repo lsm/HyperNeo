@@ -30,9 +30,9 @@ import {
   initializeApplicationState,
 } from '../state';
 import { globalStore } from '../global-store';
-import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
-import type { Session, AuthStatus, HealthStatus } from '@neokai/shared';
-import type { SystemState } from '@neokai/shared';
+import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
+import type { Session, AuthStatus, HealthStatus } from '@hyperneo/shared';
+import type { SystemState } from '@hyperneo/shared';
 import type { Signal } from '@preact/signals';
 
 // Type for mock MessageHub used in tests

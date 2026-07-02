@@ -38,7 +38,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, fireEvent, cleanup } from '@testing-library/preact';
 import { GateEditorPanel } from '../GateEditorPanel';
-import type { Gate } from '@neokai/shared';
+import type { Gate } from '@hyperneo/shared';
 
 afterEach(() => cleanup());
 

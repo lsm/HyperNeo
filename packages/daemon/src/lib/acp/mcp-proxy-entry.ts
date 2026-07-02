@@ -148,7 +148,9 @@ function requestedProtocolVersion(params: unknown): string | undefined {
 }
 
 function getCallTimeoutMs(): number {
-  const raw = process.env.NEOKAI_ACP_MCP_PROXY_CALL_TIMEOUT_MS;
+  const raw =
+    process.env.HYPERNEO_ACP_MCP_PROXY_CALL_TIMEOUT_MS ??
+    process.env.NEOKAI_ACP_MCP_PROXY_CALL_TIMEOUT_MS;
   if (!raw) return DEFAULT_CALL_TIMEOUT_MS;
   const parsed = Number.parseInt(raw, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_CALL_TIMEOUT_MS;

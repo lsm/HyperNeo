@@ -8,7 +8,7 @@ import { describe, it, expect } from 'vitest';
  */
 
 import { render, cleanup, fireEvent } from '@testing-library/preact';
-import type { ContextInfo } from '@neokai/shared';
+import type { ContextInfo } from '@hyperneo/shared';
 import ContextUsageBar from '../ContextUsageBar';
 
 describe('ContextUsageBar', () => {

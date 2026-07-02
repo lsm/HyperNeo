@@ -1,5 +1,5 @@
-import type { ModelInfo } from '@neokai/shared';
-import type { ProviderAuthStatus } from '@neokai/shared/provider';
+import type { ModelInfo } from '@hyperneo/shared';
+import type { ProviderAuthStatus } from '@hyperneo/shared/provider';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import {
   getProviderLabel,

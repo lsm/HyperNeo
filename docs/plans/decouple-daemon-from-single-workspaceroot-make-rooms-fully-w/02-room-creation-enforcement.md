@@ -23,7 +23,7 @@ Enforce that every room is created with an explicit `defaultPath`. Update the ba
 1. In `room-handlers.ts` `room.create` handler, replace the auto-populate logic: require `params.defaultPath`, throw `Error('defaultPath is required when creating a room')` if missing.
 2. Add filesystem existence check: `if (!existsSync(params.defaultPath)) throw new Error('defaultPath does not exist: ...')`.
 3. Derive `allowedPaths` from `defaultPath` if not explicitly provided: `const allowedPaths = params.allowedPaths ?? [{ path: params.defaultPath }]`.
-4. Use `validateWorkspacePath()` from `@neokai/shared` for format validation.
+4. Use `validateWorkspacePath()` from `@hyperneo/shared` for format validation.
 5. Update `packages/daemon/tests/unit/rpc/room-handlers.test.ts`: fix all test cases that create rooms with `defaultPath: undefined` to use a valid temp directory path instead. Add a new test case that verifies `room.create` throws when `defaultPath` is missing.
 6. Run `make test-daemon` to verify all tests pass.
 

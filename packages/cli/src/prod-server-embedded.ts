@@ -3,11 +3,11 @@
  * Serves web assets from Bun-embedded files instead of the filesystem.
  */
 
-import { createDaemonApp } from '@neokai/daemon/app';
-import { warmupSDKCliBinary } from '@neokai/daemon/lib/agent/sdk-cli-resolver';
-import type { Config } from '@neokai/daemon/config';
-import { createLogger } from '@neokai/shared';
-import { homedir } from 'node:os';
+import { getDataDir } from '@hyperneo/daemon/lib/data-dir';
+import { createDaemonApp } from '@hyperneo/daemon/app';
+import { warmupSDKCliBinary } from '@hyperneo/daemon/lib/agent/sdk-cli-resolver';
+import type { Config } from '@hyperneo/daemon/config';
+import { createLogger } from '@hyperneo/shared';
 import { mkdir, writeFile, access } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import {
@@ -75,11 +75,11 @@ export async function startProdServer(config: Config) {
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('SIGTERM', () => shutdown('SIGTERM'));
 
-  // Extract embedded built-in skill files to ~/.neokai/skills/.
+  // Extract embedded built-in skill files to ~/.hyperneo/skills/.
   // Each key is a relative path like "playwright/SKILL.md"; the full directory
   // structure is preserved. Existing user-customized files are not overwritten.
   if (embeddedBuiltinSkills.size > 0) {
-    const neoSkillsDir = join(homedir(), '.neokai', 'skills');
+    const neoSkillsDir = join(getDataDir(), 'skills');
     for (const [relativePath, filePath] of embeddedBuiltinSkills) {
       const dest = join(neoSkillsDir, relativePath);
       const exists = await access(dest)
@@ -113,7 +113,7 @@ export async function startProdServer(config: Config) {
   log.info('Room orchestration is handled by RoomAgentService');
 
   // Get WebSocket handlers from daemon
-  const { createWebSocketHandlers } = await import('@neokai/daemon/routes/setup-websocket');
+  const { createWebSocketHandlers } = await import('@hyperneo/daemon/routes/setup-websocket');
   const wsHandlers = createWebSocketHandlers(daemonContext.transport, daemonContext.sessionManager);
 
   // Pre-load index.html for SPA fallback

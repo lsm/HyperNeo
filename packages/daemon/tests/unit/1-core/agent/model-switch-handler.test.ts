@@ -11,8 +11,8 @@ import {
   ModelSwitchHandler,
   type ModelSwitchHandlerContext,
 } from '../../../../src/lib/agent/model-switch-handler';
-import type { Session, ModelInfo } from '@neokai/shared';
-import type { MessageHub } from '@neokai/shared';
+import type { Session, ModelInfo } from '@hyperneo/shared';
+import type { MessageHub } from '@hyperneo/shared';
 import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { Database } from '../../../../src/storage/database';
@@ -23,7 +23,7 @@ import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type { ErrorManager } from '../../../../src/lib/error-manager';
 import type { Logger } from '../../../../src/lib/logger';
-import { generateUUID } from '@neokai/shared';
+import { generateUUID } from '@hyperneo/shared';
 import { resetProviderFactory, initializeProviders } from '../../../../src/lib/providers/factory';
 import { resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import { setModelsCache, clearModelsCache } from '../../../../src/lib/model-service';

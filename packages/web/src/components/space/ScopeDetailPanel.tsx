@@ -1,4 +1,4 @@
-import type { EvolutionScope, EvolutionScopeGetResponse } from '@neokai/shared';
+import type { EvolutionScope, EvolutionScopeGetResponse } from '@hyperneo/shared';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { useMessageHub } from '../../hooks/useMessageHub';
 import { spaceStore } from '../../lib/space-store';

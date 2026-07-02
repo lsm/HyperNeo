@@ -1,4 +1,4 @@
-import type { Space } from '@neokai/shared';
+import type { Space } from '@hyperneo/shared';
 import type { ComponentChildren } from 'preact';
 import { type Signal, signal } from '@preact/signals';
 import { cleanup, fireEvent, render, screen } from '@testing-library/preact';

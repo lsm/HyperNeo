@@ -39,11 +39,11 @@ describe('Sandbox Restrictions', { skip: skipTest }, () => {
 
   beforeAll(async () => {
     // Create a temporary workspace directory
-    workspacePath = path.join(os.tmpdir(), `neokai-sandbox-test-${Date.now()}`);
+    workspacePath = path.join(os.tmpdir(), `hyperneo-sandbox-test-${Date.now()}`);
     await fs.mkdir(workspacePath, { recursive: true });
 
     // Create a temporary directory OUTSIDE the workspace for testing restrictions
-    tempDirOutsideWorkspace = path.join(os.tmpdir(), `neokai-sandbox-outside-${Date.now()}`);
+    tempDirOutsideWorkspace = path.join(os.tmpdir(), `hyperneo-sandbox-outside-${Date.now()}`);
     await fs.mkdir(tempDirOutsideWorkspace, { recursive: true });
 
     // Create daemon server
@@ -333,17 +333,17 @@ describe('Sandbox Restrictions', { skip: skipTest }, () => {
       }
     });
 
-    test('should allow writes to ~/.neokai/projects/ directory', async () => {
+    test('should allow writes to ~/.hyperneo/projects/ directory', async () => {
       const homedir = os.homedir();
-      const testFilePath = path.join(homedir, '.neokai', 'projects', 'test-sandbox-write.txt');
+      const testFilePath = path.join(homedir, '.hyperneo', 'projects', 'test-sandbox-write.txt');
 
-      // Ensure .neokai/projects directory exists
-      await fs.mkdir(path.join(homedir, '.neokai', 'projects'), { recursive: true });
+      // Ensure .hyperneo/projects directory exists
+      await fs.mkdir(path.join(homedir, '.hyperneo', 'projects'), { recursive: true });
 
       // Create session with sandbox enabled
       const createResult = (await daemon.messageHub.request('session.create', {
         workspacePath,
-        title: 'Sandbox Neokai Dir Test',
+        title: 'Sandbox HyperNeo Dir Test',
         config: {
           model: 'haiku-4.5',
           permissionMode: 'acceptEdits',
@@ -363,15 +363,15 @@ describe('Sandbox Restrictions', { skip: skipTest }, () => {
       daemon.trackSession(sessionId);
 
       try {
-        // Ask agent to write to ~/.neokai/projects/ directory
-        const messageContent = `Write the text "HYPERNEO PROJECTS TEST" to the file ${testFilePath}`;
+        // Ask agent to write to ~/.hyperneo/projects/ directory
+        const messageContent = `Write the text "NEOKAI PROJECTS TEST" to the file ${testFilePath}`;
 
         await sendMessage(daemon.messageHub, sessionId, messageContent);
 
         // Wait for processing to complete
         await waitForIdle(daemon.messageHub, sessionId, 30000);
 
-        // Check that the file WAS created in ~/.neokai/projects/
+        // Check that the file WAS created in ~/.hyperneo/projects/
         const fileContent = await fs.readFile(testFilePath, 'utf-8');
         expect(fileContent).toContain('HYPERNEO PROJECTS TEST');
       } finally {

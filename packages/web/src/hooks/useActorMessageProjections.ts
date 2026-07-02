@@ -2,7 +2,7 @@ import type {
   ActorMessageProjectionRow,
   LiveQueryDeltaEvent,
   LiveQuerySnapshotEvent,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { useMessageHub } from './useMessageHub';
 

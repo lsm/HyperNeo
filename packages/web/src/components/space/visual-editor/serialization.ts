@@ -21,7 +21,7 @@
  *   same state and expect the generated IDs to match.
  */
 
-import { generateUUID, normalizeThinkingLevel } from '@neokai/shared';
+import { generateUUID, normalizeThinkingLevel } from '@hyperneo/shared';
 import type {
   SpaceWorkflow,
   CreateSpaceWorkflowParams,
@@ -31,7 +31,7 @@ import type {
   Gate,
   SpaceAutonomyLevel,
   WorkflowHook,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import type { NodeDraft } from '../WorkflowNodeCard';
 import type { Point, WorkflowCondition } from './types';
 import { autoLayout } from './layout';
@@ -195,7 +195,7 @@ interface BuiltWorkflowFields {
     id: string;
     name: string;
     agents: WorkflowNodeAgent[];
-    postApproval?: import('@neokai/shared').PostApprovalRoute;
+    postApproval?: import('@hyperneo/shared').PostApprovalRoute;
   }>;
   startNodeId: string;
   endNodeId?: string;

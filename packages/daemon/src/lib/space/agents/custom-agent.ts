@@ -19,8 +19,8 @@ import type {
   SpaceWorkflowRun,
   WorkflowChannel,
   WorkflowNode,
-} from '@neokai/shared';
-import type { SkillEnablementOverride } from '@neokai/shared';
+} from '@hyperneo/shared';
+import type { SkillEnablementOverride } from '@hyperneo/shared';
 import type {
   AgentMemoryCoreEntry,
   AgentMemorySearchResult,

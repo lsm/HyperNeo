@@ -15,12 +15,12 @@ import type {
   ProviderSdkConfig,
   ProviderSessionConfig,
   ModelTier,
-} from '@neokai/shared/provider';
-import type { AcpConfigOption, ModelInfo } from '@neokai/shared';
+} from '@hyperneo/shared/provider';
+import type { AcpConfigOption, ModelInfo } from '@hyperneo/shared';
 import { spawn } from 'node:child_process';
 
 const DEFAULT_ACP_CONTEXT_WINDOW = 200000;
-const ACP_CONTEXT_WINDOW_ENV_VAR = 'NEOKAI_ACP_CONTEXT_WINDOW';
+const ACP_CONTEXT_WINDOW_ENV_VAR = 'HYPERNEO_ACP_CONTEXT_WINDOW';
 const ACP_PROBE_TIMEOUT_MS = 5000;
 
 /**
@@ -145,7 +145,7 @@ export class AcpProvider implements Provider {
 
   /**
    * Check if ACP is available.
-   * Requires NEOKAI_ACP_COMMAND env var to be set.
+   * Requires HYPERNEO_ACP_COMMAND env var to be set.
    */
   isAvailable(): boolean {
     return !!this.getAcpCommand();
@@ -155,14 +155,18 @@ export class AcpProvider implements Provider {
    * Get the ACP agent spawn command from environment.
    */
   getAcpCommand(): string | undefined {
-    return this.env.NEOKAI_ACP_COMMAND;
+    // Fall back to the legacy NEOKAI_ACP_COMMAND during the rename transition.
+    return this.env.HYPERNEO_ACP_COMMAND ?? this.env.NEOKAI_ACP_COMMAND;
   }
 
   /**
    * Get the configured ACP context window.
    */
   getContextWindow(): number {
-    return parseContextWindow(this.env[ACP_CONTEXT_WINDOW_ENV_VAR]);
+    // Fall back to the legacy NEOKAI_ACP_CONTEXT_WINDOW during the rename.
+    return parseContextWindow(
+      this.env[ACP_CONTEXT_WINDOW_ENV_VAR] ?? this.env.NEOKAI_ACP_CONTEXT_WINDOW
+    );
   }
 
   async getAuthStatus(): Promise<ProviderAuthStatusInfo> {
@@ -170,7 +174,7 @@ export class AcpProvider implements Provider {
     return {
       isAuthenticated: !!command,
       method: 'api_key',
-      error: command ? undefined : 'Set NEOKAI_ACP_COMMAND to enable ACP agents.',
+      error: command ? undefined : 'Set HYPERNEO_ACP_COMMAND to enable ACP agents.',
     };
   }
 
@@ -190,7 +194,7 @@ export class AcpProvider implements Provider {
   private async verifyCommandAvailable(): Promise<void> {
     const command = this.getAcpCommand();
     if (!command) {
-      throw new Error('NEOKAI_ACP_COMMAND not set');
+      throw new Error('HYPERNEO_ACP_COMMAND not set');
     }
     // Only cache successful probes — failures self-heal on retry.
     if (this.lastProbeKey === command && Date.now() - this.lastProbeAt < AcpProvider.PROBE_TTL_MS) {
@@ -213,7 +217,7 @@ export class AcpProvider implements Provider {
     if (!this.isAvailable()) return [];
 
     // For the default static list, verify the binary actually exists in PATH
-    // so `providers.test` fails fast on a misconfigured NEOKAI_ACP_COMMAND
+    // so `providers.test` fails fast on a misconfigured HYPERNEO_ACP_COMMAND
     // instead of reporting healthy. Models discovered from runtime
     // configOptions are returned without re-probing because they were
     // populated by a real ACP client that already proved reachability.

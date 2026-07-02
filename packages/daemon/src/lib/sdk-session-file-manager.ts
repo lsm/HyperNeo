@@ -8,6 +8,7 @@
  * ~/.claude/projects/{workspace-path-with-slashes-replaced}/{sdk-session-id}.jsonl
  */
 
+import { getDataDir } from './data-dir';
 import {
   copyFileSync,
   existsSync,
@@ -26,7 +27,7 @@ import type { Database } from '../storage/database';
 
 /**
  * Get the SDK project directory for a workspace path
- * SDK replaces both / and . with - (e.g., /.neokai/ -> --neokai-)
+ * SDK replaces both / and . with - (e.g., /.hyperneo/ -> --hyperneo-)
  *
  * @param workspacePath - The session's workspace path
  * @returns Absolute path to the SDK project directory
@@ -767,7 +768,7 @@ interface ArchiveMetadata {
  */
 function getArchiveDir(kaiSessionId: string): string {
   // Support TEST_SDK_SESSION_DIR for isolated testing
-  const baseDir = process.env.TEST_SDK_SESSION_DIR || join(homedir(), '.neokai');
+  const baseDir = process.env.TEST_SDK_SESSION_DIR || getDataDir();
   return join(baseDir, 'claude-session-archives', kaiSessionId);
 }
 
@@ -877,7 +878,7 @@ export function deleteSDKSessionFiles(
 /**
  * Archive SDK session files for a HyperNeo session
  *
- * Moves files to ~/.neokai/claude-session-archives/{kaiSessionId}/
+ * Moves files to ~/.hyperneo/claude-session-archives/{kaiSessionId}/
  * and creates an archive-metadata.json file.
  *
  * @param workspacePath - The session's workspace path

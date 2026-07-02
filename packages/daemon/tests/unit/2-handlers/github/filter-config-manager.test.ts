@@ -4,7 +4,7 @@ import {
   FilterConfigManager,
   createFilterConfigManager,
 } from '../../../../src/lib/github/filter-config-manager';
-import type { GitHubFilterConfig } from '@neokai/shared';
+import type { GitHubFilterConfig } from '@hyperneo/shared';
 
 // ============================================================================
 // Test Data Factories

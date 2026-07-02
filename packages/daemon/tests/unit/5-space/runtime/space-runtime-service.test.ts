@@ -27,7 +27,7 @@ import type { TaskAgentManager } from '../../../../src/lib/space/runtime/task-ag
 import type { SessionManager } from '../../../../src/lib/session-manager.ts';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
 import type { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
-import type { McpServerConfig, Session, Space } from '@neokai/shared';
+import type { McpServerConfig, Session, Space } from '@hyperneo/shared';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository as SpaceWorkflowRunRepo } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';

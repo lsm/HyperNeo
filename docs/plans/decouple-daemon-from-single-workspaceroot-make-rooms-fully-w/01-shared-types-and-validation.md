@@ -28,7 +28,7 @@ Update shared type definitions so `defaultPath` is required on `CreateRoomParams
 
 **Acceptance Criteria**:
 - `CreateRoomParams.defaultPath` is required (not optional).
-- `validateWorkspacePath` is exported from `@neokai/shared` and has passing tests.
+- `validateWorkspacePath` is exported from `@hyperneo/shared` and has passing tests.
 - `SystemState.workspaceRoot` already exists in `packages/shared/src/state-types.ts` (verified, no change needed).
 - All type errors from the change are fixed — CI passes cleanly (typecheck, daemon tests, web tests).
 

@@ -9,7 +9,7 @@ import {
   SDKRuntimeConfig,
   type SDKRuntimeConfigContext,
 } from '../../../../src/lib/agent/sdk-runtime-config';
-import type { Session } from '@neokai/shared';
+import type { Session } from '@hyperneo/shared';
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';

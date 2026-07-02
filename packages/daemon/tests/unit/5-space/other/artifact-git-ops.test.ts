@@ -265,7 +265,7 @@ describe('getGitRemoteUrl', () => {
   it('returns null for a directory with no git repo', async () => {
     const { mkdtempSync, rmdirSync } = await import('node:fs');
     const { tmpdir } = await import('node:os');
-    const dir = mkdtempSync(`${tmpdir()}/neokai-no-git-`);
+    const dir = mkdtempSync(`${tmpdir()}/hyperneo-no-git-`);
     try {
       const result = await getGitRemoteUrl(dir);
       expect(result).toBeNull();

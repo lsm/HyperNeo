@@ -1,4 +1,4 @@
-import type { SpaceLongHorizonAgentTemplate } from '@neokai/shared';
+import type { SpaceLongHorizonAgentTemplate } from '@hyperneo/shared';
 
 const LONG_HORIZON_AGENT_TEMPLATES: SpaceLongHorizonAgentTemplate[] = [
   {
@@ -58,6 +58,8 @@ const LONG_HORIZON_AGENT_TEMPLATES: SpaceLongHorizonAgentTemplate[] = [
       {
         source: 'space',
         topic: 'task.done',
+        // 'neokai-product' is a GitHub issue label defined in the external repo;
+        // renamed with the external rebrand (PR 4).
         filter: { labels: ['neokai-product', 'quality'] },
       },
       {

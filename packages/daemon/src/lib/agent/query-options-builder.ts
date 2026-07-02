@@ -18,6 +18,8 @@
  * - Hooks (output limiter)
  */
 
+import { getDataDir, resolveLegacyDataDir } from '../data-dir';
+import { existsSync } from 'node:fs';
 import type {
   CanUseTool,
   HookCallback,
@@ -34,14 +36,14 @@ import type {
   SystemPromptConfig,
   ThinkingConfig,
   ThinkingLevel,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import {
   normalizeThinkingLevel,
   PROVIDER_THINKING_MODES,
   THINKING_LEVEL_TOKENS,
-} from '@neokai/shared';
-import type { McpServerConfig } from '@neokai/shared/types/sdk-config';
-import type { PermissionMode } from '@neokai/shared/types/settings';
+} from '@hyperneo/shared';
+import type { McpServerConfig } from '@hyperneo/shared/types/sdk-config';
+import type { PermissionMode } from '@hyperneo/shared/types/settings';
 import { homedir } from 'os';
 import { join } from 'path';
 import type { Database } from '../../storage/database';
@@ -252,11 +254,11 @@ export const PROVIDER_NO_SDK_AUTO_COMPACT: ReadonlySet<string> = new Set();
  * model alias. We pass the real window here so SDK auto-compaction fires at the
  * correct threshold without injecting `/compact` as prompt text.
  *
- * Providers/routes selected by `shouldUseNeoKaiCompactFallback` cannot use SDK
+ * Providers/routes selected by `shouldUseHyperNeoCompactFallback` cannot use SDK
  * auto-compact at the right threshold. For these, we disable SDK auto-compact
  * and let HyperNeo's fallback handle compaction.
  */
-export function shouldUseNeoKaiCompactFallback(providerId: string): boolean {
+export function shouldUseHyperNeoCompactFallback(providerId: string): boolean {
   // No provider should use the HyperNeo async /compact fallback. Kept as an
   // extension point only; `PROVIDER_NO_SDK_AUTO_COMPACT` is intentionally empty.
   //
@@ -297,7 +299,7 @@ export function buildProviderSettings(
     return undefined;
   }
 
-  if (shouldUseNeoKaiCompactFallback(providerId)) {
+  if (shouldUseHyperNeoCompactFallback(providerId)) {
     // SDK auto-compact would fire at the wrong threshold (200k fallback
     // instead of the real model window). Disable it and let HyperNeo's
     // fallback trigger handle compaction at the SDK-style reserve threshold.
@@ -1002,7 +1004,7 @@ CRITICAL RULES:
    *
    * Always includes:
    * - ~/.claude/: For settings, database, and worktree storage
-   * - ~/.neokai/: For HyperNeo-specific configuration and state
+   * - ~/.hyperneo/: For HyperNeo-specific configuration and state
    *
    * For worktree sessions, also includes:
    * - /tmp: System temp for tools that write directly here (e.g. git hook tee, bun test)
@@ -1015,9 +1017,16 @@ CRITICAL RULES:
   private getAdditionalDirectories(): string[] | undefined {
     const directories: string[] = [];
 
-    // Always include Claude and HyperNeo directories for settings and storage
+    // Always include Claude and HyperNeo directories for settings and storage.
+    const dataDir = getDataDir();
     directories.push(join(homedir(), '.claude'));
-    directories.push(join(homedir(), '.neokai'));
+    directories.push(dataDir);
+    // During the symlink transition, also allow the resolved legacy ~/.neokai so
+    // sandboxed tools/skills referencing the real legacy path are not denied.
+    const legacyDir = resolveLegacyDataDir();
+    if (legacyDir !== dataDir && existsSync(legacyDir)) {
+      directories.push(legacyDir);
+    }
 
     // For worktree sessions, also allow temp directories for shell operations
     if (this.ctx.session.worktree) {
@@ -1067,7 +1076,7 @@ CRITICAL RULES:
     processProviderEnvVars.add('CLAUDE_CODE_SUBAGENT_MODEL');
     processProviderEnvVars.add('ENABLE_TOOL_SEARCH');
 
-    const excludedEnvVars = new Set(['PORT', 'NEOKAI_PORT']);
+    const excludedEnvVars = new Set(['PORT', 'HYPERNEO_PORT', 'NEOKAI_PORT']);
     const mergedEnv: Record<string, string> = Object.fromEntries(
       Object.entries(process.env).filter(
         (entry): entry is [string, string] =>
@@ -1382,17 +1391,17 @@ CRITICAL RULES:
    * Build plugin entries from enabled skills with sourceType === 'builtin'.
    *
    * Each builtin skill's commandName has a wrapper plugin materialised at
-   * `~/.neokai/skill-plugins/{commandName}/` by `SkillsManager.ensureBuiltinPluginWrappers()`
+   * `~/.hyperneo/skill-plugins/{commandName}/` by `SkillsManager.ensureBuiltinPluginWrappers()`
    * during daemon startup. The wrapper has the layout the Claude Agent SDK
    * requires for `plugins: [{ type: 'local', path }]`:
    *
    *   <wrapper>/.claude-plugin/plugin.json
-   *   <wrapper>/skills/<commandName>/   → symlink to ~/.neokai/skills/<commandName>/
+   *   <wrapper>/skills/<commandName>/   → symlink to ~/.hyperneo/skills/<commandName>/
    *
    * Without that wrapper the SDK silently drops the plugin (its loader
    * requires `.claude-plugin/plugin.json` at the root) and `/<commandName>`
    * never registers as a slash command. Pointing directly at
-   * `~/.neokai/skills/<commandName>/` was the source of the
+   * `~/.hyperneo/skills/<commandName>/` was the source of the
    * "Unknown command: /playwright" bug.
    *
    * Runtime overrides with enabled=false exclude the skill even if globally enabled.

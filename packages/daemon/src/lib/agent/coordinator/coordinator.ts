@@ -1,4 +1,4 @@
-import type { AgentDefinition } from '@neokai/shared';
+import type { AgentDefinition } from '@hyperneo/shared';
 
 /** The coordinator agent definition - applied to main thread via Options.agent */
 export const COORDINATOR_AGENT: AgentDefinition = {

@@ -3,7 +3,7 @@
  * with Bun file imports for embedding in compiled binaries.
  *
  * Also scans packages/skills/ recursively and embeds all skill files as
- * embeddedBuiltinSkills — extracted to ~/.neokai/skills/ at startup.
+ * embeddedBuiltinSkills — extracted to ~/.hyperneo/skills/ at startup.
  *
  * Usage: bun run scripts/generate-embedded-assets.ts
  */

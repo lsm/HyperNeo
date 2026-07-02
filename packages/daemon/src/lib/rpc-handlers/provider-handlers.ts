@@ -5,8 +5,8 @@
  * and the live ProviderRegistry so changes take effect immediately.
  */
 
-import type { MessageHub } from '@neokai/shared';
-import type { CreateProviderParams, UpdateProviderParams } from '@neokai/shared';
+import type { MessageHub } from '@hyperneo/shared';
+import type { CreateProviderParams, UpdateProviderParams } from '@hyperneo/shared';
 import type { ProviderRepository } from '../../storage/repositories/provider-repository';
 import type { ProviderCredentialManager } from '../credentials/provider-credential-manager';
 import {

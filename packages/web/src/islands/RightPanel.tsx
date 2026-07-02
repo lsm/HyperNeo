@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'preact/hooks';
-import type { Session, SessionFeatures } from '@neokai/shared';
-import { DEFAULT_LOBBY_FEATURES, DEFAULT_WORKER_FEATURES } from '@neokai/shared';
+import type { Session, SessionFeatures } from '@hyperneo/shared';
+import { DEFAULT_LOBBY_FEATURES, DEFAULT_WORKER_FEATURES } from '@hyperneo/shared';
 import { GitPanel } from '../components/GitPanel.tsx';
 import { GoalDetailPanel } from '../components/space/GoalDetailPanel.tsx';
 import { ScopeDetailPanel } from '../components/space/ScopeDetailPanel.tsx';
@@ -24,7 +24,7 @@ const TRANSITION_MS = 200;
 const DEFAULT_PANEL_WIDTH = 440;
 const MIN_PANEL_WIDTH = 280;
 const MAX_PANEL_WIDTH = 820;
-const PANEL_WIDTH_STORAGE_KEY = 'neokai_right_panel_width';
+const PANEL_WIDTH_STORAGE_KEY = 'hyperneo_right_panel_width';
 
 function getMaxPanelWidth(): number {
   if (typeof window === 'undefined') return MAX_PANEL_WIDTH;

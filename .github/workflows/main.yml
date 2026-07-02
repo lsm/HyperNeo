@@ -179,7 +179,7 @@ jobs:
           - space-2
           - websocket
         include:
-          # mock_sdk: true → uses Dev Proxy (NEOKAI_USE_DEV_PROXY) for mocking instead of real API calls.
+          # mock_sdk: true → uses Dev Proxy (HYPERNEO_USE_DEV_PROXY) for mocking instead of real API calls.
           # These modules test infrastructure/plumbing and don't need real AI responses.
           # To run with real API locally, just omit the env var.
           #
@@ -370,8 +370,8 @@ jobs:
         env:
           # Use Dev Proxy for mock_sdk tests by setting ANTHROPIC_BASE_URL
           # This avoids proxy env var issues and TLS interception problems
-          NEOKAI_USE_DEV_PROXY: ${{ matrix.mock_sdk == true && '1' || '' }}
-          NEOKAI_TEST_DISABLE_SANDBOX: '1'
+          HYPERNEO_USE_DEV_PROXY: ${{ matrix.mock_sdk == true && '1' || '' }}
+          HYPERNEO_TEST_DISABLE_SANDBOX: '1'
           ANTHROPIC_BASE_URL: ${{ matrix.mock_sdk == true && 'http://127.0.0.1:8000' || '' }}
           # For Dev Proxy tests, never pass real Anthropic credentials.
           ANTHROPIC_API_KEY: ${{ matrix.mock_sdk == true && 'sk-devproxy-test-key' || '' }}
@@ -931,7 +931,7 @@ jobs:
           PORT=$(python3 -c 'import socket; s=socket.socket(socket.AF_INET, socket.SOCK_STREAM); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind(("",0)); print(s.getsockname()[1])')
           echo "Reserved port $PORT for binary"
 
-          NEOKAI_WORKSPACE_ROOT="$WORKSPACE" ./dist/bin/hyperneo-linux-x64 --port "$PORT" &
+          HYPERNEO_WORKSPACE_ROOT="$WORKSPACE" ./dist/bin/hyperneo-linux-x64 --port "$PORT" &
           BINARY_PID=$!
           trap 'kill $BINARY_PID 2>/dev/null; rm -rf "$WORKSPACE"' EXIT
 

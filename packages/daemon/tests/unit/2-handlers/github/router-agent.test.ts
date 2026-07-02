@@ -10,7 +10,7 @@
 
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import { RouterAgent, type RoomCandidate } from '../../../../src/lib/github/router-agent';
-import type { GitHubEvent, SecurityCheckResult, RoutingResult } from '@neokai/shared';
+import type { GitHubEvent, SecurityCheckResult, RoutingResult } from '@hyperneo/shared';
 
 // Helper to create a basic GitHub event for testing
 function createTestEvent(overrides: Partial<GitHubEvent> = {}): GitHubEvent {

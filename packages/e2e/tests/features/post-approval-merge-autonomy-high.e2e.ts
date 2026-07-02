@@ -26,11 +26,11 @@
  *      `done` before the agent spawns, or by testing UI without
  *      spawning an agent at all. This test cannot short-circuit — the
  *      whole point is observing the agent's behaviour. A recording
- *      harness (VCR-style) or an `@neokai/provider/test` mock that
+ *      harness (VCR-style) or an `@hyperneo/provider/test` mock that
  *      feeds scripted tool-call responses is required.
  *
  *   3. **Feature flag parity.** PR 3/5 defaulted
- *      `NEOKAI_TASK_AGENT_POST_APPROVAL_ROUTING` to ON, but the E2E
+ *      `HYPERNEO_TASK_AGENT_POST_APPROVAL_ROUTING` to ON, but the E2E
  *      fixture does not yet surface environment-level controls for
  *      daemon-side flags — the dev-server is started once and the
  *      env is inherited. Adding a per-spec env override to

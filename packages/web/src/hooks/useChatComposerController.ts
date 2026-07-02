@@ -1,5 +1,5 @@
-import type { AgentProcessingState, ModelInfo, ChatMessage } from '@neokai/shared';
-import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
+import type { AgentProcessingState, ModelInfo, ChatMessage } from '@hyperneo/shared';
+import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 import { useCallback, useMemo, useState } from 'preact/hooks';
 import { switchCoordinatorMode, switchSandboxMode } from '../lib/api-helpers.ts';
 import { getCurrentAction } from '../lib/status-actions.ts';

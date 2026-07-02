@@ -21,7 +21,7 @@ import type {
   NodeExecution,
   NodeExecutionStatus,
   UpdateNodeExecutionParams,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import { isReservedWorkflowAgentName } from './space-workflow-manager';
 
 /**

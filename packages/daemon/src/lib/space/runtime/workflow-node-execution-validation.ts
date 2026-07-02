@@ -1,5 +1,5 @@
-import type { NodeExecution, SpaceTask, SpaceWorkflow } from '@neokai/shared';
-import { resolveNodeAgents } from '@neokai/shared';
+import type { NodeExecution, SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
+import { resolveNodeAgents } from '@hyperneo/shared';
 
 export type ExecutionWorkflowValidationResult =
   | { valid: true }

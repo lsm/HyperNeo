@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from 'bun:test';
 import { getCoordinatorAgents } from '../../../../src/lib/agent/coordinator-agents';
-import type { AgentDefinition } from '@neokai/shared';
+import type { AgentDefinition } from '@hyperneo/shared';
 
 describe('getCoordinatorAgents', () => {
   it('should return coordinator and all specialist agents', () => {

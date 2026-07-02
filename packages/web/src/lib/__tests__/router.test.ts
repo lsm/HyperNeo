@@ -52,7 +52,7 @@ import {
 const SESSION_ID = '550e8400-e29b-41d4-a716-446655440000';
 const SPACE_ID = 'demo-space';
 const TASK_ID = 't-42';
-const IN_APP_HISTORY_DEPTH_KEY = '__neokaiInAppHistoryDepth';
+const IN_APP_HISTORY_DEPTH_KEY = '__hyperneoInAppHistoryDepth';
 
 function resetSignals() {
   currentSessionIdSignal.value = null;
@@ -74,7 +74,7 @@ function finishNavigation() {
 }
 
 function setPath(path: string) {
-  const url = new URL(path, 'https://neokai.test');
+  const url = new URL(path, 'https://hyperneo.test');
   Object.defineProperty(window, 'location', {
     value: { pathname: url.pathname, search: url.search },
     configurable: true,

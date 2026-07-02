@@ -42,7 +42,7 @@ Naming follows `docs/adr/0001-live-query-and-job-queue.md`.
 - [ ] Export all types from `packages/shared/src/mod.ts`
 
 **Acceptance criteria:**
-- Types importable from `@neokai/shared`
+- Types importable from `@hyperneo/shared`
 - No runtime code, types only
 
 ---

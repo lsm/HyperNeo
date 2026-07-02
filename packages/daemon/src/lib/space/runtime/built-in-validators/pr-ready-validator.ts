@@ -6,7 +6,7 @@
  * allowing a send_message handoff to a review node.
  */
 
-import type { WorkflowHookResult } from '@neokai/shared';
+import type { WorkflowHookResult } from '@hyperneo/shared';
 import type { HookExecutorContext } from '../hook-executor';
 import { collectWithMaxBuffer, parseJsonStdout } from '../gate-script-executor';
 import { parsePrUrl } from '../parse-pr-url';

@@ -15,7 +15,7 @@ import { SpaceLongHorizonAgentRepository } from '../../../src/storage/repositori
 import { SpaceRepository } from '../../../src/storage/repositories/space-repository';
 import { SpaceWorkflowRepository } from '../../../src/storage/repositories/space-workflow-repository';
 import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/space-workflow-run-repository';
-import type { Session } from '@neokai/shared';
+import type { Session } from '@hyperneo/shared';
 import { createSpaceTables } from '../helpers/space-test-db';
 
 function makeSession(id: string, overrides: Partial<Session> = {}): Session {

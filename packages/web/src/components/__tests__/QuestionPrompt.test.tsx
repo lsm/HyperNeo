@@ -12,7 +12,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup } from '@testing-library/preact';
 import { QuestionPrompt } from '../QuestionPrompt';
-import type { PendingUserQuestion, QuestionDraftResponse } from '@neokai/shared';
+import type { PendingUserQuestion, QuestionDraftResponse } from '@hyperneo/shared';
 
 // Mock useMessageHub to test error scenarios
 const mockCallIfConnected = vi.fn();

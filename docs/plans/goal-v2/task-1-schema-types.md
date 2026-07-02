@@ -66,7 +66,7 @@ Add mission metadata columns to the existing `goals` table, create supporting ta
 
 - Migration runs cleanly on fresh DB and with existing goals data
 - Physical table remains `goals`, all existing SQL unchanged
-- New types exported from `@neokai/shared`
+- New types exported from `@hyperneo/shared`
 - `Mission` type alias exists; `RoomGoal` continues to compile everywhere
 - `mission_metric_history` and `mission_executions` tables created and queryable
 - Unit tests for: migration, new column defaults, metric history CRUD, execution CRUD, `getEffectiveMaxPlanningAttempts` helper

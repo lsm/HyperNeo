@@ -11,7 +11,7 @@ import { SpaceAgentRepository } from '../../../../src/storage/repositories/space
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager';
 import { setModelsCache } from '../../../../src/lib/model-service';
-import type { ModelInfo } from '@neokai/shared';
+import type { ModelInfo } from '@hyperneo/shared';
 import {
   createSpaceAgentSchema,
   insertSpace,

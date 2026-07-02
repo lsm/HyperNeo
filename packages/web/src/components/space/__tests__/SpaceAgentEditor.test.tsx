@@ -22,8 +22,8 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, waitFor, cleanup } from '@testing-library/preact';
-import { KNOWN_TOOLS } from '@neokai/shared';
-import type { SpaceWorkerAgent } from '@neokai/shared';
+import { KNOWN_TOOLS } from '@hyperneo/shared';
+import type { SpaceWorkerAgent } from '@hyperneo/shared';
 
 // ── Mocks ────────────────────────────────────────────────────────────────────
 

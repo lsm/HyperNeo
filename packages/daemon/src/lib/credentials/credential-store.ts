@@ -1,14 +1,23 @@
+import { getDataDir } from '../data-dir';
 import { Database } from 'bun:sqlite';
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
-import { homedir, platform } from 'node:os';
+import { platform } from 'node:os';
 import { execFile, spawn } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import type { CredentialStoreStatus } from '@neokai/shared/state-types';
+import type { CredentialStoreStatus } from '@hyperneo/shared/state-types';
 import { Logger } from '../logger';
 
+// Intentionally retained as 'neokai.provider': this is the OS-keychain service
+// namespace (and DB credential key) under which existing installs already store
+// encrypted provider credentials. Renaming it would orphan every stored credential
+// unless paired with a keychain + DB migration, so it is held back for the
+// external-rebrand PR alongside the GitHub repo URL and OAuth client identity.
 const DEFAULT_SERVICE_PREFIX = 'neokai.provider';
-const ENCRYPTION_KEY_ENV = 'NEOKAI_PROVIDER_CREDENTIAL_KEY';
+const ENCRYPTION_KEY_ENV = 'HYPERNEO_PROVIDER_CREDENTIAL_KEY';
+// Legacy env var name retained as a decryption fallback so installs that pinned a
+// custom key via NEOKAI_PROVIDER_CREDENTIAL_KEY keep decrypting existing rows.
+const LEGACY_ENCRYPTION_KEY_ENV = 'NEOKAI_PROVIDER_CREDENTIAL_KEY';
 const KEY_FILE_NAME = '.provider-credential-key';
 export const KEYCHAIN_UNAVAILABLE_MESSAGE =
   'macOS Keychain is locked or unavailable. Run `security unlock-keychain` ' +
@@ -171,8 +180,8 @@ const KEYCHAIN_FALLBACK_MESSAGE =
  * Note on weaker isolation: the encrypted fallback lives in a
  * `provider_credentials` table inside the daemon's main SQLite database
  * (path configurable via `DB_PATH`, defaults to
- * `~/.neokai/data/daemon.db`), with its AES key at
- * `~/.neokai/.provider-credential-key` (0600). Any same-user process can
+ * `~/.hyperneo/data/daemon.db`), with its AES key at
+ * `~/.hyperneo/.provider-credential-key` (0600). Any same-user process can
  * read both — this is weaker than the Keychain, which mitigates local
  * attackers via Secure Enclave / ACLs. The fallback exists because the
  * Keychain is unreachable from non-GUI security sessions and bricking
@@ -509,7 +518,10 @@ export class DatabaseCredentialStore implements CredentialStore {
   private get key(): Buffer {
     if (!this._key) {
       const secret =
-        this.secret ?? process.env[ENCRYPTION_KEY_ENV] ?? loadOrGenerateCredentialKey();
+        this.secret ??
+        process.env[ENCRYPTION_KEY_ENV] ??
+        process.env[LEGACY_ENCRYPTION_KEY_ENV] ??
+        loadOrGenerateCredentialKey();
       this._key = createHash('sha256').update(secret).digest();
     }
     return this._key;
@@ -608,10 +620,10 @@ function providerIdFrom(service: string, account: string): string {
 }
 
 function loadOrGenerateCredentialKey(): string {
-  const envKey = process.env[ENCRYPTION_KEY_ENV];
+  const envKey = process.env[ENCRYPTION_KEY_ENV] ?? process.env[LEGACY_ENCRYPTION_KEY_ENV];
   if (envKey) return envKey;
 
-  const keyPath = path.join(homedir(), '.neokai', KEY_FILE_NAME);
+  const keyPath = path.join(getDataDir(), KEY_FILE_NAME);
   try {
     const existing = fs.readFileSync(keyPath, 'utf-8').trim();
     if (existing) return existing;
@@ -626,7 +638,7 @@ function loadOrGenerateCredentialKey(): string {
   } catch (err) {
     throw new Error(
       `Failed to persist provider credential key to ${keyPath}. ` +
-        'Set NEOKAI_PROVIDER_CREDENTIAL_KEY to provide a stable encryption key.',
+        'Set HYPERNEO_PROVIDER_CREDENTIAL_KEY to provide a stable encryption key.',
       { cause: err }
     );
   }

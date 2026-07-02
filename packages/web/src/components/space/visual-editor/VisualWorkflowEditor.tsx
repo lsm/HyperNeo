@@ -28,8 +28,8 @@ import type {
   Gate,
   SpaceAutonomyLevel,
   WorkflowHook,
-} from '@neokai/shared';
-import { generateUUID, isChannelCyclic } from '@neokai/shared';
+} from '@hyperneo/shared';
+import { generateUUID, isChannelCyclic } from '@hyperneo/shared';
 import { spaceStore } from '../../../lib/space-store';
 import { AUTONOMY_LEVELS } from '../../../lib/space-constants';
 import { filterAgents, buildTemplateNodes, getAvailableTemplates } from '../workflow-templates';

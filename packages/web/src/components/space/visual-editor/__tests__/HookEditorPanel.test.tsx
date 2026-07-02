@@ -21,7 +21,7 @@
 // @ts-nocheck
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { cleanup, fireEvent, render } from '@testing-library/preact';
-import type { WorkflowHook } from '@neokai/shared';
+import type { WorkflowHook } from '@hyperneo/shared';
 import { HookEditorPanel } from '../HookEditorPanel';
 
 function makeHook(overrides: Partial<WorkflowHook> = {}): WorkflowHook {

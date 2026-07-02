@@ -10,8 +10,8 @@
  */
 
 import { useEffect, useState } from 'preact/hooks';
-import type { FallbackModelEntry, ModelInfo } from '@neokai/shared';
-import type { ProviderAuthStatus } from '@neokai/shared/provider';
+import type { FallbackModelEntry, ModelInfo } from '@hyperneo/shared';
+import type { ProviderAuthStatus } from '@hyperneo/shared/provider';
 import { globalSettings } from '../../lib/state.ts';
 import { updateGlobalSettings } from '../../lib/api-helpers.ts';
 import { toast } from '../../lib/toast.ts';

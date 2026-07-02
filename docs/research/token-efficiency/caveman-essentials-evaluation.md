@@ -198,16 +198,16 @@ Do **not** add `AgentOutputMode`, `GlobalSettings.outputMode`, `SessionConfig.ou
 ```sql
 -- Example scoped activation records; exact columns come from prompt-policy-registry-spec.md.
 -- Global default:
-(id = 'global.neokai.output-mode.compressed', template_id = 'neokai.output-mode.compressed', scope_type = 'global', scope_id = NULL, enabled = 1)
+(id = 'global.hyperneo.output-mode.compressed', template_id = 'neokai.output-mode.compressed', scope_type = 'global', scope_id = NULL, enabled = 1)
 
 -- Space default:
-(id = 'space.<space-id>.neokai.output-mode.compressed', template_id = 'neokai.output-mode.compressed', scope_type = 'space', scope_id = '<space-id>', enabled = 1)
+(id = 'space.<space-id>.hyperneo.output-mode.compressed', template_id = 'neokai.output-mode.compressed', scope_type = 'space', scope_id = '<space-id>', enabled = 1)
 
 -- Workflow-wide default:
-(id = 'workflow.<workflow-id>.neokai.output-mode.compressed', template_id = 'neokai.output-mode.compressed', scope_type = 'workflow', scope_id = '<workflow-id>', enabled = 1)
+(id = 'workflow.<workflow-id>.hyperneo.output-mode.compressed', template_id = 'neokai.output-mode.compressed', scope_type = 'workflow', scope_id = '<workflow-id>', enabled = 1)
 
 -- Workflow-slot override:
-(id = 'workflow-node.<workflow-id>.<node-id>.<agent-name>.neokai.output-mode.compressed', template_id = 'neokai.output-mode.compressed', scope_type = 'workflow_node', scope_id = '<workflow-id>:<node-id>:<agent-name>', enabled = 1)
+(id = 'workflow-node.<workflow-id>.<node-id>.<agent-name>.hyperneo.output-mode.compressed', template_id = 'neokai.output-mode.compressed', scope_type = 'workflow_node', scope_id = '<workflow-id>:<node-id>:<agent-name>', enabled = 1)
 ```
 
 No `spaces.output_mode` or `space_agents.output_mode` migration is needed. Workflow templates should preserve scoped prompt policy records or template metadata that materializes those records during import/instantiation; they should not add `nodes[*].agents[*].outputMode`.

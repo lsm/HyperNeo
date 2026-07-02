@@ -15,7 +15,7 @@ import type {
   SpaceTask,
   SpaceTaskStatus,
   UpdateSpaceTaskParams,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import { Logger } from '../../logger';

@@ -19,8 +19,8 @@ import type {
   InstallSkillFromGitParams,
   LiveQuerySnapshotEvent,
   LiveQueryDeltaEvent,
-} from '@neokai/shared';
-import { Logger } from '@neokai/shared';
+} from '@hyperneo/shared';
+import { Logger } from '@hyperneo/shared';
 import { connectionManager } from './connection-manager';
 
 const logger = new Logger('kai:web:skills-store');

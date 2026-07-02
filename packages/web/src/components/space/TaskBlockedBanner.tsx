@@ -21,7 +21,7 @@
  */
 
 import { useState, useEffect } from 'preact/hooks';
-import type { SpaceBlockReason, SpaceTask, SpaceTaskStatus } from '@neokai/shared';
+import type { SpaceBlockReason, SpaceTask, SpaceTaskStatus } from '@hyperneo/shared';
 import { spaceStore } from '../../lib/space-store';
 import { GateArtifactsView } from './GateArtifactsView';
 import {

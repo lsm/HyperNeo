@@ -15,7 +15,7 @@
  *   7. (default)                                  → GenericCard
  */
 
-import type { WorkflowRunArtifact } from '@neokai/shared';
+import type { WorkflowRunArtifact } from '@hyperneo/shared';
 
 // ── URL pattern helpers ──────────────────────────────────────────────────────
 

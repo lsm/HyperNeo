@@ -870,7 +870,7 @@ class TrieNode<T> {
 Determines whether a node execution should remain in the subscription index:
 
 ```typescript
-import type { NodeExecutionStatus } from '@neokai/shared';
+import type { NodeExecutionStatus } from '@hyperneo/shared';
 
 const NON_RECEIVING_STATES: ReadonlySet<NodeExecutionStatus> = new Set([
   'cancelled',

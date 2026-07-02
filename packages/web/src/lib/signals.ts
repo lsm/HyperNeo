@@ -1,4 +1,4 @@
-import type { Session } from '@neokai/shared';
+import type { Session } from '@hyperneo/shared';
 import { signal } from '@preact/signals';
 
 // Shared signal for the current session ID - always starts as null

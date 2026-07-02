@@ -7,7 +7,7 @@ import type {
   SpaceTask,
   SpaceWorkflow,
   SpaceWorkflowRun,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import type { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager';
 import {
   buildCustomAgentSystemPrompt,

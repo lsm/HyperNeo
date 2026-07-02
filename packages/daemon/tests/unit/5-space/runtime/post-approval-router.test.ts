@@ -25,7 +25,7 @@ import {
   isPostApprovalRoutingEnabled,
   POST_APPROVAL_ROUTING_FLAG_ENV,
 } from '../../../../src/lib/space/runtime/post-approval-router.ts';
-import type { SpaceTask, SpaceWorkflow } from '@neokai/shared';
+import type { SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
 
 const SPACE_ID = 'space-par-test';
 

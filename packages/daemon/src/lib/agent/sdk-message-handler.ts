@@ -18,10 +18,10 @@
 
 import type { UUID } from 'crypto';
 import type { QueryLike } from './query-like';
-import type { ContextInfo, MessageHub, Session } from '@neokai/shared';
-import { generateUUID } from '@neokai/shared';
+import type { ContextInfo, MessageHub, Session } from '@hyperneo/shared';
+import { generateUUID } from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
-import type { SDKMessage, SDKUserMessage } from '@neokai/shared/sdk';
+import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
 import {
   isSDKAPIRetryMessage,
   isSDKAssistantMessage,
@@ -38,7 +38,7 @@ import {
   isSDKThinkingTokensMessage,
   isSDKUserMessage,
   isToolUseBlock,
-} from '@neokai/shared/sdk/type-guards';
+} from '@hyperneo/shared/sdk/type-guards';
 import type { Database } from '../../storage/database';
 import { Logger } from '../logger';
 import { ErrorCategory, type ErrorManager } from '../error-manager';
@@ -51,7 +51,7 @@ import type { MessageQueue } from './message-queue';
 import type { QueryLifecycleManager } from './query-lifecycle-manager';
 import { RepeatedToolErrorGuardrail } from './repeated-tool-error-guardrail';
 import { getSessionModelInfo } from '../model-service';
-import { shouldUseNeoKaiCompactFallback } from './query-options-builder.js';
+import { shouldUseHyperNeoCompactFallback } from './query-options-builder.js';
 import { reserveBasedThreshold } from './context-tracker.js';
 
 /**
@@ -1148,18 +1148,18 @@ export class SDKMessageHandler {
         if (!providerId) {
           return;
         }
-        const shouldUseFallback = shouldUseNeoKaiCompactFallback(providerId);
+        const shouldUseFallback = shouldUseHyperNeoCompactFallback(providerId);
         const actualContextWindow = modelInfo?.contextWindow;
         if (shouldUseFallback && actualContextWindow && actualContextWindow > 0) {
-          const neoKaiCompactThreshold = reserveBasedThreshold(actualContextWindow, providerId);
+          const hyperNeoCompactThreshold = reserveBasedThreshold(actualContextWindow, providerId);
           if (
-            contextInfo.totalUsed >= neoKaiCompactThreshold &&
-            contextTracker.shouldCompactAt(neoKaiCompactThreshold)
+            contextInfo.totalUsed >= hyperNeoCompactThreshold &&
+            contextTracker.shouldCompactAt(hyperNeoCompactThreshold)
           ) {
             contextTracker.markCompactionTriggered();
             this.logger.info(
               `Triggering HyperNeo compaction fallback for session ${session.id} ` +
-                `(provider=${providerId}, ${contextInfo.totalUsed} >= ${neoKaiCompactThreshold} ` +
+                `(provider=${providerId}, ${contextInfo.totalUsed} >= ${hyperNeoCompactThreshold} ` +
                 `of ${actualContextWindow} tokens)`
             );
             void this.ctx.messageQueue.enqueue('/compact', /* internal */ true).catch((error) => {

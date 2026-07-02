@@ -108,7 +108,7 @@ jobs:
         working-directory: packages/daemon
         run: bun test ${{ matrix.test_path }}
         env:
-          NEOKAI_TEST_DISABLE_SANDBOX: '1'
+          HYPERNEO_TEST_DISABLE_SANDBOX: '1'
           ANTHROPIC_API_KEY: ${{ (matrix.module == 'cross-provider-3' || matrix.module == 'cross-provider-4') && secrets.ANTHROPIC_API_KEY || '' }}
           ANTHROPIC_AUTH_TOKEN: ""
           CLAUDE_CODE_OAUTH_TOKEN: ${{ (matrix.module == 'cross-provider-3' || matrix.module == 'cross-provider-4') && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
@@ -325,7 +325,7 @@ jobs:
           PORT=$(python3 -c 'import socket; s=socket.socket(socket.AF_INET, socket.SOCK_STREAM); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind(("",0)); print(s.getsockname()[1])')
           echo "Reserved port $PORT for binary"
 
-          NEOKAI_WORKSPACE_ROOT="$WORKSPACE" ./dist/bin/hyperneo-linux-x64 --port "$PORT" &
+          HYPERNEO_WORKSPACE_ROOT="$WORKSPACE" ./dist/bin/hyperneo-linux-x64 --port "$PORT" &
           BINARY_PID=$!
           trap 'kill $BINARY_PID 2>/dev/null; rm -rf "$WORKSPACE"' EXIT
 
@@ -351,7 +351,7 @@ jobs:
           xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" \
             bunx playwright test "tests/${{ matrix.test.path }}.e2e.ts"
         env:
-          NEOKAI_USE_DEV_PROXY: "1"
+          HYPERNEO_USE_DEV_PROXY: "1"
           ANTHROPIC_BASE_URL: "http://127.0.0.1:8000"
           ANTHROPIC_API_KEY: "sk-devproxy-test-key"
           ANTHROPIC_AUTH_TOKEN: ""

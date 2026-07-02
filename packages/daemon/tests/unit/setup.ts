@@ -91,7 +91,7 @@ mock.module('@anthropic-ai/claude-agent-sdk', () => {
   };
 });
 
-import { configureLogger, LogLevel } from '@neokai/shared';
+import { configureLogger, LogLevel } from '@hyperneo/shared';
 import { resetProviderRegistry } from '../../src/lib/providers/registry';
 
 // Set NODE_ENV to test
@@ -138,4 +138,4 @@ process.env.OPENAI_API_KEY = '';
 // isAvailable()=false when unset, which short-circuits the probe.
 process.env.KIMI_API_KEY = '';
 process.env.MOONSHOT_API_KEY = '';
-process.env.NEOKAI_ACP_COMMAND = '';
+process.env.HYPERNEO_ACP_COMMAND = '';

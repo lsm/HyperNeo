@@ -27,7 +27,7 @@ import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.t
 import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager.ts';
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
-import type { SpaceWorkflow, SpaceWorkflowRun } from '@neokai/shared';
+import type { SpaceWorkflow, SpaceWorkflowRun } from '@hyperneo/shared';
 
 // ---------------------------------------------------------------------------
 // DB helpers

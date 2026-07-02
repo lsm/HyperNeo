@@ -34,11 +34,11 @@ Once `npx` is present, proceed with the wrapper script. A global install of `pla
 ## Skill path (set once)
 
 ```bash
-export NEOKAI_SKILLS_HOME="${NEOKAI_SKILLS_HOME:-$HOME/.neokai/skills}"
-export PWCLI="$NEOKAI_SKILLS_HOME/playwright/scripts/playwright_cli.sh"
+export HYPERNEO_SKILLS_HOME="${HYPERNEO_SKILLS_HOME:-${NEOKAI_SKILLS_HOME:-$([ -d "$HOME/.hyperneo/skills" ] && echo "$HOME/.hyperneo/skills" || echo "$HOME/.neokai/skills")}}"
+export PWCLI="$HYPERNEO_SKILLS_HOME/playwright/scripts/playwright_cli.sh"
 ```
 
-HyperNeo skills install under `$NEOKAI_SKILLS_HOME` (default: `~/.neokai/skills`).
+HyperNeo skills install under `$HYPERNEO_SKILLS_HOME` (resolved from the env, then the legacy `NEOKAI_SKILLS_HOME`, then whichever data-dir skills folder exists).
 
 ## Quick start
 

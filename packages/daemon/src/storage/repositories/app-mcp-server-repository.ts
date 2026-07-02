@@ -7,14 +7,14 @@
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
-import { generateUUID } from '@neokai/shared';
+import { generateUUID } from '@hyperneo/shared';
 import type {
   AppMcpServer,
   AppMcpServerSource,
   AppMcpServerSourceType,
   CreateAppMcpServerRequest,
   UpdateAppMcpServerRequest,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import type { ReactiveDatabase } from '../reactive-database';
 import type { SQLiteValue } from '../types';
 

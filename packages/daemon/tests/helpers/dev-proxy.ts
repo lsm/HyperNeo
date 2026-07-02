@@ -219,7 +219,7 @@ export function createDevProxyController(options: DevProxyOptions = {}): DevProx
   const configPath = userConfigPath || path.join(devProxyDir, 'devproxyrc.json');
   const mocksPath = userMocksPath || path.join(devProxyDir, 'mocks.json');
   const logPath = path.join(devProxyDir, 'devproxy.log');
-  const captureLogsOnStop = process.env.NEOKAI_DEV_PROXY_CAPTURE_LOGS === '1';
+  const captureLogsOnStop = process.env.HYPERNEO_DEV_PROXY_CAPTURE_LOGS === '1';
 
   // Ensure .devproxy directory exists (may not exist in git worktrees)
   if (!fs.existsSync(devProxyDir)) {

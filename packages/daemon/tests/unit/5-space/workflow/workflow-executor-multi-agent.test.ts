@@ -28,8 +28,8 @@ import type { SpaceAgentLookup } from '../../../../src/lib/space/managers/space-
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
-import { resolveNodeAgents } from '@neokai/shared';
-import type { SpaceWorkerAgent, WorkflowNode } from '@neokai/shared';
+import { resolveNodeAgents } from '@hyperneo/shared';
+import type { SpaceWorkerAgent, WorkflowNode } from '@hyperneo/shared';
 
 // ---------------------------------------------------------------------------
 // DB helpers

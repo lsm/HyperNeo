@@ -10,7 +10,7 @@
  * 2. AI-based disambiguation for complex multi-room scenarios
  */
 
-import type { GitHubEvent, RoutingResult, SecurityCheckResult } from '@neokai/shared';
+import type { GitHubEvent, RoutingResult, SecurityCheckResult } from '@hyperneo/shared';
 import type { RoutingClassification } from './prompts/router-prompt';
 import { ROUTER_AGENT_SYSTEM_PROMPT } from './prompts/router-prompt';
 import { Logger } from '../logger';

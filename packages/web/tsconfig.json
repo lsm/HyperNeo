@@ -13,10 +13,10 @@
     "types": ["vitest/globals"],
     "paths": {
       "@/*": ["./*"],
-      "@neokai/shared": ["../shared/src/mod.ts"],
-      "@neokai/shared/*": ["../shared/src/*"],
-      "@neokai/ui": ["../ui/src/mod.ts"],
-      "@neokai/ui/*": ["../ui/src/*"]
+      "@hyperneo/shared": ["../shared/src/mod.ts"],
+      "@hyperneo/shared/*": ["../shared/src/*"],
+      "@hyperneo/ui": ["../ui/src/mod.ts"],
+      "@hyperneo/ui/*": ["../ui/src/*"]
     }
   },
   "include": ["src/**/*", "build.ts", "../shared/src/**/*", "../ui/src/**/*"],

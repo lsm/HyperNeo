@@ -1,4 +1,4 @@
-import type { NodeExecutionStatus } from '@neokai/shared';
+import type { NodeExecutionStatus } from '@hyperneo/shared';
 
 /**
  * Trie for matching validated external-event topic glob patterns.

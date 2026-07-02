@@ -14,8 +14,8 @@ import type { Database } from '../../../../src/storage/database';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { AuthManager } from '../../../../src/lib/auth-manager';
 import type { SettingsManager } from '../../../../src/lib/settings-manager';
-import type { MessageHub, Session } from '@neokai/shared';
-import { DEFAULT_GLOBAL_SETTINGS } from '@neokai/shared';
+import type { MessageHub, Session } from '@hyperneo/shared';
+import { DEFAULT_GLOBAL_SETTINGS } from '@hyperneo/shared';
 import type { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
 import type { JobQueueProcessor } from '../../../../src/storage/job-queue-processor';
 

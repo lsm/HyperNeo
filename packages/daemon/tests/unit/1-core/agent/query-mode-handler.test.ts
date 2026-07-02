@@ -9,8 +9,8 @@ import {
   QueryModeHandler,
   type QueryModeHandlerContext,
 } from '../../../../src/lib/agent/query-mode-handler';
-import type { Session } from '@neokai/shared';
-import type { SDKMessage } from '@neokai/shared/sdk';
+import type { Session } from '@hyperneo/shared';
+import type { SDKMessage } from '@hyperneo/shared/sdk';
 import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { Database } from '../../../../src/storage/database';

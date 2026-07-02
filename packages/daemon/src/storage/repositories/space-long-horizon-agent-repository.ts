@@ -1,5 +1,5 @@
 import type { Database as BunDatabase } from 'bun:sqlite';
-import { generateUUID } from '@neokai/shared';
+import { generateUUID } from '@hyperneo/shared';
 import type {
   CreateSpaceLongHorizonAgentParams,
   CreateSpaceLongHorizonAgentReminderParams,
@@ -13,7 +13,7 @@ import type {
   SpaceLongHorizonAgentReminder,
   SpaceLongHorizonAgentStatus,
   UpdateSpaceLongHorizonAgentParams,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import { getLongHorizonAgentTemplate } from '../../lib/space/agents/long-horizon-agent-templates';
 import type { SQLiteValue } from '../types';
 

@@ -19,7 +19,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup, act } from '@testing-library/preact';
 import { useState } from 'preact/hooks';
-import type { SpaceWorkerAgent, WorkflowNodeAgentOverride } from '@neokai/shared';
+import type { SpaceWorkerAgent, WorkflowNodeAgentOverride } from '@hyperneo/shared';
 import { WorkflowNodeCard } from '../WorkflowNodeCard';
 import type { NodeDraft, AgentTaskState } from '../WorkflowNodeCard';
 import { extractOverrideValue, buildOverride } from '../WorkflowNodeCard';

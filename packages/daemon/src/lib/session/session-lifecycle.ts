@@ -9,8 +9,8 @@
  * - Title generation and branch renaming
  */
 
-import type { Provider, Session, WorktreeMetadata, MessageHub } from '@neokai/shared';
-import { generateUUID } from '@neokai/shared';
+import type { Provider, Session, WorktreeMetadata, MessageHub } from '@hyperneo/shared';
+import { generateUUID } from '@hyperneo/shared';
 import type { Database } from '../../storage/database';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { WorktreeManager } from '../worktree-manager';

@@ -17,7 +17,7 @@ import type {
   SelectiveRewindPreview,
   SelectiveRewindResult,
   Session,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import type { Database } from '../../storage/database';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';

@@ -1,4 +1,4 @@
-import type { Gate, WorkflowChannel } from '@neokai/shared';
+import type { Gate, WorkflowChannel } from '@hyperneo/shared';
 import { describe, expect, it } from 'vitest';
 import { buildSemanticWorkflowEdges } from '../semanticWorkflowGraph';
 import type { VisualNode } from '../serialization';

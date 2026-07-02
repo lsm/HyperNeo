@@ -2,13 +2,13 @@
  * Shared worktree path utilities.
  *
  * Provides standalone functions for resolving worktree base directories
- * under `~/.neokai/projects/`. Used by both `WorktreeManager` (room sessions)
+ * under `~/.hyperneo/projects/`. Used by both `WorktreeManager` (room sessions)
  * and `SpaceWorktreeManager` (space task agents).
  */
 
+import { getDataDir } from './data-dir';
 import { basename, join, normalize } from 'node:path';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
 
 /**
  * Encode an absolute path to a filesystem-safe directory name.
@@ -51,18 +51,18 @@ export function getProjectShortKey(repoPath: string): string {
  * Resolve the worktree base directory for a git repository.
  *
  * Uses a short human-readable key (`{basename}-{hash8}`) instead of the full
- * encoded path, with a `.neokai-repo-root` sentinel file for collision detection.
+ * encoded path, with a `.hyperneo-repo-root` sentinel file for collision detection.
  *
  * Returns the directory where worktree subdirectories should be created, e.g.:
- *   `~/.neokai/projects/{shortKey}/worktrees`
+ *   `~/.hyperneo/projects/{shortKey}/worktrees`
  *
  * Collision handling:
- * - First use   → create `~/.neokai/projects/{shortKey}/` and write sentinel.
+ * - First use   → create `~/.hyperneo/projects/{shortKey}/` and write sentinel.
  * - Same repo   → sentinel matches; proceed normally.
  * - Collision   → sentinel belongs to a different repo; fall back to `encodeRepoPath`.
  * - No sentinel → dir was created by an older HyperNeo version; write sentinel and proceed.
  *
- * For testing, set TEST_WORKTREE_BASE_DIR to override the `~/.neokai` prefix.
+ * For testing, set TEST_WORKTREE_BASE_DIR to override the `~/.hyperneo` prefix.
  *
  * @param gitRoot  - Absolute path to the git repository root
  * @param onCollision - Optional callback invoked when a hash collision is detected
@@ -77,15 +77,19 @@ export function getWorktreeBaseDir(
   const testBaseDir = process.env.TEST_WORKTREE_BASE_DIR;
   const projectDir = testBaseDir
     ? join(testBaseDir, shortKey)
-    : join(homedir(), '.neokai', 'projects', shortKey);
+    : join(getDataDir(), 'projects', shortKey);
 
-  const sentinelFile = join(projectDir, '.neokai-repo-root');
+  const sentinelFile = join(projectDir, '.hyperneo-repo-root');
+  // Pre-rebrand installs wrote this legacy sentinel; read it for collision
+  // detection so an upgraded project dir is not mistaken for a fresh dir.
+  const legacySentinelFile = join(projectDir, '.neokai-repo-root');
 
   if (!existsSync(projectDir)) {
     mkdirSync(projectDir, { recursive: true });
     writeFileSync(sentinelFile, normalizedGitRoot);
-  } else if (existsSync(sentinelFile)) {
-    const storedPath = readFileSync(sentinelFile, 'utf-8').trim();
+  } else if (existsSync(sentinelFile) || existsSync(legacySentinelFile)) {
+    const existingSentinel = existsSync(sentinelFile) ? sentinelFile : legacySentinelFile;
+    const storedPath = readFileSync(existingSentinel, 'utf-8').trim();
     if (storedPath !== normalizedGitRoot) {
       const msg = `Short key collision detected for "${shortKey}": expected "${storedPath}", got "${normalizedGitRoot}". Falling back to full encoding.`;
       onCollision?.(msg);
@@ -93,7 +97,7 @@ export function getWorktreeBaseDir(
       const encodedPath = encodeRepoPath(normalizedGitRoot);
       const fallbackProjectDir = testBaseDir
         ? join(testBaseDir, encodedPath)
-        : join(homedir(), '.neokai', 'projects', encodedPath);
+        : join(getDataDir(), 'projects', encodedPath);
       return join(fallbackProjectDir, 'worktrees');
     }
   } else {

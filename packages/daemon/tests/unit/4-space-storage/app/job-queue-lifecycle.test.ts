@@ -4,7 +4,7 @@
  * Verifies:
  * - DaemonAppContext includes jobProcessor and jobQueue
  * - Cleanup stops the processor before messageHub (ordering guaranteed by stop() resolving)
- * - maxConcurrent is configurable via NEOKAI_JOB_QUEUE_MAX_CONCURRENT env var
+ * - maxConcurrent is configurable via HYPERNEO_JOB_QUEUE_MAX_CONCURRENT env var
  */
 
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
@@ -90,10 +90,10 @@ describe('JobQueueProcessor lifecycle', () => {
   });
 
   it('maxConcurrent defaults to 5 and is enforced by the processor', async () => {
-    const savedEnv = process.env.NEOKAI_JOB_QUEUE_MAX_CONCURRENT;
-    delete process.env.NEOKAI_JOB_QUEUE_MAX_CONCURRENT;
+    const savedEnv = process.env.HYPERNEO_JOB_QUEUE_MAX_CONCURRENT;
+    delete process.env.HYPERNEO_JOB_QUEUE_MAX_CONCURRENT;
 
-    const maxConcurrent = Number(process.env.NEOKAI_JOB_QUEUE_MAX_CONCURRENT) || 5;
+    const maxConcurrent = Number(process.env.HYPERNEO_JOB_QUEUE_MAX_CONCURRENT) || 5;
     const resolvers: Array<() => void> = [];
 
     const processor = new JobQueueProcessor(repo, { maxConcurrent, pollIntervalMs: 5000 });
@@ -113,15 +113,15 @@ describe('JobQueueProcessor lifecycle', () => {
     await processor.stop();
 
     if (savedEnv !== undefined) {
-      process.env.NEOKAI_JOB_QUEUE_MAX_CONCURRENT = savedEnv;
+      process.env.HYPERNEO_JOB_QUEUE_MAX_CONCURRENT = savedEnv;
     }
   });
 
-  it('maxConcurrent reads from NEOKAI_JOB_QUEUE_MAX_CONCURRENT and is enforced by the processor', async () => {
-    const savedEnv = process.env.NEOKAI_JOB_QUEUE_MAX_CONCURRENT;
-    process.env.NEOKAI_JOB_QUEUE_MAX_CONCURRENT = '3';
+  it('maxConcurrent reads from HYPERNEO_JOB_QUEUE_MAX_CONCURRENT and is enforced by the processor', async () => {
+    const savedEnv = process.env.HYPERNEO_JOB_QUEUE_MAX_CONCURRENT;
+    process.env.HYPERNEO_JOB_QUEUE_MAX_CONCURRENT = '3';
 
-    const maxConcurrent = Number(process.env.NEOKAI_JOB_QUEUE_MAX_CONCURRENT) || 5;
+    const maxConcurrent = Number(process.env.HYPERNEO_JOB_QUEUE_MAX_CONCURRENT) || 5;
     const resolvers: Array<() => void> = [];
 
     const processor = new JobQueueProcessor(repo, { maxConcurrent, pollIntervalMs: 5000 });
@@ -140,9 +140,9 @@ describe('JobQueueProcessor lifecycle', () => {
     await processor.stop();
 
     if (savedEnv !== undefined) {
-      process.env.NEOKAI_JOB_QUEUE_MAX_CONCURRENT = savedEnv;
+      process.env.HYPERNEO_JOB_QUEUE_MAX_CONCURRENT = savedEnv;
     } else {
-      delete process.env.NEOKAI_JOB_QUEUE_MAX_CONCURRENT;
+      delete process.env.HYPERNEO_JOB_QUEUE_MAX_CONCURRENT;
     }
   });
 

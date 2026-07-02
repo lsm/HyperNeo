@@ -15,7 +15,7 @@ import {
  * Dev proxy mode detection - when using devproxy, API responses are instant
  * so we can use much shorter timeouts
  */
-const IS_MOCK = process.env.NEOKAI_USE_DEV_PROXY === '1';
+const IS_MOCK = process.env.HYPERNEO_USE_DEV_PROXY === '1';
 
 /**
  * Open the Session options dropdown menu

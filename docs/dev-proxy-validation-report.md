@@ -29,7 +29,7 @@ The validation process identified and resolved a critical issue with Dev Proxy i
 
 ## Test Results
 
-### Mock SDK Mode (NEOKAI_AGENT_SDK_MOCK=1)
+### Mock SDK Mode (HYPERNEO_AGENT_SDK_MOCK=1)
 
 **Status:** Mostly Working
 **Results:** 3 out of 4 tests passing in multiturn-conversation.test.ts
@@ -44,7 +44,7 @@ Ran 4 tests across 1 file. [5.80s]
 
 **Note:** The failing test has a test bug (expects "idle" to be contained in ["queued", "processing"], which is a logic error unrelated to mocking).
 
-### Dev Proxy Mode (NEOKAI_USE_DEV_PROXY=1)
+### Dev Proxy Mode (HYPERNEO_USE_DEV_PROXY=1)
 
 **Status:** ✅ Working (after ANTHROPIC_BASE_URL fix)
 **Results:** 4 out of 4 tests passing in multiturn-conversation.test.ts
@@ -265,8 +265,8 @@ HTTPS_PROXY=http://127.0.0.1:8000 curl -X POST https://api.anthropic.com/v1/mess
 
 | Mode | Status | Avg Time | Notes |
 |------|--------|----------|-------|
-| Mock SDK (`NEOKAI_AGENT_SDK_MOCK=1`) | Working | ~5.8s | 3/4 tests pass (1 test bug) |
-| Dev Proxy (`NEOKAI_USE_DEV_PROXY=1`) | ✅ Working | ~13s/file | 4/4 tests pass with ANTHROPIC_BASE_URL fix |
+| Mock SDK (`HYPERNEO_AGENT_SDK_MOCK=1`) | Working | ~5.8s | 3/4 tests pass (1 test bug) |
+| Dev Proxy (`HYPERNEO_USE_DEV_PROXY=1`) | ✅ Working | ~13s/file | 4/4 tests pass with ANTHROPIC_BASE_URL fix |
 
 **Notes:**
 - Dev Proxy is slower than Mock SDK (~2x) due to HTTP overhead
@@ -303,8 +303,8 @@ Modified Dev Proxy health check from HTTP fetch to TCP connection for more relia
 
 | Test Type | Recommended Mode | Reason |
 |-----------|------------------|--------|
-| Unit tests | Mock SDK (`NEOKAI_AGENT_SDK_MOCK=1`) | Fastest execution |
-| Integration tests | Dev Proxy (`NEOKAI_USE_DEV_PROXY=1`) | More realistic HTTP behavior |
+| Unit tests | Mock SDK (`HYPERNEO_AGENT_SDK_MOCK=1`) | Fastest execution |
+| Integration tests | Dev Proxy (`HYPERNEO_USE_DEV_PROXY=1`) | More realistic HTTP behavior |
 | CI/CD pipelines | Mock SDK | Faster, no external dependencies |
 | Manual testing | Either | Use Dev Proxy for API mocking, Mock SDK for speed |
 
@@ -340,8 +340,8 @@ Ran 4 tests across 1 file. [53.59s]
 **Mode Comparison:**
 | Mode | Status | Avg Time | Use Case |
 |------|--------|----------|----------|
-| Mock SDK (`NEOKAI_AGENT_SDK_MOCK=1`) | Working | ~5.8s | Fast unit tests |
-| Dev Proxy (`NEOKAI_USE_DEV_PROXY=1`) | ✅ Working | ~13s/file | Realistic HTTP testing |
+| Mock SDK (`HYPERNEO_AGENT_SDK_MOCK=1`) | Working | ~5.8s | Fast unit tests |
+| Dev Proxy (`HYPERNEO_USE_DEV_PROXY=1`) | ✅ Working | ~13s/file | Realistic HTTP testing |
 
 **Recommendation:** Use Dev Proxy mode for integration tests where realistic HTTP behavior matters, and Mock SDK for fast unit tests.
 

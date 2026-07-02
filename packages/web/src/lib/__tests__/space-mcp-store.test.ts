@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import type { LiveQuerySnapshotEvent, LiveQueryDeltaEvent, SpaceMcpEntry } from '@neokai/shared';
+import type { LiveQuerySnapshotEvent, LiveQueryDeltaEvent, SpaceMcpEntry } from '@hyperneo/shared';
 
 type EventHandler<T = unknown> = (data: T) => void;
 

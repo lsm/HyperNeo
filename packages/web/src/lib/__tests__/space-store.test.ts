@@ -22,7 +22,7 @@ import type {
   SpaceTaskActivityMember,
   SpaceWorkflow,
   SpaceWorkflowRun,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import { signal } from '@preact/signals';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -201,7 +201,7 @@ function makeWorkflow(id: string): SpaceWorkflow {
   };
 }
 
-function makeWorkflowSummary(id: string): import('@neokai/shared').SpaceWorkflowSummary {
+function makeWorkflowSummary(id: string): import('@hyperneo/shared').SpaceWorkflowSummary {
   return {
     id,
     spaceId: 'space-1',

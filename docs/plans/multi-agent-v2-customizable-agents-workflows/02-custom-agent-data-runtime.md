@@ -94,7 +94,7 @@ Define the custom agent types and build the data access + business logic layers 
    - Wraps repository with validation:
      - `name` unique within space
      - `tools` contains only known tool names (reference `KNOWN_TOOLS`)
-     - `model` is a recognized model ID (use models list from `@neokai/shared`)
+     - `model` is a recognized model ID (use models list from `@hyperneo/shared`)
    - **Deletion protection**: If agent is referenced by workflow steps, return error with list of referencing workflow names
 
 5. Write unit tests for repository and manager:
@@ -104,7 +104,7 @@ Define the custom agent types and build the data access + business logic layers 
    - Deletion protection when referenced by workflows
 
 **Acceptance criteria:**
-- Types are defined and exported from `@neokai/shared`
+- Types are defined and exported from `@hyperneo/shared`
 - `KNOWN_TOOLS` constant is the single source of truth for tool names
 - Repository handles all CRUD with JSON serialization
 - Manager validates uniqueness, tools, and models

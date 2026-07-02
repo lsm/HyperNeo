@@ -6,7 +6,7 @@
  * Extracted from ChatContainer.tsx for better separation of concerns.
  */
 
-import type { ArchiveSessionResponse } from '@neokai/shared';
+import type { ArchiveSessionResponse } from '@hyperneo/shared';
 import { borderColors } from '../lib/design-tokens';
 import { Button } from './ui/Button';
 

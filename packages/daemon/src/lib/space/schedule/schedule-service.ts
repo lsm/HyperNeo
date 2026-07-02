@@ -18,7 +18,7 @@ import type {
   TaskSchedule,
   TaskScheduleStatus,
   TaskScheduleTriggerType,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import type { TaskScheduleRepository } from '../../../storage/repositories/task-schedule-repository';
 import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository';
 import type { SpaceRepository } from '../../../storage/repositories/space-repository';

@@ -5,14 +5,14 @@
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
-import { generateUUID } from '@neokai/shared';
+import { generateUUID } from '@hyperneo/shared';
 import type {
   NeoTask,
   TaskFilter,
   CreateTaskParams,
   UpdateTaskParams,
   TaskRestriction,
-} from '@neokai/shared/types/neo';
+} from '@hyperneo/shared/types/neo';
 import type { SQLiteValue } from '../types';
 import type { ReactiveDatabase } from '../reactive-database';
 import type { ShortIdAllocator } from '../../lib/short-id-allocator';

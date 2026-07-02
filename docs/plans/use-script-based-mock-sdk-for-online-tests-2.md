@@ -16,7 +16,7 @@ The codebase already has a comprehensive mock SDK (`packages/daemon/tests/helper
 
 Currently (11 tests already support mock mode):
 - `agent-pipeline.test.ts` - uses mock SDK (always)
-- `room-chat-constraints.test.ts` - supports mock mode via `NEOKAI_AGENT_SDK_MOCK=1`
+- `room-chat-constraints.test.ts` - supports mock mode via `HYPERNEO_AGENT_SDK_MOCK=1`
 - `message-persistence.test.ts` - supports mock mode
 - `message-delivery-mode-queue.test.ts` - supports mock mode
 - `rpc-message-handlers.test.ts` - supports mock mode
@@ -60,7 +60,7 @@ Convert room tests to support mock mode (similar to `room-chat-constraints.test.
 
 Reference pattern from `room-chat-constraints.test.ts`:
 ```typescript
-const IS_MOCK = !!process.env.NEOKAI_AGENT_SDK_MOCK;
+const IS_MOCK = !!process.env.HYPERNEO_AGENT_SDK_MOCK;
 const SETUP_TIMEOUT = IS_MOCK ? 10000 : 30000;
 const IDLE_TIMEOUT = IS_MOCK ? 5000 : 120000;
 
@@ -76,7 +76,7 @@ Files to convert:
 
 
 **Acceptance Criteria:**
-- Tests pass with `NEOKAI_AGENT_SDK_MOCK=1` with mock timeout ≤5s (idle/response time)
+- Tests pass with `HYPERNEO_AGENT_SDK_MOCK=1` with mock timeout ≤5s (idle/response time)
 - Tests still work with real API (default mode) with timeout ≥60s (idle/response time)
 - Total test execution time reduced by ≥50% compared to real API mode
 - Follows the IS_MOCK pattern for conditional timeouts
@@ -88,7 +88,7 @@ Files to convert:
 Convert any feature tests identified in Task 1 that aren't already supporting mock:
 
 Reference pattern (same as Task 2):
-- Use `NEOKAI_AGENT_SDK_MOCK` environment variable detection
+- Use `HYPERNEO_AGENT_SDK_MOCK` environment variable detection
 - Set conditional timeouts based on mock vs real mode
 
 Files to convert (from Task 1 audit):
@@ -123,7 +123,7 @@ This task runs only if gaps are identified during Tasks 2-3 conversion work.
 **Agent: coder**
 
 Update CI configuration to run converted tests in mock mode by default:
-- Modify test runner scripts to set `NEOKAI_AGENT_SDK_MOCK=1` for appropriate tests
+- Modify test runner scripts to set `HYPERNEO_AGENT_SDK_MOCK=1` for appropriate tests
 - Ensure API-dependent tests still run with real API (perhaps on a separate schedule or with explicit flag)
 - Document which tests require real API
 
@@ -138,7 +138,7 @@ Update CI configuration to run converted tests in mock mode by default:
 **Agent: general**
 
 Run all converted tests to verify they work correctly:
-- Run with `NEOKAI_AGENT_SDK_MOCK=1` (mock mode) - all should pass
+- Run with `HYPERNEO_AGENT_SDK_MOCK=1` (mock mode) - all should pass
 - Run without the env var - tests that can't use mock should skip or fail gracefully
 - Measure execution time improvement
 

@@ -96,7 +96,7 @@ Replace the `setInterval`-based polling loop in `GitHubPollingService` with self
 
 **Description:** Create an online test verifying GitHub polling works end-to-end through the job queue, including self-scheduling and recovery after restart.
 
-**Note on GitHub API mocking:** The dev proxy (`NEOKAI_USE_DEV_PROXY=1`) only intercepts Anthropic API calls, not GitHub REST API calls. For this test, the focus is on verifying the **job queue mechanics** (enqueue, process, self-schedule, dedup) rather than actual GitHub API responses. The test should mock or stub the `GitHubPollingService.triggerPoll()` method to avoid real GitHub API calls, or configure the GitHub service with a test repository that doesn't require authentication.
+**Note on GitHub API mocking:** The dev proxy (`HYPERNEO_USE_DEV_PROXY=1`) only intercepts Anthropic API calls, not GitHub REST API calls. For this test, the focus is on verifying the **job queue mechanics** (enqueue, process, self-schedule, dedup) rather than actual GitHub API responses. The test should mock or stub the `GitHubPollingService.triggerPoll()` method to avoid real GitHub API calls, or configure the GitHub service with a test repository that doesn't require authentication.
 
 **Agent type:** coder
 
@@ -109,7 +109,7 @@ Replace the `setInterval`-based polling loop in `GitHubPollingService` with self
    - Job transitions through pending -> processing -> completed
    - Next poll job is automatically scheduled
    - No duplicate poll jobs exist simultaneously
-5. Run with `NEOKAI_USE_DEV_PROXY=1`
+5. Run with `HYPERNEO_USE_DEV_PROXY=1`
 
 **Acceptance criteria:**
 - Online test verifies end-to-end GitHub polling via job queue

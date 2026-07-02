@@ -5,7 +5,7 @@ import type {
   ModelInfo,
   Provider,
   WorkspaceHistoryEntry,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import { connectionState, globalSettings, sessions } from '../lib/state.ts';
 import { navigateToSession } from '../lib/router.ts';
 import {
@@ -42,7 +42,7 @@ interface NewChatSelection {
   model: NewChatModelSelection | null;
 }
 
-const NEW_CHAT_SELECTION_KEY = 'neokai_new_chat_selection';
+const NEW_CHAT_SELECTION_KEY = 'hyperneo_new_chat_selection';
 const DEFAULT_NEW_CHAT_SELECTION: NewChatSelection = {
   project: null,
   mode: 'worktree',

@@ -87,8 +87,8 @@ Write an online test that verifies the planner agent session can invoke `WebSear
    - Creates a room and a planner session
    - Sends a goal message that explicitly instructs the planner to search the web for a current technology fact
    - Asserts that the agent's output includes a `WebSearch` tool call (check message history for tool use blocks)
-   - Uses `NEOKAI_USE_DEV_PROXY=1` mock infrastructure
-4. Run the test with `cd packages/daemon && NEOKAI_USE_DEV_PROXY=1 bun test ./tests/online/room/planner-websearch.test.ts`.
+   - Uses `HYPERNEO_USE_DEV_PROXY=1` mock infrastructure
+4. Run the test with `cd packages/daemon && HYPERNEO_USE_DEV_PROXY=1 bun test ./tests/online/room/planner-websearch.test.ts`.
 5. Ensure the test fails (not skips) if credentials are absent, per the hard-fail rule.
 
 **Acceptance criteria:**

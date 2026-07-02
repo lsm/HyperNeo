@@ -6,7 +6,7 @@
 import { render, fireEvent } from '@testing-library/preact';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import MentionToken from '../MentionToken';
-import type { ReferenceMention, ReferenceMetadata } from '@neokai/shared';
+import type { ReferenceMention, ReferenceMetadata } from '@hyperneo/shared';
 
 const taskMention: ReferenceMention = {
   type: 'task',

@@ -15,7 +15,7 @@ import type {
   AcpJsonRpcRequest,
   AcpJsonRpcResponse,
   AcpTransportOptions,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import { AcpClient } from '../../../../src/lib/acp/acp-client';
 import { AcpQueryAdapter } from '../../../../src/lib/acp/acp-query-adapter';
 

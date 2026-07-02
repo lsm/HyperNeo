@@ -36,7 +36,7 @@ import type {
   SDKLocalCommandOutputMessage,
   SDKStatusMessage,
   SDKWorkerShuttingDownMessage,
-} from '@neokai/shared/sdk/sdk.d.ts';
+} from '@hyperneo/shared/sdk/sdk.d.ts';
 import {
   isSDKSystemInit,
   isSDKCompactBoundary,
@@ -44,7 +44,7 @@ import {
   isSDKHookResponse,
   isSDKAPIRetryMessage,
   isSDKModelRefusalFallbackMessage,
-} from '@neokai/shared/sdk/type-guards';
+} from '@hyperneo/shared/sdk/type-guards';
 import { customColors } from '../../lib/design-tokens.ts';
 
 type SystemMessage = Extract<SDKMessage, { type: 'system' }>;

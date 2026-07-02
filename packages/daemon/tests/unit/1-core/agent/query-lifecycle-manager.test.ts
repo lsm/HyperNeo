@@ -18,7 +18,7 @@ import {
   type QueryLifecycleManagerContext,
 } from '../../../../src/lib/agent/query-lifecycle-manager';
 import { MessageQueue } from '../../../../src/lib/agent/message-queue';
-import type { Session, MessageHub } from '@neokai/shared';
+import type { Session, MessageHub } from '@hyperneo/shared';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { Database } from '../../../../src/storage/database';
 import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
@@ -36,7 +36,7 @@ describe('QueryLifecycleManager', () => {
   let updateSessionSpy: ReturnType<typeof mock>;
   let updateMessageStatusSpy: ReturnType<typeof mock>;
   let getMessagesByStatusSpy: ReturnType<typeof mock>;
-  let saveNeokaiActionMessageSpy: ReturnType<typeof mock>;
+  let saveHyperNeoActionMessageSpy: ReturnType<typeof mock>;
   let publishSpy: ReturnType<typeof mock>;
   let setIdleSpy: ReturnType<typeof mock>;
   let setQueuedSpy: ReturnType<typeof mock>;
@@ -82,7 +82,7 @@ describe('QueryLifecycleManager', () => {
         },
       ];
     });
-    saveNeokaiActionMessageSpy = mock(() => 'row-id-mock');
+    saveHyperNeoActionMessageSpy = mock(() => 'row-id-mock');
     publishSpy = mock(async () => {});
     setIdleSpy = mock(async () => {});
     setQueuedSpy = mock(async () => {});
@@ -104,7 +104,7 @@ describe('QueryLifecycleManager', () => {
         updateSession: updateSessionSpy,
         updateMessageStatus: updateMessageStatusSpy,
         getMessagesByStatus: getMessagesByStatusSpy,
-        saveNeokaiActionMessage: saveNeokaiActionMessageSpy,
+        saveHyperNeoActionMessage: saveHyperNeoActionMessageSpy,
       } as unknown as Database,
       messageHub: {
         event: publishSpy,
@@ -889,7 +889,7 @@ describe('QueryLifecycleManager', () => {
 
         expect(result).toBe('started');
         expect(startStreamingCalled).toBe(true);
-        expect(saveNeokaiActionMessageSpy).not.toHaveBeenCalled();
+        expect(saveHyperNeoActionMessageSpy).not.toHaveBeenCalled();
       } finally {
         delete process.env.TEST_SDK_SESSION_DIR;
         rmSync(tmpTestDir, { recursive: true, force: true });
@@ -1000,7 +1000,7 @@ describe('QueryLifecycleManager', () => {
         await expect(manager.startQueryAndEnqueue('msg-123', 'Hello')).resolves.toBeUndefined();
 
         expect(startStreamingCalled).toBe(false);
-        expect(saveNeokaiActionMessageSpy).toHaveBeenCalled();
+        expect(saveHyperNeoActionMessageSpy).toHaveBeenCalled();
         expect(setQueuedSpy).toHaveBeenCalledWith('msg-123');
         expect(enqueueSpy).not.toHaveBeenCalled();
         expect(internalPublishSpy).not.toHaveBeenCalledWith('message.sent', {
@@ -1598,9 +1598,9 @@ describe('QueryLifecycleManager', () => {
           expect(startStreamingCalled).toBe(false);
 
           // A sdk_resume_choice action message must be saved to DB
-          expect(saveNeokaiActionMessageSpy).toHaveBeenCalledTimes(1);
-          const savedMsg = saveNeokaiActionMessageSpy.mock.calls[0][1];
-          expect(savedMsg.type).toBe('neokai_action');
+          expect(saveHyperNeoActionMessageSpy).toHaveBeenCalledTimes(1);
+          const savedMsg = saveHyperNeoActionMessageSpy.mock.calls[0][1];
+          expect(savedMsg.type).toBe('hyperneo_action');
           expect(savedMsg.action).toBe('sdk_resume_choice');
           expect(savedMsg.resolved).toBe(false);
           expect(savedMsg.session_id).toBe('test-session');
@@ -1611,7 +1611,7 @@ describe('QueryLifecycleManager', () => {
             expect.objectContaining({
               added: expect.arrayContaining([
                 expect.objectContaining({
-                  type: 'neokai_action',
+                  type: 'hyperneo_action',
                   action: 'sdk_resume_choice',
                 }),
               ]),

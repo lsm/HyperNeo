@@ -40,7 +40,7 @@ import {
   ActivationError,
   ARCHIVED_TASK_ERROR_MESSAGE,
 } from '../../../../src/lib/space/runtime/channel-router.ts';
-import type { Gate, SpaceWorkflow, WorkflowChannel } from '@neokai/shared';
+import type { Gate, SpaceWorkflow, WorkflowChannel } from '@hyperneo/shared';
 import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
 import type {
   DaemonInternalEventMap,

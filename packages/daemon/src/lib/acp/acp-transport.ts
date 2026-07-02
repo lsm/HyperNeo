@@ -6,7 +6,7 @@ import type {
   AcpJsonRpcNotification,
   AcpJsonRpcRequest,
   AcpJsonRpcResponse,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import { Logger } from '../logger';
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes — long enough for session/prompt turns

@@ -14,7 +14,7 @@
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
-import { generateUUID } from '@neokai/shared';
+import { generateUUID } from '@hyperneo/shared';
 import type {
   SpaceWorkflow,
   SpaceWorkflowSummary,
@@ -28,7 +28,7 @@ import type {
   CreateSpaceWorkflowParams,
   PostApprovalRoute,
   UpdateSpaceWorkflowParams,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import { Logger } from '../../lib/logger';
 
 const log = new Logger('space-workflow-repository');
@@ -93,7 +93,7 @@ interface NodeConfigJson {
    * `rowToNode` strips it on load and logs a warning so the row can be
    * re-saved cleanly the next time the workflow is updated. The field is
    * intentionally untyped (`unknown`) because the action union has been
-   * deleted from `@neokai/shared`.
+   * deleted from `@hyperneo/shared`.
    */
   completionActions?: unknown;
 }

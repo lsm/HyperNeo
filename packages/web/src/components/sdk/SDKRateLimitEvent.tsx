@@ -1,4 +1,4 @@
-import type { SDKRateLimitEvent as SDKRateLimitEventType } from '@neokai/shared/sdk/sdk.d.ts';
+import type { SDKRateLimitEvent as SDKRateLimitEventType } from '@hyperneo/shared/sdk/sdk.d.ts';
 
 interface Props {
   message: SDKRateLimitEventType;

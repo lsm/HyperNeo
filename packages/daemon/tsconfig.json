@@ -10,8 +10,8 @@
     "noEmit": true,
     "paths": {
       "@/*": ["./src/*"],
-      "@neokai/shared": ["../shared/src/mod.ts"],
-      "@neokai/shared/*": ["../shared/src/*"]
+      "@hyperneo/shared": ["../shared/src/mod.ts"],
+      "@hyperneo/shared/*": ["../shared/src/*"]
     }
   },
   "include": ["src/**/*", "main.ts", "../shared/src/**/*", "research-context-info.ts"],

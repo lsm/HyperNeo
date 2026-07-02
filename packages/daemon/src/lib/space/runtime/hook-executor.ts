@@ -11,7 +11,7 @@ import type {
   WorkflowHookResult,
   WorkflowHookScriptValidator,
   WorkflowHookValidatorId,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import {
   collectWithMaxBuffer,
   deepMergeWithDepthLimit,
@@ -65,10 +65,41 @@ export interface HookExecutorResult {
 const DEFAULT_TIMEOUT_MS = 30_000;
 
 /** Environment variable prefixes that are stripped from the restricted env. */
-const RESTRICTED_ENV_PREFIXES = ['ANTHROPIC_', 'CLAUDE_', 'GLM_', 'ZHIPU_', 'COPILOT_', 'NEOKAI_'];
+const RESTRICTED_ENV_PREFIXES = [
+  'ANTHROPIC_',
+  'CLAUDE_',
+  'GLM_',
+  'ZHIPU_',
+  'COPILOT_',
+  'HYPERNEO_',
+  'NEOKAI_',
+];
 
 /** Environment variable keys matching this regex are stripped. */
 const RESTRICTED_ENV_KEY_PATTERN = /SECRET|TOKEN|PASSWORD|CREDENTIAL|API_KEY/i;
+
+/**
+ * Hook-specific env vars injected into every hook script under the canonical
+ * `HYPERNEO_*` names (a legacy `NEOKAI_*` alias is mirrored alongside each so
+ * hook scripts authored before the rename keep seeing values).
+ */
+const HOOK_INJECTED_ENV_KEYS = [
+  'HYPERNEO_HOOK_ID',
+  'HYPERNEO_WORKFLOW_RUN_ID',
+  'HYPERNEO_WORKSPACE_PATH',
+  'HYPERNEO_METHOD_NAME',
+  'HYPERNEO_NODE_ID',
+  'HYPERNEO_NODE_NAME',
+  'HYPERNEO_SESSION_ID',
+  'HYPERNEO_TASK_ID',
+  'HYPERNEO_WORKFLOW_START_ISO',
+  'HYPERNEO_TARGET_NODE',
+  'HYPERNEO_PARAMS_JSON',
+  'HYPERNEO_HOOK_LOCAL_STATE_JSON',
+  'HYPERNEO_CURRENT_ARTIFACTS_JSON',
+  'HYPERNEO_PERMITTED_EXTERNAL_LOOKUPS',
+  'HYPERNEO_HOOK_TEMPLATE_DATA_JSON',
+] as const;
 
 /** Keys that are always allowed regardless of prefix/pattern. */
 const ALWAYS_ALLOWED_ENV_KEYS = new Set([
@@ -79,7 +110,7 @@ const ALWAYS_ALLOWED_ENV_KEYS = new Set([
   'LANG',
   'TERM',
   'TMPDIR',
-  'NEOKAI_VALIDATION_BASE_REF',
+  'HYPERNEO_VALIDATION_BASE_REF',
 ]);
 
 /** GitHub credential keys — only injected when hook declares externalLookups: ['github']. */
@@ -207,62 +238,89 @@ function buildHookRestrictedEnv(
   }
 
   // Inject hook-specific environment variables
-  env['NEOKAI_HOOK_ID'] = context.hookId;
-  env['NEOKAI_WORKFLOW_RUN_ID'] = context.runId;
-  env['NEOKAI_WORKSPACE_PATH'] = context.workspacePath;
-  env['NEOKAI_METHOD_NAME'] = context.methodName;
-  env['NEOKAI_NODE_ID'] = context.nodeId;
-  env['NEOKAI_NODE_NAME'] = context.nodeName;
-  env['NEOKAI_SESSION_ID'] = context.sessionId;
-  env['NEOKAI_TASK_ID'] = context.taskId;
+  env['HYPERNEO_HOOK_ID'] = context.hookId;
+  env['HYPERNEO_WORKFLOW_RUN_ID'] = context.runId;
+  env['HYPERNEO_WORKSPACE_PATH'] = context.workspacePath;
+  env['HYPERNEO_METHOD_NAME'] = context.methodName;
+  env['HYPERNEO_NODE_ID'] = context.nodeId;
+  env['HYPERNEO_NODE_NAME'] = context.nodeName;
+  env['HYPERNEO_SESSION_ID'] = context.sessionId;
+  env['HYPERNEO_TASK_ID'] = context.taskId;
 
   const workflowRunCreatedAt = (context.workflowRunCreatedAt ??
     context.templateData?.workflowRunCreatedAt ??
     context.templateData?.runCreatedAt) as unknown;
   if (typeof workflowRunCreatedAt === 'string') {
-    env['NEOKAI_WORKFLOW_START_ISO'] = workflowRunCreatedAt;
+    env['HYPERNEO_WORKFLOW_START_ISO'] = workflowRunCreatedAt;
   } else if (typeof workflowRunCreatedAt === 'number' && Number.isFinite(workflowRunCreatedAt)) {
-    env['NEOKAI_WORKFLOW_START_ISO'] = new Date(workflowRunCreatedAt).toISOString();
+    env['HYPERNEO_WORKFLOW_START_ISO'] = new Date(workflowRunCreatedAt).toISOString();
   }
 
   if (context.targetNode) {
-    env['NEOKAI_TARGET_NODE'] = context.targetNode;
+    env['HYPERNEO_TARGET_NODE'] = context.targetNode;
   }
 
   try {
-    env['NEOKAI_PARAMS_JSON'] = JSON.stringify(context.params);
+    env['HYPERNEO_PARAMS_JSON'] = JSON.stringify(context.params);
   } catch {
-    env['NEOKAI_PARAMS_JSON'] = '{}';
+    env['HYPERNEO_PARAMS_JSON'] = '{}';
   }
 
   try {
-    env['NEOKAI_HOOK_LOCAL_STATE_JSON'] = JSON.stringify(context.hookLocalState);
+    env['HYPERNEO_HOOK_LOCAL_STATE_JSON'] = JSON.stringify(context.hookLocalState);
   } catch {
-    env['NEOKAI_HOOK_LOCAL_STATE_JSON'] = '{}';
+    env['HYPERNEO_HOOK_LOCAL_STATE_JSON'] = '{}';
   }
 
   try {
-    env['NEOKAI_CURRENT_ARTIFACTS_JSON'] = JSON.stringify(context.currentArtifacts);
+    env['HYPERNEO_CURRENT_ARTIFACTS_JSON'] = JSON.stringify(context.currentArtifacts);
   } catch {
-    env['NEOKAI_CURRENT_ARTIFACTS_JSON'] = '[]';
+    env['HYPERNEO_CURRENT_ARTIFACTS_JSON'] = '[]';
   }
 
   if (context.permittedExternalLookups.length > 0) {
-    env['NEOKAI_PERMITTED_EXTERNAL_LOOKUPS'] = context.permittedExternalLookups.join(',');
+    env['HYPERNEO_PERMITTED_EXTERNAL_LOOKUPS'] = context.permittedExternalLookups.join(',');
   }
 
   if (context.templateData) {
     try {
-      env['NEOKAI_HOOK_TEMPLATE_DATA_JSON'] = JSON.stringify(context.templateData);
+      env['HYPERNEO_HOOK_TEMPLATE_DATA_JSON'] = JSON.stringify(context.templateData);
     } catch {
-      env['NEOKAI_HOOK_TEMPLATE_DATA_JSON'] = '{}';
+      env['HYPERNEO_HOOK_TEMPLATE_DATA_JSON'] = '{}';
     }
+  }
+
+  // Backward-compat: mirror the injected hook vars under legacy NEOKAI_* aliases
+  // so workflow hook scripts authored before the HyperNeo rename keep seeing values.
+  for (const hyperneoKey of HOOK_INJECTED_ENV_KEYS) {
+    if (env[hyperneoKey] !== undefined) {
+      env[`NEOKAI_${hyperneoKey.slice('HYPERNEO_'.length)}`] = env[hyperneoKey];
+    }
+  }
+
+  // Resolve the validation base override from either name and expose both, so
+  // bundled scripts (HYPERNEO_VALIDATION_BASE_REF) and upgraded custom scripts
+  // still reading the legacy NEOKAI_VALIDATION_BASE_REF both see it.
+  const validationBaseRef =
+    env['HYPERNEO_VALIDATION_BASE_REF'] ?? process.env.NEOKAI_VALIDATION_BASE_REF;
+  if (validationBaseRef !== undefined) {
+    env['HYPERNEO_VALIDATION_BASE_REF'] = validationBaseRef;
+    env['NEOKAI_VALIDATION_BASE_REF'] = validationBaseRef;
   }
 
   // Merge user-specified env (cannot override injected vars)
   if (scriptEnv) {
     for (const [key, value] of Object.entries(scriptEnv)) {
+      // User env cannot override gate/hook-injected vars (HYPERNEO_* or legacy NEOKAI_* alias)
       if (
+        key.startsWith('HYPERNEO_HOOK_') ||
+        key.startsWith('HYPERNEO_WORKFLOW_') ||
+        key.startsWith('HYPERNEO_NODE_') ||
+        key.startsWith('HYPERNEO_SESSION_') ||
+        key.startsWith('HYPERNEO_TASK_') ||
+        key.startsWith('HYPERNEO_METHOD_') ||
+        key.startsWith('HYPERNEO_CURRENT_') ||
+        key.startsWith('HYPERNEO_PERMITTED_') ||
         key.startsWith('NEOKAI_HOOK_') ||
         key.startsWith('NEOKAI_WORKFLOW_') ||
         key.startsWith('NEOKAI_NODE_') ||
@@ -329,7 +387,7 @@ export async function executeHookScript(
 
   // Isolate HOME to a temp directory so restricted hooks cannot read
   // disk-backed credentials from the user profile.
-  const hookHome = mkdtempSync(join(tmpdir(), 'neokai-hook-'));
+  const hookHome = mkdtempSync(join(tmpdir(), 'hyperneo-hook-'));
   restrictedEnv['HOME'] = hookHome;
 
   let proc;

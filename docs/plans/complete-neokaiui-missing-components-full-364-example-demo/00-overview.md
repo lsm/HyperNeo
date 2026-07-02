@@ -1,22 +1,22 @@
-# Plan: Complete @neokai/ui -- Missing Components + Full 364-Example Demo
+# Plan: Complete @hyperneo/ui -- Missing Components + Full 364-Example Demo
 
 ## Goal Summary
 
-Port all 364 Tailwind Application UI v4 reference examples as live demo sections in `packages/ui/demo/`, add missing headless component wrappers, and integrate an icon library. The result is a comprehensive visual reference ("kitchen sink") showcasing every @neokai/ui component with real-world layout patterns.
+Port all 364 Tailwind Application UI v4 reference examples as live demo sections in `packages/ui/demo/`, add missing headless component wrappers, and integrate an icon library. The result is a comprehensive visual reference ("kitchen sink") showcasing every @hyperneo/ui component with real-world layout patterns.
 
 ## High-Level Approach
 
 1. **Foundation** -- Fix package.json exports gap, add `lucide-preact` icon library, refactor demo App.tsx to support a categorized sidebar (49 sections across 11 categories).
 2. **Pure HTML demos** -- Port 162 reference files that have zero external dependencies first (no headlessui, no heroicons). These are pure Tailwind markup and are the fastest to port.
 3. **Icon-only demos** -- Port 94 reference files that use heroicons but not headlessui. Depends on lucide-preact being available and icon name mapping being established.
-4. **Headless-only demos** -- Port the 2 reference files that use headlessui but not heroicons. These map directly to existing @neokai/ui component APIs. (Very small batch; only notification variants.)
+4. **Headless-only demos** -- Port the 2 reference files that use headlessui but not heroicons. These map directly to existing @hyperneo/ui component APIs. (Very small batch; only notification variants.)
 5. **Combined headless+icon demos** -- Port 106 reference files that use both headlessui and heroicons. 100 are covered by M5 tasks; the remaining 6 page-examples are in M6. The most complex batch requiring both component API knowledge and icon mapping.
 6. **Page-example compositions** -- Port the 6 full-page reference examples (detail-screens, home-screens, settings-screens) that combine multiple categories into cohesive layouts.
 7. **Integration and QA** -- Visual QA pass, sidebar navigation polish, dark/light theme verification, ensure all 364 examples render correctly.
 
 ## Data Attribute Syntax Decision
 
-Reference files use `data-closed:` (unbracketed Tailwind v4 syntax). Existing @neokai/ui demos use `data-[closed]:` (bracketed). Both work because the render utility sets `data-closed=""`. **Decision: keep the bracketed form (`data-[closed]:`)** for consistency with existing demos. All ported examples must convert unbracketed to bracketed data attribute variants.
+Reference files use `data-closed:` (unbracketed Tailwind v4 syntax). Existing @hyperneo/ui demos use `data-[closed]:` (bracketed). Both work because the render utility sets `data-closed=""`. **Decision: keep the bracketed form (`data-[closed]:`)** for consistency with existing demos. All ported examples must convert unbracketed to bracketed data attribute variants.
 
 ## Reference Location
 
@@ -32,7 +32,7 @@ All new demo files go to: `packages/ui/demo/sections/`
 
 ## Component Source Location
 
-@neokai/ui component source: `packages/ui/src/components/`
+@hyperneo/ui component source: `packages/ui/src/components/`
 Package barrel export: `packages/ui/src/mod.ts`
 
 ## Cross-Milestone Dependencies

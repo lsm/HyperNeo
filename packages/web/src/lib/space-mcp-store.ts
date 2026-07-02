@@ -12,8 +12,8 @@
  */
 
 import { signal } from '@preact/signals';
-import type { LiveQuerySnapshotEvent, LiveQueryDeltaEvent, SpaceMcpEntry } from '@neokai/shared';
-import { Logger } from '@neokai/shared';
+import type { LiveQuerySnapshotEvent, LiveQueryDeltaEvent, SpaceMcpEntry } from '@hyperneo/shared';
+import { Logger } from '@hyperneo/shared';
 import { connectionManager } from './connection-manager';
 
 const logger = new Logger('kai:web:space-mcp-store');

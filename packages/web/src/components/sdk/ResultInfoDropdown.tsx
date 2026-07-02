@@ -11,7 +11,7 @@
  * glance. Layout mirrors `MessageInfoDropdown` (header → labelled rows →
  * footnote) for consistency.
  */
-import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
+import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 
 type ResultMessage = Extract<SDKMessage, { type: 'result' }>;
 

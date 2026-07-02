@@ -10,7 +10,7 @@
  * See docs/plans/design-external-event-bus-for-space-workflow-nodes.md.
  */
 
-import type { MessageHub } from '@neokai/shared/message-hub/message-hub.ts';
+import type { MessageHub } from '@hyperneo/shared/message-hub/message-hub.ts';
 import type { ExternalEventPublisher } from './external-event-service';
 
 /**

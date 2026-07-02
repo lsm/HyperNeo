@@ -13,7 +13,7 @@ import type {
   GitHubAuthorFilter,
   GitHubLabelFilter,
   GitHubEventFilter,
-} from '@neokai/shared';
+} from '@hyperneo/shared';
 import { Logger } from '../logger';
 
 const log = new Logger('github-filter-config');

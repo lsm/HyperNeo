@@ -23,10 +23,10 @@ import type {
   SystemState,
   SettingsState,
   CredentialStoreStatus,
-} from '@neokai/shared';
-import type { LiveQueryDeltaEvent, LiveQuerySnapshotEvent } from '@neokai/shared';
-import { STATE_CHANNELS } from '@neokai/shared';
-import type { GlobalSettings } from '@neokai/shared/types/settings';
+} from '@hyperneo/shared';
+import type { LiveQueryDeltaEvent, LiveQuerySnapshotEvent } from '@hyperneo/shared';
+import { STATE_CHANNELS } from '@hyperneo/shared';
+import type { GlobalSettings } from '@hyperneo/shared/types/settings';
 import { connectionManager } from './connection-manager';
 
 const SESSIONS_SUBSCRIPTION_ID = 'sessions-list';

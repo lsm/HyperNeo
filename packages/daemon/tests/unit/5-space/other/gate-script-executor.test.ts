@@ -22,7 +22,7 @@ import {
   executeGateScript,
 } from '../../../../src/lib/space/runtime/gate-script-executor.ts';
 import type { GateScriptContext } from '../../../../src/lib/space/runtime/gate-script-executor.ts';
-import type { GateScript } from '@neokai/shared';
+import type { GateScript } from '@hyperneo/shared';
 
 // ---------------------------------------------------------------------------
 // Test fixtures
@@ -67,10 +67,12 @@ describe('buildRestrictedEnv', () => {
     process.env['GLM_API_KEY'] = 'glm-secret';
     process.env['ZHIPU_API_KEY'] = 'zhipu-secret';
     process.env['COPILOT_GITHUB_TOKEN'] = 'copilot-secret';
+    process.env['HYPERNEO_SECRET_X'] = 'hyperneo-secret';
+    process.env['HYPERNEO_PORT'] = '8080';
+    // Legacy NEOKAI_* credential var must still be stripped during the rename.
     process.env['NEOKAI_SECRET_X'] = 'neokai-secret';
-    process.env['NEOKAI_PORT'] = '8080';
-    process.env['NEOKAI_USE_DEV_PROXY'] = '1';
-    process.env['NEOKAI_VALIDATION_BASE_REF'] = 'origin/release';
+    process.env['HYPERNEO_USE_DEV_PROXY'] = '1';
+    process.env['HYPERNEO_VALIDATION_BASE_REF'] = 'origin/release';
     process.env['MY_SECRET_KEY'] = 'my-secret';
     process.env['DB_PASSWORD'] = 'db-secret';
     process.env['AWS_CREDENTIAL'] = 'aws-secret';
@@ -112,17 +114,32 @@ describe('buildRestrictedEnv', () => {
     expect(buildRestrictedEnv(CTX)['COPILOT_GITHUB_TOKEN']).toBeUndefined();
   });
 
-  test('strips NEOKAI_SECRET_ prefixed env vars', () => {
+  test('strips HYPERNEO_SECRET_ prefixed env vars', () => {
+    expect(buildRestrictedEnv(CTX)['HYPERNEO_SECRET_X']).toBeUndefined();
+  });
+
+  test('strips broader HYPERNEO_ prefixed env vars (internal ops)', () => {
+    expect(buildRestrictedEnv(CTX)['HYPERNEO_PORT']).toBeUndefined();
+    expect(buildRestrictedEnv(CTX)['HYPERNEO_USE_DEV_PROXY']).toBeUndefined();
+  });
+
+  test('strips legacy NEOKAI_ prefixed env vars (credential hygiene)', () => {
     expect(buildRestrictedEnv(CTX)['NEOKAI_SECRET_X']).toBeUndefined();
   });
 
-  test('strips broader NEOKAI_ prefixed env vars (internal ops)', () => {
-    expect(buildRestrictedEnv(CTX)['NEOKAI_PORT']).toBeUndefined();
-    expect(buildRestrictedEnv(CTX)['NEOKAI_USE_DEV_PROXY']).toBeUndefined();
+  test('injects legacy NEOKAI_* aliases for gate vars (backward-compat)', () => {
+    const env = buildRestrictedEnv(CTX);
+    // Each canonical HYPERNEO_* gate var is mirrored under NEOKAI_* so gate
+    // scripts authored before the rename keep seeing values.
+    expect(env['NEOKAI_GATE_ID']).toBe(env['HYPERNEO_GATE_ID']);
+    expect(env['NEOKAI_GATE_ID']).toBe('gate-123');
+    expect(env['NEOKAI_WORKFLOW_RUN_ID']).toBe(env['HYPERNEO_WORKFLOW_RUN_ID']);
+    expect(env['NEOKAI_WORKSPACE_PATH']).toBe(env['HYPERNEO_WORKSPACE_PATH']);
+    expect(env['NEOKAI_GATE_DATA_JSON']).toBe(env['HYPERNEO_GATE_DATA_JSON']);
   });
 
-  test('allows NEOKAI_VALIDATION_BASE_REF for validation-only gate base override', () => {
-    expect(buildRestrictedEnv(CTX)['NEOKAI_VALIDATION_BASE_REF']).toBe('origin/release');
+  test('allows HYPERNEO_VALIDATION_BASE_REF for validation-only gate base override', () => {
+    expect(buildRestrictedEnv(CTX)['HYPERNEO_VALIDATION_BASE_REF']).toBe('origin/release');
   });
 
   test('strips env vars matching SECRET key pattern', () => {
@@ -187,31 +204,31 @@ describe('buildRestrictedEnv', () => {
     expect(env['NODE_ENV']).toBe('test');
   });
 
-  test('injects NEOKAI_GATE_ID after filtering', () => {
-    // NEOKAI_ prefix vars are stripped, but these three are re-injected
-    expect(buildRestrictedEnv(CTX)['NEOKAI_GATE_ID']).toBe('gate-123');
+  test('injects HYPERNEO_GATE_ID after filtering', () => {
+    // HYPERNEO_ prefix vars are stripped, but these three are re-injected
+    expect(buildRestrictedEnv(CTX)['HYPERNEO_GATE_ID']).toBe('gate-123');
   });
 
-  test('injects NEOKAI_WORKFLOW_RUN_ID after filtering', () => {
-    expect(buildRestrictedEnv(CTX)['NEOKAI_WORKFLOW_RUN_ID']).toBe('run-456');
+  test('injects HYPERNEO_WORKFLOW_RUN_ID after filtering', () => {
+    expect(buildRestrictedEnv(CTX)['HYPERNEO_WORKFLOW_RUN_ID']).toBe('run-456');
   });
 
-  test('injects NEOKAI_WORKSPACE_PATH after filtering', () => {
-    expect(buildRestrictedEnv(CTX)['NEOKAI_WORKSPACE_PATH']).toBe('/tmp');
+  test('injects HYPERNEO_WORKSPACE_PATH after filtering', () => {
+    expect(buildRestrictedEnv(CTX)['HYPERNEO_WORKSPACE_PATH']).toBe('/tmp');
   });
 
-  test('injects NEOKAI_GATE_DATA_JSON from context gateData', () => {
+  test('injects HYPERNEO_GATE_DATA_JSON from context gateData', () => {
     const env = buildRestrictedEnv({
       ...CTX,
       gateData: { pr_url: 'https://github.com/example/repo/pull/42', approved: true },
     });
-    expect(env['NEOKAI_GATE_DATA_JSON']).toBe(
+    expect(env['HYPERNEO_GATE_DATA_JSON']).toBe(
       '{"pr_url":"https://github.com/example/repo/pull/42","approved":true}'
     );
   });
 
-  test('injects default empty NEOKAI_GATE_DATA_JSON when gateData is absent', () => {
-    expect(buildRestrictedEnv(CTX)['NEOKAI_GATE_DATA_JSON']).toBe('{}');
+  test('injects default empty HYPERNEO_GATE_DATA_JSON when gateData is absent', () => {
+    expect(buildRestrictedEnv(CTX)['HYPERNEO_GATE_DATA_JSON']).toBe('{}');
   });
 
   test('does not inject field-specific aliases (template data stays in JSON payload)', () => {
@@ -219,7 +236,7 @@ describe('buildRestrictedEnv', () => {
       ...CTX,
       gateData: { pr_url: 'https://github.com/example/repo/pull/42' },
     });
-    expect(env['NEOKAI_GATE_PR_URL']).toBeUndefined();
+    expect(env['HYPERNEO_GATE_PR_URL']).toBeUndefined();
   });
 
   test('merges user-provided env vars (safe ones)', () => {
@@ -228,30 +245,30 @@ describe('buildRestrictedEnv', () => {
     );
   });
 
-  test('user env cannot override NEOKAI_GATE_ID', () => {
-    expect(buildRestrictedEnv(CTX, { NEOKAI_GATE_ID: 'hacked' })['NEOKAI_GATE_ID']).toBe(
+  test('user env cannot override HYPERNEO_GATE_ID', () => {
+    expect(buildRestrictedEnv(CTX, { HYPERNEO_GATE_ID: 'hacked' })['HYPERNEO_GATE_ID']).toBe(
       'gate-123'
     );
   });
 
-  test('user env cannot override NEOKAI_WORKFLOW_RUN_ID', () => {
+  test('user env cannot override HYPERNEO_WORKFLOW_RUN_ID', () => {
     expect(
-      buildRestrictedEnv(CTX, { NEOKAI_WORKFLOW_RUN_ID: 'hacked' })['NEOKAI_WORKFLOW_RUN_ID']
+      buildRestrictedEnv(CTX, { HYPERNEO_WORKFLOW_RUN_ID: 'hacked' })['HYPERNEO_WORKFLOW_RUN_ID']
     ).toBe('run-456');
   });
 
-  test('user env cannot override NEOKAI_WORKSPACE_PATH', () => {
+  test('user env cannot override HYPERNEO_WORKSPACE_PATH', () => {
     expect(
-      buildRestrictedEnv(CTX, { NEOKAI_WORKSPACE_PATH: '/hacked' })['NEOKAI_WORKSPACE_PATH']
+      buildRestrictedEnv(CTX, { HYPERNEO_WORKSPACE_PATH: '/hacked' })['HYPERNEO_WORKSPACE_PATH']
     ).toBe('/tmp');
   });
 
-  test('user env cannot override NEOKAI_GATE_DATA_JSON', () => {
+  test('user env cannot override HYPERNEO_GATE_DATA_JSON', () => {
     expect(
       buildRestrictedEnv(
         { ...CTX, gateData: { approved: true } },
-        { NEOKAI_GATE_DATA_JSON: '{"approved":false}' }
-      )['NEOKAI_GATE_DATA_JSON']
+        { HYPERNEO_GATE_DATA_JSON: '{"approved":false}' }
+      )['HYPERNEO_GATE_DATA_JSON']
     ).toBe('{"approved":true}');
   });
 
@@ -259,8 +276,8 @@ describe('buildRestrictedEnv', () => {
     expect(
       buildRestrictedEnv(
         { ...CTX, gateData: { pr_url: 'https://github.com/example/repo/pull/42' } },
-        { NEOKAI_GATE_PR_URL: 'https://attacker.invalid/pr/1' }
-      )['NEOKAI_GATE_PR_URL']
+        { HYPERNEO_GATE_PR_URL: 'https://attacker.invalid/pr/1' }
+      )['HYPERNEO_GATE_PR_URL']
     ).toBeUndefined();
   });
 
@@ -270,15 +287,15 @@ describe('buildRestrictedEnv', () => {
     ).toBeUndefined();
   });
 
-  test('user env with NEOKAI_ prefix is stripped', () => {
-    expect(buildRestrictedEnv(CTX, { NEOKAI_CUSTOM: 'leak' })['NEOKAI_CUSTOM']).toBeUndefined();
+  test('user env with HYPERNEO_ prefix is stripped', () => {
+    expect(buildRestrictedEnv(CTX, { HYPERNEO_CUSTOM: 'leak' })['HYPERNEO_CUSTOM']).toBeUndefined();
   });
 
-  test('user env can pass NEOKAI_VALIDATION_BASE_REF when process env omits it', () => {
-    delete process.env['NEOKAI_VALIDATION_BASE_REF'];
+  test('user env can pass HYPERNEO_VALIDATION_BASE_REF when process env omits it', () => {
+    delete process.env['HYPERNEO_VALIDATION_BASE_REF'];
     expect(
-      buildRestrictedEnv(CTX, { NEOKAI_VALIDATION_BASE_REF: 'origin/main' })[
-        'NEOKAI_VALIDATION_BASE_REF'
+      buildRestrictedEnv(CTX, { HYPERNEO_VALIDATION_BASE_REF: 'origin/main' })[
+        'HYPERNEO_VALIDATION_BASE_REF'
       ]
     ).toBe('origin/main');
   });
@@ -304,54 +321,54 @@ describe('buildRestrictedEnv', () => {
   });
 
   test('works without user env parameter', () => {
-    expect(buildRestrictedEnv(CTX)['NEOKAI_GATE_ID']).toBe('gate-123');
+    expect(buildRestrictedEnv(CTX)['HYPERNEO_GATE_ID']).toBe('gate-123');
   });
 
-  test('injects NEOKAI_WORKFLOW_START_ISO when context provides it', () => {
+  test('injects HYPERNEO_WORKFLOW_START_ISO when context provides it', () => {
     const env = buildRestrictedEnv({
       ...CTX,
       workflowStartIso: '2026-04-19T10:00:00.000Z',
     });
-    expect(env['NEOKAI_WORKFLOW_START_ISO']).toBe('2026-04-19T10:00:00.000Z');
+    expect(env['HYPERNEO_WORKFLOW_START_ISO']).toBe('2026-04-19T10:00:00.000Z');
   });
 
-  test('does not inject NEOKAI_WORKFLOW_START_ISO when context omits it', () => {
+  test('does not inject HYPERNEO_WORKFLOW_START_ISO when context omits it', () => {
     // When workflowStartIso isn't resolvable (e.g. old run, test harness),
     // we leave the var unset rather than defaulting to something misleading.
-    expect(buildRestrictedEnv(CTX)['NEOKAI_WORKFLOW_START_ISO']).toBeUndefined();
+    expect(buildRestrictedEnv(CTX)['HYPERNEO_WORKFLOW_START_ISO']).toBeUndefined();
   });
 
-  test('user env cannot override NEOKAI_WORKFLOW_START_ISO', () => {
+  test('user env cannot override HYPERNEO_WORKFLOW_START_ISO', () => {
     const env = buildRestrictedEnv(
       { ...CTX, workflowStartIso: '2026-04-19T10:00:00.000Z' },
-      { NEOKAI_WORKFLOW_START_ISO: '1970-01-01T00:00:00.000Z' }
+      { HYPERNEO_WORKFLOW_START_ISO: '1970-01-01T00:00:00.000Z' }
     );
-    expect(env['NEOKAI_WORKFLOW_START_ISO']).toBe('2026-04-19T10:00:00.000Z');
+    expect(env['HYPERNEO_WORKFLOW_START_ISO']).toBe('2026-04-19T10:00:00.000Z');
   });
 
-  test('injects NEOKAI_GATE_DATA_UPDATED_ISO when context provides it', () => {
+  test('injects HYPERNEO_GATE_DATA_UPDATED_ISO when context provides it', () => {
     const env = buildRestrictedEnv({
       ...CTX,
       gateDataUpdatedIso: '2026-04-19T10:05:00.000Z',
     });
-    expect(env['NEOKAI_GATE_DATA_UPDATED_ISO']).toBe('2026-04-19T10:05:00.000Z');
+    expect(env['HYPERNEO_GATE_DATA_UPDATED_ISO']).toBe('2026-04-19T10:05:00.000Z');
   });
 
-  test('user env cannot override NEOKAI_GATE_DATA_UPDATED_ISO', () => {
+  test('user env cannot override HYPERNEO_GATE_DATA_UPDATED_ISO', () => {
     const env = buildRestrictedEnv(
       { ...CTX, gateDataUpdatedIso: '2026-04-19T10:05:00.000Z' },
-      { NEOKAI_GATE_DATA_UPDATED_ISO: '1970-01-01T00:00:00.000Z' }
+      { HYPERNEO_GATE_DATA_UPDATED_ISO: '1970-01-01T00:00:00.000Z' }
     );
-    expect(env['NEOKAI_GATE_DATA_UPDATED_ISO']).toBe('2026-04-19T10:05:00.000Z');
+    expect(env['HYPERNEO_GATE_DATA_UPDATED_ISO']).toBe('2026-04-19T10:05:00.000Z');
   });
 
-  test('user env cannot spoof NEOKAI_WORKFLOW_START_ISO when context omits it', () => {
+  test('user env cannot spoof HYPERNEO_WORKFLOW_START_ISO when context omits it', () => {
     // Even with no context-provided value, agents must not be able to set the
     // var themselves — that would let them backdate reviews and bypass the gate.
     const env = buildRestrictedEnv(CTX, {
-      NEOKAI_WORKFLOW_START_ISO: '2020-01-01T00:00:00.000Z',
+      HYPERNEO_WORKFLOW_START_ISO: '2020-01-01T00:00:00.000Z',
     });
-    expect(env['NEOKAI_WORKFLOW_START_ISO']).toBeUndefined();
+    expect(env['HYPERNEO_WORKFLOW_START_ISO']).toBeUndefined();
   });
 });
 
@@ -674,14 +691,14 @@ describe('executeGateScript — integration', () => {
     }
   });
 
-  test('restricted env does not leak NEOKAI_ internal vars', async () => {
-    const origPort = process.env['NEOKAI_PORT'];
-    process.env['NEOKAI_PORT'] = '9999';
+  test('restricted env does not leak HYPERNEO_ internal vars', async () => {
+    const origPort = process.env['HYPERNEO_PORT'];
+    process.env['HYPERNEO_PORT'] = '9999';
     try {
       const r = await executeGateScript(
         {
           interpreter: 'node',
-          source: 'console.log(JSON.stringify({ port: process.env.NEOKAI_PORT }))',
+          source: 'console.log(JSON.stringify({ port: process.env.HYPERNEO_PORT }))',
         } as GateScript,
         CTX
       );
@@ -689,18 +706,18 @@ describe('executeGateScript — integration', () => {
       expect(r.data['port']).toBeUndefined();
     } finally {
       if (origPort === undefined) {
-        delete process.env['NEOKAI_PORT'];
+        delete process.env['HYPERNEO_PORT'];
       } else {
-        process.env['NEOKAI_PORT'] = origPort;
+        process.env['HYPERNEO_PORT'] = origPort;
       }
     }
   });
 
-  test('injects NEOKAI_GATE_ID into script env', async () => {
+  test('injects HYPERNEO_GATE_ID into script env', async () => {
     const r = await executeGateScript(
       {
         interpreter: 'node',
-        source: 'console.log(JSON.stringify({ gateId: process.env.NEOKAI_GATE_ID }))',
+        source: 'console.log(JSON.stringify({ gateId: process.env.HYPERNEO_GATE_ID }))',
       } as GateScript,
       CTX
     );
@@ -708,11 +725,11 @@ describe('executeGateScript — integration', () => {
     expect(r.data['gateId']).toBe('gate-123');
   });
 
-  test('injects NEOKAI_WORKFLOW_RUN_ID into script env', async () => {
+  test('injects HYPERNEO_WORKFLOW_RUN_ID into script env', async () => {
     const r = await executeGateScript(
       {
         interpreter: 'node',
-        source: 'console.log(JSON.stringify({ runId: process.env.NEOKAI_WORKFLOW_RUN_ID }))',
+        source: 'console.log(JSON.stringify({ runId: process.env.HYPERNEO_WORKFLOW_RUN_ID }))',
       } as GateScript,
       CTX
     );
@@ -720,11 +737,11 @@ describe('executeGateScript — integration', () => {
     expect(r.data['runId']).toBe('run-456');
   });
 
-  test('injects NEOKAI_WORKSPACE_PATH into script env', async () => {
+  test('injects HYPERNEO_WORKSPACE_PATH into script env', async () => {
     const r = await executeGateScript(
       {
         interpreter: 'node',
-        source: 'console.log(JSON.stringify({ ws: process.env.NEOKAI_WORKSPACE_PATH }))',
+        source: 'console.log(JSON.stringify({ ws: process.env.HYPERNEO_WORKSPACE_PATH }))',
       } as GateScript,
       CTX
     );
@@ -732,12 +749,12 @@ describe('executeGateScript — integration', () => {
     expect(r.data['ws']).toBe('/tmp');
   });
 
-  test('injects NEOKAI_GATE_DATA_JSON into script env (no field aliases)', async () => {
+  test('injects HYPERNEO_GATE_DATA_JSON into script env (no field aliases)', async () => {
     const r = await executeGateScript(
       {
         interpreter: 'node',
         source:
-          'console.log(JSON.stringify({ gateData: process.env.NEOKAI_GATE_DATA_JSON, prAlias: process.env.NEOKAI_GATE_PR_URL ?? null }))',
+          'console.log(JSON.stringify({ gateData: process.env.HYPERNEO_GATE_DATA_JSON, prAlias: process.env.HYPERNEO_GATE_PR_URL ?? null }))',
       } as GateScript,
       {
         ...CTX,

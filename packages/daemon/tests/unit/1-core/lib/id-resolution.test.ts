@@ -5,7 +5,7 @@ import {
   type TaskRepoForResolve,
   type GoalRepoForResolve,
 } from '../../../../src/lib/id-resolution';
-import type { NeoTask, RoomGoal } from '@neokai/shared';
+import type { NeoTask, RoomGoal } from '@hyperneo/shared';
 
 const ROOM_ID = 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d';
 const TASK_UUID = 'd8a578c6-d3cb-4c84-926b-958cbd433d32';

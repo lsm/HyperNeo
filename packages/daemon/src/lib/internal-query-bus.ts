@@ -207,7 +207,7 @@ export class InternalQueryBus<
  *
  * This is the entry point most daemon code should use:
  *
- *   import { createInternalQueryBus } from '@neokai/daemon/lib/internal-query-bus';
+ *   import { createInternalQueryBus } from '@hyperneo/daemon/lib/internal-query-bus';
  *   const bus = createInternalQueryBus<MyQueryMap>();
  */
 export function createInternalQueryBus<

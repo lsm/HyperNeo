@@ -14,6 +14,6 @@ See LICENSE.txt in this directory.
 
 Modifications:
 - Adapted for HyperNeo from the OpenAI skill collection.
-- Updated config path references from ~/.codex/config.toml to ~/.neokai/config.toml.
+- Updated config path references from ~/.codex/config.toml to ~/.hyperneo/config.toml.
 - Repackaged the existing repository Playwright assets for this `js_repl`-focused skill.
 - Wrote new skill instructions for persistent browser debugging.
