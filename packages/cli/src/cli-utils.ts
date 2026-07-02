@@ -68,9 +68,9 @@ export function parseArgs(args: string[]): ParseArgsResult {
  */
 export function getHelpText(): string {
   return `
-NeoKai - Claude Code web UI for coding, life, and anything in between
+HyperNeo - Claude Code web UI for coding, life, and anything in between
 
-Usage: kai [options]
+Usage: hyperneo [options]
 
 Options:
   -p, --port <port>         Port to listen on (default: 9283)
@@ -81,10 +81,10 @@ Options:
   -h, --help                Show this help message
 
 Examples:
-  kai                           Start server (database at ~/.neokai/data/daemon.db)
-  kai -p 8080                   Start on port 8080
-  kai --workspace ~/code         Start with a default workspace root
-  kai --db-path /data/db.db     Use a custom database path
+  hyperneo                      Start server (database at ~/.neokai/data/daemon.db)
+  hyperneo -p 8080              Start on port 8080
+  hyperneo --workspace ~/code   Start with a default workspace root
+  hyperneo --db-path /data/db.db  Use a custom database path
 `;
 }
 

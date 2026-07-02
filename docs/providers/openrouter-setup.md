@@ -1,14 +1,14 @@
 # OpenRouter Provider Setup
 
-NeoKai supports OpenRouter through Claude Code's Anthropic-compatible request path.
+HyperNeo supports OpenRouter through Claude Code's Anthropic-compatible request path.
 
 ## Setup
 
-Create an OpenRouter API key, then start NeoKai with:
+Create an OpenRouter API key, then start HyperNeo with:
 
 ```bash
 export OPENROUTER_API_KEY=sk-or-...
-kai
+hyperneo
 ```
 
 Open **Settings -> Providers** to confirm OpenRouter is authenticated. OpenRouter models appear in new-session and runtime model selectors when the key is present.

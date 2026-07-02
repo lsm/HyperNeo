@@ -13,8 +13,8 @@ describe('syncBuiltinSkillsFromDir', () => {
   let destDir: string;
 
   beforeEach(async () => {
-    srcDir = await mkdtemp(join(tmpdir(), 'kai-skill-src-'));
-    destDir = await mkdtemp(join(tmpdir(), 'kai-skill-dest-'));
+    srcDir = await mkdtemp(join(tmpdir(), 'hyperneo-skill-src-'));
+    destDir = await mkdtemp(join(tmpdir(), 'hyperneo-skill-dest-'));
   });
 
   afterEach(async () => {
@@ -105,8 +105,8 @@ describe('ensureBuiltinSkills', () => {
   let destDir: string;
 
   beforeEach(async () => {
-    srcDir = await mkdtemp(join(tmpdir(), 'kai-ensure-src-'));
-    destDir = await mkdtemp(join(tmpdir(), 'kai-ensure-dest-'));
+    srcDir = await mkdtemp(join(tmpdir(), 'hyperneo-ensure-src-'));
+    destDir = await mkdtemp(join(tmpdir(), 'hyperneo-ensure-dest-'));
   });
 
   afterEach(async () => {

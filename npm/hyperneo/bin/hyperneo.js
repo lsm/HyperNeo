@@ -1,18 +1,18 @@
 #!/usr/bin/env node
 
 /**
- * NeoKai CLI launcher.
+ * HyperNeo CLI launcher.
  * Detects the current platform and spawns the correct compiled binary
- * from the matching @neokai/cli-{platform} optional dependency.
+ * from the matching @hyperneo/cli-{platform} optional dependency.
  */
 
 const { spawnSync } = require('child_process');
 
 const PLATFORM_MAP = {
-  'darwin-arm64': '@neokai/cli-darwin-arm64',
-  'darwin-x64': '@neokai/cli-darwin-x64',
-  'linux-x64': '@neokai/cli-linux-x64',
-  'linux-arm64': '@neokai/cli-linux-arm64',
+  'darwin-arm64': '@hyperneo/cli-darwin-arm64',
+  'darwin-x64': '@hyperneo/cli-darwin-x64',
+  'linux-x64': '@hyperneo/cli-linux-x64',
+  'linux-arm64': '@hyperneo/cli-linux-arm64',
 };
 
 const platformKey = `${process.platform}-${process.arch}`;
@@ -20,7 +20,7 @@ const packageName = PLATFORM_MAP[platformKey];
 
 if (!packageName) {
   console.error(
-    `Error: NeoKai does not support ${process.platform} ${process.arch}.\n` +
+    `Error: HyperNeo does not support ${process.platform} ${process.arch}.\n` +
       `Supported platforms: ${Object.keys(PLATFORM_MAP).join(', ')}`
   );
   process.exit(1);
@@ -28,12 +28,12 @@ if (!packageName) {
 
 let binaryPath;
 try {
-  binaryPath = require.resolve(`${packageName}/bin/kai`);
+  binaryPath = require.resolve(`${packageName}/bin/hyperneo`);
 } catch {
   console.error(
-    `Error: Could not find NeoKai binary for ${platformKey}.\n` +
+    `Error: Could not find HyperNeo binary for ${platformKey}.\n` +
       `The package ${packageName} may not be installed.\n` +
-      `Try reinstalling: npm install -g neokai`
+      `Try reinstalling: npm install -g hyperneo`
   );
   process.exit(1);
 }
@@ -44,7 +44,7 @@ const result = spawnSync(binaryPath, process.argv.slice(2), {
 });
 
 if (result.error) {
-  console.error(`Error: Failed to execute NeoKai binary: ${result.error.message}`);
+  console.error(`Error: Failed to execute HyperNeo binary: ${result.error.message}`);
   process.exit(1);
 }
 

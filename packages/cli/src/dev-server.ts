@@ -15,7 +15,7 @@ import {
 } from './cli-utils';
 import { ensureBuiltinSkills } from './skill-utils';
 
-const log = createLogger('kai:cli:dev-server');
+const log = createLogger('hyperneo:cli:dev-server');
 
 const VITE_CLIENT_SCRIPT_RE =
   /<script\b(?=[^>]*\btype=(["'])module\1)(?=[^>]*\bsrc=(["'])\/@vite\/client\2)[^>]*>\s*<\/script>\s*/i;

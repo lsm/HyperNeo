@@ -17,7 +17,7 @@ NeoKai — browser UI for the Claude Agent SDK. Multi-session chat with model sw
 ## Monorepo
 
 ```
-packages/cli      # `kai` entry point, HTTP server wrapper
+packages/cli      # `hyperneo` entry point, HTTP server wrapper
 packages/daemon   # Backend: agent orchestration, sessions, RPC handlers
 packages/shared   # Shared types, MessageHub protocol, provider abstractions
 packages/web      # Preact frontend (islands, hooks, signals)

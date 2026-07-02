@@ -16,7 +16,7 @@
       "name": "@neokai/cli",
       "version": "0.38.0",
       "bin": {
-        "kai": "./main.ts",
+        "hyperneo": "./main.ts",
       },
       "dependencies": {
         "@neokai/daemon": "workspace:*",

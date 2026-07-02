@@ -4,7 +4,7 @@
   "type": "module",
   "license": "Apache-2.0",
   "bin": {
-    "kai": "./main.ts"
+    "hyperneo": "./main.ts"
   },
   "scripts": {
     "dev": "bun run main.ts",

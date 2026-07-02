@@ -57,7 +57,7 @@ if (process.argv[2] === '--neokai-acp-mcp-proxy') {
 
   const config = getConfig(cliOptions);
 
-  console.log(`\nNeoKai Server`);
+  console.log(`\n🚀 HyperNeo Production Server`);
   console.log(`   Database: ${config.dbPath}\n`);
 
   try {
