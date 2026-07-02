@@ -225,6 +225,19 @@ class SpaceStore {
     Array<{ id: string; title: string; status: string; lastActiveAt: number }>
   >([]);
 
+  /**
+   * Optimistically patch a session row (e.g. inline rename) before the LiveQuery
+   * round-trip confirms it. No-op if the session isn't in the current space view.
+   */
+  updateSession(
+    sessionId: string,
+    patch: Partial<{ title: string; status: string; lastActiveAt: number }>
+  ): void {
+    this.sessions.value = this.sessions.value.map((s) =>
+      s.id === sessionId ? { ...s, ...patch } : s
+    );
+  }
+
   /** Cleanup functions for the space sessions LiveQuery subscription */
   private spaceSessionsCleanupFns: Array<() => void> = [];
 

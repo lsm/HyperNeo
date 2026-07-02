@@ -8,6 +8,7 @@ import type {
   ProviderInfo,
   Session,
   SessionConfig,
+  SessionMetadata,
   Tool,
   ToolBundle,
   CommitInfo,
@@ -115,6 +116,7 @@ export interface UpdateSessionRequest {
   title?: string;
   workspacePath?: string | null;
   config?: Partial<SessionConfig>;
+  metadata?: Partial<SessionMetadata>;
 }
 
 export interface WorkspaceHistoryEntry {

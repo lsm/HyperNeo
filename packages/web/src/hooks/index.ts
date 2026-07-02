@@ -38,6 +38,7 @@ export {
   type UseInterruptOptions,
   type UseInterruptResult,
 } from './useInterrupt';
+export { useSessionRename, type UseSessionRenameResult } from './useSessionRename';
 export {
   useFileAttachments,
   type AttachmentWithMetadata,

@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, fireEvent, cleanup } from '@testing-library/preact';
+import { render, fireEvent, cleanup, act } from '@testing-library/preact';
 import { signal, computed } from '@preact/signals';
 import type { Session, AgentProcessingState } from '@neokai/shared';
 
@@ -43,6 +43,22 @@ vi.mock('../../lib/signals.ts', () => ({
     return mockCurrentSessionId;
   },
 }));
+
+// Inline-rename dependencies (used by useSessionRename via the hooks index).
+const renameMocks = vi.hoisted(() => ({
+  updateSession: vi.fn(),
+  globalStoreUpdate: vi.fn(),
+  spaceStoreUpdate: vi.fn(),
+  toastError: vi.fn(),
+}));
+vi.mock('../../lib/api-helpers', () => ({ updateSession: renameMocks.updateSession }));
+vi.mock('../../lib/global-store', () => ({
+  globalStore: { updateSession: renameMocks.globalStoreUpdate },
+}));
+vi.mock('../../lib/space-store', () => ({
+  spaceStore: { updateSession: renameMocks.spaceStoreUpdate },
+}));
+vi.mock('../../lib/toast', () => ({ toast: { error: renameMocks.toastError } }));
 
 // Initialize signals after mocks are set up
 mockStatuses = signal<Map<string, { processingState: AgentProcessingState; hasUnread: boolean }>>(
@@ -500,6 +516,99 @@ describe('SessionListItem', () => {
       expect(row?.className).toContain('hover:bg-white/5');
       expect(row?.className).not.toContain('bg-white/10');
       expect(button?.className).toContain('text-gray-400');
+    });
+  });
+
+  describe('Inline Rename', () => {
+    beforeEach(() => {
+      renameMocks.updateSession.mockReset();
+      renameMocks.globalStoreUpdate.mockReset();
+      renameMocks.spaceStoreUpdate.mockReset();
+      renameMocks.toastError.mockReset();
+      renameMocks.updateSession.mockResolvedValue(undefined);
+    });
+
+    it('enters edit mode with the current title seeded on double-click', () => {
+      const { container } = render(
+        <SessionListItem session={mockSession} onSessionClick={mockOnSessionClick} />
+      );
+
+      const title = container.querySelector('h3')!;
+      fireEvent.dblClick(title);
+
+      const input = container.querySelector(
+        'input[data-testid="session-rename-input"]'
+      ) as HTMLInputElement;
+      expect(input).toBeTruthy();
+      expect(input.value).toBe('Test Session');
+    });
+
+    it('enters edit mode when the hover pencil is clicked', () => {
+      const { container } = render(
+        <SessionListItem session={mockSession} onSessionClick={mockOnSessionClick} />
+      );
+
+      fireEvent.click(container.querySelector('[data-testid="session-rename"]')!);
+
+      const input = container.querySelector('input[data-testid="session-rename-input"]');
+      expect(input).toBeTruthy();
+    });
+
+    it('commits the new title on Enter and exits edit mode', async () => {
+      const { container } = render(
+        <SessionListItem session={mockSession} onSessionClick={mockOnSessionClick} />
+      );
+
+      fireEvent.click(container.querySelector('[data-testid="session-rename"]')!);
+      const input = container.querySelector(
+        'input[data-testid="session-rename-input"]'
+      ) as HTMLInputElement;
+      fireEvent.input(input, { target: { value: 'Renamed' } });
+
+      await act(async () => {
+        fireEvent.keyDown(input, { key: 'Enter' });
+      });
+
+      expect(renameMocks.updateSession).toHaveBeenCalledWith('session-1', {
+        title: 'Renamed',
+        metadata: { titleSetBy: 'user' },
+      });
+      expect(renameMocks.globalStoreUpdate).toHaveBeenCalledWith('session-1', {
+        title: 'Renamed',
+      });
+      // Edit mode exited — input replaced by the row again.
+      expect(container.querySelector('input[data-testid="session-rename-input"]')).toBeNull();
+    });
+
+    it('cancels and restores on Escape without committing', async () => {
+      const { container } = render(
+        <SessionListItem session={mockSession} onSessionClick={mockOnSessionClick} />
+      );
+
+      fireEvent.click(container.querySelector('[data-testid="session-rename"]')!);
+      const input = container.querySelector(
+        'input[data-testid="session-rename-input"]'
+      ) as HTMLInputElement;
+      fireEvent.input(input, { target: { value: 'Discarded' } });
+
+      await act(async () => {
+        fireEvent.keyDown(input, { key: 'Escape' });
+      });
+
+      expect(renameMocks.updateSession).not.toHaveBeenCalled();
+      // Row is restored (no input).
+      expect(container.querySelector('input[data-testid="session-rename-input"]')).toBeNull();
+      // Title is unchanged.
+      expect(container.querySelector('h3')?.textContent).toBe('Test Session');
+    });
+
+    it('does not render the rename affordance for archived sessions', () => {
+      const archivedSession = { ...mockSession, status: 'archived' as const };
+      const { container } = render(
+        <SessionListItem session={archivedSession} onSessionClick={mockOnSessionClick} />
+      );
+
+      expect(container.querySelector('[data-testid="session-rename"]')).toBeNull();
     });
   });
 });

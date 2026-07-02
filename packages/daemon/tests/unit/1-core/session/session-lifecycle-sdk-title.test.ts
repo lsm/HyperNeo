@@ -557,6 +557,191 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
     expect(result.title).toBe('Create a login form');
   });
 
+  it('should skip auto-title generation when a user has manually renamed the session', async () => {
+    // titleSetBy === 'user' guards a manual rename from being clobbered by the
+    // auto-gen job: the model is never queried and the session record is untouched.
+    const { mockAgentSession, mockSessionCache: sessionCache } = makeSessionCache();
+    mockAgentSession.getSessionData = mock(() => ({
+      id: 'test-id',
+      title: 'My Renamed Title',
+      workspacePath: '/test',
+      status: 'active',
+      metadata: { titleGenerated: false, titleSetBy: 'user' },
+      config: { model: 'claude-sonnet-4-20250514', provider: 'anthropic' },
+      worktree: undefined,
+    }));
+    lifecycle = new SessionLifecycleCtor(
+      mockDb,
+      mockWorktreeManager,
+      sessionCache,
+      mockInternalEventBus,
+      mockMessageHub,
+      config,
+      mockToolsConfigManager,
+      mockAgentSessionFactory
+    );
+
+    const result = await lifecycle.generateTitleAndRenameBranch('test-id', 'Create a login form');
+
+    expect(result.title).toBe('My Renamed Title');
+    expect(result.isFallback).toBe(false);
+    // The model was never queried for a title...
+    expect(lastTitleQueryOptions).toBeUndefined();
+    // ...and the session record was not written.
+    expect(mockDb.updateSession).not.toHaveBeenCalled();
+  });
+
+  it('does not clobber a manual rename that lands during title generation', async () => {
+    // The top-of-function guard passes (not yet renamed), so the model is called.
+    // Mid-generation (inside the query override) the user renames; the post-await
+    // re-check must see titleSetBy='user' and discard the generated title.
+    const { mockAgentSession, mockSessionCache: sessionCache } = makeSessionCache();
+    mockAgentSession.getSessionData = mock(() => ({
+      id: 'test-id',
+      title: 'New Session',
+      workspacePath: '/test',
+      status: 'active',
+      metadata: { titleGenerated: false },
+      config: { model: 'claude-sonnet-4-20250514', provider: 'anthropic' },
+      worktree: undefined,
+    }));
+    const renameDuringQuery: SessionLifecycleConfig['titleGenerationQueryForTesting'] = (
+      params
+    ) => {
+      const opts = params.options ?? {};
+      if ('thinking' in opts) lastTitleQueryOptions = opts;
+      // Simulate the user renaming while the model call is in flight.
+      mockAgentSession.getSessionData = mock(() => ({
+        id: 'test-id',
+        title: 'My Manual Title',
+        workspacePath: '/test',
+        status: 'active',
+        metadata: { titleGenerated: false, titleSetBy: 'user' },
+        config: { model: 'claude-sonnet-4-20250514', provider: 'anthropic' },
+        worktree: undefined,
+      }));
+      return makeQueryMock(mockSdkMessages);
+    };
+    config.titleGenerationQueryForTesting = renameDuringQuery;
+    lifecycle = new SessionLifecycleCtor(
+      mockDb,
+      mockWorktreeManager,
+      sessionCache,
+      mockInternalEventBus,
+      mockMessageHub,
+      config,
+      mockToolsConfigManager,
+      mockAgentSessionFactory
+    );
+
+    const result = await lifecycle.generateTitleAndRenameBranch('test-id', 'Create a login form');
+
+    // Kept the manual title; the generated title ('My Generated Title') was discarded.
+    expect(result.title).toBe('My Manual Title');
+    expect(result.isFallback).toBe(false);
+    // The generated title was NOT written over the rename.
+    expect(mockDb.updateSession).not.toHaveBeenCalled();
+  });
+
+  it('does not overwrite a manual rename when the fallback path runs', async () => {
+    // Generation succeeds but the branch rename throws, landing in the catch
+    // block — and the user has renamed in the meantime. The catch must re-check
+    // and keep the manual title rather than writing the fallback over it.
+    const { mockAgentSession, mockSessionCache: sessionCache } = makeSessionCache();
+    mockAgentSession.getSessionData = mock(() => ({
+      id: 'test-id',
+      title: 'New Session',
+      workspacePath: '/test',
+      status: 'active',
+      metadata: { titleGenerated: false },
+      config: { model: 'claude-sonnet-4-20250514', provider: 'anthropic' },
+      worktree: { path: '/w', branch: 'session/test-id', mainRepoPath: '/repo' },
+    }));
+    // Branch rename fails, and the user renames during that failure.
+    mockWorktreeManager.renameBranch = mock(async () => {
+      mockAgentSession.getSessionData = mock(() => ({
+        id: 'test-id',
+        title: 'My Manual Title',
+        workspacePath: '/test',
+        status: 'active',
+        metadata: { titleGenerated: false, titleSetBy: 'user' },
+        config: { model: 'claude-sonnet-4-20250514', provider: 'anthropic' },
+        worktree: { path: '/w', branch: 'session/test-id', mainRepoPath: '/repo' },
+      }));
+      throw new Error('git rename failed');
+    });
+    lifecycle = new SessionLifecycleCtor(
+      mockDb,
+      mockWorktreeManager,
+      sessionCache,
+      mockInternalEventBus,
+      mockMessageHub,
+      config,
+      mockToolsConfigManager,
+      mockAgentSessionFactory
+    );
+
+    const result = await lifecycle.generateTitleAndRenameBranch('test-id', 'Create a login form');
+
+    // Kept the manual title; the fallback ('Create a login form') was not written.
+    expect(result.title).toBe('My Manual Title');
+    expect(result.isFallback).toBe(false);
+    expect(mockDb.updateSession).not.toHaveBeenCalled();
+  });
+
+  it('preserves a manual rename that lands during the branch rename', async () => {
+    // Worktree session: generation succeeds, then the user renames while the
+    // branch is being renamed (renameBranch returns true). The write must keep
+    // the user's title while still persisting the new branch name (no desync).
+    const { mockAgentSession, mockSessionCache: sessionCache } = makeSessionCache();
+    mockAgentSession.getSessionData = mock(() => ({
+      id: 'test-id',
+      title: 'New Session',
+      workspacePath: '/test',
+      status: 'active',
+      metadata: { titleGenerated: false },
+      config: { model: 'claude-sonnet-4-20250514', provider: 'anthropic' },
+      worktree: { path: '/w', branch: 'session/test-id', mainRepoPath: '/repo' },
+    }));
+    // renameBranch succeeds, and the user renames during it.
+    mockWorktreeManager.renameBranch = mock(async () => {
+      mockAgentSession.getSessionData = mock(() => ({
+        id: 'test-id',
+        title: 'My Manual Title',
+        workspacePath: '/test',
+        status: 'active',
+        metadata: { titleGenerated: false, titleSetBy: 'user' },
+        config: { model: 'claude-sonnet-4-20250514', provider: 'anthropic' },
+        worktree: { path: '/w', branch: 'session/test-id', mainRepoPath: '/repo' },
+      }));
+      return true;
+    });
+    lifecycle = new SessionLifecycleCtor(
+      mockDb,
+      mockWorktreeManager,
+      sessionCache,
+      mockInternalEventBus,
+      mockMessageHub,
+      config,
+      mockToolsConfigManager,
+      mockAgentSessionFactory
+    );
+
+    const result = await lifecycle.generateTitleAndRenameBranch('test-id', 'Create a login form');
+
+    // User's title kept; generated title discarded.
+    expect(result.title).toBe('My Manual Title');
+    expect(result.isFallback).toBe(false);
+    // The write happened once (persisting the branch rename)...
+    expect(mockDb.updateSession).toHaveBeenCalledTimes(1);
+    const [, written] = mockDb.updateSession.mock.calls[0];
+    // ...with the user's title, not the generated one...
+    expect(written.title).toBe('My Manual Title');
+    expect(written.metadata.titleSetBy).toBe('user');
+    // ...and the new branch name persisted (no metadata/branch desync).
+    expect(written.worktree?.branch).not.toBe('session/test-id');
+  });
+
   it('should generate titles using stored credentials when env vars are absent', async () => {
     delete process.env.ANTHROPIC_API_KEY;
     delete process.env.CLAUDE_CODE_OAUTH_TOKEN;

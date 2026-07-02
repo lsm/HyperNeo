@@ -15,6 +15,8 @@ import { spaceStore } from '../../lib/space-store';
 import { navigateToSpaceSession } from '../../lib/router';
 import { getRelativeTime } from '../../lib/utils';
 import { toast } from '../../lib/toast';
+import { useSessionRename } from '../../hooks/useSessionRename';
+import { RenameIcon } from '../icons/RenameIcon';
 import { SpaceAgentEditor } from './SpaceAgentEditor';
 
 type Session = { id: string; title: string; status: string; lastActiveAt: number; type?: string };
@@ -184,10 +186,24 @@ function SessionItem({
 }) {
   const borderColor = STATUS_BORDER[session.status] ?? 'border-l-transparent';
   const canPromote = session.type !== 'space_task_agent';
+  const { isEditing, startEditing, inputProps } = useSessionRename(session.id, session.title);
+
+  if (isEditing) {
+    return (
+      <div class={`px-4 py-3 border-l-2 ${borderColor}`}>
+        <input
+          type="text"
+          data-testid="space-session-rename-input"
+          {...inputProps}
+          class="w-full px-2 py-1 text-sm bg-white/10 rounded-md text-gray-100 outline-none ring-1 ring-blue-500/60"
+        />
+      </div>
+    );
+  }
 
   return (
     <div
-      class={`px-4 py-3 border-l-2 ${borderColor} cursor-pointer hover:bg-dark-800/50 transition-colors`}
+      class={`group/row relative px-4 py-3 border-l-2 ${borderColor} cursor-pointer hover:bg-dark-800/50 transition-colors`}
       onClick={() => navigateToSpaceSession(spaceId, session.id)}
     >
       <div class="flex items-start justify-between">
@@ -202,21 +218,36 @@ function SessionItem({
             )}
           </div>
         </div>
-        {canPromote && (
-          <div class="ml-4 flex flex-shrink-0 items-center gap-2">
-            <button
-              type="button"
-              onClick={(event) => {
-                event.stopPropagation();
-                onPromote(session);
-              }}
-              class="rounded-md border border-blue-500/30 px-2 py-1 text-xs text-blue-300 transition-colors hover:bg-blue-500/10 hover:text-blue-200"
-            >
-              Promote
-            </button>
-            <span class="text-xs text-gray-400">&rarr;</span>
-          </div>
-        )}
+        <div class="ml-4 flex flex-shrink-0 items-center gap-2">
+          <button
+            type="button"
+            data-testid="space-session-rename"
+            onClick={(event) => {
+              event.stopPropagation();
+              startEditing();
+            }}
+            title="Rename session"
+            aria-label={`Rename ${session.title || 'session'}`}
+            class="opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100 rounded-md p-1 text-gray-500 transition-colors hover:text-gray-100 hover:bg-white/10"
+          >
+            <RenameIcon className="w-3.5 h-3.5" />
+          </button>
+          {canPromote && (
+            <>
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onPromote(session);
+                }}
+                class="rounded-md border border-blue-500/30 px-2 py-1 text-xs text-blue-300 transition-colors hover:bg-blue-500/10 hover:text-blue-200"
+              >
+                Promote
+              </button>
+              <span class="text-xs text-gray-400">&rarr;</span>
+            </>
+          )}
+        </div>
       </div>
     </div>
   );

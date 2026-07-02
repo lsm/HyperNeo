@@ -942,6 +942,11 @@ export class SessionLifecycle {
 
     const session = agentSession.getSessionData();
 
+    // Respect a user-set title: never overwrite a manual rename with auto-gen.
+    if (session.metadata.titleSetBy === 'user') {
+      return { title: session.title, isFallback: false };
+    }
+
     // Check if title already generated
     if (session.metadata.titleGenerated) {
       return { title: session.title, isFallback: false };
@@ -955,6 +960,15 @@ export class SessionLifecycle {
         session.config.model,
         session.config.provider as string | undefined
       );
+
+      // Re-check against fresh state BEFORE any irreversible work: a user may
+      // have renamed during the generation await. Bail before renaming the
+      // branch so we neither clobber the title nor rename the git branch and
+      // then fail to persist it (which would desync metadata from the branch).
+      const latest = agentSession.getSessionData();
+      if (latest.metadata.titleSetBy === 'user') {
+        return { title: latest.title, isFallback: false };
+      }
 
       // Step 2: Rename branch if we have a worktree
       let newBranchName = session.worktree?.branch;
@@ -976,21 +990,28 @@ export class SessionLifecycle {
         }
       }
 
-      // Step 3: Update session record
+      // Step 3: Update session record.
+      // Re-read fresh state: a user may have renamed during the branch-rename
+      // await above (renameBranch can also swallow errors and return false). If
+      // so, keep their title (don't clobber it) but still persist any successful
+      // branch rename so metadata and the git branch don't desync.
+      const currentSession = agentSession.getSessionData();
+      const userRenamed = currentSession.metadata.titleSetBy === 'user';
+      const finalTitle = userRenamed ? currentSession.title : title;
       const updatedSession: Session = {
-        ...session,
-        title,
-        worktree: session.worktree
+        ...currentSession,
+        title: finalTitle,
+        worktree: currentSession.worktree
           ? {
-              ...session.worktree,
-              branch: newBranchName || session.worktree.branch,
+              ...currentSession.worktree,
+              branch: newBranchName ?? currentSession.worktree.branch,
             }
           : undefined,
-        gitBranch: newBranchName || session.gitBranch,
+        gitBranch: newBranchName ?? currentSession.gitBranch,
         metadata: {
-          ...session.metadata,
-          // Only mark as generated if not a fallback
-          titleGenerated: !isFallback,
+          ...currentSession.metadata,
+          // Only mark as generated when we actually generated (not on user rename).
+          titleGenerated: userRenamed ? currentSession.metadata.titleGenerated : !isFallback,
         },
       };
 
@@ -1008,8 +1029,15 @@ export class SessionLifecycle {
       });
 
       // Return result so caller can check if it was a fallback
-      return { title, isFallback };
+      return { title: finalTitle, isFallback: userRenamed ? false : isFallback };
     } catch (error) {
+      // A user may have renamed during the (failed) generation; don't let the
+      // fallback title overwrite it. Mirrors the pre-branch-rename re-check.
+      const latest = agentSession.getSessionData();
+      if (latest.metadata.titleSetBy === 'user') {
+        return { title: latest.title, isFallback: false };
+      }
+
       this.logger.error('[SessionLifecycle] Failed to generate title:', error);
 
       // Fallback: Use first 50 chars of message as title
