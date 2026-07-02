@@ -458,6 +458,99 @@ describe('useTargetSessionContext', () => {
     });
   });
 
+  it('clears the latch when the worker execution detaches (nodeExecutionId drops)', async () => {
+    // Regression: when a worker fails and is detached,
+    // detachSessionFromAllExecutions clears agentSessionId and the
+    // node_executions query filters `agent_session_id IS NOT NULL`, so the
+    // execution leaves composerTargets and the target's nodeExecutionId drops
+    // to undefined. The latch must clear so the composer treats the agent as
+    // not-started (preconfiguration enabled) instead of staying wired to the
+    // canceled stale session until recovery spawns a fresh one.
+    const attachedMember: SpaceTaskActivityMember = {
+      id: 'm1',
+      sessionId: 'coder-session',
+      kind: 'node_agent',
+      label: 'Coder',
+      role: 'coder',
+      state: 'active',
+      processingStatus: 'idle',
+      messageCount: 0,
+      nodeExecution: {
+        nodeExecutionId: 'ne-1',
+        nodeId: 'n1',
+        agentName: 'coder',
+        status: 'in_progress',
+      },
+    };
+    type DetachTarget = {
+      id: string;
+      kind: 'node_agent';
+      label: string;
+      agentName: string;
+      nodeExecutionId?: string;
+    };
+    const attachedTarget: DetachTarget = {
+      id: 'node:n1:coder',
+      kind: 'node_agent',
+      label: 'Coder',
+      agentName: 'coder',
+      nodeExecutionId: 'ne-1',
+    };
+    const detachedTarget: DetachTarget = {
+      id: 'node:n1:coder',
+      kind: 'node_agent',
+      label: 'Coder',
+      agentName: 'coder',
+      // nodeExecutionId dropped — execution left composerTargets on detach.
+    };
+
+    const { result, rerender } = renderHook(
+      (props: { target: DetachTarget; members: SpaceTaskActivityMember[] }) =>
+        useTargetSessionContext({
+          taskId: 'task-1',
+          targets: [props.target],
+          selectedTarget: props.target,
+          activityMembers: props.members,
+        }),
+      { initialProps: { target: attachedTarget, members: [attachedMember] } }
+    );
+
+    await waitFor(() => {
+      expect(result.current.targetSessionId).toBe('coder-session');
+    });
+
+    // Worker detaches: execution leaves composerTargets and the member
+    // disappears (agent_session_id IS NULL). Latch must NOT hold the stale one.
+    rerender({ target: detachedTarget, members: [] });
+    expect(result.current.targetSessionId).toBeNull();
+    expect(result.current.isStarted).toBe(false);
+
+    // Recovery spawns a fresh session under a new execution — resolves cleanly.
+    const recoveredMember: SpaceTaskActivityMember = {
+      id: 'm2',
+      sessionId: 'coder-session-2',
+      kind: 'node_agent',
+      label: 'Coder',
+      role: 'coder',
+      state: 'active',
+      processingStatus: 'idle',
+      messageCount: 0,
+      nodeExecution: {
+        nodeExecutionId: 'ne-2',
+        nodeId: 'n1',
+        agentName: 'coder',
+        status: 'in_progress',
+      },
+    };
+    rerender({
+      target: { ...detachedTarget, nodeExecutionId: 'ne-2' },
+      members: [recoveredMember],
+    });
+    await waitFor(() => {
+      expect(result.current.targetSessionId).toBe('coder-session-2');
+    });
+  });
+
   it('marks not-yet-started agent as isStarted=false', async () => {
     const notStartedTarget = {
       id: 'node:n1:reviewer',
