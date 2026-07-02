@@ -3,7 +3,7 @@ import { slugify, validateSlug } from '../../../../src/lib/space/slug';
 
 describe('slugify', () => {
   test('converts simple name to lowercase slug', () => {
-    expect(slugify('NeoKai Dev')).toBe('neokai-dev');
+    expect(slugify('HyperNeo Dev')).toBe('neokai-dev');
   });
 
   test('replaces non-alphanumeric characters with hyphens', () => {

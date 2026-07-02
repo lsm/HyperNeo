@@ -688,7 +688,7 @@ export class SDKMessageRepository {
     // Always explicitly set `origin` (even to undefined) so the SDK's own
     // `origin?: SDKMessageOrigin` object field — added in SDK 0.2.110 — is stripped from the
     // spread result. Without this, messages whose DB origin column is null would carry an
-    // SDKMessageOrigin object instead of a NeoKai MessageOrigin string, making the field's
+    // SDKMessageOrigin object instead of a HyperNeo MessageOrigin string, making the field's
     // type inconsistent across messages.
     const messages: Array<SDKMessage & { timestamp: number }> = [];
     for (const r of rows) {
@@ -779,7 +779,7 @@ export class SDKMessageRepository {
     // hasMore is based on top-level message count only (not including subagent messages)
     // Note: cast required because the new SDK added `origin?: SDKMessageOrigin` to SDKUserMessage,
     // which conflicts with our augmented `origin?: MessageOrigin` field (a different type used for
-    // tracking message provenance in NeoKai). The runtime values are always correct.
+    // tracking message provenance in HyperNeo). The runtime values are always correct.
     return {
       messages: [...topLevelMessages, ...subagentMessages] as Array<
         SDKMessage & { timestamp: number; origin?: MessageOrigin; sendStatus?: string }
@@ -1581,11 +1581,11 @@ export class SDKMessageRepository {
   }
 
   // ============================================================================
-  // NeoKai action messages (interactive prompts stored in the chat timeline)
+  // HyperNeo action messages (interactive prompts stored in the chat timeline)
   // ============================================================================
 
   /**
-   * Save a NeoKai-native action message to the sdk_messages table.
+   * Save a HyperNeo-native action message to the sdk_messages table.
    *
    * The message is stored in the same `sdk_message` JSON column as SDK messages,
    * but with `message_type = 'neokai_action'` so it can be distinguished during
@@ -1616,7 +1616,7 @@ export class SDKMessageRepository {
   }
 
   /**
-   * Update a NeoKai action message in-place (e.g. mark it resolved after the
+   * Update a HyperNeo action message in-place (e.g. mark it resolved after the
    * user has made a choice).
    *
    * @param rowId   The ID returned by saveNeokaiActionMessage.
@@ -1629,7 +1629,7 @@ export class SDKMessageRepository {
   }
 
   /**
-   * Update a NeoKai action message by its uuid field (stored inside the JSON blob).
+   * Update a HyperNeo action message by its uuid field (stored inside the JSON blob).
    *
    * This avoids having to carry the row ID through the RPC call.  The uuid is
    * unique per session (generated at emit time) so the lookup is unambiguous.

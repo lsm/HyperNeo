@@ -1,4 +1,4 @@
-# NeoKai Self-Evolving System
+# HyperNeo Self-Evolving System
 
 ## Status
 
@@ -6,17 +6,17 @@ Research and architecture proposal.
 
 ## Goal
 
-NeoKai should become a system that improves from use. Each completed run should generate evidence that can make future work cheaper, safer, and more capable after scoring, redaction, validation, and policy approval.
+HyperNeo should become a system that improves from use. Each completed run should generate evidence that can make future work cheaper, safer, and more capable after scoring, redaction, validation, and policy approval.
 
 The system improves three things independently:
 
 1. **Workflow** — how agents plan, coordinate, execute, review, and learn.
 2. **Target artifact** — the codebase, document set, research corpus, business process, or other system the user is working on.
-3. **NeoKai itself** — product, runtime, UI, tools, prompts, memory, and workflow infrastructure.
+3. **HyperNeo itself** — product, runtime, UI, tools, prompts, memory, and workflow infrastructure.
 
 The target ambition is not a vague “smarter agent.” It is a compounding system where roughly 2x implementation effort can produce 100x long-term value by turning high-quality run evidence into durable improvements: reusable strategies, workflow lessons, regression cases, product feedback, issue drafts, patches, and evolved workflow variants.
 
-A run does not automatically improve NeoKai. A run produces evidence. Evidence becomes improvement only after it passes the relevant domain policy.
+A run does not automatically improve HyperNeo. A run produces evidence. Evidence becomes improvement only after it passes the relevant domain policy.
 
 ## Source research
 
@@ -69,11 +69,11 @@ Reported results include:
 
 Ablations show both diverse strategy rollout and critical self-judgment matter. For example, on a Qwen2.5-3B setup, full StraTA reached `88.6 ± 1.9` on ALFWorld and `73.4 ± 1.0` WebShop success, above vanilla strategy hierarchy and single-component variants.
 
-### NeoKai translation
+### HyperNeo translation
 
-StraTA maps naturally to NeoKai as **Strategy Cards**.
+StraTA maps naturally to HyperNeo as **Strategy Cards**.
 
-Before a workflow starts, NeoKai should generate one or more compact strategy cards:
+Before a workflow starts, HyperNeo should generate one or more compact strategy cards:
 
 - problem framing,
 - assumptions,
@@ -83,9 +83,9 @@ Before a workflow starts, NeoKai should generate one or more compact strategy ca
 - verification steps,
 - success signals.
 
-The selected strategy becomes shared context for the workflow. It is visible to all worker agents and reviewers. After the run, NeoKai can judge whether the trace followed the strategy and whether the strategy itself was good.
+The selected strategy becomes shared context for the workflow. It is visible to all worker agents and reviewers. After the run, HyperNeo can judge whether the trace followed the strategy and whether the strategy itself was good.
 
-This lets NeoKai distinguish failures such as:
+This lets HyperNeo distinguish failures such as:
 
 - bad strategy,
 - good strategy but poor execution,
@@ -94,7 +94,7 @@ This lets NeoKai distinguish failures such as:
 - unclear review gate,
 - insufficient artifacts.
 
-Without this split, every failure collapses into “agent failed.” With this split, NeoKai gets actionable credit assignment.
+Without this split, every failure collapses into “agent failed.” With this split, HyperNeo gets actionable credit assignment.
 
 ## What Learning Beyond Gradients contributes
 
@@ -166,9 +166,9 @@ Agent-side factors that increase maintainable complexity:
 
 The main warning is that a heuristic system that only accumulates patches becomes a big ball of mud. It needs periodic compression: merging lessons, deleting stale rules, refactoring brittle patches, and turning old capabilities into tests or replays.
 
-### NeoKai translation
+### HyperNeo translation
 
-NeoKai workflows should be treated as heuristic systems.
+HyperNeo workflows should be treated as heuristic systems.
 
 A workflow is not just a prompt or DAG. It is:
 
@@ -245,19 +245,19 @@ The paper keeps important pieces fixed for stability and safety:
 
 It warns that self-improving systems may evolve faster than human audit capacity.
 
-### NeoKai translation
+### HyperNeo translation
 
-NeoKai should allow agents to propose changes to workflows, lessons, artifact schemas, memory policies, and issue templates. But promotion must remain guarded.
+HyperNeo should allow agents to propose changes to workflows, lessons, artifact schemas, memory policies, and issue templates. But promotion must remain guarded.
 
 Core rule:
 
-**Agents may propose workflow and product evolution; NeoKai owns validation and promotion.**
+**Agents may propose workflow and product evolution; HyperNeo owns validation and promotion.**
 
 This captures Hyperagents’ upside without uncontrolled self-modification.
 
 ## Initial thought process
 
-The first design focused on workflow improvement because NeoKai already has Space workflows, gates, tasks, artifacts, and agent memory. That led to a straightforward mapping:
+The first design focused on workflow improvement because HyperNeo already has Space workflows, gates, tasks, artifacts, and agent memory. That led to a straightforward mapping:
 
 - StraTA → Strategy Cards.
 - Learning Beyond Gradients → workflow episodes, artifacts, tests, lessons, compression.
@@ -265,27 +265,27 @@ The first design focused on workflow improvement because NeoKai already has Spac
 
 That was useful but incomplete.
 
-NeoKai has three real use cases:
+HyperNeo has three real use cases:
 
-1. **Using NeoKai to develop NeoKai.**
-2. **Using NeoKai to develop other software.**
-3. **Using NeoKai for non-coding work.**
+1. **Using HyperNeo to develop HyperNeo.**
+2. **Using HyperNeo to develop other software.**
+3. **Using HyperNeo for non-coding work.**
 
-Those use cases reveal that workflow evolution is only one axis. Each run can also improve the target artifact and NeoKai itself.
+Those use cases reveal that workflow evolution is only one axis. Each run can also improve the target artifact and HyperNeo itself.
 
 The corrected architecture separates three evolution targets:
 
 1. **Workflow Evolution** — improve how agents do work.
 2. **Target Artifact Evolution** — improve the thing being worked on.
-3. **NeoKai Product Evolution** — improve NeoKai itself.
+3. **HyperNeo Product Evolution** — improve HyperNeo itself.
 
 These three targets share evidence from the same run, but they require different permissions, validation, ownership, and blast-radius controls.
 
-## Target architecture: NeoKai Forge
+## Target architecture: HyperNeo Forge
 
-The proposed system is **NeoKai Forge**.
+The proposed system is **HyperNeo Forge**.
 
-NeoKai Forge is a self-evolution layer around Space workflows. It observes runs, extracts structured episodes, routes findings to evolution domains, stores lessons, proposes improvements, validates them, and promotes them only under policy.
+HyperNeo Forge is a self-evolution layer around Space workflows. It observes runs, extracts structured episodes, routes findings to evolution domains, stores lessons, proposes improvements, validates them, and promotes them only under policy.
 
 High-level loop:
 
@@ -298,7 +298,7 @@ task arrives
 → judge outcome
 → split findings by evolution domain
 → compress durable lessons
-→ propose workflow / target / NeoKai improvements
+→ propose workflow / target / HyperNeo improvements
 → validate against replay or tests
 → route to suggestion, task, issue, PR, or promoted variant
 ```
@@ -307,7 +307,7 @@ task arrives
 
 ### 1. Workflow Evolution
 
-This domain improves how NeoKai agents work.
+This domain improves how HyperNeo agents work.
 
 Examples:
 
@@ -354,9 +354,9 @@ For non-coding work, this may mean:
 
 The key is that “artifact” is broader than code.
 
-### 3. NeoKai Product Evolution
+### 3. HyperNeo Product Evolution
 
-This domain improves NeoKai itself.
+This domain improves HyperNeo itself.
 
 Examples:
 
@@ -371,15 +371,15 @@ Examples:
 - repeated failure in an agent tool,
 - missing integration.
 
-When NeoKai is used to develop NeoKai, this domain can create code patches directly. When NeoKai is used on external projects, this should usually create issue drafts or GitHub issues under an explicit flag.
+When HyperNeo is used to develop HyperNeo, this domain can create code patches directly. When HyperNeo is used on external projects, this should usually create issue drafts or GitHub issues under an explicit flag.
 
 ## Use case mapping
 
-| Use case | Workflow evolves | Target artifact evolves | NeoKai evolves |
+| Use case | Workflow evolves | Target artifact evolves | HyperNeo evolves |
 | --- | --- | --- | --- |
-| NeoKai develops NeoKai | yes | NeoKai code | NeoKai code directly |
-| NeoKai develops another codebase | yes | target repo code | NeoKai issues or optional PRs under flag |
-| NeoKai does non-coding work | yes | user system/process/artifacts | NeoKai issues or optional plugins under flag |
+| HyperNeo develops HyperNeo | yes | HyperNeo code | HyperNeo code directly |
+| HyperNeo develops another codebase | yes | target repo code | HyperNeo issues or optional PRs under flag |
+| HyperNeo does non-coding work | yes | user system/process/artifacts | HyperNeo issues or optional plugins under flag |
 
 ## Evolution policy
 
@@ -428,7 +428,7 @@ allowNeoKaiIssueCreation: false
 allowNeoKaiCodeChanges: false
 ```
 
-For NeoKai-on-NeoKai development:
+For HyperNeo-on-HyperNeo development:
 
 ```text
 workflow: create_task or create_pr
@@ -671,9 +671,9 @@ type EvolutionRetentionPolicy = {
 };
 ```
 
-## Existing NeoKai seams
+## Existing HyperNeo seams
 
-NeoKai already has several places where Forge can attach with limited disruption.
+HyperNeo already has several places where Forge can attach with limited disruption.
 
 ### Workflow definitions
 
@@ -747,11 +747,11 @@ Forge should reuse this for scoped WorkflowLessons before adding a separate memo
 
 ### Step 1: Classify task and evolution domains
 
-When a task starts, NeoKai classifies:
+When a task starts, HyperNeo classifies:
 
 - target artifact kind,
 - workspace/repo target,
-- whether this is NeoKai-on-NeoKai,
+- whether this is HyperNeo-on-HyperNeo,
 - allowed evolution modes,
 - risk level,
 - validation options.
@@ -843,7 +843,7 @@ It should answer:
 - Did human review reject anything?
 - Did a test or build catch an issue?
 - Was there target artifact improvement opportunity?
-- Was there NeoKai product friction?
+- Was there HyperNeo product friction?
 
 ### Step 7: Route findings
 
@@ -856,8 +856,8 @@ workflow finding
 target artifact finding
 → follow-up task / patch / issue / doc / generated tool
 
-NeoKai product finding
-→ local feedback item / GitHub issue draft / GitHub issue / NeoKai PR
+HyperNeo product finding
+→ local feedback item / GitHub issue draft / GitHub issue / HyperNeo PR
 ```
 
 ### Step 8: Compress lessons
@@ -933,23 +933,23 @@ passes regression checks,
 and satisfies the Space evolution policy.
 ```
 
-## NeoKai-on-NeoKai mode
+## HyperNeo-on-HyperNeo mode
 
 This is the strongest self-evolution loop.
 
-NeoKai can directly improve itself because the target artifact and product are the same.
+HyperNeo can directly improve itself because the target artifact and product are the same.
 
 Flow:
 
 ```text
-NeoKai task runs in NeoKai
+HyperNeo task runs in HyperNeo
 → workflow friction or product issue appears
 → Episode Judge records it
 → finding routes to target_artifact and neokai_product
-→ agent creates NeoKai code patch
+→ agent creates HyperNeo code patch
 → tests validate patch
 → run creates WorkflowLesson or WorkflowVariant
-→ future NeoKai tasks benefit
+→ future HyperNeo tasks benefit
 ```
 
 Example:
@@ -957,7 +957,7 @@ Example:
 ```text
 Repeated failure: task agents miss previous gate data.
 Workflow finding: gate history must be summarized before execution.
-NeoKai product finding: task message lacks compact gate-history section.
+HyperNeo product finding: task message lacks compact gate-history section.
 Target artifact patch: edit buildCustomAgentTaskMessage().
 Regression: add test for message includes gate-history summary.
 Promotion: human reviews PR.
@@ -969,28 +969,28 @@ Safety requirement: keep evaluator, branch protection, tests, and approval polic
 
 ## External codebase mode
 
-When NeoKai develops another codebase, the primary obligation is to the target repo.
+When HyperNeo develops another codebase, the primary obligation is to the target repo.
 
-NeoKai should improve:
+HyperNeo should improve:
 
 1. workflow,
 2. target repo,
-3. NeoKai product only under explicit flag.
+3. HyperNeo product only under explicit flag.
 
 Flow:
 
 ```text
-user asks NeoKai to work on repo X
-→ NeoKai patches repo X
+user asks HyperNeo to work on repo X
+→ HyperNeo patches repo X
 → episode records workflow and product friction
 → target findings become repo X issues/PRs/tasks
-→ NeoKai findings become local feedback by default
-→ if enabled, NeoKai findings become GitHub issues in NeoKai repo
+→ HyperNeo findings become local feedback by default
+→ if enabled, HyperNeo findings become GitHub issues in HyperNeo repo
 ```
 
-Default behavior should not mutate NeoKai code while the user asked for work on another repo. The best default is issue generation, not self-PR.
+Default behavior should not mutate HyperNeo code while the user asked for work on another repo. The best default is issue generation, not self-PR.
 
-NeoKai issue should include:
+HyperNeo issue should include:
 
 - observed friction,
 - affected workflow,
@@ -1008,7 +1008,7 @@ Examples:
 
 ### Paper research
 
-NeoKai can improve:
+HyperNeo can improve:
 
 - reading workflow,
 - paper taxonomy,
@@ -1020,7 +1020,7 @@ NeoKai can improve:
 
 ### Business planning
 
-NeoKai can improve:
+HyperNeo can improve:
 
 - operating model,
 - planning template,
@@ -1031,7 +1031,7 @@ NeoKai can improve:
 
 ### Legal or policy review
 
-NeoKai can improve:
+HyperNeo can improve:
 
 - checklist,
 - risk taxonomy,
@@ -1079,9 +1079,9 @@ For each workflow:
 - validation status,
 - promotion/rejection controls.
 
-### NeoKai Product Feedback inbox
+### HyperNeo Product Feedback inbox
 
-For NeoKai product findings:
+For HyperNeo product findings:
 
 - local feedback item,
 - issue draft,
@@ -1093,7 +1093,7 @@ For NeoKai product findings:
 
 Self-evolution needs held-out tests.
 
-For NeoKai-on-NeoKai:
+For HyperNeo-on-HyperNeo:
 
 - old bugfix tasks,
 - UI tasks,
@@ -1149,7 +1149,7 @@ High-risk actions require human approval:
 
 - creating public issues,
 - opening PRs,
-- changing NeoKai code outside NeoKai-on-NeoKai mode,
+- changing HyperNeo code outside HyperNeo-on-HyperNeo mode,
 - changing gates or autonomy,
 - changing tool permissions,
 - promoting workflow variants globally.
@@ -1193,20 +1193,20 @@ For non-code artifacts:
 - dataset validation rate,
 - number of repeated manual steps eliminated.
 
-### NeoKai product metrics
+### HyperNeo product metrics
 
 - repeated product friction clusters,
 - product finding dedupe rate,
 - issue draft to issue conversion rate,
 - issue to fix latency,
 - before/after impact of product fixes,
-- number of runs affected by a promoted NeoKai improvement.
+- number of runs affected by a promoted HyperNeo improvement.
 
 Each promoted workflow variant, lesson, product change, or target artifact improvement should have a before/after view. The system should show whether the improvement actually improved later runs.
 
 ## Evaluation splits and anti-overfitting
 
-Self-evolving systems can overfit their own evaluator. NeoKai Forge should separate evidence used to generate improvements from evidence used to promote them.
+Self-evolving systems can overfit their own evaluator. HyperNeo Forge should separate evidence used to generate improvements from evidence used to promote them.
 
 Episode pools:
 
@@ -1221,7 +1221,7 @@ Promotion rule:
 No workflow variant can be promoted using only the episodes that generated it.
 ```
 
-For NeoKai-on-NeoKai, held-out tasks should include old bugfixes, UI tasks, PR review tasks, paper research tasks, workflow tasks, and E2E health-check tasks. For external repos, held-out validation should use target repo tests and user-provided smoke tests. For non-coding work, held-out validation should use rubric consistency, citation checks, and human acceptance.
+For HyperNeo-on-HyperNeo, held-out tasks should include old bugfixes, UI tasks, PR review tasks, paper research tasks, workflow tasks, and E2E health-check tasks. For external repos, held-out validation should use target repo tests and user-provided smoke tests. For non-coding work, held-out validation should use rubric consistency, citation checks, and human acceptance.
 
 ## Threat model
 
@@ -1230,8 +1230,8 @@ Forge creates durable memory and self-improvement paths, so it needs explicit de
 Primary threats:
 
 - prompt injection in artifacts becomes durable lesson poisoning,
-- malicious external repo causes NeoKai product issue spam,
-- external project tricks NeoKai into mutating itself,
+- malicious external repo causes HyperNeo product issue spam,
+- external project tricks HyperNeo into mutating itself,
 - poisoned workflow variant weakens gates,
 - candidate variant games evaluator instead of improving work,
 - self-generated GitHub issue leaks private context,
@@ -1243,8 +1243,8 @@ Primary threats:
 Required rules:
 
 ```text
-- Lessons from untrusted workspaces cannot affect global NeoKai behavior.
-- External repo episodes cannot create NeoKai issues without redaction and approval.
+- Lessons from untrusted workspaces cannot affect global HyperNeo behavior.
+- External repo episodes cannot create HyperNeo issues without redaction and approval.
 - Raw secrets must never be stored in EvolutionEpisode.
 - Workflow variants cannot modify evaluator, permissions, autonomy, or publishing paths.
 - Public issue/PR generation must pass evidence redaction.
@@ -1262,7 +1262,7 @@ Only trusted or workspace-local episodes can create active lessons. Untrusted ep
 
 ## Transfer scope and privacy
 
-Hyperagents show that meta-level improvements can transfer across domains. NeoKai should support transfer, but scoped by privacy and trust.
+Hyperagents show that meta-level improvements can transfer across domains. HyperNeo should support transfer, but scoped by privacy and trust.
 
 Lesson scopes:
 
@@ -1285,7 +1285,7 @@ Default retention policy should store summaries and references, not full raw tra
 
 ## Strategy checkpoints
 
-StraTA uses a fixed strategy for a rollout, but its own limitations note that fixed strategies can become restrictive when conditions change. NeoKai should start with a StrategyCard, then allow controlled revision at checkpoints.
+StraTA uses a fixed strategy for a rollout, but its own limitations note that fixed strategies can become restrictive when conditions change. HyperNeo should start with a StrategyCard, then allow controlled revision at checkpoints.
 
 Checkpoint triggers:
 
@@ -1298,7 +1298,7 @@ Checkpoint triggers:
 - repeated failed action pattern,
 - user correction.
 
-At a checkpoint, NeoKai chooses:
+At a checkpoint, HyperNeo chooses:
 
 ```text
 continue current strategy
@@ -1359,7 +1359,7 @@ This avoids local optima and keeps the archive from repeatedly exploiting one li
 
 ## Workflow complexity budget
 
-Learning Beyond Gradients warns that uncompressed heuristic systems become unmaintainable. NeoKai should score workflow complexity and reject variants that add too much complexity for too little gain.
+Learning Beyond Gradients warns that uncompressed heuristic systems become unmaintainable. HyperNeo should score workflow complexity and reject variants that add too much complexity for too little gain.
 
 Complexity signals:
 
@@ -1473,13 +1473,13 @@ Rollback must support:
 - marking an episode poisoned,
 - removing derived candidate mutations,
 - closing or superseding generated issue drafts,
-- reverting NeoKai product settings.
+- reverting HyperNeo product settings.
 
 If an episode is marked poisoned, all derived lessons and mutations should move to challenged or archived until reviewed.
 
 ## GitHub issue generation controls
 
-NeoKai product issue generation should be conservative.
+HyperNeo product issue generation should be conservative.
 
 Controls:
 
@@ -1505,7 +1505,7 @@ Issue drafts should include:
 
 ## Mission and Goal integration
 
-NeoKai’s Mission/Goal system provides natural long-horizon feedback. Forge should treat mission executions as episode groups.
+HyperNeo’s Mission/Goal system provides natural long-horizon feedback. Forge should treat mission executions as episode groups.
 
 Integration points:
 
@@ -1519,9 +1519,9 @@ For long-running goals, Forge should produce both per-run episodes and aggregate
 
 ## UI transparency
 
-Users should be able to see why NeoKai changed behavior.
+Users should be able to see why HyperNeo changed behavior.
 
-When NeoKai injects a lesson or selects a workflow variant, UI should show:
+When HyperNeo injects a lesson or selects a workflow variant, UI should show:
 
 - which lesson or variant was used,
 - confidence,
@@ -1550,14 +1550,14 @@ If budget is exhausted, Forge should still record minimal evidence but skip expe
 
 ## Self-PR isolation
 
-NeoKai self-PR mode needs strict isolation.
+HyperNeo self-PR mode needs strict isolation.
 
 Rules:
 
-- NeoKai self-PRs always run in a separate worktree.
-- Target repo PR and NeoKai PR must never share a branch.
-- External repo work cannot silently switch into NeoKai code mutation.
-- NeoKai code changes require tests tied to finding type.
+- HyperNeo self-PRs always run in a separate worktree.
+- Target repo PR and HyperNeo PR must never share a branch.
+- External repo work cannot silently switch into HyperNeo code mutation.
+- HyperNeo code changes require tests tied to finding type.
 - Self-PR mode requires explicit Space policy.
 - PR creation still requires human approval unless policy explicitly allows it.
 
@@ -1617,14 +1617,14 @@ Value:
 
 ### Milestone 4: Evolution Router
 
-Split findings into workflow, target artifact, and NeoKai product domains.
+Split findings into workflow, target artifact, and HyperNeo product domains.
 
 Deliverables:
 
 - `EvolutionFinding`,
 - routing by Space policy,
 - suggestion/task/issue draft creation,
-- local NeoKai product feedback inbox.
+- local HyperNeo product feedback inbox.
 
 Value:
 
@@ -1662,9 +1662,9 @@ Value:
 
 - real self-improvement without uncontrolled self-modification.
 
-### Milestone 7: NeoKai issue generation flag
+### Milestone 7: HyperNeo issue generation flag
 
-For external repo and non-coding modes, allow NeoKai product findings to become GitHub issues.
+For external repo and non-coding modes, allow HyperNeo product findings to become GitHub issues.
 
 Deliverables:
 
@@ -1676,11 +1676,11 @@ Deliverables:
 
 Value:
 
-- NeoKai learns from all use, not only NeoKai-on-NeoKai development.
+- HyperNeo learns from all use, not only HyperNeo-on-HyperNeo development.
 
-### Milestone 8: NeoKai self-PR mode
+### Milestone 8: HyperNeo self-PR mode
 
-For NeoKai-on-NeoKai spaces, allow product findings to become code changes.
+For HyperNeo-on-HyperNeo spaces, allow product findings to become code changes.
 
 Deliverables:
 
@@ -1702,10 +1702,10 @@ For every completed workflow run:
 1. create a redacted EvolutionEpisode summary
 2. judge Strategy / Outcome / Failures / Lessons
 3. assign trust level and evolution scope
-4. split findings into workflow / target / NeoKai domains
+4. split findings into workflow / target / HyperNeo domains
 5. store candidate WorkflowLessons with evidence links
 6. retrieve active relevant lessons for the next similar task
-7. show NeoKai product findings in a local feedback inbox
+7. show HyperNeo product findings in a local feedback inbox
 8. allow user to dismiss bad lessons or mark episodes poisoned
 ```
 
@@ -1715,7 +1715,7 @@ This does not require autonomous mutation. It creates the data flywheel first.
 
 The multiplier comes from compounding, not magic.
 
-A single good lesson can affect hundreds of future runs. A single fixed workflow gate can prevent repeated review failures. A single artifact schema can make every future run easier to judge. A single NeoKai issue generated from repeated friction can remove a product bottleneck for all users.
+A single good lesson can affect hundreds of future runs. A single fixed workflow gate can prevent repeated review failures. A single artifact schema can make every future run easier to judge. A single HyperNeo issue generated from repeated friction can remove a product bottleneck for all users.
 
 The system compounds because every run can generate reusable assets:
 
@@ -1726,21 +1726,21 @@ The system compounds because every run can generate reusable assets:
 - artifact schemas,
 - workflow variants,
 - target follow-ups,
-- NeoKai product feedback,
+- HyperNeo product feedback,
 - tests,
 - issues,
 - PRs.
 
 This is the shared thread across StraTA, Learning Beyond Gradients, and Hyperagents:
 
-- **StraTA** teaches NeoKai to separate strategy from execution.
-- **Learning Beyond Gradients** teaches NeoKai to maintain explicit artifacts, tests, memory, and compression loops.
-- **Hyperagents** teaches NeoKai to archive and evolve improvement procedures themselves, but under fixed evaluation and safety boundaries.
+- **StraTA** teaches HyperNeo to separate strategy from execution.
+- **Learning Beyond Gradients** teaches HyperNeo to maintain explicit artifacts, tests, memory, and compression loops.
+- **Hyperagents** teaches HyperNeo to archive and evolve improvement procedures themselves, but under fixed evaluation and safety boundaries.
 
 ## Final architecture principle
 
-NeoKai should not only run agents. NeoKai should maintain the system around agents.
+HyperNeo should not only run agents. HyperNeo should maintain the system around agents.
 
 That system includes workflows, strategies, target artifacts, product feedback, memories, gates, tests, and promotion rules.
 
-The durable product is not one successful run. The durable product is a better NeoKai after every validated learning cycle.
+The durable product is not one successful run. The durable product is a better HyperNeo after every validated learning cycle.

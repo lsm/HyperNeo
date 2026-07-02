@@ -101,7 +101,7 @@ const STARTUP_TIMEOUT_MS = getStartupTimeoutMs();
 /**
  * Bounded retry config for 5xx / overloaded / provider-unavailable errors that
  * escape the SDK's own retry logic. These are transient server-side failures that
- * should be retried at the NeoKai level with exponential backoff before going terminal.
+ * should be retried at the HyperNeo level with exponential backoff before going terminal.
  *
  * Read lazily (at call time, not module load) so tests can set
  * NEOKAI_PROVIDER_RETRY_BASE_DELAY_MS=0 in beforeEach to avoid real sleeps
@@ -480,7 +480,7 @@ export class QueryRunner {
 
       // Check if the provider can make API calls (env vars, auth.json, gh CLI — all count).
       // isAvailable() is the runtime gate; getAuthStatus().isAuthenticated is UI-only
-      // (NeoKai-managed OAuth) and must NOT be used here or env-var users will be blocked.
+      // (HyperNeo-managed OAuth) and must NOT be used here or env-var users will be blocked.
       if (provider?.isAvailable && !(await provider.isAvailable())) {
         const authStatus = provider.getAuthStatus ? await provider.getAuthStatus() : null;
         const errorMsg = authStatus?.error || 'Please configure credentials.';
@@ -1058,7 +1058,7 @@ export class QueryRunner {
 
       // Bounded retry for 5xx / overloaded / provider-unavailable errors that
       // escaped the SDK's own retry logic. These are transient server-side
-      // failures that should be retried at the NeoKai level with exponential
+      // failures that should be retried at the HyperNeo level with exponential
       // backoff before going terminal. Mirrors the transient-connection retry
       // above, but allows up to maxProviderRetries attempts with backoff.
       //
@@ -1327,12 +1327,12 @@ export class QueryRunner {
               ? `The AI session could not be resumed (workspace: ${session.workspacePath ?? 'unbound'}). ` +
                 `The previous session transcript was not found — this can happen after a provider switch, ` +
                 `workspace path change, or if the ~/.claude/projects/ directory was cleaned up. ` +
-                `Your message history in NeoKai is preserved; only the AI context window is reset. ` +
+                `Your message history in HyperNeo is preserved; only the AI context window is reset. ` +
                 `Please resend your message — you will be asked to choose whether to start a fresh session or keep the existing context.`
               : isMessageNotFound
                 ? `The AI session could not resume from the previous rewind point ` +
                   `(workspace: ${session.workspacePath ?? 'unbound'}). The Claude SDK transcript no longer ` +
-                  `contains that message UUID, likely after SDK compaction. Your message history in NeoKai ` +
+                  `contains that message UUID, likely after SDK compaction. Your message history in HyperNeo ` +
                   `is preserved; only the AI context window is reset. Please resend your message.`
                 : isProviderRetryExhausted
                   ? `The provider is temporarily unavailable. The request was retried ` +

@@ -12,7 +12,7 @@ When HyperNeo is installed globally (`npm install -g hyperneo`), the SDK binary 
 
 ## Solution: Startup Warmup
 
-NeoKai now resolves/downloads the SDK binary at daemon startup via `warmupSDKCliBinary()` in `packages/daemon/src/lib/agent/sdk-cli-resolver.ts`.
+HyperNeo now resolves/downloads the SDK binary at daemon startup via `warmupSDKCliBinary()` in `packages/daemon/src/lib/agent/sdk-cli-resolver.ts`.
 
 ### Resolution Priority
 

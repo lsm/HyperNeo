@@ -1801,7 +1801,7 @@ describe('GitHubEventExtension', () => {
 
     expect(result.watchedRepo.webhookActive).toBe(false);
     expect(result.watchedRepo.webhookLastError).toBe(
-      'GitHub webhook URL does not match this NeoKai endpoint'
+      'GitHub webhook URL does not match this HyperNeo endpoint'
     );
     await extension.stop();
   });

@@ -6,7 +6,7 @@
 
 ## Overview
 
-This document describes how to integrate the GitHub Copilot CLI into NeoKai's
+This document describes how to integrate the GitHub Copilot CLI into HyperNeo's
 PR review workflow (as designed in `docs/design/pr-review-workflow.md`).
 
 ---
@@ -196,7 +196,7 @@ Leader
 1. **Native GitHub integration** — CLI has optimized GitHub API access, understands PR structure
 2. **Built-in context retrieval** — Automatically fetches PR diff, comments, code context
 3. **Model flexibility** — Can use gpt-5.3-codex which may be better for code review
-4. **Reduced NeoKai code** — No need to manage gh API calls, PR comment posting
+4. **Reduced HyperNeo code** — No need to manage gh API calls, PR comment posting
 5. **Consistent behavior** — CLI uses tested review patterns from GitHub's AI team
 
 ### Disadvantages of Copilot CLI Reviewer
@@ -239,7 +239,7 @@ interface ReviewerConfig {
 
 ## Recommendation for PR Review Integration
 
-**For NeoKai's PR review workflow, the Copilot CLI is best used as a "secondary" reviewer**
+**For HyperNeo's PR review workflow, the Copilot CLI is best used as a "secondary" reviewer**
 alongside the existing SDK-based reviewers:
 
 1. **Primary reviewer:** Anthropic Claude via SDK (existing approach) — full observability

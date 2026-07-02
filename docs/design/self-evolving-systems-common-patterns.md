@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This note extracts the shared ideas across three self-improving agent-system papers and translates them into design principles for NeoKai.
+This note extracts the shared ideas across three self-improving agent-system papers and translates them into design principles for HyperNeo.
 
 Sources:
 
@@ -14,7 +14,7 @@ The papers differ in mechanism and domain, but they converge on one core thesis:
 
 > Agent systems improve when experience becomes durable, inspectable system structure instead of being lost inside one transient run.
 
-In NeoKai terms, the learned object should not be only a model response. It should be a growing set of strategies, episodes, lessons, workflows, artifacts, tests, issue findings, product feedback, and validated variants.
+In HyperNeo terms, the learned object should not be only a model response. It should be a growing set of strategies, episodes, lessons, workflows, artifacts, tests, issue findings, product feedback, and validated variants.
 
 ## Short summary
 
@@ -55,9 +55,9 @@ Heuristic Learning makes code, tests, logs, trial summaries, replays, and memory
 
 Hyperagents treat the agent and meta-agent as editable programs. The system learns by changing its own code, prompts, memory, and improvement procedure, then storing variants in an archive with scores and lineage.
 
-### NeoKai implication
+### HyperNeo implication
 
-NeoKai should treat workflows, prompts, gates, memory retrieval rules, artifact schemas, strategy templates, test suites, and product feedback as evolvable system structure.
+HyperNeo should treat workflows, prompts, gates, memory retrieval rules, artifact schemas, strategy templates, test suites, and product feedback as evolvable system structure.
 
 A completed run should not disappear into chat history. It should become structured evidence that can produce:
 
@@ -85,9 +85,9 @@ A long debugging or control process generates many observations, failed trials, 
 
 Long-term self-improvement generates many agent variants. Hyperagents abstract this history into an archive with performance, lineage, and meta-level discoveries.
 
-### NeoKai implication
+### HyperNeo implication
 
-NeoKai should not store only raw transcripts. It needs layered abstractions:
+HyperNeo should not store only raw transcripts. It needs layered abstractions:
 
 ```text
 raw tool calls / chat / artifacts
@@ -137,9 +137,9 @@ Hyperagents distinguish:
 - Did an archive variant transfer across domains?
 - Did the self-modification create durable meta-knowledge?
 
-### NeoKai implication
+### HyperNeo implication
 
-NeoKai should score each run along multiple dimensions:
+HyperNeo should score each run along multiple dimensions:
 
 - workflow fit,
 - strategy quality,
@@ -150,7 +150,7 @@ NeoKai should score each run along multiple dimensions:
 - tool reliability,
 - human-review acceptance,
 - target artifact improvement,
-- NeoKai product friction.
+- HyperNeo product friction.
 
 Without this, every failure becomes “agent failed,” which is too vague to improve from.
 
@@ -181,9 +181,9 @@ This memory is readable and editable.
 
 The archive is memory. It stores agents, scores, variants, lineages, and meta-level improvements. Later modifications use the archive to avoid starting from scratch.
 
-### NeoKai implication
+### HyperNeo implication
 
-NeoKai needs multiple memory layers:
+HyperNeo needs multiple memory layers:
 
 | Memory type | Scope | Purpose |
 | --- | --- | --- |
@@ -191,7 +191,7 @@ NeoKai needs multiple memory layers:
 | episode memory | one summarized run | judge and compare outcomes |
 | lesson memory | task class / Space | guide future runs |
 | variant archive | workflow lineage | evolve process safely |
-| product feedback memory | NeoKai itself | improve product over time |
+| product feedback memory | HyperNeo itself | improve product over time |
 | regression memory | target artifact | prevent repeated bugs |
 
 Memory must be scoped, redacted, and lifecycle-managed. Otherwise it becomes stale, poisoned, or too noisy.
@@ -212,9 +212,9 @@ Heuristic Learning explores through code edits, policy variants, detector change
 
 Hyperagents select parents from an archive using performance and exploration pressure. This keeps the system from mutating only the current best variant and getting stuck in local optima.
 
-### NeoKai implication
+### HyperNeo implication
 
-NeoKai should support controlled diversity:
+HyperNeo should support controlled diversity:
 
 - generate several StrategyCards,
 - choose diverse strategies for high-value tasks,
@@ -241,9 +241,9 @@ The coding agent inspects failures, logs, videos, tests, and scores. It then edi
 
 The meta-agent uses archive history and evaluations to decide how to modify agents. It can improve the improvement procedure itself.
 
-### NeoKai implication
+### HyperNeo implication
 
-NeoKai should use reflection, but ground it in evidence:
+HyperNeo should use reflection, but ground it in evidence:
 
 ```text
 reflection + artifacts + tests + gates + human feedback + outcome metrics
@@ -267,9 +267,9 @@ Old capabilities become tests, replays, detectors, rules, and summaries. The sys
 
 Successful variants and meta-level improvements stay in the archive. Meta-improvements can transfer across domains, which is one of the paper’s key results.
 
-### NeoKai implication
+### HyperNeo implication
 
-NeoKai should convert repeated work into reusable structures:
+HyperNeo should convert repeated work into reusable structures:
 
 - task strategies,
 - review checklists,
@@ -298,9 +298,9 @@ Uses environment scores, fixed seeds, tests, replays, videos, and regression beh
 
 Uses task sets, evaluation scores, archive validity, validation/test splits, and sandboxed execution.
 
-### NeoKai implication
+### HyperNeo implication
 
-NeoKai should not promote lessons or variants based only on plausible summaries.
+HyperNeo should not promote lessons or variants based only on plausible summaries.
 
 Promotion should require evidence such as:
 
@@ -335,9 +335,9 @@ This is the clearest warning. A heuristic system that only accumulates patches b
 
 Self-modification can grow beyond human audit capacity. The paper keeps evaluators, sandboxing, timeouts, and parts of the outer loop fixed for safety.
 
-### NeoKai implication
+### HyperNeo implication
 
-NeoKai needs active compression:
+HyperNeo needs active compression:
 
 - merge duplicate lessons,
 - retire stale lessons,
@@ -365,9 +365,9 @@ The coding-agent loop improves its own supporting system: tests, logs, detectors
 
 The meta-agent can modify itself. The improvement procedure is editable and can produce cross-domain gains.
 
-### NeoKai implication
+### HyperNeo implication
 
-NeoKai should eventually evolve not only workflows, but the process that improves workflows.
+HyperNeo should eventually evolve not only workflows, but the process that improves workflows.
 
 Examples:
 
@@ -397,9 +397,9 @@ The system relies on tests, replays, reproducibility, rollback, and modularity t
 
 The paper explicitly keeps evaluation, sandboxing, timeouts, restricted internet, and oversight outside free self-modification.
 
-### NeoKai implication
+### HyperNeo implication
 
-NeoKai should keep these fixed by default:
+HyperNeo should keep these fixed by default:
 
 - evaluator/scorer,
 - tool permissions,
@@ -410,7 +410,7 @@ NeoKai should keep these fixed by default:
 - redaction policy,
 - cross-space transfer policy.
 
-Agents can propose changes, but NeoKai must own validation and promotion.
+Agents can propose changes, but HyperNeo must own validation and promotion.
 
 ## 12. Transfer is where compounding becomes large
 
@@ -428,9 +428,9 @@ A detector, test pattern, replay practice, or compression rule can be reused acr
 
 Meta-improvements transfer across domains. The paper’s IMO grading transfer result shows that learned improvement procedures can matter even when task content changes.
 
-### NeoKai implication
+### HyperNeo implication
 
-NeoKai should distinguish scopes:
+HyperNeo should distinguish scopes:
 
 - run-local,
 - Space-local,
@@ -441,7 +441,7 @@ NeoKai should distinguish scopes:
 
 Promotion across scopes should require stronger redaction and validation. But done right, transfer is the biggest source of 100x results.
 
-## Unified NeoKai design principle
+## Unified HyperNeo design principle
 
 Every run should produce structured evidence. Only validated evidence should become durable improvement.
 
@@ -462,7 +462,7 @@ This principle combines all three papers:
 - **Learning Beyond Gradients** gives durable artifacts, tests, replays, memory, and compression.
 - **Hyperagents** gives archive-based self-improvement and meta-procedure evolution.
 
-## Practical NeoKai artifacts
+## Practical HyperNeo artifacts
 
 The shared pattern suggests these concrete artifacts:
 
@@ -488,7 +488,7 @@ Candidate workflow mutation with lineage, score, validation status, and rollback
 
 ### ProductFinding
 
-Evidence-backed NeoKai product issue or improvement opportunity.
+Evidence-backed HyperNeo product issue or improvement opportunity.
 
 ### TargetArtifactPatch
 
@@ -500,10 +500,10 @@ The common thread is not “agents should reflect.” It is stronger:
 
 > Agents should convert experience into durable, validated, scoped system changes.
 
-For NeoKai, that means the system should improve at three levels:
+For HyperNeo, that means the system should improve at three levels:
 
 1. how work is done,
 2. what work produces,
-3. NeoKai itself.
+3. HyperNeo itself.
 
 The run is not the unit of value. The validated learning cycle is the unit of compounding.

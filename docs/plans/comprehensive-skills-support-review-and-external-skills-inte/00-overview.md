@@ -2,7 +2,7 @@
 
 ## Goal Summary
 
-NeoKai currently has **no application-level Skills registry**. The term "Skill" in NeoKai maps directly to the Claude Agent SDK's slash-command system (markdown files in `.claude/commands/`). The SDK also supports local **Plugins** (directories providing agents, skills, hooks) and **MCP tools** (MCP servers). This goal delivers:
+HyperNeo currently has **no application-level Skills registry**. The term "Skill" in HyperNeo maps directly to the Claude Agent SDK's slash-command system (markdown files in `.claude/commands/`). The SDK also supports local **Plugins** (directories providing agents, skills, hooks) and **MCP tools** (MCP servers). This goal delivers:
 
 1. A thorough audit of the current state
 2. An application-level Skills registry — add, configure, and manage custom skills from the UI
@@ -13,8 +13,8 @@ NeoKai currently has **no application-level Skills registry**. The term "Skill" 
 
 ## Key Findings from Codebase Audit
 
-- **"Skill" tool** in NeoKai = SDK's built-in `Skill` tool, which invokes slash commands from `.claude/commands/*.md`. Already included in allowed tool lists for `room_chat` and coordinator modes.
-- **SDK Plugins** (`{ type: 'local', path: string }`) can provide custom commands/agents/hooks. NeoKai's `SDKConfig` has a `plugins?: PluginConfig[]` field but no UI or management system for it.
+- **"Skill" tool** in HyperNeo = SDK's built-in `Skill` tool, which invokes slash commands from `.claude/commands/*.md`. Already included in allowed tool lists for `room_chat` and coordinator modes.
+- **SDK Plugins** (`{ type: 'local', path: string }`) can provide custom commands/agents/hooks. HyperNeo's `SDKConfig` has a `plugins?: PluginConfig[]` field but no UI or management system for it.
 - **Planner/plan-writer agents already include `WebSearch` and `WebFetch`** in their tool lists — planner web search capability exists at the code level but needs verification and possibly prompt guidance.
 - **No Skills registry exists**: no CRUD UI, no config file, no RPC handlers for Skills management.
 - **MCP is the established extensibility mechanism**: `.mcp.json` in workspace, managed via `ToolsConfig.disabledMcpServers`.

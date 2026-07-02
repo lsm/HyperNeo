@@ -103,7 +103,7 @@ export class SettingsManager {
 
     const settingsLocalPath = join(this.workspacePath, '.claude/settings.local.json');
 
-    // Read existing settings (preserve non-NeoKai settings)
+    // Read existing settings (preserve non-HyperNeo settings)
     let localSettings: Record<string, unknown> = {};
     try {
       if (existsSync(settingsLocalPath)) {
@@ -114,7 +114,7 @@ export class SettingsManager {
       // Continue with empty object
     }
 
-    // Update NeoKai-managed settings.
+    // Update HyperNeo-managed settings.
     //
     // NOTE: Legacy MCP toggles (disabledMcpjsonServers, enabledMcpjsonServers,
     // enableAllProjectMcpServers) are intentionally not written here anymore.
@@ -160,7 +160,7 @@ export class SettingsManager {
     // are respected, we explicitly read from user settings and write to local settings.
     // See: https://github.com/anthropics/claude-code/issues/11135
     if (settings.attribution !== undefined) {
-      // User has configured attribution in NeoKai's database, use it
+      // User has configured attribution in HyperNeo's database, use it
       localSettings.attribution = settings.attribution;
     } else if (localSettings.attribution === undefined) {
       // No attribution in database AND no existing attribution in local file,

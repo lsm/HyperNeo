@@ -162,7 +162,7 @@ describe('DatabaseLock', () => {
         lock.release();
       } catch (err) {
         threw = true;
-        expect(String(err)).toContain('Another NeoKai daemon is already running');
+        expect(String(err)).toContain('Another HyperNeo daemon is already running');
       }
 
       // On platforms where ppid is verifiably alive and ≠ process.pid this

@@ -114,7 +114,7 @@ Implement styled mention tokens that render @ references as visually distinct, i
        }
      }
      ```
-   - The `referenceMetadata` field is a **NeoKai-specific extension** at the top level of the JSON blob. The `sdk_message` column is a plain TEXT column, so extra fields are technically safe. The SDK's `SDKUserMessage` type does not include this field — it's intentionally an extension, not part of the SDK schema.
+   - The `referenceMetadata` field is a **HyperNeo-specific extension** at the top level of the JSON blob. The `sdk_message` column is a plain TEXT column, so extra fields are technically safe. The SDK's `SDKUserMessage` type does not include this field — it's intentionally an extension, not part of the SDK schema.
    - This approach avoids any schema migration to `sdk_messages` table
 2. Update message loading in frontend:
    - When rendering historical messages, extract `referenceMetadata` from the `sdk_message` JSON blob

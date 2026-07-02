@@ -7,7 +7,7 @@
 ## Overview
 
 This document describes how tool execution works with the Copilot CLI adapter and how
-it integrates with NeoKai's tool system.
+it integrates with HyperNeo's tool system.
 
 ---
 
@@ -31,13 +31,13 @@ all tools execute without user confirmation.
 
 ### Direct Execution vs. Tool Call Returns
 
-Unlike the legacy callback adapter (which calls back to NeoKai for tool execution), the Copilot CLI:
+Unlike the legacy callback adapter (which calls back to HyperNeo for tool execution), the Copilot CLI:
 1. **Decides** which tool to use (internally)
 2. **Executes** the tool immediately (e.g., writes a file to disk)
 3. **Uses the result** to continue the response
 4. **Optionally reports** tool calls in `assistant.message.toolRequests`
 
-NeoKai never sees or approves individual tool calls — it receives only the final response.
+HyperNeo never sees or approves individual tool calls — it receives only the final response.
 
 ---
 
@@ -45,7 +45,7 @@ NeoKai never sees or approves individual tool calls — it receives only the fin
 
 ### Legacy Callback-Based Approach
 ```
-NeoKai            Legacy Adapter               LLM
+HyperNeo            Legacy Adapter               LLM
   │──createQuery()──→ │                           │
   │                   │──messages──────────────→  │
   │                   │←────────────── tool_call─ │
@@ -58,7 +58,7 @@ NeoKai            Legacy Adapter               LLM
 
 ### Copilot CLI Approach (This Adapter)
 ```
-NeoKai                     Copilot CLI Process
+HyperNeo                     Copilot CLI Process
   │──spawn(prompt)──────→  │
   │                        │──tool calls (internal)──→ filesystem/gh API
   │                        │←─tool results ──────────
@@ -67,17 +67,17 @@ NeoKai                     Copilot CLI Process
   │←─process exit(0)────── │
 ```
 
-**Implication:** NeoKai's tool permission system (accept/deny prompts) does NOT apply
+**Implication:** HyperNeo's tool permission system (accept/deny prompts) does NOT apply
 to Copilot CLI tools. Use `--allow-all` for automation, or omit it for interactive use
 (but that blocks the process waiting for user input).
 
 ---
 
-## Mapping NeoKai Tools to Copilot CLI
+## Mapping HyperNeo Tools to Copilot CLI
 
 ### File Operations
 
-| NeoKai Tool | Copilot CLI Equivalent |
+| HyperNeo Tool | Copilot CLI Equivalent |
 |-------------|----------------------|
 | `Read` (file) | CLI reads files via its internal file tool |
 | `Write` (file) | CLI writes files directly to the filesystem |
@@ -86,11 +86,11 @@ to Copilot CLI tools. Use `--allow-all` for automation, or omit it for interacti
 | `Grep` | CLI uses its code search tool |
 
 **Observation:** Since the CLI operates directly on the filesystem using the `cwd` parameter,
-all file operations in NeoKai's worktree context work naturally.
+all file operations in HyperNeo's worktree context work naturally.
 
 ### Shell Commands
 
-| NeoKai Tool | Copilot CLI Equivalent |
+| HyperNeo Tool | Copilot CLI Equivalent |
 |-------------|----------------------|
 | `Bash` | CLI's built-in bash/shell tool |
 
@@ -114,7 +114,7 @@ the prompt context.
 
 MCP tools cannot be directly exposed to the Copilot CLI. However:
 - The CLI can call MCP servers as plugins (via `copilot plugin`)
-- Custom plugins can bridge NeoKai MCP tools to Copilot
+- Custom plugins can bridge HyperNeo MCP tools to Copilot
 - In the POC, MCP tools are not forwarded
 
 ---
@@ -131,7 +131,7 @@ The token requires:
 - `read:org` for organization operations
 - `workflow` for CI/CD operations
 
-**NeoKai integration:** Pass the authenticated token via `COPILOT_GITHUB_TOKEN` env var
+**HyperNeo integration:** Pass the authenticated token via `COPILOT_GITHUB_TOKEN` env var
 when spawning the process.
 
 ---
@@ -166,16 +166,16 @@ when spawning the process.
 ## Parallel Tool Execution
 
 The Copilot CLI supports parallel subagents via `/fleet`. In non-interactive mode,
-tool parallelism is handled internally by the CLI. NeoKai does not need to coordinate
+tool parallelism is handled internally by the CLI. HyperNeo does not need to coordinate
 parallel tool calls.
 
 ---
 
-## Practical Example: Copilot CLI Processing a NeoKai Task
+## Practical Example: Copilot CLI Processing a HyperNeo Task
 
-Given a NeoKai task: "Fix the authentication bug in auth.ts and add tests"
+Given a HyperNeo task: "Fix the authentication bug in auth.ts and add tests"
 
-1. NeoKai spawns: `copilot -p "Fix the authentication bug in auth.ts and add tests" --allow-all --output-format json --cwd /path/to/worktree`
+1. HyperNeo spawns: `copilot -p "Fix the authentication bug in auth.ts and add tests" --allow-all --output-format json --cwd /path/to/worktree`
 
 2. Copilot CLI internally:
    - Reads `auth.ts` using its file read tool
@@ -187,12 +187,12 @@ Given a NeoKai task: "Fix the authentication bug in auth.ts and add tests"
    - Writes new tests
    - Possibly runs `bun test` to verify
 
-3. NeoKai receives:
+3. HyperNeo receives:
    - Streaming text deltas describing what was done
    - Final `SDKAssistantMessage` with the complete response
    - `SDKResultMessage` with success/failure
 
-4. Files are actually modified on disk — NeoKai doesn't need to apply patches separately.
+4. Files are actually modified on disk — HyperNeo doesn't need to apply patches separately.
 
 **This is fundamentally different from the legacy callback adapter:** The CLI is a complete
-agent that delivers results, not just API calls that NeoKai must orchestrate.
+agent that delivers results, not just API calls that HyperNeo must orchestrate.

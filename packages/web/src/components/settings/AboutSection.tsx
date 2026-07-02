@@ -15,7 +15,7 @@ export function AboutSection() {
         </div>
 
         <div class="pt-3 border-t border-dark-700 space-y-2">
-          <p class="text-sm text-gray-400">NeoKai - A modern web UI for Claude Code</p>
+          <p class="text-sm text-gray-400">HyperNeo - A modern web UI for Claude Code</p>
           <div class="flex gap-4 text-xs">
             <a
               href="https://github.com"

@@ -148,11 +148,11 @@ describe('CustomEndpointsSettings — helpers', () => {
     editor.name = 'OR';
     editor.baseUrl = 'https://openrouter.ai/api/v1';
     editor.apiKey = 'sk-xx';
-    editor.headersText = 'X-Title: NeoKai';
+    editor.headersText = 'X-Title: HyperNeo';
     editor.models = [__test__.makeModelDraft('openai-chat', { id: 'mistral' })];
     const cfg = __test__.editorToConfig(editor);
     expect(cfg.apiKey).toBe('sk-xx');
-    expect(cfg.headers).toEqual({ 'X-Title': 'NeoKai' });
+    expect(cfg.headers).toEqual({ 'X-Title': 'HyperNeo' });
     expect(cfg.baseUrl).toBe('https://openrouter.ai/api/v1');
   });
 

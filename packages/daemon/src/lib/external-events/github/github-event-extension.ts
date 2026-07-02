@@ -817,7 +817,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         headers: {
           Authorization: `Bearer ${token}`,
           Accept: 'application/vnd.github+json',
-          'User-Agent': 'NeoKai-Space-GitHub/1.0',
+          'User-Agent': 'HyperNeo-Space-GitHub/1.0',
           'X-GitHub-Api-Version': '2022-11-28',
         },
       });
@@ -1194,7 +1194,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         Accept: 'application/vnd.github+json',
         ...(init.body ? { 'Content-Type': 'application/json' } : {}),
         Authorization: `Bearer ${token}`,
-        'User-Agent': 'NeoKai-Space-GitHub/1.0',
+        'User-Agent': 'HyperNeo-Space-GitHub/1.0',
         'X-GitHub-Api-Version': '2022-11-28',
         ...init.headers,
       },
@@ -1986,7 +1986,7 @@ class GitHubApiError extends Error {
 function validateRemoteHook(watched: GitHubWatchedRepo, hook: GitHubHookResponse): string | null {
   if (!hook.active) return 'GitHub webhook is disabled';
   if (watched.webhookUrl && hook.config?.url !== watched.webhookUrl) {
-    return 'GitHub webhook URL does not match this NeoKai endpoint';
+    return 'GitHub webhook URL does not match this HyperNeo endpoint';
   }
   if (hook.config?.content_type !== 'json') {
     return 'GitHub webhook content type must be JSON';
@@ -2060,7 +2060,7 @@ function gitHubRepoPath(owner: string, repo: string): string {
 function gitHubPollingHeaders(token: string | undefined): Record<string, string> {
   const headers: Record<string, string> = {
     Accept: 'application/vnd.github+json',
-    'User-Agent': 'NeoKai-Space-GitHub/1.0',
+    'User-Agent': 'HyperNeo-Space-GitHub/1.0',
     'X-GitHub-Api-Version': '2022-11-28',
   };
   if (token) headers.Authorization = `Bearer ${token}`;

@@ -63,7 +63,7 @@ import {
 // ── Test Schema ────────────────────────────────────────────────────────────────
 
 /**
- * Create a minimal in-memory database with tables that mirror the NeoKai schema
+ * Create a minimal in-memory database with tables that mirror the HyperNeo schema
  * subset used by the db-query scope config.
  */
 function createTestDb(): Database {

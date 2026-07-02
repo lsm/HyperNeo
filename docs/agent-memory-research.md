@@ -7,7 +7,7 @@
 
 ## 1. Context
 
-NeoKai already handles *short-term* memory via the LLM context window (messages in the session). This report focuses on **long-term persistent memory**: facts, preferences, and decisions that should survive across sessions and be retrievable without reloading every past conversation.
+HyperNeo already handles *short-term* memory via the LLM context window (messages in the session). This report focuses on **long-term persistent memory**: facts, preferences, and decisions that should survive across sessions and be retrievable without reloading every past conversation.
 
 ### What agents actually need to remember
 
@@ -92,7 +92,7 @@ LIMIT 10;
 
 **Tokenizer choice — Porter vs. Trigram:**
 
-The previous version used `porter ascii`. This is a poor choice for a developer memory store. Porter stemming handles English morphology ("running" → "run") but is entirely unsuited to code identifiers, which make up the majority of what NeoKai agents would store — e.g., `ReactiveDatabase`, `useSessionActions`, `memory_fts`. The porter stemmer would not help match `ReactiveDatabase` when searching for `reactive database`.
+The previous version used `porter ascii`. This is a poor choice for a developer memory store. Porter stemming handles English morphology ("running" → "run") but is entirely unsuited to code identifiers, which make up the majority of what HyperNeo agents would store — e.g., `ReactiveDatabase`, `useSessionActions`, `memory_fts`. The porter stemmer would not help match `ReactiveDatabase` when searching for `reactive database`.
 
 **`trigram`** (available in SQLite ≥ 3.34, shipping with Bun 1.2+) breaks text into 3-character sliding windows and supports substring matching. This handles:
 - Camel-case identifiers: searching `"sessioncache"` finds `SessionCache`
@@ -110,7 +110,7 @@ Trade-off: trigram indexes are larger (~3–5× vs. porter for typical English t
 | Privacy | ★★★★★ | All data stays on-disk, same DB file |
 | Scalability | ★★★★☆ | Good to ~1M entries; degrades gracefully |
 | Semantic search | ★★☆☆☆ | Keyword/trigram only — misses pure semantic paraphrase |
-| NeoKai fit | ★★★★★ | One migration; uses existing ReactiveDatabase |
+| HyperNeo fit | ★★★★★ | One migration; uses existing ReactiveDatabase |
 
 **Verdict:** Best baseline. Covers ~70% of use cases with zero infra cost. Used as the **Phase 1** foundation.
 
@@ -191,7 +191,7 @@ sqlite-vec does list Bun as a supported runtime (`npm install sqlite-vec`), whic
 | Privacy | ★★★★★ | Fully local |
 | Scalability | ★★★★☆ | Handles millions of vectors |
 | Semantic search | ★★★★★ | True semantic similarity |
-| NeoKai fit | ★★★★☆ | Bun compatibility tested; macOS needs `setCustomSQLite` |
+| HyperNeo fit | ★★★★☆ | Bun compatibility tested; macOS needs `setCustomSQLite` |
 
 **Verdict:** Excellent for Phase 2. The quantization support eliminates the embedding latency bottleneck.
 
@@ -199,7 +199,7 @@ sqlite-vec does list Bun as a supported runtime (`npm install sqlite-vec`), whic
 
 ### Approach C — sqlite-rag (Pre-Built Hybrid FTS5 + Vector)
 
-**sqlite-rag** (`sqliteai/sqlite-rag`) is an open-source reference implementation combining FTS5 and sqlite-vector via **Reciprocal Rank Fusion (RRF)**. It already solves the hybrid-merge problem. For NeoKai (Bun/TypeScript), it serves as an architectural blueprint rather than a direct dependency.
+**sqlite-rag** (`sqliteai/sqlite-rag`) is an open-source reference implementation combining FTS5 and sqlite-vector via **Reciprocal Rank Fusion (RRF)**. It already solves the hybrid-merge problem. For HyperNeo (Bun/TypeScript), it serves as an architectural blueprint rather than a direct dependency.
 
 ```
 Query
@@ -216,7 +216,7 @@ RRF score: score(d) = Σ 1 / (k + rank_i(d))   [k=60 is standard]
 | Simplicity | ★★★☆☆ | Reference code available; TypeScript port needed |
 | Privacy | ★★★★★ | Fully local |
 | Semantic search | ★★★★★ | Best of both worlds |
-| NeoKai fit | ★★★★☆ | Direct architectural model |
+| HyperNeo fit | ★★★★☆ | Direct architectural model |
 
 **Verdict:** This is the target architecture for Phase 2. Port the RRF merge logic from sqlite-rag.
 
@@ -226,14 +226,14 @@ RRF score: score(d) = Σ 1 / (k + rank_i(d))   [k=60 is standard]
 
 **Mem0** is an open-source production memory layer. Published paper shows 26% accuracy improvement over OpenAI full-context, 91% latency reduction, 90%+ token savings. Raised $24M, used by AWS, CrewAI, Flowise.
 
-**Key limitation for NeoKai:** Mem0's `add()` call runs LLM extraction to distill facts before storage — 200–2000 ms. Not suitable as the primary retrieval path. Best used as an optional background enrichment layer that writes into the FTS5/vector store.
+**Key limitation for HyperNeo:** Mem0's `add()` call runs LLM extraction to distill facts before storage — 200–2000 ms. Not suitable as the primary retrieval path. Best used as an optional background enrichment layer that writes into the FTS5/vector store.
 
 | Criterion | Score | Notes |
 |-----------|-------|-------|
 | Speed (write) | ★★☆☆☆ | LLM extraction per write: 200–2000 ms |
 | Speed (read) | ★★★★☆ | ~20 ms semantic retrieval |
 | Semantic search | ★★★★★ | LLM-quality fact extraction |
-| NeoKai fit | ★★★☆☆ | Useful as async background enrichment only |
+| HyperNeo fit | ★★★☆☆ | Useful as async background enrichment only |
 
 **Verdict:** Background enrichment layer for Phase 3. Not a Phase 1 or 2 dependency.
 
@@ -250,9 +250,9 @@ RRF score: score(d) = Σ 1 / (k + rank_i(d))   [k=60 is standard]
 | Speed (write) | ★★☆☆☆ | LLM extraction + graph update |
 | Speed (read) | ★★★★☆ | Graph traversal < 20 ms |
 | Simplicity | ★★☆☆☆ | Needs graph engine; LLM extraction |
-| NeoKai fit | ★★☆☆☆ | Over-engineered for current scale |
+| HyperNeo fit | ★★☆☆☆ | Over-engineered for current scale |
 
-**Verdict:** Revisit when NeoKai agents accumulate 6+ months of project history.
+**Verdict:** Revisit when HyperNeo agents accumulate 6+ months of project history.
 
 ---
 
@@ -264,7 +264,7 @@ RRF score: score(d) = Σ 1 / (k + rank_i(d))   [k=60 is standard]
 |-----------|-------|-------|
 | Speed | ★★★☆☆ | Self-editing adds 1–3 tool calls per turn |
 | Simplicity | ★★★☆☆ | Framework has TypeScript bindings |
-| NeoKai fit | ★★★☆☆ | Sleep-time pattern is worth borrowing |
+| HyperNeo fit | ★★★☆☆ | Sleep-time pattern is worth borrowing |
 
 **Verdict:** Borrow the "sleep-time agent" pattern for Phase 3. Full framework integration not needed.
 
@@ -280,7 +280,7 @@ RRF score: score(d) = Σ 1 / (k + rank_i(d))   [k=60 is standard]
 |-----------|-------|-------|
 | Speed | ★★★★☆ | Chroma embedded: ~5 ms; Qdrant: ~2 ms |
 | Simplicity | ★★★☆☆ | Chroma embedded is viable; Qdrant needs process |
-| NeoKai fit | ★★☆☆☆ | Chroma embedded now viable fallback; Qdrant breaks zero-infra |
+| HyperNeo fit | ★★☆☆☆ | Chroma embedded now viable fallback; Qdrant breaks zero-infra |
 
 **Verdict:** Chroma embedded is now viable as a fallback if sqlite-vector Bun extension bundling proves too painful. Qdrant remains over-engineered.
 
@@ -473,7 +473,7 @@ hub.handle('memory.delete', handler_delete);  // { id } → void
 
 ### 5.4 Agent tool integration (correct format)
 
-> **Fix for P1 review issue:** The previous version showed an XML tool definition format that does not match the Claude Agent SDK. In NeoKai, tools are registered using `tool()` + `createSdkMcpServer()` from `@anthropic-ai/claude-agent-sdk`, exactly as in `room-agent-tools.ts` and `task-agent-tools.ts`.
+> **Fix for P1 review issue:** The previous version showed an XML tool definition format that does not match the Claude Agent SDK. In HyperNeo, tools are registered using `tool()` + `createSdkMcpServer()` from `@anthropic-ai/claude-agent-sdk`, exactly as in `room-agent-tools.ts` and `task-agent-tools.ts`.
 
 ```typescript
 // packages/daemon/src/lib/memory/memory-agent-tools.ts
@@ -621,7 +621,7 @@ The `MemoryEntry` returned from `store()` and `list()` can include `embeddingSta
 
 4. **Memory expiry/pruning:** Should entries expire after a configurable TTL (e.g., 90 days without access)? Phase 3 background consolidation can handle deduplication, but hard TTL policy needs a decision.
 
-5. **Encryption at rest:** Should memory entries be encrypted at the column level? Most relevant if NeoKai is deployed in shared/cloud environments. Adds ~1 ms per operation.
+5. **Encryption at rest:** Should memory entries be encrypted at the column level? Most relevant if HyperNeo is deployed in shared/cloud environments. Adds ~1 ms per operation.
 
 6. **Multi-agent sharing:** In Leader + Worker spaces, should all agents share one memory store per room, or should each agent type have an isolated memory namespace? Shared enables cross-agent learning; isolation prevents contamination.
 

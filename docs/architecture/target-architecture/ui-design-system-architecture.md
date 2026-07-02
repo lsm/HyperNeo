@@ -12,7 +12,7 @@
 
 ## 1. Purpose
 
-NeoKai needs a real UI design system boundary before large frontend refactors.
+HyperNeo needs a real UI design system boundary before large frontend refactors.
 
 The repository already has strong pieces:
 
@@ -21,9 +21,9 @@ The repository already has strong pieces:
 - `packages/web/src/lib/design-tokens.ts` as app-level TypeScript design tokens.
 - `packages/web/src/styles.css` as Tailwind v4 theme variables and global utilities.
 
-Those pieces are not yet one coherent design system. The target is to make `packages/ui` the canonical UI system package while keeping product-specific NeoKai compositions in `packages/web`.
+Those pieces are not yet one coherent design system. The target is to make `packages/ui` the canonical UI system package while keeping product-specific HyperNeo compositions in `packages/web`.
 
-This is not a redesign mandate. The first design-system migration should preserve NeoKai's current product language: dark operational surfaces, dense workflow-oriented layouts, current app shell proportions, and the established Space/Forge/chat feel. The current app is the source of truth for initial tokens and component variants. `packages/ui/demo` is a reference harness, not a replacement visual direction.
+This is not a redesign mandate. The first design-system migration should preserve HyperNeo's current product language: dark operational surfaces, dense workflow-oriented layouts, current app shell proportions, and the established Space/Forge/chat feel. The current app is the source of truth for initial tokens and component variants. `packages/ui/demo` is a reference harness, not a replacement visual direction.
 
 ---
 
@@ -31,7 +31,7 @@ This is not a redesign mandate. The first design-system migration should preserv
 
 ### 2.1 `packages/ui`
 
-`packages/ui` currently exports reusable primitives and base components through `@neokai/ui`. Many of these exports are headless or slot-oriented primitives plus demo coverage, not yet NeoKai's visual product component authority.
+`packages/ui` currently exports reusable primitives and base components through `@neokai/ui`. Many of these exports are headless or slot-oriented primitives plus demo coverage, not yet HyperNeo's visual product component authority.
 
 Examples:
 
@@ -100,7 +100,7 @@ Current token ownership is split:
 
 - Tailwind theme variables and global utilities live in `packages/web/src/styles.css`.
 - TypeScript tokens live in `packages/web/src/lib/design-tokens.ts`.
-- `packages/ui` components generally expose behavior and styling hooks, but do not yet own the NeoKai product tokens.
+- `packages/ui` components generally expose behavior and styling hooks, but do not yet own the HyperNeo product tokens.
 - Feature components still use many direct Tailwind class strings.
 
 ### 2.5 SDK Tool Renderer Island
@@ -127,20 +127,20 @@ This makes it easy for new UI work to drift.
 ## 3. Design Goals
 
 1. **One canonical UI system package:** `packages/ui` should become the default source for reusable primitives, base components, and shared tokens.
-2. **Thin product layer:** `packages/web/src/components/ui` should keep only NeoKai-specific compositions.
+2. **Thin product layer:** `packages/web/src/components/ui` should keep only HyperNeo-specific compositions.
 3. **Token ownership clarity:** color, radius, spacing, focus, motion, and typography tokens should have a canonical owner.
 4. **Accessible primitives by default:** dialog, menu, listbox, combobox, tabs, tooltip, toast, and popover behavior should come from tested primitives.
 5. **No big-bang rewrite:** migrate surfaces gradually while preserving existing product behavior.
 6. **Feature UI consistency:** new feature components should compose system components instead of creating one-off controls.
 7. **Visual reference:** the UI demo should remain the living reference for primitives, base components, and app composition examples.
-8. **Visual parity first:** initial migrations should keep the current NeoKai look and feel unless a visual change is explicitly approved.
+8. **Visual parity first:** initial migrations should keep the current HyperNeo look and feel unless a visual change is explicitly approved.
 
 ## 4. Non-Goals
 
-- Redesigning NeoKai's visual language as part of the design-system extraction.
+- Redesigning HyperNeo's visual language as part of the design-system extraction.
 - Rewriting the entire web app in one pass.
 - Forcing product-specific components such as `DeliveryStateBadge` into `packages/ui` before they are reusable.
-- Making `packages/ui` React-compatible. NeoKai is Preact-first.
+- Making `packages/ui` React-compatible. HyperNeo is Preact-first.
 - Freezing the visual language before product workflows settle.
 - Removing all Tailwind classes from feature components. Layout-specific Tailwind remains acceptable.
 
@@ -176,7 +176,7 @@ flowchart TB
 ### Boundary Rules
 
 - `packages/ui` owns generic reusable primitives, base components, tokens, and demo references.
-- `packages/web/src/components/ui` owns product-specific compositions that mention NeoKai domain concepts or app shell behavior.
+- `packages/web/src/components/ui` owns product-specific compositions that mention HyperNeo domain concepts or app shell behavior.
 - Feature components may use `@neokai/ui` directly for generic controls.
 - Feature components should use product UI compositions for domain-specific UI.
 - New generic UI controls should not be added under `packages/web/src/components/ui` unless there is a documented reason they cannot live in `packages/ui`.
@@ -225,7 +225,7 @@ These should live in `packages/ui`, consume shared tokens, and remain domain-neu
 
 ### 6.3 Product Compositions
 
-Product compositions combine primitives/base components with NeoKai product semantics.
+Product compositions combine primitives/base components with HyperNeo product semantics.
 
 Examples:
 
@@ -339,7 +339,7 @@ The demo/reference should include canonical examples for:
 - command palette
 - Space/Forge-style multi-panel workflows
 
-The design system is not just atomic components. It should include the patterns needed for real NeoKai screens.
+The design system is not just atomic components. It should include the patterns needed for real HyperNeo screens.
 
 ---
 
@@ -377,7 +377,7 @@ For each component:
 - define the canonical `@neokai/ui` API
 - compare current web-local behavior and visual variants
 - add missing variants to `packages/ui`
-- derive initial styling from current NeoKai web components, not from demo-only examples
+- derive initial styling from current HyperNeo web components, not from demo-only examples
 - migrate one narrow app surface
 - keep the local wrapper only if product behavior remains
 
@@ -439,7 +439,7 @@ The UI design system cleanup is complete when:
 - Generic controls such as button, icon button, dialog, tooltip, tabs, menu, popover, toast, spinner, skeleton, input, and badge are imported from `@neokai/ui` in new feature code.
 - `packages/web/src/components/ui` contains product-specific compositions only, plus explicitly temporary compatibility wrappers.
 - New feature components do not create reusable one-off controls with raw Tailwind class strings.
-- Initial migrations preserve the current NeoKai product look and feel unless a visual change is explicitly approved.
+- Initial migrations preserve the current HyperNeo product look and feel unless a visual change is explicitly approved.
 - PRs that migrate UI components list any intentional visual or interaction differences.
 - Public `@neokai/ui` components have tests and demo/reference coverage.
 - Accessibility-sensitive primitives have keyboard, focus, escape, outside-click, and ARIA coverage.
@@ -450,8 +450,8 @@ The UI design system cleanup is complete when:
 
 ## 12. Open Questions
 
-1. Should `packages/ui` own NeoKai brand tokens directly, or should it expose generic primitives while a future `packages/web-design` layer owns app branding?
+1. Should `packages/ui` own HyperNeo brand tokens directly, or should it expose generic primitives while a future `packages/web-design` layer owns app branding?
 2. Should local web wrappers be converted to re-export wrappers first, or should feature code import `@neokai/ui` directly?
-3. Should the UI demo include NeoKai-specific product compositions, or only domain-neutral components and patterns?
+3. Should the UI demo include HyperNeo-specific product compositions, or only domain-neutral components and patterns?
 4. Should token enforcement be lint-based, screenshot-based, or only code-review-based in the first migration phase?
 5. Which surface should validate the first slice: `SpaceConfigurePage`, settings dialogs, or Command Palette?

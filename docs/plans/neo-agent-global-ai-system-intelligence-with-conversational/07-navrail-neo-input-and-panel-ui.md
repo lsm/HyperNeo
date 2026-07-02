@@ -59,7 +59,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
    - On click: toggles `neoStore.togglePanel()` and auto-focuses the panel's text input when opening
    - Active/highlighted state when panel is open
    - Tooltip: "Neo (⌘J)" on hover
-   - Keyboard shortcut: `Cmd+J` (Mac) / `Ctrl+J` (Win) to toggle the panel. Note: Firefox uses Cmd+J for Downloads -- `preventDefault()` overrides this within the app tab, which is acceptable since NeoKai is a dedicated web app. Consider making the shortcut user-configurable in a future iteration.
+   - Keyboard shortcut: `Cmd+J` (Mac) / `Ctrl+J` (Win) to toggle the panel. Note: Firefox uses Cmd+J for Downloads -- `preventDefault()` overrides this within the app tab, which is acceptable since HyperNeo is a dedicated web app. Consider making the shortcut user-configurable in a future iteration.
 2. Update `packages/web/src/islands/NavRail.tsx`:
    - Import and render `NeoNavButton` between nav items and settings button (same position as other nav icons)
 3. Register global keyboard shortcut handler at the app level (in `App.tsx` or a dedicated hook):

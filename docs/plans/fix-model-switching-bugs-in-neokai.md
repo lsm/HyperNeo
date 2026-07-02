@@ -1,4 +1,4 @@
-# Fix Model Switching Bugs in NeoKai
+# Fix Model Switching Bugs in HyperNeo
 
 ## Goal Summary
 

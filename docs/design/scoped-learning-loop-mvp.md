@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document defines the MVP for NeoKai Forge: a scoped self-evolution system that is useful end-to-end without requiring autonomous workflow mutation, self-PRs, or complex archive evolution.
+This document defines the MVP for HyperNeo Forge: a scoped self-evolution system that is useful end-to-end without requiring autonomous workflow mutation, self-PRs, or complex archive evolution.
 
 The target is pragmatic:
 
@@ -10,7 +10,7 @@ The target is pragmatic:
 2x implementation effort → 10x practical result
 ```
 
-The MVP should make NeoKai meaningfully better by preserving learning across tasks, sessions, and long-horizon goals.
+The MVP should make HyperNeo meaningfully better by preserving learning across tasks, sessions, and long-horizon goals.
 
 ## MVP thesis
 
@@ -37,7 +37,7 @@ This gives compounding continuity without high safety risk.
 
 ## MVP promise
 
-After using NeoKai for real work, users should get clear answers to:
+After using HyperNeo for real work, users should get clear answers to:
 
 1. What did we learn?
 2. What should we do next?
@@ -100,7 +100,7 @@ The 10x result comes from:
 
 ## Why this is roughly 2x implementation effort
 
-The MVP reuses existing NeoKai primitives:
+The MVP reuses existing HyperNeo primitives:
 
 - Space tasks,
 - workflow runs,
@@ -126,7 +126,7 @@ It avoids major runtime rewrites.
 
 ## Existing recurring goal anchor
 
-NeoKai already has Space-native recurring goals that map well to the scoped learning loop.
+HyperNeo already has Space-native recurring goals that map well to the scoped learning loop.
 
 Existing pieces:
 
@@ -154,7 +154,7 @@ Recurring SpaceGoal
 → next scheduled check-in receives active lessons and updated context
 ```
 
-For a campaign like “Grow NeoKai to 100k GitHub stars,” the recurring goal can be weekly:
+For a campaign like “Grow HyperNeo to 100k GitHub stars,” the recurring goal can be weekly:
 
 ```text
 Goal type: recurring
@@ -222,7 +222,7 @@ MVP scope kinds:
 ### Example: 100k GitHub stars
 
 ```text
-Scope: Grow NeoKai to 100k GitHub stars
+Scope: Grow HyperNeo to 100k GitHub stars
 Kind: campaign
 Objective: Reach 100k stars through product, content, community, and distribution work.
 Metrics:
@@ -235,9 +235,9 @@ Metrics:
 ### Example: self-evolve MVP dogfood
 
 ```text
-Scope: Build NeoKai self-evolve system MVP
+Scope: Build HyperNeo self-evolve system MVP
 Kind: mission
-Objective: Ship a usable scoped learning loop inside NeoKai.
+Objective: Ship a usable scoped learning loop inside HyperNeo.
 Metrics:
 - completed MVP milestones
 - number of accepted lessons reused
@@ -326,7 +326,7 @@ What failed
 Findings by domain
 Candidate lessons
 Next task proposals
-NeoKai friction
+HyperNeo friction
 ```
 
 ## Primitive 4: EvolutionLesson
@@ -359,7 +359,7 @@ Later versions can add challenged, deprecated, archived, conflict resolution, de
 
 ### Lesson injection
 
-When creating a new task under the same scope, NeoKai should inject the top active lessons into the agent task message.
+When creating a new task under the same scope, HyperNeo should inject the top active lessons into the agent task message.
 
 MVP rule:
 
@@ -407,7 +407,7 @@ MVP actions:
 - Add 12-second product GIF above the fold.
 - Draft Hacker News launch post.
 - Create metric snapshot task for weekly stars.
-- Draft NeoKai product finding: campaign dashboard needed.
+- Draft HyperNeo product finding: campaign dashboard needed.
 ```
 
 ## User flow
@@ -417,14 +417,14 @@ MVP actions:
 User creates a scope:
 
 ```text
-Name: Grow NeoKai to 100k GitHub stars
+Name: Grow HyperNeo to 100k GitHub stars
 Kind: campaign
 Objective: reach 100k stars through product, content, community, and distribution work
 Metrics: GitHub stars, weekly growth, content impressions
 Policy: create task proposals; no auto-posting; no auto-PRs
 ```
 
-NeoKai creates the scope page.
+HyperNeo creates the scope page.
 
 ### 2. Daily work
 
@@ -434,7 +434,7 @@ Each task can be linked to a scope.
 
 ```text
 Task: Improve README intro
-Scope: Grow NeoKai to 100k GitHub stars
+Scope: Grow HyperNeo to 100k GitHub stars
 ```
 
 The task message receives active lessons from the scope.
@@ -450,7 +450,7 @@ What worked: concrete screenshot made value prop clearer.
 What failed: no conversion metric available yet.
 Candidate lessons: demo-first intro may outperform architecture-first intro for new visitors.
 Next actions: add metric snapshot; publish demo post; ask users for first-impression feedback.
-NeoKai friction: no built-in campaign metric tracker.
+HyperNeo friction: no built-in campaign metric tracker.
 ```
 
 User reviews:
@@ -467,7 +467,7 @@ User clicks:
 Run scope review
 ```
 
-NeoKai summarizes:
+HyperNeo summarizes:
 
 ```text
 Progress this week
@@ -669,7 +669,7 @@ Input sections:
 
 ## Instructions
 Create an episode summary for this scope.
-Extract findings, candidate lessons, next task proposals, and NeoKai friction.
+Extract findings, candidate lessons, next task proposals, and HyperNeo friction.
 Do not create durable lessons unless evidence supports them.
 Prefer specific scoped lessons over generic advice.
 ```
@@ -741,7 +741,7 @@ Shows:
 - findings,
 - candidate lessons with Accept/Dismiss,
 - next actions with Create Task/Edit/Dismiss,
-- NeoKai friction notes.
+- HyperNeo friction notes.
 
 ### Task creation integration
 
@@ -757,9 +757,9 @@ When creating a task:
 
 SpaceTask should optionally reference `evolutionScopeId`.
 
-When a task is already linked to a recurring `SpaceGoal`, NeoKai can derive the scope through `EvolutionScope.spaceGoalId`. This keeps existing goal-linked tasks working and avoids duplicating long-horizon ownership.
+When a task is already linked to a recurring `SpaceGoal`, HyperNeo can derive the scope through `EvolutionScope.spaceGoalId`. This keeps existing goal-linked tasks working and avoids duplicating long-horizon ownership.
 
-When task completes, NeoKai can suggest creating an episode from it.
+When task completes, HyperNeo can suggest creating an episode from it.
 
 ### Attach recurring goals to scope
 
@@ -875,8 +875,8 @@ Campaigns and missions become self-improving loops.
 Use the MVP on its own implementation.
 
 ```text
-Scope: Build NeoKai Forge MVP
-Objective: verify a usable end-to-end scoped learning loop inside NeoKai
+Scope: Build HyperNeo Forge MVP
+Objective: verify a usable end-to-end scoped learning loop inside HyperNeo
 Metrics:
 - completed tasks
 - accepted lessons
@@ -885,13 +885,13 @@ Metrics:
 - time from task completion to next task creation
 ```
 
-This validates the loop in a controlled NeoKai-on-NeoKai setting.
+This validates the loop in a controlled HyperNeo-on-HyperNeo setting.
 
 ### MVP operation notes
 
 Run the first dogfood loop manually:
 
-1. Create recurring SpaceGoal `Build NeoKai Forge MVP`.
+1. Create recurring SpaceGoal `Build HyperNeo Forge MVP`.
 2. Create a Forge scope linked to that goal with the five metrics above.
 3. Attach a completed goal-linked SpaceTask as task evidence.
 4. Add a metric snapshot for the same scope.
@@ -914,7 +914,7 @@ Current MVP limitations:
 Use the MVP on a non-code long-horizon objective.
 
 ```text
-Scope: Grow NeoKai to 100k GitHub stars
+Scope: Grow HyperNeo to 100k GitHub stars
 Objective: grow GitHub stars through product, content, community, and distribution work
 Metrics:
 - GitHub stars
@@ -966,7 +966,7 @@ If MVP succeeds, add:
 
 ## Final principle
 
-MVP should make NeoKai remember, learn, and propose next steps inside a scope.
+MVP should make HyperNeo remember, learn, and propose next steps inside a scope.
 
 Do not start with autonomous mutation. Start with durable continuity.
 

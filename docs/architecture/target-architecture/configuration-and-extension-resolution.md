@@ -16,10 +16,10 @@
 
 ## 1. Overview
 
-NeoKai needs one coherent model for configuration and runtime extension. Today several concepts overlap:
+HyperNeo needs one coherent model for configuration and runtime extension. Today several concepts overlap:
 
 - Claude Agent SDK settings can come from user, project, and local settings files.
-- NeoKai has global settings, session config, Space settings, workflow settings, task/run overrides, provider settings, and runtime-only session config.
+- HyperNeo has global settings, session config, Space settings, workflow settings, task/run overrides, provider settings, and runtime-only session config.
 - Skills can be local SDK plugin directories, built-in `SKILL.md` directories, or wrappers around MCP servers.
 - A plugin can be only packaging for a Markdown skill file, even when the user thinks they enabled a capability.
 - Hooks can be built-in safety middleware, workflow tool guards, SDK lifecycle hooks, or future extension points.
@@ -27,7 +27,7 @@ NeoKai needs one coherent model for configuration and runtime extension. Today s
 
 The target architecture separates these concerns so users can understand what is active and developers can render the right SDK/provider shape without leaking one runtime's vocabulary into the whole product.
 
-The goal is not to hide native SDK features. The goal is to make NeoKai own the semantic model and then render that model into Claude Agent SDK, Codex SDK/server, OpenAI Agents SDK, Pi, or other runtimes.
+The goal is not to hide native SDK features. The goal is to make HyperNeo own the semantic model and then render that model into Claude Agent SDK, Codex SDK/server, OpenAI Agents SDK, Pi, or other runtimes.
 
 ---
 
@@ -47,7 +47,7 @@ The goal is not to hide native SDK features. The goal is to make NeoKai own the 
 - Replacing every existing settings table in one migration.
 - Supporting arbitrary third-party executable hooks in the first implementation.
 - Making every SDK native setting user-editable.
-- Removing SDK plugin support. NeoKai should still render SDK plugins when that is the right adapter target.
+- Removing SDK plugin support. HyperNeo should still render SDK plugins when that is the right adapter target.
 - Treating prompt-only Markdown as safe user-authored global behavior before provenance, validation, and preview exist.
 
 ---
@@ -56,7 +56,7 @@ The goal is not to hide native SDK features. The goal is to make NeoKai own the 
 
 ### Configuration Key
 
-A typed value NeoKai can resolve across scopes. Examples:
+A typed value HyperNeo can resolve across scopes. Examples:
 
 - default agent runtime profile
 - provider/model selection
@@ -79,7 +79,7 @@ Examples:
 - local SDK plugin directory
 - built-in skill directory under `packages/skills/*`
 - MCP server package or command
-- future NeoKai extension bundle
+- future HyperNeo extension bundle
 
 An extension package does not automatically become enabled behavior. It must declare contributions, and those contributions must be activated by config.
 
@@ -93,11 +93,11 @@ Contribution types:
 | --- | --- | --- |
 | `tool.mcp` | Tools exposed through an MCP server. | SDK `mcpServers` or runtime-native tool server. |
 | `tool.native` | Runtime-native tool/function definition. | Runtime adapter tool registry. |
-| `skill.command` | User-invoked slash command or skill. | SDK plugin/slash command, runtime command, or NeoKai command surface. |
+| `skill.command` | User-invoked slash command or skill. | SDK plugin/slash command, runtime command, or HyperNeo command surface. |
 | `prompt.policy` | Scoped always-on prompt behavior. | PromptPolicyRegistry -> AgentBehavior prompt fields. |
 | `hook.policy` | Runtime middleware that observes, allows, denies, mutates, or adds context. | SDK hooks/callbacks or runtime middleware. |
 | `runtime.setting` | Runtime/provider option. | SDK settings/options or provider bridge config. |
-| `ui.surface` | Optional settings/read-model UI contribution. | NeoKai web UI, not model prompt. |
+| `ui.surface` | Optional settings/read-model UI contribution. | HyperNeo web UI, not model prompt. |
 
 ### Skill
 
@@ -109,7 +109,7 @@ Skill is the product concept. Plugin is only one possible delivery mechanism.
 
 A runtime-specific packaging adapter, such as Claude Agent SDK `plugins: [{ type: 'local', path }]`.
 
-A plugin can contain a skill, command, prompt files, or scripts. NeoKai should not use "plugin" as the generic user-facing word for all extension behavior.
+A plugin can contain a skill, command, prompt files, or scripts. HyperNeo should not use "plugin" as the generic user-facing word for all extension behavior.
 
 ### Hook
 
@@ -188,7 +188,7 @@ flowchart TB
 
 ## 6. Scope Model
 
-NeoKai should use one common scope chain for configuration and extensions. Individual keys can opt into a subset.
+HyperNeo should use one common scope chain for configuration and extensions. Individual keys can opt into a subset.
 
 | Precedence | Scope | Meaning |
 | --- | --- | --- |
@@ -198,11 +198,11 @@ NeoKai should use one common scope chain for configuration and extensions. Indiv
 | 4 | Workflow node | A specific workflow slot/agent. |
 | 5 | Workflow | Reusable workflow definition. |
 | 6 | Space agent | Reusable agent inside a Space. |
-| 7 | Space | Project/product workspace in NeoKai. |
+| 7 | Space | Project/product workspace in HyperNeo. |
 | 8 | Project / workspace | Repository or filesystem workspace. |
 | 9 | Local private | Machine/user-private setting, not exported. |
 | 10 | User / global | User-level app default. |
-| 11 | Built-in default | NeoKai default. |
+| 11 | Built-in default | HyperNeo default. |
 
 This order is generic. Some keys need a custom chain. For example, prompt policy currently puts task above session because a task/run override is narrower than the session that executes it. That is acceptable, but the key must declare the override order explicitly.
 
@@ -244,26 +244,26 @@ Examples:
 
 ## 8. Native SDK Settings
 
-Claude Agent SDK has user, project, and local settings. Codex SDK/server and other runtimes will likely have equivalent levels. NeoKai should treat native settings files as integration sources, not as hidden state.
+Claude Agent SDK has user, project, and local settings. Codex SDK/server and other runtimes will likely have equivalent levels. HyperNeo should treat native settings files as integration sources, not as hidden state.
 
 Target rules:
 
 1. Native settings may be imported into `ConfigStore`, previewed, and rendered back when necessary.
 2. Runtime adapters decide which native file/settings mechanism they support.
 3. Agent Runtime should prefer explicit options over ambient SDK auto-load.
-4. If a runtime needs native settings files, NeoKai writes or selects them deliberately and shows the source in preview.
+4. If a runtime needs native settings files, HyperNeo writes or selects them deliberately and shows the source in preview.
 5. `local` settings are private and not exported with Space/workflow templates.
 6. Project settings are exportable only when the key allows export.
 7. Secrets never flow through project/workflow export.
 
 For Claude Agent SDK specifically:
 
-- `settingSources` is a runtime render setting, not the source of truth for NeoKai config.
-- `strictMcpConfig` should stay true for all sessions so MCP servers come from NeoKai's resolver, not ambient `.mcp.json` auto-load.
+- `settingSources` is a runtime render setting, not the source of truth for HyperNeo config.
+- `strictMcpConfig` should stay true for all sessions so MCP servers come from HyperNeo's resolver, not ambient `.mcp.json` auto-load.
 - Project `.mcp.json` should be imported into the MCP registry and accepted/enabled explicitly.
-- Prompt-affecting SDK settings such as `outputStyle` should not become the semantic source for NeoKai prompt behavior. Use PromptPolicyRegistry for behavior; render SDK-native settings only when they are a faithful adapter target.
+- Prompt-affecting SDK settings such as `outputStyle` should not become the semantic source for HyperNeo prompt behavior. Use PromptPolicyRegistry for behavior; render SDK-native settings only when they are a faithful adapter target.
 
-`settingSources` policy must be consistent across the codebase. If NeoKai allows non-MCP native settings to load from SDK files, the effective preview must show the source chain and runtime adapter target. If a slice disables native SDK file loading with `settingSources: []`, it must explain how equivalent settings such as project instructions, output style, hooks, and local private values enter NeoKai's resolver instead.
+`settingSources` policy must be consistent across the codebase. If HyperNeo allows non-MCP native settings to load from SDK files, the effective preview must show the source chain and runtime adapter target. If a slice disables native SDK file loading with `settingSources: []`, it must explain how equivalent settings such as project instructions, output style, hooks, and local private values enter HyperNeo's resolver instead.
 
 ---
 
@@ -273,7 +273,7 @@ For Claude Agent SDK specifically:
 
 Skills are user-visible capabilities. They can be:
 
-- built into NeoKai;
+- built into HyperNeo;
 - installed from a package;
 - backed by a local SDK plugin directory;
 - backed by a `SKILL.md` file;
@@ -286,7 +286,7 @@ Activation should be config-scoped. The current app-global plus per-room disable
 
 Plugins are packaging and runtime adapter targets.
 
-The Claude Agent SDK local plugin wrapper for built-in skills is a good example: NeoKai may generate a plugin directory because the SDK requires that shape, but the user enabled a skill, not "a plugin."
+The Claude Agent SDK local plugin wrapper for built-in skills is a good example: HyperNeo may generate a plugin directory because the SDK requires that shape, but the user enabled a skill, not "a plugin."
 
 Target rules:
 
@@ -674,7 +674,7 @@ Rules:
 ## 16. Open Questions
 
 1. Should the user-facing umbrella term be "Extensions" for packages/contributions, with "Skills" as one contribution type?
-2. Which settings should remain native SDK settings versus NeoKai config rendered to native settings?
-3. Should project-level config be stored in NeoKai DB, project files, or both with explicit sync?
+2. Which settings should remain native SDK settings versus HyperNeo config rendered to native settings?
+3. Should project-level config be stored in HyperNeo DB, project files, or both with explicit sync?
 4. What trust model is required before third-party executable hooks are allowed?
 5. Should prompt-only `SKILL.md` files be importable as prompt policy templates, slash-command skills, or both depending on manifest metadata?

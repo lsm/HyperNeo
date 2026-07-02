@@ -1,7 +1,7 @@
 /**
  * Built-in Prompt Templates
  *
- * Central repository of all prompt templates used by NeoKai.
+ * Central repository of all prompt templates used by HyperNeo.
  * Stored in packages/shared so both daemon and web can access them.
  */
 

@@ -139,9 +139,9 @@ test.describe('Settings Modal - Authentication Status', () => {
     // Navigate to the About section
     await page.getByRole('button', { name: 'About', exact: true }).click();
 
-    // Verify About section is shown with NeoKai app info
+    // Verify About section is shown with HyperNeo app info
     await expect(page.locator('h3:has-text("About")')).toBeVisible();
-    await expect(page.locator('text=NeoKai')).toBeVisible();
+    await expect(page.locator('text=HyperNeo')).toBeVisible();
   });
 });
 
@@ -254,11 +254,11 @@ test.describe('Settings Modal - Global Tools Settings', () => {
     await expect(page.locator('text=Version')).toBeVisible();
   });
 
-  test('should NOT show NeoKai Tools section', async ({ page }) => {
+  test('should NOT show HyperNeo Tools section', async ({ page }) => {
     await openSettingsModal(page);
 
-    // Verify NeoKai Tools heading does NOT exist
-    await expect(page.locator('h4:has-text("NeoKai Tools")')).not.toBeVisible();
+    // Verify HyperNeo Tools heading does NOT exist
+    await expect(page.locator('h4:has-text("HyperNeo Tools")')).not.toBeVisible();
 
     // Memory tool should NOT be shown
     await expect(page.locator('text=Persistent key-value storage')).not.toBeVisible();

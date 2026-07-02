@@ -2,7 +2,7 @@
 
 ## Goal
 
-Make `anthropic-copilot` (GitHub Copilot SDK backend) and `anthropic-codex` (Codex app-server backend) fully first-class providers in NeoKai. Both providers currently work for basic streaming and single-tool round-trips, but have significant gaps in type safety, UI integration, provider routing, parity, testing, and documentation.
+Make `anthropic-copilot` (GitHub Copilot SDK backend) and `anthropic-codex` (Codex app-server backend) fully first-class providers in HyperNeo. Both providers currently work for basic streaming and single-tool round-trips, but have significant gaps in type safety, UI integration, provider routing, parity, testing, and documentation.
 
 ## High-Level Approach
 

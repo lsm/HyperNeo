@@ -1,10 +1,10 @@
 # Anthropic-Codex Provider Setup
 
-This document covers how to configure the `anthropic-codex` provider in NeoKai. The provider exposes OpenAI/Codex-family models through an Anthropic-compatible local `/v1/messages` bridge backed by the OpenAI Responses API.
+This document covers how to configure the `anthropic-codex` provider in HyperNeo. The provider exposes OpenAI/Codex-family models through an Anthropic-compatible local `/v1/messages` bridge backed by the OpenAI Responses API.
 
 ## Overview
 
-The `anthropic-codex` provider lets NeoKai use Codex models such as `gpt-5.3-codex`, `gpt-5.5`, and `gpt-5.4-mini` through the same Anthropic-shaped SDK path used by other bridge providers.
+The `anthropic-codex` provider lets HyperNeo use Codex models such as `gpt-5.3-codex`, `gpt-5.5`, and `gpt-5.4-mini` through the same Anthropic-shaped SDK path used by other bridge providers.
 
 ### What It Does
 
@@ -30,7 +30,7 @@ The `anthropic-codex` provider lets NeoKai use Codex models such as `gpt-5.3-cod
 The provider discovers OpenAI credentials in the following priority order:
 
 1. **`OPENAI_API_KEY`** — Environment variable for direct OpenAI Responses API calls
-2. **`~/.neokai/auth.json`** — Stored credentials from a previously completed NeoKai OAuth flow
+2. **`~/.neokai/auth.json`** — Stored credentials from a previously completed HyperNeo OAuth flow
 3. **Legacy OAuth import** — One-time import from `~/.codex/auth.json` for users who previously ran `codex login`
 
 ### Option 1: OPENAI_API_KEY
@@ -42,11 +42,11 @@ Set your OpenAI API key directly:
 export OPENAI_API_KEY=sk-your-key-here
 ```
 
-### Option 2: NeoKai OAuth (ChatGPT Plus/Pro)
+### Option 2: HyperNeo OAuth (ChatGPT Plus/Pro)
 
 If you have a ChatGPT Plus or Pro subscription:
 
-1. Open NeoKai in your browser
+1. Open HyperNeo in your browser
 2. Navigate to Settings → Authentication
 3. Log in with your ChatGPT account
 
@@ -54,7 +54,7 @@ The OAuth flow uses a PKCE + redirect flow with a callback server on port 1455. 
 
 ### Option 3: Legacy `codex login` Import
 
-Users who previously ran `codex login` may have credentials stored in `~/.codex/auth.json`. NeoKai imports these credentials once into `~/.neokai/auth.json` for first-time use. Runtime requests do not depend on the Codex CLI or the legacy app-server adapter.
+Users who previously ran `codex login` may have credentials stored in `~/.codex/auth.json`. HyperNeo imports these credentials once into `~/.neokai/auth.json` for first-time use. Runtime requests do not depend on the Codex CLI or the legacy app-server adapter.
 
 ---
 
@@ -71,15 +71,15 @@ Choose one of the authentication methods above:
 OPENAI_API_KEY=sk-your-openai-key
 ```
 
-#### Option B: Using NeoKai OAuth
+#### Option B: Using HyperNeo OAuth
 
-1. Open NeoKai in your browser
+1. Open HyperNeo in your browser
 2. Navigate to Settings → Authentication
 3. Log in with your ChatGPT account
 
 ### Step 2: Verify Configuration
 
-Start NeoKai and check the provider status in the UI. You should see Codex models available when:
+Start HyperNeo and check the provider status in the UI. You should see Codex models available when:
 
 - The provider indicator shows green (authenticated)
 - Codex models appear in the model picker
@@ -94,7 +94,7 @@ Start NeoKai and check the provider status in the UI. You should see Codex model
 
 **Cause:** OAuth tokens may expire over time.
 
-**Solution:** Re-authenticate through NeoKai's authentication flow. For ChatGPT Plus/Pro, log out and log back in through Settings → Authentication.
+**Solution:** Re-authenticate through HyperNeo's authentication flow. For ChatGPT Plus/Pro, log out and log back in through Settings → Authentication.
 
 ### API Key Not Recognized
 
@@ -115,7 +115,7 @@ Start NeoKai and check the provider status in the UI. You should see Codex model
 
 ### No Vision Support
 
-The OpenAI Responses bridge currently accepts text and tool/function-call traffic only for NeoKai's Anthropic-compatible SDK path. Image input is not exposed through this provider.
+The OpenAI Responses bridge currently accepts text and tool/function-call traffic only for HyperNeo's Anthropic-compatible SDK path. Image input is not exposed through this provider.
 
 ### Heuristic Token Counting
 
@@ -123,4 +123,4 @@ The bridge implements a deterministic local token estimator for `/v1/messages/co
 
 ### Streaming-Only Response
 
-The bridge supports streaming responses only. Requests with `stream=false` are rejected because NeoKai's SDK integration expects SSE streaming.
+The bridge supports streaming responses only. Requests with `stream=false` are rejected because HyperNeo's SDK integration expects SSE streaming.

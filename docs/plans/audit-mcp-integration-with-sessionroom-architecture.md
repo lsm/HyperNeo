@@ -12,7 +12,7 @@ Identify all gaps where MCP servers and skills are not properly integrated with 
 
 2. **Room worker sessions** (coder/general/planner) receive MCP servers from file-based + registry sources, merged in `RoomRuntimeService.createSessionFactory()`. Skills are injected via `skillsManager` + `roomSkillOverrides` passed through `AgentSession.fromInit()`.
 
-3. **Session lifecycle**: MCP servers are stateless SDK configs (stdio command, SSE URL, HTTP URL), not persistent connections. The SDK manages the underlying MCP connections internally. There is no connect/disconnect lifecycle gap at the NeoKai layer.
+3. **Session lifecycle**: MCP servers are stateless SDK configs (stdio command, SSE URL, HTTP URL), not persistent connections. The SDK manages the underlying MCP connections internally. There is no connect/disconnect lifecycle gap at the HyperNeo layer.
 
 4. **Room-level skill overrides**: The `RoomSkillOverride` mechanism works correctly for rooms. Overrides can disable globally-enabled skills per room but cannot enable globally-disabled ones (by design).
 

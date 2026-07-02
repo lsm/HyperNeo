@@ -1,5 +1,5 @@
 #!/bin/bash
-# Dev Proxy management script for NeoKai tests
+# Dev Proxy management script for HyperNeo tests
 # Usage: ./scripts/dev-proxy.sh [start|stop|status|restart]
 
 set -e

@@ -243,7 +243,7 @@ The Copilot CLI has its own built-in tools that it executes autonomously:
 With `--allow-all`, all tool executions are auto-approved without prompts.
 
 **Key difference from the legacy callback adapter:** The CLI executes tools internally;
-NeoKai does NOT intercept or execute them. This is a "black box" approach to tool execution.
+HyperNeo does NOT intercept or execute them. This is a "black box" approach to tool execution.
 
 ---
 
@@ -264,7 +264,7 @@ Use `--no-auto-update` to prevent version upgrades in CI/automation environments
 ## Limitations & Considerations
 
 1. **No tool callback interception** — The CLI handles all tool execution autonomously.
-   NeoKai cannot inject its own tool execution logic.
+   HyperNeo cannot inject its own tool execution logic.
 2. **Working directory scope** — The CLI operates on the filesystem at `cwd`. Worktrees
    should pass `--cwd` to scope file operations.
 3. **Session persistence** — Sessions survive only as long as the Copilot backend retains

@@ -124,7 +124,7 @@ describe('TopicTrie', () => {
 
   test('matches topics case-insensitively', () => {
     const trie = new TopicTrie<string>();
-    trie.insert('GitHub/LSM/NeoKai/Pull_Request/5.Review_*', 'mixed-case-pattern');
+    trie.insert('GitHub/LSM/HyperNeo/Pull_Request/5.Review_*', 'mixed-case-pattern');
 
     expect(trie.lookup(topic)).toEqual(['mixed-case-pattern']);
   });

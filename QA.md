@@ -1,4 +1,4 @@
-# NeoKai QA Instructions
+# HyperNeo QA Instructions
 
 Project-specific QA guidance for the QA agent.
 

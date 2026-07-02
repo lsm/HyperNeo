@@ -238,7 +238,7 @@ export function WorkspaceSelector({
                 )}
               </div>
               <p class="mt-1.5 text-[11px] leading-4 text-gray-600">
-                Use an absolute path accessible to NeoKai.
+                Use an absolute path accessible to HyperNeo.
               </p>
             </div>
           )}

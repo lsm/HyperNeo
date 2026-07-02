@@ -10,7 +10,7 @@
 
 **Verdict: Partial parity (not full Anthropic API parity).**
 
-The Codex bridge is solid for NeoKai’s current path (streaming + single tool round-trip), but it is not a full Anthropic-compatible implementation.
+The Codex bridge is solid for HyperNeo’s current path (streaming + single tool round-trip), but it is not a full Anthropic-compatible implementation.
 
 ---
 
@@ -112,7 +112,7 @@ These validate:
 
 - Reliable Anthropic-shaped streaming for Codex backend.
 - Single tool-use round-trip works and is tested.
-- Practical for NeoKai’s current SDK flow.
+- Practical for HyperNeo’s current SDK flow.
 
 ### What blocks “full Anthropic parity”
 
@@ -124,4 +124,4 @@ These validate:
 
 ### Bottom line
 
-This is **Anthropic-compatible for NeoKai’s narrow Codex bridge workflow**, not a **full Anthropic API drop-in**.
+This is **Anthropic-compatible for HyperNeo’s narrow Codex bridge workflow**, not a **full Anthropic API drop-in**.

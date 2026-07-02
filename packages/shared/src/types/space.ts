@@ -1226,7 +1226,7 @@ export interface SpaceWorkerAgent {
   provider?: string;
   /**
    * Custom prompt — operator-supplied persona, context, and operating procedure for this agent.
-   * Appended AFTER the NeoKai system contract in the prompt so the contract cannot be overridden.
+   * Appended AFTER the HyperNeo system contract in the prompt so the contract cannot be overridden.
    * Null when not set.
    */
   customPrompt: string | null;
@@ -1300,7 +1300,7 @@ export interface CreateSpaceWorkerAgentParams {
   model?: string;
   thinkingLevel?: ThinkingLevel;
   provider?: string;
-  /** Operator-supplied custom prompt appended after the NeoKai contract; null when not set */
+  /** Operator-supplied custom prompt appended after the HyperNeo contract; null when not set */
   customPrompt?: string | null;
   /** Explicit tool override list — any entry must be a name from KNOWN_TOOLS. Empty/unset inherits all SDK built-ins. */
   tools?: string[];

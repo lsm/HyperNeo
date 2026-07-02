@@ -149,7 +149,7 @@ export class SlashCommandManager {
 
       // Add SDK built-in commands
       const sdkBuiltInCommands = ['clear', 'help'];
-      // Add NeoKai built-in commands
+      // Add HyperNeo built-in commands
       const kaiBuiltInCommands = getBuiltInCommandNames();
       const allCommands = [
         ...new Set([...commandNames, ...sdkBuiltInCommands, ...kaiBuiltInCommands]),

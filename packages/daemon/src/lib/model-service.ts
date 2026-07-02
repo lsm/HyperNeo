@@ -110,7 +110,7 @@ const FALLBACK_MODELS: ModelInfo[] = [
  * GLM and Kimi are included because their context windows must be resolvable
  * even when the daemon starts without the provider's env var set globally but
  * the session supplies credentials via `session.config.providerConfig.apiKey`.
- * Without these entries, `getSessionModelInfo()` returns null and the NeoKai
+ * Without these entries, `getSessionModelInfo()` returns null and the HyperNeo
  * fallback compaction threshold can't be computed — sessions would run into the
  * real context limit with no compaction trigger.
  */

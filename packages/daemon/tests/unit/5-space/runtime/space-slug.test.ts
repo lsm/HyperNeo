@@ -199,7 +199,7 @@ describe('Migration 61 — slug backfill', () => {
     const now = Date.now();
     db.prepare(
       `INSERT INTO spaces (id, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
-    ).run('s1', '/tmp/ws-1', 'NeoKai Dev', now, now);
+    ).run('s1', '/tmp/ws-1', 'HyperNeo Dev', now, now);
     db.prepare(
       `INSERT INTO spaces (id, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
     ).run('s2', '/tmp/ws-2', 'My Project', now, now);

@@ -71,15 +71,15 @@ Cursor uses a separate fine-tuned **70B** model to merge edits. The article note
 
 The benchmark is controlled and task-specific, not peer-reviewed. It focuses on mechanical single-file bug restoration, not broad architecture tasks. The article summary does not include full result tables, confidence intervals, hash collision details, or behavior under formatter churn. Still, the token-saving result is credible in mechanism: failed edit loops are known to be expensive, and anchored edits reduce avoidable failures.
 
-## Actionable takeaways for NeoKai
+## Actionable takeaways for HyperNeo
 
 1. **Treat edit tools as performance infrastructure.** Measure edit failures, retry count, stale reads, non-unique matches, and token use per provider/model.
-2. **Prototype hash-anchored edits.** NeoKai could expose read/grep line hashes and add line/range edit tools that reject stale anchors.
+2. **Prototype hash-anchored edits.** HyperNeo could expose read/grep line hashes and add line/range edit tools that reject stale anchors.
 3. **Separate reasoning failures from tool-expression failures.** Telemetry should classify invalid patch syntax, stale anchor, non-unique replacement, and missing text distinctly.
-4. **Optimize for multi-provider variance.** NeoKai supports many providers; edit syntax should not assume Claude-specific strengths.
+4. **Optimize for multi-provider variance.** HyperNeo supports many providers; edit syntax should not assume Claude-specific strengths.
 5. **Save tokens by reducing retries.** The reported **61% output-token drop** for Grok 4 Fast suggests reliability work can be token-efficiency work.
 6. **Normalize subagent outputs.** The article criticizes raw JSONL leakage; Space workflow messages should favor structured, concise artifacts over transcript dumps.
 
 ## Bottom line
 
-The article shows high leverage at the tool boundary. For NeoKai, hash-anchored edits and harness-level benchmarking are strategic investments: they improve correctness and reduce context waste without changing models.
+The article shows high leverage at the tool boundary. For HyperNeo, hash-anchored edits and harness-level benchmarking are strategic investments: they improve correctness and reduce context waste without changing models.

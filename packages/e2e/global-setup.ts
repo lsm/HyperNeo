@@ -61,7 +61,7 @@ Or set PLAYWRIGHT_BASE_URL explicitly:
         cwd: e2eWorkspaceDir,
         stdio: 'inherit',
       });
-      execSync('git config user.name "NeoKai E2E"', { cwd: e2eWorkspaceDir, stdio: 'inherit' });
+      execSync('git config user.name "HyperNeo E2E"', { cwd: e2eWorkspaceDir, stdio: 'inherit' });
       // Create initial commit so the repo is valid (seed files already exist from test-env.ts)
       execSync('git add -A && git commit -m "Initial commit for E2E testing"', {
         cwd: e2eWorkspaceDir,

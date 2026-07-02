@@ -267,7 +267,7 @@ describe('ContextTracker', () => {
     });
 
     it('uses the larger 45k reserve for Kimi to cover ~32k output + reasoning', () => {
-      // Kimi: SDK auto-compact disabled, NeoKai is sole path. Its ~32k max
+      // Kimi: SDK auto-compact disabled, HyperNeo is sole path. Its ~32k max
       // output plus mandatory reasoning requires a bigger buffer than the SDK
       // default 33k. 262144 - 45000 = 217144.
       expect(reserveBasedThreshold(262_144, 'kimi')).toBe(217_144);

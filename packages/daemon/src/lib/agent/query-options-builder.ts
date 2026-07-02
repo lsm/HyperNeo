@@ -235,7 +235,7 @@ export const NATIVE_CONTEXT_WINDOW_PROVIDER_IDS = [
 ];
 
 /**
- * Providers that cannot use SDK auto-compaction and need NeoKai's fallback
+ * Providers that cannot use SDK auto-compaction and need HyperNeo's fallback
  * trigger. Keep empty unless a provider cannot expose its real window through
  * SDK settings/env.
  */
@@ -254,10 +254,10 @@ export const PROVIDER_NO_SDK_AUTO_COMPACT: ReadonlySet<string> = new Set();
  *
  * Providers/routes selected by `shouldUseNeoKaiCompactFallback` cannot use SDK
  * auto-compact at the right threshold. For these, we disable SDK auto-compact
- * and let NeoKai's fallback handle compaction.
+ * and let HyperNeo's fallback handle compaction.
  */
 export function shouldUseNeoKaiCompactFallback(providerId: string): boolean {
-  // No provider should use the NeoKai async /compact fallback. Kept as an
+  // No provider should use the HyperNeo async /compact fallback. Kept as an
   // extension point only; `PROVIDER_NO_SDK_AUTO_COMPACT` is intentionally empty.
   //
   // History (do not re-special-case `kimi` here): Kimi's real window is 262k,
@@ -270,7 +270,7 @@ export function shouldUseNeoKaiCompactFallback(providerId: string): boolean {
   // `usage.model_context_window` into the `message_start` SSE event has no effect.
   // There is NO way to make the SDK believe 262k for Kimi.
   //
-  // Previously Kimi was routed here and NeoKai disabled SDK auto-compact
+  // Previously Kimi was routed here and HyperNeo disabled SDK auto-compact
   // (`{ autoCompactEnabled: false }`) to chase the 262k headroom via an async
   // post-turn `/compact` fallback. That fallback fires AFTER turns/events, so it
   // cannot prevent overflow-within-a-turn or overflow-on-resume (the SDK pre-flights
@@ -299,7 +299,7 @@ export function buildProviderSettings(
 
   if (shouldUseNeoKaiCompactFallback(providerId)) {
     // SDK auto-compact would fire at the wrong threshold (200k fallback
-    // instead of the real model window). Disable it and let NeoKai's
+    // instead of the real model window). Disable it and let HyperNeo's
     // fallback trigger handle compaction at the SDK-style reserve threshold.
     return { autoCompactEnabled: false };
   }
@@ -1002,7 +1002,7 @@ CRITICAL RULES:
    *
    * Always includes:
    * - ~/.claude/: For settings, database, and worktree storage
-   * - ~/.neokai/: For NeoKai-specific configuration and state
+   * - ~/.neokai/: For HyperNeo-specific configuration and state
    *
    * For worktree sessions, also includes:
    * - /tmp: System temp for tools that write directly here (e.g. git hook tee, bun test)
@@ -1015,7 +1015,7 @@ CRITICAL RULES:
   private getAdditionalDirectories(): string[] | undefined {
     const directories: string[] = [];
 
-    // Always include Claude and NeoKai directories for settings and storage
+    // Always include Claude and HyperNeo directories for settings and storage
     directories.push(join(homedir(), '.claude'));
     directories.push(join(homedir(), '.neokai'));
 

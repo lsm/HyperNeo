@@ -438,7 +438,7 @@ function safeMoveFile(src: string, dest: string): void {
  * required. The tarball's integrity is verified against the registry's
  * `dist.integrity` field before extraction.
  *
- * This avoids embedding the 200 MB binary in the compiled NeoKai binary
+ * This avoids embedding the 200 MB binary in the compiled HyperNeo binary
  * (reducing it from ~266 MB to ~66 MB).
  */
 function downloadSdkBinary(): string | undefined {

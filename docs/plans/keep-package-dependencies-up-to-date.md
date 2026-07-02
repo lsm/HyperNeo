@@ -2,7 +2,7 @@
 
 ## Goal
 
-Recurring mission to keep all package dependencies current and pinned to exact versions across the NeoKai monorepo. Each cycle checks for outdated packages, updates them (Claude Agent SDK separately, everything else together), and verifies nothing is broken.
+Recurring mission to keep all package dependencies current and pinned to exact versions across the HyperNeo monorepo. Each cycle checks for outdated packages, updates them (Claude Agent SDK separately, everything else together), and verifies nothing is broken.
 
 ## Approach
 

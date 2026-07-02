@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * Offline maintenance for the NeoKai message search FTS index.
+ * Offline maintenance for the HyperNeo message search FTS index.
  *
  * Usage:
  *   bun run scripts/maintain-message-search-db.ts [--db-path /path/to/daemon.db] [--yes]
@@ -91,7 +91,7 @@ function assertDaemonStopped(dbPath: string, force: boolean): void {
   }
 
   throw new Error(
-    `Refusing to maintain a database used by live NeoKai daemon PID ${pid}.\n` +
+    `Refusing to maintain a database used by live HyperNeo daemon PID ${pid}.\n` +
       `Stop the daemon first, or pass --force if you understand the risk.\n` +
       `Database: ${dbPath}`
   );
@@ -141,7 +141,7 @@ function tableExists(db: BunDatabase, tableName: string): boolean {
 
 async function confirm(options: Options): Promise<void> {
   if (options.yes) return;
-  console.log(`About to maintain NeoKai message search DB:
+  console.log(`About to maintain HyperNeo message search DB:
   Database: ${options.dbPath}
   Backup:   yes, standard backups/ directory
   Optimize: yes

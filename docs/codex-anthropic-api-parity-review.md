@@ -8,7 +8,7 @@ Date: 2026-03-16
 
 No — the current bridge does **not** have full Anthropic API parity.
 
-It has **working partial parity** for the path NeoKai currently uses:
+It has **working partial parity** for the path HyperNeo currently uses:
 
 - `POST /v1/messages`
 - streaming SSE
@@ -17,7 +17,7 @@ It has **working partial parity** for the path NeoKai currently uses:
 - basic system prompt support
 - basic MCP-style tool name mapping
 
-That is enough for the current NeoKai Codex bridge flow, but it is **not** a full Anthropic-compatible implementation.
+That is enough for the current HyperNeo Codex bridge flow, but it is **not** a full Anthropic-compatible implementation.
 
 ## What is solid today
 
@@ -265,7 +265,7 @@ Current tests do **not** cover:
 
 The current bridge should be described as:
 
-> Anthropic-compatible enough for NeoKai’s current streaming and tool-use integration, but not a full Anthropic API implementation.
+> Anthropic-compatible enough for HyperNeo’s current streaming and tool-use integration, but not a full Anthropic API implementation.
 
 ## Rough parity estimate
 
@@ -293,13 +293,13 @@ If the goal is true Anthropic drop-in compatibility, the highest-priority gaps a
 5. Return Anthropic-style JSON error envelopes
 6. Preserve structured conversation more faithfully instead of flattening everything into text
 7. Add multimodal block support
-8. Add `/v1/messages/count_tokens` if NeoKai or future clients need it
+8. Add `/v1/messages/count_tokens` if HyperNeo or future clients need it
 
 ## Bottom line
 
 If the goal is:
 
-### “Enough for NeoKai to use Codex behind an Anthropic-shaped SDK”
+### “Enough for HyperNeo to use Codex behind an Anthropic-shaped SDK”
 
 The bridge is close and likely sufficient for the current narrow path.
 

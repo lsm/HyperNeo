@@ -60,7 +60,7 @@ export function getProjectShortKey(repoPath: string): string {
  * - First use   → create `~/.neokai/projects/{shortKey}/` and write sentinel.
  * - Same repo   → sentinel matches; proceed normally.
  * - Collision   → sentinel belongs to a different repo; fall back to `encodeRepoPath`.
- * - No sentinel → dir was created by an older NeoKai version; write sentinel and proceed.
+ * - No sentinel → dir was created by an older HyperNeo version; write sentinel and proceed.
  *
  * For testing, set TEST_WORKTREE_BASE_DIR to override the `~/.neokai` prefix.
  *

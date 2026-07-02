@@ -1,6 +1,6 @@
 # Tool Components System
 
-A flexible, extensible system for rendering tool execution progress and results in the NeoKai web UI.
+A flexible, extensible system for rendering tool execution progress and results in the HyperNeo web UI.
 
 ## Overview
 

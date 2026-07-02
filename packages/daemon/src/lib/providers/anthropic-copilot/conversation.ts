@@ -21,7 +21,7 @@
  *
  * Only tool-use continuations reuse sessions.  Plain text responses use a
  * fresh session per request (session-per-request model avoids cross-session
- * contamination when a NeoKai chat session makes many independent calls).
+ * contamination when a HyperNeo chat session makes many independent calls).
  */
 
 import { approveAll, type CopilotClient, type CopilotSession } from '@github/copilot-sdk';

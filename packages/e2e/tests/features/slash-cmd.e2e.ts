@@ -504,7 +504,7 @@ test.describe('Slash Command Autocomplete - SDK Commands from system:init', () =
     const commandButtons = page.locator(
       '[data-testid="command-autocomplete"] button, text=Slash Commands ~ button'
     );
-    // Verify at least /help is present (from SDK, not from NeoKai built-ins)
+    // Verify at least /help is present (from SDK, not from HyperNeo built-ins)
     await expect(page.getByRole('button', { name: 'help', exact: true })).toBeVisible({
       timeout: 5000,
     });

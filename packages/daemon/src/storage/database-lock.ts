@@ -33,7 +33,7 @@ export class DatabaseLock {
       const pid = parseInt(raw, 10);
       if (!isNaN(pid) && pid !== process.pid && this.isProcessAlive(pid)) {
         throw new Error(
-          `[Daemon] Another NeoKai daemon is already running with this database (PID ${pid}).\n` +
+          `[Daemon] Another HyperNeo daemon is already running with this database (PID ${pid}).\n` +
             `  Database: ${this.dbPath}\n` +
             `  Stop the existing process, or use --db-path to point to a different database.`
         );

@@ -131,7 +131,7 @@ export function migrateSDKSessionFile(
  * Useful when we don't have the SDK session ID (e.g., session not currently running)
  *
  * @param workspacePath - The session's workspace path
- * @param kaiSessionId - The NeoKai session ID to search for in files
+ * @param kaiSessionId - The HyperNeo session ID to search for in files
  * @returns Path to the session file if found, null otherwise
  */
 function findSDKSessionFile(workspacePath: string, kaiSessionId: string): string | null {
@@ -142,7 +142,7 @@ function findSDKSessionFile(workspacePath: string, kaiSessionId: string): string
       return null;
     }
 
-    // Search all .jsonl files for the NeoKai session ID
+    // Search all .jsonl files for the HyperNeo session ID
     const files = readdirSync(sessionDir).filter((f) => f.endsWith('.jsonl'));
 
     // Track all matching files with their modification times
@@ -152,7 +152,7 @@ function findSDKSessionFile(workspacePath: string, kaiSessionId: string): string
       const filePath = join(sessionDir, file);
       const content = readFileSync(filePath, 'utf-8');
 
-      // Check if this file contains the NeoKai session ID
+      // Check if this file contains the HyperNeo session ID
       if (content.includes(kaiSessionId)) {
         const stats = statSync(filePath);
         matchingFiles.push({ path: filePath, mtime: stats.mtimeMs });
@@ -180,7 +180,7 @@ function findSDKSessionFile(workspacePath: string, kaiSessionId: string): string
  * @param workspacePath - The session's workspace path
  * @param sdkSessionId - The SDK session ID from Query.sessionId (optional, will search if not provided)
  * @param messageUuid - The UUID of the message to modify
- * @param kaiSessionId - The NeoKai session ID (for fallback search)
+ * @param kaiSessionId - The HyperNeo session ID (for fallback search)
  * @returns true if successful, false otherwise
  */
 export function removeToolResultFromSessionFile(
@@ -200,8 +200,8 @@ export function removeToolResultFromSessionFile(
         return false;
       }
     }
-    // Fallback: Search by NeoKai session ID (only when session not currently running)
-    // This is less reliable as the same NeoKai ID can appear in 100+ SDK files
+    // Fallback: Search by HyperNeo session ID (only when session not currently running)
+    // This is less reliable as the same HyperNeo ID can appear in 100+ SDK files
     else if (kaiSessionId) {
       sessionFile = findSDKSessionFile(workspacePath, kaiSessionId);
       if (!sessionFile) {
@@ -518,15 +518,15 @@ function backupSDKSessionFile(sessionFilePath: string): string | null {
 }
 
 /**
- * Repair SDK session file by inserting missing tool_use messages from NeoKai DB
+ * Repair SDK session file by inserting missing tool_use messages from HyperNeo DB
  *
  * When SDK context compaction removes tool_use blocks while keeping tool_results,
  * this function attempts to repair the file by looking up the missing messages
- * from NeoKai's database and inserting them at the correct positions.
+ * from HyperNeo's database and inserting them at the correct positions.
  *
  * @param workspacePath - The session's workspace path
  * @param sdkSessionId - The SDK session ID
- * @param kaiSessionId - The NeoKai session ID (for DB lookup)
+ * @param kaiSessionId - The HyperNeo session ID (for DB lookup)
  * @param db - Database instance for message lookup
  * @returns Repair result with backup path and count of repaired messages
  */
@@ -573,7 +573,7 @@ export function repairSDKSessionFile(
     const insertions: Array<{ lineIndex: number; message: string }> = [];
 
     for (const orphan of validation.orphanedToolResults) {
-      // Look up the tool_use message from NeoKai DB by searching for the tool_use_id
+      // Look up the tool_use message from HyperNeo DB by searching for the tool_use_id
       // Note: db.getSDKMessages returns up to 100 messages by default, increase limit to search more
       const { messages: dbMessages } = db.getSDKMessages(kaiSessionId, 10000);
 
@@ -601,7 +601,9 @@ export function repairSDKSessionFile(
       }
 
       if (!missingAssistantMsg) {
-        result.errors.push(`Could not find tool_use message for ${orphan.toolUseId} in NeoKai DB`);
+        result.errors.push(
+          `Could not find tool_use message for ${orphan.toolUseId} in HyperNeo DB`
+        );
         continue;
       }
 
@@ -669,7 +671,7 @@ export function repairSDKSessionFile(
  *
  * @param workspacePath - The session's workspace path
  * @param sdkSessionId - The SDK session ID
- * @param kaiSessionId - The NeoKai session ID (for DB lookup)
+ * @param kaiSessionId - The HyperNeo session ID (for DB lookup)
  * @param db - Database instance for message lookup
  * @returns true if session is valid (or was repaired), false if unrecoverable
  */
@@ -761,7 +763,7 @@ interface ArchiveMetadata {
 }
 
 /**
- * Get the archive directory for a NeoKai session
+ * Get the archive directory for a HyperNeo session
  */
 function getArchiveDir(kaiSessionId: string): string {
   // Support TEST_SDK_SESSION_DIR for isolated testing
@@ -770,8 +772,8 @@ function getArchiveDir(kaiSessionId: string): string {
 }
 
 /**
- * Find all SDK session files for a NeoKai session
- * Returns all files that contain the NeoKai session ID
+ * Find all SDK session files for a HyperNeo session
+ * Returns all files that contain the HyperNeo session ID
  */
 function findAllSDKFilesForSession(
   workspacePath: string,
@@ -796,8 +798,8 @@ function findAllSDKFilesForSession(
       }
     }
 
-    // Also search for any other files containing the NeoKai session ID
-    // (in case there are multiple SDK sessions for the same NeoKai session)
+    // Also search for any other files containing the HyperNeo session ID
+    // (in case there are multiple SDK sessions for the same HyperNeo session)
     const files = readdirSync(sessionDir).filter((f) => f.endsWith('.jsonl'));
 
     for (const file of files) {
@@ -826,11 +828,11 @@ function findAllSDKFilesForSession(
 }
 
 /**
- * Delete SDK session files for a NeoKai session
+ * Delete SDK session files for a HyperNeo session
  *
  * @param workspacePath - The session's workspace path
  * @param sdkSessionId - The SDK session ID (optional, will search if not provided)
- * @param kaiSessionId - The NeoKai session ID
+ * @param kaiSessionId - The HyperNeo session ID
  * @returns Delete result with list of deleted files
  */
 export function deleteSDKSessionFiles(
@@ -873,14 +875,14 @@ export function deleteSDKSessionFiles(
 }
 
 /**
- * Archive SDK session files for a NeoKai session
+ * Archive SDK session files for a HyperNeo session
  *
  * Moves files to ~/.neokai/claude-session-archives/{kaiSessionId}/
  * and creates an archive-metadata.json file.
  *
  * @param workspacePath - The session's workspace path
  * @param sdkSessionId - The SDK session ID (optional, will search if not provided)
- * @param kaiSessionId - The NeoKai session ID
+ * @param kaiSessionId - The HyperNeo session ID
  * @returns Archive result with archive path and list of archived files
  */
 export function archiveSDKSessionFiles(
@@ -983,7 +985,7 @@ export function scanSDKSessionFiles(workspacePath: string): SDKSessionFileInfo[]
         const stats = statSync(filePath);
         const sdkSessionId = file.replace('.jsonl', '');
 
-        // Extract NeoKai session IDs from file content
+        // Extract HyperNeo session IDs from file content
         const kaiSessionIds = extractKaiSessionIds(filePath);
 
         results.push({
@@ -1005,7 +1007,7 @@ export function scanSDKSessionFiles(workspacePath: string): SDKSessionFileInfo[]
 }
 
 /**
- * Extract NeoKai session IDs from an SDK session file
+ * Extract HyperNeo session IDs from an SDK session file
  * Looks for UUID patterns in the file content
  */
 function extractKaiSessionIds(filePath: string): string[] {
@@ -1014,7 +1016,7 @@ function extractKaiSessionIds(filePath: string): string[] {
   try {
     const content = readFileSync(filePath, 'utf-8');
 
-    // UUID v4 pattern (NeoKai session IDs)
+    // UUID v4 pattern (HyperNeo session IDs)
     const uuidPattern = /[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/gi;
     const matches = content.match(uuidPattern);
 
@@ -1044,12 +1046,12 @@ function extractKaiSessionIds(filePath: string): string[] {
 /**
  * Identify orphaned SDK session files
  *
- * Files are considered orphaned if none of their NeoKai session IDs
+ * Files are considered orphaned if none of their HyperNeo session IDs
  * match any active or archived session in the database.
  *
  * @param files - List of SDK session file info from scanSDKSessionFiles
- * @param activeSessionIds - Set of active NeoKai session IDs
- * @param archivedSessionIds - Set of archived NeoKai session IDs
+ * @param activeSessionIds - Set of active HyperNeo session IDs
+ * @param archivedSessionIds - Set of archived HyperNeo session IDs
  * @returns List of orphaned files with reason
  */
 export function identifyOrphanedSDKFiles(
@@ -1060,7 +1062,7 @@ export function identifyOrphanedSDKFiles(
   const orphaned: OrphanedSDKFileInfo[] = [];
 
   for (const file of files) {
-    // Check if any of the NeoKai session IDs match known sessions
+    // Check if any of the HyperNeo session IDs match known sessions
     const hasActiveSession = file.kaiSessionIds.some((id) => activeSessionIds.has(id));
     const hasArchivedSession = file.kaiSessionIds.some((id) => archivedSessionIds.has(id));
 
@@ -1169,7 +1171,7 @@ export function stripThinkingBlocksFromSessionFile(
  *
  * @param workspacePath - The session's workspace path
  * @param sdkSessionId - The SDK session ID (for direct file path lookup)
- * @param kaiSessionId - The NeoKai session ID (fallback for file search)
+ * @param kaiSessionId - The HyperNeo session ID (fallback for file search)
  * @param messageUuid - The UUID of the message to truncate at (this message is removed too)
  * @returns Object with truncation result
  */
@@ -1243,11 +1245,11 @@ export function truncateSessionFileAtMessage(
  *
  * This is used before passing resumeSessionAt back to the SDK. Auto-compaction
  * can replace older transcript entries with a summary, so a UUID that remains
- * in NeoKai's DB may no longer be resumable from the SDK transcript.
+ * in HyperNeo's DB may no longer be resumable from the SDK transcript.
  *
  * @param workspacePath - The session's workspace path
  * @param sdkSessionId - The SDK session ID (for direct file path lookup)
- * @param kaiSessionId - The NeoKai session ID (fallback for file search)
+ * @param kaiSessionId - The HyperNeo session ID (fallback for file search)
  * @param messageUuid - The UUID of the message to find
  * @returns true when the UUID exists in the JSONL transcript
  */

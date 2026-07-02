@@ -10,9 +10,9 @@
 
 ## Executive Summary
 
-This report documents the completion of the provider parity initiative for NeoKai, implementing first-class support for two new providers: `anthropic-copilot` (GitHub Copilot) and `anthropic-codex` (Anthropic Codex).
+This report documents the completion of the provider parity initiative for HyperNeo, implementing first-class support for two new providers: `anthropic-copilot` (GitHub Copilot) and `anthropic-codex` (Anthropic Codex).
 
-**Overall Status: Parity gaps significantly reduced; both providers now support core NeoKai workflows.**
+**Overall Status: Parity gaps significantly reduced; both providers now support core HyperNeo workflows.**
 
 ### Key Achievements
 
@@ -225,7 +225,7 @@ type Provider = 'anthropic' | 'glm' | 'minimax' | 'anthropic-copilot' | 'anthrop
 
 ## Conclusion
 
-Both `anthropic-copilot` and `anthropic-codex` providers are now fully integrated into NeoKai with:
+Both `anthropic-copilot` and `anthropic-codex` providers are now fully integrated into HyperNeo with:
 
 1. **Core workflow parity** — Streaming, tool-use, and session management work correctly
 2. **Type safety** — Explicit provider IDs throughout the stack prevent ambiguity
@@ -234,7 +234,7 @@ Both `anthropic-copilot` and `anthropic-codex` providers are now fully integrate
 5. **Token accounting** — Working token counting with fallback heuristics
 
 The remaining gaps are either:
-- SDK/backend limitations that cannot be addressed in NeoKai (vision, extended thinking)
+- SDK/backend limitations that cannot be addressed in HyperNeo (vision, extended thinking)
 - Advanced features not required for current workflows (`stream: false`, `tool_choice` enforcement, `stop_sequences`)
 
-Both providers are **production-ready for NeoKai's current use cases**.
+Both providers are **production-ready for HyperNeo's current use cases**.

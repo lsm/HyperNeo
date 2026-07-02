@@ -16,7 +16,7 @@
 
 ## 1. Purpose
 
-NeoKai should be agent-runtime agnostic and provider agnostic.
+HyperNeo should be agent-runtime agnostic and provider agnostic.
 
 That means the Space runtime, Forge, client stores, and MessageFabric should not assume Claude Agent SDK is the only execution runtime. They should also not assume a model provider must natively speak the runtime's preferred API.
 
@@ -24,9 +24,9 @@ The target is:
 
 > Any Agent Runtime can be paired with any Provider when technically possible, with explicit compatibility bridges and capability degradation.
 
-The current codebase already proves part of this direction. NeoKai runs the Claude Agent SDK with providers that are not Anthropic by projecting those providers behind Anthropic-compatible endpoints and process environment routing. That is the correct architectural pattern. This spec generalizes it so future runtimes such as OpenAI Agents SDK, Codex SDK/server, Pi coding agent, or other local/remote agent engines can participate without forcing the rest of the daemon to know their native APIs.
+The current codebase already proves part of this direction. HyperNeo runs the Claude Agent SDK with providers that are not Anthropic by projecting those providers behind Anthropic-compatible endpoints and process environment routing. That is the correct architectural pattern. This spec generalizes it so future runtimes such as OpenAI Agents SDK, Codex SDK/server, Pi coding agent, or other local/remote agent engines can participate without forcing the rest of the daemon to know their native APIs.
 
-This document is high-level architectural guidance. The TypeScript shapes below describe target boundaries and concepts, not final implementation-ready SDK contracts. Before implementing the real gateway, adapters, compatibility resolver, or shared agent-runtime data types, NeoKai must audit the source code or type files for each target SDK/runtime and provider protocol. The implementation types should be derived from that audit, not from guesses or a lowest-common-denominator abstraction.
+This document is high-level architectural guidance. The TypeScript shapes below describe target boundaries and concepts, not final implementation-ready SDK contracts. Before implementing the real gateway, adapters, compatibility resolver, or shared agent-runtime data types, HyperNeo must audit the source code or type files for each target SDK/runtime and provider protocol. The implementation types should be derived from that audit, not from guesses or a lowest-common-denominator abstraction.
 
 ---
 
@@ -157,7 +157,7 @@ The bridge pattern is already present and should be promoted:
 - `provider-anthropic-compat/translator.ts` defines shared Anthropic Messages request/SSE translation helpers.
 - provider config can set model-level capabilities so unsupported features are suppressed before they hit upstream APIs.
 
-This proves the desired architecture: a runtime can keep its native model IO shape while NeoKai bridges providers into that shape.
+This proves the desired architecture: a runtime can keep its native model IO shape while HyperNeo bridges providers into that shape.
 
 ---
 
@@ -179,7 +179,7 @@ This proves the desired architecture: a runtime can keep its native model IO sha
 - Hiding meaningful behavior differences across runtimes.
 - Rewriting all SDK message rendering in the first slice.
 - Making provider bridges distributed services by default. Embedded local bridges are fine.
-- Converting NeoKai into a generic model proxy independent of agent execution.
+- Converting HyperNeo into a generic model proxy independent of agent execution.
 
 ---
 
@@ -503,7 +503,7 @@ Provider and model settings stay contract-backed during MessageHub cleanup:
 | `provider.customEndpoint.delete` | command | Delete a saved custom endpoint and synchronized provider record. |
 | `provider.customEndpoint.models.list` | query | Probe an arbitrary custom endpoint for model discovery before it is saved. |
 | `provider.auth.list` | query | Preserve `auth.providers`. |
-| `provider.auth.status` | query | Preserve `auth.status` for focused NeoKai/Anthropic auth-state checks. |
+| `provider.auth.status` | query | Preserve `auth.status` for focused HyperNeo/Anthropic auth-state checks. |
 | `provider.auth.login` | command | Preserve `auth.login`. |
 | `provider.auth.logout` | command | Preserve `auth.logout`. |
 | `provider.auth.refresh` | command | Preserve `auth.refresh`. |
@@ -799,7 +799,7 @@ Tool compatibility classes:
 | --- | --- |
 | `native` | Runtime/provider supports this tool shape directly. |
 | `bridged` | Bridge translates tool calls/results. |
-| `emulated` | NeoKai simulates behavior outside provider support. |
+| `emulated` | HyperNeo simulates behavior outside provider support. |
 | `disabled` | Capability is not available for this runtime/profile. |
 
 ### Streaming
@@ -861,7 +861,7 @@ The target makes these a formal resolver result.
 
 Current sessions store `sdkSessionId`, SDK-origin path, SDK message rows, and Claude Agent SDK message blobs. That should remain for compatibility, but target session state should separate:
 
-- NeoKai session id
+- HyperNeo session id
 - runtime id
 - provider id
 - model id
@@ -992,7 +992,7 @@ Initial runtime audit targets:
 - OpenAI Agents SDK, including source/types for sessions, tools, handoffs, streaming, tracing, and model configuration.
 - Codex SDK/server, including its session protocol, tool protocol, auth model, filesystem/process model, and event stream.
 - Pi coding agent or any other target coding-agent runtime before it becomes selectable.
-- NeoKai's existing bridge/provider code, including Anthropic-compatible, OpenAI Responses, OpenAI Chat, Ollama, custom endpoint, Codex, and Copilot bridge paths.
+- HyperNeo's existing bridge/provider code, including Anthropic-compatible, OpenAI Responses, OpenAI Chat, Ollama, custom endpoint, Codex, and Copilot bridge paths.
 
 For each runtime, the audit should record support and limitations for:
 
@@ -1023,8 +1023,8 @@ For each provider protocol or bridge direction, the audit should record:
 The audit deliverables are:
 
 1. **SDK Capability Matrix:** a checked-in table or generated artifact that states what every supported runtime/provider/bridge can and cannot do.
-2. **NeoKai Superset Agent Runtime Types:** shared discriminated-union data types that can represent the full audited feature set without erasing runtime-specific features.
-3. **Adapter Mapping Notes:** for each runtime adapter and provider bridge, a mapping from native SDK/protocol types to the NeoKai superset types and back.
+2. **HyperNeo Superset Agent Runtime Types:** shared discriminated-union data types that can represent the full audited feature set without erasing runtime-specific features.
+3. **Adapter Mapping Notes:** for each runtime adapter and provider bridge, a mapping from native SDK/protocol types to the HyperNeo superset types and back.
 4. **Unsupported/Degraded Feature Rules:** explicit resolver rules for features that are native, bridged, emulated, degraded, or unsupported.
 
 Superset type design rules:
@@ -1044,7 +1044,7 @@ The architecture can still start with Claude Agent SDK as the first runtime, but
 ### Phase -1: Runtime And Provider Capability Audit
 
 - Audit source/type files for Claude Agent SDK, OpenAI Agents SDK, Codex SDK/server, Pi coding agent, and existing provider bridge paths before finalizing shared runtime types.
-- Produce the SDK Capability Matrix, NeoKai Superset Agent Runtime Types, adapter mapping notes, and unsupported/degraded feature rules.
+- Produce the SDK Capability Matrix, HyperNeo Superset Agent Runtime Types, adapter mapping notes, and unsupported/degraded feature rules.
 - Use the audited matrix to decide which fields belong in common normalized types, which fields belong in typed runtime extensions, and which fields are raw diagnostic/native references.
 - Treat this phase as a blocker for stable adapter contracts. Boundary skeletons are fine, but production adapters should not lock the abstraction before the audit.
 

@@ -9,7 +9,7 @@
  * - Description (optional)
  * - Model (dropdown override, optional for default model inheritance)
  * - Tools (explicit overrides from KNOWN_TOOLS; SDK defaults are always inherited)
- * - Custom Prompt (monospace textarea with line numbers; appended after NeoKai contract)
+ * - Custom Prompt (monospace textarea with line numbers; appended after HyperNeo contract)
  *
  * Tool presets: "Inherit defaults" (no overrides) · "Read Only" (deny mutators) · "Custom"
  *
@@ -696,7 +696,7 @@ export function SpaceAgentEditor({
           <label class="block text-sm font-medium text-gray-300 mb-2">
             {isPromotion ? 'Long-Horizon Profile' : 'Custom Prompt'}
             <span class="text-gray-400 text-xs ml-2">
-              (optional — appended after NeoKai contract)
+              (optional — appended after HyperNeo contract)
             </span>
           </label>
           {isPromotion && (

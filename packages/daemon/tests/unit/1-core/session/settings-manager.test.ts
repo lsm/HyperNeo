@@ -418,7 +418,7 @@ describe('SettingsManager', () => {
       expect(content.attribution).toEqual({ commit: 'abc123' });
     });
 
-    it('should preserve existing settings not managed by NeoKai', async () => {
+    it('should preserve existing settings not managed by HyperNeo', async () => {
       // Create existing settings file with custom settings
       const settingsDir = join(workspacePath, '.claude');
       mkdirSync(settingsDir, { recursive: true });

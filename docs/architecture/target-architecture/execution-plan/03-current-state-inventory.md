@@ -94,7 +94,7 @@ Current UI ownership is split across `packages/web` and `packages/ui`.
 | --- | --- | --- |
 | Product screens, Space, session, settings, SDK message rendering | `packages/web` | Keep product-specific behavior here until explicit extraction. |
 | Existing generic web controls | `packages/web/src/components/ui` | Compatibility facade during migration; do not churn visual styling broadly. |
-| Headless/slot primitives and demos | `packages/ui` | Not yet the visual authority for NeoKai product surfaces. |
+| Headless/slot primitives and demos | `packages/ui` | Not yet the visual authority for HyperNeo product surfaces. |
 | SDK tool cards/renderers | `packages/web/src/components/sdk/tools` | Protected renderer island; do not rebuild from `packages/ui` in broad migration. |
 
 Protected SDK renderer island:
@@ -115,7 +115,7 @@ Protected SDK renderer island:
 Migration blockers:
 
 - `ToolResultCard.tsx` is currently 600 lines and allowlisted only because it is protected behavior. The UI migration must preserve its current visual and behavioral contract unless a dedicated SDK renderer redesign PR is approved.
-- `packages/ui` exports controls like `Button`, `Dialog`, `Menu`, `Popover`, `Tabs`, `Toast`, and `Tooltip`, but it does not currently own NeoKai's dense dark product look.
+- `packages/ui` exports controls like `Button`, `Dialog`, `Menu`, `Popover`, `Tabs`, `Toast`, and `Tooltip`, but it does not currently own HyperNeo's dense dark product look.
 - First UI PRs need screenshot parity before/after. No read-model migration should be combined with visual migration in the first PR.
 
 ## Runtime And Storage Owners

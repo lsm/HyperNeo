@@ -922,7 +922,7 @@ export function createDbQueryMcpServer(config: DbQueryToolsConfig): DbQueryMcpSe
   const tools = [
     tool(
       'db_query',
-      `Execute a scoped SELECT query against the NeoKai database. ` +
+      `Execute a scoped SELECT query against the HyperNeo database. ` +
         `Operating in ${scopeDescription}. ` +
         `Only SELECT statements are allowed — INSERT/UPDATE/DELETE are rejected. ` +
         `Results are limited to ${MAX_LIMIT} rows (default ${DEFAULT_LIMIT}). ` +

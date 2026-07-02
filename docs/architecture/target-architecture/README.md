@@ -39,7 +39,7 @@ The diagrams are target architecture diagrams. They are intentionally not a grap
 
 ## 2. Architecture In One Sentence
 
-NeoKai is a local-first agent runtime where every cross-boundary interaction is a typed command, query, or event on `MessageFabric`, every durable mutation commits through one SQLite-backed unit of work with outbox/inbox semantics, effective configuration and extension contributions are resolved before agent behavior is composed through scoped prompt policy and runtime/provider adapters, and every client or worker observes the system through read models and fabric events instead of direct service coupling.
+HyperNeo is a local-first agent runtime where every cross-boundary interaction is a typed command, query, or event on `MessageFabric`, every durable mutation commits through one SQLite-backed unit of work with outbox/inbox semantics, effective configuration and extension contributions are resolved before agent behavior is composed through scoped prompt policy and runtime/provider adapters, and every client or worker observes the system through read models and fabric events instead of direct service coupling.
 
 ---
 

@@ -1489,7 +1489,7 @@ describe('EvolutionEpisodeService', () => {
   it('dogfoods the Forge MVP loop from recurring goal to next scoped task', async () => {
     const goal = goalRepo.create({
       spaceId,
-      title: 'Build NeoKai Forge MVP',
+      title: 'Build HyperNeo Forge MVP',
       description: 'Verify the scoped learning loop end to end',
       type: 'recurring',
       metrics: {
@@ -1509,7 +1509,7 @@ describe('EvolutionEpisodeService', () => {
     });
     const scope = scopeService.createScopeFromGoal({
       spaceGoalId: goal.id,
-      name: 'Build NeoKai Forge MVP',
+      name: 'Build HyperNeo Forge MVP',
       objective: 'Verify a usable end-to-end Forge scoped learning loop',
       metricDefinitions: [
         { key: 'completedTasks', label: 'Completed tasks', direction: 'increase' },
@@ -1614,7 +1614,7 @@ describe('EvolutionEpisodeService', () => {
 
     expect(scope).toMatchObject({
       spaceGoalId: goal.id,
-      name: 'Build NeoKai Forge MVP',
+      name: 'Build HyperNeo Forge MVP',
       kind: 'mission',
     });
     expect(taskEvidence.metadata).toMatchObject({

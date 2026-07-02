@@ -3,7 +3,7 @@
 **Task:** Research token-saving techniques and efficient harness engineering for AI coding agents.  
 **Resources:** The Harness Problem, Governor, Context Mode, Headroom, Caveman.  
 **Output directory:** `~/focus/tmp/token-efficiency/`  
-**NeoKai focus:** Space agent system, preset agents, custom prompts, sub-session features, tool lists, MessageHub/AgentSession runtime.
+**HyperNeo focus:** Space agent system, preset agents, custom prompts, sub-session features, tool lists, MessageHub/AgentSession runtime.
 
 ## Executive summary
 
@@ -15,7 +15,7 @@ Research shows five complementary token-efficiency families:
 4. **Hook-based filtering and governance** intercept noisy outputs, compress repeated instructions, and measure savings. Governor emphasizes quality-preserving compression and valid-context-loss metrics.
 5. **Style and metadata compression** reduce passive overhead and generated output. Caveman compresses responses, memory files, MCP tool descriptions, and subagent handoffs.
 
-For NeoKai, biggest opportunity is not one feature. Best design is layered: compact preset prompts, structured Space handoff contracts, tool-output middleware, artifact-backed retrieval, cache-aware prompt layout, and anchored edit tools.
+For HyperNeo, biggest opportunity is not one feature. Best design is layered: compact preset prompts, structured Space handoff contracts, tool-output middleware, artifact-backed retrieval, cache-aware prompt layout, and anchored edit tools.
 
 ## Taxonomy of approaches
 
@@ -27,7 +27,7 @@ For NeoKai, biggest opportunity is not one feature. Best design is layered: comp
 **Best for:** final answers, subagent receipts, status updates, review summaries.  
 **Risk:** ambiguity if used on security warnings, destructive action confirmation, or multi-step instructions.
 
-**NeoKai fit:** high. Space agents often talk to other agents, not humans. Their outputs can be compact by default.
+**HyperNeo fit:** high. Space agents often talk to other agents, not humans. Their outputs can be compact by default.
 
 ### 2. Persistent context compression
 
@@ -37,7 +37,7 @@ For NeoKai, biggest opportunity is not one feature. Best design is layered: comp
 **Best for:** text loaded every session: Space instructions, workflow instructions, preset agent prompts, memory summaries.  
 **Risk:** losing subtle constraints. Needs protected spans and rollback.
 
-**NeoKai fit:** high. `seed-agents.ts` currently seeds verbose prompts; `buildCustomAgentTaskMessage` also injects recurring task/workflow/space context.
+**HyperNeo fit:** high. `seed-agents.ts` currently seeds verbose prompts; `buildCustomAgentTaskMessage` also injects recurring task/workflow/space context.
 
 ### 3. Tool-output filtering
 
@@ -47,7 +47,7 @@ For NeoKai, biggest opportunity is not one feature. Best design is layered: comp
 **Best for:** test output, build logs, git output, GitHub issue/PR JSON, package install logs, metrics, API responses.  
 **Risk:** filtering can hide one clue. Needs raw artifact retrieval.
 
-**NeoKai fit:** very high. AgentSession and MessageHub can mediate tool results before transcript insertion.
+**HyperNeo fit:** very high. AgentSession and MessageHub can mediate tool results before transcript insertion.
 
 ### 4. Context isolation / sandboxed analysis
 
@@ -57,7 +57,7 @@ For NeoKai, biggest opportunity is not one feature. Best design is layered: comp
 **Best for:** Playwright snapshots, CSVs, logs, API payloads, large repository scans.  
 **Risk:** sandbox security, operational complexity, user trust.
 
-**NeoKai fit:** high for Space tasks. Space workflows often require data gathering and synthesis; raw data can live in artifacts.
+**HyperNeo fit:** high for Space tasks. Space workflows often require data gathering and synthesis; raw data can live in artifacts.
 
 ### 5. Local indexing and retrieval
 
@@ -67,7 +67,7 @@ For NeoKai, biggest opportunity is not one feature. Best design is layered: comp
 **Best for:** docs, logs, previous task artifacts, session histories, research corpora.  
 **Risk:** retrieval misses if indexing/chunking poor.
 
-**NeoKai fit:** high. Space runtime already has artifacts and workflow state; add searchable per-run artifact store.
+**HyperNeo fit:** high. Space runtime already has artifacts and workflow state; add searchable per-run artifact store.
 
 ### 6. Reversible compression
 
@@ -77,7 +77,7 @@ For NeoKai, biggest opportunity is not one feature. Best design is layered: comp
 **Best for:** high-stakes logs and JSON where details may matter later.  
 **Risk:** retrieval tool misuse or missing permissions.
 
-**NeoKai fit:** high. Space agents can access MCP tools; artifacts can serve as raw-output backing store.
+**HyperNeo fit:** high. Space agents can access MCP tools; artifacts can serve as raw-output backing store.
 
 ### 7. Tool catalog / MCP metadata compression
 
@@ -87,7 +87,7 @@ For NeoKai, biggest opportunity is not one feature. Best design is layered: comp
 **Best for:** sessions with many MCP tools.  
 **Risk:** over-compressed schemas reduce correct tool selection.
 
-**NeoKai fit:** medium-high. `mergeRuntimeMcpServers` attaches Space tools; tool descriptions add passive context.
+**HyperNeo fit:** medium-high. `mergeRuntimeMcpServers` attaches Space tools; tool descriptions add passive context.
 
 ### 8. Provider cache alignment
 
@@ -97,7 +97,7 @@ For NeoKai, biggest opportunity is not one feature. Best design is layered: comp
 **Best for:** recurring system prompts, preset agent prompts, Space workflow contract text.  
 **Risk:** affects billing/latency more than context occupancy.
 
-**NeoKai fit:** medium-high. `buildCustomAgentSystemPrompt` and `buildCustomAgentTaskMessage` already separate system vs user content; further stable/dynamic split could improve cache efficiency.
+**HyperNeo fit:** medium-high. `buildCustomAgentSystemPrompt` and `buildCustomAgentTaskMessage` already separate system vs user content; further stable/dynamic split could improve cache efficiency.
 
 ### 9. Anchored editing / harness reliability
 
@@ -107,7 +107,7 @@ For NeoKai, biggest opportunity is not one feature. Best design is layered: comp
 **Best for:** multi-model coding agents, weak models, concurrent file changes, repeated edit failures.  
 **Risk:** needs new edit primitive and migration from exact string replacement.
 
-**NeoKai fit:** strategic. Reliability gains reduce retries, which reduces tokens.
+**HyperNeo fit:** strategic. Reliability gains reduce retries, which reduces tokens.
 
 ## Effectiveness comparison
 
@@ -126,7 +126,7 @@ Most reliable savings by category:
 3. **Repeated passive prompt:** memory/prompt compression around 46–55%.
 4. **Retry-loop waste:** hashline-style edit reliability can cut output by 61% in failure-prone edit tasks.
 
-## Applicability to NeoKai
+## Applicability to HyperNeo
 
 ### License notes
 
@@ -138,7 +138,7 @@ Adoption recommendations must account for license differences:
 - **Caveman:** MIT. Permissive for reuse with attribution/license preservation.
 - **The Harness Problem:** article/research source, not a reusable codebase; treat ideas as design input and verify any linked implementation license separately.
 
-### Current NeoKai touchpoints
+### Current HyperNeo touchpoints
 
 Relevant current architecture from codebase:
 
@@ -182,7 +182,7 @@ Governor-style protected-span compression could be applied to user-edited Space 
 
 ### Tool lists and MCP servers
 
-Tool catalogs are passive context. NeoKai can:
+Tool catalogs are passive context. HyperNeo can:
 
 - Keep preset tool lists minimal by role.
 - Compress MCP tool descriptions before provider ingestion.
@@ -227,7 +227,7 @@ This combines Governor filtering, Context Mode artifact isolation, and Headroom 
 
 ### 2. Sandboxed analysis tool
 
-Add NeoKai-native “analyze artifact” or “execute analysis” tool. Agents provide scripts or queries; server runs them with caps and returns stdout. Use for logs, CSVs, snapshots, GitHub JSON, and test output.
+Add HyperNeo-native “analyze artifact” or “execute analysis” tool. Agents provide scripts or queries; server runs them with caps and returns stdout. Use for logs, CSVs, snapshots, GitHub JSON, and test output.
 
 ### 3. Searchable workflow artifact store
 
@@ -269,7 +269,7 @@ Use this before rolling out aggressive compression.
 2. Add per-tool raw/returned byte accounting in AgentSession/MessageHub path.
 3. Add Space workflow artifact-size and inter-agent-message-size dashboards.
 
-Reason: pick highest-impact token sinks from real NeoKai workflows before broad rewrites.
+Reason: pick highest-impact token sinks from real HyperNeo workflows before broad rewrites.
 
 ### P1 — Reduce passive prompt overhead
 

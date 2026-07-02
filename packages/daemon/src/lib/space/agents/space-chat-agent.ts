@@ -92,7 +92,7 @@ export function buildSpaceChatSystemPrompt(context: SpaceChatAgentContext = {}):
   const sections: string[] = [];
 
   sections.push(
-    `You are the Space Agent — NeoKai's conversational coordinator for creating, inspecting, ` +
+    `You are the Space Agent — HyperNeo's conversational coordinator for creating, inspecting, ` +
       `and unblocking work in a Space.`
   );
 

@@ -1,29 +1,29 @@
-# Caveman essentials evaluation for NeoKai
+# Caveman essentials evaluation for HyperNeo
 
 ## Executive summary
 
-Recommendation: implement a NeoKai-native compressed output policy as the first built-in template in a generic prompt policy registry, applying to all agent sessions — user chat, Space tasks, and SDK subagents — then measure before adapting Caveman tools.
+Recommendation: implement a HyperNeo-native compressed output policy as the first built-in template in a generic prompt policy registry, applying to all agent sessions — user chat, Space tasks, and SDK subagents — then measure before adapting Caveman tools.
 
-Do **not** bundle Caveman wholesale. Caveman's highest-value primitive is a small style contract: terse status, no filler, code/identifier preservation, short failures, and normal-prose escape hatches for safety/approval/clarity. Its hooks, installer, statusline, memory compressor, MCP shrink proxy, and branded slash commands solve Claude Code/plugin distribution problems that do not map cleanly to NeoKai's runtime.
+Do **not** bundle Caveman wholesale. Caveman's highest-value primitive is a small style contract: terse status, no filler, code/identifier preservation, short failures, and normal-prose escape hatches for safety/approval/clarity. Its hooks, installer, statusline, memory compressor, MCP shrink proxy, and branded slash commands solve Claude Code/plugin distribution problems that do not map cleanly to HyperNeo's runtime.
 
-Best first integration point: add a generic prompt policy resolver/composer/renderer in the general session-init/query-options path before the SDK query starts, not only in `packages/daemon/src/lib/space/agents/custom-agent.ts`. Compressed output should be enabled by scoped `prompt_policy_records` rows, not by typed `outputMode` fields on `GlobalSettings`, `SessionConfig`, `AgentSessionInit`, `Space`, or `SpaceAgent`. The same mechanism should apply to every `AgentSession` created by NeoKai.
+Best first integration point: add a generic prompt policy resolver/composer/renderer in the general session-init/query-options path before the SDK query starts, not only in `packages/daemon/src/lib/space/agents/custom-agent.ts`. Compressed output should be enabled by scoped `prompt_policy_records` rows, not by typed `outputMode` fields on `GlobalSettings`, `SessionConfig`, `AgentSessionInit`, `Space`, or `SpaceAgent`. The same mechanism should apply to every `AgentSession` created by HyperNeo.
 
 Target: 50%+ output-token reduction on representative user chat, ad-hoc worker, Space task, and subagent outputs without lower task quality.
 
 ## Evidence reviewed
 
 - Local Caveman plugin installation under `~/.claude/plugins/marketplaces/caveman`.
-- Existing NeoKai research note: `docs/research/token-efficiency/reports/05-caveman.md`.
-- NeoKai general session prompt path:
+- Existing HyperNeo research note: `docs/research/token-efficiency/reports/05-caveman.md`.
+- HyperNeo general session prompt path:
   - `packages/daemon/src/lib/agent/agent-session.ts`
   - `packages/daemon/src/lib/agent/query-options-builder.ts`
   - `packages/shared/src/types/sdk-config.ts`
   - `packages/shared/src/types/settings.ts`
-- NeoKai Space agent prompt path:
+- HyperNeo Space agent prompt path:
   - `packages/daemon/src/lib/space/agents/custom-agent.ts`
   - `packages/daemon/src/lib/space/agents/seed-agents.ts`
   - `packages/shared/src/types/space.ts`
-- NeoKai token/context usage surfaces:
+- HyperNeo token/context usage surfaces:
   - `packages/daemon/src/lib/agent/context-fetcher.ts`
   - `packages/web/src/components/space/thread/space-task-thread-events.ts`
 - Caveman upstream repo metadata and README via GitHub.
@@ -31,7 +31,7 @@ Target: 50%+ output-token reduction on representative user chat, ad-hoc worker, 
 
 ## Caveman primitives: essential vs non-essential
 
-| Caveman behavior | Token value | Quality risk | NeoKai recommendation |
+| Caveman behavior | Token value | Quality risk | HyperNeo recommendation |
 |---|---:|---:|---|
 | Drop filler, pleasantries, hedging | High | Low | Adopt |
 | Prefer terse status updates | High in workflows | Low | Adopt |
@@ -41,8 +41,8 @@ Target: 50%+ output-token reduction on representative user chat, ad-hoc worker, 
 | Escape hatch for security, irreversible actions, ambiguous multi-step instructions | Quality/safety critical | Low | Adopt |
 | Intensity modes (`lite`, `full`, `ultra`, `wenyan-*`) | Medium | Medium | Skip MVP; start binary `normal`/`compressed` |
 | Caveman branding/persona | Low | Medium product fit risk | Skip unless exposed intentionally |
-| Hook-based per-turn activation/tracking | Medium for Claude Code | Medium maintenance | Skip; NeoKai owns session prompt assembly |
-| Statusline and local transcript stats | Medium | Low | Rebuild natively later using NeoKai session usage |
+| Hook-based per-turn activation/tracking | Medium for Claude Code | Medium maintenance | Skip; HyperNeo owns session prompt assembly |
+| Statusline and local transcript stats | Medium | Low | Rebuild natively later using HyperNeo session usage |
 | Memory-file compressor | Medium input-token savings | Medium correctness/safety | Defer; separate feature |
 | MCP shrink proxy | Medium passive input savings | Medium protocol/metadata risk | Defer; consider native metadata compaction later |
 | Cavecrew subagent contracts | High for multi-agent workflows | Low | Adapt as native workflow output contracts, not as imported agents |
@@ -63,7 +63,7 @@ Highest ROI constraints from Caveman:
 6. Preserve code blocks exactly.
 7. Use normal prose for safety/approval/clarity cases.
 
-Candidate NeoKai prompt fragment:
+Candidate HyperNeo prompt fragment:
 
 ```text
 ## Output style
@@ -84,7 +84,7 @@ This keeps token-saving semantics without Caveman persona or mode complexity.
 
 ### MVP: prompt-only
 
-Prompt-only is enough for first adoption because NeoKai centralizes SDK session startup in `AgentSession` and `QueryOptionsBuilder`:
+Prompt-only is enough for first adoption because HyperNeo centralizes SDK session startup in `AgentSession` and `QueryOptionsBuilder`:
 
 - `AgentSessionInit` is the common creation contract for worker, chat, Space, and task sessions.
 - `QueryOptionsBuilder.buildSystemPrompt()` maps session config to SDK `systemPrompt` before the query starts.
@@ -114,13 +114,13 @@ Worth adapting later, in priority order:
    - Especially Research→Review, Coder→Review, QA→Review handoffs.
    - Return stable fields: `files`, `findings`, `verification`, `blockers`, `next`.
 3. **Token-savings report**
-   - NeoKai already stores SDK result usage (`input_tokens`/`output_tokens`) and context usage (`apiUsage`, `messageBreakdown`). Build savings dashboard from real session messages, not Claude Code JSONL parsing.
+   - HyperNeo already stores SDK result usage (`input_tokens`/`output_tokens`) and context usage (`apiUsage`, `messageBreakdown`). Build savings dashboard from real session messages, not Claude Code JSONL parsing.
 4. **MCP metadata compaction**
    - Potential passive input savings, but should be native and opt-in because MCP descriptions can encode important semantics.
 5. **Memory/prompt compression**
    - Treat as separate research. Needs strict preservation and backups.
 
-Do not adapt Caveman's installer/hooks/statusline directly; NeoKai has its own daemon/web runtime and Space task UI.
+Do not adapt Caveman's installer/hooks/statusline directly; HyperNeo has its own daemon/web runtime and Space task UI.
 
 ## Where compressed output should live
 
@@ -169,7 +169,7 @@ Narrower scope wins over broader scope for activation conflicts: task wins over 
 
 Key inheritance behavior: if a Space-scoped compressed-output record exists and a new SpaceAgent has no Space-agent-scoped record, sessions for that agent inherit the Space record dynamically. If the Space record is later disabled or suppressed, that agent follows the new Space behavior until it gets its own scoped record.
 
-## NeoKai implementation sketch, if approved
+## HyperNeo implementation sketch, if approved
 
 Minimal native behavior now depends on the generic prompt policy registry spec.
 
@@ -242,20 +242,20 @@ Reason: output style is behavioral and agent-agnostic. Space `buildCustomAgentSy
 
 ## SDK `outputStyle` interaction
 
-The Claude Agent SDK type definitions expose `outputStyle?: string` in settings and runtime result metadata includes `output_style` / `available_output_styles`. NeoKai already has `FileOnlySettings.outputStyle?: string` and `SettingsManager.prepareSDKOptions()` writes it to `.claude/settings.local.json`.
+The Claude Agent SDK type definitions expose `outputStyle?: string` in settings and runtime result metadata includes `output_style` / `available_output_styles`. HyperNeo already has `FileOnlySettings.outputStyle?: string` and `SettingsManager.prepareSDKOptions()` writes it to `.claude/settings.local.json`.
 
 Compressed mode should not blindly reuse SDK `outputStyle` as the only mechanism yet:
 
-- SDK `outputStyle` appears to be a named Claude Code display/response style loaded from settings, not a NeoKai-owned typed contract with guaranteed prompt text.
+- SDK `outputStyle` appears to be a named Claude Code display/response style loaded from settings, not a HyperNeo-owned typed contract with guaranteed prompt text.
 - `QueryOptionsBuilder` currently does not pass an `outputStyle` option directly; it writes file-only settings before SDK startup.
-- NeoKai needs deterministic behavior across user chat, Space tasks, and subagents, including custom system prompts and providers/bridges where SDK style support may vary.
+- HyperNeo needs deterministic behavior across user chat, Space tasks, and subagents, including custom system prompts and providers/bridges where SDK style support may vary.
 
 Recommended approach:
 
-1. Do not add NeoKai `outputMode` typed fields.
+1. Do not add HyperNeo `outputMode` typed fields.
 2. Implement compression via scoped `prompt_policy_records` rows that activate a built-in template rendered by the generic prompt policy registry/composer in the common session prompt path.
 3. Optionally map the compressed-output policy to SDK `outputStyle` later only if SDK supports user-defined styles or a built-in concise style with compatible semantics.
-4. If both exist, NeoKai prompt policy wins for the safety/clarity contract; SDK `outputStyle` can be treated as additive display preference.
+4. If both exist, HyperNeo prompt policy wins for the safety/clarity contract; SDK `outputStyle` can be treated as additive display preference.
 
 ## Measurement plan
 
@@ -310,20 +310,20 @@ Caveman's upstream claims:
 - Memory compression: ~46% input-token reduction in examples.
 - Subagent outputs: roughly 60% smaller by contract.
 
-Existing NeoKai note (`05-caveman.md`) flags limitations:
+Existing HyperNeo note (`05-caveman.md`) flags limitations:
 
 - Reasoning/thinking tokens are untouched.
 - Small replies can be offset by prompt overhead.
 - Benchmarks do not prove correctness preservation.
 - Savings depend on verbose output-heavy workflows.
 
-NeoKai target should be more conservative: 50%+ output-token reduction across user chat, ad-hoc worker, Space task, and subagent outputs, quality-neutral.
+HyperNeo target should be more conservative: 50%+ output-token reduction across user chat, ad-hoc worker, Space task, and subagent outputs, quality-neutral.
 
 ## Licensing and maintenance
 
 Caveman is MIT licensed (`package.json` and `LICENSE` show MIT, copyright Julius Brussee 2026). Reuse is legally feasible if copyright/license notice is preserved for copied substantial content.
 
-Recommendation: avoid copying full Caveman text. Implement independent NeoKai wording inspired by evaluated behavior. This reduces attribution and drift burden and avoids product coupling to external branding.
+Recommendation: avoid copying full Caveman text. Implement independent HyperNeo wording inspired by evaluated behavior. This reduces attribution and drift burden and avoids product coupling to external branding.
 
 If any Caveman prompt text, code, benchmarks, or command formats are copied substantially:
 
@@ -331,7 +331,7 @@ If any Caveman prompt text, code, benchmarks, or command formats are copied subs
 - Track source commit/version.
 - Add tests for any adapted behavior.
 
-Maintenance risk of wholesale adoption is high because Caveman includes provider-specific installers, Claude Code hooks, MCP proxy behavior, slash commands, and statusline integration that NeoKai would need to keep compatible without direct runtime need.
+Maintenance risk of wholesale adoption is high because Caveman includes provider-specific installers, Claude Code hooks, MCP proxy behavior, slash commands, and statusline integration that HyperNeo would need to keep compatible without direct runtime need.
 
 ## Decision
 
@@ -361,7 +361,7 @@ Defer:
 - Recommendation: prompt-only native compressed mode first for all agent sessions, implemented as a built-in prompt policy template; selected tool/skill ideas later.
 - Minimal native behavior: recommended; no wholesale bundle; use generic prompt policy registry in common session-init/query-options path rather than Space-only or feature-specific prompt policy.
 - Escape hatch: required in prompt fragment and tests.
-- Measurement: actual NeoKai measurements deferred to implementation because this research PR does not add runnable output-mode behavior. This document provides a concrete paired-task plan targeting 50%+ output reduction without quality regression; implementation acceptance should require recorded normal-vs-compressed results before enabling defaults.
+- Measurement: actual HyperNeo measurements deferred to implementation because this research PR does not add runnable output-mode behavior. This document provides a concrete paired-task plan targeting 50%+ output reduction without quality regression; implementation acceptance should require recorded normal-vs-compressed results before enabling defaults.
 
 ## Sources
 
@@ -370,11 +370,11 @@ Defer:
 - Local Caveman hooks: `~/.claude/plugins/marketplaces/caveman/src/hooks/`
 - Local Caveman reviewer contract: `~/.claude/plugins/marketplaces/caveman/agents/cavecrew-reviewer.md`
 - Caveman license: `~/.claude/plugins/marketplaces/caveman/LICENSE`
-- NeoKai existing research note: `docs/research/token-efficiency/reports/05-caveman.md`
-- NeoKai Space agent prompt builder: `packages/daemon/src/lib/space/agents/custom-agent.ts`
-- NeoKai preset agents: `packages/daemon/src/lib/space/agents/seed-agents.ts`
-- NeoKai Space agent types: `packages/shared/src/types/space.ts`
-- NeoKai generic session config types: `packages/shared/src/types/sdk-config.ts`
-- NeoKai settings/output style types: `packages/shared/src/types/settings.ts`
-- NeoKai context usage extraction: `packages/daemon/src/lib/agent/context-fetcher.ts`
-- NeoKai prompt policy registry spec: `docs/research/token-efficiency/prompt-policy-registry-spec.md`
+- HyperNeo existing research note: `docs/research/token-efficiency/reports/05-caveman.md`
+- HyperNeo Space agent prompt builder: `packages/daemon/src/lib/space/agents/custom-agent.ts`
+- HyperNeo preset agents: `packages/daemon/src/lib/space/agents/seed-agents.ts`
+- HyperNeo Space agent types: `packages/shared/src/types/space.ts`
+- HyperNeo generic session config types: `packages/shared/src/types/sdk-config.ts`
+- HyperNeo settings/output style types: `packages/shared/src/types/settings.ts`
+- HyperNeo context usage extraction: `packages/daemon/src/lib/agent/context-fetcher.ts`
+- HyperNeo prompt policy registry spec: `docs/research/token-efficiency/prompt-policy-registry-spec.md`

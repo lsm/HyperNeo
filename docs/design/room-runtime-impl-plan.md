@@ -609,7 +609,7 @@ Each component needs tests before integration:
 
 ## First Test Scenario
 
-1. Start daemon, open NeoKai UI
+1. Start daemon, open HyperNeo UI
 2. Navigate to a room
 3. Send message to Room Agent: "Create a goal to add a health check endpoint"
 4. Room Agent creates goal via tool

@@ -533,7 +533,7 @@ export class EvolutionEpisodeService {
 }
 
 export function buildEpisodeJudgePrompt(input: EpisodeJudgePromptInput): string {
-  return `You are Forge Episode Judge for NeoKai.
+  return `You are Forge Episode Judge for HyperNeo.
 
 Build a structured draft episode from scoped evidence. Focus on factual outcomes, product/workflow findings, candidate lessons, and follow-up proposals. Do not mutate anything.
 

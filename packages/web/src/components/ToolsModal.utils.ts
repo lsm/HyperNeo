@@ -286,7 +286,7 @@ export function buildDisabledSkillsList(
  * visually consistent and tests can assert against a single source of truth.
  *
  * Colour rationale:
- *   - builtin    → blue   (shipped with NeoKai)
+ *   - builtin    → blue   (shipped with HyperNeo)
  *   - plugin     → violet (local plugin directory)
  *   - mcp_server → amber  (matches the AppMcpServersSettings amber accent)
  */

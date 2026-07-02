@@ -1,8 +1,8 @@
-# NeoKai UI/UX 1.0.0 Upgrade — Overview
+# HyperNeo UI/UX 1.0.0 Upgrade — Overview
 
 ## Goal Summary
 
-Systematically redesign NeoKai's frontend UI/UX grounded in Japanese design philosophy (Ma, Kanso, Shibui) and Apple UX principles (progressive disclosure, spatial consistency, purposeful motion). The upgrade addresses four core problems identified in the codebase:
+Systematically redesign HyperNeo's frontend UI/UX grounded in Japanese design philosophy (Ma, Kanso, Shibui) and Apple UX principles (progressive disclosure, spatial consistency, purposeful motion). The upgrade addresses four core problems identified in the codebase:
 
 1. **Scattered task confirmation UX** — The `QuestionPrompt` component and tool confirmation flows appear inline in the message stream with inconsistent styling and context loss. The `WorktreeChoiceInline` component suffers from similar ad-hoc placement.
 2. **Unclear information architecture** — The three-column layout (NavRail → ContextPanel → MainContent) works but the Home/Rooms/Chats nav section mapping is non-obvious, and the Room tab structure (Overview/Context/Agents/Missions/Settings) is flat and un-hierarchical.

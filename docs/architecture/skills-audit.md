@@ -7,7 +7,7 @@
 
 ## 1. What "Skill" Means in the SDK Context
 
-In the Claude Agent SDK, a **Skill** is a slash-command—specifically, a command that lives in `.claude/commands/` as a `.md` file whose filename (without extension) becomes the command name (e.g., `/my-command`). These are discovered and managed by the SDK itself, not by NeoKai.
+In the Claude Agent SDK, a **Skill** is a slash-command—specifically, a command that lives in `.claude/commands/` as a `.md` file whose filename (without extension) becomes the command name (e.g., `/my-command`). These are discovered and managed by the SDK itself, not by HyperNeo.
 
 **SDK Type Definition** (`packages/shared/src/sdk/sdk.d.ts`):
 ```typescript
@@ -20,10 +20,10 @@ export type SlashCommand = {
 
 The SDK exposes `supportedCommands()` → `Promise<SlashCommand[]>` to list available skills. Skills are invoked with the `Skill` tool (a built-in tool name, not an MCP tool). When the agent types `/my-command arg`, the SDK resolves it to the `.claude/commands/my-command.md` file and expands the content into the prompt.
 
-**In NeoKai**, the `SlashCommandManager` (`packages/daemon/src/lib/agent/slash-command-manager.ts`) wraps this SDK behavior:
+**In HyperNeo**, the `SlashCommandManager` (`packages/daemon/src/lib/agent/slash-command-manager.ts`) wraps this SDK behavior:
 - It calls `queryObject.supportedCommands()` to fetch skills from the SDK
 - It merges in SDK built-in commands (`clear`, `help`)
-- It merges in NeoKai built-in commands (`merge-session`)
+- It merges in HyperNeo built-in commands (`merge-session`)
 - It persists the combined list to `session.availableCommands` in SQLite
 - It emits `commands.updated` events to the UI via the DaemonHub
 
@@ -44,7 +44,7 @@ export interface PluginConfig {
 
 Currently only `type: 'local'` is defined. The `path` is passed directly to the SDK subprocess. Plugins are invoked by the SDK as part of the agent session.
 
-**In NeoKai**, plugins flow through `QueryOptionsBuilder`:
+**In HyperNeo**, plugins flow through `QueryOptionsBuilder`:
 ```typescript
 // packages/daemon/src/lib/agent/query-options-builder.ts
 const queryOptions: Options = {
@@ -54,7 +54,7 @@ const queryOptions: Options = {
 };
 ```
 
-The `plugins` field on `SDKConfig` (which extends `ToolsSettings`, `AgentsConfig`, `McpSettings`, etc.) is where plugin configuration lives. There is currently **no NeoKai-specific plugin management UI or persistence layer**—plugins can only be set programmatically at session creation.
+The `plugins` field on `SDKConfig` (which extends `ToolsSettings`, `AgentsConfig`, `McpSettings`, etc.) is where plugin configuration lives. There is currently **no HyperNeo-specific plugin management UI or persistence layer**—plugins can only be set programmatically at session creation.
 
 ---
 
@@ -229,7 +229,7 @@ CREATE TABLE room_skill_overrides (
 
 | Source Type | Description | Example |
 |-------------|-------------|---------|
-| `builtin` | Built-in NeoKai skill (e.g., `merge-session`) | `command_name: "merge-session"` |
+| `builtin` | Built-in HyperNeo skill (e.g., `merge-session`) | `command_name: "merge-session"` |
 | `local` | Local script in workspace | `source_path: "./skills/my-skill"` |
 | `npm` | npm package | `source_path: "@neokai/skill-pdf"` |
 | `python` | Python script via `uvx` | `source_path: "uvx:my-skill"` |
@@ -388,7 +388,7 @@ export const DEFAULT_GLOBAL_TOOLS_CONFIG: GlobalToolsConfig = { ... };
 
 ## 9. Built-in Commands
 
-NeoKai has a single built-in command (`merge-session`) defined in `packages/daemon/src/lib/built-in-commands.ts`:
+HyperNeo has a single built-in command (`merge-session`) defined in `packages/daemon/src/lib/built-in-commands.ts`:
 
 ```typescript
 const BUILT_IN_COMMANDS: BuiltInCommand[] = [
@@ -427,8 +427,8 @@ There is **no `skills.*` handler** currently.
 | File | Purpose |
 |------|---------|
 | `packages/daemon/src/lib/agent/query-options-builder.ts` | Builds SDK `Options` from session config; handles `Skill`, `WebSearch`, `plugins`, `mcpServers` per session |
-| `packages/daemon/src/lib/agent/slash-command-manager.ts` | Fetches/cache/persists SDK slash commands; merges SDK + NeoKai built-ins |
-| `packages/daemon/src/lib/built-in-commands.ts` | NeoKai's single built-in slash command (`merge-session`) |
+| `packages/daemon/src/lib/agent/slash-command-manager.ts` | Fetches/cache/persists SDK slash commands; merges SDK + HyperNeo built-ins |
+| `packages/daemon/src/lib/built-in-commands.ts` | HyperNeo's single built-in slash command (`merge-session`) |
 | `packages/daemon/src/lib/agent/coordinator/coordinator.ts` | Coordinator agent definition |
 | `packages/daemon/src/lib/agent/coordinator/coder.ts` | Coordinator Coder (has `Skill`) |
 | `packages/daemon/src/lib/agent/coordinator/debugger.ts` | Coordinator Debugger (has `Skill`) |
@@ -456,7 +456,7 @@ There is **no `skills.*` handler** currently.
 | Skill invocation | `Skill` tool in SDK; triggered via `/<name>` |
 | Skill registry | None |
 | Skill persistence | `session.availableCommands` in SQLite (runtime list, not config) |
-| Plugin support | `PluginConfig` typed but no NeoKai management |
+| Plugin support | `PluginConfig` typed but no HyperNeo management |
 | Per-room skill overrides | None |
 | Skills UI | None |
 | Built-in commands | 1 (`merge-session`) |

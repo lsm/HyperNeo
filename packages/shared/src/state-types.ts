@@ -8,7 +8,7 @@ import type { AuthStatus, SessionInfo, HealthStatus, NeokaiActionMessage } from 
 import type { SDKMessage } from './sdk/sdk.d.ts';
 import type { GlobalSettings } from './types/settings.ts';
 
-/** A message in the chat list — either a native SDK message or a NeoKai action prompt. */
+/** A message in the chat list — either a native SDK message or a HyperNeo action prompt. */
 export type ChatMessage = SDKMessage | NeokaiActionMessage;
 
 /**

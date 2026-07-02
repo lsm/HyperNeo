@@ -23,7 +23,7 @@ The current `NavRail.tsx` uses a robot emoji as the logo and icon-only buttons w
 
 **Subtasks (in order):**
 1. Read `packages/web/src/islands/NavRail.tsx` and `packages/web/src/lib/nav-config.tsx`.
-2. Replace the `🤖` emoji logo with an SVG text mark "NK" in `text-indigo-400 font-bold text-lg tracking-tight`. Use a `<span>` with `aria-label="NeoKai"`.
+2. Replace the `🤖` emoji logo with an SVG text mark "NK" in `text-indigo-400 font-bold text-lg tracking-tight`. Use a `<span>` with `aria-label="HyperNeo"`.
 3. Update the NavRail wrapper to `w-14` (56px) from `w-16` (64px) to be tighter — the left-border accent on NavIconButton already uses 2px, so the effective clickable area is still 54px which is touch-target compliant.
 4. Add `gap-2` between nav items (currently `gap-1`) to give each item more breathing room (Ma principle).
 5. Move the `DaemonStatusIndicator` to be inlined below the settings button with a `mt-1` separator line (`<div class="w-8 h-px bg-dark-700 mx-auto" />`) above it — this groups the system controls visually.

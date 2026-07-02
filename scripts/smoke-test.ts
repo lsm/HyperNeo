@@ -1,5 +1,5 @@
 /**
- * Smoke test for compiled NeoKai binary.
+ * Smoke test for compiled HyperNeo binary.
  * Verifies the binary can start, serve web UI, and handle WebSocket RPC calls.
  *
  * Usage: bun run scripts/smoke-test.ts ./dist/bin/hyperneo-darwin-x64

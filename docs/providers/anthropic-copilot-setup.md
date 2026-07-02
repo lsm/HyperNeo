@@ -1,10 +1,10 @@
 # Anthropic-Copilot Provider Setup
 
-This document covers how to configure the `anthropic-copilot` provider in NeoKai, which bridges to GitHub Copilot as an Anthropic-compatible API.
+This document covers how to configure the `anthropic-copilot` provider in HyperNeo, which bridges to GitHub Copilot as an Anthropic-compatible API.
 
 ## Overview
 
-The `anthropic-copilot` provider exposes GitHub Copilot as an Anthropic-compatible API endpoint. This allows NeoKai to use Copilot models (like `claude-opus-4.6`, `claude-sonnet-4.6`, `gpt-5.3-codex`, `gemini-3-pro-preview`, `gpt-5-mini`) through the standard Anthropic API interface.
+The `anthropic-copilot` provider exposes GitHub Copilot as an Anthropic-compatible API endpoint. This allows HyperNeo to use Copilot models (like `claude-opus-4.6`, `claude-sonnet-4.6`, `gpt-5.3-codex`, `gemini-3-pro-preview`, `gpt-5-mini`) through the standard Anthropic API interface.
 
 ### What It Does
 
@@ -27,7 +27,7 @@ The `anthropic-copilot` provider exposes GitHub Copilot as an Anthropic-compatib
 
 The provider discovers GitHub credentials in the following order:
 
-1. **`~/.neokai/auth.json`** — Stored credentials from a previously completed NeoKai GitHub OAuth device flow
+1. **`~/.neokai/auth.json`** — Stored credentials from a previously completed HyperNeo GitHub OAuth device flow
 2. **`COPILOT_GITHUB_TOKEN`** — Environment variable with a fine-grained PAT
 3. **`GH_TOKEN`** — Environment variable (fallback)
 4. **`gh auth token`** — CLI command output
@@ -35,18 +35,18 @@ The provider discovers GitHub credentials in the following order:
 
 > **Important:** The `GITHUB_TOKEN` environment variable (used by GitHub Actions) is **NOT** used — it lacks the required `copilot_requests` scope. Classic PATs (tokens starting with `ghp_`) are **hard rejected** by the Copilot CLI.
 
-### Option 1: NeoKai GitHub OAuth (Recommended)
+### Option 1: HyperNeo GitHub OAuth (Recommended)
 
-NeoKai includes a built-in GitHub OAuth device flow specifically for Copilot authentication.
+HyperNeo includes a built-in GitHub OAuth device flow specifically for Copilot authentication.
 
 **To trigger the OAuth flow:**
-1. Open NeoKai in your browser
+1. Open HyperNeo in your browser
 2. Navigate to Settings → Authentication (or provider settings)
 3. Look for "Connect GitHub" or similar option to initiate the OAuth flow
-4. You'll receive a **device code** (e.g., `ABCD-1234`) displayed in NeoKai
+4. You'll receive a **device code** (e.g., `ABCD-1234`) displayed in HyperNeo
 5. Visit the verification URL (typically `github.com/login/device`) and enter the device code
 6. Complete the GitHub authorization in your browser
-7. Return to NeoKai — the connection should complete automatically
+7. Return to HyperNeo — the connection should complete automatically
 
 The OAuth token is stored in `~/.neokai/auth.json` and automatically used on subsequent sessions.
 
@@ -64,7 +64,7 @@ export COPILOT_GITHUB_TOKEN=github_pat_your_token_here
 To create a fine-grained PAT:
 1. Go to GitHub Settings → Developer settings → Personal access tokens → Fine-grained tokens
 2. Generate new token with:
-   - Token name: NeoKai Copilot
+   - Token name: HyperNeo Copilot
    - Repository access: All repositories
    - Permissions: Copilot (Access: read/write)
 
@@ -98,9 +98,9 @@ If you've authenticated via GitHub CLI, your OAuth token is stored in `~/.config
 
 ### Step 1: Choose Your Authentication Method
 
-For most users, **Option 1 (NeoKai GitHub OAuth)** is recommended:
-1. Open NeoKai settings and initiate the GitHub OAuth flow
-2. Authorize NeoKai to access your GitHub account for Copilot
+For most users, **Option 1 (HyperNeo GitHub OAuth)** is recommended:
+1. Open HyperNeo settings and initiate the GitHub OAuth flow
+2. Authorize HyperNeo to access your GitHub account for Copilot
 3. Credentials are stored automatically
 
 ### Alternative: Using GitHub CLI
@@ -112,7 +112,7 @@ For most users, **Option 1 (NeoKai GitHub OAuth)** is recommended:
 
 ### Step 2: Verify Configuration
 
-Start NeoKai and check the provider status in the UI. You should see Copilot models available when:
+Start HyperNeo and check the provider status in the UI. You should see Copilot models available when:
 - The provider indicator shows green (authenticated)
 - Copilot models appear in the model picker
 
@@ -130,7 +130,7 @@ Start NeoKai and check the provider status in the UI. You should see Copilot mod
 1. Go to GitHub Settings → Developer settings → Personal access tokens
 2. Delete any classic PATs you may have created
 3. Create a **fine-grained token** instead:
-   - Token name: NeoKai Copilot
+   - Token name: HyperNeo Copilot
    - Repository access: All repositories
    - Permissions: Copilot (Access: read/write)
 4. Use the new fine-grained token (starts with `github_pat_`, not `ghp_`)

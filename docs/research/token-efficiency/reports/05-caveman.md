@@ -94,16 +94,16 @@ The eval harness compares against an `Answer concisely.` control, not only a ver
 - Benchmarks do not prove correctness preservation.
 - Multi-agent/provider support requires brittle installer and adapter maintenance.
 
-## Actionable takeaways for NeoKai
+## Actionable takeaways for HyperNeo
 
 1. **Add style compression as a session mode.** Space agents could have “concise output” defaults independent of user chat style.
 2. **Use lifecycle injection.** Full rules at session start, tiny reminders on each user turn to avoid drift.
 3. **Compress preset prompts.** `seed-agents.ts` has verbose reviewer/research prompts; compressing them could save every Space agent session.
-4. **Shrink MCP tool descriptions.** NeoKai already injects runtime MCP servers into Space sessions; tool-description compression would reduce passive context.
+4. **Shrink MCP tool descriptions.** HyperNeo already injects runtime MCP servers into Space sessions; tool-description compression would reduce passive context.
 5. **Define compact subagent output contracts.** Research→Reviewer and Coder→Reviewer workflows should pass structured receipts, not long transcripts.
 6. **Track real usage.** Parse session usage and show savings by Space, task, node, and agent.
 7. **Keep clarity escapes.** Security warnings, destructive actions, and ordered procedures should not be over-compressed.
 
 ## Bottom line
 
-Caveman is the most lightweight technique family: prompt style, memory compression, metadata shrinking, and compact subagent contracts. NeoKai can adopt much of this quickly, especially for preset prompts and Space workflow handoffs.
+Caveman is the most lightweight technique family: prompt style, memory compression, metadata shrinking, and compact subagent contracts. HyperNeo can adopt much of this quickly, especially for preset prompts and Space workflow handoffs.

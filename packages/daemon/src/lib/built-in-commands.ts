@@ -1,11 +1,11 @@
 /**
- * Built-in NeoKai commands
+ * Built-in HyperNeo commands
  *
- * These commands are available in all NeoKai sessions and are expanded
+ * These commands are available in all HyperNeo sessions and are expanded
  * to full prompts before being sent to the Claude Agent SDK.
  *
  * Similar to how Claude Code handles .claude/commands/*.md files, but
- * these are built into NeoKai itself.
+ * these are built into HyperNeo itself.
  */
 
 export interface BuiltInCommand {

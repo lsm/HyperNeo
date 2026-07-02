@@ -555,7 +555,7 @@ export function EditorModal({
               </span>
               <textarea
                 value={state.headersText}
-                placeholder={'HTTP-Referer: https://example.com\nX-Title: NeoKai'}
+                placeholder={'HTTP-Referer: https://example.com\nX-Title: HyperNeo'}
                 onInput={(e) => update({ headersText: e.currentTarget.value })}
                 class="w-full h-20 bg-dark-950 border border-dark-700 rounded px-2 py-1.5 text-xs text-gray-100 focus:outline-none focus:border-blue-500 font-mono"
               />

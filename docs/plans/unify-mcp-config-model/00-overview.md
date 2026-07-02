@@ -2,7 +2,7 @@
 
 ## Goal
 
-Collapse NeoKai's six overlapping MCP configuration sources into a single registry with a single override table. Remove SDK-auto-load pathways so every server the SDK sees is explicitly placed there by NeoKai. This eliminates a class of bugs where toggles in one UI silently don't apply because another pathway still injects the server.
+Collapse HyperNeo's six overlapping MCP configuration sources into a single registry with a single override table. Remove SDK-auto-load pathways so every server the SDK sees is explicitly placed there by HyperNeo. This eliminates a class of bugs where toggles in one UI silently don't apply because another pathway still injects the server.
 
 ## Motivation — current state
 
@@ -21,7 +21,7 @@ Today, the same "is server X active for this session?" question can be answered 
 
 ### Concrete defects this causes
 
-1. **`.mcp.json` bypass (Part A reproducer).** Space ad-hoc, `space_task_agent`, and node-agent sessions run with `strictMcpConfig: false` and `settingSources: ['project','local']`, so the SDK auto-loads project `.mcp.json` regardless of what NeoKai's UI says. Disabling chrome anywhere in NeoKai has zero effect on the chrome entry defined in `.mcp.json`.
+1. **`.mcp.json` bypass (Part A reproducer).** Space ad-hoc, `space_task_agent`, and node-agent sessions run with `strictMcpConfig: false` and `settingSources: ['project','local']`, so the SDK auto-loads project `.mcp.json` regardless of what HyperNeo's UI says. Disabling chrome anywhere in HyperNeo has zero effect on the chrome entry defined in `.mcp.json`.
 2. **Workspace leakage.** Per-session "disable X" writes to workspace-shared `.claude/settings.local.json`. Last session to build query options wins; concurrent sessions fight over the same file.
 3. **Redundant global state.** `disabledMcpServers` (string[]) and `mcpServerSettings` ({allowed, defaultOn}) both exist and are both consumed. `ToolsConfigManager.getDefaultForNewSession()` reads the second to derive the first.
 4. **Dead-write RPCs.** `settings.mcp.toggle` and `settings.mcp.setDisabled` still mutate `GlobalSettings.disabledMcpServers` even though the UI that wrote them was removed.

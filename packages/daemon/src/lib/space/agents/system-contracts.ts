@@ -21,7 +21,7 @@ Every visible GitHub review/comment must include:
 \`\`\`
 ## 🤖 Review by <your model> (<your provider>)
 
-> **Model:** <your model> | **Client:** NeoKai | **Provider:** <your provider>
+> **Model:** <your model> | **Client:** HyperNeo | **Provider:** <your provider>
 \`\`\`
 
 GitHub review procedure: post a visible review before gate writes or terminal actions. Use REST API when you need the returned URL, with own-PR fallback from APPROVE/REQUEST_CHANGES to COMMENT while keeping the recommendation explicit in body. For line findings, post anchored PR comments and capture html_url values.
@@ -38,7 +38,7 @@ gh api repos/{owner}/{repo}/pulls/{n}/reviews \
   -f body="$(cat <<'EOF'
 ## 🤖 Review by <your model> (<your provider>)
 
-> **Model:** <your model> | **Client:** NeoKai | **Provider:** <your provider>
+> **Model:** <your model> | **Client:** HyperNeo | **Provider:** <your provider>
 
 <review body — apostrophes and quotes are safe inside the 'EOF' heredoc>
 EOF
@@ -56,7 +56,7 @@ gh api repos/{owner}/{repo}/pulls/{n}/reviews \
   -f body="$(cat <<'EOF'
 ## 🤖 Review by <your model> (<your provider>)
 
-> **Model:** <your model> | **Client:** NeoKai | **Provider:** <your provider>
+> **Model:** <your model> | **Client:** HyperNeo | **Provider:** <your provider>
 
 Recommendation: <APPROVE or REQUEST_CHANGES — match your actual verdict>
 

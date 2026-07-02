@@ -1,7 +1,7 @@
 /**
  * ACP Query Adapter
  *
- * Bridges ACP protocol notifications to NeoKai's internal Query interface.
+ * Bridges ACP protocol notifications to HyperNeo's internal Query interface.
  * Implements AsyncGenerator<SDKMessage, void> plus interrupt(), close(),
  * sessionId getter, and setMcpServers().
  *

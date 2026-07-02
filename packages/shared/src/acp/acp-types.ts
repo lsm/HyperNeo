@@ -2,7 +2,7 @@
  * ACP (Agent Client Protocol) type definitions
  *
  * JSON-RPC 2.0 over stdio protocol for editor-to-agent communication.
- * Foundation layer for ACP provider support in NeoKai.
+ * Foundation layer for ACP provider support in HyperNeo.
  */
 
 // ============================================================================

@@ -1,4 +1,4 @@
-# NeoKai UI/UX 升级方案 v1.0.0
+# HyperNeo UI/UX 升级方案 v1.0.0
 
 > **设计哲学基准**：日本美学七原则 × Apple Human Interface Guidelines
 > **版本**：1.0.0 | **日期**：2026-03-19 | **状态**：草案
@@ -453,7 +453,7 @@ TaskView Header（新）：
 **新方案**：
 
 ```
-NeoKai Logo Mark：
+HyperNeo Logo Mark：
   ◈  （菱形内有十字分割，代表「多个 agent 协同」）
 
   字体 Logo：

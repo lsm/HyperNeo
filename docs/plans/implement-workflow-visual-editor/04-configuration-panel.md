@@ -20,7 +20,7 @@ Build a side panel that appears when a node or edge is selected, allowing users 
    - **"Set as Start" button**: Prominently placed below the step name. When clicked, calls `onSetAsStart(stepId)` which updates `startStepId` in the parent state. Button is disabled/hidden when the node is already the start node. This is the explicit, primary mechanism for designating the start node — no heuristic-based detection.
    - Delete Step button at bottom with confirmation (disabled for start node — user must designate another start node first)
 2. Extract the `GateConfig` sub-component from `WorkflowStepCard.tsx` into a shared file `packages/web/src/components/space/visual-editor/GateConfig.tsx` so both the old editor and the visual editor can use it
-3. Style consistent with NeoKai dark theme; panel animates in from right
+3. Style consistent with HyperNeo dark theme; panel animates in from right
 4. Add tests: renders all fields, updates propagate on change, delete triggers confirmation, "Set as Start" button works and is disabled for current start node
 
 **Acceptance criteria**:

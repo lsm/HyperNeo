@@ -40,7 +40,7 @@ const { server, cleanup } = await createDaemonApp({
 });
 
 // Server is already listening
-console.log(`\n🚀 NeoKai Daemon started!`);
+console.log(`\n🚀 HyperNeo Daemon started!`);
 console.log(`   Host: ${server.hostname}`);
 console.log(`   Port: ${server.port}`);
 console.log(`   Model: ${config.defaultModel}`);

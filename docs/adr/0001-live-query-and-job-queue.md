@@ -8,7 +8,7 @@ Proposed
 
 ### Current State Synchronization Approach
 
-NeoKai currently uses a manual broadcasting pattern for state synchronization:
+HyperNeo currently uses a manual broadcasting pattern for state synchronization:
 
 1. **StateManager** maintains in-memory caches of session state
 2. **DaemonHub (EventBus)** emits events like `session.created`, `session.updated`, `sdk_messages.saved`

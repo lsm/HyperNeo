@@ -179,7 +179,7 @@ Source: `packages/daemon/src/lib/agent/query-options-builder.ts`
 | Custom `systemPrompt.append` | variable | Includes SpaceAgent custom prompt and workflow slot prompt for workers. |
 | Worktree isolation append | ~260 | Added to preset/custom prompt when `session.worktree` exists. |
 | Minimal worktree prompt | ~115 | Used only when Claude Code preset disabled. |
-| **TOTAL NeoKai-authored static** | **~260 per worktree SDK session** | Plus large custom append from agent/session config. |
+| **TOTAL HyperNeo-authored static** | **~260 per worktree SDK session** | Plus large custom append from agent/session config. |
 
 Worktree isolation overlaps task-message Runtime Location and task standing instruction: all mention worktree/root constraints. The merge/push root-repo commands are likely irrelevant to most task agents and add ~60 tokens.
 

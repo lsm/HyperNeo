@@ -104,7 +104,7 @@ Coverage includes:
 
 ### Achieved
 
-- Reliable Anthropic-like streaming behavior for NeoKai SDK workflows.
+- Reliable Anthropic-like streaming behavior for HyperNeo SDK workflows.
 - End-to-end tool bridging with continuation and parallel tool support.
 
 ### Not Achieved
@@ -114,4 +114,4 @@ Coverage includes:
 
 ### Bottom line
 
-This is best described as **"Anthropic-compatible for NeoKai Claude Agent SDK workflows"**, not **"full Anthropic API parity"**.
+This is best described as **"Anthropic-compatible for HyperNeo Claude Agent SDK workflows"**, not **"full Anthropic API parity"**.

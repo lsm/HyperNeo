@@ -1,6 +1,6 @@
 # @neokai/desktop
 
-A self-contained desktop wrapper for NeoKai built with [Tauri 2.x](https://v2.tauri.app/).
+A self-contained desktop wrapper for HyperNeo built with [Tauri 2.x](https://v2.tauri.app/).
 
 The package ships the `neokai` daemon as a Tauri **sidecar** (an external binary
 bundled and launched by the Rust shell) and renders the existing web UI inside
@@ -129,6 +129,6 @@ desktop app ship and launch a precompiled child process. The Rust shell:
 ## Open decisions
 
 This package was added with conservative defaults — see the corresponding PR
-description for the items still up for review (product name vs. `NeoKai`,
+description for the items still up for review (product name vs. `HyperNeo`,
 updater endpoint, dev port choice, mobile parity, fate of the standalone
 `~/focus/kai/desktop` repo).

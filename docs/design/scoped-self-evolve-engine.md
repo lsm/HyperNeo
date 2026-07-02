@@ -2,7 +2,7 @@
 
 ## Purpose
 
-NeoKai Forge should not be limited to improving workflows or codebases. It should be a general self-evolution engine that can attach to any long-horizon objective.
+HyperNeo Forge should not be limited to improving workflows or codebases. It should be a general self-evolution engine that can attach to any long-horizon objective.
 
 The user may want to improve:
 
@@ -28,7 +28,7 @@ The engine should be conceptualized as:
 SelfEvolveEngine(scope)
 ```
 
-A scope defines what objective is being improved. Inside that scope, the engine can improve workflows, target artifacts, and NeoKai itself.
+A scope defines what objective is being improved. Inside that scope, the engine can improve workflows, target artifacts, and HyperNeo itself.
 
 Previous framing:
 
@@ -98,14 +98,14 @@ Domains remain:
 
 1. **Workflow Evolution** — improve how agents do work.
 2. **Target Artifact Evolution** — improve the thing being worked on.
-3. **NeoKai Product Evolution** — improve NeoKai itself.
+3. **HyperNeo Product Evolution** — improve HyperNeo itself.
 
 A single scope can produce findings in all three domains.
 
 Example:
 
 ```text
-Scope: Grow NeoKai to 100k GitHub stars
+Scope: Grow HyperNeo to 100k GitHub stars
 
 Workflow finding:
 - Launch retrospectives need metric snapshots before strategy review.
@@ -113,8 +113,8 @@ Workflow finding:
 Target artifact finding:
 - README intro does not show concrete product value quickly enough.
 
-NeoKai product finding:
-- NeoKai needs a campaign dashboard that links tasks, content, and metrics.
+HyperNeo product finding:
+- HyperNeo needs a campaign dashboard that links tasks, content, and metrics.
 ```
 
 ## Scope hierarchy
@@ -124,8 +124,8 @@ Long-horizon work naturally decomposes into nested scopes.
 Example hierarchy:
 
 ```text
-Global NeoKai
-└── Mission: Grow NeoKai to 100k GitHub stars
+Global HyperNeo
+└── Mission: Grow HyperNeo to 100k GitHub stars
     ├── Campaign: Hacker News launch
     ├── Campaign: README conversion improvement
     ├── Campaign: Developer demo videos
@@ -152,9 +152,9 @@ A user creates a mission scope:
 const scope: EvolutionScope = {
 	id: 'scope_neokai_100k_stars',
 	kind: 'campaign',
-	name: 'Get NeoKai to 100k GitHub stars',
+	name: 'Get HyperNeo to 100k GitHub stars',
 	objective:
-		'Grow NeoKai GitHub repository to 100,000 stars through sustained product, content, community, and distribution work.',
+		'Grow HyperNeo GitHub repository to 100,000 stars through sustained product, content, community, and distribution work.',
 	parentScopeId: 'scope_neokai_product',
 	childScopeIds: [],
 	metricDefinitions: [
@@ -190,7 +190,7 @@ goal: 100k GitHub stars
 → extract lessons
 → update strategy
 → create next tasks
-→ route product findings into NeoKai issues or PRs
+→ route product findings into HyperNeo issues or PRs
 → repeat weekly
 ```
 
@@ -511,8 +511,8 @@ type TaskProposal = {
 For the 100k-star campaign, task proposals might be:
 
 - Rewrite README intro around a 12-second demo GIF.
-- Create “first 5 minutes with NeoKai” quickstart.
-- Publish comparison post: NeoKai vs terminal-only Claude Code workflows.
+- Create “first 5 minutes with HyperNeo” quickstart.
+- Publish comparison post: HyperNeo vs terminal-only Claude Code workflows.
 - Build lightweight analytics dashboard for star/referrer trend.
 - Create GitHub issue for confusing onboarding state discovered from comments.
 - Interview 5 users who starred but did not try the app.
@@ -541,7 +541,7 @@ For growth or marketing campaigns:
 - extracts audience insights,
 - detects message-market fit signals,
 - proposes campaign experiments,
-- routes product blockers into NeoKai product findings.
+- routes product blockers into HyperNeo product findings.
 
 ### Research evaluator
 
@@ -593,7 +593,7 @@ allowWorkflowVariantPromotion: true with review
 learningBudget: weekly campaign review + 3 experiments
 ```
 
-Example policy for NeoKai-on-NeoKai engineering mission:
+Example policy for HyperNeo-on-HyperNeo engineering mission:
 
 ```text
 workflow: create_pr with review
@@ -645,12 +645,12 @@ For the 100k-star mission, weekly rollups are probably the most important loop.
 
 ## Relationship to missions and goals
 
-NeoKai’s Mission/Goal system is the natural home for long-horizon scopes.
+HyperNeo’s Mission/Goal system is the natural home for long-horizon scopes.
 
 A Mission can own an EvolutionScope:
 
 ```text
-Mission: Grow NeoKai to 100k GitHub stars
+Mission: Grow HyperNeo to 100k GitHub stars
 EvolutionScope: same objective, metrics, evidence sources, policies
 ```
 
@@ -676,9 +676,9 @@ Forge should learn both:
 1. which workflows work best for the scope,
 2. how to improve each workflow.
 
-## Relationship to NeoKai product evolution
+## Relationship to HyperNeo product evolution
 
-Scoped objectives can produce NeoKai product findings.
+Scoped objectives can produce HyperNeo product findings.
 
 For the 100k-star campaign, examples:
 
@@ -687,7 +687,7 @@ For the 100k-star campaign, examples:
 - GitHub issue importer would help turn campaign feedback into roadmap items,
 - public docs generator is missing.
 
-These should route to NeoKai product feedback. Under explicit policy, they can become GitHub issues or NeoKai PRs.
+These should route to HyperNeo product feedback. Under explicit policy, they can become GitHub issues or HyperNeo PRs.
 
 ## Safety and privacy for broad scopes
 
@@ -860,14 +860,14 @@ Smallest useful version:
 3. Attach campaign tasks and conversations to the scope.
 4. Run weekly rollup episode.
 5. Extract campaign lessons and next task proposals.
-6. Route product blockers to NeoKai product feedback.
+6. Route product blockers to HyperNeo product feedback.
 7. Show metrics + lessons + next actions on scope page.
 
 This gives a real long-horizon learning loop without requiring autonomous mutation.
 
 ## Final architecture principle
 
-NeoKai Forge should be a scoped self-evolution engine for any long-horizon objective.
+HyperNeo Forge should be a scoped self-evolution engine for any long-horizon objective.
 
 Workflow improvement is one domain inside the engine, not the engine itself.
 
@@ -883,4 +883,4 @@ scope objective
 → next evidence cycle
 ```
 
-This lets NeoKai improve code projects, marketing campaigns, research programs, business processes, and NeoKai itself using one shared substrate.
+This lets HyperNeo improve code projects, marketing campaigns, research programs, business processes, and HyperNeo itself using one shared substrate.

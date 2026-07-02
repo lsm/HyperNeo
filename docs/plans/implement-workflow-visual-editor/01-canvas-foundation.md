@@ -89,7 +89,7 @@ Add the backend `layout` column for position persistence, then build the pannabl
 **Subtasks**:
 1. Create `packages/web/src/components/space/visual-editor/CanvasToolbar.tsx` with buttons for zoom in (+0.25), zoom out (-0.25), reset (scale=1, offset=0,0), and fit-to-view
 2. Fit-to-view accepts the bounding box of all nodes and computes the viewport to center and fit them with padding
-3. Style using existing Tailwind classes consistent with NeoKai dark theme (`bg-dark-850`, `border-dark-700`, etc.)
+3. Style using existing Tailwind classes consistent with HyperNeo dark theme (`bg-dark-850`, `border-dark-700`, etc.)
 4. Add to VisualCanvas as an absolutely-positioned overlay (bottom-right corner)
 5. Add tests for fit-to-view bounding box calculation
 

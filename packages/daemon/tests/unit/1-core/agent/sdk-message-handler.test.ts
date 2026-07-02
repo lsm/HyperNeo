@@ -1962,7 +1962,7 @@ describe('SDKMessageHandler', () => {
       expect(updateWithDetailedBreakdownSpy).not.toHaveBeenCalled();
     });
 
-    describe('NeoKai-level compaction trigger', () => {
+    describe('HyperNeo-level compaction trigger', () => {
       afterEach(() => {
         setModelsCache(new Map());
       });
@@ -1970,7 +1970,7 @@ describe('SDKMessageHandler', () => {
       it('does not enqueue /compact for non-PROVIDER_NO_SDK_AUTO_COMPACT providers (SDK handles)', async () => {
         // OpenRouter is NOT in PROVIDER_NO_SDK_AUTO_COMPACT — its SDK
         // auto-compact is enabled via Options.settings.autoCompactWindow.
-        // NeoKai must not preempt the SDK's own trigger, even when context is
+        // HyperNeo must not preempt the SDK's own trigger, even when context is
         // near capacity and even when the SDK reports isAutoCompactEnabled=true.
         setModelsCache(
           new Map([
@@ -2097,7 +2097,7 @@ describe('SDKMessageHandler', () => {
 
       it('does not enqueue /compact for native anthropic provider (SDK handles)', async () => {
         // Native Anthropic provider: SDK auto-compact works correctly, so
-        // NeoKai fallback is not installed.
+        // HyperNeo fallback is not installed.
         setModelsCache(
           new Map([
             [
@@ -2176,7 +2176,7 @@ describe('SDKMessageHandler', () => {
 
         mockContext.queryObject = { getContextUsage: getContextUsageSpy } as never;
         // Unknown provider is in PROVIDER_NO_SDK_AUTO_COMPACT, but model info
-        // lookup fails so NeoKai cannot compute a threshold.
+        // lookup fails so HyperNeo cannot compute a threshold.
         mockContext.session.config.provider = 'unknown-no-sdk-compact';
         mockContext.session.config.model = 'unknown-model';
 
@@ -2208,7 +2208,7 @@ describe('SDKMessageHandler', () => {
         // `[1m]` analog, not in the SDK model DB). Empirically every window
         // override is clamped to 200k, so the only safe compaction path is the
         // SDK's own native auto-compact, armed at 200k − 33k = 167k — safely
-        // below Kimi's real 262k window. NeoKai's async fallback must stay inert
+        // below Kimi's real 262k window. HyperNeo's async fallback must stay inert
         // for Kimi (it fires after turns and cannot prevent within-turn/resume
         // overflow). See shouldUseNeoKaiCompactFallback history.
         setModelsCache(
@@ -2268,7 +2268,7 @@ describe('SDKMessageHandler', () => {
         await h.handleMessage(resultMessage);
         await new Promise((resolve) => setTimeout(resolve, 0));
 
-        // Context is still tracked; the NeoKai fallback must NOT fire — Kimi uses
+        // Context is still tracked; the HyperNeo fallback must NOT fire — Kimi uses
         // SDK native auto-compact (200k belief, fires at 167k, safely < 262k real).
         expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
         expect(mockContextTracker.shouldCompactAt).not.toHaveBeenCalled();
@@ -2334,7 +2334,7 @@ describe('SDKMessageHandler', () => {
         await h.handleMessage(resultMessage);
         await new Promise((resolve) => setTimeout(resolve, 0));
 
-        // Context is still tracked; the NeoKai fallback must NOT fire — Kimi uses
+        // Context is still tracked; the HyperNeo fallback must NOT fire — Kimi uses
         // SDK native auto-compact (200k belief, fires at 167k, safely < 262k real).
         expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
         expect(mockContextTracker.shouldCompactAt).not.toHaveBeenCalled();

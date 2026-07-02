@@ -223,7 +223,7 @@ export interface DaemonAppContext {
 }
 
 /**
- * Creates and initializes the NeoKai daemon application.
+ * Creates and initializes the HyperNeo daemon application.
  *
  * This factory function sets up:
  * - Database connection
@@ -825,7 +825,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         if (standalone && url.pathname === '/') {
           return Response.json(
             {
-              name: 'NeoKai Daemon',
+              name: 'HyperNeo Daemon',
               version: '0.1.1',
               status: 'running',
               protocol: 'WebSocket-only (MessageHub RPC + Pub/Sub)',
