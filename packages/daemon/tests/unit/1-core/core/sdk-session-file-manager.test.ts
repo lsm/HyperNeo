@@ -733,7 +733,7 @@ describe('SDK Session File Manager', () => {
     test('should find and delete SDK files by kaiSessionId when sdkSessionId is null', () => {
       const kaiSessionId = 'test-neokai-id-12345678';
 
-      // Create a file that contains the NeoKai session ID
+      // Create a file that contains the HyperNeo session ID
       const content = JSON.stringify({
         type: 'user',
         uuid: 'u1',
@@ -855,7 +855,7 @@ describe('SDK Session File Manager', () => {
       }
     });
 
-    test('should extract NeoKai session IDs from file content', () => {
+    test('should extract HyperNeo session IDs from file content', () => {
       const kaiId = 'a1b2c3d4-e5f6-4789-abcd-ef0123456789';
 
       // Create a file with UUID-like content (appears multiple times)
@@ -1131,7 +1131,7 @@ describe('SDK Session File Manager', () => {
     test('should find file by kaiSessionId when sdkSessionId is null', () => {
       const kaiSessionId = 'findable-neokai-session-id-12345678';
 
-      // Create a file containing the NeoKai session ID
+      // Create a file containing the HyperNeo session ID
       const messages = [
         JSON.stringify({
           type: 'user',

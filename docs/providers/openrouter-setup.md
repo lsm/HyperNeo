@@ -23,7 +23,7 @@ OpenRouter model IDs use `provider/model` names. Examples:
 - `openrouter/auto`
 - `openai/gpt-5.4`
 
-NeoKai sends the selected OpenRouter ID through Claude Code's model tier environment variables so Claude Code still starts with its supported `default` model identifier while OpenRouter receives the selected model.
+HyperNeo sends the selected OpenRouter ID through Claude Code's model tier environment variables so Claude Code still starts with its supported `default` model identifier while OpenRouter receives the selected model.
 
 ## Compatibility Notes
 

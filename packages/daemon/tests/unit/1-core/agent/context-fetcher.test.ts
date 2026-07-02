@@ -2,7 +2,7 @@
  * ContextFetcher Tests
  *
  * Verifies the adapter that converts the SDK's
- * `query.getContextUsage()` response into NeoKai's `ContextInfo` shape.
+ * `query.getContextUsage()` response into HyperNeo's `ContextInfo` shape.
  */
 
 import { describe, it, expect, mock, spyOn } from 'bun:test';

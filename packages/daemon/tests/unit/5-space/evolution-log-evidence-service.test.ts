@@ -28,7 +28,7 @@ describe('EvolutionLogEvidenceService', () => {
     scopeId = evolutionRepo.createScope({
       spaceId,
       kind: 'project',
-      name: 'NeoKai product',
+      name: 'HyperNeo product',
       objective: 'Capture daemon warnings and errors',
     }).id;
   });

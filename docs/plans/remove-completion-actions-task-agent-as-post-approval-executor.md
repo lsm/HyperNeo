@@ -1202,7 +1202,7 @@ post-approval session layer rather than at the `merge_pr` tool layer.
 - **Workflow schema (shared types):** removing `completionActions`,
   `CompletionAction`, `completionActionsFiredAt`, `pendingActionIndex`,
   `pendingCheckpointType: 'completion_action'` is a breaking change to
-  `@neokai/shared`. NeoKai ships as a single repo; no external consumers.
+  `@neokai/shared`. HyperNeo ships as a single repo; no external consumers.
   Adding `postApproval` is an additive, non-breaking change.
 - **Task status `approved`:** additive; existing status values unchanged.
   No existing caller queries for `approved` tasks (it didn't exist). UI

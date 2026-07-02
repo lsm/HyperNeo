@@ -162,7 +162,7 @@ export class EvolutionLogEvidenceService {
       return this.deps.evolutionRepo.createScope({
         spaceId,
         kind: 'project',
-        name: 'NeoKai product runtime evidence',
+        name: 'HyperNeo product runtime evidence',
         objective:
           'Capture daemon runtime warnings, errors, and crashes for product Forge evidence.',
         policy: { logEvidenceProductScope: true },

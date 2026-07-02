@@ -2,7 +2,7 @@
 
 ## Purpose
 
-NeoKai needs compressed output mode, but implementing it as one bespoke append inside `QueryOptionsBuilder` would not scale. Future features will also need prompt additions: safety/approval rules, autonomy policy, workflow gates, language preference, reviewer formats, provider quirks, cost-saving hints, and task-specific contracts.
+HyperNeo needs compressed output mode, but implementing it as one bespoke append inside `QueryOptionsBuilder` would not scale. Future features will also need prompt additions: safety/approval rules, autonomy policy, workflow gates, language preference, reviewer formats, provider quirks, cost-saving hints, and task-specific contracts.
 
 Recommendation: add a generic, data-driven prompt policy registry/composer. Compressed output becomes the first built-in prompt policy template activated by scoped registry records, not by feature-specific typed fields.
 
@@ -27,14 +27,14 @@ Subagent deep dive found:
 
 - `QueryOptionsBuilder.build()` is the central SDK `Options` composer for every `AgentSession`.
 - `buildSystemPrompt()` maps session config to SDK `systemPrompt`.
-- Current prompt forms handled by NeoKai:
+- Current prompt forms handled by HyperNeo:
   - custom string prompt
   - `{ type: 'preset', preset: 'claude_code', append?: string }`
 - Worktree isolation currently appends in the system-prompt builder.
 - `SettingsManager.prepareSDKOptions()` writes file-only settings such as SDK `outputStyle` into `.claude/settings.local.json` before SDK startup.
 - `outputStyle` is not passed directly as an SDK `Options` field.
 - SDK hooks can emit `additionalContext`, but that is event-timed context, not a durable session-start contract.
-- SDK subagents do **not** automatically inherit parent `systemPrompt.append`; NeoKai already manually appends worktree isolation to coordinator specialist prompts.
+- SDK subagents do **not** automatically inherit parent `systemPrompt.append`; HyperNeo already manually appends worktree isolation to coordinator specialist prompts.
 - Space task agents with custom tools can place visible agent behavior into `agents[*].prompt`, not only top-level `systemPrompt.append`.
 
 Conclusion: primary render point should be common session query options, plus a secondary render over `queryOptions.agents[*].prompt` for subagent definitions when a policy record should apply to subagents.
@@ -437,7 +437,7 @@ Composer must retain per-record metadata, not only joined strings. Composer owns
 
 ### System prompt rendering
 
-Support existing NeoKai shapes:
+Support existing HyperNeo shapes:
 
 - `undefined` → create append string when needed.
 - `string` → prepend/append joined with double newline.
@@ -475,13 +475,13 @@ Use hook output as runtime provider data, not as persistent source of truth.
 
 ### SDK `outputStyle`
 
-The SDK type defs expose `outputStyle?: string` in settings and result metadata shows `output_style` / `available_output_styles`. NeoKai already writes file-only `outputStyle` via `SettingsManager.prepareSDKOptions()`.
+The SDK type defs expose `outputStyle?: string` in settings and result metadata shows `output_style` / `available_output_styles`. HyperNeo already writes file-only `outputStyle` via `SettingsManager.prepareSDKOptions()`.
 
 For MVP:
 
-- Do not add NeoKai `outputMode` typed fields.
+- Do not add HyperNeo `outputMode` typed fields.
 - Render compressed semantics via scoped prompt policy records.
-- Do not depend on SDK `outputStyle` because it is settings-file driven and not guaranteed to match NeoKai safety/clarity contract.
+- Do not depend on SDK `outputStyle` because it is settings-file driven and not guaranteed to match HyperNeo safety/clarity contract.
 - Later, optionally map active `neokai.output-mode.compressed` policy record to a compatible SDK output style if custom styles become reliable.
 
 ## Built-in compressed output policy

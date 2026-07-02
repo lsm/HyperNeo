@@ -96,7 +96,7 @@ export function SkillsRegistry() {
         <div class="mb-4">
           <p class="text-xs text-gray-500 mb-3">
             Application-level skills are available to any space or session. Built-in skills ship
-            with NeoKai; plugin and MCP server skills can be added from external sources.
+            with HyperNeo; plugin and MCP server skills can be added from external sources.
           </p>
           <div class="flex gap-2">
             <Button variant="primary" size="sm" onClick={() => setShowAddDialog(true)}>

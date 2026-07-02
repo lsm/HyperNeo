@@ -1056,7 +1056,7 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
           </section>
 
           <section class="rounded-xl border border-orange-500/20 bg-orange-500/5 p-4">
-            <h3 class="mb-3 text-sm font-medium text-orange-100">NeoKai friction findings</h3>
+            <h3 class="mb-3 text-sm font-medium text-orange-100">HyperNeo friction findings</h3>
             {frictionFindings.length === 0 ? (
               <p class="text-sm text-orange-200/70">No friction findings in latest episode.</p>
             ) : (

@@ -2,7 +2,7 @@
 
 **Date:** 2026-05-24
 **Task:** #394, "Refactor task event source as Layer-2 anti-stuck mechanism"
-**Evaluation Method:** Manual code audit comparing each arm's cited files, line numbers, and architectural claims against actual NeoKai source at commit `fb857f240`.
+**Evaluation Method:** Manual code audit comparing each arm's cited files, line numbers, and architectural claims against actual HyperNeo source at commit `fb857f240`.
 
 ## Summary
 
@@ -194,6 +194,6 @@ For each arm, we checked:
 
 5. **ast-grep took a different but valid angle**, focusing on structural routing (channel-router, agent-message-router) rather than the runtime tick loop. This suggests ast-grep is better for finding structural patterns than for reading source details.
 
-6. **The actual NeoKai codebase does match the models' descriptions.** Key structures (`AgentStuckRecoveryState`, `NonTerminalIdleState`, `notifiedTaskSet`, `safeNotify`, `processRunTick`) exist exactly where the models said they do.
+6. **The actual HyperNeo codebase does match the models' descriptions.** Key structures (`AgentStuckRecoveryState`, `NonTerminalIdleState`, `notifiedTaskSet`, `safeNotify`, `processRunTick`) exist exactly where the models said they do.
 
 7. **All models correctly identified the gaps:** no autonomy-aware recovery, no exponential backoff, no rate-limited notifications, no persistent recovery state, no wall-clock timeout. These are real gaps in the current implementation.

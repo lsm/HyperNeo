@@ -48,7 +48,7 @@ Add the `AppSkill` type family and related interfaces to `packages/shared/src/` 
 **Agent type:** coder
 
 **Description:**
-Implement the `SkillRepository` class (SQLite persistence) and `SkillsManager` service in the daemon. Persistence follows the existing `goal-repository.ts` pattern — a `skills` table in the NeoKai SQLite database. `SkillsManager` enforces input validation for security-sensitive fields before persisting.
+Implement the `SkillRepository` class (SQLite persistence) and `SkillsManager` service in the daemon. Persistence follows the existing `goal-repository.ts` pattern — a `skills` table in the HyperNeo SQLite database. `SkillsManager` enforces input validation for security-sensitive fields before persisting.
 
 **Subtasks (ordered):**
 

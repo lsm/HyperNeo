@@ -275,7 +275,7 @@ function SDKMessageRendererImpl({
   replacementStatus,
   isLiveTail = false,
 }: Props) {
-  // NeoKai-native action messages are always shown and handled separately.
+  // HyperNeo-native action messages are always shown and handled separately.
   if (isNeokaiActionMessage(message)) {
     const actionMsg = message as NeokaiActionMessage;
     if (actionMsg.action === 'sdk_resume_choice') {

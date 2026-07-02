@@ -95,7 +95,7 @@ export function setupMessageHandlers(
     }
 
     // Remove tool_result from the .jsonl file
-    // Pass both SDK session ID and NeoKai session ID for fallback search
+    // Pass both SDK session ID and HyperNeo session ID for fallback search
     // Use worktree path when available — SDK creates session files based on CWD
     const sdkWorkspacePath = session.worktree
       ? session.worktree.worktreePath
@@ -244,7 +244,7 @@ function convertToMarkdown(
   },
   messages: ChatMessage[]
 ): string {
-  // Filter out NeoKai-native action messages — they are UI prompts, not conversation content.
+  // Filter out HyperNeo-native action messages — they are UI prompts, not conversation content.
   const sdkOnly = messages.filter((m) => m.type !== 'neokai_action') as SDKMessage[];
   const lines: string[] = [];
 

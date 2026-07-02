@@ -534,7 +534,7 @@ export class QueryLifecycleManager {
   }
 
   /**
-   * Emit a NeoKai action message asking the user what to do when the SDK
+   * Emit a HyperNeo action message asking the user what to do when the SDK
    * transcript file cannot be found.
    *
    * The action message is persisted to the DB and broadcast via the

@@ -13,7 +13,7 @@ import type { GitHubApiComment, GitHubApiIssue, PollingConfig } from './types';
 const log = new Logger('github-polling');
 
 const DEFAULT_BASE_URL = 'https://api.github.com';
-const DEFAULT_USER_AGENT = 'NeoKai-GitHub-Integration/1.0';
+const DEFAULT_USER_AGENT = 'HyperNeo-GitHub-Integration/1.0';
 
 /**
  * State for a single repository being polled

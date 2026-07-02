@@ -35,7 +35,7 @@ type GroupKey = 'builtin' | 'user' | 'imported';
 
 const GROUP_LABELS: Record<GroupKey, string> = {
   builtin: 'Built-in',
-  user: 'Added in NeoKai',
+  user: 'Added in HyperNeo',
   imported: 'Imported from .mcp.json',
 };
 

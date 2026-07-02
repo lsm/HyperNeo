@@ -8,7 +8,7 @@ Proposed
 
 ### Current State
 
-The NeoKai codebase has a Job Queue infrastructure partially implemented but not yet integrated into the application lifecycle. This document provides a detailed migration plan to wire the Job Queue into the daemon and migrate existing background tasks from setInterval-based polling to job-based execution.
+The HyperNeo codebase has a Job Queue infrastructure partially implemented but not yet integrated into the application lifecycle. This document provides a detailed migration plan to wire the Job Queue into the daemon and migrate existing background tasks from setInterval-based polling to job-based execution.
 
 ### Existing Infrastructure
 

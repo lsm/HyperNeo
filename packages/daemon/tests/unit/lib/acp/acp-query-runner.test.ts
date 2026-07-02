@@ -726,7 +726,7 @@ describe('AcpQueryRunner', () => {
     );
   });
 
-  test('prepends NeoKai session instructions to first ACP prompt', async () => {
+  test('prepends HyperNeo session instructions to first ACP prompt', async () => {
     const { runner, ctx, mockClient } = createRunnerFixture({
       queryOptions: {
         cwd: '/tmp/acp-session',
@@ -749,7 +749,7 @@ describe('AcpQueryRunner', () => {
       {
         type: 'text',
         text:
-          'NeoKai session instructions:\n\n' +
+          'HyperNeo session instructions:\n\n' +
           'Follow Space workflow rules.\n\n' +
           'Review code carefully.\n\n' +
           'Agent: reviewer\nFind correctness issues.',
@@ -781,7 +781,7 @@ describe('AcpQueryRunner', () => {
     expect(client.sendPrompt.mock.calls[0][0]).toEqual([
       {
         type: 'text',
-        text: 'NeoKai session instructions:\n\nFollow Space workflow rules.',
+        text: 'HyperNeo session instructions:\n\nFollow Space workflow rules.',
       },
       { type: 'text', text: 'hello' },
     ]);

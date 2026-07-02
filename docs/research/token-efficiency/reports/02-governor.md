@@ -80,9 +80,9 @@ Governor is primarily **Python 3**, shell scripts, JSON hook manifests, and Mark
 - Filtering may hide clues, though `/governor:full` is an escape hatch.
 - Source reads are intentionally not compressed, limiting savings in code-heavy tasks.
 
-## Actionable takeaways for NeoKai
+## Actionable takeaways for HyperNeo
 
-1. **Add pre/post tool middleware.** NeoKai’s agent runtime should support output replacement before transcript injection.
+1. **Add pre/post tool middleware.** HyperNeo’s agent runtime should support output replacement before transcript injection.
 2. **Track net token savings.** Store raw bytes, returned bytes, overhead, direct savings, and “blocked token” estimates per tool call.
 3. **Preserve safety blocklists.** Never compress active source reads, edit diffs, write payloads, or user-facing terminal actions by default.
 4. **Use VCLR-like quality metrics.** Compression success should mean “needed signals preserved,” not maximum shrinkage.
@@ -91,4 +91,4 @@ Governor is primarily **Python 3**, shell scripts, JSON hook manifests, and Mark
 
 ## Bottom line
 
-Governor is best viewed as a governance and filtering layer. Its biggest lesson for NeoKai: token saving needs quality-preserving policy, telemetry, and explicit escape hatches, not blind summarization.
+Governor is best viewed as a governance and filtering layer. Its biggest lesson for HyperNeo: token saving needs quality-preserving policy, telemetry, and explicit escape hatches, not blind summarization.

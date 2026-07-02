@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "NeoKai flaky test registry",
+  "title": "HyperNeo flaky test registry",
   "type": "object",
   "required": ["schemaVersion", "policy", "tests"],
   "additionalProperties": false,

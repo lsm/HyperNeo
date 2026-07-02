@@ -232,7 +232,7 @@ describe('seedPresetAgents', () => {
 
     // Identity must appear in every posted PR comment.
     expect(reviewer?.customPrompt).toContain('Review by <your model>');
-    expect(reviewer?.customPrompt).toContain('Client:** NeoKai');
+    expect(reviewer?.customPrompt).toContain('Client:** HyperNeo');
     expect(reviewer?.customPrompt).toMatch(/Model:/);
     expect(reviewer?.customPrompt).toMatch(/Provider:/);
   });

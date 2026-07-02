@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-NeoKai — browser UI for the Claude Agent SDK. Multi-session chat with model switching, file/git ops, MCP servers, rewind/checkpoints, and a Space/Mission system for multi-agent workflows.
+HyperNeo — browser UI for the Claude Agent SDK. Multi-session chat with model switching, file/git ops, MCP servers, rewind/checkpoints, and a Space/Mission system for multi-agent workflows.
 
 ## Stack
 

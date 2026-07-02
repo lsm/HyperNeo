@@ -497,7 +497,7 @@ describe('KimiProvider', () => {
       // KimiProvider.ownsModel accepts any moonshot-* ID but model-service
       // lookups go through findInModels which checks id/alias/providerAliases/
       // providerAliasPrefixes. Without the prefix, sessions stored with a
-      // moonshot-* ID have null modelInfo and NeoKai fallback compaction can't
+      // moonshot-* ID have null modelInfo and HyperNeo fallback compaction can't
       // compute a threshold.
       const providerAliases = KimiProvider.MODELS[0].providerAliases ?? [];
       const providerAliasPrefixes = KimiProvider.MODELS[0].providerAliasPrefixes ?? [];

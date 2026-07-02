@@ -163,7 +163,7 @@ describe('standalone mode', () => {
 
   it('should return daemon info at root route', () => {
     const daemonInfo = {
-      name: 'NeoKai Daemon',
+      name: 'HyperNeo Daemon',
       version: '0.1.1',
       status: 'running',
       protocol: 'WebSocket-only (MessageHub RPC + Pub/Sub)',
@@ -172,7 +172,7 @@ describe('standalone mode', () => {
       },
     };
 
-    expect(daemonInfo.name).toBe('NeoKai Daemon');
+    expect(daemonInfo.name).toBe('HyperNeo Daemon');
     expect(daemonInfo.endpoints.webSocket).toBe('/ws');
   });
 });

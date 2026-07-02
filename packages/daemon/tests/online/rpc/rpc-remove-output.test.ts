@@ -231,7 +231,7 @@ describe('Message Remove Output', () => {
     });
   });
 
-  describe('Fallback search by NeoKai session ID', () => {
+  describe('Fallback search by HyperNeo session ID', () => {
     test('should find session file when SDK session ID unavailable', async () => {
       const sessionId = await createSession();
       const messageUuid = '00000000-0000-0000-0000-000000000003';

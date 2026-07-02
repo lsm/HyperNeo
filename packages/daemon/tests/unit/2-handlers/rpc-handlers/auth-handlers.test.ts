@@ -2,7 +2,7 @@
  * Tests for Auth RPC Handlers
  *
  * Tests the RPC handlers for authentication operations:
- * - auth.status - Get NeoKai auth status
+ * - auth.status - Get HyperNeo auth status
  * - auth.providers - List all providers with auth status
  * - auth.login - Initiate OAuth login for a provider
  * - auth.logout - Logout from a provider

@@ -11,7 +11,7 @@
 
 ## 1. Overview
 
-NeoKai is moving toward a single messaging interface that can connect local daemon modules, agents, clients, workers, other daemons, organization-local services, and eventually public internet integrations.
+HyperNeo is moving toward a single messaging interface that can connect local daemon modules, agents, clients, workers, other daemons, organization-local services, and eventually public internet integrations.
 
 The interface is based on three semantic message kinds:
 

@@ -58,7 +58,7 @@ export async function runWithGlm(
 // ---------------------------------------------------------------------------
 
 export const BENCHMARK_PROMPT_UNSEDED =
-  `We need to improve NeoKai's Space task/workflow runtime so stuck or idle task agents do not loop forever or spam operators.
+  `We need to improve HyperNeo's Space task/workflow runtime so stuck or idle task agents do not loop forever or spam operators.
 
 Current behavior: when task agents appear idle, blocked, waiting, or completed, the system can emit many task/workflow events to the Space Agent. These events are noisy and do not reliably recover stuck work. Successful workflow completions can also create notification noise. Real stuck tasks can retry or wait repeatedly until a human manually intervenes.
 

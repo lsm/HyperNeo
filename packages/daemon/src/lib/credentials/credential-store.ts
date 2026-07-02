@@ -12,7 +12,7 @@ const ENCRYPTION_KEY_ENV = 'NEOKAI_PROVIDER_CREDENTIAL_KEY';
 const KEY_FILE_NAME = '.provider-credential-key';
 export const KEYCHAIN_UNAVAILABLE_MESSAGE =
   'macOS Keychain is locked or unavailable. Run `security unlock-keychain` ' +
-  '(prompts for your login password), launch NeoKai from Desktop/Terminal with a ' +
+  '(prompts for your login password), launch HyperNeo from Desktop/Terminal with a ' +
   'GUI session, or configure credentials via environment variables.';
 
 export interface CredentialStore {
@@ -151,7 +151,7 @@ export class KeychainCredentialStore implements CredentialStore {
 const KEYCHAIN_FALLBACK_MESSAGE =
   'macOS Keychain is locked or unavailable; using local encrypted file storage. ' +
   'Run `security unlock-keychain` (prompts for your login password) or restart ' +
-  'NeoKai from a GUI session to restore Keychain persistence.';
+  'HyperNeo from a GUI session to restore Keychain persistence.';
 
 /**
  * macOS production credential store wrapper. Prefers Keychain for secure

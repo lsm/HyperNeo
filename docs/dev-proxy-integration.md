@@ -1,6 +1,6 @@
 # Dev Proxy Integration for Claude Agent SDK
 
-This document describes how to configure Dev Proxy to mock the Anthropic API for the NeoKai test suite.
+This document describes how to configure Dev Proxy to mock the Anthropic API for the HyperNeo test suite.
 
 ## Overview
 
@@ -53,7 +53,7 @@ Understanding the SDK's HTTP behavior is crucial for proxy integration:
 
 ### Architecture
 
-1. **NeoKai Daemon** calls `query()` from `@anthropic-ai/claude-agent-sdk`
+1. **HyperNeo Daemon** calls `query()` from `@anthropic-ai/claude-agent-sdk`
 2. **SDK** spawns a **CLI subprocess** (using Node.js or Bun)
 3. **CLI subprocess** makes HTTP requests to `api.anthropic.com` using undici (Node.js's built-in HTTP client)
 4. The subprocess **inherits environment variables** from the parent process
@@ -330,9 +330,9 @@ The existing `NEOKAI_AGENT_SDK_MOCK=1` mode continues to work for backwards comp
 cd packages/daemon && NEOKAI_AGENT_SDK_MOCK=1 bun test ./tests/online/agent/agent-session-sdk.test.ts
 ```
 
-### Integration with NeoKai Codebase
+### Integration with HyperNeo Codebase
 
-The NeoKai daemon applies provider environment variables to `process.env` before SDK query creation via `providerService.applyEnvVarsToProcess()`. The SDK subprocess inherits these variables.
+The HyperNeo daemon applies provider environment variables to `process.env` before SDK query creation via `providerService.applyEnvVarsToProcess()`. The SDK subprocess inherits these variables.
 
 **Current provider env vars** (managed by `ProviderService`):
 - `ANTHROPIC_BASE_URL` - API endpoint override

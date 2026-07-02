@@ -214,7 +214,7 @@ function makeProposal(overrides: Partial<TaskProposal> = {}): TaskProposal {
     scopeId: 'scope-1',
     title: 'Improve review UI',
     description: 'Make accept/dismiss actions clearer',
-    reason: 'Reduce NeoKai friction',
+    reason: 'Reduce HyperNeo friction',
     priority: 'high',
     status: 'proposed',
     evidenceEpisodeIds: ['episode-1'],

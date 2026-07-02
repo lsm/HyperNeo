@@ -364,7 +364,7 @@ describe('Sandbox Restrictions', { skip: skipTest }, () => {
 
       try {
         // Ask agent to write to ~/.neokai/projects/ directory
-        const messageContent = `Write the text "NEOKAI PROJECTS TEST" to the file ${testFilePath}`;
+        const messageContent = `Write the text "HYPERNEO PROJECTS TEST" to the file ${testFilePath}`;
 
         await sendMessage(daemon.messageHub, sessionId, messageContent);
 
@@ -373,7 +373,7 @@ describe('Sandbox Restrictions', { skip: skipTest }, () => {
 
         // Check that the file WAS created in ~/.neokai/projects/
         const fileContent = await fs.readFile(testFilePath, 'utf-8');
-        expect(fileContent).toContain('NEOKAI PROJECTS TEST');
+        expect(fileContent).toContain('HYPERNEO PROJECTS TEST');
       } finally {
         // Cleanup session
         await daemon.messageHub.request('session.delete', { sessionId });

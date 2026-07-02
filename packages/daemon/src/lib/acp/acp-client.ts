@@ -136,7 +136,7 @@ export class AcpClient {
         ...(hasFs ? { fs: { readTextFile: true, writeTextFile: true } } : {}),
         ...(hasTerminal ? { terminal: true } : {}),
       },
-      clientInfo: { name: 'NeoKai', version: '0.1.0' },
+      clientInfo: { name: 'HyperNeo', version: '0.1.0' },
     };
 
     const response = await this.transport.sendRequest('initialize', params);

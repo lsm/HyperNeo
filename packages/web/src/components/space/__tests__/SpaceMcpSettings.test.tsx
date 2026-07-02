@@ -117,7 +117,7 @@ describe('SpaceMcpSettings', () => {
     const { container } = render(<SpaceMcpSettings spaceId="space-1" />);
 
     expect(container.textContent).toContain('Built-in');
-    expect(container.textContent).toContain('Added in NeoKai');
+    expect(container.textContent).toContain('Added in HyperNeo');
     expect(container.textContent).toContain('Imported from .mcp.json');
     expect(container.textContent).toContain('alpha');
     expect(container.textContent).toContain('bravo');

@@ -2,7 +2,7 @@
 
 ## Milestone Goal
 
-Produce a comprehensive audit of NeoKai's current MCP support covering server registration, tool distribution, session/room integration, and identify all gaps that the subsequent milestones address.
+Produce a comprehensive audit of HyperNeo's current MCP support covering server registration, tool distribution, session/room integration, and identify all gaps that the subsequent milestones address.
 
 ## Scope
 
@@ -15,7 +15,7 @@ Read-only investigation — no code changes. Output is a Markdown document commi
 **Agent type:** general
 
 **Description:**
-Conduct a thorough audit of the current MCP support in NeoKai. Produce a structured report at `docs/mcp-audit.md`.
+Conduct a thorough audit of the current MCP support in HyperNeo. Produce a structured report at `docs/mcp-audit.md`.
 
 **Subtasks (ordered):**
 

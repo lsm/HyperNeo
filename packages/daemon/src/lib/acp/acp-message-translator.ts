@@ -2,7 +2,7 @@
  * ACP Message Translator
  *
  * Pure translation functions that bridge ACP protocol notifications
- * to NeoKai's internal SDKMessage types.
+ * to HyperNeo's internal SDKMessage types.
  *
  * Accumulates streaming chunks (agent_message_chunk, agent_thought_chunk)
  * into complete assistant messages, flushing on tool_call boundaries or

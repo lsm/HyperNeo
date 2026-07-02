@@ -10,13 +10,13 @@
 import type { ContextInfo } from '@neokai/shared';
 
 /**
- * Default cooldown between NeoKai-triggered compactions (ms).
+ * Default cooldown between HyperNeo-triggered compactions (ms).
  * Prevents rapid-fire /compact commands when context stays near the limit.
  */
 const DEFAULT_COMPACTION_COOLDOWN_MS = 60_000;
 
 /**
- * Fraction of the model's actual context window at which NeoKai triggers
+ * Fraction of the model's actual context window at which HyperNeo triggers
  * compaction for non-native providers.
  */
 export const COMPACTION_THRESHOLD = 0.85;
@@ -26,7 +26,7 @@ export const COMPACTION_THRESHOLD = 0.85;
  * `autoCompactWindow − min(maxOutputTokens, 20000) − 13000`, so the buffer it
  * keeps below the window is `min(maxOutputTokens, 20000) + 13000`. Every modern
  * model has a default max output ≥ 20000, so the first term caps at 20000 and
- * the buffer is a flat 33_000. NeoKai's fallback uses the same buffer so it
+ * the buffer is a flat 33_000. HyperNeo's fallback uses the same buffer so it
  * fires at the same point the SDK would have — for most providers this is a
  * safe default.
  */
@@ -38,14 +38,14 @@ const SDK_AUTO_COMPACT_RESERVE_TOKENS = 33_000;
  * Kimi K2.7-Code and kimi-for-coding are documented with a ~32k max output and
  * mandatory reasoning that counts toward the context window. If the SDK allows
  * close to 32k output, a 33k total reserve leaves the context headroom too
- * tight. Use `32_000 + 13_000 = 45_000` so NeoKai compacts earlier and keeps
+ * tight. Use `32_000 + 13_000 = 45_000` so HyperNeo compacts earlier and keeps
  * room for a full Kimi response plus reasoning.
  */
 const KIMI_RESERVE_TOKENS = 45_000;
 
 /**
- * Compute the NeoKai fallback threshold for a context window: the point below
- * the window at which NeoKai should trigger compaction. The default reserve
+ * Compute the HyperNeo fallback threshold for a context window: the point below
+ * the window at which HyperNeo should trigger compaction. The default reserve
  * matches the SDK's own 33k buffer; Kimi uses a larger 45k reserve to account
  * for its ~32k max output and mandatory reasoning tokens. Result is floored at
  * 1 so tiny windows still produce a positive threshold.
@@ -104,7 +104,7 @@ export class ContextTracker {
   }
 
   /**
-   * Check whether the context window is full enough that NeoKai should
+   * Check whether the context window is full enough that HyperNeo should
    * trigger compaction for a non-native provider.
    *
    * Uses the *actual* model context window (from model metadata), NOT the
@@ -135,10 +135,10 @@ export class ContextTracker {
   /**
    * Threshold-based variant of `shouldCompact`. Fires when `totalUsed` is at
    * or above `threshold` (an absolute token count, typically computed by
-   * `reserveBasedThreshold(contextWindow)` so NeoKai stays behind the SDK's
+   * `reserveBasedThreshold(contextWindow)` so HyperNeo stays behind the SDK's
    * own auto-compact trigger).
    *
-   * Used by `sdk-message-handler` to install a NeoKai fallback that runs even
+   * Used by `sdk-message-handler` to install a HyperNeo fallback that runs even
    * for providers where the SDK *reports* auto-compact as enabled but may not
    * actually fire (e.g. unknown model IDs whose PP() capacity caps below the
    * real window).

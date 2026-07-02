@@ -126,7 +126,7 @@ Implement entity-specific resolvers for each reference type, integrate reference
 2. Integration point:
    - In `persist()`, call `preprocessReferences()` before persisting the SDK message
    - Embed `referenceMetadata` into the `sdk_message` JSON blob alongside content
-   - The `sdk_message` column is a plain TEXT column — adding `referenceMetadata` as a NeoKai-specific extension field is safe (extra fields are ignored by the SDK type but preserved by SQLite)
+   - The `sdk_message` column is a plain TEXT column — adding `referenceMetadata` as a HyperNeo-specific extension field is safe (extra fields are ignored by the SDK type but preserved by SQLite)
    - The `@ref{}` text stays in the message content (readable in raw form)
 3. Handle errors gracefully:
    - If resolution fails for some references, keep them as-is in text

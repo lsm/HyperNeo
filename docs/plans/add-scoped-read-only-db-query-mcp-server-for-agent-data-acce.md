@@ -320,7 +320,7 @@ Create the core `db-query` MCP server. Each instance owns one read-only SQLite c
    **Timeout note:** Add a `// TODO: Add query timeout` comment noting that `AbortController`-based cancellation or a worker thread with `sqlite3_interrupt()` could be added in a follow-up to handle pathological queries. For now, `PRAGMA busy_timeout = 5000` handles lock contention only.
 
 2. Create `packages/daemon/tests/unit/db-query/tools.test.ts`:
-   - Use an in-memory SQLite database with a test schema (subset of NeoKai tables including rooms, tasks, goals, mission_executions, spaces, space_tasks, gate_data, space_workflow_runs)
+   - Use an in-memory SQLite database with a test schema (subset of HyperNeo tables including rooms, tasks, goals, mission_executions, spaces, space_tasks, gate_data, space_workflow_runs)
    - Test `db_query` with valid SELECT returns rows
    - Test `db_query` rejects non-SELECT statements with `isError: true`
    - Test `db_query` rejects queries referencing tables outside scope
@@ -415,7 +415,7 @@ Add comprehensive integration tests and a schema-sync validation test.
 
 **Subtasks:**
 1. Create `packages/daemon/tests/unit/db-query/db-query-integration.test.ts`:
-   - Set up an in-memory database with the full NeoKai schema (using `createTables()` from `packages/daemon/src/storage/schema/index.ts`)
+   - Set up an in-memory database with the full HyperNeo schema (using `createTables()` from `packages/daemon/src/storage/schema/index.ts`)
    - Seed with test data across rooms, spaces, goals, tasks, space_tasks, etc.
    - **Room scope test**: create a room-scoped `db-query` server and verify:
      - Can query room-scoped tables (`tasks`, `goals`, `room_github_mappings`)

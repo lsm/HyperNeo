@@ -1,4 +1,4 @@
-# LSP Integration Research: Claude Agent SDK & Native LSP for NeoKai
+# LSP Integration Research: Claude Agent SDK & Native LSP for HyperNeo
 
 _Research date: 2026-03-24_
 
@@ -6,7 +6,7 @@ _Research date: 2026-03-24_
 > installed SDK artifacts (`node_modules/@anthropic-ai/claude-agent-sdk/`) and general
 > web research. Any claim derived from web research that could not be cross-checked
 > against local artifacts is marked **(unverified)**. Claims derived solely from
-> inspecting the installed SDK or NeoKai codebase are stated without qualification.
+> inspecting the installed SDK or HyperNeo codebase are stated without qualification.
 
 ---
 
@@ -14,7 +14,7 @@ _Research date: 2026-03-24_
 
 ### 1.1 Built-in LSP Support
 
-The `@anthropic-ai/claude-agent-sdk` (v0.2.81, currently used by NeoKai) does **not**
+The `@anthropic-ai/claude-agent-sdk` (v0.2.81, currently used by HyperNeo) does **not**
 embed LSP functionality natively. The SDK orchestrates an agent loop that calls into the
 Claude Code CLI binary bundled with it. LSP is an optional capability of that CLI binary
 activated through its **plugin system**: a plugin declares `lspServers` in its manifest,
@@ -33,10 +33,10 @@ Whether the `LSP` tool is reliably present in SDK-spawned agent sessions — whe
 query may fire before language servers are ready — is unclear from local artifact inspection
 alone. This is a known category of issue with async initialization in CLI-as-library patterns.
 
-**What NeoKai can do today:**
+**What HyperNeo can do today:**
 Ensure any Claude Code LSP plugins the user has installed are discoverable by the SDK's
 underlying CLI (i.e., standard `~/.claude/` plugin paths are not blocked). There is no
-NeoKai-controlled configuration switch with verified effect on LSP tool availability.
+HyperNeo-controlled configuration switch with verified effect on LSP tool availability.
 
 ### 1.2 SDK Code Intelligence Primitives
 
@@ -91,15 +91,15 @@ pre-edit content. Any subsequent `mcp__lsp__diagnostics` or `mcp__lsp__hover` ca
 stale state until the file is synced. This is a critical integration concern addressed in
 §3.3.
 
-### 1.5 How NeoKai Could Leverage SDK LSP Today
+### 1.5 How HyperNeo Could Leverage SDK LSP Today
 
 **What works**: If a user has Claude Code LSP plugins installed in their local environment
-(`~/.claude/`), and the LSP tool becomes available to the agent, NeoKai will pass those
-tools through to the agent automatically (the SDK reads `~/.claude/` settings). No NeoKai
+(`~/.claude/`), and the LSP tool becomes available to the agent, HyperNeo will pass those
+tools through to the agent automatically (the SDK reads `~/.claude/` settings). No HyperNeo
 code change is required.
 
 **Limitations**:
-- NeoKai has no control over whether the user has LSP plugins installed
+- HyperNeo has no control over whether the user has LSP plugins installed
 - In cloud/container deployments there are no local LSP binaries or plugins
 - Whether the `LSP` tool reliably appears in SDK-mode agent sessions requires further
   testing with the installed SDK version
@@ -108,9 +108,9 @@ code change is required.
 
 - No LSP in containerized/cloud deployments
 - No control over which language servers are installed in user environments
-- No structured code intelligence API accessible programmatically from the NeoKai daemon
-- Agents have no code intelligence in the default NeoKai configuration today
-- LSP document sync (§3.3) must be handled explicitly if NeoKai manages LSP servers directly
+- No structured code intelligence API accessible programmatically from the HyperNeo daemon
+- Agents have no code intelligence in the default HyperNeo configuration today
+- LSP document sync (§3.3) must be handled explicitly if HyperNeo manages LSP servers directly
 - Call hierarchy (`callHierarchy/incomingCalls`, `callHierarchy/outgoingCalls`) not
   accessible — requires a real language server; no SDK equivalent
 - Workspace-wide symbol search (`workspace/symbol`) not accessible — the SDK's `Grep` tool
@@ -120,7 +120,7 @@ code change is required.
 
 ## Part 2: Native LSP Integration Evaluation
 
-### 2.1 Current NeoKai State
+### 2.1 Current HyperNeo State
 
 From codebase exploration:
 - **No LSP infrastructure** currently exists in `packages/daemon/`
@@ -130,7 +130,7 @@ From codebase exploration:
 - Agents have workspace context (`workspacePath`) and file system access
 - MCP tool infrastructure exists: `mcp-handlers.ts` manages `.mcp.json`-based server
   configs; `query-options-builder.ts` constructs `allowedTools`/`disallowedTools` for SDK
-- NeoKai's `WorktreeManager` creates per-session isolated git worktrees — each agent
+- HyperNeo's `WorktreeManager` creates per-session isolated git worktrees — each agent
   session already has a distinct `workspacePath`. This is the primary driver of LSP server
   instance topology (see §3.2)
 
@@ -140,8 +140,8 @@ Scores are on a 1–5 scale where **5 is best** for all dimensions.
 
 #### Approach A: Rely on Claude Code's Built-in LSP Plugin System
 
-**Description**: Ensure user-installed Claude Code LSP plugins are discoverable by NeoKai-
-spawned agents. No NeoKai-specific LSP code needed.
+**Description**: Ensure user-installed Claude Code LSP plugins are discoverable by HyperNeo-
+spawned agents. No HyperNeo-specific LSP code needed.
 
 | Factor | Score (5=best) | Notes |
 |---|---|---|
@@ -158,14 +158,14 @@ deployment that doesn't have a pre-configured Claude Code user environment.
 
 #### Approach B: MCP-Based LSP Proxy
 
-**Description**: NeoKai runs a local MCP server that proxies LSP protocol to standard
+**Description**: HyperNeo runs a local MCP server that proxies LSP protocol to standard
 language server processes (`typescript-language-server`, `rust-analyzer`, `pylsp`). Agents
 call `mcp__lsp__goto_definition(file, position)` (MCP tool naming convention:
 `mcp__${serverName}__${toolName}`, so server `lsp` + tool `goto_definition` →
 `mcp__lsp__goto_definition`).
 
 ```
-Agent → MCP tool call (mcp__lsp__goto_definition) → NeoKai MCP server
+Agent → MCP tool call (mcp__lsp__goto_definition) → HyperNeo MCP server
   → LSP JSON-RPC (stdio) → typescript-language-server
   ← location result ←
 ```
@@ -189,7 +189,7 @@ Agent → MCP tool call (mcp__lsp__goto_definition) → NeoKai MCP server
 - Need to ship language server binaries in container images or require user installation
 - Each language requires a separate server binary
 - LSP server startup latency (first request cold start: 1–5 seconds)
-- Requires NeoKai to send document sync notifications after every `Edit` (see §3.3)
+- Requires HyperNeo to send document sync notifications after every `Edit` (see §3.3)
 
 **Verdict**: Best balance of completeness and implementation effort. Recommended primary
 approach.
@@ -198,11 +198,11 @@ approach.
 
 #### Approach C: Embedded Tree-sitter
 
-**Description**: NeoKai embeds Tree-sitter for parsing + custom symbol analysis. Provides
+**Description**: HyperNeo embeds Tree-sitter for parsing + custom symbol analysis. Provides
 LSP-like primitives (go-to-definition, find references) without external servers.
 
 ```
-Agent → MCP tool call → NeoKai daemon → tree-sitter WASM → symbol result
+Agent → MCP tool call → HyperNeo daemon → tree-sitter WASM → symbol result
 ```
 
 | Factor | Score (5=best) | Notes |
@@ -297,7 +297,7 @@ packages/daemon/src/lib/
 
 ### 3.2 LSP Server Lifecycle and Worktree Topology
 
-NeoKai already uses `WorktreeManager` to create per-session isolated git worktrees. Each
+HyperNeo already uses `WorktreeManager` to create per-session isolated git worktrees. Each
 agent session gets a distinct `workspacePath` corresponding to a checked-out worktree. LSP
 server instances should map 1:1 to active worktrees:
 
@@ -332,7 +332,7 @@ results.
 
 **Required solution: `DocumentSyncTracker`**
 
-NeoKai must intercept file writes and send corresponding LSP notifications:
+HyperNeo must intercept file writes and send corresponding LSP notifications:
 
 ```
 On file write (Edit / MultiEdit / Write):
@@ -356,7 +356,7 @@ in-flight edits before a save.
 
 ### 3.4 MCP Tool Definitions for Agents
 
-The LSP capabilities are exposed as tools in a NeoKai-managed MCP server. Tool names follow
+The LSP capabilities are exposed as tools in a HyperNeo-managed MCP server. Tool names follow
 the MCP `mcp__${serverName}__${toolName}` convention (verified from CLI binary, matching the
 `mcp__ide__getDiagnostics` pattern); if the server is registered as `lsp`, tools are called
 `mcp__lsp__hover`, `mcp__lsp__goto_definition`, etc.
@@ -484,7 +484,7 @@ Agent working on TypeScript codebase:
 10. Agent calls mcp__lsp__diagnostics to verify no type errors remain after edits
 ```
 
-### 3.6 Integration Points in NeoKai
+### 3.6 Integration Points in HyperNeo
 
 **1. Per-session MCP registration with shared LspManager**
 
@@ -545,12 +545,12 @@ per worktree (useful for debugging and for showing IDE-mode indicators in the UI
   server spawn)
 - Should the LSP server warm up proactively when a session starts, or lazy-initialize on
   first tool call?
-- Recommendation: warm up proactively for TypeScript/Python (most common in NeoKai
+- Recommendation: warm up proactively for TypeScript/Python (most common in HyperNeo
   workflows); lazy for others
 
 ### Language Priority
 Which languages to support in Phase 1?
-- **Must have**: TypeScript/JavaScript (NeoKai itself is TypeScript; most agent codebases
+- **Must have**: TypeScript/JavaScript (HyperNeo itself is TypeScript; most agent codebases
   are TypeScript)
 - **Should have**: Python (AI/ML project codebases)
 - **Nice to have**: Rust, Go
@@ -575,12 +575,12 @@ Which languages to support in Phase 1?
 - **Shared across sessions using the same worktree**: Yes — reduces cold start latency,
   consistent diagnostics view
 - **Fresh per session**: No — wasteful, slower
-- NeoKai's existing worktree-per-session model makes this natural: each worktree gets one
+- HyperNeo's existing worktree-per-session model makes this natural: each worktree gets one
   LSP server instance, shared by all sessions targeting that worktree
 
 ### Container/Cloud Deployments
 - Without language server binaries, the MCP LSP proxy degrades to the tree-sitter fallback
-- NeoKai should document a Docker base image layer with common language servers
+- HyperNeo should document a Docker base image layer with common language servers
   pre-installed for cloud deployments
 - **Caution**: automatically installing language server binaries at runtime (e.g., via
   package managers) introduces security risk — arbitrary code execution from package
@@ -616,4 +616,4 @@ Scores are 1–5 where **5 is best** in each dimension.
 2. **Phase 2** (4–8 weeks): Add Tree-sitter fallback (Approach C) for structural queries
    in deployments without language server binaries.
 3. **Phase 3** (ongoing): Expand language support; add worktree-level LSP status UI in
-   NeoKai frontend; upgrade document sync from `didSave` to full `didChange` tracking.
+   HyperNeo frontend; upgrade document sync from `didSave` to full `didChange` tracking.

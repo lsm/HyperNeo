@@ -127,7 +127,7 @@ export function isRetryableProviderError(errorMessage: string): boolean {
     return false;
   }
 
-  // Permanent 5xx guard — 501 Not Implemented is returned by NeoKai's bridges
+  // Permanent 5xx guard — 501 Not Implemented is returned by HyperNeo's bridges
   // (openai-chat-bridge, ollama-bridge) for unsupported routes. It is never
   // transient, so exclude it from the retryable 5xx class.
   if (/\b501\b/.test(errorMessage)) {

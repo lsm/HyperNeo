@@ -2,7 +2,7 @@
 
 ## Goal Summary
 
-Execute the accepted target architecture refactor through NeoKai's own Goal and Forge system while keeping `dev` releasable after every merged PR.
+Execute the accepted target architecture refactor through HyperNeo's own Goal and Forge system while keeping `dev` releasable after every merged PR.
 
 The target architecture is already defined in:
 
@@ -194,7 +194,7 @@ Purpose: make the refactor executable by Goal/Forge without touching runtime beh
 | PR | Scope | Release safety | Acceptance |
 | --- | --- | --- | --- |
 | 0.1 | Add this execution plan and link it from target architecture docs. | Docs only. | Plan explains Goal/Forge cadence and release invariants. |
-| 0.2 | Create the parent Goal and linked Forge scope in NeoKai. | Product data only. | Goal has milestones; Forge scope has seed evidence from accepted specs. |
+| 0.2 | Create the parent Goal and linked Forge scope in HyperNeo. | Product data only. | Goal has milestones; Forge scope has seed evidence from accepted specs. |
 | 0.3 | Add an architecture-refactor status note or dashboard entry if needed. | Docs/read-only UI only. | Current milestone, active PR, and blockers are visible. |
 | 0.4 | Add release evidence template, file-size ratchet baseline, and oversized-source allowlist. | Docs/static checks only. | Current oversized files have named split follow-ups; new PRs can report size deltas. |
 | 0.5 | Add current-state inventories for legacy RPC aliases, shared root imports, UI component ownership, and runtime/storage owners. | Read-only inventory. | Inventories identify compatibility aliases, deletion candidates, and migration blockers before behavior moves. |
@@ -283,7 +283,7 @@ Purpose: make runtime selection and provider selection independent axes without 
 | PR | Scope | Release safety | Acceptance |
 | --- | --- | --- | --- |
 | 7.1 | Audit SDK source/type files for Claude Agent SDK, OpenAI Agents SDK, Codex SDK/server, Pi, and provider bridges. | Docs/type matrix only. | Capability matrix identifies native, bridged, degraded, and unsupported features; stable adapter contracts are blocked until this lands. |
-| 7.2 | Add NeoKai superset Agent Runtime types based on the audit. | Types and adapter contracts only. | Types avoid prematurely hiding runtime-specific capabilities. |
+| 7.2 | Add HyperNeo superset Agent Runtime types based on the audit. | Types and adapter contracts only. | Types avoid prematurely hiding runtime-specific capabilities. |
 | 7.3 | Add `AgentRuntimeGateway` wrapping current `AgentSession` behavior. | Default runtime remains Claude Agent SDK. | Existing session tests pass through the gateway. |
 | 7.4 | Add capability resolver and read-only compatibility diagnostics. | No runtime selection change yet. | UI/API can report compatibility without changing execution. |
 | 7.5 | Add runtime profile persistence with default Claude profile. | Existing sessions map to default profile. | No existing session loses provider/model configuration. |
@@ -307,7 +307,7 @@ This track may run beside M8, but it must not combine visual migration with read
 | PR | Scope | Release safety | Acceptance |
 | --- | --- | --- | --- |
 | UI.1 | Inventory current web UI components, `@neokai/ui` exports, product tokens, and protected SDK renderer islands. | Docs/inventory only. | `ToolResultCard`, `ToolProgressCard`, tool registry, SDK custom renderers, and output-removal UX are explicitly web-owned. |
-| UI.2 | Establish token authority and compatibility facade strategy. | No visual changes. | Current NeoKai dark/dense look remains unchanged; before screenshots are attached. |
+| UI.2 | Establish token authority and compatibility facade strategy. | No visual changes. | Current HyperNeo dark/dense look remains unchanged; before screenshots are attached. |
 | UI.3 | Migrate one low-risk surface with screenshot parity. | One contained surface only. | Tests, demo coverage, and before/after screenshots prove visual and interaction parity. |
 | UI.4 | Add advisory checks for new generic controls. | Advisory first. | New generic controls are not added to `packages/web/src/components/ui` unless product-specific or compatibility-only. |
 

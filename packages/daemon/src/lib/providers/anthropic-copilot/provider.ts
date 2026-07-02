@@ -1,7 +1,7 @@
 /**
  * Anthropic Copilot Provider
  *
- * A NeoKai provider that starts an embedded Anthropic-compatible HTTP server
+ * A HyperNeo provider that starts an embedded Anthropic-compatible HTTP server
  * backed by the `@github/copilot-sdk`.  The Claude Agent SDK is pointed at
  * this server via `ANTHROPIC_BASE_URL`, so Copilot becomes a fully native SDK
  * backend — multi-turn, streaming, and tool use — with no custom generator
@@ -20,18 +20,18 @@
  *
  * **Runtime availability** (`isAvailable()`, sources 1–5 via `resolveGitHubToken()`):
  * Controls whether models are listed and sessions can be created.
- *   1. `~/.neokai/auth.json` (explicitly stored NeoKai credentials)
+ *   1. `~/.neokai/auth.json` (explicitly stored HyperNeo credentials)
  *   2. `COPILOT_GITHUB_TOKEN` env var (PAT with copilot_requests scope)
  *   3. `GH_TOKEN` env var
  *   4. `gh auth token` CLI output
  *   5. `~/.config/gh/hosts.yml` oauth_token
  * Sources 2–5 allow the daemon and CI tests to use external credentials for API
- * calls without going through the NeoKai login flow.
+ * calls without going through the HyperNeo login flow.
  *
  * **UI auth check** (`getAuthStatus()`, source 1 only):
  * `getAuthStatus()` checks only `~/.neokai/auth.json`. This is what drives the
  * Login/Logout buttons. Env-var and external credentials return `isAuthenticated: false`
- * so the Logout button only appears when NeoKai can actually remove the token.
+ * so the Logout button only appears when HyperNeo can actually remove the token.
  *
  * IMPORTANT: `GITHUB_TOKEN` (GitHub Actions token) is NOT used — it lacks
  * Copilot access and causes "Not logged in" errors.
@@ -361,7 +361,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
 
   async getModels(): Promise<ModelInfo[]> {
     // isAvailable() uses the full credential discovery chain so model listing works
-    // for env-var users and CI without requiring NeoKai-managed OAuth.
+    // for env-var users and CI without requiring HyperNeo-managed OAuth.
     if (!(await this.isAvailable())) return [];
     // Pre-warm the embedded server so buildSdkConfig() has a valid URL by
     // the time the user picks a model and starts a session.
@@ -487,7 +487,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
 
   /**
    * Get current authentication status.
-   * Only NeoKai-managed credentials (auth.json) are considered authenticated.
+   * Only HyperNeo-managed credentials (auth.json) are considered authenticated.
    * Env vars and external sources (gh CLI, hosts.yml) are for daemon/test use only.
    */
   async getAuthStatus(): Promise<ProviderAuthStatusInfo> {
@@ -592,7 +592,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
   /**
    * Shut down the embedded HTTP server and the underlying CopilotClient subprocess.
    *
-   * **Call after `sessionManager.cleanup()`** — active NeoKai sessions hold
+   * **Call after `sessionManager.cleanup()`** — active HyperNeo sessions hold
    * open SSE connections to this server; they must be closed first.
    */
   async shutdown(): Promise<void> {
@@ -637,7 +637,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
 
   /**
    * Resolve a GitHub OAuth token using this priority order:
-   *   1. ~/.neokai/auth.json (explicitly stored NeoKai credentials)
+   *   1. ~/.neokai/auth.json (explicitly stored HyperNeo credentials)
    *   2. COPILOT_GITHUB_TOKEN env var (PAT with copilot_requests scope)
    *   3. GH_TOKEN env var
    *   4. `gh auth token` CLI command
@@ -946,7 +946,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
   // ---------------------------------------------------------------------------
 
   /**
-   * Map a Copilot SDK ModelInfo to NeoKai's ModelInfo format.
+   * Map a Copilot SDK ModelInfo to HyperNeo's ModelInfo format.
    *
    * Uses the static list for display-name and context-window enrichment when a
    * matching ID is found, so existing users with static aliases are not affected.

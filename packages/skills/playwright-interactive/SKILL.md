@@ -18,8 +18,8 @@ js_repl = true
 ```
 
 - You can also start a new session with `--enable js_repl` (equivalent to `-c features.js_repl=true`).
-- After enabling `js_repl`, start a new NeoKai session so the tool list refreshes.
-- For now, run this workflow with sandboxing disabled: start NeoKai with `--sandbox danger-full-access` (or the equivalent config for `sandbox_mode=danger-full-access`). This is a temporary requirement while `js_repl` + Playwright support inside the sandbox is still being completed.
+- After enabling `js_repl`, start a new HyperNeo session so the tool list refreshes.
+- For now, run this workflow with sandboxing disabled: start HyperNeo with `--sandbox danger-full-access` (or the equivalent config for `sandbox_mode=danger-full-access`). This is a temporary requirement while `js_repl` + Playwright support inside the sandbox is still being completed.
 - Run setup from the same project directory you need to debug.
 - Treat `js_repl_reset` as a recovery tool, not routine cleanup. Resetting the kernel destroys your Playwright handles.
 

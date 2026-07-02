@@ -1,7 +1,7 @@
 # OpenAI Codex CLI: Capabilities Research Report
 
 **Date:** 2026-03-14
-**Purpose:** Evaluate Codex CLI as a potential integration target for NeoKai
+**Purpose:** Evaluate Codex CLI as a potential integration target for HyperNeo
 
 ---
 
@@ -21,7 +21,7 @@
 9. [Multimodal Support](#multimodal-support)
 10. [Concurrency and Runtime](#concurrency-and-runtime)
 11. [Critical Integration Constraints](#critical-integration-constraints)
-12. [Integration Modes for NeoKai](#integration-modes-for-neokai)
+12. [Integration Modes for HyperNeo](#integration-modes-for-hyperneo)
 13. [Summary Table](#summary-table)
 
 ---
@@ -182,9 +182,9 @@ The client must send an `initialize` request and await a response, then send an 
 
 **Mode:** Codex exposes itself as an MCP (Model Context Protocol) tool server.
 
-Rather than NeoKai calling Codex as a subprocess, `codex mcp-server` allows NeoKai's own agents (running Claude or another model) to call Codex as a **tool** through the standard MCP protocol. Codex is invoked as a named tool with a prompt, executes autonomously, and returns a result.
+Rather than HyperNeo calling Codex as a subprocess, `codex mcp-server` allows HyperNeo's own agents (running Claude or another model) to call Codex as a **tool** through the standard MCP protocol. Codex is invoked as a named tool with a prompt, executes autonomously, and returns a result.
 
-**Use case:** Embedding Codex as a callable sub-agent within NeoKai's existing MCP tool ecosystem. NeoKai's agent orchestration layer issues MCP tool calls; Codex handles the implementation work.
+**Use case:** Embedding Codex as a callable sub-agent within HyperNeo's existing MCP tool ecosystem. HyperNeo's agent orchestration layer issues MCP tool calls; Codex handles the implementation work.
 
 ---
 
@@ -200,7 +200,7 @@ Codex CLI supports multiple authentication methods, suited for different deploym
 | Device code auth | Headless OAuth flow for environments without a browser |
 | Stored credentials | `~/.codex/auth.json` or OS keyring (populated by `codex login`) |
 
-For programmatic integration (e.g., NeoKai spawning Codex), `OPENAI_API_KEY` is the most straightforward path.
+For programmatic integration (e.g., HyperNeo spawning Codex), `OPENAI_API_KEY` is the most straightforward path.
 
 ---
 
@@ -245,7 +245,7 @@ Codex CLI supports incremental output streaming through two mechanisms:
 
 **`codex app-server`:** The `item/agentMessage/delta` notification delivers incremental text chunks as the model generates them, enabling true streaming text rendering in a UI.
 
-For NeoKai's chat interface, the App Server's delta notifications are the appropriate mechanism if streaming text output is desired.
+For HyperNeo's chat interface, the App Server's delta notifications are the appropriate mechanism if streaming text output is desired.
 
 ---
 
@@ -266,7 +266,7 @@ The App Server is built on Tokio's multi-threaded async runtime:
 - Internal coordination uses channel-based message passing
 - WebSocket transport uses bounded queues to apply backpressure and prevent memory exhaustion under load
 
-This means a single `codex app-server` instance can serve multiple concurrent NeoKai sessions, each mapped to a separate thread.
+This means a single `codex app-server` instance can serve multiple concurrent HyperNeo sessions, each mapped to a separate thread.
 
 ---
 
@@ -274,11 +274,11 @@ This means a single `codex app-server` instance can serve multiple concurrent Ne
 
 **Codex CLI is an autonomous agent, not a transparent API passthrough.**
 
-This distinction is architecturally fundamental and has direct consequences for how NeoKai can use Codex.
+This distinction is architecturally fundamental and has direct consequences for how HyperNeo can use Codex.
 
 ### What "autonomous agent" means in practice
 
-When NeoKai sends a prompt to Codex (via any integration mode), Codex takes full ownership of the execution loop:
+When HyperNeo sends a prompt to Codex (via any integration mode), Codex takes full ownership of the execution loop:
 
 1. It calls the model to generate a plan or response.
 2. It decides which tools to invoke (shell, file patch, web search, etc.).
@@ -286,45 +286,45 @@ When NeoKai sends a prompt to Codex (via any integration mode), Codex takes full
 4. It iterates — calling the model again with tool results — until it deems the task complete.
 5. It returns the final result or emits the final events.
 
-NeoKai observes this process through events or notifications. It **cannot**:
+HyperNeo observes this process through events or notifications. It **cannot**:
 
 - Intercept a tool call before Codex executes it (except via interactive approval prompts in TUI mode, which are not available programmatically).
-- Replace or override Codex's tool execution with NeoKai's own implementations.
+- Replace or override Codex's tool execution with HyperNeo's own implementations.
 - Inject custom tools that Codex will call (unless they are exposed as MCP servers that Codex is configured to use).
 - Receive raw model API responses with tool call payloads to handle client-side.
 
-### Contrast with NeoKai's current architecture
+### Contrast with HyperNeo's current architecture
 
-NeoKai's existing agent layer (via the Claude Agent SDK) operates with full visibility and control:
+HyperNeo's existing agent layer (via the Claude Agent SDK) operates with full visibility and control:
 
-- NeoKai's daemon receives tool call requests from the model.
-- NeoKai decides whether to execute them, how to execute them, and with what sandboxing.
-- NeoKai can inject custom logic at every step of the execution loop.
+- HyperNeo's daemon receives tool call requests from the model.
+- HyperNeo decides whether to execute them, how to execute them, and with what sandboxing.
+- HyperNeo can inject custom logic at every step of the execution loop.
 
 Codex CLI replaces this entire loop with its own opaque implementation. The integration surface is limited to: sending a prompt and receiving events/results.
 
 ### Approval policies do not restore tool interception
 
-The `--ask-for-approval` / `-a` flag adds human-in-the-loop approval gates, but these gates are interactive prompts within Codex's own TUI. When running headlessly (via `codex exec --json` or `codex app-server`), approval-gated tool calls will block waiting for user input on Codex's stdin/tty — they are not exposed as RPC calls that NeoKai can respond to programmatically.
+The `--ask-for-approval` / `-a` flag adds human-in-the-loop approval gates, but these gates are interactive prompts within Codex's own TUI. When running headlessly (via `codex exec --json` or `codex app-server`), approval-gated tool calls will block waiting for user input on Codex's stdin/tty — they are not exposed as RPC calls that HyperNeo can respond to programmatically.
 
 For unattended automation, `--ask-for-approval never` (or `--yolo`) must be used, meaning all tools execute without any external oversight.
 
 ### Implications for trust and observability
 
-- NeoKai cannot enforce its own permission model on Codex tool calls.
-- NeoKai can only observe what Codex did (via event stream), not gate what it will do.
+- HyperNeo cannot enforce its own permission model on Codex tool calls.
+- HyperNeo can only observe what Codex did (via event stream), not gate what it will do.
 - The sandbox level (`--sandbox`) is the only externally controllable safety boundary.
 - Session isolation (workspace sandboxing, git worktrees) must be configured at process spawn time, not dynamically adjusted per tool call.
 
 ---
 
-## Integration Modes for NeoKai
+## Integration Modes for HyperNeo
 
 Given the autonomous-agent constraint, three viable integration modes exist:
 
 ### Mode 1: `codex exec --json` — Spawn-per-Task
 
-NeoKai spawns a `codex exec --json` child process for each task, reads the JSONL event stream, and presents results to the user.
+HyperNeo spawns a `codex exec --json` child process for each task, reads the JSONL event stream, and presents results to the user.
 
 **Characteristics:**
 - Simple to implement — subprocess management with stdout parsing.
@@ -341,13 +341,13 @@ OPENAI_API_KEY=sk-... codex exec --json --sandbox workspace-write --ask-for-appr
 
 ### Mode 2: `codex app-server` — Long-Lived Daemon
 
-NeoKai connects to a persistent `codex app-server` instance (stdio or WebSocket), manages multiple threads, and streams incremental output to the UI.
+HyperNeo connects to a persistent `codex app-server` instance (stdio or WebSocket), manages multiple threads, and streams incremental output to the UI.
 
 **Characteristics:**
 - Supports multi-turn conversations within a thread.
 - Streaming text via `item/agentMessage/delta` notifications.
 - Thread forking and resumption for conversation branching.
-- One daemon can serve multiple NeoKai sessions (separate threads).
+- One daemon can serve multiple HyperNeo sessions (separate threads).
 - Higher implementation complexity: JSON-RPC protocol, thread lifecycle management.
 - Suitable for: interactive chat-style coding sessions, persistent session history.
 
@@ -358,14 +358,14 @@ OPENAI_API_KEY=sk-... codex app-server --listen ws://127.0.0.1:4500
 
 ### Mode 3: `codex mcp-server` — Codex as a Tool
 
-NeoKai's own Claude-based agents call Codex as an MCP tool. NeoKai remains in the driver's seat; Codex is one callable sub-agent among others.
+HyperNeo's own Claude-based agents call Codex as an MCP tool. HyperNeo remains in the driver's seat; Codex is one callable sub-agent among others.
 
 **Characteristics:**
-- NeoKai retains full agent orchestration control.
+- HyperNeo retains full agent orchestration control.
 - Codex is invoked for specific subtasks (e.g., "implement this function") and returns a result.
-- Compatible with NeoKai's existing MCP infrastructure.
-- Codex's autonomous execution is still opaque — NeoKai only sees the final tool response.
-- Suitable for: delegating bounded implementation tasks to Codex from within a NeoKai-orchestrated session.
+- Compatible with HyperNeo's existing MCP infrastructure.
+- Codex's autonomous execution is still opaque — HyperNeo only sees the final tool response.
+- Suitable for: delegating bounded implementation tasks to Codex from within a HyperNeo-orchestrated session.
 
 ---
 
@@ -378,7 +378,7 @@ NeoKai's own Claude-based agents call Codex as an MCP tool. NeoKai remains in th
 | Streaming text | No (full items only) | Yes (delta notifications) | No |
 | Multi-turn | No | Yes | No |
 | Concurrency | One task per process | Multiple threads | One task per call |
-| NeoKai controls tools? | No | No | No |
-| NeoKai controls model? | Via `--model` flag | Via `thread/start` params | Via MCP config |
+| HyperNeo controls tools? | No | No | No |
+| HyperNeo controls model? | Via `--model` flag | Via `thread/start` params | Via MCP config |
 | Sandbox control | `--sandbox` flag | Per-thread config | MCP server config |
 | Implementation complexity | Low | High | Medium |

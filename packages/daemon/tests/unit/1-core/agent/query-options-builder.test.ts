@@ -276,7 +276,7 @@ describe('QueryOptionsBuilder', () => {
       // context-window resolver. The SDK's effective window matches metadata,
       // so its own auto-compact fires correctly (1M − 33k buffer). If [1m]
       // recognition regresses, the context-fetcher capacity-mismatch warning
-      // surfaces it. GLM stays native, so no NeoKai fallback override is needed.
+      // surfaces it. GLM stays native, so no HyperNeo fallback override is needed.
       expect(buildProviderSettings('glm')).toBeUndefined();
       expect(buildProviderSettings('glm', 1_000_000)).toBeUndefined();
     });
@@ -294,7 +294,7 @@ describe('QueryOptionsBuilder', () => {
 
     it('should not disable SDK auto-compaction when context window is unavailable (avoid dead zone)', () => {
       // Previously returned { autoCompactEnabled: false }, creating a dead zone
-      // with no compaction path (no SDK auto-compact, no NeoKai fallback) and
+      // with no compaction path (no SDK auto-compact, no HyperNeo fallback) and
       // guaranteeing context overflow. Returning undefined lets the SDK use its
       // built-in auto-compact (enabled by default); the reactive prompt-too-long
       // recovery handles any sub-200k mismatch.
@@ -311,7 +311,7 @@ describe('QueryOptionsBuilder', () => {
       // and `message_start.usage.model_context_window` injection has no effect.
       //
       // There is NO way to make the SDK believe 262k. Previously Kimi disabled
-      // SDK auto-compact and used NeoKai's async post-turn fallback to chase the
+      // SDK auto-compact and used HyperNeo's async post-turn fallback to chase the
       // 262k headroom — but that fallback fires after turns, so it cannot prevent
       // within-turn or resume overflow (Kimi overflowed ~7.7% of sessions).
       //
@@ -391,7 +391,7 @@ describe('QueryOptionsBuilder', () => {
       mockSession.config.model = 'unknown-model';
       const options = await builder.build();
       // Returning undefined lets the SDK use its built-in auto-compact instead
-      // of creating a dead zone (no SDK compact, no NeoKai fallback).
+      // of creating a dead zone (no SDK compact, no HyperNeo fallback).
       expect(options.settings).toBeUndefined();
     });
 

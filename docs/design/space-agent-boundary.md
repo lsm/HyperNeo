@@ -2,7 +2,7 @@
 
 ## Developer Note
 
-NeoKai Spaces maintain two distinct agent tables. Keeping them separate prevents accidental coupling between workflow configuration and persistent role-holders.
+HyperNeo Spaces maintain two distinct agent tables. Keeping them separate prevents accidental coupling between workflow configuration and persistent role-holders.
 
 ### Worker Agents (`space_agents`)
 

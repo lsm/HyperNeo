@@ -1,7 +1,7 @@
 /**
  * GitHub Integration Types
  *
- * Types for GitHub event monitoring, filtering, and routing to NeoKai rooms.
+ * Types for GitHub event monitoring, filtering, and routing to HyperNeo rooms.
  */
 
 // ============================================================================

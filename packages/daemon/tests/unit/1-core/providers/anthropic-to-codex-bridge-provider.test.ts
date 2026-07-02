@@ -2,7 +2,7 @@
  * Unit tests for AnthropicToCodexBridgeProvider
  *
  * Covers:
- *  - getAuthStatus(): NeoKai OAuth only (env vars → unauthenticated), file-based auth, missing credentials, missing binary
+ *  - getAuthStatus(): HyperNeo OAuth only (env vars → unauthenticated), file-based auth, missing credentials, missing binary
  *  - getApiKey(): full discovery chain (env → ~/.neokai/auth.json → ~/.codex/auth.json)
  *  - importFromCodexAuth(): one-time migration scenarios (API key, OAuth with/without refresh)
  *  - buildSdkConfig(): Responses bridge server reuse and auth refresh
@@ -41,7 +41,7 @@ function makeProvider(
 }
 
 /**
- * Write a NeoKai auth.json with an openai entry to a temp dir.
+ * Write a HyperNeo auth.json with an openai entry to a temp dir.
  *
  * Uses synchronous I/O to ensure the file is fully written before the
  * provider reads it — Bun 1.3.10 on Linux may resolve async writes before
@@ -196,7 +196,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(result.error).toBeTruthy();
     });
 
-    it('returns isAuthenticated=true with NeoKai OAuth credentials even when codex is missing in Responses adapter mode', async () => {
+    it('returns isAuthenticated=true with HyperNeo OAuth credentials even when codex is missing in Responses adapter mode', async () => {
       const neokaiDir = path.join(emptyDir, 'neokai');
       const codexDir = path.join(emptyDir, 'codex');
       writeNeokaiAuth(neokaiDir, {
@@ -211,7 +211,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(result.method).toBe('oauth');
     });
 
-    it('returns isAuthenticated=true when NeoKai OAuth credentials in auth.json and codex found', async () => {
+    it('returns isAuthenticated=true when HyperNeo OAuth credentials in auth.json and codex found', async () => {
       const neokaiDir = path.join(emptyDir, 'neokai');
       const codexDir = path.join(emptyDir, 'codex');
       writeNeokaiAuth(neokaiDir, {
@@ -227,7 +227,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(result.method).toBe('oauth');
     });
 
-    it('returns isAuthenticated=false for api_key type in auth.json (not NeoKai OAuth)', async () => {
+    it('returns isAuthenticated=false for api_key type in auth.json (not HyperNeo OAuth)', async () => {
       const neokaiDir = path.join(emptyDir, 'neokai');
       const codexDir = path.join(emptyDir, 'codex');
       writeNeokaiAuth(neokaiDir, { type: 'api_key', access: 'sk-imported-key' });
@@ -236,7 +236,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(result.isAuthenticated).toBe(false);
     });
 
-    it('sets needsRefresh when NeoKai OAuth token is expired', async () => {
+    it('sets needsRefresh when HyperNeo OAuth token is expired', async () => {
       const neokaiDir = path.join(emptyDir, 'neokai');
       const codexDir = path.join(emptyDir, 'codex');
       writeNeokaiAuth(neokaiDir, {
@@ -905,7 +905,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
 
     it('returns models when OPENAI_API_KEY env var is set (env vars still power API calls)', async () => {
       // getModels() uses isAvailable() which includes env-var credentials.
-      // This ensures models appear in the picker even when the user has not done NeoKai OAuth.
+      // This ensures models appear in the picker even when the user has not done HyperNeo OAuth.
       provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, tmpDir, tmpDir);
       const models = await provider.getModels();
       expect(models.length).toBeGreaterThan(0);
@@ -944,7 +944,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
       }
     });
 
-    it('returns models when NeoKai OAuth credentials are in auth.json', async () => {
+    it('returns models when HyperNeo OAuth credentials are in auth.json', async () => {
       const neokaiDir = path.join(tmpDir, 'neokai');
       writeNeokaiAuth(neokaiDir, {
         type: 'oauth',

@@ -8,7 +8,7 @@
 
 ## 1. How MCPs Are Registered Today
 
-NeoKai's MCP server system is entirely **file-based and read-only at startup**. There is no application-level registry — servers are discovered by reading standard Claude Code configuration files.
+HyperNeo's MCP server system is entirely **file-based and read-only at startup**. There is no application-level registry — servers are discovered by reading standard Claude Code configuration files.
 
 ### Configuration File Sources
 
@@ -84,7 +84,7 @@ Used for remote MCP servers with basic HTTP transport.
 
 ### Custom In-Process MCP Servers (SDK-based)
 
-NeoKai also creates custom MCP servers in-process using the SDK's `createSdkMcpServer()` API. These are passed as live `McpServer` instances (not config objects) via `AgentSessionInit.mcpServers`:
+HyperNeo also creates custom MCP servers in-process using the SDK's `createSdkMcpServer()` API. These are passed as live `McpServer` instances (not config objects) via `AgentSessionInit.mcpServers`:
 
 | Server Name | Created By | Available To |
 |-------------|-----------|-------------|
@@ -232,7 +232,7 @@ The implementation plan (Tasks 4.1–4.2 and 5.3) addresses this with per-room e
 
 There is no `AppMcpLifecycleManager` today. MCP server processes are spawned by the SDK subprocess and managed entirely by the SDK. If a server crashes:
 - The SDK may retry or report failure
-- NeoKai has no visibility into server health
+- HyperNeo has no visibility into server health
 - No auto-restart mechanism exists
 - No way to query server status via RPC
 

@@ -45,7 +45,7 @@ Write user-facing documentation for the Skills feature, and update the CLAUDE.md
 **Subtasks (ordered):**
 
 1. Create `docs/features/skills.md` covering:
-   - What Skills are in NeoKai (slash commands + plugin extensions + MCP server skills)
+   - What Skills are in HyperNeo (slash commands + plugin extensions + MCP server skills)
    - How to add a skill via Settings > Skills
    - Source types explained: built-in, plugin, MCP server
    - How to enable/disable skills per room

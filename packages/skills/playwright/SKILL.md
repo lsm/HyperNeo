@@ -38,7 +38,7 @@ export NEOKAI_SKILLS_HOME="${NEOKAI_SKILLS_HOME:-$HOME/.neokai/skills}"
 export PWCLI="$NEOKAI_SKILLS_HOME/playwright/scripts/playwright_cli.sh"
 ```
 
-NeoKai skills install under `$NEOKAI_SKILLS_HOME` (default: `~/.neokai/skills`).
+HyperNeo skills install under `$NEOKAI_SKILLS_HOME` (default: `~/.neokai/skills`).
 
 ## Quick start
 

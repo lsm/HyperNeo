@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to NeoKai will be documented in this file.
+All notable changes to HyperNeo will be documented in this file.
 
 ## [0.38.0] - 2026-06-28
 
@@ -9,7 +9,7 @@ ACP query runner activation with provider registration and MCP tool proxying, Ki
 ### Added
 
 - **ACP query runner activation**: ACP provider registration, query runner activation, message polish and config option switching, Space MCP tool proxying for ACP, Space session MCP tools
-- **Kimi provider multi-region support**: Region selection (China vs Global), local bridge routing for 262k context window, context reserve buffer matching Kimi's ~32k max output, NeoKai compaction fallback for both regions, prompt-too-long detection in user-message stderr with recovery, official Claude Code config alignment
+- **Kimi provider multi-region support**: Region selection (China vs Global), local bridge routing for 262k context window, context reserve buffer matching Kimi's ~32k max output, HyperNeo compaction fallback for both regions, prompt-too-long detection in user-message stderr with recovery, official Claude Code config alignment
 - **Workflow hooks system**: Built-in workflows migrated to hooks; gate-poll runtime loops retired; event-driven gate evaluation for blocked runs; workflow hook UI exposure; hook events rendered in chat (roster-only in task threads); PR-ready gates migrated to send_message hooks
 - **External event expansions**: `get_external_event` MCP tool for on-demand raw event fetch; `subscribe_pr_events` node-agent tool; worker nodes auto-subscribe to PR events on `pr_url`; PR event subscription contract step; GitHub reply/resolve handle capture in event normalizer; GitHub PR reaction polling for review approvals; check-run failure polling delivered to PR workers; GitHub polling interval setting with rate-limit-aware polling and gate-hook retry; PAT storage in keychain with token/polling config UI
 - **Forge friction digest**: Repeated tool-use errors broken with `conversation_friction` evidence; `verification_triage` evidence after repeated verification failures; friction digest for repeated tool failures; existing lessons and proposals fed into episode judge prompt; artifact selection diagnostics in episode preflight; scope lessons ranked by task relevance before prompt injection

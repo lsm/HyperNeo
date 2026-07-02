@@ -95,7 +95,7 @@ TypeScript targeting Node.js 22.5+, MCP SDK, Zod, esbuild, SQLite via `bun:sqlit
 - Benchmarks are project-authored fixtures, not independent studies.
 - License is Elastic-2.0, not MIT.
 
-## Actionable takeaways for NeoKai
+## Actionable takeaways for HyperNeo
 
 1. **Add sandboxed batch execution for agents.** Space agents often gather logs, PR state, tests, and repo data; much can be processed outside transcript.
 2. **Index large artifacts locally.** Store raw outputs in SQLite/artifact store and inject only snippets or result summaries.
@@ -106,4 +106,4 @@ TypeScript targeting Node.js 22.5+, MCP SDK, Zod, esbuild, SQLite via `bun:sqlit
 
 ## Bottom line
 
-Context Mode offers the strongest output-side token-saving pattern: isolate expensive observation, compute outside context, return compact evidence. NeoKai can borrow this as runtime middleware plus artifact retrieval for Space workflows.
+Context Mode offers the strongest output-side token-saving pattern: isolate expensive observation, compute outside context, return compact evidence. HyperNeo can borrow this as runtime middleware plus artifact retrieval for Space workflows.

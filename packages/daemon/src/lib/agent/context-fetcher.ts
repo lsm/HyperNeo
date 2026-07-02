@@ -185,7 +185,7 @@ export class ContextFetcher {
   }
 
   /**
-   * Convert an SDK `getContextUsage()` response into NeoKai's `ContextInfo`.
+   * Convert an SDK `getContextUsage()` response into HyperNeo's `ContextInfo`.
    *
    * Mapping rules:
    * - `totalTokens → totalUsed`, `rawMaxTokens/maxTokens → totalCapacity`,

@@ -2,7 +2,7 @@
 
 ## Milestone Goal
 
-Produce a definitive audit of NeoKai's current Skills, MCP, and Plugin implementation. Document the as-is state, the gap analysis, and an agreed-upon architecture for the Skills registry. This milestone is a prerequisite for all implementation milestones.
+Produce a definitive audit of HyperNeo's current Skills, MCP, and Plugin implementation. Document the as-is state, the gap analysis, and an agreed-upon architecture for the Skills registry. This milestone is a prerequisite for all implementation milestones.
 
 ## Tasks
 
@@ -13,14 +13,14 @@ Produce a definitive audit of NeoKai's current Skills, MCP, and Plugin implement
 **Agent type:** general
 
 **Description:**
-Conduct a full code-level audit of the existing Skills, MCP, and Plugin integration in NeoKai. Produce a structured audit document in `docs/architecture/skills-audit.md`.
+Conduct a full code-level audit of the existing Skills, MCP, and Plugin integration in HyperNeo. Produce a structured audit document in `docs/architecture/skills-audit.md`.
 
 **Subtasks (ordered):**
 
 1. Read and document `packages/daemon/src/lib/agent/query-options-builder.ts` — how `Skill`, `WebSearch`, `WebFetch`, `plugins`, `mcpServers` are configured per session type.
 2. Read and document all coordinator agent definitions (`packages/daemon/src/lib/agent/coordinator/`) — which tools each sub-agent receives.
 3. Read and document all room agent definitions (`packages/daemon/src/lib/room/agents/`) — planner, leader, coder, general. Confirm `Skill`, `WebSearch` inclusion.
-4. Read `packages/daemon/src/lib/built-in-commands.ts` — NeoKai built-in slash commands.
+4. Read `packages/daemon/src/lib/built-in-commands.ts` — HyperNeo built-in slash commands.
 5. Read `packages/daemon/src/lib/agent/slash-command-manager.ts` — how SDK slash commands are fetched, cached, and surfaced to the UI.
 6. Read `packages/shared/src/sdk/sdk.d.ts` and `sdk-tools.d.ts` — confirm the SDK's `skills`, `plugins`, `SlashCommand`, `SdkPluginConfig` type definitions.
 7. Read `packages/shared/src/types/sdk-config.ts` — confirm `PluginConfig`, `SDKConfig.plugins`.
@@ -62,7 +62,7 @@ Design the `AppSkill` data model, the `SkillsManager` interface, and the RPC API
    - `PluginSkillConfig`: `{ pluginPath: string }` — a local plugin directory
    - `McpServerSkillConfig`: `{ appMcpServerId: string }` — references an existing `app_mcp_servers` entry by ID (MCP server config is owned by the app-level MCP registry, not duplicated in the skill)
 4. Design `SkillsManager` interface: `listSkills()`, `getSkill(id)`, `addSkill(skill)`, `updateSkill(id, updates)`, `removeSkill(id)`, `getEnabledSkills()`.
-5. Design persistence: **SQLite** — a new `skills` table in the existing NeoKai database, using the same `Repository` pattern as `goal-repository.ts`. Justify: SQLite is the established persistence pattern in the codebase; it provides concurrency safety via WAL mode; no file-locking or atomic-write logic needed; consistent with all other managers.
+5. Design persistence: **SQLite** — a new `skills` table in the existing HyperNeo database, using the same `Repository` pattern as `goal-repository.ts`. Justify: SQLite is the established persistence pattern in the codebase; it provides concurrency safety via WAL mode; no file-locking or atomic-write logic needed; consistent with all other managers.
 6. Design RPC API: `skills.list`, `skills.add`, `skills.update`, `skills.remove`, `skills.get`.
 7. Design per-room skill enablement: a dedicated `room_skill_overrides` table (`skill_id TEXT`, `room_id TEXT`, `enabled INTEGER`, `PRIMARY KEY (skill_id, room_id)`) — NOT the `rooms.config` JSON column. This allows `skills.byRoom` LiveQuery to reactively JOIN across both tables and receive change events when an override is added or removed.
 8. Design session injection: how `PluginSkillConfig` maps to `SDKConfig.plugins`, how `McpServerSkillConfig` maps to `mcpServers`, how `BuiltinSkillConfig` is surfaced.
@@ -70,7 +70,7 @@ Design the `AppSkill` data model, the `SkillsManager` interface, and the RPC API
 
 **Acceptance criteria:**
 - `docs/architecture/skills-registry-design.md` is committed with all design decisions
-- Design is compatible with existing SDK config types and NeoKai patterns
+- Design is compatible with existing SDK config types and HyperNeo patterns
 - Changes are on a feature branch with a GitHub PR created via `gh pr create`
 
 **depends_on:** ["Task 1.1: Skills and MCP System Audit"]

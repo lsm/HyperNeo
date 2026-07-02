@@ -1,6 +1,6 @@
 # E2E Tests
 
-This package contains end-to-end tests for NeoKai using Playwright.
+This package contains end-to-end tests for HyperNeo using Playwright.
 
 ## Running Tests Locally
 

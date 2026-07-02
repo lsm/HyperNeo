@@ -72,13 +72,13 @@ export interface AppSkill {
   config: AppSkillConfig;
   /** Whether this skill is globally enabled. */
   enabled: boolean;
-  /** True when the skill is shipped with NeoKai and cannot be deleted. */
+  /** True when the skill is shipped with HyperNeo and cannot be deleted. */
   builtIn: boolean;
   /**
    * Current validation state (set by the async validation job — not user-editable).
    */
   validationStatus: SkillValidationStatus;
-  /** Unix timestamp (ms) when the record was created. Consistent with other NeoKai tables. */
+  /** Unix timestamp (ms) when the record was created. Consistent with other HyperNeo tables. */
   createdAt: number;
 }
 

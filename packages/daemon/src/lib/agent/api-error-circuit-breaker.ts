@@ -389,7 +389,7 @@ export class ApiErrorCircuitBreaker {
 
 **What to do:**
 - Output limiting is now **enabled by default** to prevent this
-- If you still see this error, reduce the output limits in NeoKai's global
+- If you still see this error, reduce the output limits in HyperNeo's global
   settings (outputLimiter section):
   - outputLimiter.bash.headLines (default: 100)
   - outputLimiter.bash.tailLines (default: 200)

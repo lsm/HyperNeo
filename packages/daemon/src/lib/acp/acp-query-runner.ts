@@ -388,7 +388,7 @@ function acpInstructionBlocks(queryOptions: Options): AcpContentBlock[] {
   return [
     {
       type: 'text',
-      text: `NeoKai session instructions:\n\n${text}`,
+      text: `HyperNeo session instructions:\n\n${text}`,
     },
   ];
 }

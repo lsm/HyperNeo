@@ -1,14 +1,14 @@
 # Skills
 
-Skills extend NeoKai's capabilities by integrating external tools, commands, and services into agent sessions. A skill can be a plugin that adds custom behavior, or an MCP server that provides additional tools.
+Skills extend HyperNeo's capabilities by integrating external tools, commands, and services into agent sessions. A skill can be a plugin that adds custom behavior, or an MCP server that provides additional tools.
 
 ## What are Skills?
 
-In NeoKai, a skill is a configured capability that can be invoked by an agent during a session. Skills fall into three categories:
+In HyperNeo, a skill is a configured capability that can be invoked by an agent during a session. Skills fall into three categories:
 
 - **Plugin skills** — Local executable scripts or programs that extend agent functionality
 - **MCP server skills** — [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) servers that provide tools via the MCP standard
-- **Built-in skills** — Capabilities shipped with NeoKai that require no configuration (Web Search MCP, Chrome DevTools MCP, Playwright, and Playwright Interactive)
+- **Built-in skills** — Capabilities shipped with HyperNeo that require no configuration (Web Search MCP, Chrome DevTools MCP, Playwright, and Playwright Interactive)
 
 Skills are configured **globally** at the application level and are available to all sessions.
 
@@ -48,7 +48,7 @@ When enabled, all tools exposed by that MCP server become available to the agent
 
 #### Built-in
 
-Built-in skills are shipped with NeoKai and cannot be deleted. NeoKai ships with four built-in skills: **Fetch MCP**, **Chrome DevTools (MCP)**, **Playwright**, and **Playwright Interactive**.
+Built-in skills are shipped with HyperNeo and cannot be deleted. HyperNeo ships with four built-in skills: **Fetch MCP**, **Chrome DevTools (MCP)**, **Playwright**, and **Playwright Interactive**.
 
 ## Built-in Skills
 
@@ -74,7 +74,7 @@ CLI-first browser automation using `playwright-cli`. Invoke with `/playwright` i
 
 Core workflow: open a URL → snapshot the accessibility tree to get element refs → interact via CLI commands (click, fill, type, press) → re-snapshot after DOM changes. Use the bundled `playwright_cli.sh` wrapper script (`scripts/playwright_cli.sh`) which runs via `npx` without requiring a global install.
 
-This skill is **enabled by default**. The skill definition lives at `packages/skills/playwright/SKILL.md` in the NeoKai repository. At startup the dev server copies it (and all other built-in skill directories) to `~/.neokai/skills/playwright/`; the compiled binary extracts the same files from its embedded VFS. `QueryOptionsBuilder` then registers `~/.neokai/skills/playwright/` as a local SDK plugin so the agent can invoke `/playwright`.
+This skill is **enabled by default**. The skill definition lives at `packages/skills/playwright/SKILL.md` in the HyperNeo repository. At startup the dev server copies it (and all other built-in skill directories) to `~/.neokai/skills/playwright/`; the compiled binary extracts the same files from its embedded VFS. `QueryOptionsBuilder` then registers `~/.neokai/skills/playwright/` as a local SDK plugin so the agent can invoke `/playwright`.
 
 ### Playwright Interactive
 
@@ -88,7 +88,7 @@ Persistent browser session for iterative UI debugging and visual QA. Invoke with
 
 Covers desktop and mobile web contexts, screenshot capture, functional QA checklist, visual QA checklist, signoff criteria, and cleanup with try/finally. Uses a persistent `js_repl` Playwright session.
 
-This skill is **enabled by default**. The skill definition lives at `packages/skills/playwright-interactive/SKILL.md` in the NeoKai repository. At startup the dev server copies it to `~/.neokai/skills/playwright-interactive/`; the compiled binary extracts it from its embedded VFS. `QueryOptionsBuilder` registers the directory as a local SDK plugin so the agent can invoke `/playwright-interactive`.
+This skill is **enabled by default**. The skill definition lives at `packages/skills/playwright-interactive/SKILL.md` in the HyperNeo repository. At startup the dev server copies it to `~/.neokai/skills/playwright-interactive/`; the compiled binary extracts it from its embedded VFS. `QueryOptionsBuilder` registers the directory as a local SDK plugin so the agent can invoke `/playwright-interactive`.
 
 ## Skills Architecture
 

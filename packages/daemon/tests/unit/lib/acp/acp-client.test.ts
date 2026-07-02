@@ -106,7 +106,7 @@ describe('AcpClient', () => {
 
     const reqArgs = transport.sendRequest.mock.calls[0];
     expect(reqArgs[0]).toBe('initialize');
-    expect(reqArgs[1]).toMatchObject({ protocolVersion: 1, clientInfo: { name: 'NeoKai' } });
+    expect(reqArgs[1]).toMatchObject({ protocolVersion: 1, clientInfo: { name: 'HyperNeo' } });
   });
 
   test('initialize throws on error response', async () => {

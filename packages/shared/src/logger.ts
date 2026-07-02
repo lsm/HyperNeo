@@ -1,5 +1,5 @@
 /**
- * Unified Logger for NeoKai
+ * Unified Logger for HyperNeo
  *
  * Features:
  * - Log levels: SILENT, ERROR, WARN, INFO, DEBUG, TRACE

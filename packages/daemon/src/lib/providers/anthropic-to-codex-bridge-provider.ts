@@ -7,12 +7,12 @@
  *
  * Authentication discovery for API calls (priority order):
  *   1. OPENAI_API_KEY environment variable (daemon/test use only)
- *   2. ~/.neokai/auth.json  — NeoKai's own auth store (key "openai")
+ *   2. ~/.neokai/auth.json  — HyperNeo's own auth store (key "openai")
  *   3. ~/.codex/auth.json   — imported once into ~/.neokai/auth.json (for users who ran `codex login`)
  *
- * UI authentication requires NeoKai-managed OAuth credentials in ~/.neokai/auth.json.
+ * UI authentication requires HyperNeo-managed OAuth credentials in ~/.neokai/auth.json.
  * Env var credentials are used internally for API calls but not shown in the UI.
- * OAuth credentials obtained through NeoKai's login flow are written to
+ * OAuth credentials obtained through HyperNeo's login flow are written to
  * ~/.neokai/auth.json so they persist across sessions.
  *
  * Workspace isolation: each unique workspace path gets its own bridge server
@@ -183,13 +183,13 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   private readonly bridgeServers = new Map<string, OpenAIResponsesBridgeServer>();
   private readonly bridgeServerAuthKeys = new Map<string, string>();
 
-  /** Path to NeoKai's own auth store. */
+  /** Path to HyperNeo's own auth store. */
   private readonly authPath: string;
 
   /** Path to the Codex CLI auth file. */
   private readonly codexAuthPath: string;
 
-  /** In-memory cache of credentials read from the NeoKai auth file. */
+  /** In-memory cache of credentials read from the HyperNeo auth file. */
   private cachedCredentials: StoredCredentials | null = null;
   private readonly credentialListeners = new Set<
     (credentials: ProviderCredentials) => void | Promise<void>
@@ -266,7 +266,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     let credentials = await this.loadCredentials();
     if (!credentials) {
       // Import from ~/.codex/auth.json if the user has valid Codex CLI
-      // credentials but no NeoKai auth file, so startup reconciliation
+      // credentials but no HyperNeo auth file, so startup reconciliation
       // sees provider-owned credentials before applying stale rows.
       await this.importFromCodexAuth();
       credentials = await this.loadCredentials();
@@ -482,7 +482,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   }
 
   async getAuthStatus(): Promise<ProviderAuthStatusInfo> {
-    // Only NeoKai-managed OAuth credentials are recognised in the UI.
+    // Only HyperNeo-managed OAuth credentials are recognised in the UI.
     // OPENAI_API_KEY env vars are for daemon/test use only.
     const neokaiCreds = await this.loadCredentials();
     if (!neokaiCreds || neokaiCreds.type !== 'oauth') {
@@ -865,7 +865,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 
         res.writeHead(200, { 'Content-Type': 'text/html' });
         res.end(
-          '<html><body><h1>Authentication successful!</h1><p>You can close this window and return to NeoKai.</p><script>window.close();</script></body></html>'
+          '<html><body><h1>Authentication successful!</h1><p>You can close this window and return to HyperNeo.</p><script>window.close();</script></body></html>'
         );
         server.close();
 
@@ -1064,7 +1064,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 
     if (refreshToken) {
       // Prefer a fresh token before importing; if refresh fails, still import
-      // existing tokens so NeoKai remains decoupled from ~/.codex/auth.json.
+      // existing tokens so HyperNeo remains decoupled from ~/.codex/auth.json.
       const refreshed = await this.tryRefreshCodexToken(refreshToken);
       if (refreshed.ok) {
         accessToken = refreshed.token.access_token;

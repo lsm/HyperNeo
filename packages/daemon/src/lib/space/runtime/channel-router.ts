@@ -1695,7 +1695,7 @@ export class ChannelRouter {
    * report "no tasks" (treated as not archived) for a run whose task was
    * the only one and has since been archived.
    *
-   * Policy: the NeoKai space runtime uses a one-task-per-run model. The run
+   * Policy: the HyperNeo space runtime uses a one-task-per-run model. The run
    * is considered archived when every task associated with it has been
    * archived. A run with zero tasks is treated as not archived (archival
    * requires evidence of a tombstone, not absence of a task).

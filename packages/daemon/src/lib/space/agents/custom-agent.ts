@@ -51,7 +51,7 @@ const log = new Logger('custom-agent');
  *
  * Semantics:
  * - `customPrompt` is always appended (expanded) after the agent's `customPrompt`.
- *   It cannot replace the base prompt — the NeoKai contract sections remain intact.
+ *   It cannot replace the base prompt — the HyperNeo contract sections remain intact.
  * - absent (undefined) — uses the agent's base value unchanged.
  */
 export type PromptSource = 'workflow_node_custom_prompt' | 'space_agent_custom_prompt' | 'empty';
@@ -168,7 +168,7 @@ export interface CustomAgentConfig {
 /**
  * Build the runtime system prompt text for a worker agent.
  *
- * The NeoKai system contract (tool rules, completion semantics) is applied first by the
+ * The HyperNeo system contract (tool rules, completion semantics) is applied first by the
  * SDK preset; then the agent's `customPrompt` is appended, followed by any slot expansion.
  * User content always comes after the contract and cannot override it.
  */
@@ -622,7 +622,7 @@ function isGateWritableFromNode(
  * - inside a workflow run, the workflow slot customPrompt is expanded on top of the agent's
  * - outside a workflow run, the agent's own `customPrompt` is used unchanged
  *
- * The NeoKai system contract (preset) is always applied first; user content follows.
+ * The HyperNeo system contract (preset) is always applied first; user content follows.
  */
 export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionInit {
   const { customAgent, task, space, sessionId, workspacePath, slotOverrides } = config;

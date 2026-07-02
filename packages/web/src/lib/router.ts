@@ -293,7 +293,7 @@ function pushPath(path: string, state: Record<string, unknown>, replace: boolean
 /**
  * Return to the previous view. Only use `history.back()` when the current entry
  * has an in-app predecessor; deep links and entries popped back to depth 0 use a
- * parent-view fallback so the browser does not leave NeoKai.
+ * parent-view fallback so the browser does not leave HyperNeo.
  */
 export function navigateBack(fallback: () => void): void {
   if (getInAppHistoryDepth() > 0) {

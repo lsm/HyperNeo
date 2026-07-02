@@ -992,7 +992,7 @@ describe('WorktreeManager', () => {
       );
     });
 
-    it('dir exists but no sentinel (older NeoKai): writes sentinel and returns short-key path', async () => {
+    it('dir exists but no sentinel (older HyperNeo): writes sentinel and returns short-key path', async () => {
       const repoPath = '/Users/eve/legacy-app';
       const shortKey = manager.getProjectShortKey(repoPath);
 

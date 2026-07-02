@@ -3,7 +3,7 @@
  *
  * The unit under test materialises a small plugin directory at
  * `<wrappersRoot>/<commandName>/` that bridges the agent-skills layout used by
- * NeoKai (`SKILL.md` at the root of the skill dir) to the plugin layout the
+ * HyperNeo (`SKILL.md` at the root of the skill dir) to the plugin layout the
  * Claude Agent SDK requires (`.claude-plugin/plugin.json` at the root, skills
  * under `skills/<name>/`). The real bug these tests guard against is the SDK
  * silently dropping plugin entries whose directories lack that manifest — the

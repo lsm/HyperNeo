@@ -44,7 +44,7 @@ The `WorktreeManager` does not store anything in the DB — it operates purely o
    - **On subsequent use** (directory already exists): read the `.neokai-repo-root` sentinel file with `readFileSync` (if present) and compare its contents (trimmed) to the normalized `gitRoot`.
      - If they match (same repo): proceed normally, return the short-key base dir.
      - If they differ (collision — different repo mapped to same short key): use `this.logger.warn(...)` to log the collision (e.g., `this.logger.warn('Short key collision detected for "${shortKey}": expected "${storedPath}", got "${gitRoot}". Falling back to full encoding.')`) and fall back to `encodeRepoPath(gitRoot)` to produce the full-length base dir. **Do NOT use `console.warn`** — `no-console` is an error in `.oxlintrc.json` and `worktree-manager.ts` is not exempt; the file already uses `this.logger` (initialized at line ~24 as `private logger = new Logger('WorktreeManager')`).
-   - If the directory exists but has no sentinel file (e.g., created by an older version of NeoKai): write the sentinel for the current repo path using `writeFileSync` and proceed normally.
+   - If the directory exists but has no sentinel file (e.g., created by an older version of HyperNeo): write the sentinel for the current repo path using `writeFileSync` and proceed normally.
 4. Keep `encodeRepoPath` — it remains used by `cleanupOrphanedWorktrees` and as the collision fallback
 5. Write unit tests for `getProjectShortKey`:
    - Same path always returns the same key (deterministic)

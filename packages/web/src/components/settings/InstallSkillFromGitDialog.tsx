@@ -118,7 +118,7 @@ export function InstallSkillFromGitDialog({ isOpen, onClose }: InstallSkillFromG
           <code class="font-mono text-gray-400">
             https://github.com/openai/skills/tree/main/skills/.curated/playwright
           </code>
-          ) or a raw file URL. NeoKai will download the skill directory and register it.
+          ) or a raw file URL. HyperNeo will download the skill directory and register it.
         </p>
 
         {/* Repository URL */}

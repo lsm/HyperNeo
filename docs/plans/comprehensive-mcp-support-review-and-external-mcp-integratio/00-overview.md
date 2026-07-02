@@ -2,7 +2,7 @@
 
 ## Goal Summary
 
-NeoKai currently supports MCP servers defined in project-level `.mcp.json` or `~/.claude/settings.json` files, which are auto-loaded by the Claude Agent SDK. There is no application-level registry for managing, adding, or importing MCP servers from external sources, no UI to configure MCPs beyond toggling existing ones, and no persistent CRUD API for registering new MCPs.
+HyperNeo currently supports MCP servers defined in project-level `.mcp.json` or `~/.claude/settings.json` files, which are auto-loaded by the Claude Agent SDK. There is no application-level registry for managing, adding, or importing MCP servers from external sources, no UI to configure MCPs beyond toggling existing ones, and no persistent CRUD API for registering new MCPs.
 
 This plan audits the current MCP system, then implements:
 1. A daemon-managed **Application-Level MCP Registry** (SQLite-backed) for CRUD on named MCP server configs.
@@ -45,7 +45,7 @@ No existing MCP file-based flows are removed — the registry is additive.
 
 ### LiveQuery (reactive frontend reads)
 
-The `app_mcp_servers` and `room_mcp_enablement` tables integrate with NeoKai's **LiveQuery** system for reactive frontend reads — the same pattern used for `tasks.byRoom` and `goals.byRoom`. This means:
+The `app_mcp_servers` and `room_mcp_enablement` tables integrate with HyperNeo's **LiveQuery** system for reactive frontend reads — the same pattern used for `tasks.byRoom` and `goals.byRoom`. This means:
 
 - Repository write methods (`create`, `update`, `delete`, `setEnabled`, `resetToGlobal`) call `reactiveDb.notifyChange('<table>')` after each SQL write.
 - Two named queries are registered in `NAMED_QUERY_REGISTRY` (`live-query-handlers.ts`):

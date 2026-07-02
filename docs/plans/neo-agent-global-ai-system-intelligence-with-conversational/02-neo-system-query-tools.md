@@ -2,7 +2,7 @@
 
 ## Goal
 
-Implement read-only MCP tools that give Neo full visibility into the NeoKai system: rooms, spaces, goals, tasks, skills, MCP servers, and app settings.
+Implement read-only MCP tools that give Neo full visibility into the HyperNeo system: rooms, spaces, goals, tasks, skills, MCP servers, and app settings.
 
 ## Scope
 

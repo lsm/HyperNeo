@@ -20,7 +20,7 @@ Render workflow steps as draggable node cards on the canvas, with visual connect
    - Render input port (small circle, top-center, hidden on start node) and output port (small circle, bottom-center)
    - Port circles emit `onPortMouseDown(stepId, 'input'|'output')` for connection creation
    - Apply `cursor: grab` and selection ring (`ring-2 ring-blue-500`) when selected
-2. Style to match existing NeoKai dark theme, consistent with `WorkflowStepCard` visual language
+2. Style to match existing HyperNeo dark theme, consistent with `WorkflowStepCard` visual language
 3. Add unit tests: renders step name, shows agent name, applies selected style, renders ports, start node shows START badge and green border
 
 **Acceptance criteria**:

@@ -4,7 +4,7 @@ Use this skill when MCP coordination tools are unavailable or when you need the 
 
 ## Why this exists
 
-The primary Space coordination surface is the in-process `space-agent-tools` MCP server. It is re-attached by NeoKai runtime on every Space turn. This skill is a proof-of-concept fallback that does not depend on MCP tool schemas being present in the model context: it calls the local Space runtime HTTP/RPC API directly from Bash.
+The primary Space coordination surface is the in-process `space-agent-tools` MCP server. It is re-attached by HyperNeo runtime on every Space turn. This skill is a proof-of-concept fallback that does not depend on MCP tool schemas being present in the model context: it calls the local Space runtime HTTP/RPC API directly from Bash.
 
 `fetch-mcp` survives context compaction because it is a registry-backed MCP-server skill that is re-resolved into `mcpServers` during every SDK query build. Runtime Space MCP servers are in-process objects with closures and must be re-attached by the Space runtime before a query starts. If that invariant fails, use this skill and report the missing MCP surface.
 

@@ -242,9 +242,9 @@ File citations categorized as **real** (exists in repo), **suggested new** (legi
 
 1. **All three previously-failing arms failed due to incorrect CLI invocations, not model behavior.** CodeGraph (`mcp` → `serve --mcp`), CRG (removed `--data-dir`, added `CRG_DATA_DIR` env), Graphify (installed `[mcp]` extra).
 
-2. **All models correctly identified real gaps in NeoKai:** no autonomy-aware recovery, no exponential backoff, no rate-limited notifications, no persistent recovery state, no wall-clock timeout.
+2. **All models correctly identified real gaps in HyperNeo:** no autonomy-aware recovery, no exponential backoff, no rate-limited notifications, no persistent recovery state, no wall-clock timeout.
 
-3. **The actual NeoKai codebase matches the models' descriptions.** Key structures exist exactly where cited.
+3. **The actual HyperNeo codebase matches the models' descriptions.** Key structures exist exactly where cited.
 
 4. **ast-grep and Graphify are the most active tool users** (75 and 73 calls). Both use traversal patterns.
 

@@ -248,7 +248,7 @@ describe('ProvidersSettings', () => {
         backend: 'keychain-unavailable',
         keychainAvailable: false,
         warning:
-          'macOS Keychain is locked or unavailable. Run `security unlock-keychain`, launch NeoKai from Desktop/Terminal with a GUI session, or configure credentials via environment variables.',
+          'macOS Keychain is locked or unavailable. Run `security unlock-keychain`, launch HyperNeo from Desktop/Terminal with a GUI session, or configure credentials via environment variables.',
       },
     } as never;
 

@@ -10,7 +10,7 @@
 
 Building on the audit findings, this document specifies the design for an application-level Skills Registry that allows users to add Skills from external sources (plugin packages, MCP servers) and enable them per room/session.
 
-The design follows the established NeoKai patterns: SQLite persistence via the Repository pattern, reactive `notifyChange()` for LiveQuery invalidation, RPC handlers for the API surface, and `QueryOptionsBuilder` injection for session initialization.
+The design follows the established HyperNeo patterns: SQLite persistence via the Repository pattern, reactive `notifyChange()` for LiveQuery invalidation, RPC handlers for the API surface, and `QueryOptionsBuilder` injection for session initialization.
 
 ---
 
@@ -125,7 +125,7 @@ CREATE TABLE skills (
 ```
 
 - `config` is a JSON column serialising the discriminated config union.
-- `created_at` is Unix ms (not ISO string — consistent with other NeoKai tables).
+- `created_at` is Unix ms (not ISO string — consistent with other HyperNeo tables).
 - `id` is generated client-side with `generateUUID()` (same pattern as `GoalRepository`).
 
 ### 3.2 `room_skill_overrides` Table

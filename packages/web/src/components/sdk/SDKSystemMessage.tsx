@@ -265,7 +265,7 @@ function ModelRefusalFallbackMessage({ message }: { message: SDKModelRefusalFall
 
 /**
  * Permission Denied Message - Shows when a tool call is auto-denied by mode, rule, or canUseTool.
- * The SDK emits this when NeoKai's permissionMode/disallowedTools config blocks a tool call.
+ * The SDK emits this when HyperNeo's permissionMode/disallowedTools config blocks a tool call.
  */
 function PermissionDeniedMessage({ message }: { message: SDKPermissionDeniedMessage }) {
   return (

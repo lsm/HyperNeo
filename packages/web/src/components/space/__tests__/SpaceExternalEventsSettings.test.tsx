@@ -914,7 +914,7 @@ describe('SpaceExternalEventsSettings', () => {
             ...repoResult.repositories[0],
             webhookRemoteId: 123,
             webhookActive: false,
-            webhookLastError: 'GitHub webhook URL does not match this NeoKai endpoint',
+            webhookLastError: 'GitHub webhook URL does not match this HyperNeo endpoint',
           },
         });
       }
@@ -927,7 +927,7 @@ describe('SpaceExternalEventsSettings', () => {
 
     await waitFor(() => {
       expect(mockToastError).toHaveBeenCalledWith(
-        'GitHub webhook is inactive for acme/widgets: GitHub webhook URL does not match this NeoKai endpoint'
+        'GitHub webhook is inactive for acme/widgets: GitHub webhook URL does not match this HyperNeo endpoint'
       );
     });
     expect(mockToastSuccess).not.toHaveBeenCalledWith('GitHub webhook is active for acme/widgets');

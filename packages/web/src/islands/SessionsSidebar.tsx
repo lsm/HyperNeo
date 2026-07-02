@@ -335,7 +335,7 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
                   </button>
                 </div>
                 <p class="mt-1.5 text-[11px] leading-4 text-gray-600">
-                  Use an absolute path accessible to NeoKai.
+                  Use an absolute path accessible to HyperNeo.
                 </p>
                 {addProjectError && (
                   <p class="mt-1.5 text-[11px] leading-4 text-red-400">{addProjectError}</p>

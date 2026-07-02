@@ -1,5 +1,5 @@
 /**
- * Integration tests for the db-query MCP server using the full NeoKai schema.
+ * Integration tests for the db-query MCP server using the full HyperNeo schema.
  *
  * Unlike the unit tests in tools.test.ts which use a minimal hand-crafted schema,
  * these tests create a complete in-memory database using the real `createTables()`
@@ -22,7 +22,7 @@ import { createDbQueryToolHandlers } from '../../../../src/lib/db-query/tools.ts
 // ── Full-Schema DB Factory ─────────────────────────────────────────────────────
 
 /**
- * Create a fresh in-memory database with the complete NeoKai production schema.
+ * Create a fresh in-memory database with the complete HyperNeo production schema.
  * Runs migrations first (which create many tables), then createTables (which adds
  * any remaining tables via IF NOT EXISTS).
  */

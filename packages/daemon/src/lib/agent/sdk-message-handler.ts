@@ -1127,22 +1127,22 @@ export class SDKMessageHandler {
           contextInfo,
         });
 
-        // NeoKai-level compaction fallback.
+        // HyperNeo-level compaction fallback.
         //
         // Scoped to providers/model routes where SDK auto-compact uses the
         // wrong capacity. For these routes, SDK auto-compact is disabled via
-        // Options.settings; NeoKai is the sole compaction path and fires at a
+        // Options.settings; HyperNeo is the sole compaction path and fires at a
         // provider-aware reserve threshold (33k default, 45k for Kimi — see
         // `reserveBasedThreshold`).
         //
         // For all other providers (Anthropic native, GLM, Codex, OpenRouter,
         // Ollama, custom endpoints) we trust the SDK's own auto-compact.
-        // Installing NeoKai as a competing trigger would either race with the
+        // Installing HyperNeo as a competing trigger would either race with the
         // SDK (same threshold) or preempt it (lower threshold, cutting off
         // advertised context). The context-fetcher capacity-mismatch warning
         // surfaces any regression in SDK behaviour for those providers.
         //
-        // The NeoKai-only cooldown (60s) prevents back-to-back `/compact`
+        // The HyperNeo-only cooldown (60s) prevents back-to-back `/compact`
         // enqueues while a previous compaction is still in flight.
         const providerId = session.config.provider;
         if (!providerId) {
@@ -1158,7 +1158,7 @@ export class SDKMessageHandler {
           ) {
             contextTracker.markCompactionTriggered();
             this.logger.info(
-              `Triggering NeoKai compaction fallback for session ${session.id} ` +
+              `Triggering HyperNeo compaction fallback for session ${session.id} ` +
                 `(provider=${providerId}, ${contextInfo.totalUsed} >= ${neoKaiCompactThreshold} ` +
                 `of ${actualContextWindow} tokens)`
             );

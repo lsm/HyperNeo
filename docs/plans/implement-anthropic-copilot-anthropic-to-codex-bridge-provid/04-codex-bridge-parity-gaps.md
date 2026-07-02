@@ -2,7 +2,7 @@
 
 ## Goal
 
-Close the most impactful parity gaps in the `anthropic-to-codex-bridge` provider (backed by `codex app-server`). These gaps block real NeoKai usability with the Codex backend.
+Close the most impactful parity gaps in the `anthropic-to-codex-bridge` provider (backed by `codex app-server`). These gaps block real HyperNeo usability with the Codex backend.
 
 ## Scope
 

@@ -2,7 +2,7 @@
 
 ## Goal
 
-Introduce "Neo" -- a global AI agent that serves as the user's chief-of-staff for the entire NeoKai system. Neo has full visibility into all rooms, spaces, sessions, goals, tasks, MCP servers, and skills. Users interact with Neo through natural language to query system state, manage configuration, orchestrate room/space agents, and execute actions across the system.
+Introduce "Neo" -- a global AI agent that serves as the user's chief-of-staff for the entire HyperNeo system. Neo has full visibility into all rooms, spaces, sessions, goals, tasks, MCP servers, and skills. Users interact with Neo through natural language to query system state, manage configuration, orchestrate room/space agents, and execute actions across the system.
 
 ## Approach
 
@@ -20,7 +20,7 @@ The implementation follows the established pattern of the Global Spaces Agent (`
 8. **Origin metadata**: Lightweight `origin` column on `sdk_messages` table (`'human' | 'neo' | 'system'`). This is a **DB-level annotation for frontend display only** (powering "via Neo" indicators in M9). It is NOT injected into SDK message JSON -- room/space agents do not see it via the SDK API. Origin is single-hop only. Full provenance chains are a future concern.
 9. **Activity logging**: New `neo_activity_log` SQLite table recording every Neo tool invocation, with a retention policy (auto-prune entries older than 30 days, capped at 10,000 rows)
 10. **Settings storage**: Neo settings stored via existing `SettingsManager` under namespaced keys: `neo.securityMode` (default `'balanced'`), `neo.model` (default `null` = app primary model). No separate table needed.
-11. **Keyboard shortcut**: `Cmd+J` (Mac) / `Ctrl+J` (Win) to toggle Neo panel -- avoids Cmd+K conflicts. Note: Firefox uses Cmd+J for Downloads -- NeoKai runs in its own browser tab where `preventDefault()` overrides browser defaults; document this trade-off and consider making the shortcut user-configurable in a future iteration
+11. **Keyboard shortcut**: `Cmd+J` (Mac) / `Ctrl+J` (Win) to toggle Neo panel -- avoids Cmd+K conflicts. Note: Firefox uses Cmd+J for Downloads -- HyperNeo runs in its own browser tab where `preventDefault()` overrides browser defaults; document this trade-off and consider making the shortcut user-configurable in a future iteration
 12. **Activity logging rollout**: The activity log table is created in M1 but logging is wired in M5. This means M2-M4 tools execute without activity logging -- this is intentional (logging is a cross-cutting concern best added once all tools exist). Document this in M5 so it's not mistaken for a bug.
 13. **Provider error handling**: Neo RPC handlers and frontend must gracefully handle LLM provider failures (429 rate limits, 5xx errors, missing API keys, unavailable models). The RPC layer returns user-friendly error messages; the panel displays appropriate error states.
 

@@ -2,7 +2,7 @@
  * Auth RPC Handlers
  *
  * Handles authentication-related RPC calls including:
- * - NeoKai auth status (Anthropic API key / OAuth)
+ * - HyperNeo auth status (Anthropic API key / OAuth)
  * - Provider auth status (OpenAI, GitHub Copilot, etc.)
  * - Provider OAuth login/logout
  */
@@ -70,7 +70,7 @@ export function setupAuthHandlers(
   credentialManager?: ProviderCredentialManager,
   internalEventBus?: InternalEventBus<DaemonInternalEventMap>
 ): void {
-  // NeoKai auth status (Anthropic)
+  // HyperNeo auth status (Anthropic)
   messageHub.onRequest('auth.status', async () => {
     const authStatus = await authManager.getAuthStatus();
     return { authStatus };

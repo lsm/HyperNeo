@@ -48,7 +48,7 @@ Preserved compatibility:
 - Provider ID remains `anthropic-codex`
 - Codex model IDs and aliases remain unchanged
 - `OPENAI_API_KEY` direct auth remains supported
-- NeoKai OpenAI OAuth remains supported
+- HyperNeo OpenAI OAuth remains supported
 - One-time import from `~/.codex/auth.json` remains supported so existing Codex-login users can migrate credentials into `~/.neokai/auth.json`
 
 ## Changes Made

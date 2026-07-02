@@ -20,13 +20,13 @@ Document the setup process for both providers, known limitations, and produce a 
 1. Review existing documentation files under `docs/` for any provider setup information.
 2. Create `docs/providers/anthropic-copilot-setup.md` with:
    - Overview of the provider and what it does.
-   - Authentication methods: NeoKai OAuth, `COPILOT_GITHUB_TOKEN`, `GH_TOKEN`, `gh auth login`, `~/.config/gh/hosts.yml`.
+   - Authentication methods: HyperNeo OAuth, `COPILOT_GITHUB_TOKEN`, `GH_TOKEN`, `gh auth login`, `~/.config/gh/hosts.yml`.
    - Step-by-step setup for each method.
    - Troubleshooting: classic PAT rejection, token validation failures, enterprise GitHub.
    - Known limitations: no vision, no extended thinking, heuristic token counting, `tool_choice` limitations.
 3. Create `docs/providers/anthropic-codex-setup.md` with:
    - Overview of the provider and what it does.
-   - Authentication methods: `OPENAI_API_KEY`, `CODEX_API_KEY`, NeoKai OAuth (ChatGPT Plus/Pro), `codex login` migration.
+   - Authentication methods: `OPENAI_API_KEY`, `CODEX_API_KEY`, HyperNeo OAuth (ChatGPT Plus/Pro), `codex login` migration.
    - Step-by-step setup for each method.
    - Requirement: `codex` CLI must be on PATH.
    - Troubleshooting: codex binary not found, OAuth token refresh, workspace isolation.

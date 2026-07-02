@@ -8,7 +8,7 @@ This replaces the previous rigid multi-task plan with a simpler, adaptive approa
 
 ## Approach
 
-1. Configure a recurring mission in the NeoKai room with `@hourly` schedule and `supervised` autonomy.
+1. Configure a recurring mission in the HyperNeo room with `@hourly` schedule and `supervised` autonomy.
 2. The mission description serves as the discovery task prompt -- it contains the exact CI query commands, failure categorization guidance, and reporting format.
 3. On the first execution, the Planner agent expands the discovery prompt into a single concrete task.
 4. On subsequent executions, the mission reuses the same plan (task cloning).

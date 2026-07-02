@@ -22,7 +22,7 @@ const log = createLogger('hyperneo:cli:skill-utils');
  * skipped to preserve any user edits.
  *
  * Silently returns if `sourceDir` does not exist (e.g. when running outside
- * the NeoKai monorepo).
+ * the HyperNeo monorepo).
  */
 export async function syncBuiltinSkillsFromDir(
   sourceDir: string,

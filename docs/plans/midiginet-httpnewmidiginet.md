@@ -2,7 +2,7 @@
 
 ## Goal
 
-对 MiDiGi.NET 翻新苹果产品电商平台（https://new.midigi.net/zh）进行系统性测试，覆盖功能测试、UI/UX 测试、性能测试、网络请求测试和表单验证测试。所有测试使用 Chrome DevTools MCP 工具（`mcp__chrome-devtools__*`）进行浏览器自动化操作，无需修改 NeoKai 代码库。
+对 MiDiGi.NET 翻新苹果产品电商平台（https://new.midigi.net/zh）进行系统性测试，覆盖功能测试、UI/UX 测试、性能测试、网络请求测试和表单验证测试。所有测试使用 Chrome DevTools MCP 工具（`mcp__chrome-devtools__*`）进行浏览器自动化操作，无需修改 HyperNeo 代码库。
 
 ## Approach
 

@@ -1,5 +1,5 @@
 /**
- * Settings types for NeoKai
+ * Settings types for HyperNeo
  *
  * This module defines the settings system types that support both SDK-native
  * settings (passed as query options) and file-only settings (written to
@@ -68,7 +68,7 @@ export interface SDKSupportedSettings {
  * NOTE: Legacy MCP toggles (disabledMcpServers, enabledMcpServers,
  * enableAllProjectMcpServers) were removed in M5. The unified `app_mcp_servers`
  * registry plus the `mcp_enablement` override table is now the only place MCP
- * enablement is recorded; NeoKai no longer writes the SDK's
+ * enablement is recorded; HyperNeo no longer writes the SDK's
  * `disabledMcpjsonServers` / `enabledMcpjsonServers` /
  * `enableAllProjectMcpServers` keys into `.claude/settings.local.json`.
  */
@@ -90,7 +90,7 @@ export interface FileOnlySettings {
     pr?: string;
   };
 
-  // Output Limiter (NeoKai-specific)
+  // Output Limiter (HyperNeo-specific)
   outputLimiter?: {
     enabled?: boolean;
     bash?: {

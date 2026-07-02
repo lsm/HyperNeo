@@ -496,7 +496,7 @@ export class ProviderService {
   /**
    * Apply provider environment variables to process.env using the full session.
    *
-   * Session-aware bridge providers (Codex, Copilot) encode the NeoKai session ID
+   * Session-aware bridge providers (Codex, Copilot) encode the HyperNeo session ID
    * and effective workspace path into their SDK config. Using only (model, provider)
    * collapses all sessions to provider defaults such as `sessionId=default`.
    */

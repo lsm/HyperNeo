@@ -73,7 +73,7 @@ The `@ref{}` syntax was chosen over markdown-style links (`[@:type:id](text)`) b
 - It remains human-readable in raw message content
 - It avoids false-positive matching of any standard markdown constructs
 
-**Reference metadata** is stored alongside the message in the `sdk_message` JSON blob as a NeoKai-specific extension field (no schema migration needed — the `sdk_message` column is plain TEXT, so extra fields are preserved by SQLite):
+**Reference metadata** is stored alongside the message in the `sdk_message` JSON blob as a HyperNeo-specific extension field (no schema migration needed — the `sdk_message` column is plain TEXT, so extra fields are preserved by SQLite):
 ```json
 {
   "role": "user",
@@ -84,7 +84,7 @@ The `@ref{}` syntax was chosen over markdown-style links (`[@:type:id](text)`) b
   }
 }
 ```
-Note: `referenceMetadata` is intentionally not part of the SDK's `SDKUserMessage` type — it's a NeoKai extension stored at the top level of the JSON blob.
+Note: `referenceMetadata` is intentionally not part of the SDK's `SDKUserMessage` type — it's a HyperNeo extension stored at the top level of the JSON blob.
 
 ## Key Technical Decisions
 

@@ -328,10 +328,10 @@ export function getThinkingOptionsForProvider(
  * Session configuration extending SDKConfig with UI-specific settings
  *
  * This interface combines all SDK options from SDKConfig with
- * NeoKai-specific UI settings like autoScroll and queryMode.
+ * HyperNeo-specific UI settings like autoScroll and queryMode.
  *
  * For backward compatibility:
- * - The existing `tools?: ToolsConfig` field is preserved for NeoKai-specific UI settings
+ * - The existing `tools?: ToolsConfig` field is preserved for HyperNeo-specific UI settings
  * - SDKConfig's `tools` field (for tool selection) is available as `sdkToolsPreset`
  * - Other SDKConfig properties like `allowedTools`, `disallowedTools` are inherited directly
  */
@@ -398,8 +398,8 @@ export interface SessionConfig extends Omit<SDKConfig, 'tools'> {
   queryMode?: 'immediate' | 'manual';
 
   /**
-   * Legacy tools configuration for session (NeoKai-specific UI settings)
-   * Controls system prompt preset, setting sources, MCP tools, and NeoKai tools
+   * Legacy tools configuration for session (HyperNeo-specific UI settings)
+   * Controls system prompt preset, setting sources, MCP tools, and HyperNeo tools
    *
    * This is different from SDK's tool selection. For SDK tool selection, use:
    * - sdkToolsPreset: Select which tools to enable (array or preset)
@@ -697,7 +697,7 @@ export type MessageDeliveryMode = 'immediate' | 'defer';
 export type MessageOrigin = 'human' | 'system';
 
 /**
- * A NeoKai-native action message stored alongside SDK messages in the chat.
+ * A HyperNeo-native action message stored alongside SDK messages in the chat.
  *
  * Used to present interactive prompts to the user from the daemon — for
  * example, asking whether to start a fresh SDK session when the transcript

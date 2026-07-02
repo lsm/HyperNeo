@@ -99,9 +99,9 @@ Primary stack:
 - Dynamic-content reshaping may be risky for whitespace-sensitive prompts.
 - Local proxy/hook model assumes users can run background local services and safely mutate agent config.
 
-## Actionable takeaways for NeoKai
+## Actionable takeaways for HyperNeo
 
-1. **Build a transform pipeline before provider calls.** NeoKai can compress messages and tool outputs before they enter provider context, not only after UI compaction.
+1. **Build a transform pipeline before provider calls.** HyperNeo can compress messages and tool outputs before they enter provider context, not only after UI compaction.
 2. **Start with structured JSON/log compression.** Savings and correctness are easiest where data has schema or recurring shape.
 3. **Make compression reversible.** Store raw tool outputs as artifacts and expose retrieval tools.
 4. **Align provider cache prefixes.** Separate stable system prompts from dynamic runtime state so Anthropic prompt caching hits more often.
@@ -111,4 +111,4 @@ Primary stack:
 
 ## Bottom line
 
-Headroom is broader than a Claude plugin: it is a provider-facing compression proxy. NeoKai’s strategic lesson is to add reversible, typed compression before provider dispatch, with cache-aware prompt layout and telemetry feedback.
+Headroom is broader than a Claude plugin: it is a provider-facing compression proxy. HyperNeo’s strategic lesson is to add reversible, typed compression before provider dispatch, with cache-aware prompt layout and telemetry feedback.

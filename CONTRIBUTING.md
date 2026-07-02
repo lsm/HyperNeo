@@ -1,6 +1,6 @@
-# Contributing to NeoKai
+# Contributing to HyperNeo
 
-Thank you for your interest in contributing to NeoKai! This document provides guidelines and information for contributors.
+Thank you for your interest in contributing to HyperNeo! This document provides guidelines and information for contributors.
 
 ## Getting Started
 
@@ -181,4 +181,4 @@ If you have questions or run into issues:
 - Help others learn and grow
 - Focus on what is best for the community
 
-Thank you for contributing to NeoKai! 🚀
+Thank you for contributing to HyperNeo! 🚀

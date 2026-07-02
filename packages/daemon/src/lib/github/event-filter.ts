@@ -371,7 +371,7 @@ export class GitHubEventFilter {
           headers: {
             Accept: 'application/vnd.github+json',
             Authorization: `Bearer ${this.githubToken}`,
-            'User-Agent': 'NeoKai-GitHub-Integration/1.0',
+            'User-Agent': 'HyperNeo-GitHub-Integration/1.0',
             'X-GitHub-Api-Version': '2022-11-28',
           },
         }

@@ -183,7 +183,7 @@ Release safety:
 
 Acceptance:
 
-- Types distinguish native SDK settings from NeoKai overrides.
+- Types distinguish native SDK settings from HyperNeo overrides.
 - Types distinguish skill commands, MCP tools, hook policies, prompt policies, and runtime settings.
 - No type implies that a Markdown/plugin file is active without a declared contribution.
 

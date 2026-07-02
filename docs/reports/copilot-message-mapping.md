@@ -6,11 +6,11 @@
 
 ## Overview
 
-This document maps NeoKai SDK message types to/from GitHub Copilot CLI NDJSON format.
+This document maps HyperNeo SDK message types to/from GitHub Copilot CLI NDJSON format.
 
 ---
 
-## Outbound: NeoKai SDK → Copilot CLI
+## Outbound: HyperNeo SDK → Copilot CLI
 
 The Copilot CLI accepts a prompt string via `-p <text>`. Complex conversation context
 (system prompt, multi-turn history) must be embedded in the prompt string.
@@ -68,22 +68,22 @@ User-provided system prompts are best treated as prefix context.
 
 ### Tool Definitions → Not Applicable
 
-The legacy callback-based adapter converted NeoKai `ToolDefinition[]` into an intermediate
-tool format and executed callbacks inside NeoKai. The **Copilot CLI does not accept external
+The legacy callback-based adapter converted HyperNeo `ToolDefinition[]` into an intermediate
+tool format and executed callbacks inside HyperNeo. The **Copilot CLI does not accept external
 tool definitions**. Instead:
 - The CLI has its own built-in tool set (bash, file ops, GitHub API)
 - Tool execution is automatic with `--allow-all`
-- NeoKai tools are not invocable by Copilot CLI
+- HyperNeo tools are not invocable by Copilot CLI
 
 This is the key architectural difference:
 | Approach | Tool Execution |
 |----------|---------------|
-| Callback-based adapter | NeoKai provides tools + executes callbacks |
+| Callback-based adapter | HyperNeo provides tools + executes callbacks |
 | Copilot CLI | CLI has built-in tools, executes autonomously |
 
 ---
 
-## Inbound: Copilot CLI → NeoKai SDK
+## Inbound: Copilot CLI → HyperNeo SDK
 
 ### NDJSON Stream → SDKMessages
 
@@ -105,7 +105,7 @@ interface CopilotJsonlEvent {
 The CLI echoes back the input prompt. Ignored — we already have it.
 
 #### `assistant.turn_start` → (ignored)
-Signals start of a response turn. No NeoKai equivalent needed.
+Signals start of a response turn. No HyperNeo equivalent needed.
 
 #### `assistant.reasoning_delta` (ephemeral) → (ignored)
 Streaming reasoning tokens. Could be mapped to `stream_event` with `thinking_delta`
@@ -118,7 +118,7 @@ Streaming text tokens. Maps to `stream_event`:
 // Copilot event:
 { type: 'assistant.message_delta', data: { delta: 'Hello ' }, ephemeral: true }
 
-// NeoKai SDK:
+// HyperNeo SDK:
 {
   type: 'stream_event',
   event: {
@@ -148,7 +148,7 @@ Final complete message. Maps to assistant message:
   }
 }
 
-// NeoKai SDK:
+// HyperNeo SDK:
 {
   type: 'assistant',
   message: {
@@ -165,14 +165,14 @@ Final complete message. Maps to assistant message:
 ```
 
 **Note:** `toolRequests` in the Copilot output map to `tool_use` blocks. However, since
-the CLI executes tools autonomously, these are informational — NeoKai cannot intercept them.
+the CLI executes tools autonomously, these are informational — HyperNeo cannot intercept them.
 
 #### `assistant.reasoning` → (optional SDKAssistantMessage)
 Complete reasoning block. Can be optionally prepended to the assistant message as a
 thinking block or ignored.
 
 #### `assistant.turn_end` → (ignored)
-Turn completion signal. No NeoKai equivalent needed.
+Turn completion signal. No HyperNeo equivalent needed.
 
 #### `result` → `SDKResultMessage`
 Final result. Maps to success or error based on `exitCode`:
@@ -191,7 +191,7 @@ Final result. Maps to success or error based on `exitCode`:
   }
 }
 
-// NeoKai SDK (success):
+// HyperNeo SDK (success):
 {
   type: 'result',
   subtype: 'success',
@@ -209,7 +209,7 @@ Final result. Maps to success or error based on `exitCode`:
   session_id: '...'
 }
 
-// NeoKai SDK (error, exitCode != 0):
+// HyperNeo SDK (error, exitCode != 0):
 {
   type: 'result',
   subtype: 'error_during_execution',
@@ -220,7 +220,7 @@ Final result. Maps to success or error based on `exitCode`:
 ```
 
 **Usage reporting limitation:** The Copilot CLI only reports `premiumRequests` and
-`totalApiDurationMs`. Token counts and USD cost are NOT available. NeoKai usage fields
+`totalApiDurationMs`. Token counts and USD cost are NOT available. HyperNeo usage fields
 are zeroed.
 
 ---
@@ -238,8 +238,8 @@ copilot -p "initial prompt" --output-format json --silent
 copilot -p "follow-up prompt" --output-format json --silent --resume session_abc123
 ```
 
-**NeoKai integration:** The adapter can store the `sessionId` from each result and
-pass it to subsequent invocations. However, since NeoKai's `createQuery()` is called
+**HyperNeo integration:** The adapter can store the `sessionId` from each result and
+pass it to subsequent invocations. However, since HyperNeo's `createQuery()` is called
 once per user message (not per session), session resumption requires:
 1. Storing `sessionId` in `ProviderQueryContext` or provider state
 2. Passing it via `config.resumeSessionId` to the adapter
@@ -264,19 +264,19 @@ invocation.
 ## Context Window Management
 
 The Copilot CLI manages its own context window internally. Key differences:
-- **Legacy callback adapter:** NeoKai passes full conversation history and the adapter manages it
+- **Legacy callback adapter:** HyperNeo passes full conversation history and the adapter manages it
 - **Copilot CLI:** Context is maintained server-side in the Copilot session. The CLI
   handles `/compact` internally if context fills up.
 
 For initial invocations, the full system prompt can be prepended to the prompt string.
-Context window is NOT a concern NeoKai needs to manage when using the CLI.
+Context window is NOT a concern HyperNeo needs to manage when using the CLI.
 
 ---
 
 ## Full Event Flow Example
 
 ```
-[NeoKai] → spawn: copilot -p "Write a fibonacci function" --output-format json --silent
+[HyperNeo] → spawn: copilot -p "Write a fibonacci function" --output-format json --silent
                           --allow-all --model claude-sonnet-4.6 --cwd /workspace
   ↓ stdout NDJSON stream:
 {"type":"user.message","data":{"content":"Write a fibonacci function"},...}
@@ -289,7 +289,7 @@ Context window is NOT a concern NeoKai needs to manage when using the CLI.
 {"type":"assistant.turn_end","data":{},...}
 {"type":"result","data":{"sessionId":"s_abc","exitCode":0,"usage":{...}},...}
 
-[NeoKai yields]:
+[HyperNeo yields]:
   1. SDKSystemMessage (init)
   2. SDKPartialAssistantMessage (stream_event, delta="Here")
   3. SDKPartialAssistantMessage (stream_event, delta=" is")
