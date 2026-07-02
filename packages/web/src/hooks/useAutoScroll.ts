@@ -328,6 +328,7 @@ export function useAutoScroll({
     isInitialLoad,
     loadingOlder,
     enabled,
+    resetKey,
     scrollToBottom,
     scrollToBottomAfterLayout,
   ]);

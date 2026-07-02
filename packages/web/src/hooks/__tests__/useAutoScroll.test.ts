@@ -747,6 +747,39 @@ describe('useAutoScroll', () => {
       rerender({ messageCount: 26, resetKey: 'session-b' });
       expect(containerRef.current!.scrollTop).toBe(1000);
     });
+
+    it('should reset to bottom when resetKey changes but messageCount stays the same', () => {
+      // Edge case from review: when switching between two contexts that happen
+      // to have the same message count, resetKey is the ONLY hook input that
+      // changes. The reset effect clears the latch, but the auto-scroll effect
+      // must also re-run on resetKey so the cleared latch is acted upon —
+      // otherwise the old scroll position is preserved.
+      const { containerRef, endRef } = createMockRefs();
+
+      const { rerender } = renderHook(
+        ({ messageCount, resetKey }) =>
+          useAutoScroll({
+            containerRef,
+            endRef,
+            enabled: true,
+            messageCount,
+            resetKey,
+          }),
+        {
+          initialProps: { messageCount: 25, resetKey: 'session-a' },
+        }
+      );
+
+      // Session A: initial mount-scroll fires.
+      expect(containerRef.current!.scrollTop).toBe(1000);
+
+      // Navigate to session B which also has exactly 25 messages. messageCount
+      // is unchanged, so without resetKey in the auto-scroll dep array this
+      // render would not re-scroll.
+      containerRef.current!.scrollTop = 300;
+      rerender({ messageCount: 25, resetKey: 'session-b' });
+      expect(containerRef.current!.scrollTop).toBe(1000);
+    });
   });
 
   describe('scroll position detection', () => {
