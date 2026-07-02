@@ -141,6 +141,7 @@ export function useTargetSessionContext({
   } | null>(null);
   const latchKey = `${taskId}:${selectedTarget?.id ?? ''}`;
   const latched = latchedSessionRef.current;
+  const execSessionId = selectedTarget?.nodeExecutionSessionId;
   // The latch is valid while the target is unchanged AND the backing execution
   // still reports the latched session as live. `execSessionId` captured at latch
   // time distinguishes the two undefined cases: if we latched WITHOUT an
@@ -149,16 +150,17 @@ export function useTargetSessionContext({
   // nodeExecutionSessionId that no longer matches means the worker detached.
   const latchValid =
     latched?.key === latchKey &&
-    (latched.execSessionId === undefined ||
-      latched.execSessionId === selectedTarget?.nodeExecutionSessionId);
+    (latched.execSessionId === undefined || latched.execSessionId === execSessionId);
   const latchedSessionId = resolvedSessionId ?? (latchValid ? latched!.sessionId : null);
   let targetSessionId = latchedSessionId;
-  if (resolvedSessionId) {
-    latchedSessionRef.current = {
-      key: latchKey,
-      sessionId: resolvedSessionId,
-      execSessionId: selectedTarget?.nodeExecutionSessionId,
-    };
+  // Only latch a resolved session that agrees with the execution's live session.
+  // During a worker-recovery race nodeExecutions.byRun can advance to the new
+  // session before the heavier spaceTaskActivity.byTask snapshot drops the old
+  // member, so resolvedSessionId can momentarily lag execSessionId. Latching the
+  // stale activity session would resurrect it on the next activity gap.
+  const resolvedConsistent = execSessionId === undefined || execSessionId === resolvedSessionId;
+  if (resolvedSessionId && resolvedConsistent) {
+    latchedSessionRef.current = { key: latchKey, sessionId: resolvedSessionId, execSessionId };
   }
   const isStarted = !!targetSessionId;
 
