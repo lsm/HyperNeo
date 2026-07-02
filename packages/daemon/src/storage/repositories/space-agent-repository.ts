@@ -5,7 +5,8 @@
  *
  * Column mapping:
  *   SpaceWorkerAgent.customPrompt   ↔  custom_prompt column (nullable text)
- *   SpaceWorkerAgent.tools          ↔  tools column (JSON string array; '[]' or null → undefined)
+ *   SpaceWorkerAgent.tools          ↔  tools column (JSON string array; null/undefined → undefined,
+ *                                                    empty array [] preserved as "inherit all")
  *   SpaceWorkerAgent.thinkingLevel  ↔  thinking_level column (nullable text)
  *   SpaceWorkerAgent.templateName   ↔  template_name column (nullable text; null for user-created agents)
  *   SpaceWorkerAgent.templateHash   ↔  template_hash column (nullable text; null for user-created agents)
@@ -49,7 +50,7 @@ export class SpaceAgentRepository {
         params.model ?? null,
         params.thinkingLevel ?? null,
         params.provider ?? null,
-        params.tools && params.tools.length > 0 ? JSON.stringify(params.tools) : '[]',
+        params.tools != null ? JSON.stringify(params.tools) : '[]',
         params.customPrompt ?? null,
         params.settingSources != null ? JSON.stringify(params.settingSources) : null,
         params.templateName ?? null,
@@ -178,7 +179,7 @@ export class SpaceAgentRepository {
     }
     if (params.tools !== undefined) {
       fields.push('tools = ?');
-      values.push(params.tools && params.tools.length > 0 ? JSON.stringify(params.tools) : '[]');
+      values.push(params.tools != null ? JSON.stringify(params.tools) : '[]');
     }
     if (params.settingSources !== undefined) {
       fields.push('setting_sources = ?');
@@ -243,11 +244,16 @@ export class SpaceAgentRepository {
   }
 
   private rowToAgent(row: Record<string, unknown>): SpaceWorkerAgent {
-    // Parse tools: '[]' or null → undefined; non-empty JSON array → string[]
+    // Parse tools: null/undefined → undefined; a JSON array (including '[]')
+    // → string[]. Legacy rows may store the empty string '' (the m151
+    // migration treats tools = '' as an empty profile); normalize those to []
+    // so JSON.parse never throws on them.
     let tools: string[] | undefined;
-    if (row.tools) {
-      const parsed = JSON.parse(row.tools as string) as string[];
-      tools = parsed.length > 0 ? parsed : undefined;
+    const rawTools = row.tools as string | null | undefined;
+    if (rawTools === '') {
+      tools = [];
+    } else if (rawTools) {
+      tools = JSON.parse(rawTools) as string[];
     }
 
     // Parse settingSources: null or missing → undefined

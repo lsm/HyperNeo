@@ -8,8 +8,8 @@
  * - Form validation: name required
  * - Form validation: name uniqueness
  * - Model override is optional
- * - Form validation: at least one tool selected
- * - Tool presets: "Full Coding" selects correct tools
+ * - Empty tool profile is valid; SDK defaults are inherited
+ * - Tool presets: "Read Only" selects correct tools
  * - Tool presets: "Read Only" selects correct tools
  * - Tool presets: toggling a tool manually switches to "Custom"
  * - System prompt field accepts direct edits
@@ -264,34 +264,15 @@ describe('SpaceAgentEditor', () => {
     expect(mockCreateAgent.mock.calls[0][0]).not.toHaveProperty('model');
   });
 
-  it('shows tools error when no tools are selected', async () => {
-    const { container, getByPlaceholderText, getByTestId, getByRole, findByText } = render(
-      <SpaceAgentEditor {...DEFAULT_PROPS} />
-    );
+  it('allows saving with no explicit tool overrides (inherit all)', async () => {
+    const { getByPlaceholderText, getByRole } = render(<SpaceAgentEditor {...DEFAULT_PROPS} />);
     fillName(getByPlaceholderText, 'My Agent');
-    fillModel(getByTestId, 'claude-sonnet-4-6');
-
-    // Uncheck all tools via the checkboxes
-    const checkboxes = container.querySelectorAll('input[type="checkbox"]');
-    checkboxes.forEach((cb) => {
-      if ((cb as HTMLInputElement).checked) {
-        fireEvent.change(cb, { target: { checked: false } });
-      }
-    });
-
-    // Click each checked tool label to toggle off
-    // Instead, find all tool labels and click them to deselect
-    const toolLabels = Array.from(container.querySelectorAll('label')).filter((l) => {
-      const cb = l.querySelector('input[type="checkbox"]');
-      return cb && (cb as HTMLInputElement).checked;
-    });
-    for (const label of toolLabels) {
-      fireEvent.click(label);
-    }
 
     const form = getByRole('dialog').querySelector('form');
     fireEvent.submit(form!);
-    expect(await findByText('At least one tool must be selected')).toBeTruthy();
+
+    await waitFor(() => expect(mockCreateAgent).toHaveBeenCalled());
+    expect(mockCreateAgent.mock.calls[0][0]).toHaveProperty('tools', []);
   });
 
   // ── KNOWN_TOOLS ────────────────────────────────────────────────────────────
@@ -394,51 +375,47 @@ describe('SpaceAgentEditor', () => {
     expect(promptTextarea.value).toBe('You are an expert code reviewer.');
   });
 
-  it('applies "Full Coding" preset and selects the seeded coding tools', () => {
+  it('clears explicit overrides via "Inherit defaults" (all tools inherited)', () => {
     const { getByText, container } = render(<SpaceAgentEditor {...DEFAULT_PROPS} />);
-    fireEvent.click(getByText('Full Coding'));
+    fireEvent.click(getByText('Read Only'));
+    fireEvent.click(getByText('Inherit defaults'));
 
-    const expectedTools = [
-      'Read',
-      'Write',
-      'Edit',
-      'Bash',
-      'Grep',
-      'Glob',
-      'WebFetch',
-      'WebSearch',
-      'NotebookEdit',
-      'TodoWrite',
-      'AskUserQuestion',
-      'EnterPlanMode',
-      'ExitPlanMode',
-      'Skill',
-      'ToolSearch',
-    ];
-    const toolCheckboxes = container.querySelectorAll('input[type="checkbox"]');
-
-    for (const tool of expectedTools) {
-      const found = Array.from(toolCheckboxes).some((cb) => {
-        const label = (cb as HTMLInputElement).closest('label');
-        return label?.textContent?.includes(tool) && (cb as HTMLInputElement).checked;
-      });
-      expect(found, `Expected ${tool} to be checked after Full Coding preset`).toBe(true);
+    // Inherited mode: every tool box is checked (inherited) and disabled.
+    const checkboxes = Array.from(
+      container.querySelectorAll('.grid.grid-cols-3 input[type="checkbox"]')
+    ) as HTMLInputElement[];
+    expect(checkboxes.length).toBeGreaterThan(0);
+    for (const cb of checkboxes) {
+      expect(cb.checked).toBe(true);
+      expect(cb.disabled).toBe(true);
     }
+    expect(getByText('SDK defaults are always inherited.')).toBeTruthy();
+  });
 
-    const orchestrationToolsUnchecked = ['Workflow', 'CronCreate', 'RemoteTrigger'].every((tool) =>
-      Array.from(toolCheckboxes).every((cb) => {
-        const label = (cb as HTMLInputElement).closest('label');
-        return label?.textContent?.trim() !== tool || !(cb as HTMLInputElement).checked;
-      })
-    );
-    expect(orchestrationToolsUnchecked).toBe(true);
+  it('enters override mode from inherited when "Custom" is clicked', () => {
+    const { getByText, container } = render(<SpaceAgentEditor {...DEFAULT_PROPS} />);
+
+    // Default create mode is inherited: every box is checked + disabled.
+    fireEvent.click(getByText('Custom'));
+
+    const checkboxes = Array.from(
+      container.querySelectorAll('.grid.grid-cols-3 input[type="checkbox"]')
+    ) as HTMLInputElement[];
+    expect(checkboxes.length).toBeGreaterThan(0);
+    for (const cb of checkboxes) {
+      expect(cb.disabled).toBe(false);
+      // Custom is seeded with every known tool so the user unchecks to deny.
+      expect(cb.checked).toBe(true);
+    }
   });
 
   it('applies "Read Only" preset and selects only Read, Grep, Glob', () => {
     const { getByText, container } = render(<SpaceAgentEditor {...DEFAULT_PROPS} />);
     fireEvent.click(getByText('Read Only'));
 
-    const toolCheckboxes = Array.from(container.querySelectorAll('input[type="checkbox"]'));
+    const toolCheckboxes = Array.from(
+      container.querySelectorAll('.grid.grid-cols-3 input[type="checkbox"]')
+    );
     const checkedTools = toolCheckboxes
       .filter((cb) => (cb as HTMLInputElement).checked)
       .map((cb) => {
@@ -457,20 +434,54 @@ describe('SpaceAgentEditor', () => {
   it('switches active preset indicator to "Custom" when a tool is toggled manually', () => {
     const { getByText, container } = render(<SpaceAgentEditor {...DEFAULT_PROPS} />);
 
-    // Start with Full Coding preset
-    fireEvent.click(getByText('Full Coding'));
-
-    // Toggle one tool off
-    const toolCheckboxes = Array.from(container.querySelectorAll('input[type="checkbox"]'));
-    const readCb = toolCheckboxes.find((cb) => {
+    // Start with Read Only preset, then toggle an extra tool on
+    fireEvent.click(getByText('Read Only'));
+    const writeCb = Array.from(
+      container.querySelectorAll('.grid.grid-cols-3 input[type="checkbox"]')
+    ).find((cb) => {
       const label = (cb as HTMLInputElement).closest('label');
-      return label?.textContent?.includes('Read');
+      return label?.textContent?.includes('Write');
     });
-    if (readCb) fireEvent.click(readCb.closest('label')!);
+    if (writeCb) fireEvent.click(writeCb.closest('label')!);
 
     // "Custom" preset button should now be active
     const customButton = getByText('Custom');
     expect(customButton.className).toContain('blue');
+  });
+
+  it('switches active preset indicator to "Inherited" when the last tool is unchecked', () => {
+    const { getByText, container } = render(<SpaceAgentEditor {...DEFAULT_PROPS} />);
+
+    // Start with Read Only preset, then uncheck all of its tools
+    fireEvent.click(getByText('Read Only'));
+    for (const toolName of ['Read', 'Grep', 'Glob']) {
+      const cb = Array.from(
+        container.querySelectorAll('.grid.grid-cols-3 input[type="checkbox"]')
+      ).find((input) => {
+        const label = (input as HTMLInputElement).closest('label');
+        return label?.textContent?.includes(toolName);
+      });
+      if (cb) fireEvent.click(cb.closest('label')!);
+    }
+
+    // "Inherit defaults" preset button should now be active
+    const inheritButton = getByText('Inherit defaults');
+    expect(inheritButton.className).toContain('blue');
+  });
+
+  it('shows all tools as checked and disabled in inherited mode', () => {
+    const { container } = render(<SpaceAgentEditor {...DEFAULT_PROPS} />);
+
+    // Default create-mode preset is inherited, so all boxes should
+    // be checked and disabled to reflect inherited SDK defaults.
+    const checkboxes = Array.from(
+      container.querySelectorAll('.grid.grid-cols-3 input[type="checkbox"]')
+    ) as HTMLInputElement[];
+    expect(checkboxes.length).toBeGreaterThan(0);
+    for (const cb of checkboxes) {
+      expect(cb.checked).toBe(true);
+      expect(cb.disabled).toBe(true);
+    }
   });
 
   it('uses direct system prompt edits without template buttons', () => {
@@ -495,7 +506,7 @@ describe('SpaceAgentEditor', () => {
 
     fillName(getByPlaceholderText, 'Fresh Agent');
     fillModel(getByTestId, 'claude-sonnet-4-6');
-    // Full Coding preset is active by default
+    // Inherited preset is active by default
 
     const form = getByRole('dialog').querySelector('form');
     fireEvent.submit(form!);

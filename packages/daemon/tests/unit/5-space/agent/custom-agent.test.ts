@@ -934,7 +934,7 @@ describe('createCustomAgentInit', () => {
     expect(init.allowedTools).toBeUndefined();
     expect(init.agent).toBeUndefined();
     expect(init.agents).toBeUndefined();
-    expect(init.disallowedTools).toEqual(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
+    expect(init.disallowedTools).toEqual(['Bash', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
     expect(init.disallowedTools).not.toContain('mcp__node-agent__send_message');
     expect(init.disallowedTools).not.toContain('space-agent-tools__send_message');
   });

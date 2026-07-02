@@ -8,12 +8,12 @@
  * - Name (required, unique within space)
  * - Description (optional)
  * - Model (dropdown override, optional for default model inheritance)
- * - Tools (multi-select checkboxes from KNOWN_TOOLS)
+ * - Tools (explicit overrides from KNOWN_TOOLS; SDK defaults are always inherited)
  * - Custom Prompt (monospace textarea with line numbers; appended after NeoKai contract)
  *
- * Tool presets: "Full Coding" · "Read Only" · "Custom"
+ * Tool presets: "Inherit defaults" (no overrides) · "Read Only" (deny mutators) · "Custom"
  *
- * Validation: name required + unique, at least one tool selected.
+ * Validation: name required + unique.
  */
 
 import type {
@@ -39,30 +39,19 @@ import {
 
 type ToolName = (typeof KNOWN_TOOLS)[number];
 
-/** Tool presets map preset name → tool selection */
-const FULL_CODING_TOOLS: ToolName[] = [
-  'Read',
-  'Write',
-  'Edit',
-  'MultiEdit',
-  'Bash',
-  'Grep',
-  'Glob',
-  'WebFetch',
-  'WebSearch',
-  'NotebookEdit',
-  'TodoWrite',
-  'AskUserQuestion',
-  'EnterPlanMode',
-  'ExitPlanMode',
-  'Skill',
-  'ToolSearch',
-];
-
+/**
+ * Tool presets map preset name → explicit override list.
+ *
+ * SDK defaults are always inherited at runtime; these profiles only express
+ * overrides. An empty profile (no overrides) is "Inherit defaults". Read Only
+ * lists non-mutating tools so the runtime denies Bash/Write/Edit/MultiEdit/NotebookEdit.
+ */
 const TOOL_PRESETS: Record<string, ToolName[]> = {
-  'Full Coding': FULL_CODING_TOOLS,
   'Read Only': ['Read', 'Grep', 'Glob'],
 };
+const TOOL_PRESET_BUTTONS = ['Inherit defaults', ...Object.keys(TOOL_PRESETS), 'Custom'];
+const DENIABLE_TOOLS = ['Bash', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit'] as const;
+const DENIABLE_TOOL_SET = new Set<string>(DENIABLE_TOOLS);
 
 const THINKING_LEVEL_OPTIONS: Array<{ value: '' | ThinkingLevel; label: string }> = [
   { value: '', label: 'Use app default' },
@@ -77,9 +66,9 @@ const THINKING_LEVEL_OPTIONS: Array<{ value: '' | ThinkingLevel; label: string }
 // Pure helpers (module-level to avoid re-creation on each render)
 // ============================================================================
 
-/** Detect which preset name matches a given tool list, or 'Custom' if no match */
+/** Detect which preset name matches a given explicit override list, or 'Custom' if no match. */
 function detectPreset(toolList: string[] | null | undefined): string {
-  if (!toolList) return 'Inherited';
+  if (toolList == null || toolList.length === 0) return 'Inherited';
   for (const [preset, presetTools] of Object.entries(TOOL_PRESETS)) {
     if (toolList.length === presetTools.length && presetTools.every((t) => toolList.includes(t))) {
       return preset;
@@ -179,12 +168,10 @@ export function SpaceAgentEditor({
         ? normalizeThinkingLevel(promotionDraft.thinkingLevel)
         : ''
   );
-  const [tools, setTools] = useState<string[]>(
-    agent?.tools ?? promotionDraft?.tools ?? [...TOOL_PRESETS['Full Coding']]
-  );
-  const [toolsOverridden, setToolsOverridden] = useState(
-    agent?.tools !== undefined || promotionDraft?.tools !== undefined || !isEdit
-  );
+  const initialTools = agent?.tools ?? promotionDraft?.tools ?? [];
+  const initialToolsOverridden = initialTools.length > 0;
+  const [tools, setTools] = useState<string[]>(initialTools);
+  const [toolsOverridden, setToolsOverridden] = useState(initialToolsOverridden);
   const [customPrompt, setCustomPrompt] = useState(
     agent?.customPrompt ?? promotionDraft?.customPrompt ?? ''
   );
@@ -211,9 +198,36 @@ export function SpaceAgentEditor({
   const applyPreset = (presetName: string) => {
     setActivePreset(presetName);
     if (presetName in TOOL_PRESETS) {
-      setToolsOverridden(true);
-      setTools([...TOOL_PRESETS[presetName]]);
+      const presetTools = TOOL_PRESETS[presetName];
+      // An empty preset profile is inherit-all, so never mark it as an
+      // override (that would leave an editable empty list where one checkbox
+      // click persists a restrictive profile).
+      if (presetTools.length === 0) {
+        setToolsOverridden(false);
+        setActivePreset('Inherited');
+        setTools([]);
+      } else {
+        setToolsOverridden(true);
+        setTools([...presetTools]);
+      }
     }
+  };
+
+  const inheritTools = () => {
+    setToolsOverridden(false);
+    setActivePreset('Inherited');
+    setTools([]);
+  };
+
+  const startCustom = () => {
+    // Enter override mode seeded with every known tool, so the user builds a
+    // custom profile by unchecking — in particular unchecking a mutator
+    // (Bash/Write/Edit/MultiEdit/NotebookEdit) denies it at runtime. Starting
+    // from an empty enabled list would otherwise read as "inherits all" while
+    // leaving every box unchecked.
+    setToolsOverridden(true);
+    setActivePreset('Custom');
+    setTools([...(KNOWN_TOOLS as readonly string[])]);
   };
 
   const applyTemplate = (template: SpaceWorkerAgentTemplate) => {
@@ -223,7 +237,7 @@ export function SpaceAgentEditor({
     setDescription(template.description ?? '');
     setCustomPrompt(template.customPrompt ?? '');
     setTools([...template.tools]);
-    setToolsOverridden(true);
+    setToolsOverridden(template.tools.length > 0);
     setSelectedTemplateHash(template.templateHash ?? null);
     setActivePreset(detectPreset(template.tools));
     setErrors((prev) => ({ ...prev, tools: '', name: '', model: '' }));
@@ -231,10 +245,15 @@ export function SpaceAgentEditor({
   };
 
   const toggleTool = (tool: string) => {
-    setToolsOverridden(true);
     setTools((prev) => {
       const next = prev.includes(tool) ? prev.filter((t) => t !== tool) : [...prev, tool];
-      setActivePreset(detectPreset(next));
+      if (next.length === 0) {
+        setToolsOverridden(false);
+        setActivePreset('Inherited');
+      } else {
+        setToolsOverridden(true);
+        setActivePreset(detectPreset(next));
+      }
       return next;
     });
   };
@@ -251,10 +270,6 @@ export function SpaceAgentEditor({
       if (conflict) {
         newErrors['name'] = 'An agent with this name already exists';
       }
-    }
-
-    if (toolsOverridden && tools.length === 0) {
-      newErrors['tools'] = 'At least one tool must be selected';
     }
 
     setErrors(newErrors);
@@ -279,7 +294,8 @@ export function SpaceAgentEditor({
         customPrompt === (selectedTemplate.customPrompt ?? '') &&
         JSON.stringify(tools) === JSON.stringify(selectedTemplate.tools);
       const templateTracked = agent?.templateName || agent?.templateHash;
-      const explicitToolsCleared = isEdit && !toolsOverridden && agent?.tools !== undefined;
+      const agentHasExplicitToolProfile = (agent?.tools?.length ?? 0) > 0;
+      const explicitToolsCleared = isEdit && !toolsOverridden && agentHasExplicitToolProfile;
       const templateFieldsChanged =
         isEdit &&
         templateTracked &&
@@ -297,10 +313,12 @@ export function SpaceAgentEditor({
         ...(isEdit && trimmedModel && providerChanged && !provider ? { provider: null } : {}),
         customPrompt: customPrompt || null,
         ...(toolsOverridden
-          ? { tools: tools.length > 0 ? tools : null }
-          : isEdit && agent?.tools !== undefined
+          ? { tools }
+          : isEdit && agentHasExplicitToolProfile
             ? { tools: null }
-            : {}),
+            : !isEdit
+              ? { tools: [] }
+              : {}),
         ...(clearSettingSources ||
         JSON.stringify(settingSources) !==
           JSON.stringify(agent?.settingSources ?? inheritedSettingSources)
@@ -315,19 +333,16 @@ export function SpaceAgentEditor({
           thinkingLevel: thinkingLevel || null,
         });
       } else {
-        const {
-          tools: _editTools,
-          templateName: _templateName,
-          templateHash: _templateHash,
-          model: _editModel,
-          provider: _editProvider,
-          ...createBaseParams
-        } = baseParams;
         const createParams = {
-          ...createBaseParams,
-          ...(toolsOverridden ? { tools } : {}),
+          name: name.trim(),
           description: trimmedDescription || undefined,
+          customPrompt: customPrompt || null,
+          tools: toolsOverridden ? tools : [],
           ...(trimmedModel ? { model: trimmedModel, provider: provider || undefined } : {}),
+          ...(clearSettingSources ||
+          JSON.stringify(settingSources) !== JSON.stringify(inheritedSettingSources)
+            ? { settingSources: clearSettingSources ? null : settingSources }
+            : {}),
           ...(selectedTemplateName && selectedTemplateStillMatches
             ? { templateName: selectedTemplateName, templateHash: selectedTemplateHash }
             : {}),
@@ -572,74 +587,88 @@ export function SpaceAgentEditor({
           <div class="flex items-center justify-between mb-2">
             <label class="block text-sm font-medium text-gray-200">
               Tools
-              {toolsOverridden ? (
-                <span class="text-red-400 ml-1">*</span>
-              ) : (
-                <span class="text-gray-400 text-xs ml-2">(inherited)</span>
-              )}
+              {!toolsOverridden && <span class="text-gray-400 text-xs ml-2">(inherited)</span>}
             </label>
             {/* Tool presets */}
             <div class="flex gap-1.5">
-              {isEdit && !toolsOverridden && (
-                <button
-                  type="button"
-                  class="text-xs px-2.5 py-1 rounded border border-blue-600 bg-blue-900/20 text-blue-300"
-                >
-                  Inherited
-                </button>
-              )}
-              {isEdit && toolsOverridden && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setToolsOverridden(false);
-                    setActivePreset('Inherited');
-                  }}
-                  class="text-xs px-2.5 py-1 rounded border border-dark-600 text-gray-400 hover:border-dark-500 hover:text-gray-300"
-                >
-                  Inherit defaults
-                </button>
-              )}
-              {[...Object.keys(TOOL_PRESETS), 'Custom'].map((preset) => (
-                <button
-                  key={preset}
-                  type="button"
-                  onClick={() => {
-                    if (preset !== 'Custom') applyPreset(preset);
-                    else setActivePreset('Custom');
-                  }}
-                  class={`text-xs px-2.5 py-1 rounded border transition-colors ${
-                    activePreset === preset
-                      ? 'border-blue-600 bg-blue-900/20 text-blue-300'
-                      : 'border-dark-600 text-gray-400 hover:border-dark-500 hover:text-gray-300'
-                  }`}
-                >
-                  {preset}
-                </button>
-              ))}
+              {TOOL_PRESET_BUTTONS.map((preset) => {
+                const active =
+                  preset === 'Inherit defaults'
+                    ? !toolsOverridden
+                    : activePreset === preset && toolsOverridden;
+                return (
+                  <button
+                    key={preset}
+                    type="button"
+                    onClick={() => {
+                      if (preset === 'Inherit defaults') inheritTools();
+                      else if (preset === 'Custom') startCustom();
+                      else applyPreset(preset);
+                    }}
+                    class={`text-xs px-2.5 py-1 rounded border transition-colors ${
+                      active
+                        ? 'border-blue-600 bg-blue-900/20 text-blue-300'
+                        : 'border-dark-600 text-gray-400 hover:border-dark-500 hover:text-gray-300'
+                    }`}
+                  >
+                    {preset}
+                  </button>
+                );
+              })}
             </div>
           </div>
+
+          {/* Inheritance banner */}
+          <div class="rounded-lg border border-blue-500/30 bg-blue-500/10 px-4 py-3 mb-3 text-sm text-blue-100">
+            <p class="font-medium">SDK defaults are always inherited.</p>
+            <p class="mt-1 text-xs text-blue-200/80">
+              {toolsOverridden && tools.length > 0
+                ? 'Checked tools are explicit profile entries. Bash, Write, Edit, MultiEdit, and NotebookEdit are denied when unchecked; other unchecked SDK tools remain inherited.'
+                : 'This agent inherits all SDK built-in tools. No explicit overrides are set.'}
+            </p>
+          </div>
+
+          {toolsOverridden && tools.length > 0 && (
+            <p class="mb-2 text-xs text-gray-500">
+              Checked = explicit profile entry; unchecked usually still inherited.
+            </p>
+          )}
+
           <div class="grid grid-cols-3 gap-1.5">
             {(KNOWN_TOOLS as readonly string[]).map((tool) => {
-              const checked = tools.includes(tool);
+              const inherited = !toolsOverridden;
+              const checked = inherited || tools.includes(tool);
+              const denied =
+                toolsOverridden && tools.length > 0 && DENIABLE_TOOL_SET.has(tool) && !checked;
               return (
                 <label
                   key={tool}
-                  class={`flex items-center gap-2 px-3 py-1.5 rounded border cursor-pointer text-xs transition-colors ${
-                    checked
-                      ? 'border-blue-700/60 bg-blue-900/15 text-blue-200'
-                      : 'border-dark-700 text-gray-400 hover:border-dark-600 hover:text-gray-300'
+                  class={`flex items-center gap-2 px-3 py-1.5 rounded border text-xs transition-colors ${
+                    inherited
+                      ? 'border-dark-600 bg-dark-800/40 text-gray-500 cursor-not-allowed'
+                      : checked
+                        ? 'border-blue-700/60 bg-blue-900/15 text-blue-200 cursor-pointer'
+                        : denied
+                          ? 'border-red-700/60 bg-red-900/15 text-red-200 hover:border-red-600 cursor-pointer'
+                          : 'border-dark-700 text-gray-400 hover:border-dark-600 hover:text-gray-300 cursor-pointer'
                   }`}
                 >
                   <input
                     type="checkbox"
                     checked={checked}
-                    onChange={() => toggleTool(tool)}
+                    disabled={inherited}
+                    onChange={() => !inherited && toggleTool(tool)}
                     class="sr-only"
                   />
                   <span
                     class={`w-3.5 h-3.5 rounded border flex-shrink-0 flex items-center justify-center ${
-                      checked ? 'bg-blue-600 border-blue-600' : 'border-dark-500'
+                      inherited
+                        ? 'bg-dark-600 border-dark-500'
+                        : checked
+                          ? 'bg-blue-600 border-blue-600'
+                          : denied
+                            ? 'border-red-500'
+                            : 'border-dark-500'
                     }`}
                   >
                     {checked && (
@@ -647,8 +676,14 @@ export function SpaceAgentEditor({
                         <path d="M10 3L5 8.5 2 5.5l-1 1L5 10.5l6-7-1-1z" />
                       </svg>
                     )}
+                    {denied && <span class="text-[10px] leading-none text-red-300">×</span>}
                   </span>
-                  {tool}
+                  <span>{tool}</span>
+                  {denied && (
+                    <span class="ml-auto text-[10px] uppercase tracking-wide text-red-300">
+                      Denied
+                    </span>
+                  )}
                 </label>
               );
             })}

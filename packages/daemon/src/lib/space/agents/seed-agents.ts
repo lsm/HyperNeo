@@ -1,7 +1,7 @@
 /**
  * Space Preset Agent Seeding
  *
- * Seeds the seven default SpaceWorkerAgent records when a new Space is created.
+ * Seeds the six default SpaceWorkerAgent records when a new Space is created.
  * Preset agents are regular SpaceWorkerAgent rows — fully editable by users — that
  * have sensible defaults for tools and model.
  * SpaceRuntime resolves all agents by ID at runtime; there is no special
@@ -9,12 +9,14 @@
  *
  * Preset agents seeded per Space:
  *   - Coder       — implementation worker
- *   - Coordinator — built-in long-horizon Space agent
  *   - General     — general-purpose worker
  *   - Planner     — planning/orchestration worker
  *   - Research    — research specialist (investigates topics, writes findings, opens PRs)
  *   - Reviewer    — code review specialist
  *   - QA          — quality assurance specialist
+ *
+ * The Coordinator is a SpaceLongHorizonAgent and is managed separately; it does
+ * not appear in the worker-agent preset list.
  */
 
 import type { SpaceWorkerAgent } from '@neokai/shared';
@@ -43,57 +45,53 @@ export const SUB_SESSION_FEATURES = {
 // Tool defaults per preset agent
 // ---------------------------------------------------------------------------
 
-/** Full coding toolset: read, write, shell, search, web */
-const CODER_TOOLS: string[] = [
-  'Read',
-  'Write',
-  'Edit',
-  'MultiEdit',
-  'Bash',
-  'Grep',
-  'Glob',
-  'WebFetch',
-  'WebSearch',
-  'NotebookEdit',
-  'TodoWrite',
-  'AskUserQuestion',
-  'EnterPlanMode',
-  'ExitPlanMode',
-  'Skill',
-  'ToolSearch',
-];
+/**
+ * Permissive worker preset: empty tool profile.
+ *
+ * SpaceWorkerAgent.tools is a visible override, not an exhaustive SDK allowlist.
+ * An empty profile means the worker inherits all SDK built-ins and MCP tools
+ * at runtime (see deriveWorkerDisallowedTools). The UI shows this as
+ * "Inherit defaults".
+ */
+const PERMISSIVE_TOOLS: string[] = [];
 
-/** General-purpose worker: full coding toolset */
-const GENERAL_TOOLS = CODER_TOOLS;
+/** Coder inherits all SDK defaults so it can use any built-in tool. */
+const CODER_TOOLS = PERMISSIVE_TOOLS;
 
-/** Planner uses the same toolset as coder (orchestration patterns reserved for future) */
-const PLANNER_TOOLS = CODER_TOOLS;
+/** General-purpose worker inherits all SDK defaults. */
+const GENERAL_TOOLS = PERMISSIVE_TOOLS;
 
-/** Research uses the same toolset as coder (needs write access to commit findings and open PRs) */
-const RESEARCH_TOOLS = CODER_TOOLS;
+/** Planner inherits all SDK defaults. */
+const PLANNER_TOOLS = PERMISSIVE_TOOLS;
+
+/** Research inherits all SDK defaults (it needs write access to commit findings and open PRs). */
+const RESEARCH_TOOLS = PERMISSIVE_TOOLS;
 
 /**
- * Reviewers: read-only file access (no Write/Edit/MultiEdit/NotebookEdit) plus the Task/TaskOutput/
- * TaskStop tools so the Reviewer can dispatch exploration to the built-in
+ * Reviewers: explicit non-mutating profile that keeps Bash.
+ *
+ * The runtime denies Write/Edit/MultiEdit/NotebookEdit whenever a non-empty
+ * tool profile omits them. Bash is kept because the reviewer contract posts PR
+ * reviews and line comments via `gh api` before gate writes. All other SDK
+ * built-ins (read, web/search, delegation, etc.) are still inherited. The
+ * Task/* tools let the Reviewer dispatch exploration to the built-in
  * `general-purpose` sub-agent that ships with the `claude_code` preset.
- * Custom reviewer-specific sub-agents (e.g. reviewer-explorer) are planned
- * but will live in workflow templates / SpaceWorkerAgent data, not code.
  */
 const REVIEWER_TOOLS: string[] = [
   'Read',
-  'Bash',
   'Grep',
   'Glob',
   'WebFetch',
   'WebSearch',
   'Skill',
   'ToolSearch',
+  'Bash',
   'Task',
   'TaskOutput',
   'TaskStop',
 ];
 
-/** QA: read-only + bash for running tests — no Write or Edit */
+/** QA: read/search/web + bash for running tests — no Write/Edit/MultiEdit/NotebookEdit. */
 const QA_TOOLS: string[] = [
   'Read',
   'Bash',
@@ -109,7 +107,6 @@ const QA_TOOLS: string[] = [
  * Tool profiles per preset agent name. Exported for testing and external consumption.
  */
 export const PRESET_AGENT_TOOLS: Record<string, string[]> = {
-  coordinator: GENERAL_TOOLS,
   coder: CODER_TOOLS,
   general: GENERAL_TOOLS,
   planner: PLANNER_TOOLS,
@@ -212,17 +209,6 @@ const PRESET_AGENTS: PresetDefinition[] = [
       'You are a research specialist. You investigate topics thoroughly using web search and code ' +
       'exploration, synthesize findings clearly, and document results in well-structured markdown files.\n\n' +
       'Save all findings to a markdown file, commit the file, and open a PR with a summary of what you found.',
-  },
-  {
-    name: 'Coordinator',
-    handle: 'space-coordinator',
-    description:
-      'Built-in long-horizon Space agent. Tracks goals, Forge scope, reminders, and event subscriptions for the Space.',
-    tools: GENERAL_TOOLS,
-    customPrompt:
-      'You are the Coordinator for this Space. Maintain long-horizon context across goals, Forge evidence, reminders, and external events. ' +
-      'Use available Space tools to inspect current work, create or update tasks, and route work to specialist agents when useful.\n\n' +
-      'Keep managed goals, Forge scopes, reminders, and event subscriptions visible to the operator. Ask for confirmation before destructive changes.',
   },
   {
     name: 'Reviewer',

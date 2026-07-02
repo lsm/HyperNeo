@@ -1231,9 +1231,12 @@ export interface SpaceWorkerAgent {
    */
   customPrompt: string | null;
   /**
-   * Tool list override — which tools this agent may use.
-   * Any entry must be a name from KNOWN_TOOLS.
-   * When unset, role-based defaults apply.
+   * Explicit tool override list. Any entry must be a name from KNOWN_TOOLS.
+   *
+   * When unset or empty, the agent inherits all SDK built-in tools at runtime.
+   * When set, the runtime denies Bash/Write/Edit/MultiEdit/NotebookEdit if
+   * they are omitted; all other SDK built-ins remain inherited. This is a
+   * visible profile, not an exhaustive allowlist.
    */
   tools?: string[];
   /**
@@ -1299,7 +1302,7 @@ export interface CreateSpaceWorkerAgentParams {
   provider?: string;
   /** Operator-supplied custom prompt appended after the NeoKai contract; null when not set */
   customPrompt?: string | null;
-  /** Tool list override — any entry must be a name from KNOWN_TOOLS */
+  /** Explicit tool override list — any entry must be a name from KNOWN_TOOLS. Empty/unset inherits all SDK built-ins. */
   tools?: string[];
   /**
    * Setting sources to load for this agent.
@@ -1334,7 +1337,7 @@ export interface UpdateSpaceWorkerAgentParams {
   provider?: string | null;
   /** Operator-supplied custom prompt; null clears */
   customPrompt?: string | null;
-  /** Tool list override — null clears (reverts to role defaults) */
+  /** Explicit tool override list — null clears. Empty inherits all SDK built-ins; omitted mutators (Bash/Write/Edit/MultiEdit/NotebookEdit) are denied when the list is non-empty. */
   tools?: string[] | null;
   /**
    * Setting sources to load for this agent.
@@ -2552,8 +2555,8 @@ export interface ExportedSpaceWorkerAgent {
    */
   instructions?: string;
   /**
-   * Tool name overrides — list of tool names from KNOWN_TOOLS this agent may use.
-   * When absent, defaults apply on import.
+   * Explicit tool override list — any entry must be a name from KNOWN_TOOLS.
+   * When absent, the agent inherits all SDK built-in tools on import.
    * Mirrors `SpaceWorkerAgent.tools`.
    */
   tools?: string[];

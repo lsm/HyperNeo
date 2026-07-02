@@ -220,10 +220,9 @@ describe('Space Agent RPC Handlers', () => {
       });
 
       expect(Array.isArray(result.templates)).toBe(true);
-      expect(result.templates).toHaveLength(7);
+      expect(result.templates).toHaveLength(6);
       expect(result.templates.map((template) => template.name).sort()).toEqual([
         'Coder',
-        'Coordinator',
         'General',
         'Planner',
         'QA',
@@ -231,7 +230,7 @@ describe('Space Agent RPC Handlers', () => {
         'Reviewer',
       ]);
       for (const template of result.templates) {
-        expect(template.tools.length).toBeGreaterThan(0);
+        expect(template.tools.length).toBeGreaterThanOrEqual(0);
         expect(template.customPrompt.length).toBeGreaterThan(0);
         expect(template.templateHash).toBeTruthy();
       }

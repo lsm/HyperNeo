@@ -451,13 +451,14 @@ describe('SpaceAgentManager', () => {
       }
     });
 
-    it('accepts undefined tools (no override)', async () => {
+    it('accepts undefined tools (defaults to empty permissive profile)', async () => {
       const result = await manager.create({
         spaceId: 'space-1',
         name: 'NoTools',
         tools: undefined,
       });
       expect(result.ok).toBe(true);
+      if (result.ok) expect(result.value.tools).toEqual([]);
     });
   });
 
@@ -480,7 +481,7 @@ describe('SpaceAgentManager', () => {
       if (!result.ok) expect(result.error).toContain('"InvalidTool"');
     });
 
-    it('accepts null tools (clearing the override)', async () => {
+    it('accepts null tools (clearing the override to empty permissive profile)', async () => {
       const created = await manager.create({
         spaceId: 'space-1',
         name: 'Agent3',
@@ -490,7 +491,7 @@ describe('SpaceAgentManager', () => {
 
       const result = await manager.update(created.value.id, { tools: null });
       expect(result.ok).toBe(true);
-      if (result.ok) expect(result.value.tools).toBeUndefined();
+      if (result.ok) expect(result.value.tools).toEqual([]);
     });
   });
 
