@@ -1,6 +1,6 @@
 {
-  "name": "hyperneo",
-  "version": "0.39.1",
+  "name": "neokai",
+  "version": "0.39.2",
   "description": "HyperNeo - Claude Agent SDK Web Interface",
   "bin": {
     "hyperneo": "bin/hyperneo.js"
