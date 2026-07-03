@@ -1,6 +1,6 @@
 [package]
 name = "neokai-desktop"
-version = "0.39.0"
+version = "0.39.1"
 description = "Kai - AI Assistant Desktop App"
 authors = ["HyperNeo contributors"]
 license = "Apache-2.0"
