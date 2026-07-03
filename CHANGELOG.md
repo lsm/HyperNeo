@@ -2,6 +2,29 @@
 
 All notable changes to HyperNeo will be documented in this file.
 
+## [0.39.0] - 2026-07-03
+
+Project-wide rebrand from NeoKai to HyperNeo: packages, imports, environment variables, data directory, CLI binary, and npm packages renamed. Space runtime PR-event subscription hardened across three fixes, worker agent tool profiles aligned with runtime inheritance, provider logos branded in the model picker and composer pill, and Kimi/OpenAI bridge resilience improved. 15 commits since v0.38.0.
+
+### Added
+
+- **HyperNeo rebrand**: NeoKai renamed to HyperNeo across packages, imports, env vars, data dir, CLI binary (`hyperneo`), npm packages, and user-facing docs
+- **Provider branding**: Brand logos added to model picker and composer pill
+- **Inline session rename**: Chat and space sessions can be renamed inline
+- **Forge diagnostics**: Result-artifact gap detector in episode generation
+
+### Changed
+
+- **Worker tool profiles**: Aligned with runtime inheritance semantics
+- **OpenAI bridge logging**: Capped 4xx log noise, histogram metrics, skipped body summary for quota/auth errors
+- **Desktop description**: Updated sidecar description from neokai to HyperNeo
+
+### Fixed
+
+- **Space runtime PR-event subscriptions**: Stopped clearing auto-subscription on non-terminal unblock; no longer terminally drops PR events linked to a run; registers auto-subscription during `in_progress` and hardens pause-cache lifecycle
+- **Kimi prompt-too-long**: Enabled SDK native auto-compact; detects `blocking_limit` prompt-too-long result
+- **Web UI**: Space task composer no longer restores deleted text; `useAutoScroll` latch resets on context switch via `resetKey`
+
 ## [0.38.0] - 2026-06-28
 
 ACP query runner activation with provider registration and MCP tool proxying, Kimi provider hardened with local bridge for 262k context and multi-region support, Codex SDK aliasing removed in favor of real model IDs, workflow hooks migrated from gate-poll loops with event-driven gate evaluation, external GitHub event system expanded with PR/check-run/reaction polling and per-node subscriptions, Forge friction-digest evidence capture, Space runtime auto-continue on terminal errors, and provider resilience improvements (5xx/overloaded retry, auto-compact on prompt-too-long). 115 commits since v0.37.0.
