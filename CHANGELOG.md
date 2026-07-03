@@ -2,6 +2,12 @@
 
 All notable changes to HyperNeo will be documented in this file.
 
+## [0.39.2] - 2026-07-03
+
+### Fixed
+
+- **npm publishing**: Reverted the main npm package name from `hyperneo` to `neokai` so v0.39.2 can publish using the existing `neokai` package and Trusted Publishing configuration. The CLI binary remains `hyperneo` and HyperNeo branding is unchanged; only the `npm install -g` package name is `neokai` for now.
+
 ## [0.39.1] - 2026-07-03
 
 ### Fixed

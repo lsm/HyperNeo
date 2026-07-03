@@ -93,7 +93,7 @@ writeFileSync(
   join(mainDir, 'package.json'),
   JSON.stringify(
     {
-      name: 'hyperneo',
+      name: 'neokai',
       version: VERSION,
       description: 'HyperNeo - Claude Agent SDK Web Interface',
       bin: { hyperneo: 'bin/hyperneo.js' },
