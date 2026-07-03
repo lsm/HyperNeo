@@ -1,8 +1,8 @@
 {
   "name": "@hyperneo/desktop",
-  "version": "0.38.0",
+  "version": "0.39.0",
   "private": true,
-  "description": "Kai Desktop App - Tauri wrapper bundling the neokai daemon as a sidecar",
+  "description": "Kai Desktop App - Tauri wrapper bundling the HyperNeo daemon as a sidecar",
   "scripts": {
     "build:sidecar": "./build-sidecar.sh",
     "dev": "cargo tauri dev",
