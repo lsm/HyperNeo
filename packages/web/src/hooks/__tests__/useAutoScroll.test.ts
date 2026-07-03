@@ -1014,6 +1014,52 @@ describe('useAutoScroll', () => {
 
       vi.useRealTimers();
     });
+
+    it('should remove listeners installed via the retry-timeout path on unmount (no leak)', () => {
+      // Reproduces the P1 leak: when containerRef.current is null on the first
+      // run and the retry timeout fires (installing detection) before the
+      // effect re-runs, the listeners/ResizeObserver must still be torn down
+      // on unmount. The outer cleanup used to only clear the timeout.
+      vi.useFakeTimers();
+
+      const { endRef } = createMockRefs();
+      const addEventListenerMock = vi.fn(() => {});
+      const removeEventListenerMock = vi.fn(() => {});
+      const containerRef = { current: null } as RefObject<HTMLDivElement>;
+
+      const { unmount } = renderHook(() =>
+        useAutoScroll({
+          containerRef,
+          endRef,
+          enabled: true,
+          messageCount: 0,
+        })
+      );
+
+      // Container becomes available after mount; the retry timeout installs
+      // detection against it.
+      containerRef.current = {
+        scrollTop: 0,
+        scrollHeight: 1000,
+        clientHeight: 500,
+        addEventListener: addEventListenerMock,
+        removeEventListener: removeEventListenerMock,
+      } as unknown as HTMLDivElement;
+
+      act(() => {
+        vi.advanceTimersByTime(50);
+      });
+      expect(addEventListenerMock).toHaveBeenCalledWith('scroll', expect.any(Function), {
+        passive: true,
+      });
+      // Nothing removed yet.
+      expect(removeEventListenerMock).not.toHaveBeenCalled();
+
+      // Unmount must tear down the timeout-installed listeners.
+      unmount();
+      expect(removeEventListenerMock).toHaveBeenCalled();
+      vi.useRealTimers();
+    });
   });
 
   describe('content-growth re-anchor', () => {
@@ -1164,6 +1210,189 @@ describe('useAutoScroll', () => {
       // Should now be near bottom
       expect(result.current.isNearBottom).toBe(true);
       expect(result.current.showScrollButton).toBe(false);
+    });
+  });
+
+  describe('bounded settle-scroll (refresh / cold-mount)', () => {
+    it('should keep re-pinning to the bottom across the settle window as content grows', () => {
+      // Reproduces the refresh/cold-mount race: the immediate mount-scroll
+      // fires, but then async content (markdown, code blocks, images,
+      // banners, composer inset) grows the scrollHeight in bursts over the
+      // next few hundred ms. A single mount-scroll strands the user above
+      // the latest messages; the bounded settle re-pins until layout
+      // settles, then stops so normal scroll behavior resumes.
+      vi.useFakeTimers();
+      const { containerRef, endRef } = createMockRefs();
+
+      const { rerender } = renderHook(
+        ({ messageCount, isInitialLoad }) =>
+          useAutoScroll({
+            containerRef,
+            endRef,
+            enabled: true,
+            messageCount,
+            isInitialLoad,
+          }),
+        { initialProps: { messageCount: 0, isInitialLoad: true } }
+      );
+
+      // First non-empty content fires the immediate mount-scroll.
+      rerender({ messageCount: 5, isInitialLoad: true });
+      expect(containerRef.current!.scrollTop).toBe(1000);
+
+      // Flush the same-frame re-pin (no growth yet).
+      act(() => {
+        vi.advanceTimersByTime(16);
+      });
+      expect(containerRef.current!.scrollTop).toBe(1000);
+
+      // Late layout growth lands mid-window.
+      containerRef.current!.scrollHeight = 1500;
+
+      // Advancing past the tail re-pin delays catches the new bottom.
+      act(() => {
+        vi.advanceTimersByTime(500);
+      });
+      expect(containerRef.current!.scrollTop).toBe(1500);
+
+      // After the settle window closes, further growth is NOT re-pinned by
+      // the settle — it self-terminates so day-to-day scroll is preserved.
+      containerRef.current!.scrollHeight = 9999;
+      act(() => {
+        vi.advanceTimersByTime(1000);
+      });
+      expect(containerRef.current!.scrollTop).toBe(1500);
+      vi.useRealTimers();
+    });
+
+    it('should cancel the settle when the user scrolls away during the window', () => {
+      vi.useFakeTimers();
+      const { containerRef, endRef, addEventListenerMock } = createMockRefs();
+
+      const { rerender } = renderHook(
+        ({ messageCount }) =>
+          useAutoScroll({
+            containerRef,
+            endRef,
+            enabled: true,
+            messageCount,
+            isInitialLoad: false,
+          }),
+        { initialProps: { messageCount: 0 } }
+      );
+
+      rerender({ messageCount: 5 });
+      expect(containerRef.current!.scrollTop).toBe(1000);
+
+      // Grab the most recent 'wheel' gesture handler registered on the
+      // container and invoke it — the user is intentionally scrolling away.
+      const wheelCalls = addEventListenerMock.mock.calls.filter((c) => c[0] === 'wheel');
+      expect(wheelCalls.length).toBeGreaterThan(0);
+      const wheelHandler = wheelCalls[wheelCalls.length - 1][1] as () => void;
+      act(() => {
+        wheelHandler();
+      });
+
+      // Late growth + full window advance: the cancelled settle must NOT
+      // yank the user back to the bottom.
+      containerRef.current!.scrollHeight = 1500;
+      act(() => {
+        vi.advanceTimersByTime(600);
+      });
+      expect(containerRef.current!.scrollTop).toBe(1000);
+      vi.useRealTimers();
+    });
+
+    it('should cancel an in-flight settle when enabled flips false mid-settle', () => {
+      // A caller (e.g. ChatContainer with a deep-link highlight) disables
+      // tail-follow mid-settle; the remaining re-pins must be cancelled so
+      // the caller's own scroll driver isn't fought.
+      vi.useFakeTimers();
+      const { containerRef, endRef } = createMockRefs();
+
+      const { rerender } = renderHook(
+        ({ messageCount, enabled }) =>
+          useAutoScroll({
+            containerRef,
+            endRef,
+            enabled,
+            messageCount,
+            isInitialLoad: false,
+          }),
+        { initialProps: { messageCount: 0, enabled: true } }
+      );
+
+      rerender({ messageCount: 5, enabled: true });
+      expect(containerRef.current!.scrollTop).toBe(1000);
+
+      // Growth + enabled flip mid-window.
+      containerRef.current!.scrollHeight = 1500;
+      rerender({ messageCount: 5, enabled: false });
+
+      act(() => {
+        vi.advanceTimersByTime(600);
+      });
+      // Settle cancelled; scrollTop stays at the immediate-scroll value.
+      expect(containerRef.current!.scrollTop).toBe(1000);
+      vi.useRealTimers();
+    });
+
+    it('should cancel an in-flight settle when loadingOlder flips true mid-settle', () => {
+      // Reproduces the load-more-during-settle race: a fast Load More whose
+      // RPC resolves before the last tail re-pin would let that timer see
+      // loadingOlderRef === false and snap to the bottom, overwriting the
+      // read position ChatContainer restored after prepending older messages.
+      vi.useFakeTimers();
+      const { containerRef, endRef } = createMockRefs();
+
+      const { rerender } = renderHook(
+        ({ messageCount, loadingOlder }) =>
+          useAutoScroll({
+            containerRef,
+            endRef,
+            enabled: true,
+            messageCount,
+            isInitialLoad: false,
+            loadingOlder,
+          }),
+        { initialProps: { messageCount: 0, loadingOlder: false } }
+      );
+
+      // Settle starts on first non-empty content.
+      rerender({ messageCount: 5, loadingOlder: false });
+      expect(containerRef.current!.scrollTop).toBe(1000);
+
+      // Load More fires mid-settle.
+      rerender({ messageCount: 5, loadingOlder: true });
+
+      // Older messages prepended + read position restored, loadingOlder clears.
+      // Content grows, but the settle was cancelled — no tail re-pin may fire.
+      containerRef.current!.scrollHeight = 1500;
+      rerender({ messageCount: 5, loadingOlder: false });
+
+      act(() => {
+        vi.advanceTimersByTime(600);
+      });
+      expect(containerRef.current!.scrollTop).toBe(1000);
+      vi.useRealTimers();
+    });
+
+    it('should register wheel/touch/keydown gesture listeners to cancel the settle', () => {
+      const { containerRef, endRef, addEventListenerMock } = createMockRefs();
+
+      renderHook(() =>
+        useAutoScroll({
+          containerRef,
+          endRef,
+          enabled: true,
+          messageCount: 5,
+        })
+      );
+
+      const registered = addEventListenerMock.mock.calls.map((c) => c[0]);
+      expect(registered).toEqual(
+        expect.arrayContaining(['wheel', 'touchstart', 'touchmove', 'keydown'])
+      );
     });
   });
 });

@@ -23,6 +23,11 @@
 import type { RefObject } from 'preact';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 
+// Tail re-pin delays (ms) for the bounded settle-scroll that runs on the first
+// non-empty content for a view. Bounded and short so normal scroll behavior
+// resumes quickly after a cold-mount/refresh. See `runSettleScroll`.
+const SETTLE_REPIN_DELAYS = [120, 260, 420];
+
 export interface UseAutoScrollOptions {
   /** Ref to the scrollable container element */
   containerRef: RefObject<HTMLDivElement>;
@@ -98,6 +103,19 @@ export function useAutoScroll({
   const enabledRef = useRef<boolean>(enabled);
   const loadingOlderRef = useRef<boolean>(loadingOlder);
   const deferredScrollRafRef = useRef<number | null>(null);
+  // Bounded settle-scroll state. On the first non-empty content for a view we
+  // re-pin to the bottom several times over a short window so that, on
+  // refresh/cold-mount, the browser's scroll-position restoration and late
+  // content/layout growth (markdown/code highlighting, image loads, banner
+  // stack, composer bottom-inset measurement) don't strand the user above the
+  // latest messages after the initial scroll has already fired. The
+  // single-shot mount-scroll alone loses this race; `isInitialLoad` /
+  // `hasScrolledOnMountRef` are already latched by the time the restore lands.
+  const settleTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const settleRafsRef = useRef<number[]>([]);
+  // Set when the user intentionally scrolls away during the settle window; the
+  // remaining re-pins are then cancelled so the user's scroll wins.
+  const userInterruptedSettleRef = useRef(false);
   useLayoutEffect(() => {
     enabledRef.current = enabled;
   }, [enabled]);
@@ -141,20 +159,78 @@ export function useAutoScroll({
     });
   }, [scrollToBottom]);
 
+  // Cancel any in-flight bounded settle-scroll sequence.
+  const cancelSettleScroll = useCallback(() => {
+    for (const timer of settleTimersRef.current) {
+      clearTimeout(timer);
+    }
+    for (const raf of settleRafsRef.current) {
+      cancelAnimationFrame(raf);
+    }
+    settleTimersRef.current = [];
+    settleRafsRef.current = [];
+  }, []);
+
+  // Bounded settle-scroll: pin to the bottom now and re-pin a few more times
+  // over a short window. This overrides (a) the browser's asynchronous
+  // scroll-position restoration on refresh and (b) content/layout growth that
+  // arrives in bursts after first paint (markdown/code blocks, images,
+  // banners, composer inset). The sequence is cancelled if the user
+  // intentionally scrolls away during the window (see the gesture listeners in
+  // `setupScrollDetection`), and it self-terminates after the last re-pin so
+  // day-to-day scroll behavior is unaffected.
+  const runSettleScroll = useCallback(() => {
+    cancelSettleScroll();
+    userInterruptedSettleRef.current = false;
+
+    const repin = () => {
+      if (userInterruptedSettleRef.current) return;
+      const raf = requestAnimationFrame(() => {
+        if (userInterruptedSettleRef.current) return;
+        // Gate on the live `enabled`/`loadingOlder` values so a caller that
+        // takes over mid-settle (deep-link highlight, load-older) isn't
+        // fought by the remaining re-pins.
+        if (enabledRef.current && !loadingOlderRef.current) {
+          scrollToBottom();
+        }
+      });
+      settleRafsRef.current.push(raf);
+    };
+
+    // Immediate bottom + same-frame re-pin.
+    scrollToBottom();
+    repin();
+
+    // Tail re-pins while layout settles.
+    for (const delay of SETTLE_REPIN_DELAYS) {
+      settleTimersRef.current.push(setTimeout(repin, delay));
+    }
+  }, [cancelSettleScroll, scrollToBottom]);
+
   // Detect scroll position to show/hide scroll button
   useEffect(() => {
     // Try to get container, with a fallback check after a brief delay if not immediately available
     let container = containerRef.current;
+    // Cleanup returned by `setupScrollDetection` when it runs via the retry
+    // timeout. Captured in a local so the outer effect cleanup can invoke it
+    // on tear-down — otherwise, if the container was null on the first run and
+    // the timeout fired before the effect re-ran, the listeners/ResizeObserver
+    // installed by `setupScrollDetection` would never be removed (the outer
+    // cleanup only cleared the timeout).
+    let teardown: (() => void) | undefined;
 
     if (!container) {
       // Schedule a retry after a brief moment to allow the ref to be populated
       const timeoutId = setTimeout(() => {
         container = containerRef.current;
         if (container) {
-          setupScrollDetection(container);
+          teardown = setupScrollDetection(container);
         }
       }, 50);
-      return () => clearTimeout(timeoutId);
+      return () => {
+        clearTimeout(timeoutId);
+        teardown?.();
+      };
     }
 
     function setupScrollDetection(container: HTMLDivElement) {
@@ -208,15 +284,49 @@ export function useAutoScroll({
         resizeObserver.observe(contentWrapper);
       }
 
+      // Detect intentional user scroll gestures (wheel / touch / scroll
+      // keys) so an in-flight bounded settle-scroll can be cancelled — the
+      // user is taking over and we must not yank them back to the bottom.
+      // These listeners are NOT triggered by the browser's scroll-position
+      // restoration (which produces no input gesture), so the settle can
+      // still override that while respecting genuine user input.
+      const cancelSettleOnGesture = () => {
+        userInterruptedSettleRef.current = true;
+        cancelSettleScroll();
+      };
+      const cancelSettleOnKey = (e: KeyboardEvent) => {
+        if (
+          e.key === 'PageUp' ||
+          e.key === 'PageDown' ||
+          e.key === 'ArrowUp' ||
+          e.key === 'ArrowDown' ||
+          e.key === 'Home' ||
+          e.key === 'End'
+        ) {
+          cancelSettleOnGesture();
+        }
+      };
+      container.addEventListener('wheel', cancelSettleOnGesture, { passive: true });
+      container.addEventListener('touchstart', cancelSettleOnGesture, { passive: true });
+      container.addEventListener('touchmove', cancelSettleOnGesture, { passive: true });
+      container.addEventListener('keydown', cancelSettleOnKey, { passive: true });
+
       // Return cleanup function
       return () => {
         cancelAnimationFrame(rafId);
         container.removeEventListener('scroll', handleScroll);
+        container.removeEventListener('wheel', cancelSettleOnGesture);
+        container.removeEventListener('touchstart', cancelSettleOnGesture);
+        container.removeEventListener('touchmove', cancelSettleOnGesture);
+        container.removeEventListener('keydown', cancelSettleOnKey);
         resizeObserver.disconnect();
       };
     }
 
-    return setupScrollDetection(container);
+    teardown = setupScrollDetection(container);
+    return () => {
+      teardown?.();
+    };
   }, [nearBottomThreshold, messageCount, endRef]);
 
   // When loadingOlder transitions from true to false, skip the message-count delta
@@ -316,9 +426,16 @@ export function useAutoScroll({
       // scroll to the deep-linked row without racing against this scroll),
       // suppress the auto-scroll and let the caller drive.
       if (enabled || !isInitialLoad) {
-        scrollToBottom();
+        // The full bounded settle runs only while tail-follow is enabled —
+        // this is the path that fixes refresh/cold-mount not landing at the
+        // bottom (browser scroll-restoration + late layout growth both land
+        // after a single mount-scroll). When `enabled` is false but this is
+        // still a navigation/visit (!isInitialLoad), do a single bottom-scroll
+        // without fighting the user's autoScroll-off preference.
         if (enabled) {
-          scrollToBottomAfterLayout();
+          runSettleScroll();
+        } else {
+          scrollToBottom();
         }
       }
       return;
@@ -339,6 +456,7 @@ export function useAutoScroll({
     resetKey,
     scrollToBottom,
     scrollToBottomAfterLayout,
+    runSettleScroll,
   ]);
 
   // Reset the mount-scroll latch when `isInitialLoad` flips back to true.
@@ -351,13 +469,31 @@ export function useAutoScroll({
     }
   }, [isInitialLoad]);
 
+  // Cancel an in-flight settle when a caller takes over mid-settle:
+  //  - `enabled` flips false (e.g. a deep-link highlight arrives and
+  //    `useScrollToMessage` takes over), or
+  //  - `loadingOlder` flips true (the user hit Load More). ChatContainer
+  //    restores the user's anchored read position in its own useLayoutEffect
+  //    once older messages are prepended; a lingering tail re-pin firing after
+  //    `loadingOlder` flips back to false would scroll to the bottom and
+  //    clobber that restore.
+  // The re-pins also self-gate on these refs, but clearing the pending timers
+  // removes the race entirely (a fast load-older RPC can toggle loadingOlder
+  // false before a later tail timer fires).
+  useLayoutEffect(() => {
+    if (!enabled || loadingOlder) {
+      cancelSettleScroll();
+    }
+  }, [enabled, loadingOlder, cancelSettleScroll]);
+
   useEffect(() => {
     return () => {
       if (deferredScrollRafRef.current !== null) {
         cancelAnimationFrame(deferredScrollRafRef.current);
       }
+      cancelSettleScroll();
     };
-  }, []);
+  }, [cancelSettleScroll]);
 
   return {
     showScrollButton,
