@@ -2,6 +2,12 @@
 
 All notable changes to HyperNeo will be documented in this file.
 
+## [0.39.1] - 2026-07-03
+
+### Fixed
+
+- **npm publishing**: Reverted CLI platform package scope from `@hyperneo/cli-*` to `@neokai/cli-*` so v0.39.1 can publish using the existing npm scope and Trusted Publishing configuration. The user-facing package name (`hyperneo`), CLI binary (`hyperneo`), and HyperNeo branding are unchanged.
+
 ## [0.39.0] - 2026-07-03
 
 Project-wide rebrand from NeoKai to HyperNeo: packages, imports, environment variables, data directory, CLI binary, and npm packages renamed. Space runtime PR-event subscription hardened across three fixes, worker agent tool profiles aligned with runtime inheritance, provider logos branded in the model picker and composer pill, and Kimi/OpenAI bridge resilience improved. 15 commits since v0.38.0.
