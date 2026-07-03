@@ -1014,6 +1014,52 @@ describe('useAutoScroll', () => {
 
       vi.useRealTimers();
     });
+
+    it('should remove listeners installed via the retry-timeout path on unmount (no leak)', () => {
+      // Reproduces the P1 leak: when containerRef.current is null on the first
+      // run and the retry timeout fires (installing detection) before the
+      // effect re-runs, the listeners/ResizeObserver must still be torn down
+      // on unmount. The outer cleanup used to only clear the timeout.
+      vi.useFakeTimers();
+
+      const { endRef } = createMockRefs();
+      const addEventListenerMock = vi.fn(() => {});
+      const removeEventListenerMock = vi.fn(() => {});
+      const containerRef = { current: null } as RefObject<HTMLDivElement>;
+
+      const { unmount } = renderHook(() =>
+        useAutoScroll({
+          containerRef,
+          endRef,
+          enabled: true,
+          messageCount: 0,
+        })
+      );
+
+      // Container becomes available after mount; the retry timeout installs
+      // detection against it.
+      containerRef.current = {
+        scrollTop: 0,
+        scrollHeight: 1000,
+        clientHeight: 500,
+        addEventListener: addEventListenerMock,
+        removeEventListener: removeEventListenerMock,
+      } as unknown as HTMLDivElement;
+
+      act(() => {
+        vi.advanceTimersByTime(50);
+      });
+      expect(addEventListenerMock).toHaveBeenCalledWith('scroll', expect.any(Function), {
+        passive: true,
+      });
+      // Nothing removed yet.
+      expect(removeEventListenerMock).not.toHaveBeenCalled();
+
+      // Unmount must tear down the timeout-installed listeners.
+      unmount();
+      expect(removeEventListenerMock).toHaveBeenCalled();
+      vi.useRealTimers();
+    });
   });
 
   describe('content-growth re-anchor', () => {
@@ -1287,6 +1333,46 @@ describe('useAutoScroll', () => {
         vi.advanceTimersByTime(600);
       });
       // Settle cancelled; scrollTop stays at the immediate-scroll value.
+      expect(containerRef.current!.scrollTop).toBe(1000);
+      vi.useRealTimers();
+    });
+
+    it('should cancel an in-flight settle when loadingOlder flips true mid-settle', () => {
+      // Reproduces the load-more-during-settle race: a fast Load More whose
+      // RPC resolves before the last tail re-pin would let that timer see
+      // loadingOlderRef === false and snap to the bottom, overwriting the
+      // read position ChatContainer restored after prepending older messages.
+      vi.useFakeTimers();
+      const { containerRef, endRef } = createMockRefs();
+
+      const { rerender } = renderHook(
+        ({ messageCount, loadingOlder }) =>
+          useAutoScroll({
+            containerRef,
+            endRef,
+            enabled: true,
+            messageCount,
+            isInitialLoad: false,
+            loadingOlder,
+          }),
+        { initialProps: { messageCount: 0, loadingOlder: false } }
+      );
+
+      // Settle starts on first non-empty content.
+      rerender({ messageCount: 5, loadingOlder: false });
+      expect(containerRef.current!.scrollTop).toBe(1000);
+
+      // Load More fires mid-settle.
+      rerender({ messageCount: 5, loadingOlder: true });
+
+      // Older messages prepended + read position restored, loadingOlder clears.
+      // Content grows, but the settle was cancelled — no tail re-pin may fire.
+      containerRef.current!.scrollHeight = 1500;
+      rerender({ messageCount: 5, loadingOlder: false });
+
+      act(() => {
+        vi.advanceTimersByTime(600);
+      });
       expect(containerRef.current!.scrollTop).toBe(1000);
       vi.useRealTimers();
     });

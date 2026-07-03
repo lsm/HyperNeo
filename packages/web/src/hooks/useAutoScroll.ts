@@ -211,16 +211,26 @@ export function useAutoScroll({
   useEffect(() => {
     // Try to get container, with a fallback check after a brief delay if not immediately available
     let container = containerRef.current;
+    // Cleanup returned by `setupScrollDetection` when it runs via the retry
+    // timeout. Captured in a local so the outer effect cleanup can invoke it
+    // on tear-down — otherwise, if the container was null on the first run and
+    // the timeout fired before the effect re-ran, the listeners/ResizeObserver
+    // installed by `setupScrollDetection` would never be removed (the outer
+    // cleanup only cleared the timeout).
+    let teardown: (() => void) | undefined;
 
     if (!container) {
       // Schedule a retry after a brief moment to allow the ref to be populated
       const timeoutId = setTimeout(() => {
         container = containerRef.current;
         if (container) {
-          setupScrollDetection(container);
+          teardown = setupScrollDetection(container);
         }
       }, 50);
-      return () => clearTimeout(timeoutId);
+      return () => {
+        clearTimeout(timeoutId);
+        teardown?.();
+      };
     }
 
     function setupScrollDetection(container: HTMLDivElement) {
@@ -313,7 +323,10 @@ export function useAutoScroll({
       };
     }
 
-    return setupScrollDetection(container);
+    teardown = setupScrollDetection(container);
+    return () => {
+      teardown?.();
+    };
   }, [nearBottomThreshold, messageCount, endRef]);
 
   // When loadingOlder transitions from true to false, skip the message-count delta
@@ -456,15 +469,22 @@ export function useAutoScroll({
     }
   }, [isInitialLoad]);
 
-  // Cancel an in-flight settle when tail-follow is disabled mid-settle (e.g.
-  // a deep-link highlight arrives), mirroring the deferred re-pin cancellation
-  // semantic. The re-pins also self-gate on `enabledRef`, but clearing the
-  // pending timers keeps things tidy.
+  // Cancel an in-flight settle when a caller takes over mid-settle:
+  //  - `enabled` flips false (e.g. a deep-link highlight arrives and
+  //    `useScrollToMessage` takes over), or
+  //  - `loadingOlder` flips true (the user hit Load More). ChatContainer
+  //    restores the user's anchored read position in its own useLayoutEffect
+  //    once older messages are prepended; a lingering tail re-pin firing after
+  //    `loadingOlder` flips back to false would scroll to the bottom and
+  //    clobber that restore.
+  // The re-pins also self-gate on these refs, but clearing the pending timers
+  // removes the race entirely (a fast load-older RPC can toggle loadingOlder
+  // false before a later tail timer fires).
   useLayoutEffect(() => {
-    if (!enabled) {
+    if (!enabled || loadingOlder) {
       cancelSettleScroll();
     }
-  }, [enabled, cancelSettleScroll]);
+  }, [enabled, loadingOlder, cancelSettleScroll]);
 
   useEffect(() => {
     return () => {
