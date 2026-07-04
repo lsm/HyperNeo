@@ -30,7 +30,7 @@ console.log(`Packaging npm packages (version ${VERSION})...\n`);
 
 // 1. Create platform-specific packages
 for (const { target, os, cpu } of PLATFORMS) {
-  const pkgName = `@neokai/cli-${target}`;
+  const pkgName = `@hyperneo/cli-${target}`;
   const pkgDir = join(NPM_DIR, `cli-${target}`);
   const binDir = join(pkgDir, 'bin');
 
@@ -63,7 +63,7 @@ for (const { target, os, cpu } of PLATFORMS) {
         license: 'Apache-2.0',
         repository: {
           type: 'git',
-          url: 'https://github.com/lsm/neokai',
+          url: 'https://github.com/lsm/HyperNeo',
         },
       },
       null,
@@ -86,14 +86,14 @@ chmodSync(join(mainBinDir, 'hyperneo.js'), 0o755);
 // Write main package.json
 const optionalDeps: Record<string, string> = {};
 for (const { target } of PLATFORMS) {
-  optionalDeps[`@neokai/cli-${target}`] = VERSION;
+  optionalDeps[`@hyperneo/cli-${target}`] = VERSION;
 }
 
 writeFileSync(
   join(mainDir, 'package.json'),
   JSON.stringify(
     {
-      name: 'neokai',
+      name: 'hyperneo',
       version: VERSION,
       description: 'HyperNeo - Claude Agent SDK Web Interface',
       bin: { hyperneo: 'bin/hyperneo.js' },
@@ -102,7 +102,7 @@ writeFileSync(
       license: 'Apache-2.0',
       repository: {
         type: 'git',
-        url: 'https://github.com/lsm/neokai',
+        url: 'https://github.com/lsm/HyperNeo',
       },
     },
     null,
