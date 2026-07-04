@@ -133,7 +133,7 @@ git clone https://github.com/YOUR_USERNAME/neokai.git
 cd neokai
 
 # Add upstream remote
-git remote add upstream https://github.com/lsm/neokai.git
+git remote add upstream https://github.com/lsm/HyperNeo.git
 
 # Install dependencies
 bun install
@@ -170,7 +170,7 @@ GLM_API_KEY=your_glm_key_here  # Optional, for GLM provider
 ## Questions or Issues?
 
 If you have questions or run into issues:
-- Check [existing issues](https://github.com/lsm/neokai/issues) on GitHub
+- Check [existing issues](https://github.com/lsm/HyperNeo/issues) on GitHub
 - Open a new issue with a clear description
 - Join our community discussions
 

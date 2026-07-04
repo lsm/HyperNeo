@@ -2,6 +2,16 @@
 
 All notable changes to HyperNeo will be documented in this file.
 
+## [0.39.3] - 2026-07-04
+
+### Changed
+
+- **npm publishing**: Restored the HyperNeo npm package names now that the `@hyperneo` npm organization and Trusted Publishing are configured. The install package is `hyperneo` and platform packages are `@hyperneo/cli-*`. The CLI binary remains `hyperneo`.
+
+### Fixed
+
+- **Repository URLs**: Updated package repository URLs from `github.com/lsm/neokai` to `github.com/lsm/HyperNeo` after the repository rename.
+
 ## [0.39.2] - 2026-07-03
 
 ### Fixed
