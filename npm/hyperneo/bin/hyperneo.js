@@ -3,16 +3,16 @@
 /**
  * HyperNeo CLI launcher.
  * Detects the current platform and spawns the correct compiled binary
- * from the matching @neokai/cli-{platform} optional dependency.
+ * from the matching @hyperneo/cli-{platform} optional dependency.
  */
 
 const { spawnSync } = require('child_process');
 
 const PLATFORM_MAP = {
-  'darwin-arm64': '@neokai/cli-darwin-arm64',
-  'darwin-x64': '@neokai/cli-darwin-x64',
-  'linux-x64': '@neokai/cli-linux-x64',
-  'linux-arm64': '@neokai/cli-linux-arm64',
+  'darwin-arm64': '@hyperneo/cli-darwin-arm64',
+  'darwin-x64': '@hyperneo/cli-darwin-x64',
+  'linux-x64': '@hyperneo/cli-linux-x64',
+  'linux-arm64': '@hyperneo/cli-linux-arm64',
 };
 
 const platformKey = `${process.platform}-${process.arch}`;

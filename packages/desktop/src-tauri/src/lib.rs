@@ -46,8 +46,8 @@ pub fn run() {
 			)?;
 
 			// System tray menu.
-			let show_item = MenuItem::with_id(app, "show", "Show Kai", true, None::<&str>)?;
-			let hide_item = MenuItem::with_id(app, "hide", "Hide Kai", true, None::<&str>)?;
+			let show_item = MenuItem::with_id(app, "show", "Show HyperNeo", true, None::<&str>)?;
+			let hide_item = MenuItem::with_id(app, "hide", "Hide HyperNeo", true, None::<&str>)?;
 			let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
 
 			let menu = Menu::with_items(app, &[&show_item, &hide_item, &quit_item])?;
@@ -174,7 +174,7 @@ pub fn run() {
 					}
 				});
 
-				log::info!("Kai desktop app started with neokai daemon");
+				log::info!("HyperNeo desktop app started with neokai daemon");
 
 				// Poll the daemon's health endpoint, then navigate the webview off
 				// the loading splash and onto the live UI.

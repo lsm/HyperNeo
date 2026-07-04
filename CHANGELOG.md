@@ -2,6 +2,13 @@
 
 All notable changes to HyperNeo will be documented in this file.
 
+## [0.39.5] - 2026-07-04
+
+### Changed
+
+- **npm publishing**: Restored platform-specific optional dependencies to the `@hyperneo/cli-*` scope now that the packages have been manually published and Trusted Publishing for `lsm/HyperNeo` is configured. The install package remains `hyperneo`.
+- **Desktop release assets**: Renamed desktop installer filenames from `Kai_*` to `HyperNeo_*` to match the HyperNeo rebrand.
+
 ## [0.39.4] - 2026-07-04
 
 ### Changed
