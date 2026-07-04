@@ -2339,7 +2339,7 @@ dependencies = [
 
 [[package]]
 name = "neokai-desktop"
-version = "0.39.3"
+version = "0.39.4"
 dependencies = [
  "dirs",
  "log",

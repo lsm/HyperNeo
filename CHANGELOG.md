@@ -2,6 +2,12 @@
 
 All notable changes to HyperNeo will be documented in this file.
 
+## [0.39.4] - 2026-07-04
+
+### Changed
+
+- **npm publishing**: Kept the main install package as `hyperneo` but routed platform optional dependencies back to the existing `@neokai/cli-*` scope while the `@hyperneo` npm scope Trusted Publishing configuration is finalized. Users install with `npm install -g hyperneo` and run `hyperneo`.
+
 ## [0.39.3] - 2026-07-04
 
 ### Changed
