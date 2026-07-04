@@ -1,15 +1,15 @@
 {
   "name": "hyperneo",
-  "version": "0.39.4",
+  "version": "0.39.5",
   "description": "HyperNeo - Claude Agent SDK Web Interface",
   "bin": {
     "hyperneo": "bin/hyperneo.js"
   },
   "optionalDependencies": {
-    "@neokai/cli-darwin-arm64": "0.39.4",
-    "@neokai/cli-darwin-x64": "0.39.4",
-    "@neokai/cli-linux-x64": "0.39.4",
-    "@neokai/cli-linux-arm64": "0.39.4"
+    "@hyperneo/cli-darwin-arm64": "0.39.5",
+    "@hyperneo/cli-darwin-x64": "0.39.5",
+    "@hyperneo/cli-linux-x64": "0.39.5",
+    "@hyperneo/cli-linux-arm64": "0.39.5"
   },
   "files": [
     "bin/"

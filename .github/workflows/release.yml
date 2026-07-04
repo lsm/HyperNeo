@@ -333,17 +333,17 @@ jobs:
 
           for dmg in "$BUNDLE_ROOT"/dmg/*.dmg; do
             [ -e "$dmg" ] || continue
-            cp "$dmg" "$ARTIFACT_DIR/Kai_${VERSION}_${{ matrix.arch }}.dmg"
+            cp "$dmg" "$ARTIFACT_DIR/HyperNeo_${VERSION}_${{ matrix.arch }}.dmg"
           done
 
           for deb in "$BUNDLE_ROOT"/deb/*.deb; do
             [ -e "$deb" ] || continue
-            cp "$deb" "$ARTIFACT_DIR/Kai_${VERSION}_${{ matrix.arch }}.deb"
+            cp "$deb" "$ARTIFACT_DIR/HyperNeo_${VERSION}_${{ matrix.arch }}.deb"
           done
 
           for rpm in "$BUNDLE_ROOT"/rpm/*.rpm; do
             [ -e "$rpm" ] || continue
-            cp "$rpm" "$ARTIFACT_DIR/Kai_${VERSION}_${{ matrix.arch }}.rpm"
+            cp "$rpm" "$ARTIFACT_DIR/HyperNeo_${VERSION}_${{ matrix.arch }}.rpm"
           done
 
           if [ -d "$BUNDLE_ROOT/macos" ]; then
@@ -352,7 +352,7 @@ jobs:
             APP_PATH=""
           fi
           if [ -n "$APP_PATH" ]; then
-            ditto -c -k --keepParent "$APP_PATH" "$ARTIFACT_DIR/Kai_${VERSION}_${{ matrix.arch }}.app.zip"
+            ditto -c -k --keepParent "$APP_PATH" "$ARTIFACT_DIR/HyperNeo_${VERSION}_${{ matrix.arch }}.app.zip"
           fi
 
           if ! compgen -G "$ARTIFACT_DIR/*" > /dev/null; then
@@ -361,9 +361,9 @@ jobs:
           fi
 
           if command -v sha256sum >/dev/null 2>&1; then
-            (cd "$ARTIFACT_DIR" && sha256sum * > "Kai_${VERSION}_${{ matrix.arch }}_SHA256SUMS.txt")
+            (cd "$ARTIFACT_DIR" && sha256sum * > "HyperNeo_${VERSION}_${{ matrix.arch }}_SHA256SUMS.txt")
           else
-            (cd "$ARTIFACT_DIR" && shasum -a 256 * > "Kai_${VERSION}_${{ matrix.arch }}_SHA256SUMS.txt")
+            (cd "$ARTIFACT_DIR" && shasum -a 256 * > "HyperNeo_${VERSION}_${{ matrix.arch }}_SHA256SUMS.txt")
           fi
 
       - name: Upload desktop artifacts
