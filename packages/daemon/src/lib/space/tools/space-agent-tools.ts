@@ -309,6 +309,91 @@ function resolveWorkerTargetExecution(
   return matches.at(-1) ?? null;
 }
 
+type TaskRoutingTargetResolution =
+  | { kind: 'task-worker'; exec: NodeExecution }
+  | { kind: 'long-horizon-agent'; actor: ActorRef }
+  | { kind: 'ambiguous'; actors: ActorRef[]; exec?: NodeExecution }
+  | { kind: 'no-match' };
+
+async function resolveHandleForTaskRouting(
+  target: string,
+  taskExecutions: NodeExecution[],
+  spaceId: string,
+  workflowRunId: string,
+  messageResolver?: ActorResolver,
+  longHorizonAgentRepo?: SpaceLongHorizonAgentRepository
+): Promise<TaskRoutingTargetResolution> {
+  const address = parseAddress(target);
+  if (address.kind !== 'handle') return { kind: 'no-match' };
+
+  const handle = `@${address.handle}`;
+  const canonicalHandle = `@${normalizeAgentNameToken(address.handle)}`;
+  const taskWorker = taskExecutions
+    .filter(
+      (exec) =>
+        exec.workflowRunId === workflowRunId &&
+        normalizeAgentNameToken(exec.agentName) === normalizeAgentNameToken(address.handle)
+    )
+    .at(-1);
+  const actors = messageResolver
+    ? (
+        await messageResolver.resolveTargets({
+          messageId: `msg_probe_${Date.now()}`,
+          spaceId,
+          senderActorId: 'system:routing-validation',
+          targets: [canonicalHandle],
+          body: '',
+          kind: 'message',
+          workflowRunId,
+          createdAt: Date.now(),
+        })
+      ).resolved
+        .map((resolved) => resolved.actor)
+        .filter(
+          (actor) =>
+            actor.handle !== undefined &&
+            normalizeAgentNameToken(actor.handle) === normalizeAgentNameToken(handle)
+        )
+    : [];
+  const longHorizonActors = actors.filter((actor) => {
+    // Reserved system actors (e.g. @system-runtime) are conflicts even though
+    // they do not start with `agent:`.
+    if (actor.actorId.startsWith('system:')) return true;
+    if (!actor.actorId.startsWith('agent:')) return false;
+    // The synthetic Space coordinator actor uses actorId `agent:coordinator:<spaceId>`,
+    // but its persisted long-horizon record id is `space-lh-agent:coordinator:<spaceId>`.
+    // Treat it as a reserved long-horizon actor/conflict so @coordinator cannot be
+    // silently hijacked by a workflow worker with the same slot name.
+    if (actor.actorId === `agent:coordinator:${spaceId}`) return true;
+    if (!longHorizonAgentRepo) return true;
+    const agentId = decodeURIComponent(actor.actorId.slice('agent:'.length));
+    return longHorizonAgentRepo.getById(agentId)?.spaceId === spaceId;
+  });
+
+  if (taskWorker && longHorizonActors.length === 0)
+    return { kind: 'task-worker', exec: taskWorker };
+  if (taskWorker || longHorizonActors.length > 1)
+    return { kind: 'ambiguous', actors: longHorizonActors, exec: taskWorker };
+  if (longHorizonActors.length === 1)
+    return { kind: 'long-horizon-agent', actor: longHorizonActors[0] };
+  return { kind: 'no-match' };
+}
+
+function describeTaskExecution(exec: NodeExecution): string {
+  return `workflow node "${exec.agentName}" (${exec.id})`;
+}
+
+function describeActor(actor: ActorRef): string {
+  return `${actor.handle ?? actor.actorId} (${actor.actorId})`;
+}
+
+function describeAmbiguousTargetActors(actors: ActorRef[], exec?: NodeExecution): string {
+  return [
+    ...actors.map((actor) => `- ${describeActor(actor)}`),
+    ...(exec ? [`- ${describeTaskExecution(exec)}`] : []),
+  ].join('\n');
+}
+
 // ---------------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------------
@@ -2225,11 +2310,101 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       let resolved: NodeExecution | null = null;
       let routedTarget = args.node_id ?? null;
 
-      if (args.target) {
+      const trimmedTarget = args.target?.trim() ?? '';
+      if (trimmedTarget) {
+        let targetAddress;
+        try {
+          targetAddress = parseAddress(trimmedTarget);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          audit('failed', {
+            reason: 'malformed_target',
+            target: args.target,
+            node_id: args.node_id,
+            error: message,
+          });
+          return jsonResult({
+            success: false,
+            error: message,
+          });
+        }
+        const handleResolution =
+          targetAddress.kind === 'handle'
+            ? await resolveHandleForTaskRouting(
+                trimmedTarget,
+                allExecutions,
+                spaceId,
+                task.workflowRunId,
+                messageResolver,
+                config.longHorizonAgentRepo
+              )
+            : null;
+        if (handleResolution?.kind === 'long-horizon-agent' && targetAddress.kind === 'handle') {
+          const nodeResolved = args.node_id
+            ? resolveNodeExecution(allExecutions, args.node_id)
+            : null;
+          if (nodeResolved) {
+            audit('failed', {
+              reason: 'target_node_id_disagree',
+              target: args.target,
+              node_id: args.node_id,
+              resolved_actor: handleResolution.actor.actorId,
+              resolved_execution: nodeResolved.id,
+            });
+            return jsonResult({
+              success: false,
+              error:
+                `target and node_id disagree for task #${task.taskNumber}:\n` +
+                `  target: "${trimmedTarget}"  → ${describeActor(handleResolution.actor)}\n` +
+                `  node_id: "${args.node_id}"  → ${describeTaskExecution(nodeResolved)}\n` +
+                `Pick one. node_id is preferred for workflow node routing.`,
+            });
+          }
+          audit('failed', {
+            reason: 'ambiguous_long_horizon_target',
+            target: args.target,
+            node_id: args.node_id,
+            resolved_actor: handleResolution.actor.actorId,
+          });
+          return jsonResult({
+            success: false,
+            error:
+              `Ambiguous target "${trimmedTarget}" matched long-horizon agent "${handleResolution.actor.handle?.slice(1) ?? handleResolution.actor.actorId}" (${handleResolution.actor.actorId}), not a workflow node of task #${task.taskNumber}.\n` +
+              `To target the workflow ${targetAddress.handle} node, use:\n` +
+              `  - node_id: "${targetAddress.handle}"  (recommended)\n` +
+              `  - target: "@worker:${task.workflowRunId}/${targetAddress.handle}/${targetAddress.handle}"\n` +
+              `To target the long-horizon agent explicitly, omit task_id and call send_session_message instead.`,
+          });
+        }
+        let overrideExec: NodeExecution | undefined;
+        if (handleResolution?.kind === 'ambiguous') {
+          const nodeResolved = args.node_id
+            ? resolveNodeExecution(allExecutions, args.node_id)
+            : null;
+          if (nodeResolved && nodeResolved.id === handleResolution.exec?.id) {
+            overrideExec = handleResolution.exec;
+          } else {
+            audit('failed', {
+              reason: 'ambiguous_target',
+              target: args.target,
+              node_id: args.node_id,
+              matched_actors: handleResolution.actors.map((a) => a.actorId),
+              matched_execution: handleResolution.exec?.id,
+            });
+            return jsonResult({
+              success: false,
+              error:
+                `Ambiguous target "${trimmedTarget}" for task #${task.taskNumber} matched multiple actors:\n` +
+                `${describeAmbiguousTargetActors(handleResolution.actors, handleResolution.exec)}\n` +
+                `Disambiguate with @worker: for workflow nodes or @session: for a specific session.`,
+            });
+          }
+        }
+
         let genericTarget: string;
         try {
           genericTarget = translateTaskMessageTarget(
-            { target: args.target, nodeId: args.node_id },
+            { target: trimmedTarget, nodeId: args.node_id },
             { workflowRunId: task.workflowRunId, nodeExecutions: allExecutions, workflow }
           );
         } catch (err) {
@@ -2239,6 +2414,11 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             success: false,
             error: message,
           });
+        }
+        const workerExec =
+          overrideExec ?? (handleResolution?.kind === 'task-worker' ? handleResolution.exec : null);
+        if (workerExec) {
+          genericTarget = `@worker:${encodeURIComponent(task.workflowRunId)}/${encodeURIComponent(workerExec.workflowNodeId)}/${encodeURIComponent(workerExec.agentName)}`;
         }
         routedTarget = genericTarget;
         const address = parseAddress(genericTarget);
@@ -2321,6 +2501,27 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         }
       } else if (args.node_id) {
         resolved = resolveNodeExecution(allExecutions, args.node_id);
+      }
+
+      if (args.target && args.node_id) {
+        const nodeResolved = resolveNodeExecution(allExecutions, args.node_id);
+        if (resolved && nodeResolved && resolved.id !== nodeResolved.id) {
+          audit('failed', {
+            reason: 'target_node_id_disagree',
+            target: args.target,
+            node_id: args.node_id,
+            resolved_target_execution: resolved.id,
+            resolved_node_id_execution: nodeResolved.id,
+          });
+          return jsonResult({
+            success: false,
+            error:
+              `target and node_id disagree for task #${task.taskNumber}:\n` +
+              `  target: "${args.target}"  → ${describeTaskExecution(resolved)}\n` +
+              `  node_id: "${args.node_id}"  → ${describeTaskExecution(nodeResolved)}\n` +
+              `Pick one. node_id is preferred for workflow node routing.`,
+          });
+        }
       }
 
       if (!routedTarget) {
