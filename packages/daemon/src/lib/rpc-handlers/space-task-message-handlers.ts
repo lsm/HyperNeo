@@ -85,7 +85,7 @@ export interface TaskAgentManagerInterface {
     message: string,
     isSyntheticMessage?: boolean,
     images?: MessageImage[]
-  ): Promise<void>;
+  ): Promise<string | void>;
   /**
    * Optional: lazy-activate a workflow-declared node agent for a given task.
    *

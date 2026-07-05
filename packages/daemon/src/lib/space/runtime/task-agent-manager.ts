@@ -1428,8 +1428,8 @@ export class TaskAgentManager {
     isSyntheticMessage = true,
     images?: MessageImage[],
     deliveryMode: 'immediate' | 'defer' = 'immediate'
-  ): Promise<void> {
-    await this.injectSubSessionMessageWithOrigin(
+  ): Promise<string> {
+    return await this.injectSubSessionMessageWithOrigin(
       subSessionId,
       message,
       undefined,
@@ -3696,8 +3696,9 @@ export class TaskAgentManager {
       nodeExecutionRepo: this.config.nodeExecutionRepo,
       workflowRunId,
       workflowChannels: channels,
-      messageInjector: (targetSessionId, message) =>
-        this.injectSubSessionMessage(targetSessionId, message, true),
+      messageInjector: async (targetSessionId, message) => {
+        await this.injectSubSessionMessage(targetSessionId, message, true);
+      },
       activateTargetSession: (targetAgentName) =>
         this.activateTargetSessionsForMessage(taskId, workflowRunId, targetAgentName, {
           reopenReason: `node-agent send_message to activate "${targetAgentName}"`,
@@ -4000,8 +4001,9 @@ export class TaskAgentManager {
                 execution.agentName === actionMeta.agentName &&
                 execution.workflowNodeId === actionMeta.nodeId
             )?.status,
-        notifySourceSession: (sessionId, message) =>
-          this.injectSubSessionMessage(sessionId, message, true),
+        notifySourceSession: async (sessionId, message) => {
+          await this.injectSubSessionMessage(sessionId, message, true);
+        },
         onHookStateUpdated: (hookId, hookState) => {
           this.config.internalEventBus
             ?.publish('space.hookState.updated', {
