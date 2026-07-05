@@ -2256,6 +2256,9 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             deliverToSession: longTermAgentDelivery.deliverToSession,
             queueForActivation: longTermAgentDelivery.queueForActivation,
           }).routeMessage(messageRecord);
+          const firstDelivered = routed.deliveries.find(
+            (delivery) => delivery.state === 'delivered'
+          );
           return jsonResult({
             success: routed.deliveries.some((delivery) =>
               ['delivered', 'queued'].includes(delivery.state)
@@ -2263,6 +2266,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             task_id: task.id,
             target: 'space-agent',
             deliveries: routed.deliveries,
+            delivered_session_id: firstDelivered?.deliveredSessionId ?? null,
           });
         }
         if (address.kind === 'worker') {
@@ -2308,7 +2312,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       // Attempt direct injection when the execution already has a live session.
       if (resolved.agentSessionId) {
         try {
-          await taskAgentManager.injectSubSessionMessage(
+          const sdkMessageId = await taskAgentManager.injectSubSessionMessage(
             resolved.agentSessionId,
             formatAgentMessage({
               fromLevel: outboundSenderLevel,
@@ -2329,6 +2333,8 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             target: 'node',
             node_execution_id: resolved.id,
             agent_name: resolved.agentName,
+            delivered_session_id: resolved.agentSessionId,
+            sdk_message_id: sdkMessageId,
             activated: false,
           });
         } catch {
@@ -2359,7 +2365,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       const sessionIdAfter = refreshedExecution?.agentSessionId ?? null;
       if (sessionIdAfter) {
         try {
-          await taskAgentManager.injectSubSessionMessage(
+          const sdkMessageId = await taskAgentManager.injectSubSessionMessage(
             sessionIdAfter,
             formatAgentMessage({
               fromLevel: outboundSenderLevel,
@@ -2380,6 +2386,8 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             target: 'node',
             node_execution_id: resolved.id,
             agent_name: resolved.agentName,
+            delivered_session_id: sessionIdAfter,
+            sdk_message_id: sdkMessageId,
             activated: true,
           });
         } catch (err) {
@@ -2423,10 +2431,12 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         target: 'node',
         node_execution_id: resolved.id,
         agent_name: resolved.agentName,
+        delivered_session_id: null,
+        sdk_message_id: null,
         activated: true,
         delivered: false,
         queued: queuedMessageId !== null,
-        ...(queuedMessageId !== null ? { queuedMessageId } : {}),
+        ...(queuedMessageId !== null ? { queued_message_id: queuedMessageId } : {}),
         message:
           queuedMessageId !== null
             ? `Node "${resolved.agentName}" was activated and the message was queued; it will be delivered once the session spawns.`

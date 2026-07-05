@@ -4531,7 +4531,12 @@ describe('createSpaceAgentToolHandlers — approve_task plain path', () => {
 
 interface FakeTaskAgentManager {
   manager: TaskAgentManager;
-  subSessionInjects: Array<{ sessionId: string; message: string; isSyntheticMessage?: boolean }>;
+  subSessionInjects: Array<{
+    sessionId: string;
+    message: string;
+    isSyntheticMessage?: boolean;
+    sdkMessageId: string;
+  }>;
   /** Session IDs that should throw `Sub-session not found` on inject. */
   deadSessionIds: Set<string>;
   /** Hook invoked before ensureTaskAgentSession resolves. Allows simulating
@@ -4549,11 +4554,13 @@ function makeFakeTaskAgentManager(ctx: TestCtx): FakeTaskAgentManager {
       sessionId: string,
       message: string,
       isSyntheticMessage?: boolean
-    ): Promise<void> {
+    ): Promise<string> {
       if (state.deadSessionIds.has(sessionId)) {
         throw new Error(`Sub-session not found: ${sessionId}`);
       }
-      state.subSessionInjects.push({ sessionId, message, isSyntheticMessage });
+      const sdkMessageId = `sdk-message-${state.subSessionInjects.length}`;
+      state.subSessionInjects.push({ sessionId, message, isSyntheticMessage, sdkMessageId });
+      return sdkMessageId;
     },
   } as unknown as TaskAgentManager;
   return { manager, ...state };
@@ -4962,6 +4969,8 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
     expect(parsed.target).toBe('node');
     expect(parsed.node_execution_id).toBe(coderExec.id);
     expect(parsed.agent_name).toBe('coder');
+    expect(parsed.delivered_session_id).toBe('coder-session-live');
+    expect(parsed.sdk_message_id).toBe('sdk-message-0');
     expect(parsed.activated).toBe(false);
     // Direct-injection path must skip activateNode.
     expect(activateCalls).toHaveLength(0);
@@ -4970,6 +4979,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
         sessionId: 'coder-session-live',
         message: spaceAgentToNodeEnvelope(task, 'refactor the parser', 'coder'),
         isSyntheticMessage: true,
+        sdkMessageId: 'sdk-message-0',
       },
     ]);
     // The Task Agent path was not touched.
@@ -5012,6 +5022,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
         sessionId: 'reviewer-b-session',
         message: spaceAgentToNodeEnvelope(task, 'please re-review', 'reviewer-2'),
         isSyntheticMessage: true,
+        sdkMessageId: 'sdk-message-0',
       },
     ]);
     // Ensure the other reviewer was never touched.
@@ -5052,6 +5063,8 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
 
     expect(parsed.success).toBe(true);
     expect(parsed.activated).toBe(true);
+    expect(parsed.delivered_session_id).toBe('reviewer-session-newly-restored');
+    expect(parsed.sdk_message_id).toBe('sdk-message-0');
     expect(parsed.node_execution_id).toBe(exec.id);
     expect(activateCalls).toEqual([[run.id, wf.startNodeId]]);
     expect(tam.subSessionInjects).toEqual([
@@ -5059,6 +5072,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
         sessionId: 'reviewer-session-newly-restored',
         message: spaceAgentToNodeEnvelope(task, 'please re-review', 'reviewer'),
         isSyntheticMessage: true,
+        sdkMessageId: 'sdk-message-0',
       },
     ]);
   });
@@ -5099,6 +5113,9 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
     expect(parsed.delivered).toBe(false);
     expect(parsed.queued).toBe(false);
     expect(parsed.queuedMessageId).toBeUndefined();
+    expect(parsed.queued_message_id).toBeUndefined();
+    expect(parsed.delivered_session_id).toBeNull();
+    expect(parsed.sdk_message_id).toBeNull();
     expect(parsed.node_execution_id).toBe(exec.id);
     expect(tam.subSessionInjects).toHaveLength(0);
   });
@@ -5134,7 +5151,10 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
     expect(parsed.activated).toBe(true);
     expect(parsed.delivered).toBe(false);
     expect(parsed.queued).toBe(true);
-    expect(parsed.queuedMessageId).toBe('pending-message-0');
+    expect(parsed.queuedMessageId).toBeUndefined();
+    expect(parsed.queued_message_id).toBe('pending-message-0');
+    expect(parsed.delivered_session_id).toBeNull();
+    expect(parsed.sdk_message_id).toBeNull();
     expect(parsed.node_execution_id).toBe(exec.id);
     expect(tam.subSessionInjects).toHaveLength(0);
 
@@ -5256,6 +5276,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
         sessionId: 'reviewer-generic-session',
         message: spaceAgentToNodeEnvelope(task, 'review generic worker', 'reviewer'),
         isSyntheticMessage: true,
+        sdkMessageId: 'sdk-message-0',
       },
     ]);
   });
@@ -5297,8 +5318,70 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
         sessionId: 'coder-generic-session',
         message: spaceAgentToNodeEnvelope(task, 'session direct', 'coder'),
         isSyntheticMessage: true,
+        sdkMessageId: 'sdk-message-0',
       },
     ]);
+  });
+
+  test('handle target returns the first delivered session id', async () => {
+    const wf = buildSingleStepWorkflow(
+      ctx.spaceId,
+      ctx.workflowManager,
+      ctx.agentId,
+      'WF Handle DM'
+    );
+    const { tasks } = await ctx.runtime.startWorkflowRun(ctx.spaceId, wf.id, 'Handle DM target');
+    const task = tasks[0];
+
+    const tam = makeFakeTaskAgentManager(ctx);
+    const handlers = createSpaceAgentToolHandlers({
+      spaceId: ctx.spaceId,
+      runtime: ctx.runtime,
+      workflowManager: ctx.workflowManager,
+      taskRepo: ctx.taskRepo,
+      workflowRunRepo: ctx.workflowRunRepo,
+      taskManager: ctx.taskManager,
+      spaceAgentManager: ctx.agentManager,
+      nodeExecutionRepo: ctx.nodeExecutionRepo,
+      taskAgentManager: tam.manager,
+      messageResolver: {
+        async resolveTargets(message) {
+          return {
+            message,
+            resolved: [
+              {
+                targetRef: '@reviewer',
+                actor: {
+                  actorId: 'agent:reviewer',
+                  handle: '@reviewer',
+                  displayName: 'Reviewer',
+                  status: 'active',
+                  sessionId: 'reviewer-session-old',
+                },
+              },
+            ],
+            unresolved: [],
+          };
+        },
+      },
+      longTermAgentDelivery: {
+        async deliverToSession() {
+          return 'reviewer-session-delivered';
+        },
+      },
+    });
+
+    const result = await handlers.send_message_to_task({
+      task_id: task.id,
+      target: '@reviewer',
+      message: 'please review',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.target).toBe('space-agent');
+    expect(parsed.delivered_session_id).toBe('reviewer-session-delivered');
+    expect(parsed.deliveries[0].deliveredSessionId).toBe('reviewer-session-delivered');
   });
 
   test('generic unsupported target kind returns an error', async () => {
@@ -5429,6 +5512,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
         sessionId: 'reviewer-session-1',
         message: spaceAgentToNodeEnvelope(task, 'please look again', 'Reviewer'),
         isSyntheticMessage: true,
+        sdkMessageId: 'sdk-message-0',
       },
     ]);
   });
@@ -5491,6 +5575,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
         sessionId: 'coder-new',
         message: spaceAgentToNodeEnvelope(task, 'retry', 'coder'),
         isSyntheticMessage: true,
+        sdkMessageId: 'sdk-message-0',
       },
     ]);
   });
