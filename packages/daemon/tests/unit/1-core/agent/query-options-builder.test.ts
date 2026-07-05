@@ -10,7 +10,6 @@ import type { Session } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import type { Provider } from '@hyperneo/shared/provider';
 import { homedir } from 'os';
-import { existsSync } from 'node:fs';
 import {
   buildProviderSettings,
   ensureAgentTools,
@@ -977,10 +976,6 @@ describe('QueryOptionsBuilder', () => {
 
       // Should include home directories for settings/storage and temp directories for shell operations
       const expected = [homedir() + '/.claude', homedir() + '/.hyperneo'];
-      // During the symlink transition the legacy ~/.neokai is also allow-listed
-      // when it exists on the host running the test.
-      const legacy = homedir() + '/.neokai';
-      if (existsSync(legacy)) expected.push(legacy);
       expected.push('/tmp', '/tmp/claude', expect.stringContaining('/tmp/zsh-'));
       expect(options.additionalDirectories).toEqual(expected);
     });
@@ -988,8 +983,6 @@ describe('QueryOptionsBuilder', () => {
     it('should include home directories when no worktree', async () => {
       const options = await builder.build();
       const expected = [homedir() + '/.claude', homedir() + '/.hyperneo'];
-      const legacy = homedir() + '/.neokai';
-      if (existsSync(legacy)) expected.push(legacy);
       expect(options.additionalDirectories).toEqual(expected);
     });
   });
