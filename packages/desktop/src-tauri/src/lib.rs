@@ -128,19 +128,19 @@ pub fn run() {
 				// Per-user workspace directory.
 				let workspace = dirs::home_dir()
 					.expect("Could not find home directory")
-					.join(".kai");
+					.join(".hyperneo");
 				let workspace_str = workspace.to_string_lossy().to_string();
 
-				// Spawn the bundled `neokai` sidecar.
+				// Spawn the bundled `hyperneo` sidecar.
 				let sidecar_command = app
 					.shell()
-					.sidecar("neokai")
+					.sidecar("hyperneo")
 					.expect("Failed to create sidecar command")
 					.args(["--port", "9283", "--workspace", &workspace_str]);
 
 				let (mut rx, child) = sidecar_command
 					.spawn()
-					.expect("Failed to spawn neokai sidecar");
+					.expect("Failed to spawn hyperneo sidecar");
 
 				// Stash child so we can kill it on shutdown.
 				*sidecar_state.child.lock().unwrap() = Some(child);
@@ -152,29 +152,29 @@ pub fn run() {
 						match event {
 							CommandEvent::Stdout(line_bytes) => {
 								let line = String::from_utf8_lossy(&line_bytes);
-								log::info!("[neokai] {}", line.trim());
+								log::info!("[hyperneo] {}", line.trim());
 							}
 							CommandEvent::Stderr(line_bytes) => {
 								let line = String::from_utf8_lossy(&line_bytes);
-								log::error!("[neokai] {}", line.trim());
+								log::error!("[hyperneo] {}", line.trim());
 							}
 							CommandEvent::Error(err) => {
-								log::error!("[neokai] Error: {}", err);
+								log::error!("[hyperneo] Error: {}", err);
 							}
 							CommandEvent::Terminated(payload) => {
 								log::warn!(
-									"[neokai] Process terminated with code: {:?}",
+									"[hyperneo] Process terminated with code: {:?}",
 									payload.code
 								);
 								let _ =
-									app_handle_for_events.emit("neokai-terminated", payload.code);
+									app_handle_for_events.emit("hyperneo-terminated", payload.code);
 							}
 							_ => {}
 						}
 					}
 				});
 
-				log::info!("HyperNeo desktop app started with neokai daemon");
+				log::info!("HyperNeo desktop app started with hyperneo daemon");
 
 				// Poll the daemon's health endpoint, then navigate the webview off
 				// the loading splash and onto the live UI.
@@ -211,7 +211,7 @@ pub fn run() {
 						}
 					} else {
 						log::error!("Daemon failed to start within timeout");
-						let _ = app_handle.emit("neokai-start-failed", "Daemon failed to start");
+						let _ = app_handle.emit("hyperneo-start-failed", "Daemon failed to start");
 					}
 				});
 			}
@@ -219,7 +219,7 @@ pub fn run() {
 			#[cfg(debug_assertions)]
 			{
 				log::info!(
-					"Development mode: expecting neokai daemon at {}",
+					"Development mode: expecting hyperneo daemon at {}",
 					DAEMON_URL
 				);
 				log::info!("Run 'make dev PORT=9283' from the monorepo root to start the daemon");
