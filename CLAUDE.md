@@ -36,7 +36,7 @@ packages/e2e      # Playwright tests
 
 ```bash
 # Dev — ALWAYS pass DB_PATH in a worktree (see DB lock note below)
-make dev PORT=8484 DB_PATH=/tmp/neokai-$(basename $PWD).db
+make dev PORT=8484 DB_PATH=/tmp/hyperneo-$(basename $PWD).db
 
 # Quality
 bun run check        # lint + typecheck + knip + check:session-guards
