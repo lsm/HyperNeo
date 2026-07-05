@@ -125,10 +125,12 @@ pub fn run() {
 				let sidecar_state = app.state::<SidecarState>();
 				let app_handle = app.handle().clone();
 
-				// Per-user workspace directory.
+				// Per-user workspace directory. Kept under ~/.hyperneo but in a
+				// "workspace" subdir so it is not the same path as the daemon data dir.
 				let workspace = dirs::home_dir()
 					.expect("Could not find home directory")
-					.join(".hyperneo");
+					.join(".hyperneo")
+					.join("workspace");
 				let workspace_str = workspace.to_string_lossy().to_string();
 
 				// Spawn the bundled `hyperneo` sidecar.

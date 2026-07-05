@@ -119,7 +119,7 @@ workspace packages.
 Tauri's [sidecar](https://v2.tauri.app/develop/sidecar/) feature lets the
 desktop app ship and launch a precompiled child process. The Rust shell:
 
-- Spawns `hyperneo --port 9283 --workspace ~/.hyperneo` on startup (release mode only).
+- Spawns `hyperneo --port 9283 --workspace ~/.hyperneo/workspace` on startup (release mode only).
 - Streams stdout/stderr into the Tauri log plugin.
 - Polls `http://localhost:9283/api/health` for up to ~15 s and then navigates
   the main window from `loading/index.html` to the live UI.
@@ -129,6 +129,6 @@ desktop app ship and launch a precompiled child process. The Rust shell:
 ## Open decisions
 
 This package was added with conservative defaults — see the corresponding PR
-description for the items still up for review (product name vs. `HyperNeo`,
-updater endpoint, dev port choice, mobile parity, fate of the standalone
-`~/focus/hyperneo/desktop` repo).
+description for the items still up for review (updater endpoint, dev port
+choice, mobile parity, fate of the standalone `~/focus/HyperNeo/desktop`
+repo).
