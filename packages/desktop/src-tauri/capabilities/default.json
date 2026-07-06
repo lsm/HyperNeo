@@ -21,7 +21,7 @@
       "identifier": "shell:allow-spawn",
       "allow": [
         {
-          "name": "binaries/neokai",
+          "name": "binaries/hyperneo",
           "sidecar": true
         }
       ]
@@ -30,7 +30,7 @@
       "identifier": "shell:allow-execute",
       "allow": [
         {
-          "name": "binaries/neokai",
+          "name": "binaries/hyperneo",
           "sidecar": true,
           "args": true
         }

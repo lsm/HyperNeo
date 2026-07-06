@@ -2,7 +2,7 @@
 
 A self-contained desktop wrapper for HyperNeo built with [Tauri 2.x](https://v2.tauri.app/).
 
-The package ships the `neokai` daemon as a Tauri **sidecar** (an external binary
+The package ships the `hyperneo` daemon as a Tauri **sidecar** (an external binary
 bundled and launched by the Rust shell) and renders the existing web UI inside
 a native webview. There is no separate frontend code — Tauri opens a small
 loading splash, polls the daemon's `/api/health` endpoint, and then navigates
@@ -13,13 +13,13 @@ the webview to `http://localhost:9283` once the daemon is ready.
 │  Tauri webview                      │
 │  ┌──────────────────────────────┐   │
 │  │ packages/web (served by      │   │
-│  │ the bundled neokai daemon)   │   │
+│  │ the bundled hyperneo daemon) │   │
 │  └──────────────────────────────┘   │
 │              ▲                       │
 │              │ HTTP / WebSocket      │
 │  ┌──────────────────────────────┐   │
-│  │ neokai sidecar (compiled bun │   │
-│  │ binary, port 9283)           │   │
+│  │ hyperneo sidecar (compiled   │   │
+│  │ bun binary, port 9283)       │   │
 │  └──────────────────────────────┘   │
 └─────────────────────────────────────┘
 ```
@@ -81,7 +81,7 @@ bun run build
 
 Under the hood this:
 
-1. Runs `bun run build:sidecar`, which calls `bun run scripts/build-binary.ts --target <bun-target>` from the monorepo root and copies the produced `dist/bin/hyperneo-<arch>` into `src-tauri/binaries/neokai-<rust-target-triple>`.
+1. Runs `bun run build:sidecar`, which calls `bun run scripts/build-binary.ts --target <bun-target>` from the monorepo root and copies the produced `dist/bin/hyperneo-<arch>` into `src-tauri/binaries/hyperneo-<rust-target-triple>`.
 2. Runs `cargo tauri build`, which embeds that binary as the `externalBin` and produces an installable bundle for the host OS in `src-tauri/target/release/bundle/`.
 
 Cross-target builds use the `build:macos`, `build:macos-intel`, `build:macos-universal`, `build:windows`, `build:linux`, and `build:linux-arm` scripts. They each rebuild the sidecar for the matching bun target before invoking `cargo tauri build --target <triple>`.
@@ -119,8 +119,7 @@ workspace packages.
 Tauri's [sidecar](https://v2.tauri.app/develop/sidecar/) feature lets the
 desktop app ship and launch a precompiled child process. The Rust shell:
 
-- Spawns `neokai --port 9283 --workspace ~/.kai` on startup (release mode
-  only; `.kai` is the legacy desktop config directory retained for compatibility).
+- Spawns `hyperneo --port 9283 --workspace ~/.hyperneo/workspace` on startup (release mode only).
 - Streams stdout/stderr into the Tauri log plugin.
 - Polls `http://localhost:9283/api/health` for up to ~15 s and then navigates
   the main window from `loading/index.html` to the live UI.
