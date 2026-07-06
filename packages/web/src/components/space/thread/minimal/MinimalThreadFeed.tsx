@@ -180,6 +180,11 @@ interface RosterTaskNotificationEntry {
   ts: number;
   toolUseId?: string;
 }
+interface RosterStatusEntry {
+  kind: 'status';
+  status: string;
+  ts: number;
+}
 type ActiveRosterEntry =
   | RosterToolEntry
   | RosterMessageEntry
@@ -188,7 +193,8 @@ type ActiveRosterEntry =
   | RosterHandoffEntry
   | RosterHookEntry
   | RosterApiRetryEntry
-  | RosterTaskNotificationEntry;
+  | RosterTaskNotificationEntry
+  | RosterStatusEntry;
 
 const TASK_THREAD_MESSAGE_BUBBLE_WIDTH_CLASS = 'max-w-[85%] md:max-w-[86%]';
 const TASK_THREAD_AGENT_BUBBLE_WIDTH_CLASS = 'max-w-full md:max-w-[86%]';
@@ -371,6 +377,25 @@ function getToolUseContentBlocks(row: ParsedThreadRow) {
   return content.filter((block): block is { type: 'tool_use'; name: string; input?: unknown } =>
     isToolUseBlock(block as never)
   );
+}
+
+function parseSystemStatusRow(
+  row: ParsedThreadRow
+): { status: string; isClear: false } | { status: null; isClear: true } | null {
+  const msg = row.message;
+  if (!msg || msg.type !== 'system') return null;
+  if ((msg as { subtype?: string }).subtype !== 'status') return null;
+  const status = (msg as { status?: unknown }).status;
+  if (status === null) return { status: null, isClear: true };
+  if (typeof status === 'string' && status) return { status, isClear: false };
+  return null;
+}
+
+function isFoldedSystemStatusRow(
+  row: ParsedThreadRow,
+  consumedStatusRowIds: ReadonlySet<string>
+): boolean {
+  return consumedStatusRowIds.has(String(row.id));
 }
 
 /**
@@ -563,6 +588,26 @@ function rowsContainResultError(rows: ParsedThreadRow[]): boolean {
 function latestSessionId(rows: ParsedThreadRow[]): string | null {
   for (let i = rows.length - 1; i >= 0; i--) {
     if (rows[i].sessionId) return rows[i].sessionId;
+  }
+  return null;
+}
+
+/**
+ * Session id of the active turn represented by a block. Status rows and
+ * compact_boundary rows can carry a different session id than the agent rows
+ * they annotate (or no session id at all), so the active turn's session must
+ * be derived from the last *non-status, non-boundary, non-user* row. Using the
+ * raw `latestSessionId` would let a later cross-session status row hijack the
+ * turn's identity and either mis-attach the status or suppress its fallback.
+ */
+function activeTurnSessionId(rows: ParsedThreadRow[]): string | null {
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const row = rows[i];
+    if (!row.sessionId) continue;
+    if (parseSystemStatusRow(row)) continue;
+    if (row.message && isSDKCompactBoundary(row.message)) continue;
+    if (isUserRow(row)) continue;
+    return row.sessionId;
   }
   return null;
 }
@@ -918,7 +963,8 @@ function buildActiveTurn(
   summary: ActiveTurnSummary | undefined,
   sessionId: string | null,
   taskNotificationsByToolUseId: Map<string, TaskNotificationLite>,
-  globalRosteredToolUseIds: Set<string>
+  globalRosteredToolUseIds: Set<string>,
+  latestStatusBySession?: Map<string, { status: string; ts: number }>
 ): ActiveFeedTurn {
   const baseRoster = rosterEntriesFromSummary(summary, ROSTER_MAX_ENTRIES).map((entry) => {
     if (entry.kind !== 'tool') return entry;
@@ -932,7 +978,17 @@ function buildActiveTurn(
     ...globalRosteredToolUseIds,
     ...rosteredToolUseIdsFromRoster(baseRoster),
   ]);
-  const roster = [...baseRoster, ...standaloneTaskNotificationEntries(rows, rostered)];
+  const withNotifications = [...baseRoster, ...standaloneTaskNotificationEntries(rows, rostered)];
+  const labelKey = normalizeAgentKey(block.agentLabel);
+  const sessionEntry = sessionId ? latestStatusBySession?.get(sessionId) : undefined;
+  const labelEntry = latestStatusBySession?.get(labelKey);
+  const activeStatus = sessionEntry ?? labelEntry;
+  // Cap the base roster first, then pin the live status entry so the header
+  // pill always has a matching roster line even when many events followed it.
+  const cappedBase = withNotifications.slice(-ROSTER_MAX_ENTRIES);
+  const roster = activeStatus
+    ? [...cappedBase, { kind: 'status' as const, status: activeStatus.status, ts: activeStatus.ts }]
+    : cappedBase;
   return {
     state: 'active',
     id: turnId,
@@ -941,13 +997,13 @@ function buildActiveTurn(
     agentRole: rows[0]?.role ?? block.agentLabel,
     agentNodeExecutionId: rows[0]?.nodeExecutionId ?? null,
     startedAt: rows[0].createdAt,
-    status: 'Running…',
+    status: activeStatus ? `${humanizeSystemSubtype(activeStatus.status)}…` : 'Running…',
     toolCalls: countToolCallsForActive(rows, summary),
     messages: countMessagesForActive(rows),
     thinkingEntries: countSummaryEntries(summary, 'thinking'),
     messageEntries: countSummaryEntries(summary, 'text'),
     toolEntries: countSummaryEntries(summary, 'tool_use'),
-    lastEventAt: latestActivityTimestamp(summary, rows),
+    lastEventAt: Math.max(latestActivityTimestamp(summary, rows), activeStatus?.ts ?? 0),
     roster,
     sessionId,
   };
@@ -1063,12 +1119,24 @@ function isFoldedTaskNotification(row: ParsedThreadRow, rosteredToolUseIds: Set<
 function buildOperationalSystemTurn(
   row: ParsedThreadRow,
   isSessionTail: boolean,
-  rosteredToolUseIds: Set<string>
+  rosteredToolUseIds: Set<string>,
+  consumedStatusRowIds?: ReadonlySet<string>
 ): SystemFeedTurn | null {
   const message = row.message;
   if (!message || message.type !== 'system') return null;
   const subtype = (message as { subtype?: string }).subtype;
   if (!subtype || subtype === 'init') return null;
+  // SDK status messages (compacting / requesting) fold into the active turn's
+  // header pill and roster. Suppress the standalone system card when the status
+  // has been attached to an active turn; leave non-clear statuses as a generic
+  // fallback row when they arrived with no active roster (orphan / completed
+  // turn). Clear messages (status: null) are only meaningful inside an active
+  // turn, so never render them as a standalone card.
+  if (subtype === 'status') {
+    const statusValue = (message as { status?: unknown }).status;
+    if (statusValue === null) return null;
+    if (consumedStatusRowIds && consumedStatusRowIds.has(String(row.id))) return null;
+  }
   // Hooks surface ONLY as roster entries in the minimal feed (one entry per
   // hook run via the active-turn summary). Suppress every hook_* system row so
   // the feed never shows a standalone hook card. The chat transcript still
@@ -1196,6 +1264,14 @@ function buildGenericSystemSummary(message: Extract<SDKMessage, { type: 'system'
 } | null {
   const subtype = (message as { subtype?: string }).subtype;
   if (!subtype) return null;
+
+  if (subtype === 'status') {
+    const statusValue = firstStringField(message, ['status']) ?? subtype;
+    return {
+      title: humanizeSystemSubtype(statusValue),
+      body: statusValue,
+    };
+  }
 
   if (subtype === 'informational') {
     const level = (message as { level?: unknown }).level;
@@ -1341,12 +1417,90 @@ function buildFeedTurns(
   const trailingBlockByAgent = new Map<string, AgentTurnBlock>();
   for (const block of blocks) trailingBlockByAgent.set(normalizeAgentKey(block.agentLabel), block);
   const renderedTurnKeys = new Set<string>();
+  const activeTurnIndexBySession = new Map<string, number | undefined>();
   for (const [key, block] of trailingBlockByAgent) {
     if (!normalisedActive.has(key)) continue;
     if (block.isTerminal) continue;
-    const sid = latestSessionId(block.rows);
+    const sid = activeTurnSessionId(block.rows);
     const turnIndex = latestTurnIndex(block.rows);
-    if (sid && turnIndex !== undefined) renderedTurnKeys.add(`${sid}:${turnIndex}`);
+    if (sid) {
+      if (turnIndex !== undefined) renderedTurnKeys.add(`${sid}:${turnIndex}`);
+      activeTurnIndexBySession.set(sid, turnIndex);
+    }
+  }
+
+  // SDK system:status messages (compacting / requesting) fold into the active
+  // turn's header pill and roster. Consume them when they belong to the active
+  // turn's session, or — for rows without a session id — when the agent label
+  // has a non-terminal active turn. When the turn index is known on both sides
+  // it must match. Any unmatched status row falls back to a generic system card
+  // so it is never silently lost.
+  const consumedStatusRowIds = new Set<string>();
+  const latestStatusBySession = new Map<string, { status: string; ts: number }>();
+  for (const row of rowsWithReplacementStatus) {
+    const parsed = parseSystemStatusRow(row);
+    const isCompactBoundary = !!row.message && isSDKCompactBoundary(row.message);
+    if (!parsed && !isCompactBoundary) continue;
+
+    const sid = row.sessionId;
+    const labelKey = normalizeAgentKey(row.label);
+    const block = trailingBlockByAgent.get(labelKey);
+    const isActiveBlock = block && !block.isTerminal && normalisedActive.has(labelKey);
+    const activeSessionId = isActiveBlock ? activeTurnSessionId(block.rows) : null;
+    let targetKey: string | undefined;
+    let activeTurnIndex: number | undefined;
+    if (sid && activeSessionId && sid === activeSessionId) {
+      targetKey = sid;
+      activeTurnIndex = activeTurnIndexBySession.get(sid);
+    } else if (!sid && isActiveBlock) {
+      targetKey = labelKey;
+      activeTurnIndex = latestTurnIndex(block.rows);
+    }
+    if (!targetKey) continue;
+    if (
+      row.turnIndex !== undefined &&
+      activeTurnIndex !== undefined &&
+      row.turnIndex !== activeTurnIndex
+    ) {
+      continue;
+    }
+
+    if (isCompactBoundary) {
+      // The daemon treats a compact_boundary as the clear point for an active
+      // compacting state; mirror that in the folded UI.
+      latestStatusBySession.delete(targetKey);
+      continue;
+    }
+
+    // Only fold a status row when there is an actual turn to attach it to.
+    // If the trailing block contains only status/boundary/user rows, the row
+    // would be consumed and then silently dropped, so let it fall back to a
+    // standalone system card instead.
+    if (parsed) {
+      const block = trailingBlockByAgent.get(labelKey);
+      if (block) {
+        const hasFoldTarget = block.rows.some((r) => {
+          if (isUserRow(r)) return false;
+          if (parseSystemStatusRow(r)) return false;
+          if (r.message && isSDKCompactBoundary(r.message)) return false;
+          return true;
+        });
+        if (!hasFoldTarget) continue;
+      }
+    }
+
+    consumedStatusRowIds.add(String(row.id));
+    if (parsed!.isClear) {
+      latestStatusBySession.delete(targetKey);
+    } else {
+      const existing = latestStatusBySession.get(targetKey);
+      // Use strict `>` so two status rows in the same millisecond keep the
+      // first-seen value (insertion order) instead of being overwritten by a
+      // later row whose UUID/DB order may not reflect the true stream order.
+      if (!existing || row.createdAt > existing.ts) {
+        latestStatusBySession.set(targetKey, { status: parsed!.status, ts: row.createdAt });
+      }
+    }
   }
 
   const rosteredActiveToolUseIds = collectActiveRosteredToolUseIds(
@@ -1383,6 +1537,11 @@ function buildFeedTurns(
       pendingAgentRows = [];
     };
     for (const row of block.rows) {
+      if (isFoldedSystemStatusRow(row, consumedStatusRowIds)) continue;
+      // Unmatched `system:status` clear rows (status: null) should never join a
+      // turn — they would shift latestSessionId / message counts and could steal
+      // the active rail's session away from the real active turn.
+      if (parseSystemStatusRow(row)?.isClear) continue;
       if (buildCompactBoundaryTurn(row) || isUserRow(row)) {
         flush();
         continue;
@@ -1400,7 +1559,7 @@ function buildFeedTurns(
       }
       if (
         subtype !== 'task_notification' &&
-        buildOperationalSystemTurn(row, false, rosteredActiveToolUseIds)
+        buildOperationalSystemTurn(row, false, rosteredActiveToolUseIds, consumedStatusRowIds)
       ) {
         flush();
         continue;
@@ -1490,6 +1649,9 @@ function buildFeedTurns(
     };
 
     for (const row of block.rows) {
+      if (isFoldedSystemStatusRow(row, consumedStatusRowIds)) continue;
+      // Drop unmatched `system:status` clear rows before they can join a turn.
+      if (parseSystemStatusRow(row)?.isClear) continue;
       const compactBoundaryTurn = buildCompactBoundaryTurn(row);
       if (compactBoundaryTurn) {
         flushAgent();
@@ -1499,7 +1661,8 @@ function buildFeedTurns(
       const operationalSystemTurn = buildOperationalSystemTurn(
         row,
         row.sessionId ? latestRowIdBySession.get(row.sessionId) === String(row.id) : false,
-        rosteredToolUseIds
+        rosteredToolUseIds,
+        consumedStatusRowIds
       );
       if (operationalSystemTurn) {
         flushAgent();
@@ -1560,7 +1723,8 @@ function buildFeedTurns(
         summary,
         sessionId,
         taskNotificationsByToolUseId,
-        rosteredToolUseIds
+        rosteredToolUseIds,
+        latestStatusBySession
       );
     }
   }
@@ -1610,7 +1774,11 @@ function PulseDot({ color }: { color: string }) {
 
 function StatusPill({ color, status }: { color: string; status: string }) {
   return (
-    <span class="inline-flex items-center gap-1.5 text-[11px] uppercase tracking-wider font-medium">
+    <span
+      class="inline-flex items-center gap-1.5 text-[11px] uppercase tracking-wider font-medium"
+      data-testid="minimal-thread-status-pill"
+      data-status={status}
+    >
       <PulseDot color={color} />
       <span style={{ color }}>{status}</span>
     </span>
@@ -1774,6 +1942,23 @@ function RosterEntry({ entry, isLatest }: { entry: ActiveRosterEntry; isLatest: 
             </span>
           ) : null}
         </span>
+      </div>
+    );
+  }
+
+  if (entry.kind === 'status') {
+    const statusText = `${humanizeSystemSubtype(entry.status)}…`;
+    return (
+      <div
+        class={`flex items-baseline gap-2 text-xs leading-5 ${fadeClass}`}
+        data-testid="minimal-thread-roster-entry"
+        data-roster-kind="status"
+        data-status={entry.status}
+      >
+        <span class="shrink-0" aria-hidden="true">
+          <PulseDot color="#f59e0b" />
+        </span>
+        <span class={`${bodyClass} italic`}>{statusText}</span>
       </div>
     );
   }
