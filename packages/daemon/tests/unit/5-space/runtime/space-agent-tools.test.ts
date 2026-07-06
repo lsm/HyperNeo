@@ -5704,6 +5704,60 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
     expect(tam.subSessionInjects[0]?.sessionId).toBe('coder-worker-session');
   });
 
+  test('node_id exact UUID disambiguates duplicate handle workers from a long-horizon conflict', async () => {
+    const wf = buildSingleStepWorkflow(
+      ctx.spaceId,
+      ctx.workflowManager,
+      ctx.agentId,
+      'WF Duplicate Handle LH'
+    );
+    const { run, tasks } = await ctx.runtime.startWorkflowRun(
+      ctx.spaceId,
+      wf.id,
+      'Duplicate handle with LH'
+    );
+    const task = tasks[0];
+    const olderExec = ctx.nodeExecutionRepo.createOrIgnore({
+      workflowRunId: run.id,
+      workflowNodeId: 'old-node',
+      agentName: 'coder',
+      agentSessionId: 'coder-old-session',
+      status: 'in_progress',
+    });
+    // Ensure deterministic ordering: listByWorkflowRun orders by created_at ASC
+    // then id ASC. A 2ms gap guarantees distinct timestamps across platforms.
+    await new Promise((resolve) => setTimeout(resolve, 2));
+    ctx.nodeExecutionRepo.createOrIgnore({
+      workflowRunId: run.id,
+      workflowNodeId: 'latest-node',
+      agentName: 'coder',
+      agentSessionId: 'coder-latest-session',
+      status: 'in_progress',
+    });
+    ctx.longHorizonAgentRepo.create({
+      id: '3bffb20e',
+      spaceId: ctx.spaceId,
+      handle: 'coder',
+      displayName: 'Coder',
+    });
+
+    const tam = makeFakeTaskAgentManager(ctx);
+    const result = await makeHandlersWith(tam, {
+      activateNode: async () => {},
+      messageResolver: resolverForActors([{ actorId: 'agent:3bffb20e', handle: '@coder' }]),
+    }).send_message_to_task({
+      task_id: task.id,
+      target: '@coder',
+      node_id: olderExec.id,
+      message: 'hello older worker',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.node_execution_id).toBe(olderExec.id);
+    expect(tam.subSessionInjects[0]?.sessionId).toBe('coder-old-session');
+  });
+
   test('task_id + bare handle errors when it conflicts with a long-horizon agent and node_id is absent', async () => {
     const wf = buildSingleStepWorkflow(
       ctx.spaceId,
@@ -5830,6 +5884,67 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
     expect(parsed.error).toContain('@coordinator');
     expect(parsed.error).toContain('workflow node "coordinator"');
     expect(countSdkMessages()).toBe(before);
+  });
+
+  test('@coordinator routes to the Space coordinator when no workflow worker collides', async () => {
+    const wf = buildSingleStepWorkflow(
+      ctx.spaceId,
+      ctx.workflowManager,
+      ctx.agentId,
+      'WF Coordinator No Collision'
+    );
+    const { tasks } = await ctx.runtime.startWorkflowRun(
+      ctx.spaceId,
+      wf.id,
+      'Coordinator no collision'
+    );
+    const task = tasks[0];
+    const auditLogRepo = new McpAuditLogRepository(ctx.db);
+
+    const tam = makeFakeTaskAgentManager(ctx);
+    const result = await makeHandlersWith(tam, {
+      auditLogRepo,
+      activateNode: async () => {},
+      messageResolver: {
+        async resolveTargets(message) {
+          return {
+            resolved: [
+              {
+                targetRef: message.targets[0],
+                address: { kind: 'handle', handle: 'coordinator' },
+                actor: {
+                  actorId: `agent:coordinator:${ctx.spaceId}`,
+                  kind: 'agent',
+                  spaceId: ctx.spaceId,
+                  handle: '@coordinator',
+                  status: 'active',
+                },
+              },
+            ],
+            unresolved: [],
+          };
+        },
+      },
+      longTermAgentDelivery: {
+        deliverToSession: async () => 'coordinator-session',
+        queueForActivation: async () => null,
+      },
+    }).send_message_to_task({
+      task_id: task.id,
+      target: '@coordinator',
+      message: 'hello coordinator',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+    const auditSummaries = parseAuditSummaries(auditLogRepo, task.id);
+
+    expect(parsed.success).toBe(true);
+    expect(auditSummaries).toHaveLength(1);
+    expect(auditSummaries[0]).toMatchObject({
+      task_id: task.id,
+      outcome: 'delivered',
+      target: 'space-agent',
+      agent_name: '@coordinator',
+    });
   });
 
   test('target trimming is preserved for bare handle routing', async () => {

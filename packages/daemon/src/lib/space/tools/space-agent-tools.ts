@@ -328,13 +328,14 @@ async function resolveHandleForTaskRouting(
 
   const handle = `@${address.handle}`;
   const canonicalHandle = `@${normalizeAgentNameToken(address.handle)}`;
-  const taskWorker = taskExecutions
-    .filter(
-      (exec) =>
-        exec.workflowRunId === workflowRunId &&
-        normalizeAgentNameToken(exec.agentName) === normalizeAgentNameToken(address.handle)
-    )
-    .at(-1);
+  const taskWorker =
+    taskExecutions
+      .filter(
+        (exec) =>
+          exec.workflowRunId === workflowRunId &&
+          normalizeAgentNameToken(exec.agentName) === normalizeAgentNameToken(address.handle)
+      )
+      .at(-1) ?? null;
   const actors = messageResolver
     ? (
         await messageResolver.resolveTargets({
@@ -362,9 +363,9 @@ async function resolveHandleForTaskRouting(
     if (!actor.actorId.startsWith('agent:')) return false;
     // The synthetic Space coordinator actor uses actorId `agent:coordinator:<spaceId>`,
     // but its persisted long-horizon record id is `space-lh-agent:coordinator:<spaceId>`.
-    // Treat it as a reserved long-horizon actor/conflict so @coordinator cannot be
-    // silently hijacked by a workflow worker with the same slot name.
-    if (actor.actorId === `agent:coordinator:${spaceId}`) return true;
+    // Treat it as a conflict only when a workflow worker with the same slot name exists;
+    // otherwise normal @coordinator delivery to the Space coordinator should proceed.
+    if (actor.actorId === `agent:coordinator:${spaceId}`) return taskWorker !== null;
     if (!longHorizonAgentRepo) return true;
     const agentId = decodeURIComponent(actor.actorId.slice('agent:'.length));
     return longHorizonAgentRepo.getById(agentId)?.spaceId === spaceId;
@@ -373,7 +374,7 @@ async function resolveHandleForTaskRouting(
   if (taskWorker && longHorizonActors.length === 0)
     return { kind: 'task-worker', exec: taskWorker };
   if (taskWorker || longHorizonActors.length > 1)
-    return { kind: 'ambiguous', actors: longHorizonActors, exec: taskWorker };
+    return { kind: 'ambiguous', actors: longHorizonActors, exec: taskWorker ?? undefined };
   if (longHorizonActors.length === 1)
     return { kind: 'long-horizon-agent', actor: longHorizonActors[0] };
   return { kind: 'no-match' };
@@ -2377,12 +2378,17 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           });
         }
         let overrideExec: NodeExecution | undefined;
+        const nodeResolved = args.node_id
+          ? resolveNodeExecution(allExecutions, args.node_id)
+          : null;
+        const nodeMatchesTargetHandle =
+          nodeResolved &&
+          targetAddress.kind === 'handle' &&
+          normalizeAgentNameToken(nodeResolved.agentName) ===
+            normalizeAgentNameToken(targetAddress.handle);
         if (handleResolution?.kind === 'ambiguous') {
-          const nodeResolved = args.node_id
-            ? resolveNodeExecution(allExecutions, args.node_id)
-            : null;
-          if (nodeResolved && nodeResolved.id === handleResolution.exec?.id) {
-            overrideExec = handleResolution.exec;
+          if (nodeMatchesTargetHandle) {
+            overrideExec = nodeResolved;
           } else {
             audit('failed', {
               reason: 'ambiguous_target',
@@ -2416,7 +2422,9 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           });
         }
         const workerExec =
-          overrideExec ?? (handleResolution?.kind === 'task-worker' ? handleResolution.exec : null);
+          overrideExec ??
+          (nodeMatchesTargetHandle ? nodeResolved : null) ??
+          (handleResolution?.kind === 'task-worker' ? handleResolution.exec : null);
         if (workerExec) {
           genericTarget = `@worker:${encodeURIComponent(task.workflowRunId)}/${encodeURIComponent(workerExec.workflowNodeId)}/${encodeURIComponent(workerExec.agentName)}`;
         }
