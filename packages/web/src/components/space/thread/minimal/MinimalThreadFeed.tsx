@@ -1416,16 +1416,12 @@ function buildFeedTurns(
   for (const label of activeAgentLabels) normalisedActive.add(normalizeAgentKey(label));
   const trailingBlockByAgent = new Map<string, AgentTurnBlock>();
   for (const block of blocks) trailingBlockByAgent.set(normalizeAgentKey(block.agentLabel), block);
-  const activeSessionByLabel = new Map<string, string | null>();
-  for (const [key, block] of trailingBlockByAgent) {
-    activeSessionByLabel.set(key, activeTurnSessionId(block.rows));
-  }
   const renderedTurnKeys = new Set<string>();
   const activeTurnIndexBySession = new Map<string, number | undefined>();
   for (const [key, block] of trailingBlockByAgent) {
     if (!normalisedActive.has(key)) continue;
     if (block.isTerminal) continue;
-    const sid = activeSessionByLabel.get(key) ?? null;
+    const sid = activeTurnSessionId(block.rows);
     const turnIndex = latestTurnIndex(block.rows);
     if (sid) {
       if (turnIndex !== undefined) renderedTurnKeys.add(`${sid}:${turnIndex}`);
@@ -1448,18 +1444,17 @@ function buildFeedTurns(
 
     const sid = row.sessionId;
     const labelKey = normalizeAgentKey(row.label);
-    const activeSessionId = activeSessionByLabel.get(labelKey);
+    const block = trailingBlockByAgent.get(labelKey);
+    const isActiveBlock = block && !block.isTerminal && normalisedActive.has(labelKey);
+    const activeSessionId = isActiveBlock ? activeTurnSessionId(block.rows) : null;
     let targetKey: string | undefined;
     let activeTurnIndex: number | undefined;
     if (sid && activeSessionId && sid === activeSessionId) {
       targetKey = sid;
       activeTurnIndex = activeTurnIndexBySession.get(sid);
-    } else if (!sid) {
-      const block = trailingBlockByAgent.get(labelKey);
-      if (block && !block.isTerminal && normalisedActive.has(labelKey)) {
-        targetKey = labelKey;
-        activeTurnIndex = latestTurnIndex(block.rows);
-      }
+    } else if (!sid && isActiveBlock) {
+      targetKey = labelKey;
+      activeTurnIndex = latestTurnIndex(block.rows);
     }
     if (!targetKey) continue;
     if (
@@ -1540,6 +1535,10 @@ function buildFeedTurns(
     };
     for (const row of block.rows) {
       if (isFoldedSystemStatusRow(row, consumedStatusRowIds)) continue;
+      // Unmatched `system:status` clear rows (status: null) should never join a
+      // turn — they would shift latestSessionId / message counts and could steal
+      // the active rail's session away from the real active turn.
+      if (parseSystemStatusRow(row)?.isClear) continue;
       if (buildCompactBoundaryTurn(row) || isUserRow(row)) {
         flush();
         continue;
@@ -1648,6 +1647,8 @@ function buildFeedTurns(
 
     for (const row of block.rows) {
       if (isFoldedSystemStatusRow(row, consumedStatusRowIds)) continue;
+      // Drop unmatched `system:status` clear rows before they can join a turn.
+      if (parseSystemStatusRow(row)?.isClear) continue;
       const compactBoundaryTurn = buildCompactBoundaryTurn(row);
       if (compactBoundaryTurn) {
         flushAgent();

@@ -3666,6 +3666,87 @@ describe('MinimalThreadFeed', () => {
     expect(pill.dataset.status).toBe('Running…');
   });
 
+  it('does not let an unmatched clear status from another session steal the active turn session', () => {
+    const t = Date.now();
+    const rows = [
+      makeRow({
+        id: 'a1',
+        label: 'Coder Agent',
+        createdAt: t,
+        message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'bun test' } }]),
+        sessionId: 'active-session',
+      }),
+      makeRow({
+        id: 'clear1',
+        label: 'Coder Agent',
+        createdAt: t + 100,
+        sessionId: 'other-session',
+        messageType: 'system',
+        message: statusClearMessage('clear1', 'other-session'),
+      }),
+    ];
+    const summary: ActiveTurnSummary = {
+      sessionId: 'active-session',
+      turnIndex: 0,
+      entries: [{ kind: 'tool_use', toolName: 'Read', preview: 'summary-read', ts: t, uuid: 'a1' }],
+    };
+
+    render(
+      <MinimalThreadFeed
+        parsedRows={rows}
+        activeAgentLabels={new Set(['Coder Agent'])}
+        activeTurnSummaries={[summary]}
+      />
+    );
+
+    // The active turn must still be attributed to active-session so its summary
+    // applies; if the unmatched clear row joined the turn, latestSessionId would
+    // flip to other-session and the summary roster entry would disappear.
+    const entries = screen.getAllByTestId('minimal-thread-roster-entry');
+    expect(entries.some((el) => el.textContent?.includes('summary-read'))).toBe(true);
+
+    expect(screen.queryByTestId('minimal-thread-system')).toBeNull();
+
+    const pill = screen.getByTestId('minimal-thread-status-pill');
+    expect(pill.dataset.status).toBe('Running…');
+  });
+
+  it('does not consume a status row when the agent is not rendering an active rail', () => {
+    const t = Date.now();
+    const rows = [
+      makeRow({
+        id: 'a1',
+        label: 'Coder Agent',
+        createdAt: t,
+        message: assistantText('a1', 'done'),
+        sessionId: 'active-session',
+      }),
+      makeRow({
+        id: 'r1',
+        label: 'Coder Agent',
+        createdAt: t + 100,
+        message: resultMessage('r1'),
+        sessionId: 'active-session',
+      }),
+      makeRow({
+        id: 's1',
+        label: 'Coder Agent',
+        createdAt: t + 200,
+        sessionId: 'active-session',
+        messageType: 'system',
+        message: statusMessage('s1', 'compacting', 'active-session'),
+      }),
+    ];
+
+    render(<MinimalThreadFeed parsedRows={rows} />);
+
+    const systemRows = screen.getAllByTestId('minimal-thread-system');
+    expect(systemRows).toHaveLength(1);
+    expect(systemRows[0].textContent).toContain('Compacting');
+
+    expect(screen.queryByTestId('minimal-thread-status-pill')).toBeNull();
+  });
+
   it('falls back to a system row for compacting status when no active turn exists', () => {
     const t = Date.now();
     const rows = [
