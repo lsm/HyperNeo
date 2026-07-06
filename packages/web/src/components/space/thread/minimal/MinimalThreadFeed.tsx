@@ -1494,7 +1494,10 @@ function buildFeedTurns(
       latestStatusBySession.delete(targetKey);
     } else {
       const existing = latestStatusBySession.get(targetKey);
-      if (!existing || row.createdAt >= existing.ts) {
+      // Use strict `>` so two status rows in the same millisecond keep the
+      // first-seen value (insertion order) instead of being overwritten by a
+      // later row whose UUID/DB order may not reflect the true stream order.
+      if (!existing || row.createdAt > existing.ts) {
         latestStatusBySession.set(targetKey, { status: parsed!.status, ts: row.createdAt });
       }
     }

@@ -3534,7 +3534,7 @@ describe('MinimalThreadFeed', () => {
     expect(screen.queryByTestId('minimal-thread-roster-entry')).toBeNull();
   });
 
-  it('uses the later status when two status rows share the same timestamp', () => {
+  it('keeps the first status when two status rows share the same timestamp', () => {
     const t = Date.now();
     const rows = [
       makeRow({
@@ -3562,10 +3562,10 @@ describe('MinimalThreadFeed', () => {
     render(<MinimalThreadFeed parsedRows={rows} activeAgentLabels={new Set(['Coder Agent'])} />);
 
     const pill = screen.getByTestId('minimal-thread-status-pill');
-    expect(pill.dataset.status).toBe('Requesting…');
+    expect(pill.dataset.status).toBe('Compacting…');
 
     const statusEntry = screen.getByTestId('minimal-thread-roster-entry');
-    expect(statusEntry.dataset.status).toBe('requesting');
+    expect(statusEntry.dataset.status).toBe('compacting');
   });
 
   it('clears compacting status when a compact boundary arrives for the active turn', () => {
