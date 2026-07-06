@@ -69,8 +69,6 @@ describe('buildRestrictedEnv', () => {
     process.env['COPILOT_GITHUB_TOKEN'] = 'copilot-secret';
     process.env['HYPERNEO_SECRET_X'] = 'hyperneo-secret';
     process.env['HYPERNEO_PORT'] = '8080';
-    // Legacy NEOKAI_* credential var must still be stripped during the rename.
-    process.env['NEOKAI_SECRET_X'] = 'neokai-secret';
     process.env['HYPERNEO_USE_DEV_PROXY'] = '1';
     process.env['HYPERNEO_VALIDATION_BASE_REF'] = 'origin/release';
     process.env['MY_SECRET_KEY'] = 'my-secret';
@@ -123,19 +121,18 @@ describe('buildRestrictedEnv', () => {
     expect(buildRestrictedEnv(CTX)['HYPERNEO_USE_DEV_PROXY']).toBeUndefined();
   });
 
-  test('strips legacy NEOKAI_ prefixed env vars (credential hygiene)', () => {
+  test('strips NEOKAI_ prefixed env vars (credential hygiene)', () => {
+    process.env['NEOKAI_SECRET_X'] = 'neokai-secret';
     expect(buildRestrictedEnv(CTX)['NEOKAI_SECRET_X']).toBeUndefined();
+    delete process.env['NEOKAI_SECRET_X'];
   });
 
-  test('injects legacy NEOKAI_* aliases for gate vars (backward-compat)', () => {
+  test('does not inject NEOKAI_* aliases for gate vars', () => {
     const env = buildRestrictedEnv(CTX);
-    // Each canonical HYPERNEO_* gate var is mirrored under NEOKAI_* so gate
-    // scripts authored before the rename keep seeing values.
-    expect(env['NEOKAI_GATE_ID']).toBe(env['HYPERNEO_GATE_ID']);
-    expect(env['NEOKAI_GATE_ID']).toBe('gate-123');
-    expect(env['NEOKAI_WORKFLOW_RUN_ID']).toBe(env['HYPERNEO_WORKFLOW_RUN_ID']);
-    expect(env['NEOKAI_WORKSPACE_PATH']).toBe(env['HYPERNEO_WORKSPACE_PATH']);
-    expect(env['NEOKAI_GATE_DATA_JSON']).toBe(env['HYPERNEO_GATE_DATA_JSON']);
+    expect(env['NEOKAI_GATE_ID']).toBeUndefined();
+    expect(env['NEOKAI_WORKFLOW_RUN_ID']).toBeUndefined();
+    expect(env['NEOKAI_WORKSPACE_PATH']).toBeUndefined();
+    expect(env['NEOKAI_GATE_DATA_JSON']).toBeUndefined();
   });
 
   test('allows HYPERNEO_VALIDATION_BASE_REF for validation-only gate base override', () => {

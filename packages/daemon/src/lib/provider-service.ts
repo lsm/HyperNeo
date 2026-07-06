@@ -112,7 +112,7 @@ export interface OriginalEnvVars {
   PORT?: string;
   /** Daemon's HYPERNEO_PORT — also cleared to prevent subprocess env leakage */
   HYPERNEO_PORT?: string;
-  /** Legacy NEOKAI_PORT — also cleared during the rename transition */
+  /** Legacy NEOKAI_PORT — also cleared so stale legacy deployments do not leak the daemon port */
   NEOKAI_PORT?: string;
 }
 
@@ -436,10 +436,7 @@ export class ProviderService {
 
     try {
       const sdkConfig = provider.buildSdkConfig(modelId);
-      if (
-        provider.id === 'anthropic' &&
-        (process.env.HYPERNEO_USE_DEV_PROXY ?? process.env.NEOKAI_USE_DEV_PROXY) === '1'
-      ) {
+      if (provider.id === 'anthropic' && process.env.HYPERNEO_USE_DEV_PROXY === '1') {
         sdkConfig.envVars = {
           ...sdkConfig.envVars,
           ANTHROPIC_BASE_URL: 'http://127.0.0.1:8000',
@@ -485,10 +482,7 @@ export class ProviderService {
     const modelId = session.config.model || 'default';
     try {
       const sdkConfig = provider.buildSdkConfig(modelId, sessionConfig);
-      if (
-        provider.id === 'anthropic' &&
-        (process.env.HYPERNEO_USE_DEV_PROXY ?? process.env.NEOKAI_USE_DEV_PROXY) === '1'
-      ) {
+      if (provider.id === 'anthropic' && process.env.HYPERNEO_USE_DEV_PROXY === '1') {
         sdkConfig.envVars = {
           ...sdkConfig.envVars,
           ANTHROPIC_BASE_URL: 'http://127.0.0.1:8000',
@@ -691,9 +685,8 @@ export class ProviderService {
       process.env.ANTHROPIC_DEFAULT_OPUS_MODEL = envVars.ANTHROPIC_DEFAULT_OPUS_MODEL;
     }
 
-    // Always clear PORT, HYPERNEO_PORT, and legacy NEOKAI_PORT so SDK subprocesses
-    // cannot inherit the daemon's listening port and trigger a kill-chain via
-    // `lsof -i :<port>`.
+    // Always clear PORT and HYPERNEO_PORT so SDK subprocesses cannot inherit the
+    // daemon's listening port and trigger a kill-chain via `lsof -i :<port>`.
     this.saveClearDaemonPortEnvVars(original);
 
     return original;
@@ -856,7 +849,7 @@ export class ProviderService {
       }
     }
 
-    // Always clear PORT, HYPERNEO_PORT, and legacy NEOKAI_PORT so SDK subprocesses
+    // Always clear PORT, HYPERNEO_PORT, and stale NEOKAI_PORT so SDK subprocesses
     // cannot inherit the daemon's listening port and trigger a kill-chain via
     // `lsof -i :<port>`.
     this.saveClearDaemonPortEnvVars(original);
@@ -870,7 +863,7 @@ export class ProviderService {
   }
 
   /**
-   * Save and delete PORT, HYPERNEO_PORT, and legacy NEOKAI_PORT from process.env.
+   * Save and delete PORT, HYPERNEO_PORT, and stale NEOKAI_PORT from process.env.
    *
    * Called by every path that prepares env vars for an SDK subprocess so the
    * daemon's listening port is never visible to agent bash commands.
@@ -1058,7 +1051,7 @@ const PROVIDER_SERVICE_KEY = Symbol.for('hyperneo:providerServiceInstance');
  * stale bridge URLs into the next Anthropic turn.
  */
 function isDevProxyActive(): boolean {
-  return (process.env.HYPERNEO_USE_DEV_PROXY ?? process.env.NEOKAI_USE_DEV_PROXY) === '1';
+  return process.env.HYPERNEO_USE_DEV_PROXY === '1';
 }
 
 /**

@@ -32,8 +32,8 @@ import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { getDataDir } from '../data-dir';
 
-/** Verbose logging — enabled via HYPERNEO_VERBOSE (or legacy NEOKAI_VERBOSE) env var for diagnostics. */
-const isVerbose = process.env.HYPERNEO_VERBOSE ?? process.env.NEOKAI_VERBOSE;
+/** Verbose logging — enabled via HYPERNEO_VERBOSE env var for diagnostics. */
+const isVerbose = process.env.HYPERNEO_VERBOSE;
 // oxlint-disable-next-line no-console
 const logWarn = isVerbose ? console.warn : () => {};
 

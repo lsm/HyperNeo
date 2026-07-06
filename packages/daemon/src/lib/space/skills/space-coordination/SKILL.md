@@ -13,7 +13,7 @@ The primary Space coordination surface is the in-process `space-agent-tools` MCP
 Use the local daemon URL from the environment when present:
 
 ```bash
-BASE_URL="${HYPERNEO_BASE_URL:-${NEOKAI_BASE_URL:-${KAI_BASE_URL:-http://127.0.0.1:${HYPERNEO_PORT:-${NEOKAI_PORT:-${PORT:-8383}}}}}}"
+BASE_URL="${HYPERNEO_BASE_URL:-${KAI_BASE_URL:-http://127.0.0.1:${HYPERNEO_PORT:-${PORT:-8383}}}}"
 ```
 
 Space context is normally available in the session id (`space:chat:<space_id>`) or task metadata. If you do not know the Space id, ask the user or inspect the current session/task context.

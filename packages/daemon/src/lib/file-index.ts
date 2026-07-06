@@ -217,11 +217,7 @@ export class FileIndex {
     pollIntervalMs?: number
   ) {
     this.pollInterval =
-      pollIntervalMs ??
-      parseInt(
-        process.env.HYPERNEO_FILE_INDEX_POLL_MS ?? process.env.NEOKAI_FILE_INDEX_POLL_MS ?? '60000',
-        10
-      );
+      pollIntervalMs ?? parseInt(process.env.HYPERNEO_FILE_INDEX_POLL_MS ?? '60000', 10);
   }
 
   /** Load .gitignore from workspace root if it exists. */

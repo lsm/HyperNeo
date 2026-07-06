@@ -243,13 +243,12 @@ export function resolveCodexTimeoutSeconds(
 }
 
 export const CODEX_REVIEW_BOT_TIMEOUT_SECONDS = resolveCodexTimeoutSeconds(
-  process.env.HYPERNEO_CODEX_REVIEW_BOT_TIMEOUT_SECONDS ??
-    process.env.NEOKAI_CODEX_REVIEW_BOT_TIMEOUT_SECONDS,
+  process.env.HYPERNEO_CODEX_REVIEW_BOT_TIMEOUT_SECONDS,
   DEFAULT_CODEX_REVIEW_BOT_TIMEOUT_SECONDS
 );
 
 export const CODEX_REVIEW_BOT_POLL_INTERVAL_MS = resolveCodexPollIntervalMs(
-  process.env.HYPERNEO_CODEX_POLL_INTERVAL_MS ?? process.env.NEOKAI_CODEX_POLL_INTERVAL_MS
+  process.env.HYPERNEO_CODEX_POLL_INTERVAL_MS
 );
 
 /**

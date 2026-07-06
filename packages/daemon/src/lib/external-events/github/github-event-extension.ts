@@ -2257,9 +2257,7 @@ function reactionIdFrom(row: unknown): string {
 }
 
 function getConfiguredWebhookUrl(): string {
-  // Fall back to the legacy NEOKAI_PUBLIC_URL during the rename transition.
-  const baseUrl =
-    process.env.HYPERNEO_PUBLIC_URL ?? process.env.NEOKAI_PUBLIC_URL ?? process.env.PUBLIC_URL;
+  const baseUrl = process.env.HYPERNEO_PUBLIC_URL ?? process.env.PUBLIC_URL;
   if (!baseUrl) {
     throw new Error('HYPERNEO_PUBLIC_URL is required to configure GitHub webhooks');
   }
