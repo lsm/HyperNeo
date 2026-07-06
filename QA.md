@@ -4,8 +4,8 @@ Project-specific QA guidance for the QA agent.
 
 ## Dev Server Startup
 
-- Start with `make dev PORT=<free-port> DB_PATH=/tmp/neokai-qa-<task-id>.db`
-- DB path must use the task ID naming pattern (e.g. task 466 → `/tmp/neokai-qa-466.db`)
+- Start with `make dev PORT=<free-port> DB_PATH=/tmp/hyperneo-qa-<task-id>.db`
+- DB path must use the task ID naming pattern (e.g. task 466 → `/tmp/hyperneo-qa-466.db`)
 - Always use a fresh DB for QA — never point at the daemon's primary DB
 
 ## Server Lifecycle Discipline

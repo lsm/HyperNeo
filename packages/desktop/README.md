@@ -40,7 +40,7 @@ packages/desktop/
 ├── README.md
 └── src-tauri/
     ├── Cargo.toml
-    ├── tauri.conf.json       # productName: "Kai", devUrl: http://localhost:9283
+    ├── tauri.conf.json       # productName: "HyperNeo", devUrl: http://localhost:9283
     ├── build.rs
     ├── capabilities/         # Tauri permission manifests
     ├── icons/                # bundle + tray icons
@@ -119,7 +119,8 @@ workspace packages.
 Tauri's [sidecar](https://v2.tauri.app/develop/sidecar/) feature lets the
 desktop app ship and launch a precompiled child process. The Rust shell:
 
-- Spawns `neokai --port 9283 --workspace ~/.kai` on startup (release mode only).
+- Spawns `neokai --port 9283 --workspace ~/.kai` on startup (release mode
+  only; `.kai` is the legacy desktop config directory retained for compatibility).
 - Streams stdout/stderr into the Tauri log plugin.
 - Polls `http://localhost:9283/api/health` for up to ~15 s and then navigates
   the main window from `loading/index.html` to the live UI.
@@ -129,6 +130,6 @@ desktop app ship and launch a precompiled child process. The Rust shell:
 ## Open decisions
 
 This package was added with conservative defaults — see the corresponding PR
-description for the items still up for review (product name vs. `HyperNeo`,
-updater endpoint, dev port choice, mobile parity, fate of the standalone
-`~/focus/kai/desktop` repo).
+description for the items still up for review (updater endpoint, dev port
+choice, mobile parity, fate of the standalone `~/focus/HyperNeo/desktop`
+repo).
