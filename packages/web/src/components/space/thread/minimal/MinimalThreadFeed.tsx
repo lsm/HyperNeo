@@ -180,6 +180,11 @@ interface RosterTaskNotificationEntry {
   ts: number;
   toolUseId?: string;
 }
+interface RosterStatusEntry {
+  kind: 'status';
+  status: string;
+  ts: number;
+}
 type ActiveRosterEntry =
   | RosterToolEntry
   | RosterMessageEntry
@@ -188,7 +193,8 @@ type ActiveRosterEntry =
   | RosterHandoffEntry
   | RosterHookEntry
   | RosterApiRetryEntry
-  | RosterTaskNotificationEntry;
+  | RosterTaskNotificationEntry
+  | RosterStatusEntry;
 
 const TASK_THREAD_MESSAGE_BUBBLE_WIDTH_CLASS = 'max-w-[85%] md:max-w-[86%]';
 const TASK_THREAD_AGENT_BUBBLE_WIDTH_CLASS = 'max-w-full md:max-w-[86%]';
@@ -371,6 +377,21 @@ function getToolUseContentBlocks(row: ParsedThreadRow) {
   return content.filter((block): block is { type: 'tool_use'; name: string; input?: unknown } =>
     isToolUseBlock(block as never)
   );
+}
+
+function getSystemStatus(row: ParsedThreadRow): string | null {
+  const msg = row.message;
+  if (!msg || msg.type !== 'system') return null;
+  if ((msg as { subtype?: string }).subtype !== 'status') return null;
+  const status = (msg as { status?: unknown }).status;
+  return typeof status === 'string' && status ? status : null;
+}
+
+function isFoldedSystemStatusRow(
+  row: ParsedThreadRow,
+  consumedStatusRowIds: ReadonlySet<string>
+): boolean {
+  return consumedStatusRowIds.has(String(row.id));
 }
 
 /**
@@ -918,7 +939,8 @@ function buildActiveTurn(
   summary: ActiveTurnSummary | undefined,
   sessionId: string | null,
   taskNotificationsByToolUseId: Map<string, TaskNotificationLite>,
-  globalRosteredToolUseIds: Set<string>
+  globalRosteredToolUseIds: Set<string>,
+  latestStatusBySession?: Map<string, { status: string; ts: number }>
 ): ActiveFeedTurn {
   const baseRoster = rosterEntriesFromSummary(summary, ROSTER_MAX_ENTRIES).map((entry) => {
     if (entry.kind !== 'tool') return entry;
@@ -932,7 +954,16 @@ function buildActiveTurn(
     ...globalRosteredToolUseIds,
     ...rosteredToolUseIdsFromRoster(baseRoster),
   ]);
-  const roster = [...baseRoster, ...standaloneTaskNotificationEntries(rows, rostered)];
+  const withNotifications = [...baseRoster, ...standaloneTaskNotificationEntries(rows, rostered)];
+  const latestStatus = latestStatusBySession?.get(sessionId ?? normalizeAgentKey(block.agentLabel));
+  const roster = latestStatus
+    ? [
+        ...withNotifications,
+        { kind: 'status' as const, status: latestStatus.status, ts: latestStatus.ts },
+      ]
+    : withNotifications;
+  roster.sort((a, b) => a.ts - b.ts);
+  const cappedRoster = roster.slice(-ROSTER_MAX_ENTRIES);
   return {
     state: 'active',
     id: turnId,
@@ -941,14 +972,14 @@ function buildActiveTurn(
     agentRole: rows[0]?.role ?? block.agentLabel,
     agentNodeExecutionId: rows[0]?.nodeExecutionId ?? null,
     startedAt: rows[0].createdAt,
-    status: 'Running…',
+    status: latestStatus ? `${humanizeSystemSubtype(latestStatus.status)}…` : 'Running…',
     toolCalls: countToolCallsForActive(rows, summary),
     messages: countMessagesForActive(rows),
     thinkingEntries: countSummaryEntries(summary, 'thinking'),
     messageEntries: countSummaryEntries(summary, 'text'),
     toolEntries: countSummaryEntries(summary, 'tool_use'),
-    lastEventAt: latestActivityTimestamp(summary, rows),
-    roster,
+    lastEventAt: Math.max(latestActivityTimestamp(summary, rows), latestStatus?.ts ?? 0),
+    roster: cappedRoster,
     sessionId,
   };
 }
@@ -1063,12 +1094,20 @@ function isFoldedTaskNotification(row: ParsedThreadRow, rosteredToolUseIds: Set<
 function buildOperationalSystemTurn(
   row: ParsedThreadRow,
   isSessionTail: boolean,
-  rosteredToolUseIds: Set<string>
+  rosteredToolUseIds: Set<string>,
+  consumedStatusRowIds?: ReadonlySet<string>
 ): SystemFeedTurn | null {
   const message = row.message;
   if (!message || message.type !== 'system') return null;
   const subtype = (message as { subtype?: string }).subtype;
   if (!subtype || subtype === 'init') return null;
+  // SDK status messages (compacting / requesting) fold into the active turn's
+  // header pill and roster. Suppress the standalone system card when the status
+  // has been attached to an active turn; leave it as a generic fallback row
+  // when it arrived with no active roster (orphan / completed turn).
+  if (subtype === 'status' && consumedStatusRowIds && consumedStatusRowIds.has(String(row.id))) {
+    return null;
+  }
   // Hooks surface ONLY as roster entries in the minimal feed (one entry per
   // hook run via the active-turn summary). Suppress every hook_* system row so
   // the feed never shows a standalone hook card. The chat transcript still
@@ -1196,6 +1235,14 @@ function buildGenericSystemSummary(message: Extract<SDKMessage, { type: 'system'
 } | null {
   const subtype = (message as { subtype?: string }).subtype;
   if (!subtype) return null;
+
+  if (subtype === 'status') {
+    const statusValue = firstStringField(message, ['status']) ?? subtype;
+    return {
+      title: humanizeSystemSubtype(statusValue),
+      body: statusValue,
+    };
+  }
 
   if (subtype === 'informational') {
     const level = (message as { level?: unknown }).level;
@@ -1341,12 +1388,57 @@ function buildFeedTurns(
   const trailingBlockByAgent = new Map<string, AgentTurnBlock>();
   for (const block of blocks) trailingBlockByAgent.set(normalizeAgentKey(block.agentLabel), block);
   const renderedTurnKeys = new Set<string>();
+  const activeTurnIndexBySession = new Map<string, number | undefined>();
   for (const [key, block] of trailingBlockByAgent) {
     if (!normalisedActive.has(key)) continue;
     if (block.isTerminal) continue;
     const sid = latestSessionId(block.rows);
     const turnIndex = latestTurnIndex(block.rows);
-    if (sid && turnIndex !== undefined) renderedTurnKeys.add(`${sid}:${turnIndex}`);
+    if (sid) {
+      if (turnIndex !== undefined) renderedTurnKeys.add(`${sid}:${turnIndex}`);
+      activeTurnIndexBySession.set(sid, turnIndex);
+    }
+  }
+
+  // SDK system:status messages (compacting / requesting) fold into the active
+  // turn's header pill and roster. Consume them when they belong to a session
+  // (or agent label, when the row has no session id) that is currently
+  // rendering an active turn, and — when the turn index is known on both sides
+  // — the same turn. Any unmatched status row falls back to a generic system
+  // card so it is never silently lost.
+  const consumedStatusRowIds = new Set<string>();
+  const latestStatusBySession = new Map<string, { status: string; ts: number }>();
+  for (const row of rowsWithReplacementStatus) {
+    const status = getSystemStatus(row);
+    if (!status) continue;
+    if (status !== 'compacting' && status !== 'requesting') continue;
+    const sid = row.sessionId;
+    const labelKey = normalizeAgentKey(row.label);
+    let targetKey: string | undefined;
+    let activeTurnIndex: number | undefined;
+    if (sid && activeTurnIndexBySession.has(sid)) {
+      targetKey = sid;
+      activeTurnIndex = activeTurnIndexBySession.get(sid);
+    } else {
+      const block = trailingBlockByAgent.get(labelKey);
+      if (block && !block.isTerminal && normalisedActive.has(labelKey)) {
+        targetKey = labelKey;
+        activeTurnIndex = latestTurnIndex(block.rows);
+      }
+    }
+    if (!targetKey) continue;
+    if (
+      row.turnIndex !== undefined &&
+      activeTurnIndex !== undefined &&
+      row.turnIndex !== activeTurnIndex
+    ) {
+      continue;
+    }
+    consumedStatusRowIds.add(String(row.id));
+    const existing = latestStatusBySession.get(targetKey);
+    if (!existing || row.createdAt > existing.ts) {
+      latestStatusBySession.set(targetKey, { status, ts: row.createdAt });
+    }
   }
 
   const rosteredActiveToolUseIds = collectActiveRosteredToolUseIds(
@@ -1383,6 +1475,7 @@ function buildFeedTurns(
       pendingAgentRows = [];
     };
     for (const row of block.rows) {
+      if (isFoldedSystemStatusRow(row, consumedStatusRowIds)) continue;
       if (buildCompactBoundaryTurn(row) || isUserRow(row)) {
         flush();
         continue;
@@ -1400,7 +1493,7 @@ function buildFeedTurns(
       }
       if (
         subtype !== 'task_notification' &&
-        buildOperationalSystemTurn(row, false, rosteredActiveToolUseIds)
+        buildOperationalSystemTurn(row, false, rosteredActiveToolUseIds, consumedStatusRowIds)
       ) {
         flush();
         continue;
@@ -1490,6 +1583,7 @@ function buildFeedTurns(
     };
 
     for (const row of block.rows) {
+      if (isFoldedSystemStatusRow(row, consumedStatusRowIds)) continue;
       const compactBoundaryTurn = buildCompactBoundaryTurn(row);
       if (compactBoundaryTurn) {
         flushAgent();
@@ -1499,7 +1593,8 @@ function buildFeedTurns(
       const operationalSystemTurn = buildOperationalSystemTurn(
         row,
         row.sessionId ? latestRowIdBySession.get(row.sessionId) === String(row.id) : false,
-        rosteredToolUseIds
+        rosteredToolUseIds,
+        consumedStatusRowIds
       );
       if (operationalSystemTurn) {
         flushAgent();
@@ -1560,7 +1655,8 @@ function buildFeedTurns(
         summary,
         sessionId,
         taskNotificationsByToolUseId,
-        rosteredToolUseIds
+        rosteredToolUseIds,
+        latestStatusBySession
       );
     }
   }
@@ -1610,7 +1706,11 @@ function PulseDot({ color }: { color: string }) {
 
 function StatusPill({ color, status }: { color: string; status: string }) {
   return (
-    <span class="inline-flex items-center gap-1.5 text-[11px] uppercase tracking-wider font-medium">
+    <span
+      class="inline-flex items-center gap-1.5 text-[11px] uppercase tracking-wider font-medium"
+      data-testid="minimal-thread-status-pill"
+      data-status={status}
+    >
       <PulseDot color={color} />
       <span style={{ color }}>{status}</span>
     </span>
@@ -1774,6 +1874,23 @@ function RosterEntry({ entry, isLatest }: { entry: ActiveRosterEntry; isLatest: 
             </span>
           ) : null}
         </span>
+      </div>
+    );
+  }
+
+  if (entry.kind === 'status') {
+    const statusText = `${humanizeSystemSubtype(entry.status)}…`;
+    return (
+      <div
+        class={`flex items-baseline gap-2 text-xs leading-5 ${fadeClass}`}
+        data-testid="minimal-thread-roster-entry"
+        data-roster-kind="status"
+        data-status={entry.status}
+      >
+        <span class="shrink-0" aria-hidden="true">
+          <PulseDot color="#f59e0b" />
+        </span>
+        <span class={`${bodyClass} italic`}>{statusText}</span>
       </div>
     );
   }

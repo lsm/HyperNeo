@@ -240,6 +240,16 @@ function errorResultMessageWithEmptyErrors(uuid: string) {
   };
 }
 
+function statusMessage(uuid: string, status: 'compacting' | 'requesting') {
+  return {
+    type: 'system',
+    subtype: 'status',
+    uuid,
+    session_id: 'space:s:task:t',
+    status,
+  };
+}
+
 describe('MinimalThreadFeed', () => {
   beforeEach(() => {
     cleanup();
@@ -3434,5 +3444,77 @@ describe('MinimalThreadFeed', () => {
     expect(metas[0].textContent).toContain('1 tool call');
     expect(metas[0].textContent).not.toContain('3 tool calls');
     expect(metas[1].textContent).toContain('3 tool calls');
+  });
+
+  it.each([
+    ['compacting', 'Compacting…'],
+    ['requesting', 'Requesting…'],
+  ] as const)('folds %s status into the active turn header and roster', (status, expectedText) => {
+    const t = Date.now();
+    const rows = [
+      makeRow({
+        id: 'a1',
+        label: 'Coder Agent',
+        createdAt: t,
+        message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'bun test' } }]),
+      }),
+      makeRow({
+        id: 's1',
+        label: 'Coder Agent',
+        createdAt: t + 100,
+        messageType: 'system',
+        message: statusMessage('s1', status),
+      }),
+    ];
+
+    render(<MinimalThreadFeed parsedRows={rows} activeAgentLabels={new Set(['Coder Agent'])} />);
+
+    // No standalone system card — the status row is folded into the active turn.
+    expect(screen.queryByTestId('minimal-thread-system')).toBeNull();
+
+    const turn = screen.getByTestId('minimal-thread-turn');
+    expect(turn.dataset.turnState).toBe('active');
+
+    const pill = screen.getByTestId('minimal-thread-status-pill');
+    expect(pill.dataset.status).toBe(expectedText);
+    expect(pill.textContent).toContain(expectedText);
+
+    const statusEntry = screen.getByTestId('minimal-thread-roster-entry');
+    expect(statusEntry.dataset.rosterKind).toBe('status');
+    expect(statusEntry.dataset.status).toBe(status);
+    expect(statusEntry.textContent).toContain(expectedText);
+  });
+
+  it('falls back to a system row for compacting status when no active turn exists', () => {
+    const t = Date.now();
+    const rows = [
+      makeRow({
+        id: 'a1',
+        label: 'Coder Agent',
+        createdAt: t,
+        message: assistantText('a1', 'done'),
+      }),
+      makeRow({
+        id: 'r1',
+        label: 'Coder Agent',
+        createdAt: t + 100,
+        message: resultMessage('r1'),
+      }),
+      makeRow({
+        id: 's1',
+        label: 'Coder Agent',
+        createdAt: t + 200,
+        messageType: 'system',
+        message: statusMessage('s1', 'compacting'),
+      }),
+    ];
+
+    render(<MinimalThreadFeed parsedRows={rows} />);
+
+    const systemRows = screen.getAllByTestId('minimal-thread-system');
+    expect(systemRows).toHaveLength(1);
+    expect(systemRows[0].textContent).toContain('Compacting');
+    expect(systemRows[0].textContent).toContain('compacting');
+    expect(screen.queryByTestId('minimal-thread-status-pill')).toBeNull();
   });
 });
