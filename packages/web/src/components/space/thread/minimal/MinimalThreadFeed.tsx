@@ -593,6 +593,26 @@ function latestSessionId(rows: ParsedThreadRow[]): string | null {
 }
 
 /**
+ * Session id of the active turn represented by a block. Status rows and
+ * compact_boundary rows can carry a different session id than the agent rows
+ * they annotate (or no session id at all), so the active turn's session must
+ * be derived from the last *non-status, non-boundary, non-user* row. Using the
+ * raw `latestSessionId` would let a later cross-session status row hijack the
+ * turn's identity and either mis-attach the status or suppress its fallback.
+ */
+function activeTurnSessionId(rows: ParsedThreadRow[]): string | null {
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const row = rows[i];
+    if (!row.sessionId) continue;
+    if (parseSystemStatusRow(row)) continue;
+    if (row.message && isSDKCompactBoundary(row.message)) continue;
+    if (isUserRow(row)) continue;
+    return row.sessionId;
+  }
+  return null;
+}
+
+/**
  * Extract the closing text for a turn, walking rows last-to-first.
  *
  * Two viable text sources:
@@ -1396,12 +1416,16 @@ function buildFeedTurns(
   for (const label of activeAgentLabels) normalisedActive.add(normalizeAgentKey(label));
   const trailingBlockByAgent = new Map<string, AgentTurnBlock>();
   for (const block of blocks) trailingBlockByAgent.set(normalizeAgentKey(block.agentLabel), block);
+  const activeSessionByLabel = new Map<string, string | null>();
+  for (const [key, block] of trailingBlockByAgent) {
+    activeSessionByLabel.set(key, activeTurnSessionId(block.rows));
+  }
   const renderedTurnKeys = new Set<string>();
   const activeTurnIndexBySession = new Map<string, number | undefined>();
   for (const [key, block] of trailingBlockByAgent) {
     if (!normalisedActive.has(key)) continue;
     if (block.isTerminal) continue;
-    const sid = latestSessionId(block.rows);
+    const sid = activeSessionByLabel.get(key) ?? null;
     const turnIndex = latestTurnIndex(block.rows);
     if (sid) {
       if (turnIndex !== undefined) renderedTurnKeys.add(`${sid}:${turnIndex}`);
@@ -1410,24 +1434,27 @@ function buildFeedTurns(
   }
 
   // SDK system:status messages (compacting / requesting) fold into the active
-  // turn's header pill and roster. Consume them when they belong to a session
-  // (or agent label, when the row has no session id) that is currently
-  // rendering an active turn, and — when the turn index is known on both sides
-  // — the same turn. Any unmatched status row falls back to a generic system
-  // card so it is never silently lost.
+  // turn's header pill and roster. Consume them when they belong to the active
+  // turn's session, or — for rows without a session id — when the agent label
+  // has a non-terminal active turn. When the turn index is known on both sides
+  // it must match. Any unmatched status row falls back to a generic system card
+  // so it is never silently lost.
   const consumedStatusRowIds = new Set<string>();
   const latestStatusBySession = new Map<string, { status: string; ts: number }>();
   for (const row of rowsWithReplacementStatus) {
     const parsed = parseSystemStatusRow(row);
-    if (!parsed) continue;
+    const isCompactBoundary = !!row.message && isSDKCompactBoundary(row.message);
+    if (!parsed && !isCompactBoundary) continue;
+
     const sid = row.sessionId;
     const labelKey = normalizeAgentKey(row.label);
+    const activeSessionId = activeSessionByLabel.get(labelKey);
     let targetKey: string | undefined;
     let activeTurnIndex: number | undefined;
-    if (sid && activeTurnIndexBySession.has(sid)) {
+    if (sid && activeSessionId && sid === activeSessionId) {
       targetKey = sid;
       activeTurnIndex = activeTurnIndexBySession.get(sid);
-    } else {
+    } else if (!sid) {
       const block = trailingBlockByAgent.get(labelKey);
       if (block && !block.isTerminal && normalisedActive.has(labelKey)) {
         targetKey = labelKey;
@@ -1442,13 +1469,38 @@ function buildFeedTurns(
     ) {
       continue;
     }
+
+    if (isCompactBoundary) {
+      // The daemon treats a compact_boundary as the clear point for an active
+      // compacting state; mirror that in the folded UI.
+      latestStatusBySession.delete(targetKey);
+      continue;
+    }
+
+    // Only fold a status row when there is an actual turn to attach it to.
+    // If the trailing block contains only status/boundary/user rows, the row
+    // would be consumed and then silently dropped, so let it fall back to a
+    // standalone system card instead.
+    if (parsed) {
+      const block = trailingBlockByAgent.get(labelKey);
+      if (block) {
+        const hasFoldTarget = block.rows.some((r) => {
+          if (isUserRow(r)) return false;
+          if (parseSystemStatusRow(r)) return false;
+          if (r.message && isSDKCompactBoundary(r.message)) return false;
+          return true;
+        });
+        if (!hasFoldTarget) continue;
+      }
+    }
+
     consumedStatusRowIds.add(String(row.id));
-    if (parsed.isClear) {
+    if (parsed!.isClear) {
       latestStatusBySession.delete(targetKey);
     } else {
       const existing = latestStatusBySession.get(targetKey);
-      if (!existing || row.createdAt > existing.ts) {
-        latestStatusBySession.set(targetKey, { status: parsed.status, ts: row.createdAt });
+      if (!existing || row.createdAt >= existing.ts) {
+        latestStatusBySession.set(targetKey, { status: parsed!.status, ts: row.createdAt });
       }
     }
   }

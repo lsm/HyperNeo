@@ -240,22 +240,22 @@ function errorResultMessageWithEmptyErrors(uuid: string) {
   };
 }
 
-function statusMessage(uuid: string, status: 'compacting' | 'requesting') {
+function statusMessage(uuid: string, status: 'compacting' | 'requesting', sessionId?: string) {
   return {
     type: 'system',
     subtype: 'status',
     uuid,
-    session_id: 'space:s:task:t',
+    session_id: sessionId ?? 'space:s:task:t',
     status,
   };
 }
 
-function statusClearMessage(uuid: string) {
+function statusClearMessage(uuid: string, sessionId?: string) {
   return {
     type: 'system',
     subtype: 'status',
     uuid,
-    session_id: 'space:s:task:t',
+    session_id: sessionId ?? 'space:s:task:t',
     status: null,
   };
 }
@@ -3532,6 +3532,138 @@ describe('MinimalThreadFeed', () => {
     expect(pill.textContent).toContain('Running…');
 
     expect(screen.queryByTestId('minimal-thread-roster-entry')).toBeNull();
+  });
+
+  it('uses the later status when two status rows share the same timestamp', () => {
+    const t = Date.now();
+    const rows = [
+      makeRow({
+        id: 'a1',
+        label: 'Coder Agent',
+        createdAt: t,
+        message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'bun test' } }]),
+      }),
+      makeRow({
+        id: 's1',
+        label: 'Coder Agent',
+        createdAt: t,
+        messageType: 'system',
+        message: statusMessage('s1', 'compacting'),
+      }),
+      makeRow({
+        id: 's2',
+        label: 'Coder Agent',
+        createdAt: t,
+        messageType: 'system',
+        message: statusMessage('s2', 'requesting'),
+      }),
+    ];
+
+    render(<MinimalThreadFeed parsedRows={rows} activeAgentLabels={new Set(['Coder Agent'])} />);
+
+    const pill = screen.getByTestId('minimal-thread-status-pill');
+    expect(pill.dataset.status).toBe('Requesting…');
+
+    const statusEntry = screen.getByTestId('minimal-thread-roster-entry');
+    expect(statusEntry.dataset.status).toBe('requesting');
+  });
+
+  it('clears compacting status when a compact boundary arrives for the active turn', () => {
+    const t = Date.now();
+    const rows = [
+      makeRow({
+        id: 'a1',
+        label: 'Coder Agent',
+        createdAt: t,
+        message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'bun test' } }]),
+      }),
+      makeRow({
+        id: 's1',
+        label: 'Coder Agent',
+        createdAt: t + 100,
+        messageType: 'system',
+        message: statusMessage('s1', 'compacting'),
+      }),
+      makeRow({
+        id: 'cb1',
+        label: 'Coder Agent',
+        createdAt: t + 200,
+        messageType: 'system',
+        message: compactBoundaryMessage('cb1', {
+          trigger: 'auto',
+          pre_tokens: 1000,
+          post_tokens: 500,
+        }),
+      }),
+      makeRow({
+        id: 'a2',
+        label: 'Coder Agent',
+        createdAt: t + 300,
+        message: assistantToolUse('a2', [{ name: 'Read', input: { file_path: 'x.ts' } }]),
+      }),
+    ];
+
+    render(<MinimalThreadFeed parsedRows={rows} activeAgentLabels={new Set(['Coder Agent'])} />);
+
+    const turns = screen.getAllByTestId('minimal-thread-turn');
+    const activeTurn = turns.find((el) => el.dataset.turnState === 'active');
+    expect(activeTurn).not.toBeUndefined();
+
+    const pill = screen.getByTestId('minimal-thread-status-pill');
+    expect(pill.dataset.status).toBe('Running…');
+
+    const statusEntries = screen.queryAllByTestId('minimal-thread-roster-entry');
+    expect(statusEntries.some((el) => el.dataset.rosterKind === 'status')).toBe(false);
+  });
+
+  it('does not consume a status row when there is no fold target', () => {
+    const t = Date.now();
+    const rows = [
+      makeRow({
+        id: 's1',
+        label: 'Coder Agent',
+        createdAt: t,
+        messageType: 'system',
+        message: statusMessage('s1', 'requesting'),
+      }),
+    ];
+
+    render(<MinimalThreadFeed parsedRows={rows} activeAgentLabels={new Set(['Coder Agent'])} />);
+
+    const systemRows = screen.getAllByTestId('minimal-thread-system');
+    expect(systemRows).toHaveLength(1);
+    expect(systemRows[0].textContent).toContain('Requesting');
+    expect(screen.queryByTestId('minimal-thread-status-pill')).toBeNull();
+  });
+
+  it('does not fold a status row from a different session onto the active rail', () => {
+    const t = Date.now();
+    const rows = [
+      makeRow({
+        id: 'a1',
+        label: 'Coder Agent',
+        createdAt: t,
+        message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'bun test' } }]),
+        sessionId: 'active-session',
+      }),
+      makeRow({
+        id: 's1',
+        label: 'Coder Agent',
+        createdAt: t + 100,
+        sessionId: 'other-session',
+        messageType: 'system',
+        message: statusMessage('s1', 'requesting', 'other-session'),
+      }),
+    ];
+
+    render(<MinimalThreadFeed parsedRows={rows} activeAgentLabels={new Set(['Coder Agent'])} />);
+
+    const systemRows = screen.getAllByTestId('minimal-thread-system');
+    expect(systemRows).toHaveLength(1);
+    expect(systemRows[0].textContent).toContain('Requesting');
+
+    const pill = screen.getByTestId('minimal-thread-status-pill');
+    expect(pill.dataset.status).toBe('Running…');
   });
 
   it('falls back to a system row for compacting status when no active turn exists', () => {
