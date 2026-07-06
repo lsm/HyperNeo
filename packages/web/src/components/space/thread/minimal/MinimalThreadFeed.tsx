@@ -379,12 +379,16 @@ function getToolUseContentBlocks(row: ParsedThreadRow) {
   );
 }
 
-function getSystemStatus(row: ParsedThreadRow): string | null {
+function parseSystemStatusRow(
+  row: ParsedThreadRow
+): { status: string; isClear: false } | { status: null; isClear: true } | null {
   const msg = row.message;
   if (!msg || msg.type !== 'system') return null;
   if ((msg as { subtype?: string }).subtype !== 'status') return null;
   const status = (msg as { status?: unknown }).status;
-  return typeof status === 'string' && status ? status : null;
+  if (status === null) return { status: null, isClear: true };
+  if (typeof status === 'string' && status) return { status, isClear: false };
+  return null;
 }
 
 function isFoldedSystemStatusRow(
@@ -955,15 +959,16 @@ function buildActiveTurn(
     ...rosteredToolUseIdsFromRoster(baseRoster),
   ]);
   const withNotifications = [...baseRoster, ...standaloneTaskNotificationEntries(rows, rostered)];
-  const latestStatus = latestStatusBySession?.get(sessionId ?? normalizeAgentKey(block.agentLabel));
-  const roster = latestStatus
-    ? [
-        ...withNotifications,
-        { kind: 'status' as const, status: latestStatus.status, ts: latestStatus.ts },
-      ]
-    : withNotifications;
-  roster.sort((a, b) => a.ts - b.ts);
-  const cappedRoster = roster.slice(-ROSTER_MAX_ENTRIES);
+  const labelKey = normalizeAgentKey(block.agentLabel);
+  const sessionEntry = sessionId ? latestStatusBySession?.get(sessionId) : undefined;
+  const labelEntry = latestStatusBySession?.get(labelKey);
+  const activeStatus = sessionEntry ?? labelEntry;
+  // Cap the base roster first, then pin the live status entry so the header
+  // pill always has a matching roster line even when many events followed it.
+  const cappedBase = withNotifications.slice(-ROSTER_MAX_ENTRIES);
+  const roster = activeStatus
+    ? [...cappedBase, { kind: 'status' as const, status: activeStatus.status, ts: activeStatus.ts }]
+    : cappedBase;
   return {
     state: 'active',
     id: turnId,
@@ -972,14 +977,14 @@ function buildActiveTurn(
     agentRole: rows[0]?.role ?? block.agentLabel,
     agentNodeExecutionId: rows[0]?.nodeExecutionId ?? null,
     startedAt: rows[0].createdAt,
-    status: latestStatus ? `${humanizeSystemSubtype(latestStatus.status)}…` : 'Running…',
+    status: activeStatus ? `${humanizeSystemSubtype(activeStatus.status)}…` : 'Running…',
     toolCalls: countToolCallsForActive(rows, summary),
     messages: countMessagesForActive(rows),
     thinkingEntries: countSummaryEntries(summary, 'thinking'),
     messageEntries: countSummaryEntries(summary, 'text'),
     toolEntries: countSummaryEntries(summary, 'tool_use'),
-    lastEventAt: Math.max(latestActivityTimestamp(summary, rows), latestStatus?.ts ?? 0),
-    roster: cappedRoster,
+    lastEventAt: Math.max(latestActivityTimestamp(summary, rows), activeStatus?.ts ?? 0),
+    roster,
     sessionId,
   };
 }
@@ -1103,10 +1108,14 @@ function buildOperationalSystemTurn(
   if (!subtype || subtype === 'init') return null;
   // SDK status messages (compacting / requesting) fold into the active turn's
   // header pill and roster. Suppress the standalone system card when the status
-  // has been attached to an active turn; leave it as a generic fallback row
-  // when it arrived with no active roster (orphan / completed turn).
-  if (subtype === 'status' && consumedStatusRowIds && consumedStatusRowIds.has(String(row.id))) {
-    return null;
+  // has been attached to an active turn; leave non-clear statuses as a generic
+  // fallback row when they arrived with no active roster (orphan / completed
+  // turn). Clear messages (status: null) are only meaningful inside an active
+  // turn, so never render them as a standalone card.
+  if (subtype === 'status') {
+    const statusValue = (message as { status?: unknown }).status;
+    if (statusValue === null) return null;
+    if (consumedStatusRowIds && consumedStatusRowIds.has(String(row.id))) return null;
   }
   // Hooks surface ONLY as roster entries in the minimal feed (one entry per
   // hook run via the active-turn summary). Suppress every hook_* system row so
@@ -1409,9 +1418,8 @@ function buildFeedTurns(
   const consumedStatusRowIds = new Set<string>();
   const latestStatusBySession = new Map<string, { status: string; ts: number }>();
   for (const row of rowsWithReplacementStatus) {
-    const status = getSystemStatus(row);
-    if (!status) continue;
-    if (status !== 'compacting' && status !== 'requesting') continue;
+    const parsed = parseSystemStatusRow(row);
+    if (!parsed) continue;
     const sid = row.sessionId;
     const labelKey = normalizeAgentKey(row.label);
     let targetKey: string | undefined;
@@ -1435,9 +1443,13 @@ function buildFeedTurns(
       continue;
     }
     consumedStatusRowIds.add(String(row.id));
-    const existing = latestStatusBySession.get(targetKey);
-    if (!existing || row.createdAt > existing.ts) {
-      latestStatusBySession.set(targetKey, { status, ts: row.createdAt });
+    if (parsed.isClear) {
+      latestStatusBySession.delete(targetKey);
+    } else {
+      const existing = latestStatusBySession.get(targetKey);
+      if (!existing || row.createdAt > existing.ts) {
+        latestStatusBySession.set(targetKey, { status: parsed.status, ts: row.createdAt });
+      }
     }
   }
 

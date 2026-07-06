@@ -250,6 +250,16 @@ function statusMessage(uuid: string, status: 'compacting' | 'requesting') {
   };
 }
 
+function statusClearMessage(uuid: string) {
+  return {
+    type: 'system',
+    subtype: 'status',
+    uuid,
+    session_id: 'space:s:task:t',
+    status: null,
+  };
+}
+
 describe('MinimalThreadFeed', () => {
   beforeEach(() => {
     cleanup();
@@ -3483,6 +3493,45 @@ describe('MinimalThreadFeed', () => {
     expect(statusEntry.dataset.rosterKind).toBe('status');
     expect(statusEntry.dataset.status).toBe(status);
     expect(statusEntry.textContent).toContain(expectedText);
+  });
+
+  it('clears folded status when SDK sends status: null', () => {
+    const t = Date.now();
+    const rows = [
+      makeRow({
+        id: 'a1',
+        label: 'Coder Agent',
+        createdAt: t,
+        message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'bun test' } }]),
+      }),
+      makeRow({
+        id: 's1',
+        label: 'Coder Agent',
+        createdAt: t + 100,
+        messageType: 'system',
+        message: statusMessage('s1', 'compacting'),
+      }),
+      makeRow({
+        id: 's2',
+        label: 'Coder Agent',
+        createdAt: t + 200,
+        messageType: 'system',
+        message: statusClearMessage('s2'),
+      }),
+    ];
+
+    render(<MinimalThreadFeed parsedRows={rows} activeAgentLabels={new Set(['Coder Agent'])} />);
+
+    expect(screen.queryByTestId('minimal-thread-system')).toBeNull();
+
+    const turn = screen.getByTestId('minimal-thread-turn');
+    expect(turn.dataset.turnState).toBe('active');
+
+    const pill = screen.getByTestId('minimal-thread-status-pill');
+    expect(pill.dataset.status).toBe('Running…');
+    expect(pill.textContent).toContain('Running…');
+
+    expect(screen.queryByTestId('minimal-thread-roster-entry')).toBeNull();
   });
 
   it('falls back to a system row for compacting status when no active turn exists', () => {
