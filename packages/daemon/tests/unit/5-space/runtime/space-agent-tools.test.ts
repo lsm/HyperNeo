@@ -27,6 +27,7 @@ import { NodeExecutionRepository } from '../../../../src/storage/repositories/no
 import { GateDataRepository } from '../../../../src/storage/repositories/gate-data-repository.ts';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
+import { McpAuditLogRepository } from '../../../../src/storage/repositories/mcp-audit-log-repository.ts';
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager.ts';
@@ -4617,6 +4618,12 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
     return { enqueued: [] };
   }
 
+  function parseAuditSummaries(auditLogRepo: McpAuditLogRepository, taskId: string) {
+    return auditLogRepo
+      .listByTask(taskId)
+      .map((entry) => JSON.parse(entry.paramsSummary ?? '{}') as Record<string, unknown>);
+  }
+
   function makeHandlersWith(
     tam: FakeTaskAgentManager,
     opts: {
@@ -4625,6 +4632,11 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
       myAgentName?: string;
       myAgentNameAliases?: string[];
       mySessionId?: string;
+      auditLogRepo?: McpAuditLogRepository;
+      messageResolver?: Parameters<typeof createSpaceAgentToolHandlers>[0]['messageResolver'];
+      longTermAgentDelivery?: Parameters<
+        typeof createSpaceAgentToolHandlers
+      >[0]['longTermAgentDelivery'];
     } = {}
   ) {
     const fakeQueue = opts.pendingMessageQueue;
@@ -4642,6 +4654,9 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
       myAgentName: opts.myAgentName,
       myAgentNameAliases: opts.myAgentNameAliases,
       mySessionId: opts.mySessionId,
+      auditLogRepo: opts.auditLogRepo,
+      messageResolver: opts.messageResolver,
+      longTermAgentDelivery: opts.longTermAgentDelivery,
       pendingMessageQueue: fakeQueue
         ? {
             enqueue(input) {
@@ -4931,6 +4946,130 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
       'To reply, use: send_message with target "@!!!"'
     );
     expect(tam.subSessionInjects[0]?.message).not.toContain('target "@space-agent"');
+  });
+
+  test('writes one audit entry for worker-node success', async () => {
+    const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'WF Audit');
+    const { run, tasks } = await ctx.runtime.startWorkflowRun(ctx.spaceId, wf.id, 'Audit run');
+    const task = tasks[0];
+    const exec = ctx.nodeExecutionRepo.createOrIgnore({
+      workflowRunId: run.id,
+      workflowNodeId: wf.startNodeId,
+      agentName: 'coder',
+      agentSessionId: 'coder-session-live',
+      status: 'idle',
+    });
+    const auditLogRepo = new McpAuditLogRepository(ctx.db);
+    const tam = makeFakeTaskAgentManager(ctx);
+    const handlers = makeHandlersWith(tam, { auditLogRepo, activateNode: async () => {} });
+
+    const result = await handlers.send_message_to_task({
+      task_id: task.id,
+      node_id: 'coder',
+      message: 'audit worker delivery',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+    const auditSummaries = parseAuditSummaries(auditLogRepo, task.id);
+
+    expect(parsed.success).toBe(true);
+    expect(auditSummaries).toHaveLength(1);
+    expect(auditSummaries[0]).toMatchObject({
+      task_id: task.id,
+      outcome: 'delivered',
+      target: 'node',
+      node_id: exec.id,
+      agent_name: 'coder',
+      node_execution_id: exec.id,
+    });
+  });
+
+  test('writes one audit entry for long-term-agent handle success', async () => {
+    const wf = buildSingleStepWorkflow(
+      ctx.spaceId,
+      ctx.workflowManager,
+      ctx.agentId,
+      'WF Handle Audit'
+    );
+    const { tasks } = await ctx.runtime.startWorkflowRun(ctx.spaceId, wf.id, 'Handle audit run');
+    const task = tasks[0];
+    const auditLogRepo = new McpAuditLogRepository(ctx.db);
+    const tam = makeFakeTaskAgentManager(ctx);
+    const handlers = makeHandlersWith(tam, {
+      auditLogRepo,
+      messageResolver: {
+        async resolveTargets(message) {
+          return {
+            resolved: [
+              {
+                targetRef: message.targets[0],
+                address: { kind: 'handle', handle: 'coder' },
+                actor: {
+                  actorId: 'agent:coder',
+                  kind: 'agent',
+                  spaceId: ctx.spaceId,
+                  handle: '@coder',
+                  status: 'active',
+                },
+              },
+            ],
+            unresolved: [],
+          };
+        },
+      },
+      longTermAgentDelivery: {
+        deliverToSession: async () => 'coder-long-term-session',
+        queueForActivation: async () => null,
+      },
+    });
+
+    const result = await handlers.send_message_to_task({
+      task_id: task.id,
+      target: '@coder',
+      message: 'audit handle delivery',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+    const auditSummaries = parseAuditSummaries(auditLogRepo, task.id);
+
+    expect(parsed.success).toBe(true);
+    expect(auditSummaries).toHaveLength(1);
+    expect(auditSummaries[0]).toMatchObject({
+      task_id: task.id,
+      outcome: 'delivered',
+      target: 'space-agent',
+      agent_name: '@coder',
+    });
+  });
+
+  test('writes one audit entry for node-not-found error', async () => {
+    const wf = buildSingleStepWorkflow(
+      ctx.spaceId,
+      ctx.workflowManager,
+      ctx.agentId,
+      'WF Audit Missing'
+    );
+    const { tasks } = await ctx.runtime.startWorkflowRun(ctx.spaceId, wf.id, 'Audit missing run');
+    const task = tasks[0];
+    const auditLogRepo = new McpAuditLogRepository(ctx.db);
+    const tam = makeFakeTaskAgentManager(ctx);
+    const handlers = makeHandlersWith(tam, { auditLogRepo, activateNode: async () => {} });
+
+    const result = await handlers.send_message_to_task({
+      task_id: task.id,
+      node_id: 'missing-node',
+      message: 'audit missing node',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+    const auditSummaries = parseAuditSummaries(auditLogRepo, task.id);
+
+    expect(parsed.success).toBe(false);
+    expect(auditSummaries).toHaveLength(1);
+    expect(auditSummaries[0]).toMatchObject({
+      task_id: task.id,
+      outcome: 'failed',
+      target: 'missing-node',
+      node_id: 'missing-node',
+      reason: 'node_not_found',
+    });
   });
 
   test('node_id by agent name routes directly to the live sub-session', async () => {

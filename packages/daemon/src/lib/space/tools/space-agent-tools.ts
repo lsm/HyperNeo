@@ -2141,40 +2141,53 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       node_id?: string;
       target?: string;
     }): Promise<ToolResult> {
+      let task: SpaceTask | null = null;
+      const audit = (outcome: string, extra: Record<string, unknown> = {}) =>
+        logAudit(
+          'send_message_to_task',
+          { task_id: task?.id ?? args.task_id, outcome, ...extra },
+          task?.id
+        );
+
       if (!taskAgentManager) {
+        audit('error', { reason: 'task_agent_manager_unavailable' });
         return jsonResult({
           success: false,
           error: 'Task agent communication is not available in this context.',
         });
       }
       // --- Resolve task by id or by space-scoped task number ---
-      let task: SpaceTask | null = null;
       if (args.task_id) {
         task = taskRepo.getTask(args.task_id);
         if (!task) {
+          audit('failed', { reason: 'task_not_found' });
           return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
         }
       } else if (typeof args.task_number === 'number') {
         task = taskRepo.getTaskByNumber(spaceId, args.task_number);
         if (!task) {
+          audit('failed', { reason: 'task_number_not_found', task_number: args.task_number });
           return jsonResult({
             success: false,
             error: `Task not found in this space with task_number=${args.task_number}`,
           });
         }
       } else {
+        audit('failed', { reason: 'missing_task_identifier' });
         return jsonResult({
           success: false,
           error: 'Either task_id or task_number must be provided.',
         });
       }
       if (task.spaceId !== spaceId) {
+        audit('failed', { reason: 'space_mismatch' });
         return jsonResult({
           success: false,
           error: `Task ${task.id} does not belong to this space.`,
         });
       }
       if (task.status === 'archived') {
+        audit('failed', { reason: 'task_archived' });
         return jsonResult({
           success: false,
           error: `Task ${task.id} is archived — create a new task.`,
@@ -2182,6 +2195,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       }
 
       if (args.target === 'task-agent' || args.node_id === 'task-agent') {
+        audit('failed', { target: 'task-agent', reason: 'deprecated_task_agent_target' });
         return jsonResult({
           success: false,
           error: 'Target "task-agent" is no longer supported. Use a worker target or node_id.',
@@ -2189,12 +2203,14 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       }
 
       if (!args.node_id && !args.target) {
+        audit('failed', { reason: 'missing_target' });
         return jsonResult({
           success: false,
           error: 'Target agent is required. Use node_id or target to specify a recipient.',
         });
       }
       if (!task.workflowRunId) {
+        audit('failed', { reason: 'missing_workflow_run' });
         return jsonResult({
           success: false,
           error: `Task ${task.id} has no workflow run — cannot target workflow workers.`,
@@ -2217,15 +2233,21 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             { workflowRunId: task.workflowRunId, nodeExecutions: allExecutions, workflow }
           );
         } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          audit('failed', { target: args.target, node_id: args.node_id, reason: message });
           return jsonResult({
             success: false,
-            error: err instanceof Error ? err.message : String(err),
+            error: message,
           });
         }
         routedTarget = genericTarget;
         const address = parseAddress(genericTarget);
         if (address.kind === 'handle' || address.kind === 'role') {
           if (!messageResolver || !longTermAgentDelivery) {
+            audit('failed', {
+              target: 'space-agent',
+              reason: 'long_term_agent_messaging_unavailable',
+            });
             return jsonResult({
               success: false,
               error: 'Long-term agent messaging is not available in this context.',
@@ -2259,10 +2281,21 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           const firstDelivered = routed.deliveries.find(
             (delivery) => delivery.state === 'delivered'
           );
+          const deliveredOrQueued = routed.deliveries.some((delivery) =>
+            ['delivered', 'queued'].includes(delivery.state)
+          );
+          const routedOutcome = firstDelivered
+            ? 'delivered'
+            : deliveredOrQueued
+              ? 'queued'
+              : 'failed';
+          audit(routedOutcome, {
+            target: 'space-agent',
+            agent_name: genericTarget,
+            reason: deliveredOrQueued ? undefined : 'no_delivery_or_queue',
+          });
           return jsonResult({
-            success: routed.deliveries.some((delivery) =>
-              ['delivered', 'queued'].includes(delivery.state)
-            ),
+            success: deliveredOrQueued,
             task_id: task.id,
             target: 'space-agent',
             deliveries: routed.deliveries,
@@ -2280,6 +2313,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           resolved =
             allExecutions.find((exec) => exec.agentSessionId === address.sessionId) ?? null;
         } else {
+          audit('failed', { target: genericTarget, reason: 'generic_target_not_routable' });
           return jsonResult({
             success: false,
             error: `Generic target ${genericTarget} is not routable from this tool. Use @handle, @role:<role>, @worker:<node>/<agent>, @worker:<run>/<node>/<agent>, @session:<task-agent-session>, or node_id.`,
@@ -2290,12 +2324,14 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       }
 
       if (!routedTarget) {
+        audit('failed', { reason: 'missing_target' });
         return jsonResult({
           success: false,
           error: 'Target agent is required. Use node_id or target to specify a recipient.',
         });
       }
       if (!resolved) {
+        audit('failed', { target: routedTarget, node_id: args.node_id, reason: 'node_not_found' });
         return jsonResult({
           success: false,
           error:
@@ -2327,6 +2363,12 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             }),
             true
           );
+          audit('delivered', {
+            target: 'node',
+            node_id: resolved.id,
+            agent_name: resolved.agentName,
+            node_execution_id: resolved.id,
+          });
           return jsonResult({
             success: true,
             task_id: task.id,
@@ -2345,6 +2387,12 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 
       // No live session → activate and retry.
       if (!activateNode) {
+        audit('failed', {
+          target: 'node',
+          node_id: resolved.id,
+          agent_name: resolved.agentName,
+          reason: 'activation_callback_missing',
+        });
         return jsonResult({
           success: false,
           error: `Node "${resolved.agentName}" has no live session and no activation callback is configured.`,
@@ -2354,6 +2402,12 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         await activateNode(task.workflowRunId, resolved.workflowNodeId);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
+        audit('error', {
+          target: 'node',
+          node_id: resolved.id,
+          agent_name: resolved.agentName,
+          reason: message,
+        });
         return jsonResult({
           success: false,
           error: `Failed to activate node "${resolved.agentName}": ${message}`,
@@ -2380,6 +2434,12 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             }),
             true
           );
+          audit('delivered', {
+            target: 'node',
+            node_id: resolved.id,
+            agent_name: resolved.agentName,
+            node_execution_id: resolved.id,
+          });
           return jsonResult({
             success: true,
             task_id: task.id,
@@ -2392,6 +2452,12 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           });
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
+          audit('error', {
+            target: 'node',
+            node_id: resolved.id,
+            agent_name: resolved.agentName,
+            reason: message,
+          });
           return jsonResult({
             success: false,
             error: `Failed to inject message into node "${resolved.agentName}": ${message}`,
@@ -2425,6 +2491,15 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 
       // No live session yet — the tick loop will spawn one. When a queue is
       // available, the queued row will be flushed into that session on activation.
+      audit(queuedMessageId !== null ? 'queued' : 'activated', {
+        target: 'node',
+        node_id: resolved.id,
+        agent_name: resolved.agentName,
+        node_execution_id: resolved.id,
+        ...(queuedMessageId !== null
+          ? { queued_message_id: queuedMessageId }
+          : { reason: 'pending_message_queue_unavailable' }),
+      });
       return jsonResult({
         success: true,
         task_id: task.id,
