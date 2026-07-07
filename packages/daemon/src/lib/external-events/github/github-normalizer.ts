@@ -103,16 +103,24 @@ function repoFromPayload(payload: Record<string, unknown>): { owner: string; rep
   };
 }
 
-function parseRepoFromApiUrl(url: string): GitHubPollingRepo | null {
-  // GitHub API URLs have the form https://api.github.com/repos/{owner}/{repo}/...
+function parseRepoFromUrl(url: string): GitHubPollingRepo | null {
+  // API URLs have the form https://api.github.com/repos/{owner}/{repo}/...
+  // HTML URLs have the form https://github.com/{owner}/{repo}/...
   // A renamed repo's payload URL carries the current canonical name, which may
   // differ from the watched repo config cached at setup time.
-  const match = url.match(/\/repos\/([^/]+)\/([^/]+)(?:\/|$)/);
-  if (!match) return null;
-  const owner = match[1];
-  const repo = match[2];
-  if (!owner || !repo) return null;
-  return { owner, repo };
+  const apiMatch = url.match(/\/repos\/([^/]+)\/([^/]+)(?:\/|$)/);
+  if (apiMatch) {
+    const [, owner, repo] = apiMatch;
+    if (owner && repo) return { owner, repo };
+  }
+  // Negative lookahead avoids matching github.com/repos/{owner}/{repo} (an API URL
+  // where the domain was already consumed by a prior /repos/ match attempt).
+  const htmlMatch = url.match(/github\.com\/(?!repos\/)([^/]+)\/([^/]+)(?:\/|$)/);
+  if (htmlMatch) {
+    const [, owner, repo] = htmlMatch;
+    if (owner && repo) return { owner, repo };
+  }
+  return null;
 }
 
 function resolvePollingRepo(
@@ -121,7 +129,7 @@ function resolvePollingRepo(
 ): GitHubPollingRepo {
   const apiUrl = getString(obj.url);
   const htmlUrl = getString(obj.html_url);
-  const payloadRepo = parseRepoFromApiUrl(apiUrl) ?? parseRepoFromApiUrl(htmlUrl);
+  const payloadRepo = parseRepoFromUrl(apiUrl) ?? parseRepoFromUrl(htmlUrl);
   if (!payloadRepo) return watched;
 
   const differs =

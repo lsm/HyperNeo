@@ -216,12 +216,31 @@ describe('normalizeGitHubPollingRow — renamed repo uses payload URL, not stale
     expect(event.topic).toBe('github/lsm/hyperneo/pull_request/2236.polled');
   });
 
-  it('falls back to watched repo when payload URL is missing or malformed', () => {
+  it('falls back to html_url when api url is missing but html_url has the new name', () => {
+    const row = {
+      id: 112,
+      node_id: 'PRRC_kwAAA_htmlfallback',
+      body: 'api url missing',
+      html_url: 'https://github.com/lsm/HyperNeo/pull/2236#discussion_r112',
+      user: { login: 'reviewer', type: 'User' },
+      updated_at: '2026-01-01T00:00:00Z',
+    };
+    const normalized = normalizeGitHubPollingRow(staleWatched, row, 'review_comments')!;
+    expect(normalized.repoOwner).toBe('lsm');
+    expect(normalized.repoName).toBe('HyperNeo');
+
+    const event = toExternalEvent('space-1', normalized);
+    expect(event.topic).toBe('github/lsm/hyperneo/pull_request/2236.review_comment_polled');
+  });
+
+  it('falls back to watched repo when payload URL is missing or unparseable', () => {
     const row = {
       id: 111,
+      number: 2236,
       node_id: 'PRRC_kwAAA_fallback',
       body: 'missing url',
-      html_url: 'https://github.com/lsm/neokai/pull/2236#discussion_r111',
+      url: 'https://example.com/not-a-github-url',
+      html_url: 'also-not-a-github-url',
       user: { login: 'reviewer', type: 'User' },
       updated_at: '2026-01-01T00:00:00Z',
     };
