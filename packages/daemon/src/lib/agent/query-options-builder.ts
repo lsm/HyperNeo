@@ -18,8 +18,7 @@
  * - Hooks (output limiter)
  */
 
-import { getDataDir, resolveLegacyDataDir } from '../data-dir';
-import { existsSync } from 'node:fs';
+import { getDataDir } from '../data-dir';
 import type {
   CanUseTool,
   HookCallback,
@@ -1021,12 +1020,6 @@ CRITICAL RULES:
     const dataDir = getDataDir();
     directories.push(join(homedir(), '.claude'));
     directories.push(dataDir);
-    // During the symlink transition, also allow the resolved legacy ~/.neokai so
-    // sandboxed tools/skills referencing the real legacy path are not denied.
-    const legacyDir = resolveLegacyDataDir();
-    if (legacyDir !== dataDir && existsSync(legacyDir)) {
-      directories.push(legacyDir);
-    }
 
     // For worktree sessions, also allow temp directories for shell operations
     if (this.ctx.session.worktree) {

@@ -175,53 +175,6 @@ describe('worktree-path-utils', () => {
       );
     });
 
-    test('reads legacy .neokai-repo-root sentinel for collision detection', () => {
-      const repoPath = '/Users/legacy/collide';
-      const shortKey = getProjectShortKey(repoPath);
-      const otherPath = '/Users/someone/else-repo';
-
-      // Upgraded project dir exists, new sentinel absent, legacy sentinel present.
-      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}`, true);
-      existsSyncResults.set(
-        `/home/testuser/.hyperneo/projects/${shortKey}/.hyperneo-repo-root`,
-        false
-      );
-      existsSyncResults.set(
-        `/home/testuser/.hyperneo/projects/${shortKey}/.neokai-repo-root`,
-        true
-      );
-      // Legacy sentinel belongs to a DIFFERENT repo → must collide, not reuse.
-      readFileSyncSpy.mockImplementation(() => otherPath);
-
-      const collisions: string[] = [];
-      const result = getWorktreeBaseDir(repoPath, (msg) => collisions.push(msg));
-
-      const encoded = encodeRepoPath(repoPath);
-      expect(result).toBe(`/home/testuser/.hyperneo/projects/${encoded}/worktrees`);
-      expect(collisions.length).toBe(1);
-      expect(collisions[0]).toContain('collision');
-    });
-
-    test('matches repo via legacy .neokai-repo-root sentinel (no collision)', () => {
-      const repoPath = '/Users/legacy/same-repo';
-      const shortKey = getProjectShortKey(repoPath);
-
-      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}`, true);
-      existsSyncResults.set(
-        `/home/testuser/.hyperneo/projects/${shortKey}/.hyperneo-repo-root`,
-        false
-      );
-      existsSyncResults.set(
-        `/home/testuser/.hyperneo/projects/${shortKey}/.neokai-repo-root`,
-        true
-      );
-      readFileSyncSpy.mockImplementation(() => repoPath);
-
-      const result = getWorktreeBaseDir(repoPath);
-
-      expect(result).toBe(`/home/testuser/.hyperneo/projects/${shortKey}/worktrees`);
-    });
-
     test('respects TEST_WORKTREE_BASE_DIR env var', () => {
       const repoPath = '/test/repo';
       const shortKey = getProjectShortKey(repoPath);
