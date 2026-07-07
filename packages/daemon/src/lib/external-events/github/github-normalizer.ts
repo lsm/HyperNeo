@@ -1,4 +1,7 @@
 import type { ExternalEvent } from '../types';
+import { Logger } from '../../logger';
+
+const log = new Logger('github-normalizer');
 
 export type GitHubEventKind =
   | 'issue_comment'
@@ -98,6 +101,47 @@ function repoFromPayload(payload: Record<string, unknown>): { owner: string; rep
     owner: getString(owner.login, fullOwner ?? ''),
     repo: getString(repository.name, fullRepo ?? ''),
   };
+}
+
+function parseRepoFromUrl(url: string): GitHubPollingRepo | null {
+  // API URLs have the form https://api.github.com/repos/{owner}/{repo}/...
+  // HTML URLs have the form https://github.com/{owner}/{repo}/...
+  // A renamed repo's payload URL carries the current canonical name, which may
+  // differ from the watched repo config cached at setup time.
+  const apiMatch = url.match(/\/repos\/([^/]+)\/([^/]+)(?:\/|$)/);
+  if (apiMatch) {
+    const [, owner, repo] = apiMatch;
+    if (owner && repo) return { owner, repo };
+  }
+  // Negative lookahead avoids matching github.com/repos/{owner}/{repo} (an API URL
+  // where the domain was already consumed by a prior /repos/ match attempt).
+  const htmlMatch = url.match(/github\.com\/(?!repos\/)([^/]+)\/([^/]+)(?:\/|$)/);
+  if (htmlMatch) {
+    const [, owner, repo] = htmlMatch;
+    if (owner && repo) return { owner, repo };
+  }
+  return null;
+}
+
+function resolvePollingRepo(
+  watched: GitHubPollingRepo,
+  obj: Record<string, unknown>
+): GitHubPollingRepo {
+  const apiUrl = getString(obj.url);
+  const htmlUrl = getString(obj.html_url);
+  const payloadRepo = parseRepoFromUrl(apiUrl) ?? parseRepoFromUrl(htmlUrl);
+  if (!payloadRepo) return watched;
+
+  const differs =
+    payloadRepo.owner.toLowerCase() !== watched.owner.toLowerCase() ||
+    payloadRepo.repo.toLowerCase() !== watched.repo.toLowerCase();
+  if (differs) {
+    log.warn('Payload repo differs from watched repo; using payload repo', {
+      watched: `${watched.owner}/${watched.repo}`,
+      payload: `${payloadRepo.owner}/${payloadRepo.repo}`,
+    });
+  }
+  return payloadRepo;
 }
 
 function userFrom(value: unknown): { login: string; type: string } {
@@ -305,6 +349,7 @@ export function normalizeGitHubPollingRow(
     prNumber = prMatch ? Number(prMatch[1]) : getNumber(obj.number);
   }
   if (!prNumber) return null;
+  const repo = resolvePollingRepo(watched, obj);
   const user = userFrom(obj.user);
   let eventType: GitHubEventKind = 'pull_request';
   if (endpointKey === 'issue_comments') eventType = 'issue_comment';
@@ -336,24 +381,24 @@ export function normalizeGitHubPollingRow(
       ? headSha || String(updatedAt)
       : getString(obj.updated_at ?? obj.created_at);
   const dedupeSuffix = dedupeVersion ? `:${dedupeVersion}` : '';
-  const canonicalOwner = watched.owner.toLowerCase();
-  const canonicalRepo = watched.repo.toLowerCase();
+  const canonicalOwner = repo.owner.toLowerCase();
+  const canonicalRepo = repo.repo.toLowerCase();
   return {
     deliveryId: `poll:${eventType}:${id}${dedupeSuffix}`,
     dedupeKey: `${canonicalOwner}/${canonicalRepo}:${eventType}:${id}${dedupeSuffix}`,
     source: 'polling',
     eventType,
     action: 'polled',
-    repoOwner: watched.owner,
-    repoName: watched.repo,
+    repoOwner: repo.owner,
+    repoName: repo.repo,
     entityId: String(prNumber),
     prNumber,
-    prUrl: prUrl(watched.owner, watched.repo, prNumber),
+    prUrl: prUrl(repo.owner, repo.repo, prNumber),
     actor: user.login,
     actorType: user.type,
     body: getString(obj.body),
     summary: `PR #${prNumber} ${eventType} by ${user.login}: ${truncateBody(getString(obj.body, getString(obj.title)))}`,
-    externalUrl: htmlUrl || prUrl(watched.owner, watched.repo, prNumber),
+    externalUrl: htmlUrl || prUrl(repo.owner, repo.repo, prNumber),
     externalId: `${eventType}:${id}${dedupeSuffix}`,
     commentId,
     nodeId,
