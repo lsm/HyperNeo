@@ -38,8 +38,7 @@ const DEFAULT_STARTUP_TIMEOUT_MS = 15000;
 const RETRY_EXIT_TIMEOUT_MS = 5000;
 
 function getStartupTimeoutMs(): number {
-  const raw =
-    process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS ?? process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS;
+  const raw = process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
   if (!raw) return DEFAULT_STARTUP_TIMEOUT_MS;
   const parsed = Number.parseInt(raw, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_STARTUP_TIMEOUT_MS;
@@ -484,8 +483,7 @@ export class AcpQueryRunner {
       let queryOptions = await optionsBuilder.build();
       queryOptions = await this.ensureRequiredMcpServersForAcp(queryOptions);
 
-      // Fall back to the legacy NEOKAI_ACP_COMMAND during the rename transition.
-      const acpCommand = process.env.HYPERNEO_ACP_COMMAND ?? process.env.NEOKAI_ACP_COMMAND;
+      const acpCommand = process.env.HYPERNEO_ACP_COMMAND;
       if (!acpCommand) {
         throw new Error('Set HYPERNEO_ACP_COMMAND to enable ACP agents.');
       }

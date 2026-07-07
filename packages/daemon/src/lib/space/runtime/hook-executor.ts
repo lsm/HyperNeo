@@ -64,7 +64,11 @@ export interface HookExecutorResult {
 /** Default timeout for hook scripts (30 seconds). */
 const DEFAULT_TIMEOUT_MS = 30_000;
 
-/** Environment variable prefixes that are stripped from the restricted env. */
+/** Environment variable prefixes that are stripped from the restricted env.
+ * `NEOKAI_` is retained as a stripped prefix so stale legacy internals from old
+ * deployments do not leak into hook scripts, even though no NEOKAI_* aliases are
+ * injected or read.
+ */
 const RESTRICTED_ENV_PREFIXES = [
   'ANTHROPIC_',
   'CLAUDE_',
@@ -80,10 +84,9 @@ const RESTRICTED_ENV_KEY_PATTERN = /SECRET|TOKEN|PASSWORD|CREDENTIAL|API_KEY/i;
 
 /**
  * Hook-specific env vars injected into every hook script under the canonical
- * `HYPERNEO_*` names (a legacy `NEOKAI_*` alias is mirrored alongside each so
- * hook scripts authored before the rename keep seeing values).
+ * `HYPERNEO_*` names.
  */
-const HOOK_INJECTED_ENV_KEYS = [
+const HOOK_INJECTED_ENV_KEYS = new Set([
   'HYPERNEO_HOOK_ID',
   'HYPERNEO_WORKFLOW_RUN_ID',
   'HYPERNEO_WORKSPACE_PATH',
@@ -99,7 +102,7 @@ const HOOK_INJECTED_ENV_KEYS = [
   'HYPERNEO_CURRENT_ARTIFACTS_JSON',
   'HYPERNEO_PERMITTED_EXTERNAL_LOOKUPS',
   'HYPERNEO_HOOK_TEMPLATE_DATA_JSON',
-] as const;
+]);
 
 /** Keys that are always allowed regardless of prefix/pattern. */
 const ALWAYS_ALLOWED_ENV_KEYS = new Set([
@@ -290,46 +293,17 @@ function buildHookRestrictedEnv(
     }
   }
 
-  // Backward-compat: mirror the injected hook vars under legacy NEOKAI_* aliases
-  // so workflow hook scripts authored before the HyperNeo rename keep seeing values.
-  for (const hyperneoKey of HOOK_INJECTED_ENV_KEYS) {
-    if (env[hyperneoKey] !== undefined) {
-      env[`NEOKAI_${hyperneoKey.slice('HYPERNEO_'.length)}`] = env[hyperneoKey];
-    }
-  }
-
-  // Resolve the validation base override from either name and expose both, so
-  // bundled scripts (HYPERNEO_VALIDATION_BASE_REF) and upgraded custom scripts
-  // still reading the legacy NEOKAI_VALIDATION_BASE_REF both see it.
-  const validationBaseRef =
-    env['HYPERNEO_VALIDATION_BASE_REF'] ?? process.env.NEOKAI_VALIDATION_BASE_REF;
+  // Resolve the validation base override from process env.
+  const validationBaseRef = env['HYPERNEO_VALIDATION_BASE_REF'];
   if (validationBaseRef !== undefined) {
     env['HYPERNEO_VALIDATION_BASE_REF'] = validationBaseRef;
-    env['NEOKAI_VALIDATION_BASE_REF'] = validationBaseRef;
   }
 
   // Merge user-specified env (cannot override injected vars)
   if (scriptEnv) {
     for (const [key, value] of Object.entries(scriptEnv)) {
-      // User env cannot override gate/hook-injected vars (HYPERNEO_* or legacy NEOKAI_* alias)
-      if (
-        key.startsWith('HYPERNEO_HOOK_') ||
-        key.startsWith('HYPERNEO_WORKFLOW_') ||
-        key.startsWith('HYPERNEO_NODE_') ||
-        key.startsWith('HYPERNEO_SESSION_') ||
-        key.startsWith('HYPERNEO_TASK_') ||
-        key.startsWith('HYPERNEO_METHOD_') ||
-        key.startsWith('HYPERNEO_CURRENT_') ||
-        key.startsWith('HYPERNEO_PERMITTED_') ||
-        key.startsWith('NEOKAI_HOOK_') ||
-        key.startsWith('NEOKAI_WORKFLOW_') ||
-        key.startsWith('NEOKAI_NODE_') ||
-        key.startsWith('NEOKAI_SESSION_') ||
-        key.startsWith('NEOKAI_TASK_') ||
-        key.startsWith('NEOKAI_METHOD_') ||
-        key.startsWith('NEOKAI_CURRENT_') ||
-        key.startsWith('NEOKAI_PERMITTED_')
-      ) {
+      // User env cannot override hook-injected vars (HYPERNEO_*)
+      if (HOOK_INJECTED_ENV_KEYS.has(key)) {
         continue;
       }
       const isAllowed =

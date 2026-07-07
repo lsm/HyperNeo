@@ -174,10 +174,7 @@ export class OpenRouterProvider implements Provider {
 
   private getAllowedModelIds(): Set<string> | null {
     const envConfigured = this.env.OPENROUTER_ALLOWED_MODELS ?? this.env.OPENROUTER_MODEL_ALLOWLIST;
-    const configured =
-      envConfigured ??
-      this.env.HYPERNEO_PROVIDER_MODEL_ALLOWLISTS ??
-      this.env.NEOKAI_PROVIDER_MODEL_ALLOWLISTS;
+    const configured = envConfigured ?? this.env.HYPERNEO_PROVIDER_MODEL_ALLOWLISTS;
     if (!configured?.trim()) return null;
 
     const ids = configured

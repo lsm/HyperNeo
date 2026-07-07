@@ -41,12 +41,10 @@ export interface ConfigOverrides {
 }
 
 /**
- * Read a `HYPERNEO_<name>` env var, falling back to the legacy `NEOKAI_<name>`
- * during the rename so upgraded deployments that still export the old name keep
- * working (port, workspace root, disable flags, etc.).
+ * Read a `HYPERNEO_<name>` env var.
  */
 function hyperneoEnv(name: string): string | undefined {
-  return process.env[`HYPERNEO_${name}`] ?? process.env[`NEOKAI_${name}`];
+  return process.env[`HYPERNEO_${name}`];
 }
 
 export function getConfig(overrides?: ConfigOverrides): Config {

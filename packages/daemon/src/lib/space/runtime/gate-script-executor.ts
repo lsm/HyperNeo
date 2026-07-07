@@ -96,6 +96,9 @@ export const MAX_BUFFER_BYTES = 1_048_576;
 /**
  * Environment variable prefixes that are stripped from the restricted env.
  * These carry credentials, auth tokens, and internal secrets.
+ * `NEOKAI_` is retained as a stripped prefix so stale legacy internals from old
+ * deployments do not leak into gate scripts, even though no NEOKAI_* aliases are
+ * injected or read.
  */
 const RESTRICTED_ENV_PREFIXES = [
   'ANTHROPIC_',
@@ -115,7 +118,7 @@ const RESTRICTED_ENV_KEY_PATTERN = /SECRET|TOKEN|PASSWORD|CREDENTIAL|API_KEY/i;
 
 /**
  * Gate-specific env vars injected into every gate/hook script under the canonical
- * `HYPERNEO_*` names (a legacy `NEOKAI_*` alias is mirrored alongside each).
+ * `HYPERNEO_*` names.
  */
 const GATE_INJECTED_ENV_KEYS = [
   'HYPERNEO_GATE_ID',
@@ -126,10 +129,9 @@ const GATE_INJECTED_ENV_KEYS = [
   'HYPERNEO_GATE_DATA_UPDATED_ISO',
 ] as const;
 
-/** True for a canonical or legacy gate-injected env key (user scriptEnv cannot override these). */
+/** True for a canonical gate-injected env key (user scriptEnv cannot override these). */
 function isGateInjectedEnvKey(key: string): boolean {
-  if ((GATE_INJECTED_ENV_KEYS as readonly string[]).includes(key)) return true;
-  return GATE_INJECTED_ENV_KEYS.some((k) => key === `NEOKAI_${k.slice('HYPERNEO_'.length)}`);
+  return (GATE_INJECTED_ENV_KEYS as readonly string[]).includes(key);
 }
 
 /**
@@ -210,28 +212,16 @@ export function buildRestrictedEnv(
     env['HYPERNEO_GATE_DATA_JSON'] = '{}';
   }
 
-  // Backward-compat: mirror the injected gate vars under legacy NEOKAI_* aliases
-  // so gate/hook scripts authored before the HyperNeo rename keep seeing values.
-  for (const hyperneoKey of GATE_INJECTED_ENV_KEYS) {
-    if (env[hyperneoKey] !== undefined) {
-      env[`NEOKAI_${hyperneoKey.slice('HYPERNEO_'.length)}`] = env[hyperneoKey];
-    }
-  }
-
-  // Resolve the validation base override from either name and expose both, so
-  // bundled scripts (HYPERNEO_VALIDATION_BASE_REF) and upgraded custom scripts
-  // still reading the legacy NEOKAI_VALIDATION_BASE_REF both see it.
-  const validationBaseRef =
-    env['HYPERNEO_VALIDATION_BASE_REF'] ?? process.env.NEOKAI_VALIDATION_BASE_REF;
+  // Resolve the validation base override from process env.
+  const validationBaseRef = env['HYPERNEO_VALIDATION_BASE_REF'];
   if (validationBaseRef !== undefined) {
     env['HYPERNEO_VALIDATION_BASE_REF'] = validationBaseRef;
-    env['NEOKAI_VALIDATION_BASE_REF'] = validationBaseRef;
   }
 
   // Merge user-specified env (applied after injected vars; cannot override gate-injected vars)
   if (scriptEnv) {
     for (const [key, value] of Object.entries(scriptEnv)) {
-      // User env cannot override gate-injected vars (HYPERNEO_* or legacy NEOKAI_* alias)
+      // User env cannot override gate-injected vars (HYPERNEO_*)
       if (isGateInjectedEnvKey(key)) {
         continue;
       }
