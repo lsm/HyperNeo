@@ -122,6 +122,118 @@ function pullRequestWebhook(overrides: Record<string, unknown> = {}): unknown {
   };
 }
 
+describe('normalizeGitHubPollingRow — renamed repo uses payload URL, not stale watched config', () => {
+  const staleWatched: GitHubPollingRepo = { owner: 'lsm', repo: 'neokai' };
+
+  function makeRenamedReviewCommentRow(): Record<string, unknown> {
+    return {
+      id: 12345,
+      node_id: 'PRRC_kwAAA_renamed',
+      pull_request_review_id: 99,
+      body: 'nit on renamed repo',
+      // The watched config is stale (neokai), but the API payload URL carries the
+      // current canonical repo name (HyperNeo).
+      url: 'https://api.github.com/repos/lsm/HyperNeo/pulls/comments/12345',
+      html_url: 'https://github.com/lsm/HyperNeo/pull/2236#discussion_r12345',
+      user: { login: 'reviewer', type: 'User' },
+      created_at: '2026-01-01T00:00:00Z',
+      updated_at: '2026-01-01T00:00:00Z',
+    };
+  }
+
+  function makeRenamedIssueCommentRow(): Record<string, unknown> {
+    return {
+      id: 67890,
+      node_id: 'IC_kwAAA_renamed',
+      body: 'general comment on renamed repo',
+      url: 'https://api.github.com/repos/lsm/HyperNeo/issues/comments/67890',
+      html_url: 'https://github.com/lsm/HyperNeo/issues/2236#issuecomment-67890',
+      issue_url: 'https://api.github.com/repos/lsm/HyperNeo/issues/2236',
+      issue: { number: 2236, pull_request: { url: 'api' } },
+      user: { login: 'reviewer', type: 'User' },
+      created_at: '2026-01-01T00:00:00Z',
+      updated_at: '2026-01-01T00:00:00Z',
+    };
+  }
+
+  function makeRenamedPullRow(): Record<string, unknown> {
+    return {
+      id: 10001,
+      number: 2236,
+      node_id: 'PR_kwAAA_renamed',
+      url: 'https://api.github.com/repos/lsm/HyperNeo/pulls/2236',
+      html_url: 'https://github.com/lsm/HyperNeo/pull/2236',
+      title: 'Renamed repo PR',
+      body: 'PR body on renamed repo',
+      user: { login: 'author', type: 'User' },
+      head: { sha: 'abc123def456', ref: 'feature/renamed' },
+      created_at: '2026-01-01T00:00:00Z',
+      updated_at: '2026-01-01T00:00:00Z',
+    };
+  }
+
+  it('review_comment row derives owner/repo from payload API URL and emits new-name topic', () => {
+    const normalized = normalizeGitHubPollingRow(
+      staleWatched,
+      makeRenamedReviewCommentRow(),
+      'review_comments'
+    )!;
+    expect(normalized).not.toBeNull();
+    expect(normalized.repoOwner).toBe('lsm');
+    expect(normalized.repoName).toBe('HyperNeo');
+    expect(normalized.prNumber).toBe(2236);
+    expect(normalized.prUrl).toBe('https://github.com/lsm/HyperNeo/pull/2236');
+
+    const event = toExternalEvent('space-1', normalized);
+    expect(event.topic).toBe('github/lsm/hyperneo/pull_request/2236.review_comment_polled');
+  });
+
+  it('issue_comment row derives owner/repo from payload API URL and emits new-name topic', () => {
+    const normalized = normalizeGitHubPollingRow(
+      staleWatched,
+      makeRenamedIssueCommentRow(),
+      'issue_comments'
+    )!;
+    expect(normalized).not.toBeNull();
+    expect(normalized.repoOwner).toBe('lsm');
+    expect(normalized.repoName).toBe('HyperNeo');
+    expect(normalized.prNumber).toBe(2236);
+    expect(normalized.prUrl).toBe('https://github.com/lsm/HyperNeo/pull/2236');
+
+    const event = toExternalEvent('space-1', normalized);
+    expect(event.topic).toBe('github/lsm/hyperneo/pull_request/2236.comment_polled');
+  });
+
+  it('pulls row derives owner/repo from payload API URL and emits new-name topic', () => {
+    const normalized = normalizeGitHubPollingRow(staleWatched, makeRenamedPullRow(), 'pulls')!;
+    expect(normalized).not.toBeNull();
+    expect(normalized.repoOwner).toBe('lsm');
+    expect(normalized.repoName).toBe('HyperNeo');
+    expect(normalized.prNumber).toBe(2236);
+    expect(normalized.prUrl).toBe('https://github.com/lsm/HyperNeo/pull/2236');
+
+    const event = toExternalEvent('space-1', normalized);
+    expect(event.topic).toBe('github/lsm/hyperneo/pull_request/2236.polled');
+  });
+
+  it('falls back to watched repo when payload URL is missing or malformed', () => {
+    const row = {
+      id: 111,
+      node_id: 'PRRC_kwAAA_fallback',
+      body: 'missing url',
+      html_url: 'https://github.com/lsm/neokai/pull/2236#discussion_r111',
+      user: { login: 'reviewer', type: 'User' },
+      updated_at: '2026-01-01T00:00:00Z',
+    };
+    const normalized = normalizeGitHubPollingRow(staleWatched, row, 'review_comments')!;
+    expect(normalized.repoOwner).toBe('lsm');
+    expect(normalized.repoName).toBe('neokai');
+
+    const event = toExternalEvent('space-1', normalized);
+    expect(event.topic).toBe('github/lsm/neokai/pull_request/2236.review_comment_polled');
+  });
+});
+
 describe('normalizeGitHubPollingRow — pulls dedupe key', () => {
   it('keys the dedupe suffix on the head sha, not the volatile updated_at', () => {
     const event = normalizeGitHubPollingRow(watched, makePullRow(), 'pulls')!;
