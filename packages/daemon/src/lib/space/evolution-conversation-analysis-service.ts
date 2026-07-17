@@ -318,7 +318,13 @@ async function analyzeConversationWithModel(
         pathToClaudeCodeExecutable: resolveSDKCliPath(),
         executable: isRunningUnderBun() ? 'bun' : undefined,
         env: mergeProviderEnvVars(providerEnvVars),
-        thinking: KimiProvider.resolveKimiTitleThinkingConfig(sdkModelId),
+        // Kimi K3 rejects `thinking.type` and K2.7 requires enabled thinking.
+        // Only apply the Kimi-specific override for the Kimi provider; other
+        // providers keep the safe disabled-thinking default.
+        thinking:
+          provider === 'kimi'
+            ? KimiProvider.resolveKimiTitleThinkingConfig(sdkModelId)
+            : { type: 'disabled' },
       },
     });
     let raw = '';

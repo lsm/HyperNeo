@@ -1201,11 +1201,13 @@ ${messageText.slice(0, 2000)}`;
           pathToClaudeCodeExecutable: cliPath,
           executable: isRunningUnderBun() ? 'bun' : undefined,
           env: mergedEnv,
-          // Disable thinking for title generation — we only need a short text response.
-          // Without this, models with adaptive thinking (e.g. Opus 4.6) may return
-          // only thinking blocks with no text block, causing an empty-response error.
           // Kimi K3 rejects `thinking.type` entirely, so omit the field for K3.
-          thinking: KimiProvider.resolveKimiTitleThinkingConfig(titleModels.providerModelId),
+          // Kimi K2.7 models require thinking to be explicitly enabled. For all
+          // other providers keep the previous disabled-thinking default.
+          thinking:
+            provider === 'kimi'
+              ? KimiProvider.resolveKimiTitleThinkingConfig(titleModels.providerModelId)
+              : { type: 'disabled' },
         },
       });
 

@@ -293,10 +293,25 @@ export function shouldUseHyperNeoCompactFallback(providerId: string): boolean {
 
 export function buildProviderSettings(
   providerId: string,
-  contextWindow?: number | null
+  contextWindow?: number | null,
+  modelId?: string | null
 ): Options['settings'] {
   if (NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId)) {
     return undefined;
+  }
+
+  // Kimi K3 advertises a 1M context window. The SDK's internal resolver does
+  // not know the `kimi-k3` ID, so it falls back to its 200k default and clamps
+  // any override to that fallback. We still pass the real 1M window explicitly
+  // (belt-and-suspenders with the env var set in KimiProvider.buildSdkConfig)
+  // and let the SDK compact at the best threshold it can reach. This branch
+  // documents that K3 is intentionally treated differently from the 262k Kimi
+  // K2.7 models.
+  if (providerId === 'kimi' && modelId && KimiProvider.isKimiK3Model(modelId)) {
+    return {
+      autoCompactEnabled: true,
+      autoCompactWindow: 1_048_576,
+    };
   }
 
   if (shouldUseHyperNeoCompactFallback(providerId)) {
@@ -550,7 +565,11 @@ export class QueryOptionsBuilder {
       // output style, CLAUDE.md content, etc.).
       settingSources:
         config.settingSources ?? this.ctx.settingsManager.getGlobalSettings().settingSources,
-      settings: buildProviderSettings(providerId, modelInfo?.contextWindow),
+      settings: buildProviderSettings(
+        providerId,
+        modelInfo?.contextWindow,
+        this.ctx.session.config.model
+      ),
 
       // ============ Streaming ============
       includePartialMessages: config.includePartialMessages,

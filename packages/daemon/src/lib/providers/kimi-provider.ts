@@ -73,9 +73,13 @@ export const KIMI_REGION_ENDPOINTS: Record<
   { anthropicBaseUrl: string; openAiBaseUrl: string; modelId: string }
 > = {
   china: {
-    anthropicBaseUrl: 'https://api.moonshot.cn/anthropic',
-    openAiBaseUrl: 'https://api.moonshot.cn/v1',
-    modelId: 'kimi-k2.7-code',
+    // Default China endpoint remains the legacy Kimi Code host so existing
+    // credentials and migration records ({ region: 'china' }) keep working.
+    // The newer Moonshot Open Platform China host can be reached via an
+    // explicit base URL override (KIMI_BASE_URL / sessionConfig.baseUrl).
+    anthropicBaseUrl: 'https://api.kimi.com/coding',
+    openAiBaseUrl: 'https://api.kimi.com/coding/v1',
+    modelId: 'kimi-for-coding',
   },
   global: {
     anthropicBaseUrl: 'https://api.moonshot.ai/anthropic',
@@ -530,12 +534,12 @@ export class KimiProvider implements Provider {
   }
 
   /**
-   * Use the K3 model for title generation: it does not require an explicit
-   * thinking payload, unlike the K2.7 models. The title path always disables
-   * thinking, so picking a no-thinking model avoids upstream rejections.
+   * Use the provider default model for title generation. The title helper now
+   * enables thinking for Kimi K2.7 and omits it for K3, so the default region
+   * model works on both legacy and global endpoints.
    */
   getTitleGenerationModel(): string {
-    return 'kimi-k3';
+    return KimiProvider.DEFAULT_MODEL;
   }
 
   async getAuthStatus(): Promise<ProviderAuthStatusInfo> {

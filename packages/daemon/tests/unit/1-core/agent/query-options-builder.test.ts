@@ -325,6 +325,20 @@ describe('QueryOptionsBuilder', () => {
       });
     });
 
+    it('should explicitly pass the 1M window for Kimi K3', () => {
+      // Kimi K3 advertises a 1M context window. The SDK clamps unknown IDs to
+      // its 200k fallback, but we still surface the real window so the
+      // intent is explicit and the context-fetcher can correct the display.
+      expect(buildProviderSettings('kimi', 1_048_576, 'kimi-k3')).toEqual({
+        autoCompactEnabled: true,
+        autoCompactWindow: 1_048_576,
+      });
+      expect(buildProviderSettings('kimi', 1_048_576, 'moonshot-k3-preview')).toEqual({
+        autoCompactEnabled: true,
+        autoCompactWindow: 1_048_576,
+      });
+    });
+
     it('should still return undefined for anthropic-copilot (native Anthropic API)', () => {
       expect(buildProviderSettings('anthropic-copilot')).toBeUndefined();
     });

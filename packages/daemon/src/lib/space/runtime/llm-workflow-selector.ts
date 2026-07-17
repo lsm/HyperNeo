@@ -110,7 +110,12 @@ export async function selectWorkflowWithLlmDefault(
         // We only need a short text response; adaptive-thinking models can
         // otherwise return only thinking blocks with no text payload.
         // Kimi K3 rejects `thinking.type` entirely, so omit the field for K3.
-        thinking: KimiProvider.resolveKimiTitleThinkingConfig(modelId),
+        // Kimi K2.7 requires enabled thinking. For all other providers keep the
+        // safe disabled-thinking default.
+        thinking:
+          provider === 'kimi'
+            ? KimiProvider.resolveKimiTitleThinkingConfig(modelId)
+            : { type: 'disabled' },
       },
     });
 
