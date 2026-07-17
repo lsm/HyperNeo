@@ -49,6 +49,12 @@ export interface AnthropicCompatProbeOptions {
   fetchImpl?: typeof fetch;
   /** Probe timeout in milliseconds. Defaults to 5000. */
   timeoutMs?: number;
+  /**
+   * Optional thinking configuration for models that require it (e.g. Kimi K2.7).
+   * When provided, the probe emits `thinking: { type, budget_tokens }` so the
+   * upstream accepts the request without burning real completion tokens.
+   */
+  thinking?: { type: 'enabled'; budget_tokens: number };
 }
 
 /**
@@ -72,9 +78,19 @@ export async function probeAnthropicCompatCredentials(
     providerName,
     fetchImpl = fetch,
     timeoutMs = DEFAULT_PROBE_TIMEOUT_MS,
+    thinking,
   } = options;
 
   const url = `${normalizeBaseUrlForProbe(baseUrl)}/v1/messages`;
+
+  const payload: Record<string, unknown> = {
+    model,
+    max_tokens: 1,
+    messages: [{ role: 'user', content: '.' }],
+  };
+  if (thinking) {
+    payload.thinking = thinking;
+  }
 
   let response: Response;
   try {
@@ -86,11 +102,7 @@ export async function probeAnthropicCompatCredentials(
         authorization: `Bearer ${apiKey}`,
         'anthropic-version': '2023-06-01',
       },
-      body: JSON.stringify({
-        model,
-        max_tokens: 1,
-        messages: [{ role: 'user', content: '.' }],
-      }),
+      body: JSON.stringify(payload),
       signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (err) {

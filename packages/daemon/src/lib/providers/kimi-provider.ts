@@ -75,7 +75,7 @@ export const KIMI_REGION_ENDPOINTS: Record<
   china: {
     anthropicBaseUrl: 'https://api.moonshot.cn/anthropic',
     openAiBaseUrl: 'https://api.moonshot.cn/v1',
-    modelId: 'kimi-for-coding',
+    modelId: 'kimi-k2.7-code',
   },
   global: {
     anthropicBaseUrl: 'https://api.moonshot.ai/anthropic',
@@ -300,7 +300,12 @@ export class KimiProvider implements Provider {
    * @throws {Error} when the key is rejected, the upstream is unreachable,
    *   or the request times out.
    */
-  private async verifyCredentials(baseUrl: string, apiKey: string, modelId: string): Promise<void> {
+  private async verifyCredentials(
+    baseUrl: string,
+    apiKey: string,
+    modelId: string,
+    thinking?: { type: 'enabled'; budget_tokens: number }
+  ): Promise<void> {
     const cacheKey = `${baseUrl}::${modelId}::${apiKey}`;
     const cached = this.probeCache.get(cacheKey);
     if (cached && Date.now() - cached.at < KimiProvider.PROBE_TTL_MS) {
@@ -314,6 +319,7 @@ export class KimiProvider implements Provider {
       model: modelId,
       providerName: 'Kimi',
       fetchImpl: this.fetchImpl,
+      thinking,
     })
       .then(() => undefined)
       .catch((err) => {
@@ -331,10 +337,13 @@ export class KimiProvider implements Provider {
     const region = resolveKimiRegion(this.env.KIMI_REGION ?? this.defaultRegion);
     const regionBaseUrl = KimiProvider.getBaseUrlForRegion(region);
     const baseUrl = normalizeBaseUrl(this.env.KIMI_BASE_URL || regionBaseUrl);
-    // Probe with the K3 model: it does not require an explicit thinking payload,
-    // so the health check works even when the user's region/endpoint defaults to
-    // a K2.7 model that would otherwise reject a no-thinking request.
-    await this.verifyCredentials(baseUrl, apiKey, 'kimi-k3');
+    // Probe with the K2.7 model, which is available to all Kimi members. K2.7
+    // requires thinking to be enabled, so include a minimal thinking payload.
+    const probeModelId = KimiProvider.getModelIdForRegion(region);
+    await this.verifyCredentials(baseUrl, apiKey, probeModelId, {
+      type: 'enabled',
+      budget_tokens: 16_000,
+    });
     return KimiProvider.MODELS;
   }
 
