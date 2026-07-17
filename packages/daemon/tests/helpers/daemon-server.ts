@@ -708,14 +708,30 @@ async function waitForModelsReady(
 
   if (context.daemonContext) {
     const { getModelsCache, refreshModels } = await import('../../src/lib/model-service');
+    const { getProviderRegistry } = await import('../../src/lib/providers/registry.js');
     const authStatus = await context.daemonContext.authManager.getAuthStatus();
 
-    // When there is no Anthropic auth, createDaemonApp skips background
-    // initializeModels(), so the cache never populates on its own. Trigger a
-    // foreground refresh for suites that run with only MiniMax/GLM credentials,
-    // but enforce the overall readiness deadline so a hanging provider probe
-    // cannot outlive the caller's setup budget.
-    if (!authStatus.isAuthenticated && (getModelsCache().get('global')?.length ?? 0) === 0) {
+    const cache = getModelsCache().get('global') ?? [];
+    const registry = getProviderRegistry();
+    const nonAnthropicProviders = registry
+      .getAll()
+      .filter((provider) => !provider.id.startsWith('anthropic'));
+    const hasNonAnthropicModels = cache.some((model) => !model.provider.startsWith('anthropic'));
+
+    // Trigger a foreground refresh when:
+    // 1. There is no Anthropic auth and the cache is empty (createDaemonApp skips
+    //    background initializeModels() in that case), OR
+    // 2. The cache only contains Anthropic fallback models from a previous
+    //    in-process daemon but the current daemon has non-Anthropic providers
+    //    configured (e.g. MiniMax+GLM). STATIC_MODEL_METADATA does not include
+    //    MiniMax, so without a refresh those providers stay absent.
+    // Enforce the overall readiness deadline so a hanging provider probe cannot
+    // outlive the caller's setup budget.
+    const needsRefresh =
+      (!authStatus.isAuthenticated && cache.length === 0) ||
+      (nonAnthropicProviders.length > 0 && !hasNonAnthropicModels);
+
+    if (needsRefresh) {
       const remainingMs = deadline - Date.now();
       if (remainingMs <= 0) {
         throw new Error('Timed out waiting for models cache to populate');
@@ -742,10 +758,19 @@ async function waitForModelsReady(
   }
 
   // Spawned mode: use RPC models.list, which refreshes if the cache is empty.
+  // Bound each request to the remaining readiness budget so MessageHub's
+  // default 10s timeout cannot overrun the helper's deadline.
   let lastError: unknown;
   while (Date.now() < deadline) {
     try {
-      const result = (await context.messageHub.request('models.list', {})) as {
+      const remainingMs = deadline - Date.now();
+      const result = (await context.messageHub.request(
+        'models.list',
+        {},
+        {
+          timeout: remainingMs,
+        }
+      )) as {
         models: unknown[];
       };
       if (result.models.length > 0) {
