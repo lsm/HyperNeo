@@ -303,7 +303,7 @@ export class KimiProvider implements Provider {
   async getModels(): Promise<ModelInfo[]> {
     const apiKey = this.getApiKey();
     if (!apiKey) return [];
-    const region = resolveKimiRegion(this.defaultRegion);
+    const region = resolveKimiRegion(this.env.KIMI_REGION ?? this.defaultRegion);
     await this.verifyCredentials(
       KimiProvider.getBaseUrlForRegion(region),
       apiKey,
@@ -337,7 +337,7 @@ export class KimiProvider implements Provider {
    */
   private static canonicalizeModelId(modelId: string): string {
     const id = modelId.toLowerCase();
-    if (id === 'k3' || id === 'kimi-k3') return 'kimi-k3';
+    if (id === 'k3' || id === 'kimi-k3' || id === 'moonshot-k3') return 'kimi-k3';
     if (id === 'kimi-k2.7-code-highspeed' || id === 'kimi-for-coding-highspeed')
       return 'kimi-k2.7-code-highspeed';
     if (id === 'kimi-k2.7-code') return 'kimi-k2.7-code';
@@ -349,14 +349,23 @@ export class KimiProvider implements Provider {
   /**
    * Map the selected (or canonical) model ID to the upstream Kimi Code fixed ID
    * used on the Anthropic-compatible endpoints.
+   *
+   * The K2.7 catalogue entry is region-sensitive: the global endpoint advertises
+   * `kimi-k2.7-code`, while the China endpoint advertises `kimi-for-coding`.
    */
-  private static resolveUpstreamModelId(modelId: string): string {
+  private static resolveUpstreamModelId(modelId: string, region: KimiRegion = 'china'): string {
     const id = modelId.toLowerCase();
-    if (id === 'k3' || id === 'kimi-k3') return 'k3';
+    if (id === 'k3' || id === 'kimi-k3' || id === 'moonshot-k3') return 'k3';
     if (id === 'kimi-k2.7-code-highspeed' || id === 'kimi-for-coding-highspeed')
       return 'kimi-k2.7-code-highspeed';
-    if (id === 'kimi-k2.7-code') return 'kimi-k2.7-code';
-    return KimiProvider.DEFAULT_MODEL;
+    if (
+      id === 'kimi-k2.7-code' ||
+      id === 'kimi' ||
+      id === 'kimi-for-coding' ||
+      id.startsWith('moonshot-')
+    )
+      return KimiProvider.getModelIdForRegion(region);
+    return KimiProvider.getModelIdForRegion(region);
   }
 
   /**
@@ -387,7 +396,18 @@ export class KimiProvider implements Provider {
     const baseUrl = normalizeBaseUrl(
       sessionConfig?.baseUrl || this.env.KIMI_BASE_URL || regionBaseUrl
     );
-    const routingModelId = KimiProvider.resolveUpstreamModelId(_modelId);
+
+    // The Moonshot `/v1` endpoints are OpenAI-compatible, not Anthropic-compatible.
+    // Feeding them into ANTHROPIC_BASE_URL would cause the Claude SDK to send
+    // Anthropic Messages requests to an OpenAI base URL and fail at request time.
+    if (baseUrl.endsWith('/v1')) {
+      throw new Error(
+        `Kimi base URL ${baseUrl} appears to be a Moonshot OpenAI-compatible /v1 endpoint. ` +
+          'Use the Kimi Code Anthropic-compatible endpoint (e.g. https://api.moonshot.ai/anthropic) instead.'
+      );
+    }
+
+    const routingModelId = KimiProvider.resolveUpstreamModelId(_modelId, region);
     const contextWindow = KimiProvider.resolveContextWindow(_modelId);
 
     return {
