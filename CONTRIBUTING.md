@@ -129,8 +129,8 @@ feat: add model switching support in coordinator mode
 
 ```bash
 # Clone your fork
-git clone https://github.com/YOUR_USERNAME/neokai.git
-cd neokai
+git clone https://github.com/YOUR_USERNAME/HyperNeo.git
+cd HyperNeo
 
 # Add upstream remote
 git remote add upstream https://github.com/lsm/HyperNeo.git

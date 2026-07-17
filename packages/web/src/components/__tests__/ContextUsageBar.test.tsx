@@ -437,7 +437,7 @@ describe('ContextUsageBar', () => {
   });
 
   describe('Category Sort Order', () => {
-    it('should sort categories by type order', () => {
+    it('should sort categories by type order and hide autocompact buffer rows', () => {
       const usageWithAllCategories: ContextInfo = {
         totalUsed: 100000,
         totalCapacity: 200000,
@@ -459,15 +459,19 @@ describe('ContextUsageBar', () => {
       const clickable = container.querySelector('[title="Click for context details"]')!;
       fireEvent.click(clickable);
 
-      // All categories should be shown
+      // Real usage categories should be shown.
       expect(container.textContent).toContain('System Prompt');
       expect(container.textContent).toContain('System Tools');
       expect(container.textContent).toContain('MCP Tools');
       expect(container.textContent).toContain('Messages');
       expect(container.textContent).toContain('Input Context');
       expect(container.textContent).toContain('Output Tokens');
-      expect(container.textContent).toContain('Autocompact');
       expect(container.textContent).toContain('Free Space');
+      // Autocompact is rendered as the reserved buffer zone, not a breakdown row.
+      const categoryLabels = Array.from(
+        container.querySelectorAll('.text-gray-400.flex-1.min-w-0.truncate')
+      ).map((el) => el.textContent);
+      expect(categoryLabels).not.toContain('Autocompact');
     });
 
     it('should handle input tokens category', () => {
@@ -561,9 +565,11 @@ describe('ContextUsageBar', () => {
       expect(cyanRow).toBeTruthy();
     });
 
-    it('should show gray color for autocompact category', () => {
+    it('should not render autocompact as a breakdown row even when present', () => {
       const usageWithAutocompact: ContextInfo = {
         ...mockContextUsage,
+        autoCompactThreshold: 180000,
+        isAutoCompactEnabled: true,
         breakdown: {
           Autocompact: { tokens: 10000, percent: 5 },
         },
@@ -573,8 +579,13 @@ describe('ContextUsageBar', () => {
       const clickable = container.querySelector('[title="Click for context details"]')!;
       fireEvent.click(clickable);
 
-      const grayRow = container.querySelector('.bg-gray-600');
-      expect(grayRow).toBeTruthy();
+      // The buffer is visualised as the hatched zone, not a category row.
+      const categoryLabels = Array.from(
+        container.querySelectorAll('.text-gray-400.flex-1.min-w-0.truncate')
+      ).map((el) => el.textContent);
+      expect(categoryLabels).not.toContain('Autocompact');
+      // The dedicated buffer visuals should still render.
+      expect(container.querySelector('[data-testid="autocompact-buffer-zone"]')).toBeTruthy();
     });
   });
 
@@ -680,7 +691,11 @@ describe('ContextUsageBar', () => {
 
       expect(Number.parseFloat(bufferZone?.style.width ?? '')).toBeCloseTo(12.14595588235294, 5);
       expect(Number.parseFloat(marker?.style.left ?? '')).toBeCloseTo(87.85404411764706, 5);
-      expect(container.textContent).toContain('12.1%');
+      // The buffer row is visualised as the hatched zone, not a breakdown row.
+      const categoryLabels = Array.from(
+        container.querySelectorAll('.text-gray-400.flex-1.min-w-0.truncate')
+      ).map((el) => el.textContent);
+      expect(categoryLabels).not.toContain('Reserved for Autocompact');
     });
 
     it('should render threshold marker at autoCompactThreshold position', () => {

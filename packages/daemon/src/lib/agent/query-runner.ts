@@ -87,8 +87,7 @@ const DEFAULT_STARTUP_TIMEOUT_MS = 15000;
 const RETRY_EXIT_TIMEOUT_MS = 5000;
 
 function getStartupTimeoutMs(): number {
-  const raw =
-    process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS ?? process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS;
+  const raw = process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
   if (!raw) return DEFAULT_STARTUP_TIMEOUT_MS;
   const parsed = Number.parseInt(raw, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_STARTUP_TIMEOUT_MS;
@@ -112,16 +111,14 @@ const DEFAULT_MAX_PROVIDER_RETRIES = 3;
 const DEFAULT_PROVIDER_RETRY_BASE_DELAY_MS = 2000;
 
 function getMaxProviderRetries(): number {
-  const raw = process.env.HYPERNEO_PROVIDER_MAX_RETRIES ?? process.env.NEOKAI_PROVIDER_MAX_RETRIES;
+  const raw = process.env.HYPERNEO_PROVIDER_MAX_RETRIES;
   if (!raw) return DEFAULT_MAX_PROVIDER_RETRIES;
   const parsed = Number.parseInt(raw, 10);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_MAX_PROVIDER_RETRIES;
 }
 
 function getProviderRetryBaseDelayMs(): number {
-  const raw =
-    process.env.HYPERNEO_PROVIDER_RETRY_BASE_DELAY_MS ??
-    process.env.NEOKAI_PROVIDER_RETRY_BASE_DELAY_MS;
+  const raw = process.env.HYPERNEO_PROVIDER_RETRY_BASE_DELAY_MS;
   if (!raw) return DEFAULT_PROVIDER_RETRY_BASE_DELAY_MS;
   const parsed = Number.parseInt(raw, 10);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_PROVIDER_RETRY_BASE_DELAY_MS;

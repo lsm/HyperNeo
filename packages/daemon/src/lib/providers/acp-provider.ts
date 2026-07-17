@@ -155,18 +155,14 @@ export class AcpProvider implements Provider {
    * Get the ACP agent spawn command from environment.
    */
   getAcpCommand(): string | undefined {
-    // Fall back to the legacy NEOKAI_ACP_COMMAND during the rename transition.
-    return this.env.HYPERNEO_ACP_COMMAND ?? this.env.NEOKAI_ACP_COMMAND;
+    return this.env.HYPERNEO_ACP_COMMAND;
   }
 
   /**
    * Get the configured ACP context window.
    */
   getContextWindow(): number {
-    // Fall back to the legacy NEOKAI_ACP_CONTEXT_WINDOW during the rename.
-    return parseContextWindow(
-      this.env[ACP_CONTEXT_WINDOW_ENV_VAR] ?? this.env.NEOKAI_ACP_CONTEXT_WINDOW
-    );
+    return parseContextWindow(this.env[ACP_CONTEXT_WINDOW_ENV_VAR]);
   }
 
   async getAuthStatus(): Promise<ProviderAuthStatusInfo> {

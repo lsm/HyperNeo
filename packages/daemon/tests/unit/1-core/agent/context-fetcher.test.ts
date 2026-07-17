@@ -166,26 +166,38 @@ describe('ContextFetcher.toContextInfo', () => {
     expect(info.autoCompactThreshold).toBe(244800);
   });
 
-  it('derives the threshold from reserved autocompact breakdown tokens', () => {
+  it('derives the threshold from reserved autocompact breakdown tokens without including the buffer as a usage row', () => {
     const response = baseResponse({
       totalTokens: 226963,
       maxTokens: 200000,
-      rawMaxTokens: 272000,
+      rawMaxTokens: 200000,
       percentage: 113.5,
+      model: 'glm-5.1',
       autoCompactThreshold: 180000,
       isAutoCompactEnabled: true,
       categories: [
         { name: 'Messages', tokens: 193926, color: 'blue' },
         { name: 'Reserved for Autocompact', tokens: 33037, color: 'gray' },
+        { name: 'Free space', tokens: 45037, color: 'gray-dim' },
       ],
     });
 
-    const info = ContextFetcher.toContextInfo(response);
+    const info = ContextFetcher.toContextInfo(response, {
+      id: 'glm-5.1',
+      alias: 'glm-5.1',
+      contextWindow: 272000,
+      provider: 'glm',
+    });
 
     expect(info.totalCapacity).toBe(272000);
-    expect(info.breakdown['Reserved for Autocompact']).toEqual({
-      tokens: 33037,
-      percent: 12.1,
+    // The buffer is reserved for the threshold/visual zone, not a usage category.
+    expect(info.breakdown['Reserved for Autocompact']).toBeUndefined();
+    expect(info.breakdown.Messages).toEqual({ tokens: 193926, percent: 71.3 });
+    // Free space keeps the reserved autocompact buffer unavailable; only the
+    // breakdown row is hidden.
+    expect(info.breakdown['Free space']).toEqual({
+      tokens: 45037,
+      percent: 16.6,
     });
     expect(info.autoCompactThreshold).toBe(238963);
   });

@@ -27,6 +27,7 @@ import { NodeExecutionRepository } from '../../../../src/storage/repositories/no
 import { GateDataRepository } from '../../../../src/storage/repositories/gate-data-repository.ts';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
+import { McpAuditLogRepository } from '../../../../src/storage/repositories/mcp-audit-log-repository.ts';
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager.ts';
@@ -4617,6 +4618,12 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
     return { enqueued: [] };
   }
 
+  function parseAuditSummaries(auditLogRepo: McpAuditLogRepository, taskId: string) {
+    return auditLogRepo
+      .listByTask(taskId)
+      .map((entry) => JSON.parse(entry.paramsSummary ?? '{}') as Record<string, unknown>);
+  }
+
   function makeHandlersWith(
     tam: FakeTaskAgentManager,
     opts: {
@@ -4625,6 +4632,11 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
       myAgentName?: string;
       myAgentNameAliases?: string[];
       mySessionId?: string;
+      auditLogRepo?: McpAuditLogRepository;
+      messageResolver?: Parameters<typeof createSpaceAgentToolHandlers>[0]['messageResolver'];
+      longTermAgentDelivery?: Parameters<
+        typeof createSpaceAgentToolHandlers
+      >[0]['longTermAgentDelivery'];
     } = {}
   ) {
     const fakeQueue = opts.pendingMessageQueue;
@@ -4637,11 +4649,15 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
       taskManager: ctx.taskManager,
       spaceAgentManager: ctx.agentManager,
       nodeExecutionRepo: ctx.nodeExecutionRepo,
+      longHorizonAgentRepo: ctx.longHorizonAgentRepo,
       taskAgentManager: tam.manager,
       activateNode: opts.activateNode,
       myAgentName: opts.myAgentName,
       myAgentNameAliases: opts.myAgentNameAliases,
       mySessionId: opts.mySessionId,
+      auditLogRepo: opts.auditLogRepo,
+      messageResolver: opts.messageResolver,
+      longTermAgentDelivery: opts.longTermAgentDelivery,
       pendingMessageQueue: fakeQueue
         ? {
             enqueue(input) {
@@ -4654,6 +4670,8 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
             },
           }
         : undefined,
+      messageResolver: opts.messageResolver,
+      longTermAgentDelivery: opts.longTermAgentDelivery,
     });
   }
 
@@ -4931,6 +4949,256 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
       'To reply, use: send_message with target "@!!!"'
     );
     expect(tam.subSessionInjects[0]?.message).not.toContain('target "@space-agent"');
+  });
+
+  test('writes one audit entry for worker-node success', async () => {
+    const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'WF Audit');
+    const { run, tasks } = await ctx.runtime.startWorkflowRun(ctx.spaceId, wf.id, 'Audit run');
+    const task = tasks[0];
+    const exec = ctx.nodeExecutionRepo.createOrIgnore({
+      workflowRunId: run.id,
+      workflowNodeId: wf.startNodeId,
+      agentName: 'coder',
+      agentSessionId: 'coder-session-live',
+      status: 'idle',
+    });
+    const auditLogRepo = new McpAuditLogRepository(ctx.db);
+    const tam = makeFakeTaskAgentManager(ctx);
+    const handlers = makeHandlersWith(tam, { auditLogRepo, activateNode: async () => {} });
+
+    const result = await handlers.send_message_to_task({
+      task_id: task.id,
+      node_id: 'coder',
+      message: 'audit worker delivery',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+    const auditSummaries = parseAuditSummaries(auditLogRepo, task.id);
+
+    expect(parsed.success).toBe(true);
+    expect(auditSummaries).toHaveLength(1);
+    expect(auditSummaries[0]).toMatchObject({
+      task_id: task.id,
+      outcome: 'delivered',
+      target: 'node',
+      node_id: exec.id,
+      agent_name: 'coder',
+      node_execution_id: exec.id,
+    });
+  });
+
+  test('writes one audit entry for long-term-agent handle success', async () => {
+    const wf = buildSingleStepWorkflow(
+      ctx.spaceId,
+      ctx.workflowManager,
+      ctx.agentId,
+      'WF Handle Audit'
+    );
+    const { tasks } = await ctx.runtime.startWorkflowRun(ctx.spaceId, wf.id, 'Handle audit run');
+    const task = tasks[0];
+    const auditLogRepo = new McpAuditLogRepository(ctx.db);
+    const tam = makeFakeTaskAgentManager(ctx);
+    const handlers = makeHandlersWith(tam, {
+      auditLogRepo,
+      messageResolver: {
+        async resolveTargets(message) {
+          return {
+            resolved: [
+              {
+                targetRef: message.targets[0],
+                address: { kind: 'handle', handle: 'coder' },
+                actor: {
+                  actorId: 'agent:coder',
+                  kind: 'agent',
+                  spaceId: ctx.spaceId,
+                  handle: '@coder',
+                  status: 'active',
+                },
+              },
+            ],
+            unresolved: [],
+          };
+        },
+      },
+      longTermAgentDelivery: {
+        deliverToSession: async () => 'coder-long-term-session',
+        queueForActivation: async () => null,
+      },
+    });
+
+    const result = await handlers.send_message_to_task({
+      task_id: task.id,
+      target: '@coder',
+      message: 'audit handle delivery',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+    const auditSummaries = parseAuditSummaries(auditLogRepo, task.id);
+
+    expect(parsed.success).toBe(true);
+    expect(auditSummaries).toHaveLength(1);
+    expect(auditSummaries[0]).toMatchObject({
+      task_id: task.id,
+      outcome: 'delivered',
+      target: 'space-agent',
+      agent_name: '@coder',
+    });
+  });
+
+  test('writes one audit entry for node-not-found error', async () => {
+    const wf = buildSingleStepWorkflow(
+      ctx.spaceId,
+      ctx.workflowManager,
+      ctx.agentId,
+      'WF Audit Missing'
+    );
+    const { tasks } = await ctx.runtime.startWorkflowRun(ctx.spaceId, wf.id, 'Audit missing run');
+    const task = tasks[0];
+    const auditLogRepo = new McpAuditLogRepository(ctx.db);
+    const tam = makeFakeTaskAgentManager(ctx);
+    const handlers = makeHandlersWith(tam, { auditLogRepo, activateNode: async () => {} });
+
+    const result = await handlers.send_message_to_task({
+      task_id: task.id,
+      node_id: 'missing-node',
+      message: 'audit missing node',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+    const auditSummaries = parseAuditSummaries(auditLogRepo, task.id);
+
+    expect(parsed.success).toBe(false);
+    expect(auditSummaries).toHaveLength(1);
+    expect(auditSummaries[0]).toMatchObject({
+      task_id: task.id,
+      outcome: 'failed',
+      target: 'missing-node',
+      node_id: 'missing-node',
+      reason: 'node_not_found',
+    });
+  });
+
+  test('writes audit entry for malformed target', async () => {
+    const wf = buildSingleStepWorkflow(
+      ctx.spaceId,
+      ctx.workflowManager,
+      ctx.agentId,
+      'WF Audit Malformed'
+    );
+    const { tasks } = await ctx.runtime.startWorkflowRun(
+      ctx.spaceId,
+      wf.id,
+      'Audit malformed target'
+    );
+    const task = tasks[0];
+    const auditLogRepo = new McpAuditLogRepository(ctx.db);
+    const tam = makeFakeTaskAgentManager(ctx);
+    const handlers = makeHandlersWith(tam, { auditLogRepo, activateNode: async () => {} });
+
+    const result = await handlers.send_message_to_task({
+      task_id: task.id,
+      target: 'coder',
+      message: 'audit malformed',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+    const auditSummaries = parseAuditSummaries(auditLogRepo, task.id);
+
+    expect(parsed.success).toBe(false);
+    expect(auditSummaries).toHaveLength(1);
+    expect(auditSummaries[0]).toMatchObject({
+      task_id: task.id,
+      outcome: 'failed',
+      target: 'coder',
+      reason: 'malformed_target',
+    });
+  });
+
+  test('writes audit entry for target and node_id disagreement', async () => {
+    const wf = buildSingleStepWorkflow(
+      ctx.spaceId,
+      ctx.workflowManager,
+      ctx.agentId,
+      'WF Audit Disagree'
+    );
+    const { run, tasks } = await ctx.runtime.startWorkflowRun(ctx.spaceId, wf.id, 'Audit disagree');
+    const task = tasks[0];
+    ctx.nodeExecutionRepo.createOrIgnore({
+      workflowRunId: run.id,
+      workflowNodeId: wf.startNodeId,
+      agentName: 'coder',
+      agentSessionId: 'coder-disagree-session',
+      status: 'in_progress',
+    });
+    ctx.nodeExecutionRepo.createOrIgnore({
+      workflowRunId: run.id,
+      workflowNodeId: 'review-node',
+      agentName: 'reviewer',
+      agentSessionId: 'reviewer-disagree-session',
+      status: 'in_progress',
+    });
+    const auditLogRepo = new McpAuditLogRepository(ctx.db);
+    const tam = makeFakeTaskAgentManager(ctx);
+    const handlers = makeHandlersWith(tam, { auditLogRepo, activateNode: async () => {} });
+
+    const result = await handlers.send_message_to_task({
+      task_id: task.id,
+      target: '@coder',
+      node_id: 'reviewer',
+      message: 'audit disagree',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+    const auditSummaries = parseAuditSummaries(auditLogRepo, task.id);
+
+    expect(parsed.success).toBe(false);
+    expect(auditSummaries).toHaveLength(1);
+    expect(auditSummaries[0]).toMatchObject({
+      task_id: task.id,
+      outcome: 'failed',
+      target: '@coder',
+      node_id: 'reviewer',
+      reason: 'target_node_id_disagree',
+    });
+  });
+
+  test('writes audit entry for ambiguous long-horizon target', async () => {
+    const wf = buildSingleStepWorkflow(
+      ctx.spaceId,
+      ctx.workflowManager,
+      ctx.agentId,
+      'WF Audit Ambiguous LH'
+    );
+    const { tasks } = await ctx.runtime.startWorkflowRun(
+      ctx.spaceId,
+      wf.id,
+      'Audit ambiguous long horizon'
+    );
+    const task = tasks[0];
+    ctx.longHorizonAgentRepo.create({
+      id: '3bffb20e',
+      spaceId: ctx.spaceId,
+      handle: 'reviewer',
+      displayName: 'Reviewer',
+    });
+    const auditLogRepo = new McpAuditLogRepository(ctx.db);
+    const tam = makeFakeTaskAgentManager(ctx);
+    const handlers = makeHandlersWith(tam, {
+      auditLogRepo,
+      messageResolver: resolverForActors([{ actorId: 'agent:3bffb20e', handle: '@reviewer' }]),
+    });
+
+    const result = await handlers.send_message_to_task({
+      task_id: task.id,
+      target: '@reviewer',
+      message: 'audit ambiguous long horizon',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+    const auditSummaries = parseAuditSummaries(auditLogRepo, task.id);
+
+    expect(parsed.success).toBe(false);
+    expect(auditSummaries).toHaveLength(1);
+    expect(auditSummaries[0]).toMatchObject({
+      task_id: task.id,
+      outcome: 'failed',
+      target: '@reviewer',
+      reason: 'ambiguous_long_horizon_target',
+    });
   });
 
   test('node_id by agent name routes directly to the live sub-session', async () => {
@@ -5281,6 +5549,764 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
     ]);
   });
 
+  function countSdkMessages(): number {
+    return (ctx.db.prepare('SELECT COUNT(*) AS count FROM sdk_messages').get() as { count: number })
+      .count;
+  }
+
+  function resolverForActors(
+    actors: Array<{ actorId: string; handle: string; status?: 'active' | 'inactive' }>
+  ) {
+    return {
+      async resolveTargets() {
+        return {
+          resolved: actors.map((actor) => ({
+            targetRef: actor.handle,
+            address: { kind: 'handle' as const, handle: actor.handle.slice(1) },
+            actor: {
+              kind: 'agent' as const,
+              spaceId: ctx.spaceId,
+              status: actor.status ?? 'active',
+              ...actor,
+            },
+          })),
+          unresolved: [],
+        };
+      },
+    };
+  }
+
+  test('task_id + bare handle errors when it only matches a long-horizon agent', async () => {
+    const wf = buildSingleStepWorkflow(
+      ctx.spaceId,
+      ctx.workflowManager,
+      ctx.agentId,
+      'WF Handle Ambiguous'
+    );
+    const { tasks } = await ctx.runtime.startWorkflowRun(ctx.spaceId, wf.id, 'Handle ambiguous');
+    const task = tasks[0];
+    ctx.longHorizonAgentRepo.create({
+      id: '3bffb20e',
+      spaceId: ctx.spaceId,
+      handle: 'reviewer',
+      displayName: 'Reviewer',
+    });
+    const before = countSdkMessages();
+
+    const tam = makeFakeTaskAgentManager(ctx);
+    const result = await makeHandlersWith(tam, {
+      messageResolver: resolverForActors([{ actorId: 'agent:3bffb20e', handle: '@reviewer' }]),
+    }).send_message_to_task({ task_id: task.id, target: '@reviewer', message: 'hello' });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('Ambiguous target');
+    expect(parsed.error).toContain('workflow reviewer node');
+    expect(parsed.error).toContain('node_id');
+    expect(parsed.error).toContain('@worker:');
+    expect(countSdkMessages()).toBe(before);
+    expect(tam.subSessionInjects).toHaveLength(0);
+  });
+
+  test('task_id + bare handle returns a tool error for malformed targets', async () => {
+    const wf = buildSingleStepWorkflow(
+      ctx.spaceId,
+      ctx.workflowManager,
+      ctx.agentId,
+      'WF Malformed Handle'
+    );
+    const { tasks } = await ctx.runtime.startWorkflowRun(ctx.spaceId, wf.id, 'Malformed handle');
+    const task = tasks[0];
+
+    const tam = makeFakeTaskAgentManager(ctx);
+    const result = await makeHandlersWith(tam, {
+      activateNode: async () => {},
+    }).send_message_to_task({
+      task_id: task.id,
+      target: 'coder',
+      message: 'hello malformed',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('Address must start with @ or #');
+  });
+
+  test('task_id + bare handle succeeds when it matches a task worker only', async () => {
+    const wf = buildSingleStepWorkflow(
+      ctx.spaceId,
+      ctx.workflowManager,
+      ctx.agentId,
+      'WF Handle Worker'
+    );
+    const { run, tasks } = await ctx.runtime.startWorkflowRun(ctx.spaceId, wf.id, 'Handle worker');
+    const task = tasks[0];
+    const exec = ctx.nodeExecutionRepo.createOrIgnore({
+      workflowRunId: run.id,
+      workflowNodeId: wf.startNodeId,
+      agentName: 'coder',
+      agentSessionId: 'coder-worker-session',
+      status: 'in_progress',
+    });
+
+    const tam = makeFakeTaskAgentManager(ctx);
+    const result = await makeHandlersWith(tam, {
+      activateNode: async () => {},
+    }).send_message_to_task({
+      task_id: task.id,
+      target: '@coder',
+      message: 'hello worker',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.node_execution_id).toBe(exec.id);
+    expect(tam.subSessionInjects[0]?.sessionId).toBe('coder-worker-session');
+  });
+
+  test('task_id + bare handle succeeds when it matches both worker and long-horizon agent but node_id disambiguates', async () => {
+    const wf = buildSingleStepWorkflow(
+      ctx.spaceId,
+      ctx.workflowManager,
+      ctx.agentId,
+      'WF Handle Both'
+    );
+    const { run, tasks } = await ctx.runtime.startWorkflowRun(ctx.spaceId, wf.id, 'Handle both');
+    const task = tasks[0];
+    const exec = ctx.nodeExecutionRepo.createOrIgnore({
+      workflowRunId: run.id,
+      workflowNodeId: wf.startNodeId,
+      agentName: 'coder',
+      agentSessionId: 'coder-worker-session',
+      status: 'in_progress',
+    });
+    ctx.longHorizonAgentRepo.create({
+      id: '3bffb20e',
+      spaceId: ctx.spaceId,
+      handle: 'coder',
+      displayName: 'Coder',
+    });
+
+    const tam = makeFakeTaskAgentManager(ctx);
+    const result = await makeHandlersWith(tam, {
+      activateNode: async () => {},
+      messageResolver: resolverForActors([{ actorId: 'agent:3bffb20e', handle: '@coder' }]),
+    }).send_message_to_task({
+      task_id: task.id,
+      target: '@coder',
+      node_id: 'coder',
+      message: 'hello both disambiguated',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.node_execution_id).toBe(exec.id);
+    expect(tam.subSessionInjects[0]?.sessionId).toBe('coder-worker-session');
+  });
+
+  test('node_id exact UUID disambiguates duplicate handle workers from a long-horizon conflict', async () => {
+    const wf = buildSingleStepWorkflow(
+      ctx.spaceId,
+      ctx.workflowManager,
+      ctx.agentId,
+      'WF Duplicate Handle LH'
+    );
+    const { run, tasks } = await ctx.runtime.startWorkflowRun(
+      ctx.spaceId,
+      wf.id,
+      'Duplicate handle with LH'
+    );
+    const task = tasks[0];
+    const olderExec = ctx.nodeExecutionRepo.createOrIgnore({
+      workflowRunId: run.id,
+      workflowNodeId: 'old-node',
+      agentName: 'coder',
+      agentSessionId: 'coder-old-session',
+      status: 'in_progress',
+    });
+    // Ensure deterministic ordering: listByWorkflowRun orders by created_at ASC
+    // then id ASC. A 2ms gap guarantees distinct timestamps across platforms.
+    await new Promise((resolve) => setTimeout(resolve, 2));
+    ctx.nodeExecutionRepo.createOrIgnore({
+      workflowRunId: run.id,
+      workflowNodeId: 'latest-node',
+      agentName: 'coder',
+      agentSessionId: 'coder-latest-session',
+      status: 'in_progress',
+    });
+    ctx.longHorizonAgentRepo.create({
+      id: '3bffb20e',
+      spaceId: ctx.spaceId,
+      handle: 'coder',
+      displayName: 'Coder',
+    });
+
+    const tam = makeFakeTaskAgentManager(ctx);
+    const result = await makeHandlersWith(tam, {
+      activateNode: async () => {},
+      messageResolver: resolverForActors([{ actorId: 'agent:3bffb20e', handle: '@coder' }]),
+    }).send_message_to_task({
+      task_id: task.id,
+      target: '@coder',
+      node_id: olderExec.id,
+      message: 'hello older worker',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.node_execution_id).toBe(olderExec.id);
+    expect(tam.subSessionInjects[0]?.sessionId).toBe('coder-old-session');
+  });
+
+  test('task_id + bare handle errors when it conflicts with a long-horizon agent and node_id is absent', async () => {
+    const wf = buildSingleStepWorkflow(
+      ctx.spaceId,
+      ctx.workflowManager,
+      ctx.agentId,
+      'WF Handle Both No Node'
+    );
+    const { run, tasks } = await ctx.runtime.startWorkflowRun(
+      ctx.spaceId,
+      wf.id,
+      'Handle both no node'
+    );
+    const task = tasks[0];
+    ctx.nodeExecutionRepo.createOrIgnore({
+      workflowRunId: run.id,
+      workflowNodeId: wf.startNodeId,
+      agentName: 'coder',
+      agentSessionId: 'coder-worker-session',
+      status: 'in_progress',
+    });
+    ctx.longHorizonAgentRepo.create({
+      id: '3bffb20e',
+      spaceId: ctx.spaceId,
+      handle: 'coder',
+      displayName: 'Coder',
+    });
+    const before = countSdkMessages();
+
+    const tam = makeFakeTaskAgentManager(ctx);
+    const result = await makeHandlersWith(tam, {
+      messageResolver: resolverForActors([{ actorId: 'agent:3bffb20e', handle: '@coder' }]),
+    }).send_message_to_task({ task_id: task.id, target: '@coder', message: 'hello both' });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('Ambiguous target');
+    expect(parsed.error).toContain('agent:3bffb20e');
+    expect(parsed.error).toContain('workflow node "coder"');
+    expect(countSdkMessages()).toBe(before);
+  });
+
+  test('task_id + bare handle errors when it conflicts with a long-horizon agent and node_id disagrees', async () => {
+    const wf = buildSingleStepWorkflow(
+      ctx.spaceId,
+      ctx.workflowManager,
+      ctx.agentId,
+      'WF Handle Both Disagree'
+    );
+    const { run, tasks } = await ctx.runtime.startWorkflowRun(
+      ctx.spaceId,
+      wf.id,
+      'Handle both disagree'
+    );
+    const task = tasks[0];
+    ctx.longHorizonAgentRepo.create({
+      id: '3bffb20e',
+      spaceId: ctx.spaceId,
+      handle: 'coder',
+      displayName: 'Coder',
+    });
+    ctx.nodeExecutionRepo.createOrIgnore({
+      workflowRunId: run.id,
+      workflowNodeId: 'review-node',
+      agentName: 'reviewer',
+      agentSessionId: 'reviewer-disagree-session',
+      status: 'in_progress',
+    });
+    const before = countSdkMessages();
+
+    const tam = makeFakeTaskAgentManager(ctx);
+    const result = await makeHandlersWith(tam, {
+      messageResolver: resolverForActors([{ actorId: 'agent:3bffb20e', handle: '@coder' }]),
+    }).send_message_to_task({
+      task_id: task.id,
+      target: '@coder',
+      node_id: 'reviewer',
+      message: 'hello disagree long horizon',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('disagree');
+    expect(parsed.error).toContain('@coder');
+    expect(parsed.error).toContain('reviewer');
+    expect(countSdkMessages()).toBe(before);
+  });
+
+  test('@coordinator does not route to a workflow worker named coordinator', async () => {
+    const wf = buildSingleStepWorkflow(
+      ctx.spaceId,
+      ctx.workflowManager,
+      ctx.agentId,
+      'WF Coordinator Worker'
+    );
+    const { run, tasks } = await ctx.runtime.startWorkflowRun(
+      ctx.spaceId,
+      wf.id,
+      'Coordinator worker collision'
+    );
+    const task = tasks[0];
+    ctx.nodeExecutionRepo.createOrIgnore({
+      workflowRunId: run.id,
+      workflowNodeId: wf.startNodeId,
+      agentName: 'coordinator',
+      agentSessionId: 'coordinator-worker-session',
+      status: 'in_progress',
+    });
+    const before = countSdkMessages();
+
+    const tam = makeFakeTaskAgentManager(ctx);
+    const result = await makeHandlersWith(tam, {
+      messageResolver: resolverForActors([
+        { actorId: `agent:coordinator:${ctx.spaceId}`, handle: '@coordinator' },
+      ]),
+    }).send_message_to_task({
+      task_id: task.id,
+      target: '@coordinator',
+      message: 'hello coordinator',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('Ambiguous target');
+    expect(parsed.error).toContain('@coordinator');
+    expect(parsed.error).toContain('workflow node "coordinator"');
+    expect(countSdkMessages()).toBe(before);
+  });
+
+  test('@coordinator routes to the Space coordinator when no workflow worker collides', async () => {
+    const wf = buildSingleStepWorkflow(
+      ctx.spaceId,
+      ctx.workflowManager,
+      ctx.agentId,
+      'WF Coordinator No Collision'
+    );
+    const { tasks } = await ctx.runtime.startWorkflowRun(
+      ctx.spaceId,
+      wf.id,
+      'Coordinator no collision'
+    );
+    const task = tasks[0];
+    const auditLogRepo = new McpAuditLogRepository(ctx.db);
+
+    const tam = makeFakeTaskAgentManager(ctx);
+    const result = await makeHandlersWith(tam, {
+      auditLogRepo,
+      activateNode: async () => {},
+      messageResolver: {
+        async resolveTargets(message) {
+          return {
+            resolved: [
+              {
+                targetRef: message.targets[0],
+                address: { kind: 'handle', handle: 'coordinator' },
+                actor: {
+                  actorId: `agent:coordinator:${ctx.spaceId}`,
+                  kind: 'agent',
+                  spaceId: ctx.spaceId,
+                  handle: '@coordinator',
+                  status: 'active',
+                },
+              },
+            ],
+            unresolved: [],
+          };
+        },
+      },
+      longTermAgentDelivery: {
+        deliverToSession: async () => 'coordinator-session',
+        queueForActivation: async () => null,
+      },
+    }).send_message_to_task({
+      task_id: task.id,
+      target: '@coordinator',
+      message: 'hello coordinator',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+    const auditSummaries = parseAuditSummaries(auditLogRepo, task.id);
+
+    expect(parsed.success).toBe(true);
+    expect(auditSummaries).toHaveLength(1);
+    expect(auditSummaries[0]).toMatchObject({
+      task_id: task.id,
+      outcome: 'delivered',
+      target: 'space-agent',
+      agent_name: '@coordinator',
+    });
+  });
+
+  test('target trimming is preserved for bare handle routing', async () => {
+    const wf = buildSingleStepWorkflow(
+      ctx.spaceId,
+      ctx.workflowManager,
+      ctx.agentId,
+      'WF Trim Target'
+    );
+    const { run, tasks } = await ctx.runtime.startWorkflowRun(ctx.spaceId, wf.id, 'Trim target');
+    const task = tasks[0];
+    const exec = ctx.nodeExecutionRepo.createOrIgnore({
+      workflowRunId: run.id,
+      workflowNodeId: wf.startNodeId,
+      agentName: 'coder',
+      agentSessionId: 'coder-trim-session',
+      status: 'in_progress',
+    });
+
+    const tam = makeFakeTaskAgentManager(ctx);
+    const result = await makeHandlersWith(tam, {
+      activateNode: async () => {},
+    }).send_message_to_task({
+      task_id: task.id,
+      target: '  @coder  ',
+      message: 'hello trimmed',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.node_execution_id).toBe(exec.id);
+  });
+
+  test('whitespace target falls back to node_id', async () => {
+    const wf = buildSingleStepWorkflow(
+      ctx.spaceId,
+      ctx.workflowManager,
+      ctx.agentId,
+      'WF Blank Target Fallback'
+    );
+    const { run, tasks } = await ctx.runtime.startWorkflowRun(
+      ctx.spaceId,
+      wf.id,
+      'Blank target fallback'
+    );
+    const task = tasks[0];
+    const exec = ctx.nodeExecutionRepo.createOrIgnore({
+      workflowRunId: run.id,
+      workflowNodeId: wf.startNodeId,
+      agentName: 'coder',
+      agentSessionId: 'coder-blank-session',
+      status: 'in_progress',
+    });
+
+    const tam = makeFakeTaskAgentManager(ctx);
+    const result = await makeHandlersWith(tam, {
+      activateNode: async () => {},
+    }).send_message_to_task({
+      task_id: task.id,
+      target: '   ',
+      node_id: 'coder',
+      message: 'hello blank fallback',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.node_execution_id).toBe(exec.id);
+    expect(tam.subSessionInjects[0]?.sessionId).toBe('coder-blank-session');
+  });
+
+  test('case-insensitive handle still detects long-horizon conflict', async () => {
+    const wf = buildSingleStepWorkflow(
+      ctx.spaceId,
+      ctx.workflowManager,
+      ctx.agentId,
+      'WF Case Conflict'
+    );
+    const { run, tasks } = await ctx.runtime.startWorkflowRun(ctx.spaceId, wf.id, 'Case conflict');
+    const task = tasks[0];
+    ctx.nodeExecutionRepo.createOrIgnore({
+      workflowRunId: run.id,
+      workflowNodeId: wf.startNodeId,
+      agentName: 'coder',
+      agentSessionId: 'coder-case-session',
+      status: 'in_progress',
+    });
+    ctx.longHorizonAgentRepo.create({
+      id: '3bffb20e',
+      spaceId: ctx.spaceId,
+      handle: 'coder',
+      displayName: 'Coder',
+    });
+    const before = countSdkMessages();
+
+    const tam = makeFakeTaskAgentManager(ctx);
+    const result = await makeHandlersWith(tam, {
+      messageResolver: resolverForActors([{ actorId: 'agent:3bffb20e', handle: '@coder' }]),
+    }).send_message_to_task({
+      task_id: task.id,
+      target: '@Coder',
+      message: 'hello case conflict',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('Ambiguous target');
+    expect(parsed.error).toContain('@Coder');
+    expect(countSdkMessages()).toBe(before);
+  });
+
+  test('case-mismatched handle probes resolver with canonical casing', async () => {
+    const wf = buildSingleStepWorkflow(
+      ctx.spaceId,
+      ctx.workflowManager,
+      ctx.agentId,
+      'WF Case Probe'
+    );
+    const { run, tasks } = await ctx.runtime.startWorkflowRun(ctx.spaceId, wf.id, 'Case probe');
+    const task = tasks[0];
+    ctx.nodeExecutionRepo.createOrIgnore({
+      workflowRunId: run.id,
+      workflowNodeId: wf.startNodeId,
+      agentName: 'coder',
+      agentSessionId: 'coder-case-probe-session',
+      status: 'in_progress',
+    });
+    ctx.longHorizonAgentRepo.create({
+      id: '3bffb20e',
+      spaceId: ctx.spaceId,
+      handle: 'coder',
+      displayName: 'Coder',
+    });
+    const before = countSdkMessages();
+
+    const tam = makeFakeTaskAgentManager(ctx);
+    const result = await makeHandlersWith(tam, {
+      messageResolver: {
+        async resolveTargets(message) {
+          // Simulate a real resolver that only matches the canonical lowercase handle.
+          if (message.targets[0] === '@coder') {
+            return {
+              message,
+              resolved: [
+                {
+                  targetRef: '@coder',
+                  address: { kind: 'handle' as const, handle: 'coder' },
+                  actor: {
+                    kind: 'agent' as const,
+                    actorId: 'agent:3bffb20e',
+                    handle: '@coder',
+                    spaceId: ctx.spaceId,
+                    status: 'active',
+                  },
+                },
+              ],
+              unresolved: [],
+            };
+          }
+          return {
+            message,
+            resolved: [],
+            unresolved: message.targets.map((targetRef) => ({ targetRef, reason: 'not found' })),
+          };
+        },
+      },
+    }).send_message_to_task({
+      task_id: task.id,
+      target: '@Coder',
+      message: 'hello case probe',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('Ambiguous target');
+    expect(parsed.error).toContain('@Coder');
+    expect(countSdkMessages()).toBe(before);
+  });
+
+  test('system handle is treated as a reserved conflict', async () => {
+    const wf = buildSingleStepWorkflow(
+      ctx.spaceId,
+      ctx.workflowManager,
+      ctx.agentId,
+      'WF System Handle'
+    );
+    const { run, tasks } = await ctx.runtime.startWorkflowRun(
+      ctx.spaceId,
+      wf.id,
+      'System handle conflict'
+    );
+    const task = tasks[0];
+    ctx.nodeExecutionRepo.createOrIgnore({
+      workflowRunId: run.id,
+      workflowNodeId: wf.startNodeId,
+      agentName: 'system-runtime',
+      agentSessionId: 'system-runtime-session',
+      status: 'in_progress',
+    });
+    const before = countSdkMessages();
+
+    const tam = makeFakeTaskAgentManager(ctx);
+    const result = await makeHandlersWith(tam, {
+      messageResolver: resolverForActors([
+        { actorId: 'system:runtime', handle: '@system-runtime' },
+      ]),
+    }).send_message_to_task({
+      task_id: task.id,
+      target: '@system-runtime',
+      message: 'hello system handle',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('Ambiguous target');
+    expect(parsed.error).toContain('@system-runtime');
+    expect(countSdkMessages()).toBe(before);
+  });
+
+  test('task worker handle ignores matching worker profile actor', async () => {
+    const wf = buildSingleStepWorkflow(
+      ctx.spaceId,
+      ctx.workflowManager,
+      ctx.agentId,
+      'WF Worker Profile'
+    );
+    const { run, tasks } = await ctx.runtime.startWorkflowRun(ctx.spaceId, wf.id, 'Worker profile');
+    const task = tasks[0];
+    const exec = ctx.nodeExecutionRepo.createOrIgnore({
+      workflowRunId: run.id,
+      workflowNodeId: wf.startNodeId,
+      agentName: 'coder',
+      agentSessionId: 'coder-profile-session',
+      status: 'in_progress',
+    });
+
+    const tam = makeFakeTaskAgentManager(ctx);
+    const result = await makeHandlersWith(tam, {
+      activateNode: async () => {},
+      messageResolver: resolverForActors([{ actorId: `agent:${ctx.agentId}`, handle: '@coder' }]),
+    }).send_message_to_task({
+      task_id: task.id,
+      target: '@coder',
+      message: 'hello profile',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.node_execution_id).toBe(exec.id);
+    expect(tam.subSessionInjects[0]?.sessionId).toBe('coder-profile-session');
+  });
+
+  test('bare handle worker resolution picks the most recent matching execution', async () => {
+    const wf = buildSingleStepWorkflow(
+      ctx.spaceId,
+      ctx.workflowManager,
+      ctx.agentId,
+      'WF Duplicate'
+    );
+    const { run, tasks } = await ctx.runtime.startWorkflowRun(ctx.spaceId, wf.id, 'Duplicate');
+    const task = tasks[0];
+    ctx.nodeExecutionRepo.createOrIgnore({
+      workflowRunId: run.id,
+      workflowNodeId: 'old-node',
+      agentName: 'coder',
+      agentSessionId: 'coder-old-session',
+      status: 'in_progress',
+    });
+    // Ensure deterministic ordering: listByWorkflowRun orders by created_at ASC
+    // then id ASC. A 2ms gap guarantees distinct timestamps across platforms.
+    await new Promise((resolve) => setTimeout(resolve, 2));
+    const latest = ctx.nodeExecutionRepo.createOrIgnore({
+      workflowRunId: run.id,
+      workflowNodeId: 'latest-node',
+      agentName: 'coder',
+      agentSessionId: 'coder-latest-session',
+      status: 'in_progress',
+    });
+
+    const tam = makeFakeTaskAgentManager(ctx);
+    const result = await makeHandlersWith(tam, {
+      activateNode: async () => {},
+    }).send_message_to_task({
+      task_id: task.id,
+      target: '@coder',
+      message: 'hello latest',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.node_execution_id).toBe(latest.id);
+    expect(tam.subSessionInjects[0]?.sessionId).toBe('coder-latest-session');
+  });
+
+  test('target and node_id may agree on the same execution', async () => {
+    const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'WF Agree');
+    const { run, tasks } = await ctx.runtime.startWorkflowRun(ctx.spaceId, wf.id, 'Agree');
+    const task = tasks[0];
+    const exec = ctx.nodeExecutionRepo.createOrIgnore({
+      workflowRunId: run.id,
+      workflowNodeId: wf.startNodeId,
+      agentName: 'coder',
+      agentSessionId: 'coder-agree-session',
+      status: 'in_progress',
+    });
+
+    const tam = makeFakeTaskAgentManager(ctx);
+    const result = await makeHandlersWith(tam, {
+      activateNode: async () => {},
+    }).send_message_to_task({
+      task_id: task.id,
+      target: '@coder',
+      node_id: 'coder',
+      message: 'hello agree',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.node_execution_id).toBe(exec.id);
+  });
+
+  test('target and node_id disagree errors before message persistence', async () => {
+    const wf = buildSingleStepWorkflow(
+      ctx.spaceId,
+      ctx.workflowManager,
+      ctx.agentId,
+      'WF Disagree'
+    );
+    const { run, tasks } = await ctx.runtime.startWorkflowRun(ctx.spaceId, wf.id, 'Disagree');
+    const task = tasks[0];
+    ctx.nodeExecutionRepo.createOrIgnore({
+      workflowRunId: run.id,
+      workflowNodeId: wf.startNodeId,
+      agentName: 'coder',
+      agentSessionId: 'coder-disagree-session',
+      status: 'in_progress',
+    });
+    ctx.nodeExecutionRepo.createOrIgnore({
+      workflowRunId: run.id,
+      workflowNodeId: 'review-node',
+      agentName: 'reviewer',
+      agentSessionId: 'reviewer-disagree-session',
+      status: 'in_progress',
+    });
+    const before = countSdkMessages();
+
+    const tam = makeFakeTaskAgentManager(ctx);
+    const result = await makeHandlersWith(tam, {
+      activateNode: async () => {},
+    }).send_message_to_task({
+      task_id: task.id,
+      target: '@coder',
+      node_id: 'reviewer',
+      message: 'hello disagree',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('disagree');
+    expect(countSdkMessages()).toBe(before);
+    expect(tam.subSessionInjects).toHaveLength(0);
+  });
+
   test('generic @session target resolves by task agent session id', async () => {
     const wf = buildSingleStepWorkflow(
       ctx.spaceId,
@@ -5323,7 +6349,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
     ]);
   });
 
-  test('handle target returns the first delivered session id', async () => {
+  test('bare @handle matching only a long-horizon agent is rejected with task_id', async () => {
     const wf = buildSingleStepWorkflow(
       ctx.spaceId,
       ctx.workflowManager,
@@ -5378,10 +6404,9 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
     });
     const parsed = JSON.parse(result.content[0].text);
 
-    expect(parsed.success).toBe(true);
-    expect(parsed.target).toBe('space-agent');
-    expect(parsed.delivered_session_id).toBe('reviewer-session-delivered');
-    expect(parsed.deliveries[0].deliveredSessionId).toBe('reviewer-session-delivered');
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('Ambiguous target');
+    expect(parsed.error).toContain('@reviewer');
   });
 
   test('generic unsupported target kind returns an error', async () => {

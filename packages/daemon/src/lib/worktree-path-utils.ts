@@ -80,16 +80,12 @@ export function getWorktreeBaseDir(
     : join(getDataDir(), 'projects', shortKey);
 
   const sentinelFile = join(projectDir, '.hyperneo-repo-root');
-  // Pre-rebrand installs wrote this legacy sentinel; read it for collision
-  // detection so an upgraded project dir is not mistaken for a fresh dir.
-  const legacySentinelFile = join(projectDir, '.neokai-repo-root');
 
   if (!existsSync(projectDir)) {
     mkdirSync(projectDir, { recursive: true });
     writeFileSync(sentinelFile, normalizedGitRoot);
-  } else if (existsSync(sentinelFile) || existsSync(legacySentinelFile)) {
-    const existingSentinel = existsSync(sentinelFile) ? sentinelFile : legacySentinelFile;
-    const storedPath = readFileSync(existingSentinel, 'utf-8').trim();
+  } else if (existsSync(sentinelFile)) {
+    const storedPath = readFileSync(sentinelFile, 'utf-8').trim();
     if (storedPath !== normalizedGitRoot) {
       const msg = `Short key collision detected for "${shortKey}": expected "${storedPath}", got "${normalizedGitRoot}". Falling back to full encoding.`;
       onCollision?.(msg);

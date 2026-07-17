@@ -2,6 +2,12 @@
 
 All notable changes to HyperNeo will be documented in this file.
 
+## [Unreleased]
+
+### Removed
+
+- Removed unused CodeGraph MCP integration artifacts (orphaned DB already deleted and `.mcp.json` entry already absent); benchmark scripts and reports retained for historical reference.
+
 ## [0.39.5] - 2026-07-04
 
 ### Changed

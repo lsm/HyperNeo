@@ -1,15 +1,15 @@
 [package]
-name = "neokai-desktop"
+name = "hyperneo-desktop"
 version = "0.39.5"
 description = "HyperNeo - AI Assistant Desktop App"
 authors = ["HyperNeo contributors"]
 license = "Apache-2.0"
-repository = "https://github.com/lsm/dev-neokai"
+repository = "https://github.com/lsm/HyperNeo"
 edition = "2021"
 rust-version = "1.77.2"
 
 [lib]
-name = "kai_lib"
+name = "hyperneo_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

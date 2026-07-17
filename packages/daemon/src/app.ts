@@ -317,10 +317,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     const jobQueue = new JobQueueRepository(db.getDatabase());
     const workflowHookStateRepository = new WorkflowHookStateRepository(db.getDatabase());
     const workflowHookRuntimeService = new WorkflowHookRuntimeService();
-    const maxConcurrent =
-      Number(
-        process.env.HYPERNEO_JOB_QUEUE_MAX_CONCURRENT ?? process.env.NEOKAI_JOB_QUEUE_MAX_CONCURRENT
-      ) || 5;
+    const maxConcurrent = Number(process.env.HYPERNEO_JOB_QUEUE_MAX_CONCURRENT) || 5;
     const jobProcessor = new JobQueueProcessor(jobQueue, {
       pollIntervalMs: 1000,
       maxConcurrent,
@@ -394,7 +391,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     // MCP resolution and are not affected by this global instance.
     const settingsManager = new SettingsManager(
       db,
-      process.env.HYPERNEO_WORKSPACE_PATH ?? process.env.NEOKAI_WORKSPACE_PATH ?? homedir()
+      process.env.HYPERNEO_WORKSPACE_PATH ?? homedir()
     );
     const getGitHubPollingIntervalSeconds = () => {
       const value = settingsManager.getGlobalSettings().githubPollingInterval;
