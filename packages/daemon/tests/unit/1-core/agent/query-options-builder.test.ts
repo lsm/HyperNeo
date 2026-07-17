@@ -716,6 +716,52 @@ describe('QueryOptionsBuilder', () => {
         resetProviderRegistry();
       }
     });
+
+    it('rejects mixed Kimi K3 primary and K2.7 fallback chains', () => {
+      mockSession.config.provider = 'kimi';
+      mockSession.config.model = 'kimi-k3';
+      mockSession.config.fallbackModel = 'kimi-k2.7-code';
+      mockSession.config.thinkingLevel = 'off';
+
+      expect(() =>
+        builder.addSessionStateOptions({} as import('@anthropic-ai/claude-agent-sdk').Options)
+      ).toThrow(/Incompatible Kimi fallback chain/);
+    });
+
+    it('rejects mixed Kimi K2.7 primary and K3 fallback chains', () => {
+      mockSession.config.provider = 'kimi';
+      mockSession.config.model = 'kimi-for-coding';
+      mockSession.config.fallbackModel = 'k3';
+      mockSession.config.thinkingLevel = 'off';
+
+      expect(() =>
+        builder.addSessionStateOptions({} as import('@anthropic-ai/claude-agent-sdk').Options)
+      ).toThrow(/Incompatible Kimi fallback chain/);
+    });
+
+    it('allows Kimi K3 primary and K3 fallback without thinking', () => {
+      mockSession.config.provider = 'kimi';
+      mockSession.config.model = 'kimi-k3';
+      mockSession.config.fallbackModel = 'k3';
+      mockSession.config.thinkingLevel = 'think8k';
+
+      const result = builder.addSessionStateOptions(
+        {} as import('@anthropic-ai/claude-agent-sdk').Options
+      );
+      expect(result.thinking).toBeUndefined();
+    });
+
+    it('allows Kimi K2.7 primary and K2.7 fallback with enabled thinking', () => {
+      mockSession.config.provider = 'kimi';
+      mockSession.config.model = 'kimi-for-coding';
+      mockSession.config.fallbackModel = 'kimi-k2.7-code-highspeed';
+      mockSession.config.thinkingLevel = 'off';
+
+      const result = builder.addSessionStateOptions(
+        {} as import('@anthropic-ai/claude-agent-sdk').Options
+      );
+      expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 16000 });
+    });
   });
 
   describe('system prompt configuration', () => {

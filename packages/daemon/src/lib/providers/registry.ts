@@ -267,12 +267,15 @@ export function inferProviderForModel(modelId: string): ProviderIdStr {
 
   // Exclude IDs containing ':' so Ollama tags like kimi-k2:latest or
   // moonshot-v1:latest fall through to Ollama routing.
+  // Strip the documented `[1m]` context-window suffix first so `k3[1m]` and
+  // `kimi-k3[1m]` route to Kimi just like the plain IDs.
+  const kimiCheckId = normalizedModelId.replace(/\[1m\]$/, '');
   if (
-    !normalizedModelId.includes(':') &&
-    (normalizedModelId.startsWith('moonshot-') ||
-      normalizedModelId.startsWith('kimi-') ||
-      normalizedModelId === 'kimi' ||
-      normalizedModelId === 'k3')
+    !kimiCheckId.includes(':') &&
+    (kimiCheckId.startsWith('moonshot-') ||
+      kimiCheckId.startsWith('kimi-') ||
+      kimiCheckId === 'kimi' ||
+      kimiCheckId === 'k3')
   ) {
     return 'kimi';
   }

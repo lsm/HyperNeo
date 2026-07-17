@@ -792,6 +792,22 @@ export class QueryOptionsBuilder {
           };
         }
       }
+
+      // The SDK applies a single `thinking` option to the whole query (primary
+      // model + fallback). K3 rejects any `thinking` payload while K2.7 requires
+      // one, so a mixed Kimi fallback chain can never satisfy both models.
+      const fallbackModel = this.ctx.session.config.fallbackModel;
+      if (fallbackModel) {
+        const primaryIsK3 = KimiProvider.isKimiK3Model(selectedModel);
+        const fallbackIsK3 = KimiProvider.isKimiK3Model(fallbackModel);
+        const primaryIsK2 = KimiProvider.isKimiK2Point7Model(selectedModel);
+        const fallbackIsK2 = KimiProvider.isKimiK2Point7Model(fallbackModel);
+        if ((primaryIsK3 && fallbackIsK2) || (primaryIsK2 && fallbackIsK3)) {
+          throw new Error(
+            `Incompatible Kimi fallback chain: ${selectedModel} and ${fallbackModel} cannot be used together because Kimi K3 does not support thinking while Kimi K2.7 requires it.`
+          );
+        }
+      }
     }
 
     if (thinkingConfig) {

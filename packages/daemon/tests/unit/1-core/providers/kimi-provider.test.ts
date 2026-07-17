@@ -187,6 +187,22 @@ describe('KimiProvider', () => {
       expect(url).toBe('https://custom.example.com/anthropic/v1/messages');
     });
 
+    it('probes custom base URLs with legacy IDs when region defaults to china', async () => {
+      process.env.KIMI_API_KEY = 'test-key';
+      process.env.KIMI_BASE_URL = 'https://kimi-proxy.example.com/anthropic';
+      const fetchImpl = mock(
+        async () => new Response('{}', { status: 200 })
+      ) as unknown as typeof fetch;
+      provider = new KimiProvider(process.env, undefined, fetchImpl);
+
+      await provider.getModels();
+
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      const [, init] = (fetchImpl.mock.calls[0] as [string, RequestInit]) ?? [];
+      const body = JSON.parse(String(init?.body));
+      expect(body.model).toBe('kimi-for-coding');
+    });
+
     it('infers the global region from a known KIMI_BASE_URL without KIMI_REGION', async () => {
       process.env.KIMI_API_KEY = 'test-key';
       process.env.KIMI_BASE_URL = 'https://api.moonshot.ai/anthropic';
@@ -504,9 +520,8 @@ describe('KimiProvider', () => {
       expect(config.envVars.ANTHROPIC_MODEL).toBe('kimi-for-coding');
     });
 
-    it('explicit sessionConfig.baseUrl overrides region selection', () => {
+    it('uses legacy IDs for unknown custom base URLs when provider default is china', () => {
       provider = new KimiProvider();
-      provider.setDefaultRegion('global');
 
       const config = provider.buildSdkConfig('kimi-k2.7-code', {
         apiKey: 'key',
@@ -514,7 +529,62 @@ describe('KimiProvider', () => {
       });
 
       expect(config.envVars.ANTHROPIC_BASE_URL).toBe('https://custom.example.com/anthropic');
+      // The provider default region is china. Because the custom host is not a
+      // known modern Moonshot Open Platform endpoint, the legacy China IDs are
+      // used to preserve compatibility with custom Kimi Code proxies.
+      expect(config.envVars.ANTHROPIC_MODEL).toBe('kimi-for-coding');
+    });
+
+    it('uses modern IDs for unknown custom base URLs when region is global', () => {
+      provider = new KimiProvider();
+
+      const config = provider.buildSdkConfig('kimi-k2.7-code', {
+        apiKey: 'key',
+        region: 'global',
+        baseUrl: 'https://custom.example.com/anthropic',
+      });
+
+      expect(config.envVars.ANTHROPIC_BASE_URL).toBe('https://custom.example.com/anthropic');
       expect(config.envVars.ANTHROPIC_MODEL).toBe('kimi-k2.7-code');
+    });
+
+    it('uses legacy IDs for unknown custom base URLs when region is china', () => {
+      provider = new KimiProvider();
+
+      const config = provider.buildSdkConfig('kimi-k2.7-code', {
+        apiKey: 'key',
+        region: 'china',
+        baseUrl: 'https://custom.example.com/anthropic',
+      });
+
+      expect(config.envVars.ANTHROPIC_BASE_URL).toBe('https://custom.example.com/anthropic');
+      expect(config.envVars.ANTHROPIC_MODEL).toBe('kimi-for-coding');
+    });
+
+    it('routes k3 alias to legacy ID on custom China base URLs', () => {
+      provider = new KimiProvider();
+
+      const config = provider.buildSdkConfig('k3', {
+        apiKey: 'key',
+        region: 'china',
+        baseUrl: 'https://kimi-proxy.example.com/anthropic',
+      });
+
+      expect(config.envVars.ANTHROPIC_MODEL).toBe('k3');
+      expect(config.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('1048576');
+    });
+
+    it('routes k3 alias to modern ID on custom global base URLs', () => {
+      provider = new KimiProvider();
+
+      const config = provider.buildSdkConfig('k3', {
+        apiKey: 'key',
+        region: 'global',
+        baseUrl: 'https://kimi-proxy.example.com/anthropic',
+      });
+
+      expect(config.envVars.ANTHROPIC_MODEL).toBe('kimi-k3');
+      expect(config.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('1048576');
     });
 
     it('KIMI_BASE_URL env var overrides region selection', () => {

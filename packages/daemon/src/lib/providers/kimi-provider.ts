@@ -331,6 +331,19 @@ export class KimiProvider implements Provider {
    */
   static resolveRegionFromBaseUrl(baseUrl: string): KimiRegion | undefined {
     const normalized = normalizeBaseUrl(baseUrl).toLowerCase();
+    try {
+      const host = new URL(normalized).host;
+      if (host === 'api.moonshot.ai') {
+        return 'global';
+      }
+      if (host === 'api.moonshot.cn' || host === 'api.kimi.com') {
+        return 'china';
+      }
+    } catch {
+      // Ignore malformed URLs and fall through to exact matching.
+    }
+    // Preserve exact matches for contexts where URL parsing is unavailable or
+    // the value is not a well-formed URL.
     if (
       normalized === KIMI_REGION_ENDPOINTS.global.anthropicBaseUrl.toLowerCase() ||
       normalized === KIMI_REGION_ENDPOINTS.global.openAiBaseUrl.toLowerCase()
@@ -339,9 +352,7 @@ export class KimiProvider implements Provider {
     }
     if (
       normalized === KIMI_REGION_ENDPOINTS.china.anthropicBaseUrl.toLowerCase() ||
-      normalized === KIMI_REGION_ENDPOINTS.china.openAiBaseUrl.toLowerCase() ||
-      normalized === 'https://api.moonshot.cn/anthropic' ||
-      normalized === 'https://api.moonshot.cn/v1'
+      normalized === KIMI_REGION_ENDPOINTS.china.openAiBaseUrl.toLowerCase()
     ) {
       return 'china';
     }
@@ -356,10 +367,28 @@ export class KimiProvider implements Provider {
    */
   private static isLegacyKimiCodeEndpoint(baseUrl: string): boolean {
     const normalized = normalizeBaseUrl(baseUrl).toLowerCase();
-    return (
-      normalized === KIMI_REGION_ENDPOINTS.china.anthropicBaseUrl.toLowerCase() ||
-      normalized === KIMI_REGION_ENDPOINTS.china.openAiBaseUrl.toLowerCase()
-    );
+    try {
+      const url = new URL(normalized);
+      return url.host === 'api.kimi.com' && url.pathname.startsWith('/coding');
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Detect whether a base URL belongs to the modern Moonshot Open Platform.
+   * Both `api.moonshot.ai` (global) and `api.moonshot.cn` (China) advertise the
+   * Open Platform model ID family (`kimi-k3`, `kimi-k2.7-code`,
+   * `kimi-k2.7-code-highspeed`).
+   */
+  private static isModernMoonshotOpenPlatformEndpoint(baseUrl: string): boolean {
+    const normalized = normalizeBaseUrl(baseUrl).toLowerCase();
+    try {
+      const host = new URL(normalized).host;
+      return host === 'api.moonshot.ai' || host === 'api.moonshot.cn';
+    } catch {
+      return false;
+    }
   }
 
   isAvailable(): boolean {
@@ -440,7 +469,8 @@ export class KimiProvider implements Provider {
     // payload; max_tokens is set to budget_tokens + 1 by the probe.
     const probeModelId = KimiProvider.resolveUpstreamModelId(
       KimiProvider.getModelIdForRegion(region),
-      baseUrl
+      baseUrl,
+      region
     );
     await this.verifyCredentials(baseUrl, apiKey, probeModelId, {
       type: 'enabled',
@@ -493,14 +523,33 @@ export class KimiProvider implements Provider {
    * - The modern Moonshot Open Platform endpoints (`api.moonshot.*`) advertise
    *   `kimi-k3`, `kimi-k2.7-code`, and `kimi-k2.7-code-highspeed`.
    */
-  private static resolveUpstreamModelId(modelId: string, baseUrl?: string): string {
+  private static resolveUpstreamModelId(
+    modelId: string,
+    baseUrl?: string,
+    region?: KimiRegion
+  ): string {
     const id = KimiProvider.normalizeKimiModelId(modelId);
-    const legacy = baseUrl ? KimiProvider.isLegacyKimiCodeEndpoint(baseUrl) : false;
+    let useLegacy = false;
+    if (baseUrl) {
+      if (KimiProvider.isModernMoonshotOpenPlatformEndpoint(baseUrl)) {
+        useLegacy = false;
+      } else if (KimiProvider.isLegacyKimiCodeEndpoint(baseUrl)) {
+        useLegacy = true;
+      } else {
+        // Unknown/custom base URL: default to legacy for China (and the default
+        // no-region case), modern for global. This preserves legacy IDs for
+        // custom China proxies while still letting global-only custom endpoints
+        // use modern Open Platform IDs.
+        useLegacy = region !== 'global';
+      }
+    } else {
+      useLegacy = region !== 'global';
+    }
     if (id === 'k3' || id === 'kimi-k3' || id.startsWith('moonshot-k3')) {
-      return legacy ? 'k3' : 'kimi-k3';
+      return useLegacy ? 'k3' : 'kimi-k3';
     }
     if (id === 'kimi-k2.7-code-highspeed' || id === 'kimi-for-coding-highspeed') {
-      return legacy ? 'kimi-for-coding-highspeed' : 'kimi-k2.7-code-highspeed';
+      return useLegacy ? 'kimi-for-coding-highspeed' : 'kimi-k2.7-code-highspeed';
     }
     if (
       id === 'kimi-k2.7-code' ||
@@ -508,9 +557,9 @@ export class KimiProvider implements Provider {
       id === 'kimi-for-coding' ||
       id.startsWith('moonshot-')
     ) {
-      return legacy ? 'kimi-for-coding' : 'kimi-k2.7-code';
+      return useLegacy ? 'kimi-for-coding' : 'kimi-k2.7-code';
     }
-    return legacy ? 'kimi-for-coding' : 'kimi-k2.7-code';
+    return useLegacy ? 'kimi-for-coding' : 'kimi-k2.7-code';
   }
 
   /**
@@ -556,8 +605,12 @@ export class KimiProvider implements Provider {
       );
     }
 
+    const effectiveRegion = explicitRegion
+      ? resolveKimiRegion(explicitRegion)
+      : (KimiProvider.resolveRegionFromBaseUrl(baseUrl) ?? this.defaultRegion);
+
     const contextWindow = KimiProvider.resolveContextWindow(_modelId);
-    const routingModelId = KimiProvider.resolveUpstreamModelId(_modelId, baseUrl);
+    const routingModelId = KimiProvider.resolveUpstreamModelId(_modelId, baseUrl, effectiveRegion);
 
     return {
       envVars: {

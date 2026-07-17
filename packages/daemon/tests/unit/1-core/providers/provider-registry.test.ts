@@ -559,6 +559,12 @@ describe('inferProviderForModel', () => {
     expect(inferProviderForModel('kimi')).toBe('kimi');
   });
 
+  it('maps documented [1m] K3 aliases to kimi before anthropic fallback', () => {
+    expect(inferProviderForModel('k3[1m]')).toBe('kimi');
+    expect(inferProviderForModel('kimi-k3[1m]')).toBe('kimi');
+    expect(inferProviderForModel('K3[1M]')).toBe('kimi');
+  });
+
   it('does not hijack Ollama tags with kimi/moonshot prefixes', () => {
     // Ollama tags contain ':' — must fall through to Ollama routing
     expect(inferProviderForModel('kimi-k2:latest')).not.toBe('kimi');
