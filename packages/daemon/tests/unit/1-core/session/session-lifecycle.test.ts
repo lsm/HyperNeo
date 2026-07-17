@@ -134,7 +134,7 @@ const mockKimiModels: Array<{
     contextWindow: 1_048_576,
     preferContextWindowMetadata: true,
     available: true,
-    providerAliases: ['k3', 'kimi-k3'],
+    providerAliases: ['k3', 'kimi-k3', 'k3[1m]', 'kimi-k3[1m]'],
     providerAliasPrefixes: ['moonshot-k3'],
   },
   {
@@ -574,6 +574,57 @@ describe('SessionLifecycle', () => {
           config: expect.objectContaining({
             model: 'moonshot-v1-32k',
             provider: 'custom',
+          }),
+        })
+      );
+    });
+
+    it('preserves the [1m] suffix for Kimi K3 aliases', async () => {
+      await lifecycle.create({
+        config: {
+          model: 'k3[1m]',
+        },
+      });
+
+      expect(mockDb.createSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: expect.objectContaining({
+            model: 'kimi-k3[1m]',
+            provider: 'kimi',
+          }),
+        })
+      );
+    });
+
+    it('preserves the [1m] suffix for canonical Kimi K3 ID', async () => {
+      await lifecycle.create({
+        config: {
+          model: 'kimi-k3[1m]',
+        },
+      });
+
+      expect(mockDb.createSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: expect.objectContaining({
+            model: 'kimi-k3[1m]',
+            provider: 'kimi',
+          }),
+        })
+      );
+    });
+
+    it('does not add a [1m] suffix when the alias was requested without it', async () => {
+      await lifecycle.create({
+        config: {
+          model: 'k3',
+        },
+      });
+
+      expect(mockDb.createSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: expect.objectContaining({
+            model: 'kimi-k3',
+            provider: 'kimi',
           }),
         })
       );

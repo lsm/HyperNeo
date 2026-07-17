@@ -1286,6 +1286,19 @@ ${messageText.slice(0, 2000)}`;
             if (explicitProvider && found.provider !== explicitProvider) {
               // fall through to keep the requested model for its explicit provider
             } else {
+              // Preserve documented [1m] context-window suffixes for Kimi K3.
+              // findInModels returns the canonical unsuffixed ID, but the SDK
+              // needs the suffix to avoid falling back to its default 200k window.
+              const suffix = /\[1m\]$/i;
+              if (
+                requestedModel &&
+                suffix.test(requestedModel.trim()) &&
+                !suffix.test(found.id) &&
+                KimiProvider.isKimiK3Model(found.id)
+              ) {
+                return { id: `${found.id}[1m]`, provider: found.provider };
+              }
+
               return { id: found.id, provider: found.provider };
             }
           }
