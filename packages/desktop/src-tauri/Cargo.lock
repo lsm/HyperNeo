@@ -1776,7 +1776,7 @@ dependencies = [
 
 [[package]]
 name = "hyperneo-desktop"
-version = "0.39.5"
+version = "0.39.6"
 dependencies = [
  "dirs",
  "log",

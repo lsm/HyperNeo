@@ -2,11 +2,31 @@
 
 All notable changes to HyperNeo will be documented in this file.
 
-## [Unreleased]
+## [0.39.6] - 2026-07-17
+
+### Added
+
+- **Desktop rebrand completed**: Renamed desktop crate, sidecar binary, bundle identifier, data/workspace directory, and event names from Kai/NeoKai to HyperNeo
+
+### Changed
+
+- **Web UI**: SDK `system:status` messages now fold into the active turn roster
+- **Environment variables**: Removed legacy `NEOKAI_*` env var aliases
+- **Data directory**: Dropped legacy `~/.neokai` data directory support
+- **Docs**: Updated remaining HyperNeo rebrand references
+
+### Fixed
+
+- **Space task messaging**: Reject ambiguous task message targets, audit `send_message_to_task` outcomes, and enrich delivery responses
+- **GitHub polling**: Derive repo owner/name from payload URL to handle renamed repositories
+- **Context usage breakdown**: Exclude autocompact buffer row and normalize categories to `totalUsed`
+- **Dev branch CI**: Fixed logger test isolation and rpc-4 model-handler race
 
 ### Removed
 
-- Removed unused CodeGraph MCP integration artifacts (orphaned DB already deleted and `.mcp.json` entry already absent); benchmark scripts and reports retained for historical reference.
+- **CodeGraph MCP**: Removed unused CodeGraph MCP integration artifacts (orphaned DB already deleted and `.mcp.json` entry already absent); benchmark scripts and reports retained for historical reference
+
+13 commits since v0.39.5.
 
 ## [0.39.5] - 2026-07-04
 
