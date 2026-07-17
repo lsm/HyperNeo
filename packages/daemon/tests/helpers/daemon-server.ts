@@ -716,20 +716,46 @@ async function waitForModelsReady(
     const nonAnthropicProviders = registry
       .getAll()
       .filter((provider) => !provider.id.startsWith('anthropic'));
+
+    // Only refresh for non-Anthropic providers that are actually configured/
+    // available in this environment. Built-in optional providers such as Ollama
+    // or custom endpoints are registered but may not be configured; refreshing
+    // them when the Anthropic catalog is already usable can hit the readiness
+    // timeout on a slow probe. Bound each availability probe to 1s (or the
+    // remaining readiness budget, whichever is smaller).
+    const availableNonAnthropicCount = (
+      await Promise.allSettled(
+        nonAnthropicProviders.map(async (provider) => {
+          const probeMs = Math.min(1000, Math.max(0, deadline - Date.now()));
+          if (probeMs <= 0) return false;
+          try {
+            return await Promise.race([
+              provider.isAvailable(),
+              new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error('provider availability probe timeout')), probeMs)
+              ),
+            ]);
+          } catch {
+            return false;
+          }
+        })
+      )
+    ).filter((result) => result.status === 'fulfilled' && result.value).length;
+
     const hasNonAnthropicModels = cache.some((model) => !model.provider.startsWith('anthropic'));
 
     // Trigger a foreground refresh when:
     // 1. There is no Anthropic auth and the cache is empty (createDaemonApp skips
     //    background initializeModels() in that case), OR
     // 2. The cache only contains Anthropic fallback models from a previous
-    //    in-process daemon but the current daemon has non-Anthropic providers
-    //    configured (e.g. MiniMax+GLM). STATIC_MODEL_METADATA does not include
-    //    MiniMax, so without a refresh those providers stay absent.
+    //    in-process daemon but the current daemon has available non-Anthropic
+    //    providers configured (e.g. MiniMax+GLM). STATIC_MODEL_METADATA does not
+    //    include MiniMax, so without a refresh those providers stay absent.
     // Enforce the overall readiness deadline so a hanging provider probe cannot
     // outlive the caller's setup budget.
     const needsRefresh =
       (!authStatus.isAuthenticated && cache.length === 0) ||
-      (nonAnthropicProviders.length > 0 && !hasNonAnthropicModels);
+      (availableNonAnthropicCount > 0 && !hasNonAnthropicModels);
 
     if (needsRefresh) {
       const remainingMs = deadline - Date.now();
